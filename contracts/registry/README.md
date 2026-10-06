@@ -86,7 +86,17 @@ forge script script/DeployChitIssuerRoot.s.sol \
   --slow
 ```
 
-Required env: `SEPOLIA_THROWAWAY_PK`, `SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`, `CHIT_ISSUER_ROOT_CONTROLLER`, `CHIT_GENESIS_KID`, `CHIT_GENESIS_NOT_BEFORE`, `CHIT_STANDBY_KID`, `CHIT_HIST_SNAPSHOT`, `CHIT_LEGACY_UNIVERSE_ID`, `CHIT_LEGACY_UNIVERSE_HASH`, `CHIT_LEGACY_ENUMERATED_COUNT`. Optional `CHIT_HIST_VERSION` (default 1).
+Required env: `SEPOLIA_THROWAWAY_PK`, `SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`, `CHIT_ISSUER_ROOT_CONTROLLER`, `CHIT_GENESIS_KID`, `CHIT_GENESIS_NOT_BEFORE`, `CHIT_STANDBY_KID`, `CHIT_HIST_SNAPSHOT`, `CHIT_LEGACY_UNIVERSE_ID`, `CHIT_LEGACY_UNIVERSE_HASH`, `CHIT_LEGACY_ENUMERATED_COUNT`. Optional `CHIT_HIST_VERSION` (default 1) and `CHIT_STANDBY_CUSHION` (seconds past the 24h minimum, default 3600).
+
+The sample standby `notBefore` is the latest block timestamp plus 24 hours plus that cushion. A preflight `eth_call` of the genesis commit runs at that latest timestamp and is rolled back before `startBroadcast`. If it reverts, the script stops and forge does not send the transaction. The Sepolia dry run omitted the cushion (`notBefore = simulated timestamp + 24h`); the mined block was about a minute later and the commit reverted `ActivationTooSoon`.
+
+### `_issuer.chit402.com` TXT for the Sepolia registry
+
+Copy this as the single TXT record at `_issuer.chit402.com` for the dry-run registry. It is the genesis commit (seq 1). The verifier accepts it while seq 1 is at or behind the chain head and this root matches that commit. The active kid at seq 1 is the genesis key.
+
+```text
+v=chit-issuer1; chain=eip155:84532; reg=0xeC17A9070cE6aD1356c5c142B74b0b393dBe7973; seq=1; root=0x01e9aa809ddfe08f50f9bd2a453468ce20a9c86f586cfee62fed0e0e7baaee0d; kid=bX9D-3TQbKfQi06XoHGaLh6YnO6I_uQsLAxoGbzBiH0
+```
 
 The public genesis kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` is `0x22f169982faf3e1918fefd2f89db2b5954fdbb3944e5758a66000439e253ab54`. Its `not_before` `2026-09-04T08:52:05Z` is unix `1788511925`. Pass the legacy universe id above. The sample commit registers the standby, sets history, and freezes that universe. It does not mint or re-sign receipts.
 

@@ -29,6 +29,14 @@ import {BroadcastChain} from "../contracts/registry/BroadcastChain.sol";
 ///   CHIT_LEGACY_UNIVERSE_HASH     bytes32 Merkle root
 ///   CHIT_LEGACY_ENUMERATED_COUNT
 /// Optional: CHIT_HIST_VERSION (default 1)
+///           CHIT_STANDBY_CUSHION (seconds past the 24h minimum; default 3600)
+///
+/// The sample standby `notBefore` is `latestTimestamp + 24 hours + cushion`.
+/// The dry run used `simulatedTimestamp + 24 hours` and the mined block was
+/// about a minute later, so `commit` reverted `ActivationTooSoon` on chain.
+/// Before `startBroadcast`, the script eth_calls that commit at the latest
+/// block's timestamp and rolls the state back. A revert there aborts the
+/// script, so forge does not send the transaction.
 ///
 /// Broadcast (human, after the env is exported in the local shell):
 ///   forge script script/DeployChitIssuerRoot.s.sol --rpc-url https://sepolia.base.org --broadcast --slow
@@ -65,11 +73,18 @@ interface ISafeExec {
 }
 
 contract DeployChitIssuerRoot is Script {
+    /// @dev Seconds added on top of `ACTIVATION_DELAY`. One hour covers the
+    ///      dry-run gap (simulated timestamp, then a mined block ~56s later).
+    uint256 public constant DEFAULT_STANDBY_CUSHION = 1 hours;
+
     error NeedTwoDistinctOwners();
     error OwnerNotOnSafe(address owner);
     error ThresholdNotTwo(uint256 threshold);
     error GenesisCommitFailed();
     error SameKid();
+    error CushionOverflow();
+    /// @dev `reason` is the revert data from the preflight eth_call.
+    error PreflightRevert(bytes reason);
 
     struct Genesis {
         uint256 deployerPk;
@@ -91,13 +106,65 @@ contract DeployChitIssuerRoot is Script {
         BroadcastChain.assertBaseSepolia();
         Genesis memory g = _load();
         _requireSafeOwners(g);
+
+        uint256 latest = latestBlockTimestamp();
+        uint64 notBefore = standbyNotBefore(latest, standbyCushion());
+        bytes memory inner = _genesisCalldata(g, notBefore);
+        _preflightAtLatest(g.controller, g.genesisKid, g.genesisNotBefore, inner, latest);
+
         vm.startBroadcast(g.deployerPk);
         ChitIssuerRoot root = new ChitIssuerRoot(g.controller, g.genesisKid, g.genesisNotBefore);
-        _genesisCommit(ISafeExec(g.controller), root, g);
+        _exec(ISafeExec(g.controller), address(root), inner, g.ownerPk1, g.ownerPk2);
         vm.stopBroadcast();
         console2.log("ChitIssuerRoot", address(root));
+        console2.log("standby notBefore", notBefore);
         console2.log("rootSeq", root.rootSeq());
         console2.logBytes32(root.rootHash());
+    }
+
+    /// @notice `timestamp + 24 hours + cushion`, checked to fit in `uint64`.
+    function standbyNotBefore(uint256 timestamp, uint256 cushion) public pure returns (uint64) {
+        // Same 24h minimum as `ChitIssuerRoot.ACTIVATION_DELAY`. A public
+        // constant on that contract is not visible as `ChitIssuerRoot.ACTIVATION_DELAY`.
+        uint256 sum = timestamp + 24 hours + cushion;
+        if (sum > type(uint64).max) revert CushionOverflow();
+        return uint64(sum);
+    }
+
+    /// @notice `CHIT_STANDBY_CUSHION` in seconds, or one hour when unset.
+    function standbyCushion() public view returns (uint256) {
+        return vm.envOr("CHIT_STANDBY_CUSHION", DEFAULT_STANDBY_CUSHION);
+    }
+
+    /// @dev Latest head from the script RPC. Unit tests have no fork, so a failed
+    ///      `eth_getBlockByNumber` falls back to `block.timestamp`.
+    function latestBlockTimestamp() public returns (uint256) {
+        try this.readLatestBlockTimestamp() returns (uint256 ts) {
+            if (ts == 0) return block.timestamp;
+            return ts;
+        } catch {
+            return block.timestamp;
+        }
+    }
+
+    function readLatestBlockTimestamp() external returns (uint256) {
+        bytes memory raw = vm.rpc("eth_getBlockByNumber", "[\"latest\", false]");
+        return vm.parseJsonUint(string(raw), ".timestamp");
+    }
+
+    /// @notice eth_call the genesis commit as `controller` at the current block
+    ///         timestamp, then roll that state back. Set the timestamp to the
+    ///         latest head before calling. A revert means do not broadcast.
+    function preflightGenesis(address controller, address registry, bytes memory data) public {
+        _preflightCall(controller, registry, data);
+    }
+
+    function _preflightCall(address controller, address registry, bytes memory data) internal {
+        uint256 snap = vm.snapshotState();
+        vm.prank(controller);
+        (bool ok, bytes memory ret) = registry.call(data);
+        bool restored = vm.revertToState(snap);
+        if (!restored || !ok) revert PreflightRevert(ok ? bytes("") : ret);
     }
 
     function _load() internal view returns (Genesis memory g) {
@@ -127,26 +194,51 @@ contract DeployChitIssuerRoot is Script {
         if (threshold != 2) revert ThresholdNotTwo(threshold);
     }
 
-    function _genesisCommit(ISafeExec safe, ChitIssuerRoot root, Genesis memory g) internal {
-        bytes memory data = _genesisCalldata(g);
-        _exec(safe, address(root), data, g.ownerPk1, g.ownerPk2);
+    /// @dev Deploy a throwaway copy at `latest`, eth_call the commit, then roll
+    ///      back. The broadcast section below is reached only if that call succeeds.
+    function _preflightAtLatest(
+        address controller,
+        bytes32 genesisKid,
+        uint64 genesisNotBefore,
+        bytes memory inner,
+        uint256 latest
+    ) internal {
+        uint256 snap = vm.snapshotState();
+        vm.warp(latest);
+        ChitIssuerRoot staged = new ChitIssuerRoot(controller, genesisKid, genesisNotBefore);
+        _preflightCall(controller, address(staged), inner);
+        if (!vm.revertToState(snap)) revert PreflightRevert("");
     }
 
-    function _genesisCalldata(Genesis memory g) internal view returns (bytes memory) {
+    function _genesisCalldata(Genesis memory g, uint64 notBefore) internal pure returns (bytes memory) {
+        return genesisCommitData(
+            g.standbyKid, g.legacyId, g.legacyHash, g.enumerated, g.histVersion, g.histSnapshot, notBefore
+        );
+    }
+
+    function genesisCommitData(
+        bytes32 standbyKid,
+        bytes32 legacyId,
+        bytes32 legacyHash,
+        uint64 enumerated,
+        uint64 histVersion,
+        bytes32 histSnapshot,
+        uint64 notBefore
+    ) public pure returns (bytes memory) {
         ChitIssuerRoot.Op[] memory ops = new ChitIssuerRoot.Op[](1);
         ops[0] = ChitIssuerRoot.Op({
             kind: 1, // OP_ADD_STANDBY
-            kid: g.standbyKid,
-            timestamp: uint64(block.timestamp + 24 hours),
+            kid: standbyKid,
+            timestamp: notBefore,
             reasonCode: 0
         });
         ChitIssuerRoot.FreezeArg[] memory freezeArgs = new ChitIssuerRoot.FreezeArg[](1);
         freezeArgs[0] = ChitIssuerRoot.FreezeArg({
-            universeId: g.legacyId,
-            universeHash: g.legacyHash,
-            enumeratedCount: g.enumerated
+            universeId: legacyId,
+            universeHash: legacyHash,
+            enumeratedCount: enumerated
         });
-        return abi.encodeCall(ChitIssuerRoot.commit, (ops, freezeArgs, g.histVersion, g.histSnapshot));
+        return abi.encodeCall(ChitIssuerRoot.commit, (ops, freezeArgs, histVersion, histSnapshot));
     }
 
     function _exec(ISafeExec safe, address to, bytes memory data, uint256 pk1, uint256 pk2) internal {
