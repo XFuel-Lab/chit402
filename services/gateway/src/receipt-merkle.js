@@ -1316,15 +1316,19 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * Drop a stored anchored mark that did not survive a receipt lookup or the
-   * block-time gate, so the next publish looks the nonce up again.
+   * Drop a stored anchored mark that the receipt lookup or the block-time
+   * gate did not keep. An unread block time goes back to `broadcast` and is
+   * checked again. A mined receipt outside the clock bound consumed its
+   * nonce: mark it `replaced` so the next publish signs the next nonce
+   * instead of confirming the same transaction forever.
    */
   _reopenAnchored(root, tx, reason) {
     if (root && this.anchorState?.base?.[root]) delete this.anchorState.base[root];
+    const status = reason === 'anchor_clock_drift' ? 'replaced' : 'broadcast';
     for (const row of this._latestBaseIntents()) {
       if (row.status !== 'anchored') continue;
       if (row.root !== root && row.tx !== tx) continue;
-      this._markIntent(row, 'broadcast', { reason, tx: row.tx, at: row.at });
+      this._markIntent(row, status, { reason, tx: row.tx, at: row.at });
     }
   }
 

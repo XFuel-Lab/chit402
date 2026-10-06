@@ -1540,6 +1540,54 @@ test('an unreadable block time does not stay anchored and is looked up again', a
   }
 });
 
+test('a mined receipt outside the clock bound is replaced and the next publish advances', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  try {
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      blockTimestamp: 1,
+      lookup: async (intent) => receiptFor(intent),
+      send: async (args) => args.hash,
+    });
+    assert.equal(head.anchor_status, 'pending');
+    assert.equal(head.anchor.reason, 'anchor_clock_drift');
+    assert.equal(head.anchor.tx, null);
+    assert.match(head.anchor.rejected_tx, /^0x[0-9a-f]{64}$/);
+    assert.equal(tree.anchorState.base[root], undefined);
+    assert.equal(anchorIntentRows(dir).some((row) => (
+      row.nonce === 4 && row.status === 'replaced' && row.reason === 'anchor_clock_drift'
+    )), true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'broadcast'), false);
+    const nonces = [];
+    const again = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:10:00.000Z',
+      nonce: 4,
+      blockTimestamp: Math.floor(Date.parse('2026-10-06T12:10:00.000Z') / 1000),
+      lookup: async (intent) => receiptFor(intent),
+      send: async (args) => {
+        nonces.push(args.nonce);
+        return args.hash;
+      },
+    });
+    assert.deepEqual(nonces, [5]);
+    assert.equal(again.anchor_status, 'anchored');
+    assert.equal(again.anchor.receipt_confirmed, true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5 && row.status === 'anchored'), true);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
 test('a stored anchor without a receipt is looked up again and the dropped tx is retried', async () => {
   const dir = tmp();
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
