@@ -99,6 +99,24 @@ jobs:
         working-directory: services/gateway
         run: npm test
 
+  # ── @xfuel/verify on Windows (Node 24) ─────────────────────
+  # Linux CI does not run this package's own suite. npm publish runs it
+  # via prepublishOnly, and two tests fail only on Windows (ESM file URL
+  # for --import, and process exit while undici sockets are closing).
+  verify-windows:
+    name: Verify package (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Test @xfuel/verify
+        working-directory: packages/verify
+        run: npm install --no-audit --no-fund && npm test
+
   # ── www unit tests (path-filtered) ─────────────────────────
   # apps/web is not covered by Gateway Tests or Jest (Jest is packages/sdk).
   web:
