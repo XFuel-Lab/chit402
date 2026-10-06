@@ -91,6 +91,8 @@ With no pin, `root_checked` is false. That is not a root pass. Payload v11 and a
 
 Payload v11 and refusal v2 require `canonicalization` `{ hash_alg: "sha-256", jcs: "RFC8785" }` with no `string_escaping` field. The verifier recomputes `payload_hash` with RFC 8785. `snapshot_hash` is SHA-256 of the RFC 8785 bytes of the embed `entries` array, and `issuer_history.hash` must equal that digest. `entry_hash` and flag-off history pins stay on `chit402-jcs-v1`. With no registry pin and no fetched history document, the embed is `self_asserted` (`ok: false`) and `overall` is `partial`. That is not a history proof, in the same way `root_checked: false` is not a root pass.
 
+A v11 receipt also signs `policy`: `policy_id`, `policy_version`, `dispute_window_seconds`, `retention_days`, `retention_mode`, `max_cumulative_spend`, and `policy_hash`. The verifier recomputes `policy_hash` as SHA-256 of the RFC 8785 terms and fails if it does not match. `xfuel-verify` prints those terms. A fetched `/.well-known/receipt-policy-history.json` reports whether that hash was announced. The signed terms govern. A missing announcement is partial, not a failure.
+
 ## Issuer Signature Verification (ES256)
 
 Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature

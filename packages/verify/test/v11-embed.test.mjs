@@ -188,6 +188,15 @@ function forgedV11({ snapshotHash }) {
       root_hash: `0x${'ab'.repeat(32)}`,
       root_seq: 1,
     },
+    policy: {
+      policy_id: 'chit402.receipt-policy',
+      policy_version: '1',
+      dispute_window_seconds: 86400,
+      retention_days: 365,
+      retention_mode: 'compliance',
+      max_cumulative_spend: null,
+      policy_hash: '48a69e8a154e670ad67663feead6a6b7d9e0de6a8f733c49b108bf5d124502a8',
+    },
   };
   claims.payload_hash = recomputeV11PayloadHash(claims);
   return {

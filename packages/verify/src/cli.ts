@@ -80,6 +80,10 @@ Options:
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
   --no-issuer-history Do not check the kid's not_before / not_after window
+  --policy-history-file <path>
+                      Read receipt-policy history JSON instead of fetching it
+  --no-policy-history Do not fetch /.well-known/receipt-policy-history.json.
+                      The signed policy terms still govern the receipt.
   --no-preimage       Do not require published hash preimages
   --pinned-chain <caip2>
                       Opt in to issuer-root checks. eip155:8453 or eip155:84532.
@@ -122,6 +126,9 @@ Network behavior:
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
   - --rpc is passed with a receipt, an inclusion proof, and a tree head
+  - a v11 receipt is checked and --no-policy-history was not passed
+    (GET /.well-known/receipt-policy-history.json). A missing announcement
+    is partial, not a failure. The signed policy terms govern.
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -199,6 +206,8 @@ function parseArgs(args: string[]): {
   rootCacheFile: string | null;
   legacyProofFile: string | null;
   issuerDomain: string | null;
+  policyHistoryFile: string | null;
+  noPolicyHistory: boolean;
 } {
   const result = {
     file: null as string | null,
@@ -235,6 +244,8 @@ function parseArgs(args: string[]): {
     rootCacheFile: null as string | null,
     legacyProofFile: null as string | null,
     issuerDomain: null as string | null,
+    policyHistoryFile: null as string | null,
+    noPolicyHistory: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -275,6 +286,10 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--policy-history-file' && args[i + 1]) {
+      result.policyHistoryFile = args[++i];
+    } else if (arg === '--no-policy-history') {
+      result.noPolicyHistory = true;
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
     } else if (arg === '--pinned-chain' && args[i + 1]) {
@@ -601,6 +616,15 @@ async function main(): Promise<number> {
       return 3;
     }
   }
+  let policyHistory: unknown = null;
+  if (args.policyHistoryFile) {
+    try {
+      policyHistory = JSON.parse(readFileSync(args.policyHistoryFile, 'utf8'));
+    } catch (err) {
+      console.error(`Error reading receipt policy history: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
   let canonicalPreimage: string | null = null;
   if (args.canonicalPreimageFile) {
     try {
@@ -649,6 +673,8 @@ async function main(): Promise<number> {
     fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
+    policyHistory,
+    fetchPolicyHistory: !args.noPolicyHistory && !policyHistory,
     canonicalPreimage,
     issuerRoot: rootRequested ? {
       pin: args.pinnedChain || args.pinnedRegistry
@@ -757,6 +783,20 @@ async function main(): Promise<number> {
       console.log(`  Issuer history: ${result.issuer_history.ok ? '✓ kid in window' : '✗ ' + (result.issuer_history.reason || 'failed')}`);
     } else if (result.issuer_history.warning) {
       console.log(`  Issuer history: ${result.issuer_history.warning}`);
+    }
+    if (result.policy?.checked) {
+      const terms = result.policy.terms;
+      console.log(`  Policy:        ${result.policy.ok ? terms?.policy_id || 'signed' : '✗ ' + (result.policy.reason || 'failed')}`);
+      if (terms) {
+        console.log(`  Policy version: ${terms.policy_version}`);
+        console.log(`  Dispute window: ${terms.dispute_window_seconds}s`);
+        console.log(`  Retention:     ${terms.retention_days} days, ${terms.retention_mode}`);
+        console.log(`  Spend cap:     ${terms.max_cumulative_spend == null ? 'none' : terms.max_cumulative_spend}`);
+        console.log(`  Policy hash:   ${result.policy.policy_hash}`);
+      }
+      if (result.policy.history === 'listed') console.log('  Policy history: listed');
+      else if (result.policy.history === 'not_listed') console.log('  Policy history: not listed (signed terms govern)');
+      else if (result.policy.history === 'missing') console.log('  Policy history: missing (partial; signed terms govern)');
     }
     if (result.root_checked === false) {
       console.log('  Issuer root:   not checked (root_checked: false). This is not a root pass.');

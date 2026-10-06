@@ -93,6 +93,13 @@ import {
   recomputeV11PayloadHash,
 } from './canonical-preimage.js';
 import {
+  verifyReceiptPolicyClaim,
+  policyHistoryListsHash,
+  policyHistoryUrlFromReceipt,
+  uncheckedPolicy,
+  type PolicyCheck,
+} from './receipt-policy.js';
+import {
   verifyIssuerRoot,
   resolvePinnedRoot,
   rpcsForPin,
@@ -389,6 +396,11 @@ export interface ReceiptVerification {
   preimages: PreimageCheck;
   /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
   issuer_history: IssuerHistoryCheck;
+  /**
+   * v11 signed policy terms. `history` is informational. A missing
+   * announcement is not a failure; `overall` becomes `partial`.
+   */
+  policy: PolicyCheck;
   /**
    * False when no pin is configured, or the chain could not be read.
    * A false value is never a root pass. Other 0.3.0 checks are unchanged.
@@ -1336,6 +1348,12 @@ export interface VerifyReceiptOptions {
   issuerHistoryBytes?: string | null;
   /** `--no-issuer-history`. A signed pin is not checked. */
   skipIssuerHistory?: boolean;
+  /** Announced receipt-policy history. Skips the network when set. */
+  policyHistory?: unknown;
+  /** Fetch /.well-known/receipt-policy-history.json. A miss is partial, not a failure. */
+  fetchPolicyHistory?: boolean;
+  /** Explicit policy-history URL. Any https URL. */
+  policyHistoryUrl?: string | null;
   /**
    * Stored canonical object (the GET /preimage body). SHA-256 must match
    * the signed payload_hash. Absent bytes are not rebuilt.
@@ -1681,6 +1699,36 @@ export async function verifyReceipt(
       historySnapshot = verifiedClaims.issuer_history_snapshot as IssuerHistorySnapshot;
     }
   }
+  let policyFailed = false;
+  let policyHistoryMissing = false;
+  let policy: PolicyCheck = uncheckedPolicy();
+  if (issuer_signature.valid && Number.isFinite(payloadVersion) && payloadVersion >= 11 && verifiedClaims) {
+    const verdict = verifyReceiptPolicyClaim(verifiedClaims.policy);
+    if (!verdict.ok && verdict.reason) {
+      policyFailed = true;
+      errors.push(verdict.reason);
+      policy = {
+        checked: true,
+        ok: false,
+        reason: verdict.reason,
+        terms: verdict.terms,
+        policy_hash: verdict.policy_hash,
+        history: 'not_checked',
+      };
+    } else {
+      const history = await resolvePolicyHistory(receipt, verdict.policy_hash || '', options, trustedHosts);
+      if (history.warning) warnings.push(history.warning);
+      if (history.status === 'missing') policyHistoryMissing = true;
+      policy = {
+        checked: true,
+        ok: true,
+        reason: null,
+        terms: verdict.terms,
+        policy_hash: verdict.policy_hash,
+        history: history.status,
+      };
+    }
+  }
   // Payload v10 signs the history pin. A missing pin fails even when the
   // caller did not pass a history file or ask for a fetch.
   const pinRequired = !options.skipIssuerHistory
@@ -1776,7 +1824,7 @@ export async function verifyReceipt(
   const historyFailed = issuer_history.checked && !issuer_history.ok && !historySelfAsserted;
   const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
   const signedIatFailed = missingSignedIat;
-  const v11ClaimFailed = canonicalizationFailed || snapshotFailed;
+  const v11ClaimFailed = canonicalizationFailed || snapshotFailed || policyFailed;
   const rootSoft = !!issuer_root && (
     issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
   );
@@ -1796,7 +1844,7 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
-  if (overall === 'verified' && (rootSoft || historySelfAsserted)) overall = 'partial';
+  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing)) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
@@ -1853,6 +1901,7 @@ export async function verifyReceipt(
     receipt_lane,
     preimages,
     issuer_history,
+    policy,
     root_checked: issuer_root?.root_checked === true,
     issuer_root: issuer_root ?? {
       verdict: 'unpinned',
@@ -1874,6 +1923,51 @@ export async function verifyReceipt(
  * `iat` from a verified JWS payload. Null and a missing key are both absent.
  * An unsigned `created_at` is not a substitute.
  */
+async function resolvePolicyHistory(
+  receipt: XFuelReceipt,
+  policyHash: string,
+  options: VerifyReceiptOptions,
+  trustedHosts: readonly string[],
+): Promise<{ status: PolicyCheck['history']; warning: string | null }> {
+  if (options.policyHistory) {
+    const listed = policyHistoryListsHash(options.policyHistory, policyHash);
+    return {
+      status: listed ? 'listed' : 'not_listed',
+      warning: listed
+        ? null
+        : 'signed policy_hash is not in the announced receipt-policy history. The signed terms govern.',
+    };
+  }
+  if (options.fetchPolicyHistory !== true) return { status: 'not_checked', warning: null };
+  const explicit = options.policyHistoryUrl || null;
+  const url = explicit || policyHistoryUrlFromReceipt(receipt);
+  const missing = {
+    status: 'missing' as const,
+    warning: 'receipt policy history was not available. The signed terms govern.',
+  };
+  if (!url) return missing;
+  try {
+    const parsed = new URL(url);
+    const hostOk = explicit
+      ? parsed.protocol === 'https:'
+      : parsed.protocol === 'https:' && trustedHosts.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
+    if (!hostOk) return missing;
+    const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    const res = await fetchImpl(parsed.toString(), { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const doc = await res.json();
+    const listed = policyHistoryListsHash(doc, policyHash);
+    return {
+      status: listed ? 'listed' : 'not_listed',
+      warning: listed
+        ? null
+        : 'signed policy_hash is not in the announced receipt-policy history. The signed terms govern.',
+    };
+  } catch {
+    return missing;
+  }
+}
+
 function readSignedIat(claims: Record<string, unknown> | null | undefined): unknown {
   if (!claims || !Object.prototype.hasOwnProperty.call(claims, 'iat')) return undefined;
   const value = claims.iat;
