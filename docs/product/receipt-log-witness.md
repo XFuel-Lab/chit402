@@ -21,6 +21,8 @@ A witness transaction is `broadcast` until a mined receipt succeeds and `head()`
 
 The append uses the same durable path as the bare-root anchor. The gateway signs the type-2 transaction, fsyncs those raw bytes and their keccak hash, and only then broadcasts. A crash after that fsync rebroadcasts the same bytes. Recovery is `eth_getTransactionByHash`, then `eth_getTransactionCount` on a standard RPC. If the nonce is still unused, the same raw transaction is sent again. If something else consumed the nonce, the intent is `replaced` and those bytes are not sent again. Journaling only the nonce is not enough: a second signature at nonce N would be a different transaction.
 
+The witness does not default to chain id 8453. With `RECEIPT_LOG_WITNESS=1`, `BASE_CHAIN_ID` is required. Boot refuses `witness_chain_unset` when it is missing. Boot, and every witness broadcast, calls `eth_chainId` on the configured RPC and refuses `witness_chain_mismatch` when that result is not `BASE_CHAIN_ID`. The append is signed with that verified chain id and no other. Chain id 8453 is refused unless `RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1`. That flag is Christopher's personal sign-off. It is not a dry-run switch. The bare-root anchor still signs chain id 8453 and does not read `BASE_CHAIN_ID`. That path is unchanged here.
+
 The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. Any other genesis reverts.
 
 A runtime code hash is not enough. Custom init code can return this contract's runtime bytecode and write any storage, so the constructor never ran. The check that binds the deployment is the creation transaction, not a log. `xfuel-verify --rpc --witness` and gateway boot require:
@@ -84,7 +86,9 @@ On a chain where the contract is deployed, `head()` returns `(epoch, size, root)
 
 ## What Christopher would sign on Sepolia
 
-The script is `script/DeployChitLogWitness.s.sol`. It refuses every chain except Base Sepolia (chain id 84532), including Base mainnet (8453). Running it without `--broadcast` simulates. This change does not broadcast.
+The dry run sets `BASE_CHAIN_ID=84532`. The script is `script/DeployChitLogWitness.s.sol`. It refuses every chain except Base Sepolia (chain id 84532), including Base mainnet (8453). Running it without `--broadcast` simulates. This change does not broadcast.
+
+The gateway flag for that dry run is `RECEIPT_LOG_WITNESS=1` together with `BASE_CHAIN_ID=84532`. There is no default chain. Boot refuses `witness_chain_unset` if `BASE_CHAIN_ID` is missing, and boot and every witness broadcast refuse `witness_chain_mismatch` unless `eth_chainId` on the configured RPC is 84532. The signed append uses that verified id. `RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1` is the only way the witness will sign chain 8453, and setting it requires Christopher's personal sign-off. This build does not set it. The bare-root anchor is a separate transaction. It still hardcodes chain id 8453 and does not consult `BASE_CHAIN_ID`.
 
 The deployer key (`SEPOLIA_THROWAWAY_PK`) pays for the contract creation and for the Safe `execTransaction` that calls `declareEpoch`. The Safe (`CHIT_LOG_WITNESS_OWNER`) must already be a 2-of-3, and two of its owners (`SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`) sign that inner call. The appender (`CHIT_LOG_WITNESS_APPENDER`) is the gateway key that will later call `append`. It needs Sepolia ETH only when the flag is turned on and it sends. The deploy itself does not spend from the appender.
 

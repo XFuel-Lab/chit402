@@ -12,6 +12,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const SEPOLIA_CHAIN_ID = 84532;
+const SEPOLIA_CHAIN_HEX = '0x14a34';
+function readSepoliaChain() {
+  return async () => SEPOLIA_CHAIN_HEX;
+}
 
 const {
   ReceiptMerkleTree,
@@ -229,10 +234,12 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
   const prevAddr = process.env.CHIT_LOG_WITNESS_ADDRESS;
   const prevKey = process.env.RECEIPT_WITNESS_PRIVATE_KEY;
   const prevAnchor = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevChain = process.env.BASE_CHAIN_ID;
   process.env.RECEIPT_LOG_WITNESS = '1';
   process.env.CHIT_LOG_WITNESS_ADDRESS = `0x${'22'.repeat(20)}`;
   process.env.RECEIPT_WITNESS_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'cd'.repeat(32)}`;
+  process.env.BASE_CHAIN_ID = String(SEPOLIA_CHAIN_ID);
   const calls = [];
   let signedTx = null;
   const fullRoot = rootOf(tree.leaves).toString('hex');
@@ -240,6 +247,7 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
   try {
     const head = await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 3,
       send: async () => {
         calls.push('base');
@@ -262,9 +270,10 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
     assert.equal(appendCall.slice(0, 10), selector);
     assert.equal(head.anchors.base.calldata, `0x${head.root}`);
     assert.equal(head.anchors.witness.status, 'witnessed');
-    const { keccak256 } = await import('ethers');
+    const { keccak256, Transaction } = await import('ethers');
     assert.equal(head.anchors.witness.tx, signedTx.hash);
     assert.equal(signedTx.hash, keccak256(signedTx.raw));
+    assert.equal(Transaction.from(signedTx.raw).chainId, BigInt(SEPOLIA_CHAIN_ID));
     assert.equal(head.checkpoint.includes('chit402.com/receipt-log/1'), true);
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
     assert.equal(payload.checkpoint, undefined);
@@ -280,6 +289,8 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
     else process.env.RECEIPT_WITNESS_PRIVATE_KEY = prevKey;
     if (prevAnchor == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevAnchor;
+    if (prevChain == null) delete process.env.BASE_CHAIN_ID;
+    else process.env.BASE_CHAIN_ID = prevChain;
     resetReceiptMerkleTree();
   }
 });
@@ -290,11 +301,15 @@ function witnessEnv() {
     addr: process.env.CHIT_LOG_WITNESS_ADDRESS,
     key: process.env.RECEIPT_WITNESS_PRIVATE_KEY,
     anchor: process.env.RECEIPT_ANCHOR_PRIVATE_KEY,
+    chain: process.env.BASE_CHAIN_ID,
+    allow: process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET,
   };
   process.env.RECEIPT_LOG_WITNESS = '1';
   process.env.CHIT_LOG_WITNESS_ADDRESS = `0x${'33'.repeat(20)}`;
   process.env.RECEIPT_WITNESS_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'cd'.repeat(32)}`;
+  process.env.BASE_CHAIN_ID = String(SEPOLIA_CHAIN_ID);
+  delete process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET;
   return () => {
     const restore = (name, value) => {
       if (value == null) delete process.env[name];
@@ -304,6 +319,8 @@ function witnessEnv() {
     restore('CHIT_LOG_WITNESS_ADDRESS', prev.addr);
     restore('RECEIPT_WITNESS_PRIVATE_KEY', prev.key);
     restore('RECEIPT_ANCHOR_PRIVATE_KEY', prev.anchor);
+    restore('BASE_CHAIN_ID', prev.chain);
+    restore('RECEIPT_LOG_WITNESS_ALLOW_MAINNET', prev.allow);
     resetReceiptMerkleTree();
   };
 }
@@ -322,6 +339,7 @@ test('an unmined append is not signed, and the retry records it once head() matc
     const sends = [];
     const first = await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 3,
       send: async () => `0x${'aa'.repeat(32)}`,
       witnessSend: async () => {
@@ -341,6 +359,7 @@ test('an unmined append is not signed, and the retry records it once head() matc
     receipt = { status: '0x1' };
     const caught = await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       send: async () => `0x${'aa'.repeat(32)}`,
       witnessLookup: async () => ({ receiptOk: true }),
       witnessSend: async () => {
@@ -370,6 +389,7 @@ test('a reverted append is not a signed witness', async () => {
     const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
     const head = await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 3,
       send: async () => `0x${'aa'.repeat(32)}`,
       witnessSend: async () => `0x${'bb'.repeat(32)}`,
@@ -395,6 +415,7 @@ test('a failed bare-root send does not advance the witness nonce', async () => {
     const seen = {};
     await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       nonce: 4,
       send: async (tx) => {
         seen.base = tx.nonce;
@@ -427,6 +448,7 @@ test('a crash after the witness raw tx is fsynced rebroadcasts those same bytes'
     let persisted = null;
     await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 7,
       witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
       witnessSend: async (tx) => {
@@ -444,6 +466,7 @@ test('a crash after the witness raw tx is fsynced rebroadcasts those same bytes'
     let resent = null;
     await restored.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 99,
       witnessLookup: async (intent) => {
         assert.equal(intent.raw, persisted.raw);
@@ -479,6 +502,7 @@ test('a witness nonce consumed by something else is replaced and the old raw is 
     const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
     await tree.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessReadNonce: async () => 7,
       witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
       witnessSend: async () => {
@@ -491,6 +515,7 @@ test('a witness nonce consumed by something else is replaced and the old raw is 
     let resent = false;
     const head = await restored.publishHead({
       force: true,
+      witnessReadChainId: readSepoliaChain(),
       witnessLookup: async () => ({ replaced: true, reason: 'nonce_consumed', tx: first.tx }),
       witnessSend: async () => {
         resent = true;
@@ -528,7 +553,7 @@ test('boot refuses a witness when the creation transaction is not pinned', async
   try {
     const tree = new ReceiptMerkleTree();
     await assert.rejects(
-      () => finishReceiptLogBoot(tree, { witness: true }),
+      () => finishReceiptLogBoot(tree, { witness: true, readChainId: readSepoliaChain() }),
       (err) => err instanceof ReceiptLogRefused && err.code === 'witness_creation_unpinned',
     );
   } finally {
@@ -557,6 +582,180 @@ test('consistency above 2^31 matches a safe fold and is not a 32-bit shift', () 
   assert.ok(preview);
   assert.equal(verifyConsistency(m, n, preview.oldRoot, preview.newRoot, proof), true);
   assert.equal(verifyConsistencyInt32(m, n, preview.oldRoot, preview.newRoot, proof), false);
+});
+
+function twoLeafTree() {
+  const tree = new ReceiptMerkleTree();
+  tree.appendReceipt('a', '1', { publish: false });
+  tree.appendReceipt('b', '2', { publish: false });
+  return { tree, prefix: rootOf(tree.leaves.slice(0, 1)).toString('hex') };
+}
+
+test('boot and broadcast refuse a witness when BASE_CHAIN_ID is unset', async () => {
+  const restore = witnessEnv();
+  try {
+    delete process.env.BASE_CHAIN_ID;
+    const tree = new ReceiptMerkleTree();
+    let rpc = 0;
+    await assert.rejects(
+      () => finishReceiptLogBoot(tree, {
+        witness: true,
+        readChainId: async () => {
+          rpc += 1;
+          return SEPOLIA_CHAIN_HEX;
+        },
+      }),
+      (err) => err instanceof ReceiptLogRefused && err.code === 'witness_chain_unset',
+    );
+    assert.equal(rpc, 0);
+    const { tree: live, prefix } = twoLeafTree();
+    let sent = false;
+    const head = await live.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadChainId: async () => {
+        rpc += 1;
+        return SEPOLIA_CHAIN_HEX;
+      },
+      witnessReadHead: async () => ({ epoch: 1, size: 1, root: prefix }),
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => {
+        sent = true;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+    assert.equal(sent, false);
+    assert.equal(rpc, 0);
+    assert.equal(head.witness_pending.reason, 'witness_chain_unset');
+    assert.equal(head.anchors.witness, undefined);
+    assert.equal((live.anchorIntents || []).some((row) => row.chain === 'base-witness' && row.raw), false);
+  } finally {
+    restore();
+  }
+});
+
+test('a witness broadcast refuses when eth_chainId is not BASE_CHAIN_ID', async () => {
+  const restore = witnessEnv();
+  try {
+    const tree = new ReceiptMerkleTree();
+    await assert.rejects(
+      () => finishReceiptLogBoot(tree, { witness: true, readChainId: async () => '0x2105' }),
+      (err) => err instanceof ReceiptLogRefused && err.code === 'witness_chain_mismatch',
+    );
+    const { tree: live, prefix } = twoLeafTree();
+    let sent = false;
+    const head = await live.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadChainId: async () => '0x2105',
+      witnessReadHead: async () => ({ epoch: 1, size: 1, root: prefix }),
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => {
+        sent = true;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+    assert.equal(sent, false);
+    assert.equal(head.witness_pending.reason, 'witness_chain_mismatch');
+    assert.equal(head.anchors.witness, undefined);
+    assert.equal((live.anchorIntents || []).some((row) => row.chain === 'base-witness' && row.raw), false);
+  } finally {
+    restore();
+  }
+});
+
+test('mainnet is refused for the witness without Christopher sign-off', async () => {
+  const restore = witnessEnv();
+  try {
+    process.env.BASE_CHAIN_ID = '8453';
+    process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET = 'true';
+    const tree = new ReceiptMerkleTree();
+    let rpc = 0;
+    const refuse = (err) => err instanceof ReceiptLogRefused && err.code === 'witness_mainnet_refused';
+    await assert.rejects(
+      () => finishReceiptLogBoot(tree, {
+        witness: true,
+        readChainId: async () => {
+          rpc += 1;
+          return '0x2105';
+        },
+      }),
+      refuse,
+    );
+    delete process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET;
+    await assert.rejects(
+      () => finishReceiptLogBoot(tree, {
+        witness: true,
+        readChainId: async () => {
+          rpc += 1;
+          return '0x2105';
+        },
+      }),
+      refuse,
+    );
+    assert.equal(rpc, 0);
+    const { tree: live, prefix } = twoLeafTree();
+    let sent = false;
+    const head = await live.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadChainId: async () => {
+        rpc += 1;
+        return '0x2105';
+      },
+      witnessReadHead: async () => ({ epoch: 1, size: 1, root: prefix }),
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => {
+        sent = true;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+    assert.equal(sent, false);
+    assert.equal(rpc, 0);
+    assert.equal(head.witness_pending.reason, 'witness_mainnet_refused');
+    assert.equal(head.anchors.witness, undefined);
+  } finally {
+    restore();
+  }
+});
+
+test('a Sepolia witness signs chain 84532 only after eth_chainId matches', async () => {
+  const restore = witnessEnv();
+  try {
+    const { tree, prefix } = twoLeafTree();
+    const fullRoot = rootOf(tree.leaves).toString('hex');
+    let reads = 0;
+    let sent = null;
+    let mined = false;
+    const head = await tree.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadChainId: async () => {
+        reads += 1;
+        return SEPOLIA_CHAIN_HEX;
+      },
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async (tx) => {
+        sent = tx;
+        mined = true;
+        return tx.hash;
+      },
+      witnessReadHead: async () => (mined
+        ? { epoch: 1, size: tree.leaves.length, root: fullRoot }
+        : { epoch: 1, size: 1, root: prefix }),
+      witnessReadReceipt: async () => (mined ? { status: '0x1' } : null),
+    });
+    assert.ok(sent?.raw);
+    assert.ok(reads >= 2);
+    const { Transaction } = await import('ethers');
+    assert.equal(Transaction.from(sent.raw).chainId, BigInt(SEPOLIA_CHAIN_ID));
+    assert.equal(head.anchors.witness.status, 'witnessed');
+    assert.equal(head.anchors.witness.tx, sent.hash);
+    const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
+    assert.equal(payload.anchors.witness.status, 'witnessed');
+  } finally {
+    restore();
+  }
 });
 
 function verifyConsistencyInt32(m, n, oldRoot, newRoot, proof) {

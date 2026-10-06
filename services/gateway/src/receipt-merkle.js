@@ -443,7 +443,10 @@ async function feesFromSignedRaw(raw, fallback) {
  * Sign the witness `append` call. Same type-2 fee shape as the bare-root
  * anchor. The caller fsyncs `raw` and `hash` before broadcast. `hash` is
  * keccak256 of those exact bytes, which recovery rebroadcasts.
- * Chain id is 8453 unless BASE_CHAIN_ID is set (84532 for a Sepolia dry run).
+ * `chainId` must be the id `assertWitnessChain` just verified. There is no
+ * default, and 8453 is refused unless RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1.
+ * The bare-root anchor above still hardcodes 8453. It does not read
+ * BASE_CHAIN_ID. That path is the #486 anchor and is not changed here.
  */
 export async function signWitnessAppendRaw({
   privateKey,
@@ -451,12 +454,24 @@ export async function signWitnessAppendRaw({
   to,
   calldata,
   fees = null,
-  chainId = null,
+  chainId,
 }) {
   const { Wallet, keccak256 } = await import('ethers');
   const wallet = new Wallet(privateKey);
   const fee = fees || FIXED_ANCHOR_FEES;
-  const chain = chainId == null ? Number(process.env.BASE_CHAIN_ID || 8453) : Number(chainId);
+  const chain = Number(chainId);
+  if (!Number.isSafeInteger(chain) || chain <= 0) {
+    throw new ReceiptLogRefused(
+      'witness_chain_unset',
+      'witness append signs only a chain id that eth_chainId already verified',
+    );
+  }
+  if (chain === 8453 && process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET !== '1') {
+    throw new ReceiptLogRefused(
+      'witness_mainnet_refused',
+      'witness refuses Base mainnet (8453) until Christopher signs off. RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1 is that sign-off and nothing else.',
+    );
+  }
   const raw = await wallet.signTransaction({
     to,
     value: 0n,
@@ -469,6 +484,31 @@ export async function signWitnessAppendRaw({
     maxPriorityFeePerGas: fee.maxPriorityFeePerGas,
   });
   return { raw, hash: keccak256(raw), from: wallet.address, to };
+}
+
+/**
+ * eth_chainId must match BASE_CHAIN_ID before a witness signature and again
+ * before those bytes are broadcast. A raw transaction signed for a different
+ * chain is not sent.
+ */
+async function gateWitnessBroadcast({ raw = null, request = null, witnessReadChainId = null } = {}) {
+  const { assertWitnessChain } = await import('./receipt-log-witness.js');
+  const chainId = await assertWitnessChain({
+    request,
+    readChainId: witnessReadChainId,
+    rpcUrl: baseRpcUrl() || null,
+  });
+  if (raw) {
+    const { Transaction } = await import('ethers');
+    const signedFor = Number(Transaction.from(raw).chainId);
+    if (signedFor !== chainId) {
+      throw new ReceiptLogRefused(
+        'witness_chain_mismatch',
+        `signed witness transaction is chain ${signedFor}, verified chain is ${chainId}`,
+      );
+    }
+  }
+  return chainId;
 }
 
 async function baseAnchorFees(request) {
@@ -1154,6 +1194,7 @@ export class ReceiptMerkleTree {
     witnessReadReceipt = null,
     witnessReadNonce = null,
     witnessLookup = null,
+    witnessReadChainId = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -1336,6 +1377,7 @@ export class ReceiptMerkleTree {
       witnessReadReceipt,
       witnessReadNonce,
       witnessLookup,
+      witnessReadChainId,
       request,
     });
     // An unconfirmed witness is not a signed claim. `broadcast`, `reverted`,
@@ -1417,6 +1459,7 @@ export class ReceiptMerkleTree {
     witnessReadReceipt = null,
     witnessReadNonce = null,
     witnessLookup = null,
+    witnessReadChainId = null,
     request = null,
   }) {
     const {
@@ -1435,6 +1478,7 @@ export class ReceiptMerkleTree {
         witnessReadHead,
         witnessReadReceipt,
         witnessLookup,
+        witnessReadChainId,
         request,
       });
       if (resumed) return resumed;
@@ -1448,6 +1492,16 @@ export class ReceiptMerkleTree {
     if (nonce == null) return publicWitness({ status: 'pending', reason: 'nonce_unknown', to: plan.to });
     const key = witnessPrivateKey();
     if (!key) return publicWitness({ status: 'pending', reason: 'no_key', to: plan.to });
+    let chainId;
+    try {
+      chainId = await gateWitnessBroadcast({ request, witnessReadChainId });
+    } catch (err) {
+      return publicWitness({
+        status: 'failed',
+        reason: err.code || err.message || 'witness_chain_unset',
+        to: plan.to,
+      });
+    }
     let signed;
     try {
       const fees = typeof witnessSend === 'function' ? null : await baseAnchorFees(request);
@@ -1457,9 +1511,10 @@ export class ReceiptMerkleTree {
         to: plan.to,
         calldata: plan.calldata,
         fees,
+        chainId,
       });
     } catch (err) {
-      return publicWitness({ status: 'failed', reason: err.message || 'sign_failed', to: plan.to });
+      return publicWitness({ status: 'failed', reason: err.code || err.message || 'sign_failed', to: plan.to });
     }
     const signedIntent = this._noteWitnessIntent({
       root,
@@ -1472,6 +1527,17 @@ export class ReceiptMerkleTree {
       from: signed.from,
       calldata: plan.calldata,
     });
+    try {
+      await gateWitnessBroadcast({ raw: signed.raw, request, witnessReadChainId });
+    } catch (err) {
+      return publicWitness({
+        status: 'failed',
+        reason: err.code || 'witness_chain_mismatch',
+        to: signed.to,
+        tx: signed.hash,
+        calldata: plan.calldata,
+      });
+    }
     try {
       if (typeof witnessSend === 'function') {
         await witnessSend({
@@ -1521,6 +1587,7 @@ export class ReceiptMerkleTree {
     witnessReadHead,
     witnessReadReceipt,
     witnessLookup,
+    witnessReadChainId = null,
     request,
   }) {
     const {
@@ -1605,6 +1672,7 @@ export class ReceiptMerkleTree {
         return publicWitness({ status: 'blocked', reason: 'signed_raw_missing', tx: intent.tx, to: intent.to });
       }
       try {
+        await gateWitnessBroadcast({ raw: intent.raw, request, witnessReadChainId });
         if (typeof witnessSend === 'function') {
           await witnessSend({
             to: intent.to,
@@ -1619,10 +1687,13 @@ export class ReceiptMerkleTree {
           await broadcastBaseRaw(intent.raw);
         }
       } catch (err) {
-        this._noteWitnessIntent({ ...intent, status: 'blocked', raw: intent.raw });
+        const refused = err.code === 'witness_chain_mismatch'
+          || err.code === 'witness_chain_unset'
+          || err.code === 'witness_mainnet_refused';
+        this._noteWitnessIntent({ ...intent, status: refused ? 'failed' : 'blocked', raw: intent.raw });
         return publicWitness({
-          status: 'blocked',
-          reason: err.message || 'rebroadcast_failed',
+          status: refused ? 'failed' : 'blocked',
+          reason: err.code || err.message || 'rebroadcast_failed',
           to: intent.to,
           tx: intent.tx,
           raw: intent.raw,
@@ -3061,11 +3132,17 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
     witnessAddress,
     witnessCreationPin,
     witnessCreationMatches,
+    assertWitnessChain,
   } = await import('./receipt-log-witness.js');
   const witnessOn = opts.witness === true || (opts.witness !== false && receiptWitnessEnabled());
   let creationPin = null;
   if (witnessOn) {
     assertDistinctWitnessKey();
+    await assertWitnessChain({
+      rpcUrl: opts.rpcUrl,
+      request: opts.request,
+      readChainId: opts.readChainId,
+    });
     creationPin = opts.creationPin || witnessCreationPin();
     if (!creationPin?.address || !creationPin?.tx) {
       throw new ReceiptLogRefused(

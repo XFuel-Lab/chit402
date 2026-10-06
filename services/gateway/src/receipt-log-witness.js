@@ -111,6 +111,104 @@ export function witnessRpcUrl(env = process.env) {
   return env.BASE_RPC_URL || env.SETTLEMENT_RPC_URL || null;
 }
 
+/** Base mainnet. The witness refuses this id unless Christopher has signed off. */
+export const WITNESS_MAINNET_CHAIN_ID = 8453;
+
+/**
+ * The chain the witness may sign for. There is no default.
+ * 8453 is refused unless RECEIPT_LOG_WITNESS_ALLOW_MAINNET is exactly `1`.
+ * That flag is Christopher's personal sign-off, not a dry-run switch.
+ */
+export function parseWitnessChainId(env = process.env) {
+  const raw = env.BASE_CHAIN_ID;
+  if (raw == null || String(raw).trim() === '') {
+    return { ok: false, code: 'witness_chain_unset' };
+  }
+  const text = String(raw).trim();
+  if (!/^[0-9]+$/.test(text)) return { ok: false, code: 'witness_chain_unset' };
+  const chainId = Number(text);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+    return { ok: false, code: 'witness_chain_unset' };
+  }
+  if (chainId === WITNESS_MAINNET_CHAIN_ID && env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET !== '1') {
+    return { ok: false, code: 'witness_mainnet_refused' };
+  }
+  return { ok: true, chainId };
+}
+
+export function normalizeReportedChainId(value) {
+  if (typeof value === 'bigint') {
+    const n = Number(value);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  try {
+    if (/^0x[0-9a-fA-F]+$/.test(text)) {
+      const n = Number(BigInt(text));
+      return Number.isSafeInteger(n) ? n : null;
+    }
+    if (/^[0-9]+$/.test(text)) {
+      const n = Number(text);
+      return Number.isSafeInteger(n) ? n : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Boot and every witness broadcast call this. It refuses an unset chain id,
+ * refuses mainnet without Christopher's sign-off, then requires eth_chainId
+ * on the configured RPC to equal BASE_CHAIN_ID. The returned id is the only
+ * chain a witness transaction may be signed for.
+ */
+export async function assertWitnessChain({
+  env = process.env,
+  rpcUrl = null,
+  request = null,
+  readChainId = null,
+} = {}) {
+  const parsed = parseWitnessChainId(env);
+  if (!parsed.ok) {
+    const message = parsed.code === 'witness_mainnet_refused'
+      ? 'witness refuses Base mainnet (8453) until Christopher signs off. RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1 is that sign-off and nothing else.'
+      : 'RECEIPT_LOG_WITNESS=1 requires an explicit BASE_CHAIN_ID. There is no default.';
+    throw new ReceiptLogRefused(parsed.code, message);
+  }
+  let reported;
+  try {
+    if (typeof readChainId === 'function') {
+      reported = await readChainId();
+    } else {
+      const url = rpcUrl || witnessRpcUrl(env);
+      const call = request || (async (rpc, method, params) => {
+        if (!rpc) throw new Error('no_rpc');
+        const provider = new JsonRpcProvider(rpc);
+        return provider.send(method, params);
+      });
+      reported = await call(url, 'eth_chainId', []);
+    }
+  } catch (err) {
+    if (err instanceof ReceiptLogRefused) throw err;
+    throw new ReceiptLogRefused(
+      'witness_chain_mismatch',
+      err.message || 'eth_chainId failed',
+    );
+  }
+  const got = normalizeReportedChainId(reported);
+  if (got !== parsed.chainId) {
+    throw new ReceiptLogRefused(
+      'witness_chain_mismatch',
+      `eth_chainId ${got == null ? 'unreadable' : got} does not match BASE_CHAIN_ID ${parsed.chainId}`,
+    );
+  }
+  return parsed.chainId;
+}
+
 export function witnessPrivateKey(env = process.env) {
   return env.RECEIPT_WITNESS_PRIVATE_KEY || env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
 }
@@ -385,8 +483,10 @@ export async function sendWitnessAppend(plan, {
   readReceipt = null,
   readHead = null,
   request = null,
+  readChainId = null,
 } = {}) {
   if (!plan || plan.status !== 'ready') return plan;
+  await assertWitnessChain({ rpcUrl, request, readChainId });
   const base = {
     to: plan.to,
     calldata: plan.calldata,
