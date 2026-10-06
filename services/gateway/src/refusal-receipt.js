@@ -20,7 +20,12 @@ import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwk
 import { withPublicPreimages } from './receipt-preimage.js';
 import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { currentHistoryPin, issuerHistorySnapshotClaim } from './issuer-history.js';
+import {
+  currentHistoryPin,
+  issuerHistorySnapshotClaim,
+  publishedHistoryEntries,
+  verifyHistorySnapshotClaims,
+} from './issuer-history.js';
 import {
   assertIssuanceOpen,
   bindIssuerRoot,
@@ -275,6 +280,16 @@ export function verifyRefusalReceipt(doc, jwks = null) {
     const pin = payload.issuer_history;
     if (!pin || typeof pin.hash !== 'string' || pin.version == null || pin.seq == null) {
       return { checked: true, valid: false, reason: 'issuer_history_pin_missing', payload };
+    }
+    // Refusal v2 is payload version 3. The same snapshot rules as payment
+    // v11 apply here. A gate of payload_version >= 11 would skip them.
+    if (version === REFUSAL_PAYLOAD_VERSION_V2) {
+      const snapshot = verifyHistorySnapshotClaims(payload, {
+        publishedEntries: publishedHistoryEntries(payload.issuer_history) ?? undefined,
+      });
+      if (!snapshot.ok) {
+        return { checked: true, valid: false, reason: snapshot.reason, payload };
+      }
     }
     if (typeof payload.payload_hash !== 'string' || !/^[0-9a-f]{64}$/.test(payload.payload_hash)) {
       return { checked: true, valid: false, reason: 'payload_hash_missing', payload };

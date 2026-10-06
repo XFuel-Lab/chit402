@@ -50,7 +50,12 @@ import {
   sealCanonicalObject,
   resealSignedClaims,
 } from './canonical-preimage.js';
-import { currentHistoryPin, issuerHistorySnapshotClaim } from './issuer-history.js';
+import {
+  currentHistoryPin,
+  issuerHistorySnapshotClaim,
+  publishedHistoryEntries,
+  verifyHistorySnapshotClaims,
+} from './issuer-history.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
@@ -1578,6 +1583,12 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: result.payload };
     }
+    const snapshot = verifyHistorySnapshotClaims(result.payload, {
+      publishedEntries: publishedHistoryEntries(result.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
+    }
   }
 
   return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
@@ -1633,6 +1644,12 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     const window = verifySessionWindow(jwsResult.payload);
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: jwsResult.payload };
+    }
+    const snapshot = verifyHistorySnapshotClaims(jwsResult.payload, {
+      publishedEntries: publishedHistoryEntries(jwsResult.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
     }
   }
 

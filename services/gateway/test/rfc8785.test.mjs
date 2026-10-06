@@ -13,7 +13,23 @@ import path from 'path';
 import { fileURLToPath } from 'node:url';
 
 const { jcsCanonicalize, jcsRfc8785 } = await import('../src/offer-receipt.js');
-const { issuerHistoryEntryBody, issuerHistoryEntryHash } = await import('../src/issuer-history.js');
+const { historyEntriesSnapshotHash, issuerHistoryEntryBody, issuerHistoryEntryHash } = await import('../src/issuer-history.js');
+
+const SNAPSHOT_ENTRIES = [{
+  kid: 'kid',
+  jwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'kid', alg: 'ES256', use: 'sig' },
+  alg: 'ES256',
+  not_before: '2026-01-01T00:00:00.000Z',
+  not_after: null,
+  status: 'active',
+  revoked_at: null,
+  reason: 'line\nbreak',
+  custody: 'env',
+  prev_hash: null,
+  entry_hash: 'a'.repeat(64),
+}];
+const SNAPSHOT_PREIMAGE = '[{"alg":"ES256","custody":"env","entry_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","jwk":{"alg":"ES256","crv":"P-256","kid":"kid","kty":"EC","use":"sig","x":"x","y":"y"},"kid":"kid","not_after":null,"not_before":"2026-01-01T00:00:00.000Z","prev_hash":null,"reason":"line\\nbreak","revoked_at":null,"status":"active"}]';
+const SNAPSHOT_HASH = '5807995d545f994f774145bbc13de8102d9696b81f178eca800f08092f608d2d';
 
 const fixtureDir = fileURLToPath(new URL('./fixtures/rfc8785/', import.meta.url));
 const NAMES = ['arrays', 'french', 'structures', 'unicode', 'values', 'weird'];
@@ -67,6 +83,17 @@ test('ES6 number serialization matches the official 1000-line prefix', () => {
     assert.equal(jcsRfc8785(number), expected, hex);
     if (samples[hex]) assert.equal(expected, samples[hex], hex);
   }
+});
+
+test('snapshot_hash is SHA-256 of the RFC 8785 entries array', () => {
+  assert.equal(jcsRfc8785(SNAPSHOT_ENTRIES), SNAPSHOT_PREIMAGE);
+  assert.match(SNAPSHOT_PREIMAGE, /line\\nbreak/);
+  assert.equal(SNAPSHOT_PREIMAGE.includes('\\u000a'), false);
+  assert.equal(historyEntriesSnapshotHash(SNAPSHOT_ENTRIES), SNAPSHOT_HASH);
+  assert.equal(
+    crypto.createHash('sha256').update(SNAPSHOT_PREIMAGE, 'utf8').digest('hex'),
+    SNAPSHOT_HASH,
+  );
 });
 
 test('entry_hash stays on chit402-jcs-v1 when a string needs escaping', () => {

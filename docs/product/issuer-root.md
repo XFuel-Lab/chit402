@@ -68,7 +68,8 @@ SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a 
 | v11 receipt `payload_hash`, including the `issuer_history_snapshot` object inside that payload | RFC 8785 (`jcsRfc8785`) |
 | v2 refusal `payload_hash` | RFC 8785 |
 | `issuer_root` fingerprint suffix on a new issuer-history version | RFC 8785 |
-| `issuer_history_snapshot.snapshot_hash`, which is `issuer_history.hash` | chit402-jcs-v1 (`jcsCanonicalize`). SHA-256 of the full well-known document. The document is not re-encoded when v11 turns on |
+| `issuer_history_snapshot.snapshot_hash`, and the v11 / refusal-v2 `issuer_history.hash` pin | RFC 8785 of the embed `entries` array only. SHA-256 of those UTF-8 bytes |
+| well-known document hash (`?hash=` of the full issuer-history document, and the flag-off `issuer_history.hash` pin) | chit402-jcs-v1 (`jcsCanonicalize`) of the whole document |
 | `entry_hash` | chit402-jcs-v1. SHA-256 of the entry without `entry_hash` |
 | v7–v10 receipt `payload_hash`, flag-off refusal `payload_hash`, and every flag-off path | chit402-jcs-v1. Those bytes are not recomputed |
 
@@ -84,19 +85,39 @@ chit402-jcs-v1 writes every code unit U+0000 through U+001F as `\u00xx`, includi
 | `version` | Same as `issuer_history.version` |
 | `seq` | Same as `issuer_history.seq` |
 | `head_hash` | Last entry's `entry_hash` |
-| `snapshot_hash` | Same as `issuer_history.hash`. SHA-256 of the chit402-jcs-v1 bytes of the full well-known document, not of this object and not RFC 8785 |
+| `snapshot_hash` | SHA-256 of the RFC 8785 bytes of `entries` only. Same value as the `issuer_history.hash` pin. Not the well-known document hash |
 | `entries` | One object per history entry, in chain order |
 
 Each entry has `kid`, `jwk` (`kty`, `crv`, `x`, `y`, `kid`, `alg`, `use`), `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, `entry_hash`.
 
+`snapshot_hash` is SHA-256 of the UTF-8 RFC 8785 canonicalization of the `entries` array alone, after each entry is reduced to `kid`, `jwk`, `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, and `entry_hash` (missing window fields are null). No trailing newline. It is not a hash of `schema`, `version`, `seq`, `head_hash`, or the well-known document. `entry_hash` inside each entry is still SHA-256 of the chit402-jcs-v1 entry body, without `entry_hash`.
+
+The `issuer_history` pin in a v11 receipt and in a refusal v2 is that same digest computed from the entries of the published history document at that `version`. `version` and `seq` on the pin match the embed. Flag-off receipts still pin the chit402-jcs-v1 hash of the full well-known document. `?hash=` serves that document by its document hash, and also by this entries digest once the version has been sealed.
+
+A chain of `entry_hash` values can be rewritten and still look self-consistent. That is not a check of `snapshot_hash`. Backdating `not_before`, swapping `jwk`, and recomputing `entry_hash` changes the RFC 8785 bytes, so the new digest is not the signed pin. Matching it requires changing `issuer_history.hash`, which is inside the signature.
+
 Offline check, with no well-known fetch:
 
-1. `snapshot_hash`, `version`, and `seq` equal the `issuer_history` pin. Do not recompute `snapshot_hash` from this object, and do not recompute it with RFC 8785. It pins the well-known document, which stays on chit402-jcs-v1.
-2. `entry_hash` is SHA-256 of the chit402-jcs-v1 bytes of the entry without `entry_hash`.
-3. `prev_hash` chains, and the last `entry_hash` equals `head_hash`.
-4. The entry whose `kid` is `issuer_root.kid` supplies `not_before`, `not_after`, `status`, and `revoked_at`.
+1. `canonicalization` is `{ hash_alg: "sha-256", jcs: "RFC8785" }`.
+2. Recompute `snapshot_hash` as SHA-256 of the RFC 8785 bytes of `entries`. It equals `issuer_history.hash`.
+3. `version` and `seq` equal the pin.
+4. `entry_hash` is SHA-256 of the chit402-jcs-v1 bytes of the entry without `entry_hash`.
+5. `prev_hash` chains, and the last `entry_hash` equals `head_hash`.
+6. The entry whose `kid` is `issuer_root.kid` supplies `not_before`, `not_after`, `status`, and `revoked_at`.
 
-The embed sits inside the v11 payload, so the bytes of this object that feed `payload_hash` are RFC 8785. One live key is 1052 bytes of that form. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. `?hash=` still serves that document, and `snapshot_hash` is its chit402-jcs-v1 hash.
+When the published document is available, `issuer_history.hash` must also equal that same function applied to the document's entries. Do not compare the pin to the chit402-jcs-v1 hash of the whole document.
+
+Refusal v2 (`chit402.refusal.v2`, payload version 3) carries `canonicalization` and `issuer_history_snapshot` and is checked with these rules. Payload version 3 is not `>= 11`. A verifier that only runs this check for payment payload version 11 or greater misses refusals. Flag-off refusal v1 (payload version 2) has neither field.
+
+Test vector. One entry, `reason` containing U+000A. The preimage is this single line:
+
+```
+[{"alg":"ES256","custody":"env","entry_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","jwk":{"alg":"ES256","crv":"P-256","kid":"kid","kty":"EC","use":"sig","x":"x","y":"y"},"kid":"kid","not_after":null,"not_before":"2026-01-01T00:00:00.000Z","prev_hash":null,"reason":"line\nbreak","revoked_at":null,"status":"active"}]
+```
+
+`snapshot_hash` is `5807995d545f994f774145bbc13de8102d9696b81f178eca800f08092f608d2d`. The newline in `reason` is the two characters `\n`, which is RFC 8785, not `\u000a`.
+
+The embed sits inside the v11 payload, so the bytes of this object that feed `payload_hash` are RFC 8785. One live key is 1052 bytes of that form. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. Its document hash is unchanged.
 
 A receipt that already has a JWS is not re-signed. While the issuer root is on, a later covering root is an unsigned `covering_head` sidecar (`chit402.covering_head.v1`, `signed: false`). The stored `issuer_signature.jws` bytes stay put across a key rotation and a tree-head update. Flag-off v10 may still reseal `tree_head_hash` inside that same claim set. v9 and older are never restamped.
 

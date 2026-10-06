@@ -19,6 +19,7 @@ const { V11_CANONICALIZATION } = await import('../src/canonical-preimage.js');
 const {
   buildReceipt,
   decodeReceiptClaims,
+  verifyReceiptEcdsa,
   treeHeadRestampAllowed,
   stampCoveringTreeHead,
   RECEIPT_PAYLOAD_VERSION,
@@ -33,11 +34,14 @@ const {
 const {
   buildIssuerHistory,
   currentIssuerHistory,
+  historyEntriesSnapshotHash,
   issuerHistoryEntryHash,
+  publishedHistoryEntries,
   resetIssuerHistoryStore,
+  verifyHistorySnapshotClaims,
   verifyIssuerHistory,
 } = await import('../src/issuer-history.js');
-const { verifyJwsWithJwks, getJwks, getIssuerPublicKeyJwk, initIssuerKey, _resetIssuerKey } = await import('../src/issuer-key.js');
+const { verifyJwsWithJwks, getJwks, getIssuerPublicKeyJwk, initIssuerKey, signJws, _resetIssuerKey } = await import('../src/issuer-key.js');
 const {
   assertIssuerRootStartup,
   assertIssuanceOpen,
@@ -540,6 +544,7 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     const snap = claims.issuer_history_snapshot;
     assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
     assert.equal(snap.snapshot_hash, claims.issuer_history.hash);
+    assert.equal(snap.snapshot_hash, historyEntriesSnapshotHash(snap.entries));
     assert.equal(snap.version, claims.issuer_history.version);
     assert.equal(snap.seq, claims.issuer_history.seq);
     assert.equal(snap.entries.at(-1).entry_hash, snap.head_hash);
@@ -556,9 +561,13 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.ok(snapBytes <= 2560, `issuer_history_snapshot is ${snapBytes} bytes`);
     console.log(`issuer_history_snapshot RFC8785 bytes: ${snapBytes}`);
     const history = currentIssuerHistory();
-    assert.equal(snap.snapshot_hash, history.hash);
+    const publishedEntries = JSON.parse(history.body).entries;
+    assert.equal(snap.snapshot_hash, history.entries_snapshot_hash);
+    assert.equal(snap.snapshot_hash, historyEntriesSnapshotHash(publishedEntries));
+    assert.notEqual(snap.snapshot_hash, history.hash);
     assert.equal(history.body, jcsCanonicalize(JSON.parse(history.body)));
     assert.equal(history.hash, crypto.createHash('sha256').update(history.body, 'utf8').digest('hex'));
+    assert.equal(verifyHistorySnapshotClaims(claims, { publishedEntries }).ok, true);
 
     const refusal = issueRefusalReceipt(refusalRow('xfuel-v11-embed'));
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
@@ -566,6 +575,57 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.equal(refusal.canonical_preimage, jcsRfc8785(JSON.parse(refusal.canonical_preimage)));
     assert.equal(refusalClaims.issuer_history_snapshot.snapshot_hash, refusalClaims.issuer_history.hash);
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('a forged history embed cannot match snapshot_hash without changing the signed pin', async () => {
+  const prev = snapshotEnv();
+  try {
+    useStableKey();
+    await armStrict();
+    const receipt = buildReceipt(paidTask('xfuel-snapshot-bind'), { signingSecret: 's', agentId: 4 });
+    const claims = decodeReceiptClaims(receipt);
+    const pin = claims.issuer_history.hash;
+    const published = publishedHistoryEntries(claims.issuer_history);
+    assert.equal(pin, historyEntriesSnapshotHash(published));
+    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
+
+    const forged = structuredClone(claims);
+    const entry = forged.issuer_history_snapshot.entries.at(-1);
+    entry.not_before = '2020-01-01T00:00:00.000Z';
+    entry.jwk = { ...entry.jwk, x: 'A'.repeat(entry.jwk.x.length) };
+    entry.entry_hash = issuerHistoryEntryHash(entry);
+    forged.issuer_history_snapshot.head_hash = entry.entry_hash;
+    assert.equal(issuerHistoryEntryHash(entry), entry.entry_hash);
+    const forgedHash = historyEntriesSnapshotHash(forged.issuer_history_snapshot.entries);
+    assert.notEqual(forgedHash, pin);
+    forged.issuer_history_snapshot.snapshot_hash = pin;
+    assert.equal(verifyHistorySnapshotClaims(forged, { publishedEntries: published }).reason, 'snapshot_hash_mismatch');
+    forged.issuer_history_snapshot.snapshot_hash = forgedHash;
+    assert.equal(forged.issuer_history.hash, pin);
+    assert.equal(verifyHistorySnapshotClaims(forged, { publishedEntries: published }).reason, 'snapshot_pin_mismatch');
+
+    const refusal = issueRefusalReceipt(refusalRow('xfuel-snapshot-bind-refusal'));
+    assert.equal(verifyRefusalReceipt(refusal).valid, true);
+    const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+    assert.equal(refusalClaims.payload_version, 3);
+    const bad = structuredClone(refusalClaims);
+    const badEntry = bad.issuer_history_snapshot.entries.at(-1);
+    badEntry.not_before = '2020-01-01T00:00:00.000Z';
+    badEntry.jwk = { ...badEntry.jwk, x: 'B'.repeat(badEntry.jwk.x.length) };
+    badEntry.entry_hash = issuerHistoryEntryHash(badEntry);
+    bad.issuer_history_snapshot.head_hash = badEntry.entry_hash;
+    bad.issuer_history_snapshot.snapshot_hash = historyEntriesSnapshotHash(bad.issuer_history_snapshot.entries);
+    assert.notEqual(bad.issuer_history_snapshot.snapshot_hash, bad.issuer_history.hash);
+    const { jws } = signJws(bad, { typ: 'chit402-refusal+jwt' });
+    const checked = verifyRefusalReceipt({
+      ...refusal,
+      issuer_signature: { ...refusal.issuer_signature, jws },
+    });
+    assert.equal(checked.valid, false);
+    assert.equal(checked.reason, 'snapshot_pin_mismatch');
   } finally {
     restoreEnv(prev);
   }
