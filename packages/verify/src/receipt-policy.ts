@@ -31,7 +31,18 @@ export interface ReceiptPolicyClaim extends ReceiptPolicyTerms {
   policy_hash: string;
 }
 
-export type PolicyHistoryStatus = 'not_checked' | 'listed' | 'not_listed' | 'missing';
+export type PolicyHistoryStatus = 'not_checked' | 'listed' | 'not_listed' | 'not_effective' | 'missing';
+
+const POLICY_TERM_KEYS = [
+  'dispute_window_seconds',
+  'max_cumulative_spend',
+  'policy_id',
+  'policy_version',
+  'retention_days',
+  'retention_mode',
+] as const;
+
+const POLICY_OBJECT_KEYS = new Set<string>([...POLICY_TERM_KEYS, 'policy_hash']);
 
 export interface PolicyCheck {
   checked: boolean;
@@ -54,17 +65,25 @@ export function uncheckedPolicy(): PolicyCheck {
   };
 }
 
+function isPolicyTerms(value: ReceiptPolicyTerms): boolean {
+  return value.policy_id.length > 0 && value.policy_version.length > 0;
+}
+
+/** The six hashed fields, copied only after the object has already passed the type check. */
 export function receiptPolicyTerms(input: unknown): ReceiptPolicyTerms | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const row = input as Record<string, unknown>;
-  const spend = row.max_cumulative_spend;
+  if (typeof row.policy_id !== 'string' || typeof row.policy_version !== 'string') return null;
+  if (typeof row.dispute_window_seconds !== 'number' || typeof row.retention_days !== 'number') return null;
+  if (typeof row.retention_mode !== 'string') return null;
+  if (row.max_cumulative_spend !== null && typeof row.max_cumulative_spend !== 'string') return null;
   return {
-    policy_id: typeof row.policy_id === 'string' ? row.policy_id : String(row.policy_id ?? ''),
-    policy_version: typeof row.policy_version === 'string' ? row.policy_version : String(row.policy_version ?? ''),
-    dispute_window_seconds: Number(row.dispute_window_seconds),
-    retention_days: Number(row.retention_days),
-    retention_mode: typeof row.retention_mode === 'string' ? row.retention_mode : String(row.retention_mode ?? ''),
-    max_cumulative_spend: spend == null || spend === '' ? null : String(spend),
+    policy_id: row.policy_id,
+    policy_version: row.policy_version,
+    dispute_window_seconds: row.dispute_window_seconds,
+    retention_days: row.retention_days,
+    retention_mode: row.retention_mode,
+    max_cumulative_spend: row.max_cumulative_spend,
   };
 }
 
@@ -74,51 +93,87 @@ export function receiptPolicyHash(terms: ReceiptPolicyTerms): string {
 }
 
 export function verifyReceiptPolicyClaim(policy: unknown): { ok: boolean; reason: string | null; terms: ReceiptPolicyTerms | null; policy_hash: string | null } {
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
-    return { ok: false, reason: 'policy_missing', terms: null, policy_hash: null };
+  if (policy == null) {
+    return { ok: false, reason: 'POLICY_ABSENT', terms: null, policy_hash: null };
+  }
+  if (typeof policy !== 'object' || Array.isArray(policy)) {
+    return { ok: false, reason: 'policy_type', terms: null, policy_hash: null };
   }
   const raw = policy as Record<string, unknown>;
-  if (!Object.prototype.hasOwnProperty.call(raw, 'policy_hash') || typeof raw.policy_hash !== 'string' || raw.policy_hash.length === 0) {
+  const keys = Object.keys(raw);
+  if (keys.some((key) => !POLICY_OBJECT_KEYS.has(key)) || POLICY_TERM_KEYS.some((key) => !Object.prototype.hasOwnProperty.call(raw, key))) {
+    return { ok: false, reason: 'policy_fields', terms: null, policy_hash: null };
+  }
+  if (!Object.prototype.hasOwnProperty.call(raw, 'policy_hash')) {
     return { ok: false, reason: 'policy_hash_missing', terms: null, policy_hash: null };
   }
-  const terms = receiptPolicyTerms(policy);
-  if (!terms) return { ok: false, reason: 'policy_incomplete', terms: null, policy_hash: null };
-  if (!terms.policy_id || !terms.policy_version || !terms.retention_mode) {
-    return { ok: false, reason: 'policy_incomplete', terms, policy_hash: null };
+  const terms = receiptPolicyTerms(raw);
+  if (!terms || !isPolicyTerms(terms)) {
+    return { ok: false, reason: 'policy_type', terms: null, policy_hash: null };
+  }
+  if (!Number.isInteger(terms.dispute_window_seconds) || terms.dispute_window_seconds < 1
+    || !Number.isInteger(terms.retention_days) || terms.retention_days < 1) {
+    return { ok: false, reason: 'policy_type', terms, policy_hash: null };
+  }
+  if (terms.max_cumulative_spend !== null && !/^[0-9]+$/.test(terms.max_cumulative_spend)) {
+    return { ok: false, reason: 'policy_type', terms, policy_hash: null };
   }
   if (terms.retention_mode !== RECEIPT_POLICY_RETENTION_MODE) {
     return { ok: false, reason: 'policy_retention_mode', terms, policy_hash: null };
   }
-  if (!Number.isInteger(terms.dispute_window_seconds) || terms.dispute_window_seconds < 1) {
-    return { ok: false, reason: 'policy_incomplete', terms, policy_hash: null };
-  }
-  if (!Number.isInteger(terms.retention_days) || terms.retention_days < 1) {
-    return { ok: false, reason: 'policy_incomplete', terms, policy_hash: null };
-  }
-  if (terms.max_cumulative_spend != null && !/^[0-9]+$/.test(terms.max_cumulative_spend)) {
-    return { ok: false, reason: 'policy_incomplete', terms, policy_hash: null };
+  if (typeof raw.policy_hash !== 'string' || !/^[0-9a-f]{64}$/.test(raw.policy_hash)) {
+    return { ok: false, reason: 'policy_hash_mismatch', terms, policy_hash: null };
   }
   let expected: string;
   try {
     expected = receiptPolicyHash(terms);
   } catch {
-    return { ok: false, reason: 'policy_incomplete', terms, policy_hash: null };
+    return { ok: false, reason: 'policy_type', terms, policy_hash: null };
   }
-  const signed = raw.policy_hash.replace(/^0x/i, '').toLowerCase();
-  if (signed !== expected) return { ok: false, reason: 'policy_hash_mismatch', terms, policy_hash: expected };
+  if (raw.policy_hash !== expected) return { ok: false, reason: 'policy_hash_mismatch', terms, policy_hash: expected };
   return { ok: true, reason: null, terms, policy_hash: expected };
 }
 
-export function policyHistoryListsHash(doc: unknown, policyHash: string): boolean {
-  if (!doc || typeof doc !== 'object') return false;
-  const entries = (doc as { entries?: unknown }).entries;
-  if (!Array.isArray(entries)) return false;
+function issuedAtMs(issuedAt: unknown): number | null {
+  if (typeof issuedAt === 'number' && Number.isFinite(issuedAt)) {
+    return issuedAt > 1e12 ? issuedAt : issuedAt * 1000;
+  }
+  if (typeof issuedAt === 'string' && issuedAt) {
+    const ms = Date.parse(issuedAt);
+    if (Number.isFinite(ms)) return ms;
+    const parsed = Number(issuedAt);
+    if (Number.isFinite(parsed)) return parsed > 1e12 ? parsed : parsed * 1000;
+  }
+  return null;
+}
+
+/**
+ * The hash must appear with effective_from at or before the receipt's issued time.
+ * A document that is not a history is `missing`.
+ */
+export function matchPolicyHistory(
+  doc: unknown,
+  policyHash: string,
+  issuedAt: unknown,
+): { status: PolicyHistoryStatus; ok: boolean; reason: string | null } {
+  if (!doc || typeof doc !== 'object' || !Array.isArray((doc as { entries?: unknown }).entries)) {
+    return { status: 'missing', ok: false, reason: 'policy_history_missing' };
+  }
   const needle = policyHash.toLowerCase();
-  return entries.some((row) => {
-    if (!row || typeof row !== 'object') return false;
-    const hash = (row as { policy_hash?: unknown }).policy_hash;
-    return typeof hash === 'string' && hash.replace(/^0x/i, '').toLowerCase() === needle;
-  });
+  const issued = issuedAtMs(issuedAt);
+  let sawHash = false;
+  for (const row of (doc as { entries: unknown[] }).entries) {
+    if (!row || typeof row !== 'object') continue;
+    const entry = row as { policy_hash?: unknown; effective_from?: unknown };
+    if (typeof entry.policy_hash !== 'string' || entry.policy_hash.toLowerCase() !== needle) continue;
+    sawHash = true;
+    const from = typeof entry.effective_from === 'string' ? Date.parse(entry.effective_from) : NaN;
+    if (issued != null && Number.isFinite(from) && from <= issued) {
+      return { status: 'listed', ok: true, reason: null };
+    }
+  }
+  if (!sawHash) return { status: 'not_listed', ok: false, reason: 'policy_history_mismatch' };
+  return { status: 'not_effective', ok: false, reason: 'policy_history_not_effective' };
 }
 
 export function policyHistoryUrlFromReceipt(receipt: { verification?: { jwks_uri?: string }; verify_url?: string }): string | null {

@@ -81,9 +81,12 @@ Options:
                       SHA-256 this file and match the signed payload_hash
   --no-issuer-history Do not check the kid's not_before / not_after window
   --policy-history-file <path>
-                      Read receipt-policy history JSON instead of fetching it
-  --no-policy-history Do not fetch /.well-known/receipt-policy-history.json.
-                      The signed policy terms still govern the receipt.
+                      Check policy_hash against this receipt-policy history file.
+                      effective_from must be at or before the receipt's issued time.
+  --fetch             Fetch /.well-known/receipt-policy-history.json. Also done
+                      when --rpc or --fetch-jwks opts into the network.
+  --no-policy-history Do not check receipt-policy history. The output says
+                      the history was not checked.
   --no-preimage       Do not require published hash preimages
   --pinned-chain <caip2>
                       Opt in to issuer-root checks. eip155:8453 or eip155:84532.
@@ -126,9 +129,9 @@ Network behavior:
   - --check-nullifier is passed (queries Base RPC for on-chain anchor)
   - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
   - --rpc is passed with a receipt, an inclusion proof, and a tree head
-  - a v11 receipt is checked and --no-policy-history was not passed
-    (GET /.well-known/receipt-policy-history.json). A missing announcement
-    is partial, not a failure. The signed policy terms govern.
+  - --fetch, --fetch-jwks, or --rpc is passed on a v11 receipt
+    (GET /.well-known/receipt-policy-history.json). Without one of those,
+    or without --policy-history-file, policy history is reported as not checked.
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -208,6 +211,7 @@ function parseArgs(args: string[]): {
   issuerDomain: string | null;
   policyHistoryFile: string | null;
   noPolicyHistory: boolean;
+  fetchPolicy: boolean;
 } {
   const result = {
     file: null as string | null,
@@ -246,6 +250,7 @@ function parseArgs(args: string[]): {
     issuerDomain: null as string | null,
     policyHistoryFile: null as string | null,
     noPolicyHistory: false,
+    fetchPolicy: false,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -290,6 +295,8 @@ function parseArgs(args: string[]): {
       result.policyHistoryFile = args[++i];
     } else if (arg === '--no-policy-history') {
       result.noPolicyHistory = true;
+    } else if (arg === '--fetch') {
+      result.fetchPolicy = true;
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
     } else if (arg === '--pinned-chain' && args[i + 1]) {
@@ -674,7 +681,7 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     policyHistory,
-    fetchPolicyHistory: !args.noPolicyHistory && !policyHistory,
+    fetchPolicyHistory: !args.noPolicyHistory && !policyHistory && (args.fetchPolicy || args.fetchJwks || args.sawRpc),
     canonicalPreimage,
     issuerRoot: rootRequested ? {
       pin: args.pinnedChain || args.pinnedRegistry
@@ -795,8 +802,10 @@ async function main(): Promise<number> {
         console.log(`  Policy hash:   ${result.policy.policy_hash}`);
       }
       if (result.policy.history === 'listed') console.log('  Policy history: listed');
-      else if (result.policy.history === 'not_listed') console.log('  Policy history: not listed (signed terms govern)');
-      else if (result.policy.history === 'missing') console.log('  Policy history: missing (partial; signed terms govern)');
+      else if (result.policy.history === 'not_listed') console.log('  Policy history: not listed');
+      else if (result.policy.history === 'not_effective') console.log('  Policy history: effective_from is after issuance');
+      else if (result.policy.history === 'missing') console.log('  Policy history: missing (not a pass)');
+      else console.log('  Policy history: not checked');
     }
     if (result.root_checked === false) {
       console.log('  Issuer root:   not checked (root_checked: false). This is not a root pass.');

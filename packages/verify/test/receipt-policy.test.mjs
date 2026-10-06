@@ -5,10 +5,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const vector = JSON.parse(readFileSync(join(fixtureDir, 'policy-vector.json'), 'utf8'));
+const cappedVector = JSON.parse(readFileSync(join(fixtureDir, 'policy-vector-capped.json'), 'utf8'));
 
 const {
   receiptPolicyHash,
@@ -34,20 +39,28 @@ const VECTOR = {
   policy_hash: RECEIPT_POLICY_VECTOR_HASH,
 };
 
-test('policy_hash vector is SHA-256 of the RFC 8785 terms', () => {
-  assert.equal(rfc8785Canonicalize(receiptPolicyTerms(VECTOR)), RECEIPT_POLICY_VECTOR_PREIMAGE);
-  assert.equal(
-    createHash('sha256').update(RECEIPT_POLICY_VECTOR_PREIMAGE, 'utf8').digest('hex'),
-    RECEIPT_POLICY_VECTOR_HASH,
-  );
-  assert.equal(receiptPolicyHash(receiptPolicyTerms(VECTOR)), RECEIPT_POLICY_VECTOR_HASH);
-  const capped = receiptPolicyHash(receiptPolicyTerms({ ...VECTOR, max_cumulative_spend: '2000' }));
-  assert.equal(capped, RECEIPT_POLICY_CAPPED_HASH);
-  assert.equal(verifyReceiptPolicyClaim(VECTOR).ok, true);
-  assert.equal(verifyReceiptPolicyClaim(null).reason, 'policy_missing');
+test('policy_hash fixtures match the gateway vectors', () => {
+  assert.equal(vector.preimage, RECEIPT_POLICY_VECTOR_PREIMAGE);
+  assert.equal(vector.policy_hash, RECEIPT_POLICY_VECTOR_HASH);
+  assert.equal(cappedVector.policy_hash, RECEIPT_POLICY_CAPPED_HASH);
+  assert.equal(rfc8785Canonicalize(vector.terms), vector.preimage);
+  assert.equal(rfc8785Canonicalize(cappedVector.terms), cappedVector.preimage);
+  assert.equal(createHash('sha256').update(vector.preimage, 'utf8').digest('hex'), vector.policy_hash);
+  assert.equal(createHash('sha256').update(cappedVector.preimage, 'utf8').digest('hex'), cappedVector.policy_hash);
+  assert.equal(receiptPolicyHash(vector.terms), vector.policy_hash);
+  assert.equal(receiptPolicyHash(cappedVector.terms), cappedVector.policy_hash);
+  assert.equal(verifyReceiptPolicyClaim({ ...vector.terms, policy_hash: vector.policy_hash }).ok, true);
+  assert.equal(verifyReceiptPolicyClaim(null).reason, 'POLICY_ABSENT');
   const { policy_hash, ...bare } = VECTOR;
   void policy_hash;
   assert.equal(verifyReceiptPolicyClaim(bare).reason, 'policy_hash_missing');
+  assert.equal(verifyReceiptPolicyClaim({ ...VECTOR, extra: true }).reason, 'policy_fields');
+  assert.equal(verifyReceiptPolicyClaim({ ...VECTOR, dispute_window_seconds: '86400' }).reason, 'policy_type');
+  assert.equal(verifyReceiptPolicyClaim({ ...VECTOR, max_cumulative_spend: 2000 }).reason, 'policy_type');
+  assert.equal(verifyReceiptPolicyClaim({ ...VECTOR, retention_mode: 'governance' }).reason, 'policy_retention_mode');
+  const { retention_days, ...missingField } = VECTOR;
+  void retention_days;
+  assert.equal(verifyReceiptPolicyClaim(missingField).reason, 'policy_fields');
 });
 
 function publicJwk(publicKey) {
@@ -143,7 +156,7 @@ function historyDoc(policyHash) {
   };
 }
 
-test('a v11 receipt fails closed without policy', async () => {
+test('a v11 receipt with no policy is POLICY_ABSENT and the other checks still run', async () => {
   const signed = v11Receipt(undefined);
   const result = await verifyReceipt(signed.receipt, {
     trustedKids: [signed.kid],
@@ -151,8 +164,11 @@ test('a v11 receipt fails closed without policy', async () => {
     requirePreimages: false,
     skipIssuerHistory: true,
   });
-  assert.equal(result.overall, 'failed');
-  assert.match(result.errors.join(' '), /policy_missing/);
+  assert.equal(result.issuer_signature.valid, true);
+  assert.equal(result.policy.reason, 'POLICY_ABSENT');
+  assert.equal(result.policy.history, 'not_checked');
+  assert.equal(result.overall, 'partial');
+  assert.doesNotMatch(result.errors.join(' '), /POLICY_ABSENT|policy_/);
 });
 
 test('changing one policy term fails the receipt', async () => {
@@ -236,8 +252,38 @@ test('a missing policy history is partial and a listed hash is reported', async 
     policyHistory: historyDoc(RECEIPT_POLICY_CAPPED_HASH),
   });
   assert.equal(other.policy.history, 'not_listed');
-  assert.equal(other.policy.ok, true);
-  assert.notEqual(other.overall, 'failed');
+  assert.equal(other.overall, 'failed');
+  assert.match(other.errors.join(' '), /policy_history_mismatch/);
+
+  const late = await verifyReceipt(signed.receipt, {
+    trustedKids: [signed.kid],
+    issuerRoot: { pin: null },
+    requirePreimages: false,
+    skipIssuerHistory: true,
+    policyHistory: {
+      schema: 'chit402.receipt_policy_history.v1',
+      entries: [{
+        policy_version: '1',
+        policy_hash: RECEIPT_POLICY_VECTOR_HASH,
+        terms: vector.terms,
+        effective_from: '2030-01-01T00:00:00.000Z',
+      }],
+    },
+  });
+  assert.equal(late.policy.history, 'not_effective');
+  assert.equal(late.overall, 'failed');
+  assert.match(late.errors.join(' '), /policy_history_not_effective/);
+
+  const unchecked = await verifyReceipt(signed.receipt, {
+    trustedKids: [signed.kid],
+    issuerRoot: { pin: null },
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(unchecked.policy.history, 'not_checked');
+  assert.equal(unchecked.policy.ok, true);
+  assert.equal(unchecked.policy.terms.dispute_window_seconds, 86400);
+  assert.equal(unchecked.policy.terms.retention_days, 365);
 });
 
 test('the CLI prints the signed policy terms', () => {
@@ -253,11 +299,11 @@ test('the CLI prints the signed policy terms', () => {
     receiptPath,
     '--no-preimage',
     '--no-issuer-history',
-    '--no-policy-history',
     '--trusted-kid',
     signed.kid,
   ], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Policy history: not checked/);
   assert.match(run.stdout, /Policy:        chit402\.receipt-policy/);
   assert.match(run.stdout, /Dispute window: 86400s/);
   assert.match(run.stdout, /Retention:     365 days, compliance/);
@@ -278,5 +324,10 @@ test('the CLI prints the signed policy terms', () => {
   assert.equal(announced.status, 0, announced.stderr);
   const parsed = JSON.parse(announced.stdout);
   assert.equal(parsed.policy.history, 'listed');
+  assert.equal(parsed.policy.terms.policy_id, 'chit402.receipt-policy');
+  assert.equal(parsed.policy.terms.dispute_window_seconds, 86400);
+  assert.equal(parsed.policy.terms.retention_days, 365);
   assert.equal(parsed.policy.terms.retention_mode, 'compliance');
+  assert.equal(parsed.policy.terms.max_cumulative_spend, null);
+  assert.equal(parsed.policy.policy_hash, RECEIPT_POLICY_VECTOR_HASH);
 });

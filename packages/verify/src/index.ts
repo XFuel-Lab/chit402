@@ -94,7 +94,7 @@ import {
 } from './canonical-preimage.js';
 import {
   verifyReceiptPolicyClaim,
-  policyHistoryListsHash,
+  matchPolicyHistory,
   policyHistoryUrlFromReceipt,
   uncheckedPolicy,
   type PolicyCheck,
@@ -1701,32 +1701,68 @@ export async function verifyReceipt(
   }
   let policyFailed = false;
   let policyHistoryMissing = false;
+  let policyAbsent = false;
   let policy: PolicyCheck = uncheckedPolicy();
   if (issuer_signature.valid && Number.isFinite(payloadVersion) && payloadVersion >= 11 && verifiedClaims) {
-    const verdict = verifyReceiptPolicyClaim(verifiedClaims.policy);
-    if (!verdict.ok && verdict.reason) {
-      policyFailed = true;
-      errors.push(verdict.reason);
+    if (verifiedClaims.policy == null) {
+      policyAbsent = true;
+      warnings.push('POLICY_ABSENT');
       policy = {
         checked: true,
         ok: false,
-        reason: verdict.reason,
-        terms: verdict.terms,
-        policy_hash: verdict.policy_hash,
+        reason: 'POLICY_ABSENT',
+        terms: null,
+        policy_hash: null,
         history: 'not_checked',
       };
     } else {
-      const history = await resolvePolicyHistory(receipt, verdict.policy_hash || '', options, trustedHosts);
-      if (history.warning) warnings.push(history.warning);
-      if (history.status === 'missing') policyHistoryMissing = true;
-      policy = {
-        checked: true,
-        ok: true,
-        reason: null,
-        terms: verdict.terms,
-        policy_hash: verdict.policy_hash,
-        history: history.status,
-      };
+      const verdict = verifyReceiptPolicyClaim(verifiedClaims.policy);
+      if (!verdict.ok && verdict.reason) {
+        policyFailed = true;
+        errors.push(verdict.reason);
+        policy = {
+          checked: true,
+          ok: false,
+          reason: verdict.reason,
+          terms: verdict.terms,
+          policy_hash: verdict.policy_hash,
+          history: 'not_checked',
+        };
+      } else {
+        const asked = options.policyHistory != null || options.fetchPolicyHistory === true;
+        if (!asked) {
+          policy = {
+            checked: true,
+            ok: true,
+            reason: null,
+            terms: verdict.terms,
+            policy_hash: verdict.policy_hash,
+            history: 'not_checked',
+          };
+        } else {
+          const history = await resolvePolicyHistory(
+            receipt,
+            verdict.policy_hash || '',
+            signedIat,
+            options,
+            trustedHosts,
+          );
+          if (history.warning) warnings.push(history.warning);
+          if (history.status === 'missing') policyHistoryMissing = true;
+          if (!history.ok && history.reason && history.status !== 'missing') {
+            policyFailed = true;
+            errors.push(history.reason);
+          }
+          policy = {
+            checked: true,
+            ok: history.ok || history.status === 'missing',
+            reason: history.ok ? null : history.reason,
+            terms: verdict.terms,
+            policy_hash: verdict.policy_hash,
+            history: history.status,
+          };
+        }
+      }
     }
   }
   // Payload v10 signs the history pin. A missing pin fails even when the
@@ -1844,7 +1880,7 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
-  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing)) overall = 'partial';
+  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing || policyAbsent)) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
@@ -1926,25 +1962,22 @@ export async function verifyReceipt(
 async function resolvePolicyHistory(
   receipt: XFuelReceipt,
   policyHash: string,
+  issuedAt: unknown,
   options: VerifyReceiptOptions,
   trustedHosts: readonly string[],
-): Promise<{ status: PolicyCheck['history']; warning: string | null }> {
-  if (options.policyHistory) {
-    const listed = policyHistoryListsHash(options.policyHistory, policyHash);
-    return {
-      status: listed ? 'listed' : 'not_listed',
-      warning: listed
-        ? null
-        : 'signed policy_hash is not in the announced receipt-policy history. The signed terms govern.',
-    };
+): Promise<{ status: PolicyCheck['history']; ok: boolean; reason: string | null; warning: string | null }> {
+  if (options.policyHistory != null) {
+    const matched = matchPolicyHistory(options.policyHistory, policyHash, issuedAt);
+    return { ...matched, warning: matched.ok ? null : matched.reason };
   }
-  if (options.fetchPolicyHistory !== true) return { status: 'not_checked', warning: null };
-  const explicit = options.policyHistoryUrl || null;
-  const url = explicit || policyHistoryUrlFromReceipt(receipt);
   const missing = {
     status: 'missing' as const,
-    warning: 'receipt policy history was not available. The signed terms govern.',
+    ok: false,
+    reason: 'policy_history_missing',
+    warning: 'receipt policy history was not available. This is not a pass.',
   };
+  const explicit = options.policyHistoryUrl || null;
+  const url = explicit || policyHistoryUrlFromReceipt(receipt);
   if (!url) return missing;
   try {
     const parsed = new URL(url);
@@ -1956,13 +1989,8 @@ async function resolvePolicyHistory(
     const res = await fetchImpl(parsed.toString(), { signal: AbortSignal.timeout(4000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const doc = await res.json();
-    const listed = policyHistoryListsHash(doc, policyHash);
-    return {
-      status: listed ? 'listed' : 'not_listed',
-      warning: listed
-        ? null
-        : 'signed policy_hash is not in the announced receipt-policy history. The signed terms govern.',
-    };
+    const matched = matchPolicyHistory(doc, policyHash, issuedAt);
+    return { ...matched, warning: matched.ok ? null : matched.reason };
   } catch {
     return missing;
   }
