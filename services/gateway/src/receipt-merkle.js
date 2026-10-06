@@ -777,7 +777,8 @@ export class ReceiptMerkleTree {
         }
       }
       if (intentNonce != null) {
-        reserved = this._reserveBaseIntent({ root, day, nonce: this._nextFreeNonce(intentNonce, root, day) });
+        this._abandonUnsignedIntents({ keepRoot: root, keepDay: day });
+        reserved = this._reserveBaseIntent({ root, day, nonce: this._nextFreeNonce(intentNonce) });
       }
     }
     let anchor;
@@ -802,16 +803,6 @@ export class ReceiptMerkleTree {
         tx: null,
         calldata: anchorCalldata(root),
         reason: 'nonce_unknown',
-      };
-    } else if (reserved?.blocked) {
-      anchor = {
-        status: 'pending',
-        chain: 'base',
-        chain_id: 8453,
-        from: reserved.from || null,
-        tx: null,
-        calldata: anchorCalldata(root),
-        reason: 'anchor_intent_blocked',
       };
     } else if (reserved?.raw) {
       anchor = await this._resumeSignedIntent(reserved, { send, lookup, request, root, day });
@@ -1002,31 +993,53 @@ export class ReceiptMerkleTree {
         tx: row.tx || prev?.tx || null,
         from: row.from || prev?.from || null,
         to: row.to || prev?.to || null,
+        at: row.at || prev?.at || null,
+        reason: row.reason || prev?.reason || null,
       });
     }
     return [...latest.values()];
   }
 
-  _nextFreeNonce(start, root, day) {
-    const taken = new Set();
+  /**
+   * A row with no raw transaction was never broadcast. Free it.
+   * keepRoot/keepDay leaves the open unsigned row the caller is about to sign.
+   */
+  _abandonUnsignedIntents({ keepRoot = null, keepDay = null } = {}) {
+    for (const row of this._latestBaseIntents()) {
+      if (row.raw) continue;
+      if (row.status === 'abandoned_unsigned' || row.status === 'replaced' || row.status === 'anchored') continue;
+      if (row.status === 'intent' && keepRoot && row.root === keepRoot && row.day === keepDay) continue;
+      this._markIntent(row, 'abandoned_unsigned', { reason: 'never_broadcast' });
+    }
+  }
+
+  /**
+   * Lowest nonce at or above the sender's pending count that is not held by
+   * a signed raw transaction. Replaced nonces stay taken. Unsigned and
+   * abandoned_unsigned nonces are free, so a crash before sign leaves no gap.
+   */
+  _nextFreeNonce(start) {
+    const occupied = new Set();
     for (const row of this._latestBaseIntents()) {
       if (row.nonce == null) continue;
-      if (row.day === day && row.root === root && row.status !== 'replaced') continue;
-      taken.add(Number(row.nonce));
+      if (row.status === 'abandoned_unsigned') continue;
+      if (!row.raw && row.status !== 'replaced') continue;
+      occupied.add(Number(row.nonce));
     }
     let n = Number(start);
-    while (taken.has(n)) n += 1;
+    while (occupied.has(n)) n += 1;
     return n;
   }
 
   _reserveBaseIntent({ root, day, nonce }) {
+    this._abandonUnsignedIntents({ keepRoot: root, keepDay: day });
     const prior = this._latestBaseIntents().filter((row) => row.day === day && row.root === root);
     const anchored = [...prior].reverse().find((row) => row.status === 'anchored' && row.tx);
     if (anchored) {
       return { anchoredTx: anchored.tx, nonce: anchored.nonce, from: anchored.from, intent: anchored };
     }
     const signed = [...prior].reverse().find((row) => (
-      row.raw && row.tx && row.status !== 'replaced' && row.status !== 'anchored'
+      row.raw && row.tx && row.status !== 'replaced' && row.status !== 'anchored' && row.status !== 'abandoned_unsigned'
     ));
     if (signed) {
       return {
@@ -1037,12 +1050,11 @@ export class ReceiptMerkleTree {
         intent: signed,
       };
     }
-    const held = [...prior].reverse().find((row) => (
-      row.status !== 'replaced' && row.status !== 'intent' && row.status !== 'anchored'
-    ));
-    if (held && !held.raw) return { blocked: true, nonce: held.nonce, from: held.from, intent: held };
-    const open = [...prior].reverse().find((row) => row.status === 'intent' && row.nonce != null);
-    if (open) return { needsSign: true, nonce: open.nonce, intent: open };
+    const open = [...prior].reverse().find((row) => row.status === 'intent' && row.nonce != null && !row.raw);
+    if (open && Number(open.nonce) === Number(nonce)) {
+      return { needsSign: true, nonce: open.nonce, intent: open };
+    }
+    if (open) this._markIntent(open, 'abandoned_unsigned', { reason: 'never_broadcast' });
     const record = {
       v: 1,
       op: 'anchor_intent',
@@ -1072,6 +1084,8 @@ export class ReceiptMerkleTree {
       from: extra.from || intent.from || null,
       to: extra.to || intent.to || null,
       status,
+      reason: extra.reason || null,
+      at: new Date().toISOString(),
       epoch: intent.epoch ?? this.epoch,
     };
     if (this.dir) appendJournal(this.dir, record);
@@ -1173,8 +1187,8 @@ export class ReceiptMerkleTree {
           to: intent.to,
           request,
         });
-    } catch {
-      this._markIntent(intent, 'blocked');
+    } catch (err) {
+      this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
       return pending('rpc_error');
     }
     if (found?.receiptOk === true && normalizeRoot(found.root) === normalizeRoot(intent.root) && found.tx) {
@@ -1196,8 +1210,8 @@ export class ReceiptMerkleTree {
     }
     if (found?.rebroadcast) {
       if (!intent.raw) {
-        this._markIntent(intent, 'blocked');
-        return pending('signed_raw_missing');
+        this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
+        return pending('never_broadcast');
       }
       try {
         if (typeof send === 'function') {
@@ -1214,7 +1228,7 @@ export class ReceiptMerkleTree {
           await broadcastBaseRaw(intent.raw);
         }
       } catch (err) {
-        this._markIntent(intent, 'blocked');
+        this._markIntent(intent, 'blocked', { reason: err.message || 'rpc_error' });
         return pending(err.message);
       }
       this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx, from: intent.from, to: intent.to });
@@ -1228,7 +1242,11 @@ export class ReceiptMerkleTree {
         reason: null,
       };
     }
-    this._markIntent(intent, 'blocked');
+    if (!intent.raw) {
+      this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
+      return pending('never_broadcast');
+    }
+    this._markIntent(intent, 'blocked', { reason: found?.reason || 'rpc_error' });
     return pending(found?.reason || 'anchor_intent_blocked');
   }
 
@@ -1252,13 +1270,18 @@ export class ReceiptMerkleTree {
 
   /**
    * A signed raw transaction is fsynced before broadcast. Recovery looks up
-   * that hash. A match is adopted. Anything else mined is replaced. An RPC
-   * error stays blocked. The same raw is rebroadcast only when the nonce
-   * is still unused.
+   * that hash. A match is adopted. Anything else mined is replaced. An
+   * unsigned intent was never broadcast: it is abandoned and the nonce is
+   * free. An RPC error on a signed raw stays blocked and is retried. The
+   * same raw is rebroadcast only when the nonce is still unused.
    */
   async reconcileAnchorIntents({ lookup, rebroadcast } = {}) {
     for (const intent of this._latestBaseIntents()) {
-      if (intent.status === 'replaced') continue;
+      if (intent.status === 'replaced' || intent.status === 'abandoned_unsigned') continue;
+      if (!intent.raw && intent.status !== 'anchored') {
+        this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
+        continue;
+      }
       if (intent.status === 'anchored' && intent.tx) {
         this._adoptBaseIntent({ ...intent, status: 'anchored' }, { ...intent, receiptOk: true, root: intent.root });
         continue;
@@ -1267,8 +1290,8 @@ export class ReceiptMerkleTree {
       let found;
       try {
         found = await lookup(intent);
-      } catch {
-        this._markIntent(intent, 'blocked');
+      } catch (err) {
+        this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
         continue;
       }
       if (found?.replaced) {
@@ -1288,25 +1311,64 @@ export class ReceiptMerkleTree {
         try {
           await rebroadcast(intent.raw);
           this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx });
-        } catch {
-          this._markIntent(intent, 'blocked');
+        } catch (err) {
+          this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
         }
         continue;
       }
       if (found?.blocked || found?.pending || found?.rebroadcast) {
-        this._markIntent(intent, 'blocked');
+        this._markIntent(intent, 'blocked', { reason: found.reason || 'rpc_error' });
         continue;
       }
     }
     if (this.dir) this._writeSnapshot();
   }
 
-  bundleStatus() {
+  bundleStatus(now = new Date()) {
+    const latest = this._latestBaseIntents();
+    const blocked = latest.filter((row) => row.status === 'blocked');
+    const pending = latest.filter((row) => (
+      row.status === 'intent' || row.status === 'signed' || row.status === 'broadcast'
+    ));
+    let oldest = null;
+    for (const row of blocked) {
+      const at = Date.parse(row.at || '');
+      if (!Number.isFinite(at)) continue;
+      if (oldest == null || at < oldest) oldest = at;
+    }
+    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+    let lastAnchoredRoot = null;
+    let lastAnchoredTx = null;
+    let lastError = null;
+    for (const row of this.anchorIntents || []) {
+      if (row.chain !== 'base') continue;
+      if (row.status === 'anchored' && row.root && row.tx) {
+        lastAnchoredRoot = row.root;
+        lastAnchoredTx = row.tx;
+      }
+      if (row.status === 'blocked' || row.status === 'replaced') {
+        lastError = row.reason || row.status;
+      }
+    }
+    if (!lastAnchoredRoot) {
+      const bases = Object.entries(this.anchorState?.base || {});
+      const last = bases[bases.length - 1];
+      if (last?.[1]?.tx) {
+        lastAnchoredRoot = last[0];
+        lastAnchoredTx = last[1].tx;
+      }
+    }
     return {
       last_bundle_ok_at: this.lastBundleOkAt || this.bundleIndex?.last_bundle_ok_at || null,
       consecutive_failures: this.bundleFailures
         || this.bundleIndex?.consecutive_failures
         || 0,
+      blocked_intents: blocked.length,
+      pending_intents: pending.length,
+      oldest_blocked_age_s: oldest == null ? null : Math.max(0, Math.floor((nowMs - oldest) / 1000)),
+      last_anchored_root: lastAnchoredRoot,
+      last_anchored_tx: lastAnchoredTx,
+      last_error: lastError,
     };
   }
 

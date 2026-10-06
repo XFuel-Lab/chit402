@@ -218,11 +218,20 @@ test('an empty directory with the fresh-genesis flag boots and logs loudly', asy
       assert.equal(body.issuer_signature, undefined);
       assert.equal(body.receipt_log.consecutive_failures, 0);
       assert.equal(body.receipt_log.last_bundle_ok_at, null);
+      assert.equal(body.receipt_log.blocked_intents, 0);
+      assert.equal(body.receipt_log.pending_intents, 0);
+      assert.equal(body.receipt_log.oldest_blocked_age_s, null);
+      assert.equal(body.receipt_log.last_anchored_root, null);
+      assert.equal(body.receipt_log.last_anchored_tx, null);
+      assert.equal(body.receipt_log.last_error, null);
       assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
       const health = await fetch(`${base}/health`);
       const healthBody = await health.json();
       assert.equal(healthBody.receipt_log.consecutive_failures, 0);
       assert.equal(healthBody.receipt_log.last_bundle_ok_at, null);
+      assert.equal(healthBody.receipt_log.blocked_intents, 0);
+      assert.equal(healthBody.receipt_log.pending_intents, 0);
+      assert.equal(healthBody.receipt_log.last_error, null);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -864,9 +873,173 @@ test('an RPC error leaves the signed nonce blocked and does not sign a new trans
     assert.equal(anchorIntentRows(dir).filter((row) => row.status === 'signed').length, 1);
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'blocked'), true);
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced'), false);
+    const retry = new ReceiptMerkleTree();
+    retry.load(dir);
+    let resent = null;
+    await retry.publishHead({
+      force: true,
+      now: '2026-10-06T12:40:00.000Z',
+      nonce: 9,
+      lookup: async (intent) => {
+        assert.equal(intent.status, 'blocked');
+        assert.equal(intent.raw, raw);
+        assert.equal(intent.nonce, 4);
+        return { rebroadcast: true, tx: intent.tx, nonce: intent.nonce };
+      },
+      send: async (args) => {
+        resent = args;
+        return args.hash;
+      },
+    });
+    assert.equal(resent.raw, raw);
+    assert.equal(resent.nonce, 4);
+    assert.equal(anchorIntentRows(dir).filter((row) => row.status === 'signed').length, 1);
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a crash after reserve and before sign reuses the nonce with no gap', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  try {
+    tree._reserveBaseIntent({ root, day: '2026-10-06', nonce: 4 });
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'intent' && row.nonce === 4 && !row.raw), true);
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    await restored.reconcileAnchorIntents({
+      lookup: async () => { throw new Error('connection refused'); },
+    });
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'abandoned_unsigned' && row.nonce === 4), true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'blocked'), false);
+    let used = null;
+    await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async (args) => {
+        used = args.nonce;
+        return args.hash;
+      },
+    });
+    assert.equal(used, 4);
+    const signed = anchorIntentRows(dir).filter((row) => row.status === 'signed');
+    assert.equal(signed.length, 1);
+    assert.equal(signed[0].nonce, 4);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('an unsigned crash frees the nonce for the next root', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  try {
+    tree._reserveBaseIntent({ root, day: '2026-10-06', nonce: 4 });
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    await restored.reconcileAnchorIntents({
+      lookup: async () => ({ blocked: true, reason: 'rpc_error' }),
+    });
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'abandoned_unsigned' && row.nonce === 4), true);
+    restored.appendReceipt('row-2', 'hash-2', { publish: false });
+    const root2 = hex(rootOf(restored.leaves));
+    assert.notEqual(root2, root);
+    let used = null;
+    await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async (args) => {
+        used = args.nonce;
+        return args.hash;
+      },
+    });
+    assert.equal(used, 4);
+    const signed = anchorIntentRows(dir).filter((row) => row.status === 'signed');
+    assert.equal(signed.length, 1);
+    assert.equal(signed[0].root, root2);
+    assert.equal(signed[0].nonce, 4);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('health reports blocked and pending anchor intents', async () => {
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  delete process.env.RECEIPT_LOG_DIR;
+  delete process.env.RECEIPT_LOG_BOOT;
+  resetReceiptMerkleTree();
+  const tree = getReceiptMerkleTree();
+  const anchoredRoot = 'cd'.repeat(32);
+  const blockedRoot = 'ab'.repeat(32);
+  tree.anchorIntents.push(
+    {
+      chain: 'base',
+      day: '2026-10-06',
+      root: anchoredRoot,
+      nonce: 3,
+      tx: `0x${'22'.repeat(32)}`,
+      raw: '0x03',
+      status: 'anchored',
+    },
+    {
+      chain: 'base',
+      day: '2026-10-06',
+      root: blockedRoot,
+      nonce: 4,
+      tx: `0x${'11'.repeat(32)}`,
+      raw: '0x02',
+      status: 'blocked',
+      reason: 'rpc_error',
+      at: new Date(Date.now() - 3_600_000).toISOString(),
+    },
+    {
+      chain: 'base',
+      day: '2026-10-06',
+      root: 'ee'.repeat(32),
+      nonce: 5,
+      status: 'signed',
+      raw: '0x04',
+      tx: `0x${'33'.repeat(32)}`,
+    },
+  );
+  const { createApp } = await import('../src/server.js');
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  try {
+    const health = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+    const body = await health.json();
+    assert.equal(body.receipt_log.blocked_intents, 1);
+    assert.equal(body.receipt_log.pending_intents, 1);
+    assert.ok(body.receipt_log.oldest_blocked_age_s >= 3600);
+    assert.equal(body.receipt_log.last_anchored_root, anchoredRoot);
+    assert.equal(body.receipt_log.last_anchored_tx, `0x${'22'.repeat(32)}`);
+    assert.equal(body.receipt_log.last_error, 'rpc_error');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    resetReceiptMerkleTree();
   }
 });
 
