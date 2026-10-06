@@ -40,12 +40,16 @@ library ChitIssuerCodes {
 ///        slot 5  mapping(bytes32 => Freeze) freezes
 ///        slot 6  address supersededBy
 ///
-///      `KeyState` is one slot, low bits first:
-///        [0, 8)     status
-///        [8, 16)    wasActive (0 or 1)
-///        [16, 80)   notBefore
-///        [80, 144)  notAfter
-///        [144, 208) revokedAt
+///      `KeyState` is two slots. A sixth `uint64 activatedAt` does not fit in the
+///      first 26 bytes. Slot layout, low bits first:
+///        base+0 [0, 8)     status
+///        base+0 [8, 16)    wasActive (0 or 1)
+///        base+0 [16, 80)   notBefore
+///        base+0 [80, 144)  notAfter
+///        base+0 [144, 208) revokedAt
+///        base+1 [0, 64)    activatedAt
+///      `ADD_STANDBY` writes only the first slot. The second slot is written
+///      when the key is activated (genesis constructor, or `PROMOTE`).
 ///
 ///      Op encoding (each field is a 32-byte ABI word inside the commit hash):
 ///        kind 1 ADD_STANDBY  timestamp = notBefore, reasonCode = 0
@@ -55,12 +59,19 @@ library ChitIssuerCodes {
 ///
 ///      reasonCode: 1 compromise, 2 superseded, 3 lost, 255 other.
 ///
-///      Commitment:
-///        rootHash = keccak256(abi.encode(
-///            prevRootHash, rootSeq, block.chainid, address(this),
-///            ops, freezes, histVersion, histSnapshot))
-///        `rootSeq` in the preimage is the sequence assigned by this commit.
-///        `ops` and `freezes` are the calldata arguments, not storage structs.
+///      Commitment (domain `COMMIT_DOMAIN`), `rootSeq` is the new sequence:
+///        keccak256(abi.encode(
+///            COMMIT_DOMAIN, prevRootHash, rootSeq, block.chainid, address(this),
+///            uint64(block.number), ops, freezeArgs, histVersion, histSnapshot))
+///      Genesis (domain `GENESIS_DOMAIN`), stored as `rootHash` before any commit:
+///        keccak256(abi.encode(
+///            GENESIS_DOMAIN, block.chainid, address(this), controller,
+///            genesisKid, genesisNotBefore, activatedAt, uint64(block.number)))
+///      `block.number` is `frozenBlock` for every freeze in that commit. A reorg
+///      into a different block changes `rootHash`. The block hash is the hash of
+///      the `Frozen` / `RootCommitted` log's block after the block is sealed;
+///      `blockhash(block.number)` is zero inside the transaction, so it is not
+///      stored. Canonical ABI: `contracts/issuer-root/abi/ChitIssuerRoot.json`.
 ///
 ///      The legacy-freeze Merkle root is NOT computed here. Callers pass
 ///      `universeHash`. Rules, matching the gateway and verifier:
@@ -92,12 +103,15 @@ contract ChitIssuerRoot {
     uint8 public constant REASON_LOST = ChitIssuerCodes.REASON_LOST;
     uint8 public constant REASON_OTHER = ChitIssuerCodes.REASON_OTHER;
 
+    /// @dev Two slots. See the contract-level storage note. `activatedAt` is 0
+    ///      until PROMOTE. Genesis sets it to `genesisNotBefore`.
     struct KeyState {
         uint8 status;
         bool wasActive;
         uint64 notBefore;
         uint64 notAfter;
         uint64 revokedAt;
+        uint64 activatedAt;
     }
 
     struct Freeze {
@@ -128,6 +142,10 @@ contract ChitIssuerRoot {
 
     uint64 public constant ACTIVATION_DELAY = 24 hours;
 
+    /// @dev Domain separators so a genesis preimage cannot collide with a commit.
+    bytes32 public constant GENESIS_DOMAIN = keccak256("chit.issuerRoot.genesis.v1");
+    bytes32 public constant COMMIT_DOMAIN = keccak256("chit.issuerRoot.commit.v1");
+
     uint64 public rootSeq;
     bytes32 public rootHash;
     uint64 public historyVersion;
@@ -136,9 +154,19 @@ contract ChitIssuerRoot {
     mapping(bytes32 => Freeze) public freezes;
     address public supersededBy;
 
-    event RootCommitted(uint64 indexed rootSeq, bytes32 rootHash, uint64 historyVersion, bytes32 historySnapshot);
+    event RootCommitted(
+        uint64 indexed rootSeq, bytes32 rootHash, uint64 historyVersion, bytes32 historySnapshot, uint64 blockNumber
+    );
+    event GenesisSeeded(
+        address indexed controller,
+        bytes32 indexed kid,
+        uint64 notBefore,
+        uint64 activatedAt,
+        uint64 blockNumber,
+        bytes32 rootHash
+    );
     event KeyStandby(bytes32 indexed kid, uint64 notBefore, uint64 indexed rootSeq);
-    event KeyActivated(bytes32 indexed kid, uint64 indexed rootSeq);
+    event KeyActivated(bytes32 indexed kid, uint64 activatedAt, uint64 indexed rootSeq);
     event KeyRetired(bytes32 indexed kid, uint64 notAfter, uint64 indexed rootSeq);
     event KeyRevoked(bytes32 indexed kid, uint64 revokedAt, uint8 reasonCode, uint64 indexed rootSeq);
     event Frozen(bytes32 indexed universeId, bytes32 universeHash, uint64 enumeratedCount, uint64 frozenBlock, uint64 indexed rootSeq);
@@ -164,7 +192,7 @@ contract ChitIssuerRoot {
     error NotYetActive(bytes32 kid, uint64 notBefore);
     error NotAfterBeforeStart(uint64 notAfter, uint64 notBefore);
     error AlreadyRevoked(bytes32 kid);
-    error RevokedAtBeforeStart(uint64 revokedAt, uint64 notBefore);
+    error RevokedAtBeforeStart(uint64 revokedAt, uint64 earliest);
     error RevokedAtZero();
     error RevokedAtInFuture(uint64 revokedAt);
     error BadReason(uint8 reasonCode);
@@ -178,23 +206,32 @@ contract ChitIssuerRoot {
         _;
     }
 
-    /// @notice Seeds `genesisKid` as active. Emits `KeyActivated(genesisKid, 0)`.
-    ///         `rootSeq` stays 0 and `rootHash` stays bytes32(0) until the first
-    ///         commit. The genesis commit (standby + legacy freeze) is that
-    ///         first `commit`, which emits `RootCommitted` at seq 1 together
-    ///         with `Frozen`.
+    /// @notice Seeds `genesisKid` as active with `activatedAt = genesisNotBefore`.
+    ///         `rootSeq` stays 0. `rootHash` is the genesis commitment, not zero.
+    ///         Emits `KeyActivated(kid, activatedAt, 0)` and `GenesisSeeded`.
+    ///         The first `commit` is seq 1 and emits `RootCommitted` together
+    ///         with any `Frozen` logs. Its preimage chains from this genesis hash.
     constructor(address controller_, bytes32 genesisKid, uint64 genesisNotBefore) {
         if (controller_ == address(0)) revert ZeroController();
         if (genesisKid == bytes32(0)) revert ZeroKid();
+        if (block.number > type(uint64).max) revert BlockNumberUnusable(block.number);
         controller = controller_;
+        uint64 activatedAt = genesisNotBefore;
+        uint64 blockNumber = uint64(block.number);
         keys[genesisKid] = KeyState({
             status: STATUS_ACTIVE,
             wasActive: true,
             notBefore: genesisNotBefore,
             notAfter: 0,
-            revokedAt: 0
+            revokedAt: 0,
+            activatedAt: activatedAt
         });
-        emit KeyActivated(genesisKid, 0);
+        bytes32 seeded = genesisRootHash(
+            block.chainid, address(this), controller_, genesisKid, genesisNotBefore, activatedAt, blockNumber
+        );
+        rootHash = seeded;
+        emit KeyActivated(genesisKid, activatedAt, 0);
+        emit GenesisSeeded(controller_, genesisKid, genesisNotBefore, activatedAt, blockNumber, seeded);
     }
 
     /// @notice Append key ops and write-once freezes. Reverts after `supersede`.
@@ -243,11 +280,24 @@ contract ChitIssuerRoot {
         uint64 histVersion,
         bytes32 histSnapshot
     ) internal {
+        if (block.number > type(uint64).max) revert BlockNumberUnusable(block.number);
+        uint64 blockNumber = uint64(block.number);
         bytes32 nextHash = keccak256(
-            abi.encode(_hash(), seq, block.chainid, address(this), ops, freezeArgs, histVersion, histSnapshot)
+            abi.encode(
+                COMMIT_DOMAIN,
+                _hash(),
+                seq,
+                block.chainid,
+                address(this),
+                blockNumber,
+                ops,
+                freezeArgs,
+                histVersion,
+                histSnapshot
+            )
         );
         _setRoot(seq, nextHash);
-        emit RootCommitted(seq, nextHash, histVersion, histSnapshot);
+        emit RootCommitted(seq, nextHash, histVersion, histSnapshot, blockNumber);
     }
 
     /// @notice Final migration pointer. Does not change `rootSeq` or `rootHash`.
@@ -263,15 +313,16 @@ contract ChitIssuerRoot {
     }
 
     /// @notice Whether `kid` was acceptable for a receipt with `iat == t`.
-    /// @dev Active or retired: `notBefore <= t`, `notAfter` is 0 or `t <= notAfter`,
-    ///      and `revokedAt` is 0 or `t < revokedAt`.
-    ///      Revoked: the same window, and only if the key was ever active
-    ///      (`wasActive`) and `t < revokedAt`. A standby revoked before promotion
+    /// @dev The window starts at `max(notBefore, activatedAt)`. A standby that is
+    ///      promoted late is not valid back to `notBefore`. Active or retired:
+    ///      start `<= t`, `notAfter` is 0 or `t <= notAfter`, and `revokedAt` is
+    ///      0 or `t < revokedAt`. Revoked: the same window, and only if the key
+    ///      was ever active (`wasActive`). A standby revoked before promotion
     ///      never validates. `status` is the stored status, not a historical one.
     function keyValidAt(bytes32 kid, uint64 t) external view returns (bool ok, uint8 status) {
         KeyState storage k = keys[kid];
         status = k.status;
-        if (t < k.notBefore) return (false, status);
+        if (t < _validFrom(k)) return (false, status);
 
         if (k.status == STATUS_ACTIVE || k.status == STATUS_RETIRED) {
             if (k.notAfter != 0 && t > k.notAfter) return (false, status);
@@ -288,18 +339,46 @@ contract ChitIssuerRoot {
         return (false, status);
     }
 
-    /// @notice Reference preimage for `rootHash`. `seq` is the post-increment sequence.
+    /// @notice Reference preimage for a `commit`. `seq` is the post-increment sequence.
+    ///         `blockNumber` is `uint64(block.number)` of that commit, which is
+    ///         `frozenBlock` for every freeze in it.
     function commitmentHash(
         bytes32 prevRootHash,
         uint64 seq,
         uint256 chainId,
         address registry,
+        uint64 blockNumber,
         Op[] calldata ops,
         FreezeArg[] calldata freezeArgs,
         uint64 histVersion,
         bytes32 histSnapshot
     ) public pure returns (bytes32) {
-        return keccak256(abi.encode(prevRootHash, seq, chainId, registry, ops, freezeArgs, histVersion, histSnapshot));
+        return keccak256(
+            abi.encode(
+                COMMIT_DOMAIN, prevRootHash, seq, chainId, registry, blockNumber, ops, freezeArgs, histVersion, histSnapshot
+            )
+        );
+    }
+
+    /// @notice Reference preimage for the constructor `rootHash`.
+    function genesisRootHash(
+        uint256 chainId,
+        address registry,
+        address controller_,
+        bytes32 genesisKid,
+        uint64 genesisNotBefore,
+        uint64 activatedAt,
+        uint64 blockNumber
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                GENESIS_DOMAIN, chainId, registry, controller_, genesisKid, genesisNotBefore, activatedAt, blockNumber
+            )
+        );
+    }
+
+    function _validFrom(KeyState storage k) internal view returns (uint64) {
+        return k.activatedAt > k.notBefore ? k.activatedAt : k.notBefore;
     }
 
     // ─── Ops ───────────────────────────────────────────────────────────────
@@ -345,17 +424,22 @@ contract ChitIssuerRoot {
         KeyState storage k = keys[op.kid];
         if (k.status != STATUS_STANDBY) revert BadStatus(op.kid, k.status);
         if (block.timestamp < uint256(k.notBefore)) revert NotYetActive(op.kid, k.notBefore);
+        if (block.timestamp > type(uint64).max) revert BlockNumberUnusable(block.timestamp);
+        uint64 activatedAt = uint64(block.timestamp);
         k.status = STATUS_ACTIVE;
         k.wasActive = true;
-        emit KeyActivated(op.kid, seq);
+        k.activatedAt = activatedAt;
+        emit KeyActivated(op.kid, activatedAt, seq);
     }
 
     function _retire(Op calldata op, uint64 seq) internal {
         if (op.reasonCode != 0) revert NonZeroReason(op.reasonCode);
         KeyState storage k = keys[op.kid];
         if (k.status != STATUS_ACTIVE) revert BadStatus(op.kid, k.status);
-        // Backdated and future notAfter are both allowed. notAfter >= notBefore.
-        if (op.timestamp < k.notBefore) revert NotAfterBeforeStart(op.timestamp, k.notBefore);
+        // Backdated and future notAfter are both allowed. The window cannot
+        // end before the key became valid.
+        uint64 start = _validFrom(k);
+        if (op.timestamp < start) revert NotAfterBeforeStart(op.timestamp, start);
         k.status = STATUS_RETIRED;
         k.notAfter = op.timestamp;
         emit KeyRetired(op.kid, op.timestamp, seq);
@@ -367,7 +451,10 @@ contract ChitIssuerRoot {
         KeyState storage k = keys[op.kid];
         if (k.status == STATUS_NONE) revert KeyMissing(op.kid);
         if (k.status == STATUS_REVOKED) revert AlreadyRevoked(op.kid);
-        if (op.timestamp < k.notBefore) revert RevokedAtBeforeStart(op.timestamp, k.notBefore);
+        // Promoted keys backdate only to activatedAt (the validity start).
+        // An unpromoted standby still uses notBefore, which is that start.
+        uint64 earliest = _validFrom(k);
+        if (op.timestamp < earliest) revert RevokedAtBeforeStart(op.timestamp, earliest);
         // revokedAt may be <= block.timestamp for any promoted key.
         // A future revokedAt is only legal for a standby that was never promoted.
         if (uint256(op.timestamp) > block.timestamp) {

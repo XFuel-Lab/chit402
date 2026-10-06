@@ -28,26 +28,33 @@ struct FreezeArg {
 |---|---|---|---|
 | 1 | ADD_STANDBY | notBefore, at least `block.timestamp + 24 hours` | 0 |
 | 2 | PROMOTE | 0 | 0 |
-| 3 | RETIRE | notAfter, `>= notBefore` (past or future) | 0 |
-| 4 | REVOKE | revokedAt, `>= notBefore`, never 0 | 1, 2, 3, or 255 |
+| 3 | RETIRE | notAfter, at or after the validity start (past or future) | 0 |
+| 4 | REVOKE | revokedAt, at or after the validity start, never 0 | 1, 2, 3, or 255 |
 
-reasonCode: **1 compromise, 2 superseded, 3 lost, 255 other**. Any other code reverts.
+reasonCode: **1 compromise, 2 superseded, 3 lost, 255 other**. Any other code reverts. The validity start is `max(notBefore, activatedAt)`.
 
 ```text
-rootHash = keccak256(abi.encode(
-    prevRootHash, rootSeq, block.chainid, address(this),
-    ops, freezeArgs, histVersion, histSnapshot))
+GENESIS_DOMAIN = keccak256("chit.issuerRoot.genesis.v1")
+COMMIT_DOMAIN  = keccak256("chit.issuerRoot.commit.v1")
+
+genesis = keccak256(abi.encode(
+    GENESIS_DOMAIN, chainId, registry, controller,
+    genesisKid, notBefore, activatedAt, uint64(block.number)))
+
+commit = keccak256(abi.encode(
+    COMMIT_DOMAIN, prevRootHash, rootSeq, chainId, registry,
+    uint64(block.number), ops, freezeArgs, histVersion, histSnapshot))
 ```
 
-`rootSeq` in that preimage is the sequence this commit assigns (previous + 1). `ops` and `freezeArgs` are the calldata arguments. An empty commit (no ops and no freezes) reverts. `scripts/issuer-root.mjs` recomputes the hash with ethers `AbiCoder`.
+The constructor stores the genesis hash at `rootSeq` 0 and emits `KeyActivated` plus `GenesisSeeded`. The first commit chains from that hash. `uint64(block.number)` is `frozenBlock` for every freeze in the commit, so a reorg into another block changes `rootHash`. An empty commit reverts. Canonical ABI: `contracts/issuer-root/abi/ChitIssuerRoot.json`. `scripts/issuer-root.mjs` recomputes both hashes.
 
 ## Key validity
 
-`KeyState` is one storage slot: `status`, `wasActive`, `notBefore`, `notAfter`, `revokedAt`.
+`KeyState` is two slots. The first holds `status`, `wasActive`, `notBefore`, `notAfter`, and `revokedAt` (26 bytes). `activatedAt` is a `uint64` and does not fit, so it occupies the low 64 bits of the next slot. `ADD_STANDBY` writes only the first slot. Genesis and `PROMOTE` write the second (one extra cold `SSTORE`, about 20,000 gas).
 
-`keyValidAt(kid, t)` is true for an active or retired key when `notBefore <= t`, `notAfter` is 0 or `t <= notAfter`, and `revokedAt` is 0 or `t < revokedAt`. A revoked key passes the same window only when `wasActive` is set and `t < revokedAt`. A standby revoked before promotion never passes.
+`activatedAt` is `notBefore` for the genesis key and `block.timestamp` at `PROMOTE` otherwise. `keyValidAt` starts at `max(notBefore, activatedAt)`, so a late promotion is not valid back to `notBefore`. A revoked key that was ever active still passes for `t < revokedAt` inside that window. Revoke of a promoted key cannot backdate earlier than `activatedAt`. A standby revoked before promotion never passes.
 
-`revokedAt` may be `<= block.timestamp`. A future `revokedAt` is accepted only for a standby that was never promoted (typically `revokedAt = notBefore`, so it never validates).
+`revokedAt` may be `<= block.timestamp`. A future `revokedAt` is accepted only for a standby that was never promoted.
 
 ## Legacy freeze Merkle
 
@@ -100,11 +107,11 @@ Fork-measured on an Anvil fork of `https://sepolia.base.org` (chain id 84532). N
 
 | Operation | Spec §7 estimate | Fork-measured `gasUsed` |
 |---|---|---|
-| Deploy `ChitIssuerRoot` | ~1.0–1.5M | 1,410,063 |
-| Commit with one key op through Safe v1.4.1 SafeL2 | ~100–150k | 170,961 |
-| Commit with one key op plus one freeze through that Safe | ~150–220k | 209,661 |
+| Deploy `ChitIssuerRoot` | ~1.0–1.5M | 1,617,123 |
+| Commit with one key op through Safe v1.4.1 SafeL2 | ~100–150k | 154,262 |
+| Commit with one key op plus one freeze through that Safe | ~150–220k | 210,013 |
 
-The Safe is the canonical SafeL2 `0x29fcB43b46531BcA003ddC8FCB67FFE91900C762` and factory `0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67`. `forge test --match-test test_forkMeasuredGas` reports the same commit execution gas (170,985 and 209,649 via `lastCallGas`). Deploy in that test is not the receipt figure; the receipt figure above is.
+The Safe is the canonical SafeL2 `0x29fcB43b46531BcA003ddC8FCB67FFE91900C762` and factory `0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67`. These are receipt `gasUsed` values after `activatedAt` and the genesis `rootHash` landed. Deploy is higher than the earlier 1,410,063 because the constructor writes a second key slot and a nonzero genesis hash, and the creation code is larger. The one-op commit is lower than the earlier 170,961 because `rootHash` is already nonzero. `forge test --match-test test_forkMeasuredGas` checks the same path on a local fork and does not broadcast.
 
 Human broadcast, only with a throwaway Sepolia key, after the env vars in the deploy section are set:
 

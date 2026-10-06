@@ -60,7 +60,7 @@ contract ChitIssuerRootSafeTest is SafeFixture {
 
         vm.warp(notBefore);
         _exec(safe, address(root), _commit(promoteOps), ownerPk2, ownerPk3);
-        (uint8 status, bool wasActive,,,) = root.keys(kid);
+        (uint8 status, bool wasActive,,,,) = root.keys(kid);
         assertEq(status, ChitIssuerCodes.STATUS_ACTIVE);
         assertTrue(wasActive);
     }

@@ -46,7 +46,7 @@ contract ChitIssuerRootHandler is Test {
     function retire(uint256 index, uint64 notAfter) external {
         if (tracked.length == 0) return;
         bytes32 kid = tracked[index % tracked.length];
-        (uint8 status,, uint64 notBefore,,) = root.keys(kid);
+        (uint8 status,, uint64 notBefore,,,) = root.keys(kid);
         if (status != ChitIssuerCodes.STATUS_ACTIVE) return;
         if (notAfter < notBefore) notAfter = notBefore;
         ChitIssuerRoot.Op[] memory ops = new ChitIssuerRoot.Op[](1);
@@ -56,7 +56,7 @@ contract ChitIssuerRootHandler is Test {
 
     function revoke(uint256 index, uint64 revokedAt, uint8 reason) external {
         bytes32 kid = index % (tracked.length + 1) == 0 ? genesisKid : tracked[index % tracked.length];
-        (uint8 status,, uint64 notBefore,,) = root.keys(kid);
+        (uint8 status,, uint64 notBefore,,,) = root.keys(kid);
         if (status == ChitIssuerCodes.STATUS_NONE || status == ChitIssuerCodes.STATUS_REVOKED) return;
         if (reason != 1 && reason != 2 && reason != 3 && reason != 255) reason = 1;
         if (revokedAt < notBefore) revokedAt = notBefore;
@@ -97,7 +97,7 @@ contract ChitIssuerRootHandler is Test {
 
     function assertRevokesStick() external view {
         for (uint256 i = 0; i < revokedKids.length; i++) {
-            (uint8 status,,,,) = root.keys(revokedKids[i]);
+            (uint8 status,,,,,) = root.keys(revokedKids[i]);
             assertEq(status, ChitIssuerCodes.STATUS_REVOKED);
         }
     }
@@ -119,11 +119,16 @@ contract ChitIssuerRootHandler is Test {
     }
 
     function _was(bytes32 kid) internal view {
-        (uint8 status, bool wasActive,,,) = root.keys(kid);
+        (uint8 status, bool wasActive,,, uint64 revokedAt, uint64 activatedAt) = root.keys(kid);
         if (status == ChitIssuerCodes.STATUS_ACTIVE || status == ChitIssuerCodes.STATUS_RETIRED) {
             assertTrue(wasActive);
+            assertGt(activatedAt, 0);
         }
-        if (status == ChitIssuerCodes.STATUS_STANDBY) assertFalse(wasActive);
+        if (status == ChitIssuerCodes.STATUS_STANDBY) {
+            assertFalse(wasActive);
+            assertEq(activatedAt, 0);
+        }
+        revokedAt;
     }
 
     function _commit(ChitIssuerRoot.Op[] memory ops, ChitIssuerRoot.FreezeArg[] memory fz) internal returns (bool ok) {
@@ -158,7 +163,7 @@ contract ChitIssuerRootInvariantTest is Test {
 
     function invariant_rootSeqMatchesGhost() public view {
         assertEq(handler.root().rootSeq(), handler.ghostSeq());
-        if (handler.ghostSeq() == 0) assertEq(handler.root().rootHash(), bytes32(0));
+        if (handler.ghostSeq() == 0) assertTrue(handler.root().rootHash() != bytes32(0));
     }
 
     function invariant_revokeIrreversible() public view {

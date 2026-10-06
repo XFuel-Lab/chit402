@@ -23,16 +23,23 @@ contract ChitIssuerRootTest is Test {
     function test_constructorSeedsActiveKeyAndDoesNotCommit() public {
         assertEq(root.controller(), address(this));
         assertEq(root.rootSeq(), 0);
-        assertEq(root.rootHash(), bytes32(0));
+        assertEq(
+            root.rootHash(),
+            root.genesisRootHash(
+                block.chainid, address(root), address(this), GENESIS_KID, GENESIS_NOT_BEFORE, GENESIS_NOT_BEFORE, uint64(block.number)
+            )
+        );
         assertEq(root.supersededBy(), address(0));
         assertEq(root.ACTIVATION_DELAY(), 24 hours);
 
-        (uint8 status, bool wasActive, uint64 notBefore, uint64 notAfter, uint64 revokedAt) = root.keys(GENESIS_KID);
+        (uint8 status, bool wasActive, uint64 notBefore, uint64 notAfter, uint64 revokedAt, uint64 activatedAt) =
+            root.keys(GENESIS_KID);
         assertEq(status, ChitIssuerCodes.STATUS_ACTIVE);
         assertTrue(wasActive);
         assertEq(notBefore, GENESIS_NOT_BEFORE);
         assertEq(notAfter, 0);
         assertEq(revokedAt, 0);
+        assertEq(activatedAt, GENESIS_NOT_BEFORE);
 
         (bool ok, uint8 returned) = root.keyValidAt(GENESIS_KID, GENESIS_NOT_BEFORE);
         assertTrue(ok);
@@ -46,19 +53,28 @@ contract ChitIssuerRootTest is Test {
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         vm.recordLogs();
         vm.expectEmit(true, true, false, true, predicted);
-        emit ChitIssuerRoot.KeyActivated(kid, 0);
+        emit ChitIssuerRoot.KeyActivated(kid, 100, 0);
         ChitIssuerRoot fresh = new ChitIssuerRoot(address(this), kid, 100);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 fromContract;
+        bytes32 activatedTopic = keccak256("KeyActivated(bytes32,uint64,uint64)");
+        bytes32 seededTopic = keccak256("GenesisSeeded(address,bytes32,uint64,uint64,uint64,bytes32)");
+        bool sawActivated;
+        bool sawSeeded;
         for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].emitter == predicted) {
-                fromContract++;
-                assertEq(logs[i].topics[0], keccak256("KeyActivated(bytes32,uint64)"));
-            }
+            if (logs[i].emitter != predicted) continue;
+            fromContract++;
+            if (logs[i].topics[0] == activatedTopic) sawActivated = true;
+            if (logs[i].topics[0] == seededTopic) sawSeeded = true;
         }
-        assertEq(fromContract, 1);
+        assertEq(fromContract, 2);
+        assertTrue(sawActivated);
+        assertTrue(sawSeeded);
         assertEq(fresh.rootSeq(), 0);
-        assertEq(fresh.rootHash(), bytes32(0));
+        assertEq(
+            fresh.rootHash(),
+            fresh.genesisRootHash(block.chainid, address(fresh), address(this), kid, 100, 100, uint64(block.number))
+        );
     }
 
     function test_constructorRejectsZeroControllerAndZeroKid() public {
@@ -124,7 +140,7 @@ contract ChitIssuerRootTest is Test {
 
         vm.warp(notBefore);
         _commit(_op(ChitIssuerCodes.OP_PROMOTE, kid, 0, 0), 0, bytes32(0));
-        (uint8 status, bool wasActive,,,) = root.keys(kid);
+        (uint8 status, bool wasActive,,,,) = root.keys(kid);
         assertEq(status, ChitIssuerCodes.STATUS_ACTIVE);
         assertTrue(wasActive);
         (bool ok,) = root.keyValidAt(kid, notBefore);
@@ -159,7 +175,7 @@ contract ChitIssuerRootTest is Test {
         assertLt(uint256(revokedAt), block.timestamp);
         _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, revokedAt, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
 
-        (uint8 status, bool wasActive,,, uint64 stored) = root.keys(GENESIS_KID);
+        (uint8 status, bool wasActive,,, uint64 stored,) = root.keys(GENESIS_KID);
         assertEq(status, ChitIssuerCodes.STATUS_REVOKED);
         assertTrue(wasActive);
         assertEq(stored, revokedAt);
@@ -199,7 +215,7 @@ contract ChitIssuerRootTest is Test {
         uint64 notBefore = uint64(block.timestamp + 24 hours);
         _commit(_op(ChitIssuerCodes.OP_ADD_STANDBY, standby, notBefore, 0), 0, bytes32(0));
         _commit(_op(ChitIssuerCodes.OP_REVOKE, standby, notBefore, ChitIssuerCodes.REASON_OTHER), 0, bytes32(0));
-        (, bool wasActive,,,) = root.keys(standby);
+        (, bool wasActive,,,,) = root.keys(standby);
         assertFalse(wasActive);
         (bool ok,) = root.keyValidAt(standby, notBefore - 1);
         assertFalse(ok);
@@ -299,14 +315,17 @@ contract ChitIssuerRootTest is Test {
         ChitIssuerRoot.FreezeArg[] memory fz = new ChitIssuerRoot.FreezeArg[](1);
         fz[0] = ChitIssuerRoot.FreezeArg({universeId: universe, universeHash: uhash, enumeratedCount: 9});
 
-        bytes32 expected = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), ops, fz, 1, snap);
+        bytes32 prevHash = root.rootHash();
+        uint64 blockNumber = uint64(block.number);
+        bytes32 expected = _hashCommit(root, prevHash, blockNumber, ops, fz, 1, snap);
+        assertTrue(expected != _hashCommit(root, prevHash, blockNumber + 1, ops, fz, 1, snap));
 
         vm.expectEmit(true, true, false, true, address(root));
         emit ChitIssuerRoot.KeyStandby(standby, notBefore, 1);
         vm.expectEmit(true, true, false, true, address(root));
         emit ChitIssuerRoot.Frozen(universe, uhash, 9, uint64(block.number), 1);
         vm.expectEmit(true, false, false, true, address(root));
-        emit ChitIssuerRoot.RootCommitted(1, expected, 1, snap);
+        emit ChitIssuerRoot.RootCommitted(1, expected, 1, snap, blockNumber);
         root.commit(ops, fz, 1, snap);
 
         assertEq(root.rootSeq(), 1);
@@ -322,7 +341,7 @@ contract ChitIssuerRootTest is Test {
         vm.warp(notBefore);
 
         vm.expectEmit(true, true, false, true, address(root));
-        emit ChitIssuerRoot.KeyActivated(kid, 2);
+        emit ChitIssuerRoot.KeyActivated(kid, notBefore, 2);
         _commit(_op(ChitIssuerCodes.OP_PROMOTE, kid, 0, 0), 0, bytes32(0));
 
         vm.expectEmit(true, true, false, true, address(root));
@@ -369,24 +388,50 @@ contract ChitIssuerRootTest is Test {
 
     function test_rootHashBindsChainIdAndRegistry() public {
         ChitIssuerRoot.Op[] memory ops = _one(_op(ChitIssuerCodes.OP_RETIRE, GENESIS_KID, GENESIS_NOT_BEFORE, 0));
-        bytes32 first = root.commitmentHash(bytes32(0), 1, 84532, address(root), ops, _noFreezes(), 0, bytes32(0));
+        bytes32 firstPrev = root.rootHash();
+        bytes32 first = root.commitmentHash(firstPrev, 1, 84532, address(root), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         root.commit(ops, _noFreezes(), 0, bytes32(0));
         assertEq(root.rootHash(), first);
 
         ChitIssuerRoot other = new ChitIssuerRoot(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
-        bytes32 otherHash = other.commitmentHash(bytes32(0), 1, 84532, address(other), ops, _noFreezes(), 0, bytes32(0));
+        bytes32 otherHash =
+            other.commitmentHash(other.rootHash(), 1, 84532, address(other), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         assertTrue(otherHash != first);
         other.commit(ops, _noFreezes(), 0, bytes32(0));
         assertEq(other.rootHash(), otherHash);
 
-        bytes32 otherChain = root.commitmentHash(bytes32(0), 1, 8453, address(root), ops, _noFreezes(), 0, bytes32(0));
+        bytes32 otherChain =
+            root.commitmentHash(firstPrev, 1, 8453, address(root), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         assertTrue(otherChain != first);
 
         vm.chainId(8453);
         ChitIssuerRoot onOtherChain = new ChitIssuerRoot(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
+        bytes32 chainPrev = onOtherChain.rootHash();
         onOtherChain.commit(ops, _noFreezes(), 0, bytes32(0));
         assertTrue(onOtherChain.rootHash() != first);
-        assertEq(onOtherChain.rootHash(), onOtherChain.commitmentHash(bytes32(0), 1, 8453, address(onOtherChain), ops, _noFreezes(), 0, bytes32(0)));
+        _assertMatchesCommitment(onOtherChain, chainPrev, 8453, ops);
+    }
+
+    function _hashCommit(
+        ChitIssuerRoot r,
+        bytes32 prev,
+        uint64 blockNumber,
+        ChitIssuerRoot.Op[] memory ops,
+        ChitIssuerRoot.FreezeArg[] memory fz,
+        uint64 version,
+        bytes32 snap
+    ) internal view returns (bytes32) {
+        return r.commitmentHash(prev, 1, block.chainid, address(r), blockNumber, ops, fz, version, snap);
+    }
+
+    function _assertMatchesCommitment(ChitIssuerRoot r, bytes32 prev, uint256 chainId, ChitIssuerRoot.Op[] memory ops)
+        internal
+        view
+    {
+        assertEq(
+            r.rootHash(),
+            r.commitmentHash(prev, 1, chainId, address(r), uint64(block.number), ops, _noFreezes(), 0, bytes32(0))
+        );
     }
 
     function test_rootSeqIsMonotonicAcrossCommits() public {
@@ -409,8 +454,8 @@ contract ChitIssuerRootTest is Test {
         ChitIssuerRoot.Op[] memory backward = new ChitIssuerRoot.Op[](2);
         backward[0] = forward[1];
         backward[1] = forward[0];
-        bytes32 h1 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), forward, _noFreezes(), 0, bytes32(0));
-        bytes32 h2 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), backward, _noFreezes(), 0, bytes32(0));
+        bytes32 h1 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), 1, forward, _noFreezes(), 0, bytes32(0));
+        bytes32 h2 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), 1, backward, _noFreezes(), 0, bytes32(0));
         assertTrue(h1 != h2);
     }
 
@@ -473,22 +518,48 @@ contract ChitIssuerRootTest is Test {
         assertGt(address(root).code.length, 0);
     }
 
-    function test_keyStatePacksIntoOneSlot() public {
-        bytes32 raw = vm.load(address(root), keccak256(abi.encode(GENESIS_KID, KEYS_SLOT)));
-        uint256 word = uint256(raw);
+    function test_keyStateUsesTwoSlots() public {
+        bytes32 base = keccak256(abi.encode(GENESIS_KID, KEYS_SLOT));
+        uint256 word = uint256(vm.load(address(root), base));
         assertEq(uint8(word), ChitIssuerCodes.STATUS_ACTIVE);
         assertEq(uint8(word >> 8), 1);
         assertEq(uint64(word >> 16), GENESIS_NOT_BEFORE);
         assertEq(uint64(word >> 80), 0);
         assertEq(uint64(word >> 144), 0);
         assertEq(word >> 208, 0);
+        assertEq(uint64(uint256(vm.load(address(root), bytes32(uint256(base) + 1)))), GENESIS_NOT_BEFORE);
+    }
+
+    function test_latePromoteDoesNotBackdateAndRevokeStopsAtActivatedAt() public {
+        bytes32 kid = keccak256("late");
+        uint64 notBefore = uint64(block.timestamp + 24 hours);
+        _commit(_op(ChitIssuerCodes.OP_ADD_STANDBY, kid, notBefore, 0), 0, bytes32(0));
+        vm.warp(notBefore + 7 days);
+        _commit(_op(ChitIssuerCodes.OP_PROMOTE, kid, 0, 0), 0, bytes32(0));
+        uint64 activatedAt = uint64(block.timestamp);
+        (,,,,, uint64 storedActivated) = root.keys(kid);
+        assertEq(storedActivated, activatedAt);
+        (bool duringGap,) = root.keyValidAt(kid, notBefore);
+        assertFalse(duringGap);
+        (bool atPromotion,) = root.keyValidAt(kid, activatedAt);
+        assertTrue(atPromotion);
+
+        vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.RevokedAtBeforeStart.selector, notBefore, activatedAt));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, notBefore, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, activatedAt, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
+        (bool beforeRevoke,) = root.keyValidAt(kid, activatedAt - 1);
+        assertFalse(beforeRevoke);
+        (bool atRevokeBoundary,) = root.keyValidAt(kid, activatedAt);
+        assertFalse(atRevokeBoundary);
     }
 
     function test_offChainHelperMatchesRootHash() public {
         ChitIssuerRoot.Op memory op = _op(ChitIssuerCodes.OP_RETIRE, GENESIS_KID, GENESIS_NOT_BEFORE, 0);
         bytes32 snap = keccak256("helper");
+        bytes32 prev = root.rootHash();
+        uint64 blockNumber = uint64(block.number);
         _commit(op, 1, snap);
-        bytes32 js = _jsHash(bytes32(0), 1, address(root), op, 1, snap);
+        bytes32 js = _jsHash(prev, 1, address(root), blockNumber, op, 1, snap);
         assertEq(js, root.rootHash());
     }
 
@@ -561,7 +632,7 @@ contract ChitIssuerRootTest is Test {
     }
 
     function _assertTransition(ChitIssuerRoot r, bytes32 kid, uint8 opKind, uint64 ts) internal view {
-        (uint8 status,, uint64 nb, uint64 na, uint64 rv) = r.keys(kid);
+        (uint8 status,, uint64 nb, uint64 na, uint64 rv,) = r.keys(kid);
         if (opKind == 1) assertEq(status, ChitIssuerCodes.STATUS_STANDBY);
         if (opKind == 2) assertEq(status, ChitIssuerCodes.STATUS_ACTIVE);
         if (opKind == 3) {
@@ -642,11 +713,16 @@ contract ChitIssuerRootTest is Test {
         freezeArgs = new ChitIssuerRoot.FreezeArg[](0);
     }
 
-    function _jsHash(bytes32 prev, uint64 seq, address registry, ChitIssuerRoot.Op memory op, uint64 version, bytes32 snapshot)
-        internal
-        returns (bytes32)
-    {
-        string[] memory cmd = new string[](18);
+    function _jsHash(
+        bytes32 prev,
+        uint64 seq,
+        address registry,
+        uint64 blockNumber,
+        ChitIssuerRoot.Op memory op,
+        uint64 version,
+        bytes32 snapshot
+    ) internal returns (bytes32) {
+        string[] memory cmd = new string[](20);
         cmd[0] = "node";
         cmd[1] = "scripts/issuer-root.mjs";
         cmd[2] = "hash";
@@ -658,12 +734,14 @@ contract ChitIssuerRootTest is Test {
         cmd[8] = vm.toString(block.chainid);
         cmd[9] = "--registry";
         cmd[10] = vm.toString(registry);
-        cmd[11] = "--hist-version";
-        cmd[12] = vm.toString(version);
-        cmd[13] = "--hist-snapshot";
-        cmd[14] = vm.toString(snapshot);
-        cmd[15] = "--op";
-        cmd[16] = string.concat(
+        cmd[11] = "--block";
+        cmd[12] = vm.toString(blockNumber);
+        cmd[13] = "--hist-version";
+        cmd[14] = vm.toString(version);
+        cmd[15] = "--hist-snapshot";
+        cmd[16] = vm.toString(snapshot);
+        cmd[17] = "--op";
+        cmd[18] = string.concat(
             vm.toString(uint256(op.kind)),
             ",",
             vm.toString(op.kid),
@@ -672,11 +750,8 @@ contract ChitIssuerRootTest is Test {
             ",",
             vm.toString(uint256(op.reasonCode))
         );
-        cmd[17] = "";
-        // The CLI stops at flags; an empty trailing arg would be parsed as a command leftover.
-        // Drop it by copying into a 17-length array.
-        string[] memory trimmed = new string[](17);
-        for (uint256 i = 0; i < 17; i++) trimmed[i] = cmd[i];
+        string[] memory trimmed = new string[](19);
+        for (uint256 i = 0; i < 19; i++) trimmed[i] = cmd[i];
         bytes memory out = vm.ffi(trimmed);
         if (out.length == 32) return bytes32(out);
         uint256 n = out.length;

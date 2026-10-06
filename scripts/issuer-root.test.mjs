@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AbiCoder, keccak256 } from 'ethers';
 import {
+  COMMIT_DOMAIN,
   hashCommitment,
   kidToBytes32,
   legacyInclusionProof,
@@ -78,6 +79,7 @@ test('hashCommitment matches cast abi-encode + keccak', () => {
     rootSeq: 1n,
     chainId: 84532n,
     registry,
+    blockNumber: 99n,
     histVersion: 1n,
     histSnapshot: snapshot,
     ops: [{ kind: 1, kid, timestamp: 1788511925n, reasonCode: 0 }],
@@ -87,15 +89,17 @@ test('hashCommitment matches cast abi-encode + keccak', () => {
   const encoded = AbiCoder.defaultAbiCoder().encode(
     [
       'bytes32',
+      'bytes32',
       'uint64',
       'uint256',
       'address',
+      'uint64',
       'tuple(uint8,bytes32,uint64,uint8)[]',
       'tuple(bytes32,bytes32,uint64)[]',
       'uint64',
       'bytes32',
     ],
-    [prev, 1, 84532, registry, [[1, kid, 1788511925, 0]], [[universe, uhash, 3]], 1, snapshot],
+    [COMMIT_DOMAIN, prev, 1, 84532, registry, 99, [[1, kid, 1788511925, 0]], [[universe, uhash, 3]], 1, snapshot],
   );
   assert.equal(keccak256(encoded), js);
 
@@ -103,11 +107,13 @@ test('hashCommitment matches cast abi-encode + keccak', () => {
     'cast',
     [
       'abi-encode',
-      'f(bytes32,uint64,uint256,address,(uint8,bytes32,uint64,uint8)[],(bytes32,bytes32,uint64)[],uint64,bytes32)',
+      'f(bytes32,bytes32,uint64,uint256,address,uint64,(uint8,bytes32,uint64,uint8)[],(bytes32,bytes32,uint64)[],uint64,bytes32)',
+      COMMIT_DOMAIN,
       prev,
       '1',
       '84532',
       registry,
+      '99',
       `[(1,${kid},1788511925,0)]`,
       `[(${universe},${uhash},3)]`,
       '1',

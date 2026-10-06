@@ -68,7 +68,7 @@ contract ChitIssuerRootForkTest is SafeFixture {
         console2.log("FORK_GAS commit_op_freeze_tx", 21000 + _calldataGas(both) + bothGas);
 
         assertEq(root.rootSeq(), 2);
-        (uint8 status,,,,) = root.keys(standby);
+        (uint8 status,,,,,) = root.keys(standby);
         assertEq(status, ChitIssuerCodes.STATUS_STANDBY);
         (bytes32 uhash,,,) = root.freezes(universe);
         assertEq(uhash, keccak256("fork-merkle"));

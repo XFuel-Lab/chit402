@@ -1,10 +1,20 @@
 /**
  * Off-chain reference for ChitIssuerRoot.
  *
- * Commitment (matches `commitmentHash` / `commit`):
+ * Commit (matches `commitmentHash` / `commit`):
  *   keccak256(abi.encode(
- *     prevRootHash, rootSeq, chainId, registry,
+ *     COMMIT_DOMAIN, prevRootHash, rootSeq, chainId, registry, blockNumber,
  *     ops, freezes, histVersion, histSnapshot))
+ *   COMMIT_DOMAIN = keccak256("chit.issuerRoot.commit.v1")
+ *   blockNumber is uint64(block.number), and it is frozenBlock for every freeze.
+ *
+ * Genesis (matches `genesisRootHash` / the constructor):
+ *   keccak256(abi.encode(
+ *     GENESIS_DOMAIN, chainId, registry, controller,
+ *     genesisKid, genesisNotBefore, activatedAt, blockNumber))
+ *   GENESIS_DOMAIN = keccak256("chit.issuerRoot.genesis.v1")
+ *   Genesis sets activatedAt = genesisNotBefore and stores that hash as rootHash
+ *   at rootSeq 0. The first commit chains from it.
  *
  * Op tuple: (uint8 kind, bytes32 kid, uint64 timestamp, uint8 reasonCode)
  *   1 ADD_STANDBY  timestamp = notBefore, reasonCode = 0
@@ -48,11 +58,16 @@ export const REASON = Object.freeze({
 
 const coder = AbiCoder.defaultAbiCoder();
 
+export const COMMIT_DOMAIN = keccak256(Buffer.from('chit.issuerRoot.commit.v1'));
+export const GENESIS_DOMAIN = keccak256(Buffer.from('chit.issuerRoot.genesis.v1'));
+
 const COMMITMENT_TYPES = [
+  'bytes32',
   'bytes32',
   'uint64',
   'uint256',
   'address',
+  'uint64',
   'tuple(uint8 kind, bytes32 kid, uint64 timestamp, uint8 reasonCode)[]',
   'tuple(bytes32 universeId, bytes32 universeHash, uint64 enumeratedCount)[]',
   'uint64',
@@ -64,21 +79,40 @@ export function hashCommitment({
   rootSeq,
   chainId,
   registry,
+  blockNumber,
   ops,
   freezes,
   histVersion,
   histSnapshot,
 }) {
   const encoded = coder.encode(COMMITMENT_TYPES, [
+    COMMIT_DOMAIN,
     prevRootHash,
     rootSeq,
     chainId,
     registry,
+    blockNumber,
     (ops ?? []).map((op) => [op.kind, op.kid, op.timestamp, op.reasonCode]),
     (freezes ?? []).map((freeze) => [freeze.universeId, freeze.universeHash, freeze.enumeratedCount]),
     histVersion,
     histSnapshot,
   ]);
+  return keccak256(encoded);
+}
+
+export function hashGenesis({
+  chainId,
+  registry,
+  controller,
+  genesisKid,
+  genesisNotBefore,
+  activatedAt,
+  blockNumber,
+}) {
+  const encoded = coder.encode(
+    ['bytes32', 'uint256', 'address', 'address', 'bytes32', 'uint64', 'uint64', 'uint64'],
+    [GENESIS_DOMAIN, chainId, registry, controller, genesisKid, genesisNotBefore, activatedAt, blockNumber],
+  );
   return keccak256(encoded);
 }
 
@@ -305,6 +339,7 @@ function main(argv) {
       rootSeq: BigInt(argValue(argv, '--seq')),
       chainId: BigInt(argValue(argv, '--chain')),
       registry: argValue(argv, '--registry'),
+      blockNumber: BigInt(argValue(argv, '--block')),
       histVersion: BigInt(argValue(argv, '--hist-version')),
       histSnapshot: argValue(argv, '--hist-snapshot'),
       ops: argValues(argv, '--op').map(parseOp),
