@@ -1447,7 +1447,7 @@ export class ReceiptMerkleTree {
           anchor: this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from }),
         };
       }
-      return { released: true };
+      return this._blockedPublish(root, intent, 'prior_nonce_pending');
     }
     if (found?.replaced) {
       this._markIntent(intent, 'replaced', { tx: found.tx || intent.tx || null, reason: found.reason || 'nonce_consumed' });
@@ -1475,7 +1475,7 @@ export class ReceiptMerkleTree {
             anchor: this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from }),
           };
         }
-        return { released: true };
+        return this._blockedPublish(root, intent, 'prior_nonce_pending');
       }
       if (classifyAnchorSendError(err) === 'transient') {
         const failed = this._noteSendFailure(intent, err);
@@ -1493,10 +1493,20 @@ export class ReceiptMerkleTree {
       return this._blockedPublish(root, intent, failed.reason);
     }
     const seen = this._confirmed(confirmed, intent);
-    if (seen) {
+    if (seen === 'mined') {
       const anchor = this._anchoredFromConfirmation(intent, confirmed, seen);
       if (normalizeRoot(intent.root) === normalizeRoot(root)) return { done: true, anchor };
       return { released: true };
+    }
+    if (seen === 'mempool') {
+      this._markIntent(intent, 'broadcast', { tx: intent.tx, raw: intent.raw, from: intent.from, to: intent.to });
+      if (normalizeRoot(intent.root) === normalizeRoot(root)) {
+        return {
+          done: true,
+          anchor: this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from }),
+        };
+      }
+      return this._blockedPublish(root, intent, 'prior_nonce_pending');
     }
     this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx, from: intent.from, to: intent.to });
     return {
