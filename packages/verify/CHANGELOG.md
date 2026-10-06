@@ -3,6 +3,19 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.2 — Tree head signature and anchor wallets
+
+### Security
+- **`xfuel-verify --rpc` requires the tree head's ES256 issuer signature.** A missing, forged, or untrusted signature fails closed. The kid is trusted the same way as a receipt: the production pin, a JWKS key matched by kid, or a kid in a verified issuer-history document. The signed root, size, epoch, and anchors must match the head that was checked.
+- **The anchor transaction has to come from the wallet the issuer signed.** `anchors.base.from` is the Base sender and `anchors.solana.fee_payer` is the Solana fee payer. The verifier reads those accounts from the transaction and requires them to equal the signed values. A wallet that is not on the issuer's anchor-wallet list fails even when the sender matches. The list is the package pin (Base `0x1844D1F5FE42aff1Cce6F776514Fd40374079582`, Solana `BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD`), plus wallets in a verified `chit402.anchor_wallets.v1` document or in a verified issuer-history payload's `anchor_wallets`. The on-chain issuer-root registry and the DNS anchor are named and not queried.
+
+### Fixed
+- **`--rpc <url>` with a tree head enters anchor mode.** A head file is no longer read as a receipt (`Invalid receipt: missing task_id`). An unpublished head reports `not_yet_published` when the receipt and inclusion are present as well as when an input is missing.
+- **`--version` prints the package version** and exits 0.
+
+### Notes
+- Not published. The epoch 1 root `dd20e39a…`, the epoch 2 opening `f2043ee9…`, and the epoch record payload are unchanged.
+
 ## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
 
 ### Security

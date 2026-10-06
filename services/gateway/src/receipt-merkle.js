@@ -21,6 +21,7 @@ import {
   describeSolanaAnchor,
   parseAnchorMemo,
   solanaAnchorCluster,
+  solanaAnchorFeePayer,
   solanaAnchorMemo,
   ZERO_ROOT,
 } from './solana-receipt-anchor.js';
@@ -538,6 +539,7 @@ export function signPinnedClosedHead({
     slot: solana.slot ?? null,
     cluster: 'mainnet-beta',
     memo: historical ? EPOCH1_FINAL_SOLANA_MEMO : null,
+    fee_payer: solana.fee_payer || null,
     reason: null,
   };
   const claims = {
@@ -1067,7 +1069,7 @@ export class ReceiptMerkleTree {
           && parsed.bundle_index_hash === indexHash
         ));
       if (sameMemo) {
-        solana = { ...priorSolana };
+        solana = { ...priorSolana, fee_payer: priorSolana.fee_payer || solanaFeePayerOrNull() };
       } else {
         // This UTC day already has a memo. Do not send another.
         let memo = null;
@@ -1093,6 +1095,7 @@ export class ReceiptMerkleTree {
           slot: null,
           cluster,
           memo,
+          fee_payer: priorSolana.fee_payer || solanaFeePayerOrNull(),
           reason: 'day_already_anchored',
           prior_signature: priorSolana.signature,
         };
@@ -2381,6 +2384,15 @@ export function resetReceiptMerkleTree() {
   return _tree;
 }
 
+function solanaFeePayerOrNull() {
+  try {
+    return solanaAnchorFeePayer() || null;
+  } catch (err) {
+    if (err?.code === 'anchor_fee_payer_mismatch') throw err;
+    return null;
+  }
+}
+
 /**
  * Open the durable log and install it as the process tree.
  * Throws ReceiptLogRefused. A fresh genesis is minted only when the operator
@@ -2388,6 +2400,9 @@ export function resetReceiptMerkleTree() {
  */
 export function bootReceiptLog(dir, opts = {}) {
   resolveAnchorSender();
+  // A fee-payer env that disagrees with the Solana key refuses boot.
+  // A missing or unparsable key stays pending until publish, as before.
+  solanaFeePayerOrNull();
   const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
   const tree = new ReceiptMerkleTree();
   tree.durable = true;

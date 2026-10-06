@@ -70,7 +70,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
-| Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
+| Anchored receipt root | Yes, with `--rpc` | Issuer-signed tree head, inclusion, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
 | Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
 
@@ -86,7 +86,7 @@ counts only when the verifying key is trusted:
    production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
    `--trusted-kid`, or disable with `--no-trusted-kid`.
 
-The epoch record checked by `xfuel-verify receipt.json inclusion.json head.json --rpc` uses those same sources. An embedded epoch key still has to match the trusted-kid pin.
+The epoch record and the tree head checked by `xfuel-verify receipt.json inclusion.json head.json --rpc` use those same sources. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list (the package pin, or a verified `/.well-known/anchor-wallets.json`). The chain sender and fee payer must be those wallets. `--version` prints the package version.
 
 `issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
 arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),

@@ -33,6 +33,7 @@ const {
 
 const ENV_KEYS = [
   'SOLANA_ANCHOR_SECRET_KEY',
+  'SOLANA_ANCHOR_FEE_PAYER',
   'SOLANA_RPC_URL',
   'SOLANA_ANCHOR_CLUSTER',
   'RECEIPT_ANCHOR_PRIVATE_KEY',
@@ -173,6 +174,7 @@ test('unset Solana env stays pending and does not call the connection', async ()
     assert.equal(described.status, 'pending');
     assert.equal(described.reason, 'no_key');
     assert.equal(described.signature, null);
+    assert.equal(described.fee_payer, null);
     assert.equal(connection.sent.length, 0);
     assert.match(described.memo, /^chit402:root:v1:global:2026-09-30:/);
   });
@@ -196,6 +198,7 @@ test('mocked connection records signature, slot, cluster, and memo', async () =>
     assert.equal(head.anchors.solana.status, 'anchored');
     assert.equal(head.anchors.solana.cluster, 'devnet');
     assert.equal(head.anchors.solana.slot, 424242);
+    assert.equal(head.anchors.solana.fee_payer, base58Encode(kp.publicKey));
     assert.equal(head.anchors.base.status, 'pending');
     assert.equal(head.anchors.base.reason, 'no_key');
     assert.match(head.anchors.solana.memo, /^chit402:root:v2:global:2026-09-30:/);

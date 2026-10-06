@@ -10,6 +10,7 @@
  * it does not log the secret. A missing key or RPC leaves the head pending.
  */
 import crypto from 'crypto';
+import { ReceiptLogRefused } from './receipt-log-store.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PREFIX = 'chit402:root:v1';
@@ -303,15 +304,44 @@ export async function sendSolanaMemoAnchor({ memo, secretKey, rpc, connection })
   }
 }
 
-function pendingSolana(reason, { cluster = null, memo = null } = {}) {
+function pendingSolana(reason, { cluster = null, memo = null, fee_payer = null } = {}) {
   return {
     status: 'pending',
     signature: null,
     slot: null,
     cluster,
     memo,
+    fee_payer,
     reason,
   };
+}
+
+/**
+ * Solana fee payer for a new head. The secret key's public key wins.
+ * SOLANA_ANCHOR_FEE_PAYER may name that same account when the key is unset
+ * (a public pin) or must match it when both are set. A mismatch refuses.
+ * A key that does not parse refuses. No key and no env value returns null.
+ */
+export function solanaAnchorFeePayer(env = process.env) {
+  const raw = String(env.SOLANA_ANCHOR_FEE_PAYER || '').trim();
+  const key = String(env.SOLANA_ANCHOR_SECRET_KEY || '').trim();
+  let derived = null;
+  if (key) {
+    try {
+      const parsed = parseSolanaSecretKey(key);
+      derived = base58Encode(parsed.publicKey);
+      parsed.seed.fill(0);
+    } catch (err) {
+      throw new ReceiptLogRefused('anchor_key', `SOLANA_ANCHOR_SECRET_KEY is not a signing key: ${err.message}`);
+    }
+  }
+  if (raw && derived && raw !== derived) {
+    throw new ReceiptLogRefused(
+      'anchor_fee_payer_mismatch',
+      'SOLANA_ANCHOR_FEE_PAYER does not match SOLANA_ANCHOR_SECRET_KEY',
+    );
+  }
+  return derived || raw || null;
 }
 
 /**
@@ -346,10 +376,17 @@ export async function describeSolanaAnchor({
   } catch (err) {
     return pendingSolana(err.message || 'bad_memo', { cluster, memo });
   }
+  let feePayer = null;
+  try {
+    feePayer = solanaAnchorFeePayer();
+  } catch (err) {
+    if (err?.code === 'anchor_fee_payer_mismatch') throw err;
+    return pendingSolana('bad_key', { cluster, memo, fee_payer: null });
+  }
   const key = process.env.SOLANA_ANCHOR_SECRET_KEY || '';
   const rpc = process.env.SOLANA_RPC_URL || '';
-  if (!String(key).trim()) return pendingSolana('no_key', { cluster, memo });
-  if (!String(rpc).trim() && !connection) return pendingSolana('no_rpc', { cluster, memo });
+  if (!String(key).trim()) return pendingSolana('no_key', { cluster, memo, fee_payer: feePayer });
+  if (!String(rpc).trim() && !connection) return pendingSolana('no_rpc', { cluster, memo, fee_payer: feePayer });
   try {
     const result = await sendSolanaMemoAnchor({
       memo,
@@ -363,10 +400,11 @@ export async function describeSolanaAnchor({
       slot: result.slot ?? null,
       cluster,
       memo,
+      fee_payer: feePayer,
       reason: null,
     };
   } catch (err) {
     const reason = err.message || 'send_failed';
-    return pendingSolana(reason === 'no_key' ? 'bad_key' : reason, { cluster, memo });
+    return pendingSolana(reason === 'no_key' ? 'bad_key' : reason, { cluster, memo, fee_payer: feePayer });
   }
 }

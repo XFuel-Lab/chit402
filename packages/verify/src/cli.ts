@@ -16,6 +16,7 @@
  *   3 = input error
  */
 
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import {
   verifyReceipt,
@@ -23,6 +24,7 @@ import {
   isRefusalDocument,
   loadIssuerJwks,
   DEFAULT_TRUSTED_ISSUER_KIDS,
+  DEFAULT_TRUSTED_JWKS_HOSTS,
   type XFuelReceipt,
   type Jwks,
   type RefusalDocument,
@@ -38,7 +40,7 @@ import { type EpochRecord } from './epoch.js';
 import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
-import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
+import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 
 const HELP = `
@@ -69,14 +71,22 @@ Options:
   --check-payer       Query Base or Solana RPC. Base confirms payer, payee, asset, amount
   --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
   --rpc <url>         Base RPC URL (default: https://mainnet.base.org)
+  --version           Print @xfuel/verify version and exit
   --rpc               With a receipt, an inclusion proof, and a tree head: check the
                       leaf, then the Solana memo and the Base calldata for that root.
+                      The tree head must carry a valid ES256 issuer signature, and
+                      the anchor wallets must match the signed head.
                       A v2 head also needs the signed epoch record.
+                      A tree-head file with --rpc enters this mode.
   --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
   --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
                       origin plus /v1/receipts/tree/epoch
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
   --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
+  --anchor-wallets-file <path>
+                      Signed chit402.anchor_wallets.v1 document. Wallets in a
+                      verified document are added to the package pin. A head
+                      that names any other wallet fails.
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
   --strict-issuer-history
@@ -122,11 +132,16 @@ Anchored root:
   xfuel-verify receipt.json inclusion.json head.json --rpc
   xfuel-verify receipt.json --inclusion inclusion.json --head head.json --rpc https://mainnet.base.org
 
-  Checks the Merkle inclusion, fetches the Solana transaction and requires the
-  SPL Memo to contain the root, and checks the Base calldata the same way.
-  Prints what this proves and what it does not prove. Exit 0 when both chains
-  match, 2 when the leaf is included but an anchor is still pending, 1 when a
-  check fails.
+  Checks the tree head's ES256 issuer signature (production pin, issuer
+  history, or JWKS, same rules as a receipt). The signed root, size, epoch,
+  and anchors must match the head. Then it checks Merkle inclusion, requires
+  the Solana memo and fee payer, and requires the Base calldata and sender.
+  The sender and fee payer must be on the issuer anchor-wallet list (the
+  package pin, plus a verified /.well-known/anchor-wallets.json or
+  issuer-history anchor_wallets list). The on-chain issuer-root registry and
+  the DNS anchor are not read. Prints what this proves and what it does not
+  prove. Exit 0 when both chains match, 2 when the leaf is included but an
+  anchor is still pending, 1 when a check fails.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -183,6 +198,8 @@ function parseArgs(args: string[]): {
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
   noPreimage: boolean;
+  version: boolean;
+  anchorWalletsFile: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -210,11 +227,15 @@ function parseArgs(args: string[]): {
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
     noPreimage: false,
+    version: false,
+    anchorWalletsFile: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--help' || arg === '-h') {
+    if (arg === '--version' || arg === '-V') {
+      result.version = true;
+    } else if (arg === '--help' || arg === '-h') {
       result.help = true;
     } else if (arg === '--check-nullifier') {
       result.checkNullifier = true;
@@ -254,6 +275,8 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--anchor-wallets-file' && args[i + 1]) {
+      result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
     } else if (arg === '--json') {
@@ -332,15 +355,20 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('  Anchored receipt root');
   console.log('  ─────────────────────────────────────────────────');
   console.log(`  Root:          ${result.root || '—'}`);
+  console.log(`  Head signature:${result.head_signature.valid ? ' ✓ YES' : ' ✗ NO'}${result.head_signature.trust ? ` (${result.head_signature.trust})` : ''}`);
+  if (result.head_signature.kid) console.log(`  Head kid:      ${result.head_signature.kid}`);
+  if (result.head_signature.message) console.log(`  Head reason:   ${result.head_signature.message}`);
   console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}`);
   console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
   console.log(`  Solana:        ${result.solana.checked ? mark(result.solana.valid) : (result.solana.reason || 'not checked')}`);
   if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
   if (result.solana.slot != null) console.log(`  Slot:          ${result.solana.slot}`);
   if (result.solana.cluster) console.log(`  Cluster:       ${result.solana.cluster}`);
+  if (result.solana.fee_payer) console.log(`  Fee payer:     ${result.solana.fee_payer}`);
   if (result.solana.memo) console.log(`  Memo:          ${result.solana.memo}`);
   if (result.solana.reason && !result.solana.valid) console.log(`  Solana reason: ${result.solana.reason}`);
   console.log(`  Base:          ${result.base.checked ? mark(result.base.valid) : (result.base.reason || 'not checked')}`);
+  if (result.base.from) console.log(`  Base from:     ${result.base.from}`);
   if (result.base.tx) console.log(`  Base tx:       ${result.base.tx}`);
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
@@ -415,16 +443,99 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
   return false;
 }
 
+function packageVersion(): string {
+  const require = createRequire(__filename);
+  const pkg = require('../package.json') as { version?: string };
+  return pkg.version || '0.0.0';
+}
+
+function looksLikeTreeHead(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as { schema?: unknown; status?: unknown; anchors?: unknown; root?: unknown; task_id?: unknown };
+  if (doc.status === 'not_yet_published') return true;
+  if (typeof doc.schema === 'string' && doc.schema.startsWith('chit402.tree_head.')) return true;
+  return Boolean(doc.anchors && doc.root && !doc.task_id);
+}
+
+function fileLooksLikeHead(file: string | null): boolean {
+  if (!file) return false;
+  try {
+    return looksLikeTreeHead(readJson(file));
+  } catch {
+    return false;
+  }
+}
+
+function historyHostAllowed(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (parsed.protocol === 'http:' && parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return false;
+    if (parsed.protocol === 'https:') {
+      return DEFAULT_TRUSTED_JWKS_HOSTS.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadAnchorIssuerHistory(
+  args: ReturnType<typeof parseArgs>,
+  receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
+): Promise<IssuerHistoryDocument | null> {
+  if (args.issuerHistoryFile) {
+    return JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+  }
+  if (args.noIssuerHistory) return null;
+  const url = historyUrlFromReceipt(receipt);
+  if (!url || !historyHostAllowed(url)) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return null;
+    return await res.json() as IssuerHistoryDocument;
+  } catch {
+    return null;
+  }
+}
+
+async function loadAnchorWalletDocument(
+  args: ReturnType<typeof parseArgs>,
+  receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
+): Promise<Record<string, unknown> | null> {
+  if (args.anchorWalletsFile) {
+    return JSON.parse(readFileSync(args.anchorWalletsFile, 'utf8')) as Record<string, unknown>;
+  }
+  if (args.noIssuerHistory) return null;
+  const historyUrl = historyUrlFromReceipt(receipt);
+  const epochOrigin = (() => {
+    if (!args.epochUrl) return null;
+    try { return new URL(args.epochUrl).origin; } catch { return null; }
+  })();
+  const origin = epochOrigin || (historyUrl ? new URL(historyUrl).origin : null);
+  if (!origin) return null;
+  const url = `${origin}/.well-known/anchor-wallets.json`;
+  if (!historyHostAllowed(url)) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return await res.json() as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const receiptPath = args.file;
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
   const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
+  const headCandidates = [args.headFile, headPath, ...args.positionals];
+  if (headCandidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
+    console.error('Tree head is not_yet_published.');
+    return 3;
+  }
   if (!receiptPath || !inclusionPath || !headPath) {
-    const candidates = [args.headFile, headPath, ...args.positionals];
-    if (candidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
-      console.error('Tree head is not_yet_published.');
-      return 3;
-    }
     console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
     console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
     return 3;
@@ -440,6 +551,32 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     console.error(`Error reading anchor inputs: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
   }
+  let fileJwks: Jwks | undefined;
+  if (args.jwksFile) {
+    try {
+      fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+    } catch (err) {
+      console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
+    jwks: fileJwks,
+    jwksUri: args.jwksUrl || undefined,
+    fetchJwks: args.fetchJwks,
+  });
+  const trustedKids = args.noTrustedKid
+    ? []
+    : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+  let issuerHistory: IssuerHistoryDocument | null = null;
+  let anchorWalletDocument: Record<string, unknown> | null = null;
+  try {
+    issuerHistory = await loadAnchorIssuerHistory(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
+    anchorWalletDocument = await loadAnchorWalletDocument(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
+  } catch (err) {
+    console.error(`Error reading issuer trust files: ${err instanceof Error ? err.message : String(err)}`);
+    return 3;
+  }
   let epochRecord: EpochRecord | null = null;
   let verifyEpochSignature: ((jws: string) => boolean) | undefined;
   if (headNeedsEpochRecord(head)) {
@@ -449,23 +586,6 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       epochRecord = null;
     }
     if (epochRecord?.issuer_signature?.jws) {
-      let fileJwks: Jwks | undefined;
-      if (args.jwksFile) {
-        try {
-          fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
-        } catch (err) {
-          console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
-          return 3;
-        }
-      }
-      const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
-        jwks: fileJwks,
-        jwksUri: args.jwksUrl || undefined,
-        fetchJwks: args.fetchJwks,
-      });
-      const trustedKids = args.noTrustedKid
-        ? []
-        : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
       verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
     }
   }
@@ -477,6 +597,16 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     epochRecord,
     verifyEpochSignature,
+    jwks: loaded.jwks,
+    trustedKids,
+    issuerHistory,
+    strictIssuerHistory: args.strictIssuerHistory,
+    anchorWalletDocument: anchorWalletDocument as {
+      schema?: string;
+      base?: unknown;
+      solana?: unknown;
+      issuer_signature?: { jws?: string };
+    } | null,
   });
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
   const lane = verified.receipt_lane;
@@ -579,9 +709,16 @@ async function runRefusal(
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
-  const anchorMode = args.anchorFlag
+  if (args.version) {
+    console.log(`@xfuel/verify ${packageVersion()}`);
+    return 0;
+  }
+  let anchorMode = args.anchorFlag
     || Boolean(args.inclusionFile || args.headFile)
     || (args.positionals.length >= 3 && args.sawRpc);
+  if (!anchorMode && args.sawRpc && args.positionals.some((file) => fileLooksLikeHead(file))) {
+    anchorMode = true;
+  }
 
   if (args.help) {
     console.log(HELP);

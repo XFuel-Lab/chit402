@@ -1839,6 +1839,15 @@ export {
 } from './anchor-witness.js';
 
 export {
+  PINNED_BASE_ANCHOR_WALLET,
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  ANCHOR_WALLET_SOURCES_NOT_CONSULTED,
+  verifyTreeHeadTrust,
+  verifyAnchorWalletDocument,
+  compileAnchorWallets,
+} from './anchor-trust.js';
+
+export {
   verifyCanonicalPreimageBytes,
   CANONICAL_PAYLOAD_VERSION,
 } from './canonical-preimage.js';
