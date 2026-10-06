@@ -198,8 +198,11 @@ test('mocked connection records signature, slot, cluster, and memo', async () =>
     assert.equal(head.anchors.solana.slot, 424242);
     assert.equal(head.anchors.base.status, 'pending');
     assert.equal(head.anchors.base.reason, 'no_key');
-    assert.match(head.anchors.solana.memo, /^chit402:root:v1:global:2026-09-30:/);
-    assert.match(head.anchors.solana.memo, new RegExp(`${head.root}:${ZERO_ROOT}$`));
+    assert.match(head.anchors.solana.memo, /^chit402:root:v2:global:2026-09-30:/);
+    const memo = parseAnchorMemo(head.anchors.solana.memo);
+    assert.equal(memo.prev, ZERO_ROOT);
+    assert.equal(memo.epoch, 1);
+    assert.equal(memo.root, head.root);
     assert.equal(connection.sent.length, 1);
     assert.equal(connection.sent[0].includes(Buffer.from(head.anchors.solana.memo)), true);
     assert.equal(JSON.stringify(head).includes(kp.json), false);
@@ -274,7 +277,7 @@ test('a day that already anchored a different root is not sent again', async () 
       solanaConnection: connection,
     });
     assert.equal(connection.sent.length, 2);
-    assert.match(secondDay.anchors.solana.memo, new RegExp(`:${first.root}$`));
+    assert.equal(parseAnchorMemo(secondDay.anchors.solana.memo).prev, first.root);
     tree.appendReceipt('row-3', 'hash-3');
     const grown = await tree.publishHead({
       force: true,

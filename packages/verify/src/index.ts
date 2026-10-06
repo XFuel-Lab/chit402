@@ -1195,10 +1195,13 @@ function factsFromClaims(claims: Record<string, unknown> | undefined): {
   };
 }
 
-function issuerJwksUri(receipt: XFuelReceipt): string | null {
-  const fromVerification = receipt.verification?.jwks_uri;
+function issuerJwksUri(receipt: {
+  verification?: { jwks_uri?: string | null };
+  issuer_signature?: { jws?: string };
+} | null | undefined): string | null {
+  const fromVerification = receipt?.verification?.jwks_uri;
   if (typeof fromVerification === 'string' && fromVerification.startsWith('https://')) return fromVerification;
-  const jws = receipt.issuer_signature?.jws;
+  const jws = receipt?.issuer_signature?.jws;
   const header = jws ? readJwsHeader(jws) : null;
   if (header?.jku && header.jku.startsWith('https://')) return header.jku;
   return null;
@@ -1224,6 +1227,46 @@ function mergeJwks(primary?: Jwks, extra?: Jwks): Jwks | undefined {
     deduped.push(key);
   }
   return { keys: deduped };
+}
+
+/**
+ * Key sources shared by receipt verification and the epoch-record check:
+ * a caller-supplied JWKS, `--jwks-url` (any https URL), and `--fetch-jwks`
+ * from an allowlisted host. A failed fetch is an error. It does not add a key.
+ */
+export async function loadIssuerJwks(
+  source: {
+    verification?: { jwks_uri?: string | null };
+    issuer_signature?: { jws?: string };
+  } | null | undefined,
+  options: {
+    jwks?: Jwks;
+    jwksUri?: string;
+    fetchJwks?: boolean;
+    trustedJwksHosts?: readonly string[];
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<{ jwks?: Jwks; errors: string[] }> {
+  const errors: string[] = [];
+  let jwks = options.jwks;
+  const trustedHosts = options.trustedJwksHosts ?? DEFAULT_TRUSTED_JWKS_HOSTS;
+  if (options.jwksUri || options.fetchJwks) {
+    const uri = options.jwksUri || issuerJwksUri(source);
+    const allowed = !!uri && (options.jwksUri ? httpsUrl(uri) : jwksHostAllowed(uri, trustedHosts));
+    if (uri && allowed) {
+      try {
+        const fetched = await fetchIssuerJwks(uri, options.fetchImpl);
+        jwks = mergeJwks(jwks, fetched);
+      } catch (err) {
+        errors.push(`JWKS fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (options.jwksUri) {
+      errors.push('JWKS URI rejected — only https URLs are fetched');
+    } else if (options.fetchJwks && uri) {
+      errors.push(`JWKS host untrusted: ${uri}`);
+    }
+  }
+  return { jwks, errors };
 }
 
 /** Fetch a JWKS document. Caller decides whether the URL is a trust root. */
@@ -1363,23 +1406,15 @@ export async function verifyReceipt(
   const trustedKids = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const trustedHosts = options.trustedJwksHosts ?? DEFAULT_TRUSTED_JWKS_HOSTS;
 
-  let jwks = options.jwks;
-  if (options.jwksUri || options.fetchJwks) {
-    const uri = options.jwksUri || issuerJwksUri(receipt);
-    const allowed = !!uri && (options.jwksUri ? httpsUrl(uri) : jwksHostAllowed(uri, trustedHosts));
-    if (uri && allowed) {
-      try {
-        const fetched = await fetchIssuerJwks(uri, options.fetchImpl);
-        jwks = mergeJwks(jwks, fetched);
-      } catch (err) {
-        errors.push(`JWKS fetch failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    } else if (options.jwksUri) {
-      errors.push('JWKS URI rejected — only https URLs are fetched');
-    } else if (options.fetchJwks && uri) {
-      errors.push(`JWKS host untrusted: ${uri}`);
-    }
-  }
+  const loadedKeys = await loadIssuerJwks(receipt, {
+    jwks: options.jwks,
+    jwksUri: options.jwksUri,
+    fetchJwks: options.fetchJwks,
+    trustedJwksHosts: trustedHosts,
+    fetchImpl: options.fetchImpl,
+  });
+  const jwks = loadedKeys.jwks;
+  errors.push(...loadedKeys.errors);
 
   let issuer_signature: IssuerSignatureVerification;
   if (receipt.issuer_signature?.jws || receipt.issuer_signature?.value) {
@@ -1771,6 +1806,27 @@ export {
   requestDigestOfPreimage,
   type RequestBindingStatus,
 } from './request-binding.js';
+
+export {
+  acceptTreeHeadSchema,
+  verifyEpochLink,
+  verifyEpochRecord,
+  verifyEpochInclusion,
+  TREE_HEAD_SCHEMA_V1,
+  TREE_HEAD_SCHEMA_V2,
+  EPOCH1_FINAL_ROOT,
+  EPOCH1_FINAL_SIZE,
+  EPOCH1_GENESIS_DIGEST,
+  EPOCH1_SIZE1_ROOT,
+  EPOCH1_SIZE2_ROOT,
+  epoch1PrefixRoot,
+  matchEpoch1Prefix,
+  EPOCH2_OPENING_ROOT,
+  type EpochTreeHead,
+  type EpochRecord,
+  type EpochRecordEntry,
+  type EpochRecordOptions,
+} from './epoch.js';
 
 export {
   verifyAnchoredRoot,

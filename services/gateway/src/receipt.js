@@ -2211,6 +2211,17 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // A paid null claim_id stays cached until a book seat exists. Session
   // changes do not rewrite it. A legacy JWS that omits claim_id is not rewritten.
   let coveringHead = null;
+  // A stored JWS is reused. Assigning a new one (first seal, or a settlement
+  // update the cache does not already cover) must hit disk immediately when
+  // this task is a rehydrated snapshot: flushAll only walks the hot map.
+  const rememberIssuerSignature = (signature) => {
+    if (!persistSignature || !task || typeof task !== 'object' || !signature?.jws) return;
+    task.issuerSignature = signature;
+    if (typeof task.persistSignatureSnapshot === 'function') {
+      task.persistSignatureSnapshot();
+    }
+  };
+
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
   // Same idempotency key with a different request must not reuse this JWS.
   const receiptRequest = clientRequestBinding(draft);
@@ -2243,17 +2254,13 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         issuer_signature.jws = before;
       }
       coveringHead = refreshed.covering_head || null;
-      if (persistSignature && task && typeof task === 'object') {
-        task.issuerSignature = issuer_signature;
-        if (coveringHead) task.coveringHead = coveringHead;
-      }
+      if (coveringHead && task && typeof task === 'object') task.coveringHead = coveringHead;
+      rememberIssuerSignature(issuer_signature);
     }
   }
   if (!issuer_signature?.jws) {
     issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
-    if (persistSignature && task && typeof task === 'object') {
-      task.issuerSignature = issuer_signature;
-    }
+    rememberIssuerSignature(issuer_signature);
   }
   const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })

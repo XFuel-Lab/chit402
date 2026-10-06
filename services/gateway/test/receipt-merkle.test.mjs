@@ -59,7 +59,11 @@ test('signed tree head stays pending anchor without a house key', async () => {
     const tree = new ReceiptMerkleTree();
     tree.appendReceipt('solo', 'hh');
     const head = await tree.publishHead({ force: true });
-    assert.equal(head.schema, 'chit402.tree_head.v1');
+    assert.equal(head.schema, 'chit402.tree_head.v2');
+    assert.equal(head.payload_version, 2);
+    assert.equal(head.epoch, 1);
+    assert.equal(head.prev_epoch_root, null);
+    assert.equal(head.prev_root, '0'.repeat(64));
     assert.equal(head.anchor_status, 'pending');
     assert.equal(head.anchor.tx, null);
     assert.equal(head.anchor.from, process.env.RECEIPT_ANCHOR_FROM);
@@ -99,9 +103,11 @@ test('a sender hash is stored on the head, and a failed send stays pending', asy
       force: true,
       send: async () => '0x' + 'cd'.repeat(32),
     });
-    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(head.anchor.reason, 'unconfirmed');
     assert.equal(head.anchor.tx, '0x' + 'cd'.repeat(32));
-    assert.match(renderInclusionSection(tree.inclusion('anchored-row')), /anchored in Base tx/);
+    assert.match(head.anchor.from, /^0x[0-9a-fA-F]{40}$/);
+    assert.match(renderInclusionSection(tree.inclusion('anchored-row')), /pending anchor/);
     const failed = await tree.publishHead({
       force: true,
       send: async () => { throw new Error('rpc down'); },

@@ -49,6 +49,8 @@ function fixture() {
     proof: [{ hash: sibling.toString('hex'), position: 'left' }],
   };
   const head = {
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
     root,
     tree_size: 2,
     anchors: {

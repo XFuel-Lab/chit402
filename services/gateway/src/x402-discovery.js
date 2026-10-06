@@ -2232,9 +2232,9 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptTreeHead',
           summary: 'Latest signed receipt Merkle tree head',
-          description: 'Public. RFC 6962-style root over receipt leaves. anchors.base is a Base calldata transaction. anchors.solana is an SPL Memo. Each side stays pending until its key and RPC are set.',
+          description: 'Public read. Returns the latest signed head (chit402.tree_head.v2) or status not_yet_published. Does not publish or anchor. anchors.base is a Base calldata transaction. anchors.solana is an SPL Memo. Each side stays pending until its key and RPC are set.',
           tags: ['Receipts'],
-          responses: { 200: { description: 'chit402.tree_head.v1' } },
+          responses: { 200: { description: 'chit402.tree_head.v2, or not_yet_published' } },
         },
       },
       '/v1/receipts/tree/consistency': {

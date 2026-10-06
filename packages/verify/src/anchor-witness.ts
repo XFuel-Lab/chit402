@@ -8,6 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { BASE_RPC_URL } from './base-payer.js';
+import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -59,6 +60,9 @@ export interface AnchorInclusion {
 export interface AnchorHead {
   root: string;
   tree_size?: number;
+  epoch?: number | null;
+  prev_epoch_root?: string | null;
+  prev_epoch_size?: number | null;
   anchor_tx?: string | null;
   anchor?: { tx?: string | null; calldata?: string | null; chain_id?: number | null } | null;
   anchors?: {
@@ -156,18 +160,53 @@ export function verifyMerkleInclusion(
   return Buffer.from(hash).toString('hex') === String(rootHex).replace(/^0x/, '').toLowerCase();
 }
 
-export function parseAnchorMemo(memo: string): { scope: string; day: string; root: string; prev: string } | null {
-  const parts = String(memo || '').split(':');
-  if (parts.length !== 7) return null;
-  if (parts[0] !== 'chit402' || parts[1] !== 'root' || parts[2] !== 'v1') return null;
-  const scope = parts[3];
-  const day = parts[4];
-  const root = parts[5];
-  const prev = parts[6];
+export interface ParsedAnchorMemo {
+  version?: 1 | 2;
+  scope: string;
+  day: string;
+  root: string;
+  prev: string;
+  epoch?: number;
+  prev_epoch_root?: string;
+  prev_epoch_size?: number;
+  bundle_index_hash?: string;
+}
+
+function memoIdentity(scope: string, day: string, root: string, prev: string): ParsedAnchorMemo | null {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(scope)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
   if (!/^[0-9a-f]{64}$/.test(root) || !/^[0-9a-f]{64}$/.test(prev)) return null;
   return { scope, day, root, prev };
+}
+
+/** v1 memos stay valid. v2 adds epoch, prev_epoch_root, prev_epoch_size, and the bundle index hash. */
+export function parseAnchorMemo(memo: string): ParsedAnchorMemo | null {
+  const parts = String(memo || '').split(':');
+  if (parts[0] !== 'chit402' || parts[1] !== 'root') return null;
+  if (parts.length === 7 && parts[2] === 'v1') {
+    const base = memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+    return base ? { version: 1, ...base } : null;
+  }
+  if (parts.length === 11 && parts[2] === 'v2') {
+    const base = memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+    if (!base) return null;
+    const epoch = Number(parts[7]);
+    const prevEpoch = parts[8];
+    const size = Number(parts[9]);
+    const bundle = parts[10];
+    if (!Number.isInteger(epoch) || epoch < 1) return null;
+    if (!/^[0-9a-f]{64}$/.test(prevEpoch) || !/^[0-9a-f]{64}$/.test(bundle)) return null;
+    if (!Number.isInteger(size) || size < 0) return null;
+    return {
+      version: 2,
+      ...base,
+      epoch,
+      prev_epoch_root: prevEpoch,
+      prev_epoch_size: size,
+      bundle_index_hash: bundle,
+    };
+  }
+  return null;
 }
 
 function isMemoIx(ix: SolanaIx): boolean {
@@ -258,6 +297,8 @@ export interface VerifyAnchoredRootInput {
   fetchSolanaTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>;
   fetchGenesis?: (rpcUrl: string) => Promise<string>;
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
+  epochRecord?: EpochRecord | null;
+  verifyEpochSignature?: (jws: string) => boolean;
 }
 
 /**
@@ -314,6 +355,32 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
   if (!inclusionValid && inclusionReason) errors.push(inclusionReason);
+
+  let epochReason: string | undefined;
+  if (input.head?.epoch == null) {
+    const link = verifyEpochLink(input.head, null);
+    if (!link.ok) epochReason = link.reason || 'epoch_missing';
+  }
+  const needsEpoch = input.head?.epoch != null || input.epochRecord != null;
+  if (!epochReason && needsEpoch) {
+    if (!input.epochRecord) epochReason = 'epoch_record_missing';
+    else {
+      const checked = verifyEpochRecord(input.epochRecord, { verifySignature: input.verifyEpochSignature });
+      if (!checked.ok) epochReason = checked.reason || 'epoch_record';
+      else if (input.head?.epoch != null && Number(input.head.epoch) > 1) {
+        const prev = (input.epochRecord.epochs || []).find((row) => Number(row.epoch) === Number(input.head.epoch) - 1);
+        const link = verifyEpochLink(input.head, prev ? {
+          root: prev.final_root || prev.opening_root || null,
+          tree_size: prev.final_size ?? prev.opening_size ?? null,
+        } : null);
+        if (!link.ok) epochReason = link.reason || 'epoch_link';
+      } else if (input.head) {
+        const link = verifyEpochLink(input.head, null);
+        if (!link.ok) epochReason = link.reason || 'epoch_link';
+      }
+    }
+  }
+  if (epochReason) errors.push(epochReason);
 
   const solanaRpc = input.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL;
   const baseRpc = input.baseRpcUrl || BASE_RPC_URL;
@@ -417,7 +484,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
 
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
