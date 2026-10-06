@@ -11,7 +11,8 @@
  * only after the Safe has called `declareEpoch`. The Oct 5 reset, a size-1
  * root with no link to the size-4 head, is not an extension.
  */
-import { Wallet, JsonRpcProvider, Interface, keccak256 } from 'ethers';
+import { AbiCoder, Wallet, JsonRpcProvider, Interface, keccak256 } from 'ethers';
+import { EPOCH1_FINAL_ROOT } from './receipt-log-epoch.js';
 import logger from './logger.js';
 import { ReceiptLogRefused } from './receipt-log-store.js';
 import { consistencyProof, rootOf, verifyConsistency } from './receipt-merkle.js';
@@ -28,6 +29,67 @@ const iface = new Interface(WITNESS_ABI);
 
 /** Runtime code hash of ChitLogWitness at solc 0.8.24, optimizer 200. */
 export const CHIT_LOG_WITNESS_CODEHASH = '0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a';
+
+/**
+ * Creation (init) bytecode hash and length, without constructor args.
+ * A deployment is this init code plus abi.encode(owner, appender, 1, 4, dd20e39a…).
+ * The address and creation tx hash are empty until Christopher deploys.
+ * Boot and the verifier refuse a witness until both are set, because a
+ * matching runtime hash can be returned by other init code.
+ */
+export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901';
+export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 3613;
+export const CHIT_LOG_WITNESS_ADDRESS_PIN = null;
+export const CHIT_LOG_WITNESS_CREATION_TX_PIN = null;
+
+export function witnessCreationPin(env = process.env) {
+  const address = env.CHIT_LOG_WITNESS_ADDRESS || CHIT_LOG_WITNESS_ADDRESS_PIN || null;
+  const tx = env.CHIT_LOG_WITNESS_CREATION_TX || CHIT_LOG_WITNESS_CREATION_TX_PIN || null;
+  return { address, tx };
+}
+
+/**
+ * True when `input` is our creation bytecode plus the epoch-1 constructor
+ * args, and the receipt created `address`.
+ */
+export function witnessCreationMatches(input, receipt, address) {
+  const raw = String(input || '').toLowerCase();
+  if (!raw.startsWith('0x')) return { ok: false, reason: 'witness_creation_input' };
+  const body = raw.slice(2);
+  const prefixLen = CHIT_LOG_WITNESS_INIT_CODE_BYTES * 2;
+  if (body.length <= prefixLen) return { ok: false, reason: 'witness_creation_input' };
+  const prefix = `0x${body.slice(0, prefixLen)}`;
+  if (keccak256(prefix).toLowerCase() !== CHIT_LOG_WITNESS_INIT_CODE_HASH) {
+    return { ok: false, reason: 'witness_creation_input' };
+  }
+  let decoded;
+  try {
+    decoded = AbiCoder.defaultAbiCoder().decode(
+      ['address', 'address', 'uint256', 'uint256', 'bytes32'],
+      `0x${body.slice(prefixLen)}`,
+    );
+  } catch {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const epoch = Number(decoded[2]);
+  const size = Number(decoded[3]);
+  const root = String(decoded[4]).replace(/^0x/, '').toLowerCase();
+  if (epoch !== 1 || size !== 4 || root !== EPOCH1_FINAL_ROOT) {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  if (String(decoded[0]).toLowerCase() === '0x0000000000000000000000000000000000000000') {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const created = String(receipt?.contractAddress || '').toLowerCase();
+  if (!created || created !== String(address || '').toLowerCase()) {
+    return { ok: false, reason: 'witness_creation_address' };
+  }
+  const status = receipt?.status;
+  if (!(status === '0x1' || status === 1 || status === '0x01')) {
+    return { ok: false, reason: 'witness_creation_receipt' };
+  }
+  return { ok: true, owner: String(decoded[0]), appender: String(decoded[1]) };
+}
 
 export function witnessCodeMatches(bytecode) {
   const code = String(bytecode || '');
@@ -49,7 +111,7 @@ export function witnessRpcUrl(env = process.env) {
   return env.BASE_RPC_URL || env.SETTLEMENT_RPC_URL || null;
 }
 
-function witnessPrivateKey(env = process.env) {
+export function witnessPrivateKey(env = process.env) {
   return env.RECEIPT_WITNESS_PRIVATE_KEY || env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
 }
 
@@ -66,6 +128,19 @@ export function decodeHead(data) {
     size: Number(size),
     root: String(root).replace(/^0x/, '').toLowerCase(),
   };
+}
+
+export async function readWitnessCreation({ txHash, rpcUrl = witnessRpcUrl(), request = null } = {}) {
+  if (!txHash) return null;
+  const call = request || (async (rpc, method, params) => {
+    if (!rpc) throw new Error('no_rpc');
+    const provider = new JsonRpcProvider(rpc);
+    return provider.send(method, params);
+  });
+  const tx = await call(rpcUrl, 'eth_getTransactionByHash', [txHash]);
+  if (!tx) return null;
+  const receipt = await call(rpcUrl, 'eth_getTransactionReceipt', [txHash]);
+  return { input: tx.input || tx.data || null, hash: tx.hash || txHash, receipt };
 }
 
 export async function readWitnessCode({
@@ -343,6 +418,81 @@ export async function sendWitnessAppend(plan, {
     { ...base, status: 'broadcast', reason: 'unmined', tx },
     { readReceipt, readHead, rpcUrl, address: plan.to, request },
   );
+}
+
+/**
+ * Same recovery as the bare-root anchor: eth_getTransactionByHash of the
+ * stored keccak, then eth_getTransactionCount when that hash is missing.
+ * A missing hash whose nonce is still unused is rebroadcast as the same raw
+ * bytes. A nonce that was mined as something else is replaced.
+ */
+export async function lookupWitnessSubmission({
+  txHash = null,
+  nonce = null,
+  from = null,
+  to = null,
+  calldata = null,
+  rpcUrl = witnessRpcUrl(),
+  request = null,
+} = {}) {
+  const sender = String(from || witnessSignerAddress() || '').toLowerCase();
+  const dest = String(to || witnessAddress() || '').toLowerCase();
+  if (!sender || !dest) return { blocked: true, pending: true, reason: 'sender_unknown' };
+  const url = rpcUrl || '';
+  const call = request || (async (rpc, method, params) => {
+    if (!rpc) throw new Error('no_rpc');
+    const provider = new JsonRpcProvider(rpc);
+    return provider.send(method, params);
+  });
+  const classify = async (tx, hash) => {
+    const txFrom = String(tx.from || '').toLowerCase();
+    const txTo = String(tx.to || '').toLowerCase();
+    const txNonce = tx.nonce == null ? null : Number(tx.nonce);
+    const input = String(tx.input || tx.data || '').toLowerCase();
+    const wantInput = String(calldata || '').toLowerCase();
+    let receipt;
+    try {
+      receipt = await call(url, 'eth_getTransactionReceipt', [hash]);
+    } catch {
+      return { blocked: true, pending: true, reason: 'rpc_error', tx: hash };
+    }
+    if (!receipt) return { pending: true, blocked: true, tx: hash, reason: 'receipt_pending' };
+    const ok = receipt.status === '0x1' || receipt.status === 1 || receipt.status === '0x01';
+    const fromOk = txFrom === sender;
+    const toOk = txTo === dest;
+    const nonceOk = nonce == null || txNonce == null || txNonce === Number(nonce);
+    const inputOk = !wantInput || input === wantInput;
+    if (!ok) return { reverted: true, mined: true, tx: hash, reason: 'reverted' };
+    if (fromOk && toOk && nonceOk && inputOk) {
+      return { receiptOk: true, tx: hash, nonce: txNonce, from: txFrom, to: txTo };
+    }
+    return {
+      replaced: true,
+      mined: true,
+      tx: hash,
+      reason: !fromOk ? 'from_mismatch' : !toOk ? 'to_mismatch' : !inputOk ? 'calldata_replaced' : 'nonce_mismatch',
+    };
+  };
+  if (txHash) {
+    let tx;
+    try {
+      tx = await call(url, 'eth_getTransactionByHash', [txHash]);
+    } catch {
+      return { blocked: true, pending: true, reason: 'rpc_error' };
+    }
+    if (tx) return classify(tx, tx.hash || txHash);
+  }
+  if (nonce == null || !sender) return { blocked: true, pending: true, reason: 'nonce_unknown', tx: txHash };
+  let countRaw;
+  try {
+    countRaw = await call(url, 'eth_getTransactionCount', [sender, 'latest']);
+  } catch {
+    return { blocked: true, pending: true, reason: 'rpc_error', tx: txHash };
+  }
+  const count = Number(countRaw);
+  if (!Number.isInteger(count)) return { blocked: true, pending: true, reason: 'rpc_error', tx: txHash };
+  if (count <= Number(nonce)) return { missing: true, rebroadcast: true, tx: txHash, nonce: Number(nonce) };
+  return { replaced: true, reason: 'nonce_consumed', tx: txHash, nonce: Number(nonce) };
 }
 
 /** Boot refuses a shared anchor and appender key. The appender is a separate key. */

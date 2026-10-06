@@ -15,6 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 const {
   ReceiptMerkleTree,
+  finishReceiptLogBoot,
   leafHash,
   rootOf,
   inclusionProof,
@@ -233,19 +234,22 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
   process.env.RECEIPT_WITNESS_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'cd'.repeat(32)}`;
   const calls = [];
+  let signedTx = null;
   const fullRoot = rootOf(tree.leaves).toString('hex');
   let mined = false;
   try {
     const head = await tree.publishHead({
       force: true,
+      witnessReadNonce: async () => 3,
       send: async () => {
         calls.push('base');
         return `0x${'aa'.repeat(32)}`;
       },
       witnessSend: async (tx) => {
+        signedTx = tx;
         calls.push(tx.data);
         mined = true;
-        return `0x${'bb'.repeat(32)}`;
+        return tx.hash;
       },
       witnessReadHead: async () => (mined
         ? { epoch: 1, size: full, root: fullRoot }
@@ -258,7 +262,9 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
     assert.equal(appendCall.slice(0, 10), selector);
     assert.equal(head.anchors.base.calldata, `0x${head.root}`);
     assert.equal(head.anchors.witness.status, 'witnessed');
-    assert.equal(head.anchors.witness.tx, `0x${'bb'.repeat(32)}`);
+    const { keccak256 } = await import('ethers');
+    assert.equal(head.anchors.witness.tx, signedTx.hash);
+    assert.equal(signedTx.hash, keccak256(signedTx.raw));
     assert.equal(head.checkpoint.includes('chit402.com/receipt-log/1'), true);
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
     assert.equal(payload.checkpoint, undefined);
@@ -316,6 +322,7 @@ test('an unmined append is not signed, and the retry records it once head() matc
     const sends = [];
     const first = await tree.publishHead({
       force: true,
+      witnessReadNonce: async () => 3,
       send: async () => `0x${'aa'.repeat(32)}`,
       witnessSend: async () => {
         sends.push('send');
@@ -335,6 +342,7 @@ test('an unmined append is not signed, and the retry records it once head() matc
     const caught = await tree.publishHead({
       force: true,
       send: async () => `0x${'aa'.repeat(32)}`,
+      witnessLookup: async () => ({ receiptOk: true }),
       witnessSend: async () => {
         sends.push('again');
         return `0x${'cc'.repeat(32)}`;
@@ -362,6 +370,7 @@ test('a reverted append is not a signed witness', async () => {
     const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
     const head = await tree.publishHead({
       force: true,
+      witnessReadNonce: async () => 3,
       send: async () => `0x${'aa'.repeat(32)}`,
       witnessSend: async () => `0x${'bb'.repeat(32)}`,
       witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
@@ -406,6 +415,100 @@ test('a failed bare-root send does not advance the witness nonce', async () => {
   }
 });
 
+test('a crash after the witness raw tx is fsynced rebroadcasts those same bytes', async () => {
+  const restore = witnessEnv();
+  const dir = mkdtempSync(`${tmpdir()}/witness-crash-`);
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.dir = dir;
+    tree.appendReceipt('a', '1', { publish: false });
+    tree.appendReceipt('b', '2', { publish: false });
+    const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
+    let persisted = null;
+    await tree.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+      witnessSend: async (tx) => {
+        persisted = tree.anchorIntents.find((row) => row.chain === 'base-witness' && row.status === 'signed');
+        assert.equal(tx.raw, persisted.raw);
+        assert.equal(tx.hash, persisted.tx);
+        assert.equal(tx.nonce, 7);
+        throw new Error('crash_before_broadcast');
+      },
+    });
+    const { keccak256 } = await import('ethers');
+    assert.equal(persisted.tx, keccak256(persisted.raw));
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let resent = null;
+    await restored.publishHead({
+      force: true,
+      witnessReadNonce: async () => 99,
+      witnessLookup: async (intent) => {
+        assert.equal(intent.raw, persisted.raw);
+        assert.equal(intent.tx, persisted.tx);
+        assert.equal(intent.nonce, 7);
+        return { rebroadcast: true, missing: true, tx: intent.tx, nonce: 7 };
+      },
+      witnessSend: async (tx) => {
+        resent = tx.raw;
+        assert.equal(tx.hash, persisted.tx);
+        assert.equal(tx.nonce, 7);
+        return tx.hash;
+      },
+      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+      witnessReadReceipt: async () => null,
+    });
+    assert.equal(resent, persisted.raw);
+    const raws = new Set(restored.anchorIntents.filter((row) => row.chain === 'base-witness').map((row) => row.raw).filter(Boolean));
+    assert.deepEqual([...raws], [persisted.raw]);
+  } finally {
+    restore();
+  }
+});
+
+test('a witness nonce consumed by something else is replaced and the old raw is not sent again', async () => {
+  const restore = witnessEnv();
+  const dir = mkdtempSync(`${tmpdir()}/witness-replaced-`);
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.dir = dir;
+    tree.appendReceipt('a', '1', { publish: false });
+    tree.appendReceipt('b', '2', { publish: false });
+    const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
+    await tree.publishHead({
+      force: true,
+      witnessReadNonce: async () => 7,
+      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+      witnessSend: async () => {
+        throw new Error('crash_before_broadcast');
+      },
+    });
+    const first = tree.anchorIntents.find((row) => row.chain === 'base-witness' && row.status === 'signed');
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let resent = false;
+    const head = await restored.publishHead({
+      force: true,
+      witnessLookup: async () => ({ replaced: true, reason: 'nonce_consumed', tx: first.tx }),
+      witnessSend: async () => {
+        resent = true;
+        return `0x${'ff'.repeat(32)}`;
+      },
+      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+    });
+    assert.equal(resent, false);
+    assert.equal(head.witness_pending.status, 'replaced');
+    assert.equal(head.anchors.witness, undefined);
+    const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
+    assert.equal(payload.anchors.witness, undefined);
+    assert.equal(restored.anchorIntents.some((row) => row.chain === 'base-witness' && row.status === 'replaced' && row.nonce === 7), true);
+  } finally {
+    restore();
+  }
+});
+
 test('boot refuses a witness contract that is not this build', async () => {
   const tree = new ReceiptMerkleTree();
   tree.leaves = [leafHash(Buffer.from('genesis-only'))];
@@ -418,6 +521,19 @@ test('boot refuses a witness contract that is not this build', async () => {
     }),
     (err) => err instanceof ReceiptLogRefused && err.code === 'witness_code',
   );
+});
+
+test('boot refuses a witness when the creation transaction is not pinned', async () => {
+  const restore = witnessEnv();
+  try {
+    const tree = new ReceiptMerkleTree();
+    await assert.rejects(
+      () => finishReceiptLogBoot(tree, { witness: true }),
+      (err) => err instanceof ReceiptLogRefused && err.code === 'witness_creation_unpinned',
+    );
+  } finally {
+    restore();
+  }
 });
 
 test('boot refuses a witness key that is also the anchor key', () => {

@@ -4,12 +4,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { AbiCoder } from 'ethers';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const { verifyAnchoredRoot, verifyConsistency } = await import('../dist/anchor-witness.js');
-const runtimeCode = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures/chit-log-witness.runtime.hex'), 'utf8').trim();
+const fixtureDir = dirname(fileURLToPath(import.meta.url));
+const runtimeCode = readFileSync(join(fixtureDir, 'fixtures/chit-log-witness.runtime.hex'), 'utf8').trim();
+const initCode = readFileSync(join(fixtureDir, 'fixtures/chit-log-witness.init.hex'), 'utf8').trim();
+const CREATION_TX = `0x${'cd'.repeat(32)}`;
+
+function creationFor(address, input = null) {
+  const args = AbiCoder.defaultAbiCoder().encode(
+    ['address', 'address', 'uint256', 'uint256', 'bytes32'],
+    [
+      '0x1111111111111111111111111111111111111111',
+      '0x2222222222222222222222222222222222222222',
+      1,
+      4,
+      '0xdd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973',
+    ],
+  );
+  return {
+    input: input || `${initCode}${args.slice(2)}`,
+    receipt: { status: '0x1', contractAddress: address },
+  };
+}
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest();
@@ -57,7 +78,6 @@ test('without a witness address the contract is not checked and the run still ve
     head,
     fetchSolanaTx: async () => null,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${head.root}`, chainId: 8453 }),
-    fetchWitnessCode: async () => runtimeCode,
   });
   assert.equal(result.witness.configured, false);
   assert.equal(result.witness.checked, false);
@@ -74,6 +94,8 @@ test('a head that matches the contract is accepted, and a different root is not'
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 2, root }),
+    witnessCreationTx: CREATION_TX,
+    fetchWitnessCreation: async () => creationFor(address),
     fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
@@ -88,6 +110,8 @@ test('a head that matches the contract is accepted, and a different root is not'
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 2, root: 'ab'.repeat(32) }),
+    witnessCreationTx: CREATION_TX,
+    fetchWitnessCreation: async () => creationFor(address),
     fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
@@ -105,6 +129,8 @@ test('a larger head needs an RFC consistency proof from the stored head', async 
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 1, root: genesis }),
+    witnessCreationTx: CREATION_TX,
+    fetchWitnessCreation: async () => creationFor(address),
     fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
@@ -126,6 +152,8 @@ test('a larger head needs an RFC consistency proof from the stored head', async 
       proof,
     },
     fetchWitness: async () => ({ epoch: 1, size: 1, root: genesis }),
+    witnessCreationTx: CREATION_TX,
+    fetchWitnessCreation: async () => creationFor(address),
     fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
@@ -145,6 +173,24 @@ test('a contract whose code hash is not ChitLogWitness is not a witness', async 
   });
   assert.equal(result.witness.reason, 'witness_code');
   assert.equal(result.witness.valid, false);
+  assert.equal(result.overall, 'failed');
+});
+
+test('matching runtime code with other init code is not this constructor', async () => {
+  const { receipt, inclusion, head, root } = fixture();
+  const address = '0x' + '11'.repeat(20);
+  const result = await verifyAnchoredRoot({
+    receipt,
+    inclusion,
+    head,
+    witnessAddress: address,
+    witnessCreationTx: CREATION_TX,
+    fetchWitness: async () => ({ epoch: 1, size: 2, root }),
+    fetchWitnessCode: async () => runtimeCode,
+    fetchWitnessCreation: async () => creationFor(address, `0x${'ab'.repeat(3613)}`),
+    fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
+  });
+  assert.equal(result.witness.reason, 'witness_creation_input');
   assert.equal(result.overall, 'failed');
 });
 

@@ -7,7 +7,8 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
-import { Interface, keccak256 } from 'ethers';
+import { AbiCoder, Interface, keccak256 } from 'ethers';
+import { EPOCH1_FINAL_ROOT } from './epoch.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
@@ -258,6 +259,66 @@ const WITNESS_HEAD = new Interface([
 /** Runtime code hash of ChitLogWitness, solc 0.8.24, optimizer 200. */
 export const CHIT_LOG_WITNESS_CODEHASH = '0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a';
 
+/** Init code without constructor args. Address and creation tx are unset until deploy. */
+export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901';
+export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 3613;
+export const CHIT_LOG_WITNESS_ADDRESS_PIN: string | null = null;
+export const CHIT_LOG_WITNESS_CREATION_TX_PIN: string | null = null;
+
+export interface WitnessCreation {
+  input?: string | null;
+  hash?: string | null;
+  receipt?: { status?: string | number | null; contractAddress?: string | null } | null;
+}
+
+export function witnessCreationMatches(
+  input: string | null | undefined,
+  receipt: WitnessCreation['receipt'],
+  address: string,
+): { ok: boolean; reason?: string } {
+  const raw = String(input || '').toLowerCase();
+  if (!raw.startsWith('0x')) return { ok: false, reason: 'witness_creation_input' };
+  const body = raw.slice(2);
+  const prefixLen = CHIT_LOG_WITNESS_INIT_CODE_BYTES * 2;
+  if (body.length <= prefixLen) return { ok: false, reason: 'witness_creation_input' };
+  const prefix = `0x${body.slice(0, prefixLen)}`;
+  try {
+    if (keccak256(prefix).toLowerCase() !== CHIT_LOG_WITNESS_INIT_CODE_HASH) {
+      return { ok: false, reason: 'witness_creation_input' };
+    }
+  } catch {
+    return { ok: false, reason: 'witness_creation_input' };
+  }
+  let decoded: readonly [string, string, bigint, bigint, string];
+  try {
+    decoded = AbiCoder.defaultAbiCoder().decode(
+      ['address', 'address', 'uint256', 'uint256', 'bytes32'],
+      `0x${body.slice(prefixLen)}`,
+    ) as unknown as readonly [string, string, bigint, bigint, string];
+  } catch {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const epoch = Number(decoded[2]);
+  const size = Number(decoded[3]);
+  const root = String(decoded[4]).replace(/^0x/, '').toLowerCase();
+  if (epoch !== 1 || size !== 4 || root !== EPOCH1_FINAL_ROOT) return { ok: false, reason: 'witness_creation_args' };
+  if (String(decoded[0]).toLowerCase() === '0x0000000000000000000000000000000000000000') {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const created = String(receipt?.contractAddress || '').toLowerCase();
+  if (!created || created !== String(address || '').toLowerCase()) return { ok: false, reason: 'witness_creation_address' };
+  const status = receipt?.status;
+  if (!(status === '0x1' || status === 1 || status === '0x01')) return { ok: false, reason: 'witness_creation_receipt' };
+  return { ok: true };
+}
+
+export async function fetchWitnessCreation(txHash: string, rpcUrl: string): Promise<WitnessCreation | null> {
+  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { input?: string; hash?: string } | null;
+  if (!tx) return null;
+  const receipt = await defaultRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash]) as WitnessCreation['receipt'];
+  return { input: tx.input || null, hash: tx.hash || txHash, receipt: receipt || null };
+}
+
 export async function fetchWitnessCode(address: string, rpcUrl: string): Promise<string | null> {
   const code = await defaultRpc(rpcUrl, 'eth_getCode', [address, 'latest']) as string | null;
   return typeof code === 'string' ? code : null;
@@ -440,6 +501,8 @@ export interface VerifyAnchoredRootInput {
   } | null;
   fetchWitness?: (address: string, rpcUrl: string) => Promise<WitnessHead | null>;
   fetchWitnessCode?: (address: string, rpcUrl: string) => Promise<string | null>;
+  witnessCreationTx?: string | null;
+  fetchWitnessCreation?: (txHash: string, rpcUrl: string) => Promise<WitnessCreation | null>;
 }
 
 /**
@@ -651,11 +714,30 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       if (!witnessCodeMatches(code)) {
         witness.reason = 'witness_code';
         errors.push('witness:witness_code');
-        // A contract that is not this build is not a witness, even if head() matches.
+      }
+      const creationTx = input.witnessCreationTx
+        || process.env.CHIT_LOG_WITNESS_CREATION_TX
+        || CHIT_LOG_WITNESS_CREATION_TX_PIN;
+      const pinnedAddress = CHIT_LOG_WITNESS_ADDRESS_PIN;
+      if (!witness.reason && pinnedAddress && pinnedAddress.toLowerCase() !== witnessAddress.toLowerCase()) {
+        witness.reason = 'witness_address';
+        errors.push('witness:witness_address');
+      }
+      if (!witness.reason && !creationTx) {
+        witness.reason = 'witness_creation_unpinned';
+        errors.push('witness:witness_creation_unpinned');
+      } else if (!witness.reason && creationTx) {
+        const readCreation = input.fetchWitnessCreation || fetchWitnessCreation;
+        const created = await readCreation(creationTx, baseRpc);
+        const matched = witnessCreationMatches(created?.input, created?.receipt, witnessAddress);
+        if (!matched.ok) {
+          witness.reason = matched.reason || 'witness_creation';
+          errors.push(`witness:${witness.reason}`);
+        }
       }
       const read = input.fetchWitness || fetchWitnessHead;
-      const onchain = witness.reason === 'witness_code' ? null : await read(witnessAddress, baseRpc);
-      if (witness.reason === 'witness_code') {
+      const onchain = witness.reason ? null : await read(witnessAddress, baseRpc);
+      if (witness.reason) {
         // already recorded
       } else if (!onchain) {
         witness.reason = 'head_missing';

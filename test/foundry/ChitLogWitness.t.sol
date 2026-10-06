@@ -32,9 +32,12 @@ contract ChitLogWitnessTest is Test {
     // The same value is pinned in the gateway and in the verify package.
     bytes32 internal constant CHIT_LOG_WITNESS_CODEHASH =
         0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a;
+    bytes32 internal constant CHIT_LOG_WITNESS_INIT_CODE_HASH =
+        0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901;
 
-    function test_runtimeCodeIsPinned() public view {
-        assertEq(keccak256(address(witness).code), CHIT_LOG_WITNESS_CODEHASH);
+    function test_runtimeCodeIsPinned() public pure {
+        assertEq(keccak256(type(ChitLogWitness).runtimeCode), CHIT_LOG_WITNESS_CODEHASH);
+        assertEq(keccak256(type(ChitLogWitness).creationCode), CHIT_LOG_WITNESS_INIT_CODE_HASH);
     }
 
     function test_pinsMatchTheReceiptLog() public view {

@@ -19,7 +19,17 @@ The appender is a separate key from the Safe and from the bare-root anchor key. 
 
 A witness transaction is `broadcast` until a mined receipt succeeds and `head()` on the contract equals that size and root. Only then is it `witnessed`, and only then does the signed head include it. A reverted transaction is `reverted` and is not a signed claim. The daily retry looks at that witness side as well as Base and Solana.
 
-The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. Any other genesis reverts. `xfuel-verify --rpc --witness` also checks the runtime code hash of this build (`0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a`, solc 0.8.24, optimizer 200). A different contract at that address is not a witness.
+The append uses the same durable path as the bare-root anchor. The gateway signs the type-2 transaction, fsyncs those raw bytes and their keccak hash, and only then broadcasts. A crash after that fsync rebroadcasts the same bytes. Recovery is `eth_getTransactionByHash`, then `eth_getTransactionCount` on a standard RPC. If the nonce is still unused, the same raw transaction is sent again. If something else consumed the nonce, the intent is `replaced` and those bytes are not sent again. Journaling only the nonce is not enough: a second signature at nonce N would be a different transaction.
+
+The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. Any other genesis reverts.
+
+A runtime code hash is not enough. Custom init code can return this contract's runtime bytecode and write any storage, so the constructor never ran. The check that binds the deployment is the creation transaction, not a log. `xfuel-verify --rpc --witness` and gateway boot require:
+
+- the runtime code hash of this build, `0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a`
+- the creation bytecode hash `0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901` (3,613 bytes, solc 0.8.24, optimizer 200)
+- `CHIT_LOG_WITNESS_ADDRESS` and `CHIT_LOG_WITNESS_CREATION_TX`
+
+The creation transaction must be a contract creation. Its input must be that init code plus `abi.encode(owner, appender, 1, 4, dd20e39a…)`. The receipt's `contractAddress` must be the pinned address, and the receipt must have succeeded. Owner and appender are whatever that transaction used. Epoch, size, and root are fixed. Those two pins are empty in this build, because nothing has been deployed. Until both are set, `--witness` and a boot with `RECEIPT_LOG_WITNESS=1` fail `witness_creation_unpinned`. They do not treat a matching runtime hash as proof. An event in the receipt would not be enough: other init code can emit the same log.
 
 Events `HeadAppended` and `EpochDeclared` carry the size and the root. A reader with the leaves can rebuild the consistency proof and compare it to the sequence of heads on the chain. The event does not contain the proof nodes.
 

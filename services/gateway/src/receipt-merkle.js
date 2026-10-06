@@ -439,6 +439,38 @@ async function feesFromSignedRaw(raw, fallback) {
   return fallback || FIXED_ANCHOR_FEES;
 }
 
+/**
+ * Sign the witness `append` call. Same type-2 fee shape as the bare-root
+ * anchor. The caller fsyncs `raw` and `hash` before broadcast. `hash` is
+ * keccak256 of those exact bytes, which recovery rebroadcasts.
+ * Chain id is 8453 unless BASE_CHAIN_ID is set (84532 for a Sepolia dry run).
+ */
+export async function signWitnessAppendRaw({
+  privateKey,
+  nonce,
+  to,
+  calldata,
+  fees = null,
+  chainId = null,
+}) {
+  const { Wallet, keccak256 } = await import('ethers');
+  const wallet = new Wallet(privateKey);
+  const fee = fees || FIXED_ANCHOR_FEES;
+  const chain = chainId == null ? Number(process.env.BASE_CHAIN_ID || 8453) : Number(chainId);
+  const raw = await wallet.signTransaction({
+    to,
+    value: 0n,
+    data: calldata,
+    nonce: Number(nonce),
+    chainId: chain,
+    type: 2,
+    gasLimit: fee.gasLimit,
+    maxFeePerGas: fee.maxFeePerGas,
+    maxPriorityFeePerGas: fee.maxPriorityFeePerGas,
+  });
+  return { raw, hash: keccak256(raw), from: wallet.address, to };
+}
+
 async function baseAnchorFees(request) {
   const url = baseRpcUrl();
   if (!url && !request) return FIXED_ANCHOR_FEES;
@@ -464,7 +496,7 @@ async function baseAnchorFees(request) {
   };
 }
 
-async function broadcastBaseRaw(raw) {
+export async function broadcastBaseRaw(raw) {
   const rpc = baseRpcUrl();
   if (!rpc) throw new Error('no_rpc');
   const { JsonRpcProvider } = await import('ethers');
@@ -820,7 +852,7 @@ export function dailyAnchorDue(head, now = new Date()) {
   const base = head.anchors?.base || head.anchor;
   const sol = head.anchors?.solana;
   const witness = witnessSide(head);
-  const witnessBusy = witness && (witness.status === 'broadcast' || witness.status === 'reverted' || witness.status === 'failed');
+  const witnessBusy = witness && ['broadcast', 'reverted', 'failed', 'signed', 'blocked', 'replaced'].includes(witness.status);
   if (!transportFailure(base) && !transportFailure(sol) && !witnessBusy) return true;
   const age = now.getTime() - Date.parse(head.published_at);
   if (Number.isFinite(age) && age >= 0 && age < ANCHOR_RETRY_MS) return false;
@@ -1121,6 +1153,7 @@ export class ReceiptMerkleTree {
     witnessReadHead = null,
     witnessReadReceipt = null,
     witnessReadNonce = null,
+    witnessLookup = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -1302,6 +1335,8 @@ export class ReceiptMerkleTree {
       witnessReadHead,
       witnessReadReceipt,
       witnessReadNonce,
+      witnessLookup,
+      request,
     });
     // An unconfirmed witness is not a signed claim. `broadcast`, `reverted`,
     // and `failed` stay on `witness_pending`, outside the JWS.
@@ -1369,11 +1404,10 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * Daily witness append. The bare-root transfer stays on anchors.base.
-   * The witness nonce is the appender's pending nonce, reserved in the
-   * journal before send. It is not `reserved.nonce + 1`: a bare-root send
-   * that never landed did not consume that nonce.
-   * Returns null when RECEIPT_LOG_WITNESS is not `1`.
+   * Daily witness append. Signs the append, fsyncs the raw transaction and
+   * its keccak hash, then broadcasts those same bytes. A crash before
+   * broadcast rebroadcasts that raw transaction. A nonce taken by something
+   * else is `replaced`. Returns null when RECEIPT_LOG_WITNESS is not `1`.
    */
   async _witnessAppend({
     root,
@@ -1382,27 +1416,28 @@ export class ReceiptMerkleTree {
     witnessReadHead = null,
     witnessReadReceipt = null,
     witnessReadNonce = null,
+    witnessLookup = null,
+    request = null,
   }) {
     const {
       planWitnessAppend,
-      sendWitnessAppend,
       confirmWitnessAppend,
       receiptWitnessEnabled,
+      witnessPrivateKey,
     } = await import('./receipt-log-witness.js');
     if (!receiptWitnessEnabled()) return null;
     const pending = this._latestWitnessIntent(root, day);
-    if (pending?.tx && (pending.status === 'broadcast' || pending.status === 'intent')) {
-      const confirmed = await confirmWitnessAppend({
-        tx: pending.tx,
-        newSize: this.leaves.length,
-        newRoot: root,
-        to: pending.to || null,
-        calldata: pending.calldata || null,
-      }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
-      this._noteWitnessIntent({ ...pending, ...confirmed });
-      if (confirmed.status === 'broadcast' || confirmed.status === 'witnessed') {
-        return publicWitness(confirmed);
-      }
+    if (pending?.raw && pending.tx && !['replaced', 'reverted', 'witnessed'].includes(pending.status)) {
+      const resumed = await this._resumeWitnessIntent(pending, {
+        root,
+        day,
+        witnessSend,
+        witnessReadHead,
+        witnessReadReceipt,
+        witnessLookup,
+        request,
+      });
+      if (resumed) return resumed;
     }
     const plan = await planWitnessAppend(this, root, {
       readHead: witnessReadHead || undefined,
@@ -1410,44 +1445,237 @@ export class ReceiptMerkleTree {
     if (!plan) return null;
     if (plan.status !== 'ready') return publicWitness(plan);
     const nonce = await this._witnessNonce({ root, day, readNonce: witnessReadNonce });
-    const sent = await sendWitnessAppend(plan, {
-      nonce,
-      send: witnessSend,
-      readReceipt: witnessReadReceipt,
-      readHead: witnessReadHead,
-    });
-    this._noteWitnessIntent({
+    if (nonce == null) return publicWitness({ status: 'pending', reason: 'nonce_unknown', to: plan.to });
+    const key = witnessPrivateKey();
+    if (!key) return publicWitness({ status: 'pending', reason: 'no_key', to: plan.to });
+    let signed;
+    try {
+      const fees = typeof witnessSend === 'function' ? null : await baseAnchorFees(request);
+      signed = await signWitnessAppendRaw({
+        privateKey: key,
+        nonce,
+        to: plan.to,
+        calldata: plan.calldata,
+        fees,
+      });
+    } catch (err) {
+      return publicWitness({ status: 'failed', reason: err.message || 'sign_failed', to: plan.to });
+    }
+    const signedIntent = this._noteWitnessIntent({
       root,
       day,
       nonce,
-      tx: sent.tx,
-      status: sent.status,
-      to: sent.to,
-      calldata: sent.calldata,
+      tx: signed.hash,
+      raw: signed.raw,
+      status: 'signed',
+      to: signed.to,
+      from: signed.from,
+      calldata: plan.calldata,
     });
-    return publicWitness(sent);
+    try {
+      if (typeof witnessSend === 'function') {
+        await witnessSend({
+          to: signed.to,
+          from: signed.from,
+          data: plan.calldata,
+          raw: signed.raw,
+          hash: signed.hash,
+          nonce,
+          value: '0',
+        });
+      } else {
+        await broadcastBaseRaw(signed.raw);
+      }
+    } catch (err) {
+      return publicWitness({
+        status: 'signed',
+        reason: err.message || 'send_failed',
+        to: signed.to,
+        tx: signed.hash,
+        raw: signed.raw,
+        calldata: plan.calldata,
+      });
+    }
+    this._noteWitnessIntent({ ...signedIntent, status: 'broadcast', raw: signed.raw, tx: signed.hash });
+    const confirmed = await confirmWitnessAppend({
+      tx: signed.hash,
+      newSize: this.leaves.length,
+      newRoot: root,
+      to: signed.to,
+      calldata: plan.calldata,
+      raw: signed.raw,
+    }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
+    this._noteWitnessIntent({
+      ...signedIntent,
+      ...confirmed,
+      raw: signed.raw,
+      tx: signed.hash,
+    });
+    return publicWitness({ ...confirmed, raw: signed.raw, tx: signed.hash });
+  }
+
+  async _resumeWitnessIntent(intent, {
+    root,
+    day,
+    witnessSend,
+    witnessReadHead,
+    witnessReadReceipt,
+    witnessLookup,
+    request,
+  }) {
+    const {
+      confirmWitnessAppend,
+      lookupWitnessSubmission,
+    } = await import('./receipt-log-witness.js');
+    let found;
+    try {
+      found = typeof witnessLookup === 'function'
+        ? await witnessLookup(intent)
+        : await lookupWitnessSubmission({
+          txHash: intent.tx,
+          nonce: intent.nonce,
+          from: intent.from,
+          to: intent.to,
+          calldata: intent.calldata,
+          request,
+        });
+    } catch (err) {
+      this._noteWitnessIntent({ ...intent, status: 'blocked', reason: err.message || 'rpc_error' });
+      return publicWitness({
+        status: 'blocked',
+        reason: err.message || 'rpc_error',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.receiptOk === true) {
+      const confirmed = await confirmWitnessAppend({
+        tx: intent.tx,
+        newSize: this.leaves.length,
+        newRoot: root,
+        to: intent.to,
+        calldata: intent.calldata,
+        raw: intent.raw,
+      }, {
+        readReceipt: async () => ({ status: '0x1' }),
+        readHead: witnessReadHead,
+      });
+      this._noteWitnessIntent({ ...intent, ...confirmed, raw: intent.raw, tx: intent.tx });
+      return publicWitness({ ...confirmed, raw: intent.raw, tx: intent.tx });
+    }
+    if (found?.reverted) {
+      this._noteWitnessIntent({ ...intent, status: 'reverted', raw: intent.raw, tx: found.tx || intent.tx });
+      return publicWitness({
+        status: 'reverted',
+        reason: 'reverted',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.replaced) {
+      this._noteWitnessIntent({ ...intent, status: 'replaced', raw: intent.raw, tx: found.tx || intent.tx });
+      return publicWitness({
+        status: 'replaced',
+        reason: found.reason || 'nonce_consumed',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.pending || found?.blocked) {
+      const status = found.blocked ? 'blocked' : 'broadcast';
+      this._noteWitnessIntent({ ...intent, status, raw: intent.raw, tx: intent.tx });
+      return publicWitness({
+        status,
+        reason: found.reason || 'unmined',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.rebroadcast) {
+      if (!intent.raw) {
+        this._noteWitnessIntent({ ...intent, status: 'blocked' });
+        return publicWitness({ status: 'blocked', reason: 'signed_raw_missing', tx: intent.tx, to: intent.to });
+      }
+      try {
+        if (typeof witnessSend === 'function') {
+          await witnessSend({
+            to: intent.to,
+            from: intent.from,
+            data: intent.calldata,
+            raw: intent.raw,
+            hash: intent.tx,
+            nonce: intent.nonce,
+            value: '0',
+          });
+        } else {
+          await broadcastBaseRaw(intent.raw);
+        }
+      } catch (err) {
+        this._noteWitnessIntent({ ...intent, status: 'blocked', raw: intent.raw });
+        return publicWitness({
+          status: 'blocked',
+          reason: err.message || 'rebroadcast_failed',
+          to: intent.to,
+          tx: intent.tx,
+          raw: intent.raw,
+          calldata: intent.calldata,
+        });
+      }
+      this._noteWitnessIntent({ ...intent, status: 'broadcast', raw: intent.raw, tx: intent.tx });
+      const confirmed = await confirmWitnessAppend({
+        tx: intent.tx,
+        newSize: this.leaves.length,
+        newRoot: root,
+        to: intent.to,
+        calldata: intent.calldata,
+        raw: intent.raw,
+      }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
+      this._noteWitnessIntent({ ...intent, ...confirmed, raw: intent.raw, tx: intent.tx });
+      return publicWitness({ ...confirmed, raw: intent.raw, tx: intent.tx });
+    }
+    this._noteWitnessIntent({ ...intent, status: 'blocked', raw: intent.raw });
+    return publicWitness({
+      status: 'blocked',
+      reason: found?.reason || 'witness_intent_blocked',
+      to: intent.to,
+      tx: intent.tx,
+      raw: intent.raw,
+      calldata: intent.calldata,
+    });
   }
 
   _latestWitnessIntent(root, day) {
     const rows = (this.anchorIntents || []).filter((row) => (
-      row.chain === 'base-witness' && row.root === root && row.day === day
+      row.chain === 'base-witness' && row.root === root && (day == null || row.day === day)
     ));
-    return rows.length ? rows[rows.length - 1] : null;
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => ({
+      ...acc,
+      ...row,
+      raw: row.raw || acc.raw || null,
+      tx: row.tx || acc.tx || null,
+      from: row.from || acc.from || null,
+      to: row.to || acc.to || null,
+      calldata: row.calldata || acc.calldata || null,
+    }));
   }
 
   /**
-   * Reserve the appender's pending nonce and fsync it before broadcast.
-   * A reusable intent for this root keeps its nonce so a crash does not
-   * burn a second one. The bare-root reservation is a different account
-   * when the appender key is separate, and it is not added to.
+   * Reserve the appender's pending nonce and fsync it before the signature.
+   * A signed raw transaction for this root is not given a new nonce.
    */
   async _witnessNonce({ root, day, readNonce }) {
     const prior = this._latestWitnessIntent(root, day);
-    // Reuse only a nonce that was reserved and not broadcast. A mined
-    // revert or a failed head check already consumed that nonce.
-    if (prior && prior.nonce != null && !prior.tx && prior.status === 'intent') {
-      return prior.nonce;
-    }
+    if (prior?.raw && prior.tx && !['replaced', 'reverted'].includes(prior.status)) return prior.nonce;
+    if (prior && prior.nonce != null && !prior.tx && prior.status === 'intent') return prior.nonce;
     let nonce = null;
     if (typeof readNonce === 'function') nonce = await readNonce();
     else {
@@ -1464,7 +1692,12 @@ export class ReceiptMerkleTree {
         nonce = null;
       }
     }
-    if (nonce == null || !this.dir) return nonce;
+    if (nonce == null) return null;
+    if (prior?.status === 'replaced' || prior?.status === 'reverted') {
+      const taken = Number(prior.nonce);
+      if (Number.isInteger(taken) && Number(nonce) <= taken) nonce = taken + 1;
+    }
+    if (!this.dir) return nonce;
     const record = {
       v: 1,
       op: 'anchor_intent',
@@ -1481,22 +1714,26 @@ export class ReceiptMerkleTree {
   }
 
   _noteWitnessIntent(row) {
-    if (!row) return;
+    if (!row) return null;
+    const prior = this._latestWitnessIntent(row.root, row.day);
     const record = {
       v: 1,
       op: 'anchor_intent',
       chain: 'base-witness',
       root: row.root,
       day: row.day,
-      nonce: row.nonce ?? null,
-      tx: row.tx || null,
+      nonce: row.nonce ?? prior?.nonce ?? null,
+      tx: row.tx || prior?.tx || null,
+      raw: row.raw || prior?.raw || null,
+      from: row.from || prior?.from || null,
+      to: row.to || prior?.to || null,
+      calldata: row.calldata || prior?.calldata || null,
       status: row.status,
-      to: row.to || null,
-      calldata: row.calldata || null,
       epoch: this.epoch,
     };
     this.anchorIntents.push(record);
     if (this.dir) appendJournal(this.dir, record);
+    return record;
   }
 
   /**
@@ -2815,28 +3052,61 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
       ? async (raw) => { await broadcastBaseRaw(raw); }
       : null);
   if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast });
+  const {
+    assertWitnessJournal,
+    assertDistinctWitnessKey,
+    readWitnessCode,
+    readWitnessCreation,
+    receiptWitnessEnabled,
+    witnessAddress,
+    witnessCreationPin,
+    witnessCreationMatches,
+  } = await import('./receipt-log-witness.js');
+  const witnessOn = opts.witness === true || (opts.witness !== false && receiptWitnessEnabled());
+  let creationPin = null;
+  if (witnessOn) {
+    assertDistinctWitnessKey();
+    creationPin = opts.creationPin || witnessCreationPin();
+    if (!creationPin?.address || !creationPin?.tx) {
+      throw new ReceiptLogRefused(
+        'witness_creation_unpinned',
+        'ChitLogWitness address and creation tx are not pinned. A runtime code hash does not prove the constructor ran.',
+      );
+    }
+    const creation = typeof opts.readCreation === 'function'
+      ? await opts.readCreation(creationPin.tx)
+      : await readWitnessCreation({ txHash: creationPin.tx, rpcUrl: opts.rpcUrl, request: opts.request });
+    if (!creation?.input || !creation?.receipt) {
+      throw new ReceiptLogRefused(
+        'witness_creation_unpinned',
+        'the pinned ChitLogWitness creation transaction was not loaded',
+      );
+    }
+    const created = witnessCreationMatches(creation.input, creation.receipt, creationPin.address);
+    if (!created.ok) {
+      throw new ReceiptLogRefused(created.reason || 'witness_creation', 'witness creation transaction does not match this build');
+    }
+    const configured = String(opts.address || witnessAddress() || '').toLowerCase();
+    if (configured && configured !== String(creationPin.address).toLowerCase()) {
+      throw new ReceiptLogRefused(
+        'witness_address',
+        `CHIT_LOG_WITNESS_ADDRESS ${configured} is not the pinned creation ${creationPin.address}`,
+      );
+    }
+  }
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
   if (!allow) {
     await assertLatestBaseAnchor(tree, opts);
     gateEpochRecord(tree);
   }
-  // The fresh-genesis flag does not skip this. A new log is not an extension
-  // of the contract head. The flag is off unless RECEIPT_LOG_WITNESS=1.
-  const {
-    assertWitnessJournal,
-    assertDistinctWitnessKey,
-    readWitnessCode,
-    receiptWitnessEnabled,
-    witnessAddress,
-  } = await import('./receipt-log-witness.js');
-  if (opts.witness === true || (opts.witness !== false && receiptWitnessEnabled())) {
-    assertDistinctWitnessKey();
+  // The fresh-genesis flag does not skip the witness extension check.
+  if (witnessOn) {
     const readCode = opts.readCode || (() => readWitnessCode({
-      address: opts.address || witnessAddress(),
+      address: creationPin.address,
       rpcUrl: opts.rpcUrl,
       request: opts.request,
     }));
-    await assertWitnessJournal(tree, { ...opts, readCode });
+    await assertWitnessJournal(tree, { ...opts, address: creationPin.address, readCode });
   }
   return tree;
 }
