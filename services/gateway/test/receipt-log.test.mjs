@@ -449,6 +449,28 @@ test('an on-chain root missing from the journal refuses boot', async () => {
   await finishReceiptLogBoot(tree, { readLatest: async () => ({ root: 'cc'.repeat(32) }) });
 });
 
+test('boot refuses when RECEIPT_ANCHOR_FROM disagrees with the private key', () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevFrom = process.env.RECEIPT_ANCHOR_FROM;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.RECEIPT_ANCHOR_FROM = '0x0000000000000000000000000000000000000001';
+  try {
+    assert.throws(() => bootReceiptLog(tmp()), (err) => err.code === 'anchor_sender_mismatch');
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevFrom == null) delete process.env.RECEIPT_ANCHOR_FROM;
+    else process.env.RECEIPT_ANCHOR_FROM = prevFrom;
+  }
+});
+
+test('the anchor sender is the private key when RECEIPT_ANCHOR_FROM is unset', async () => {
+  const { resolveAnchorSender } = await import('../src/receipt-log-anchor.js');
+  const { Wallet } = await import('ethers');
+  const key = `0x${'ab'.repeat(32)}`;
+  assert.equal(resolveAnchorSender({ RECEIPT_ANCHOR_PRIVATE_KEY: key }), new Wallet(key).address);
+});
+
 test('an anchor intent is fsynced before broadcast and a crash does not send twice', async () => {
   const dir = tmp();
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
@@ -479,7 +501,9 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
     lookup: async (intent) => {
       assert.equal(intent.nonce, 4);
       assert.equal(intent.root, root);
-      return { tx: found, root, nonce: 4 };
+      assert.equal(intent.status, 'signed');
+      assert.match(intent.raw, /^0x/);
+      return { tx: found, root, nonce: 4, receiptOk: true, from: intent.from, to: intent.to };
     },
   });
   const again = await restored.publishHead({
@@ -572,92 +596,330 @@ test('a bundle upload failure is counted and a retention policy is hashed into t
   assert.notEqual(bundleIndexHash(bare), uploaded.index_hash);
 });
 
-test('a crash before the hash is recorded adopts the tx at the reserved nonce', async () => {
-  const { lookupBaseTxByNonceOrHash } = await import('../src/receipt-log-anchor.js');
-  const root = 'ab'.repeat(32);
-  const from = '0x1844d1f5fe42aff1cce6f776514fd40374079582';
-  const txHash = `0x${'11'.repeat(32)}`;
-  const found = await lookupBaseTxByNonceOrHash({
-    nonce: 4,
-    from,
-    root,
-    request: async (_url, method, params) => {
-      if (method === 'ots_getTransactionBySenderAndNonce') {
-        assert.equal(String(params[0]).toLowerCase(), from);
-        assert.equal(Number(params[1]), 4);
-        return { hash: txHash, from, nonce: '0x4', input: `0x${root}` };
-      }
-      if (method === 'eth_getTransactionReceipt') return { status: '0x1' };
-      return null;
-    },
-  });
-  assert.equal(found?.receiptOk, true);
-  assert.equal(found?.tx, txHash);
-  const replaced = await lookupBaseTxByNonceOrHash({
-    nonce: 4,
-    from,
-    root,
-    request: async (_url, method) => {
-      if (method === 'ots_getTransactionBySenderAndNonce') {
-        return { hash: txHash, from, nonce: '0x4', input: `0x${'cd'.repeat(32)}` };
-      }
-      if (method === 'eth_getTransactionReceipt') return { status: '0x1' };
-      return null;
-    },
-  });
-  assert.equal(replaced?.replaced, true);
-  assert.equal(replaced?.receiptOk, undefined);
-});
+function anchorIntentRows(dir) {
+  return fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((row) => row.op === 'anchor_intent');
+}
 
-test('a broadcast intent is not treated as anchored without a receipt', async () => {
-  const tree = new ReceiptMerkleTree();
-  tree.dir = tmp();
+test('a mined anchor is adopted only when calldata, sender, to, and receipt status match', async () => {
+  const { lookupBaseTxByNonceOrHash } = await import('../src/receipt-log-anchor.js');
+  const { Wallet } = await import('ethers');
   const root = 'ab'.repeat(32);
-  tree.anchorIntents.push({
-    chain: 'base',
-    day: '2026-10-06',
-    root,
-    nonce: 4,
-    tx: '0x' + 'cd'.repeat(32),
-    status: 'broadcast',
-  });
-  let lookups = 0;
-  await tree.reconcileAnchorIntents({
-    lookup: async () => {
-      lookups += 1;
-      return { dropped: true };
-    },
-  });
-  assert.equal(lookups, 1);
-  assert.equal(tree.anchorState.base[root], undefined);
-  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
-  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
-  tree.appendReceipt('row-broadcast', 'h', { publish: false });
-  const liveRoot = hex(rootOf(tree.leaves));
-  tree.anchorIntents.push({
-    chain: 'base',
-    day: '2026-10-06',
-    root: liveRoot,
-    nonce: 4,
-    tx: `0x${'cd'.repeat(32)}`,
-    status: 'dropped',
-  });
-  let resentNonce = null;
-  try {
-    await tree.publishHead({
-      force: true,
-      now: '2026-10-06T13:00:00.000Z',
-      nonce: 99,
-      send: async (args) => {
-        resentNonce = args.nonce;
-        return `0x${'ee'.repeat(32)}`;
+  const from = new Wallet(`0x${'ab'.repeat(32)}`).address.toLowerCase();
+  const txHash = `0x${'11'.repeat(32)}`;
+  const wrong = '0x2222222222222222222222222222222222222222';
+  async function lookupInput(input, { txFrom = from, txTo = from, status = '0x1' } = {}) {
+    return lookupBaseTxByNonceOrHash({
+      txHash,
+      nonce: 4,
+      from,
+      to: from,
+      root,
+      request: async (_url, method) => {
+        if (method === 'eth_getTransactionByHash') {
+          return { hash: txHash, from: txFrom, to: txTo, nonce: '0x4', input };
+        }
+        if (method === 'eth_getTransactionReceipt') return { status };
+        throw new Error(`unexpected ${method}`);
       },
     });
+  }
+  const adopted = await lookupInput(`0x${root}`);
+  assert.equal(adopted.receiptOk, true);
+  assert.equal(adopted.tx, txHash);
+  assert.equal(adopted.root, root);
+  for (const input of ['0x', `0x${'ab'.repeat(80)}`]) {
+    const mined = await lookupInput(input);
+    assert.equal(mined.replaced, true);
+    assert.equal(mined.receiptOk, undefined);
+    assert.equal(mined.reason, 'calldata_replaced');
+  }
+  const wrongTo = await lookupInput(`0x${root}`, { txTo: wrong });
+  assert.equal(wrongTo.replaced, true);
+  assert.equal(wrongTo.reason, 'to_mismatch');
+  const wrongFrom = await lookupInput(`0x${root}`, { txFrom: wrong });
+  assert.equal(wrongFrom.replaced, true);
+  assert.equal(wrongFrom.reason, 'from_mismatch');
+
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.anchorIntents.push({
+    chain: 'base',
+    day: '2026-10-06',
+    root,
+    nonce: 4,
+    tx: txHash,
+    from,
+    to: from,
+    raw: '0x02',
+    status: 'signed',
+  });
+  await tree.reconcileAnchorIntents({
+    lookup: async () => lookupInput('0x'),
+  });
+  assert.equal(tree.anchorState.base[root], undefined);
+  assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced'), true);
+  assert.equal(anchorIntentRows(dir).some((row) => row.status === 'anchored'), false);
+});
+
+test('ots is optional and a normal RPC recovers by hash and transaction count', async () => {
+  const { lookupBaseTxByNonceOrHash } = await import('../src/receipt-log-anchor.js');
+  const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
+  const root = 'ab'.repeat(32);
+  const txHash = `0x${'11'.repeat(32)}`;
+  const missing = await lookupBaseTxByNonceOrHash({
+    txHash,
+    nonce: 4,
+    from,
+    to: from,
+    root,
+    request: async (_url, method) => {
+      if (method === 'eth_getTransactionByHash') return null;
+      if (method === 'ots_getTransactionBySenderAndNonce') throw new Error('method not found');
+      if (method === 'eth_getTransactionCount') return '0x4';
+      throw new Error(`unexpected ${method}`);
+    },
+  });
+  assert.equal(missing.rebroadcast, true);
+  assert.equal(missing.replaced, undefined);
+  const consumed = await lookupBaseTxByNonceOrHash({
+    txHash,
+    nonce: 4,
+    from,
+    to: from,
+    root,
+    request: async (_url, method) => {
+      if (method === 'eth_getTransactionByHash') return null;
+      if (method === 'eth_getTransactionCount') return '0x5';
+      throw new Error(`unexpected ${method}`);
+    },
+  });
+  assert.equal(consumed.replaced, true);
+  assert.equal(consumed.reason, 'nonce_consumed');
+  const errored = await lookupBaseTxByNonceOrHash({
+    txHash,
+    nonce: 4,
+    from,
+    to: from,
+    root,
+    request: async () => {
+      throw new Error('connection refused');
+    },
+  });
+  assert.equal(errored.blocked, true);
+  assert.equal(errored.replaced, undefined);
+  assert.equal(errored.rebroadcast, undefined);
+});
+
+test('crash after the signed raw tx is persisted and before send rebroadcasts that same raw tx', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  let persisted = null;
+  try {
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async (args) => {
+        persisted = anchorIntentRows(dir).find((row) => row.status === 'signed');
+        assert.equal(args.nonce, 4);
+        assert.equal(args.raw, persisted.raw);
+        assert.equal(args.hash, persisted.tx);
+        throw new Error('crash_before_send');
+      },
+    });
+    assert.equal(head.anchor_status, 'pending');
+    assert.ok(persisted.raw);
+    assert.match(persisted.tx, /^0x[0-9a-f]{64}$/);
+    const { keccak256 } = await import('ethers');
+    assert.equal(persisted.tx, keccak256(persisted.raw));
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let resent = null;
+    await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 99,
+      lookup: async (intent) => {
+        assert.equal(intent.raw, persisted.raw);
+        assert.equal(intent.tx, persisted.tx);
+        assert.equal(intent.nonce, 4);
+        return { rebroadcast: true, missing: true, tx: intent.tx, nonce: 4 };
+      },
+      send: async (args) => {
+        resent = args.raw;
+        assert.equal(args.nonce, 4);
+        assert.equal(args.hash, persisted.tx);
+        return args.hash;
+      },
+    });
+    assert.equal(resent, persisted.raw);
+    const signed = anchorIntentRows(dir).filter((row) => row.status === 'signed');
+    assert.equal(signed.length, 1);
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
   }
-  assert.equal(resentNonce, 4);
+});
+
+test('crash after send and before the broadcast record still has the tx hash and does not sign again', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  let persisted = null;
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => {
+        persisted = anchorIntentRows(dir).find((row) => row.status === 'signed');
+        assert.ok(persisted.tx);
+        assert.equal(anchorIntentRows(dir).some((row) => row.status === 'broadcast'), false);
+        throw new Error('crash_after_send');
+      },
+    });
+    const from = persisted.from.toLowerCase();
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let sentAgain = false;
+    const again = await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 99,
+      lookup: async (intent) => {
+        assert.equal(intent.tx, persisted.tx);
+        return {
+          receiptOk: true,
+          tx: intent.tx,
+          root,
+          nonce: 4,
+          from,
+          to: from,
+        };
+      },
+      send: async () => {
+        sentAgain = true;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+    assert.equal(sentAgain, false);
+    assert.equal(again.anchor.tx, persisted.tx);
+    assert.equal(anchorIntentRows(dir).filter((row) => row.status === 'signed').length, 1);
+    assert.equal(restored.anchorState.base[root].calldata, `0x${root}`);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('an RPC error leaves the signed nonce blocked and does not sign a new transaction', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => {
+        throw new Error('crash_before_send');
+      },
+    });
+    const raw = anchorIntentRows(dir).find((row) => row.status === 'signed').raw;
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let sent = false;
+    const head = await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 4,
+      lookup: async () => {
+        throw new Error('connection refused');
+      },
+      send: async () => {
+        sent = true;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+    assert.equal(sent, false);
+    assert.equal(head.anchor_status, 'pending');
+    const raws = new Set(anchorIntentRows(dir).map((row) => row.raw).filter(Boolean));
+    assert.deepEqual([...raws], [raw]);
+    assert.equal(anchorIntentRows(dir).filter((row) => row.status === 'signed').length, 1);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'blocked'), true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced'), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a nonce that landed as something else is replaced and is not sent again', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => {
+        throw new Error('crash_before_send');
+      },
+    });
+    const first = anchorIntentRows(dir).find((row) => row.status === 'signed');
+    const restored = new ReceiptMerkleTree();
+    restored.load(dir);
+    let resentNonce = null;
+    await restored.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ replaced: true, reason: 'nonce_consumed', tx: first.tx }),
+      send: async (args) => {
+        resentNonce = args.nonce;
+        return args.hash;
+      },
+    });
+    assert.equal(resentNonce, null);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced' && row.nonce === 4), true);
+    const again = new ReceiptMerkleTree();
+    again.load(dir);
+    await again.publishHead({
+      force: true,
+      now: '2026-10-06T12:40:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true }),
+      send: async (args) => {
+        resentNonce = args.nonce;
+        assert.notEqual(args.raw, first.raw);
+        return args.hash;
+      },
+    });
+    assert.equal(resentNonce, 5);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
 });
 
 test('backfill refuses a forked book and a leaf with no row_hash', () => {

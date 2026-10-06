@@ -21,6 +21,7 @@ import {
   verifyReceipt,
   verifyRefusal,
   isRefusalDocument,
+  loadIssuerJwks,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   type XFuelReceipt,
   type Jwks,
@@ -34,7 +35,7 @@ import {
   type AnchorWitnessResult,
 } from './anchor-witness.js';
 import { type EpochRecord } from './epoch.js';
-import { jwkThumbprint, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
@@ -385,9 +386,13 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
   const embedded = sig && 'issuer_jwk' in sig
     ? (sig as { issuer_jwk?: Es256Jwk }).issuer_jwk
     : undefined;
+  const kid = readJwsHeader(jws)?.kid;
   const keys: Es256Jwk[] = [];
   for (const key of jwks?.keys || []) {
-    if (key && (key as Es256Jwk).kty === 'EC') keys.push(key as Es256Jwk);
+    if (!key || (key as Es256Jwk).kty !== 'EC') continue;
+    const jwk = key as Es256Jwk;
+    if (kid && jwk.kid !== kid) continue;
+    keys.push(jwk);
   }
   if (embedded && trustedKids?.includes(jwkThumbprint(embedded))) keys.push(embedded);
   for (const key of keys) {
@@ -430,13 +435,24 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       epochRecord = null;
     }
     if (epochRecord?.issuer_signature?.jws) {
-      const jwks = args.jwksFile
-        ? JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks
-        : undefined;
+      let fileJwks: Jwks | undefined;
+      if (args.jwksFile) {
+        try {
+          fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+        } catch (err) {
+          console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+          return 3;
+        }
+      }
+      const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
+        jwks: fileJwks,
+        jwksUri: args.jwksUrl || undefined,
+        fetchJwks: args.fetchJwks,
+      });
       const trustedKids = args.noTrustedKid
         ? []
         : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
-      verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, jwks, trustedKids);
+      verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
     }
   }
   const result = await verifyAnchoredRoot({

@@ -8,6 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Wallet, getAddress } from 'ethers';
 import { ReceiptLogRefused } from './receipt-log-store.js';
 import { epochRootOf } from './receipt-log-epoch.js';
 import { analyzeSeq } from './book-seq.js';
@@ -254,10 +255,57 @@ export async function assertKnownAnchorTxs(pin, { request, baseRpc, solanaRpc, t
   }
 }
 
+function receiptSucceeded(status) {
+  return status === '0x1' || status === 1 || status === '0x01';
+}
+
 /**
- * Receipt lookup for a write-ahead intent. A broadcast hash is not anchored
- * until eth_getTransactionReceipt says the transaction landed. A missing
- * transaction was dropped and may be resent at the same nonce.
+ * Sender for Base anchors. The private key wins when FROM is unset.
+ * Both set and different refuses boot. A key that does not parse refuses boot.
+ */
+export function resolveAnchorSender(env = process.env) {
+  const key = env.RECEIPT_ANCHOR_PRIVATE_KEY || '';
+  const fromRaw = env.RECEIPT_ANCHOR_FROM || '';
+  let derived = null;
+  if (key) {
+    try {
+      derived = new Wallet(key).address;
+    } catch (err) {
+      throw new ReceiptLogRefused(
+        'anchor_key',
+        `RECEIPT_ANCHOR_PRIVATE_KEY is not a signing key: ${err.message}`,
+      );
+    }
+  }
+  let from = null;
+  if (fromRaw) {
+    try {
+      from = getAddress(fromRaw);
+    } catch {
+      throw new ReceiptLogRefused('anchor_from', 'RECEIPT_ANCHOR_FROM is not an address');
+    }
+  }
+  if (from && derived && from.toLowerCase() !== derived.toLowerCase()) {
+    throw new ReceiptLogRefused(
+      'anchor_sender_mismatch',
+      'RECEIPT_ANCHOR_FROM does not match the address of RECEIPT_ANCHOR_PRIVATE_KEY',
+    );
+  }
+  return derived || from || null;
+}
+
+export function anchorWalletAddress(env = process.env) {
+  return resolveAnchorSender(env);
+}
+
+/**
+ * Adopt only a mined self-transfer whose calldata is exactly the intent
+ * root, whose sender is ours, and whose receipt status is 1.
+ * Anything else mined at that nonce is replaced.
+ * A missing hash is rebroadcast only when the latest nonce count has not
+ * passed the reserved nonce. RPC errors stay blocked.
+ * ots_getTransactionBySenderAndNonce is optional. Public Base RPC does not
+ * implement it, and a failure there is not an answer.
  */
 export async function lookupBaseTxByNonceOrHash({
   rpcUrl,
@@ -265,44 +313,109 @@ export async function lookupBaseTxByNonceOrHash({
   root,
   nonce,
   from,
+  to,
   request,
 } = {}) {
   const want = normalizeRoot(root);
-  const sender = String(from || anchorWalletAddress() || '').toLowerCase();
+  let sender = '';
+  try {
+    sender = String(from || resolveAnchorSender() || '').toLowerCase();
+  } catch (err) {
+    if (err?.code === 'anchor_sender_mismatch' || err?.code === 'anchor_key' || err?.code === 'anchor_from') {
+      throw err;
+    }
+    return { pending: true, blocked: true, reason: 'sender_unknown' };
+  }
+  const anchorTo = String(to || sender || '').toLowerCase();
+  if (!sender || !anchorTo) {
+    return { pending: true, blocked: true, reason: 'sender_unknown' };
+  }
   const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
-  let tx = null;
+
+  const classify = async (tx, hash) => {
+    const txFrom = String(tx.from || '').toLowerCase();
+    const txTo = String(tx.to || '').toLowerCase();
+    const txNonce = tx.nonce == null ? null : Number(tx.nonce);
+    const got = calldataRoot(tx.input || tx.data);
+    let receipt;
+    try {
+      receipt = await rpc(url, 'eth_getTransactionReceipt', [hash], request);
+    } catch {
+      return { pending: true, blocked: true, reason: 'rpc_error', tx: hash };
+    }
+    if (!receipt) {
+      return { pending: true, blocked: true, tx: hash, reason: 'receipt_pending' };
+    }
+    const ok = receiptSucceeded(receipt.status);
+    const rootOk = Boolean(want && got && got === want);
+    const fromOk = txFrom === sender;
+    const toOk = txTo === anchorTo;
+    const nonceOk = nonce == null || txNonce == null || txNonce === Number(nonce);
+    if (ok && rootOk && fromOk && toOk && nonceOk) {
+      return {
+        tx: hash,
+        nonce: txNonce,
+        root: got,
+        from: txFrom,
+        to: txTo,
+        receiptOk: true,
+      };
+    }
+    return {
+      replaced: true,
+      mined: true,
+      tx: hash,
+      root: got,
+      reason: !ok ? 'receipt_failed'
+        : !rootOk ? 'calldata_replaced'
+          : !fromOk ? 'from_mismatch'
+            : !toOk ? 'to_mismatch'
+              : 'nonce_mismatch',
+    };
+  };
+
   if (txHash) {
-    tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
-    if (!tx) return { dropped: true };
-  } else if (nonce != null && sender) {
+    let tx;
+    try {
+      tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
+    } catch {
+      return { pending: true, blocked: true, reason: 'rpc_error' };
+    }
+    if (tx) return classify(tx, tx.hash || txHash);
+    return classifyMissingHash({ url, nonce, sender, txHash, request });
+  }
+
+  if (nonce != null) {
     const nonceHex = `0x${Number(nonce).toString(16)}`;
     try {
-      tx = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request);
+      const probed = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request);
+      if (probed) return classify(probed, probed.hash);
     } catch {
-      tx = null;
+      // Optional. A normal RPC has no ots method.
     }
-    if (!tx) return null;
-  } else {
-    return null;
+    return classifyMissingHash({ url, nonce, sender, txHash: null, request });
   }
-  const txFrom = String(tx.from || '').toLowerCase();
-  const txNonce = tx.nonce == null ? null : Number(tx.nonce);
-  const hash = tx.hash || txHash;
-  if ((sender && txFrom && txFrom !== sender) || (nonce != null && txNonce != null && txNonce !== Number(nonce))) {
-    return { replaced: true, tx: hash, reason: sender && txFrom && txFrom !== sender ? 'from_mismatch' : 'nonce_mismatch' };
-  }
-  const receipt = await rpc(url, 'eth_getTransactionReceipt', [hash], request);
-  if (!receipt) return { dropped: true };
-  const status = receipt.status;
-  const ok = status === '0x1' || status === 1 || status === '0x01';
-  const got = calldataRoot(tx.input || tx.data);
-  if (want && got && got !== want) return { replaced: true, tx: hash, root: got, reason: 'calldata_replaced' };
-  if (!ok) return { mined: true, receiptOk: false, tx: hash, root: got };
-  return { tx: hash, nonce: txNonce, root: got, receiptOk: true };
+  return { pending: true, blocked: true, reason: 'no_tx_hash' };
 }
 
-export function anchorWalletAddress() {
-  return process.env.RECEIPT_ANCHOR_FROM || null;
+async function classifyMissingHash({ url, nonce, sender, txHash, request }) {
+  if (nonce == null || !sender) {
+    return { pending: true, blocked: true, reason: 'nonce_unknown', tx: txHash };
+  }
+  let countRaw;
+  try {
+    countRaw = await rpc(url, 'eth_getTransactionCount', [sender, 'latest'], request);
+  } catch {
+    return { pending: true, blocked: true, reason: 'rpc_error', tx: txHash };
+  }
+  const count = Number(countRaw);
+  if (!Number.isInteger(count)) {
+    return { pending: true, blocked: true, reason: 'rpc_error', tx: txHash };
+  }
+  if (count <= Number(nonce)) {
+    return { missing: true, rebroadcast: true, tx: txHash, nonce: Number(nonce) };
+  }
+  return { replaced: true, reason: 'nonce_consumed', tx: txHash, nonce: Number(nonce) };
 }
 
 /**

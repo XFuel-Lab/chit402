@@ -86,6 +86,8 @@ counts only when the verifying key is trusted:
    production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
    `--trusted-kid`, or disable with `--no-trusted-kid`.
 
+The epoch record checked by `xfuel-verify receipt.json inclusion.json head.json --rpc` uses those same sources. An embedded epoch key still has to match the trusted-kid pin.
+
 `issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
 arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
 including when `--jwks-file` points at the real JWKS.

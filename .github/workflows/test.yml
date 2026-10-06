@@ -91,6 +91,10 @@ jobs:
         working-directory: services/gateway
         run: npm install --no-audit --no-fund
 
+      - name: Install and build @xfuel/verify
+        working-directory: packages/verify
+        run: npm install --no-audit --no-fund && npm run build
+
       - name: Gateway tests (receipts + x402 adapter)
         working-directory: services/gateway
         run: npm test

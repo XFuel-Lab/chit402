@@ -42,7 +42,9 @@ import {
   assertLatestBaseAnchor,
   FRESH_GENESIS_LOG,
   lookupBaseTxByNonceOrHash,
+  normalizeRoot,
   readReceiptLogPin,
+  resolveAnchorSender,
 } from './receipt-log-anchor.js';
 import { assertPinnedEpochRecord } from './receipt-log-epoch.js';
 export { FRESH_GENESIS_LOG, assertLatestBaseAnchor, readReceiptLogPin };
@@ -206,38 +208,123 @@ export function anchorCalldata(rootHex) {
   return `0x${root.toLowerCase()}`;
 }
 
+const FIXED_ANCHOR_FEES = {
+  gasLimit: 100_000n,
+  maxFeePerGas: 1_000_000_000n,
+  maxPriorityFeePerGas: 100_000_000n,
+};
+
+function baseRpcUrl() {
+  return process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
+}
+
 /**
- * Describe the Base anchor. Sends a zero-value self-transfer only when
- * RECEIPT_ANCHOR_PRIVATE_KEY is set. Otherwise the head stays pending.
+ * Sign the zero-value self-transfer. The caller fsyncs `raw` and `hash`
+ * before any broadcast. The hash is keccak256 of the signed bytes.
  */
-async function sendBaseAnchorTx({ from, calldata, privateKey, nonce = null }) {
-  const rpc = process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null;
-  if (!rpc) throw new Error('no_rpc');
-  const { Wallet, JsonRpcProvider } = await import('ethers');
-  const provider = new JsonRpcProvider(rpc);
-  const wallet = new Wallet(privateKey, provider);
-  const tx = await wallet.sendTransaction({
-    to: from || wallet.address,
+export async function signBaseAnchorRaw({ privateKey, nonce, calldata, fees = null }) {
+  const { Wallet, keccak256 } = await import('ethers');
+  const wallet = new Wallet(privateKey);
+  const fromEnv = process.env.RECEIPT_ANCHOR_FROM || '';
+  if (fromEnv && fromEnv.toLowerCase() !== wallet.address.toLowerCase()) {
+    throw new ReceiptLogRefused(
+      'anchor_sender_mismatch',
+      'RECEIPT_ANCHOR_FROM does not match the address of RECEIPT_ANCHOR_PRIVATE_KEY',
+    );
+  }
+  const fee = fees || FIXED_ANCHOR_FEES;
+  const raw = await wallet.signTransaction({
+    to: wallet.address,
     value: 0n,
     data: calldata,
-    ...(nonce != null ? { nonce } : {}),
+    nonce: Number(nonce),
+    chainId: 8453,
+    type: 2,
+    gasLimit: fee.gasLimit,
+    maxFeePerGas: fee.maxFeePerGas,
+    maxPriorityFeePerGas: fee.maxPriorityFeePerGas,
   });
+  return { raw, hash: keccak256(raw), from: wallet.address, to: wallet.address };
+}
+
+async function baseAnchorFees(request) {
+  const url = baseRpcUrl();
+  if (!url && !request) return FIXED_ANCHOR_FEES;
+  const { JsonRpcProvider } = await import('ethers');
+  const call = request || (async (rpcUrl, method, params) => {
+    const provider = new JsonRpcProvider(rpcUrl);
+    return provider.send(method, params);
+  });
+  const block = await call(url, 'eth_getBlockByNumber', ['latest', false]);
+  if (!block?.baseFeePerGas) return FIXED_ANCHOR_FEES;
+  const base = BigInt(block.baseFeePerGas);
+  let tip = FIXED_ANCHOR_FEES.maxPriorityFeePerGas;
+  try {
+    const quoted = await call(url, 'eth_maxPriorityFeePerGas', []);
+    if (quoted != null) tip = BigInt(quoted);
+  } catch {
+    tip = FIXED_ANCHOR_FEES.maxPriorityFeePerGas;
+  }
+  return {
+    gasLimit: FIXED_ANCHOR_FEES.gasLimit,
+    maxPriorityFeePerGas: tip,
+    maxFeePerGas: base * 2n + tip,
+  };
+}
+
+async function broadcastBaseRaw(raw) {
+  const rpc = baseRpcUrl();
+  if (!rpc) throw new Error('no_rpc');
+  const { JsonRpcProvider } = await import('ethers');
+  const provider = new JsonRpcProvider(rpc);
+  const tx = await provider.broadcastTransaction(raw);
   return tx.hash;
 }
 
+/**
+ * Describe the Base anchor. Sends a zero-value self-transfer only when
+ * RECEIPT_ANCHOR_PRIVATE_KEY is set. Otherwise the head stays pending.
+ * The durable path signs and fsyncs before this runs.
+ */
+async function sendBaseAnchorTx({ from, calldata, privateKey, nonce = null }) {
+  const signed = await signBaseAnchorRaw({
+    privateKey,
+    nonce: nonce == null ? await readBaseAnchorNonce() : nonce,
+    calldata,
+    fees: await baseAnchorFees(),
+  });
+  if (from && from.toLowerCase() !== signed.from.toLowerCase()) {
+    throw new ReceiptLogRefused(
+      'anchor_sender_mismatch',
+      'RECEIPT_ANCHOR_FROM does not match the address of RECEIPT_ANCHOR_PRIVATE_KEY',
+    );
+  }
+  await broadcastBaseRaw(signed.raw);
+  return signed.hash;
+}
+
 async function readBaseAnchorNonce() {
-  const rpc = process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null;
+  const rpc = baseRpcUrl();
   const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
   if (!rpc || !key) throw new Error('no_rpc');
   const { Wallet, JsonRpcProvider } = await import('ethers');
   const provider = new JsonRpcProvider(rpc);
   const wallet = new Wallet(key, provider);
-  const from = process.env.RECEIPT_ANCHOR_FROM || wallet.address;
+  const from = resolveAnchorSender() || wallet.address;
   return provider.getTransactionCount(from, 'pending');
 }
 
 export async function describeAnchor(rootHex, { send = null } = {}) {
-  const from = process.env.RECEIPT_ANCHOR_FROM || null;
+  const from = (() => {
+    try {
+      return resolveAnchorSender();
+    } catch (err) {
+      if (err?.code === 'anchor_sender_mismatch' || err?.code === 'anchor_key' || err?.code === 'anchor_from') {
+        throw err;
+      }
+      return null;
+    }
+  })();
   const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
   const calldata = anchorCalldata(rootHex);
   const pending = (reason) => ({
@@ -660,6 +747,8 @@ export class ReceiptMerkleTree {
     solanaBlockTime,
     readSolanaBlockTs,
     nonce = null,
+    lookup = null,
+    request = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -687,37 +776,49 @@ export class ReceiptMerkleTree {
           intentNonce = null;
         }
       }
-      if (intentNonce != null) reserved = this._reserveBaseIntent({ root, day, nonce: intentNonce });
+      if (intentNonce != null) {
+        reserved = this._reserveBaseIntent({ root, day, nonce: this._nextFreeNonce(intentNonce, root, day) });
+      }
     }
     let anchor;
     if (priorBase) {
       anchor = priorBase;
-    } else if (reserved?.tx && !send) {
+    } else if (reserved?.anchoredTx && !send) {
       anchor = {
         status: 'anchored',
         chain: 'base',
         chain_id: 8453,
-        from: process.env.RECEIPT_ANCHOR_FROM || null,
-        tx: reserved.tx,
+        from: reserved.from || resolveAnchorSender() || null,
+        tx: reserved.anchoredTx,
         calldata: anchorCalldata(root),
         reason: null,
       };
+    } else if (reserveBase && !reserved) {
+      anchor = {
+        status: 'pending',
+        chain: 'base',
+        chain_id: 8453,
+        from: (() => { try { return resolveAnchorSender(); } catch { return null; } })(),
+        tx: null,
+        calldata: anchorCalldata(root),
+        reason: 'nonce_unknown',
+      };
+    } else if (reserved?.blocked) {
+      anchor = {
+        status: 'pending',
+        chain: 'base',
+        chain_id: 8453,
+        from: reserved.from || null,
+        tx: null,
+        calldata: anchorCalldata(root),
+        reason: 'anchor_intent_blocked',
+      };
+    } else if (reserved?.raw) {
+      anchor = await this._resumeSignedIntent(reserved, { send, lookup, request, root, day });
+    } else if (reserved?.needsSign) {
+      anchor = await this._signAndBroadcastIntent(reserved, { send, request, root, day });
     } else {
-      const outerSend = send;
-      const wrapped = reserved
-        ? async (args) => {
-          const tx = outerSend
-            ? await outerSend({ ...args, nonce: reserved.nonce })
-            : await sendBaseAnchorTx({
-              ...args,
-              nonce: reserved.nonce,
-              privateKey: process.env.RECEIPT_ANCHOR_PRIVATE_KEY,
-            });
-          this._noteIntentBroadcast({ chain: 'base', root, day, nonce: reserved.nonce, tx });
-          return tx;
-        }
-        : outerSend;
-      anchor = await describeAnchor(root, { send: wrapped || null });
+      anchor = await describeAnchor(root, { send: send || null });
     }
     const priorSolana = solanaAnchoredForDay(this.heads, day, scope, this.anchorState);
     let solana;
@@ -888,16 +989,60 @@ export class ReceiptMerkleTree {
     }
   }
 
+  _latestBaseIntents() {
+    const latest = new Map();
+    for (const row of this.anchorIntents || []) {
+      if (row.chain !== 'base') continue;
+      const key = `${row.day}|${row.root}|${row.nonce}`;
+      const prev = latest.get(key);
+      latest.set(key, {
+        ...prev,
+        ...row,
+        raw: row.raw || prev?.raw || null,
+        tx: row.tx || prev?.tx || null,
+        from: row.from || prev?.from || null,
+        to: row.to || prev?.to || null,
+      });
+    }
+    return [...latest.values()];
+  }
+
+  _nextFreeNonce(start, root, day) {
+    const taken = new Set();
+    for (const row of this._latestBaseIntents()) {
+      if (row.nonce == null) continue;
+      if (row.day === day && row.root === root && row.status !== 'replaced') continue;
+      taken.add(Number(row.nonce));
+    }
+    let n = Number(start);
+    while (taken.has(n)) n += 1;
+    return n;
+  }
+
   _reserveBaseIntent({ root, day, nonce }) {
-    const prior = (this.anchorIntents || []).filter((row) => (
-      row.chain === 'base' && row.day === day && row.root === root
-    ));
+    const prior = this._latestBaseIntents().filter((row) => row.day === day && row.root === root);
     const anchored = [...prior].reverse().find((row) => row.status === 'anchored' && row.tx);
-    if (anchored) return { tx: anchored.tx, nonce: anchored.nonce };
-    const reusable = [...prior].reverse().find((row) => (
-      row.nonce != null && row.status !== 'anchored' && row.status !== 'replaced'
+    if (anchored) {
+      return { anchoredTx: anchored.tx, nonce: anchored.nonce, from: anchored.from, intent: anchored };
+    }
+    const signed = [...prior].reverse().find((row) => (
+      row.raw && row.tx && row.status !== 'replaced' && row.status !== 'anchored'
     ));
-    if (reusable) return { nonce: reusable.nonce, reserved: true };
+    if (signed) {
+      return {
+        raw: signed.raw,
+        hash: signed.tx,
+        nonce: signed.nonce,
+        from: signed.from,
+        intent: signed,
+      };
+    }
+    const held = [...prior].reverse().find((row) => (
+      row.status !== 'replaced' && row.status !== 'intent' && row.status !== 'anchored'
+    ));
+    if (held && !held.raw) return { blocked: true, nonce: held.nonce, from: held.from, intent: held };
+    const open = [...prior].reverse().find((row) => row.status === 'intent' && row.nonce != null);
+    if (open) return { needsSign: true, nonce: open.nonce, intent: open };
     const record = {
       v: 1,
       op: 'anchor_intent',
@@ -910,34 +1055,195 @@ export class ReceiptMerkleTree {
     };
     appendJournal(this.dir, record);
     this.anchorIntents.push(record);
-    return { nonce, reserved: true };
+    return { needsSign: true, nonce, intent: record };
   }
 
-  _noteIntentBroadcast({ chain, root, day, nonce, tx }) {
-    if (!this.dir || !tx) return;
+  _markIntent(intent, status, extra = {}) {
+    if (!intent || intent.status === status) return intent;
     const record = {
       v: 1,
       op: 'anchor_intent',
-      chain,
-      root,
-      day,
-      nonce,
-      tx,
-      status: 'broadcast',
-      epoch: this.epoch,
+      chain: 'base',
+      root: intent.root,
+      day: intent.day,
+      nonce: intent.nonce,
+      tx: extra.tx || intent.tx || null,
+      raw: extra.raw || intent.raw || null,
+      from: extra.from || intent.from || null,
+      to: extra.to || intent.to || null,
+      status,
+      epoch: intent.epoch ?? this.epoch,
     };
-    appendJournal(this.dir, record);
+    if (this.dir) appendJournal(this.dir, record);
     this.anchorIntents.push(record);
+    return record;
   }
 
-  _adoptBaseIntent(intent) {
-    if (!intent?.root || !intent.tx) return;
-    if (!this.anchorState.base[intent.root]) {
-      this.anchorState.base[intent.root] = {
+  async _signAndBroadcastIntent(reserved, { send, request, root, day }) {
+    const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
+    const calldata = anchorCalldata(root);
+    const pending = (reason, from = null) => ({
+      status: 'pending',
+      chain: 'base',
+      chain_id: 8453,
+      from,
+      tx: null,
+      calldata,
+      reason,
+    });
+    if (!key) return pending('no_key');
+    let signed;
+    try {
+      const fees = typeof send === 'function' ? null : await baseAnchorFees(request);
+      signed = await signBaseAnchorRaw({
+        privateKey: key,
+        nonce: reserved.nonce,
+        calldata,
+        fees,
+      });
+    } catch (err) {
+      return pending(err.message);
+    }
+    const signedIntent = this._markIntent(reserved.intent || {
+      root,
+      day,
+      nonce: reserved.nonce,
+      epoch: this.epoch,
+    }, 'signed', {
+      raw: signed.raw,
+      tx: signed.hash,
+      from: signed.from,
+      to: signed.to,
+    });
+    try {
+      if (typeof send === 'function') {
+        await send({
+          from: signed.from,
+          to: signed.to,
+          calldata,
+          value: '0',
+          nonce: reserved.nonce,
+          raw: signed.raw,
+          hash: signed.hash,
+        });
+      } else {
+        await broadcastBaseRaw(signed.raw);
+      }
+    } catch (err) {
+      return pending(err.message, signed.from);
+    }
+    this._markIntent(signedIntent, 'broadcast', {
+      raw: signed.raw,
+      tx: signed.hash,
+      from: signed.from,
+      to: signed.to,
+    });
+    return {
+      status: 'anchored',
+      chain: 'base',
+      chain_id: 8453,
+      from: signed.from,
+      tx: signed.hash,
+      calldata,
+      reason: null,
+    };
+  }
+
+  async _resumeSignedIntent(reserved, { send, lookup, request, root, day }) {
+    const intent = reserved.intent;
+    const calldata = anchorCalldata(root);
+    const pending = (reason) => ({
+      status: 'pending',
+      chain: 'base',
+      chain_id: 8453,
+      from: intent.from || null,
+      tx: null,
+      calldata,
+      reason,
+    });
+    let found;
+    try {
+      found = typeof lookup === 'function'
+        ? await lookup(intent)
+        : await lookupBaseTxByNonceOrHash({
+          txHash: intent.tx,
+          root: intent.root,
+          nonce: intent.nonce,
+          from: intent.from,
+          to: intent.to,
+          request,
+        });
+    } catch {
+      this._markIntent(intent, 'blocked');
+      return pending('rpc_error');
+    }
+    if (found?.receiptOk === true && normalizeRoot(found.root) === normalizeRoot(intent.root) && found.tx) {
+      this._adoptBaseIntent(intent, found);
+      this._markIntent(intent, 'anchored', { tx: found.tx, from: found.from || intent.from });
+      return {
         status: 'anchored',
+        chain: 'base',
+        chain_id: 8453,
+        from: found.from || intent.from || null,
+        tx: found.tx,
+        calldata,
+        reason: null,
+      };
+    }
+    if (found?.replaced) {
+      this._markIntent(intent, 'replaced', { tx: found.tx || intent.tx || null });
+      return pending(found.reason || 'nonce_replaced');
+    }
+    if (found?.rebroadcast) {
+      if (!intent.raw) {
+        this._markIntent(intent, 'blocked');
+        return pending('signed_raw_missing');
+      }
+      try {
+        if (typeof send === 'function') {
+          await send({
+            from: intent.from,
+            to: intent.to,
+            calldata,
+            value: '0',
+            nonce: intent.nonce,
+            raw: intent.raw,
+            hash: intent.tx,
+          });
+        } else {
+          await broadcastBaseRaw(intent.raw);
+        }
+      } catch (err) {
+        this._markIntent(intent, 'blocked');
+        return pending(err.message);
+      }
+      this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx, from: intent.from, to: intent.to });
+      return {
+        status: 'anchored',
+        chain: 'base',
+        chain_id: 8453,
+        from: intent.from || null,
         tx: intent.tx,
-        calldata: anchorCalldata(intent.root),
-        from: process.env.RECEIPT_ANCHOR_FROM || null,
+        calldata,
+        reason: null,
+      };
+    }
+    this._markIntent(intent, 'blocked');
+    return pending(found?.reason || 'anchor_intent_blocked');
+  }
+
+  _adoptBaseIntent(intent, found = null) {
+    const root = normalizeRoot(found?.root || intent?.root);
+    if (!root || root !== normalizeRoot(intent?.root)) return;
+    const tx = found?.tx || intent?.tx;
+    if (!tx) return;
+    if (found && found.receiptOk !== true && found.status !== 'anchored') return;
+    if (!this.anchorState.base[root]) {
+      this.anchorState.base[root] = {
+        status: 'anchored',
+        tx,
+        calldata: anchorCalldata(root),
+        from: found?.from || intent.from || resolveAnchorSender() || null,
         chain_id: 8453,
         nonce: intent.nonce ?? null,
       };
@@ -945,81 +1251,52 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * A pending intent was fsynced before broadcast. If the chain already has
-   * that nonce or hash, record it and do not send a second anchor.
+   * A signed raw transaction is fsynced before broadcast. Recovery looks up
+   * that hash. A match is adopted. Anything else mined is replaced. An RPC
+   * error stays blocked. The same raw is rebroadcast only when the nonce
+   * is still unused.
    */
-  async reconcileAnchorIntents({ lookup } = {}) {
-    const latest = new Map();
-    for (const row of this.anchorIntents || []) {
-      if (row.chain !== 'base') continue;
-      latest.set(`${row.day}|${row.root}|${row.nonce}`, row);
-    }
-    for (const intent of latest.values()) {
+  async reconcileAnchorIntents({ lookup, rebroadcast } = {}) {
+    for (const intent of this._latestBaseIntents()) {
+      if (intent.status === 'replaced') continue;
       if (intent.status === 'anchored' && intent.tx) {
-        this._adoptBaseIntent(intent);
+        this._adoptBaseIntent({ ...intent, status: 'anchored' }, { ...intent, receiptOk: true, root: intent.root });
         continue;
       }
       if (typeof lookup !== 'function') continue;
-      const found = await lookup(intent);
-      if (found?.mismatch) {
-        throw new ReceiptLogRefused(
-          'anchor_intent_mismatch',
-          `anchor intent nonce ${intent.nonce} landed as ${found.root}, not ${intent.root}`,
-        );
+      let found;
+      try {
+        found = await lookup(intent);
+      } catch {
+        this._markIntent(intent, 'blocked');
+        continue;
       }
       if (found?.replaced) {
-        this.anchorIntents.push({ ...intent, status: 'replaced', tx: found.tx || intent.tx || null });
-        if (this.dir) {
-          appendJournal(this.dir, {
-            v: 1,
-            op: 'anchor_intent',
-            chain: 'base',
-            root: intent.root,
-            day: intent.day,
-            nonce: intent.nonce,
-            tx: found.tx || intent.tx || null,
-            status: 'replaced',
-            epoch: this.epoch,
-          });
+        this._markIntent(intent, 'replaced', { tx: found.tx || intent.tx || null });
+        continue;
+      }
+      if (found?.receiptOk === true && found.tx && normalizeRoot(found.root) === normalizeRoot(intent.root)) {
+        this._adoptBaseIntent(intent, found);
+        this._markIntent(intent, 'anchored', { tx: found.tx, from: found.from || intent.from });
+        continue;
+      }
+      if (found?.receiptOk === true) {
+        this._markIntent(intent, 'replaced', { tx: found.tx || intent.tx || null });
+        continue;
+      }
+      if (found?.rebroadcast && intent.raw && typeof rebroadcast === 'function') {
+        try {
+          await rebroadcast(intent.raw);
+          this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx });
+        } catch {
+          this._markIntent(intent, 'blocked');
         }
         continue;
       }
-      if (found?.dropped || found?.receiptOk === false) {
-        const dropped = { ...intent, status: 'dropped' };
-        this.anchorIntents.push(dropped);
-        if (this.dir) {
-          appendJournal(this.dir, {
-            v: 1,
-            op: 'anchor_intent',
-            chain: 'base',
-            root: intent.root,
-            day: intent.day,
-            nonce: intent.nonce,
-            tx: intent.tx || null,
-            status: 'dropped',
-            epoch: this.epoch,
-          });
-        }
+      if (found?.blocked || found?.pending || found?.rebroadcast) {
+        this._markIntent(intent, 'blocked');
         continue;
       }
-      if (intent.status === 'broadcast' && found?.receiptOk !== true) continue;
-      if (!found?.tx) continue;
-      const adopted = { ...intent, tx: found.tx, status: 'anchored' };
-      this._adoptBaseIntent(adopted);
-      if (this.dir) {
-        appendJournal(this.dir, {
-          v: 1,
-          op: 'anchor_intent',
-          chain: 'base',
-          root: intent.root,
-          day: intent.day,
-          nonce: intent.nonce,
-          tx: found.tx,
-          status: 'anchored',
-          epoch: this.epoch,
-        });
-      }
-      this.anchorIntents.push(adopted);
     }
     if (this.dir) this._writeSnapshot();
   }
@@ -1288,6 +1565,7 @@ export function resetReceiptMerkleTree() {
  * flag is set and the directory has no journal.
  */
 export function bootReceiptLog(dir, opts = {}) {
+  resolveAnchorSender();
   const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
   const tree = new ReceiptMerkleTree();
   tree.durable = true;
@@ -1351,15 +1629,22 @@ function gateEpochRecord(tree) {
  */
 export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts = {}) {
   if (!tree) return tree;
+  resolveAnchorSender();
   const lookup = opts.lookup || ((intent) => lookupBaseTxByNonceOrHash({
     rpcUrl: opts.baseRpc,
     txHash: intent?.tx,
     root: intent?.root,
     nonce: intent?.nonce,
-    from: opts.from || process.env.RECEIPT_ANCHOR_FROM,
+    from: intent?.from || opts.from || resolveAnchorSender(),
+    to: intent?.to || intent?.from || opts.from || resolveAnchorSender(),
     request: opts.request,
   }));
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup });
+  const rebroadcast = Object.prototype.hasOwnProperty.call(opts, 'rebroadcast')
+    ? opts.rebroadcast
+    : (baseRpcUrl()
+      ? async (raw) => { await broadcastBaseRaw(raw); }
+      : null);
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast });
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
   if (allow) return tree;
   await assertLatestBaseAnchor(tree, opts);
