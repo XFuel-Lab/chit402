@@ -15,6 +15,7 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 
 const { jcsCanonicalize } = await import('../src/offer-receipt.js');
+const { V11_CANONICALIZATION } = await import('../src/canonical-preimage.js');
 const {
   buildReceipt,
   decodeReceiptClaims,
@@ -32,6 +33,7 @@ const {
 const {
   buildIssuerHistory,
   currentIssuerHistory,
+  issuerHistoryEntryHash,
   resetIssuerHistoryStore,
   verifyIssuerHistory,
 } = await import('../src/issuer-history.js');
@@ -502,6 +504,48 @@ test('repeated history reads do not mint a version when the key set is unchanged
     assert.equal(third.version, first.version);
     assert.equal(second.hash, first.hash);
     assert.equal(third.body, first.body);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('v11 signs canonicalization and a history snapshot that checks offline', async () => {
+  const prev = snapshotEnv();
+  try {
+    useStableKey();
+    await armStrict();
+    assert.equal(jcsCanonicalize({ s: 'a"b\\c/d\n' }), '{"s":"a\\"b\\\\c/d\\u000a"}');
+    const receipt = buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
+    const claims = decodeReceiptClaims(receipt);
+    assert.deepEqual(claims.canonicalization, V11_CANONICALIZATION);
+    assert.equal(claims.canonicalization.hash_alg, 'sha-256');
+    assert.equal(claims.canonicalization.jcs, 'RFC8785');
+    const preimage = JSON.parse(receipt.issuer_signature.canonical_preimage);
+    assert.deepEqual(preimage.canonicalization, V11_CANONICALIZATION);
+    const snap = claims.issuer_history_snapshot;
+    assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
+    assert.equal(snap.snapshot_hash, claims.issuer_history.hash);
+    assert.equal(snap.version, claims.issuer_history.version);
+    assert.equal(snap.seq, claims.issuer_history.seq);
+    assert.equal(snap.entries.at(-1).entry_hash, snap.head_hash);
+    let prevHash = null;
+    for (const entry of snap.entries) {
+      assert.equal(entry.prev_hash ?? null, prevHash);
+      assert.equal(issuerHistoryEntryHash(entry), entry.entry_hash);
+      prevHash = entry.entry_hash;
+    }
+    const kidEntry = snap.entries.find((entry) => entry.kid === claims.issuer_root.kid);
+    assert.ok(kidEntry);
+    assert.equal(typeof kidEntry.not_before, 'string');
+    const snapBytes = Buffer.byteLength(jcsCanonicalize(snap), 'utf8');
+    assert.ok(snapBytes <= 2560, `issuer_history_snapshot is ${snapBytes} bytes`);
+    console.log(`issuer_history_snapshot JCS bytes: ${snapBytes}`);
+
+    const refusal = issueRefusalReceipt(refusalRow('xfuel-v11-embed'));
+    const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+    assert.deepEqual(refusalClaims.canonicalization, V11_CANONICALIZATION);
+    assert.equal(refusalClaims.issuer_history_snapshot.snapshot_hash, refusalClaims.issuer_history.hash);
+    assert.equal(verifyRefusalReceipt(refusal).valid, true);
   } finally {
     restoreEnv(prev);
   }

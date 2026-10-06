@@ -18,8 +18,8 @@
 import crypto from 'crypto';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import { withPublicPreimages } from './receipt-preimage.js';
-import { REFUSAL_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
-import { currentHistoryPin } from './issuer-history.js';
+import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
+import { currentHistoryPin, issuerHistorySnapshotClaim } from './issuer-history.js';
 import {
   assertIssuanceOpen,
   bindIssuerRoot,
@@ -136,7 +136,11 @@ export function issueRefusalReceipt(row) {
     charged: false,
     amount_charged: '0',
     issuer_history: currentHistoryPin(),
-    ...(v2 ? { issuer_root: issuerRootClaim(getIssuerKid()) } : {}),
+    ...(v2 ? {
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_root: issuerRootClaim(getIssuerKid()),
+    } : {}),
   };
   const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS);
   const { jws, kid } = signJws(sealed.claims, { typ: REFUSAL_JWT_TYP });

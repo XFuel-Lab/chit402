@@ -28,6 +28,17 @@ export const CANONICAL_HASH_ALG = 'sha256';
 export const CANONICAL_ENCODING = 'jcs-rfc8785';
 
 /**
+ * Signed into payload v11 (and issuer-root refusals). The envelope and
+ * response headers already name the algorithm; this is the copy inside the
+ * JWS. string_escaping is what jcsCanonicalize actually does.
+ */
+export const V11_CANONICALIZATION = Object.freeze({
+  hash_alg: 'sha-256',
+  jcs: 'RFC8785',
+  string_escaping: 'UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. U+0000 through U+001F escaped as \\u00xx lowercase hex. U+0022 escaped as \\". U+005C escaped as \\\\. Other code units copied. Solidus is not escaped.',
+});
+
+/**
  * Keys allowed in a payment-receipt canonical object.
  * `payload_hash` is not in this list: it is the hash of the object.
  * `openrouter` is included only when the claim is present.
@@ -37,6 +48,7 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'agent_pubkey',
   'binding',
   'caller_binding',
+  'canonicalization',
   'claim_id',
   'delegation_hash',
   'dispute_window',
@@ -45,6 +57,7 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'iss',
   'issuance_commitment',
   'issuer_history',
+  'issuer_history_snapshot',
   'issuer_root',
   'kind',
   'openrouter',
@@ -75,12 +88,14 @@ export const REFUSAL_CANONICAL_FIELDS = Object.freeze([
   'book_id',
   'book_row',
   'cap_atomic',
+  'canonicalization',
   'chain_id',
   'charged',
   'hub',
   'intent_id',
   'issued_at',
   'issuer_history',
+  'issuer_history_snapshot',
   'issuer_root',
   'kind',
   'model',

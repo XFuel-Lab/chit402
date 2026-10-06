@@ -46,10 +46,11 @@ import {
 import {
   CANONICAL_PAYLOAD_VERSION,
   RECEIPT_CANONICAL_FIELDS,
+  V11_CANONICALIZATION,
   sealCanonicalObject,
   resealSignedClaims,
 } from './canonical-preimage.js';
-import { currentHistoryPin } from './issuer-history.js';
+import { currentHistoryPin, issuerHistorySnapshotClaim } from './issuer-history.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -949,7 +950,11 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
     issuer_history: currentHistoryPin(),
-    ...(issuerRootActive() ? { issuer_root: issuerRootClaim(getIssuerKid()) } : {}),
+    ...(issuerRootActive() ? {
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_root: issuerRootClaim(getIssuerKid()),
+    } : {}),
     payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };

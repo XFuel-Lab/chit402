@@ -44,6 +44,44 @@ The signed object, inside the JWS and the canonical preimage:
 
 `issuer_root.kid`, the JWS `kid`, and the thumbprint of `issuer_jwk` are the same value. The canonical allowlist includes `issuer_root`. Payment payload version is 11. Refusal schema is `chit402.refusal.v2` and its payload version is 3 (payload version 2 is already the history pin on `chit402.refusal.v1`). The issuer-history JWS payload carries the same object, which seals a new history version. Older history bytes stay fetchable.
 
+The same v11 signature (and a v2 refusal) also carries `canonicalization` and `issuer_history_snapshot`. Flag-off payloads omit both. A stored JWS is not rewritten to add them.
+
+### `canonicalization`
+
+Inside the JWS, not only on the envelope or in `X-Chit-Hash-Alg` / `X-Chit-Canonicalization`:
+
+| Field | Value |
+|---|---|
+| `hash_alg` | `sha-256` |
+| `jcs` | `RFC8785` |
+| `string_escaping` | UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. U+0000 through U+001F escaped as `\u00xx` lowercase hex. U+0022 escaped as `\"`. U+005C escaped as `\\`. Other code units copied. Solidus is not escaped. |
+
+That escaping is what `jcsCanonicalize` writes. SHA-256 of those UTF-8 bytes, without a trailing newline, is `payload_hash`.
+
+### `issuer_history_snapshot`
+
+`chit402.issuer_history_embed.v1`. A minimal copy of the pinned history so a saved receipt can check the kid window without `GET /.well-known/issuer-history.json`.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `chit402.issuer_history_embed.v1` |
+| `version` | Same as `issuer_history.version` |
+| `seq` | Same as `issuer_history.seq` |
+| `head_hash` | Last entry's `entry_hash` |
+| `snapshot_hash` | Same as `issuer_history.hash`. SHA-256 of the JCS of the full well-known document, not of this object |
+| `entries` | One object per history entry, in chain order |
+
+Each entry has `kid`, `jwk` (`kty`, `crv`, `x`, `y`, `kid`, `alg`, `use`), `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, `entry_hash`.
+
+Offline check, with no well-known fetch:
+
+1. `snapshot_hash`, `version`, and `seq` equal the `issuer_history` pin.
+2. `entry_hash` is SHA-256 of the JCS of the entry without `entry_hash`.
+3. `prev_hash` chains, and the last `entry_hash` equals `head_hash`.
+4. The entry whose `kid` is `issuer_root.kid` supplies `not_before`, `not_after`, `status`, and `revoked_at`.
+
+One live key is 1052 bytes of JCS for `issuer_history_snapshot`. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. `?hash=` still serves that document, and `snapshot_hash` is its hash.
+
 A receipt that already has a JWS is not re-signed. While the issuer root is on, a later covering root is an unsigned `covering_head` sidecar (`chit402.covering_head.v1`, `signed: false`). The stored `issuer_signature.jws` bytes stay put across a key rotation and a tree-head update. Flag-off v10 may still reseal `tree_head_hash` inside that same claim set. v9 and older are never restamped.
 
 ## Cutover pause

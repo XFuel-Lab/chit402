@@ -382,6 +382,39 @@ export function currentHistoryPin() {
   return { hash: record.hash, version: record.version, seq: record.seq };
 }
 
+export const ISSUER_HISTORY_EMBED_SCHEMA = 'chit402.issuer_history_embed.v1';
+
+/**
+ * Minimal history carried inside a v11 signature. entry_hash still recomputes
+ * from the same entry body the well-known document uses. snapshot_hash is
+ * issuer_history.hash (SHA-256 of the full snapshot JCS), not a hash of this
+ * object. One live key is about 1KB.
+ * @param {{ version: number, seq: number, hash: string, body: string }} [record]
+ */
+export function issuerHistorySnapshotClaim(record = currentIssuerHistory()) {
+  const doc = JSON.parse(record.body);
+  return {
+    schema: ISSUER_HISTORY_EMBED_SCHEMA,
+    version: record.version,
+    seq: record.seq,
+    head_hash: doc.head_hash,
+    snapshot_hash: record.hash,
+    entries: (doc.entries || []).map((entry) => ({
+      kid: entry.kid,
+      jwk: entry.jwk,
+      alg: entry.alg,
+      not_before: entry.not_before,
+      not_after: entry.not_after ?? null,
+      status: entry.status,
+      revoked_at: entry.revoked_at ?? null,
+      reason: entry.reason ?? null,
+      custody: entry.custody,
+      prev_hash: entry.prev_hash ?? null,
+      entry_hash: entry.entry_hash,
+    })),
+  };
+}
+
 /**
  * Latest snapshot, or a sealed older one by version or hash.
  * @param {{ version?: unknown, hash?: unknown }} [query]
