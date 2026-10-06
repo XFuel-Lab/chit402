@@ -19,8 +19,10 @@
  *   1  a real check failed
  *   2  UNSIGNED (registry-only), no real failure
  *   3  usage error
- * --allow-unsigned maps exit 2 to 0. The verdict stays UNSIGNED.
- * --json sets overall to "unsigned" for that case.
+ * --allow-unsigned maps exit 2 to 0. It does not rewrite the finding.
+ * Human text then uses UNSIGNED (registry-only; accepted by --allow-unsigned).
+ * --json keeps verdict "unsigned" and overall "unsigned" either way.
+ * exit_policy is "default" or "allow-unsigned". allow_unsigned is deprecated.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -59,11 +61,6 @@ function step(status, detail) {
 
 function pass(detail) {
   return step('PASS', detail);
-}
-
-/** Registry hash matched. The issuer JWS did not stamp agent_record_entry. */
-function unsigned(detail) {
-  return { status: 'UNSIGNED', detail };
 }
 
 function fail(detail) {
@@ -512,11 +509,17 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   }
   // PASS means the issuer JWS stamped this fingerprint. A missing stamp matched
   // the registry only, so a swapped entry would otherwise look signed.
-  if (!signedFingerprint) return unsigned(`event ${eventId} ${fingerprint}`);
-  if (String(signedFingerprint).toLowerCase() !== published) {
-    return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`);
+  if (!signedFingerprint) {
+    return { status: 'UNSIGNED', detail: `event ${eventId} ${fingerprint}`, signed_check: 'not_run' };
   }
-  return pass(`event ${eventId} ${fingerprint}`);
+  if (String(signedFingerprint).toLowerCase() !== published) {
+    return {
+      status: 'FAIL',
+      detail: `fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`,
+      signed_check: 'mismatch',
+    };
+  }
+  return { status: 'PASS', detail: `event ${eventId} ${fingerprint}`, signed_check: 'matched' };
 }
 
 /**
@@ -541,30 +544,50 @@ export function exitCode(result, opts = {}) {
  * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
  * @param {{ allowUnsigned?: boolean }} [opts]
  */
+const ACCEPTED_UNSIGNED = 'UNSIGNED (registry-only; accepted by --allow-unsigned)';
+
+/**
+ * @param {string} status
+ * @param {boolean} accepted
+ */
+function stepLabel(status, accepted) {
+  if (status === 'UNSIGNED' && accepted) return ACCEPTED_UNSIGNED;
+  if (status === 'UNSIGNED') return 'UNSIGNED (registry-only)';
+  return status;
+}
+
 export function formatJson(result, opts = {}) {
-  const code = exitCode(result, opts);
+  const allow = opts.allowUnsigned === true;
+  const code = exitCode(result, { allowUnsigned: allow });
   const overall = result.verdict === 'PASS' ? 'pass'
     : result.verdict === 'UNSIGNED' ? 'unsigned'
       : 'fail';
+  const verdict = result.verdict === 'UNSIGNED' ? 'unsigned' : result.verdict;
+  const signedCheck = result.steps.entry_fingerprint?.signed_check || 'not_run';
   return JSON.stringify({
     overall,
-    verdict: verdictLabel(result.verdict),
+    verdict,
+    signed_check: signedCheck,
+    exit_policy: allow ? 'allow-unsigned' : 'default',
     exit_code: code,
-    allow_unsigned: opts.allowUnsigned === true,
+    allow_unsigned: allow,
     steps: result.steps,
   }, null, 2);
 }
 
 /**
  * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
+ * @param {{ allowUnsigned?: boolean }} [opts]
  */
-export function formatReport(result) {
+export function formatReport(result, opts = {}) {
+  const accepted = opts.allowUnsigned === true && result.verdict === 'UNSIGNED';
   const lines = STEPS.map((name) => {
     const row = result.steps[name] || { status: 'FAIL', detail: 'missing' };
-    const status = row.status === 'UNSIGNED' ? 'UNSIGNED (registry-only)' : row.status;
+    const status = stepLabel(row.status, accepted);
     return `${status} ${name.padEnd(20)} ${row.detail}`;
   });
-  lines.push(`VERDICT ${verdictLabel(result.verdict)}`);
+  const verdict = accepted ? ACCEPTED_UNSIGNED : verdictLabel(result.verdict);
+  lines.push(`VERDICT ${verdict}`);
   return lines.join('\n');
 }
 
@@ -633,7 +656,7 @@ async function main() {
   const result = await verifyLink(specimen);
   const code = exitCode(result, { allowUnsigned: parsed.allowUnsigned });
   if (parsed.json) console.log(formatJson(result, { allowUnsigned: parsed.allowUnsigned }));
-  else console.log(formatReport(result));
+  else console.log(formatReport(result, { allowUnsigned: parsed.allowUnsigned }));
   process.exit(code);
 }
 

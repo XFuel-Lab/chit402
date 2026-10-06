@@ -189,11 +189,13 @@ node scripts/verify-1f916-link.mjs --json specimen.json
 |---------|-------|------|
 | Signed fingerprint matches | `PASS` | 0 |
 | Stamp missing, registry matches | `UNSIGNED (registry-only)` | 2 |
-| Same, with `--allow-unsigned` | `UNSIGNED (registry-only)` | 0 |
+| Same, with `--allow-unsigned` | `UNSIGNED (registry-only; accepted by --allow-unsigned)` | 0 |
 | A check failed (including a fingerprint mismatch) | `FAIL` | 1 |
 | Usage error | stderr | 3 |
 
-`--json` sets `overall` to `pass`, `unsigned`, or `fail`. `--allow-unsigned` changes the process exit from 2 to 0 and leaves `overall` as `unsigned`.
+`--allow-unsigned` is caller policy. It changes the exit code only. The human line names that acceptance and does not say PASS.
+
+`--json` sets `overall` to `pass`, `unsigned`, or `fail`. For a missing stamp, `verdict` is `unsigned` and `signed_check` is `not_run`. Those fields, and every step row, stay the same when `--allow-unsigned` is set. `exit_policy` is `default` without the flag and `allow-unsigned` with it. `exit_code` is 2 or 0. `allow_unsigned` is the same fact as a boolean and is deprecated in favor of `exit_policy`.
 
 ## API Reference
 

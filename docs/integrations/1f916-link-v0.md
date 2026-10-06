@@ -98,7 +98,7 @@ Facilitator JSON shapes differ. Coinbase CDP returns `transaction`. Other settle
 
 `xfuel-verify` covers steps 2 and 3 for a receipt JSON file. It does not compare `agent_record_entry.fingerprint`.
 
-`scripts/verify-1f916-link.mjs` fetches the receipt, checks the signature against the Chit JWKS, checks the signed book chain, checks the Base transaction on a public RPC, and compares `agent_record_entry.fingerprint` to the hash 1F916 publishes for the claimed identity-log event. A step is `PASS` or `FAIL`. When the issuer JWS has no `agent_record_entry` stamp, `entry_fingerprint` is `UNSIGNED (registry-only)`: the registry hash matched, and the signed compare did not run. Exit 0 is a signed PASS, exit 1 is a real failure, exit 2 is UNSIGNED. `--allow-unsigned` maps exit 2 to 0. `--json` sets `overall` to `pass`, `unsigned`, or `fail`. Node built-ins only.
+`scripts/verify-1f916-link.mjs` fetches the receipt, checks the signature against the Chit JWKS, checks the signed book chain, checks the Base transaction on a public RPC, and compares `agent_record_entry.fingerprint` to the hash 1F916 publishes for the claimed identity-log event. A step is `PASS` or `FAIL`. When the issuer JWS has no `agent_record_entry` stamp, `entry_fingerprint` is `UNSIGNED (registry-only)`: the registry hash matched, and the signed compare did not run. Exit 0 is a signed PASS, exit 1 is a real failure, exit 2 is UNSIGNED. `--allow-unsigned` maps exit 2 to 0 and prints `UNSIGNED (registry-only; accepted by --allow-unsigned)`. It does not rewrite the finding. `--json` sets `overall` and `verdict` to `unsigned`, `signed_check` to `not_run`, and `exit_policy` to `default` or `allow-unsigned`. `allow_unsigned` is deprecated in favor of `exit_policy`. Node built-ins only.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/<chit_receipt_id>?format=json" -o receipt.json
@@ -143,7 +143,7 @@ The command reads each tx, checks the USDC transfer with the foreign-ingest veri
 node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
 ```
 
-These two files are stamped, and each receipt's issuer JWS carries `agent_record_entry`, so the command exits 0 with `PASS entry_fingerprint`. A specimen whose `chit_receipt_id` is absent still prints `pending_first_stamp` on `fetch_receipt`. A receipt with no stamp exits 2 and prints `UNSIGNED (registry-only)` on `entry_fingerprint`.
+These two files are stamped, and each receipt's issuer JWS carries `agent_record_entry`, so the command exits 0 with `PASS entry_fingerprint`. A specimen whose `chit_receipt_id` is absent still prints `pending_first_stamp` on `fetch_receipt`. A receipt with no stamp exits 2 and prints `UNSIGNED (registry-only)` on `entry_fingerprint`. `--allow-unsigned` exits 0 and prints `UNSIGNED (registry-only; accepted by --allow-unsigned)`.
 
 ## What issuance will do later
 

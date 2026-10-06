@@ -297,7 +297,11 @@ test('a foreign-ingest payout receipt with an issuer JWS passes while status is 
   assert.equal(exitCode(result, { allowUnsigned: true }), 0);
   assert.match(report, /^PASS entry_fingerprint/m);
   assert.doesNotMatch(report, /UNSIGNED \(registry-only\)/);
-  assert.equal(JSON.parse(formatJson(result)).overall, 'pass');
+  assert.equal(result.steps.entry_fingerprint.signed_check, 'matched');
+  const signedJson = JSON.parse(formatJson(result));
+  assert.equal(signedJson.overall, 'pass');
+  assert.equal(signedJson.signed_check, 'matched');
+  assert.equal(signedJson.exit_policy, 'default');
 });
 
 test('a tampered entry fingerprint fails only that step on a foreign-ingest payout', async () => {
@@ -332,6 +336,18 @@ test('a signed stamp rejects a swapped entry the registry confirms', async () =>
   assert.equal(result.verdict, 'FAIL');
 });
 
+function withoutExitPolicy(parsed) {
+  const copy = JSON.parse(JSON.stringify(parsed));
+  delete copy.exit_policy;
+  delete copy.allow_unsigned;
+  delete copy.exit_code;
+  return copy;
+}
+
+function fingerprintLine(report) {
+  return report.split('\n').find((line) => line.includes('entry_fingerprint'));
+}
+
 test('unstamped receipt plus a swapped entry is UNSIGNED, not PASS', async () => {
   const { fetchImpl, specimen } = foreignPayoutHarness({
     stampFingerprint: null,
@@ -343,25 +359,39 @@ test('unstamped receipt plus a swapped entry is UNSIGNED, not PASS', async () =>
     fetchImpl,
   });
   const openReport = formatReport(open);
+  const acceptedReport = formatReport(open, { allowUnsigned: true });
   assert.equal(open.verdict, 'UNSIGNED', openReport);
   assert.equal(open.steps.entry_fingerprint.status, 'UNSIGNED');
+  assert.equal(open.steps.entry_fingerprint.signed_check, 'not_run');
   assert.notEqual(open.steps.entry_fingerprint.status, 'PASS');
   assert.equal(exitCode(open), 2);
   assert.equal(exitCode(open, { allowUnsigned: true }), 0);
   assert.match(openReport, /UNSIGNED \(registry-only\)\s+entry_fingerprint/);
+  assert.doesNotMatch(openReport, /accepted by --allow-unsigned/);
   assert.match(openReport, /VERDICT UNSIGNED \(registry-only\)/);
   assert.match(openReport, new RegExp(SWAPPED));
   assert.doesNotMatch(openReport, /^PASS entry_fingerprint/m);
   assert.doesNotMatch(openReport, /VERDICT PASS/);
-  const parsed = JSON.parse(formatJson(open));
-  assert.equal(parsed.overall, 'unsigned');
-  assert.equal(parsed.verdict, 'UNSIGNED (registry-only)');
-  assert.equal(parsed.exit_code, 2);
-  assert.equal(parsed.steps.entry_fingerprint.status, 'UNSIGNED');
+  const acceptedLine = fingerprintLine(acceptedReport);
+  assert.equal(acceptedLine.startsWith('UNSIGNED (registry-only; accepted by --allow-unsigned) '), true);
+  assert.equal(acceptedLine.includes('PASS'), false);
+  assert.match(acceptedReport, /VERDICT UNSIGNED \(registry-only; accepted by --allow-unsigned\)/);
+  const plain = JSON.parse(formatJson(open));
   const allowed = JSON.parse(formatJson(open, { allowUnsigned: true }));
-  assert.equal(allowed.overall, 'unsigned');
-  assert.equal(allowed.exit_code, 0);
+  assert.equal(plain.overall, 'unsigned');
+  assert.equal(plain.verdict, 'unsigned');
+  assert.equal(plain.signed_check, 'not_run');
+  assert.equal(plain.exit_policy, 'default');
+  assert.equal(plain.exit_code, 2);
+  assert.equal(plain.allow_unsigned, false);
+  assert.equal(plain.steps.entry_fingerprint.status, 'UNSIGNED');
+  assert.equal(plain.steps.entry_fingerprint.signed_check, 'not_run');
+  assert.deepEqual(withoutExitPolicy(plain), withoutExitPolicy(allowed));
+  assert.equal(allowed.exit_policy, 'allow-unsigned');
   assert.equal(allowed.allow_unsigned, true);
+  assert.equal(allowed.exit_code, 0);
+  assert.equal(allowed.verdict, 'unsigned');
+  assert.equal(allowed.overall, 'unsigned');
 });
 
 test('a real fingerprint mismatch stays exit 1 when --allow-unsigned is set', async () => {
@@ -449,17 +479,31 @@ describe('verifier fixture, not a public specimen', () => {
 
     const allowed = spawnSync(process.execPath, [script, positivePath, '--allow-unsigned'], { encoding: 'utf8' });
     assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr);
-    assert.match(allowed.stdout, /UNSIGNED \(registry-only\)\s+entry_fingerprint/);
-    assert.doesNotMatch(allowed.stdout, /^PASS entry_fingerprint/m);
+    const acceptedLine = allowed.stdout.split('\n').find((line) => line.includes('entry_fingerprint'));
+    assert.equal(acceptedLine.startsWith('UNSIGNED (registry-only; accepted by --allow-unsigned) '), true, acceptedLine);
+    assert.equal(acceptedLine.includes('PASS'), false, acceptedLine);
+    assert.match(allowed.stdout, /VERDICT UNSIGNED \(registry-only; accepted by --allow-unsigned\)/);
     assert.doesNotMatch(allowed.stdout, /VERDICT PASS/);
 
     const json = spawnSync(process.execPath, [script, '--json', positivePath], { encoding: 'utf8' });
     assert.equal(json.status, 2, json.stdout + json.stderr);
     const parsed = JSON.parse(json.stdout);
     assert.equal(parsed.overall, 'unsigned');
+    assert.equal(parsed.verdict, 'unsigned');
+    assert.equal(parsed.signed_check, 'not_run');
+    assert.equal(parsed.exit_policy, 'default');
     assert.equal(parsed.exit_code, 2);
     assert.equal(parsed.steps.entry_fingerprint.status, 'UNSIGNED');
+    assert.equal(parsed.steps.entry_fingerprint.signed_check, 'not_run');
     assert.notEqual(parsed.overall, 'pass');
+
+    const jsonAllowed = spawnSync(process.execPath, [script, '--json', '--allow-unsigned', positivePath], { encoding: 'utf8' });
+    assert.equal(jsonAllowed.status, 0, jsonAllowed.stdout + jsonAllowed.stderr);
+    const allowedJson = JSON.parse(jsonAllowed.stdout);
+    assert.deepEqual(withoutExitPolicy(parsed), withoutExitPolicy(allowedJson));
+    assert.equal(allowedJson.exit_policy, 'allow-unsigned');
+    assert.equal(allowedJson.allow_unsigned, true);
+    assert.equal(allowedJson.exit_code, 0);
 
     const bad = spawnSync(process.execPath, [script, '--allow-unsigned', tamperedPath], { encoding: 'utf8' });
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);
