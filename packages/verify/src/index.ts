@@ -1614,12 +1614,28 @@ export async function verifyReceipt(
     }
   }
 
-  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
-    ?? decoded?.iat
-    ?? receipt.created_at
-    ?? null;
   const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
   const payloadVersion = Number(verifiedClaims?.payload_version);
+  // A verified `iat` is the only clock for the key window. Payload v11 and any
+  // receipt that carries `issuer_root` fail `missing_signed_iat` when it is
+  // absent. v7–v10 receipts that predate a signed `iat` still fall back to the
+  // unverified decode and then the unsigned `created_at`. That fallback is not
+  // used once `issuer_root` is present, even on an older payload version.
+  const signedIat = readSignedIat(issuer_signature.valid ? verifiedClaims as Record<string, unknown> | undefined : undefined);
+  const hasIssuerRoot = !!(
+    verifiedClaims
+    && verifiedClaims.issuer_root
+    && typeof verifiedClaims.issuer_root === 'object'
+  );
+  const signedIatRequired = issuer_signature.valid && (
+    (Number.isFinite(payloadVersion) && payloadVersion >= 11) || hasIssuerRoot
+  );
+  const missingSignedIat = signedIatRequired && signedIat === undefined;
+  const issuedAt = missingSignedIat
+    ? null
+    : (signedIat !== undefined
+      ? signedIat
+      : (decoded?.iat ?? receipt.created_at ?? null));
   // Payload v10 signs the history pin. A missing pin fails even when the
   // caller did not pass a history file or ask for a fetch.
   const pinRequired = !options.skipIssuerHistory
@@ -1658,8 +1674,10 @@ export async function verifyReceipt(
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
     };
   if (issuer_history.warning) warnings.push(issuer_history.warning);
+  if (missingSignedIat) errors.push('missing_signed_iat');
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
-    errors.push(`issuer history: ${issuer_history.reason}`);
+    const historyUsedUnsignedClock = missingSignedIat && issuer_history.reason === 'issued_at_missing';
+    if (!historyUsedUnsignedClock) errors.push(`issuer history: ${issuer_history.reason}`);
   }
   const historyDocument = issuer_history.document ?? options.issuerHistory ?? null;
   delete issuer_history.document;
@@ -1669,7 +1687,7 @@ export async function verifyReceipt(
     signatureReason: issuer_signature.reason ?? null,
     jwsKid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
     verifiedClaims: verifiedClaims as Record<string, unknown> | undefined,
-    iat: unixSeconds(verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null),
+    iat: signedIat === undefined ? null : unixSeconds(signedIat),
     payloadVersion: Number.isFinite(payloadVersion) ? payloadVersion : null,
     payloadHash: typeof signedPayloadHash === 'string' ? signedPayloadHash : null,
     historyDocument,
@@ -1705,10 +1723,11 @@ export async function verifyReceipt(
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
   const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
+  const signedIatFailed = missingSignedIat;
   const rootSoft = !!issuer_root && (
     issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
   );
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1796,6 +1815,17 @@ export async function verifyReceipt(
     overall,
     errors,
   };
+}
+
+/**
+ * `iat` from a verified JWS payload. Null and a missing key are both absent.
+ * An unsigned `created_at` is not a substitute.
+ */
+function readSignedIat(claims: Record<string, unknown> | null | undefined): unknown {
+  if (!claims || !Object.prototype.hasOwnProperty.call(claims, 'iat')) return undefined;
+  const value = claims.iat;
+  if (value == null || value === '') return undefined;
+  return value;
 }
 
 function unixSeconds(value: unknown): number | null {

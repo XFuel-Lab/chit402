@@ -19,6 +19,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - `chit402.refusal.v2` (payload version 3) and any other non-payment schema fail `verifyReceipt`. A refusal is never a verified payment.
 - Only a DNS timeout or SERVFAIL is `pass_dns_unavailable`. `ECONNREFUSED` and any other resolver error fail.
 - The active kid set at a DNS `seq` is rebuilt from events. The pin does not insert a kid.
+- **Signed `iat`.** Payload v11, and any receipt whose verified claims include `issuer_root`, fail `missing_signed_iat` when the signed payload has no `iat`. The key window does not use the unsigned `created_at`. v7–v10 receipts that never signed `iat` still fall back to `created_at` for the issuer-history window. That fallback stops as soon as `issuer_root` is present.
 - An unsigned caller cache of `RootCommitted` logs is labeled `as of block N, caller cache` and never upgrades a verdict to `pass`.
 - Chain revocation fails the receipt whatever DNS says. A DNS record that drops the receipt's still-active kid fails `dns_chain_disagree` immediately. Other kid-set lag is `dns_lagging` inside TTL+1h and `dns_chain_disagree` after that.
 

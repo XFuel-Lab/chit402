@@ -866,6 +866,31 @@ test('a gateway-signed chit402.refusal.v2 is not a verified payment', async () =
   assert.notEqual(payment.issuer_root.verdict, 'pass');
 });
 
+test('v11 and issuer_root fail closed when the signed iat is missing', async () => {
+  const v11 = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    iat: null,
+    payloadVersion: 11,
+  });
+  assert.equal(v11.verdict, 'fail_missing_signed_iat');
+  assert.equal(v11.reason, 'missing_signed_iat');
+
+  const rooted = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    iat: null,
+    payloadVersion: 10,
+  });
+  assert.equal(rooted.reason, 'missing_signed_iat');
+
+  const legacy = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    iat: null,
+    payloadVersion: 9,
+    issuerRoot: null,
+  });
+  assert.notEqual(legacy.reason, 'missing_signed_iat');
+});
+
 test('decodeKeyReturn reads the six-word keys tuple', () => {
   const iface = new Interface(REGISTRY_ABI);
   const data = iface.encodeFunctionResult('keys', [2, true, 1788511925, 0, 0, 1788511925]);

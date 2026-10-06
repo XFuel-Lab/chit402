@@ -662,6 +662,8 @@ export async function verifyIssuerRoot(input: IssuerRootInput): Promise<IssuerRo
   if (!input.thumbprint || !input.jwsKid || input.thumbprint !== input.jwsKid) {
     return fail('kid_mismatch');
   }
+  const signedIatRequired = (input.payloadVersion != null && input.payloadVersion >= 11) || input.issuerRoot != null;
+  if (signedIatRequired && input.iat == null) return fail('missing_signed_iat');
 
   const claim = input.issuerRoot;
   const legacy = !claim;

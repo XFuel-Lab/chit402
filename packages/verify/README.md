@@ -87,6 +87,8 @@ npx xfuel-verify receipt.json --pinned-chain eip155:84532 --pinned-registry 0xYo
 
 `CHIT_PINNED_CHAIN` and `CHIT_PINNED_REGISTRY` are the same pin. `pass_dns_unavailable` is a pass printed in yellow. `unverified_root` and `pin_only` are not passes. An unsigned `--root-cache` is reported as `as of block N, caller cache` and does not upgrade the verdict.
 
+With no pin, `root_checked` is false. That is not a root pass. Payload v11 and any receipt with `issuer_root` still require a signed `iat`. A missing one fails `missing_signed_iat`. The unsigned `created_at` is not the key-window clock. v7–v10 receipts that never signed `iat` still use `created_at` for the issuer-history window.
+
 ## Issuer Signature Verification (ES256)
 
 Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature
