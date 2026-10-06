@@ -1,8 +1,9 @@
 /**
- * RFC 8785 JSON Canonicalization.
- * Same rules as `jcsCanonicalize` in services/gateway/src/offer-receipt.js.
- * Issuer-history entry hashes and the receipt canonical object use this form.
- * Per-field receipt hashes keep the encoding they were signed with.
+ * chit402-jcs-v1. Same bytes as `jcsCanonicalize` in the gateway.
+ *
+ * Every code unit U+0000 through U+001F is `\u00xx`, including tab and newline.
+ * That is not RFC 8785, which writes U+0009 as `\t` and U+000A as `\n`.
+ * Issuer-history entry hashes and the v11 canonical object use this form.
  */
 
 export function jcsCanonicalize(value: unknown): string {

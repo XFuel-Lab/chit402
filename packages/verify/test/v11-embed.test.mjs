@@ -1,6 +1,6 @@
 /**
  * Payload v11 canonicalization and the offline issuer-history embed.
- * The receipt is signed by the gateway on cursor/gateway-v11-issuer-root-5306.
+ * The receipt is signed by the gateway on cursor/gateway-v11-issuer-root-5306 at 485c5d8.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const { verifyReceipt } = await import('../dist/index.js');
+const { jcsCanonicalize } = await import('../dist/jcs.js');
 const {
   v11CanonicalizationVerdict,
   recomputeV11PayloadHash,
@@ -44,11 +45,26 @@ test('v11 canonicalization accepts only the gateway values and recomputes the pr
     v11CanonicalizationVerdict({ ...V11_CANONICALIZATION, hash_alg: 'sha-1' }).reason,
     'canonicalization_hash_alg',
   );
+  assert.equal(claims.canonicalization.jcs, 'chit402-jcs-v1');
   assert.equal(
-    v11CanonicalizationVerdict({ ...V11_CANONICALIZATION, jcs: 'chit402-jcs-v1' }).reason,
+    v11CanonicalizationVerdict({ ...V11_CANONICALIZATION, jcs: 'RFC8785' }).reason,
     'canonicalization_jcs',
   );
+  assert.equal(
+    v11CanonicalizationVerdict({ ...V11_CANONICALIZATION, string_escaping: 'other' }).reason,
+    'canonicalization_string_escaping',
+  );
   assert.equal(v11CanonicalizationVerdict(null).reason, 'canonicalization_missing');
+});
+
+test('tab and newline vector: chit402-jcs-v1 escapes controls, RFC 8785 does not', () => {
+  const value = { s: '\t\n\u0001\u{1F600}' };
+  const chit402 = Buffer.from(jcsCanonicalize(value), 'utf8').toString('hex');
+  const rfc8785 = Buffer.from(JSON.stringify(value), 'utf8').toString('hex');
+  assert.equal(chit402, '7b2273223a225c75303030395c75303030615c7530303031f09f9880227d');
+  assert.equal(rfc8785, '7b2273223a225c745c6e5c7530303031f09f9880227d');
+  assert.equal(chit402.length, 60);
+  assert.equal(rfc8785.length, 44);
 });
 
 test('a gateway v11 receipt passes history offline when well-known returns 404', async () => {

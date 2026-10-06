@@ -89,6 +89,8 @@ npx xfuel-verify receipt.json --pinned-chain eip155:84532 --pinned-registry 0xYo
 
 With no pin, `root_checked` is false. That is not a root pass. Payload v11 and any receipt with `issuer_root` still require a signed `iat`. A missing one fails `missing_signed_iat`. The unsigned `created_at` is not the key-window clock. v7–v10 receipts that never signed `iat` still use `created_at` for the issuer-history window.
 
+Payload v11 also requires `canonicalization` with `jcs` `chit402-jcs-v1` and that rule's `string_escaping` sentence. The verifier recomputes `payload_hash` under that rule. `RFC8785` is rejected until a gateway emits true RFC 8785 bytes. Christopher has that decision pending. A v11 `issuer_history_snapshot` is checked offline, so a missing well-known document does not fail the history leg when the embed verifies.
+
 ## Issuer Signature Verification (ES256)
 
 Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature
