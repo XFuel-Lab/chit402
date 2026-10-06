@@ -9,6 +9,7 @@ The package re-exports `@xfuel/verify` and forwards CLI arguments to `xfuel-veri
 
 ### Changed
 - Depends on `@xfuel/verify` `^0.3.0`.
+- Publish notes: `publishConfig` does not name an owner. The registry maintainer is the npm user `xfuel`, the same account as `@xfuel/verify`.
 - README usage includes `--canonical-preimage` and `--issuer-history-file`. Those flags hash the canonical object against signed `payload_hash` and read `not_after` from a pinned issuer-history snapshot. The CLI still forwards every argument unchanged.
 
 ## 0.2.0
