@@ -175,7 +175,9 @@ test('relative resource URL does not throw and still omits extensions when bazaa
     includeBazaar: false,
   });
   assert.equal(body.resource.url, '/task-request');
-  assert.equal(body.extensions, undefined);
+  assert.equal(body.extensions.bazaar, undefined);
+  assert.equal(body.extensions['offer-receipt'], undefined);
+  assert.ok(body.extensions.reviews, 'only the fixed Agorean reviews block remains');
 });
 
 test('receipt JWS verifies and the legacy settle fields stay put', async () => {

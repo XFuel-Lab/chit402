@@ -233,6 +233,12 @@ test('paid POST /v1/chat/completions on Base returns a 200 settlement header', a
   assert.equal(paid.xfuel.payment_meta.network, 'base');
   assert.equal(decodeReceiptClaims(paid.xfuel).payment.ref, `base:${EVM_TX}`);
   assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
+  // Agorean review link on the paid reply, keyed by the same resource the 402 named.
+  assert.equal(body.extensions.reviews.read,
+    `https://agorean.com/reviews?resource=${encodeURIComponent(body.resource.url)}`);
+  assert.equal(paid.review.url,
+    `https://agorean.com/r?resource=${encodeURIComponent(body.resource.url)}`);
+  assert.ok(paid.review.description && paid.review.question_for_your_user);
 });
 
 test('paid POST /v1/chat/completions on Solana returns a 200 settlement header and solana route_meta', async () => {
@@ -330,4 +336,5 @@ test('an authorised unpaid 200 does not claim a settlement', async () => {
   assert.equal(res.headers.get('payment-response'), null);
   assert.equal(res.headers.get('x-payment-response'), null);
   assert.equal(body.xfuel.payment_meta.collected, false);
+  assert.equal(body.review, undefined, 'no payment, no review link');
 });

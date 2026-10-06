@@ -64,7 +64,7 @@ import {
 } from './session-act.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
-import { buildPaymentChallenge } from './x402-adapter.js';
+import { buildPaymentChallenge, agoreanReviewField } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
@@ -2015,6 +2015,8 @@ export function createApp() {
           proof:   `/prove-result?task_id=${effectiveTaskId}`,
           receipt: verifyUrl,   // public, no-auth, shareable
         },
+        // Agorean review link, only when this call was paid over x402.
+        ...agoreanReviewField(paymentRail === 'usdc' ? { ref: paymentRef } : null, taskResourceUrl),
       });
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /task-request error');
@@ -2787,28 +2789,6 @@ export function createApp() {
       });
     }
     return res.json(record);
-  });
-
-  app.get('/v1/receipts/tree/epoch/:epoch/head', (req, res) => {
-    const epoch = Number(req.params.epoch);
-    if (!Number.isInteger(epoch) || epoch < 1) {
-      return res.status(400).json({ error: 'bad_epoch' });
-    }
-    try {
-      const head = getReceiptMerkleTree().signedClosedEpochHead(epoch);
-      if (!head) {
-        return res.json({
-          schema: 'chit402.tree_head.v2',
-          status: 'not_yet_published',
-          published: false,
-          epoch,
-        });
-      }
-      return res.json(head);
-    } catch (err) {
-      logger.error({ err }, 'closed epoch head error');
-      return res.status(500).json({ error: 'internal', message: err.message });
-    }
   });
 
   app.get('/v1/receipts/tree/consistency', (req, res) => {

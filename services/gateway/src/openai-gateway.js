@@ -40,7 +40,7 @@ import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
-import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { setX402PaymentResponseHeaders, agoreanReviewField } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -2551,6 +2551,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
+      ...agoreanReviewField(metering.payment, paidResourceUrl(baseUrl, resourcePath)),
     });
   }
 
@@ -2997,6 +2998,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
+      ...agoreanReviewField(metering.payment, paidResourceUrl(baseUrl, '/v1/responses')),
     });
   });
 

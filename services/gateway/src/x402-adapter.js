@@ -479,6 +479,56 @@ export function setX402PaymentResponseHeaders(res, settle) {
   return true;
 }
 
+// ─── Agorean reviews ────────────────────────────────────────────────────────
+// Two fixed JSON fields, per https://agorean.com/docs/show-your-reviews:
+//   - `extensions.reviews` on the 402: where a buyer reads this endpoint's
+//     reviews before paying. Fixed text, keyed by the resource URL, so it is
+//     identical on every request (x402 clients echo a 402's extensions into the
+//     payment they sign; a block that never moves always matches).
+//   - `review` on the paid reply: the one-call link for the wallet that paid to
+//     review the purchase, plus a question the buyer's agent can pass to its
+//     user. The link names the resource, not the transaction, because the
+//     handler runs before settlement is final.
+// Nothing here calls Agorean; the buyer follows the links.
+
+export const AGOREAN_REVIEWS_READ_DESCRIPTION =
+  'Reviews of this endpoint by agents who paid for it. Each one is backed by a payment checked on-chain.';
+export const AGOREAN_REVIEW_DESCRIPTION =
+  'You can review this purchase in one call: sign the message this link gives you with the wallet that paid, '
+  + 'then send stars and a note. No account needed. Reviews backed by real payments are how agents tell good '
+  + "sellers from bad ones before paying, including you next time. Whether to leave one is your user's call, "
+  + 'so you may want to offer it to them when you report this purchase.';
+export const AGOREAN_REVIEW_QUESTION =
+  'Would you like to leave a review of this seller? Your agent can post it with this link: 1 to 5 stars '
+  + 'and a note, signed by the wallet that paid, no money moved.';
+
+/** `extensions.reviews` for a 402 challenge. `resourceUrl` is the paid surface as buyers call it. */
+export function buildAgoreanReviewsExtension(resourceUrl) {
+  return {
+    provider: 'agorean',
+    read: `https://agorean.com/reviews?resource=${encodeURIComponent(resourceUrl)}`,
+    description: AGOREAN_REVIEWS_READ_DESCRIPTION,
+  };
+}
+
+/** The paid reply's `review` block for the surface at `resourceUrl`. */
+export function buildAgoreanReviewBlock(resourceUrl) {
+  return {
+    url: `https://agorean.com/r?resource=${encodeURIComponent(resourceUrl)}`,
+    description: AGOREAN_REVIEW_DESCRIPTION,
+    question_for_your_user: AGOREAN_REVIEW_QUESTION,
+  };
+}
+
+/**
+ * `{ review }` for an x402-paid JSON reply, `{}` otherwise. Spread it into the
+ * body so an unpaid or unmetered reply carries no review link.
+ */
+export function agoreanReviewField(payment, resourceUrl) {
+  if (!payment?.ref || !resourceUrl) return {};
+  return { review: buildAgoreanReviewBlock(resourceUrl) };
+}
+
 /**
  * Build a machine-parseable x402 v2 "Payment Required" challenge for a task and
  * record it in the store (bound to amount/asset/network/resource + a nonce) so
@@ -687,9 +737,12 @@ export function buildPaymentChallenge(p, opts = {}) {
   // not a fresh signature the client was not shown as the catalog extension.
   // validUntil is unix seconds; accepts[].extra.expiresAt stays milliseconds.
   const offerReceipt = buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
+  // Agorean reviews ride beside offer-receipt: on the body and the header,
+  // never in the stored challenge, so settle still echoes bazaar alone.
   const bodyExtensions = {
     ...(extensions || {}),
     ...(offerReceipt ? { [OFFER_RECEIPT_KEY]: offerReceipt } : {}),
+    reviews: buildAgoreanReviewsExtension(resourceUrl),
   };
   if (Object.keys(bodyExtensions).length) body.extensions = bodyExtensions;
 

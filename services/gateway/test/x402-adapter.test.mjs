@@ -14,6 +14,9 @@ import {
   BAZAAR_EXTENSION_KEY,
   isSolanaNetwork,
   isEvmNetwork,
+  buildAgoreanReviewsExtension,
+  buildAgoreanReviewBlock,
+  agoreanReviewField,
 } from '../src/x402-adapter.js';
 import {
   SOLANA_NETWORKS,
@@ -103,6 +106,40 @@ test('buildPaymentChallenge: includes bazaar extension by default', () => {
   const bazaar = body.extensions[BAZAAR_EXTENSION_KEY];
   assert.ok(bazaar.info.input.type, 'info.input.type is present');
   assert.ok(bazaar.info.output.type, 'info.output.type is present');
+});
+
+test('buildPaymentChallenge: declares Agorean reviews on the body and the header, keyed by the resource', () => {
+  const build = () => buildPaymentChallenge({
+    taskId: `task-${Math.random()}`,
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+    resource: 'https://api.xfuel.app/v1/chat/completions',
+  }, { store: null });
+
+  const { body, headers } = build();
+  const expected = {
+    provider: 'agorean',
+    read: 'https://agorean.com/reviews?resource=https%3A%2F%2Fapi.xfuel.app%2Fv1%2Fchat%2Fcompletions',
+    description: 'Reviews of this endpoint by agents who paid for it. Each one is backed by a payment checked on-chain.',
+  };
+  assert.deepEqual(body.extensions.reviews, expected, 'body carries the reviews block');
+  const header = JSON.parse(Buffer.from(headers['PAYMENT-REQUIRED'], 'base64').toString('utf8'));
+  assert.deepEqual(header.extensions.reviews, expected, 'header carries the same block');
+  assert.deepEqual(build().body.extensions.reviews, expected, 'identical on every request');
+  assert.equal(body.extensions.reviews.read, buildAgoreanReviewsExtension(body.resource.url).read);
+  assert.ok(body.extensions.bazaar, 'bazaar stays beside it');
+});
+
+test('agoreanReviewField: review link only on an x402-paid reply', () => {
+  const resource = 'https://api.xfuel.app/task-request';
+  const paid = agoreanReviewField({ ref: 'base:0xabc' }, resource);
+  assert.deepEqual(paid.review, buildAgoreanReviewBlock(resource));
+  assert.equal(paid.review.url, 'https://agorean.com/r?resource=https%3A%2F%2Fapi.xfuel.app%2Ftask-request');
+  assert.match(paid.review.description, /^You can review this purchase in one call/);
+  assert.match(paid.review.question_for_your_user, /^Would you like to leave a review of this seller\?/);
+  assert.deepEqual(agoreanReviewField(null, resource), {}, 'unpaid: no review field');
+  assert.deepEqual(agoreanReviewField({ ref: null }, resource), {}, 'no payment ref: no review field');
+  assert.deepEqual(agoreanReviewField({ ref: 'base:0xabc' }, null), {}, 'no resource: no review field');
 });
 
 test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', () => {
@@ -221,7 +258,8 @@ test('buildPaymentChallenge: can disable bazaar extension', () => {
     includeBazaar: false,
   });
 
-  assert.ok(!body.extensions, 'no extensions when includeBazaar=false');
+  assert.ok(!body.extensions?.bazaar, 'no bazaar extension when includeBazaar=false');
+  assert.ok(body.extensions?.reviews, 'the Agorean reviews block does not depend on bazaar');
 });
 
 test('buildPaymentChallenge requires taskId and amount', () => {
