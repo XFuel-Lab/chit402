@@ -1694,6 +1694,8 @@ export async function verifyReceipt(
     || options.issuerHistoryUrl
     || historyPin
   ));
+  const rootPinInput = options.issuerRoot && 'pin' in options.issuerRoot ? options.issuerRoot.pin : undefined;
+  const registryPinned = resolvePinnedRoot(rootPinInput, process.env).mode === 'on';
   const issuer_history = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
@@ -1711,6 +1713,7 @@ export async function verifyReceipt(
       requirePin: pinRequired,
       snapshot: historySnapshot,
       offlineEmbed: embedOk,
+      registryPinned,
     })
     : {
       checked: false,
@@ -1724,7 +1727,8 @@ export async function verifyReceipt(
   if (missingSignedIat) errors.push('missing_signed_iat');
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
     const historyUsedUnsignedClock = missingSignedIat && issuer_history.reason === 'issued_at_missing';
-    if (!historyUsedUnsignedClock) errors.push(`issuer history: ${issuer_history.reason}`);
+    const selfAsserted = issuer_history.reason === 'self_asserted';
+    if (!historyUsedUnsignedClock && !selfAsserted) errors.push(`issuer history: ${issuer_history.reason}`);
   }
   const historyDocument = issuer_history.document ?? options.issuerHistory ?? null;
   delete issuer_history.document;
@@ -1768,7 +1772,8 @@ export async function verifyReceipt(
 
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
-  const historyFailed = issuer_history.checked && !issuer_history.ok;
+  const historySelfAsserted = issuer_history.reason === 'self_asserted';
+  const historyFailed = issuer_history.checked && !issuer_history.ok && !historySelfAsserted;
   const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
   const signedIatFailed = missingSignedIat;
   const v11ClaimFailed = canonicalizationFailed || snapshotFailed;
@@ -1791,7 +1796,7 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
-  if (overall === 'verified' && rootSoft) overall = 'partial';
+  if (overall === 'verified' && (rootSoft || historySelfAsserted)) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature

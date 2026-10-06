@@ -13,6 +13,8 @@ import {
   readJwsHeader,
   type Es256Jwk,
 } from './jws.js';
+import { v11CanonicalizationVerdict, recomputeV11PayloadHash } from './canonical-preimage.js';
+import { readIssuerHistoryPin, verifyIssuerHistorySnapshot } from './issuer-history.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
 export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
@@ -238,7 +240,13 @@ export function verifyRefusal(
   }
   if (!trusted) return failed(KEY_UNTRUSTED, { kid: kid || null });
 
-  const signed = payload as unknown as RefusalDocument & { issuer_root?: { kid?: unknown } };
+  const signed = payload as unknown as RefusalDocument & {
+    issuer_root?: { kid?: unknown };
+    canonicalization?: unknown;
+    issuer_history_snapshot?: unknown;
+    payload_hash?: unknown;
+    issued_at?: unknown;
+  };
   if (!isRefusalSchema(signed.schema)) return failed('unknown_document_type', { kid });
   if (signed.schema !== REFUSAL_SCHEMA && signed.schema !== REFUSAL_SCHEMA_V2) {
     return failed('unknown_refusal_schema', { kid });
@@ -257,6 +265,26 @@ export function verifyRefusal(
       return failed('issuer_root_missing', { kid });
     }
     if (kid && root.kid !== kid) return failed('issuer_root_kid_mismatch', { kid });
+  }
+  const carriesEmbed = signed.schema === REFUSAL_SCHEMA_V2
+    || signed.canonicalization != null
+    || signed.issuer_history_snapshot != null;
+  if (carriesEmbed) {
+    const canon = v11CanonicalizationVerdict(signed.canonicalization);
+    if (!canon.ok) return failed(canon.reason || 'canonicalization_missing', { kid });
+    const recomputed = recomputeV11PayloadHash(signed as unknown as Record<string, unknown>);
+    const signedHash = typeof signed.payload_hash === 'string'
+      ? signed.payload_hash.replace(/^0x/i, '').toLowerCase()
+      : '';
+    if (!recomputed || recomputed !== signedHash) return failed('payload_hash_mismatch', { kid });
+    const rootKid = signed.issuer_root && typeof signed.issuer_root.kid === 'string'
+      ? signed.issuer_root.kid
+      : null;
+    const snap = verifyIssuerHistorySnapshot(signed.issuer_history_snapshot, readIssuerHistoryPin(signed as unknown as Record<string, unknown>), {
+      kid: rootKid,
+      issuedAt: signed.issued_at,
+    });
+    if (!snap.ok) return failed(snap.reason || 'issuer_history_snapshot_missing', { kid });
   }
   if (doc.payload_version != null && Number(doc.payload_version) !== version) {
     return failed('payload_version_mismatch', { kid });

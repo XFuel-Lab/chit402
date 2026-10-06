@@ -860,6 +860,7 @@ test('a gateway-signed chit402.refusal.v2 is not a verified payment', async () =
   const jwk = doc.issuer_signature.issuer_jwk;
   const refusal = verifyRefusal(doc, { jwks: { keys: [jwk] }, trustedKids: [doc.issuer_signature.kid] });
   assert.equal(refusal.valid, true, refusal.reason);
+  assert.equal(refusal.payload_version, 3);
   const payment = await verifyReceipt(doc, { jwks: { keys: [jwk] }, trustedKids: [doc.issuer_signature.kid] });
   assert.equal(payment.overall, 'failed');
   assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
