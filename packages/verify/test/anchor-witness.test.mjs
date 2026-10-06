@@ -247,3 +247,51 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
   assert.equal(`${payerMode.stdout}`.includes('What this proves'), false);
   assert.notEqual(payerMode.status, 0);
 });
+
+/**
+ * These strings are the getGenesisHash values. The mock below returns them
+ * directly. It does not read SOLANA_GENESIS, so a truncated table still fails.
+ */
+const GENESIS_LITERALS = {
+  'mainnet-beta': '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
+  devnet: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',
+  testnet: '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY',
+};
+
+test('genesis hashes are the full getGenesisHash values, not the CAIP-2 prefix', async () => {
+  assert.equal(SOLANA_GENESIS['mainnet-beta'], GENESIS_LITERALS['mainnet-beta']);
+  assert.equal(SOLANA_GENESIS.devnet, GENESIS_LITERALS.devnet);
+  assert.equal(SOLANA_GENESIS.testnet, GENESIS_LITERALS.testnet);
+  assert.notEqual(SOLANA_GENESIS['mainnet-beta'], '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp');
+  assert.notEqual(SOLANA_GENESIS.devnet, 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1');
+  assert.notEqual(SOLANA_GENESIS.testnet, '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z');
+  for (const [cluster, literal] of Object.entries(GENESIS_LITERALS)) {
+    const fx = fixture();
+    fx.head.anchors.solana.cluster = cluster;
+    const fetched = fetchers(fx, { genesis: literal });
+    const result = await verifyAnchoredRoot({
+      receipt: fx.receipt,
+      inclusion: fx.inclusion,
+      head: fx.head,
+      ...fetched,
+    });
+    assert.equal(result.solana.reason, undefined, cluster);
+    assert.equal(result.solana.valid, true, cluster);
+    assert.equal(result.overall, 'verified', cluster);
+  }
+});
+
+test('an inclusion endpoint 404 body is not_in_tree', async () => {
+  const fx = fixture();
+  const fetched = fetchers(fx);
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: { error: 'not_in_tree', task_id: fx.receipt.task_id },
+    head: fx.head,
+    ...fetched,
+  });
+  assert.equal(result.inclusion.reason, 'not_in_tree');
+  assert.equal(result.errors.includes('not_in_tree'), true);
+  assert.equal(result.errors.includes('bad_root'), false);
+  assert.deepEqual(fetched.calls, []);
+});

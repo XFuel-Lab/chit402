@@ -292,6 +292,15 @@ function readJson(file: string): unknown {
   return JSON.parse(content) as unknown;
 }
 
+function headStatus(file: string): string | null {
+  try {
+    const doc = readJson(file) as { status?: unknown };
+    return typeof doc?.status === 'string' ? doc.status : null;
+  } catch {
+    return null;
+  }
+}
+
 function printLane(lane: ReceiptLane): void {
   const bit = (value: boolean | null) => (value == null ? 'unknown' : (value ? 'true' : 'false'));
   console.log(`  Receipt lane (unsigned)`);
@@ -411,6 +420,11 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
   const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
   if (!receiptPath || !inclusionPath || !headPath) {
+    const candidates = [args.headFile, headPath, ...args.positionals];
+    if (candidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
+      console.error('Tree head is not_yet_published.');
+      return 3;
+    }
     console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
     console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
     return 3;
