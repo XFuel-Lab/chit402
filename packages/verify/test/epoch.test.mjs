@@ -278,4 +278,34 @@ test('an unlogged list verifies by hash and a bad hash does not', () => {
   assert.equal(verifyUnloggedSection(tampered).reason, 'unlogged_hash');
   assert.equal(unloggedReasonForTask({ payload_version: 2, unlogged: tampered }, 'openai-old'), null);
   assert.equal(EPOCH2_OPENING_ROOT, 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286');
+  const empty = { count: 0, hash: createHash('sha256').update('[]').digest('hex'), rows: [] };
+  const epoch1 = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
+  const baseRecord = {
+    payload_version: 2,
+    epochs: [{
+      epoch: 1,
+      status: 'closed',
+      final_root: epoch1,
+      final_size: 4,
+      genesis_digest: EPOCH1_GENESIS_DIGEST,
+      prev_epoch_root: null,
+      prev_epoch_size: 0,
+    }],
+    orphans: [
+      { root: '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9', chain: 'base_and_solana' },
+      { root: null, root_prefix: 'd7f6c548', unrecoverable: true, chain: 'base_and_solana' },
+      { root: EPOCH2_OPENING_ROOT, chain: 'base_and_solana' },
+    ],
+    unlogged: empty,
+    issuer_signature: { jws: 'a.b.c' },
+  };
+  assert.equal(verifyEpochRecord(baseRecord, { verifySignature: () => true }).reason, 'orphan_ff950e72_missing');
+  baseRecord.orphans.unshift({
+    root: 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3',
+    chain: 'base',
+    solana: 'absent',
+  });
+  assert.equal(verifyEpochRecord(baseRecord, { verifySignature: () => true }).ok, true);
+  baseRecord.orphans[1].chain = 'base';
+  assert.equal(verifyEpochRecord(baseRecord, { verifySignature: () => true }).reason, 'orphan_20d88791_chain');
 });

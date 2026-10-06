@@ -2185,6 +2185,19 @@ test('a forged epoch record is not a pinned epoch', async () => {
   pinned.issuer_signature = { jws: 'a.b.c' };
   assert.equal(assertPinnedEpochRecord(pinned).ok, true);
   assert.equal(pinned.orphans.find((row) => row.root_prefix === 'd7f6c548').unrecoverable, true);
+  const legacy = epochRecordClaims();
+  legacy.payload_version = 1;
+  legacy.orphans = legacy.orphans
+    .filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3')
+    .map((row) => (row.root_prefix === 'd7f6c548' || String(row.root || '').startsWith('20d88791')
+      ? { ...row, chain: 'base' }
+      : row));
+  legacy.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(legacy).ok, true);
+  const dropped = epochRecordWithUnlogged(epochRecordClaims(), []);
+  dropped.orphans = dropped.orphans.filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3');
+  dropped.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(dropped).reason, 'orphan_ff950e72_missing');
 });
 
 test('backfill dry-run lists each refusal', () => {
@@ -2268,6 +2281,19 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   assert.equal(v2.payload_version, 2);
   assert.equal(JSON.stringify(v2.epochs), JSON.stringify(v1.epochs));
   assert.equal(JSON.stringify(v2.orphans), JSON.stringify(v1.orphans));
+  const stale = epochRecordClaims();
+  stale.orphans = stale.orphans.filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3')
+    .map((row) => (row.root_prefix === 'd7f6c548' || String(row.root || '').startsWith('20d88791')
+      ? { ...row, chain: 'base' }
+      : row));
+  const corrected = epochRecordWithUnlogged(stale, plan.unlogged);
+  assert.equal(JSON.stringify(corrected.epochs), JSON.stringify(stale.epochs));
+  assert.notEqual(JSON.stringify(corrected.orphans), JSON.stringify(stale.orphans));
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('ff950e72')).chain, 'base');
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('ff950e72')).solana, 'absent');
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('20d88791')).chain, 'base_and_solana');
+  assert.equal(corrected.orphans.find((row) => row.root_prefix === 'd7f6c548').chain, 'base_and_solana');
+  assert.equal(corrected.orphans.find((row) => row.root_prefix === 'd7f6c548').root, null);
   assert.equal(v2.epochs[0].final_root, EPOCH1_FINAL_ROOT);
   assert.equal(v2.epochs[0].final_size, 4);
   assert.equal(v2.epochs[1].opening_root, EPOCH2_OPENING_ROOT);

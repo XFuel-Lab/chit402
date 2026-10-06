@@ -53,15 +53,26 @@ export const EPOCH2_OPENING_SIZE = 1;
  * d7f6c548 is stored as a prefix: the leaves were not recovered, and the
  * remaining bytes are not invented.
  */
+export const ORPHAN_FF950E72 = 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3';
+
 export const ORPHANED_ROOTS = Object.freeze([
+  {
+    root: ORPHAN_FF950E72,
+    kind: 'genesis_only',
+    chain: 'base',
+    solana: 'absent',
+    base_tx: '0xf100906ada9e73713cf4d9503c4ad9a994f5a593c1d7714c1437db10f9d0f3d4',
+    base_nonce: 0,
+    note: 'Sep 30 genesis. Base nonce 0 self-transfer from 0x1844D1F5FE42aff1Cce6F776514Fd40374079582. Calldata is this root. The anchor memo wallet has no Solana memo for it. Not a prefix of epoch 1.',
+  },
   {
     root: '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9',
     kind: 'genesis_only',
     verifier_binary_build_digest: '207e981d0c50dfe0294ab085893e88a930f1b664b4dfec221f82afd666831145',
-    chain: 'base',
+    chain: 'base_and_solana',
     window: '2026-09-30 to 2026-10-01',
     times_anchored: 5,
-    note: 'The same genesis-only root was anchored five times after process restarts (Sep 30 twice, Oct 1 three times). It is not a prefix of epoch 1.',
+    note: 'The same genesis-only root was anchored five times after process restarts (Sep 30 twice, Oct 1 three times), on Base (nonces 1, 2, 4, 5, 6) and on Solana. It is not a prefix of epoch 1.',
   },
   {
     root: null,
@@ -69,9 +80,9 @@ export const ORPHANED_ROOTS = Object.freeze([
     recovered: false,
     unrecoverable: true,
     kind: 'populated_lost',
-    chain: 'base',
+    chain: 'base_and_solana',
     observed_et: '2026-10-01 8:01 AM ET',
-    note: 'A populated tree was anchored on Base and lost on the next restart. The full root is that transaction calldata. The leaves were not recovered, so this record keeps the prefix and does not invent the remaining bytes.',
+    note: 'A populated tree was anchored on Base (nonce 3) and on Solana, then lost on the next restart. The full root is that transaction calldata. The leaves were not recovered, so this record keeps the prefix and does not invent the remaining bytes.',
   },
   {
     root: EPOCH2_OPENING_ROOT,
@@ -228,11 +239,13 @@ export function attestedUnloggedEntry(record, taskId) {
 }
 
 /**
- * Version 2 claims. epochs and orphans are the same arrays as `base`
- * (the version 1 record). The version 1 object is not modified.
+ * Version 2 claims. `epochs` is the same array as `base` (the version 1
+ * roots). Orphans are the corrected canonical list, not a copy of a version
+ * 1 record that omitted ff950e72 or marked Solana anchors base-only.
+ * The version 1 object is not modified.
  */
 export function epochRecordWithUnlogged(base, unloggedRows) {
-  if (!base?.epochs || !base?.orphans) {
+  if (!base?.epochs) {
     const err = new Error('epoch_record_incomplete');
     err.code = 'epoch_record_incomplete';
     throw err;
@@ -241,7 +254,7 @@ export function epochRecordWithUnlogged(base, unloggedRows) {
     schema: base.schema || EPOCH_RECORD_SCHEMA,
     payload_version: EPOCH_RECORD_VERSION_UNLOGGED,
     epochs: base.epochs,
-    orphans: base.orphans,
+    orphans: ORPHANED_ROOTS.map((row) => ({ ...row })),
     unlogged: unloggedSection(unloggedRows),
   };
 }
@@ -355,8 +368,25 @@ export function assertPinnedEpochRecord(record) {
   } else if (version === EPOCH_RECORD_VERSION_UNLOGGED) {
     const listed = verifyUnloggedSection(record.unlogged);
     if (!listed.ok) return listed;
+    const chains = assertV2OrphanChains(record.orphans);
+    if (!chains.ok) return chains;
   } else {
     return { ok: false, reason: 'epoch_record_version' };
   }
+  return { ok: true };
+}
+
+/** Version 2 only. Version 1 records predate this correction and still boot. */
+function assertV2OrphanChains(orphans) {
+  const early = orphans.find((row) => row?.root === ORPHAN_FF950E72);
+  if (!early) return { ok: false, reason: 'orphan_ff950e72_missing' };
+  if (early.chain !== 'base' || early.solana !== 'absent') {
+    return { ok: false, reason: 'orphan_ff950e72_chain' };
+  }
+  const genesisOnly = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
+  const genesis = orphans.find((row) => row?.root === genesisOnly);
+  if (genesis?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_20d88791_chain' };
+  const lost = orphans.find((row) => row?.root_prefix === 'd7f6c548');
+  if (lost?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_d7f6c548_chain' };
   return { ok: true };
 }

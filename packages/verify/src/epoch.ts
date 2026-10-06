@@ -45,6 +45,7 @@ function isGenuineV1Head(head: EpochTreeHead | null | undefined): boolean {
   return head.schema === TREE_HEAD_SCHEMA_V1 || Number(head.payload_version) === 1;
 }
 const ORPHAN_GENESIS_ONLY = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
+const ORPHAN_FF950E72 = 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3';
 
 export interface EpochTreeHead {
   schema?: string;
@@ -248,9 +249,22 @@ export function verifyEpochRecord(
   } else if (version === 2) {
     const listed = verifyUnloggedSection(record.unlogged);
     if (!listed.ok) return listed;
+    const chains = v2OrphanChains(orphans);
+    if (!chains.ok) return chains;
   } else {
     return { ok: false, reason: 'epoch_record_version' };
   }
+  return { ok: true };
+}
+
+function v2OrphanChains(orphans: Array<{ root?: string | null; root_prefix?: string; chain?: string; solana?: string }>): { ok: boolean; reason?: string } {
+  const early = orphans.find((row) => row?.root === ORPHAN_FF950E72);
+  if (!early) return { ok: false, reason: 'orphan_ff950e72_missing' };
+  if (early.chain !== 'base' || early.solana !== 'absent') return { ok: false, reason: 'orphan_ff950e72_chain' };
+  const genesis = orphans.find((row) => row?.root === ORPHAN_GENESIS_ONLY);
+  if (genesis?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_20d88791_chain' };
+  const lost = orphans.find((row) => row?.root_prefix === 'd7f6c548');
+  if (lost?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_d7f6c548_chain' };
   return { ok: true };
 }
 
