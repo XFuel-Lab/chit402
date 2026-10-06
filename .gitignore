@@ -138,6 +138,10 @@ deployment-*.json
 # Rust build artifacts
 target/
 
+# Foundry (Hardhat cache/ is already ignored above)
+out/
+broadcast/
+
 # IDE
 *.code-workspace
 .history/
