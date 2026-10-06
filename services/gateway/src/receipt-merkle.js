@@ -1053,7 +1053,7 @@ export class ReceiptMerkleTree {
     const latest = new Map();
     for (const row of this.anchorIntents || []) {
       if (row.chain !== 'base') continue;
-      const key = `${row.day}|${row.root}|${row.nonce}`;
+      const key = `${row.day}|${row.root}|${row.nonce}|${row.tx || ''}`;
       const prev = latest.get(key);
       latest.set(key, {
         ...prev,
@@ -1112,7 +1112,11 @@ export class ReceiptMerkleTree {
       return { anchoredTx: anchored.tx, nonce: anchored.nonce, from: anchored.from, intent: anchored };
     }
     const signed = [...prior].reverse().find((row) => (
-      row.raw && row.tx && row.status !== 'replaced' && row.status !== 'anchored' && row.status !== 'abandoned_unsigned'
+      row.raw && row.tx
+      && row.status !== 'replaced'
+      && row.status !== 'anchored'
+      && row.status !== 'abandoned_unsigned'
+      && row.status !== 'superseded'
     ));
     if (signed) {
       return {
@@ -1296,11 +1300,25 @@ export class ReceiptMerkleTree {
       this._markIntent(intent, 'broadcast', { tx: intent.tx, raw: intent.raw, from: intent.from, to: intent.to });
     }
     return this._anchorResult({
-      status: 'anchored',
+      status: how === 'mined' ? 'anchored' : 'broadcast',
       root: intent.root,
       tx: found.tx || intent.tx,
       from: found.from || intent.from,
     });
+  }
+
+  _blockedPublish(publishRoot, intent, reason) {
+    const same = normalizeRoot(intent?.root) === normalizeRoot(publishRoot);
+    return {
+      hold: true,
+      anchor: this._anchorResult({
+        status: 'blocked',
+        root: publishRoot,
+        tx: same ? (intent?.tx || null) : null,
+        from: same ? (intent?.from || null) : null,
+        reason,
+      }),
+    };
   }
 
   async _replaceAtNonce(old, { root, day, send, lookup, request }) {
@@ -1413,59 +1431,55 @@ export class ReceiptMerkleTree {
       found = await this._lookupIntent(intent, lookup, request);
     } catch (err) {
       const failed = this._noteSendFailure(intent, err);
-      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root: intent.root, tx: intent.tx, reason: failed.reason, from: intent.from }) };
+      return this._blockedPublish(root, intent, failed.reason);
     }
     const how = this._confirmed(found, intent);
-    if (how) {
+    if (how === 'mined') {
       const anchor = this._anchoredFromConfirmation(intent, found, how);
       if (normalizeRoot(intent.root) === normalizeRoot(root)) return { done: true, anchor };
       return { released: true };
     }
+    if (how === 'mempool') {
+      this._markIntent(intent, 'broadcast', { tx: intent.tx, raw: intent.raw, from: intent.from, to: intent.to });
+      if (normalizeRoot(intent.root) === normalizeRoot(root)) {
+        return {
+          done: true,
+          anchor: this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from }),
+        };
+      }
+      return { released: true };
+    }
     if (found?.replaced) {
       this._markIntent(intent, 'replaced', { tx: found.tx || intent.tx || null, reason: found.reason || 'nonce_consumed' });
-      return {
-        hold: true,
-        anchor: this._anchorResult({
-          status: 'blocked',
-          root: intent.root,
-          tx: found.tx || intent.tx,
-          from: intent.from,
-          reason: found.reason || 'nonce_replaced',
-        }),
-      };
+      return { released: true };
     }
     if ((found?.blocked || found?.pending) && !found?.rebroadcast) {
       const failed = this._noteSendFailure(intent, new Error(found.reason || 'rpc_error'));
-      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root: intent.root, tx: intent.tx, reason: failed.reason, from: intent.from }) };
+      return this._blockedPublish(root, intent, failed.reason);
     }
     if (this._backoffActive(intent, now)) {
-      return {
-        hold: true,
-        anchor: this._anchorResult({
-          status: 'blocked',
-          root: intent.root,
-          tx: intent.tx,
-          reason: intent.reason || 'anchor_backoff',
-          from: intent.from,
-        }),
-      };
+      return this._blockedPublish(root, intent, intent.reason || 'anchor_backoff');
     }
     try {
       await this._broadcastRaw(intent, send, request);
     } catch (err) {
       if (err?.code === 'anchor_chain_mismatch') {
         this._markIntent(intent, 'blocked', { reason: 'anchor_chain_mismatch', attempts: (Number(intent.attempts) || 0) + 1 });
-        return { hold: true, anchor: this._anchorResult({ status: 'blocked', root: intent.root, tx: intent.tx, reason: 'anchor_chain_mismatch', from: intent.from }) };
+        return this._blockedPublish(root, intent, 'anchor_chain_mismatch');
       }
       if (classifyAnchorSendError(err) === 'known') {
-        const anchor = this._anchorResult({ status: 'anchored', root: intent.root, tx: intent.tx, from: intent.from });
         this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx });
-        if (normalizeRoot(intent.root) === normalizeRoot(root)) return { done: true, anchor };
+        if (normalizeRoot(intent.root) === normalizeRoot(root)) {
+          return {
+            done: true,
+            anchor: this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from }),
+          };
+        }
         return { released: true };
       }
       if (classifyAnchorSendError(err) === 'transient') {
         const failed = this._noteSendFailure(intent, err);
-        return { hold: true, anchor: this._anchorResult({ status: 'blocked', root: intent.root, tx: intent.tx, reason: failed.reason, from: intent.from }) };
+        return this._blockedPublish(root, intent, failed.reason);
       }
       this._noteSendFailure(intent, err);
       const replaced = await this._replaceAtNonce(intent, { root, day, send, lookup, request });
@@ -1476,7 +1490,7 @@ export class ReceiptMerkleTree {
       confirmed = await this._lookupIntent(intent, lookup, request);
     } catch (err) {
       const failed = this._noteSendFailure(intent, err);
-      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root: intent.root, tx: intent.tx, reason: failed.reason, from: intent.from }) };
+      return this._blockedPublish(root, intent, failed.reason);
     }
     const seen = this._confirmed(confirmed, intent);
     if (seen) {
@@ -1725,14 +1739,18 @@ export class ReceiptMerkleTree {
 
   bundleStatus(now = new Date()) {
     const latest = this._latestBaseIntents();
+    const covered = new Set(
+      latest.filter((row) => row.raw || row.tx).map((row) => `${row.day}|${row.root}|${row.nonce}`),
+    );
     const blocked = latest.filter((row) => (
       row.status === 'blocked' || (row.status === 'signed' && row.reason)
     ));
-    const pending = latest.filter((row) => (
-      row.status === 'intent'
-      || row.status === 'broadcast'
-      || (row.status === 'signed' && !row.reason)
-    ));
+    const pending = latest.filter((row) => {
+      if (row.status === 'intent' && !row.raw && covered.has(`${row.day}|${row.root}|${row.nonce}`)) return false;
+      return row.status === 'intent'
+        || row.status === 'broadcast'
+        || (row.status === 'signed' && !row.reason);
+    });
     let oldest = null;
     for (const row of blocked) {
       const at = Date.parse(row.at || '');

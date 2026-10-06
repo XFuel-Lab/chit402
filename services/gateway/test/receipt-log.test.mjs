@@ -1067,21 +1067,17 @@ test('a nonce that landed as something else is replaced and is not sent again', 
       force: true,
       now: '2026-10-06T12:30:00.000Z',
       nonce: 4,
-      lookup: async () => ({ replaced: true, reason: 'nonce_consumed', tx: first.tx }),
-      send: async (args) => {
-        resentNonce = args.nonce;
-        return args.hash;
+      lookup: async (intent) => {
+        if (intent.tx === first.tx) return { replaced: true, reason: 'nonce_consumed', tx: first.tx };
+        return {
+          receiptOk: true,
+          tx: intent.tx,
+          root: intent.root,
+          from: intent.from,
+          to: intent.to,
+          nonce: intent.nonce,
+        };
       },
-    });
-    assert.equal(resentNonce, null);
-    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced' && row.nonce === 4), true);
-    const again = new ReceiptMerkleTree();
-    again.load(dir);
-    await again.publishHead({
-      force: true,
-      now: '2026-10-06T12:40:00.000Z',
-      nonce: 4,
-      lookup: async () => ({ rebroadcast: true }),
       send: async (args) => {
         resentNonce = args.nonce;
         assert.notEqual(args.raw, first.raw);
@@ -1089,6 +1085,8 @@ test('a nonce that landed as something else is replaced and is not sent again', 
       },
     });
     assert.equal(resentNonce, 5);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced' && row.nonce === 4), true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'signed' && row.nonce === 5), true);
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
@@ -1273,7 +1271,7 @@ test('a node that already has the signed raw is not replaced', async () => {
       send: async () => { sent = true; return `0x${'11'.repeat(32)}`; },
     });
     assert.equal(sent, false);
-    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded'), false);
     assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
   } finally {
