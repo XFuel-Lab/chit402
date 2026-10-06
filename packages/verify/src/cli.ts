@@ -796,9 +796,46 @@ async function main(): Promise<number> {
   }
 }
 
+/**
+ * Node's fetch keeps its undici agent on this symbol after the first request.
+ * There is no public handle for that pool. Closing it lets the loop drain.
+ */
+const UNDICI_GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+
+type FetchDispatcher = {
+  close?: () => Promise<void> | void;
+  destroy?: () => Promise<void> | void;
+};
+
+function fetchDispatcher(): FetchDispatcher | undefined {
+  const bag = globalThis as unknown as Record<symbol, FetchDispatcher | undefined>;
+  return bag[UNDICI_GLOBAL_DISPATCHER];
+}
+
+/**
+ * process.exit() while a fetch keep-alive socket is already CLOSING aborts
+ * on Windows: Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)
+ * (src/win/async.c). Set the code and close the pool so the loop can drain.
+ */
+async function finish(code: number): Promise<void> {
+  process.exitCode = code;
+  const dispatcher = fetchDispatcher();
+  if (!dispatcher) return;
+  try {
+    const closing = dispatcher.close?.();
+    if (closing) await closing;
+  } catch {
+    try {
+      await dispatcher.destroy?.();
+    } catch {
+      // The verification result is already the exit code.
+    }
+  }
+}
+
 main()
-  .then((code) => process.exit(code))
+  .then((code) => finish(code))
   .catch((err) => {
     console.error('Unexpected error:', err);
-    process.exit(3);
+    return finish(3);
   });
