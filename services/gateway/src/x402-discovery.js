@@ -2237,6 +2237,16 @@ export function buildOpenApiSpec(baseUrl = '') {
           responses: { 200: { description: 'chit402.tree_head.v2, or not_yet_published' } },
         },
       },
+      '/v1/receipts/tree/epoch/{epoch}/head': {
+        get: {
+          operationId: 'receiptClosedEpochHead',
+          summary: 'Signed head of a closed receipt-log epoch',
+          description: 'Public read. Epoch 1 returns the closed head: journal root and size, Base and Solana transactions from the committed pin, signed with the issuer key. Does not write the journal, broadcast, or change the epoch record. Other epochs stay not_yet_published until they are closed and pinned.',
+          tags: ['Receipts'],
+          parameters: [{ name: 'epoch', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: { 200: { description: 'chit402.tree_head.v2, or not_yet_published' } },
+        },
+      },
       '/v1/receipts/tree/consistency': {
         get: {
           operationId: 'receiptTreeConsistency',

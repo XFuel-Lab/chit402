@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Epoch 1 can be checked from served data.** `GET /v1/receipts/tree/epoch/1/head` returns the closed epoch-1 head (root `dd20e39a…`, size 4) signed with the issuer key. Base `0x1d8d7ea2…` and Solana `61RHMsPP…` come from the committed pin. The GET does not write the journal, broadcast, or change the signed epoch record. The epoch 1 root and the epoch 2 opening stay byte-identical. Epoch-1 inclusion proofs name those anchors. `@xfuel/verify` 0.3.1 compares the full mainnet `getGenesisHash` (`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`). Not published. No deploy in this change.
+
 ### Changed
 - **`@xfuel/verify` 0.3.0** and **`chit402-verify` 0.3.0**. The alias depends on `@xfuel/verify` `^0.3.0`. This packages the canonical preimage check, the issuer-history pin (`not_after`), and refusal checks. Publish `@xfuel/verify` first, then `chit402-verify`. No production deploy in this change.
 

@@ -3,12 +3,17 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
 
 ### Security
-- **Epoch 1 proofs fail closed.** A head may omit `epoch` only when it is `chit402.tree_head.v1` or payload version 1. A version 2 head with no `epoch` fails `epoch_missing`, including inside `verifyAnchoredRoot`. An epoch-1 inclusion root must be a pinned prefix: size 1 is the genesis leaf of digest `422cceb1`, size 2 is `ecf9a330…`, size 4 is `dd20e39a…`. Size 3 and every other size fail. Not published. The next npm release of this package is 0.4.1, because #484 already targets 0.4.0.
+- **Epoch 1 proofs fail closed.** A head may omit `epoch` only when it is `chit402.tree_head.v1` or payload version 1. A version 2 head with no `epoch` fails `epoch_missing`, including inside `verifyAnchoredRoot`. An epoch-1 inclusion root must be a pinned prefix: size 1 is the genesis leaf of digest `422cceb1`, size 2 is `ecf9a330…`, size 4 is `dd20e39a…`. Size 3 and every other size fail.
 - **`xfuel-verify --rpc` loads the signed epoch record.** A v2 head fetches `GET /v1/receipts/tree/epoch` from the receipt `verify_url` origin, or uses `--epoch-record` / `--epoch-url`. A missing or forged record still fails. Issuer history is fetched by default; `--no-issuer-history` is the offline skip, and a missing `/preimage` is not a verification failure.
 - **Epoch signatures use the same keys as the receipt check.** `--jwks-file`, `--jwks-url`, and `--fetch-jwks` are loaded for the epoch record. An embedded epoch key still verifies only when its thumbprint is a trusted kid. A key that is in none of those sources fails closed.
+
+### Fixed
+- **Mainnet Solana genesis hash.** `SOLANA_GENESIS['mainnet-beta']` is the full `getGenesisHash` value `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`. The previous 32-character CAIP-2 reference never compared equal, so every mainnet-beta anchor failed `solana:cluster_mismatch`. Devnet `EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG` and testnet `4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY` were already the full hashes and are pinned the same way.
+- **Unpublished head and `not_in_tree`.** A head whose `status` is `not_yet_published` is reported as that. An inclusion document `{ "error": "not_in_tree" }` (the inclusion endpoint's 404 body) is `not_in_tree`.
+- **`BUILD_DIGEST.txt` tracks these sources.** The historical epoch 1 genesis `422cceb1` and the epoch 2 opening root `f2043ee9` are not this file.
 
 ## 0.3.0 — Canonical preimage, issuer-history pin, refusals
 
