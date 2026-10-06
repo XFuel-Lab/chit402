@@ -22,8 +22,14 @@ const {
   BASE_SEPOLIA_REGISTRY_RPC,
   BASE_MAINNET_REGISTRY_RPC,
   verifyReceipt,
+  verifyRefusal,
+  hashGenesis,
+  hashCommitment,
+  kidToBytes32,
+  recomputeRootHashes,
+  decodeKeyReturn,
 } = await import('../dist/index.js');
-const { parseIssuerTxt } = await import('../dist/issuer-dns.js');
+const { parseIssuerTxt, resolveIssuerTxt } = await import('../dist/issuer-dns.js');
 const {
   legacyMerkleRootHex,
   legacyInclusion,
@@ -38,10 +44,11 @@ const HONEST = '0x1111111111111111111111111111111111111111';
 const HOSTILE_REG = '0x2222222222222222222222222222222222222222';
 const STALE_REG = '0x3333333333333333333333333333333333333333';
 const NEXT_REG = '0x4444444444444444444444444444444444444444';
-const ROOT = `0x${'ab'.repeat(32)}`;
-const HOSTILE_ROOT = `0x${'cd'.repeat(32)}`;
-const STALE_ROOT = `0x${'ef'.repeat(32)}`;
 const HIST = `0x${'11'.repeat(32)}`;
+const CONTROLLER = '0x5555555555555555555555555555555555555555';
+const CHAIN_ID = 84532;
+const GENESIS_BLOCK = 1;
+const COMMIT_BLOCK = 1000;
 const NOT_BEFORE = Math.floor(Date.parse('2026-09-04T08:52:05Z') / 1000);
 const IAT = NOT_BEFORE + 86_400;
 const NOW = IAT + 3600;
@@ -55,27 +62,97 @@ const expectedRows = JSON.parse(readFileSync(
 ));
 
 function key(status, extra = {}) {
-  return { status, notBefore: NOT_BEFORE, notAfter: 0, revokedAt: 0, ...extra };
-}
-
-function commit(seq, rootHash, blockNumber = 1000) {
+  const wasActive = extra.wasActive ?? (status === 2 || status === 3);
   return {
-    event: 'RootCommitted',
-    rootSeq: seq,
-    rootHash,
-    historyVersion: 1,
-    historySnapshot: HIST,
-    blockNumber,
-    blockTimestamp: BLOCK_TS,
-    logIndex: 0,
+    status,
+    wasActive,
+    notBefore: NOT_BEFORE,
+    notAfter: 0,
+    revokedAt: 0,
+    activatedAt: NOT_BEFORE,
+    ...extra,
+    wasActive: extra.wasActive ?? wasActive,
   };
 }
+
+function honestChain() {
+  const genesisKid = kidToBytes32(GENESIS);
+  const secondKid = kidToBytes32(SECOND);
+  const genesisHash = hashGenesis({
+    chainId: CHAIN_ID,
+    registry: HONEST,
+    controller: CONTROLLER,
+    genesisKid,
+    genesisNotBefore: NOT_BEFORE,
+    activatedAt: NOT_BEFORE,
+    blockNumber: GENESIS_BLOCK,
+  });
+  const commitHash = hashCommitment({
+    prevRootHash: genesisHash,
+    rootSeq: 1,
+    chainId: CHAIN_ID,
+    registry: HONEST,
+    blockNumber: COMMIT_BLOCK,
+    ops: [{ kind: 2, kid: secondKid, timestamp: 0, reasonCode: 0 }],
+    freezes: [],
+    histVersion: 1,
+    histSnapshot: HIST,
+  });
+  const logs = [
+    {
+      event: 'GenesisSeeded',
+      controller: CONTROLLER,
+      kid: GENESIS,
+      notBefore: NOT_BEFORE,
+      activatedAt: NOT_BEFORE,
+      commitBlock: GENESIS_BLOCK,
+      rootHash: genesisHash,
+      rootSeq: 0,
+      blockNumber: GENESIS_BLOCK,
+      blockTimestamp: BLOCK_TS - 10,
+      logIndex: 0,
+    },
+    {
+      event: 'KeyActivated',
+      kid: GENESIS,
+      activatedAt: NOT_BEFORE,
+      rootSeq: 0,
+      blockNumber: GENESIS_BLOCK,
+      blockTimestamp: BLOCK_TS - 10,
+      logIndex: 1,
+    },
+    {
+      event: 'KeyActivated',
+      kid: SECOND,
+      activatedAt: NOT_BEFORE,
+      rootSeq: 1,
+      blockNumber: COMMIT_BLOCK,
+      blockTimestamp: BLOCK_TS,
+      logIndex: 0,
+    },
+    {
+      event: 'RootCommitted',
+      rootSeq: 1,
+      rootHash: commitHash,
+      historyVersion: 1,
+      historySnapshot: HIST,
+      commitBlock: COMMIT_BLOCK,
+      blockNumber: COMMIT_BLOCK,
+      blockTimestamp: BLOCK_TS,
+      logIndex: 1,
+    },
+  ];
+  return { genesisHash, commitHash, logs };
+}
+
+const HONEST_CHAIN = honestChain();
+const ROOT = HONEST_CHAIN.commitHash;
 
 function agreeView(over = {}) {
   return {
     blockNumber: 1000,
     blockTimestamp: BLOCK_TS,
-    rootSeq: 3,
+    rootSeq: 1,
     rootHash: ROOT,
     historyVersion: 1,
     historySnapshot: HIST,
@@ -84,17 +161,7 @@ function agreeView(over = {}) {
       [GENESIS]: key(2),
       [SECOND]: key(2),
     },
-    logs: [
-      commit(3, ROOT),
-      {
-        event: 'KeyActivated',
-        kid: SECOND,
-        rootSeq: 3,
-        blockNumber: 1000,
-        blockTimestamp: BLOCK_TS,
-        logIndex: 1,
-      },
-    ],
+    logs: HONEST_CHAIN.logs,
     ...over,
   };
 }
@@ -124,14 +191,14 @@ function dnsFor(state) {
   if (state === 'missing') return { status: 'nxdomain' };
   if (state === 'hostile') {
     return txt(
-      `v=chit-issuer1; chain=eip155:84532; reg=${HOSTILE_REG}; seq=3; root=${ROOT}; kid=${GENESIS}; kid=${SECOND}`,
+      `v=chit-issuer1; chain=eip155:84532; reg=${HOSTILE_REG}; seq=1; root=${ROOT}; kid=${GENESIS}; kid=${SECOND}`,
     );
   }
   const kids = state === 'stale'
     ? `kid=${GENESIS}`
     : `kid=${GENESIS}; kid=${SECOND}`;
   return txt(
-    `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=3; root=${ROOT}; ${kids}`,
+    `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=1; root=${ROOT}; ${kids}`,
   );
 }
 
@@ -139,26 +206,18 @@ function chainFor(state) {
   if (state === 'missing') return [throwingRpc(), throwingRpc()];
   if (state === 'stale') {
     const view = agreeView({
-      rootSeq: 2,
-      rootHash: STALE_ROOT,
-      logs: [commit(2, STALE_ROOT)],
+      rootSeq: 0,
+      rootHash: HONEST_CHAIN.genesisHash,
+      logs: HONEST_CHAIN.logs.filter((log) => (log.rootSeq ?? 0) === 0),
     });
     return [rpcReturning(view), rpcReturning(view)];
   }
   if (state === 'hostile') {
     const view = agreeView({
-      rootHash: HOSTILE_ROOT,
-      logs: [
-        commit(3, HOSTILE_ROOT),
-        {
-          event: 'KeyActivated',
-          kid: SECOND,
-          rootSeq: 3,
-          blockNumber: 1000,
-          blockTimestamp: BLOCK_TS,
-          logIndex: 1,
-        },
-      ],
+      rootHash: `0x${'cd'.repeat(32)}`,
+      logs: HONEST_CHAIN.logs.map((log) => (
+        log.event === 'RootCommitted' ? { ...log, rootHash: `0x${'cd'.repeat(32)}` } : log
+      )),
     });
     return [rpcReturning(view), rpcReturning(view)];
   }
@@ -181,7 +240,7 @@ function baseInput(row) {
       v: 1,
       chain_id: 'eip155:84532',
       registry: HONEST,
-      root_seq: 3,
+      root_seq: 1,
       root_hash: ROOT,
       kid: GENESIS,
     },
@@ -222,8 +281,7 @@ test('two RPCs are compared at the minimum finalized head', async () => {
   const good = agreeView({ blockNumber: 100 });
   const ahead = agreeView({
     blockNumber: 110,
-    rootHash: HOSTILE_ROOT,
-    logs: [commit(3, HOSTILE_ROOT, 110)],
+    rootHash: `0x${'cd'.repeat(32)}`,
   });
   const tags = [];
   const result = await verifyIssuerRoot({
@@ -247,7 +305,7 @@ test('two RPCs are compared at the minimum finalized head', async () => {
 
 test('a reorg at latest does not move the verifier off finalized', async () => {
   const good = agreeView();
-  const latest = agreeView({ rootSeq: 9, rootHash: HOSTILE_ROOT, logs: [commit(9, HOSTILE_ROOT)] });
+  const latest = agreeView({ rootSeq: 9, rootHash: `0x${'cd'.repeat(32)}` });
   const tags = [];
   const result = await verifyIssuerRoot({
     ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
@@ -256,7 +314,7 @@ test('a reorg at latest does not move the verifier off finalized', async () => {
       chain_id: 'eip155:84532',
       registry: HONEST,
       root_seq: 9,
-      root_hash: HOSTILE_ROOT,
+      root_hash: `0x${'cd'.repeat(32)}`,
       kid: GENESIS,
     },
     rpcs: [
@@ -282,7 +340,7 @@ test('a reorg at latest does not move the verifier off finalized', async () => {
 
 test('RPC disagreement at the shared block fails closed', async () => {
   const left = agreeView();
-  const right = agreeView({ rootHash: HOSTILE_ROOT, logs: [commit(3, HOSTILE_ROOT)] });
+  const right = agreeView({ rootHash: `0x${'cd'.repeat(32)}` });
   const result = await verifyIssuerRoot({
     ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
     rpcs: [rpcReturning(left), rpcReturning(right)],
@@ -328,7 +386,7 @@ test('offline is package trust only for the genesis kid', async () => {
     jwsKid: SECOND,
     thumbprint: SECOND,
     issuerRoot: {
-      v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 3, root_hash: ROOT, kid: SECOND,
+      v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 1, root_hash: ROOT, kid: SECOND,
     },
   });
   assert.equal(other.verdict, 'fail_key_unknown');
@@ -428,7 +486,7 @@ test('DNS seq ahead of the chain fails, and the grace window splits lag from dis
   const dropped = await verifyIssuerRoot({
     ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
     dns: txt(
-      `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=3; root=${ROOT}; kid=${SECOND}`,
+      `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=1; root=${ROOT}; kid=${SECOND}`,
     ),
   });
   assert.equal(dropped.verdict, 'fail_dns_chain_disagree');
@@ -445,10 +503,10 @@ test('a revoked key passes only for iat before revokedAt when it was ever active
       jwsKid: kid,
       thumbprint: kid,
       issuerRoot: {
-        v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 3, root_hash: ROOT, kid,
+        v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 1, root_hash: ROOT, kid,
       },
       dns: txt(
-        `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=3; root=${ROOT}; kid=${kid}; kid=${GENESIS}; kid=${SECOND}`,
+        `v=chit-issuer1; chain=eip155:84532; reg=${HONEST}; seq=1; root=${ROOT}; kid=${kid}; kid=${GENESIS}; kid=${SECOND}`,
       ),
       history: {
         found: true,
@@ -461,13 +519,13 @@ test('a revoked key passes only for iat before revokedAt when it was ever active
     });
   }
 
-  const before = await withKey(GENESIS, key(4, { revokedAt: IAT + 10 }));
+  const before = await withKey(GENESIS, key(4, { revokedAt: IAT + 10, wasActive: true }));
   assert.equal(before.verdict, 'pass');
 
   const after = await withKey(GENESIS, key(4, { revokedAt: IAT }));
   assert.equal(after.verdict, 'fail_key_revoked_at_iat');
 
-  const never = await withKey(SECOND, key(4, { revokedAt: IAT + 10 }), [commit(3, ROOT)]);
+  const never = await withKey(SECOND, key(4, { revokedAt: IAT + 10, wasActive: false }));
   assert.equal(never.verdict, 'fail_key_outside_window');
 
   const unknown = await verifyIssuerRoot({
@@ -478,7 +536,7 @@ test('a revoked key passes only for iat before revokedAt when it was ever active
       v: 1,
       chain_id: 'eip155:84532',
       registry: HONEST,
-      root_seq: 3,
+      root_seq: 1,
       root_hash: ROOT,
       kid: Buffer.alloc(32, 9).toString('base64url'),
     },
@@ -486,15 +544,17 @@ test('a revoked key passes only for iat before revokedAt when it was ever active
   assert.equal(unknown.verdict, 'fail_key_unknown');
 });
 
-test('DNS kid set at a seq is rebuilt from events, including the genesis seed', () => {
+test('DNS kid set at a seq is rebuilt from events, not from the pin', () => {
   const logs = [
-    { event: 'KeyStandby', kid: SECOND, rootSeq: 2, notBefore: NOT_BEFORE, blockNumber: 1, blockTimestamp: 1, logIndex: 0 },
-    { event: 'KeyActivated', kid: SECOND, rootSeq: 3, blockNumber: 2, blockTimestamp: 2, logIndex: 0 },
-    { event: 'KeyRetired', kid: GENESIS, rootSeq: 4, notAfter: IAT, blockNumber: 3, blockTimestamp: 3, logIndex: 0 },
+    { event: 'KeyActivated', kid: GENESIS, activatedAt: NOT_BEFORE, rootSeq: 0, blockNumber: 1, blockTimestamp: 1, logIndex: 0 },
+    { event: 'KeyStandby', kid: SECOND, rootSeq: 2, notBefore: NOT_BEFORE, blockNumber: 2, blockTimestamp: 2, logIndex: 0 },
+    { event: 'KeyActivated', kid: SECOND, activatedAt: NOT_BEFORE, rootSeq: 3, blockNumber: 3, blockTimestamp: 3, logIndex: 0 },
+    { event: 'KeyRetired', kid: GENESIS, rootSeq: 4, notAfter: IAT, blockNumber: 4, blockTimestamp: 4, logIndex: 0 },
   ];
-  assert.deepEqual(activeKidsAtSeq(logs, 1, GENESIS), [GENESIS]);
-  assert.deepEqual(activeKidsAtSeq(logs, 3, GENESIS).sort(), [GENESIS, SECOND].sort());
-  assert.deepEqual(activeKidsAtSeq(logs, 4, GENESIS), [SECOND]);
+  assert.deepEqual(activeKidsAtSeq(logs, 1), [GENESIS]);
+  assert.deepEqual(activeKidsAtSeq(logs, 3).sort(), [GENESIS, SECOND].sort());
+  assert.deepEqual(activeKidsAtSeq(logs, 4), [SECOND]);
+  assert.deepEqual(activeKidsAtSeq([], 1), []);
 });
 
 test('legacy receipts inside the freeze pass, and receipts outside it fail', async () => {
@@ -579,7 +639,7 @@ test('signature and kid failures, and pins that must not be trusted', async () =
   const kid = await verifyIssuerRoot({
     ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
     issuerRoot: {
-      v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 3, root_hash: ROOT, kid: SECOND,
+      v: 1, chain_id: 'eip155:84532', registry: HONEST, root_seq: 1, root_hash: ROOT, kid: SECOND,
     },
   });
   assert.equal(kid.verdict, 'fail_kid_mismatch');
@@ -613,7 +673,7 @@ test('signature and kid failures, and pins that must not be trusted', async () =
 
 test('RootCommitted logs parse from the registry ABI', () => {
   const iface = new Interface(REGISTRY_ABI);
-  const encoded = iface.encodeEventLog(iface.getEvent('RootCommitted'), [3n, ROOT, 1n, HIST]);
+  const encoded = iface.encodeEventLog(iface.getEvent('RootCommitted'), [3n, ROOT, 1n, HIST, 9n]);
   const parsed = parseRegistryLog({
     topics: encoded.topics,
     data: encoded.data,
@@ -625,11 +685,15 @@ test('RootCommitted logs parse from the registry ABI', () => {
   assert.equal(parsed.rootHash, ROOT);
   assert.equal(parsed.blockTimestamp, 123);
   assert.equal(parsed.logIndex, 4);
+  assert.equal(parsed.commitBlock, 9);
 });
 
-test('verifyReceipt without a pin matches the 0.3.0 shape', async () => {
+test('verifyReceipt without a pin keeps 0.3.0 overall and is not a root pass', async () => {
   const bare = await verifyReceipt({ task_id: 't-unpinned', status: 'ok' });
-  assert.equal(bare.issuer_root, undefined);
+  assert.equal(bare.root_checked, false);
+  assert.equal(bare.issuer_root.verdict, 'unpinned');
+  assert.equal(bare.issuer_root.root_checked, false);
+  assert.notEqual(bare.issuer_root.verdict, 'pass');
   assert.equal(bare.overall, 'partial');
 
   const rejected = await verifyReceipt({ task_id: 't-bad-pin', status: 'ok' }, {
@@ -639,13 +703,178 @@ test('verifyReceipt without a pin matches the 0.3.0 shape', async () => {
   assert.equal(rejected.overall, 'failed');
 });
 
-test('legacy merkle root vector is stable', () => {
-  const hashes = [Buffer.alloc(32, 1), Buffer.alloc(32, 2), Buffer.alloc(32, 3)];
-  // Three leaves, sorted, last leaf duplicated, then paired.
-  assert.equal(
-    legacyMerkleRootHex(hashes),
-    '0x248412f354c35f31f24c19f39002b11d0f93174f0811307780eef7d8cbc90dd0',
-  );
-  const again = legacyMerkleRootHex([...hashes].reverse());
-  assert.equal(again, '0x248412f354c35f31f24c19f39002b11d0f93174f0811307780eef7d8cbc90dd0');
+test('legacy merkle matches the gateway and contract vectors', () => {
+  const vectors = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures/legacy-merkle-vectors.json'), 'utf8'));
+  assert.equal(vectors.empty_root, '0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d');
+  for (const row of vectors.cases) {
+    const hashes = row.payload_hashes.map((hex) => Buffer.from(hex, 'hex'));
+    assert.equal(legacyMerkleRootHex(hashes), row.root);
+    for (const proof of row.proofs) {
+      const leaf = Buffer.from(proof.payload_hash, 'hex');
+      assert.equal(verifyLegacyInclusion(leaf, proof.index, row.enumerated_count, proof.proof, row.root), true);
+    }
+  }
+});
+
+test('activatedAt moves the start of the validity window', async () => {
+  const late = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    rpcs: [rpcReturning(agreeView({
+      keys: { ...agreeView().keys, [GENESIS]: key(2, { activatedAt: IAT + 10 }) },
+    })), rpcReturning(agreeView({
+      keys: { ...agreeView().keys, [GENESIS]: key(2, { activatedAt: IAT + 10 }) },
+    }))],
+  });
+  assert.equal(late.verdict, 'fail_key_outside_window');
+});
+
+test('a log timestamp disagreement is rpc_disagree', async () => {
+  const left = agreeView();
+  const right = agreeView({
+    logs: HONEST_CHAIN.logs.map((log) => (
+      log.event === 'RootCommitted' ? { ...log, blockTimestamp: log.blockTimestamp + 5000 } : log
+    )),
+  });
+  const result = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    rpcs: [rpcReturning(left), rpcReturning(right)],
+  });
+  assert.equal(result.verdict, 'fail_rpc_disagree');
+});
+
+test('historical receipts stay verifiable up to the supersede block', async () => {
+  function at(block) {
+    return agreeView({
+      blockNumber: block,
+      supersededBy: NEXT_REG,
+      logs: [
+        ...HONEST_CHAIN.logs,
+        {
+          event: 'Superseded',
+          next: NEXT_REG,
+          blockNumber: 900,
+          blockTimestamp: BLOCK_TS,
+          logIndex: 9,
+        },
+      ],
+    });
+  }
+  const rpcs = [
+    { async read(tag) { return tag === 900 ? at(900) : at(1000); } },
+    { async read(tag) { return tag === 900 ? at(900) : at(1000); } },
+  ];
+  const stayed = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    rpcs,
+  });
+  assert.equal(stayed.verdict, 'pass');
+  assert.equal(stayed.compared_block, 900);
+
+  const followed = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    pin: { chain: 'eip155:84532', registry: NEXT_REG, genesis_kid: GENESIS },
+    dns: txt(`v=chit-issuer1; chain=eip155:84532; reg=${NEXT_REG}; seq=1; root=${ROOT}; kid=${GENESIS}; kid=${SECOND}`),
+    rpcs,
+  });
+  assert.equal(followed.verdict, 'pass');
+
+  const split = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    pin: { chain: 'eip155:84532', registry: NEXT_REG, genesis_kid: GENESIS },
+    rpcs,
+  });
+  assert.equal(split.verdict, 'fail_superseded_unconfirmed');
+});
+
+test('gateway proof field names do not throw', async () => {
+  const hashes = [Buffer.from('11'.repeat(32), 'hex'), Buffer.from('22'.repeat(32), 'hex')];
+  const root = legacyMerkleRootHex(hashes);
+  const proof = legacyInclusion(hashes, hashes[0]);
+  const universeId = `0x${'22'.repeat(32)}`;
+  const view = agreeView({
+    logs: [
+      ...HONEST_CHAIN.logs,
+      {
+        event: 'Frozen',
+        universeId,
+        universeHash: root,
+        enumeratedCount: 2,
+        frozenBlock: COMMIT_BLOCK,
+        rootSeq: 1,
+        blockNumber: COMMIT_BLOCK,
+        blockTimestamp: BLOCK_TS,
+        logIndex: 8,
+      },
+    ],
+  });
+  const result = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    issuerRoot: null,
+    payloadVersion: 10,
+    payloadHash: `0x${hashes[0].toString('hex')}`,
+    legacyProof: {
+      universe_id: universeId,
+      enumerated_count: proof.leafCount,
+      index: proof.index,
+      proof: proof.proof,
+    },
+    rpcs: [rpcReturning(view), rpcReturning(view)],
+  });
+  assert.equal(result.verdict, 'pass_legacy_root');
+
+  const missing = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    issuerRoot: null,
+    payloadVersion: 10,
+    payloadHash: `0x${hashes[0].toString('hex')}`,
+    legacyProof: { index: 0, proof: [] },
+    rpcs: [rpcReturning(view), rpcReturning(view)],
+  });
+  assert.equal(missing.verdict, 'fail_legacy_proof_invalid');
+});
+
+test('ECONNREFUSED is not pass_dns_unavailable', async () => {
+  const looked = await resolveIssuerTxt('chit402.com', {
+    async resolveTxt() {
+      const err = new Error('refused');
+      err.code = 'ECONNREFUSED';
+      throw err;
+    },
+  });
+  assert.equal(looked.status, 'error');
+  const result = await verifyIssuerRoot({
+    ...baseInput({ package: 'agree', chain: 'agree', dns: 'agree' }),
+    dns: looked,
+  });
+  assert.equal(result.verdict, 'fail_dns_error');
+  assert.notEqual(result.verdict, 'pass_dns_unavailable');
+});
+
+test('a gateway-signed chit402.refusal.v2 is not a verified payment', async () => {
+  const doc = JSON.parse(readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), 'fixtures/refusal-v2.gateway.json'),
+    'utf8',
+  ));
+  assert.equal(doc.schema, 'chit402.refusal.v2');
+  assert.equal(doc.payload_version, 3);
+  const jwk = doc.issuer_signature.issuer_jwk;
+  const refusal = verifyRefusal(doc, { jwks: { keys: [jwk] }, trustedKids: [doc.issuer_signature.kid] });
+  assert.equal(refusal.valid, true, refusal.reason);
+  const payment = await verifyReceipt(doc, { jwks: { keys: [jwk] }, trustedKids: [doc.issuer_signature.kid] });
+  assert.equal(payment.overall, 'failed');
+  assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
+  assert.notEqual(payment.issuer_root.verdict, 'pass');
+});
+
+test('decodeKeyReturn reads the six-word keys tuple', () => {
+  const iface = new Interface(REGISTRY_ABI);
+  const data = iface.encodeFunctionResult('keys', [2, true, 1788511925, 0, 0, 1788511925]);
+  const decoded = decodeKeyReturn(data);
+  assert.equal(decoded.status, 2);
+  assert.equal(decoded.wasActive, true);
+  assert.equal(decoded.notBefore, 1788511925);
+  assert.equal(decoded.notAfter, 0);
+  assert.equal(decoded.revokedAt, 0);
+  assert.equal(decoded.activatedAt, 1788511925);
+  assert.equal(recomputeRootHashes(HONEST_CHAIN.logs, CHAIN_ID, HONEST).get(1), ROOT);
 });

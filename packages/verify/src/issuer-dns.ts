@@ -39,7 +39,8 @@ export type DnsLookupResult =
   }
   | { status: 'nxdomain' }
   | { status: 'servfail' }
-  | { status: 'timeout' };
+  | { status: 'timeout' }
+  | { status: 'error'; code: string };
 
 export type DnsParseFailure = 'dns_missing' | 'dns_ambiguous' | 'dns_malformed';
 
@@ -137,8 +138,9 @@ function dnsCode(err: unknown): string {
 
 /**
  * Read `_issuer.<domain>`. NXDOMAIN and an empty answer are `nxdomain`
- * (missing). SERVFAIL is `servfail`. A timeout is `timeout`.
- * DNSSEC is not validated here; the result is `unsigned`.
+ * (missing). Only `ESERVFAIL` is `servfail` and only `ETIMEOUT` / `ETIME`
+ * are `timeout`. `ECONNREFUSED`, `EAI_AGAIN`, and any other error are
+ * `error`. DNSSEC is not validated here; a successful read is `unsigned`.
  */
 export async function resolveIssuerTxt(
   domain = DEFAULT_ISSUER_DOMAIN,
@@ -163,10 +165,9 @@ export async function resolveIssuerTxt(
   } catch (err) {
     const code = dnsCode(err);
     if (code === 'ENOTFOUND' || code === 'ENODATA' || code === 'NXDOMAIN') return { status: 'nxdomain' };
-    if (code === 'ETIMEOUT' || code === 'EAI_AGAIN' || code === 'ECONNREFUSED' || code === 'ETIME') {
-      return { status: 'timeout' };
-    }
-    return { status: 'servfail' };
+    if (code === 'ETIMEOUT' || code === 'ETIME') return { status: 'timeout' };
+    if (code === 'ESERVFAIL') return { status: 'servfail' };
+    return { status: 'error', code: code || 'unknown' };
   } finally {
     if (timer) clearTimeout(timer);
   }

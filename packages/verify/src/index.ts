@@ -76,7 +76,7 @@ import {
   type ReceiptLane,
   type ReceiptTreeHead,
 } from './receipt-lane.js';
-import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
+import { isKnownPaymentSchema, isRefusalDocument, isRefusalSchema } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
@@ -383,10 +383,12 @@ export interface ReceiptVerification {
   /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
   issuer_history: IssuerHistoryCheck;
   /**
-   * Set only when an issuer-root pin is configured. Absent means 0.3.0
-   * behavior: root, DNS, and registry checks were not run.
+   * False when no pin is configured, or the chain could not be read.
+   * A false value is never a root pass. Other 0.3.0 checks are unchanged.
    */
-  issuer_root?: IssuerRootVerdict;
+  root_checked: boolean;
+  /** `unpinned` when root_checked is false. */
+  issuer_root: IssuerRootVerdict;
   warnings: string[];
   overall: 'verified' | 'partial' | 'failed';
   errors: string[];
@@ -1667,7 +1669,7 @@ export async function verifyReceipt(
     signatureReason: issuer_signature.reason ?? null,
     jwsKid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
     verifiedClaims: verifiedClaims as Record<string, unknown> | undefined,
-    iat: unixSeconds(issuedAt),
+    iat: unixSeconds(verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null),
     payloadVersion: Number.isFinite(payloadVersion) ? payloadVersion : null,
     payloadHash: typeof signedPayloadHash === 'string' ? signedPayloadHash : null,
     historyDocument,
@@ -1728,8 +1730,16 @@ export async function verifyReceipt(
   // schema, not only the unsigned outer schema. A valid issuer signature
   // here must not be reported as a verified payment.
   const verifiedSchema = typeof verifiedClaims?.schema === 'string' ? verifiedClaims.schema : null;
-  if (verifiedSchema === REFUSAL_SCHEMA || isRefusalDocument(receipt as unknown)) {
+  const signedKind = typeof verifiedClaims?.kind === 'string' ? verifiedClaims.kind : null;
+  if (
+    isRefusalSchema(verifiedSchema)
+    || isRefusalDocument(receipt as unknown)
+    || signedKind === 'refusal'
+  ) {
     errors.push('refusal document is not a payment receipt');
+    overall = 'failed';
+  } else if (verifiedSchema && !isKnownPaymentSchema(verifiedSchema)) {
+    errors.push('unknown document type');
     overall = 'failed';
   }
 
@@ -1771,7 +1781,17 @@ export async function verifyReceipt(
     receipt_lane,
     preimages,
     issuer_history,
-    ...(issuer_root ? { issuer_root } : {}),
+    root_checked: issuer_root?.root_checked === true,
+    issuer_root: issuer_root ?? {
+      verdict: 'unpinned',
+      reason: null,
+      warnings: [],
+      display: 'normal',
+      note: 'not root-checked',
+      compared_block: null,
+      dnssec: 'unchecked',
+      root_checked: false,
+    },
     warnings,
     overall,
     errors,
@@ -1836,7 +1856,18 @@ async function issuerRootForReceipt(
   const requested = options.issuerRoot;
   const pinInput = requested && 'pin' in requested ? requested.pin : undefined;
   const resolved = resolvePinnedRoot(pinInput, process.env);
-  if (resolved.mode === 'off') return undefined;
+  if (resolved.mode === 'off') {
+    return {
+      verdict: 'unpinned',
+      reason: null,
+      warnings: [],
+      display: 'normal',
+      note: 'not root-checked',
+      compared_block: null,
+      dnssec: 'unchecked',
+      root_checked: false,
+    };
+  }
   if (resolved.mode === 'reject') {
     return {
       verdict: 'fail_registry_unpinned',
@@ -1846,6 +1877,7 @@ async function issuerRootForReceipt(
       note: null,
       compared_block: null,
       dnssec: 'unchecked',
+      root_checked: true,
     };
   }
   const embedded = resolvePinnedIssuerJwk(receipt);
@@ -1970,6 +2002,13 @@ export {
   keyVerdictAt,
   supersessionConfirmed,
   legacyFreezeRoot,
+  decodeKeyReturn,
+  kidToBytes32,
+  hashGenesis,
+  hashCommitment,
+  recomputeRootHashes,
+  GENESIS_DOMAIN,
+  COMMIT_DOMAIN,
   PINNED_ROOT,
   PINNED_ROOT_CHAINS,
   BASE_SEPOLIA_REGISTRY_RPC,

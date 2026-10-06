@@ -7,21 +7,24 @@
  *
  *   leaf = SHA-256(0x00 || payload_hash)   // payload_hash is 32 raw bytes
  *   node = SHA-256(0x01 || left || right)
- *   leaves are sorted ascending as raw bytes
+ *   payload_hash bytes are sorted ascending, then hashed
  *   when a level has an odd count greater than 1, the last node is duplicated
  *   a single leaf is the root (it is not paired with itself)
+ *   empty root = SHA-256(0x00)
  *
- * The 0x00 / 0x01 prefixes match this package's receipt tree. Odd-level
- * duplication matches the freeze rule for this package and is not RFC 6962
- * (RFC 6962 promotes an unpaired node).
+ * Sort is on the payload hash, not the leaf hash. Vectors:
+ * test/fixtures/legacy-merkle-vectors.json (byte-identical with #483 and #485).
  */
 
 import { createHash } from 'node:crypto';
 
 export const LEGACY_MERKLE_RECONCILE =
-  'Reconcile with cursor/chit-issuer-root-contract and cursor/gateway-v11-issuer-root: '
-  + 'leaf = sha256(0x00 || payload_hash bytes), node = sha256(0x01 || left || right), '
-  + 'leaves sorted ascending, odd levels duplicate the last node.';
+  'leaf = sha256(0x00 || payload_hash bytes), node = sha256(0x01 || left || right), '
+  + 'payload hashes sorted ascending, odd levels duplicate the last node, '
+  + 'empty root = sha256(0x00). Matches #483 and #485.';
+
+/** SHA-256(0x00). The root of an empty legacy set. */
+export const EMPTY_LEGACY_ROOT = createHash('sha256').update(Buffer.from([0x00])).digest();
 
 export interface LegacyProofStep {
   hash: string;
@@ -63,20 +66,24 @@ function compareBytes(a: Buffer, b: Buffer): number {
   return a.length - b.length;
 }
 
-/**
- * Sorted leaf hashes. Duplicate payload hashes stay duplicated so the
- * enumerated count is preserved; equal leaves sort next to each other.
- */
+/** Payload hashes in ascending byte order. Equal hashes keep their order. */
+export function sortedPayloadHashes(payloadHashes: Buffer[]): Buffer[] {
+  return payloadHashes.map((hash, index) => ({ hash, index }))
+    .sort((a, b) => compareBytes(a.hash, b.hash) || a.index - b.index)
+    .map((row) => row.hash);
+}
+
+/** Leaf hashes in payload-hash order. The sort is not on the leaf hash. */
 export function sortedLegacyLeaves(payloadHashes: Buffer[]): Buffer[] {
-  return payloadHashes.map((hash) => legacyLeaf(hash)).sort(compareBytes);
+  return sortedPayloadHashes(payloadHashes).map((hash) => legacyLeaf(hash));
 }
 
 /**
  * Merkle root. Odd levels (count > 1) duplicate the last node, then pair
- * left-to-right. Parent nodes are not re-sorted.
+ * left-to-right. Parent nodes are not re-sorted. An empty set is SHA-256(0x00).
  */
-export function legacyMerkleRoot(payloadHashes: Buffer[]): Buffer | null {
-  if (payloadHashes.length === 0) return null;
+export function legacyMerkleRoot(payloadHashes: Buffer[]): Buffer {
+  if (payloadHashes.length === 0) return Buffer.from(EMPTY_LEGACY_ROOT);
   let level = sortedLegacyLeaves(payloadHashes);
   while (level.length > 1) {
     if (level.length % 2 === 1) level.push(Buffer.from(level[level.length - 1]));
@@ -89,9 +96,8 @@ export function legacyMerkleRoot(payloadHashes: Buffer[]): Buffer | null {
   return level[0];
 }
 
-export function legacyMerkleRootHex(payloadHashes: Buffer[]): string | null {
-  const root = legacyMerkleRoot(payloadHashes);
-  return root ? `0x${root.toString('hex')}` : null;
+export function legacyMerkleRootHex(payloadHashes: Buffer[]): string {
+  return `0x${legacyMerkleRoot(payloadHashes).toString('hex')}`;
 }
 
 /**
@@ -99,10 +105,10 @@ export function legacyMerkleRootHex(payloadHashes: Buffer[]): string | null {
  * sorted leaf list, not its position in the input array.
  */
 export function legacyInclusion(payloadHashes: Buffer[], payloadHash: Buffer): LegacyInclusion | null {
-  const leaves = sortedLegacyLeaves(payloadHashes);
-  const target = legacyLeaf(payloadHash);
-  const index = leaves.findIndex((leaf) => leaf.equals(target));
+  const sorted = sortedPayloadHashes(payloadHashes);
+  const index = sorted.findIndex((hash) => hash.equals(payloadHash));
   if (index < 0) return null;
+  const leaves = sorted.map((hash) => legacyLeaf(hash));
   let level = leaves;
   let idx = index;
   const proof: LegacyProofStep[] = [];

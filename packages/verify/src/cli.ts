@@ -758,7 +758,9 @@ async function main(): Promise<number> {
     } else if (result.issuer_history.warning) {
       console.log(`  Issuer history: ${result.issuer_history.warning}`);
     }
-    if (result.issuer_root) {
+    if (result.root_checked === false) {
+      console.log('  Issuer root:   not checked (root_checked: false). This is not a root pass.');
+    } else if (result.issuer_root) {
       const yellow = result.issuer_root.display === 'yellow';
       const label = `Issuer root:    ${result.issuer_root.verdict}${yellow ? ' (yellow)' : ''}`;
       console.log(yellow && process.stdout.isTTY ? `\x1b[33m  ${label}\x1b[0m` : `  ${label}`);

@@ -167,3 +167,19 @@ test('UNAVAILABLE is a signed anchor, not a missing document', () => {
   assert.equal(result.valid, true);
   assert.equal(result.chain_id, null);
 });
+
+test('an unknown signed document type is not a verified payment', async () => {
+  const doc = document({ schema: 'chit402.freeze.v1', kind: 'freeze' });
+  const payment = await verifyReceipt(doc, { jwks, trustedKids: [] });
+  assert.equal(payment.overall, 'failed');
+  assert.ok(payment.errors.some((line) => line.includes('unknown document type') || line.includes('not a payment')));
+  assert.notEqual(payment.overall, 'verified');
+});
+
+test('an unknown refusal schema is not a verified payment', async () => {
+  const doc = document({ schema: 'chit402.refusal.v9' });
+  const payment = await verifyReceipt(doc, { jwks, trustedKids: [] });
+  assert.equal(payment.overall, 'failed');
+  assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
+  assert.equal(verifyRefusal(doc, { jwks }).reason, 'unknown_refusal_schema');
+});
