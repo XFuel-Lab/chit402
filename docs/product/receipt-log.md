@@ -122,7 +122,9 @@ node scripts/rebuild-receipt-epoch1.mjs \
   --out .data/receipt-log
 ```
 
-The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it.
+The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it. The path is exact: `.data/receipt-log.` (trailing period) is a different directory, and boot will not see that journal.
+
+Run the script from `services/gateway` so it loads `.env` the same way the server does. It refuses, and does not sign, when `ISSUER_PRIVATE_KEY` is unset. An ephemeral key is not used: boot would reject that epoch record (`epoch_signature` / `no_matching_key`). On success it prints `epoch record kid:` and `epoch record signed: true` only after that signature verifies against the same key. A directory from a run that did not print a kid was signed with a throwaway key. Move it aside and run the script again. Do not copy it into place. The book file is not modified.
 
 Then backfill every later book row that is not already a leaf. Dry-run is the default. `--apply` writes the leaves and does not publish or broadcast.
 
@@ -135,6 +137,10 @@ node scripts/backfill-receipt-log.mjs \
   --dir .data/receipt-log \
   --apply
 ```
+
+If `--dir` has no `journal.jsonl`, the script exits with `REFUSED: no journal at <absolute directory>`. That is a missing file, not `epoch1_has_no_receipt_leaf`.
+
+Boot does not read the book. A journal that is only epoch 1 and the epoch 2 opening is enough to start. Rows that are not leaves yet do not refuse boot, and loading the book does not append them. One `FORKED` agent or one row with no `row_hash` refuses the whole backfill, including later rows that do have a hash. That refusal does not change the journal. Do not invent hashes for those rows.
 
 The dry-run prints `would append <task_id>` for each row that would be written. It also lists every refusal as `refuse <task_id or agent id>: <reason>` and exits non-zero. It refuses a book whose `analyzeSeq` result is `FORKED`, a gap, a duplicate seq, and any leaf whose `row_hash` is empty or missing. Those are the same rows the epoch 1 rebuild refuses. `--apply` prints `appended <task_id>` and does not run when a refusal was listed. Rows before epoch 1's last receipt leaf stay out of the tree.
 
