@@ -11,6 +11,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ### Fixed
 - **`--rpc <url>` with a tree head enters anchor mode.** A head file is no longer read as a receipt (`Invalid receipt: missing task_id`). An unpublished head reports `not_yet_published` when the receipt and inclusion are present as well as when an input is missing.
+- **A head with no `published_at` is not `issued_at_missing`.** v1 heads omit the field, and a closed head with no observed chain time signs null. An active kid with an open issuer-history window still verifies. A revoked kid, or a kid with `not_after`, fails closed because the missing time cannot show the signature was inside the window. A present `published_at` still uses the receipt window rules.
 - **`--version` prints the package version** and exits 0.
 
 ### Notes

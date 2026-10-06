@@ -554,6 +554,9 @@ export function signPinnedClosedHead({
     anchor_status: PIN_ANCHORED,
     anchor_tx: base.tx,
     anchor_from: base.from || null,
+    // Epoch 1 uses the observed Base block time. Any other closed head has
+    // no observed publish time, so this stays null. The verifier does not
+    // treat that null as issued_at_missing. A revoked kid still fails closed.
     published_at: historical ? EPOCH1_FINAL_PUBLISHED_AT : null,
     clock_tolerance_s: clockToleranceClaim(),
     anchors: { base: baseSide, solana: solanaSide },

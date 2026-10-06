@@ -52,6 +52,7 @@ export const HEAD_TRUST_MESSAGES: Record<string, string> = {
   head_key_untrusted: 'Tree head kid is not trusted. Trust is the production pin, a verified issuer-history entry, or a JWKS key matched by kid.',
   head_claims_mismatch: 'Signed tree head does not match the root, size, epoch, or anchors on the head.',
   head_kid_window: 'Tree head kid is outside its issuer-history window.',
+  published_at_missing: 'Tree head has no published_at. The kid is revoked or has not_after, so the window cannot be checked.',
   issuer_history_invalid: 'Issuer history did not verify, so the tree head key was not trusted from it.',
   anchor_wallets_invalid: 'Issuer anchor-wallet list did not verify.',
   anchor_sender_missing: 'Signed head does not name anchors.base.from. An anchored Base transaction must name its sender.',
@@ -300,13 +301,43 @@ export function verifyTreeHeadTrust(
   }
 
   if (historyOk && issuerHistory && kid) {
-    const window = issuerKeyWindow(issuerHistory, kid, head?.published_at ?? payload.published_at);
+    const publishedAt = Object.prototype.hasOwnProperty.call(head || {}, 'published_at')
+      ? head?.published_at
+      : payload.published_at;
+    const window = headHistoryWindow(issuerHistory, kid, publishedAt);
     if (!window.ok) {
-      return { ...fail('head_kid_window', window.reason || undefined), kid, trust, payload };
+      const reason = window.reason === 'published_at_missing' ? 'published_at_missing' : 'head_kid_window';
+      const detail = reason === 'head_kid_window' ? (window.reason || undefined) : undefined;
+      return { ...fail(reason, detail), kid, trust, payload };
     }
   }
 
   return { ok: true, reason: null, message: null, kid, trust, payload };
+}
+
+/**
+ * A signed published_at is checked with the receipt window rules.
+ * v1 heads omit the field, and a closed head with no observed chain time
+ * signs null. That is not issued_at_missing. An active kid with an open
+ * window still verifies. A revoked kid, or one with not_after, fails closed
+ * because the missing time cannot show the head was signed inside the window.
+ */
+function headHistoryWindow(
+  doc: IssuerHistoryDocument,
+  kid: string,
+  publishedAt: unknown,
+): { ok: boolean; reason: string | null } {
+  const hasTime = publishedAt != null && publishedAt !== '';
+  if (hasTime) return issuerKeyWindow(doc, kid, publishedAt);
+  const entry = (doc.entries || []).find((row) => row.kid === kid);
+  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
+  const notBefore = entry.not_before ? Date.parse(entry.not_before) : NaN;
+  if (!Number.isFinite(notBefore)) return { ok: false, reason: 'not_before_missing' };
+  if (notBefore > Date.now()) return { ok: false, reason: 'issued_before_not_before' };
+  if (entry.status === 'revoked' || entry.not_after != null) {
+    return { ok: false, reason: 'published_at_missing' };
+  }
+  return { ok: true, reason: null };
 }
 
 function asAddressList(value: unknown, chain: 'base' | 'solana'): string[] {

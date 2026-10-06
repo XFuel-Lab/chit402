@@ -284,3 +284,97 @@ test('a kid that is only in verified issuer history can sign the head', async ()
   assert.equal(result.overall, 'verified', result.errors.join(','));
   assert.equal(result.head_signature.trust, 'issuer_history');
 });
+
+function historyFor(key, { status = 'active', not_after = null, revoked_at = null } = {}) {
+  const body = {
+    kid: key.kid,
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after,
+    status,
+    revoked_at,
+    reason: null,
+    custody: 'test',
+    prev_hash: null,
+  };
+  const entryHash = issuerHistoryEntryHash(body);
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    entry_count: 1,
+    head_hash: entryHash,
+  };
+  return {
+    schema: 'chit402.issuer_history.v1',
+    entries: [{ ...body, entry_hash: entryHash }],
+    head_hash: entryHash,
+    issuer_signature: {
+      jws: signClaims(claims, key, 'chit402-issuer-history+jwt'),
+      kid: key.kid,
+      issuer_jwk: key.publicJwk,
+    },
+  };
+}
+
+test('a v1 head with no published_at still verifies for an active kid', () => {
+  const key = issuerKey();
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  delete unsigned.published_at;
+  const head = sealHead(unsigned, key);
+  delete head.published_at;
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [key.kid],
+    issuerHistory: historyFor(key),
+  });
+  assert.equal(trusted.ok, true, trusted.message || trusted.reason);
+  assert.notEqual(trusted.reason, 'issued_at_missing');
+});
+
+test('a closed head that signs published_at null is not issued_at_missing', () => {
+  const key = issuerKey();
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  const head = sealHead({ ...unsigned, published_at: null }, key);
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [key.kid],
+    issuerHistory: historyFor(key),
+  });
+  assert.equal(trusted.ok, true, trusted.message || trusted.reason);
+  assert.equal(head.published_at, null);
+});
+
+test('a revoked kid with no published_at fails closed', () => {
+  const key = issuerKey();
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  const head = sealHead({ ...unsigned, published_at: null }, key);
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [key.kid],
+    issuerHistory: historyFor(key, {
+      status: 'revoked',
+      revoked_at: '2026-10-01T00:00:00Z',
+    }),
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'published_at_missing');
+});
+
+test('a published_at before not_before still fails the kid window', () => {
+  const key = issuerKey();
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  const head = sealHead({ ...unsigned, published_at: '2026-01-01T00:00:00Z' }, key);
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [key.kid],
+    issuerHistory: historyFor(key),
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_kid_window');
+  assert.match(trusted.message, /issued_before_not_before/);
+});
