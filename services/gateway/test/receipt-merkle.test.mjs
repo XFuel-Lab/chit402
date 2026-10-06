@@ -103,9 +103,11 @@ test('a sender hash is stored on the head, and a failed send stays pending', asy
       force: true,
       send: async () => '0x' + 'cd'.repeat(32),
     });
-    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(head.anchor.reason, 'unconfirmed');
     assert.equal(head.anchor.tx, '0x' + 'cd'.repeat(32));
-    assert.match(renderInclusionSection(tree.inclusion('anchored-row')), /anchored in Base tx/);
+    assert.match(head.anchor.from, /^0x[0-9a-fA-F]{40}$/);
+    assert.match(renderInclusionSection(tree.inclusion('anchored-row')), /pending anchor/);
     const failed = await tree.publishHead({
       force: true,
       send: async () => { throw new Error('rpc down'); },

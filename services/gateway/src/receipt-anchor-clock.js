@@ -129,15 +129,21 @@ export function receiptTimestampSeconds(receipt) {
 
 /**
  * Downgrade a side that already confirmed outside the bound.
- * Leaves the object alone when no block time was observed, so a send that
- * has not been mined yet is not rewritten here.
+ * A Base side with no block time is `unconfirmed` and must be looked up
+ * again. Solana keeps an unseen slot, because that chain's confirmation is
+ * the memo signature and this clock is a separate check.
  * On drift, `tx` / `signature` are cleared so a later reader does not treat
  * the hash as an anchor. `rejected_tx` keeps the hash for the next sample.
  */
 export function applyAnchorClock(side, { publishedAt, blockTs, chain } = {}) {
   if (!side || side.status !== 'anchored') return side;
-  if (blockTs == null) return side;
   const which = chain || side.chain || 'base';
+  if (blockTs == null) {
+    if (which === 'base') {
+      return { ...side, status: 'unconfirmed', reason: 'block_time_unconfirmed' };
+    }
+    return side;
+  }
   const verdict = anchorClockVerdict(publishedAt, blockTs, toleranceSeconds(which, null));
   const observed = toUnixSeconds(blockTs);
   if (verdict.ok) return { ...side, block_ts: observed };
@@ -236,7 +242,11 @@ export async function gatePublishedAnchor(anchor, publishedAt, {
   rpcUrl,
   fetchBlockTs = fetchBaseBlockTimestamp,
 } = {}) {
-  if (!anchor || anchor.status !== 'anchored' || !anchor.tx) return anchor;
+  if (!anchor || !anchor.tx) return anchor;
+  if (anchor.status !== 'anchored') return anchor;
+  if (anchor.receipt_confirmed !== true) {
+    return { ...anchor, status: 'unconfirmed', reason: 'receipt_unconfirmed' };
+  }
   let blockTs = blockTimestamp;
   if (blockTs === undefined) {
     try {

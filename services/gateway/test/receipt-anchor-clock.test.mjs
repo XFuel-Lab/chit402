@@ -14,6 +14,7 @@ const {
   clock_tolerance_s,
   toleranceSeconds,
   applyAnchorClock,
+  gatePublishedAnchor,
   verifyAnchorClock,
   assessInclusion,
   formatAnchorClock,
@@ -95,23 +96,29 @@ test('a block outside the bound is not published as anchored', async () => {
       blockTimestamp: 1,
     });
     assert.equal(head.payload_version, 2);
-    assert.equal(head.anchor_status, 'pending');
-    assert.equal(head.anchor.status, 'pending');
-    assert.equal(head.anchor.reason, 'anchor_clock_drift');
-    assert.equal(head.anchor.tx, null);
-    assert.equal(head.anchor_tx, null);
-    assert.equal(head.anchor.rejected_tx, `0x${'cd'.repeat(32)}`);
-    assert.equal(head.anchors.base.reason, 'anchor_clock_drift');
-    assert.equal(head.anchors.base.status, 'pending');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(head.anchor.reason, 'unconfirmed');
+    assert.equal(head.anchor.tx, `0x${'cd'.repeat(32)}`);
     assert.deepEqual(head.clock_tolerance_s, { base: 300, solana: 150 });
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
     assert.equal(payload.payload_version, 2);
-    assert.equal(payload.anchor_status, 'pending');
+    assert.equal(payload.anchor_status, 'broadcast');
     assert.equal(payload.clock_tolerance_s.base, 300);
     assert.equal(payload.clock_tolerance_s.solana, 150);
     assert.equal(payload.published_at, head.published_at);
     assert.equal(verifyTreeHead(head).valid, true);
     assert.match(renderInclusionSection(tree.inclusion('late')), /pending anchor/);
+    const drifted = await gatePublishedAnchor({
+      status: 'anchored',
+      chain: 'base',
+      tx: `0x${'cd'.repeat(32)}`,
+      calldata: '0xroot',
+      receipt_confirmed: true,
+    }, head.published_at, { blockTimestamp: 1 });
+    assert.equal(drifted.status, 'pending');
+    assert.equal(drifted.reason, 'anchor_clock_drift');
+    assert.equal(drifted.tx, null);
+    assert.equal(drifted.rejected_tx, `0x${'cd'.repeat(32)}`);
   });
 });
 
@@ -124,11 +131,20 @@ test('a block inside the bound stays anchored, and an old head still verifies', 
       send: async () => `0x${'ef'.repeat(32)}`,
       blockTimestamp: Math.floor(Date.now() / 1000),
     });
-    assert.equal(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(head.anchor.reason, 'unconfirmed');
     assert.equal(head.anchor.tx, `0x${'ef'.repeat(32)}`);
     assert.equal(head.payload_version, 2);
     assert.equal(verifyTreeHead(head).valid, true);
-    assert.match(renderInclusionSection(tree.inclusion('on-time')), /anchored in Base tx/);
+    assert.match(renderInclusionSection(tree.inclusion('on-time')), /pending anchor/);
+    const kept = await gatePublishedAnchor({
+      status: 'anchored',
+      chain: 'base',
+      tx: `0x${'ef'.repeat(32)}`,
+      receipt_confirmed: true,
+    }, head.published_at, { blockTimestamp: Math.floor(Date.parse(head.published_at) / 1000) });
+    assert.equal(kept.status, 'anchored');
+    assert.equal(kept.tx, `0x${'ef'.repeat(32)}`);
 
     const edited = { ...head, published_at: '2000-01-01T00:00:00.000Z' };
     assert.equal(verifyTreeHead(edited).reason, 'head_mismatch');
@@ -149,7 +165,7 @@ test('a block inside the bound stays anchored, and an old head still verifies', 
   });
 });
 
-test('applyAnchorClock clears the tx on drift and leaves an unseen block alone', () => {
+test('applyAnchorClock clears the tx on drift and unconfirms an unread block time', () => {
   const side = { status: 'anchored', chain: 'base', tx: '0xabc', calldata: '0xroot' };
   const drifted = applyAnchorClock(side, { publishedAt: '2026-09-30T00:00:00.000Z', blockTs: 1, chain: 'base' });
   assert.equal(drifted.status, 'pending');
@@ -158,7 +174,8 @@ test('applyAnchorClock clears the tx on drift and leaves an unseen block alone',
   assert.equal(drifted.rejected_tx, '0xabc');
   assert.equal(drifted.calldata, '0xroot');
   const unseen = applyAnchorClock(side, { publishedAt: '2026-09-30T00:00:00.000Z', blockTs: null, chain: 'base' });
-  assert.equal(unseen.status, 'anchored');
+  assert.equal(unseen.status, 'unconfirmed');
+  assert.equal(unseen.reason, 'block_time_unconfirmed');
   assert.equal(unseen.tx, '0xabc');
 });
 
@@ -217,6 +234,15 @@ test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', 
       blockTimestamp: blockTs,
     });
     const verified = verifyTreeHead(head);
+    const clockHead = {
+      ...head,
+      anchor_status: 'anchored',
+      anchor_tx: head.anchor.tx,
+      anchors: {
+        ...head.anchors,
+        base: { ...head.anchors.base, status: 'anchored', tx: head.anchor.tx },
+      },
+    };
     const inclusion = tree.inclusion('row-1');
     const receipt = {
       task_id: 'row-1',
@@ -231,7 +257,7 @@ test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', 
 
     const calls = [];
     const ok = await verifyAnchorClock({
-      head,
+      head: clockHead,
       signedPayload: verified.payload,
       signatureValid: true,
       enabled: true,
@@ -246,7 +272,7 @@ test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', 
 
     const lateReceiptTs = Math.floor(Date.parse(head.published_at) / 1000) + clock_tolerance_s.base + 5;
     const late = await verifyAnchorClock({
-      head,
+      head: clockHead,
       signedPayload: verified.payload,
       signatureValid: true,
       enabled: true,
@@ -260,7 +286,7 @@ test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', 
     assert.match(late.detail, /receipt timestamp/);
 
     const drifted = await verifyAnchorClock({
-      head,
+      head: clockHead,
       signedPayload: verified.payload,
       signatureValid: true,
       enabled: true,

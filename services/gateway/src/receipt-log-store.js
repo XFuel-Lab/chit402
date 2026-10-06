@@ -390,7 +390,7 @@ function foldAnchor(state, head) {
     const key = `${scope}|${day}`;
     if (!state.solana[key]) {
       state.solana[key] = {
-        status: 'anchored',
+        status: sol.status,
         signature: sol.signature,
         slot: sol.slot ?? null,
         cluster: sol.cluster || null,
@@ -406,7 +406,7 @@ function foldAnchor(state, head) {
   if (base?.status === 'anchored' && base.tx && head.root) {
     if (!state.base[head.root]) {
       state.base[head.root] = {
-        status: 'anchored',
+        status: base.status,
         tx: base.tx,
         calldata: base.calldata || null,
         from: base.from || head.anchor_from || null,

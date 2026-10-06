@@ -398,6 +398,7 @@ export async function lookupBaseTxByNonceOrHash({
         from: txFrom,
         to: txTo,
         receiptOk: true,
+        receiptStatus: receipt.status,
       };
     }
     return {

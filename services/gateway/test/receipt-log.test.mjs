@@ -518,6 +518,15 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
   const again = await restored.publishHead({
     force: true,
     now: '2026-10-06T12:30:00.000Z',
+    blockTimestamp: Math.floor(Date.parse('2026-10-06T12:30:00.000Z') / 1000),
+    lookup: async (intent) => ({
+      tx: found,
+      root,
+      nonce: 4,
+      receiptOk: true,
+      from: intent.from,
+      to: intent.to,
+    }),
   });
   assert.equal(again.anchor.tx, found);
   const intents = fs.readFileSync(path.join(dir, 'journal.jsonl'), 'utf8')
@@ -808,6 +817,7 @@ test('crash after send and before the broadcast record still has the tx hash and
       force: true,
       now: '2026-10-06T12:30:00.000Z',
       nonce: 99,
+      blockTimestamp: Math.floor(Date.parse('2026-10-06T12:30:00.000Z') / 1000),
       lookup: async (intent) => {
         assert.equal(intent.tx, persisted.tx);
         return {
@@ -1033,6 +1043,7 @@ test('health reports blocked and pending anchor intents', async () => {
     assert.equal(body.receipt_log.last_anchored_root, anchoredRoot);
     assert.equal(body.receipt_log.last_anchored_tx, `0x${'22'.repeat(32)}`);
     assert.equal(body.receipt_log.last_error, 'rpc_error');
+    assert.equal(body.receipt_log.stuck_pending_age_s, null);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
@@ -1351,6 +1362,460 @@ test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', asyn
     else process.env.RECEIPT_LOG_DIR = prevDir;
     resetReceiptMerkleTree();
   }
+});
+
+function receiptFor(intent, extra = {}) {
+  return {
+    receiptOk: true,
+    receiptStatus: '0x1',
+    tx: intent.tx,
+    root: intent.root,
+    from: intent.from,
+    to: intent.to,
+    nonce: intent.nonce,
+    ...extra,
+  };
+}
+
+test('already known on the first send is not anchored, and a dropped tx is retried', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  try {
+    const { classifyAnchorSendError } = await import('../src/receipt-merkle.js');
+    assert.equal(classifyAnchorSendError(new Error('already known')), 'known');
+    assert.equal(classifyAnchorSendError(new Error('nonce too low')), 'known');
+    let raw = null;
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({ rebroadcast: true, tx: intent.tx, nonce: intent.nonce }),
+      send: async (args) => {
+        raw = args.raw;
+        throw new Error('already known');
+      },
+    });
+    assert.notEqual(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(tree.anchorState.base[root], undefined);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'anchored'), false);
+    let retried = null;
+    const again = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({ rebroadcast: true, tx: intent.tx, nonce: intent.nonce }),
+      send: async (args) => {
+        retried = args.raw;
+        return args.hash;
+      },
+    });
+    assert.equal(retried, raw);
+    assert.notEqual(again.anchor_status, 'anchored');
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+
+    const low = new ReceiptMerkleTree();
+    const lowDir = tmp();
+    low.dir = lowDir;
+    low.appendReceipt('row-1', 'hash-1', { publish: false });
+    const lowHead = await low.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true }),
+      send: async () => { throw new Error('nonce too low'); },
+    });
+    assert.equal(lowHead.anchor_status, 'broadcast');
+    assert.equal(low.anchorState.base[hex(rootOf(low.leaves))], undefined);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('already known on replace is not anchored', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      send: async () => { throw new Error('broadcast_rejected'); },
+    });
+    const first = anchorIntentRows(dir).find((row) => row.status === 'signed' && row.raw);
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const root = hex(rootOf(tree.leaves));
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:05:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true }),
+      send: async (args) => {
+        if (args.raw === first.raw) throw new Error('broadcast_rejected');
+        throw new Error('already known');
+      },
+    });
+    assert.notEqual(head.anchor_status, 'anchored');
+    assert.equal(head.anchor_status, 'broadcast');
+    assert.equal(tree.anchorState.base[root], undefined);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'anchored'), false);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded' && row.raw === first.raw), true);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('an unreadable block time does not stay anchored and is looked up again', async () => {
+  const { gatePublishedAnchor } = await import('../src/receipt-anchor-clock.js');
+  const gated = await gatePublishedAnchor({
+    status: 'anchored',
+    chain: 'base',
+    tx: '0xabc',
+    receipt_confirmed: true,
+  }, '2026-10-06T12:00:00.000Z', { blockTimestamp: null });
+  assert.equal(gated.status, 'unconfirmed');
+  assert.equal(gated.reason, 'block_time_unconfirmed');
+  assert.equal(gated.tx, '0xabc');
+  const bare = await gatePublishedAnchor({
+    status: 'anchored',
+    chain: 'base',
+    tx: '0xabc',
+  }, '2026-10-06T12:00:00.000Z', { blockTimestamp: 1 });
+  assert.equal(bare.status, 'unconfirmed');
+  assert.equal(bare.reason, 'receipt_unconfirmed');
+
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  let lookups = 0;
+  try {
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      blockTimestamp: null,
+      lookup: async (intent) => {
+        lookups += 1;
+        return receiptFor(intent);
+      },
+      send: async (args) => args.hash,
+    });
+    assert.equal(head.anchor_status, 'unconfirmed');
+    assert.equal(head.anchor.reason, 'block_time_unconfirmed');
+    assert.equal(tree.anchorState.base[root], undefined);
+    const again = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:10:00.000Z',
+      nonce: 9,
+      blockTimestamp: Math.floor(Date.parse('2026-10-06T12:10:00.000Z') / 1000),
+      lookup: async (intent) => {
+        lookups += 1;
+        return receiptFor(intent);
+      },
+      send: async () => { throw new Error('should_not_resign'); },
+    });
+    assert.ok(lookups >= 2);
+    assert.equal(again.anchor_status, 'anchored');
+    assert.equal(again.anchor.receipt_confirmed, true);
+    assert.equal(tree.anchorState.base[root].tx, again.anchor.tx);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a stored anchor without a receipt is looked up again and the dropped tx is retried', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const root = hex(rootOf(tree.leaves));
+  const tx = `0x${'ab'.repeat(32)}`;
+  const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
+  tree.anchorIntents.push({
+    chain: 'base',
+    root,
+    day: '2026-10-06',
+    nonce: 4,
+    status: 'anchored',
+    raw: '0xraw',
+    tx,
+    from,
+    to: from,
+    at: '2026-10-06T12:00:00.000Z',
+  });
+  tree.anchorState.base[root] = { status: 'anchored', tx, from, calldata: `0x${root}` };
+  tree.heads.push({
+    root,
+    tree_size: tree.leaves.length,
+    published_at: '2026-10-06T12:00:00.000Z',
+    anchors: { base: { status: 'anchored', tx, from, chain: 'base' } },
+    anchor: { status: 'anchored', tx, from },
+  });
+  try {
+    let sent = null;
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:30:00.000Z',
+      nonce: 4,
+      lookup: async () => ({ rebroadcast: true, missing: true }),
+      send: async (args) => {
+        sent = args.raw;
+        return args.hash;
+      },
+    });
+    assert.equal(sent, '0xraw');
+    assert.notEqual(head.anchor_status, 'anchored');
+    assert.equal(tree.anchorState.base[root]?.status, undefined);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  const sent = [];
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({
+        visible: true,
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      }),
+      send: async (args) => {
+        sent.push(args);
+        return args.hash;
+      },
+    });
+    const health = tree.bundleStatus(new Date('2026-10-06T12:01:00.000Z'));
+    assert.equal(health.last_error, 'prior_nonce_pending');
+    assert.equal(health.stuck_pending_age_s, 60);
+    const first = anchorIntentRows(dir).find((row) => row.raw);
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const root2 = hex(rootOf(tree.leaves));
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:11:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => {
+        if (intent.raw === first.raw) {
+          return {
+            visible: true,
+            tx: intent.tx,
+            root: intent.root,
+            from: intent.from,
+            to: intent.to,
+            nonce: intent.nonce,
+          };
+        }
+        return { rebroadcast: true, tx: intent.tx, nonce: intent.nonce };
+      },
+      send: async (args) => {
+        sent.push(args);
+        return args.hash;
+      },
+    });
+    assert.equal(sent.length, 2);
+    assert.equal(sent[1].nonce, 4);
+    assert.equal(sent[1].calldata, `0x${root2}`);
+    assert.notEqual(sent[1].raw, first.raw);
+    const { Transaction } = await import('ethers');
+    assert.ok(Transaction.from(sent[1].raw).maxFeePerGas > Transaction.from(first.raw).maxFeePerGas);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded' && row.raw === first.raw), true);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+    assert.notEqual(head.anchor_status, 'anchored');
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+});
+
+test('a stuck replacement stops when the fee cap is hit', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevCap = process.env.ANCHOR_MAX_FEE_WEI;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.ANCHOR_MAX_FEE_WEI = '1000000000';
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  let sends = 0;
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({
+        visible: true,
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      }),
+      send: async (args) => {
+        sends += 1;
+        return args.hash;
+      },
+    });
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const head = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:11:00.000Z',
+      nonce: 4,
+      lookup: async (intent) => ({
+        visible: true,
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      }),
+      send: async (args) => {
+        sends += 1;
+        return args.hash;
+      },
+    });
+    assert.equal(sends, 1);
+    assert.equal(head.anchor_status, 'blocked');
+    assert.equal(head.anchor.reason, 'anchor_fee_cap');
+    const health = tree.bundleStatus(new Date('2026-10-06T12:11:00.000Z'));
+    assert.equal(health.last_error, 'anchor_fee_cap');
+    assert.ok(health.stuck_pending_age_s >= 600);
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded'), false);
+    assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevCap == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+    else process.env.ANCHOR_MAX_FEE_WEI = prevCap;
+  }
+});
+
+test('a crash between the two journal writes broadcasts only the highest fee', async () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  const root = 'ab'.repeat(32);
+  const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
+  const low = {
+    chain: 'base',
+    root,
+    day: '2026-10-06',
+    nonce: 4,
+    status: 'signed',
+    raw: '0xlow',
+    tx: `0x${'11'.repeat(32)}`,
+    from,
+    to: from,
+    max_fee: '1000',
+    max_priority: '10',
+    at: '2026-10-06T12:05:00.000Z',
+  };
+  const high = {
+    ...low,
+    raw: '0xhigh',
+    tx: `0x${'22'.repeat(32)}`,
+    max_fee: '5000',
+    max_priority: '50',
+    at: '2026-10-06T12:00:00.000Z',
+  };
+  tree.anchorIntents.push(low, high);
+  const sent = [];
+  await tree.reconcileAnchorIntents({
+    lookup: async () => ({ rebroadcast: true }),
+    rebroadcast: async (raw) => {
+      const rows = anchorIntentRows(dir);
+      assert.equal(rows.some((row) => row.status === 'superseded' && row.tx === low.tx && row.reason === 'lower_fee'), true);
+      assert.equal(rows.some((row) => row.status === 'superseded' && row.tx === high.tx), false);
+      sent.push(raw);
+    },
+  });
+  assert.deepEqual(sent, ['0xhigh']);
+});
+
+test('every anchored transition goes through confirmAnchor', async () => {
+  const { confirmAnchor } = await import('../src/receipt-merkle.js');
+  const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
+  const root = 'ab'.repeat(32);
+  const tx = `0x${'11'.repeat(32)}`;
+  const ok = confirmAnchor({
+    receiptStatus: '0x1',
+    root,
+    from,
+    to: from,
+    wantRoot: root,
+    wantFrom: from,
+    wantTo: from,
+    tx,
+  });
+  assert.equal(ok.status, 'anchored');
+  assert.equal(ok.receipt_confirmed, true);
+  assert.equal(confirmAnchor({ ...ok, receiptStatus: '0x0', wantRoot: root, wantFrom: from, wantTo: from }), null);
+  assert.equal(confirmAnchor({
+    receiptStatus: '0x1', root: 'cd'.repeat(32), from, to: from, wantRoot: root, wantFrom: from, wantTo: from, tx,
+  }), null);
+  assert.equal(confirmAnchor({
+    receiptStatus: '0x1', root, from: '0x1111111111111111111111111111111111111111', to: from, wantRoot: root, wantFrom: from, wantTo: from, tx,
+  }), null);
+  assert.equal(confirmAnchor({
+    receiptStatus: '0x1', root, from, to: '0x1111111111111111111111111111111111111111', wantRoot: root, wantFrom: from, wantTo: from, tx,
+  }), null);
+
+  const srcDir = path.join(gatewayRoot, 'src');
+  const files = ['receipt-merkle.js', 'receipt-anchor-clock.js', 'receipt-log-anchor.js', 'receipt-log-store.js'];
+  const statusLines = [];
+  const markLines = [];
+  for (const name of files) {
+    const text = fs.readFileSync(path.join(srcDir, name), 'utf8');
+    text.split('\n').forEach((line, index) => {
+      if (/status:\s*'anchored'/.test(line)) statusLines.push(`${name}:${index + 1}:${line.trim()}`);
+      if (/_markIntent\([^)]*'anchored'/.test(line)) markLines.push(`${name}:${index + 1}:${line.trim()}`);
+    });
+  }
+  assert.equal(statusLines.length, 1, statusLines.join('\n'));
+  const merkle = fs.readFileSync(path.join(srcDir, 'receipt-merkle.js'), 'utf8');
+  const confirmBody = merkle.slice(merkle.indexOf('export function confirmAnchor'), merkle.indexOf('export function dailyAnchorDue'));
+  assert.match(confirmBody, /status: 'anchored'/);
+  assert.equal(markLines.length, 1, markLines.join('\n'));
+  const commitBody = merkle.slice(merkle.indexOf('  _commitAnchored('), merkle.indexOf('  _reopenAnchored('));
+  assert.match(commitBody, /confirmAnchor\(/);
+  assert.match(commitBody, /_markIntent\(intent, 'anchored'/);
+  assert.ok(commitBody.indexOf('confirmAnchor(') < commitBody.indexOf("_markIntent(intent, 'anchored'"));
+  const solana = fs.readFileSync(path.join(srcDir, 'solana-receipt-anchor.js'), 'utf8');
+  const solanaHits = solana.split('\n').filter((line) => /status:\s*'anchored'/.test(line));
+  assert.equal(solanaHits.length, 1);
 });
 
 test('backfill refuses a forked book and a leaf with no row_hash', () => {
@@ -1753,7 +2218,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     force: true,
     now: '2026-10-06T12:00:00.000Z',
     nonce: 7,
-    blockTimestamp: null,
+    blockTimestamp: Math.floor(Date.parse('2026-10-06T12:00:00.000Z') / 1000),
     solanaBlockTime: null,
     solanaConnection: mockConnection(),
     lookup: async (intent) => ({
