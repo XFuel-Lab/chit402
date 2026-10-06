@@ -1757,6 +1757,7 @@ export {
   isRefusalDocument,
   verifyRefusal,
   REFUSAL_SCHEMA,
+  REFUSAL_SCHEMA_V2,
   REFUSAL_PAYLOAD_VERSION,
   REFUSAL_PROVES,
   REFUSAL_DOES_NOT_PROVE,
@@ -1764,6 +1765,12 @@ export {
   type RefusalVerification,
   type RefusalJwks,
 } from './refusal.js';
+
+export {
+  verifyRequestDigest,
+  requestDigestOfPreimage,
+  type RequestBindingStatus,
+} from './request-binding.js';
 
 export {
   verifyAnchoredRoot,

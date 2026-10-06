@@ -215,6 +215,40 @@ function isPrivateSpendSession(req, registry) {
  * Append a policy_blocked row and its signed refusal. Never throws.
  * The paid path is not involved: this runs only after a deliberate refusal.
  */
+function clientRequestForRefusal(req, path) {
+  const headers = req?.headers || {};
+  const body = req?.body && typeof req.body === 'object' ? req.body : {};
+  const idem = headers['idempotency-key'] || headers['x-idempotency-key'] || body.idempotency_key || null;
+  const nonce = headers['x-xfuel-nonce'] || (body.nonce != null && body.nonce !== '' ? body.nonce : null);
+  const intent = headers['x-xfuel-intent'] || body.intent_id || body.intent || null;
+  return {
+    method: req?.method || 'POST',
+    path: path && String(path).startsWith('/') ? String(path) : '/v1/chat/completions',
+    body: req?.rawBody != null ? req.rawBody : JSON.stringify(req?.body ?? {}),
+    idempotency_key: idem ? String(idem) : null,
+    nonce: nonce != null ? String(nonce) : null,
+    intent_id: intent ? String(intent).trim() : null,
+    intent_supplied: !!(intent && String(intent).trim()),
+  };
+}
+
+function requestBindingHttpError(err) {
+  if (!err || (err.code !== 'idempotency_conflict' && err.code !== 'intent_id_required' && err.code !== 'request_unbound')) {
+    return null;
+  }
+  const status = err.code === 'idempotency_conflict' ? 409 : 400;
+  return {
+    status,
+    body: {
+      error: {
+        message: err.message,
+        type: err.code,
+        code: err.code,
+      },
+    },
+  };
+}
+
 async function recordSpendRefusal(ledger, fields) {
   if (!ledger || typeof ledger.recordPolicyBlocked !== 'function') return null;
   let anchor = null;
@@ -226,8 +260,16 @@ async function recordSpendRefusal(ledger, fields) {
   }
   try {
     const recorded = ledger.recordPolicyBlocked({ ...fields, anchor });
+    if (!recorded?.ok && recorded?.code === 'idempotency_conflict') {
+      const err = new Error(recorded.reason || 'idempotency key was already used for a different request');
+      err.code = 'idempotency_conflict';
+      throw err;
+    }
     return recorded?.ok ? recorded.entry : null;
   } catch (err) {
+    if (err.code === 'idempotency_conflict' || err.code === 'intent_id_required' || err.code === 'request_unbound') {
+      throw err;
+    }
     logger.warn({ err: err.message }, 'refusal receipt not issued');
     return null;
   }
@@ -312,16 +354,27 @@ async function meterV1Request(req, res, {
     const spent = ledger.sumCollectedByAgent(bookable.agent_id);
     const caps = capViewOf(bookable, spent);
     if (remainingBlocksDoor(caps.remaining)) {
-      const entry = await recordSpendRefusal(ledger, {
-        agentId: bookable.agent_id,
-        taskId,
-        policyCode: 'budget_exhausted',
-        reason: 'Agent budget remaining is below the hop floor',
-        model: req.body?.model || null,
-        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-        spentAtomic: caps.spent ?? null,
-        capAtomic: caps.cap ?? null,
-      });
+      let entry = null;
+      try {
+        entry = await recordSpendRefusal(ledger, {
+          agentId: bookable.agent_id,
+          taskId,
+          policyCode: 'budget_exhausted',
+          reason: 'Agent budget remaining is below the hop floor',
+          model: req.body?.model || null,
+          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+          spentAtomic: caps.spent ?? null,
+          capAtomic: caps.cap ?? null,
+          request: clientRequestForRefusal(req, resourcePath),
+        });
+      } catch (err) {
+        const httpErr = requestBindingHttpError(err);
+        if (httpErr) {
+          res.status(httpErr.status).json(httpErr.body);
+          return { halted: true };
+        }
+        throw err;
+      }
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.status(403).json(withRefusal({
         error: {
@@ -363,21 +416,32 @@ async function meterV1Request(req, res, {
     if (!policyCheck.allowed) {
       const intentMeta = extractIntentMeta(req);
       const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
-      const entry = await recordSpendRefusal(ledger, {
-        agentId: bookable.agent_id,
-        taskId,
-        policyCode: policyCheck.code || 'policy_blocked',
-        reason: policyCheck.reason || 'policy blocked',
-        model: req.body?.model || null,
-        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-        intentId: intentFields.intent_id,
-        attemptIndex: intentFields.attempt_index,
-        policyKey: policyCheck.policy_key || null,
-        spentAtomic: policyCheck.spent_atomic ?? null,
-        capAtomic: policyCheck.cap_atomic ?? null,
-        periodStart: policyCheck.period_start || null,
-        amountRequested: quotedAmount,
-      });
+      let entry = null;
+      try {
+        entry = await recordSpendRefusal(ledger, {
+          agentId: bookable.agent_id,
+          taskId,
+          policyCode: policyCheck.code || 'policy_blocked',
+          reason: policyCheck.reason || 'policy blocked',
+          model: req.body?.model || null,
+          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+          intentId: intentFields.intent_id,
+          attemptIndex: intentFields.attempt_index,
+          policyKey: policyCheck.policy_key || null,
+          spentAtomic: policyCheck.spent_atomic ?? null,
+          capAtomic: policyCheck.cap_atomic ?? null,
+          periodStart: policyCheck.period_start || null,
+          amountRequested: quotedAmount,
+          request: clientRequestForRefusal(req, resourcePath),
+        });
+      } catch (err) {
+        const httpErr = requestBindingHttpError(err);
+        if (httpErr) {
+          res.status(httpErr.status).json(httpErr.body);
+          return { halted: true };
+        }
+        throw err;
+      }
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.status(403).json(withRefusal({
         error: {

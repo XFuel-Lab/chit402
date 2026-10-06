@@ -57,6 +57,7 @@ import {
   verifyHistorySnapshotClaims,
 } from './issuer-history.js';
 import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
+import { claimIdempotency, requestDigest, requestDigestCanonical } from './request-binding.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
@@ -874,6 +875,15 @@ function paymentClaimsOf(view) {
   };
 }
 
+function clientRequestBinding(view) {
+  const request = view?.request || view?.meta?.request || null;
+  if (!request || !issuerRootActive()) return null;
+  const request_preimage = requestDigestCanonical(request);
+  const request_digest = requestDigest(request);
+  if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest);
+  return { request_preimage, request_digest };
+}
+
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
@@ -905,6 +915,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     outputCommitment: view.output_commitment ?? null,
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });
+  const requestBinding = clientRequestBinding(view);
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -962,6 +973,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
       policy: signedReceiptPolicy(),
+      ...(requestBinding ? { request_digest: requestBinding.request_digest } : {}),
     } : {}),
     payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
@@ -2094,6 +2106,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const draft = {
     schema: 'xfuel.receipt.v4',
     task_id: task.taskId,
+    request: task.request || task.meta?.request || null,
     status: task.status,
     proof_outcome: outcome,
     verify_url: buildVerifyUrl(base, task.taskId, { reqHost }),
@@ -2199,6 +2212,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // changes do not rewrite it. A legacy JWS that omits claim_id is not rewritten.
   let coveringHead = null;
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  // Same idempotency key with a different request must not reuse this JWS.
+  const receiptRequest = clientRequestBinding(draft);
+  if (receiptRequest && issuer_signature?.jws) {
+    const cachedDigest = decodeReceiptClaims({ issuer_signature })?.request_digest || null;
+    if (cachedDigest !== receiptRequest.request_digest) {
+      const err = new Error('idempotency key was already used for a different request');
+      err.code = 'idempotency_conflict';
+      throw err;
+    }
+  }
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
     if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
@@ -2255,6 +2278,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       issuer_jwk_pin: issuer_signature.kid,
       offline_key_source: 'issuer_signature.issuer_jwk',
     },
+    ...(receiptRequest ? {
+      request_digest: receiptRequest.request_digest,
+      request_preimage: receiptRequest.request_preimage,
+    } : {}),
     route_meta: {
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,

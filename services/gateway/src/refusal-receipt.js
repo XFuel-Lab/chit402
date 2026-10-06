@@ -20,6 +20,7 @@ import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwk
 import { withPublicPreimages } from './receipt-preimage.js';
 import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { claimIdempotency, requestDigest, requestDigestCanonical, requestDigestMatches } from './request-binding.js';
 import {
   currentHistoryPin,
   issuerHistorySnapshotClaim,
@@ -99,15 +100,35 @@ export function refusalAnchorClaims(anchor) {
  * Sign a refusal for a policy_blocked row that already has seq and row_hash.
  * @param {object} row
  */
+function bindingError(message, code) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
 export function issueRefusalReceipt(row) {
   assertIssuanceOpen();
   const anchor = refusalAnchorClaims(row?.anchor);
+  const request = row?.request && typeof row.request === 'object' ? row.request : null;
+  const intentSupplied = row?.intent_supplied === true || request?.intent_supplied === true;
+  const intentId = row?.intent_id || request?.intent_id || null;
+  if (intentSupplied && !intentId) {
+    throw bindingError('intent_id is required when the request carried one', 'intent_id_required');
+  }
   const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
   const nonce = crypto.randomBytes(16).toString('hex');
   const amount = textOrNull(row?.amount_requested);
   const v2 = issuerRootActive();
   const schema = v2 ? REFUSAL_SCHEMA_V2 : REFUSAL_SCHEMA;
   const payloadVersion = v2 ? REFUSAL_PAYLOAD_VERSION_V2 : REFUSAL_PAYLOAD_VERSION;
+  let bound = null;
+  if (v2) {
+    if (!request) throw bindingError('request_digest is required to bind this refusal', 'request_unbound');
+    const request_preimage = requestDigestCanonical(request);
+    const request_digest = requestDigest(request);
+    if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest);
+    bound = { request_preimage, request_digest };
+  }
   const claims = {
     schema,
     payload_version: payloadVersion,
@@ -120,7 +141,7 @@ export function issueRefusalReceipt(row) {
     agent_id: Number(row.agent_id),
     book_id: Number(row.agent_id),
     task_id: String(row.task_id),
-    intent_id: row?.intent_id || null,
+    intent_id: intentId || null,
     attempt_index: row?.attempt_index != null ? Number(row.attempt_index) : null,
     amount_requested: amount,
     asset: amount != null ? 'USDC' : null,
@@ -146,6 +167,7 @@ export function issueRefusalReceipt(row) {
       canonicalization: V11_CANONICALIZATION,
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
+      request_digest: bound.request_digest,
     } : {}),
   };
   const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS, v2 ? jcsRfc8785 : undefined);
@@ -165,6 +187,7 @@ export function issueRefusalReceipt(row) {
       canonical_preimage: sealed.preimage,
     },
     canonical_preimage: sealed.preimage,
+    request_preimage: bound?.request_preimage || null,
     verify_url: null,
   };
 }
@@ -289,6 +312,13 @@ export function verifyRefusalReceipt(doc, jwks = null) {
       });
       if (!snapshot.ok) {
         return { checked: true, valid: false, reason: snapshot.reason, payload };
+      }
+      if (typeof payload.request_digest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.request_digest)
+        || typeof doc.request_preimage !== 'string' || !doc.request_preimage) {
+        return { checked: true, valid: false, reason: 'REQUEST_UNBOUND', payload };
+      }
+      if (!requestDigestMatches(payload.request_digest, doc.request_preimage)) {
+        return { checked: true, valid: false, reason: 'request_digest_mismatch', payload };
       }
     }
     if (typeof payload.payload_hash !== 'string' || !/^[0-9a-f]{64}$/.test(payload.payload_hash)) {

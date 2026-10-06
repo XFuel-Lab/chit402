@@ -61,6 +61,36 @@ Vector `{ "s": "<TAB><LF><U+0001><U+1F600>" }` under this canonicalizer is the 2
 
 SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a v11 receipt and a v2 refusal.
 
+### `request_digest`
+
+A v2 refusal (`chit402.refusal.v2`, payload version 3) signs `request_digest`. A v11 receipt signs it when the gateway still has the client request. Flag-off payloads omit it.
+
+`request_digest` is lowercase hex SHA-256 of the RFC 8785 bytes of this object. Every key is present. A missing idempotency key or client nonce is null. The body bytes are not in the object. `body_sha256` is SHA-256 of those bytes.
+
+| Field | Meaning |
+|---|---|
+| `body_sha256` | Lowercase hex SHA-256 of the raw request body |
+| `idempotency_key` | Client `Idempotency-Key` or `X-Idempotency-Key`, or null |
+| `method` | Uppercase HTTP method |
+| `nonce` | Client nonce (`X-XFuel-Nonce` or body `nonce`), or null |
+| `path` | Request path, starting with `/` |
+
+`intent_id` is a separate signed field. If the request carried one, the refusal must include it. A missing `intent_id` fails closed with `intent_id_required`.
+
+The same idempotency key with a different `request_digest` fails closed with `idempotency_conflict`. The cached refusal or receipt is not returned.
+
+The unsigned preimage is `request_preimage` on the document and `preimages.fields.request_digest.preimage_utf8`. A stranger recomputes SHA-256 of that exact text.
+
+Vector:
+
+```
+{"body_sha256":"93dda1aa54d9bb86b7c2cdfaad61fd78e5b81656484a8941eee498adc9a54e54","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}
+```
+
+`request_digest` is `a9a7ca02eb504b94c7efb7a3a5832c0fc847e37cf6930ca48db3c0b6e04498f6`. The body whose SHA-256 is `body_sha256` is `{"model":"xfuel/auto","messages":[{"role":"user","content":"hello"}]}`.
+
+A refusal v2 without `request_digest`, or without the preimage, is `REQUEST_UNBOUND` and does not pass. `@xfuel/verify` in this branch reports that status. PR #484 must keep the same check: do not treat a v2 refusal that lacks `request_digest` as a pass. Recompute with `verifyRequestDigest(digest, preimageUtf8)`, which hashes the supplied text and does not rebuild it.
+
 ### `policy`
 
 Inside a v11 payment receipt. Flag-off v10 omits it. Refusal v2 does not carry it. A stored receipt is not re-signed to add it.

@@ -15,6 +15,8 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 
 const { jcsCanonicalize, jcsRfc8785 } = await import('../src/offer-receipt.js');
+const { requestDigest } = await import('../src/request-binding.js');
+const { buildPublicPreimages } = await import('../src/receipt-preimage.js');
 const { V11_CANONICALIZATION } = await import('../src/canonical-preimage.js');
 const {
   buildReceipt,
@@ -128,6 +130,14 @@ function paidTask(taskId) {
       model: 'theta/qwen3',
       output: 'private',
     },
+  };
+}
+
+function clientRequest(body = '{"model":"xfuel/auto"}') {
+  return {
+    method: 'POST',
+    path: '/v1/chat/completions',
+    body,
   };
 }
 
@@ -374,7 +384,7 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     assert.equal(treeHeadRestampAllowed(first), false);
     assert.equal(treeHeadRestampAllowed(resumed), false);
 
-    const refusal = issueRefusalReceipt(refusalRow('xfuel-cutover-c'));
+    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-cutover-c'), request: clientRequest() });
     assert.equal(refusal.schema, 'chit402.refusal.v2');
     assert.equal(refusal.payload_version, 3);
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
@@ -577,11 +587,15 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.equal(history.hash, crypto.createHash('sha256').update(history.body, 'utf8').digest('hex'));
     assert.equal(verifyHistorySnapshotClaims(claims, { publishedEntries }).ok, true);
 
-    const refusal = issueRefusalReceipt(refusalRow('xfuel-v11-embed'));
+    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-v11-embed'), request: clientRequest() });
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.deepEqual(refusalClaims.canonicalization, V11_CANONICALIZATION);
     assert.equal(refusal.canonical_preimage, jcsRfc8785(JSON.parse(refusal.canonical_preimage)));
     assert.equal(refusalClaims.issuer_history_snapshot.snapshot_hash, refusalClaims.issuer_history.hash);
+    assert.equal(refusal.request_digest, requestDigest(clientRequest()));
+    const published = buildPublicPreimages(refusal);
+    assert.equal(published.fields.request_digest.preimage_utf8, refusal.request_preimage);
+    assert.equal(published.fields.request_digest.hash, refusal.request_digest);
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
   } finally {
     restoreEnv(prev);
@@ -615,7 +629,7 @@ test('a forged history embed cannot match snapshot_hash without changing the sig
     assert.equal(forged.issuer_history.hash, pin);
     assert.equal(verifyHistorySnapshotClaims(forged, { publishedEntries: published }).reason, 'snapshot_pin_mismatch');
 
-    const refusal = issueRefusalReceipt(refusalRow('xfuel-snapshot-bind-refusal'));
+    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-snapshot-bind-refusal'), request: clientRequest() });
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.equal(refusalClaims.payload_version, 3);

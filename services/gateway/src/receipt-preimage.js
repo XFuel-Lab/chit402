@@ -16,6 +16,7 @@ import { emptyUniverseHash } from './export-coverage.js';
 import { canonicalSignedPayload } from './receipt.js';
 import { jcsCanonicalize } from './offer-receipt.js';
 import { canonicalObjectDescriptor } from './canonical-preimage.js';
+import { requestDigestOfPreimage } from './request-binding.js';
 
 export const PREIMAGE_SCHEMA = 'chit402.preimage.v1';
 
@@ -343,6 +344,20 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
       reason: NOT_RECOMPUTABLE_REASONS.output,
     });
   }
+  if (typeof receipt.request_preimage === 'string' && receipt.request_preimage && typeof receipt.request_digest === 'string') {
+    const hash = requestDigestOfPreimage(receipt.request_preimage);
+    if (hash === receipt.request_digest) {
+      fields.request_digest = fieldEntry({
+        field: 'request_digest',
+        alg: 'sha256',
+        encoding: 'utf8',
+        rule: 'SHA-256 of the RFC 8785 object {body_sha256, idempotency_key, method, nonce, path}. Null when the client omitted the key or nonce.',
+        preimage_utf8: receipt.request_preimage,
+        hash,
+      });
+    }
+  }
+
   if (receipt.caller_binding?.api_key_hash) {
     not.push({
       field: 'caller_binding.api_key_hash',
@@ -385,7 +400,9 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
   const base = baseUrl ? String(baseUrl).replace(/\/$/, '') : '';
   const links = {};
   const refusalId = receipt.refusal_id;
-  const isRefusal = receipt.schema === 'chit402.refusal.v1' || receipt.kind === 'refusal';
+  const isRefusal = receipt.schema === 'chit402.refusal.v1'
+    || receipt.schema === 'chit402.refusal.v2'
+    || receipt.kind === 'refusal';
   if (isRefusal && refusalId) {
     const path = `/refusal/${encodeURIComponent(String(refusalId))}/preimage`;
     links.preimage = base ? `${base}${path}` : path;
@@ -421,7 +438,7 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
  */
 export function withPublicPreimages(receipt, opts = {}) {
   if (!receipt || typeof receipt !== 'object') return receipt;
-  if (receipt.schema && receipt.schema !== 'xfuel.receipt.v4' && receipt.schema !== 'chit402.refusal.v1' && !receipt.book_chain && !receipt.book_row) {
+  if (receipt.schema && receipt.schema !== 'xfuel.receipt.v4' && receipt.schema !== 'chit402.refusal.v1' && receipt.schema !== 'chit402.refusal.v2' && !receipt.book_chain && !receipt.book_row) {
     return receipt;
   }
   const preimages = buildPublicPreimages(receipt, opts);

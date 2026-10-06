@@ -338,7 +338,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
 - Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
 - Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
-- Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
+- Live receipt: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines

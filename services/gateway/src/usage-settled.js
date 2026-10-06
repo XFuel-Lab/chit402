@@ -16,6 +16,7 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
+import { claimIdempotency, requestDigest, refusalMatchesRequest } from './request-binding.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -894,6 +895,7 @@ export class UsageSettledLedger {
     periodStart = null,
     anchor = null,
     amountRequested = null,
+    request = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -906,6 +908,23 @@ export class UsageSettledLedger {
     if (this.byTask.has(tid)) {
       const existing = this.byTask.get(tid);
       if (existing?.event === 'policy_blocked') {
+        if (request && existing.refusal) {
+          try {
+            if (existing.refusal.request_digest && !refusalMatchesRequest(existing.refusal, request)) {
+              return {
+                ok: false,
+                reason: 'idempotency key was already used for a different request',
+                code: 'idempotency_conflict',
+              };
+            }
+            if (request.idempotency_key) claimIdempotency(request.idempotency_key, requestDigest(request));
+          } catch (err) {
+            if (err.code === 'idempotency_conflict') {
+              return { ok: false, reason: err.message, code: err.code };
+            }
+            throw err;
+          }
+        }
         return { ok: true, entry: existing, duplicate: true };
       }
       return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
@@ -937,6 +956,8 @@ export class UsageSettledLedger {
       cap_atomic: capAtomic != null ? String(capAtomic) : null,
       period_start: periodStart || null,
       anchor: refusalAnchorOrUnavailable(anchor),
+      request: request && typeof request === 'object' ? request : null,
+      intent_supplied: request?.intent_supplied === true,
     };
     this._index(entry);
     return { ok: true, entry, duplicate: false };
