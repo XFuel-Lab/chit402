@@ -135,7 +135,7 @@ Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596). An ungat
 
 ## Agent Record link (draft, not issued)
 
-`agent_record_entry` (`chit402.agent_record_entry.v0`) is a draft unsigned object beside `book_seq`, same posture as `receipt_lane`: `signed: false`, outside the payment JWS, payment `payload_version` unchanged. It carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). Issuance does not stamp it yet. Specimen 1 and Specimen 2 are stamped listing payouts: https://www.chit402.com/specimens/1f916-link-1.json and https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
+`agent_record_entry` (`chit402.agent_record_entry.v0`) carries `registry: 1f916` and `fingerprint` (the Agent Record entry hash). `signed: false` means it is not a second signature. On a new receipt that was asked to bind an entry, the object is inside the payment issuer JWS and on the receipt JSON. Payment `payload_version` stays 10. A receipt that was not asked, and every receipt already issued, omits the claim. Those receipts are not re-signed. Specimen 1 and Specimen 2 are stamped listing payouts: https://www.chit402.com/specimens/1f916-link-1.json and https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62. Field rules, issuer, and the verify path: [integrations/1f916-link-v0.md](./integrations/1f916-link-v0.md) and https://www.chit402.com/docs/1f916-link.
 
 ## Outside witness
 

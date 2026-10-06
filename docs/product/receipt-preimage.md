@@ -14,7 +14,9 @@ Payment receipts that store the object are payload version 10. Version 9 and ear
 
 Every key below may appear. A key that is absent is omitted. Wire order is the JCS sort of whichever keys are present, not this list order.
 
-`action`, `agent_pubkey`, `binding`, `caller_binding`, `claim_id`, `delegation_hash`, `dispute_window`, `fulfillment`, `iat`, `iss`, `issuance_commitment`, `issuer_history`, `kind`, `openrouter`, `output`, `parent_receipt_id`, `payload_version`, `payment`, `provider_cogs`, `route`, `session`, `session_act`, `session_expiry`, `settlement`, `target_agent`, `task_id`, `tolerance`, `tree_head_hash`.
+`action`, `agent_pubkey`, `agent_record_entry`, `binding`, `caller_binding`, `claim_id`, `delegation_hash`, `dispute_window`, `fulfillment`, `iat`, `iss`, `issuance_commitment`, `issuer_history`, `kind`, `openrouter`, `output`, `parent_receipt_id`, `payload_version`, `payment`, `provider_cogs`, `route`, `session`, `session_act`, `session_expiry`, `settlement`, `target_agent`, `task_id`, `tolerance`, `tree_head_hash`.
+
+`agent_record_entry` is present only when issuance was asked to bind a 1F916 entry. It is omitted otherwise. The whole object at `GET /preimage` is still the bytes whose SHA-256 is `payload_hash`.
 
 `issuer_history` is `{ hash, version, seq }` of the issuer-history snapshot in effect at issuance. `output` is `{ hash }` only.
 

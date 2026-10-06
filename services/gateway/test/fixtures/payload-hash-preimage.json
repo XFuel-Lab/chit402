@@ -1,0 +1,5 @@
+{
+  "preimage": "{\"iss\":\"chit402\",\"kind\":\"fixture\",\"payload_version\":10}",
+  "payload_hash": "bd3b0e2d97efcf67aed998d36a251d9b1688421535524013339d7d21c06cdca0",
+  "note": "SHA-256 of the preimage string is payload_hash. GET /preimage serves those bytes. This fixture is not a live receipt."
+}

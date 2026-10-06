@@ -42,6 +42,7 @@ import {
   resealSignedClaims,
 } from './canonical-preimage.js';
 import { currentHistoryPin } from './issuer-history.js';
+import { agentRecordEntryClaim } from './agent-record-entry.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -851,6 +852,22 @@ function paymentClaimsOf(view) {
   };
 }
 
+/**
+ * Fingerprint to put in a JWS that is being signed now.
+ * A cached JWS that already carries one keeps that claim.
+ * A cached JWS that omits it is not given one on a later re-sign.
+ * The first signature uses the ask on task.meta, when it is a real fingerprint.
+ * @param {object} task
+ */
+function agentRecordEntryForIssuance(task) {
+  const asked = agentRecordEntryClaim(task?.meta?.agent_record_entry);
+  const cachedSig = task?.issuerSignature || task?.issuer_signature || null;
+  const claims = cachedSig?.jws ? decodeReceiptClaims({ issuer_signature: cachedSig }) : null;
+  if (claims?.agent_record_entry) return agentRecordEntryClaim(claims.agent_record_entry);
+  if (claims) return null;
+  return asked;
+}
+
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
@@ -936,6 +953,9 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuer_history: currentHistoryPin(),
     payload_version: RECEIPT_PAYLOAD_VERSION,
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
+    ...(agentRecordEntryClaim(view.agent_record_entry)
+      ? { agent_record_entry: agentRecordEntryClaim(view.agent_record_entry) }
+      : {}),
   };
 }
 
@@ -2071,6 +2091,9 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         },
   };
 
+  const agentRecord = agentRecordEntryForIssuance(task);
+  if (agentRecord) draft.agent_record_entry = agentRecord;
+
   const jwks_uri = buildJwksUri(base);
   // Session/parent fields are frozen on the first JWS for this task_id.
   // Payment/route may still re-sign (rolling settlement attaches the ref later).
@@ -2216,6 +2239,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (signedClaims && Object.prototype.hasOwnProperty.call(signedClaims, 'tolerance')) {
     envelope.tolerance = signedClaims.tolerance ?? null;
+  }
+  if (signedClaims?.agent_record_entry) {
+    const served = agentRecordEntryClaim(signedClaims.agent_record_entry);
+    if (served) envelope.agent_record_entry = served;
   }
 
   return envelope;

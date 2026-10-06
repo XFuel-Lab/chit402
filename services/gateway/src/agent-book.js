@@ -22,6 +22,7 @@ import {
 } from './export-coverage.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { getReceiptMerkleTree } from './receipt-merkle.js';
+import { emptyLookupBody } from './empty-lookup.js';
 
 export { clampBookLimit, BOOK_DEFAULT_LIMIT, BOOK_MAX_LIMIT } from './usage-settled.js';
 export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
@@ -632,8 +633,12 @@ export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {
   }
 
   const entry = ledger.findByTask(String(taskId));
-  if (!entry || entry.agent_id !== id) {
+  if (entry && entry.agent_id !== id) {
     return { status: 403, body: null };
+  }
+  if (!entry) {
+    const rows = Array.isArray(ledger.entries) ? ledger.entries : [];
+    return { status: 404, body: emptyLookupBody(String(taskId), rows) };
   }
 
   const lineage = ledger.lineageOf(String(taskId));

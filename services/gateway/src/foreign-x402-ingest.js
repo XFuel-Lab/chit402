@@ -25,6 +25,7 @@ import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPa
 import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
+import { agentRecordEntryClaim } from './agent-record-entry.js';
 import { fromCaip2Network } from './x402-facilitator.js';
 import {
   buildFulfillmentEnvelope,
@@ -86,15 +87,8 @@ export function foreignPayoutClaims({
       api_key_hash: null,
     },
   };
-  if (typeof fingerprint === 'string' && /^[0-9a-fA-F]{64}$/.test(fingerprint)) {
-    claims.agent_record_entry = {
-      schema: 'chit402.agent_record_entry.v0',
-      signed: false,
-      registry: '1f916',
-      fingerprint: fingerprint.toLowerCase(),
-      fingerprint_alg: '1f916-entry-hash',
-    };
-  }
+  const entry = agentRecordEntryClaim(fingerprint);
+  if (entry) claims.agent_record_entry = entry;
   return claims;
 }
 

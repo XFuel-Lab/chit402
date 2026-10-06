@@ -6,7 +6,7 @@ Public page: https://www.chit402.com/docs/1f916-link
 
 This note specifies how a [1F916](https://1f916.ai/) Agent Record entry and a Chit receipt name each other, so one offline check covers the instruction and the money. It answers the schema, the issuer, and the verify path asked for on [post 7404](https://1f916.ai/post/7404) ([JSON](https://1f916.ai/api/post/7404), comments 88731 and 88757).
 
-**Issuance support is coming.** Chit402 does not stamp `agent_record_entry` on receipts in this revision. A receipt fetched today will not contain the field. Nothing in gateway issuance, `packages/verify`, or the payment JWS changes here.
+**New receipts stamp the fingerprint when asked.** A chat or responses call that sends `X-Chit-Agent-Record-Fingerprint` (or body `agent_record_entry.fingerprint`) gets that hash inside the payment issuer JWS as `agent_record_entry`. The public foreign-ingest body cannot supply it. A receipt that was not asked omits the claim. Receipts already issued are not re-signed and are not given the field after the fact. Payment `payload_version` stays 10.
 
 The Agent Record wire is [draft-maintainer-1f916-agent-record](https://datatracker.ietf.org/doc/draft-maintainer-1f916-agent-record/) (text reviewed: draft-01, 12 August 2026).
 
@@ -33,9 +33,7 @@ GET https://api.chit402.com/receipt/<chit_receipt_id>?format=json
 
 ## Receipt side (Chit)
 
-`agent_record_entry` is an unsigned object beside `book_seq`, in the same posture as [`receipt_lane`](../product/receipt-lane.md) and `supersession` ([RECEIPT_SCHEMA_V2.md](../RECEIPT_SCHEMA_V2.md)).
-
-The payment JWS has a fixed claim set. `book_chain` (`chit402.book_seq.v1`) is its own signed object with its own `payload_version`. There is no open slot on the payment JWS for an extra signed claim. This field follows the unsigned siblings: `signed: false`. It does not change payment `payload_version`, the HMAC array, or `book_chain`.
+`agent_record_entry` is `chit402.agent_record_entry.v0`. `signed: false` means the object is not a second signature. On a new receipt that was asked to bind an entry, the same object is a claim inside the payment issuer JWS, so the fingerprint is covered by `issuer_signature`. `book_chain` (`chit402.book_seq.v1`) stays its own signed object. Payment `payload_version` stays 10. The HMAC array and `book_chain` are unchanged. A receipt issued before this stamp, or issued without an ask, omits the claim. That omission is not filled in later.
 
 | Field | Meaning |
 |-------|---------|
@@ -111,7 +109,7 @@ npx xfuel-verify receipt.json --fetch-jwks --check-payer
 npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 ```
 
-`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. `xfuel-verify` does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
+`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. `xfuel-verify` does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. The signed compare runs when the issuer JWS carries `agent_record_entry`. A new receipt stamps that claim when issuance was asked to bind an entry. A receipt whose JWS omits it was not asked, or was issued before this stamp, and is not rewritten.
 
 The instruction and the money are bound when steps 2, 3, and 4 succeed. A receipt with no `agent_record_entry` can still verify as a payment. It does not bind an Agent Record entry.
 
@@ -145,6 +143,6 @@ node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-
 
 A specimen whose `chit_receipt_id` is absent still prints `pending_first_stamp` on `fetch_receipt`. These two files are stamped, so that step fetches the receipt.
 
-## What issuance will do later
+## What issuance does
 
-When issuance support lands, a receipt that was asked to bind an entry will include `agent_record_entry` as this unsigned object. Payment `payload_version` stays unchanged. This document is the field contract for that later change.
+A new payment receipt that was asked to bind an entry includes `agent_record_entry` in the issuer JWS and on the receipt JSON. The ask is `X-Chit-Agent-Record-Fingerprint: <64 hex>`, or the same fingerprint on `agent_record_entry` in the JSON body. `fingerprint_alg` defaults to `1f916-entry-hash`. Payment `payload_version` stays 10. The house foreign-payout stamp still puts the same object in its JWS when the operator passes `--fingerprint` after the public record check. `POST /v1/agents/:agent_id/book/ingest` does not take a fingerprint from the body.
