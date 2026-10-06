@@ -2200,6 +2200,66 @@ test('backfill dry-run lists each refusal', () => {
   assert.match(out.stderr, /refuse dup-b: missing_row_hash/);
 });
 
+test('rebuild refuses to sign when ISSUER_PRIVATE_KEY is unset', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const outDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, '{}\n');
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: '' };
+  const out = spawnSync(process.execPath, [
+    'scripts/rebuild-receipt-epoch1.mjs',
+    '--jsonl', jsonl,
+    '--out', outDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8', env });
+  assert.notEqual(out.status, 0);
+  assert.match(out.stderr, /REFUSED: ISSUER_PRIVATE_KEY is not set/);
+  assert.match(out.stderr, /ephemeral key/);
+  assert.match(out.stderr, /no_matching_key/);
+  assert.equal(fs.existsSync(path.join(outDir, 'journal.jsonl')), false);
+  assert.doesNotMatch(out.stderr, /epoch record signed: true/);
+});
+
+test('rebuild with a configured key still refuses a book that is not epoch 1', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const outDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, JSON.stringify({
+    agent_id: 1,
+    task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af',
+    row_hash: 'not-the-historical-row',
+  }) + '\n');
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: Buffer.from(pem).toString('base64') };
+  const out = spawnSync(process.execPath, [
+    'scripts/rebuild-receipt-epoch1.mjs',
+    '--jsonl', jsonl,
+    '--out', outDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8', env });
+  assert.notEqual(out.status, 0);
+  assert.match(out.stderr, /REFUSED:/);
+  assert.match(out.stderr, /epoch1_root_mismatch|epoch 1 must recompute/);
+  assert.doesNotMatch(out.stderr, /ephemeral key/);
+  assert.doesNotMatch(out.stderr, /epoch record signed: true/);
+  assert.equal(fs.existsSync(path.join(outDir, 'journal.jsonl')), false);
+});
+
+test('backfill names a directory that has no journal', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const logDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, '{}\n');
+  fs.mkdirSync(logDir);
+  const out = spawnSync(process.execPath, [
+    'scripts/backfill-receipt-log.mjs',
+    '--jsonl', jsonl,
+    '--dir', logDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8' });
+  assert.notEqual(out.status, 0);
+  assert.ok(out.stderr.includes(`REFUSED: no journal at ${logDir}`), out.stderr);
+  assert.doesNotMatch(out.stderr, /epoch1_has_no_receipt_leaf/);
+});
+
 function runCli(args) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
