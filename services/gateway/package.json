@@ -31,6 +31,7 @@
   "author": "XFuelLab",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1086.0",
     "axios": "^1.19.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",

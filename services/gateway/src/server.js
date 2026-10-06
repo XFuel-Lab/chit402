@@ -71,7 +71,8 @@ import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
-import { getReceiptMerkleTree } from './receipt-merkle.js';
+import { getReceiptMerkleTree, bootReceiptLog, receiptLogBootRequested } from './receipt-merkle.js';
+import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
@@ -799,6 +800,15 @@ export function createApp() {
   // combination should not take the gateway down, but it must not be quiet.
   checkPricingConfig(config.verifiedInference);
 
+  // The receipt log is append-only on disk. A bad journal, a root that does
+  // not match its stored head, or a missing journal beside anchored heads
+  // refuses to start. A public read never publishes.
+  if (receiptLogBootRequested()) {
+    const receiptLogDir = process.env.RECEIPT_LOG_DIR
+      || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'receipt-log') : null);
+    if (receiptLogDir) bootReceiptLog(receiptLogDir);
+  }
+
   // Payer ledger for rolling settlement. Same single-process JSON-on-disk model
   // as task-store — a restart must not forgive an invoice. The live flag stays
   // off until this persist path exists (ADR 0008).
@@ -830,6 +840,15 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist && !!agentsDir,
   });
+  const receiptLogS3 = s3ConfigFromEnv();
+  if (receiptLogS3) {
+    startHourlyBundleTimer({
+      tree: getReceiptMerkleTree,
+      config: receiptLogS3,
+      receipts: () => usageSettled.entries,
+      onError: (err) => logger.error({ err: err.message }, 'receipt log bundle upload failed'),
+    });
+  }
   setBookRowWrittenHook((entry) => {
     try {
       if (entry?.task_id) getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
@@ -2743,8 +2762,8 @@ export function createApp() {
   app.get('/v1/receipts/tree/head', async (_req, res) => {
     try {
       const tree = getReceiptMerkleTree();
-      let head = tree.latestHead();
-      if (!head) head = await tree.publishHead();
+      const head = tree.latestSignedHead();
+      if (!head) return res.json(tree.unpublishedHead());
       return res.json(head);
     } catch (err) {
       logger.error({ err }, 'tree head error');
@@ -2752,11 +2771,24 @@ export function createApp() {
     }
   });
 
+  app.get('/v1/receipts/tree/epoch', (_req, res) => {
+    const record = getReceiptMerkleTree().epochRecord;
+    if (!record) {
+      return res.json({
+        schema: 'chit402.tree_epoch.v1',
+        status: 'not_yet_published',
+        published: false,
+      });
+    }
+    return res.json(record);
+  });
+
   app.get('/v1/receipts/tree/consistency', (req, res) => {
     try {
       const first = Number(req.query.first);
       const second = Number(req.query.second);
-      return res.json(getReceiptMerkleTree().consistency(first, second));
+      const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
+      return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
     } catch (err) {
       return res.status(400).json({ error: 'bad_tree_size', message: err.message });
     }

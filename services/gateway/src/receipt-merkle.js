@@ -13,8 +13,7 @@
  * None of those are committed.
  */
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
+import logger from './logger.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import { clockToleranceClaim, gatePublishedAnchor, gatePublishedSolana } from './receipt-anchor-clock.js';
@@ -25,11 +24,26 @@ import {
   solanaAnchorMemo,
   ZERO_ROOT,
 } from './solana-receipt-anchor.js';
+import { bundleIndexHash, emptyBundleIndex } from './receipt-log-s3.js';
+import {
+  appendJournal,
+  freshGenesisAllowed,
+  readReceiptLog,
+  ReceiptLogRefused,
+  receiptLogBootRequested,
+  receiptLogStrict,
+  writeAnchorState,
+  writeBundleIndexFile,
+  writeCheckpoint,
+  writeEpochRecordFile,
+} from './receipt-log-store.js';
 
-export const TREE_HEAD_SCHEMA = 'chit402.tree_head.v1';
-// clock_tolerance_s and published_at are optional signed claims. Version stays
-// 1 so a head signed before those claims still verifies.
-export const TREE_HEAD_VERSION = 1;
+export { ReceiptLogRefused, freshGenesisAllowed, receiptLogBootRequested, receiptLogStrict };
+export const TREE_HEAD_SCHEMA_V1 = 'chit402.tree_head.v1';
+export const TREE_HEAD_SCHEMA = 'chit402.tree_head.v2';
+// Version 2 adds epoch, prev_epoch_root, prev_epoch_size, prev_root, and
+// bundle_index_hash. A head signed at version 1 still verifies.
+export const TREE_HEAD_VERSION = 2;
 export const TREE_HEAD_JWT_TYP = 'chit402-tree-head+jwt';
 export const GENESIS_SCHEMA = 'chit402.tree_genesis.v1';
 
@@ -238,14 +252,35 @@ function dayOf(iso) {
   return String(iso || '').slice(0, 10);
 }
 
-function previousRoot(heads, day) {
-  for (let i = heads.length - 1; i >= 0; i -= 1) {
-    if (dayOf(heads[i].published_at) < day && heads[i].root) return heads[i].root;
+/**
+ * Prev root for the anchor. The previous stored head, not a published_at
+ * scan. Zeros only when this epoch has no earlier head (true genesis, or a
+ * republish of that genesis head that already recorded zeros).
+ */
+export function anchorPrevRoot(heads, currentRoot) {
+  const list = Array.isArray(heads) ? heads : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const root = list[i]?.root;
+    if (root && root !== currentRoot) return root;
+  }
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i]?.root === currentRoot && list[i]?.prev_root) return list[i].prev_root;
   }
   return ZERO_ROOT;
 }
 
-function solanaAnchoredForDay(heads, day, scope) {
+function solanaAnchoredForDay(heads, day, scope, anchorState) {
+  const disk = anchorState?.solana?.[`${scope}|${day}`];
+  if (disk?.status === 'anchored' && disk.signature) {
+    return {
+      status: 'anchored',
+      signature: disk.signature,
+      slot: disk.slot ?? null,
+      cluster: disk.cluster || null,
+      memo: disk.memo || null,
+      reason: null,
+    };
+  }
   for (let i = heads.length - 1; i >= 0; i -= 1) {
     if (dayOf(heads[i].published_at) !== day) continue;
     const sol = heads[i].anchors?.solana;
@@ -255,11 +290,22 @@ function solanaAnchoredForDay(heads, day, scope) {
   return null;
 }
 
-function baseAnchoredForRoot(heads, root) {
+function baseAnchoredForRoot(heads, root, anchorState) {
+  const disk = anchorState?.base?.[root];
+  if (disk?.status === 'anchored' && disk.tx) return disk;
   for (let i = heads.length - 1; i >= 0; i -= 1) {
     if (heads[i].root !== root) continue;
     const base = heads[i].anchors?.base || heads[i].anchor;
     if (base?.status === 'anchored' && base.tx) return base;
+  }
+  return null;
+}
+
+function epochHeadCovering(heads, leaves, rootHex) {
+  for (let i = heads.length - 1; i >= 0; i -= 1) {
+    const head = heads[i];
+    if (!head?.issuer_signature?.jws) continue;
+    if (Number(head.tree_size) === leaves.length && head.root === rootHex) return head;
   }
   return null;
 }
@@ -319,6 +365,17 @@ export class ReceiptMerkleTree {
     this.byTask = new Map();
     this.heads = [];
     this.dir = null;
+    this.durable = false;
+    this.allowFreshGenesis = false;
+    this.epoch = 1;
+    this.prevEpochRoot = null;
+    this.prevEpochSize = 0;
+    this.closedEpochs = [];
+    this.anchorState = { schema: 'chit402.receipt_anchor_state.v1', solana: {}, base: {} };
+    this.epochRecord = null;
+    this.bundleIndex = emptyBundleIndex();
+    this._epochOpened = false;
+    this._warnedUninitialized = false;
   }
 
   genesisLeaf() {
@@ -332,14 +389,35 @@ export class ReceiptMerkleTree {
 
   ensureGenesis() {
     if (this.leaves.length > 0) return;
+    if (this.durable && !this.allowFreshGenesis) {
+      throw new ReceiptLogRefused('no_genesis', 'receipt log has no stored genesis');
+    }
+    if (this.durable && this.allowFreshGenesis) {
+      logger.error(
+        { flag: 'RECEIPT_LOG_ACCEPT_FRESH_GENESIS', dir: this.dir },
+        'RECEIPT LOG FRESH GENESIS: the operator flag is set. This starts a new public receipt log and does not extend the anchored history.',
+      );
+    }
     const g = this.genesisLeaf();
     this._push(g.task_id, g.bytes, g.kind);
   }
 
   _push(taskId, bytes, kind) {
-    const hash = leafHash(bytes);
-    const index = this.leaves.length;
     const buf = Buffer.from(bytes);
+    const hash = leafHash(buf);
+    const index = this.leaves.length;
+    if (this.dir) {
+      this._ensureEpochOpen();
+      appendJournal(this.dir, {
+        v: 1,
+        op: 'leaf',
+        epoch: this.epoch,
+        index,
+        task_id: taskId,
+        kind,
+        preimage_b64: buf.toString('base64'),
+      });
+    }
     this.leaves.push(hash);
     this.meta.push({
       task_id: taskId,
@@ -347,9 +425,23 @@ export class ReceiptMerkleTree {
       kind,
       leaf: hash.toString('hex'),
       preimage_b64: buf.toString('base64'),
+      epoch: this.epoch,
     });
     if (taskId) this.byTask.set(String(taskId), index);
+    if (this.dir) this._writeSnapshot();
     return index;
+  }
+
+  _ensureEpochOpen() {
+    if (!this.dir || this._epochOpened) return;
+    appendJournal(this.dir, {
+      v: 1,
+      op: 'epoch_open',
+      epoch: this.epoch,
+      prev_epoch_root: this.prevEpochRoot,
+      prev_epoch_size: this.prevEpochSize,
+    });
+    this._epochOpened = true;
   }
 
   /**
@@ -361,23 +453,26 @@ export class ReceiptMerkleTree {
    * @param {(taskId: string) => string|null|undefined} [rowHashOf]
    */
   prefixLeafPreimages(taskId, rowHashOf = null) {
-    const index = this.byTask.get(String(taskId));
+    const closed = this._findClosed(taskId);
+    const index = closed
+      ? closed.byTask.get(String(taskId))
+      : this.byTask.get(String(taskId));
     if (index == null) return { ok: false, reason: 'not_in_tree' };
+    const metaList = closed ? closed.meta : this.meta;
+    const leafList = closed ? closed.leaves : this.leaves;
     const leaves = [];
     for (let i = 0; i <= index; i += 1) {
-      const meta = this.meta[i] || {};
+      const meta = metaList[i] || {};
       let body = null;
       if (meta.preimage_b64) {
         body = Buffer.from(meta.preimage_b64, 'base64');
-      } else if (meta.kind === 'genesis' || meta.task_id === 'genesis') {
-        body = this.genesisLeaf().bytes;
-      } else if (typeof rowHashOf === 'function' && meta.task_id) {
+      } else if (typeof rowHashOf === 'function' && meta.task_id && meta.kind !== 'genesis' && meta.task_id !== 'genesis') {
         const rowHash = rowHashOf(meta.task_id);
         if (rowHash != null) body = Buffer.from(`${meta.task_id}|${rowHash}`);
       }
       if (!body) return { ok: false, reason: 'leaf_preimage_unavailable', index: i };
       const hashed = leafHash(body);
-      const stored = this.leaves[i];
+      const stored = leafList[i];
       if (!stored || hashed.toString('hex') !== Buffer.from(stored).toString('hex')) {
         return { ok: false, reason: 'leaf_preimage_mismatch', index: i };
       }
@@ -391,7 +486,7 @@ export class ReceiptMerkleTree {
     return {
       ok: true,
       leaves,
-      root: hex(rootOf(this.leaves.slice(0, index + 1))),
+      root: hex(rootOf(leafList.slice(0, index + 1))),
       leaf_index: index,
     };
   }
@@ -399,11 +494,23 @@ export class ReceiptMerkleTree {
   appendReceipt(taskId, rowHash) {
     if (!taskId) return null;
     if (this.byTask.has(String(taskId))) return this.inclusion(taskId);
-    this.ensureGenesis();
+    if (this._findClosed(taskId)) return this.inclusion(taskId);
+    if (this.leaves.length === 0) {
+      if (this.durable && !this.allowFreshGenesis) {
+        if (!this._warnedUninitialized) {
+          this._warnedUninitialized = true;
+          logger.error(
+            { dir: this.dir },
+            'receipt log append refused: no stored genesis. Rebuild epoch 1, or set RECEIPT_LOG_ACCEPT_FRESH_GENESIS to the documented flag.',
+          );
+        }
+        return null;
+      }
+      this.ensureGenesis();
+    }
     const bytes = Buffer.from(`${taskId}|${rowHash || ''}`);
     this._push(String(taskId), bytes, 'receipt');
     this._maybePublishDaily();
-    this._persist();
     return this.inclusion(taskId);
   }
 
@@ -414,53 +521,100 @@ export class ReceiptMerkleTree {
    * @param {unknown} taskId
    * @returns {string|null}
    */
+  _findClosed(taskId) {
+    const id = String(taskId);
+    for (let i = this.closedEpochs.length - 1; i >= 0; i -= 1) {
+      const epoch = this.closedEpochs[i];
+      if (epoch.byTask?.has(id)) return epoch;
+    }
+    return null;
+  }
+
   prefixRoot(taskId) {
+    const closed = this._findClosed(taskId);
+    if (closed) {
+      const index = closed.byTask.get(String(taskId));
+      return hex(rootOf(closed.leaves.slice(0, index + 1)));
+    }
     const index = this.byTask.get(String(taskId));
     if (index == null) return null;
     return hex(rootOf(this.leaves.slice(0, index + 1)));
   }
 
   inclusion(taskId) {
+    const closed = this._findClosed(taskId);
+    if (closed) return this._inclusionIn(closed, taskId);
     const index = this.byTask.get(String(taskId));
     if (index == null) return null;
-    const proof = inclusionProof(this.leaves, index);
-    const root = hex(rootOf(this.leaves));
-    const head = this.heads[this.heads.length - 1] || null;
-    const covers = head && head.tree_size === this.leaves.length;
-    const baseSide = covers ? (head.anchors?.base || head.anchor || null) : null;
+    return this._inclusionIn({
+      epoch: this.epoch,
+      leaves: this.leaves,
+      byTask: this.byTask,
+      heads: this.heads,
+      prevEpochRoot: this.prevEpochRoot,
+      prevEpochSize: this.prevEpochSize,
+    }, taskId);
+  }
+
+  _inclusionIn(epoch, taskId) {
+    const index = epoch.byTask.get(String(taskId));
+    if (index == null) return null;
+    const proof = inclusionProof(epoch.leaves, index);
+    const root = hex(rootOf(epoch.leaves));
+    const head = epochHeadCovering(epoch.heads, epoch.leaves, root);
+    const baseSide = head ? (head.anchors?.base || head.anchor || null) : null;
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
-    const solana = covers ? (head.anchors?.solana || null) : null;
+    const solana = head ? (head.anchors?.solana || null) : null;
     const solanaSig = solana?.status === 'anchored' ? solana.signature : null;
     return {
       schema: 'chit402.inclusion.v1',
-      payload_version: 1,
+      payload_version: 2,
+      epoch: epoch.epoch,
+      prev_epoch_root: epoch.prevEpochRoot || null,
+      prev_epoch_size: epoch.prevEpochSize || 0,
       task_id: String(taskId),
       leaf_index: index,
-      leaf: this.leaves[index].toString('hex'),
-      tree_size: this.leaves.length,
+      leaf: epoch.leaves[index].toString('hex'),
+      tree_size: epoch.leaves.length,
       root,
       proof: proof.map((step) => ({ hash: step.hash, position: step.position })),
       anchor_status: baseTx ? 'anchored' : 'pending',
       anchor_tx: baseTx,
       solana_signature: solanaSig,
-      anchors: covers ? (head.anchors || null) : null,
+      anchors: head ? (head.anchors || null) : null,
       verified_at: new Date().toISOString(),
     };
   }
 
-  consistency(m, n) {
-    const proof = consistencyProof(this.leaves, m, n);
-    const oldRoot = hex(rootOf(this.leaves.slice(0, m)));
-    const newRoot = hex(rootOf(this.leaves.slice(0, n)));
+  consistency(m, n, epochNumber = null) {
+    const epoch = this._epochForConsistency(m, n, epochNumber);
+    const proof = consistencyProof(epoch.leaves, m, n);
+    const oldRoot = hex(rootOf(epoch.leaves.slice(0, m)));
+    const newRoot = hex(rootOf(epoch.leaves.slice(0, n)));
     return {
       schema: 'chit402.consistency.v1',
-      payload_version: 1,
+      payload_version: 2,
+      epoch: epoch.epoch,
       first_tree_size: m,
       second_tree_size: n,
       first_root: oldRoot,
       second_root: newRoot,
       proof,
     };
+  }
+
+  _epochForConsistency(m, n, epochNumber) {
+    if (epochNumber != null) {
+      const wanted = Number(epochNumber);
+      if (wanted === this.epoch) return { epoch: this.epoch, leaves: this.leaves };
+      const closed = this.closedEpochs.find((row) => row.epoch === wanted);
+      if (!closed) throw new Error('bad_tree_size');
+      return closed;
+    }
+    if (n <= this.leaves.length) return { epoch: this.epoch, leaves: this.leaves };
+    const closed = [...this.closedEpochs].reverse().find((row) => row.leaves.length >= n);
+    if (closed) return closed;
+    return { epoch: this.epoch, leaves: this.leaves };
   }
 
   async publishHead(opts = {}) {
@@ -481,32 +635,49 @@ export class ReceiptMerkleTree {
     solanaBlockTime,
     readSolanaBlockTs,
   } = {}) {
-    if (this.leaves.length === 0) this.ensureGenesis();
+    if (this.leaves.length === 0) {
+      if (this.durable && !this.allowFreshGenesis) return null;
+      this.ensureGenesis();
+    }
     const publishedAt = (now ? new Date(now) : new Date()).toISOString();
     const day = dayOf(publishedAt);
     const root = hex(rootOf(this.leaves));
-    const prevRoot = previousRoot(this.heads, day);
+    const prevRoot = anchorPrevRoot(this.heads, root);
+    const indexHash = this.currentBundleIndexHash();
     const last = this.heads[this.heads.length - 1] || null;
     if (!force && last && last.root === root && last.tree_size === this.leaves.length && !anchorNeedsRetry(last)) {
       return last;
     }
 
-    const priorBase = !send ? baseAnchoredForRoot(this.heads, root) : null;
+    const priorBase = !send ? baseAnchoredForRoot(this.heads, root, this.anchorState) : null;
     let anchor = priorBase || await describeAnchor(root, { send });
-    const priorSolana = solanaAnchoredForDay(this.heads, day, scope);
+    const priorSolana = solanaAnchoredForDay(this.heads, day, scope, this.anchorState);
     let solana;
     if (priorSolana) {
       const parsed = parseAnchorMemo(priorSolana.memo);
-      const sameMemo = parsed?.root === root && parsed?.prev === prevRoot;
+      const sameMemo = parsed?.root === root && parsed?.prev === prevRoot
+        && (parsed.version !== 2 || (
+          Number(parsed.epoch) === Number(this.epoch)
+          && parsed.bundle_index_hash === indexHash
+        ));
       if (sameMemo) {
         solana = { ...priorSolana };
       } else {
-        // This UTC day already has a memo for a different root. Do not send another.
+        // This UTC day already has a memo. Do not send another.
         let memo = null;
         let cluster = priorSolana.cluster || null;
         try {
           cluster = solanaAnchorCluster();
-          memo = solanaAnchorMemo({ scope, day, rootHex: root, prevRootHex: prevRoot });
+          memo = solanaAnchorMemo({
+            scope,
+            day,
+            rootHex: root,
+            prevRootHex: prevRoot,
+            epoch: this.epoch,
+            prevEpochRoot: this.prevEpochRoot,
+            prevEpochSize: this.prevEpochSize,
+            bundleIndexHash: indexHash,
+          });
         } catch {
           memo = null;
         }
@@ -527,6 +698,10 @@ export class ReceiptMerkleTree {
         day,
         scope,
         connection: solanaConnection,
+        epoch: this.epoch,
+        prevEpochRoot: this.prevEpochRoot,
+        prevEpochSize: this.prevEpochSize,
+        bundleIndexHash: indexHash,
       });
     }
 
@@ -542,12 +717,19 @@ export class ReceiptMerkleTree {
       });
     }
 
+    anchor = { ...anchor, prev_root: prevRoot };
+    solana = { ...solana, prev_root: prevRoot };
     const anchors = { base: anchor, solana };
     // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
-    // field inside the Base or Solana records.
+    // field inside the Base or Solana records. Epoch fields are version 2.
     const claims = {
       schema: TREE_HEAD_SCHEMA,
       payload_version: TREE_HEAD_VERSION,
+      epoch: this.epoch,
+      prev_epoch_root: this.prevEpochRoot,
+      prev_epoch_size: this.prevEpochSize,
+      prev_root: prevRoot,
+      bundle_index_hash: indexHash,
       tree_size: this.leaves.length,
       root,
       anchor_status: anchor.status,
@@ -579,8 +761,136 @@ export class ReceiptMerkleTree {
     const solWorse = last?.anchors?.solana?.status === 'anchored' && solana.status !== 'anchored';
     if (sameSlot && !baseWorse && !solWorse) this.heads[this.heads.length - 1] = head;
     else this.heads.push(head);
-    this._persist();
+    this._rememberAnchor(day, scope, head);
+    this._persistHead(head);
     return head;
+  }
+
+  currentBundleIndexHash() {
+    return bundleIndexHash(this.bundleIndex || emptyBundleIndex());
+  }
+
+  /**
+   * Leaf preimages and heads for an hourly bundle. `added` is the open-epoch
+   * leaves past the last bundled size.
+   */
+  bundleView(receipts = [], now = new Date()) {
+    const leafRows = (epoch, meta, leafList) => meta.map((row, index) => ({
+      epoch,
+      index,
+      task_id: row.task_id || null,
+      kind: row.kind || null,
+      preimage_b64: row.preimage_b64,
+      leaf: leafList[index].toString('hex'),
+    }));
+    const leaves = leafRows(this.epoch, this.meta, this.leaves);
+    const closedEpochs = this.closedEpochs.map((epoch) => ({
+      epoch: epoch.epoch,
+      prev_epoch_root: epoch.prevEpochRoot || null,
+      prev_epoch_size: epoch.prevEpochSize || 0,
+      leaves: leafRows(epoch.epoch, epoch.meta, epoch.leaves),
+    }));
+    const from = this.bundledTreeSize || 0;
+    const added = leaves.filter((row) => row.index >= from);
+    const ids = new Set(added.map((row) => row.task_id).filter(Boolean));
+    const receiptRows = (receipts || []).filter((row) => ids.has(String(row.task_id)));
+    return {
+      hour: new Date(now).toISOString().slice(0, 13),
+      epoch: this.epoch,
+      prevEpochRoot: this.prevEpochRoot,
+      prevEpochSize: this.prevEpochSize,
+      leaves,
+      added,
+      heads: this.heads,
+      receipts: receiptRows,
+      closedEpochs,
+      root: this.leaves.length ? hex(rootOf(this.leaves)) : null,
+      tree_size: this.leaves.length,
+    };
+  }
+
+  noteBundle(index, treeSize) {
+    this.bundleIndex = index;
+    this.bundledTreeSize = treeSize;
+    if (this.dir) {
+      appendJournal(this.dir, { v: 1, op: 'bundle_index', index });
+      this._writeSnapshot();
+    }
+  }
+
+  _rememberAnchor(day, scope, head) {
+    const sol = head.anchors?.solana;
+    if (sol?.status === 'anchored' && sol.signature) {
+      const key = `${scope}|${day}`;
+      if (!this.anchorState.solana[key]) {
+        this.anchorState.solana[key] = {
+          status: 'anchored',
+          signature: sol.signature,
+          slot: sol.slot ?? null,
+          cluster: sol.cluster || null,
+          memo: sol.memo || null,
+          root: head.root,
+          prev: head.prev_root || null,
+          day,
+          scope,
+        };
+      }
+    }
+    const base = head.anchors?.base;
+    if (base?.status === 'anchored' && base.tx && head.root && !this.anchorState.base[head.root]) {
+      this.anchorState.base[head.root] = {
+        status: 'anchored',
+        tx: base.tx,
+        calldata: base.calldata || null,
+        from: base.from || null,
+        chain_id: base.chain_id || 8453,
+      };
+    }
+  }
+
+  _persistHead(head) {
+    if (!this.dir) return;
+    this._ensureEpochOpen();
+    appendJournal(this.dir, { v: 1, op: 'head', epoch: this.epoch, head });
+    appendJournal(this.dir, {
+      v: 1,
+      op: 'anchor',
+      epoch: this.epoch,
+      day: dayOf(head.published_at),
+      scope: 'global',
+      root: head.root,
+      prev: head.prev_root || null,
+      solana: this.anchorState.solana[`${'global'}|${dayOf(head.published_at)}`] || null,
+      base: this.anchorState.base[head.root] || null,
+    });
+    this._writeSnapshot();
+  }
+
+  _snapshotEpochs() {
+    const closed = this.closedEpochs.map((row) => ({
+      epoch: row.epoch,
+      status: row.status || 'closed',
+      tree_size: row.leaves.length,
+      root: hex(rootOf(row.leaves)),
+      prevEpochRoot: row.prevEpochRoot || null,
+      prevEpochSize: row.prevEpochSize || 0,
+    }));
+    closed.push({
+      epoch: this.epoch,
+      status: 'open',
+      tree_size: this.leaves.length,
+      root: this.leaves.length ? hex(rootOf(this.leaves)) : null,
+      prevEpochRoot: this.prevEpochRoot,
+      prevEpochSize: this.prevEpochSize,
+    });
+    return closed;
+  }
+
+  _writeSnapshot() {
+    if (!this.dir) return;
+    writeCheckpoint(this.dir, this._snapshotEpochs());
+    writeAnchorState(this.dir, this.anchorState);
+    if (this.bundleIndex) writeBundleIndexFile(this.dir, this.bundleIndex);
   }
 
   _maybePublishDaily() {
@@ -593,51 +903,134 @@ export class ReceiptMerkleTree {
     return this.heads[this.heads.length - 1] || null;
   }
 
-  _persist() {
-    if (!this.dir) return;
-    try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      const body = JSON.stringify({
-        meta: this.meta,
-        heads: this.heads,
-      });
-      fs.writeFileSync(path.join(this.dir, 'receipt-merkle.json'), body);
-    } catch {
-      /* persistence is best-effort; the in-memory tree still answers */
+  /** Last head that carries an issuer JWS. Historical observations are not served as published. */
+  latestSignedHead() {
+    for (let i = this.heads.length - 1; i >= 0; i -= 1) {
+      if (this.heads[i]?.issuer_signature?.jws) return this.heads[i];
     }
+    return null;
   }
 
-  load(dir) {
+  /**
+   * Public read when nothing has been signed yet. Does not publish or anchor.
+   */
+  unpublishedHead() {
+    return {
+      schema: TREE_HEAD_SCHEMA,
+      status: 'not_yet_published',
+      published: false,
+      epoch: this.epoch,
+      prev_epoch_root: this.prevEpochRoot,
+      prev_epoch_size: this.prevEpochSize,
+      tree_size: this.leaves.length,
+      root: this.leaves.length ? hex(rootOf(this.leaves)) : null,
+    };
+  }
+
+  /**
+   * Load a durable log. Throws ReceiptLogRefused. Does not mint genesis.
+   * Genesis bytes come from the journal, never from the current verifier digest.
+   */
+  load(dir, { strict = true } = {}) {
+    const loaded = readReceiptLog(dir, { strict });
     this.dir = dir;
-    try {
-      const raw = fs.readFileSync(path.join(dir, 'receipt-merkle.json'), 'utf8');
-      const parsed = JSON.parse(raw);
-      this.leaves = [];
-      this.meta = [];
-      this.byTask = new Map();
-      this.heads = Array.isArray(parsed.heads) ? parsed.heads : [];
-      for (const row of parsed.meta || []) {
-        if (row.kind === 'genesis') {
-          const g = this.genesisLeaf();
-          this._push(g.task_id, g.bytes, 'genesis');
-        } else if (row.task_id) {
-          const bytes = Buffer.from(`${row.task_id}|`);
-          // row hash is not stored separately; keep the recorded leaf if present
-          if (row.leaf) {
-            const hash = Buffer.from(row.leaf, 'hex');
-            const index = this.leaves.length;
-            this.leaves.push(hash);
-            this.meta.push(row);
-            this.byTask.set(String(row.task_id), index);
-          } else {
-            this._push(row.task_id, bytes, 'receipt');
-          }
+    this.durable = true;
+    this.allowFreshGenesis = false;
+    if (loaded.empty) {
+      if (loaded.missingWhileAnchored) {
+        logger.error(
+          { dir },
+          'RECEIPT LOG: journal missing while anchor state exists, and RECEIPT_LOG_STRICT is off. The process will not mint a fresh genesis.',
+        );
+      }
+      this._epochOpened = false;
+      return this;
+    }
+    this._applyLoaded(loaded);
+    return this;
+  }
+
+  _applyLoaded(loaded) {
+    const epochs = loaded.epochs || [];
+    const open = epochs[epochs.length - 1];
+    this.closedEpochs = epochs.slice(0, -1).map(materializeEpoch);
+    const live = materializeEpoch(open);
+    this.epoch = live.epoch;
+    this.prevEpochRoot = live.prevEpochRoot;
+    this.prevEpochSize = live.prevEpochSize;
+    this.leaves = live.leaves;
+    this.meta = live.meta;
+    this.byTask = live.byTask;
+    this.heads = live.heads;
+    this.anchorState = loaded.anchorState || this.anchorState;
+    this.epochRecord = loaded.epochRecord || null;
+    if (loaded.bundleIndex) this.bundleIndex = loaded.bundleIndex;
+    this._epochOpened = true;
+    if (this.epochRecord?.issuer_signature?.jws) {
+      const signed = verifyJwsWithJwks(this.epochRecord.issuer_signature.jws, getJwks());
+      if (!signed.valid) {
+        throw new ReceiptLogRefused('epoch_signature', signed.reason || 'epoch record signature invalid');
+      }
+      const payload = signed.payload || {};
+      if (JSON.stringify(payload.epochs) !== JSON.stringify(this.epochRecord.epochs)) {
+        throw new ReceiptLogRefused('epoch_signature', 'epoch record epochs do not match the signature');
+      }
+      if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(this.epochRecord.orphans ?? [])) {
+        throw new ReceiptLogRefused('epoch_signature', 'epoch record orphans do not match the signature');
+      }
+    } else if (this.epochRecord && receiptLogStrict()) {
+      throw new ReceiptLogRefused('epoch_unsigned', 'epoch record is missing its signature');
+    }
+    const signedEpochs = this.epochRecord?.epochs;
+    if (Array.isArray(signedEpochs)) {
+      for (const want of signedEpochs) {
+        const got = epochs.find((row) => row.epoch === Number(want.epoch));
+        if (!got) continue;
+        const finalRoot = want.final_root || (want.status === 'open' ? want.opening_root : null);
+        if (want.status === 'closed' && finalRoot && got.root !== finalRoot) {
+          throw new ReceiptLogRefused(
+            'root_mismatch',
+            `epoch ${got.epoch} recomputed ${got.root} does not match the epoch record ${finalRoot}`,
+          );
+        }
+        if (want.status === 'open' && want.opening_root && got.tree_size === Number(want.opening_size) && got.root !== want.opening_root) {
+          throw new ReceiptLogRefused(
+            'root_mismatch',
+            `epoch ${got.epoch} opening root ${got.root} does not match the epoch record ${want.opening_root}`,
+          );
         }
       }
-    } catch {
-      /* empty tree */
     }
   }
+}
+
+function materializeEpoch(row) {
+  const byTask = new Map();
+  const meta = row.meta || row.preimages.map((body, index) => ({
+    task_id: null,
+    index,
+    kind: index === 0 ? 'genesis' : 'receipt',
+    leaf: Buffer.from(row.leaves[index]).toString('hex'),
+    preimage_b64: Buffer.from(body).toString('base64'),
+    epoch: row.epoch,
+  }));
+  // Replay stored meta when the journal loader already built it.
+  const useMeta = Array.isArray(row.meta) && row.meta.length === row.leaves.length
+    ? row.meta
+    : meta;
+  useMeta.forEach((item, index) => {
+    if (item?.task_id) byTask.set(String(item.task_id), index);
+  });
+  return {
+    epoch: row.epoch,
+    status: row.status,
+    prevEpochRoot: row.prevEpochRoot || row.prev_epoch_root || null,
+    prevEpochSize: row.prevEpochSize || row.prev_epoch_size || 0,
+    leaves: row.leaves,
+    meta: useMeta,
+    byTask: row.byTask instanceof Map ? row.byTask : byTask,
+    heads: row.heads || [],
+  };
 }
 
 export function getReceiptMerkleTree() {
@@ -650,16 +1043,62 @@ export function resetReceiptMerkleTree() {
   return _tree;
 }
 
+/**
+ * Open the durable log and install it as the process tree.
+ * Throws ReceiptLogRefused. A fresh genesis is minted only when the operator
+ * flag is set and the directory has no journal.
+ */
+export function bootReceiptLog(dir, opts = {}) {
+  const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
+  const tree = new ReceiptMerkleTree();
+  tree.durable = true;
+  tree.dir = dir;
+  const loaded = readReceiptLog(dir, { strict });
+  if (loaded.empty) {
+    tree.allowFreshGenesis = opts.allowFreshGenesis !== undefined
+      ? opts.allowFreshGenesis
+      : freshGenesisAllowed();
+    if (loaded.missingWhileAnchored) {
+      logger.error(
+        { dir },
+        'RECEIPT LOG: journal missing while anchor state exists, and strict mode is off. Refusing to mint a fresh genesis.',
+      );
+      tree.allowFreshGenesis = false;
+    }
+    if (tree.allowFreshGenesis) {
+      logger.error(
+        { dir, flag: 'RECEIPT_LOG_ACCEPT_FRESH_GENESIS' },
+        'RECEIPT LOG FRESH GENESIS: the operator flag is set. This process may open a new public receipt log. It does not extend the anchored history.',
+      );
+    }
+    _tree = tree;
+    return tree;
+  }
+  tree.allowFreshGenesis = false;
+  tree._applyLoaded(loaded);
+  _tree = tree;
+  return tree;
+}
+
 export function verifyTreeHead(head, jwks = null) {
   const sig = head?.issuer_signature;
   if (!sig?.jws) return { valid: false, reason: 'no_signature' };
   const result = verifyJwsWithJwks(sig.jws, jwks || getJwks());
   if (!result.valid) return { valid: false, reason: result.reason || 'signature_invalid' };
   const payload = result.payload || {};
+  if (payload.schema && head.schema && payload.schema !== head.schema) {
+    return { valid: false, reason: 'head_mismatch' };
+  }
   if (payload.root !== head.root || Number(payload.tree_size) !== Number(head.tree_size)) {
     return { valid: false, reason: 'head_mismatch' };
   }
-  // Absent on heads signed before the clock claim. Present claims must match.
+  // Absent on heads signed before the claim. Present claims must match.
+  for (const key of ['epoch', 'prev_epoch_root', 'prev_epoch_size', 'prev_root', 'bundle_index_hash']) {
+    if (!Object.prototype.hasOwnProperty.call(payload, key)) continue;
+    if (JSON.stringify(payload[key] ?? null) !== JSON.stringify(head[key] ?? null)) {
+      return { valid: false, reason: 'head_mismatch' };
+    }
+  }
   if (payload.published_at != null && payload.published_at !== head.published_at) {
     return { valid: false, reason: 'head_mismatch' };
   }

@@ -12,7 +12,7 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 | `GET /v1/receipts/:task_id/inclusion` | `leaf_index`, `tree_size`, `root`, `proof` |
 | `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
 
-The gateway signs a new head on the first append of each UTC day. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`.
+The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md).
 
 ## Dual anchor
 
@@ -23,7 +23,7 @@ The same daily root is published on Base and on Solana. `GET /v1/receipts/tree/h
 | `anchors.base` | Zero-value transaction whose calldata is the 32-byte root | `tx`, `calldata`, `from`, `chain_id` |
 | `anchors.solana` | SPL Memo (`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`) | `signature`, `slot`, `cluster`, `memo` |
 
-The memo text is `chit402:root:v1:<book_or_global>:<yyyy-mm-dd>:<root_hex>:<prev_root_hex>`. The live tree uses scope `global`. `prev_root_hex` is the previous UTC day's root, or 64 zero bytes on the first head.
+New memos are `chit402:root:v2:<scope>:<yyyy-mm-dd>:<root_hex>:<prev_root_hex>:<epoch>:<prev_epoch_root>:<prev_epoch_size>:<bundle_index_hash>`. The live tree uses scope `global`. `prev_root_hex` is the previous stored head. It is 64 zero bytes only when that head is the genesis of the epoch. A v1 memo (`chit402:root:v1:...`) still parses. The daily anchor guard is stored on disk.
 
 Each side stays `pending` until its own key and RPC are set. A failed send stays `pending` and is retried on a later append, with a one-minute gap so a dead RPC is not hit on every receipt. A day that already has a Solana signature is not sent again. The inclusion proof is still signed either way.
 

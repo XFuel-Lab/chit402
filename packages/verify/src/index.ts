@@ -1766,6 +1766,18 @@ export {
 } from './refusal.js';
 
 export {
+  acceptTreeHeadSchema,
+  verifyEpochLink,
+  verifyEpochRecord,
+  verifyEpochInclusion,
+  TREE_HEAD_SCHEMA_V1,
+  TREE_HEAD_SCHEMA_V2,
+  type EpochTreeHead,
+  type EpochRecord,
+  type EpochRecordEntry,
+} from './epoch.js';
+
+export {
   verifyAnchoredRoot,
   verifyMerkleInclusion,
   extractMemos,

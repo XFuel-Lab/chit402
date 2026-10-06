@@ -156,18 +156,53 @@ export function verifyMerkleInclusion(
   return Buffer.from(hash).toString('hex') === String(rootHex).replace(/^0x/, '').toLowerCase();
 }
 
-export function parseAnchorMemo(memo: string): { scope: string; day: string; root: string; prev: string } | null {
-  const parts = String(memo || '').split(':');
-  if (parts.length !== 7) return null;
-  if (parts[0] !== 'chit402' || parts[1] !== 'root' || parts[2] !== 'v1') return null;
-  const scope = parts[3];
-  const day = parts[4];
-  const root = parts[5];
-  const prev = parts[6];
+export interface ParsedAnchorMemo {
+  version?: 1 | 2;
+  scope: string;
+  day: string;
+  root: string;
+  prev: string;
+  epoch?: number;
+  prev_epoch_root?: string;
+  prev_epoch_size?: number;
+  bundle_index_hash?: string;
+}
+
+function memoIdentity(scope: string, day: string, root: string, prev: string): ParsedAnchorMemo | null {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(scope)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
   if (!/^[0-9a-f]{64}$/.test(root) || !/^[0-9a-f]{64}$/.test(prev)) return null;
   return { scope, day, root, prev };
+}
+
+/** v1 memos stay valid. v2 adds epoch, prev_epoch_root, prev_epoch_size, and the bundle index hash. */
+export function parseAnchorMemo(memo: string): ParsedAnchorMemo | null {
+  const parts = String(memo || '').split(':');
+  if (parts[0] !== 'chit402' || parts[1] !== 'root') return null;
+  if (parts.length === 7 && parts[2] === 'v1') {
+    const base = memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+    return base ? { version: 1, ...base } : null;
+  }
+  if (parts.length === 11 && parts[2] === 'v2') {
+    const base = memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+    if (!base) return null;
+    const epoch = Number(parts[7]);
+    const prevEpoch = parts[8];
+    const size = Number(parts[9]);
+    const bundle = parts[10];
+    if (!Number.isInteger(epoch) || epoch < 1) return null;
+    if (!/^[0-9a-f]{64}$/.test(prevEpoch) || !/^[0-9a-f]{64}$/.test(bundle)) return null;
+    if (!Number.isInteger(size) || size < 0) return null;
+    return {
+      version: 2,
+      ...base,
+      epoch,
+      prev_epoch_root: prevEpoch,
+      prev_epoch_size: size,
+      bundle_index_hash: bundle,
+    };
+  }
+  return null;
 }
 
 function isMemoIx(ix: SolanaIx): boolean {

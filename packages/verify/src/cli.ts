@@ -69,7 +69,7 @@ Options:
   --rpc               With a receipt, an inclusion proof, and a tree head: check the
                       leaf, then the Solana memo and the Base calldata for that root
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
-  --head <file>       Signed tree head JSON (chit402.tree_head.v1)
+  --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
   --strict-issuer-history

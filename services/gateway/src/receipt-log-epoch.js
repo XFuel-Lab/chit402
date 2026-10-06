@@ -1,0 +1,214 @@
+/**
+ * Epochs of the public receipt log.
+ *
+ * Epoch 1 is the historical log whose final root is dd20e39a (4 leaves,
+ * genesis digest 422cceb1 from the #468 verifier). Epoch 2 opens at the
+ * Oct 5 genesis-only root f2043ee9 and records the link back to epoch 1.
+ * Earlier Base anchors that are not prefixes of epoch 1 are orphans.
+ * Nothing here broadcasts a transaction or re-signs a receipt.
+ */
+import crypto from 'crypto';
+
+export const EPOCH_RECORD_SCHEMA = 'chit402.tree_epoch.v1';
+export const EPOCH_RECORD_VERSION = 1;
+export const EPOCH_RECORD_JWT_TYP = 'chit402-tree-epoch+jwt';
+
+export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
+export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
+export const EPOCH1_FINAL_SIZE = 4;
+export const EPOCH1_ANCHOR_TASK = 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af';
+
+export const EPOCH2_GENESIS_DIGEST = '847edd6698d938721c0c59466a601d65cb82c1fdc0abd80104e1132f0cbaa576';
+export const EPOCH2_OPENING_ROOT = 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286';
+export const EPOCH2_OPENING_SIZE = 1;
+
+/**
+ * Roots that are on Base and are not a prefix of epoch 1.
+ * d7f6c548 is stored as a prefix: the leaves were not recovered, and the
+ * remaining bytes are not invented.
+ */
+export const ORPHANED_ROOTS = Object.freeze([
+  {
+    root: '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9',
+    kind: 'genesis_only',
+    verifier_binary_build_digest: '207e981d0c50dfe0294ab085893e88a930f1b664b4dfec221f82afd666831145',
+    chain: 'base',
+    window: '2026-09-30 to 2026-10-01',
+    times_anchored: 5,
+    note: 'The same genesis-only root was anchored five times after process restarts (Sep 30 twice, Oct 1 three times). It is not a prefix of epoch 1.',
+  },
+  {
+    root: null,
+    root_prefix: 'd7f6c548',
+    recovered: false,
+    kind: 'populated_lost',
+    chain: 'base',
+    observed_et: '2026-10-01 8:01 AM ET',
+    note: 'A populated tree was anchored on Base and lost on the next restart. The full root is that transaction calldata. The leaves were not recovered, so this record keeps the prefix and does not invent the remaining bytes.',
+  },
+  {
+    root: EPOCH2_OPENING_ROOT,
+    kind: 'genesis_only',
+    verifier_binary_build_digest: EPOCH2_GENESIS_DIGEST,
+    chain: 'base_and_solana',
+    observed_at: '2026-10-05T11:22:55.242Z',
+    note: 'Anchored after the Oct 5 restart. The Solana memo prev root is 64 zero bytes. This root is also the opening leaf of epoch 2. The link to epoch 1 is prev_epoch_root, not that memo prev.',
+  },
+]);
+
+function sha256(buf) {
+  return crypto.createHash('sha256').update(buf).digest();
+}
+
+export function epochLeafHash(bytes) {
+  return sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(bytes)]));
+}
+
+export function epochNodeHash(left, right) {
+  return sha256(Buffer.concat([Buffer.from([0x01]), left, right]));
+}
+
+export function epochRootOf(leaves) {
+  if (!leaves.length) return sha256(Buffer.from([0x00]));
+  let level = leaves.map((h) => Buffer.from(h));
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 === level.length) next.push(level[i]);
+      else next.push(epochNodeHash(level[i], level[i + 1]));
+    }
+    level = next;
+  }
+  return level[0];
+}
+
+/** Exact genesis leaf body. Key order matches the gateway tree. */
+export function genesisBytes(digest) {
+  return Buffer.from(JSON.stringify({
+    schema: 'chit402.tree_genesis.v1',
+    payload_version: 1,
+    verifier_binary_build_digest: String(digest),
+  }));
+}
+
+export function receiptLeafBytes(taskId, rowHash) {
+  return Buffer.from(`${taskId}|${rowHash || ''}`);
+}
+
+/**
+ * Rebuild epoch 1 from book rows in file order.
+ * Leaf 0 is the pinned genesis. Leaf 1 is the anchor task. The next two
+ * rows that carry a task_id are leaves 2 and 3. Refuses unless the root
+ * equals expectRoot (dd20e39a in production).
+ * @param {object[]} rows
+ */
+export function rebuildEpoch1FromRows(rows, {
+  genesisDigest = EPOCH1_GENESIS_DIGEST,
+  expectRoot = EPOCH1_FINAL_ROOT,
+  anchorTaskId = EPOCH1_ANCHOR_TASK,
+  receiptCount = 3,
+} = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const start = list.findIndex((row) => String(row?.task_id || '') === anchorTaskId);
+  if (start < 0) {
+    const err = new Error(`epoch1_anchor_row_missing: ${anchorTaskId}`);
+    err.code = 'epoch1_anchor_row_missing';
+    throw err;
+  }
+  const chosen = [];
+  const seen = new Set();
+  for (let i = start; i < list.length && chosen.length < receiptCount; i += 1) {
+    const row = list[i];
+    const taskId = row?.task_id ? String(row.task_id) : '';
+    if (!taskId || seen.has(taskId)) continue;
+    seen.add(taskId);
+    chosen.push(row);
+  }
+  if (chosen.length !== receiptCount) {
+    const err = new Error(`epoch1_row_count: need ${receiptCount} receipt rows, found ${chosen.length}`);
+    err.code = 'epoch1_row_count';
+    throw err;
+  }
+  const preimages = [
+    genesisBytes(genesisDigest),
+    ...chosen.map((row) => receiptLeafBytes(row.task_id, row.row_hash || '')),
+  ];
+  const hashes = preimages.map((body) => epochLeafHash(body));
+  const root = epochRootOf(hashes).toString('hex');
+  if (root !== String(expectRoot)) {
+    const err = new Error(`epoch1_root_mismatch: got ${root} want ${expectRoot}`);
+    err.code = 'epoch1_root_mismatch';
+    err.root = root;
+    err.want = String(expectRoot);
+    throw err;
+  }
+  return {
+    epoch: 1,
+    genesis_digest: genesisDigest,
+    root,
+    tree_size: preimages.length,
+    preimages,
+    leaves: hashes,
+    rows: chosen,
+  };
+}
+
+export function epochRecordClaims({
+  epoch1Root = EPOCH1_FINAL_ROOT,
+  epoch1Size = EPOCH1_FINAL_SIZE,
+  epoch2Root = EPOCH2_OPENING_ROOT,
+  epoch2Size = EPOCH2_OPENING_SIZE,
+} = {}) {
+  return {
+    schema: EPOCH_RECORD_SCHEMA,
+    payload_version: EPOCH_RECORD_VERSION,
+    epochs: [
+      {
+        epoch: 1,
+        status: 'closed',
+        final_root: epoch1Root,
+        final_size: epoch1Size,
+        genesis_digest: EPOCH1_GENESIS_DIGEST,
+        prev_epoch_root: null,
+        prev_epoch_size: 0,
+      },
+      {
+        epoch: 2,
+        status: 'open',
+        opening_root: epoch2Root,
+        opening_size: epoch2Size,
+        genesis_digest: EPOCH2_GENESIS_DIGEST,
+        prev_epoch_root: epoch1Root,
+        prev_epoch_size: epoch1Size,
+      },
+    ],
+    orphans: ORPHANED_ROOTS.map((row) => ({ ...row })),
+  };
+}
+
+/**
+ * Follow epoch links. Epoch 1 has no predecessor. Each later epoch must name
+ * the previous epoch's final root and size. Orphans are listed, not elected.
+ */
+export function checkEpochLinks(claims) {
+  const epochs = claims?.epochs;
+  if (!Array.isArray(epochs) || epochs.length === 0) {
+    return { ok: false, reason: 'no_epochs' };
+  }
+  for (let i = 0; i < epochs.length; i += 1) {
+    const row = epochs[i];
+    if (Number(row.epoch) !== i + 1) return { ok: false, reason: 'epoch_index' };
+    if (i === 0) {
+      if (row.prev_epoch_root != null) return { ok: false, reason: 'epoch1_has_prev' };
+      if (Number(row.prev_epoch_size) !== 0) return { ok: false, reason: 'epoch1_size' };
+      continue;
+    }
+    const prev = epochs[i - 1];
+    const prevRoot = prev.final_root || prev.opening_root;
+    const prevSize = prev.final_size ?? prev.opening_size;
+    if (row.prev_epoch_root !== prevRoot) return { ok: false, reason: 'prev_epoch_root' };
+    if (Number(row.prev_epoch_size) !== Number(prevSize)) return { ok: false, reason: 'prev_epoch_size' };
+  }
+  if (!Array.isArray(claims.orphans)) return { ok: false, reason: 'orphans_missing' };
+  return { ok: true, epochs };
+}

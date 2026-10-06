@@ -94,7 +94,7 @@ test('a block outside the bound is not published as anchored', async () => {
       send: async () => `0x${'cd'.repeat(32)}`,
       blockTimestamp: 1,
     });
-    assert.equal(head.payload_version, 1);
+    assert.equal(head.payload_version, 2);
     assert.equal(head.anchor_status, 'pending');
     assert.equal(head.anchor.status, 'pending');
     assert.equal(head.anchor.reason, 'anchor_clock_drift');
@@ -105,7 +105,7 @@ test('a block outside the bound is not published as anchored', async () => {
     assert.equal(head.anchors.base.status, 'pending');
     assert.deepEqual(head.clock_tolerance_s, { base: 300, solana: 150 });
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
-    assert.equal(payload.payload_version, 1);
+    assert.equal(payload.payload_version, 2);
     assert.equal(payload.anchor_status, 'pending');
     assert.equal(payload.clock_tolerance_s.base, 300);
     assert.equal(payload.clock_tolerance_s.solana, 150);
@@ -126,7 +126,7 @@ test('a block inside the bound stays anchored, and an old head still verifies', 
     });
     assert.equal(head.anchor_status, 'anchored');
     assert.equal(head.anchor.tx, `0x${'ef'.repeat(32)}`);
-    assert.equal(head.payload_version, 1);
+    assert.equal(head.payload_version, 2);
     assert.equal(verifyTreeHead(head).valid, true);
     assert.match(renderInclusionSection(tree.inclusion('on-time')), /anchored in Base tx/);
 

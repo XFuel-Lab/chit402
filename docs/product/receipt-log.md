@@ -1,0 +1,203 @@
+# Receipt log
+
+The public receipt log is an append-only Merkle tree. This page is how that log is stored, how it fails, and how to restore it. Inclusion math stays in [receipt-merkle.md](./receipt-merkle.md).
+
+The log lives in the gateway data directory, next to the book:
+
+```
+services/gateway/.data/receipt-log/
+  journal.jsonl        append-only records, one JSON object per line
+  checkpoint.json      atomic snapshot of each epoch's size and root
+  anchor-state.json    atomic copy of the one-anchor-per-day guard
+  epoch-record.json    signed epoch record, including orphaned roots
+  bundle-index.json    SHA-256 of each hourly S3 bundle
+```
+
+On Lightsail that directory is `/home/ubuntu/xfuel-protocol/services/gateway/.data/receipt-log`. It is gitignored. `git pull` does not delete it.
+
+Each journal line is written, then the file and the directory are fsynced. The checkpoint, anchor state, epoch record, and bundle index are written to a temp file in the same directory, fsynced, and renamed.
+
+## What is stored
+
+- The exact genesis leaf bytes. Later boots use those bytes. They do not call the current verifier digest.
+- Every later leaf's preimage bytes (`task_id|row_hash`).
+- Every signed head, and the observed historical heads that were not re-signed.
+- The anchor guard: which UTC day already has a Solana signature, and which root already has a Base transaction.
+
+A leaf hash is SHA-256 of `0x00` plus the stored preimage. On boot the gateway replays the journal, recomputes every root, and checks each stored head. Genesis is the stored preimage, not `packages/verify/BUILD_DIGEST.txt` as it reads today.
+
+## Failure modes
+
+The process refuses to start in these cases. It does not open an empty log and it does not anchor a new genesis.
+
+| Condition | Result |
+|-----------|--------|
+| Journal line does not parse, or a preimage does not match its stored leaf hash | Refuse. Code `corrupt_journal` or `leaf_hash`. |
+| Recomputed root does not match a stored head, the checkpoint at the same size, or the epoch record | Refuse. Code `root_mismatch`. |
+| Checkpoint is ahead of the journal | Refuse. Code `checkpoint_ahead`. |
+| Anchor state or an epoch record exists and the journal does not | Refuse when `RECEIPT_LOG_STRICT` is not `false` (the default). Code `missing_log`. |
+| Epoch record signature does not match the epochs or the orphan list | Refuse. Code `epoch_signature`. |
+
+An empty data directory, with no journal and no anchor state, starts with nothing published. `GET /v1/receipts/tree/head` returns `status: not_yet_published` and does not sign a head, send a Base transaction, or send a Solana memo. The same is true of inclusion and consistency reads.
+
+A new genesis is created only when `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` is exactly `YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG`. The process logs that at error level. The flag does not extend epoch 1 or epoch 2. Leave it unset on the public gateway.
+
+`RECEIPT_LOG_STRICT=false` logs and continues when the journal is missing but an anchor snapshot exists. It still does not mint a genesis. Production should leave strict mode on.
+
+A failed disk write throws. It is not swallowed.
+
+## Heads and anchors
+
+Signed heads are `chit402.tree_head.v2`, payload version 2. A version 1 head still verifies.
+
+| Claim | Meaning |
+|-------|---------|
+| `epoch` | Which log this head belongs to |
+| `prev_epoch_root` | Final root of the previous epoch. Null on epoch 1 |
+| `prev_epoch_size` | Leaf count of that previous epoch. 0 on epoch 1 |
+| `prev_root` | Previous stored head in this epoch. 64 zero bytes only for a real genesis head |
+| `bundle_index_hash` | SHA-256 of the canonical bundle index at publish time |
+| `tree_size`, `root` | This head's tree |
+
+`prev_root` is the last stored head whose root differs from the head being published. It is not chosen by comparing `published_at`.
+
+The Solana memo for a new anchor is:
+
+```
+chit402:root:v2:<scope>:<yyyy-mm-dd>:<root>:<prev_root>:<epoch>:<prev_epoch_root>:<prev_epoch_size>:<bundle_index_hash>
+```
+
+`prev_epoch_root` is 64 zero bytes when the epoch has no predecessor. A v1 memo (`chit402:root:v1:<scope>:<day>:<root>:<prev>`) still parses.
+
+Base calldata remains the 32-byte root. The previous root is inside the signed head and on `anchors.base.prev_root`. The offline check that calldata equals the root is unchanged.
+
+The one-anchor-per-day guard is `anchor-state.json`. A restart does not forget a signature that was fsynced. Publishing happens on the daily append path. A public GET does not publish.
+
+Inclusion proofs include `epoch`, `prev_epoch_root`, and `prev_epoch_size`. An epoch 1 proof verifies against the epoch 1 root. It does not have to verify against epoch 2.
+
+## Epochs
+
+| Epoch | What it is |
+|-------|------------|
+| 1 | Closed. Four leaves. Genesis digest `422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368` (verifier sources from the #468 build). Final root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. |
+| 2 | Open. Starts at `f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286`, the Oct 5 genesis leaf (digest `847edd66…`). `prev_epoch_root` is the epoch 1 final root and `prev_epoch_size` is 4. |
+
+The Oct 5 Solana memo for that opening root used a prev of 64 zero bytes. That memo is not rewritten. The epoch link is `prev_epoch_root`, not that memo.
+
+The signed epoch record (`chit402.tree_epoch.v1`) also lists orphaned roots that are on Base and are not a prefix of epoch 1:
+
+- `20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9`, the same genesis-only root anchored five times from Sep 30 through Oct 1.
+- `d7f6c548`, a populated tree anchored Oct 1 around 8:01 AM ET and lost on the next restart. The full root was not recovered, so the record keeps the prefix and does not invent the rest.
+- `f2043ee9…`, the Oct 5 genesis-only anchor, which is also the opening leaf of epoch 2.
+
+Existing receipt `tree_head_hash` values are not re-signed. Epoch 1 inclusion still uses the prefix root that was signed into those receipts.
+
+`GET /v1/receipts/tree/epoch` returns the signed record. It does not publish a head.
+
+### Rebuild epoch 1 on the server
+
+Run this on the gateway host, against the book file, before restarting the process onto this build. It refuses unless the root is exactly the epoch 1 final root. It does not broadcast and it does not re-sign a receipt.
+
+```bash
+cd /home/ubuntu/xfuel-protocol/services/gateway
+node scripts/rebuild-receipt-epoch1.mjs \
+  --jsonl .data/agents/usage-settled.jsonl \
+  --out .data/receipt-log
+```
+
+The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it.
+
+## S3 bundles
+
+Hourly bundles are off until `RECEIPT_LOG_S3_BUCKET` is set. Credentials use the AWS SDK default chain (environment, shared config, or the instance role). No key is committed.
+
+| Variable | Role |
+|----------|------|
+| `RECEIPT_LOG_S3_BUCKET` | Bucket name. Unset means the uploader does not run. |
+| `RECEIPT_LOG_S3_REGION` | Region. Default `us-east-1`. |
+| `RECEIPT_LOG_S3_PREFIX` | Key prefix. Default `receipt-log/`. |
+| `RECEIPT_LOG_S3_RETENTION_DAYS` | Object Lock retain-until, in days from upload. Default 365. |
+| `RECEIPT_LOG_S3_ENDPOINT` | Optional endpoint for MinIO. |
+| `RECEIPT_LOG_S3_FORCE_PATH_STYLE` | Set `true` for path-style endpoints. |
+
+Each hour the gateway gzips one JSON document (`chit402.receipt_log_bundle.v1`): the open epoch's leaf preimages, heads, the book rows those new leaves came from, and the closed epochs. It uploads that gzip with `ObjectLockMode: COMPLIANCE` and records the SHA-256 of the gzip bytes in `bundle-index.json`. The next daily anchor's `bundle_index_hash` is the SHA-256 of the canonical index (object keys sorted).
+
+A failed upload is logged and retried on the next hour. It does not by itself stop the process. The local journal is still required to boot.
+
+### Bucket policy
+
+Create the bucket with Object Lock enabled and default retention in compliance mode. The instance role needs:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReceiptLogObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:GetObjectRetention",
+        "s3:PutObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::BUCKET_NAME/receipt-log/*"
+    },
+    {
+      "Sid": "ReceiptLogList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::BUCKET_NAME",
+      "Condition": { "StringLike": { "s3:prefix": "receipt-log/*" } }
+    }
+  ]
+}
+```
+
+Replace `BUCKET_NAME`. Compliance mode does not allow a role to shorten the lock, so this policy does not grant `s3:BypassGovernanceRetention`.
+
+Lifecycle rule, move bundles to Glacier after 90 days. Object Lock still applies after the transition.
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "receipt-log-glacier-90",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "receipt-log/" },
+      "Transitions": [{ "Days": 90, "StorageClass": "GLACIER" }]
+    }
+  ]
+}
+```
+
+### Restore
+
+```bash
+cd /home/ubuntu/xfuel-protocol/services/gateway
+RECEIPT_LOG_S3_BUCKET=BUCKET_NAME RECEIPT_LOG_S3_REGION=us-east-1 \
+  node scripts/restore-receipt-log.mjs
+```
+
+The script downloads the index, checks each bundle's SHA-256, rebuilds the leaves from the stored preimages, and checks epoch 1 size 4 against `dd20e39a…` and the epoch 2 opening root against `f2043ee9…`. Extra checks: `--expect <epoch>:<size>:<root>`. It does not write the local journal and it does not broadcast. Copy a restored tree into `.data/receipt-log` only after that check passes, and only when that directory has no journal yet.
+
+## Rollout on Lightsail
+
+Do this before `systemctl restart xfuel-api` on the build that contains this log. Do not set the fresh-genesis flag.
+
+1. Pull the commit. Do not restart yet.
+2. Confirm `.data/agents/usage-settled.jsonl` is the live book.
+3. Run `rebuild-receipt-epoch1.mjs` as above. It must print the epoch 1 root and `epoch record signed: true`. If it prints `REFUSED`, do not restart.
+4. Create the S3 bucket with Object Lock (compliance) and the lifecycle rule above. Attach the instance role. Set `RECEIPT_LOG_S3_BUCKET` and `RECEIPT_LOG_S3_REGION` in `.env` when you want hourly bundles. Leaving the bucket unset keeps bundles off.
+5. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset.
+6. Restart `xfuel-api` only after the script has written the journal. An empty `.data/receipt-log` boots and serves `not_yet_published`. It does not anchor. It also does not copy existing book rows into the tree, because book reload does not append leaves. If you restart before the script, stop the service, run the script, then start again.
+7. `GET /v1/receipts/tree/head` may say `not_yet_published` until the next book append publishes the day's head. That GET must not create a Base or Solana transaction. The recomputed epoch 2 root is still in that response as `root`.
+8. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list.
+
+Book rows written after epoch 1's last leaf are not backfilled by the rebuild. Epoch 2 opens at the single genesis leaf `f2043ee9`. A row appended after this process is running becomes the next leaf. A row that was written while the old in-memory tree was empty stays in the book and is not a leaf until an operator appends it on purpose.
+
+## Principal notice (draft)
+
+Receipt log notice (Oct 6). On Oct 5 at about 7:18 AM ET the public receipt log restarted from memory. A new root, f2043ee9, was anchored at 7:22 AM ET without a link to the Oct 3 root dd20e39a (4 leaves, Base and Solana). Signed receipts were not changed. They still verify, and none were re-signed.
+
+This release stores the log on disk and refuses to start if that copy does not match its last signed head. A public read no longer publishes a head. Epoch 1 is the four-leaf log that ends at dd20e39a. Epoch 2 starts at f2043ee9 and records the link back to epoch 1, including the leaf count 4. Earlier Base anchors from Sep 30 and Oct 1, including the lost populated root whose prefix is d7f6c548, are listed as orphans in the signed epoch record. Inclusion proofs for epoch 1 stay valid against dd20e39a once that epoch is rebuilt on the server from the book. A new log is not opened unless an operator sets an explicit flag for that purpose.
