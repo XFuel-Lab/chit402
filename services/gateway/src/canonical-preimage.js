@@ -34,8 +34,8 @@ export const CANONICAL_ENCODING = 'jcs-rfc8785';
  */
 export const V11_CANONICALIZATION = Object.freeze({
   hash_alg: 'sha-256',
-  jcs: 'RFC8785',
-  string_escaping: 'UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. U+0000 through U+001F escaped as \\u00xx lowercase hex. U+0022 escaped as \\". U+005C escaped as \\\\. Other code units copied. Solidus is not escaped.',
+  jcs: 'chit402-jcs-v1',
+  string_escaping: 'UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. Every code unit U+0000 through U+001F is \\u00xx lowercase hex, including U+0008, U+0009, U+000A, U+000C, and U+000D. U+0022 is \\". U+005C is \\\\. Other UTF-16 code units are copied, so U+1F600 is the four UTF-8 bytes f0 9f 98 80. Solidus is not escaped.',
 });
 
 /**

@@ -515,11 +515,24 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     useStableKey();
     await armStrict();
     assert.equal(jcsCanonicalize({ s: 'a"b\\c/d\n' }), '{"s":"a\\"b\\\\c/d\\u000a"}');
+    const controlVector = { s: '\t\n\u0001\u{1F600}' };
+    const produced = jcsCanonicalize(controlVector);
+    const producedBytes = Buffer.from(produced, 'utf8');
+    assert.equal(
+      producedBytes.toString('hex'),
+      '7b2273223a225c75303030395c75303030615c7530303031f09f9880227d',
+    );
+    assert.equal(producedBytes.length, 30);
+    assert.notEqual(produced, JSON.stringify(controlVector));
+    assert.equal(
+      Buffer.from(JSON.stringify(controlVector), 'utf8').toString('hex'),
+      '7b2273223a225c745c6e5c7530303031f09f9880227d',
+    );
     const receipt = buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.deepEqual(claims.canonicalization, V11_CANONICALIZATION);
     assert.equal(claims.canonicalization.hash_alg, 'sha-256');
-    assert.equal(claims.canonicalization.jcs, 'RFC8785');
+    assert.equal(claims.canonicalization.jcs, 'chit402-jcs-v1');
     const preimage = JSON.parse(receipt.issuer_signature.canonical_preimage);
     assert.deepEqual(preimage.canonicalization, V11_CANONICALIZATION);
     const snap = claims.issuer_history_snapshot;

@@ -53,10 +53,14 @@ Inside the JWS, not only on the envelope or in `X-Chit-Hash-Alg` / `X-Chit-Canon
 | Field | Value |
 |---|---|
 | `hash_alg` | `sha-256` |
-| `jcs` | `RFC8785` |
-| `string_escaping` | UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. U+0000 through U+001F escaped as `\u00xx` lowercase hex. U+0022 escaped as `\"`. U+005C escaped as `\\`. Other code units copied. Solidus is not escaped. |
+| `jcs` | `chit402-jcs-v1` |
+| `string_escaping` | UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. Every code unit U+0000 through U+001F is `\u00xx` lowercase hex, including U+0008, U+0009, U+000A, U+000C, and U+000D. U+0022 is `\"`. U+005C is `\\`. Other UTF-16 code units are copied, so U+1F600 is the four UTF-8 bytes `f0 9f 98 80`. Solidus is not escaped. |
 
-That escaping is what `jcsCanonicalize` writes. SHA-256 of those UTF-8 bytes, without a trailing newline, is `payload_hash`.
+`jcs` is not `RFC8785`. RFC 8785, like `JSON.stringify`, writes U+0008 as `\b`, U+0009 as `\t`, U+000A as `\n`, U+000C as `\f`, and U+000D as `\r`. This canonicalizer writes those five as `\u0008`, `\u0009`, `\u000a`, `\u000c`, and `\u000d`. U+0001 is `\u0001` in both. A non-BMP character is the raw UTF-8 scalar in both. The canonicalizer is unchanged. Whether v11 switches to true RFC 8785 is Christopher's call.
+
+Vector `{ "s": "<TAB><LF><U+0001><U+1F600>" }` is the 30 bytes `7b2273223a225c75303030395c75303030615c7530303031f09f9880227d`. RFC 8785 for the same value is the 22 bytes `7b2273223a225c745c6e5c7530303031f09f9880227d`.
+
+SHA-256 of the canonicalizer's UTF-8 bytes, with no trailing newline, is `payload_hash`.
 
 ### `issuer_history_snapshot`
 
