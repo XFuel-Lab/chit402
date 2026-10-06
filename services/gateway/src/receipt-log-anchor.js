@@ -619,20 +619,27 @@ export function planReceiptBackfill(tree, rows) {
     });
     let tainted = false;
     let prevSeq = null;
-    const refusedHashes = new Set();
+    const acceptedHashes = new Set();
+    for (const row of group) {
+      const id = row?.task_id ? String(row.task_id) : '';
+      if (id && known.has(id) && hasStoredRowHash(row)) acceptedHashes.add(String(row.row_hash));
+    }
     for (const { row } of indexed) {
       const id = row?.task_id ? String(row.task_id) : '';
       const seq = Number(row?.seq);
       const seqOk = Number.isInteger(seq) && seq > 0;
       const seqGap = seqOk && prevSeq != null && seq > prevSeq + 1;
+      const leadingGap = seqOk && prevSeq == null && seq > 1;
       const empty = !hasStoredRowHash(row);
       const prev = prevHashOf(row);
+      const prevNotAccepted = prev != null && !acceptedHashes.has(prev);
       if (id && known.has(id)) {
-        tainted = Boolean(empty || seqGap);
+        if (leadingGap || seqGap || empty || prevNotAccepted) tainted = true;
         if (seqOk) prevSeq = seq;
         continue;
       }
       if (!id) {
+        if (leadingGap || seqGap || prevNotAccepted) tainted = true;
         if (seqOk) prevSeq = seq;
         continue;
       }
@@ -646,15 +653,15 @@ export function planReceiptBackfill(tree, rows) {
         if (seqOk) prevSeq = seq;
         continue;
       }
-      if (tainted || seqGap || (prev && refusedHashes.has(prev))) {
+      if (tainted || leadingGap || seqGap || prevNotAccepted || (prev == null && seqOk && seq > 1)) {
         unloggedByTask.set(id, { task_id: id, agent_id: agentId, reason: 'depends_on_refused' });
-        refusedHashes.add(String(row.row_hash));
         tainted = true;
         if (seqOk) prevSeq = seq;
         continue;
       }
       tainted = false;
       if (seqOk) prevSeq = seq;
+      acceptedHashes.add(String(row.row_hash));
       if (afterTail.has(id)) {
         appendByTask.set(id, { task_id: id, agent_id: agentId, row_hash: String(row.row_hash) });
       }

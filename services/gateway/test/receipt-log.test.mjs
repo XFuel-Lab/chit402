@@ -1873,6 +1873,50 @@ test('every anchored transition goes through confirmAnchor', async () => {
   assert.equal(solanaHits.length, 1);
 });
 
+test('a leading seq gap is depends_on_refused and taints the rest of the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 11, task_id: 'gap-start', seq: 3, prev_hash: null, row_hash: 'g3' },
+    { agent_id: 11, task_id: 'gap-next', seq: 4, prev_hash: 'g3', row_hash: 'g4' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append, []);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['gap-start', 'depends_on_refused'],
+    ['gap-next', 'depends_on_refused'],
+  ]);
+});
+
+test('a row whose parent is missing is depends_on_refused', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 12, task_id: 'chain-start', seq: 1, prev_hash: null, row_hash: 'p1' },
+    { agent_id: 12, task_id: 'missing-parent', seq: 3, prev_hash: 'not-a-parent', row_hash: 'p3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['chain-start']);
+  assert.equal(plan.append[0].row_hash, 'p1');
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['missing-parent', 'depends_on_refused'],
+  ]);
+});
+
 test('backfill lists a forked agent instead of aborting the file', () => {
   const tree = new ReceiptMerkleTree();
   tree.closedEpochs = [{
