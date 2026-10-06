@@ -16,6 +16,28 @@ export const EPOCH_RECORD_JWT_TYP = 'chit402-tree-epoch+jwt';
 export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
 export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
 export const EPOCH1_FINAL_SIZE = 4;
+/** SHA-256(0x00 || genesis bytes of digest 422cceb1). Single-leaf root. */
+export const EPOCH1_SIZE1_ROOT = '8665a0fcb74c2cfeca3a356efe18fe878cf94c21cd38da6b19a2bb57629bc35c';
+/** Anchored size-2 head. The v9 tree_head_hash on xfuel-39af100b. */
+export const EPOCH1_SIZE2_ROOT = 'ecf9a330a9e82d45e0887807261276fad2fbfb394189bb8f7f35b0e9163c70ae';
+
+const EPOCH1_PREFIX_ROOTS = Object.freeze({
+  1: EPOCH1_SIZE1_ROOT,
+  2: EPOCH1_SIZE2_ROOT,
+  4: EPOCH1_FINAL_ROOT,
+});
+
+/** Size 3 is not pinned. The leaf preimages are not in this repo. */
+export function epoch1PrefixRoot(treeSize) {
+  return EPOCH1_PREFIX_ROOTS[Number(treeSize)] || null;
+}
+
+export function matchEpoch1Prefix(treeSize, root) {
+  const want = epoch1PrefixRoot(treeSize);
+  const got = String(root || '').replace(/^0x/, '').toLowerCase();
+  if (!want || got !== want) return { ok: false, reason: 'epoch1_prefix' };
+  return { ok: true };
+}
 export const EPOCH1_ANCHOR_TASK = 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af';
 
 export const EPOCH2_GENESIS_DIGEST = '847edd6698d938721c0c59466a601d65cb82c1fdc0abd80104e1132f0cbaa576';

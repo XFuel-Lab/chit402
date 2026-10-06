@@ -14,7 +14,35 @@ export const TREE_HEAD_SCHEMA_V2 = 'chit402.tree_head.v2';
 export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
 export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
 export const EPOCH1_FINAL_SIZE = 4;
+/** SHA-256(0x00 || genesis bytes of digest 422cceb1). Single-leaf root. */
+export const EPOCH1_SIZE1_ROOT = '8665a0fcb74c2cfeca3a356efe18fe878cf94c21cd38da6b19a2bb57629bc35c';
+/** Anchored size-2 head. The v9 tree_head_hash on xfuel-39af100b. */
+export const EPOCH1_SIZE2_ROOT = 'ecf9a330a9e82d45e0887807261276fad2fbfb394189bb8f7f35b0e9163c70ae';
 export const EPOCH2_OPENING_ROOT = 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286';
+
+/** Size 3 has no anchored head and the leaf preimages are not in this repo. */
+const EPOCH1_PREFIX_ROOTS: Record<number, string> = {
+  1: EPOCH1_SIZE1_ROOT,
+  2: EPOCH1_SIZE2_ROOT,
+  4: EPOCH1_FINAL_ROOT,
+};
+
+export function epoch1PrefixRoot(treeSize: number): string | null {
+  return EPOCH1_PREFIX_ROOTS[Number(treeSize)] || null;
+}
+
+export function matchEpoch1Prefix(treeSize: number, root: string | null | undefined): { ok: boolean; reason?: string } {
+  const want = epoch1PrefixRoot(treeSize);
+  const got = String(root || '').replace(/^0x/, '').toLowerCase();
+  if (!want || got !== want) return { ok: false, reason: 'epoch1_prefix' };
+  return { ok: true };
+}
+
+function isGenuineV1Head(head: EpochTreeHead | null | undefined): boolean {
+  if (!head) return false;
+  if (head.schema === TREE_HEAD_SCHEMA_V2 || Number(head.payload_version) === 2) return false;
+  return head.schema === TREE_HEAD_SCHEMA_V1 || Number(head.payload_version) === 1;
+}
 const ORPHAN_GENESIS_ONLY = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
 
 export interface EpochTreeHead {
@@ -77,12 +105,15 @@ export function verifyEpochLink(
   const schema = acceptTreeHeadSchema(head);
   if (!schema.ok) return schema;
   const explicitEpoch = head?.epoch == null ? null : Number(head.epoch);
-  const epoch = explicitEpoch == null ? 1 : explicitEpoch;
+  if (explicitEpoch == null) {
+    if (!isGenuineV1Head(head)) return { ok: false, reason: 'epoch_missing' };
+    if (head?.prev_epoch_root) return { ok: false, reason: 'epoch1_has_prev' };
+    return { ok: true };
+  }
+  const epoch = explicitEpoch;
   if (!Number.isInteger(epoch) || epoch < 1) return { ok: false, reason: 'bad_epoch' };
   if (epoch === 1) {
     if (head?.prev_epoch_root) return { ok: false, reason: 'epoch1_has_prev' };
-    // A v1 head omits epoch. It is not an epoch-1 record.
-    if (explicitEpoch == null) return { ok: true };
     const sizeRaw = head?.tree_size ?? head?.final_size;
     const size = sizeRaw == null ? null : Number(sizeRaw);
     const rootRaw = head?.root ?? head?.final_root;
@@ -177,6 +208,11 @@ export function verifyEpochInclusion(input: {
   prevEpochSize?: number | null;
   previous?: { root?: string | null; tree_size?: number | null } | null;
 }): { ok: boolean; reason?: string } {
+  const epoch = input.epoch == null ? 1 : Number(input.epoch);
+  if (epoch === 1) {
+    const prefix = matchEpoch1Prefix(input.treeSize, input.root);
+    if (!prefix.ok) return prefix;
+  }
   let leaf: Uint8Array | null = input.leaf ? new Uint8Array(input.leaf) : null;
   if (!leaf && input.taskId) {
     leaf = leafHash(Buffer.from(`${input.taskId}|${input.rowHash || ''}`));
@@ -184,7 +220,6 @@ export function verifyEpochInclusion(input: {
   if (!leaf) return { ok: false, reason: 'no_leaf' };
   const included = verifyMerkleInclusion(Buffer.from(leaf), input.index, input.treeSize, input.root, input.proof);
   if (!included) return { ok: false, reason: 'inclusion_failed' };
-  const epoch = input.epoch == null ? 1 : Number(input.epoch);
   if (epoch === 1) return { ok: true };
   return verifyEpochLink({
     schema: TREE_HEAD_SCHEMA_V2,

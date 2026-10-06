@@ -357,8 +357,12 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   if (!inclusionValid && inclusionReason) errors.push(inclusionReason);
 
   let epochReason: string | undefined;
+  if (input.head?.epoch == null) {
+    const link = verifyEpochLink(input.head, null);
+    if (!link.ok) epochReason = link.reason || 'epoch_missing';
+  }
   const needsEpoch = input.head?.epoch != null || input.epochRecord != null;
-  if (needsEpoch) {
+  if (!epochReason && needsEpoch) {
     if (!input.epochRecord) epochReason = 'epoch_record_missing';
     else {
       const checked = verifyEpochRecord(input.epochRecord, { verifySignature: input.verifyEpochSignature });
@@ -375,8 +379,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
         if (!link.ok) epochReason = link.reason || 'epoch_link';
       }
     }
-    if (epochReason) errors.push(epochReason);
   }
+  if (epochReason) errors.push(epochReason);
 
   const solanaRpc = input.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL;
   const baseRpc = input.baseRpcUrl || BASE_RPC_URL;

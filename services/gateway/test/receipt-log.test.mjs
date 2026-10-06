@@ -24,6 +24,9 @@ const {
 const {
   EPOCH1_FINAL_ROOT,
   EPOCH1_GENESIS_DIGEST,
+  EPOCH1_SIZE1_ROOT,
+  EPOCH1_SIZE2_ROOT,
+  matchEpoch1Prefix,
   EPOCH2_OPENING_ROOT,
   checkEpochLinks,
   epochRecordClaims,
@@ -859,6 +862,17 @@ test('backfill refuses duplicate seq rows whose agent_id was stripped', () => {
     assert.ok(err.refusals.some((row) => row.reason === 'missing_agent_id' || row.reason === 'FORKED'));
     return true;
   });
+});
+
+test('epoch 1 inclusion prefixes are the pinned roots, and size 3 is not pinned', () => {
+  const size1 = epochLeafHash(genesisBytes(EPOCH1_GENESIS_DIGEST)).toString('hex');
+  assert.equal(size1, EPOCH1_SIZE1_ROOT);
+  assert.equal(matchEpoch1Prefix(1, size1).ok, true);
+  assert.equal(matchEpoch1Prefix(2, EPOCH1_SIZE2_ROOT).ok, true);
+  assert.equal(matchEpoch1Prefix(2, 'ab'.repeat(32)).reason, 'epoch1_prefix');
+  assert.equal(matchEpoch1Prefix(4, EPOCH1_FINAL_ROOT).ok, true);
+  assert.equal(matchEpoch1Prefix(3, EPOCH1_FINAL_ROOT).reason, 'epoch1_prefix');
+  assert.equal(matchEpoch1Prefix(5, EPOCH1_SIZE1_ROOT).reason, 'epoch1_prefix');
 });
 
 test('a gateway epoch-1 record at size 3 is not final', () => {
