@@ -2791,6 +2791,28 @@ export function createApp() {
     return res.json(record);
   });
 
+  app.get('/v1/receipts/tree/epoch/:epoch/head', (req, res) => {
+    const epoch = Number(req.params.epoch);
+    if (!Number.isInteger(epoch) || epoch < 1) {
+      return res.status(400).json({ error: 'bad_epoch' });
+    }
+    try {
+      const head = getReceiptMerkleTree().signedClosedEpochHead(epoch);
+      if (!head) {
+        return res.json({
+          schema: 'chit402.tree_head.v2',
+          status: 'not_yet_published',
+          published: false,
+          epoch,
+        });
+      }
+      return res.json(head);
+    } catch (err) {
+      logger.error({ err }, 'closed epoch head error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   app.get('/v1/receipts/tree/consistency', (req, res) => {
     try {
       const first = Number(req.query.first);
