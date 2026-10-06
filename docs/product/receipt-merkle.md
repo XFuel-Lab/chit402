@@ -10,10 +10,15 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 |----------|---------|
 | `GET /v1/receipts/tree/head` | Latest signed tree head (`chit402.tree_head.v2`), or `not_yet_published` |
 | `GET /v1/receipts/tree/epoch/:epoch/head` | Signed head of a closed epoch. Epoch 1 is the pinned final root, with its Base and Solana transactions. A public read does not broadcast. |
+| `GET /v1/receipts/tree/checkpoint` | C2SP signed note for that head. 404 when nothing has been signed |
 | `GET /v1/receipts/:task_id/inclusion` | `leaf_index`, `tree_size`, `root`, `proof` |
-| `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
+| `GET /v1/receipts/tree/consistency?first=&second=` | RFC 6962 consistency proof. `format=legacy` is the old proof |
 
-The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md).
+The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md). The Base witness contract is in [receipt-log-witness.md](./receipt-log-witness.md). It is off unless `RECEIPT_LOG_WITNESS=1`, and this repo does not deploy it.
+
+Inclusion proofs are unchanged: each step is `{ hash, position }` with `position` of `left` or `right`. Consistency proofs default to RFC 6962 / RFC 9162 §2.1.4. The proof omits the old root and orders nodes the way the RFC does. `?format=legacy` still returns the previous proof, which includes the old root and lists nodes left to right. The public route had that shape, so the old bytes stay available under that name. `chit402.consistency.v2` is the RFC proof. `chit402.consistency.v1` is legacy.
+
+The empty tree root in this code is SHA-256 of a single `0x00` byte (`6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d`). RFC 6962's empty root is SHA-256 of the empty string (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). The log never publishes size 0. Leaf 0 is genesis, so every signed head has size at least 1. Do not treat the empty digest as an RFC empty root.
 
 ## Dual anchor
 
@@ -56,7 +61,7 @@ node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head h
 
 ## What this proves
 
-The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root. A Base transaction whose calldata is the root, and a Solana memo that contains the root, show that root was published on those chains.
+The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. An RFC 6962 consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root. A Base transaction whose calldata is the root, and a Solana memo that contains the root, show that root was published on those chains. They do not, by themselves, show that a party other than the issuer accepted the step from the previous root. That check is the witness contract, and it runs only when the flag and the contract address are set.
 
 `chit402-verify receipt.json inclusion.json head.json --rpc` checks the inclusion, fetches the Solana transaction, and checks the Base calldata. It prints the same boundary.
 

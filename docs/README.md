@@ -72,6 +72,7 @@ Everything else is reference. Do not send partners this index.
 | [product/refusal-receipt.md](./product/refusal-receipt.md) | Signed refusal document (`chit402.refusal.v1`) |
 | [product/receipt-merkle.md](./product/receipt-merkle.md) | Merkle inclusion, tree head, Base and Solana anchors |
 | [product/receipt-log.md](./product/receipt-log.md) | Durable receipt log, epochs, S3 bundles, restore |
+| [product/receipt-log-witness.md](./product/receipt-log-witness.md) | Witnessed heads and Safe-signed epochs. The contract is not deployed |
 | [product/receipt-preimage.md](./product/receipt-preimage.md) | Public bytes for recomputable receipt hashes |
 | [product/issuer-key-history.md](./product/issuer-key-history.md) | Signed issuer key rotation history |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |

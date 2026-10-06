@@ -86,6 +86,8 @@ API reference: [M2M API](docs/M2M_API.md) · Chat completions: [docs here](docs/
 
 Each UTC day the gateway signs the receipt Merkle root and publishes it in two places. `GET /v1/receipts/tree/head` returns both under `anchors.base` and `anchors.solana` (`signature`, `slot`, `cluster`, `memo`). A missing key or a failed send leaves that side `pending`. A day that already has a Solana signature is not posted again. Details: [docs/product/receipt-merkle.md](docs/product/receipt-merkle.md).
 
+`ChitLogWitness` can accept an RFC 6962 consistency proof on Base. It is off unless `RECEIPT_LOG_WITNESS=1`, and this repository does not deploy it. With the flag off, the Base post is still the zero-value transaction whose calldata is the root. See [docs/product/receipt-log-witness.md](docs/product/receipt-log-witness.md).
+
 | Chain | Env | What is posted |
 |-------|-----|----------------|
 | Base | `RECEIPT_ANCHOR_PRIVATE_KEY`, optional `RECEIPT_ANCHOR_FROM`, `BASE_RPC_URL` or `SETTLEMENT_RPC_URL` | Zero-value transaction, calldata = 32-byte root |

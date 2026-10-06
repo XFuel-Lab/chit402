@@ -7,6 +7,7 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
+import { Interface } from 'ethers';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
@@ -123,6 +124,16 @@ export interface AnchorWitnessResult {
     chain_id: number | null;
     reason?: string;
   };
+  witness: {
+    checked: boolean;
+    valid: boolean;
+    configured: boolean;
+    address: string | null;
+    epoch: number | null;
+    size: number | null;
+    root: string | null;
+    reason?: string;
+  };
   proves: string[];
   does_not_prove: string[];
   errors: string[];
@@ -162,6 +173,86 @@ export function verifyMerkleInclusion(
     hash = new Uint8Array(next);
   }
   return Buffer.from(hash).toString('hex') === String(rootHex).replace(/^0x/, '').toLowerCase();
+}
+
+function parseNode(hexNode: string): Buffer | null {
+  const hex = String(hexNode || '').replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+/**
+ * RFC 9162 §2.1.4.2. `proof` is the RFC node list. It does not include the
+ * old root. `m == n` requires an empty proof and equal roots.
+ */
+export function verifyConsistency(
+  m: number,
+  n: number,
+  oldRoot: string,
+  newRoot: string,
+  proof: string[],
+): boolean {
+  const old = parseNode(oldRoot);
+  const next = parseNode(newRoot);
+  if (!old || !next || !Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m) return false;
+  if (m === n) return old.equals(next) && (!proof || proof.length === 0);
+  if (!Array.isArray(proof) || proof.length === 0) return false;
+  const nodes: Buffer[] = [];
+  if (m > 0 && (m & (m - 1)) === 0) nodes.push(old);
+  for (const step of proof) {
+    const parsed = parseNode(step);
+    if (!parsed) return false;
+    nodes.push(parsed);
+  }
+  let fn = m - 1;
+  let sn = n - 1;
+  while ((fn & 1) === 1) {
+    fn >>= 1;
+    sn >>= 1;
+  }
+  let fr: Uint8Array = nodes[0];
+  let sr: Uint8Array = nodes[0];
+  for (let i = 1; i < nodes.length; i += 1) {
+    if (sn === 0) return false;
+    const c = nodes[i];
+    if ((fn & 1) === 1 || fn === sn) {
+      fr = nodeHash(c, fr);
+      sr = nodeHash(c, sr);
+      if ((fn & 1) === 0) {
+        while ((fn & 1) === 0 && fn !== 0) {
+          fn >>= 1;
+          sn >>= 1;
+        }
+      }
+    } else {
+      sr = nodeHash(sr, c);
+    }
+    fn >>= 1;
+    sn >>= 1;
+  }
+  return sn === 0 && Buffer.from(fr).equals(old) && Buffer.from(sr).equals(next);
+}
+
+const WITNESS_HEAD = new Interface([
+  'function head() view returns (uint256 epoch, uint256 size, bytes32 root)',
+]);
+
+export interface WitnessHead {
+  epoch: number;
+  size: number;
+  root: string;
+}
+
+export async function fetchWitnessHead(address: string, rpcUrl: string): Promise<WitnessHead | null> {
+  const data = WITNESS_HEAD.encodeFunctionData('head', []);
+  const raw = await defaultRpc(rpcUrl, 'eth_call', [{ to: address, data }, 'latest']) as string | null;
+  if (!raw || raw === '0x') return null;
+  const [epoch, size, root] = WITNESS_HEAD.decodeFunctionResult('head', raw);
+  return {
+    epoch: Number(epoch),
+    size: Number(size),
+    root: String(root).replace(/^0x/, '').toLowerCase(),
+  };
 }
 
 export interface ParsedAnchorMemo {
@@ -303,6 +394,15 @@ export interface VerifyAnchoredRootInput {
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
+  witnessAddress?: string | null;
+  consistency?: {
+    first_tree_size?: number;
+    second_tree_size?: number;
+    first_root?: string;
+    second_root?: string;
+    proof?: string[];
+  } | null;
+  fetchWitness?: (address: string, rpcUrl: string) => Promise<WitnessHead | null>;
 }
 
 /**
@@ -490,10 +590,71 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
 
+  const witnessAddress = input.witnessAddress || null;
+  const witness = {
+    checked: false,
+    valid: false,
+    configured: Boolean(witnessAddress),
+    address: witnessAddress,
+    epoch: null as number | null,
+    size: null as number | null,
+    root: null as string | null,
+    reason: undefined as string | undefined,
+  };
+  if (!witnessAddress) {
+    doesNotProve.push('No witness contract address was set, so this run did not check a contract head. Mainnet has no ChitLogWitness address in this release.');
+  } else if (!inclusionValid || !root) {
+    witness.reason = 'inclusion_failed';
+    errors.push('witness:inclusion_failed');
+  } else {
+    witness.checked = true;
+    try {
+      const read = input.fetchWitness || fetchWitnessHead;
+      const onchain = await read(witnessAddress, baseRpc);
+      if (!onchain) {
+        witness.reason = 'head_missing';
+      } else {
+        witness.epoch = onchain.epoch;
+        witness.size = onchain.size;
+        witness.root = onchain.root;
+        const headEpoch = input.head.epoch == null ? null : Number(input.head.epoch);
+        const headSize = input.head.tree_size == null ? null : Number(input.head.tree_size);
+        if (headEpoch != null && headEpoch !== onchain.epoch) witness.reason = 'epoch_mismatch';
+        else if (headSize == null) witness.reason = 'head_size_missing';
+        else if (headSize < onchain.size) witness.reason = 'head_behind';
+        else if (headSize === onchain.size) {
+          witness.valid = onchain.root === root;
+          if (!witness.valid) witness.reason = 'root_mismatch';
+        } else {
+          const proof = input.consistency;
+          const nodes = proof?.proof || [];
+          const oldSize = Number(proof?.first_tree_size);
+          const newSize = Number(proof?.second_tree_size);
+          const oldRoot = normalizeRoot(proof?.first_root || null);
+          const newRoot = normalizeRoot(proof?.second_root || null);
+          if (!proof || !Array.isArray(nodes)) witness.reason = 'witness_proof_required';
+          else if (oldSize !== onchain.size || newSize !== headSize || oldRoot !== onchain.root || newRoot !== root) {
+            witness.reason = 'witness_proof_mismatch';
+          } else if (!verifyConsistency(onchain.size, headSize, onchain.root, root, nodes)) {
+            witness.reason = 'witness_proof_rejected';
+          } else witness.valid = true;
+        }
+      }
+    } catch (err) {
+      witness.reason = err instanceof Error ? err.message : 'witness_rpc_error';
+    }
+    if (!witness.valid && witness.reason) errors.push(`witness:${witness.reason}`);
+  }
+
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  const witnessFailed = witness.configured && !witness.valid;
+  if (!inclusionValid || epochReason || witnessFailed || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
+
+  const proves = witness.valid
+    ? [...ANCHOR_PROVES, `The Base witness contract at ${witness.address} stores this head, or this head is an RFC 6962 extension of the head it stores.`]
+    : ANCHOR_PROVES;
 
   return {
     overall,
@@ -501,7 +662,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     inclusion: { valid: inclusionValid, leaf: leafHex, leaf_source: leafSource, reason: inclusionReason },
     solana,
     base,
-    proves: ANCHOR_PROVES,
+    witness,
+    proves,
     does_not_prove: doesNotProve,
     errors,
   };

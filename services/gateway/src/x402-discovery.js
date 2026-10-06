@@ -2232,7 +2232,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptTreeHead',
           summary: 'Latest signed receipt Merkle tree head',
-          description: 'Public read. Returns the latest signed head (chit402.tree_head.v2) or status not_yet_published. Does not publish or anchor. anchors.base is a Base calldata transaction. anchors.solana is an SPL Memo. Each side stays pending until its key and RPC are set.',
+          description: 'Public read. Returns the latest signed head (chit402.tree_head.v2) or status not_yet_published. Does not publish or anchor. anchors.base is a Base calldata transaction. anchors.solana is an SPL Memo. Each side stays pending until its key and RPC are set. The C2SP checkpoint is the neighboring URL, not a field of this JSON.',
           tags: ['Receipts'],
           responses: { 200: { description: 'chit402.tree_head.v2, or not_yet_published' } },
         },
@@ -2247,17 +2247,31 @@ export function buildOpenApiSpec(baseUrl = '') {
           responses: { 200: { description: 'chit402.tree_head.v2, or not_yet_published' } },
         },
       },
+      '/v1/receipts/tree/checkpoint': {
+        get: {
+          operationId: 'receiptTreeCheckpoint',
+          summary: 'C2SP tlog-checkpoint for the latest signed head',
+          description: 'Public text/plain signed note. Origin is chit402.com/receipt-log/<epoch>. The body is origin, tree size, base64 root, and one epoch extension line. 404 when no head has been signed.',
+          tags: ['Receipts'],
+          responses: {
+            200: { description: 'C2SP signed note, text/plain' },
+            404: { description: 'not_yet_published' },
+          },
+        },
+      },
       '/v1/receipts/tree/consistency': {
         get: {
           operationId: 'receiptTreeConsistency',
           summary: 'Consistency proof between two tree sizes',
-          description: 'Public. Query first and second are tree sizes, first <= second.',
+          description: 'Public. Query first and second are tree sizes, first <= second. format=rfc6962 (default) is RFC 6962 / RFC 9162. format=legacy is the previous proof, which includes the old root and orders nodes left to right. Inclusion proofs are unchanged.',
           tags: ['Receipts'],
           parameters: [
             { name: 'first', in: 'query', required: true, schema: { type: 'integer' } },
             { name: 'second', in: 'query', required: true, schema: { type: 'integer' } },
+            { name: 'format', in: 'query', schema: { type: 'string', enum: ['rfc6962', 'legacy'] } },
+            { name: 'epoch', in: 'query', schema: { type: 'integer' } },
           ],
-          responses: { 200: { description: 'chit402.consistency.v1' } },
+          responses: { 200: { description: 'chit402.consistency.v2, or chit402.consistency.v1 when format=legacy' } },
         },
       },
       '/v1/receipts/{task_id}/inclusion': {

@@ -53,6 +53,7 @@ import {
   EPOCH1_FINAL_SIZE,
   EPOCH1_SIZE2_ROOT,
 } from './receipt-log-epoch.js';
+import { signTreeCheckpoint } from './receipt-checkpoint.js';
 export { FRESH_GENESIS_LOG, assertLatestBaseAnchor, readReceiptLogPin };
 
 export { ReceiptLogRefused, freshGenesisAllowed, receiptLogBootRequested, receiptLogStrict };
@@ -76,9 +77,18 @@ export function nodeHash(left, right) {
   return sha256(Buffer.concat([Buffer.from([0x01]), left, right]));
 }
 
-/** Root of an ordered list of leaf hashes. Empty tree hashes a single 0x00. */
+/**
+ * Root of an ordered list of leaf hashes.
+ *
+ * The empty tree hashes a single `0x00` byte: SHA-256(0x00). RFC 6962's empty
+ * root is SHA-256("") . This log never publishes size 0. Leaf 0 is genesis,
+ * so every signed head has size at least 1. Callers must not treat the empty
+ * digest as an RFC 6962 empty root.
+ */
+export const EMPTY_TREE_ROOT = sha256(Buffer.from([0x00]));
+
 export function rootOf(leaves) {
-  if (!leaves.length) return sha256(Buffer.from([0x00]));
+  if (!leaves.length) return Buffer.from(EMPTY_TREE_ROOT);
   let level = leaves.map((h) => Buffer.from(h));
   while (level.length > 1) {
     const next = [];
@@ -133,10 +143,16 @@ function largestPowerOfTwoLessThan(n) {
   return p;
 }
 
+function mthRange(leaves, start, end) {
+  return rootOf(leaves.slice(start, end));
+}
+
 /**
- * Consistency proof that the first `m` leaves are a prefix of the first `n`.
- * Node hashes, hex, oldest first. RFC 6962 §2.1.4 shape: subtrees that
- * complete the old tree and the new tree.
+ * RFC 6962 / RFC 9162 §2.1.4 consistency proof.
+ * Hex node hashes. The old root is omitted when it is already known
+ * (the initial `b = true` call, and any complete old subtree). Order is
+ * the RFC SUBPROOF order, not left to right.
+ * `m == n` is an empty proof.
  */
 export function consistencyProof(leaves, m, n) {
   if (!Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m || n > leaves.length) {
@@ -144,18 +160,97 @@ export function consistencyProof(leaves, m, n) {
   }
   if (m === n) return [];
   const proof = [];
-  function mth(start, end) {
-    return rootOf(leaves.slice(start, end));
+  function subproof(oldSize, start, end, known) {
+    const size = end - start;
+    if (oldSize === size) {
+      if (!known) proof.push(mthRange(leaves, start, end).toString('hex'));
+      return;
+    }
+    const k = largestPowerOfTwoLessThan(size);
+    if (oldSize <= k) {
+      subproof(oldSize, start, start + k, known);
+      proof.push(mthRange(leaves, start + k, end).toString('hex'));
+    } else {
+      subproof(oldSize - k, start + k, end, false);
+      proof.push(mthRange(leaves, start, start + k).toString('hex'));
+    }
   }
+  subproof(m, 0, n, true);
+  return proof;
+}
+
+function isPow2(n) {
+  return n > 0 && (n & (n - 1)) === 0;
+}
+
+function parseNode(hexNode) {
+  const hex = String(hexNode || '').replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+/**
+ * RFC 9162 §2.1.4.2. True when `proof` shows `oldRoot` at size `m` is a
+ * prefix of `newRoot` at size `n`.
+ */
+export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
+  const old = parseNode(oldRoot);
+  const next = parseNode(newRoot);
+  if (!old || !next || !Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m) return false;
+  if (m === n) return old.equals(next) && (!proof || proof.length === 0);
+  if (!Array.isArray(proof) || proof.length === 0) return false;
+  const nodes = [];
+  if (isPow2(m)) nodes.push(old);
+  for (const step of proof) {
+    const parsed = parseNode(step);
+    if (!parsed) return false;
+    nodes.push(parsed);
+  }
+  let fn = m - 1;
+  let sn = n - 1;
+  while ((fn & 1) === 1) {
+    fn >>= 1;
+    sn >>= 1;
+  }
+  let fr = nodes[0];
+  let sr = nodes[0];
+  for (let i = 1; i < nodes.length; i += 1) {
+    if (sn === 0) return false;
+    const c = nodes[i];
+    if ((fn & 1) === 1 || fn === sn) {
+      fr = nodeHash(c, fr);
+      sr = nodeHash(c, sr);
+      if ((fn & 1) === 0) {
+        while ((fn & 1) === 0 && fn !== 0) {
+          fn >>= 1;
+          sn >>= 1;
+        }
+      }
+    } else {
+      sr = nodeHash(sr, c);
+    }
+    fn >>= 1;
+    sn >>= 1;
+  }
+  return sn === 0 && fr.equals(old) && sr.equals(next);
+}
+
+/**
+ * Pre-RFC consistency proof. Includes the old root and lists nodes left to
+ * right. `GET /v1/receipts/tree/consistency?format=legacy` still returns this.
+ * New callers use `consistencyProof`.
+ */
+export function consistencyProofLegacy(leaves, m, n) {
+  if (!Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m || n > leaves.length) {
+    throw new Error('bad_tree_size');
+  }
+  if (m === n) return [];
+  const proof = [];
   function prove(start, end, oldEnd) {
     const size = end - start;
     if (size === 0) return;
-    if (end <= oldEnd) {
-      proof.push(mth(start, end).toString('hex'));
-      return;
-    }
-    if (start >= oldEnd) {
-      proof.push(mth(start, end).toString('hex'));
+    if (end <= oldEnd || start >= oldEnd) {
+      proof.push(mthRange(leaves, start, end).toString('hex'));
       return;
     }
     const k = largestPowerOfTwoLessThan(size);
@@ -166,19 +261,20 @@ export function consistencyProof(leaves, m, n) {
   return proof;
 }
 
-/**
- * Recompute the old and new roots from a consistency proof.
- * Returns true when both match the supplied roots.
- */
-export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
-  const oldHex = String(oldRoot || '').replace(/^0x/, '');
-  const newHex = String(newRoot || '').replace(/^0x/, '');
+/** Verifier for `consistencyProofLegacy`. Rejects an RFC 6962 proof. */
+export function verifyConsistencyLegacy(m, n, oldRoot, newRoot, proof) {
+  const oldHex = String(oldRoot || '').replace(/^0x/, '').toLowerCase();
+  const newHex = String(newRoot || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(oldHex) || !/^[0-9a-f]{64}$/.test(newHex)) return false;
   if (m === n) return oldHex === newHex && (!proof || proof.length === 0);
   if (!Array.isArray(proof) || proof.length === 0) return false;
   let i = 0;
   function take() {
     if (i >= proof.length) throw new Error('short_proof');
-    return Buffer.from(proof[i++], 'hex');
+    const parsed = parseNode(proof[i]);
+    i += 1;
+    if (!parsed) throw new Error('bad_node');
+    return parsed;
   }
   function check(start, end, oldEnd) {
     if (end <= oldEnd) {
@@ -899,13 +995,17 @@ export class ReceiptMerkleTree {
     };
   }
 
-  consistency(m, n, epochNumber = null) {
+  consistency(m, n, epochNumber = null, format = 'rfc6962') {
+    const fmt = format === 'legacy' ? 'legacy' : 'rfc6962';
     const epoch = this._epochForConsistency(m, n, epochNumber);
-    const proof = consistencyProof(epoch.leaves, m, n);
+    const proof = fmt === 'legacy'
+      ? consistencyProofLegacy(epoch.leaves, m, n)
+      : consistencyProof(epoch.leaves, m, n);
     const oldRoot = hex(rootOf(epoch.leaves.slice(0, m)));
     const newRoot = hex(rootOf(epoch.leaves.slice(0, n)));
     return {
-      schema: 'chit402.consistency.v1',
+      schema: fmt === 'legacy' ? 'chit402.consistency.v1' : 'chit402.consistency.v2',
+      format: fmt,
       payload_version: 2,
       epoch: epoch.epoch,
       first_tree_size: m,
@@ -950,6 +1050,8 @@ export class ReceiptMerkleTree {
     nonce = null,
     lookup = null,
     request = null,
+    witnessSend = null,
+    witnessReadHead = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -1124,6 +1226,8 @@ export class ReceiptMerkleTree {
     anchor = { ...anchor, prev_root: prevRoot };
     solana = { ...solana, prev_root: prevRoot };
     const anchors = { base: anchor, solana };
+    const witnessRecord = await this._witnessAppend({ root, reserved, witnessSend, witnessReadHead });
+    if (witnessRecord) anchors.witness = witnessRecord;
     // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
     // field inside the Base or Solana records. Epoch fields are version 2.
     const claims = {
@@ -1157,6 +1261,19 @@ export class ReceiptMerkleTree {
         issuer_jwk: getIssuerPublicKeyJwk(),
       },
     };
+    // The checkpoint note is signed on its own. It is not a JWS claim.
+    // The public head route omits it. GET /v1/receipts/tree/checkpoint serves it.
+    try {
+      head.checkpoint = signTreeCheckpoint({
+        epoch: this.epoch,
+        treeSize: this.leaves.length,
+        root,
+        prevEpochSize: this.prevEpochSize || 0,
+        prevEpochRoot: this.prevEpochRoot,
+      });
+    } catch (err) {
+      logger.error({ err }, 'receipt checkpoint was not signed');
+    }
     const sameSlot = last
       && dayOf(last.published_at) === day
       && last.root === root
@@ -1168,6 +1285,53 @@ export class ReceiptMerkleTree {
     this._rememberAnchor(day, scope, head);
     this._persistHead(head);
     return head;
+  }
+
+  /**
+   * Daily witness append. Runs after the bare-root transfer so a shared
+   * signer uses the next nonce. The bare-root calldata stays on anchors.base.
+   * Returns null when RECEIPT_LOG_WITNESS is not `1`.
+   */
+  async _witnessAppend({ root, reserved, witnessSend, witnessReadHead = null }) {
+    const {
+      planWitnessAppend,
+      sendWitnessAppend,
+      receiptWitnessEnabled,
+      witnessSharesAnchorKey,
+    } = await import('./receipt-log-witness.js');
+    if (!receiptWitnessEnabled()) return null;
+    const plan = await planWitnessAppend(this, root, {
+      readHead: witnessReadHead || undefined,
+    });
+    if (!plan) return null;
+    if (plan.status !== 'ready') {
+      return {
+        status: plan.status,
+        reason: plan.reason,
+        to: plan.to || null,
+        tx: plan.tx || null,
+        calldata: plan.calldata || null,
+      };
+    }
+    const share = witnessSharesAnchorKey();
+    const nonce = share && reserved?.nonce != null ? reserved.nonce + 1 : null;
+    const sent = await sendWitnessAppend(plan, { nonce, send: witnessSend });
+    return {
+      status: sent.status,
+      reason: sent.reason,
+      to: sent.to || null,
+      tx: sent.tx || null,
+      calldata: sent.calldata || null,
+    };
+  }
+
+  /**
+   * Signed C2SP checkpoint for the latest signed head. Null when nothing
+   * has been signed. The note is not a field of the public JSON head.
+   */
+  checkpointText() {
+    const head = this.latestSignedHead();
+    return head?.checkpoint || null;
   }
 
   currentBundleIndexHash() {
@@ -2447,7 +2611,8 @@ function gateEpochRecord(tree) {
 /**
  * Chain half of boot. Reconciles a write-ahead anchor intent, then refuses
  * if the latest Base root is not in the journal. The fresh-genesis flag
- * skips the refusal.
+ * skips that anchor refusal and the epoch-record refusal. It does not skip
+ * the witness check when RECEIPT_LOG_WITNESS=1.
  */
 export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts = {}) {
   if (!tree) return tree;
@@ -2477,9 +2642,16 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
       : null);
   if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast });
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
-  if (allow) return tree;
-  await assertLatestBaseAnchor(tree, opts);
-  gateEpochRecord(tree);
+  if (!allow) {
+    await assertLatestBaseAnchor(tree, opts);
+    gateEpochRecord(tree);
+  }
+  // The fresh-genesis flag does not skip this. A new log is not an extension
+  // of the contract head. The flag is off unless RECEIPT_LOG_WITNESS=1.
+  const { assertWitnessJournal, receiptWitnessEnabled } = await import('./receipt-log-witness.js');
+  if (opts.witness === true || (opts.witness !== false && receiptWitnessEnabled())) {
+    await assertWitnessJournal(tree, opts);
+  }
   return tree;
 }
 
