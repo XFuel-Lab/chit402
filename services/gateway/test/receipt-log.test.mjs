@@ -6,7 +6,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { spawnSync } from 'node:child_process';
+import http from 'node:http';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,6 +17,7 @@ const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
 const {
   ReceiptMerkleTree,
   bootReceiptLog,
+  getReceiptMerkleTree,
   resetReceiptMerkleTree,
   rootOf,
   anchorPrevRoot,
@@ -27,6 +29,7 @@ const {
   EPOCH1_SIZE1_ROOT,
   EPOCH1_SIZE2_ROOT,
   matchEpoch1Prefix,
+  EPOCH2_GENESIS_DIGEST,
   EPOCH2_OPENING_ROOT,
   checkEpochLinks,
   epochRecordClaims,
@@ -569,6 +572,43 @@ test('a bundle upload failure is counted and a retention policy is hashed into t
   assert.notEqual(bundleIndexHash(bare), uploaded.index_hash);
 });
 
+test('a crash before the hash is recorded adopts the tx at the reserved nonce', async () => {
+  const { lookupBaseTxByNonceOrHash } = await import('../src/receipt-log-anchor.js');
+  const root = 'ab'.repeat(32);
+  const from = '0x1844d1f5fe42aff1cce6f776514fd40374079582';
+  const txHash = `0x${'11'.repeat(32)}`;
+  const found = await lookupBaseTxByNonceOrHash({
+    nonce: 4,
+    from,
+    root,
+    request: async (_url, method, params) => {
+      if (method === 'ots_getTransactionBySenderAndNonce') {
+        assert.equal(String(params[0]).toLowerCase(), from);
+        assert.equal(Number(params[1]), 4);
+        return { hash: txHash, from, nonce: '0x4', input: `0x${root}` };
+      }
+      if (method === 'eth_getTransactionReceipt') return { status: '0x1' };
+      return null;
+    },
+  });
+  assert.equal(found?.receiptOk, true);
+  assert.equal(found?.tx, txHash);
+  const replaced = await lookupBaseTxByNonceOrHash({
+    nonce: 4,
+    from,
+    root,
+    request: async (_url, method) => {
+      if (method === 'ots_getTransactionBySenderAndNonce') {
+        return { hash: txHash, from, nonce: '0x4', input: `0x${'cd'.repeat(32)}` };
+      }
+      if (method === 'eth_getTransactionReceipt') return { status: '0x1' };
+      return null;
+    },
+  });
+  assert.equal(replaced?.replaced, true);
+  assert.equal(replaced?.receiptOk, undefined);
+});
+
 test('a broadcast intent is not treated as anchored without a receipt', async () => {
   const tree = new ReceiptMerkleTree();
   tree.dir = tmp();
@@ -952,4 +992,172 @@ test('backfill dry-run lists each refusal', () => {
   assert.notEqual(out.status, 0);
   assert.match(out.stderr, /refuse agent 3: FORKED/);
   assert.match(out.stderr, /refuse dup-b: missing_row_hash/);
+});
+
+function runCli(args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
+}
+
+test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch', async () => {
+  const dir = tmp();
+  const claims = epochRecordClaims();
+  const signed = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
+  const jwk = { ...getIssuerPublicKeyJwk(), kid: signed.kid };
+  const record = {
+    ...claims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-tree-epoch+jwt',
+      payload_version: 1,
+      jws: signed.jws,
+      kid: signed.kid,
+      issuer_jwk: jwk,
+    },
+  };
+  const genesis = genesisBytes(EPOCH2_GENESIS_DIGEST);
+  const lines = [
+    { v: 1, op: 'epoch_open', epoch: 2, prev_epoch_root: EPOCH1_FINAL_ROOT, prev_epoch_size: 4 },
+    {
+      v: 1, op: 'leaf', epoch: 2, index: 0, task_id: 'genesis', kind: 'genesis',
+      preimage_b64: genesis.toString('base64'),
+    },
+    {
+      v: 1, op: 'leaf', epoch: 2, index: 1, task_id: 'cli-row', kind: 'receipt',
+      preimage_b64: Buffer.from('cli-row|cli-hash').toString('base64'),
+    },
+    { v: 1, op: 'epoch_record', record },
+  ];
+  fs.writeFileSync(path.join(dir, 'journal.jsonl'), `${lines.map((row) => JSON.stringify(row)).join('\n')}\n`);
+
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevCluster = process.env.SOLANA_ANCHOR_CLUSTER;
+  const prevBase = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  const prevLogDir = process.env.RECEIPT_LOG_DIR;
+  process.env.SOLANA_ANCHOR_SECRET_KEY = solanaKeypair().json;
+  process.env.SOLANA_ANCHOR_CLUSTER = 'devnet';
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  delete process.env.RECEIPT_LOG_BOOT;
+  delete process.env.RECEIPT_LOG_DIR;
+  resetReceiptMerkleTree();
+  const tree = getReceiptMerkleTree();
+  tree.load(dir);
+  const baseTx = `0x${'44'.repeat(32)}`;
+  const head = await tree.publishHead({
+    force: true,
+    now: '2026-10-06T12:00:00.000Z',
+    nonce: 7,
+    blockTimestamp: null,
+    solanaBlockTime: null,
+    solanaConnection: mockConnection(),
+    send: async () => baseTx,
+  });
+  assert.equal(head.schema, 'chit402.tree_head.v2');
+  assert.equal(head.epoch, 2);
+  const { createApp } = await import('../src/server.js');
+  const app = createApp();
+  const gateway = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  const gatewayPort = gateway.address().port;
+  const rpc = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      let result = null;
+      if (msg.method === 'eth_chainId') result = '0x2105';
+      else if (msg.method === 'eth_getTransactionByHash') {
+        result = { hash: baseTx, input: `0x${head.root}` };
+      } else if (msg.method === 'getTransaction') {
+        result = {
+          slot: head.anchors.solana.slot,
+          meta: { err: null },
+          transaction: {
+            message: {
+              instructions: [{ program: 'spl-memo', parsed: head.anchors.solana.memo }],
+            },
+          },
+        };
+      } else if (msg.method === 'getGenesisHash') {
+        result = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+    });
+  });
+  const rpcPort = await listen(rpc);
+  const work = tmp();
+  const receiptPath = path.join(work, 'receipt.json');
+  const inclusionPath = path.join(work, 'inclusion.json');
+  const headPath = path.join(work, 'head.json');
+  const jwksPath = path.join(work, 'jwks.json');
+  fs.writeFileSync(receiptPath, JSON.stringify({
+    task_id: 'cli-row',
+    row_hash: 'cli-hash',
+    verify_url: `http://127.0.0.1:${gatewayPort}/receipt/cli-row`,
+  }));
+  fs.writeFileSync(inclusionPath, JSON.stringify(tree.inclusion('cli-row')));
+  fs.writeFileSync(headPath, JSON.stringify(head));
+  fs.writeFileSync(jwksPath, JSON.stringify({ keys: [jwk] }));
+  const verifyRoot = path.resolve(gatewayRoot, '../../packages/verify');
+  const built = spawnSync(path.join(verifyRoot, 'node_modules/.bin/tsc'), [], { cwd: verifyRoot, encoding: 'utf8' });
+  assert.equal(built.status, 0, built.stdout + built.stderr);
+  const cli = path.join(verifyRoot, 'dist/cli.js');
+  const args = [
+    cli, receiptPath, inclusionPath, headPath,
+    '--rpc', `http://127.0.0.1:${rpcPort}`,
+    '--solana-rpc', `http://127.0.0.1:${rpcPort}`,
+    '--jwks-file', jwksPath,
+    '--trusted-kid', signed.kid,
+    '--no-issuer-history',
+    '--json',
+  ];
+  try {
+    const ok = await runCli(args);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    const forgedClaims = epochRecordClaims({ epoch1Root: 'ab'.repeat(32) });
+    const forgedSig = signJws(forgedClaims, { typ: 'chit402-tree-epoch+jwt' });
+    tree.epochRecord = {
+      ...forgedClaims,
+      issuer_signature: {
+        alg: 'ES256',
+        typ: 'chit402-tree-epoch+jwt',
+        payload_version: 1,
+        jws: forgedSig.jws,
+        kid: forgedSig.kid,
+        issuer_jwk: jwk,
+      },
+    };
+    const forged = await runCli(args);
+    assert.notEqual(forged.status, 0);
+    assert.match(forged.stdout + forged.stderr, /epoch1_root|epoch_record_missing|epoch_signature/);
+  } finally {
+    await new Promise((resolve) => gateway.close(resolve));
+    await new Promise((resolve) => rpc.close(resolve));
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevCluster == null) delete process.env.SOLANA_ANCHOR_CLUSTER;
+    else process.env.SOLANA_ANCHOR_CLUSTER = prevCluster;
+    if (prevBase == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevBase;
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    if (prevLogDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevLogDir;
+    resetReceiptMerkleTree();
+  }
 });

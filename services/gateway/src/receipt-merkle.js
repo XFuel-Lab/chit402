@@ -894,7 +894,9 @@ export class ReceiptMerkleTree {
     ));
     const anchored = [...prior].reverse().find((row) => row.status === 'anchored' && row.tx);
     if (anchored) return { tx: anchored.tx, nonce: anchored.nonce };
-    const reusable = [...prior].reverse().find((row) => row.nonce != null && row.status !== 'anchored');
+    const reusable = [...prior].reverse().find((row) => (
+      row.nonce != null && row.status !== 'anchored' && row.status !== 'replaced'
+    ));
     if (reusable) return { nonce: reusable.nonce, reserved: true };
     const record = {
       v: 1,
@@ -964,6 +966,23 @@ export class ReceiptMerkleTree {
           'anchor_intent_mismatch',
           `anchor intent nonce ${intent.nonce} landed as ${found.root}, not ${intent.root}`,
         );
+      }
+      if (found?.replaced) {
+        this.anchorIntents.push({ ...intent, status: 'replaced', tx: found.tx || intent.tx || null });
+        if (this.dir) {
+          appendJournal(this.dir, {
+            v: 1,
+            op: 'anchor_intent',
+            chain: 'base',
+            root: intent.root,
+            day: intent.day,
+            nonce: intent.nonce,
+            tx: found.tx || intent.tx || null,
+            status: 'replaced',
+            epoch: this.epoch,
+          });
+        }
+        continue;
       }
       if (found?.dropped || found?.receiptOk === false) {
         const dropped = { ...intent, status: 'dropped' };
@@ -1336,6 +1355,8 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
     rpcUrl: opts.baseRpc,
     txHash: intent?.tx,
     root: intent?.root,
+    nonce: intent?.nonce,
+    from: opts.from || process.env.RECEIPT_ANCHOR_FROM,
     request: opts.request,
   }));
   if (tree.dir) await tree.reconcileAnchorIntents({ lookup });

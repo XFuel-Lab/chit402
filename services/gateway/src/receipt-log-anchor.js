@@ -263,21 +263,42 @@ export async function lookupBaseTxByNonceOrHash({
   rpcUrl,
   txHash,
   root,
+  nonce,
+  from,
   request,
 } = {}) {
   const want = normalizeRoot(root);
-  if (!txHash) return null;
+  const sender = String(from || anchorWalletAddress() || '').toLowerCase();
   const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
-  const tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
-  if (!tx) return { dropped: true };
-  const receipt = await rpc(url, 'eth_getTransactionReceipt', [txHash], request);
+  let tx = null;
+  if (txHash) {
+    tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
+    if (!tx) return { dropped: true };
+  } else if (nonce != null && sender) {
+    const nonceHex = `0x${Number(nonce).toString(16)}`;
+    try {
+      tx = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request);
+    } catch {
+      tx = null;
+    }
+    if (!tx) return null;
+  } else {
+    return null;
+  }
+  const txFrom = String(tx.from || '').toLowerCase();
+  const txNonce = tx.nonce == null ? null : Number(tx.nonce);
+  const hash = tx.hash || txHash;
+  if ((sender && txFrom && txFrom !== sender) || (nonce != null && txNonce != null && txNonce !== Number(nonce))) {
+    return { replaced: true, tx: hash, reason: sender && txFrom && txFrom !== sender ? 'from_mismatch' : 'nonce_mismatch' };
+  }
+  const receipt = await rpc(url, 'eth_getTransactionReceipt', [hash], request);
   if (!receipt) return { dropped: true };
   const status = receipt.status;
   const ok = status === '0x1' || status === 1 || status === '0x01';
-  const got = calldataRoot(tx.input);
-  if (want && got && got !== want) return { mismatch: true, tx: tx.hash, root: got };
-  if (!ok) return { mined: true, receiptOk: false, tx: tx.hash, root: got };
-  return { tx: tx.hash, nonce: Number(tx.nonce), root: got, receiptOk: true };
+  const got = calldataRoot(tx.input || tx.data);
+  if (want && got && got !== want) return { replaced: true, tx: hash, root: got, reason: 'calldata_replaced' };
+  if (!ok) return { mined: true, receiptOk: false, tx: hash, root: got };
+  return { tx: hash, nonce: txNonce, root: got, receiptOk: true };
 }
 
 export function anchorWalletAddress() {
