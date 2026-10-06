@@ -20,7 +20,9 @@ const {
   buildReceipt,
   decodeReceiptClaims,
   treeHeadRestampAllowed,
+  stampCoveringTreeHead,
   RECEIPT_PAYLOAD_VERSION,
+  COVERING_HEAD_SCHEMA,
 } = await import('../src/receipt.js');
 const {
   issueRefusalReceipt,
@@ -44,6 +46,8 @@ const {
   IssuancePausedError,
   legacyProofForReceipt,
   ROOT_COMMITTED_TOPIC,
+  SKIP_LOG,
+  _resetIssuerRootStartupState,
 } = await import('../src/issuer-root.js');
 const {
   buildLegacyReceiptSet,
@@ -53,6 +57,7 @@ const {
   legacyUniverseId,
 } = await import('../src/legacy-receipt-merkle.js');
 const { buildForeignReceipt } = await import('../src/foreign-x402-ingest.js');
+const { getReceiptMerkleTree, resetReceiptMerkleTree } = await import('../src/receipt-merkle.js');
 const { assertBroadcastAllowed } = await import('../scripts/build-legacy-receipt-set.mjs');
 const { createApp } = await import('../src/server.js');
 
@@ -68,6 +73,8 @@ const ROOT_ENV = [
   'ISSUER_ROOT_HASH',
   'ISSUER_ROOT_STARTUP_CHECK',
   'ISSUER_ROOT_RPC_URL',
+  'ISSUER_ROOT_RPC_URL_2',
+  'ISSUER_ROOT_ALLOW_SKIP',
   'ISSUER_ROOT_CUTOVER',
   'ISSUER_ROOT_FREEZE_FILE',
   'ISSUER_ROOT_LEGACY_SET',
@@ -88,6 +95,7 @@ function restoreEnv(prev) {
   }
   _resetIssuerKey();
   resetIssuerHistoryStore();
+  _resetIssuerRootStartupState();
 }
 
 function paidTask(taskId) {
@@ -162,6 +170,15 @@ function useStableKey() {
   resetIssuerHistoryStore();
 }
 
+function writeLegacyArtifact(artifact = null) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-required-'));
+  const file = path.join(dir, 'set.json');
+  const body = artifact || buildLegacyReceiptSet([]);
+  fs.writeFileSync(file, JSON.stringify(body));
+  process.env.ISSUER_ROOT_LEGACY_SET = file;
+  return file;
+}
+
 function enableRoot({ seq = '1', hash = `0x${'ab'.repeat(32)}`, check = 'skip' } = {}) {
   process.env.ISSUER_ROOT_ENABLED = 'true';
   process.env.ISSUER_ROOT_CHAIN_ID = 'eip155:84532';
@@ -184,6 +201,9 @@ function listen(app) {
 
 const COMMITTED = new Interface([
   'event RootCommitted(uint64 indexed rootSeq, bytes32 rootHash, uint64 historyVersion, bytes32 historySnapshot)',
+]);
+const FROZEN = new Interface([
+  'event Frozen(bytes32 indexed universeId, bytes32 universeHash, uint64 enumeratedCount, uint64 frozenBlock, uint64 indexed rootSeq)',
 ]);
 
 function committedLog(seq, rootHash) {
@@ -277,6 +297,7 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     assert.equal(artifact.leaves[0].payload_hash, issued[0]);
     assert.equal(verifyLegacyInclusion(issued[0], [], artifact.root), true);
 
+    writeLegacyArtifact(artifact);
     enableRoot();
     process.env.ISSUER_ROOT_CUTOVER = 'pause';
     assert.equal(issuerRootActive(), true);
@@ -302,7 +323,7 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     assert.equal(replay.issuer_signature.jws, jwsBefore);
     assert.equal(replay.issuer_signature.canonical_preimage, first.issuer_signature.canonical_preimage);
     assert.equal(treeHeadRestampAllowed(first), false);
-    assert.equal(treeHeadRestampAllowed(resumed), true);
+    assert.equal(treeHeadRestampAllowed(resumed), false);
 
     const refusal = issueRefusalReceipt(refusalRow('xfuel-cutover-c'));
     assert.equal(refusal.schema, 'chit402.refusal.v2');
@@ -322,64 +343,101 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
   }
 });
 
-test('startup reads the finalized commit once and signing does not call the rpc', async () => {
+function pairFetch(encoded, { blockNumber = '0xa', blockHash = `0x${'cd'.repeat(32)}`, disagreeUrl = null, frozen = null } = {}) {
+  const seen = [];
+  const fetchImpl = async (url, opts) => {
+    seen.push(url);
+    const body = JSON.parse(opts.body);
+    const disagree = disagreeUrl && url === disagreeUrl;
+    if (body.method === 'eth_chainId') {
+      return { ok: true, json: async () => ({ result: '0x14a34' }) };
+    }
+    if (body.method === 'eth_getBlockByNumber') {
+      return {
+        ok: true,
+        json: async () => ({
+          result: {
+            number: blockNumber,
+            hash: disagree ? `0x${'11'.repeat(32)}` : blockHash,
+          },
+        }),
+      };
+    }
+    if (body.method === 'eth_getLogs') {
+      assert.equal(Number(body.params[0].toBlock), 10);
+      const topic0 = body.params[0].topics[0];
+      const source = frozen && topic0 === frozen.topics[0] ? frozen : encoded;
+      const log = {
+        topics: source.topics,
+        data: source.data,
+        blockNumber,
+        blockHash,
+      };
+      return { ok: true, json: async () => ({ result: [log] }) };
+    }
+    throw new Error(`unexpected ${body.method}`);
+  };
+  return { fetchImpl, seen };
+}
+
+test('startup reads two RPCs at one finalized block and signing does not call them again', async () => {
   const prev = snapshotEnv();
   const originalFetch = globalThis.fetch;
   try {
     useStableKey();
+    writeLegacyArtifact();
     const hash = `0x${'ab'.repeat(32)}`;
     enableRoot({ hash, check: 'strict' });
     process.env.ISSUER_ROOT_RPC_URL = 'http://127.0.0.1:9';
+    process.env.ISSUER_ROOT_RPC_URL_2 = 'http://127.0.0.1:10';
     const encoded = committedLog(1, hash);
     assert.equal(encoded.topics[0], ROOT_COMMITTED_TOPIC);
-    let calls = 0;
-    const fetchImpl = async (_url, opts) => {
-      calls += 1;
-      const body = JSON.parse(opts.body);
-      if (body.method === 'eth_chainId') {
-        return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: '0x14a34' }) };
-      }
-      if (body.method === 'eth_getLogs') {
-        assert.equal(body.params[0].toBlock, 'finalized');
-        return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result: [{ topics: encoded.topics, data: encoded.data }] }) };
-      }
-      throw new Error(`unexpected ${body.method}`);
-    };
-    const started = await assertIssuerRootStartup({ fetchImpl });
+    const agreed = pairFetch(encoded);
+    const started = await assertIssuerRootStartup({ fetchImpl: agreed.fetchImpl });
     assert.equal(started.checked, true);
-    assert.equal(calls, 2);
+    assert.equal(started.blockNumber, 10);
+    assert.ok(agreed.seen.includes('http://127.0.0.1:9'));
+    assert.ok(agreed.seen.includes('http://127.0.0.1:10'));
+    const callsAtStartup = agreed.seen.length;
 
     globalThis.fetch = async () => {
-      calls += 1;
+      agreed.seen.push('signing');
       throw new Error('rpc unreachable');
     };
     const receipt = buildReceipt(paidTask('xfuel-rpc-down'), { signingSecret: 's', agentId: 4 });
     assert.equal(decodeReceiptClaims(receipt).payload_version, 11);
-    assert.equal(calls, 2);
+    assert.equal(agreed.seen.length, callsAtStartup);
+
+    const drifted = pairFetch(committedLog(1, hash), { disagreeUrl: 'http://127.0.0.1:10' });
+    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: drifted.fetchImpl }), /disagree/);
 
     enableRoot({ hash: `0x${'ef'.repeat(32)}`, check: 'strict' });
     process.env.ISSUER_ROOT_RPC_URL = 'http://127.0.0.1:9';
-    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl }), /hash mismatch/);
+    process.env.ISSUER_ROOT_RPC_URL_2 = 'http://127.0.0.1:10';
+    await assert.rejects(
+      () => assertIssuerRootStartup({ fetchImpl: pairFetch(encoded).fetchImpl }),
+      /hash mismatch/,
+    );
 
-    const emptyFetch = async (_url, opts) => {
-      const body = JSON.parse(opts.body);
-      if (body.method === 'eth_chainId') {
-        return { ok: true, json: async () => ({ result: '0x14a34' }) };
-      }
-      return { ok: true, json: async () => ({ result: [] }) };
-    };
     enableRoot({ check: 'strict' });
-    process.env.ISSUER_ROOT_RPC_URL = 'http://127.0.0.1:9';
-    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: emptyFetch }), /not a single finalized/);
+    delete process.env.ISSUER_ROOT_RPC_URL_2;
+    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: agreed.fetchImpl }), /two independent RPCs/);
 
     enableRoot({ check: 'skip' });
+    await assert.rejects(() => assertIssuerRootStartup(), /I_UNDERSTAND/);
+    process.env.ISSUER_ROOT_ALLOW_SKIP = 'I_UNDERSTAND';
+    const logs = [];
     let skipCalls = 0;
     globalThis.fetch = async () => {
       skipCalls += 1;
       throw new Error('rpc unreachable');
     };
-    const skipped = await assertIssuerRootStartup();
+    const skipped = await assertIssuerRootStartup({
+      log: (_fields, message) => logs.push(message),
+    });
     assert.equal(skipped.reason, 'skip');
+    assert.equal(logs[0], SKIP_LOG);
+    writeLegacyArtifact();
     const skippedReceipt = buildReceipt(paidTask('xfuel-rpc-skip'), { signingSecret: 's', agentId: 4 });
     assert.equal(decodeReceiptClaims(skippedReceipt).issuer_root.chain_id, 'eip155:84532');
     assert.equal(skipCalls, 0);
@@ -407,10 +465,71 @@ test('enabled without a stable issuer key refuses to start', async () => {
   }
 });
 
+test('enabled without a legacy snapshot refuses to issue', () => {
+  const prev = snapshotEnv();
+  try {
+    useStableKey();
+    enableRoot();
+    delete process.env.ISSUER_ROOT_CUTOVER;
+    delete process.env.ISSUER_ROOT_LEGACY_SET;
+    assert.throws(() => buildReceipt(paidTask('xfuel-no-snapshot'), { signingSecret: 's', agentId: 4 }), (err) => {
+      assert.equal(err.code, 'issuer_root_cutover_pause');
+      return true;
+    });
+    writeLegacyArtifact();
+    const receipt = buildReceipt(paidTask('xfuel-after-snapshot'), { signingSecret: 's', agentId: 4 });
+    assert.equal(decodeReceiptClaims(receipt).payload_version, 11);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('a stored v11 JWS is unchanged across key rotation and a tree-head update', () => {
+  const prev = snapshotEnv();
+  resetReceiptMerkleTree();
+  try {
+    useStableKey();
+    writeLegacyArtifact();
+    enableRoot();
+    const taskId = 'xfuel-immutable-jws';
+    const task = paidTask(taskId);
+    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const jws = receipt.issuer_signature.jws;
+    const payloadHash = receipt.issuer_signature.payload_hash;
+    const kid = receipt.issuer_signature.kid;
+    task.issuerSignature = receipt.issuer_signature;
+
+    useStableKey();
+    writeLegacyArtifact();
+    enableRoot();
+    assert.notEqual(getIssuerPublicKeyJwk().kid, kid);
+    getReceiptMerkleTree().appendReceipt(taskId, 'row-after-rotation');
+    const entry = { receipt_snapshot: { issuer_signature: { ...receipt.issuer_signature } } };
+    stampCoveringTreeHead(receipt);
+    assert.equal(receipt.issuer_signature.jws, jws);
+    assert.equal(receipt.issuer_signature.payload_hash, payloadHash);
+    assert.equal(receipt.issuer_signature.kid, kid);
+    assert.equal(receipt.covering_head.schema, COVERING_HEAD_SCHEMA);
+    assert.equal(receipt.covering_head.signed, false);
+    assert.notEqual(receipt.covering_head.tree_head_hash, decodeReceiptClaims(receipt).tree_head_hash);
+    assert.equal(JSON.parse(Buffer.from(jws.split('.')[1], 'base64url').toString('utf8')).tree_head_hash, decodeReceiptClaims(receipt).tree_head_hash);
+
+    const again = buildReceipt(task, { signingSecret: 's', agentId: 4, persistSignature: true });
+    assert.equal(again.issuer_signature.jws, jws);
+    assert.equal(again.issuer_signature.payload_hash, payloadHash);
+    assert.equal(task.issuerSignature.jws, jws);
+    assert.equal(entry.receipt_snapshot.issuer_signature.jws, jws);
+  } finally {
+    resetReceiptMerkleTree();
+    restoreEnv(prev);
+  }
+});
+
 test('explicit chain id and kid binding', () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
+    writeLegacyArtifact();
     enableRoot();
     process.env.ISSUER_ROOT_CHAIN_ID = 'eip155:8453';
     const receipt = buildReceipt(paidTask('xfuel-chain-explicit'), { signingSecret: 's', agentId: 4 });
@@ -535,9 +654,32 @@ test('freeze and legacy-proof routes are 404 until the flag is on', async () => 
         tx_hash: `0x${'ef'.repeat(32)}`,
       }],
     }));
-    enableRoot();
+    enableRoot({ check: 'strict' });
     process.env.ISSUER_ROOT_FREEZE_FILE = freezeFile;
     process.env.ISSUER_ROOT_LEGACY_SET = setFile;
+    process.env.ISSUER_ROOT_RPC_URL = 'http://127.0.0.1:9';
+    process.env.ISSUER_ROOT_RPC_URL_2 = 'http://127.0.0.1:10';
+    const frozen = FROZEN.encodeEventLog('Frozen', [
+      `0x${artifact.universe_id}`,
+      artifact.root,
+      artifact.enumerated_count,
+      10,
+      1,
+    ]);
+    const committed = committedLog(1, process.env.ISSUER_ROOT_HASH);
+    const mismatched = FROZEN.encodeEventLog('Frozen', [
+      `0x${artifact.universe_id}`,
+      artifact.root,
+      artifact.enumerated_count + 1,
+      10,
+      1,
+    ]);
+    await assert.rejects(
+      () => assertIssuerRootStartup({ fetchImpl: pairFetch(committed, { frozen: mismatched }).fetchImpl }),
+      /does not match the Frozen log/,
+    );
+    assert.equal(freezeDocumentFor(artifact.universe_id), null);
+    await assertIssuerRootStartup({ fetchImpl: pairFetch(committed, { frozen }).fetchImpl });
 
     const freeze = await fetch(`http://127.0.0.1:${port}/freeze/${artifact.universe_id}`);
     assert.equal(freeze.status, 200);

@@ -16,12 +16,14 @@ Restart the process after changing these variables. The key check and the finali
 | `ISSUER_ROOT_SEQ` | `rootSeq` of a commit that has already finalized. Integer ≥ 1. |
 | `ISSUER_ROOT_HASH` | `rootHash` from that commit's `RootCommitted` log. 32 bytes. Stored lowercase with a `0x` prefix. |
 | `ISSUER_ROOT_STARTUP_CHECK` | `strict` (default when the flag is on) or `skip`. |
-| `ISSUER_ROOT_RPC_URL` | Used only by the strict startup check. Falls back to `BASE_RPC_URL`, then `SETTLEMENT_RPC_URL`. |
-| `ISSUER_ROOT_CUTOVER` | `pause` stops issuance. `off` (default) does not. |
-| `ISSUER_ROOT_FREEZE_FILE` | JSON file of freeze facts. See below. |
-| `ISSUER_ROOT_LEGACY_SET` | JSON artifact from the legacy Merkle builder. |
+| `ISSUER_ROOT_ALLOW_SKIP` | Must be `I_UNDERSTAND` or `skip` refuses to start. `skip` logs an error and does not read the chain. |
+| `ISSUER_ROOT_RPC_URL` | First RPC for the strict startup check. Falls back to `BASE_RPC_URL`, then `SETTLEMENT_RPC_URL`. |
+| `ISSUER_ROOT_RPC_URL_2` | Second RPC. Strict mode requires this and the first URL to be different hosts. |
+| `ISSUER_ROOT_CUTOVER` | `pause` stops issuance until the v11 config is complete. `off` is the default. |
+| `ISSUER_ROOT_FREEZE_FILE` | JSON file of freeze facts. Checked against `Frozen` at startup. |
+| `ISSUER_ROOT_LEGACY_SET` | JSON artifact from the legacy Merkle builder. Required before v11 issuance. |
 
-Signing never reads the chain. `strict` calls `eth_chainId` and `eth_getLogs` once, at startup, with `toBlock: finalized`. The log must be the single `RootCommitted` for `ISSUER_ROOT_SEQ`, and its `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, or an unreachable RPC refuses to start. `skip` does not call the RPC. `skip` does not allow an unset `ISSUER_PRIVATE_KEY`.
+Signing never reads the chain. `strict` asks two RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error. It still refuses an unset `ISSUER_PRIVATE_KEY`.
 
 If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs.
 
@@ -42,7 +44,7 @@ The signed object, inside the JWS and the canonical preimage:
 
 `issuer_root.kid`, the JWS `kid`, and the thumbprint of `issuer_jwk` are the same value. The canonical allowlist includes `issuer_root`. Payment payload version is 11. Refusal schema is `chit402.refusal.v2` and its payload version is 3 (payload version 2 is already the history pin on `chit402.refusal.v1`). The issuer-history JWS payload carries the same object, which seals a new history version. Older history bytes stay fetchable.
 
-A receipt that already has a JWS is not re-signed into v11. A tree-head restamp of a pre-v11 receipt is skipped once v11 is on, so its `payload_hash` stays the one in the legacy freeze.
+A receipt that already has a JWS is not re-signed. While the issuer root is on, a later covering root is an unsigned `covering_head` sidecar (`chit402.covering_head.v1`, `signed: false`). The stored `issuer_signature.jws` bytes stay put across a key rotation and a tree-head update. Flag-off v10 may still reseal `tree_head_hash` inside that same claim set. v9 and older are never restamped.
 
 ## Cutover pause
 
@@ -53,9 +55,9 @@ The pause is config, then a restart:
 1. Set `ISSUER_ROOT_CUTOVER=pause`. Leave `ISSUER_ROOT_ENABLED` unset. Restart. New payment receipts, refusals, and foreign-ingest JWS signatures throw `issuer_root_cutover_pause`. Tree-head restamps are skipped. Receipts that already have a JWS still serve.
 2. Run the read-only builder (below) against the book. It does not sign.
 3. The genesis Safe commit freezes that root. Wait until the commit is finalized.
-4. Set `ISSUER_ROOT_ENABLED=true`, `ISSUER_ROOT_REGISTRY`, `ISSUER_ROOT_HASH`, `ISSUER_ROOT_SEQ`, and a stable `ISSUER_PRIVATE_KEY`. Restart. The strict startup check reads the finalized log once. Issuance resumes as v11.
+4. Set `ISSUER_ROOT_ENABLED=true`, `ISSUER_ROOT_REGISTRY`, `ISSUER_ROOT_HASH`, `ISSUER_ROOT_SEQ`, `ISSUER_ROOT_LEGACY_SET` to the artifact from step 2, `ISSUER_ROOT_RPC_URL`, `ISSUER_ROOT_RPC_URL_2`, and a stable `ISSUER_PRIVATE_KEY`. Restart. The strict startup check reads both RPCs at one finalized block. Issuance resumes as v11.
 
-The pause stays in force until that full v11 config is set. `ISSUER_ROOT_SEQ` alone does not resume, and it does not issue another v10 receipt. That is the gap test: every hash from before the pause is in the legacy set, nothing is signed during the pause, and every hash after resume is v11 and outside the set.
+The pause stays in force until that full v11 config is set. `ISSUER_ROOT_SEQ` alone does not resume, and it does not issue another v10 receipt. Turning the flag on before `ISSUER_ROOT_LEGACY_SET` names a written snapshot also pauses issuance, even when `ISSUER_ROOT_CUTOVER` is `off`. That is the gap test: every hash from before the pause is in the legacy set, nothing is signed during the pause, and every hash after resume is v11 and outside the set.
 
 ## Legacy Merkle set
 
@@ -76,6 +78,21 @@ Tree, for the verify package:
 The contract branch `cursor/chit-issuer-root-contract` was not on origin when this was written. Vectors: `services/gateway/test/fixtures/legacy-merkle-vectors.json`.
 
 `GET /receipt/:id/legacy-proof` serves an inclusion proof from `ISSUER_ROOT_LEGACY_SET`. 404 when the flag is off or the id is not a leaf. `chit-` and `xfuel-` ids match.
+
+The JSON uses these names. The verifier reads `universe_id` and `enumerated_count`.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `chit402.legacy_proof.v1` |
+| `task_id` | Receipt id as stored in the artifact |
+| `payload_hash` | 64 hex characters, no `0x` prefix |
+| `index` | Leaf index after the ascending sort |
+| `enumerated_count` | Receipt count in the frozen set. Not `leafCount`. |
+| `root` | Merkle root, `0x` plus 32 bytes |
+| `universe_id` | 64 hex characters, no `0x` prefix. Not `universeId`. |
+| `leaf` | Leaf hash, 64 hex characters |
+| `proof` | `{ hash, position }` steps. `position` is `left` or `right`. |
+| `tree` | The four rule strings: `leaf`, `node`, `sort`, `odd` |
 
 ## Universe id for `legacy_receipts_pre_v11`
 
@@ -126,4 +143,4 @@ On an export-coverage snapshot, a bid-board window, or any other universe, `univ
 | `freeze_head.blockhash` | `0x` plus 32 bytes |
 | `tx_hash` | Safe transaction hash, `0x` plus 32 bytes |
 
-The gateway adds `issuer_root` from its own config and signs. It does not read the chain on this route. A stranger checks the document against the `Frozen` log field by field (decoded ABI values), not by comparing JSON bytes to the log.
+Startup, in strict mode, reads each `Frozen` log at the same finalized block on both RPCs. `universeHash`, `enumeratedCount`, and `frozenBlock` come from the log. `blockhash` is the hash of that log's block. The file's `freeze_head.chain_id` must equal `ISSUER_ROOT_CHAIN_ID`. A mismatch refuses to start. The route then signs only a file row that still matches those startup facts. It does not read the chain again. A `skip` startup does not sign a freeze document. A stranger still checks the document against the `Frozen` log field by field (decoded ABI values).

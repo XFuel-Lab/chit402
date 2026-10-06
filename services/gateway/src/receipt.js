@@ -1167,24 +1167,72 @@ function coveringHeadStale(cachedClaims, taskId) {
  * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
+/** Unsigned later covering root. Never a replacement for issuer_signature. */
+export const COVERING_HEAD_SCHEMA = 'chit402.covering_head.v1';
+
 /**
- * A tree-head restamp re-signs the stored claims with a new payload_hash.
- * During the cutover pause that would put a receipt in neither set, so it
- * is skipped. Once v11 is on, a pre-v11 receipt is not restamped either:
- * its payload_hash stays the one in the legacy freeze.
+ * v11, and any receipt served while the issuer root is on, keeps the JWS
+ * that was stored. A flag-off v10 receipt may still be restamped the way
+ * main does, except during the cutover pause.
+ */
+export function storedJwsImmutable(receipt) {
+  if (issuerRootActive()) return true;
+  const claims = decodeReceiptClaims(receipt);
+  const version = Number(claims?.payload_version ?? receipt?.issuer_signature?.payload_version);
+  return Number.isFinite(version) && version >= ISSUER_ROOT_PAYLOAD_VERSION;
+}
+
+/**
+ * A tree-head restamp re-signs the stored claims. That path is only the
+ * flag-off v10 refresh. It does not run for v11, and it does not run while
+ * the issuer root is on or issuance is paused.
  */
 export function treeHeadRestampAllowed(receipt) {
+  if (storedJwsImmutable(receipt)) return false;
   if (isCutoverPaused()) return false;
-  if (!issuerRootActive()) return true;
-  const claims = decodeReceiptClaims(receipt);
-  const version = Number(claims?.payload_version);
-  if (Number.isFinite(version) && version < ISSUER_ROOT_PAYLOAD_VERSION) return false;
   return true;
 }
 
+function attachCoveringHeadSidecar(receipt, claims) {
+  const taskId = receipt?.task_id;
+  if (!taskId) return;
+  const root = getReceiptMerkleTree().prefixRoot(taskId);
+  if (!root) return;
+  const signed = claims && Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')
+    ? (claims.tree_head_hash ?? null)
+    : null;
+  if (signed === root) return;
+  receipt.covering_head = {
+    schema: COVERING_HEAD_SCHEMA,
+    signed: false,
+    task_id: taskId,
+    tree_head_hash: root,
+    signed_tree_head_hash: signed,
+  };
+}
+
+/**
+ * Later covering root for a stored receipt.
+ * v11 leaves issuer_signature.jws byte-for-byte and records the new root on
+ * covering_head, which is unsigned. Flag-off v10 may still reseal that one
+ * claim inside the JWS. v9 and older are returned unchanged.
+ * @param {object} receipt
+ */
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
-  if (!treeHeadRestampAllowed(receipt)) return receipt;
+  if (storedJwsImmutable(receipt) || !treeHeadRestampAllowed(receipt)) {
+    const original = receipt.issuer_signature;
+    const jws = original.jws;
+    const kid = original.kid;
+    const preimage = original.canonical_preimage;
+    const payloadHash = original.payload_hash;
+    if (storedJwsImmutable(receipt)) attachCoveringHeadSidecar(receipt, decodeReceiptClaims(receipt));
+    original.jws = jws;
+    if (kid) original.kid = kid;
+    if (preimage !== undefined) original.canonical_preimage = preimage;
+    if (payloadHash !== undefined) original.payload_hash = payloadHash;
+    return receipt;
+  }
   const claims = decodeReceiptClaims(receipt);
   if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
@@ -2111,6 +2159,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // Late session assign is a child receipt — never mutate genesis session claims.
   // A paid null claim_id stays cached until a book seat exists. Session
   // changes do not rewrite it. A legacy JWS that omits claim_id is not rewritten.
+  let coveringHead = null;
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
@@ -2119,15 +2168,23 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
-      // Refresh the covering head inside the stored claim set. Do not drop
+      // A stored JWS is not replaced when it is immutable (v11, or the issuer
+      // root is on). The later root is an unsigned sidecar. Flag-off v10 may
+      // still reseal tree_head_hash inside the same claim set. Do not drop
       // the JWS and call signReceiptEcdsa: that would issue a new payload.
+      const before = issuer_signature.jws;
       const refreshed = stampCoveringTreeHead({
         task_id: draft.task_id,
         issuer_signature,
       });
       issuer_signature = refreshed.issuer_signature;
+      if (storedJwsImmutable({ issuer_signature, task_id: draft.task_id }) && issuer_signature.jws !== before) {
+        issuer_signature.jws = before;
+      }
+      coveringHead = refreshed.covering_head || null;
       if (persistSignature && task && typeof task === 'object') {
         task.issuerSignature = issuer_signature;
+        if (coveringHead) task.coveringHead = coveringHead;
       }
     }
   }
@@ -2181,6 +2238,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     proof: draft.proof,
     links: draft.links,
     issuer_signature,
+    ...(coveringHead ? { covering_head: coveringHead } : {}),
   };
 
   if (task.meta?.refund?.status === 'refund_owed') {

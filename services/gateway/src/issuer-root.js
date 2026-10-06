@@ -14,26 +14,45 @@
  */
 import fs from 'fs';
 import { Interface, getAddress, id, zeroPadValue, toBeHex } from 'ethers';
+import logger from './logger.js';
 import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
-import { legacyProofFromArtifact } from './legacy-receipt-merkle.js';
+import { LEGACY_SET_SCHEMA, legacyProofFromArtifact } from './legacy-receipt-merkle.js';
 
 export const ISSUER_ROOT_PAYLOAD_VERSION = 11;
 export const DEFAULT_ISSUER_ROOT_CHAIN_ID = 'eip155:84532';
 export const ISSUER_ROOT_SCHEMA_VERSION = 1;
 export const FREEZE_SCHEMA = 'chit402.freeze.v1';
 export const FREEZE_JWT_TYP = 'chit402-freeze+jwt';
+export const SKIP_ACK = 'I_UNDERSTAND';
+export const SKIP_LOG = 'ISSUER_ROOT_STARTUP_CHECK=skip: chain finality was NOT checked. ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND is set. Do not use this on a host that issues receipts.';
 export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
 export const REFUSAL_PAYLOAD_VERSION_V2 = 3;
 
 const ROOT_COMMITTED_ABI = 'event RootCommitted(uint64 indexed rootSeq, bytes32 rootHash, uint64 historyVersion, bytes32 historySnapshot)';
 const ROOT_COMMITTED = new Interface([ROOT_COMMITTED_ABI]);
 export const ROOT_COMMITTED_TOPIC = id('RootCommitted(uint64,bytes32,uint64,bytes32)');
+const FROZEN_ABI = 'event Frozen(bytes32 indexed universeId, bytes32 universeHash, uint64 enumeratedCount, uint64 frozenBlock, uint64 indexed rootSeq)';
+const FROZEN = new Interface([FROZEN_ABI]);
+export const FROZEN_TOPIC = id('Frozen(bytes32,bytes32,uint64,uint64,uint64)');
+
+/** Facts from the startup Frozen-log check. Request handlers do not read the chain. */
+const startupState = {
+  verified: false,
+  skipped: false,
+  freezes: new Map(),
+};
+
+export function _resetIssuerRootStartupState() {
+  startupState.verified = false;
+  startupState.skipped = false;
+  startupState.freezes = new Map();
+}
 
 const HEX_32 = /^0x[0-9a-f]{64}$/;
 
 export class IssuancePausedError extends Error {
   constructor() {
-    super('Issuance is paused for the legacy_receipts_pre_v11 cutover. Set ISSUER_ROOT_ENABLED=true with ISSUER_ROOT_SEQ, ISSUER_ROOT_HASH, and ISSUER_ROOT_REGISTRY after the genesis commit finalizes.');
+    super('Issuance is paused. Set ISSUER_ROOT_CUTOVER off only after ISSUER_ROOT_LEGACY_SET names a written legacy_receipts_pre_v11 snapshot and the v11 root config is complete.');
     this.name = 'IssuancePausedError';
     this.code = 'issuer_root_cutover_pause';
   }
@@ -101,6 +120,8 @@ export function readIssuerRootConfig() {
     || process.env.SETTLEMENT_RPC_URL
     || '',
   ).trim() || null;
+  const rpcUrl2 = String(process.env.ISSUER_ROOT_RPC_URL_2 || '').trim() || null;
+  const rpcUrls = [rpcUrl, rpcUrl2].filter((url, index, all) => url && all.indexOf(url) === index);
   const keyConfigured = !blank(process.env.ISSUER_PRIVATE_KEY);
   const ready = enabled
     && chainNumeric != null
@@ -125,6 +146,8 @@ export function readIssuerRootConfig() {
     hashInvalid: hash.invalid,
     startupCheck,
     rpcUrl,
+    rpcUrl2,
+    rpcUrls,
     keyConfigured,
     freezeFile: blank(process.env.ISSUER_ROOT_FREEZE_FILE) ? null : String(process.env.ISSUER_ROOT_FREEZE_FILE).trim(),
     legacySetFile: blank(process.env.ISSUER_ROOT_LEGACY_SET) ? null : String(process.env.ISSUER_ROOT_LEGACY_SET).trim(),
@@ -138,12 +161,33 @@ export function issuerRootActive() {
 }
 
 /**
- * Pause holds while cutover mode is on and v11 is not ready.
- * v11 resumes once the flag, seq, hash, and registry are all set.
+ * A written legacy_receipts_pre_v11 artifact. Missing, unreadable, or the
+ * wrong schema means the snapshot does not exist yet.
+ */
+export function legacySnapshotReady() {
+  const file = readIssuerRootConfig().legacySetFile;
+  if (!file || !fs.existsSync(file)) return false;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return parsed?.schema === LEGACY_SET_SCHEMA
+      && typeof parsed.universe_id === 'string'
+      && parsed.universe_id.length > 0
+      && Number.isInteger(parsed.enumerated_count)
+      && parsed.enumerated_count >= 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Explicit pause, or the flag is on and the legacy snapshot is not on disk yet.
+ * A partial root config does not resume, and it does not fall through to v10.
  */
 export function isCutoverPaused() {
   const cfg = readIssuerRootConfig();
-  return cfg.cutover === 'pause' && !cfg.ready;
+  if (cfg.cutover === 'pause' && !cfg.ready) return true;
+  if (cfg.enabled && cfg.ready && !legacySnapshotReady()) return true;
+  return false;
 }
 
 export function assertIssuanceOpen() {
@@ -155,6 +199,7 @@ export function assertIssuanceOpen() {
     }
     throw new Error('ISSUER_ROOT_ENABLED requires a valid ISSUER_ROOT_CHAIN_ID, ISSUER_ROOT_REGISTRY, ISSUER_ROOT_SEQ (>= 1), and ISSUER_ROOT_HASH');
   }
+  if (cfg.enabled && cfg.ready && !legacySnapshotReady()) throw new IssuancePausedError();
 }
 
 /**
@@ -222,50 +267,199 @@ async function rpcCall(url, method, params, fetchImpl) {
   return body.result;
 }
 
+function hexQty(value) {
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number(value);
+  return Number.NaN;
+}
+
+function normHash(value) {
+  const text = String(value || '').trim().toLowerCase();
+  const hex = text.startsWith('0x') ? text : `0x${text}`;
+  return HEX_32.test(hex) ? hex : null;
+}
+
 /**
- * One read of the finalized RootCommitted log for the configured seq.
- * Called only from startup. Signing does not call this.
+ * Finalized block plus the RootCommitted log, from one RPC.
+ * The log query uses the block number, not the tag, so both RPCs are
+ * asked for the same height.
  */
-export async function assertFinalizedCommit(cfg, fetchImpl) {
-  if (!cfg.rpcUrl) {
-    throw new Error('ISSUER_ROOT_STARTUP_CHECK=strict needs ISSUER_ROOT_RPC_URL, BASE_RPC_URL, or SETTLEMENT_RPC_URL');
-  }
-  const chainHex = await rpcCall(cfg.rpcUrl, 'eth_chainId', [], fetchImpl);
-  const chainNum = Number(chainHex);
+async function readFinalizedCommit(url, cfg, fetchImpl) {
+  const chainNum = hexQty(await rpcCall(url, 'eth_chainId', [], fetchImpl));
   if (chainNum !== cfg.chainNumeric) {
     throw new Error(`issuer root rpc chain ${chainNum} does not match ${cfg.chainId}`);
   }
+  const block = await rpcCall(url, 'eth_getBlockByNumber', ['finalized', false], fetchImpl);
+  const blockNumber = hexQty(block?.number);
+  const blockHash = normHash(block?.hash);
+  if (!Number.isInteger(blockNumber) || blockNumber < 0 || !blockHash) {
+    throw new Error('issuer root rpc returned no finalized block');
+  }
   const topic1 = zeroPadValue(toBeHex(cfg.seq), 32);
-  const logs = await rpcCall(cfg.rpcUrl, 'eth_getLogs', [{
+  const logs = await rpcCall(url, 'eth_getLogs', [{
     address: cfg.registry,
     topics: [ROOT_COMMITTED_TOPIC, topic1],
     fromBlock: '0x0',
-    toBlock: 'finalized',
+    toBlock: toBeHex(blockNumber),
   }], fetchImpl);
   if (!Array.isArray(logs) || logs.length !== 1) {
     throw new Error(`issuer root seq ${cfg.seq} is not a single finalized RootCommitted log`);
   }
-  const parsed = ROOT_COMMITTED.parseLog({ topics: logs[0].topics, data: logs[0].data });
-  const got = String(parsed.args.rootHash).toLowerCase();
-  if (got !== cfg.hash) {
+  const log = logs[0];
+  const parsed = ROOT_COMMITTED.parseLog({ topics: log.topics, data: log.data });
+  const rootHash = normHash(parsed.args.rootHash);
+  const logBlock = hexQty(log.blockNumber);
+  if (!rootHash || !Number.isInteger(logBlock)) {
+    throw new Error('issuer root log is missing rootHash or blockNumber');
+  }
+  if (logBlock > blockNumber) {
+    throw new Error('issuer root log is after the finalized block');
+  }
+  return { blockNumber, blockHash, rootHash, logBlock, data: String(log.data).toLowerCase() };
+}
+
+/**
+ * Two RPCs must agree on the finalized block and on the commit log.
+ * Called only from startup. Signing does not call this.
+ */
+export async function assertFinalizedCommit(cfg, fetchImpl) {
+  if (!cfg.rpcUrls || cfg.rpcUrls.length < 2) {
+    throw new Error('ISSUER_ROOT_STARTUP_CHECK=strict needs two independent RPCs: ISSUER_ROOT_RPC_URL and ISSUER_ROOT_RPC_URL_2');
+  }
+  const reads = [];
+  for (const url of cfg.rpcUrls) {
+    reads.push(await readFinalizedCommit(url, cfg, fetchImpl));
+  }
+  const [left, right] = reads;
+  if (left.blockNumber !== right.blockNumber || left.blockHash !== right.blockHash) {
+    throw new Error('issuer root RPCs disagree on the finalized block');
+  }
+  if (left.rootHash !== right.rootHash || left.logBlock !== right.logBlock || left.data !== right.data) {
+    throw new Error('issuer root RPCs disagree on the RootCommitted log');
+  }
+  if (left.rootHash !== cfg.hash) {
     throw new Error(`issuer root hash mismatch at seq ${cfg.seq}`);
+  }
+  return left;
+}
+
+function loadFreezeRecords(file) {
+  if (!file) return [];
+  let parsed;
+  try {
+    parsed = readJsonFile(file);
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(parsed) ? parsed : parsed?.freezes;
+  if (!Array.isArray(list)) return null;
+  return list;
+}
+
+/**
+ * Frozen log at the agreed finalized height. blockhash is the hash of the
+ * log's own block, which is what freeze_head.blockhash must equal.
+ */
+async function readFrozen(url, cfg, record, toBlock, fetchImpl) {
+  const universeHex = `0x${String(record.universe_id).toLowerCase().replace(/^0x/, '')}`;
+  const logs = await rpcCall(url, 'eth_getLogs', [{
+    address: cfg.registry,
+    topics: [FROZEN_TOPIC, zeroPadValue(universeHex, 32)],
+    fromBlock: '0x0',
+    toBlock,
+  }], fetchImpl);
+  if (!Array.isArray(logs) || logs.length !== 1) {
+    throw new Error(`freeze ${universeHex} is not a single finalized Frozen log`);
+  }
+  const log = logs[0];
+  const parsed = FROZEN.parseLog({ topics: log.topics, data: log.data });
+  const universeHash = normHash(parsed.args.universeHash);
+  const enumeratedCount = hexQty(parsed.args.enumeratedCount);
+  const frozenBlock = hexQty(parsed.args.frozenBlock);
+  const logBlock = hexQty(log.blockNumber);
+  if (!universeHash || !Number.isInteger(enumeratedCount) || !Number.isInteger(frozenBlock) || !Number.isInteger(logBlock)) {
+    throw new Error('Frozen log is missing universeHash, enumeratedCount, or frozenBlock');
+  }
+  if (logBlock !== frozenBlock) {
+    throw new Error('Frozen log block does not equal frozenBlock');
+  }
+  const block = await rpcCall(url, 'eth_getBlockByNumber', [toBeHex(frozenBlock), false], fetchImpl);
+  const blockhash = normHash(block?.hash);
+  if (!blockhash || hexQty(block?.number) !== frozenBlock) {
+    throw new Error('freeze block hash is missing');
+  }
+  return { universeHash, enumeratedCount, frozenBlock, blockhash, data: String(log.data).toLowerCase() };
+}
+
+function freezeFactsMatch(record, chain) {
+  return normHash(record.universe_hash) === chain.universeHash
+    && record.enumerated_count === chain.enumeratedCount
+    && record.freeze_head.frozenBlock === chain.frozenBlock
+    && normHash(record.freeze_head.blockhash) === chain.blockhash
+    && record.freeze_head.chain_id === readIssuerRootConfig().chainId;
+}
+
+async function assertFreezeFile(cfg, finalized, fetchImpl) {
+  startupState.freezes = new Map();
+  if (!cfg.freezeFile) return;
+  const records = loadFreezeRecords(cfg.freezeFile);
+  if (records == null) throw new Error('ISSUER_ROOT_FREEZE_FILE is not a freeze list');
+  const toBlock = toBeHex(finalized.blockNumber);
+  for (const record of records) {
+    if (!freezeRecordOk(record)) throw new Error('ISSUER_ROOT_FREEZE_FILE has a malformed freeze');
+    const reads = [];
+    for (const url of cfg.rpcUrls) {
+      reads.push(await readFrozen(url, cfg, record, toBlock, fetchImpl));
+    }
+    const [left, right] = reads;
+    if (left.universeHash !== right.universeHash
+      || left.enumeratedCount !== right.enumeratedCount
+      || left.frozenBlock !== right.frozenBlock
+      || left.blockhash !== right.blockhash
+      || left.data !== right.data) {
+      throw new Error('issuer root RPCs disagree on a Frozen log');
+    }
+    if (!freezeFactsMatch(record, left)) {
+      throw new Error(`freeze ${record.universe_id} does not match the Frozen log`);
+    }
+    const id = String(record.universe_id).toLowerCase().replace(/^0x/, '');
+    startupState.freezes.set(id, left);
   }
 }
 
 /**
  * Startup gate. No-op when the flag is off.
- * strict (default when enabled) reads the chain once.
- * skip does not read the chain. Either way, an unset issuer key refuses to start.
- * @param {{ fetchImpl?: typeof fetch }} [opts]
+ * strict (default when enabled) reads two RPCs at the same finalized block.
+ * skip reads nothing, and only when ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND.
+ * An unset issuer key refuses to start either way.
+ * @param {{ fetchImpl?: typeof fetch, log?: Function }} [opts]
  */
-export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch } = {}) {
+export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, log = null } = {}) {
   const cfg = readIssuerRootConfig();
+  startupState.verified = false;
+  startupState.skipped = false;
+  startupState.freezes = new Map();
   if (!cfg.enabled) return { checked: false, reason: 'disabled' };
   const problem = configError(cfg);
   if (problem) throw new Error(problem);
-  if (cfg.startupCheck === 'skip') return { checked: false, reason: 'skip' };
-  await assertFinalizedCommit(cfg, fetchImpl);
-  return { checked: true, reason: 'finalized', seq: cfg.seq };
+  if (cfg.startupCheck === 'skip') {
+    if (String(process.env.ISSUER_ROOT_ALLOW_SKIP || '').trim() !== SKIP_ACK) {
+      throw new Error('ISSUER_ROOT_STARTUP_CHECK=skip requires ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND');
+    }
+    const emit = typeof log === 'function' ? log : (fields, message) => logger.error(fields, message);
+    emit({
+      chainId: cfg.chainId,
+      seq: cfg.seq,
+      registry: cfg.registry,
+    }, SKIP_LOG);
+    startupState.skipped = true;
+    return { checked: false, reason: 'skip' };
+  }
+  const finalized = await assertFinalizedCommit(cfg, fetchImpl);
+  await assertFreezeFile(cfg, finalized, fetchImpl);
+  startupState.verified = true;
+  return { checked: true, reason: 'finalized', seq: cfg.seq, blockNumber: finalized.blockNumber };
 }
 
 function readJsonFile(file) {
@@ -294,25 +488,23 @@ function freezeRecordOk(row) {
 }
 
 /**
- * Signed chit402.freeze.v1, or null when the flag is off, the file is
- * missing, or the universe id is unknown. The facts come from the static
- * file. issuer_root comes from this process's config. No RPC.
+ * Signed chit402.freeze.v1, or null when the flag is off, the id is unknown,
+ * or the file does not match the Frozen log checked at startup.
+ * Signing does not read the chain. A skip startup never verified a log, so
+ * it does not sign a freeze document.
  * @param {string} universeId
  */
 export function freezeDocumentFor(universeId) {
-  if (!issuerRootActive()) return null;
+  if (!issuerRootActive() || !startupState.verified || startupState.skipped) return null;
   const cfg = readIssuerRootConfig();
   if (!cfg.freezeFile) return null;
-  let parsed;
-  try {
-    parsed = readJsonFile(cfg.freezeFile);
-  } catch {
-    return null;
-  }
-  const list = Array.isArray(parsed) ? parsed : parsed?.freezes;
-  if (!Array.isArray(list)) return null;
+  const list = loadFreezeRecords(cfg.freezeFile);
+  if (!list) return null;
   const row = list.find((item) => sameUniverse(item?.universe_id, universeId));
   if (!row || !freezeRecordOk(row)) return null;
+  const id = String(row.universe_id).toLowerCase().replace(/^0x/, '');
+  const chain = startupState.freezes.get(id);
+  if (!chain || !freezeFactsMatch(row, chain)) return null;
   const kid = getIssuerKid();
   const jwk = getIssuerPublicKeyJwk();
   const claims = {

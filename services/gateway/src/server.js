@@ -849,14 +849,24 @@ export function createApp() {
     });
   });
   setReceiptBoundHook((receipt, entry) => {
+    const storedJws = receipt?.issuer_signature?.jws || null;
     stampCoveringTreeHead(receipt);
+    const version = Number(receipt?.issuer_signature?.payload_version);
+    const immutable = issuerRootActive() || (Number.isFinite(version) && version >= 11);
+    if (immutable && storedJws && receipt?.issuer_signature && receipt.issuer_signature.jws !== storedJws) {
+      receipt.issuer_signature.jws = storedJws;
+    }
     const snap = entry?.receipt_snapshot;
     if (!snap || !receipt) return;
-    if (receipt.issuer_signature) snap.issuer_signature = receipt.issuer_signature;
-    if (Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
+    if (receipt.covering_head) snap.covering_head = receipt.covering_head;
+    if (receipt.issuer_signature) {
+      const snapJws = snap.issuer_signature?.jws || null;
+      if (!(immutable && snapJws)) snap.issuer_signature = receipt.issuer_signature;
+    }
+    if (!immutable && Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
       snap.tree_head_hash = receipt.tree_head_hash ?? null;
     }
-    if (Object.prototype.hasOwnProperty.call(receipt, 'tolerance')) {
+    if (!immutable && Object.prototype.hasOwnProperty.call(receipt, 'tolerance')) {
       snap.tolerance = receipt.tolerance;
     }
   });
