@@ -510,10 +510,10 @@ test('backfill lists rows after epoch 1 and --apply writes them without publishi
   tree.byTask = new Map();
   tree._epochOpened = false;
   const rows = [
-    { task_id: 'before', row_hash: 'old' },
-    { task_id: 'epoch1-leaf', row_hash: 'h1' },
-    { task_id: 'after-1', row_hash: 'n1' },
-    { task_id: 'after-2', row_hash: 'n2' },
+    { agent_id: 7, task_id: 'before', seq: 1, prev_hash: null, row_hash: 'old' },
+    { agent_id: 7, task_id: 'epoch1-leaf', seq: 2, prev_hash: 'old', row_hash: 'h1' },
+    { agent_id: 7, task_id: 'after-1', seq: 3, prev_hash: 'h1', row_hash: 'n1' },
+    { agent_id: 7, task_id: 'after-2', seq: 4, prev_hash: 'n1', row_hash: 'n2' },
   ];
   const plan = planReceiptBackfill(tree, rows);
   assert.deepEqual(plan.append.map((row) => row.task_id), ['after-1', 'after-2']);
@@ -767,6 +767,116 @@ test('the committed pin passes the boot gate when RPC returns those transactions
     else process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS = prevFlag;
   }
   assert.equal(seen.size, pin.anchors.length);
+});
+
+test('an env root cannot replace the committed pin or skip RPC', async () => {
+  const { readReceiptLogPin } = await import('../src/receipt-log-anchor.js');
+  assert.throws(
+    () => readReceiptLogPin({
+      RECEIPT_LOG_EXPECTED_EPOCH: '1',
+      RECEIPT_LOG_EXPECTED_ROOT: 'ab'.repeat(32),
+    }),
+    (err) => err.code === 'bad_pin',
+  );
+  const pin = readReceiptLogPin({
+    RECEIPT_LOG_EXPECTED_EPOCH: '2',
+    RECEIPT_LOG_EXPECTED_ROOT: EPOCH2_OPENING_ROOT,
+  });
+  assert.ok(pin.anchors.length >= 19);
+  assert.ok(pin.epochs.some((row) => Number(row.epoch) === 2 && Number(row.opening_size) === 1));
+  const tree = new ReceiptMerkleTree();
+  for (const root of new Set(pin.anchors.filter((row) => row.in_journal !== false).map((row) => row.root))) {
+    tree.heads.push({ root });
+  }
+  await assert.rejects(
+    () => assertLatestBaseAnchor(tree, { pin, request: async () => null }),
+    (err) => err.code === 'anchor_rpc_missing',
+  );
+});
+
+test('epoch 2 opening is checked after the tree grows past one leaf', () => {
+  const dir = tmp();
+  const claims = epochRecordClaims();
+  const { jws, kid } = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
+  const record = {
+    ...claims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-tree-epoch+jwt',
+      payload_version: 1,
+      jws,
+      kid,
+    },
+  };
+  const lines = [
+    {
+      v: 1,
+      op: 'epoch_open',
+      epoch: 2,
+      prev_epoch_root: EPOCH1_FINAL_ROOT,
+      prev_epoch_size: 4,
+    },
+    {
+      v: 1,
+      op: 'leaf',
+      epoch: 2,
+      index: 0,
+      task_id: 'genesis',
+      kind: 'genesis',
+      preimage_b64: Buffer.from('not-the-epoch-2-opening').toString('base64'),
+    },
+    {
+      v: 1,
+      op: 'leaf',
+      epoch: 2,
+      index: 1,
+      task_id: 'later',
+      kind: 'receipt',
+      preimage_b64: Buffer.from('later-leaf|hh').toString('base64'),
+    },
+    { v: 1, op: 'epoch_record', record },
+  ];
+  fs.writeFileSync(path.join(dir, 'journal.jsonl'), `${lines.map((row) => JSON.stringify(row)).join('\n')}\n`);
+  assert.throws(() => new ReceiptMerkleTree().load(dir), (err) => err.code === 'root_mismatch');
+});
+
+test('backfill refuses duplicate seq rows whose agent_id was stripped', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { task_id: 'dup-a', seq: 2, prev_hash: 'aa', row_hash: 'bb' },
+    { task_id: 'dup-b', seq: 2, prev_hash: 'aa', row_hash: 'cc' },
+  ];
+  assert.throws(() => planReceiptBackfill(tree, rows), (err) => {
+    assert.equal(err.code, 'backfill_refused');
+    assert.ok(err.refusals.some((row) => row.reason === 'missing_agent_id' || row.reason === 'FORKED'));
+    return true;
+  });
+});
+
+test('a gateway epoch-1 record at size 3 is not final', () => {
+  const forged = {
+    epochs: [{
+      epoch: 1,
+      status: 'closed',
+      final_root: 'ab'.repeat(32),
+      final_size: 3,
+      genesis_digest: EPOCH1_GENESIS_DIGEST,
+      prev_epoch_root: null,
+      prev_epoch_size: 0,
+    }],
+    orphans: [],
+  };
+  const result = checkEpochLinks(forged);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'epoch1_root');
 });
 
 test('boot refuses a non-empty journal with no epoch record', () => {

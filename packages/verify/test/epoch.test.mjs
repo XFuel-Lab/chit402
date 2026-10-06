@@ -115,6 +115,19 @@ test('a forged epoch-1 root does not verify', () => {
   }).reason, 'epoch1_root');
 });
 
+test('epoch 1 at size 3 with a forged root does not verify', () => {
+  const result = verifyEpochLink({
+    schema: 'chit402.tree_head.v2',
+    payload_version: 2,
+    epoch: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 3,
+    genesis_digest: '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'epoch1_root');
+});
+
 test('verifyAnchoredRoot refuses a head whose epoch record is missing', async () => {
   const result = await verifyAnchoredRoot({
     receipt: { task_id: 't', row_hash: 'r' },

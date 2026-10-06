@@ -202,6 +202,12 @@ export function checkEpochLinks(claims) {
     if (i === 0) {
       if (row.prev_epoch_root != null) return { ok: false, reason: 'epoch1_has_prev' };
       if (Number(row.prev_epoch_size) !== 0) return { ok: false, reason: 'epoch1_size' };
+      if (row.final_root !== EPOCH1_FINAL_ROOT || Number(row.final_size) !== EPOCH1_FINAL_SIZE) {
+        return { ok: false, reason: 'epoch1_root' };
+      }
+      if (row.genesis_digest !== EPOCH1_GENESIS_DIGEST) {
+        return { ok: false, reason: 'epoch1_genesis' };
+      }
       continue;
     }
     const prev = epochs[i - 1];

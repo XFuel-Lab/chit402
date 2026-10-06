@@ -26,20 +26,7 @@ export function normalizeRoot(root) {
   return hex;
 }
 
-export function readReceiptLogPin(env = process.env) {
-  const epochEnv = env.RECEIPT_LOG_EXPECTED_EPOCH;
-  const rootEnv = env.RECEIPT_LOG_EXPECTED_ROOT;
-  if ((epochEnv != null && epochEnv !== '') || (rootEnv != null && rootEnv !== '')) {
-    const root = normalizeRoot(rootEnv);
-    const epoch = Number(epochEnv);
-    if (!root || !Number.isInteger(epoch) || epoch < 1) {
-      throw new ReceiptLogRefused(
-        'bad_pin',
-        'RECEIPT_LOG_EXPECTED_EPOCH and RECEIPT_LOG_EXPECTED_ROOT must both be set to an epoch number and a 32-byte root',
-      );
-    }
-    return { epoch, root, source: 'env' };
-  }
+function readPinFile(env) {
   const file = env.RECEIPT_LOG_PIN_FILE || PIN_FILE;
   if (!fs.existsSync(file)) return null;
   let parsed;
@@ -63,6 +50,54 @@ export function readReceiptLogPin(env = process.env) {
     anchors: Array.isArray(parsed.anchors) ? parsed.anchors : [],
     source: 'file',
     file,
+  };
+}
+
+/**
+ * The committed pin is always the gate: both epoch prefixes, the chain
+ * hash list, and the RPC checks. Env may only add a stricter current
+ * root. A value that disagrees with a closed epoch refuses boot.
+ */
+export function readReceiptLogPin(env = process.env) {
+  const filePin = readPinFile(env);
+  const epochEnv = env.RECEIPT_LOG_EXPECTED_EPOCH;
+  const rootEnv = env.RECEIPT_LOG_EXPECTED_ROOT;
+  const hasEpoch = epochEnv != null && String(epochEnv) !== '';
+  const hasRoot = rootEnv != null && String(rootEnv) !== '';
+  if (!hasEpoch && !hasRoot) return filePin;
+  if (!hasEpoch || !hasRoot) {
+    throw new ReceiptLogRefused(
+      'bad_pin',
+      'RECEIPT_LOG_EXPECTED_EPOCH and RECEIPT_LOG_EXPECTED_ROOT must both be set. They cannot replace the committed pin.',
+    );
+  }
+  const root = normalizeRoot(rootEnv);
+  const epoch = Number(epochEnv);
+  if (!root || !Number.isInteger(epoch) || epoch < 1) {
+    throw new ReceiptLogRefused(
+      'bad_pin',
+      'RECEIPT_LOG_EXPECTED_EPOCH and RECEIPT_LOG_EXPECTED_ROOT must both be set to an epoch number and a 32-byte root',
+    );
+  }
+  if (!filePin) {
+    throw new ReceiptLogRefused('bad_pin', 'env expected root cannot replace a missing receipt log pin file');
+  }
+  const pinned = filePin.epochs.find((row) => Number(row.epoch) === epoch);
+  if (!pinned) {
+    throw new ReceiptLogRefused('bad_pin', `env epoch ${epoch} is not in the committed pin`);
+  }
+  const pinnedRoot = normalizeRoot(pinned.root || pinned.opening_root);
+  const closed = Number(pinned.epoch) === 1 || pinned.status === 'closed' || (pinned.tree_size != null && !pinned.opening_root);
+  if (closed && root !== pinnedRoot) {
+    throw new ReceiptLogRefused(
+      'bad_pin',
+      `env root ${root} conflicts with the committed epoch ${epoch} root ${pinnedRoot}`,
+    );
+  }
+  return {
+    ...filePin,
+    stricter: root === pinnedRoot ? null : { epoch, root },
+    source: 'file',
   };
 }
 
@@ -104,6 +139,22 @@ export function assertJournalMatchesPin(tree, pin) {
       throw new ReceiptLogRefused(
         'pin_unmet',
         `epoch ${wanted.epoch} recomputed ${recomputed} does not match pin ${root}`,
+      );
+    }
+  }
+  if (pin?.stricter?.root) {
+    const leaves = epochLeaves(tree, Number(pin.stricter.epoch));
+    if (!leaves?.length) {
+      throw new ReceiptLogRefused(
+        'pin_unmet',
+        `env epoch ${pin.stricter.epoch} is not in the journal`,
+      );
+    }
+    const full = Buffer.from(epochRootOf(leaves)).toString('hex');
+    if (full !== pin.stricter.root) {
+      throw new ReceiptLogRefused(
+        'pin_unmet',
+        `epoch ${pin.stricter.epoch} root ${full} does not meet the stricter env root ${pin.stricter.root}`,
       );
     }
   }
@@ -285,12 +336,39 @@ export function planReceiptBackfill(tree, rows) {
   const list = Array.isArray(rows) ? rows : [];
   const refusals = [];
   const byAgent = new Map();
+  const unscoped = [];
   for (const row of list) {
     const id = Number(row?.agent_id);
-    if (!Number.isInteger(id) || id < 1) continue;
+    const hasChain = Boolean(row?.task_id) || row?.seq != null;
+    if (!Number.isInteger(id) || id < 1) {
+      if (hasChain) {
+        unscoped.push(row);
+        refusals.push({
+          task_id: row?.task_id ? String(row.task_id) : null,
+          reason: 'missing_agent_id',
+        });
+      }
+      continue;
+    }
     const group = byAgent.get(id) || [];
     group.push(row);
     byAgent.set(id, group);
+  }
+  if (unscoped.length > 0) {
+    const analysis = analyzeSeq(unscoped);
+    if (analysis.forked || analysis.status === 'FORKED' || analysis.duplicates.length > 0) {
+      refusals.push({
+        reason: 'FORKED',
+        gaps: analysis.gaps,
+        duplicates: analysis.duplicates,
+      });
+    } else if (analysis.gaps.length > 0 || analysis.status === 'gapped') {
+      refusals.push({
+        reason: 'gap',
+        gaps: analysis.gaps,
+        duplicates: analysis.duplicates,
+      });
+    }
   }
   for (const [agentId, group] of byAgent) {
     const analysis = analyzeSeq(group);

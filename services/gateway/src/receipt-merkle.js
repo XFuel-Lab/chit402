@@ -1202,11 +1202,22 @@ export class ReceiptMerkleTree {
             `epoch ${got.epoch} recomputed ${got.root} does not match the epoch record ${finalRoot}`,
           );
         }
-        if (want.status === 'open' && want.opening_root && got.tree_size === Number(want.opening_size) && got.root !== want.opening_root) {
-          throw new ReceiptLogRefused(
-            'root_mismatch',
-            `epoch ${got.epoch} opening root ${got.root} does not match the epoch record ${want.opening_root}`,
-          );
+        if (want.status === 'open' && want.opening_root) {
+          const size = Number(want.opening_size);
+          const leaves = got.leaves || [];
+          if (!Number.isInteger(size) || size < 1 || leaves.length < size) {
+            throw new ReceiptLogRefused(
+              'root_mismatch',
+              `epoch ${got.epoch} has ${leaves.length} leaves; the opening prefix requires ${want.opening_size}`,
+            );
+          }
+          const prefix = hex(rootOf(leaves.slice(0, size)));
+          if (prefix !== want.opening_root) {
+            throw new ReceiptLogRefused(
+              'root_mismatch',
+              `epoch ${got.epoch} opening root ${prefix} does not match the epoch record ${want.opening_root}`,
+            );
+          }
         }
       }
     }

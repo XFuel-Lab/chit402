@@ -27,6 +27,9 @@ export interface EpochTreeHead {
   prev_epoch_size?: number | null;
   prev_root?: string | null;
   bundle_index_hash?: string | null;
+  genesis_digest?: string | null;
+  final_root?: string | null;
+  final_size?: number | null;
 }
 
 export interface EpochRecordEntry {
@@ -73,14 +76,23 @@ export function verifyEpochLink(
 ): { ok: boolean; reason?: string } {
   const schema = acceptTreeHeadSchema(head);
   if (!schema.ok) return schema;
-  const epoch = head?.epoch == null ? 1 : Number(head.epoch);
+  const explicitEpoch = head?.epoch == null ? null : Number(head.epoch);
+  const epoch = explicitEpoch == null ? 1 : explicitEpoch;
   if (!Number.isInteger(epoch) || epoch < 1) return { ok: false, reason: 'bad_epoch' };
   if (epoch === 1) {
     if (head?.prev_epoch_root) return { ok: false, reason: 'epoch1_has_prev' };
-    const size = head?.tree_size == null ? null : Number(head.tree_size);
-    const root = typeof head?.root === 'string' ? head.root.replace(/^0x/, '').toLowerCase() : '';
-    if (size === EPOCH1_FINAL_SIZE && root && root !== EPOCH1_FINAL_ROOT) {
+    // A v1 head omits epoch. It is not an epoch-1 record.
+    if (explicitEpoch == null) return { ok: true };
+    const sizeRaw = head?.tree_size ?? head?.final_size;
+    const size = sizeRaw == null ? null : Number(sizeRaw);
+    const rootRaw = head?.root ?? head?.final_root;
+    const root = typeof rootRaw === 'string' ? rootRaw.replace(/^0x/, '').toLowerCase() : '';
+    if (size !== EPOCH1_FINAL_SIZE || root !== EPOCH1_FINAL_ROOT) {
       return { ok: false, reason: 'epoch1_root' };
+    }
+    const recordShape = head?.final_size != null || head?.genesis_digest != null;
+    if (recordShape && head?.genesis_digest !== EPOCH1_GENESIS_DIGEST) {
+      return { ok: false, reason: 'epoch1_genesis' };
     }
     return { ok: true };
   }
