@@ -332,7 +332,8 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('  Anchored receipt root');
   console.log('  ─────────────────────────────────────────────────');
   console.log(`  Root:          ${result.root || '—'}`);
-  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}`);
+  const unlogged = result.inclusion.unlogged_reason ? ` unlogged:${result.inclusion.unlogged_reason}` : '';
+  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}${unlogged}`);
   console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
   console.log(`  Solana:        ${result.solana.checked ? mark(result.solana.valid) : (result.solana.reason || 'not checked')}`);
   if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
@@ -410,6 +411,9 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
     const payload = verified.payload;
     if (JSON.stringify(payload.epochs ?? null) !== JSON.stringify(record.epochs ?? null)) return false;
     if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(record.orphans ?? [])) return false;
+    const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
+    const recordUnlogged = record.unlogged === undefined ? null : record.unlogged;
+    if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) return false;
     return true;
   }
   return false;

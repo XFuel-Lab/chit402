@@ -10,8 +10,12 @@
 import crypto from 'crypto';
 
 export const EPOCH_RECORD_SCHEMA = 'chit402.tree_epoch.v1';
+/** Roots and orphans only. Still valid. Kept in the journal when version 2 is appended. */
 export const EPOCH_RECORD_VERSION = 1;
+/** Version 2 adds the signed unlogged list. Epochs and orphans stay the version 1 bytes. */
+export const EPOCH_RECORD_VERSION_UNLOGGED = 2;
 export const EPOCH_RECORD_JWT_TYP = 'chit402-tree-epoch+jwt';
+export const UNLOGGED_REASONS = Object.freeze(['missing_row_hash', 'forked', 'depends_on_refused']);
 
 export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
 export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
@@ -176,6 +180,72 @@ export function rebuildEpoch1FromRows(rows, {
   };
 }
 
+/**
+ * Canonical unlogged rows. Key order is task_id, agent_id, reason.
+ * The hash is SHA-256 of JSON.stringify(this array). No row_hash is derived.
+ */
+export function canonicalUnloggedRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    task_id: String(row?.task_id || ''),
+    agent_id: row?.agent_id == null || row?.agent_id === '' ? null : Number(row.agent_id),
+    reason: String(row?.reason || ''),
+  }));
+}
+
+export function unloggedSection(rows) {
+  const list = canonicalUnloggedRows(rows);
+  const hash = crypto.createHash('sha256').update(JSON.stringify(list)).digest('hex');
+  return { count: list.length, hash, rows: list };
+}
+
+export function verifyUnloggedSection(section) {
+  if (!section || typeof section !== 'object') return { ok: false, reason: 'unlogged_missing' };
+  if (!Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
+  const list = canonicalUnloggedRows(section.rows);
+  if (JSON.stringify(list) !== JSON.stringify(section.rows)) {
+    return { ok: false, reason: 'unlogged_canonical' };
+  }
+  for (const row of list) {
+    if (!row.task_id) return { ok: false, reason: 'unlogged_task' };
+    if (!UNLOGGED_REASONS.includes(row.reason)) return { ok: false, reason: 'unlogged_reason' };
+  }
+  if (Number(section.count) !== list.length) return { ok: false, reason: 'unlogged_count' };
+  const hash = crypto.createHash('sha256').update(JSON.stringify(list)).digest('hex');
+  if (section.hash !== hash) return { ok: false, reason: 'unlogged_hash' };
+  return { ok: true };
+}
+
+/**
+ * Reason from a version 2 record whose unlogged section hashes. Null when
+ * the section is absent, not version 2, or does not verify.
+ */
+export function attestedUnloggedEntry(record, taskId) {
+  if (Number(record?.payload_version) !== EPOCH_RECORD_VERSION_UNLOGGED) return null;
+  const checked = verifyUnloggedSection(record?.unlogged);
+  if (!checked.ok) return null;
+  const id = String(taskId || '');
+  return record.unlogged.rows.find((row) => row.task_id === id) || null;
+}
+
+/**
+ * Version 2 claims. epochs and orphans are the same arrays as `base`
+ * (the version 1 record). The version 1 object is not modified.
+ */
+export function epochRecordWithUnlogged(base, unloggedRows) {
+  if (!base?.epochs || !base?.orphans) {
+    const err = new Error('epoch_record_incomplete');
+    err.code = 'epoch_record_incomplete';
+    throw err;
+  }
+  return {
+    schema: base.schema || EPOCH_RECORD_SCHEMA,
+    payload_version: EPOCH_RECORD_VERSION_UNLOGGED,
+    epochs: base.epochs,
+    orphans: base.orphans,
+    unlogged: unloggedSection(unloggedRows),
+  };
+}
+
 export function epochRecordClaims({
   epoch1Root = EPOCH1_FINAL_ROOT,
   epoch1Size = EPOCH1_FINAL_SIZE,
@@ -278,6 +348,15 @@ export function assertPinnedEpochRecord(record) {
   }
   if (!record.orphans.some((row) => row?.root === EPOCH2_OPENING_ROOT)) {
     return { ok: false, reason: 'orphans_incomplete' };
+  }
+  const version = Number(record.payload_version) || EPOCH_RECORD_VERSION;
+  if (version === EPOCH_RECORD_VERSION) {
+    if (record.unlogged != null) return { ok: false, reason: 'unlogged_unexpected' };
+  } else if (version === EPOCH_RECORD_VERSION_UNLOGGED) {
+    const listed = verifyUnloggedSection(record.unlogged);
+    if (!listed.ok) return listed;
+  } else {
+    return { ok: false, reason: 'epoch_record_version' };
   }
   return { ok: true };
 }

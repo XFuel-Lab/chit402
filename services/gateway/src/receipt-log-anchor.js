@@ -483,6 +483,38 @@ export async function assertLatestBaseAnchor(tree, opts = {}) {
   });
 }
 
+function prevHashOf(row) {
+  if (row?.prev_hash == null || row.prev_hash === '') return null;
+  return String(row.prev_hash);
+}
+
+function hasStoredRowHash(row) {
+  return row?.row_hash != null && row.row_hash !== '';
+}
+
+/**
+ * A duplicate seq, a shared prev, or a prev that disagrees with a parent
+ * that itself has a stored row_hash. A parent with no row_hash is not a
+ * fork: that row is missing_row_hash and its successors depend on it.
+ */
+function isRealFork(analysis, group) {
+  if ((analysis.duplicates || []).length > 0) return true;
+  if ((analysis.shared_prev || []).length > 0) return true;
+  const bySeq = new Map();
+  for (const row of group) {
+    const n = Number(row?.seq);
+    if (!Number.isInteger(n) || n <= 0 || bySeq.has(n)) continue;
+    bySeq.set(n, row);
+  }
+  for (const mismatch of analysis.prev_hash_mismatches || []) {
+    const seq = Number(mismatch.seq);
+    if (seq === 1) return true;
+    const parent = bySeq.get(seq - 1);
+    if (parent && hasStoredRowHash(parent)) return true;
+  }
+  return false;
+}
+
 export function planReceiptBackfill(tree, rows) {
   const epoch1 = (tree.closedEpochs || []).find((epoch) => epoch.epoch === 1)
     || (tree.epoch === 1 ? tree : null);
@@ -544,30 +576,6 @@ export function planReceiptBackfill(tree, rows) {
       });
     }
   }
-  for (const [agentId, group] of byAgent) {
-    const analysis = analyzeSeq(group);
-    if (analysis.forked || analysis.status === 'FORKED' || analysis.duplicates.length > 0) {
-      refusals.push({
-        agent_id: agentId,
-        reason: 'FORKED',
-        gaps: analysis.gaps,
-        duplicates: analysis.duplicates,
-      });
-    } else if (analysis.gaps.length > 0 || analysis.status === 'gapped') {
-      refusals.push({
-        agent_id: agentId,
-        reason: 'gap',
-        gaps: analysis.gaps,
-        duplicates: analysis.duplicates,
-      });
-    }
-  }
-  for (const row of list) {
-    if (!row?.task_id) continue;
-    if (row.row_hash == null || row.row_hash === '') {
-      refusals.push({ task_id: String(row.task_id), reason: 'missing_row_hash' });
-    }
-  }
   if (refusals.length > 0) {
     const err = new Error('backfill_refused');
     err.code = 'backfill_refused';
@@ -580,12 +588,87 @@ export function planReceiptBackfill(tree, rows) {
     err.code = 'epoch1_tail_missing';
     throw err;
   }
-  const append = [];
+  const afterTail = new Set();
   for (let i = start + 1; i < list.length; i += 1) {
     const id = list[i]?.task_id ? String(list[i].task_id) : '';
-    if (!id || known.has(id)) continue;
-    known.add(id);
-    append.push({ task_id: id, row_hash: list[i].row_hash || '' });
+    if (id && !afterTail.has(id)) afterTail.add(id);
   }
-  return { last_task_id: String(last.task_id), append };
+  const unloggedByTask = new Map();
+  const appendByTask = new Map();
+  for (const [agentId, group] of byAgent) {
+    const analysis = analyzeSeq(group);
+    if (isRealFork(analysis, group)) {
+      for (const row of group) {
+        if (!row?.task_id) continue;
+        const id = String(row.task_id);
+        if (known.has(id) || unloggedByTask.has(id)) continue;
+        unloggedByTask.set(id, { task_id: id, agent_id: agentId, reason: 'forked' });
+      }
+      continue;
+    }
+    const indexed = group.map((row, index) => ({ row, index }));
+    indexed.sort((a, b) => {
+      const sa = Number(a.row?.seq);
+      const sb = Number(b.row?.seq);
+      const aOk = Number.isInteger(sa) && sa > 0;
+      const bOk = Number.isInteger(sb) && sb > 0;
+      if (aOk && bOk && sa !== sb) return sa - sb;
+      if (aOk && !bOk) return -1;
+      if (!aOk && bOk) return 1;
+      return a.index - b.index;
+    });
+    let tainted = false;
+    let prevSeq = null;
+    const refusedHashes = new Set();
+    for (const { row } of indexed) {
+      const id = row?.task_id ? String(row.task_id) : '';
+      const seq = Number(row?.seq);
+      const seqOk = Number.isInteger(seq) && seq > 0;
+      const seqGap = seqOk && prevSeq != null && seq > prevSeq + 1;
+      const empty = !hasStoredRowHash(row);
+      const prev = prevHashOf(row);
+      if (id && known.has(id)) {
+        tainted = Boolean(empty || seqGap);
+        if (seqOk) prevSeq = seq;
+        continue;
+      }
+      if (!id) {
+        if (seqOk) prevSeq = seq;
+        continue;
+      }
+      if (unloggedByTask.has(id) || appendByTask.has(id)) {
+        if (seqOk) prevSeq = seq;
+        continue;
+      }
+      if (empty) {
+        unloggedByTask.set(id, { task_id: id, agent_id: agentId, reason: 'missing_row_hash' });
+        tainted = true;
+        if (seqOk) prevSeq = seq;
+        continue;
+      }
+      if (tainted || seqGap || (prev && refusedHashes.has(prev))) {
+        unloggedByTask.set(id, { task_id: id, agent_id: agentId, reason: 'depends_on_refused' });
+        refusedHashes.add(String(row.row_hash));
+        tainted = true;
+        if (seqOk) prevSeq = seq;
+        continue;
+      }
+      tainted = false;
+      if (seqOk) prevSeq = seq;
+      if (afterTail.has(id)) {
+        appendByTask.set(id, { task_id: id, agent_id: agentId, row_hash: String(row.row_hash) });
+      }
+    }
+  }
+  const unlogged = [];
+  const append = [];
+  const seen = new Set();
+  for (const row of list) {
+    const id = row?.task_id ? String(row.task_id) : '';
+    if (!id || seen.has(id) || known.has(id)) continue;
+    seen.add(id);
+    if (unloggedByTask.has(id)) unlogged.push(unloggedByTask.get(id));
+    else if (appendByTask.has(id)) append.push(appendByTask.get(id));
+  }
+  return { last_task_id: String(last.task_id), append, unlogged };
 }

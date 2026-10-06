@@ -77,6 +77,7 @@ import {
   receiptLogBootRequested,
   finishReceiptLogBoot,
 } from './receipt-merkle.js';
+import { attestedUnloggedEntry } from './receipt-log-epoch.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
@@ -2823,9 +2824,15 @@ export function createApp() {
   });
 
   app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
-    const found = getReceiptMerkleTree().inclusion(req.params.task_id);
-    if (!found) return res.status(404).json({ error: 'not_in_tree', task_id: req.params.task_id });
-    return res.json(found);
+    const tree = getReceiptMerkleTree();
+    const found = tree.inclusion(req.params.task_id);
+    if (found) return res.json(found);
+    const unlogged = attestedUnloggedEntry(tree.epochRecord, req.params.task_id);
+    return res.status(404).json({
+      error: 'not_in_tree',
+      task_id: req.params.task_id,
+      ...(unlogged ? { reason: unlogged.reason, agent_id: unlogged.agent_id } : {}),
+    });
   });
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {

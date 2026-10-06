@@ -38,6 +38,8 @@ const {
   EPOCH2_OPENING_ROOT,
   checkEpochLinks,
   epochRecordClaims,
+  epochRecordWithUnlogged,
+  attestedUnloggedEntry,
   genesisBytes,
   epochLeafHash,
   rebuildEpoch1FromRows,
@@ -1871,7 +1873,7 @@ test('every anchored transition goes through confirmAnchor', async () => {
   assert.equal(solanaHits.length, 1);
 });
 
-test('backfill refuses a forked book and a leaf with no row_hash', () => {
+test('backfill lists a forked agent instead of aborting the file', () => {
   const tree = new ReceiptMerkleTree();
   tree.closedEpochs = [{
     epoch: 1,
@@ -1884,13 +1886,15 @@ test('backfill refuses a forked book and a leaf with no row_hash', () => {
     { agent_id: 3, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
     { agent_id: 3, task_id: 'dup-a', seq: 2, prev_hash: 'aa', row_hash: 'bb' },
     { agent_id: 3, task_id: 'dup-b', seq: 2, prev_hash: 'aa', row_hash: '' },
+    { agent_id: 8, task_id: 'clean-after', seq: 1, prev_hash: null, row_hash: 'cc' },
   ];
-  assert.throws(() => planReceiptBackfill(tree, rows), (err) => {
-    assert.equal(err.code, 'backfill_refused');
-    assert.ok(err.refusals.some((row) => row.reason === 'FORKED'));
-    assert.ok(err.refusals.some((row) => row.reason === 'missing_row_hash' && row.task_id === 'dup-b'));
-    return true;
-  });
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['clean-after']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['dup-a', 'forked'],
+    ['dup-b', 'forked'],
+  ]);
+  assert.equal(plan.append[0].row_hash, 'cc');
 });
 
 test('restore checks the signed bundle index hash and object lock compliance', async () => {
@@ -2200,9 +2204,144 @@ test('backfill dry-run lists each refusal', () => {
     '--jsonl', jsonl,
     '--dir', dir,
   ], { cwd: gatewayRoot, encoding: 'utf8' });
-  assert.notEqual(out.status, 0);
-  assert.match(out.stderr, /refuse agent 3: FORKED/);
-  assert.match(out.stderr, /refuse dup-b: missing_row_hash/);
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /would list as unlogged dup-a forked/);
+  assert.match(out.stdout, /would list as unlogged dup-b forked/);
+  assert.match(out.stderr, /would list as unlogged 2 row\(s\)/);
+  assert.doesNotMatch(out.stdout + out.stderr, /epoch1_has_no_receipt_leaf/);
+});
+
+test('clean rows append and the pinned epoch bytes stay put', () => {
+  const anchor = 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af';
+  const rows = [
+    { agent_id: 7, task_id: 'older', seq: 1, prev_hash: null, row_hash: 'h0' },
+    { agent_id: 7, task_id: anchor, seq: 2, prev_hash: 'h0', row_hash: 'h1' },
+    { agent_id: 7, task_id: 'leaf-2', seq: 3, prev_hash: 'h1', row_hash: 'h2' },
+    { agent_id: 7, task_id: 'leaf-3', seq: 4, prev_hash: 'h2', row_hash: 'h3' },
+    { agent_id: 9, task_id: 'openai-old', seq: 1, prev_hash: null, row_hash: '' },
+    { agent_id: 9, task_id: 'openai-next', seq: 2, prev_hash: null, row_hash: 'stored-next' },
+    { agent_id: 149, task_id: 'fork-149-a', seq: 1, prev_hash: null, row_hash: 'fa' },
+    { agent_id: 149, task_id: 'fork-149-b', seq: 1, prev_hash: null, row_hash: 'fb' },
+    { agent_id: 187, task_id: 'fork-187-a', seq: 2, prev_hash: 'gone', row_hash: 'ga' },
+    { agent_id: 187, task_id: 'fork-187-b', seq: 1, prev_hash: null, row_hash: 'gb' },
+    { agent_id: 8, task_id: 'board-clean', seq: 1, prev_hash: null, row_hash: 'clean-hash' },
+    { agent_id: 7, task_id: 'xfuel-clean', seq: 5, prev_hash: 'h3', row_hash: 'h4' },
+  ];
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    status: 'closed',
+    root: EPOCH1_FINAL_ROOT,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: anchor, kind: 'receipt' },
+      { task_id: 'leaf-2', kind: 'receipt' },
+      { task_id: 'leaf-3', kind: 'receipt' },
+    ],
+    leaves: [Buffer.alloc(32), Buffer.alloc(32), Buffer.alloc(32), Buffer.alloc(32)],
+  }];
+  tree.epoch = 2;
+  tree.prevEpochRoot = EPOCH1_FINAL_ROOT;
+  tree.prevEpochSize = 4;
+  const opening = epochLeafHash(genesisBytes(EPOCH2_GENESIS_DIGEST));
+  tree.leaves = [opening];
+  tree.meta = [{ task_id: 'genesis', kind: 'genesis', epoch: 2 }];
+  tree.byTask = new Map([['genesis', 0]]);
+  tree.epochRecord = epochRecordClaims();
+  const plan = planReceiptBackfill(tree, rows);
+  const again = planReceiptBackfill(tree, rows);
+  assert.deepEqual(again, plan);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['board-clean', 'xfuel-clean']);
+  assert.deepEqual(plan.append.map((row) => row.row_hash), ['clean-hash', 'h4']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['openai-old', 'missing_row_hash'],
+    ['openai-next', 'depends_on_refused'],
+    ['fork-149-a', 'forked'],
+    ['fork-149-b', 'forked'],
+    ['fork-187-a', 'forked'],
+    ['fork-187-b', 'forked'],
+  ]);
+  const v1 = epochRecordClaims();
+  const v2 = epochRecordWithUnlogged(v1, plan.unlogged);
+  assert.equal(v1.payload_version, 1);
+  assert.equal(v1.unlogged, undefined);
+  assert.equal(v2.payload_version, 2);
+  assert.equal(JSON.stringify(v2.epochs), JSON.stringify(v1.epochs));
+  assert.equal(JSON.stringify(v2.orphans), JSON.stringify(v1.orphans));
+  assert.equal(v2.epochs[0].final_root, EPOCH1_FINAL_ROOT);
+  assert.equal(v2.epochs[0].final_size, 4);
+  assert.equal(v2.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+  assert.equal(v2.unlogged.count, plan.unlogged.length);
+  assert.equal(v2.unlogged.hash.length, 64);
+  const epoch1Before = tree.closedEpochs[0].root;
+  const openingBefore = Buffer.from(tree.leaves[0]).toString('hex');
+  assert.equal(openingBefore, EPOCH2_OPENING_ROOT);
+  for (const row of plan.append) tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  assert.equal(tree.closedEpochs[0].root, epoch1Before);
+  assert.equal(tree.closedEpochs[0].root, EPOCH1_FINAL_ROOT);
+  assert.equal(Buffer.from(tree.leaves[0]).toString('hex'), EPOCH2_OPENING_ROOT);
+  assert.equal(tree.epoch, 2);
+  assert.equal(tree.leaves.length, 3);
+  assert.equal(tree.heads.length, 0);
+  const listed = attestedUnloggedEntry({ ...v2, payload_version: 2 }, 'openai-next');
+  assert.equal(listed.reason, 'depends_on_refused');
+  assert.equal(attestedUnloggedEntry(v1, 'openai-next'), null);
+});
+
+test('inclusion of an unlogged id returns the signed reason', async () => {
+  const claims = epochRecordWithUnlogged(epochRecordClaims(), [
+    { task_id: 'openai-old', agent_id: 4, reason: 'missing_row_hash' },
+  ]);
+  const { jws, kid } = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
+  const record = { ...claims, issuer_signature: { jws, kid } };
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  delete process.env.RECEIPT_LOG_BOOT;
+  delete process.env.RECEIPT_LOG_DIR;
+  resetReceiptMerkleTree();
+  let server;
+  try {
+    const { createApp } = await import('../src/server.js');
+    const app = createApp();
+    getReceiptMerkleTree().epochRecord = record;
+    server = await new Promise((resolve) => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+    const port = server.address().port;
+    const inclusion = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/v1/receipts/openai-old/inclusion`, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+        }));
+      }).on('error', reject);
+    });
+    assert.equal(inclusion.status, 404);
+    assert.equal(inclusion.json.error, 'not_in_tree');
+    assert.equal(inclusion.json.reason, 'missing_row_hash');
+    assert.equal(inclusion.json.agent_id, 4);
+    const epoch = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/v1/receipts/tree/epoch`, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      }).on('error', reject);
+    });
+    assert.equal(epoch.payload_version, 2);
+    assert.equal(epoch.epochs[0].final_root, EPOCH1_FINAL_ROOT);
+    assert.equal(epoch.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+    assert.equal(epoch.unlogged.rows[0].reason, 'missing_row_hash');
+    assert.equal(JSON.stringify(epoch.orphans), JSON.stringify(epochRecordClaims().orphans));
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
+    resetReceiptMerkleTree();
+  }
 });
 
 test('rebuild refuses to sign when ISSUER_PRIVATE_KEY is unset', () => {

@@ -49,6 +49,7 @@ import {
 } from './receipt-log-anchor.js';
 import {
   assertPinnedEpochRecord,
+  verifyUnloggedSection,
   EPOCH1_FINAL_ROOT,
   EPOCH1_FINAL_SIZE,
   EPOCH1_SIZE2_ROOT,
@@ -2304,6 +2305,17 @@ export class ReceiptMerkleTree {
       }
       if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(this.epochRecord.orphans ?? [])) {
         throw new ReceiptLogRefused('epoch_signature', 'epoch record orphans do not match the signature');
+      }
+      const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
+      const recordUnlogged = this.epochRecord.unlogged === undefined ? null : this.epochRecord.unlogged;
+      if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) {
+        throw new ReceiptLogRefused('epoch_signature', 'epoch record unlogged list does not match the signature');
+      }
+      if (Number(this.epochRecord.payload_version) === 2) {
+        const listed = verifyUnloggedSection(this.epochRecord.unlogged);
+        if (!listed.ok) {
+          throw new ReceiptLogRefused(listed.reason || 'unlogged_hash', 'epoch record unlogged list does not verify');
+        }
       }
     } else if (this.epochRecord && receiptLogStrict()) {
       throw new ReceiptLogRefused('epoch_unsigned', 'epoch record is missing its signature');

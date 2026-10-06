@@ -5,6 +5,7 @@
  * Epoch 1 inclusion proofs stay valid on their own root.
  * A later epoch must name the previous epoch's root and size.
  */
+import { createHash } from 'node:crypto';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
 
 export const TREE_HEAD_SCHEMA_V1 = 'chit402.tree_head.v1';
@@ -72,11 +73,64 @@ export interface EpochRecordEntry {
   prev_epoch_size?: number | null;
 }
 
+export interface UnloggedRow {
+  task_id: string;
+  agent_id: number | null;
+  reason: string;
+}
+
+export interface UnloggedSection {
+  count: number;
+  hash: string;
+  rows: UnloggedRow[];
+}
+
 export interface EpochRecord {
   schema?: string;
+  payload_version?: number;
   epochs?: EpochRecordEntry[];
   orphans?: unknown[];
+  unlogged?: UnloggedSection | null;
   issuer_signature?: { jws?: string | null } | null;
+}
+
+const UNLOGGED_REASONS = new Set(['missing_row_hash', 'forked', 'depends_on_refused']);
+
+export function canonicalUnloggedRows(rows: Array<Partial<UnloggedRow>> | null | undefined): UnloggedRow[] {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    task_id: String(row?.task_id || ''),
+    agent_id: row?.agent_id == null || (row.agent_id as unknown) === '' ? null : Number(row.agent_id),
+    reason: String(row?.reason || ''),
+  }));
+}
+
+export function unloggedListHash(rows: UnloggedRow[]): string {
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+}
+
+export function verifyUnloggedSection(section: UnloggedSection | null | undefined): { ok: boolean; reason?: string } {
+  if (!section || !Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
+  const list = canonicalUnloggedRows(section.rows);
+  if (JSON.stringify(list) !== JSON.stringify(section.rows)) return { ok: false, reason: 'unlogged_canonical' };
+  for (const row of list) {
+    if (!row.task_id) return { ok: false, reason: 'unlogged_task' };
+    if (!UNLOGGED_REASONS.has(row.reason)) return { ok: false, reason: 'unlogged_reason' };
+  }
+  if (Number(section.count) !== list.length) return { ok: false, reason: 'unlogged_count' };
+  if (section.hash !== unloggedListHash(list)) return { ok: false, reason: 'unlogged_hash' };
+  return { ok: true };
+}
+
+/** Reason for a task the issuer attested as outside the tree. Null if the list does not verify. */
+export function unloggedReasonForTask(
+  record: EpochRecord | null | undefined,
+  taskId: string | null | undefined,
+): UnloggedRow | null {
+  if (Number(record?.payload_version) !== 2) return null;
+  const checked = verifyUnloggedSection(record?.unlogged);
+  if (!checked.ok || !record?.unlogged) return null;
+  const id = String(taskId || '');
+  return record.unlogged.rows.find((row) => row.task_id === id) || null;
 }
 
 export interface EpochRecordOptions {
@@ -188,6 +242,15 @@ export function verifyEpochRecord(
   if (lost.unrecoverable !== true) return { ok: false, reason: 'orphan_d7f6c548_unmarked' };
   if (!orphans.some((row) => row?.root === ORPHAN_GENESIS_ONLY)) return { ok: false, reason: 'orphans_incomplete' };
   if (!orphans.some((row) => row?.root === EPOCH2_OPENING_ROOT)) return { ok: false, reason: 'orphans_incomplete' };
+  const version = Number(record.payload_version) || 1;
+  if (version === 1) {
+    if (record.unlogged != null) return { ok: false, reason: 'unlogged_unexpected' };
+  } else if (version === 2) {
+    const listed = verifyUnloggedSection(record.unlogged);
+    if (!listed.ok) return listed;
+  } else {
+    return { ok: false, reason: 'epoch_record_version' };
+  }
   return { ok: true };
 }
 

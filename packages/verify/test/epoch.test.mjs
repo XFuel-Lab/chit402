@@ -10,6 +10,8 @@ const {
   verifyEpochLink,
   verifyEpochRecord,
   verifyEpochInclusion,
+  verifyUnloggedSection,
+  unloggedReasonForTask,
   verifyAnchoredRoot,
   leafHash,
   parseAnchorMemo,
@@ -17,6 +19,7 @@ const {
   EPOCH1_SIZE1_ROOT,
   EPOCH1_SIZE2_ROOT,
   EPOCH1_FINAL_ROOT,
+  EPOCH2_OPENING_ROOT,
 } = await import('../dist/index.js');
 
 function sha256(buf) {
@@ -257,4 +260,22 @@ test('v1 and v2 anchor memos both parse', () => {
   assert.equal(v2.prev_epoch_size, 4);
   assert.equal(v2.bundle_index_hash, bundle);
   assert.equal(parseAnchorMemo('nope'), null);
+});
+
+test('an unlogged list verifies by hash and a bad hash does not', () => {
+  const rows = [
+    { task_id: 'openai-old', agent_id: 4, reason: 'missing_row_hash' },
+    { task_id: 'fork-149-a', agent_id: 149, reason: 'forked' },
+  ];
+  const hash = createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+  const section = { count: 2, hash, rows };
+  assert.equal(verifyUnloggedSection(section).ok, true);
+  const record = { payload_version: 2, unlogged: section };
+  assert.equal(unloggedReasonForTask(record, 'fork-149-a').reason, 'forked');
+  assert.equal(unloggedReasonForTask(record, 'missing'), null);
+  assert.equal(unloggedReasonForTask({ payload_version: 1, unlogged: section }, 'fork-149-a'), null);
+  const tampered = { ...section, rows: [{ ...rows[0], reason: 'forked' }, rows[1]] };
+  assert.equal(verifyUnloggedSection(tampered).reason, 'unlogged_hash');
+  assert.equal(unloggedReasonForTask({ payload_version: 2, unlogged: tampered }, 'openai-old'), null);
+  assert.equal(EPOCH2_OPENING_ROOT, 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286');
 });

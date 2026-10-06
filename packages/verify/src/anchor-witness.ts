@@ -8,7 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { BASE_RPC_URL } from './base-payer.js';
-import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
+import { unloggedReasonForTask, verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -106,7 +106,13 @@ export interface BaseAnchorTx {
 export interface AnchorWitnessResult {
   overall: 'verified' | 'partial' | 'failed';
   root: string | null;
-  inclusion: { valid: boolean; leaf: string | null; leaf_source: string; reason?: string };
+  inclusion: {
+    valid: boolean;
+    leaf: string | null;
+    leaf_source: string;
+    reason?: string;
+    unlogged_reason?: string;
+  };
   solana: {
     checked: boolean;
     valid: boolean;
@@ -495,10 +501,22 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
+  let unloggedReason: string | undefined;
+  if (!inclusionValid && !epochReason) {
+    const listed = unloggedReasonForTask(input.epochRecord, taskId);
+    if (listed) unloggedReason = listed.reason;
+  }
+
   return {
     overall,
     root,
-    inclusion: { valid: inclusionValid, leaf: leafHex, leaf_source: leafSource, reason: inclusionReason },
+    inclusion: {
+      valid: inclusionValid,
+      leaf: leafHex,
+      leaf_source: leafSource,
+      reason: inclusionReason,
+      ...(unloggedReason ? { unlogged_reason: unloggedReason } : {}),
+    },
     solana,
     base,
     proves: ANCHOR_PROVES,

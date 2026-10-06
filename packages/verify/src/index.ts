@@ -1805,6 +1805,9 @@ export {
   verifyEpochLink,
   verifyEpochRecord,
   verifyEpochInclusion,
+  verifyUnloggedSection,
+  unloggedReasonForTask,
+  canonicalUnloggedRows,
   TREE_HEAD_SCHEMA_V1,
   TREE_HEAD_SCHEMA_V2,
   EPOCH1_FINAL_ROOT,
@@ -1819,6 +1822,8 @@ export {
   type EpochRecord,
   type EpochRecordEntry,
   type EpochRecordOptions,
+  type UnloggedRow,
+  type UnloggedSection,
 } from './epoch.js';
 
 export {

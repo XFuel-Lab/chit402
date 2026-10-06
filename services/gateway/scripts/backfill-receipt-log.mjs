@@ -2,9 +2,12 @@
 /**
  * Append book rows that are not leaves yet.
  *
- * Dry-run is the default. --apply writes leaves and does not publish or
- * broadcast. Rows are the book file in order, after epoch 1's last receipt
- * leaf, skipping any task_id already in an epoch.
+ * Dry-run is the default. It prints `would append` and `would list as
+ * unlogged`. --apply writes the clean leaves and a payload version 2 epoch
+ * record. It does not publish, broadcast, derive a row_hash, or write the
+ * book. A forked agent's rows, an empty row_hash, and a row whose chain
+ * depends on one of those are listed and skipped. The version 1 epoch
+ * record stays in the journal.
  *
  *   node scripts/backfill-receipt-log.mjs \
  *     --jsonl .data/agents/usage-settled.jsonl \
@@ -18,9 +21,17 @@
 import '../src/config.js';
 import fs from 'fs';
 import path from 'path';
+import {
+  initIssuerKey,
+  signJws,
+  getIssuerPublicKeyJwk,
+  getJwks,
+  verifyJwsWithJwks,
+} from '../src/issuer-key.js';
 import { ReceiptMerkleTree } from '../src/receipt-merkle.js';
 import { planReceiptBackfill } from '../src/receipt-log-anchor.js';
-import { JOURNAL_NAME } from '../src/receipt-log-store.js';
+import { EPOCH_RECORD_JWT_TYP, epochRecordWithUnlogged } from '../src/receipt-log-epoch.js';
+import { JOURNAL_NAME, appendSignedEpochRecord } from '../src/receipt-log-store.js';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -62,18 +73,56 @@ try {
   process.exit(1);
 }
 
-if (plan.append.length === 0) {
+function printPlan(prefixAppend, prefixList) {
+  for (const row of plan.append) console.log(`${prefixAppend} ${row.task_id}`);
+  for (const row of plan.unlogged) console.log(`${prefixList} ${row.task_id} ${row.reason}`);
+  console.error(`${prefixAppend} ${plan.append.length} row(s)`);
+  console.error(`${prefixList} ${plan.unlogged.length} row(s)`);
+}
+
+if (!apply) {
+  printPlan('would append', 'would list as unlogged');
+  console.error('dry-run only. Pass --apply to write leaves and the unlogged list. This does not broadcast.');
+  process.exit(0);
+}
+if (plan.append.length === 0 && plan.unlogged.length === 0) {
   console.error(`no rows to append after ${plan.last_task_id}`);
   process.exit(0);
 }
-
-for (const row of plan.append) {
-  if (apply) {
-    tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
-    console.log(`appended ${row.task_id}`);
-  } else {
-    console.log(`would append ${row.task_id}`);
-  }
+if (!String(process.env.ISSUER_PRIVATE_KEY || '').trim()) {
+  console.error('REFUSED: ISSUER_PRIVATE_KEY is not set. Refusing to sign the epoch record with an ephemeral key.');
+  process.exit(1);
 }
-console.error(`${apply ? 'appended' : 'would append'} ${plan.append.length} row(s)`);
-if (!apply) console.error('dry-run only. Pass --apply to write leaves. This does not broadcast.');
+let record;
+try {
+  initIssuerKey();
+  const claims = epochRecordWithUnlogged(tree.epochRecord, plan.unlogged);
+  const { jws, kid } = signJws(claims, { typ: EPOCH_RECORD_JWT_TYP });
+  record = {
+    ...claims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: EPOCH_RECORD_JWT_TYP,
+      payload_version: 2,
+      jws,
+      kid,
+      issuer_jwk: getIssuerPublicKeyJwk(),
+    },
+  };
+  const verified = verifyJwsWithJwks(jws, getJwks());
+  if (!verified.valid) {
+    console.error(`REFUSED: epoch record failed verification (${verified.reason || 'invalid'})`);
+    process.exit(1);
+  }
+} catch (err) {
+  console.error(`REFUSED: ${err.message}`);
+  process.exit(1);
+}
+for (const row of plan.append) {
+  tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+}
+appendSignedEpochRecord(abs, record);
+printPlan('appended', 'listed as unlogged');
+console.error(`epoch record kid: ${record.issuer_signature.kid}`);
+console.error('epoch record signed: true');
+console.error('No transaction was broadcast. No receipt was re-signed. The book file was not written.');
