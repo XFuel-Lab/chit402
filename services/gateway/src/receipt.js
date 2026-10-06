@@ -51,6 +51,7 @@ import {
   resealSignedClaims,
 } from './canonical-preimage.js';
 import { currentHistoryPin, issuerHistorySnapshotClaim } from './issuer-history.js';
+import { jcsRfc8785 } from './offer-receipt.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -1448,7 +1449,8 @@ function sessionClaimsFrozen(cachedClaims, draft) {
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   assertIssuanceOpen();
   const draft = canonicalSignedClaims(receipt, { iat });
-  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS);
+  const canonicalize = draft.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
+  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS, canonicalize);
   const jwksUri = buildJwksUri(baseUrl);
   const { jws, kid } = signJws(sealed.claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,

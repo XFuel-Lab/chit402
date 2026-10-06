@@ -53,14 +53,26 @@ Inside the JWS, not only on the envelope or in `X-Chit-Hash-Alg` / `X-Chit-Canon
 | Field | Value |
 |---|---|
 | `hash_alg` | `sha-256` |
-| `jcs` | `chit402-jcs-v1` |
-| `string_escaping` | UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. Every code unit U+0000 through U+001F is `\u00xx` lowercase hex, including U+0008, U+0009, U+000A, U+000C, and U+000D. U+0022 is `\"`. U+005C is `\\`. Other UTF-16 code units are copied, so U+1F600 is the four UTF-8 bytes `f0 9f 98 80`. Solidus is not escaped. |
+| `jcs` | `RFC8785` |
 
-`jcs` is not `RFC8785`. RFC 8785, like `JSON.stringify`, writes U+0008 as `\b`, U+0009 as `\t`, U+000A as `\n`, U+000C as `\f`, and U+000D as `\r`. This canonicalizer writes those five as `\u0008`, `\u0009`, `\u000a`, `\u000c`, and `\u000d`. U+0001 is `\u0001` in both. A non-BMP character is the raw UTF-8 scalar in both. The canonicalizer is unchanged. Whether v11 switches to true RFC 8785 is Christopher's call.
+There is no `string_escaping` field. `RFC8785` means [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785): ECMAScript `JSON.stringify` string escaping and number serialization, and object keys sorted by UTF-16 code unit. U+0008, U+0009, U+000A, U+000C, and U+000D are `\b`, `\t`, `\n`, `\f`, and `\r`. The other C0 controls are lowercase `\u00xx`. U+0022 is `\"`. U+005C is `\\`. Other UTF-16 code units are copied, so U+1F600 is the four UTF-8 bytes `f0 9f 98 80`. Solidus is not escaped. Lone surrogates and non-finite numbers are rejected.
 
-Vector `{ "s": "<TAB><LF><U+0001><U+1F600>" }` is the 30 bytes `7b2273223a225c75303030395c75303030615c7530303031f09f9880227d`. RFC 8785 for the same value is the 22 bytes `7b2273223a225c745c6e5c7530303031f09f9880227d`.
+Vector `{ "s": "<TAB><LF><U+0001><U+1F600>" }` under this canonicalizer is the 22 bytes `7b2273223a225c745c6e5c7530303031f09f9880227d`.
 
-SHA-256 of the canonicalizer's UTF-8 bytes, with no trailing newline, is `payload_hash`.
+SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a v11 receipt and a v2 refusal.
+
+### Which canonicalizer covers which hash
+
+| Hash | Canonicalizer |
+|---|---|
+| v11 receipt `payload_hash`, including the `issuer_history_snapshot` object inside that payload | RFC 8785 (`jcsRfc8785`) |
+| v2 refusal `payload_hash` | RFC 8785 |
+| `issuer_root` fingerprint suffix on a new issuer-history version | RFC 8785 |
+| `issuer_history_snapshot.snapshot_hash`, which is `issuer_history.hash` | chit402-jcs-v1 (`jcsCanonicalize`). SHA-256 of the full well-known document. The document is not re-encoded when v11 turns on |
+| `entry_hash` | chit402-jcs-v1. SHA-256 of the entry without `entry_hash` |
+| v7–v10 receipt `payload_hash`, flag-off refusal `payload_hash`, and every flag-off path | chit402-jcs-v1. Those bytes are not recomputed |
+
+chit402-jcs-v1 writes every code unit U+0000 through U+001F as `\u00xx`, including tab and newline. The same control vector under that canonicalizer is the 30 bytes `7b2273223a225c75303030395c75303030615c7530303031f09f9880227d`. A stored v7–v10 receipt is not re-signed onto RFC 8785.
 
 ### `issuer_history_snapshot`
 
@@ -72,19 +84,19 @@ SHA-256 of the canonicalizer's UTF-8 bytes, with no trailing newline, is `payloa
 | `version` | Same as `issuer_history.version` |
 | `seq` | Same as `issuer_history.seq` |
 | `head_hash` | Last entry's `entry_hash` |
-| `snapshot_hash` | Same as `issuer_history.hash`. SHA-256 of the JCS of the full well-known document, not of this object |
+| `snapshot_hash` | Same as `issuer_history.hash`. SHA-256 of the chit402-jcs-v1 bytes of the full well-known document, not of this object and not RFC 8785 |
 | `entries` | One object per history entry, in chain order |
 
 Each entry has `kid`, `jwk` (`kty`, `crv`, `x`, `y`, `kid`, `alg`, `use`), `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, `entry_hash`.
 
 Offline check, with no well-known fetch:
 
-1. `snapshot_hash`, `version`, and `seq` equal the `issuer_history` pin.
-2. `entry_hash` is SHA-256 of the JCS of the entry without `entry_hash`.
+1. `snapshot_hash`, `version`, and `seq` equal the `issuer_history` pin. Do not recompute `snapshot_hash` from this object, and do not recompute it with RFC 8785. It pins the well-known document, which stays on chit402-jcs-v1.
+2. `entry_hash` is SHA-256 of the chit402-jcs-v1 bytes of the entry without `entry_hash`.
 3. `prev_hash` chains, and the last `entry_hash` equals `head_hash`.
 4. The entry whose `kid` is `issuer_root.kid` supplies `not_before`, `not_after`, `status`, and `revoked_at`.
 
-One live key is 1052 bytes of JCS for `issuer_history_snapshot`. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. `?hash=` still serves that document, and `snapshot_hash` is its hash.
+The embed sits inside the v11 payload, so the bytes of this object that feed `payload_hash` are RFC 8785. One live key is 1052 bytes of that form. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. `?hash=` still serves that document, and `snapshot_hash` is its chit402-jcs-v1 hash.
 
 A receipt that already has a JWS is not re-signed. While the issuer root is on, a later covering root is an unsigned `covering_head` sidecar (`chit402.covering_head.v1`, `signed: false`). The stored `issuer_signature.jws` bytes stay put across a key rotation and a tree-head update. Flag-off v10 may still reseal `tree_head_hash` inside that same claim set. v9 and older are never restamped.
 

@@ -1,10 +1,12 @@
 /**
  * Stored canonical object for a receipt or refusal.
  *
- * The preimage is the exact UTF-8 JCS (RFC 8785) bytes of the public claims,
+ * The preimage is the exact UTF-8 canonical bytes of the public claims,
  * without `payload_hash`. SHA-256 of those bytes is `payload_hash`, and that
  * digest is inside the signed JWS. The bytes are kept at issuance and served
  * unchanged. A read path must not rebuild them from the receipt.
+ * Versions through v10 use chit402-jcs-v1. Payload v11 and refusal v2 use
+ * RFC 8785.
  *
  * Field set is the allowlist below. Wire order is JCS: object keys sorted by
  * UTF-16 code unit, no insignificant whitespace. The same canonicalization
@@ -30,12 +32,13 @@ export const CANONICAL_ENCODING = 'jcs-rfc8785';
 /**
  * Signed into payload v11 (and issuer-root refusals). The envelope and
  * response headers already name the algorithm; this is the copy inside the
- * JWS. string_escaping is what jcsCanonicalize actually does.
+ * JWS. `jcs` names the canonicalizer that produced this payload: RFC 8785.
+ * There is no custom string_escaping sentence. entry_hash and the well-known
+ * issuer-history document stay on chit402-jcs-v1 and are not this field.
  */
 export const V11_CANONICALIZATION = Object.freeze({
   hash_alg: 'sha-256',
-  jcs: 'chit402-jcs-v1',
-  string_escaping: 'UTF-8, no trailing newline. Object keys sorted by UTF-16 code unit. Every code unit U+0000 through U+001F is \\u00xx lowercase hex, including U+0008, U+0009, U+000A, U+000C, and U+000D. U+0022 is \\". U+005C is \\\\. Other UTF-16 code units are copied, so U+1F600 is the four UTF-8 bytes f0 9f 98 80. Solidus is not escaped.',
+  jcs: 'RFC8785',
 });
 
 /**
@@ -192,13 +195,16 @@ export function lockCanonicalFields(claims, allowed) {
 }
 
 /**
- * JCS bytes and the SHA-256 that the JWS will carry as `payload_hash`.
+ * Canonical bytes and the SHA-256 that the JWS will carry as `payload_hash`.
+ * The default is chit402-jcs-v1, which v7–v10 and every flag-off seal use.
+ * Payload v11 and refusal v2 pass `jcsRfc8785`.
  * @param {object} claims claims without a trusted payload_hash
  * @param {readonly string[]} allowed
+ * @param {(value: unknown) => string} [canonicalize]
  */
-export function sealCanonicalObject(claims, allowed) {
+export function sealCanonicalObject(claims, allowed, canonicalize = jcsCanonicalize) {
   const body = lockCanonicalFields(claims, allowed);
-  const preimage = jcsCanonicalize(body);
+  const preimage = canonicalize(body);
   const payload_hash = sha256Hex(preimage);
   return {
     preimage,

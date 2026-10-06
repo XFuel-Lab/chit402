@@ -6,9 +6,11 @@
  * GET /.well-known/issuer-history.json?hash=<sha256>
  *
  * Each entry names a kid, its public JWK, the window it may sign, and where
- * the private key is held. Entries chain by prev_hash (JCS / RFC 8785, then
- * SHA-256). The current issuer key signs the head hash, so a rewritten entry
- * breaks the chain or the signature.
+ * the private key is held. Entries chain by prev_hash. entry_hash and the
+ * well-known document hash use chit402-jcs-v1 (`jcsCanonicalize`), not RFC
+ * 8785. The issuer_root fingerprint suffix uses RFC 8785. The current issuer
+ * key signs the head hash, so a rewritten entry breaks the chain or the
+ * signature.
  *
  * A published snapshot is sealed once. A later key, retirement, or not_after
  * appends a new version. Old version bytes stay fetchable. The receipt pins
@@ -20,7 +22,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { jcsCanonicalize } from './offer-receipt.js';
+import { jcsCanonicalize, jcsRfc8785 } from './offer-receipt.js';
 import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
 import { bindIssuerRoot, issuerRootActive, issuerRootClaim } from './issuer-root.js';
 
@@ -286,12 +288,14 @@ function entryFingerprint(entries) {
 /**
  * Flag-off fingerprint is the entry chain only, so a sealed snapshot still
  * matches. When the issuer root is on, the signed claims changed, so the
- * fingerprint includes that object and a new version is sealed.
+ * fingerprint includes that object and a new version is sealed. The
+ * issuer_root suffix is RFC 8785. entry_hash and the document body stay on
+ * chit402-jcs-v1.
  */
 function sealFingerprint(preview) {
   const base = entryFingerprint(preview.entries);
   if (!issuerRootActive()) return base;
-  return `${base}|${jcsCanonicalize(issuerRootClaim(getIssuerKid()))}`;
+  return `${base}|${jcsRfc8785(issuerRootClaim(getIssuerKid()))}`;
 }
 
 /** In-process append-only snapshots. Disk is optional. */

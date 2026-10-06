@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 
-const { jcsCanonicalize } = await import('../src/offer-receipt.js');
+const { jcsCanonicalize, jcsRfc8785 } = await import('../src/offer-receipt.js');
 const { V11_CANONICALIZATION } = await import('../src/canonical-preimage.js');
 const {
   buildReceipt,
@@ -516,24 +516,26 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     await armStrict();
     assert.equal(jcsCanonicalize({ s: 'a"b\\c/d\n' }), '{"s":"a\\"b\\\\c/d\\u000a"}');
     const controlVector = { s: '\t\n\u0001\u{1F600}' };
-    const produced = jcsCanonicalize(controlVector);
-    const producedBytes = Buffer.from(produced, 'utf8');
+    const legacy = jcsCanonicalize(controlVector);
     assert.equal(
-      producedBytes.toString('hex'),
+      Buffer.from(legacy, 'utf8').toString('hex'),
       '7b2273223a225c75303030395c75303030615c7530303031f09f9880227d',
     );
-    assert.equal(producedBytes.length, 30);
-    assert.notEqual(produced, JSON.stringify(controlVector));
+    const rfc = jcsRfc8785(controlVector);
     assert.equal(
-      Buffer.from(JSON.stringify(controlVector), 'utf8').toString('hex'),
+      Buffer.from(rfc, 'utf8').toString('hex'),
       '7b2273223a225c745c6e5c7530303031f09f9880227d',
     );
+    assert.equal(Buffer.byteLength(rfc, 'utf8'), 22);
     const receipt = buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.deepEqual(claims.canonicalization, V11_CANONICALIZATION);
     assert.equal(claims.canonicalization.hash_alg, 'sha-256');
-    assert.equal(claims.canonicalization.jcs, 'chit402-jcs-v1');
-    const preimage = JSON.parse(receipt.issuer_signature.canonical_preimage);
+    assert.equal(claims.canonicalization.jcs, 'RFC8785');
+    assert.equal(Object.hasOwn(claims.canonicalization, 'string_escaping'), false);
+    const preimageText = receipt.issuer_signature.canonical_preimage;
+    const preimage = JSON.parse(preimageText);
+    assert.equal(preimageText, jcsRfc8785(preimage));
     assert.deepEqual(preimage.canonicalization, V11_CANONICALIZATION);
     const snap = claims.issuer_history_snapshot;
     assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
@@ -550,15 +552,48 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     const kidEntry = snap.entries.find((entry) => entry.kid === claims.issuer_root.kid);
     assert.ok(kidEntry);
     assert.equal(typeof kidEntry.not_before, 'string');
-    const snapBytes = Buffer.byteLength(jcsCanonicalize(snap), 'utf8');
+    const snapBytes = Buffer.byteLength(jcsRfc8785(snap), 'utf8');
     assert.ok(snapBytes <= 2560, `issuer_history_snapshot is ${snapBytes} bytes`);
-    console.log(`issuer_history_snapshot JCS bytes: ${snapBytes}`);
+    console.log(`issuer_history_snapshot RFC8785 bytes: ${snapBytes}`);
+    const history = currentIssuerHistory();
+    assert.equal(snap.snapshot_hash, history.hash);
+    assert.equal(history.body, jcsCanonicalize(JSON.parse(history.body)));
+    assert.equal(history.hash, crypto.createHash('sha256').update(history.body, 'utf8').digest('hex'));
 
     const refusal = issueRefusalReceipt(refusalRow('xfuel-v11-embed'));
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.deepEqual(refusalClaims.canonicalization, V11_CANONICALIZATION);
+    assert.equal(refusal.canonical_preimage, jcsRfc8785(JSON.parse(refusal.canonical_preimage)));
     assert.equal(refusalClaims.issuer_history_snapshot.snapshot_hash, refusalClaims.issuer_history.hash);
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('v11 seals controls as RFC 8785; a flag-off receipt keeps chit402-jcs-v1', async () => {
+  const prev = snapshotEnv();
+  const taskId = 'xfuel-\t\n\u0001\u{1F600}';
+  try {
+    for (const key of ROOT_ENV) delete process.env[key];
+    _resetIssuerKey();
+    resetIssuerHistoryStore();
+    const off = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
+    const offText = off.issuer_signature.canonical_preimage;
+    assert.equal(decodeReceiptClaims(off).payload_version, 10);
+    assert.equal(offText, jcsCanonicalize(JSON.parse(offText)));
+    assert.notEqual(offText, jcsRfc8785(JSON.parse(offText)));
+    assert.match(offText, /\\u0009\\u000a\\u0001/);
+
+    useStableKey();
+    await armStrict();
+    const on = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
+    const onText = on.issuer_signature.canonical_preimage;
+    assert.equal(decodeReceiptClaims(on).payload_version, 11);
+    assert.equal(onText, jcsRfc8785(JSON.parse(onText)));
+    assert.notEqual(onText, jcsCanonicalize(JSON.parse(onText)));
+    assert.match(onText, /\\t\\n\\u0001/);
+    assert.doesNotMatch(onText, /\\u0009/);
   } finally {
     restoreEnv(prev);
   }

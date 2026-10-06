@@ -24,8 +24,9 @@ import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
-import { assertIssuanceOpen, bindIssuerRoot } from './issuer-root.js';
+import { assertIssuanceOpen, bindIssuerRoot, ISSUER_ROOT_PAYLOAD_VERSION } from './issuer-root.js';
 import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
+import { jcsRfc8785 } from './offer-receipt.js';
 import { fromCaip2Network } from './x402-facilitator.js';
 import {
   buildFulfillmentEnvelope,
@@ -799,7 +800,8 @@ export function buildForeignReceipt({
     amount: payout.amount,
     ...(payout.agent_record_entry ? { agent_record_entry: payout.agent_record_entry } : {}),
   };
-  const sealed = sealCanonicalObject(claims, FOREIGN_CANONICAL_FIELDS);
+  const canonicalize = claims.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
+  const sealed = sealCanonicalObject(claims, FOREIGN_CANONICAL_FIELDS, canonicalize);
   const { jws, kid } = signJws(sealed.claims, { jku: ISSUER_JWKS_URI });
   bindIssuerRoot(sealed.claims, kid, getIssuerPublicKeyJwk());
   receipt.issuer_signature = {
