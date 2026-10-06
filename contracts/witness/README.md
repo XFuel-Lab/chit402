@@ -17,4 +17,4 @@ The deployer pays contract-creation gas and the gas for the Safe `execTransactio
 
 `forge test --gas-report` on this commit (solc 0.8.24, optimizer 200) put `append` at a median of about 31,500 gas, with a fuzzer maximum in a band of about 54,000 to 56,000. `declareEpoch` maximum was 42,616. The script budgets 60,000 and 50,000 for those two calls. With the 20% cushion that is 72,000 gas per append and 60,000 for the epoch call. Contract creation and the Safe wrapper are on top of that. Those figures are not a mainnet quote.
 
-The deployed head is epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. The Safe call opens epoch 2 at size 1, root `f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286`.
+The constructor reverts unless the genesis is epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. The Safe call opens epoch 2 at size 1, root `f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286`. The runtime code hash of this build is `0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a`. `xfuel-verify --witness` requires that hash.

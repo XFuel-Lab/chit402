@@ -47,11 +47,18 @@ function b64Root(hex) {
  * root. The line is opaque to a client that does not know this name.
  */
 export function epochExtensionLine({ epoch, prevEpochSize = 0, prevEpochRoot = null }) {
+  const n = Number(epoch);
+  if (!Number.isInteger(n) || n < 1) throw new Error('bad_epoch');
   const size = Number(prevEpochSize || 0);
   if (!Number.isInteger(size) || size < 0) throw new Error('bad_prev_size');
-  if (size === 0) return `epoch ${decimal(epoch)} 0`;
-  if (!prevEpochRoot) throw new Error('missing_prev_root');
-  return `epoch ${decimal(epoch)} ${decimal(size)} ${b64Root(prevEpochRoot)}`;
+  if (n === 1) {
+    if (size !== 0) throw new Error('epoch1_prev');
+    return 'epoch 1 0';
+  }
+  if (size < 1) throw new Error('missing_prev_size');
+  const root = b64Root(prevEpochRoot);
+  if (root === Buffer.alloc(32).toString('base64')) throw new Error('zero_prev_root');
+  return `epoch ${decimal(n)} ${decimal(size)} ${root}`;
 }
 
 /**
@@ -186,7 +193,7 @@ export function parseEpochExtension(line) {
   const epoch = Number(parts[1]);
   const prevEpochSize = Number(parts[2]);
   if (prevEpochSize === 0) {
-    if (parts.length !== 3) return null;
+    if (epoch !== 1 || parts.length !== 3) return null;
     return { epoch, prevEpochSize: 0, prevEpochRoot: null };
   }
   if (parts.length !== 4) return null;

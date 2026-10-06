@@ -19,6 +19,24 @@ contract ChitLogWitnessTest is Test {
         );
     }
 
+    function test_constructorRejectsAnyOtherGenesis() public {
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 2, 1, ChitLogPins.EPOCH2_OPENING_ROOT);
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 1, 3, ChitLogPins.EPOCH1_FINAL_ROOT);
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 1, 4, bytes32(uint256(1)));
+    }
+
+    // Runtime code hash of this solc 0.8.24 / optimizer-200 build.
+    // The same value is pinned in the gateway and in the verify package.
+    bytes32 internal constant CHIT_LOG_WITNESS_CODEHASH =
+        0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a;
+
+    function test_runtimeCodeIsPinned() public view {
+        assertEq(keccak256(address(witness).code), CHIT_LOG_WITNESS_CODEHASH);
+    }
+
     function test_pinsMatchTheReceiptLog() public view {
         assertEq(witness.epoch(), 1);
         assertEq(witness.treeSize(), 4);
@@ -133,9 +151,25 @@ contract ChitLogWitnessTest is Test {
         assertEq(extensions, 780);
     }
 
+    function test_verifierAgreesAbove2To31() public {
+        string[] memory cmd = new string[](3);
+        cmd[0] = "node";
+        cmd[1] = "services/gateway/scripts/rfc6962-dump.mjs";
+        cmd[2] = "--above";
+        string memory line = _trim(string(vm.ffi(cmd)));
+        string[] memory parts = vm.split(line, " ");
+        uint256 m = vm.parseUint(parts[0]);
+        uint256 n = vm.parseUint(parts[1]);
+        assertGt(m, 2 ** 31);
+        bytes32 oldRoot = vm.parseBytes32(string.concat("0x", parts[2]));
+        bytes32 newRoot = vm.parseBytes32(string.concat("0x", parts[3]));
+        bytes32[] memory proof = _proof(parts[4]);
+        assertTrue(Rfc6962.verify(m, n, oldRoot, newRoot, proof));
+    }
+
     function test_appendUsesTheOffChainProofAndRejectsAShrink() public {
         (uint256 m, uint256 n, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(4, 8, 7);
-        ChitLogWitness local = new ChitLogWitness(owner, appender, 3, m, oldRoot);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 3, m, oldRoot);
         vm.prank(appender);
         vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.SizeNotExtended.selector, m, m));
         local.append(m, newRoot, proof);
@@ -160,7 +194,7 @@ contract ChitLogWitnessTest is Test {
         (uint256 gotM, uint256 gotN, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(m, n, seed);
         assertEq(gotM, m);
         assertEq(gotN, n);
-        ChitLogWitness local = new ChitLogWitness(owner, appender, 4, m, oldRoot);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 4, m, oldRoot);
         assertTrue(local.accepts(n, newRoot, proof));
         vm.prank(appender);
         local.append(n, newRoot, proof);
@@ -173,7 +207,7 @@ contract ChitLogWitnessTest is Test {
 
     function test_gasLargerAppend() public {
         (uint256 m, uint256 n, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(32, 40, 99);
-        ChitLogWitness local = new ChitLogWitness(owner, appender, 3, m, oldRoot);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 3, m, oldRoot);
         uint256 gasBefore = gasleft();
         vm.prank(appender);
         local.append(n, newRoot, proof);
@@ -258,6 +292,16 @@ contract ChitLogWitnessInvariant is Test {
         assertEq(witness.root(), ChitLogPins.EPOCH1_FINAL_ROOT);
         assertEq(witness.owner(), address(this));
         assertEq(witness.appender(), address(0xA11));
+    }
+}
+
+/// @dev Starts from the pinned constructor, then sets a test head. The
+///      production contract reverts on any other genesis.
+contract ChitLogWitnessHarness is ChitLogWitness {
+    constructor(address owner_, address appender_, uint256 epoch_, uint256 size_, bytes32 root_)
+        ChitLogWitness(owner_, appender_, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT)
+    {
+        _setHead(epoch_, size_, root_);
     }
 }
 

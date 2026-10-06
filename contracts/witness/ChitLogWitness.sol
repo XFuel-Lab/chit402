@@ -82,17 +82,24 @@ contract ChitLogWitness {
         _;
     }
 
-    /// @param epoch_ Starting epoch. The deploy script passes 1.
-    /// @param size_  Starting tree size. Epoch 1 on the deploy path is 4.
-    /// @param root_  Starting root. Epoch 1 on the deploy path is `dd20e39a…`.
+    /// @param epoch_ Must be 1. Any other epoch reverts.
+    /// @param size_  Must be 4. Any other size reverts.
+    /// @param root_  Must be the epoch-1 final root `dd20e39a…`. Any other root reverts.
+    ///         A deploy cannot open on the Oct 5 head. That head is only
+    ///         `declareEpoch` from the Safe, after this constructor.
     constructor(address owner_, address appender_, uint256 epoch_, uint256 size_, bytes32 root_) {
         if (owner_ == address(0) || appender_ == address(0)) revert ZeroAddress();
-        if (epoch_ == 0 || size_ == 0) revert SizeZero();
-        if (root_ == bytes32(0)) revert ZeroRoot();
+        if (epoch_ != 1 || size_ != EPOCH1_FINAL_SIZE || root_ != EPOCH1_FINAL_ROOT) revert PinMismatch();
         owner = owner_;
         appender = appender_;
+        _head = LogHead({epoch: 1, size: EPOCH1_FINAL_SIZE, root: EPOCH1_FINAL_ROOT});
+        emit HeadInitialized(1, EPOCH1_FINAL_SIZE, EPOCH1_FINAL_ROOT);
+    }
+
+    /// @dev Test harnesses start from a later head. Production bytecode does
+    ///      not call this. The constructor above is the only deploy path.
+    function _setHead(uint256 epoch_, uint256 size_, bytes32 root_) internal {
         _head = LogHead({epoch: epoch_, size: size_, root: root_});
-        emit HeadInitialized(epoch_, size_, root_);
     }
 
     function head() external view returns (uint256 currentEpoch, uint256 currentSize, bytes32 currentRoot) {

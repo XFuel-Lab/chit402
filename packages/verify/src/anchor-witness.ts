@@ -7,7 +7,7 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
-import { Interface } from 'ethers';
+import { Interface, keccak256 } from 'ethers';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
@@ -181,9 +181,26 @@ function parseNode(hexNode: string): Buffer | null {
   return Buffer.from(hex, 'hex');
 }
 
+function isPow2(n: number): boolean {
+  if (!Number.isSafeInteger(n) || n < 1) return false;
+  let x = n;
+  while (x % 2 === 0) x = Math.floor(x / 2);
+  return x === 1;
+}
+
+function shr1(n: number): number {
+  return Math.floor(n / 2);
+}
+
+function lsb(n: number): boolean {
+  return n % 2 === 1;
+}
+
 /**
  * RFC 9162 §2.1.4.2. `proof` is the RFC node list. It does not include the
  * old root. `m == n` requires an empty proof and equal roots.
+ * Shifts are `Math.floor(n / 2)`. A JavaScript `>>=` would truncate at 2^31.
+ * Sizes that are not safe integers are rejected.
  */
 export function verifyConsistency(
   m: number,
@@ -194,41 +211,42 @@ export function verifyConsistency(
 ): boolean {
   const old = parseNode(oldRoot);
   const next = parseNode(newRoot);
-  if (!old || !next || !Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m) return false;
+  if (!old || !next || !Number.isSafeInteger(m) || !Number.isSafeInteger(n) || m < 1 || n < m) return false;
   if (m === n) return old.equals(next) && (!proof || proof.length === 0);
   if (!Array.isArray(proof) || proof.length === 0) return false;
   const nodes: Buffer[] = [];
-  if (m > 0 && (m & (m - 1)) === 0) nodes.push(old);
+  if (isPow2(m)) nodes.push(old);
   for (const step of proof) {
     const parsed = parseNode(step);
     if (!parsed) return false;
     nodes.push(parsed);
   }
+  if (!nodes.length) return false;
   let fn = m - 1;
   let sn = n - 1;
-  while ((fn & 1) === 1) {
-    fn >>= 1;
-    sn >>= 1;
+  while (lsb(fn)) {
+    fn = shr1(fn);
+    sn = shr1(sn);
   }
   let fr: Uint8Array = nodes[0];
   let sr: Uint8Array = nodes[0];
   for (let i = 1; i < nodes.length; i += 1) {
     if (sn === 0) return false;
     const c = nodes[i];
-    if ((fn & 1) === 1 || fn === sn) {
+    if (lsb(fn) || fn === sn) {
       fr = nodeHash(c, fr);
       sr = nodeHash(c, sr);
-      if ((fn & 1) === 0) {
-        while ((fn & 1) === 0 && fn !== 0) {
-          fn >>= 1;
-          sn >>= 1;
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr1(fn);
+          sn = shr1(sn);
         }
       }
     } else {
       sr = nodeHash(sr, c);
     }
-    fn >>= 1;
-    sn >>= 1;
+    fn = shr1(fn);
+    sn = shr1(sn);
   }
   return sn === 0 && Buffer.from(fr).equals(old) && Buffer.from(sr).equals(next);
 }
@@ -236,6 +254,24 @@ export function verifyConsistency(
 const WITNESS_HEAD = new Interface([
   'function head() view returns (uint256 epoch, uint256 size, bytes32 root)',
 ]);
+
+/** Runtime code hash of ChitLogWitness, solc 0.8.24, optimizer 200. */
+export const CHIT_LOG_WITNESS_CODEHASH = '0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a';
+
+export async function fetchWitnessCode(address: string, rpcUrl: string): Promise<string | null> {
+  const code = await defaultRpc(rpcUrl, 'eth_getCode', [address, 'latest']) as string | null;
+  return typeof code === 'string' ? code : null;
+}
+
+export function witnessCodeMatches(bytecode: string | null | undefined): boolean {
+  const code = String(bytecode || '');
+  if (!code || code === '0x') return false;
+  try {
+    return keccak256(code).toLowerCase() === CHIT_LOG_WITNESS_CODEHASH;
+  } catch {
+    return false;
+  }
+}
 
 export interface WitnessHead {
   epoch: number;
@@ -403,6 +439,7 @@ export interface VerifyAnchoredRootInput {
     proof?: string[];
   } | null;
   fetchWitness?: (address: string, rpcUrl: string) => Promise<WitnessHead | null>;
+  fetchWitnessCode?: (address: string, rpcUrl: string) => Promise<string | null>;
 }
 
 /**
@@ -609,9 +646,18 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   } else {
     witness.checked = true;
     try {
+      const readCode = input.fetchWitnessCode || fetchWitnessCode;
+      const code = await readCode(witnessAddress, baseRpc);
+      if (!witnessCodeMatches(code)) {
+        witness.reason = 'witness_code';
+        errors.push('witness:witness_code');
+        // A contract that is not this build is not a witness, even if head() matches.
+      }
       const read = input.fetchWitness || fetchWitnessHead;
-      const onchain = await read(witnessAddress, baseRpc);
-      if (!onchain) {
+      const onchain = witness.reason === 'witness_code' ? null : await read(witnessAddress, baseRpc);
+      if (witness.reason === 'witness_code') {
+        // already recorded
+      } else if (!onchain) {
         witness.reason = 'head_missing';
       } else {
         witness.epoch = onchain.epoch;

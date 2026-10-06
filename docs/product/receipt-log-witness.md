@@ -15,7 +15,11 @@ When the flag is on and `CHIT_LOG_WITNESS_ADDRESS` is set:
 - At boot the gateway reads the contract head. It refuses to start unless the open journal is the same epoch and an RFC 6962 extension of that head (the same size and root, or a larger size whose proof verifies). A missing address or a failed read also refuses, with `witness_unconfigured` or `witness_rpc`.
 - `xfuel-verify receipt.json inclusion.json head.json --rpc --witness 0x…` reads `head()` on that address. The same size must be the same root. A larger head needs `--consistency` set to the RFC proof from the contract size to the signed head. With no address, the command says the contract was not checked. It does not treat a missing address as a pass of the witness.
 
-The appender is a separate key from the Safe. It can append. It cannot open an epoch, and it cannot change the owner or the appender. The Safe is the owner.
+The appender is a separate key from the Safe and from the bare-root anchor key. Boot refuses `witness_same_key` when those two addresses are the same. The appender can append. It cannot open an epoch, and it cannot change the owner or the appender. The Safe is the owner.
+
+A witness transaction is `broadcast` until a mined receipt succeeds and `head()` on the contract equals that size and root. Only then is it `witnessed`, and only then does the signed head include it. A reverted transaction is `reverted` and is not a signed claim. The daily retry looks at that witness side as well as Base and Solana.
+
+The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973`. Any other genesis reverts. `xfuel-verify --rpc --witness` also checks the runtime code hash of this build (`0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a`, solc 0.8.24, optimizer 200). A different contract at that address is not a witness.
 
 Events `HeadAppended` and `EpochDeclared` carry the size and the root. A reader with the leaves can rebuild the consistency proof and compare it to the sequence of heads on the chain. The event does not contain the proof nodes.
 
@@ -42,9 +46,9 @@ The body is four lines:
 1. origin
 2. tree size, decimal, no leading zeros
 3. root, standard base64
-4. one extension line, `epoch <epoch> <prev_epoch_size>` and, when the previous size is not 0, the previous root in base64
+4. one extension line. Epoch 1 is `epoch 1 0`. Epoch 2 and later require a non-zero previous size and a non-zero previous root, or the signer throws.
 
-Epoch 1's line is `epoch 1 0`. There is no invented previous root. A client that ignores extension lines still sees an append-only log inside that origin.
+A client that ignores extension lines still sees an append-only log inside that origin.
 
 ## How to check it yourself
 

@@ -11,7 +11,7 @@
  * only after the Safe has called `declareEpoch`. The Oct 5 reset, a size-1
  * root with no link to the size-4 head, is not an extension.
  */
-import { Wallet, JsonRpcProvider, Interface } from 'ethers';
+import { Wallet, JsonRpcProvider, Interface, keccak256 } from 'ethers';
 import logger from './logger.js';
 import { ReceiptLogRefused } from './receipt-log-store.js';
 import { consistencyProof, rootOf, verifyConsistency } from './receipt-merkle.js';
@@ -25,6 +25,15 @@ export const WITNESS_ABI = [
 ];
 
 const iface = new Interface(WITNESS_ABI);
+
+/** Runtime code hash of ChitLogWitness at solc 0.8.24, optimizer 200. */
+export const CHIT_LOG_WITNESS_CODEHASH = '0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a';
+
+export function witnessCodeMatches(bytecode) {
+  const code = String(bytecode || '');
+  if (!code || code === '0x') return false;
+  return keccak256(code).toLowerCase() === CHIT_LOG_WITNESS_CODEHASH;
+}
 
 /** The only on value is `1`. Unset, `0`, `true`, and `yes` stay off. */
 export function receiptWitnessEnabled(env = process.env) {
@@ -57,6 +66,20 @@ export function decodeHead(data) {
     size: Number(size),
     root: String(root).replace(/^0x/, '').toLowerCase(),
   };
+}
+
+export async function readWitnessCode({
+  address = witnessAddress(),
+  rpcUrl = witnessRpcUrl(),
+  request = null,
+} = {}) {
+  if (!address) throw new Error('witness_unconfigured');
+  if (typeof request === 'function') {
+    return request(rpcUrl, 'eth_getCode', [address, 'latest']);
+  }
+  if (!rpcUrl) throw new Error('no_rpc');
+  const provider = new JsonRpcProvider(rpcUrl);
+  return provider.getCode(address);
 }
 
 export async function readWitnessHead({
@@ -152,6 +175,15 @@ export async function assertWitnessJournal(tree, opts = {}) {
   } catch (err) {
     throw new ReceiptLogRefused('witness_rpc', err.message || 'witness head read failed');
   }
+  if (typeof opts.readCode === 'function') {
+    const code = await opts.readCode();
+    if (!witnessCodeMatches(code)) {
+      throw new ReceiptLogRefused(
+        'witness_code',
+        'witness runtime code hash does not match the pinned ChitLogWitness',
+      );
+    }
+  }
   const check = journalExtendsHead(tree, contractHead);
   if (!check.ok) {
     throw new ReceiptLogRefused(check.reason || 'witness_not_extension', check.detail || 'journal is not an extension of the witness head');
@@ -189,7 +221,7 @@ export async function planWitnessAppend(tree, rootHex, opts = {}) {
   if (!check.ok) return pending(check.reason || 'witness_not_extension');
   if (contractHead.size === tree.leaves.length && contractHead.root === String(rootHex).toLowerCase()) {
     return {
-      status: 'anchored',
+      status: 'witnessed',
       reason: 'already',
       to: address,
       tx: null,
@@ -214,14 +246,84 @@ export async function planWitnessAppend(tree, rootHex, opts = {}) {
   };
 }
 
-export async function sendWitnessAppend(plan, { send = null, nonce = null, rpcUrl = witnessRpcUrl() } = {}) {
-  if (!plan || plan.status !== 'ready') return plan;
+function receiptOk(status) {
+  return status === '0x1' || status === 1 || status === '0x01' || status === true;
+}
+
+/**
+ * A hash from sendTransaction is `broadcast`, not witnessed. `witnessed`
+ * requires a mined success receipt and `head()` equal to the new size and root.
+ * A mined failure is `reverted`. A send that throws before a hash is `failed`.
+ */
+export async function confirmWitnessAppend(record, {
+  readReceipt = null,
+  readHead = null,
+  rpcUrl = witnessRpcUrl(),
+  address = witnessAddress(),
+  request = null,
+} = {}) {
+  if (!record?.tx) {
+    return { ...record, status: 'failed', reason: record?.reason || 'no_tx' };
+  }
+  let receipt = null;
   try {
-    let tx;
+    if (typeof readReceipt === 'function') receipt = await readReceipt(record.tx);
+    else if (rpcUrl) {
+      const provider = new JsonRpcProvider(rpcUrl);
+      receipt = await provider.getTransactionReceipt(record.tx);
+    } else {
+      return { ...record, status: 'broadcast', reason: 'unmined' };
+    }
+  } catch (err) {
+    return { ...record, status: 'broadcast', reason: err.message || 'receipt_rpc' };
+  }
+  if (!receipt) return { ...record, status: 'broadcast', reason: 'unmined' };
+  if (!receiptOk(receipt.status)) {
+    return { ...record, status: 'reverted', reason: 'reverted' };
+  }
+  let onchain;
+  try {
+    onchain = typeof readHead === 'function'
+      ? await readHead()
+      : await readWitnessHead({ address, rpcUrl, request });
+  } catch (err) {
+    return { ...record, status: 'broadcast', reason: err.message || 'head_unconfirmed' };
+  }
+  const root = String(onchain?.root || '').replace(/^0x/, '').toLowerCase();
+  const want = String(record.newRoot || '').replace(/^0x/, '').toLowerCase();
+  if (Number(onchain?.size) === Number(record.newSize) && root === want && root) {
+    return {
+      ...record,
+      status: 'witnessed',
+      reason: null,
+      size: Number(onchain.size),
+      root,
+    };
+  }
+  return { ...record, status: 'failed', reason: 'head_mismatch' };
+}
+
+export async function sendWitnessAppend(plan, {
+  send = null,
+  nonce = null,
+  rpcUrl = witnessRpcUrl(),
+  readReceipt = null,
+  readHead = null,
+  request = null,
+} = {}) {
+  if (!plan || plan.status !== 'ready') return plan;
+  const base = {
+    to: plan.to,
+    calldata: plan.calldata,
+    newSize: plan.newSize,
+    newRoot: plan.newRoot,
+  };
+  let tx = null;
+  try {
     if (typeof send === 'function') {
       tx = await send({ to: plan.to, data: plan.calldata, value: '0', nonce });
     } else {
-      if (!rpcUrl) return { ...plan, status: 'pending', reason: 'no_rpc' };
+      if (!rpcUrl) return { ...base, status: 'pending', reason: 'no_rpc', tx: null };
       const provider = new JsonRpcProvider(rpcUrl);
       const wallet = new Wallet(plan.privateKey, provider);
       const sent = await wallet.sendTransaction({
@@ -232,23 +334,25 @@ export async function sendWitnessAppend(plan, { send = null, nonce = null, rpcUr
       });
       tx = sent.hash;
     }
-    return {
-      status: 'anchored',
-      reason: null,
-      to: plan.to,
-      tx: tx || null,
-      calldata: plan.calldata,
-    };
   } catch (err) {
     logger.error({ err: err.message }, 'receipt witness append failed');
-    return {
-      status: 'pending',
-      reason: err.message || 'send_failed',
-      to: plan.to,
-      tx: null,
-      calldata: plan.calldata,
-    };
+    return { ...base, status: 'failed', reason: err.message || 'send_failed', tx: null };
   }
+  if (!tx) return { ...base, status: 'failed', reason: 'no_tx', tx: null };
+  return confirmWitnessAppend(
+    { ...base, status: 'broadcast', reason: 'unmined', tx },
+    { readReceipt, readHead, rpcUrl, address: plan.to, request },
+  );
+}
+
+/** Boot refuses a shared anchor and appender key. The appender is a separate key. */
+export function assertDistinctWitnessKey(env = process.env) {
+  if (!receiptWitnessEnabled(env)) return { ok: true, skipped: true };
+  if (!witnessSharesAnchorKey(env)) return { ok: true };
+  throw new ReceiptLogRefused(
+    'witness_same_key',
+    'RECEIPT_LOG_WITNESS appender address equals the Base anchor address. Use a separate appender key.',
+  );
 }
 
 export function witnessSignerAddress(env = process.env) {

@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,7 @@ const {
   verifyInclusion,
   consistencyProof,
   verifyConsistency,
+  consistencyPreview,
   consistencyProofLegacy,
   verifyConsistencyLegacy,
   EMPTY_TREE_ROOT,
@@ -29,16 +31,19 @@ const {
   signTreeCheckpoint,
   verifyCheckpointNote,
   checkpointOrigin,
+  epochExtensionLine,
 } = await import('../src/receipt-checkpoint.js');
 const { initIssuerKey } = await import('../src/issuer-key.js');
 const {
   journalExtendsHead,
   assertWitnessJournal,
+  assertDistinctWitnessKey,
   receiptWitnessEnabled,
   encodeAppend,
   WITNESS_ABI,
 } = await import('../src/receipt-log-witness.js');
 const { ReceiptLogRefused } = await import('../src/receipt-log-store.js');
+const { dailyAnchorDue, ANCHOR_RETRY_MS } = await import('../src/receipt-merkle.js');
 const {
   EPOCH1_FINAL_ROOT,
   EPOCH1_SIZE1_ROOT,
@@ -170,6 +175,9 @@ test('a checkpoint is a signed note with one epoch extension line', () => {
   const parsed1 = verifyCheckpointNote(epoch1, publicKeyJwk);
   assert.equal(parsed1.ok, true, parsed1.reason);
   assert.equal(parsed1.extension, 'epoch 1 0');
+  assert.throws(() => epochExtensionLine({ epoch: 2, prevEpochSize: 0, prevEpochRoot: null }), /missing_prev_size/);
+  assert.throws(() => epochExtensionLine({ epoch: 3, prevEpochSize: 0, prevEpochRoot: EPOCH1_FINAL_ROOT }), /missing_prev_size/);
+  assert.throws(() => epochExtensionLine({ epoch: 2, prevEpochSize: 4, prevEpochRoot: '0'.repeat(64) }), /zero_prev_root/);
 });
 
 test('the witness flag is off unless it is exactly 1, and a reset is not an extension', async () => {
@@ -225,6 +233,8 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
   process.env.RECEIPT_WITNESS_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'cd'.repeat(32)}`;
   const calls = [];
+  const fullRoot = rootOf(tree.leaves).toString('hex');
+  let mined = false;
   try {
     const head = await tree.publishHead({
       force: true,
@@ -234,22 +244,25 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
       },
       witnessSend: async (tx) => {
         calls.push(tx.data);
+        mined = true;
         return `0x${'bb'.repeat(32)}`;
       },
-      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+      witnessReadHead: async () => (mined
+        ? { epoch: 1, size: full, root: fullRoot }
+        : { epoch: 1, size: 2, root: prefix }),
+      witnessReadReceipt: async () => ({ status: '0x1' }),
     });
-    assert.deepEqual(calls[0] === 'base' || calls.includes('base'), true);
     assert.equal(calls.includes('base'), true);
     const appendCall = calls.find((item) => item !== 'base');
     const selector = new Interface(WITNESS_ABI).getFunction('append').selector;
     assert.equal(appendCall.slice(0, 10), selector);
     assert.equal(head.anchors.base.calldata, `0x${head.root}`);
-    assert.equal(head.anchors.witness.status, 'anchored');
+    assert.equal(head.anchors.witness.status, 'witnessed');
     assert.equal(head.anchors.witness.tx, `0x${'bb'.repeat(32)}`);
     assert.equal(head.checkpoint.includes('chit402.com/receipt-log/1'), true);
-    assert.equal(head.issuer_signature.jws.split('.').length, 3);
     const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
     assert.equal(payload.checkpoint, undefined);
+    assert.equal(payload.anchors.witness.status, 'witnessed');
     const encoded = encodeAppend(full, head.root, extended.proof);
     assert.equal(head.anchors.witness.calldata, encoded);
   } finally {
@@ -264,3 +277,200 @@ test('an RFC extension of the contract head is accepted, and the daily anchor se
     resetReceiptMerkleTree();
   }
 });
+
+function witnessEnv() {
+  const prev = {
+    flag: process.env.RECEIPT_LOG_WITNESS,
+    addr: process.env.CHIT_LOG_WITNESS_ADDRESS,
+    key: process.env.RECEIPT_WITNESS_PRIVATE_KEY,
+    anchor: process.env.RECEIPT_ANCHOR_PRIVATE_KEY,
+  };
+  process.env.RECEIPT_LOG_WITNESS = '1';
+  process.env.CHIT_LOG_WITNESS_ADDRESS = `0x${'33'.repeat(20)}`;
+  process.env.RECEIPT_WITNESS_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'cd'.repeat(32)}`;
+  return () => {
+    const restore = (name, value) => {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('RECEIPT_LOG_WITNESS', prev.flag);
+    restore('CHIT_LOG_WITNESS_ADDRESS', prev.addr);
+    restore('RECEIPT_WITNESS_PRIVATE_KEY', prev.key);
+    restore('RECEIPT_ANCHOR_PRIVATE_KEY', prev.anchor);
+    resetReceiptMerkleTree();
+  };
+}
+
+test('an unmined append is not signed, and the retry records it once head() matches', async () => {
+  const restore = witnessEnv();
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.appendReceipt('a', '1');
+    tree.appendReceipt('b', '2');
+    const full = tree.leaves.length;
+    const fullRoot = rootOf(tree.leaves).toString('hex');
+    const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
+    let chain = { epoch: 1, size: 2, root: prefix };
+    let receipt = null;
+    const sends = [];
+    const first = await tree.publishHead({
+      force: true,
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => {
+        sends.push('send');
+        return `0x${'bb'.repeat(32)}`;
+      },
+      witnessReadHead: async () => chain,
+      witnessReadReceipt: async () => receipt,
+    });
+    const unsigned = JSON.parse(Buffer.from(first.issuer_signature.jws.split('.')[1], 'base64url').toString());
+    assert.equal(first.witness_pending.status, 'broadcast');
+    assert.equal(unsigned.anchors.witness, undefined);
+    assert.equal(dailyAnchorDue(first, new Date(Date.parse(first.published_at) + 1000)), false);
+    assert.equal(dailyAnchorDue(first, new Date(Date.parse(first.published_at) + ANCHOR_RETRY_MS)), true);
+
+    chain = { epoch: 1, size: full, root: fullRoot };
+    receipt = { status: '0x1' };
+    const caught = await tree.publishHead({
+      force: true,
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => {
+        sends.push('again');
+        return `0x${'cc'.repeat(32)}`;
+      },
+      witnessReadHead: async () => chain,
+      witnessReadReceipt: async () => receipt,
+    });
+    assert.deepEqual(sends, ['send']);
+    assert.equal(caught.anchors.witness.status, 'witnessed');
+    assert.equal(caught.witness_pending, undefined);
+    const payload = JSON.parse(Buffer.from(caught.issuer_signature.jws.split('.')[1], 'base64url').toString());
+    assert.equal(payload.anchors.witness.status, 'witnessed');
+    assert.equal(payload.anchors.witness.root, fullRoot);
+  } finally {
+    restore();
+  }
+});
+
+test('a reverted append is not a signed witness', async () => {
+  const restore = witnessEnv();
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.appendReceipt('a', '1');
+    tree.appendReceipt('b', '2');
+    const prefix = rootOf(tree.leaves.slice(0, 2)).toString('hex');
+    const head = await tree.publishHead({
+      force: true,
+      send: async () => `0x${'aa'.repeat(32)}`,
+      witnessSend: async () => `0x${'bb'.repeat(32)}`,
+      witnessReadHead: async () => ({ epoch: 1, size: 2, root: prefix }),
+      witnessReadReceipt: async () => ({ status: '0x0' }),
+    });
+    assert.equal(head.witness_pending.status, 'reverted');
+    assert.equal(head.anchors.witness, undefined);
+    const payload = JSON.parse(Buffer.from(head.issuer_signature.jws.split('.')[1], 'base64url').toString());
+    assert.equal(payload.anchors.witness, undefined);
+  } finally {
+    restore();
+  }
+});
+
+test('a failed bare-root send does not advance the witness nonce', async () => {
+  const restore = witnessEnv();
+  const dir = mkdtempSync(`${tmpdir()}/witness-nonce-`);
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.dir = dir;
+    tree.appendReceipt('a', '1');
+    const seen = {};
+    await tree.publishHead({
+      force: true,
+      nonce: 4,
+      send: async (tx) => {
+        seen.base = tx.nonce;
+        throw new Error('bare root not broadcast');
+      },
+      witnessSend: async (tx) => {
+        seen.witness = tx.nonce;
+        return `0x${'ee'.repeat(32)}`;
+      },
+      witnessReadNonce: async () => 4,
+      witnessReadHead: async () => ({ epoch: 1, size: 1, root: rootOf(tree.leaves.slice(0, 1)).toString('hex') }),
+      witnessReadReceipt: async () => null,
+    });
+    assert.equal(seen.base, 4);
+    assert.equal(seen.witness, 4);
+  } finally {
+    restore();
+  }
+});
+
+test('boot refuses a witness contract that is not this build', async () => {
+  const tree = new ReceiptMerkleTree();
+  tree.leaves = [leafHash(Buffer.from('genesis-only'))];
+  await assert.rejects(
+    () => assertWitnessJournal(tree, {
+      enabled: true,
+      address: `0x${'11'.repeat(20)}`,
+      readHead: async () => ({ epoch: 1, size: 1, root: tree.leaves[0].toString('hex') }),
+      readCode: async () => '0x1234',
+    }),
+    (err) => err instanceof ReceiptLogRefused && err.code === 'witness_code',
+  );
+});
+
+test('boot refuses a witness key that is also the anchor key', () => {
+  const key = `0x${'11'.repeat(32)}`;
+  assert.throws(
+    () => assertDistinctWitnessKey({
+      RECEIPT_LOG_WITNESS: '1',
+      RECEIPT_WITNESS_PRIVATE_KEY: key,
+      RECEIPT_ANCHOR_PRIVATE_KEY: key,
+    }),
+    (err) => err instanceof ReceiptLogRefused && err.code === 'witness_same_key',
+  );
+  assert.equal(assertDistinctWitnessKey({ RECEIPT_LOG_WITNESS: '0' }).skipped, true);
+});
+
+test('consistency above 2^31 matches a safe fold and is not a 32-bit shift', () => {
+  const m = 2 ** 31 + 3;
+  const n = 2 ** 31 + 8;
+  const proof = [0, 1, 2, 3, 4].map((i) => createHash('sha256').update(Buffer.from(`above-${i}`)).digest('hex'));
+  const preview = consistencyPreview(m, n, proof);
+  assert.ok(preview);
+  assert.equal(verifyConsistency(m, n, preview.oldRoot, preview.newRoot, proof), true);
+  assert.equal(verifyConsistencyInt32(m, n, preview.oldRoot, preview.newRoot, proof), false);
+});
+
+function verifyConsistencyInt32(m, n, oldRoot, newRoot, proof) {
+  const old = Buffer.from(oldRoot, 'hex');
+  const next = Buffer.from(newRoot, 'hex');
+  const node = (left, right) => createHash('sha256').update(Buffer.concat([Buffer.from([0x01]), left, right])).digest();
+  const nodes = proof.map((step) => Buffer.from(step, 'hex'));
+  let fn = (m - 1) | 0;
+  let sn = (n - 1) | 0;
+  while ((fn & 1) === 1) {
+    fn >>= 1;
+    sn >>= 1;
+  }
+  let fr = nodes[0];
+  let sr = nodes[0];
+  for (let i = 1; i < nodes.length; i += 1) {
+    if (sn === 0) return false;
+    const c = nodes[i];
+    if ((fn & 1) === 1 || fn === sn) {
+      fr = node(c, fr);
+      sr = node(c, sr);
+      if ((fn & 1) === 0) {
+        while ((fn & 1) === 0 && fn !== 0) {
+          fn >>= 1;
+          sn >>= 1;
+        }
+      }
+    } else sr = node(sr, c);
+    fn >>= 1;
+    sn >>= 1;
+  }
+  return sn === 0 && fr.equals(old) && sr.equals(next);
+}

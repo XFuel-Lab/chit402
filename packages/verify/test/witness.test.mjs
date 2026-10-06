@@ -4,8 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const { verifyAnchoredRoot, verifyConsistency } = await import('../dist/anchor-witness.js');
+const runtimeCode = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures/chit-log-witness.runtime.hex'), 'utf8').trim();
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest();
@@ -53,6 +57,7 @@ test('without a witness address the contract is not checked and the run still ve
     head,
     fetchSolanaTx: async () => null,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${head.root}`, chainId: 8453 }),
+    fetchWitnessCode: async () => runtimeCode,
   });
   assert.equal(result.witness.configured, false);
   assert.equal(result.witness.checked, false);
@@ -69,6 +74,7 @@ test('a head that matches the contract is accepted, and a different root is not'
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 2, root }),
+    fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
   assert.equal(matched.witness.valid, true);
@@ -82,6 +88,7 @@ test('a head that matches the contract is accepted, and a different root is not'
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 2, root: 'ab'.repeat(32) }),
+    fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
   assert.equal(refused.witness.valid, false);
@@ -98,6 +105,7 @@ test('a larger head needs an RFC consistency proof from the stored head', async 
     head,
     witnessAddress: address,
     fetchWitness: async () => ({ epoch: 1, size: 1, root: genesis }),
+    fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
   assert.equal(missing.witness.reason, 'witness_proof_required');
@@ -118,7 +126,39 @@ test('a larger head needs an RFC consistency proof from the stored head', async 
       proof,
     },
     fetchWitness: async () => ({ epoch: 1, size: 1, root: genesis }),
+    fetchWitnessCode: async () => runtimeCode,
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
   assert.equal(extended.witness.valid, true, extended.witness.reason);
+});
+
+test('a contract whose code hash is not ChitLogWitness is not a witness', async () => {
+  const { receipt, inclusion, head, root } = fixture();
+  const result = await verifyAnchoredRoot({
+    receipt,
+    inclusion,
+    head,
+    witnessAddress: '0x' + '11'.repeat(20),
+    fetchWitness: async () => ({ epoch: 1, size: 2, root }),
+    fetchWitnessCode: async () => '0x1234',
+    fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
+  });
+  assert.equal(result.witness.reason, 'witness_code');
+  assert.equal(result.witness.valid, false);
+  assert.equal(result.overall, 'failed');
+});
+
+test('consistency above 2^31 agrees with the safe integer fold', () => {
+  const m = 2147483651;
+  const n = 2147483656;
+  const oldRoot = '66efa6095285abc11dba086420c33d7a5ac36361bff1c880a468b15c90002893';
+  const newRoot = '8a7dacdbf7ccc03b1b16b371e75b220e9c2bd48f7360a96408c4fbd35778e333';
+  const proof = [
+    'b6dc386a95e0e1eb7afab12a9d5eb47518b76628b4a26d8449b0b88ce2453400',
+    '437e86843ba8e36bc02680f08d56197df23b325971dc3218793d65a08c391ab1',
+    '5d9b7a4d672258165cb7ad26afa29e6d7f9dc4a0a66747c6c0897e6bcc9e4cd8',
+    '5274cdb016bfd8066395730837a4ed14d5e7b73e1ec45ae3e31a35fe0160fbf4',
+    'd6c0dfd6e1b39f2524f750fffc90fc85df4a5a7afe2ef2e32c976d3db5ab2c24',
+  ];
+  assert.equal(verifyConsistency(m, n, oldRoot, newRoot, proof), true);
 });

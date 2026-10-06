@@ -7,7 +7,8 @@
  *   node services/gateway/scripts/rfc6962-dump.mjs [max]
  *   node services/gateway/scripts/rfc6962-dump.mjs --one <m> <n> <seed>
  */
-import { leafHash, rootOf, consistencyProof } from '../src/receipt-merkle.js';
+import { createHash } from 'node:crypto';
+import { consistencyPreview, leafHash, rootOf, consistencyProof } from '../src/receipt-merkle.js';
 
 function hex(buf) {
   return Buffer.from(buf).toString('hex');
@@ -31,7 +32,17 @@ function line(leaves, m, n) {
 }
 
 const args = process.argv.slice(2);
-if (args[0] === '--one') {
+if (args[0] === '--above') {
+  const m = 2 ** 31 + 3;
+  const n = 2 ** 31 + 8;
+  const proof = [0, 1, 2, 3, 4].map((i) => createHash('sha256').update(Buffer.from(`above-${i}`)).digest('hex'));
+  const preview = consistencyPreview(m, n, proof);
+  if (!preview) {
+    console.error('preview failed');
+    process.exit(1);
+  }
+  process.stdout.write(`${m} ${n} ${preview.oldRoot} ${preview.newRoot} ${proof.join(',')}\n`);
+} else if (args[0] === '--one') {
   const m = Number(args[1]);
   const n = Number(args[2]);
   const seed = args[3] ?? '0';

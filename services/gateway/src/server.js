@@ -2771,7 +2771,7 @@ export function createApp() {
       const receiptLog = tree.bundleStatus();
       if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
       // The checkpoint note has its own URL. It is not a JWS claim.
-      const { checkpoint: _checkpoint, ...publicHead } = head;
+      const { checkpoint: _checkpoint, witness_pending: _pending, ...publicHead } = head;
       return res.json({ ...publicHead, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');

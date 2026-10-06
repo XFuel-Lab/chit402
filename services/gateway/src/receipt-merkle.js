@@ -180,7 +180,18 @@ export function consistencyProof(leaves, m, n) {
 }
 
 function isPow2(n) {
-  return n > 0 && (n & (n - 1)) === 0;
+  if (!Number.isSafeInteger(n) || n < 1) return false;
+  let x = n;
+  while (x % 2 === 0) x = Math.floor(x / 2);
+  return x === 1;
+}
+
+function shr1(n) {
+  return Math.floor(n / 2);
+}
+
+function lsb(n) {
+  return n % 2 === 1;
 }
 
 function parseNode(hexNode) {
@@ -196,43 +207,69 @@ function parseNode(hexNode) {
 export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
   const old = parseNode(oldRoot);
   const next = parseNode(newRoot);
-  if (!old || !next || !Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m) return false;
+  if (!old || !next || !Number.isSafeInteger(m) || !Number.isSafeInteger(n) || m < 1 || n < m) return false;
   if (m === n) return old.equals(next) && (!proof || proof.length === 0);
   if (!Array.isArray(proof) || proof.length === 0) return false;
+  const folded = foldConsistency(m, n, old, proof);
+  if (!folded) return false;
+  return folded.sn === 0 && folded.fr.equals(old) && folded.sr.equals(next);
+}
+
+/**
+ * RFC 9162 §2.1.4.2 fold. Shifts are `Math.floor(n / 2)`, not `>>=`, so a
+ * size above 2^31 is not truncated to a signed 32-bit integer. Sizes above
+ * `Number.MAX_SAFE_INTEGER` are rejected.
+ * When `m` is not a power of two, `oldRoot` is only the final comparison
+ * value. `consistencyPreview` uses that to build a fixture.
+ */
+function foldConsistency(m, n, oldRoot, proof) {
   const nodes = [];
-  if (isPow2(m)) nodes.push(old);
+  if (isPow2(m)) nodes.push(oldRoot);
   for (const step of proof) {
     const parsed = parseNode(step);
-    if (!parsed) return false;
+    if (!parsed) return null;
     nodes.push(parsed);
   }
+  if (!nodes.length) return null;
   let fn = m - 1;
   let sn = n - 1;
-  while ((fn & 1) === 1) {
-    fn >>= 1;
-    sn >>= 1;
+  while (lsb(fn)) {
+    fn = shr1(fn);
+    sn = shr1(sn);
   }
   let fr = nodes[0];
   let sr = nodes[0];
   for (let i = 1; i < nodes.length; i += 1) {
-    if (sn === 0) return false;
+    if (sn === 0) return null;
     const c = nodes[i];
-    if ((fn & 1) === 1 || fn === sn) {
+    if (lsb(fn) || fn === sn) {
       fr = nodeHash(c, fr);
       sr = nodeHash(c, sr);
-      if ((fn & 1) === 0) {
-        while ((fn & 1) === 0 && fn !== 0) {
-          fn >>= 1;
-          sn >>= 1;
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr1(fn);
+          sn = shr1(sn);
         }
       }
     } else {
       sr = nodeHash(sr, c);
     }
-    fn >>= 1;
-    sn >>= 1;
+    fn = shr1(fn);
+    sn = shr1(sn);
   }
-  return sn === 0 && fr.equals(old) && sr.equals(next);
+  return { fr, sr, sn };
+}
+
+/**
+ * Roots a proof would have to match when `m` is not a power of two.
+ * The old root is the fold's `fr`. Used to test sizes above 2^31.
+ */
+export function consistencyPreview(m, n, proof) {
+  if (!Number.isSafeInteger(m) || !Number.isSafeInteger(n) || isPow2(m) || m < 1 || n <= m) return null;
+  const placeholder = Buffer.alloc(32, 0);
+  const folded = foldConsistency(m, n, placeholder, proof);
+  if (!folded || folded.sn !== 0) return null;
+  return { oldRoot: folded.fr.toString('hex'), newRoot: folded.sr.toString('hex') };
 }
 
 /**
@@ -679,13 +716,41 @@ function sideNeedsRetry(side, envReady) {
 
 const QUIET_REASONS = new Set(['no_key', 'no_rpc', 'bad_key', 'bad_cluster', 'day_already_anchored']);
 
+function witnessFlagOn() {
+  return process.env.RECEIPT_LOG_WITNESS === '1';
+}
+
+function witnessSide(head) {
+  return head?.anchors?.witness || head?.witness_pending || null;
+}
+
+function publicWitness(record) {
+  if (!record) return null;
+  return {
+    status: record.status,
+    reason: record.reason || null,
+    to: record.to || null,
+    tx: record.tx || null,
+    calldata: record.calldata || null,
+    ...(record.size != null ? { size: record.size } : {}),
+    ...(record.root ? { root: String(record.root).replace(/^0x/, '') } : {}),
+  };
+}
+
+function witnessNeedsRetry(head) {
+  if (!witnessFlagOn()) return false;
+  const side = witnessSide(head);
+  if (side?.status === 'witnessed') return false;
+  return true;
+}
+
 function anchorNeedsRetry(head) {
   if (!head) return true;
   const base = head.anchors?.base || head.anchor;
   const sol = head.anchors?.solana;
   const baseReady = Boolean(process.env.RECEIPT_ANCHOR_PRIVATE_KEY);
   const solReady = Boolean(process.env.SOLANA_ANCHOR_SECRET_KEY && process.env.SOLANA_RPC_URL);
-  return sideNeedsRetry(base, baseReady) || sideNeedsRetry(sol, solReady);
+  return sideNeedsRetry(base, baseReady) || sideNeedsRetry(sol, solReady) || witnessNeedsRetry(head);
 }
 
 function transportFailure(side) {
@@ -754,7 +819,9 @@ export function dailyAnchorDue(head, now = new Date()) {
   if (!anchorNeedsRetry(head)) return false;
   const base = head.anchors?.base || head.anchor;
   const sol = head.anchors?.solana;
-  if (!transportFailure(base) && !transportFailure(sol)) return true;
+  const witness = witnessSide(head);
+  const witnessBusy = witness && (witness.status === 'broadcast' || witness.status === 'reverted' || witness.status === 'failed');
+  if (!transportFailure(base) && !transportFailure(sol) && !witnessBusy) return true;
   const age = now.getTime() - Date.parse(head.published_at);
   if (Number.isFinite(age) && age >= 0 && age < ANCHOR_RETRY_MS) return false;
   return true;
@@ -1052,6 +1119,8 @@ export class ReceiptMerkleTree {
     request = null,
     witnessSend = null,
     witnessReadHead = null,
+    witnessReadReceipt = null,
+    witnessReadNonce = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -1226,8 +1295,19 @@ export class ReceiptMerkleTree {
     anchor = { ...anchor, prev_root: prevRoot };
     solana = { ...solana, prev_root: prevRoot };
     const anchors = { base: anchor, solana };
-    const witnessRecord = await this._witnessAppend({ root, reserved, witnessSend, witnessReadHead });
-    if (witnessRecord) anchors.witness = witnessRecord;
+    const witnessRecord = await this._witnessAppend({
+      root,
+      day,
+      witnessSend,
+      witnessReadHead,
+      witnessReadReceipt,
+      witnessReadNonce,
+    });
+    // An unconfirmed witness is not a signed claim. `broadcast`, `reverted`,
+    // and `failed` stay on `witness_pending`, outside the JWS.
+    let witnessPending = null;
+    if (witnessRecord?.status === 'witnessed') anchors.witness = witnessRecord;
+    else if (witnessRecord) witnessPending = witnessRecord;
     // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
     // field inside the Base or Solana records. Epoch fields are version 2.
     const claims = {
@@ -1261,6 +1341,7 @@ export class ReceiptMerkleTree {
         issuer_jwk: getIssuerPublicKeyJwk(),
       },
     };
+    if (witnessPending) head.witness_pending = witnessPending;
     // The checkpoint note is signed on its own. It is not a JWS claim.
     // The public head route omits it. GET /v1/receipts/tree/checkpoint serves it.
     try {
@@ -1288,41 +1369,134 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * Daily witness append. Runs after the bare-root transfer so a shared
-   * signer uses the next nonce. The bare-root calldata stays on anchors.base.
+   * Daily witness append. The bare-root transfer stays on anchors.base.
+   * The witness nonce is the appender's pending nonce, reserved in the
+   * journal before send. It is not `reserved.nonce + 1`: a bare-root send
+   * that never landed did not consume that nonce.
    * Returns null when RECEIPT_LOG_WITNESS is not `1`.
    */
-  async _witnessAppend({ root, reserved, witnessSend, witnessReadHead = null }) {
+  async _witnessAppend({
+    root,
+    day,
+    witnessSend,
+    witnessReadHead = null,
+    witnessReadReceipt = null,
+    witnessReadNonce = null,
+  }) {
     const {
       planWitnessAppend,
       sendWitnessAppend,
+      confirmWitnessAppend,
       receiptWitnessEnabled,
-      witnessSharesAnchorKey,
     } = await import('./receipt-log-witness.js');
     if (!receiptWitnessEnabled()) return null;
+    const pending = this._latestWitnessIntent(root, day);
+    if (pending?.tx && (pending.status === 'broadcast' || pending.status === 'intent')) {
+      const confirmed = await confirmWitnessAppend({
+        tx: pending.tx,
+        newSize: this.leaves.length,
+        newRoot: root,
+        to: pending.to || null,
+        calldata: pending.calldata || null,
+      }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
+      this._noteWitnessIntent({ ...pending, ...confirmed });
+      if (confirmed.status === 'broadcast' || confirmed.status === 'witnessed') {
+        return publicWitness(confirmed);
+      }
+    }
     const plan = await planWitnessAppend(this, root, {
       readHead: witnessReadHead || undefined,
     });
     if (!plan) return null;
-    if (plan.status !== 'ready') {
-      return {
-        status: plan.status,
-        reason: plan.reason,
-        to: plan.to || null,
-        tx: plan.tx || null,
-        calldata: plan.calldata || null,
-      };
-    }
-    const share = witnessSharesAnchorKey();
-    const nonce = share && reserved?.nonce != null ? reserved.nonce + 1 : null;
-    const sent = await sendWitnessAppend(plan, { nonce, send: witnessSend });
-    return {
+    if (plan.status !== 'ready') return publicWitness(plan);
+    const nonce = await this._witnessNonce({ root, day, readNonce: witnessReadNonce });
+    const sent = await sendWitnessAppend(plan, {
+      nonce,
+      send: witnessSend,
+      readReceipt: witnessReadReceipt,
+      readHead: witnessReadHead,
+    });
+    this._noteWitnessIntent({
+      root,
+      day,
+      nonce,
+      tx: sent.tx,
       status: sent.status,
-      reason: sent.reason,
-      to: sent.to || null,
-      tx: sent.tx || null,
-      calldata: sent.calldata || null,
+      to: sent.to,
+      calldata: sent.calldata,
+    });
+    return publicWitness(sent);
+  }
+
+  _latestWitnessIntent(root, day) {
+    const rows = (this.anchorIntents || []).filter((row) => (
+      row.chain === 'base-witness' && row.root === root && row.day === day
+    ));
+    return rows.length ? rows[rows.length - 1] : null;
+  }
+
+  /**
+   * Reserve the appender's pending nonce and fsync it before broadcast.
+   * A reusable intent for this root keeps its nonce so a crash does not
+   * burn a second one. The bare-root reservation is a different account
+   * when the appender key is separate, and it is not added to.
+   */
+  async _witnessNonce({ root, day, readNonce }) {
+    const prior = this._latestWitnessIntent(root, day);
+    // Reuse only a nonce that was reserved and not broadcast. A mined
+    // revert or a failed head check already consumed that nonce.
+    if (prior && prior.nonce != null && !prior.tx && prior.status === 'intent') {
+      return prior.nonce;
+    }
+    let nonce = null;
+    if (typeof readNonce === 'function') nonce = await readNonce();
+    else {
+      try {
+        const { witnessSignerAddress, witnessRpcUrl } = await import('./receipt-log-witness.js');
+        const address = witnessSignerAddress();
+        const rpc = witnessRpcUrl();
+        if (address && rpc) {
+          const { JsonRpcProvider } = await import('ethers');
+          const provider = new JsonRpcProvider(rpc);
+          nonce = await provider.getTransactionCount(address, 'pending');
+        }
+      } catch {
+        nonce = null;
+      }
+    }
+    if (nonce == null || !this.dir) return nonce;
+    const record = {
+      v: 1,
+      op: 'anchor_intent',
+      chain: 'base-witness',
+      root,
+      day,
+      nonce,
+      status: 'intent',
+      epoch: this.epoch,
     };
+    appendJournal(this.dir, record);
+    this.anchorIntents.push(record);
+    return nonce;
+  }
+
+  _noteWitnessIntent(row) {
+    if (!row) return;
+    const record = {
+      v: 1,
+      op: 'anchor_intent',
+      chain: 'base-witness',
+      root: row.root,
+      day: row.day,
+      nonce: row.nonce ?? null,
+      tx: row.tx || null,
+      status: row.status,
+      to: row.to || null,
+      calldata: row.calldata || null,
+      epoch: this.epoch,
+    };
+    this.anchorIntents.push(record);
+    if (this.dir) appendJournal(this.dir, record);
   }
 
   /**
@@ -2648,9 +2822,21 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
   }
   // The fresh-genesis flag does not skip this. A new log is not an extension
   // of the contract head. The flag is off unless RECEIPT_LOG_WITNESS=1.
-  const { assertWitnessJournal, receiptWitnessEnabled } = await import('./receipt-log-witness.js');
+  const {
+    assertWitnessJournal,
+    assertDistinctWitnessKey,
+    readWitnessCode,
+    receiptWitnessEnabled,
+    witnessAddress,
+  } = await import('./receipt-log-witness.js');
   if (opts.witness === true || (opts.witness !== false && receiptWitnessEnabled())) {
-    await assertWitnessJournal(tree, opts);
+    assertDistinctWitnessKey();
+    const readCode = opts.readCode || (() => readWitnessCode({
+      address: opts.address || witnessAddress(),
+      rpcUrl: opts.rpcUrl,
+      request: opts.request,
+    }));
+    await assertWitnessJournal(tree, { ...opts, readCode });
   }
   return tree;
 }
