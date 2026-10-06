@@ -38,10 +38,13 @@ import {
   writeEpochRecordFile,
 } from './receipt-log-store.js';
 import {
+  assertJournalMatchesPin,
   assertLatestBaseAnchor,
   FRESH_GENESIS_LOG,
+  lookupBaseTxByNonceOrHash,
   readReceiptLogPin,
 } from './receipt-log-anchor.js';
+import { assertPinnedEpochRecord } from './receipt-log-epoch.js';
 export { FRESH_GENESIS_LOG, assertLatestBaseAnchor, readReceiptLogPin };
 
 export { ReceiptLogRefused, freshGenesisAllowed, receiptLogBootRequested, receiptLogStrict };
@@ -889,10 +892,10 @@ export class ReceiptMerkleTree {
     const prior = (this.anchorIntents || []).filter((row) => (
       row.chain === 'base' && row.day === day && row.root === root
     ));
-    const withTx = [...prior].reverse().find((row) => row.tx);
-    if (withTx?.tx) return { tx: withTx.tx, nonce: withTx.nonce };
-    const open = [...prior].reverse().find((row) => row.status === 'intent' && row.tx == null);
-    if (open) return { nonce: open.nonce, reserved: true };
+    const anchored = [...prior].reverse().find((row) => row.status === 'anchored' && row.tx);
+    if (anchored) return { tx: anchored.tx, nonce: anchored.nonce };
+    const reusable = [...prior].reverse().find((row) => row.nonce != null && row.status !== 'anchored');
+    if (reusable) return { nonce: reusable.nonce, reserved: true };
     const record = {
       v: 1,
       op: 'anchor_intent',
@@ -950,7 +953,7 @@ export class ReceiptMerkleTree {
       latest.set(`${row.day}|${row.root}|${row.nonce}`, row);
     }
     for (const intent of latest.values()) {
-      if (intent.tx && (intent.status === 'anchored' || intent.status === 'broadcast')) {
+      if (intent.status === 'anchored' && intent.tx) {
         this._adoptBaseIntent(intent);
         continue;
       }
@@ -962,6 +965,25 @@ export class ReceiptMerkleTree {
           `anchor intent nonce ${intent.nonce} landed as ${found.root}, not ${intent.root}`,
         );
       }
+      if (found?.dropped || found?.receiptOk === false) {
+        const dropped = { ...intent, status: 'dropped' };
+        this.anchorIntents.push(dropped);
+        if (this.dir) {
+          appendJournal(this.dir, {
+            v: 1,
+            op: 'anchor_intent',
+            chain: 'base',
+            root: intent.root,
+            day: intent.day,
+            nonce: intent.nonce,
+            tx: intent.tx || null,
+            status: 'dropped',
+            epoch: this.epoch,
+          });
+        }
+        continue;
+      }
+      if (intent.status === 'broadcast' && found?.receiptOk !== true) continue;
       if (!found?.tx) continue;
       const adopted = { ...intent, tx: found.tx, status: 'anchored' };
       this._adoptBaseIntent(adopted);
@@ -1271,8 +1293,25 @@ export function bootReceiptLog(dir, opts = {}) {
   }
   tree.allowFreshGenesis = false;
   tree._applyLoaded(loaded);
+  if (!allowFresh && pin) assertJournalMatchesPin(tree, pin);
+  if (!allowFresh) gateEpochRecord(tree);
+  else if (tree.epochRecord) gateEpochRecord(tree);
   _tree = tree;
   return tree;
+}
+
+function gateEpochRecord(tree) {
+  if (!tree.epochRecord) {
+    throw new ReceiptLogRefused('epoch_record_missing', 'receipt log epoch record is missing');
+  }
+  const pinned = assertPinnedEpochRecord(tree.epochRecord);
+  if (!pinned.ok) {
+    throw new ReceiptLogRefused(pinned.reason || 'epoch_record', `epoch record refused: ${pinned.reason}`);
+  }
+  const signed = verifyJwsWithJwks(tree.epochRecord.issuer_signature.jws, getJwks());
+  if (!signed.valid) {
+    throw new ReceiptLogRefused('epoch_signature', signed.reason || 'epoch record signature invalid');
+  }
 }
 
 /**
@@ -1282,10 +1321,17 @@ export function bootReceiptLog(dir, opts = {}) {
  */
 export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts = {}) {
   if (!tree) return tree;
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup: opts.lookup });
+  const lookup = opts.lookup || ((intent) => lookupBaseTxByNonceOrHash({
+    rpcUrl: opts.baseRpc,
+    txHash: intent?.tx,
+    root: intent?.root,
+    request: opts.request,
+  }));
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup });
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
   if (allow) return tree;
   await assertLatestBaseAnchor(tree, opts);
+  gateEpochRecord(tree);
   return tree;
 }
 

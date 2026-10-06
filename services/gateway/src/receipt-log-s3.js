@@ -130,8 +130,22 @@ function retainUntil(days) {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
+export function bundleIndexObjectKey(prefix, hour) {
+  const base = `${String(prefix || '').replace(/\/$/, '')}/index/${hour}.json`;
+  return base.replace(/^\//, '');
+}
+
+function retentionMissing(err) {
+  const name = err?.name || err?.Code || '';
+  return name === 'NotFound' || name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404;
+}
+
+/**
+ * Put with compliance mode, then read the lock back.
+ * A missing retain-until date or any mode other than COMPLIANCE fails the upload.
+ */
 export async function putLockedObject({ client, bucket, key, body, retentionDays, contentType, contentEncoding }) {
-  const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const { PutObjectCommand, GetObjectRetentionCommand } = await import('@aws-sdk/client-s3');
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
@@ -142,7 +156,37 @@ export async function putLockedObject({ client, bucket, key, body, retentionDays
     ObjectLockRetainUntilDate: retainUntil(retentionDays),
   });
   await client.send(command);
+  let kept;
+  try {
+    kept = await client.send(new GetObjectRetentionCommand({ Bucket: bucket, Key: key }));
+  } catch (err) {
+    if (!retentionMissing(err)) {
+      const error = new Error('object_lock_not_compliance');
+      error.cause = err;
+      throw error;
+    }
+    kept = null;
+  }
+  const until = kept?.Retention?.RetainUntilDate;
+  if (kept?.Retention?.Mode !== 'COMPLIANCE' || until == null || until === '') {
+    throw new Error('object_lock_not_compliance');
+  }
   return command;
+}
+
+async function refuseExistingIndex(client, bucket, key) {
+  const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
+  try {
+    await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+  } catch (err) {
+    const name = err?.name || err?.Code || '';
+    const status = err?.$metadata?.httpStatusCode;
+    if (name === 'NotFound' || name === 'NoSuchKey' || status === 404 || /not.?found|missing /i.test(String(err?.message || ''))) {
+      return;
+    }
+    throw err;
+  }
+  throw new Error('index_already_published');
 }
 
 export async function getObjectBytes({ client, bucket, key }) {
@@ -256,7 +300,8 @@ export async function uploadHourlyBundle({
   };
   if (retentionPolicy) next.retention_policy = retentionPolicy;
   if (index?.last_bundle_ok_at) next.last_bundle_ok_at = index.last_bundle_ok_at;
-  const indexKey = `${String(prefix || '').replace(/\/$/, '')}/bundle-index.json`.replace(/^\//, '');
+  const indexKey = bundleIndexObjectKey(prefix, bundle.hour);
+  await refuseExistingIndex(client, bucket, indexKey);
   const indexBody = Buffer.from(JSON.stringify(next));
   await putLockedObject({
     client,
@@ -269,18 +314,56 @@ export async function uploadHourlyBundle({
   return { index: next, key, sha256: digest, index_hash: bundleIndexHash(next), index_key: indexKey };
 }
 
+function headIsAnchored(head) {
+  const base = head?.anchors?.base;
+  const sol = head?.anchors?.solana;
+  return Boolean((base?.status === 'anchored' && base.tx) || (sol?.status === 'anchored' && sol.signature));
+}
+
+function selectRestoreHead(explicit, bundles) {
+  if (explicit) return explicit;
+  const heads = [];
+  for (const bundle of bundles) {
+    for (const head of bundle.heads || []) heads.push(head);
+  }
+  for (let i = heads.length - 1; i >= 0; i -= 1) {
+    if (heads[i]?.issuer_signature?.jws && headIsAnchored(heads[i])) return heads[i];
+  }
+  return null;
+}
+
+async function resolveIndexKey({ client, bucket, prefix, indexKey }) {
+  if (indexKey) return indexKey;
+  const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+  const base = `${String(prefix || '').replace(/\/$/, '')}/index/`;
+  const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: base }));
+  const keys = (listed?.Contents || []).map((row) => row.Key).filter(Boolean).sort();
+  if (!keys.length) throw new Error('bundle_index_missing');
+  return keys[keys.length - 1];
+}
+
 /**
- * Download the index and every bundle, check SHA-256, and rebuild leaf
- * preimages. `expectRoots` is a list of `{ root, tree_size, epoch }` the
- * rebuilt log must contain (the anchored heads).
+ * Download one hourly index and every bundle it names.
+ * The index hash must match an anchored, signed head.
+ * Prefix roots in `expectRoots` are checked, and every leaf past those
+ * prefixes must roll into that head's root and size.
  */
-export async function restoreFromS3({ client, bucket, prefix, expectRoots = [] }) {
-  const indexKey = `${String(prefix || '').replace(/\/$/, '')}/bundle-index.json`.replace(/^\//, '');
-  const indexBytes = await getObjectBytes({ client, bucket, key: indexKey });
+export async function restoreFromS3({
+  client,
+  bucket,
+  prefix,
+  expectRoots = [],
+  head = null,
+  indexKey = null,
+  verifyHead = null,
+}) {
+  const key = await resolveIndexKey({ client, bucket, prefix, indexKey });
+  const indexBytes = await getObjectBytes({ client, bucket, key });
   const index = JSON.parse(indexBytes.toString('utf8'));
   if (index.schema !== BUNDLE_INDEX_SCHEMA || !Array.isArray(index.bundles)) {
     throw new Error('bundle_index_malformed');
   }
+  const parsed = [];
   const byEpoch = new Map();
   for (const row of index.bundles) {
     const bytes = await getObjectBytes({ client, bucket, key: row.key });
@@ -290,6 +373,7 @@ export async function restoreFromS3({ client, bucket, prefix, expectRoots = [] }
     }
     const bundle = decompressBundle(bytes);
     if (bundle.schema !== BUNDLE_SCHEMA) throw new Error(`bundle_schema: ${row.key}`);
+    parsed.push(bundle);
     const rebuilt = rebuildBundle(bundle);
     if (bundle.tree_size != null && Number(bundle.tree_size) !== rebuilt.tree_size) {
       throw new Error(`bundle_size_mismatch: ${row.key}`);
@@ -306,15 +390,42 @@ export async function restoreFromS3({ client, bucket, prefix, expectRoots = [] }
     }
     byEpoch.set(bundle.epoch, rebuilt);
   }
+  const signed = selectRestoreHead(head, parsed);
+  const jws = signed?.issuer_signature?.jws;
+  if (!jws || String(jws).split('.').length < 3) throw new Error('anchored_head_unsigned');
+  if (typeof verifyHead === 'function' && !verifyHead(signed)) throw new Error('anchored_head_unsigned');
+  if (!headIsAnchored(signed)) throw new Error('anchored_head_missing');
+  const indexHash = bundleIndexHash(index);
+  if (!signed.bundle_index_hash || signed.bundle_index_hash !== indexHash) {
+    throw new Error(`bundle_index_hash: head ${signed.bundle_index_hash || 'missing'} index ${indexHash}`);
+  }
   for (const want of expectRoots) {
     const got = byEpoch.get(want.epoch);
     if (!got) throw new Error(`restore_missing_epoch: ${want.epoch}`);
-    const matched = rootAtSize(got, want.tree_size || got.tree_size);
+    const prefixSize = Number(want.tree_size || got.tree_size);
+    const matched = rootAtSize(got, prefixSize);
     if (want.root && matched !== want.root) {
       throw new Error(`restore_root_mismatch: epoch ${want.epoch} got ${matched} want ${want.root}`);
     }
+    if (got.tree_size > prefixSize) {
+      const full = rootAtSize(got, got.tree_size);
+      const headRoot = String(signed.root || '').replace(/^0x/, '').toLowerCase();
+      const sameEpoch = signed.epoch == null || Number(signed.epoch) === Number(want.epoch);
+      if (!sameEpoch || full !== headRoot || Number(signed.tree_size) !== got.tree_size) {
+        throw new Error(`anchored_root: epoch ${want.epoch} has leaves past the prefix of ${prefixSize}`);
+      }
+    }
   }
-  return { index, epochs: [...byEpoch.values()] };
+  const covered = signed.epoch != null ? byEpoch.get(Number(signed.epoch)) : null;
+  const open = covered || [...byEpoch.values()].sort((a, b) => Number(b.epoch) - Number(a.epoch))[0];
+  if (open) {
+    const full = open.hashes.length ? epochRootOf(open.hashes).toString('hex') : null;
+    const headRoot = String(signed.root || '').replace(/^0x/, '').toLowerCase();
+    if (full !== headRoot || Number(signed.tree_size) !== open.tree_size) {
+      throw new Error(`anchored_root: recomputed ${full} size ${open.tree_size}`);
+    }
+  }
+  return { index, epochs: [...byEpoch.values()], index_key: key, head: signed };
 }
 
 function leafBodies(leaves) {

@@ -10,6 +10,7 @@ const {
   verifyEpochLink,
   verifyEpochRecord,
   verifyEpochInclusion,
+  verifyAnchoredRoot,
   leafHash,
   parseAnchorMemo,
 } = await import('../dist/index.js');
@@ -59,7 +60,8 @@ test('epoch 2 must link to epoch 1 root and size', () => {
     ],
     orphans: [{ root_prefix: 'd7f6c548' }],
   };
-  assert.equal(verifyEpochRecord(record).ok, true);
+  assert.equal(verifyEpochRecord(record).ok, false);
+  assert.equal(verifyEpochRecord(record).reason, 'epoch_signature_missing');
   assert.equal(verifyEpochLink(
     { schema: 'chit402.tree_head.v2', payload_version: 2, epoch: 2, prev_epoch_root: epoch1, prev_epoch_size: 4 },
     { root: epoch1, tree_size: 4 },
@@ -83,6 +85,61 @@ test('epoch 2 must link to epoch 1 root and size', () => {
     previous: { root: epoch1, tree_size: 4 },
   });
   assert.equal(linked.ok, true);
+});
+
+test('a forged epoch-1 root does not verify', () => {
+  const forged = {
+    epochs: [
+      {
+        epoch: 1,
+        status: 'closed',
+        final_root: 'ab'.repeat(32),
+        final_size: 4,
+        genesis_digest: '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368',
+        prev_epoch_root: null,
+        prev_epoch_size: 0,
+      },
+    ],
+    orphans: [{ root_prefix: 'd7f6c548', root: null, unrecoverable: true }],
+    issuer_signature: { jws: 'aaa.bbb.ccc' },
+  };
+  const result = verifyEpochRecord(forged, { verifySignature: () => true });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'epoch1_root');
+  assert.equal(verifyEpochLink({
+    schema: 'chit402.tree_head.v2',
+    payload_version: 2,
+    epoch: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 4,
+  }).reason, 'epoch1_root');
+});
+
+test('verifyAnchoredRoot refuses a head whose epoch record is missing', async () => {
+  const result = await verifyAnchoredRoot({
+    receipt: { task_id: 't', row_hash: 'r' },
+    inclusion: {
+      task_id: 't',
+      leaf_index: 0,
+      tree_size: 1,
+      root: 'ab'.repeat(32),
+      leaf: 'cd'.repeat(32),
+      proof: [],
+    },
+    head: {
+      root: 'ab'.repeat(32),
+      tree_size: 1,
+      epoch: 2,
+      prev_epoch_root: 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973',
+      prev_epoch_size: 4,
+      anchors: {
+        base: { status: 'pending', tx: null },
+        solana: { status: 'pending', signature: null },
+      },
+    },
+  });
+  assert.equal(result.overall, 'failed');
+  assert.ok(result.errors.includes('epoch_record_missing'));
 });
 
 test('v1 and v2 anchor memos both parse', () => {

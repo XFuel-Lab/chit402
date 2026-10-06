@@ -1,6 +1,39 @@
 {
-  "schema": "chit402.receipt_log_pin.v1",
-  "epoch": 2,
-  "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
-  "note": "Last anchored head before the durable journal. Epoch 2 opening root, anchored Oct 5 2026. An empty journal must not boot while this pin is present."
+  "schema": "chit402.receipt_log_pin.v2",
+  "epochs": [
+    {
+      "epoch": 1,
+      "root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
+      "tree_size": 4,
+      "genesis_digest": "422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368"
+    },
+    {
+      "epoch": 2,
+      "opening_root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
+      "opening_size": 1,
+      "prev_epoch_root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
+      "prev_epoch_size": 4
+    }
+  ],
+  "anchors": [
+    {
+      "chain": "base",
+      "root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
+      "tx": null,
+      "note": "Oct 3 Base anchor of epoch 1. Fill tx with the 32-byte transaction hash before restart. Boot refuses while tx is null."
+    },
+    {
+      "chain": "base",
+      "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
+      "tx": null,
+      "note": "Oct 5 Base anchor of the epoch 2 opening root. Fill tx before restart."
+    },
+    {
+      "chain": "solana",
+      "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
+      "tx": null,
+      "note": "Oct 5 Solana memo signature for the epoch 2 opening root. Fill tx before restart."
+    }
+  ],
+  "note": "Boot recomputes every pinned epoch from the journal. anchor-state.json is not evidence. Known anchor transactions are loaded with eth_getTransactionByHash (Base) or getTransaction (Solana)."
 }

@@ -1772,9 +1772,14 @@ export {
   verifyEpochInclusion,
   TREE_HEAD_SCHEMA_V1,
   TREE_HEAD_SCHEMA_V2,
+  EPOCH1_FINAL_ROOT,
+  EPOCH1_FINAL_SIZE,
+  EPOCH1_GENESIS_DIGEST,
+  EPOCH2_OPENING_ROOT,
   type EpochTreeHead,
   type EpochRecord,
   type EpochRecordEntry,
+  type EpochRecordOptions,
 } from './epoch.js';
 
 export {

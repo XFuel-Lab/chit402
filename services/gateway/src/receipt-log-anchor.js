@@ -9,6 +9,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ReceiptLogRefused } from './receipt-log-store.js';
+import { epochRootOf } from './receipt-log-epoch.js';
+import { analyzeSeq } from './book-seq.js';
 
 const PIN_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -46,12 +48,65 @@ export function readReceiptLogPin(env = process.env) {
   } catch (err) {
     throw new ReceiptLogRefused('bad_pin', `receipt log pin file does not parse: ${err.message}`);
   }
-  const root = normalizeRoot(parsed.root);
-  const epoch = Number(parsed.epoch);
-  if (!root || !Number.isInteger(epoch) || epoch < 1) {
-    throw new ReceiptLogRefused('bad_pin', 'receipt log pin file needs epoch and a 32-byte root');
+  const epochs = Array.isArray(parsed.epochs) ? parsed.epochs : [];
+  if (epochs.length === 0 && parsed.root) {
+    epochs.push({ epoch: Number(parsed.epoch), root: parsed.root, tree_size: parsed.tree_size });
   }
-  return { epoch, root, source: 'file', file };
+  if (epochs.length === 0) {
+    throw new ReceiptLogRefused('bad_pin', 'receipt log pin file needs epochs');
+  }
+  const first = epochs[0];
+  return {
+    epoch: Number(first.epoch),
+    root: normalizeRoot(first.root || first.opening_root),
+    epochs,
+    anchors: Array.isArray(parsed.anchors) ? parsed.anchors : [],
+    source: 'file',
+    file,
+  };
+}
+
+export function epochLeaves(tree, epochNo) {
+  const closed = (tree?.closedEpochs || []).find((row) => row.epoch === epochNo);
+  if (closed) return closed.leaves || [];
+  if (tree?.epoch === epochNo) return tree.leaves || [];
+  return null;
+}
+
+/**
+ * Recompute each pinned epoch from the journal leaves. An empty journal
+ * fails here too: it has neither epoch.
+ */
+export function assertJournalMatchesPin(tree, pin) {
+  const epochs = pin?.epochs || (pin?.root ? [{ epoch: pin.epoch, root: pin.root, tree_size: pin.tree_size }] : []);
+  if (epochs.length === 0) {
+    throw new ReceiptLogRefused('bad_pin', 'receipt log pin has no epochs');
+  }
+  for (const wanted of epochs) {
+    const leaves = epochLeaves(tree, Number(wanted.epoch));
+    const stated = wanted.tree_size || wanted.opening_size;
+    const size = stated == null || stated === '' ? leaves?.length || 0 : Number(stated);
+    const root = normalizeRoot(wanted.root || wanted.opening_root);
+    if (!leaves || !root || !size) {
+      throw new ReceiptLogRefused(
+        'pin_unmet',
+        `journal has no epoch ${wanted.epoch} to compare with the pin`,
+      );
+    }
+    if (leaves.length < size) {
+      throw new ReceiptLogRefused(
+        'pin_unmet',
+        `epoch ${wanted.epoch} has ${leaves.length} leaves; pin requires ${size}`,
+      );
+    }
+    const recomputed = Buffer.from(epochRootOf(leaves.slice(0, size))).toString('hex');
+    if (recomputed !== root) {
+      throw new ReceiptLogRefused(
+        'pin_unmet',
+        `epoch ${wanted.epoch} recomputed ${recomputed} does not match pin ${root}`,
+      );
+    }
+  }
 }
 
 export function knownHeadRoots(tree) {
@@ -64,10 +119,6 @@ export function knownHeadRoots(tree) {
   };
   take(tree?.heads);
   for (const epoch of tree?.closedEpochs || []) take(epoch.heads);
-  for (const root of Object.keys(tree?.anchorState?.base || {})) {
-    const hex = normalizeRoot(root);
-    if (hex) roots.add(hex);
-  }
   return roots;
 }
 
@@ -95,89 +146,84 @@ async function defaultRpc(rpcUrl, method, params) {
 }
 
 /**
- * Latest zero-value root transaction from the anchor wallet.
- * Tries Otterscan's sender+nonce lookup, then a bounded block scan.
+ * Load one known anchor by hash. Base uses eth_getTransactionByHash.
+ * Solana uses getTransaction. A null RPC result refuses the boot.
  */
-export async function latestBaseAnchorRoot({
-  rpcUrl,
-  address,
-  lookback = Number(process.env.RECEIPT_LOG_ANCHOR_LOOKBACK || 2048),
-  request,
-} = {}) {
-  if (!rpcUrl || !address) return null;
-  const countHex = await rpc(rpcUrl, 'eth_getTransactionCount', [address, 'latest'], request);
-  const count = Number(countHex);
-  if (Number.isInteger(count) && count > 0) {
-    for (let nonce = count - 1; nonce >= Math.max(0, count - 32); nonce -= 1) {
-      try {
-        const tx = await rpc(rpcUrl, 'ots_getTransactionBySenderAndNonce', [address, nonce], request);
-        const root = calldataRoot(tx?.input || tx?.data);
-        if (root) return { root, tx: tx.hash, nonce, source: 'nonce' };
-      } catch {
-        break;
+export async function assertKnownAnchorTxs(pin, { request, baseRpc, solanaRpc, tree } = {}) {
+  const anchors = pin?.anchors || [];
+  const roots = tree ? knownHeadRoots(tree) : null;
+  for (const anchor of anchors) {
+    const want = normalizeRoot(anchor.root);
+    if (!want) {
+      throw new ReceiptLogRefused('bad_pin', 'pin anchor is missing a 32-byte root');
+    }
+    if (!anchor.tx) {
+      throw new ReceiptLogRefused(
+        'anchor_tx_unspecified',
+        `pin anchor for root ${want} on ${anchor.chain || 'base'} has no transaction hash`,
+      );
+    }
+    const chain = anchor.chain || 'base';
+    let tx = null;
+    if (chain === 'solana') {
+      const url = solanaRpc || process.env.SOLANA_RPC_URL || '';
+      if (!url && !request) {
+        throw new ReceiptLogRefused('anchor_rpc_missing', 'Solana RPC is not configured');
+      }
+      tx = await rpc(url, 'getTransaction', [anchor.tx, { encoding: 'json', maxSupportedTransactionVersion: 0 }], request);
+      if (!tx) {
+        throw new ReceiptLogRefused('anchor_rpc_missing', `Solana did not return ${anchor.tx}`);
+      }
+      if (!JSON.stringify(tx).includes(want)) {
+        throw new ReceiptLogRefused('anchor_root_mismatch', `Solana tx ${anchor.tx} does not contain ${want}`);
+      }
+    } else {
+      const url = baseRpc || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
+      if (!url && !request) {
+        throw new ReceiptLogRefused('anchor_rpc_missing', 'Base RPC is not configured');
+      }
+      tx = await rpc(url, 'eth_getTransactionByHash', [anchor.tx], request);
+      if (!tx) {
+        throw new ReceiptLogRefused('anchor_rpc_missing', `Base did not return ${anchor.tx}`);
+      }
+      const got = calldataRoot(tx.input || tx.data);
+      if (got !== want) {
+        throw new ReceiptLogRefused('anchor_root_mismatch', `Base tx ${anchor.tx} calldata is ${got || 'empty'}`);
       }
     }
-  }
-  const tipHex = await rpc(rpcUrl, 'eth_blockNumber', [], request);
-  const tip = Number(tipHex);
-  if (!Number.isInteger(tip)) return null;
-  const from = Math.max(0, tip - lookback);
-  for (let n = tip; n >= from; n -= 1) {
-    const block = await rpc(rpcUrl, 'eth_getBlockByNumber', [`0x${n.toString(16)}`, true], request);
-    const txs = block?.transactions || [];
-    for (let i = txs.length - 1; i >= 0; i -= 1) {
-      const tx = txs[i];
-      if (!tx || String(tx.from || '').toLowerCase() !== address.toLowerCase()) continue;
-      const root = calldataRoot(tx.input);
-      if (!root) continue;
-      return { root, tx: tx.hash, nonce: Number(tx.nonce), block: n, source: 'scan' };
+    if (roots && !roots.has(want)) {
+      throw new ReceiptLogRefused(
+        'anchor_not_in_journal',
+        `anchored root ${want} from ${anchor.tx} is not in the journal head history`,
+      );
     }
   }
-  return null;
 }
 
+/**
+ * Receipt lookup for a write-ahead intent. A broadcast hash is not anchored
+ * until eth_getTransactionReceipt says the transaction landed. A missing
+ * transaction was dropped and may be resent at the same nonce.
+ */
 export async function lookupBaseTxByNonceOrHash({
   rpcUrl,
-  address,
-  nonce,
   txHash,
   root,
-  lookback = Number(process.env.RECEIPT_LOG_ANCHOR_LOOKBACK || 2048),
   request,
 } = {}) {
   const want = normalizeRoot(root);
-  if (txHash) {
-    const tx = await rpc(rpcUrl, 'eth_getTransactionByHash', [txHash], request);
-    if (!tx) return null;
-    const got = calldataRoot(tx.input);
-    if (want && got && got !== want) return { mismatch: true, tx: tx.hash, root: got };
-    if (got) return { tx: tx.hash, nonce: Number(tx.nonce), root: got };
-    return null;
-  }
-  if (nonce == null || !address) return null;
-  try {
-    const tx = await rpc(rpcUrl, 'ots_getTransactionBySenderAndNonce', [address, Number(nonce)], request);
-    const got = calldataRoot(tx?.input || tx?.data);
-    if (want && got && got !== want) return { mismatch: true, tx: tx.hash, root: got };
-    if (got) return { tx: tx.hash, nonce: Number(nonce), root: got };
-  } catch {
-    /* fall through to a block scan */
-  }
-  const tipHex = await rpc(rpcUrl, 'eth_blockNumber', [], request);
-  const tip = Number(tipHex);
-  if (!Number.isInteger(tip)) return null;
-  const from = Math.max(0, tip - lookback);
-  for (let n = tip; n >= from; n -= 1) {
-    const block = await rpc(rpcUrl, 'eth_getBlockByNumber', [`0x${n.toString(16)}`, true], request);
-    for (const tx of block?.transactions || []) {
-      if (!tx || String(tx.from || '').toLowerCase() !== address.toLowerCase()) continue;
-      if (Number(tx.nonce) !== Number(nonce)) continue;
-      const got = calldataRoot(tx.input);
-      if (want && got && got !== want) return { mismatch: true, tx: tx.hash, root: got };
-      if (got) return { tx: tx.hash, nonce: Number(nonce), root: got };
-    }
-  }
-  return null;
+  if (!txHash) return null;
+  const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
+  const tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
+  if (!tx) return { dropped: true };
+  const receipt = await rpc(url, 'eth_getTransactionReceipt', [txHash], request);
+  if (!receipt) return { dropped: true };
+  const status = receipt.status;
+  const ok = status === '0x1' || status === 1 || status === '0x01';
+  const got = calldataRoot(tx.input);
+  if (want && got && got !== want) return { mismatch: true, tx: tx.hash, root: got };
+  if (!ok) return { mined: true, receiptOk: false, tx: tx.hash, root: got };
+  return { tx: tx.hash, nonce: Number(tx.nonce), root: got, receiptOk: true };
 }
 
 export function anchorWalletAddress() {
@@ -189,21 +235,24 @@ export function anchorWalletAddress() {
  * No RPC and no injected reader means there is nothing to compare.
  */
 export async function assertLatestBaseAnchor(tree, opts = {}) {
-  const readLatest = opts.readLatest || (async () => {
-    const rpcUrl = process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
-    const address = anchorWalletAddress();
-    if (!rpcUrl || !address) return null;
-    return latestBaseAnchorRoot({ rpcUrl, address, request: opts.request });
+  if (typeof opts.readLatest === 'function') {
+    const found = await opts.readLatest();
+    if (!found?.root) return;
+    const root = normalizeRoot(found.root);
+    if (!root) return;
+    if (knownHeadRoots(tree).has(root)) return;
+    throw new ReceiptLogRefused(
+      'anchor_not_in_journal',
+      `Base anchor root ${root} from ${found.tx || 'the anchor wallet'} is not in the journal head history`,
+    );
+  }
+  const pin = opts.pin || readReceiptLogPin();
+  await assertKnownAnchorTxs(pin, {
+    request: opts.request,
+    baseRpc: opts.baseRpc,
+    solanaRpc: opts.solanaRpc,
+    tree,
   });
-  const found = await readLatest();
-  if (!found?.root) return;
-  const root = normalizeRoot(found.root);
-  if (!root) return;
-  if (knownHeadRoots(tree).has(root)) return;
-  throw new ReceiptLogRefused(
-    'anchor_not_in_journal',
-    `Base anchor root ${root} from ${found.tx || 'the anchor wallet'} is not in the receipt log head history`,
-  );
 }
 
 export function planReceiptBackfill(tree, rows) {
@@ -231,6 +280,45 @@ export function planReceiptBackfill(tree, rows) {
   for (const epoch of tree.closedEpochs || []) collect(epoch.meta);
   collect(tree.meta);
   const list = Array.isArray(rows) ? rows : [];
+  const refusals = [];
+  const byAgent = new Map();
+  for (const row of list) {
+    const id = Number(row?.agent_id);
+    if (!Number.isInteger(id) || id < 1) continue;
+    const group = byAgent.get(id) || [];
+    group.push(row);
+    byAgent.set(id, group);
+  }
+  for (const [agentId, group] of byAgent) {
+    const analysis = analyzeSeq(group);
+    if (analysis.forked || analysis.status === 'FORKED' || analysis.duplicates.length > 0) {
+      refusals.push({
+        agent_id: agentId,
+        reason: 'FORKED',
+        gaps: analysis.gaps,
+        duplicates: analysis.duplicates,
+      });
+    } else if (analysis.gaps.length > 0 || analysis.status === 'gapped') {
+      refusals.push({
+        agent_id: agentId,
+        reason: 'gap',
+        gaps: analysis.gaps,
+        duplicates: analysis.duplicates,
+      });
+    }
+  }
+  for (const row of list) {
+    if (!row?.task_id) continue;
+    if (row.row_hash == null || row.row_hash === '') {
+      refusals.push({ task_id: String(row.task_id), reason: 'missing_row_hash' });
+    }
+  }
+  if (refusals.length > 0) {
+    const err = new Error('backfill_refused');
+    err.code = 'backfill_refused';
+    err.refusals = refusals;
+    throw err;
+  }
   const start = list.findIndex((row) => String(row?.task_id || '') === String(last.task_id));
   if (start < 0) {
     const err = new Error(`epoch1_tail_missing: ${last.task_id}`);

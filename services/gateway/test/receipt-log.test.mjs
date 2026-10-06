@@ -6,8 +6,12 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+
+const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
 
 const {
   ReceiptMerkleTree,
@@ -46,6 +50,49 @@ function tmp() {
 
 function hex(buf) {
   return Buffer.from(buf).toString('hex');
+}
+
+function anchoredHead({ root, treeSize, bundleIndexHash, epoch = 1 }) {
+  return {
+    schema: 'chit402.tree_head.v2',
+    epoch,
+    root,
+    tree_size: treeSize,
+    bundle_index_hash: bundleIndexHash,
+    anchors: { base: { status: 'anchored', tx: `0x${'11'.repeat(32)}` } },
+    issuer_signature: { jws: 'a.b.c' },
+  };
+}
+
+function lockingClient(objects, mode = 'COMPLIANCE') {
+  return {
+    async send(command) {
+      const name = command.constructor?.name || '';
+      const input = command.input || {};
+      if (name === 'GetObjectRetentionCommand') {
+        return { Retention: { Mode: mode, RetainUntilDate: new Date(Date.now() + 86400000) } };
+      }
+      if (name === 'HeadObjectCommand') {
+        if (!objects.has(input.Key)) {
+          const err = new Error('NotFound');
+          err.name = 'NotFound';
+          throw err;
+        }
+        return {};
+      }
+      if (input.Body) {
+        if (mode === 'COMPLIANCE') {
+          assert.equal(input.ObjectLockMode, 'COMPLIANCE');
+          assert.ok(input.ObjectLockRetainUntilDate instanceof Date);
+        }
+        objects.set(input.Key, Buffer.from(input.Body));
+        return {};
+      }
+      const body = objects.get(input.Key);
+      if (!body) throw new Error(`missing ${input.Key}`);
+      return { Body: { transformToByteArray: async () => body } };
+    },
+  };
 }
 
 function solanaKeypair() {
@@ -281,20 +328,7 @@ test('epoch 1 rebuild matches a synthetic fixture and refuses the historical roo
 
 test('S3 bundle round-trip restores the log and checks the anchored root', async () => {
   const objects = new Map();
-  const client = {
-    async send(command) {
-      const input = command.input;
-      if (input.Body) {
-        assert.equal(input.ObjectLockMode, 'COMPLIANCE');
-        assert.ok(input.ObjectLockRetainUntilDate instanceof Date);
-        objects.set(input.Key, Buffer.from(input.Body));
-        return {};
-      }
-      const body = objects.get(input.Key);
-      if (!body) throw new Error(`missing ${input.Key}`);
-      return { Body: { transformToByteArray: async () => body } };
-    },
-  };
+  const client = lockingClient(objects);
   const tree = new ReceiptMerkleTree();
   tree.appendReceipt('bundled', 'hh');
   const root = hex(rootOf(tree.leaves));
@@ -309,16 +343,30 @@ test('S3 bundle round-trip restores the log and checks the anchored root', async
   assert.equal(objects.size, 2);
   assert.equal(uploaded.index.bundles[0].sha256.length, 64);
   assert.equal(bundleIndexHash(uploaded.index), uploaded.index_hash);
+  const head = anchoredHead({
+    root,
+    treeSize: tree.leaves.length,
+    bundleIndexHash: uploaded.index_hash,
+    epoch: tree.epoch,
+  });
   const restored = await restoreFromS3({
     client,
     bucket: 'receipt-log-test',
     prefix: 'receipt-log/',
+    indexKey: uploaded.index_key,
+    head,
     expectRoots: [{ epoch: 1, tree_size: tree.leaves.length, root }],
   });
   assert.equal(restored.epochs[0].root, root);
   objects.set(uploaded.key, Buffer.from('tampered'));
   await assert.rejects(
-    () => restoreFromS3({ client, bucket: 'receipt-log-test', prefix: 'receipt-log/' }),
+    () => restoreFromS3({
+      client,
+      bucket: 'receipt-log-test',
+      prefix: 'receipt-log/',
+      indexKey: uploaded.index_key,
+      head,
+    }),
     /bundle_hash_mismatch/,
   );
 });
@@ -364,6 +412,22 @@ test('duplicate seq and a prev_hash mismatch mark the book FORKED', () => {
   const report = ledger.seqReport(7);
   assert.equal(report.status, 'FORKED');
   assert.ok(report.duplicate_rows.some((row) => row.kind === 'duplicate_seq' || row.kind === 'duplicate_task_id'));
+});
+
+test('a non-empty journal that is not the pinned epoch refuses to boot', () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('not-the-historical-log', 'zz', { publish: false });
+  assert.throws(() => bootReceiptLog(dir), (err) => err.code === 'pin_unmet');
+  resetReceiptMerkleTree();
+});
+
+test('anchor-state.json keys are not proof a root is in the log', async () => {
+  const { knownHeadRoots } = await import('../src/receipt-log-anchor.js');
+  const tree = new ReceiptMerkleTree();
+  tree.anchorState.base['aa'.repeat(32)] = { status: 'anchored', tx: '0x' + '11'.repeat(32) };
+  assert.equal(knownHeadRoots(tree).has('aa'.repeat(32)), false);
 });
 
 test('an on-chain root missing from the journal refuses boot', async () => {
@@ -482,16 +546,7 @@ test('a bundle upload failure is counted and a retention policy is hashed into t
   });
   assert.equal(policy.id, 'retention-2026');
   const objects = new Map();
-  const client = {
-    async send(command) {
-      const input = command.input;
-      if (input.Body) {
-        objects.set(input.Key, Buffer.from(input.Body));
-        return {};
-      }
-      return { Body: { transformToByteArray: async () => objects.get(input.Key) } };
-    },
-  };
+  const client = lockingClient(objects);
   const ok = new ReceiptMerkleTree();
   ok.appendReceipt('bundled-ok', 'hh', { publish: false });
   const uploaded = await publishTreeBundle(ok, {
@@ -509,4 +564,220 @@ test('a bundle upload failure is counted and a retention policy is hashed into t
   assert.equal(ok.bundleStatus().consecutive_failures, 0);
   const bare = { schema: uploaded.index.schema, bundles: uploaded.index.bundles };
   assert.notEqual(bundleIndexHash(bare), uploaded.index_hash);
+});
+
+test('a broadcast intent is not treated as anchored without a receipt', async () => {
+  const tree = new ReceiptMerkleTree();
+  tree.dir = tmp();
+  const root = 'ab'.repeat(32);
+  tree.anchorIntents.push({
+    chain: 'base',
+    day: '2026-10-06',
+    root,
+    nonce: 4,
+    tx: '0x' + 'cd'.repeat(32),
+    status: 'broadcast',
+  });
+  let lookups = 0;
+  await tree.reconcileAnchorIntents({
+    lookup: async () => {
+      lookups += 1;
+      return { dropped: true };
+    },
+  });
+  assert.equal(lookups, 1);
+  assert.equal(tree.anchorState.base[root], undefined);
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  tree.appendReceipt('row-broadcast', 'h', { publish: false });
+  const liveRoot = hex(rootOf(tree.leaves));
+  tree.anchorIntents.push({
+    chain: 'base',
+    day: '2026-10-06',
+    root: liveRoot,
+    nonce: 4,
+    tx: `0x${'cd'.repeat(32)}`,
+    status: 'dropped',
+  });
+  let resentNonce = null;
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T13:00:00.000Z',
+      nonce: 99,
+      send: async (args) => {
+        resentNonce = args.nonce;
+        return `0x${'ee'.repeat(32)}`;
+      },
+    });
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+  }
+  assert.equal(resentNonce, 4);
+});
+
+test('backfill refuses a forked book and a leaf with no row_hash', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 3, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 3, task_id: 'dup-a', seq: 2, prev_hash: 'aa', row_hash: 'bb' },
+    { agent_id: 3, task_id: 'dup-b', seq: 2, prev_hash: 'aa', row_hash: '' },
+  ];
+  assert.throws(() => planReceiptBackfill(tree, rows), (err) => {
+    assert.equal(err.code, 'backfill_refused');
+    assert.ok(err.refusals.some((row) => row.reason === 'FORKED'));
+    assert.ok(err.refusals.some((row) => row.reason === 'missing_row_hash' && row.task_id === 'dup-b'));
+    return true;
+  });
+});
+
+test('restore checks the signed bundle index hash and object lock compliance', async () => {
+  const { uploadHourlyBundle, buildBundle } = await import('../src/receipt-log-s3.js');
+  const tree = new ReceiptMerkleTree();
+  tree.appendReceipt('later-leaf', 'row', { publish: false });
+  const view = tree.bundleView([], new Date('2026-10-06T18:00:00.000Z'));
+  const bundle = buildBundle({
+    hour: view.hour,
+    epoch: view.epoch,
+    leaves: view.leaves,
+    heads: [],
+    receipts: [],
+    added: view.added,
+  });
+  const governance = lockingClient(new Map(), 'GOVERNANCE');
+  await assert.rejects(
+    () => uploadHourlyBundle({
+      client: governance,
+      bucket: 'b',
+      prefix: 'receipt-log/',
+      retentionDays: 30,
+      bundle,
+      index: { schema: 'chit402.receipt_log_bundle_index.v1', bundles: [] },
+    }),
+    /object_lock_not_compliance/,
+  );
+  const objects = new Map();
+  const client = lockingClient(objects);
+  const uploaded = await uploadHourlyBundle({
+    client,
+    bucket: 'b',
+    prefix: 'receipt-log/',
+    retentionDays: 30,
+    bundle,
+    index: { schema: 'chit402.receipt_log_bundle_index.v1', bundles: [] },
+  });
+  await assert.rejects(
+    () => uploadHourlyBundle({
+      client,
+      bucket: 'b',
+      prefix: 'receipt-log/',
+      retentionDays: 30,
+      bundle,
+      index: uploaded.index,
+    }),
+    /index_already_published/,
+  );
+  const fullRoot = hex(rootOf(tree.leaves));
+  const prefixRoot = hex(rootOf(tree.leaves.slice(0, 1)));
+  await assert.rejects(
+    () => restoreFromS3({
+      client,
+      bucket: 'b',
+      prefix: 'receipt-log/',
+      indexKey: uploaded.index_key,
+      head: anchoredHead({
+        root: fullRoot,
+        treeSize: tree.leaves.length,
+        bundleIndexHash: '00'.repeat(32),
+        epoch: tree.epoch,
+      }),
+      expectRoots: [{ epoch: tree.epoch, tree_size: tree.leaves.length, root: fullRoot }],
+    }),
+    /bundle_index_hash/,
+  );
+  await assert.rejects(
+    () => restoreFromS3({
+      client,
+      bucket: 'b',
+      prefix: 'receipt-log/',
+      indexKey: uploaded.index_key,
+      head: anchoredHead({
+        root: prefixRoot,
+        treeSize: 1,
+        bundleIndexHash: uploaded.index_hash,
+        epoch: tree.epoch,
+      }),
+      expectRoots: [{ epoch: tree.epoch, tree_size: 1, root: prefixRoot }],
+    }),
+    /anchored_root/,
+  );
+});
+
+test('boot refuses a non-empty journal with no epoch record', () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('local-only', 'hh', { publish: false });
+  assert.throws(() => bootReceiptLog(dir, { pin: null }), (err) => err.code === 'epoch_record_missing');
+  resetReceiptMerkleTree();
+});
+
+test('a known anchor transaction the RPC does not return refuses boot', async () => {
+  const { assertKnownAnchorTxs } = await import('../src/receipt-log-anchor.js');
+  const root = 'aa'.repeat(32);
+  const pin = { anchors: [{ chain: 'base', root, tx: `0x${'11'.repeat(32)}` }] };
+  await assert.rejects(
+    () => assertKnownAnchorTxs(pin, { request: async () => null, tree: new ReceiptMerkleTree() }),
+    (err) => err.code === 'anchor_rpc_missing',
+  );
+  const tree = new ReceiptMerkleTree();
+  tree.anchorState.base[root] = { status: 'anchored', tx: pin.anchors[0].tx };
+  await assert.rejects(
+    () => assertKnownAnchorTxs(pin, {
+      tree,
+      request: async () => ({ hash: pin.anchors[0].tx, input: `0x${root}` }),
+    }),
+    (err) => err.code === 'anchor_not_in_journal',
+  );
+});
+
+test('a forged epoch record is not a pinned epoch', async () => {
+  const { assertPinnedEpochRecord } = await import('../src/receipt-log-epoch.js');
+  const forged = epochRecordClaims({ epoch1Root: 'ab'.repeat(32) });
+  forged.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(forged).reason, 'epoch1_root');
+  const pinned = epochRecordClaims();
+  pinned.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(pinned).ok, true);
+  assert.equal(pinned.orphans.find((row) => row.root_prefix === 'd7f6c548').unrecoverable, true);
+});
+
+test('backfill dry-run lists each refusal', () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('leaf-1', 'aa', { publish: false });
+  const jsonl = path.join(dir, 'rows.jsonl');
+  const rows = [
+    { agent_id: 3, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 3, task_id: 'dup-a', seq: 2, prev_hash: 'aa', row_hash: 'bb' },
+    { agent_id: 3, task_id: 'dup-b', seq: 2, prev_hash: 'aa', row_hash: '' },
+  ];
+  fs.writeFileSync(jsonl, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  const out = spawnSync(process.execPath, [
+    'scripts/backfill-receipt-log.mjs',
+    '--jsonl', jsonl,
+    '--dir', dir,
+  ], { cwd: gatewayRoot, encoding: 'utf8' });
+  assert.notEqual(out.status, 0);
+  assert.match(out.stderr, /refuse agent 3: FORKED/);
+  assert.match(out.stderr, /refuse dup-b: missing_row_hash/);
 });

@@ -10,6 +10,13 @@ import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-wi
 export const TREE_HEAD_SCHEMA_V1 = 'chit402.tree_head.v1';
 export const TREE_HEAD_SCHEMA_V2 = 'chit402.tree_head.v2';
 
+/** Historical epoch 1. A self-consistent record with any other final root is forged. */
+export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
+export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
+export const EPOCH1_FINAL_SIZE = 4;
+export const EPOCH2_OPENING_ROOT = 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286';
+const ORPHAN_GENESIS_ONLY = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
+
 export interface EpochTreeHead {
   schema?: string;
   payload_version?: number;
@@ -29,6 +36,7 @@ export interface EpochRecordEntry {
   final_size?: number | null;
   opening_root?: string | null;
   opening_size?: number | null;
+  genesis_digest?: string | null;
   prev_epoch_root?: string | null;
   prev_epoch_size?: number | null;
 }
@@ -37,6 +45,11 @@ export interface EpochRecord {
   schema?: string;
   epochs?: EpochRecordEntry[];
   orphans?: unknown[];
+  issuer_signature?: { jws?: string | null } | null;
+}
+
+export interface EpochRecordOptions {
+  verifySignature?: (jws: string) => boolean;
 }
 
 export function acceptTreeHeadSchema(head: EpochTreeHead | null | undefined): { ok: boolean; reason?: string } {
@@ -64,6 +77,11 @@ export function verifyEpochLink(
   if (!Number.isInteger(epoch) || epoch < 1) return { ok: false, reason: 'bad_epoch' };
   if (epoch === 1) {
     if (head?.prev_epoch_root) return { ok: false, reason: 'epoch1_has_prev' };
+    const size = head?.tree_size == null ? null : Number(head.tree_size);
+    const root = typeof head?.root === 'string' ? head.root.replace(/^0x/, '').toLowerCase() : '';
+    if (size === EPOCH1_FINAL_SIZE && root && root !== EPOCH1_FINAL_ROOT) {
+      return { ok: false, reason: 'epoch1_root' };
+    }
     return { ok: true };
   }
   if (!previous?.root) return { ok: false, reason: 'missing_previous_epoch' };
@@ -72,7 +90,22 @@ export function verifyEpochLink(
   return { ok: true };
 }
 
-export function verifyEpochRecord(record: EpochRecord | null | undefined): { ok: boolean; reason?: string } {
+/**
+ * Epoch 1 is pinned to dd20e39a, size 4, genesis 422cceb1.
+ * A self-consistent chain with another root does not verify.
+ * The issuer signature is required. d7f6c548 must be present, root null,
+ * and marked unrecoverable.
+ */
+export function verifyEpochRecord(
+  record: EpochRecord | null | undefined,
+  options: EpochRecordOptions = {},
+): { ok: boolean; reason?: string } {
+  const jws = record?.issuer_signature?.jws;
+  if (!jws) return { ok: false, reason: 'epoch_signature_missing' };
+  if (typeof options.verifySignature !== 'function') {
+    return { ok: false, reason: 'epoch_signature_unverified' };
+  }
+  if (!options.verifySignature(jws)) return { ok: false, reason: 'epoch_signature_invalid' };
   const epochs = record?.epochs;
   if (!Array.isArray(epochs) || epochs.length === 0) return { ok: false, reason: 'no_epochs' };
   for (let i = 0; i < epochs.length; i += 1) {
@@ -89,7 +122,29 @@ export function verifyEpochRecord(record: EpochRecord | null | undefined): { ok:
     if (row.prev_epoch_root !== prevRoot) return { ok: false, reason: 'prev_epoch_root' };
     if (Number(row.prev_epoch_size) !== Number(prevSize)) return { ok: false, reason: 'prev_epoch_size' };
   }
-  if (record && !Array.isArray(record.orphans)) return { ok: false, reason: 'orphans_missing' };
+  if (!Array.isArray(record?.orphans)) return { ok: false, reason: 'orphans_missing' };
+  const epoch1 = epochs.find((row) => Number(row.epoch) === 1);
+  if (!epoch1) return { ok: false, reason: 'epoch1_missing' };
+  if (epoch1.final_root !== EPOCH1_FINAL_ROOT || Number(epoch1.final_size) !== EPOCH1_FINAL_SIZE) {
+    return { ok: false, reason: 'epoch1_root' };
+  }
+  if (epoch1.genesis_digest !== EPOCH1_GENESIS_DIGEST) return { ok: false, reason: 'epoch1_genesis' };
+  const epoch2 = epochs.find((row) => Number(row.epoch) === 2);
+  if (epoch2) {
+    if (epoch2.prev_epoch_root !== EPOCH1_FINAL_ROOT || Number(epoch2.prev_epoch_size) !== EPOCH1_FINAL_SIZE) {
+      return { ok: false, reason: 'prev_epoch_root' };
+    }
+    if (epoch2.opening_root && epoch2.opening_root !== EPOCH2_OPENING_ROOT) {
+      return { ok: false, reason: 'epoch2_opening' };
+    }
+  }
+  const orphans = record.orphans as Array<{ root?: string | null; root_prefix?: string; unrecoverable?: boolean }>;
+  const lost = orphans.find((row) => row?.root_prefix === 'd7f6c548');
+  if (!lost) return { ok: false, reason: 'orphan_d7f6c548_missing' };
+  if (lost.root != null) return { ok: false, reason: 'orphan_d7f6c548_root_invented' };
+  if (lost.unrecoverable !== true) return { ok: false, reason: 'orphan_d7f6c548_unmarked' };
+  if (!orphans.some((row) => row?.root === ORPHAN_GENESIS_ONLY)) return { ok: false, reason: 'orphans_incomplete' };
+  if (!orphans.some((row) => row?.root === EPOCH2_OPENING_ROOT)) return { ok: false, reason: 'orphans_incomplete' };
   return { ok: true };
 }
 

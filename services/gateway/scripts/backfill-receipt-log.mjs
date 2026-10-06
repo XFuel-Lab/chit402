@@ -41,6 +41,10 @@ try {
   plan = planReceiptBackfill(tree, rows);
 } catch (err) {
   console.error(`REFUSED: ${err.message}`);
+  for (const row of err.refusals || []) {
+    const id = row.task_id || `agent ${row.agent_id}`;
+    console.error(`refuse ${id}: ${row.reason}`);
+  }
   process.exit(1);
 }
 

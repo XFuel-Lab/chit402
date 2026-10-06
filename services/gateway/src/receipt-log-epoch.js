@@ -41,6 +41,7 @@ export const ORPHANED_ROOTS = Object.freeze([
     root: null,
     root_prefix: 'd7f6c548',
     recovered: false,
+    unrecoverable: true,
     kind: 'populated_lost',
     chain: 'base',
     observed_et: '2026-10-01 8:01 AM ET',
@@ -211,4 +212,44 @@ export function checkEpochLinks(claims) {
   }
   if (!Array.isArray(claims.orphans)) return { ok: false, reason: 'orphans_missing' };
   return { ok: true, epochs };
+}
+
+/**
+ * Epoch 1 is pinned. A self-consistent record with a different final root
+ * is not accepted. d7f6c548 must be present with root null and unrecoverable.
+ */
+export function assertPinnedEpochRecord(record) {
+  const jws = record?.issuer_signature?.jws;
+  if (!jws) return { ok: false, reason: 'epoch_signature_missing' };
+  const linked = checkEpochLinks(record);
+  if (!linked.ok) return linked;
+  const epoch1 = record.epochs.find((row) => Number(row.epoch) === 1);
+  if (!epoch1) return { ok: false, reason: 'epoch1_missing' };
+  if (epoch1.final_root !== EPOCH1_FINAL_ROOT || Number(epoch1.final_size) !== EPOCH1_FINAL_SIZE) {
+    return { ok: false, reason: 'epoch1_root' };
+  }
+  if (epoch1.genesis_digest !== EPOCH1_GENESIS_DIGEST) {
+    return { ok: false, reason: 'epoch1_genesis' };
+  }
+  const epoch2 = record.epochs.find((row) => Number(row.epoch) === 2);
+  if (epoch2) {
+    if (epoch2.prev_epoch_root !== EPOCH1_FINAL_ROOT || Number(epoch2.prev_epoch_size) !== EPOCH1_FINAL_SIZE) {
+      return { ok: false, reason: 'prev_epoch_root' };
+    }
+    if (epoch2.opening_root && epoch2.opening_root !== EPOCH2_OPENING_ROOT) {
+      return { ok: false, reason: 'epoch2_opening' };
+    }
+  }
+  const lost = record.orphans.find((row) => row?.root_prefix === 'd7f6c548');
+  if (!lost) return { ok: false, reason: 'orphan_d7f6c548_missing' };
+  if (lost.root != null) return { ok: false, reason: 'orphan_d7f6c548_root_invented' };
+  if (lost.unrecoverable !== true) return { ok: false, reason: 'orphan_d7f6c548_unmarked' };
+  const genesisOnly = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
+  if (!record.orphans.some((row) => row?.root === genesisOnly)) {
+    return { ok: false, reason: 'orphans_incomplete' };
+  }
+  if (!record.orphans.some((row) => row?.root === EPOCH2_OPENING_ROOT)) {
+    return { ok: false, reason: 'orphans_incomplete' };
+  }
+  return { ok: true };
 }

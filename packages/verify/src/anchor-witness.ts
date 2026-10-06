@@ -8,6 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { BASE_RPC_URL } from './base-payer.js';
+import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -59,6 +60,9 @@ export interface AnchorInclusion {
 export interface AnchorHead {
   root: string;
   tree_size?: number;
+  epoch?: number | null;
+  prev_epoch_root?: string | null;
+  prev_epoch_size?: number | null;
   anchor_tx?: string | null;
   anchor?: { tx?: string | null; calldata?: string | null; chain_id?: number | null } | null;
   anchors?: {
@@ -293,6 +297,8 @@ export interface VerifyAnchoredRootInput {
   fetchSolanaTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>;
   fetchGenesis?: (rpcUrl: string) => Promise<string>;
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
+  epochRecord?: EpochRecord | null;
+  verifyEpochSignature?: (jws: string) => boolean;
 }
 
 /**
@@ -349,6 +355,28 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
   if (!inclusionValid && inclusionReason) errors.push(inclusionReason);
+
+  let epochReason: string | undefined;
+  const needsEpoch = input.head?.epoch != null || input.epochRecord != null;
+  if (needsEpoch) {
+    if (!input.epochRecord) epochReason = 'epoch_record_missing';
+    else {
+      const checked = verifyEpochRecord(input.epochRecord, { verifySignature: input.verifyEpochSignature });
+      if (!checked.ok) epochReason = checked.reason || 'epoch_record';
+      else if (input.head?.epoch != null && Number(input.head.epoch) > 1) {
+        const prev = (input.epochRecord.epochs || []).find((row) => Number(row.epoch) === Number(input.head.epoch) - 1);
+        const link = verifyEpochLink(input.head, prev ? {
+          root: prev.final_root || prev.opening_root || null,
+          tree_size: prev.final_size ?? prev.opening_size ?? null,
+        } : null);
+        if (!link.ok) epochReason = link.reason || 'epoch_link';
+      } else if (input.head) {
+        const link = verifyEpochLink(input.head, null);
+        if (!link.ok) epochReason = link.reason || 'epoch_link';
+      }
+    }
+    if (epochReason) errors.push(epochReason);
+  }
 
   const solanaRpc = input.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL;
   const baseRpc = input.baseRpcUrl || BASE_RPC_URL;
@@ -452,7 +480,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
 
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
