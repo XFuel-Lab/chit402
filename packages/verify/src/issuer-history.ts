@@ -93,6 +93,87 @@ export function issuerHistoryEntryHash(entry: IssuerHistoryEntry): string {
   return sha256Hex(jcsCanonicalize(issuerHistoryEntryBody(entry)));
 }
 
+export const ISSUER_HISTORY_EMBED_SCHEMA = 'chit402.issuer_history_embed.v1';
+
+export interface IssuerHistorySnapshot {
+  schema?: string;
+  version?: number;
+  seq?: number;
+  head_hash?: string;
+  snapshot_hash?: string;
+  entries?: IssuerHistoryEntry[];
+}
+
+/**
+ * Offline check of `issuer_history_snapshot`. `snapshot_hash` is the pin hash
+ * of the full well-known document, not a hash of this embed.
+ */
+export function verifyIssuerHistorySnapshot(
+  snapshot: unknown,
+  pin: IssuerHistoryPin | null,
+  { kid, issuedAt }: { kid: string | null; issuedAt: unknown },
+): { ok: boolean; reason: string | null } {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { ok: false, reason: 'issuer_history_snapshot_missing' };
+  }
+  const embed = snapshot as IssuerHistorySnapshot;
+  if (embed.schema !== ISSUER_HISTORY_EMBED_SCHEMA) {
+    return { ok: false, reason: 'issuer_history_snapshot_schema' };
+  }
+  if (!pin || embed.snapshot_hash !== pin.hash
+    || Number(embed.version) !== pin.version
+    || Number(embed.seq) !== pin.seq) {
+    return { ok: false, reason: 'issuer_history_snapshot_pin' };
+  }
+  if (!Array.isArray(embed.entries) || embed.entries.length === 0) {
+    return { ok: false, reason: 'issuer_history_snapshot_entry_hash' };
+  }
+  let prev: string | null = null;
+  for (const entry of embed.entries) {
+    if ((entry.prev_hash ?? null) !== prev) return { ok: false, reason: 'issuer_history_snapshot_prev_hash' };
+    if (issuerHistoryEntryHash(entry) !== entry.entry_hash) {
+      return { ok: false, reason: 'issuer_history_snapshot_entry_hash' };
+    }
+    if (!['active', 'retired', 'revoked'].includes(entry.status)) {
+      return { ok: false, reason: 'issuer_history_snapshot_entry_hash' };
+    }
+    prev = entry.entry_hash || null;
+  }
+  const head = embed.entries[embed.entries.length - 1].entry_hash;
+  if (embed.head_hash !== head) return { ok: false, reason: 'issuer_history_snapshot_head_hash' };
+  if (!kid) return { ok: false, reason: 'issuer_history_snapshot_window' };
+  const window = issuerKeyWindow({ entries: embed.entries }, kid, issuedAt);
+  if (!window.ok) return { ok: false, reason: `issuer_history_snapshot_window:${window.reason}` };
+  return { ok: true, reason: null };
+}
+
+/** True when a fetched well-known document does not match the signed embed. */
+export function historySnapshotDisagrees(
+  snapshot: IssuerHistorySnapshot,
+  doc: IssuerHistoryDocument,
+  docHash: string,
+): boolean {
+  if (docHash !== snapshot.snapshot_hash) return true;
+  if (Number(doc.version) !== Number(snapshot.version)) return true;
+  if (Number(doc.seq) !== Number(snapshot.seq)) return true;
+  if (doc.head_hash !== snapshot.head_hash) return true;
+  const live = doc.entries || [];
+  const embedded = snapshot.entries || [];
+  if (live.length !== embedded.length) return true;
+  for (let i = 0; i < embedded.length; i += 1) {
+    const left = embedded[i];
+    const right = live[i];
+    if (left.kid !== right.kid) return true;
+    if (left.entry_hash !== right.entry_hash) return true;
+    if ((left.prev_hash ?? null) !== (right.prev_hash ?? null)) return true;
+    if (left.not_before !== right.not_before) return true;
+    if ((left.not_after ?? null) !== (right.not_after ?? null)) return true;
+    if (left.status !== right.status) return true;
+    if ((left.revoked_at ?? null) !== (right.revoked_at ?? null)) return true;
+  }
+  return false;
+}
+
 function parseTime(value: unknown): number | null {
   if (value == null || value === '') return null;
   if (typeof value === 'number' && Number.isFinite(value)) return value > 1e12 ? value : value * 1000;
@@ -215,6 +296,8 @@ export async function checkReceiptIssuerHistory(
     pin = null,
     requirePin = false,
     documentBytes = null,
+    snapshot = null,
+    offlineEmbed = false,
   }: {
     document?: IssuerHistoryDocument | null;
     fetchHistory?: boolean;
@@ -232,6 +315,10 @@ export async function checkReceiptIssuerHistory(
     requirePin?: boolean;
     /** Exact response or file bytes. SHA-256 of these must equal the pin. */
     documentBytes?: string | null;
+    /** Signed issuer_history_snapshot, when the receipt carried one. */
+    snapshot?: IssuerHistorySnapshot | null;
+    /** The embed already verified. A 404 from well-known does not fail the history leg. */
+    offlineEmbed?: boolean;
   } = {},
 ): Promise<IssuerHistoryCheck> {
   const base: IssuerHistoryCheck = {
@@ -293,14 +380,22 @@ export async function checkReceiptIssuerHistory(
       doc = JSON.parse(raw) as IssuerHistoryDocument;
     } catch (err) {
       const warning = `issuer history unreachable: ${err instanceof Error ? err.message : String(err)}`;
+      if (offlineEmbed) return { ...base, checked: true, ok: true, unreachable: false, warning: null, reason: null };
       if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
       return { ...base, unreachable: true, warning };
     }
   }
   if (!doc) {
+    if (offlineEmbed) return { ...base, checked: true, ok: true, unreachable: false, warning: null, reason: null };
     const warning = 'issuer history not checked';
     if (failClosed) return { ...base, checked: true, ok: false, unreachable: true, reason: warning, warning };
     return { ...base, warning };
+  }
+  if (snapshot) {
+    const docHash = raw != null ? sha256Hex(raw) : issuerHistoryDocumentHash(doc);
+    if (historySnapshotDisagrees(snapshot, doc, docHash)) {
+      return { ...base, checked: true, ok: false, reason: 'history_snapshot_disagree', document: doc };
+    }
   }
   if (pinned && pin) {
     if (raw != null && sha256Hex(raw) !== pin.hash) {

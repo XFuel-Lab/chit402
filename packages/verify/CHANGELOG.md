@@ -20,6 +20,8 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - Only a DNS timeout or SERVFAIL is `pass_dns_unavailable`. `ECONNREFUSED` and any other resolver error fail.
 - The active kid set at a DNS `seq` is rebuilt from events. The pin does not insert a kid.
 - **Signed `iat`.** Payload v11, and any receipt whose verified claims include `issuer_root`, fail `missing_signed_iat` when the signed payload has no `iat`. The key window does not use the unsigned `created_at`. v7–v10 receipts that never signed `iat` still fall back to `created_at` for the issuer-history window. That fallback stops as soon as `issuer_root` is present.
+- **v11 `canonicalization`.** Required. `hash_alg` must be `sha-256`, `jcs` must be `RFC8785` (the label on gateway `f9f16db`; `chit402-jcs-v1` is rejected), and `string_escaping` must be the signed sentence. The preimage is recomputed as SHA-256 of JCS(claims without `payload_hash`) and must equal `payload_hash`.
+- **v11 `issuer_history_snapshot`.** `chit402.issuer_history_embed.v1` is checked offline: `snapshot_hash` matches `issuer_history.hash`, each `entry_hash` recomputes, `prev_hash` chains to `head_hash`, and the `issuer_root.kid` entry covers the signed `iat`. A well-known 404 does not fail that leg. If a live history document is also supplied and disagrees, the result is `history_snapshot_disagree`.
 - An unsigned caller cache of `RootCommitted` logs is labeled `as of block N, caller cache` and never upgrades a verdict to `pass`.
 - Chain revocation fails the receipt whatever DNS says. A DNS record that drops the receipt's still-active kid fails `dns_chain_disagree` immediately. Other kid-set lag is `dns_lagging` inside TTL+1h and `dns_chain_disagree` after that.
 

@@ -81,10 +81,17 @@ import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
   readIssuerHistoryPin,
+  verifyIssuerHistorySnapshot,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
+  type IssuerHistorySnapshot,
 } from './issuer-history.js';
-import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import {
+  verifyCanonicalPreimageBytes,
+  CANONICAL_PAYLOAD_VERSION,
+  v11CanonicalizationVerdict,
+  recomputeV11PayloadHash,
+} from './canonical-preimage.js';
 import {
   verifyIssuerRoot,
   resolvePinnedRoot,
@@ -1636,6 +1643,44 @@ export async function verifyReceipt(
     : (signedIat !== undefined
       ? signedIat
       : (decoded?.iat ?? receipt.created_at ?? null));
+  let canonicalizationFailed = false;
+  let snapshotFailed = false;
+  let embedOk = false;
+  let historySnapshot: IssuerHistorySnapshot | null = null;
+  if (issuer_signature.valid && Number.isFinite(payloadVersion) && payloadVersion >= 11 && verifiedClaims) {
+    const canon = v11CanonicalizationVerdict(verifiedClaims.canonicalization);
+    if (!canon.ok && canon.reason) {
+      canonicalizationFailed = true;
+      errors.push(canon.reason);
+    } else {
+      const recomputed = recomputeV11PayloadHash(verifiedClaims as Record<string, unknown>);
+      const signedHash = typeof verifiedClaims.payload_hash === 'string'
+        ? verifiedClaims.payload_hash.replace(/^0x/i, '').toLowerCase()
+        : '';
+      if (recomputed !== signedHash) {
+        canonicalizationFailed = true;
+        errors.push('payload_hash_mismatch');
+      }
+    }
+    const rootClaim = verifiedClaims.issuer_root;
+    const rootKid = rootClaim && typeof rootClaim === 'object' && typeof (rootClaim as { kid?: unknown }).kid === 'string'
+      ? (rootClaim as { kid: string }).kid
+      : null;
+    const snap = verifyIssuerHistorySnapshot(verifiedClaims.issuer_history_snapshot, historyPin, {
+      kid: rootKid,
+      issuedAt: signedIat,
+    });
+    if (!snap.ok && snap.reason) {
+      const windowWithoutIat = missingSignedIat && snap.reason.startsWith('issuer_history_snapshot_window');
+      if (!windowWithoutIat) {
+        snapshotFailed = true;
+        errors.push(snap.reason);
+      }
+    } else if (snap.ok) {
+      embedOk = true;
+      historySnapshot = verifiedClaims.issuer_history_snapshot as IssuerHistorySnapshot;
+    }
+  }
   // Payload v10 signs the history pin. A missing pin fails even when the
   // caller did not pass a history file or ask for a fetch.
   const pinRequired = !options.skipIssuerHistory
@@ -1664,6 +1709,8 @@ export async function verifyReceipt(
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
       pin: historyPin,
       requirePin: pinRequired,
+      snapshot: historySnapshot,
+      offlineEmbed: embedOk,
     })
     : {
       checked: false,
@@ -1724,10 +1771,11 @@ export async function verifyReceipt(
   const historyFailed = issuer_history.checked && !issuer_history.ok;
   const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
   const signedIatFailed = missingSignedIat;
+  const v11ClaimFailed = canonicalizationFailed || snapshotFailed;
   const rootSoft = !!issuer_root && (
     issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
   );
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed || v11ClaimFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
