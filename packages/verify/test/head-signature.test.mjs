@@ -145,10 +145,17 @@ test('a head with the issuer signature removed does not verify', async () => {
 test('a forged tree-head signature does not verify', async () => {
   const fx = fixture();
   const parts = fx.head.issuer_signature.jws.split('.');
-  const flipped = parts[2].slice(0, -1) + (parts[2].endsWith('A') ? 'B' : 'A');
+  // A 64-byte ES256 signature is 86 base64url characters. The last character
+  // holds only two payload bits, so changing it can leave the signature valid.
+  // Flip a character in the middle, where every bit is signed data.
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const chars = parts[2].split('');
+  const at = 10;
+  const cur = alphabet.indexOf(chars[at]);
+  chars[at] = alphabet[(cur + 8) % alphabet.length];
   const forged = {
     ...fx.head,
-    issuer_signature: { ...fx.head.issuer_signature, jws: `${parts[0]}.${parts[1]}.${flipped}` },
+    issuer_signature: { ...fx.head.issuer_signature, jws: `${parts[0]}.${parts[1]}.${chars.join('')}` },
   };
   const result = await run(fx, { head: forged });
   assert.equal(result.overall, 'failed');
