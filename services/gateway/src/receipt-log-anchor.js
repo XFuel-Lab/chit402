@@ -191,7 +191,10 @@ export async function assertKnownAnchorTxs(pin, { request, baseRpc, solanaRpc, t
         throw new ReceiptLogRefused('anchor_root_mismatch', `Base tx ${anchor.tx} calldata is ${got || 'empty'}`);
       }
     }
-    if (roots && !roots.has(want)) {
+    // Orphans and intermediate heads are on chain and are not stored as
+    // journal heads. Only anchors with in_journal left on (the default)
+    // have to appear in the head history.
+    if (roots && anchor.in_journal !== false && !roots.has(want)) {
       throw new ReceiptLogRefused(
         'anchor_not_in_journal',
         `anchored root ${want} from ${anchor.tx} is not in the journal head history`,

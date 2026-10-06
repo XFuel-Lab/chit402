@@ -19,21 +19,175 @@
     {
       "chain": "base",
       "root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
-      "tx": null,
-      "note": "Oct 3 Base anchor of epoch 1. Fill tx with the 32-byte transaction hash before restart. Boot refuses while tx is null."
+      "tx": "0x1d8d7ea255170c8d4b87bef9382e13555dded2072fd877ce35f995f1ab54ee09",
+      "nonce": 8,
+      "epoch": 1,
+      "tree_size": 4,
+      "in_journal": true,
+      "note": "Oct 3 11:33:37 UTC. Epoch 1 final root. Self-transfer from 0x1844D1F5FE42aff1Cce6F776514Fd40374079582. Calldata is the root."
+    },
+    {
+      "chain": "solana",
+      "root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
+      "tx": "61RHMsPPseUc35v5oxDEtANEDCvXk5fmxZdrFDMknGWc5m7U8YhMfz4En1eFFj3z9n67ZtMiha1zkwnneL2LUiXk",
+      "slot": 452921175,
+      "epoch": 1,
+      "tree_size": 4,
+      "in_journal": true,
+      "note": "Oct 3 memo on BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD. Memo prev is the size-2 root ecf9a330."
+    },
+    {
+      "chain": "base",
+      "root": "ecf9a330a9e82d45e0887807261276fad2fbfb394189bb8f7f35b0e9163c70ae",
+      "tx": "0x1e97e3115e3823c010b27964f7e8ca677f43dd02dcc874164221ce51693a2cec",
+      "nonce": 7,
+      "epoch": 1,
+      "tree_size": 2,
+      "in_journal": false,
+      "note": "Oct 2 17:30:03 UTC. Epoch 1 size-2 head. The restored journal stores the size-4 final head, so this root is checked on Base and is not required as its own journal head."
+    },
+    {
+      "chain": "solana",
+      "root": "ecf9a330a9e82d45e0887807261276fad2fbfb394189bb8f7f35b0e9163c70ae",
+      "tx": "5G99CwZZCcYS9bN8yzbuMn7njkjAe5jTFBhZEjgpeBAt2dz3B9TqTW65xPzsxzojkTyaPn6eEqsJuuSQDnZyLqxV",
+      "slot": 452677928,
+      "epoch": 1,
+      "tree_size": 2,
+      "in_journal": false,
+      "note": "Oct 2 memo. Same size-2 root. Not a stored journal head."
     },
     {
       "chain": "base",
       "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
-      "tx": null,
-      "note": "Oct 5 Base anchor of the epoch 2 opening root. Fill tx before restart."
+      "tx": "0x75cc2b11c3784e8fe67ae7c15f692a3023e756acd1c6d4455ee28382a3d3ef12",
+      "nonce": 9,
+      "epoch": 2,
+      "tree_size": 1,
+      "in_journal": true,
+      "note": "Oct 5 11:22:57 UTC. Epoch 2 opening root."
     },
     {
       "chain": "solana",
       "root": "f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286",
-      "tx": null,
-      "note": "Oct 5 Solana memo signature for the epoch 2 opening root. Fill tx before restart."
+      "tx": "M7uAGvNRoVobyuQEQxULsZzWfvRityoxS6sm4SepBLCTjJqAVZ7f3p1aaNgqXoGBZ1zqtmwyN6yqerpMBX2Wrrv",
+      "slot": 453564625,
+      "epoch": 2,
+      "tree_size": 1,
+      "in_journal": true,
+      "note": "Oct 5 memo. Prev root in the memo is 64 zero bytes."
+    },
+    {
+      "chain": "base",
+      "root": "d7f6c548f9d5f96f7cbdd0028e6d99eb052314b0bfc04a15700316e5da3ad433",
+      "tx": "0xebcc701220ed9ece30b9a69ced15dc77f5691dc98e5e79cd22a27c4afe8184d2",
+      "nonce": 3,
+      "in_journal": false,
+      "role": "orphan",
+      "unrecoverable": true,
+      "note": "Orphan. Leaves were not recovered. The epoch record keeps root null and unrecoverable true. This entry is the Base calldata root."
+    },
+    {
+      "chain": "solana",
+      "root": "d7f6c548f9d5f96f7cbdd0028e6d99eb052314b0bfc04a15700316e5da3ad433",
+      "tx": "25wpC8zXi8MMuJ7rU5txqmRVk6vP2nTqp6mipwgGTWRfD7gb7kGpfztzgUwdqMKWxSeYvw6NgmqLzUxKbxEG3BoL",
+      "slot": 452281715,
+      "in_journal": false,
+      "role": "orphan",
+      "unrecoverable": true,
+      "note": "Oct 1 memo of the same unrecoverable root. Not a journal head."
+    },
+    {
+      "chain": "base",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "0xefeb978ecdbdc74e1e9f988df101a49f8ba09113548ed1b591b1fa4015d7de79",
+      "nonce": 1,
+      "in_journal": false,
+      "role": "orphan",
+      "note": "Genesis-only orphan, one of five Base anchors."
+    },
+    {
+      "chain": "base",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "0x176ea33a4dd58612aa30cdf94d40dc70afa8f63a320d24e602ef4571d71f4571",
+      "nonce": 2,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "base",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "0x0dea3d444dafad27834fd985cb2fc45a791ce95ef8ff491b37a8ced43a821b1e",
+      "nonce": 4,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "base",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "0xca559605445983e6d7831414a3136b3e11fa50c513ef5c1e91b8c470177582de",
+      "nonce": 5,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "base",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "0x0c9324ee11b9bad039388baca06dac56025ebd3e51dc372dc4d754a9a1549642",
+      "nonce": 6,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "solana",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "2w6984ck921kpr2o8zmWYaDqkWHNbbnYxL1a1NX859xhaR3K9gkC13V3sBHangVhNSSmEsZf3UNx6iXUek3Wq8nC",
+      "slot": 452039860,
+      "in_journal": false,
+      "role": "orphan",
+      "note": "Sep 30 memo. One of five."
+    },
+    {
+      "chain": "solana",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "289NahscuY74aJG5wu2iPfekKGizhvBb8Nf6Ei67hXyGW3B2nnz8WrHM15JA2gUfV59As9DAoQ9bG72CsArmXV8t",
+      "slot": 452042710,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "solana",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "4vsyqd1pPJ7ccyupjj3ZWbwTr6AHPkKzaBe2t5HEHBvJB71ecHcF8AW2ENpqJuiMY9FFhunhh1nofqR2ooh15jqg",
+      "slot": 452323996,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "solana",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "8yrvdGAkeXrQKqciraz5h14wuU3KLh7dvgrS7EgB7N9n6tm6xNt1mZEMgLxkE4DHd9zmzKYpmThA6ot7EWAhTPn",
+      "slot": 452364071,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "solana",
+      "root": "20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9",
+      "tx": "2eDr4kx48d5gVCcq6QHMbhie3kEekFvaeWK8bQN8H4VdajdFB2KpCNerfCJ3XYtyru6hWUH9qHrLaUnZoTWKCDXJ",
+      "slot": 452414397,
+      "in_journal": false,
+      "role": "orphan"
+    },
+    {
+      "chain": "base",
+      "root": "ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3",
+      "tx": "0xf100906ada9e73713cf4d9503c4ad9a994f5a593c1d7714c1437db10f9d0f3d4",
+      "nonce": 0,
+      "in_journal": false,
+      "role": "orphan",
+      "solana": "absent",
+      "note": "Base-only. The anchor memo wallet BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD has no memo containing this root. There is no Solana entry."
     }
   ],
-  "note": "Boot recomputes every pinned epoch from the journal. anchor-state.json is not evidence. Known anchor transactions are loaded with eth_getTransactionByHash (Base) or getTransaction (Solana)."
+  "note": "Boot recomputes epoch 1 and the epoch 2 opening from the journal. in_journal true means that root must be a journal head. Orphans and the size-2 head are loaded by hash and are not journal heads. anchor-state.json is not evidence. Base uses eth_getTransactionByHash. Solana uses getTransaction."
 }

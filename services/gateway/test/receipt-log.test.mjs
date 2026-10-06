@@ -721,6 +721,54 @@ test('restore checks the signed bundle index hash and object lock compliance', a
   );
 });
 
+test('the committed pin passes the boot gate when RPC returns those transactions', async () => {
+  const { readReceiptLogPin, assertKnownAnchorTxs } = await import('../src/receipt-log-anchor.js');
+  const { finishReceiptLogBoot } = await import('../src/receipt-merkle.js');
+  const pin = readReceiptLogPin({});
+  assert.ok(pin.anchors.length > 0);
+  assert.equal(pin.anchors.every((row) => typeof row.tx === 'string' && row.tx.length > 0), true);
+  const baseOnly = pin.anchors.filter((row) => row.solana === 'absent').map((row) => row.root);
+  assert.deepEqual(baseOnly, ['ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3']);
+  assert.equal(pin.anchors.some((row) => row.chain === 'solana' && row.root === baseOnly[0]), false);
+  const tree = new ReceiptMerkleTree();
+  const journalRoots = new Set(pin.anchors.filter((row) => row.in_journal !== false).map((row) => row.root));
+  for (const root of journalRoots) {
+    tree.heads.push({ root, tree_size: 1 });
+  }
+  const seen = new Set();
+  const request = async (_url, method, params) => {
+    const hash = params[0];
+    const anchor = pin.anchors.find((row) => row.tx === hash);
+    assert.ok(anchor, hash);
+    seen.add(hash);
+    if (method === 'eth_getTransactionByHash') {
+      assert.equal(anchor.chain, 'base');
+      return { hash, input: `0x${anchor.root}` };
+    }
+    if (method === 'getTransaction') {
+      assert.equal(anchor.chain, 'solana');
+      return { slot: anchor.slot, memo: anchor.root };
+    }
+    throw new Error(method);
+  };
+  await assertKnownAnchorTxs(pin, { request, tree });
+  const claims = epochRecordClaims();
+  const { jws, kid } = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
+  tree.epochRecord = {
+    ...claims,
+    issuer_signature: { jws, kid },
+  };
+  const prevFlag = process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
+  delete process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
+  try {
+    await finishReceiptLogBoot(tree, { request, pin });
+  } finally {
+    if (prevFlag == null) delete process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
+    else process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS = prevFlag;
+  }
+  assert.equal(seen.size, pin.anchors.length);
+});
+
 test('boot refuses a non-empty journal with no epoch record', () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
