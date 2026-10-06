@@ -13,10 +13,34 @@
  * that writes the registry is not this key.
  */
 import fs from 'fs';
-import { Interface, getAddress, id, zeroPadValue, toBeHex } from 'ethers';
+import { fileURLToPath } from 'url';
+import { Interface, getAddress, zeroPadValue, toBeHex } from 'ethers';
 import logger from './logger.js';
 import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
-import { LEGACY_SET_SCHEMA, legacyProofFromArtifact } from './legacy-receipt-merkle.js';
+import {
+  LEGACY_SET_SCHEMA,
+  legacyProofFromArtifact,
+  legacyRootHex,
+  legacyUniverseId,
+  sortPayloadHashes,
+} from './legacy-receipt-merkle.js';
+
+const ARTIFACT_PATH = fileURLToPath(new URL('../abi/ChitIssuerRoot.json', import.meta.url));
+const CHIT_ISSUER_ROOT_ARTIFACT = JSON.parse(fs.readFileSync(ARTIFACT_PATH, 'utf8'));
+if (!Array.isArray(CHIT_ISSUER_ROOT_ARTIFACT.abi)) {
+  throw new Error('ChitIssuerRoot artifact is missing abi');
+}
+const CHIT_ISSUER_ROOT = new Interface(CHIT_ISSUER_ROOT_ARTIFACT.abi);
+
+/** Topic hash of every event in the artifact. Not a hand-written signature. */
+export const EVENT_TOPICS = Object.fromEntries(
+  CHIT_ISSUER_ROOT.fragments
+    .filter((fragment) => fragment.type === 'event')
+    .map((fragment) => [fragment.name, fragment.topicHash]),
+);
+for (const name of ['RootCommitted', 'Frozen', 'GenesisSeeded', 'KeyActivated', 'KeyRetired', 'KeyRevoked', 'KeyStandby', 'Superseded']) {
+  if (!EVENT_TOPICS[name]) throw new Error(`ChitIssuerRoot artifact has no event ${name}`);
+}
 
 export const ISSUER_ROOT_PAYLOAD_VERSION = 11;
 export const DEFAULT_ISSUER_ROOT_CHAIN_ID = 'eip155:84532';
@@ -28,31 +52,31 @@ export const SKIP_LOG = 'ISSUER_ROOT_STARTUP_CHECK=skip: chain finality was NOT 
 export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
 export const REFUSAL_PAYLOAD_VERSION_V2 = 3;
 
-const ROOT_COMMITTED_ABI = 'event RootCommitted(uint64 indexed rootSeq, bytes32 rootHash, uint64 historyVersion, bytes32 historySnapshot)';
-const ROOT_COMMITTED = new Interface([ROOT_COMMITTED_ABI]);
-export const ROOT_COMMITTED_TOPIC = id('RootCommitted(uint64,bytes32,uint64,bytes32)');
-const FROZEN_ABI = 'event Frozen(bytes32 indexed universeId, bytes32 universeHash, uint64 enumeratedCount, uint64 frozenBlock, uint64 indexed rootSeq)';
-const FROZEN = new Interface([FROZEN_ABI]);
-export const FROZEN_TOPIC = id('Frozen(bytes32,bytes32,uint64,uint64,uint64)');
+export const ROOT_COMMITTED_TOPIC = EVENT_TOPICS.RootCommitted;
+export const FROZEN_TOPIC = EVENT_TOPICS.Frozen;
+export const GENESIS_SEEDED_TOPIC = EVENT_TOPICS.GenesisSeeded;
+export const KEY_ACTIVATED_TOPIC = EVENT_TOPICS.KeyActivated;
 
 /** Facts from the startup Frozen-log check. Request handlers do not read the chain. */
 const startupState = {
   verified: false,
   skipped: false,
   freezes: new Map(),
+  legacyFrozen: null,
 };
 
 export function _resetIssuerRootStartupState() {
   startupState.verified = false;
   startupState.skipped = false;
   startupState.freezes = new Map();
+  startupState.legacyFrozen = null;
 }
 
 const HEX_32 = /^0x[0-9a-f]{64}$/;
 
 export class IssuancePausedError extends Error {
   constructor() {
-    super('Issuance is paused. Set ISSUER_ROOT_CUTOVER off only after ISSUER_ROOT_LEGACY_SET names a written legacy_receipts_pre_v11 snapshot and the v11 root config is complete.');
+    super('Issuance is paused. v11 starts only after a strict startup check, with the legacy snapshot Merkle root and count equal to the Frozen log for legacy_receipts_pre_v11. skip does not sign.');
     this.name = 'IssuancePausedError';
     this.code = 'issuer_root_cutover_pause';
   }
@@ -180,13 +204,57 @@ export function legacySnapshotReady() {
 }
 
 /**
- * Explicit pause, or the flag is on and the legacy snapshot is not on disk yet.
- * A partial root config does not resume, and it does not fall through to v10.
+ * Recompute the legacy Merkle root and count from the artifact leaves.
+ * The file's own root field is not trusted.
+ */
+export function recomputeLegacyCommitment(parsed) {
+  if (!parsed || parsed.schema !== LEGACY_SET_SCHEMA) return null;
+  const universeId = String(parsed.universe_id || '').toLowerCase().replace(/^0x/, '');
+  if (universeId !== legacyUniverseId()) return null;
+  const hashes = (Array.isArray(parsed.leaves) ? parsed.leaves : []).map((leaf) => leaf?.payload_hash);
+  let sorted;
+  try {
+    sorted = sortPayloadHashes(hashes);
+  } catch {
+    return null;
+  }
+  return { universeId, root: legacyRootHex(sorted), count: sorted.length };
+}
+
+/**
+ * The on-disk legacy set matches the Frozen log captured at strict startup.
+ * skip never matches. A file whose leaves do not hash to that log stays paused.
+ */
+export function legacyFreezeMatches() {
+  const cfg = readIssuerRootConfig();
+  if (cfg.startupCheck === 'skip' || startupState.skipped || !startupState.verified) return false;
+  if (cfg.chainNumeric === 8453 && cfg.startupCheck !== 'strict') return false;
+  const chain = startupState.legacyFrozen;
+  if (!chain || !cfg.legacySetFile) return false;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(cfg.legacySetFile, 'utf8'));
+  } catch {
+    return false;
+  }
+  const local = recomputeLegacyCommitment(parsed);
+  if (!local) return false;
+  return local.root === chain.universeHash
+    && local.count === chain.enumeratedCount
+    && local.universeId === chain.universeId;
+}
+
+/**
+ * Explicit pause, a missing legacy snapshot, skip, or a snapshot that does
+ * not match the Frozen log. A partial root config does not resume as v10.
  */
 export function isCutoverPaused() {
   const cfg = readIssuerRootConfig();
   if (cfg.cutover === 'pause' && !cfg.ready) return true;
-  if (cfg.enabled && cfg.ready && !legacySnapshotReady()) return true;
+  if (!cfg.enabled || !cfg.ready) return false;
+  if (!legacySnapshotReady()) return true;
+  if (cfg.startupCheck === 'skip' || startupState.skipped) return true;
+  if (!legacyFreezeMatches()) return true;
   return false;
 }
 
@@ -200,6 +268,10 @@ export function assertIssuanceOpen() {
     throw new Error('ISSUER_ROOT_ENABLED requires a valid ISSUER_ROOT_CHAIN_ID, ISSUER_ROOT_REGISTRY, ISSUER_ROOT_SEQ (>= 1), and ISSUER_ROOT_HASH');
   }
   if (cfg.enabled && cfg.ready && !legacySnapshotReady()) throw new IssuancePausedError();
+  if (cfg.enabled && cfg.ready && (cfg.startupCheck === 'skip' || startupState.skipped)) {
+    throw new IssuancePausedError();
+  }
+  if (cfg.enabled && cfg.ready && !legacyFreezeMatches()) throw new IssuancePausedError();
 }
 
 /**
@@ -307,7 +379,7 @@ async function readFinalizedCommit(url, cfg, fetchImpl) {
     throw new Error(`issuer root seq ${cfg.seq} is not a single finalized RootCommitted log`);
   }
   const log = logs[0];
-  const parsed = ROOT_COMMITTED.parseLog({ topics: log.topics, data: log.data });
+  const parsed = CHIT_ISSUER_ROOT.parseLog({ topics: log.topics, data: log.data });
   const rootHash = normHash(parsed.args.rootHash);
   const logBlock = hexQty(log.blockNumber);
   if (!rootHash || !Number.isInteger(logBlock)) {
@@ -373,7 +445,7 @@ async function readFrozen(url, cfg, record, toBlock, fetchImpl) {
     throw new Error(`freeze ${universeHex} is not a single finalized Frozen log`);
   }
   const log = logs[0];
-  const parsed = FROZEN.parseLog({ topics: log.topics, data: log.data });
+  const parsed = CHIT_ISSUER_ROOT.parseLog({ topics: log.topics, data: log.data });
   const universeHash = normHash(parsed.args.universeHash);
   const enumeratedCount = hexQty(parsed.args.enumeratedCount);
   const frozenBlock = hexQty(parsed.args.frozenBlock);
@@ -429,6 +501,33 @@ async function assertFreezeFile(cfg, finalized, fetchImpl) {
 }
 
 /**
+ * Frozen log for legacy_receipts_pre_v11. A missing log leaves issuance
+ * paused. A disagreement between the two RPCs refuses to start.
+ */
+async function captureLegacyFrozen(cfg, finalized, fetchImpl) {
+  startupState.legacyFrozen = null;
+  const record = { universe_id: legacyUniverseId() };
+  const toBlock = toBeHex(finalized.blockNumber);
+  let left;
+  let right;
+  try {
+    left = await readFrozen(cfg.rpcUrls[0], cfg, record, toBlock, fetchImpl);
+    right = await readFrozen(cfg.rpcUrls[1], cfg, record, toBlock, fetchImpl);
+  } catch (err) {
+    if (/not a single finalized Frozen log/.test(String(err?.message || ''))) return;
+    throw err;
+  }
+  if (left.universeHash !== right.universeHash
+    || left.enumeratedCount !== right.enumeratedCount
+    || left.frozenBlock !== right.frozenBlock
+    || left.blockhash !== right.blockhash
+    || left.data !== right.data) {
+    throw new Error('issuer root RPCs disagree on the legacy Frozen log');
+  }
+  startupState.legacyFrozen = { ...left, universeId: legacyUniverseId() };
+}
+
+/**
  * Startup gate. No-op when the flag is off.
  * strict (default when enabled) reads two RPCs at the same finalized block.
  * skip reads nothing, and only when ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND.
@@ -440,6 +539,7 @@ export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, lo
   startupState.verified = false;
   startupState.skipped = false;
   startupState.freezes = new Map();
+  startupState.legacyFrozen = null;
   if (!cfg.enabled) return { checked: false, reason: 'disabled' };
   const problem = configError(cfg);
   if (problem) throw new Error(problem);
@@ -458,6 +558,7 @@ export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, lo
   }
   const finalized = await assertFinalizedCommit(cfg, fetchImpl);
   await assertFreezeFile(cfg, finalized, fetchImpl);
+  await captureLegacyFrozen(cfg, finalized, fetchImpl);
   startupState.verified = true;
   return { checked: true, reason: 'finalized', seq: cfg.seq, blockNumber: finalized.blockNumber };
 }

@@ -364,7 +364,7 @@ export function currentIssuerHistory() {
     version,
     seq,
     hash: historySha256(body),
-    fingerprint: entryFingerprint(doc.entries),
+    fingerprint: sealFingerprint(doc),
     head_hash: doc.head_hash,
     body,
   };

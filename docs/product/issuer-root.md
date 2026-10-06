@@ -23,7 +23,7 @@ Restart the process after changing these variables. The key check and the finali
 | `ISSUER_ROOT_FREEZE_FILE` | JSON file of freeze facts. Checked against `Frozen` at startup. |
 | `ISSUER_ROOT_LEGACY_SET` | JSON artifact from the legacy Merkle builder. Required before v11 issuance. |
 
-Signing never reads the chain. `strict` asks two RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error. It still refuses an unset `ISSUER_PRIVATE_KEY`.
+Signing never reads the chain. `strict` asks two RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error and does not sign v11 receipts, on Base Sepolia or on mainnet. It still refuses an unset `ISSUER_PRIVATE_KEY`. Topics and log decoding come from `services/gateway/abi/ChitIssuerRoot.json`, the contract artifact, not from a hand-written event signature.
 
 If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs.
 
@@ -57,7 +57,7 @@ The pause is config, then a restart:
 3. The genesis Safe commit freezes that root. Wait until the commit is finalized.
 4. Set `ISSUER_ROOT_ENABLED=true`, `ISSUER_ROOT_REGISTRY`, `ISSUER_ROOT_HASH`, `ISSUER_ROOT_SEQ`, `ISSUER_ROOT_LEGACY_SET` to the artifact from step 2, `ISSUER_ROOT_RPC_URL`, `ISSUER_ROOT_RPC_URL_2`, and a stable `ISSUER_PRIVATE_KEY`. Restart. The strict startup check reads both RPCs at one finalized block. Issuance resumes as v11.
 
-The pause stays in force until that full v11 config is set. `ISSUER_ROOT_SEQ` alone does not resume, and it does not issue another v10 receipt. Turning the flag on before `ISSUER_ROOT_LEGACY_SET` names a written snapshot also pauses issuance, even when `ISSUER_ROOT_CUTOVER` is `off`. That is the gap test: every hash from before the pause is in the legacy set, nothing is signed during the pause, and every hash after resume is v11 and outside the set.
+The pause stays in force until that full v11 config is set. `ISSUER_ROOT_SEQ` alone does not resume, and it does not issue another v10 receipt. Turning the flag on before `ISSUER_ROOT_LEGACY_SET` names a written snapshot also pauses issuance, even when `ISSUER_ROOT_CUTOVER` is `off`. The pause also stays until a strict startup check has seen the `Frozen` log for `legacy_receipts_pre_v11` and the artifact's recomputed Merkle root and leaf count equal that log's `universeHash` and `enumeratedCount`. A file that only claims those values, or a `skip` startup, does not lift the pause. That is the gap test: every hash from before the pause is in the legacy set, nothing is signed during the pause, and every hash after resume is v11 and outside the set.
 
 ## Legacy Merkle set
 
