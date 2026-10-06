@@ -31,8 +31,13 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 ### CLI
 
 ```bash
-# Local binding verification (no network required)
+# Local binding verification.
+# Issuer history is fetched unless you pass --issuer-history-file or --no-issuer-history.
+# A payload v10 receipt fails offline (exit 1) when that fetch cannot run.
 npx xfuel-verify receipt.json
+
+# Explicit offline. --no-issuer-history skips the kid window.
+npx xfuel-verify receipt.json --no-issuer-history
 
 # Hash the canonical object (must match signed payload_hash) and read not_after
 # from a pinned issuer-history snapshot. Both flags are offline.
@@ -67,7 +72,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
 | Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash |
+| Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
 
 ## Issuer Signature Verification (ES256)
 
@@ -81,20 +86,26 @@ counts only when the verifying key is trusted:
    production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
    `--trusted-kid`, or disable with `--no-trusted-kid`.
 
+The epoch record checked by `xfuel-verify receipt.json inclusion.json head.json --rpc` uses those same sources. An embedded epoch key still has to match the trusted-kid pin.
+
 `issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
 arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
 including when `--jwks-file` points at the real JWKS.
 
 ```bash
-# Offline: default production pin, no network
-npx xfuel-verify receipt.json
+# Explicit offline. The default command fetches issuer history.
+npx xfuel-verify receipt.json --no-issuer-history
 
-# Recompute published preimages and check the kid window.
-# A payload v10 receipt pins issuer_history. Hash the stored canonical object:
-curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
-curl -sS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json
-curl -sS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
-npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+# Recompute a published canonical preimage and check the kid window.
+# curl -f stops on HTTP errors. Most receipts have no /preimage (a 404).
+# A missing preimage is not a verification failure: omit --canonical-preimage.
+curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
+curl -fsS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
+if curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json; then
+  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+else
+  npx xfuel-verify receipt.json --issuer-history-file issuer-history.json
+fi
 
 # Trust the published JWKS instead of (or in addition to) the pin
 curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json

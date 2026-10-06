@@ -121,28 +121,67 @@ export function normalizeRootHex(rootHex) {
   return root;
 }
 
-export function solanaAnchorMemo({ scope = 'global', day, rootHex, prevRootHex = ZERO_ROOT }) {
+export const MEMO_PREFIX_V2 = 'chit402:root:v2';
+
+export function solanaAnchorMemo({
+  scope = 'global',
+  day,
+  rootHex,
+  prevRootHex = ZERO_ROOT,
+  epoch = null,
+  prevEpochRoot = null,
+  prevEpochSize = 0,
+  bundleIndexHash = null,
+} = {}) {
   const book = String(scope || 'global');
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(book)) throw new Error('bad_scope');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('bad_day');
   const root = normalizeRootHex(rootHex);
   const prev = normalizeRootHex(prevRootHex || ZERO_ROOT);
-  return `${MEMO_PREFIX}:${book}:${day}:${root}:${prev}`;
+  if (epoch == null) return `${MEMO_PREFIX}:${book}:${day}:${root}:${prev}`;
+  const epochNo = Number(epoch);
+  if (!Number.isInteger(epochNo) || epochNo < 1) throw new Error('bad_epoch');
+  const prevEpoch = prevEpochRoot ? normalizeRootHex(prevEpochRoot) : ZERO_ROOT;
+  const size = Number(prevEpochSize || 0);
+  if (!Number.isInteger(size) || size < 0) throw new Error('bad_epoch_size');
+  const bundle = bundleIndexHash ? normalizeRootHex(bundleIndexHash) : ZERO_ROOT;
+  return `${MEMO_PREFIX_V2}:${book}:${day}:${root}:${prev}:${epochNo}:${prevEpoch}:${size}:${bundle}`;
 }
 
-/** Parse a memo. Returns null when the text is not this scheme. */
-export function parseAnchorMemo(memo) {
-  const parts = String(memo || '').split(':');
-  if (parts.length !== 7) return null;
-  if (parts[0] !== 'chit402' || parts[1] !== 'root' || parts[2] !== 'v1') return null;
-  const scope = parts[3];
-  const day = parts[4];
-  const root = parts[5];
-  const prev = parts[6];
+function memoIdentity(scope, day, root, prev) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(scope)) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
   if (!/^[0-9a-f]{64}$/.test(root) || !/^[0-9a-f]{64}$/.test(prev)) return null;
   return { scope, day, root, prev };
+}
+
+/** Parse a v1 or v2 memo. Returns null when the text is not this scheme. */
+export function parseAnchorMemo(memo) {
+  const parts = String(memo || '').split(':');
+  if (parts[0] !== 'chit402' || parts[1] !== 'root') return null;
+  if (parts.length === 7 && parts[2] === 'v1') {
+    return memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+  }
+  if (parts.length === 11 && parts[2] === 'v2') {
+    const base = memoIdentity(parts[3], parts[4], parts[5], parts[6]);
+    if (!base) return null;
+    const epoch = Number(parts[7]);
+    const prevEpoch = parts[8];
+    const size = Number(parts[9]);
+    const bundle = parts[10];
+    if (!Number.isInteger(epoch) || epoch < 1) return null;
+    if (!/^[0-9a-f]{64}$/.test(prevEpoch) || !/^[0-9a-f]{64}$/.test(bundle)) return null;
+    if (!Number.isInteger(size) || size < 0) return null;
+    return {
+      version: 2,
+      ...base,
+      epoch,
+      prev_epoch_root: prevEpoch,
+      prev_epoch_size: size,
+      bundle_index_hash: bundle,
+    };
+  }
+  return null;
 }
 
 export function memoScope(memo) {
@@ -285,12 +324,25 @@ export async function describeSolanaAnchor({
   day,
   scope = 'global',
   connection = null,
+  epoch = null,
+  prevEpochRoot = null,
+  prevEpochSize = 0,
+  bundleIndexHash = null,
 } = {}) {
   let cluster = null;
   let memo = null;
   try {
     cluster = solanaAnchorCluster();
-    memo = solanaAnchorMemo({ scope, day, rootHex, prevRootHex });
+    memo = solanaAnchorMemo({
+      scope,
+      day,
+      rootHex,
+      prevRootHex,
+      epoch,
+      prevEpochRoot,
+      prevEpochSize,
+      bundleIndexHash,
+    });
   } catch (err) {
     return pendingSolana(err.message || 'bad_memo', { cluster, memo });
   }
