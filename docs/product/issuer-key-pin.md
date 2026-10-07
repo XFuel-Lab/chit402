@@ -2,6 +2,8 @@
 
 The issuer public key for a pinned era is `docs/well-known/issuer-key.json` at one git commit. The verifier takes that commit SHA and the SHA-256 of the file bytes. It does not fetch a branch name, `HEAD`, or `main`. A mutable ref is `ISSUER_PIN_MUTABLE_REF`.
 
+The specimen pointer is `docs/well-known/issuer-key.ref.json`: commit `6c6d0a9483762f1120a0bacb067a0560f9d781b8`, SHA-256 `d14688282f5e8efe7efafbfc1f18192f93377b8d82f6400c388c4be4236600fb`. That commit is the pin. The pointer file is not a second copy of the key.
+
 This file is not the gateway deploy and it is not `GET /.well-known/jwks.json`. It does not replace issuer-root startup, and it does not register a log witness. When a receipt carries `issuer_root.kid`, that kid must equal the pin. When the caller supplies a `/api/witnesses` document, each issuer `kid` or P-256 `jwk` in it must equal the pin. Witness account addresses are not issuer keys.
 
 `docs/well-known/issuer-key.sig` is the registration self-signature. The same value is `self_signature` inside the JSON. The file hash covers the JSON, so stripping the signature changes the hash.

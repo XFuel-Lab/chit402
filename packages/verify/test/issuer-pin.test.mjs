@@ -512,6 +512,23 @@ test('the published sepolia pin is a public registration, not the production kid
   assert.equal(result.ok, true, result.code);
 });
 
+test('published pin ref names a commit and the file hash', () => {
+  const refPath = fileURLToPath(new URL('../../../docs/well-known/issuer-key.ref.json', import.meta.url));
+  const pinPath = fileURLToPath(new URL('../../../docs/well-known/issuer-key.json', import.meta.url));
+  const repo = fileURLToPath(new URL('../../..', import.meta.url));
+  const ref = JSON.parse(readFileSync(refPath, 'utf8'));
+  assert.equal(ref.schema, 'chit402.issuer_key_pin_ref.v1');
+  assert.match(ref.commit, /^[0-9a-f]{40}$/);
+  assert.equal(ref.path, ISSUER_PIN_PATH);
+  assert.equal(ref.chain_id, ISSUER_PIN_CHAIN_ID);
+  assert.equal(issuerPinFileHash(readFileSync(pinPath, 'utf8')), ref.sha256);
+  const listed = spawnSync('git', ['cat-file', '-e', `${ref.commit}^{commit}`], { cwd: repo });
+  if (listed.status !== 0) return;
+  const shown = spawnSync('git', ['show', `${ref.commit}:${ref.path}`], { cwd: repo, encoding: 'utf8' });
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.equal(issuerPinFileHash(shown.stdout), ref.sha256);
+});
+
 test('anchor CLI reports a downgrade without a network fetch', () => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-'));
   const receipt = join(dir, 'receipt.json');
