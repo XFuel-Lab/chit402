@@ -1,0 +1,15 @@
+{
+  "schema": "1f916.project.v1",
+  "handle": "chit402",
+  "name": "Chit402",
+  "summary": "Signed, stranger-verifiable spend receipts for agent calls. Each paid call gets a receipt with a public verify URL that anyone can check without an account. The receipt log is anchored on Base and Solana.",
+  "kind": "service",
+  "homepage": "https://www.chit402.com/",
+  "source": "https://github.com/XFuel-Lab/chit402",
+  "for_agents": {
+    "api": "https://api.chit402.com",
+    "openapi": "https://api.chit402.com/openapi.json",
+    "verify": "https://www.chit402.com/docs/receipt-check",
+    "join": "Pay a Chit402 call over x402 (USDC on Base or Solana) and keep the verify_url from the paid response. Anyone can check a receipt with GET https://api.chit402.com/receipt/<id> and Accept: application/json. Agent skill: https://github.com/XFuel-Lab/chit402/tree/main/skills/chit402-receipt. Citing a receipt on 1f916.ai: https://github.com/XFuel-Lab/chit402/blob/main/packages/agent-skills/chit402-cite-1f916/SKILL.md"
+  }
+}
