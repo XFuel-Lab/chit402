@@ -7,19 +7,21 @@ import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const apiV1 = 'https://api.chit402.com/v1';
 
-const dropInSnippet = `const res = await fetch('${apiV1}/chat/completions', {
+const dropInSnippet = `import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
+import { registerExactEvmScheme } from '@x402/evm/exact/client';
+import { privateKeyToAccount } from 'viem/accounts';
+
+const client = new x402Client();
+registerExactEvmScheme(client, { signer: privateKeyToAccount(process.env.EVM_PRIVATE_KEY) });
+const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+
+const res = await fetchWithPayment('${apiV1}/chat/completions', {
   method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': process.env.CHIT402_API_KEY ?? 'YOUR_KEY', // partner key, or pay HTTP 402 USDC
-  },
-  body: JSON.stringify({
-    model: 'xfuel/auto',
-    messages: [{ role: 'user', content: 'Say hello in five words.' }],
-    max_tokens: 32,
-  }),
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ model: 'xfuel/auto', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
 });
-// → signed receipt + verify_url (headers / xfuel field — see /doors)`;
+const paid = await res.json();
+console.log(paid.xfuel.verify_url); // signed receipt`;
 
 export default function ChitHome() {
   const config = getHostConfig();
@@ -72,8 +74,8 @@ export default function ChitHome() {
           <div className="chit-ninety-door card">
             <h2 style={styles.ninetyTitle}>90-second drop-in</h2>
             <p style={styles.ninetyLead}>
-              Stamp who paid which call onto the possession book. Pay USDC (HTTP 402 on Base or
-              Solana) or your partner <code>X-API-Key</code> → signed receipt →{' '}
+              Stamp who paid which call onto the possession book. Pay per call, no key: HTTP 402
+              USDC on Base or Solana, then a signed receipt you can{' '}
               <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
               Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
               <Link to="/doors">/doors</Link>.
@@ -81,6 +83,9 @@ export default function ChitHome() {
             <pre className="docs-code chit-ninety-code">
               <code>{dropInSnippet.replace(apiV1, resolvedApiV1)}</code>
             </pre>
+            <p style={styles.ninetyFoot}>
+              Partners with an existing key can still send <code>X-API-Key</code>.
+            </p>
           </div>
         </div>
       </section>
@@ -235,5 +240,12 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '0.92rem',
     lineHeight: 1.65,
     marginBottom: '0.85rem',
+  },
+  ninetyFoot: {
+    color: '#8a8a9a',
+    fontSize: '0.82rem',
+    lineHeight: 1.5,
+    marginTop: '0.65rem',
+    marginBottom: 0,
   },
 };
