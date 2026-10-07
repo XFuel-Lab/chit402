@@ -17,6 +17,27 @@ import { jcsRfc8785 } from './offer-receipt.js';
 export const RECEIPT_POLICY_HISTORY_SCHEMA = 'chit402.receipt_policy_history.v1';
 export const RECEIPT_POLICY_RETENTION_MODE = 'compliance';
 
+/**
+ * Retention floor. Both must hold or boot refuses:
+ *   retention_days >= 365
+ *   retention_days * 86400 >= longest_dispute_window_seconds + 30 days
+ * longest_dispute_window_seconds is the max of this policy's
+ * dispute_window_seconds and the issuance window
+ * (X402_ISSUANCE_DISPUTE_WINDOW_SEC, or 7 days when unset).
+ * The published history is an announcement. The signed policy on a receipt
+ * still governs that receipt. Verification does not re-apply this floor.
+ */
+export const RETENTION_DAYS_FLOOR = 365;
+export const DISPUTE_RETENTION_MARGIN_DAYS = 30;
+export const DISPUTE_RETENTION_MARGIN_SECONDS = DISPUTE_RETENTION_MARGIN_DAYS * 24 * 60 * 60;
+/** Matches DEFAULT_DISPUTE_WINDOW_SEC in issuance-commitment.js. */
+export const DEFAULT_ISSUANCE_DISPUTE_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Longest dispute window that still fits in a 365-day retention after the
+ * 30-day margin: 335 days. This is the floor vector's dispute window.
+ */
+export const RETENTION_FLOOR_DISPUTE_WINDOW_SECONDS = 335 * 24 * 60 * 60;
+
 const DEV_TERMS = Object.freeze({
   policy_id: 'chit402.receipt-policy',
   policy_version: '1',
@@ -138,6 +159,46 @@ export function readReceiptPolicyTerms(env = process.env) {
 }
 
 /**
+ * Issuance dispute window the process will open, in seconds.
+ * Unset uses the 7-day default.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function issuanceDisputeWindowSeconds(env = process.env) {
+  const raw = env.X402_ISSUANCE_DISPUTE_WINDOW_SEC;
+  if (raw == null || String(raw).trim() === '') return DEFAULT_ISSUANCE_DISPUTE_WINDOW_SECONDS;
+  const parsed = positiveInt(raw);
+  if (parsed == null) {
+    throw new Error('X402_ISSUANCE_DISPUTE_WINDOW_SEC must be an integer >= 1');
+  }
+  return parsed;
+}
+
+/**
+ * Longest dispute window this boot is willing to leave open.
+ * @param {object} terms
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function longestDisputeWindowSeconds(terms, env = process.env) {
+  return Math.max(Number(terms.dispute_window_seconds), issuanceDisputeWindowSeconds(env));
+}
+
+/**
+ * Boot and signing refuse a short retention. Equality with the floor passes.
+ * @param {object} terms
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function assertReceiptPolicyFloor(terms, env = process.env) {
+  if (!Number.isInteger(terms.retention_days) || terms.retention_days < RETENTION_DAYS_FLOOR) {
+    throw new Error(`receipt policy retention_days is below ${RETENTION_DAYS_FLOOR}`);
+  }
+  const longest = longestDisputeWindowSeconds(terms, env);
+  const needed = longest + DISPUTE_RETENTION_MARGIN_SECONDS;
+  if (terms.retention_days * 86400 < needed) {
+    throw new Error(`receipt policy retention is shorter than the longest dispute window plus ${DISPUTE_RETENTION_MARGIN_DAYS} days`);
+  }
+}
+
+/**
  * Production refuses to boot without the terms. A partial env fails in any
  * environment. RECEIPT_LOG_RETENTION_POLICY_* must equal this policy when set.
  * @param {NodeJS.ProcessEnv} [env]
@@ -155,13 +216,16 @@ export function assertReceiptPolicyBoot(env = process.env) {
       throw new Error('RECEIPT_LOG_RETENTION_POLICY_ID and RECEIPT_LOG_RETENTION_POLICY_SHA256 must match policy_id and policy_hash');
     }
   }
+  assertReceiptPolicyFloor(cfg.terms, env);
   observeReceiptPolicy(env);
   return claim;
 }
 
-/** Signed v11 policy object, including policy_hash. */
+/** Signed v11 policy object, including policy_hash. Below the floor, this throws. */
 export function signedReceiptPolicy(env = process.env) {
-  return receiptPolicyClaim(readReceiptPolicyTerms(env));
+  const terms = readReceiptPolicyTerms(env);
+  assertReceiptPolicyFloor(terms, env);
+  return receiptPolicyClaim(terms);
 }
 
 /**

@@ -52,10 +52,12 @@ import {
 } from './canonical-preimage.js';
 import {
   currentHistoryPin,
+  currentIssuerHistory,
   issuerHistorySnapshotClaim,
   publishedHistoryEntries,
   verifyHistorySnapshotClaims,
 } from './issuer-history.js';
+import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
 import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
 import { claimIdempotency, requestDigest, requestDigestCanonical } from './request-binding.js';
 import { jcsRfc8785 } from './offer-receipt.js';
@@ -916,6 +918,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });
   const requestBinding = clientRequestBinding(view);
+  const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -973,6 +976,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
       policy: signedReceiptPolicy(),
+      ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
       ...(requestBinding ? { request_digest: requestBinding.request_digest } : {}),
     } : {}),
     payload_version: activeReceiptPayloadVersion(),

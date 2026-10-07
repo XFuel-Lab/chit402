@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { Interface, getAddress, zeroPadValue, toBeHex } from 'ethers';
 import logger from './logger.js';
 import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import {
   LEGACY_SET_SCHEMA,
   legacyProofFromArtifact,
@@ -56,6 +57,27 @@ export const ROOT_COMMITTED_TOPIC = EVENT_TOPICS.RootCommitted;
 export const FROZEN_TOPIC = EVENT_TOPICS.Frozen;
 export const GENESIS_SEEDED_TOPIC = EVENT_TOPICS.GenesisSeeded;
 export const KEY_ACTIVATED_TOPIC = EVENT_TOPICS.KeyActivated;
+export const KEY_RETIRED_TOPIC = EVENT_TOPICS.KeyRetired;
+
+/**
+ * Registry kid is the RFC 7638 thumbprint decoded from base64url to 32 bytes.
+ * Same encoding as kidToBytes32 on the ChitIssuerRoot contract branch.
+ * @param {string} thumbprint
+ */
+export function registryKidFromThumbprint(thumbprint) {
+  const buf = Buffer.from(String(thumbprint || ''), 'base64url');
+  if (buf.length !== 32) return null;
+  return `0x${buf.toString('hex')}`;
+}
+
+/**
+ * @param {string} bytes32
+ */
+export function thumbprintFromRegistryKid(bytes32) {
+  const hex = String(bytes32 || '').toLowerCase().replace(/^0x/, '');
+  if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex').toString('base64url');
+}
 
 /** Facts from the startup Frozen-log check. Request handlers do not read the chain. */
 const startupState = {
@@ -63,6 +85,8 @@ const startupState = {
   skipped: false,
   freezes: new Map(),
   legacyFrozen: null,
+  /** thumbprint -> { blockNumber, notAfter, rootSeq } */
+  retired: new Map(),
 };
 
 export function _resetIssuerRootStartupState() {
@@ -70,6 +94,53 @@ export function _resetIssuerRootStartupState() {
   startupState.skipped = false;
   startupState.freezes = new Map();
   startupState.legacyFrozen = null;
+  startupState.retired = new Map();
+}
+
+/**
+ * Test seam. Production retirements are filled only from KeyRetired logs
+ * at strict startup. blockNumber is the log's block.
+ * @param {{ kid: string, blockNumber: number, notAfter?: number|null }} row
+ */
+export function _recordRegistryRetirement({ kid, blockNumber, notAfter = null }) {
+  if (typeof kid !== 'string' || !kid) throw new Error('retirement kid is missing');
+  if (!Number.isInteger(blockNumber) || blockNumber < 0) throw new Error('retirement block is missing');
+  startupState.retired.set(kid, {
+    blockNumber,
+    notAfter: Number.isInteger(notAfter) ? notAfter : null,
+    rootSeq: null,
+  });
+}
+
+/** Block of the KeyRetired log for this thumbprint, or null. */
+export function retirementBlockForKid(kid) {
+  const row = startupState.retired.get(kid);
+  return row ? row.blockNumber : null;
+}
+
+/**
+ * ISO time from KeyRetired.notAfter when it is a unix second above 0.
+ * Zero means the contract left the window open, so this returns null.
+ * @param {string} kid
+ */
+export function retirementNotAfterForKid(kid) {
+  const row = startupState.retired.get(kid);
+  if (!row || !Number.isInteger(row.notAfter) || row.notAfter <= 0) return null;
+  return new Date(row.notAfter * 1000).toISOString();
+}
+
+/**
+ * Refuse to sign when the startup cache shows this kid was retired.
+ * An empty cache does not touch the issuer key.
+ */
+export function assertSigningKeyNotRetired() {
+  if (startupState.retired.size === 0) return;
+  const kid = getIssuerKid();
+  const row = startupState.retired.get(kid);
+  if (!row) return;
+  const err = new Error(`issuer key is retired at block ${row.blockNumber}`);
+  err.code = 'issuer_key_retired';
+  throw err;
 }
 
 const HEX_32 = /^0x[0-9a-f]{64}$/;
@@ -259,6 +330,8 @@ export function isCutoverPaused() {
 }
 
 export function assertIssuanceOpen() {
+  assertSigningKeyNotGuardian();
+  assertSigningKeyNotRetired();
   const cfg = readIssuerRootConfig();
   if (cfg.cutover === 'pause' && !cfg.ready) throw new IssuancePausedError();
   if (cfg.enabled && !cfg.ready) {
@@ -504,6 +577,89 @@ async function assertFreezeFile(cfg, finalized, fetchImpl) {
  * Frozen log for legacy_receipts_pre_v11. A missing log leaves issuance
  * paused. A disagreement between the two RPCs refuses to start.
  */
+/**
+ * KeyRetired logs up to the agreed finalized block. kid in the log is the
+ * 32-byte registry form. The cache key is the RFC 7638 thumbprint.
+ * @param {object[]} logs
+ */
+export function retirementsFromLogs(logs) {
+  if (!Array.isArray(logs)) throw new Error('KeyRetired logs are missing');
+  const rows = logs.map((log) => {
+    const parsed = CHIT_ISSUER_ROOT.parseLog({ topics: log.topics, data: log.data });
+    const registryKid = normHash(parsed.args.kid);
+    const blockNumber = hexQty(log.blockNumber);
+    const notAfter = hexQty(parsed.args.notAfter);
+    const rootSeq = hexQty(parsed.args.rootSeq);
+    if (!registryKid || !Number.isInteger(blockNumber) || blockNumber < 0
+      || !Number.isInteger(notAfter) || !Number.isInteger(rootSeq)) {
+      throw new Error('KeyRetired log is missing kid, block, or notAfter');
+    }
+    const kid = thumbprintFromRegistryKid(registryKid);
+    if (!kid) throw new Error('KeyRetired kid is not 32 bytes');
+    return {
+      kid,
+      registry_kid: registryKid,
+      blockNumber,
+      notAfter,
+      rootSeq,
+      data: String(log.data).toLowerCase(),
+      logIndex: Number.isInteger(hexQty(log.logIndex)) ? hexQty(log.logIndex) : 0,
+    };
+  });
+  rows.sort((left, right) => left.blockNumber - right.blockNumber
+    || left.logIndex - right.logIndex
+    || (left.kid < right.kid ? -1 : left.kid > right.kid ? 1 : 0));
+  return rows;
+}
+
+function retirementFingerprint(rows) {
+  return JSON.stringify(rows.map((row) => ({
+    kid: row.kid,
+    blockNumber: row.blockNumber,
+    notAfter: row.notAfter,
+    rootSeq: row.rootSeq,
+    data: row.data,
+    logIndex: row.logIndex,
+  })));
+}
+
+function cacheRetirements(rows) {
+  startupState.retired = new Map();
+  for (const row of rows) {
+    startupState.retired.set(row.kid, {
+      blockNumber: row.blockNumber,
+      notAfter: row.notAfter,
+      rootSeq: row.rootSeq,
+    });
+  }
+}
+
+async function readRetired(url, cfg, toBlock, fetchImpl) {
+  const logs = await rpcCall(url, 'eth_getLogs', [{
+    address: cfg.registry,
+    topics: [KEY_RETIRED_TOPIC],
+    fromBlock: '0x0',
+    toBlock,
+  }], fetchImpl);
+  return retirementsFromLogs(logs);
+}
+
+/**
+ * Both RPCs must return the same KeyRetired set. A later log for the same
+ * kid replaces the earlier one. Signing reads this cache and does not
+ * call the RPC again.
+ */
+async function captureRetiredKeys(cfg, finalized, fetchImpl) {
+  startupState.retired = new Map();
+  const toBlock = toBeHex(finalized.blockNumber);
+  const left = await readRetired(cfg.rpcUrls[0], cfg, toBlock, fetchImpl);
+  const right = await readRetired(cfg.rpcUrls[1], cfg, toBlock, fetchImpl);
+  if (retirementFingerprint(left) !== retirementFingerprint(right)) {
+    throw new Error('issuer root RPCs disagree on KeyRetired logs');
+  }
+  cacheRetirements(left);
+}
+
 async function captureLegacyFrozen(cfg, finalized, fetchImpl) {
   startupState.legacyFrozen = null;
   const record = { universe_id: legacyUniverseId() };
@@ -540,6 +696,7 @@ export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, lo
   startupState.skipped = false;
   startupState.freezes = new Map();
   startupState.legacyFrozen = null;
+  startupState.retired = new Map();
   if (!cfg.enabled) return { checked: false, reason: 'disabled' };
   const problem = configError(cfg);
   if (problem) throw new Error(problem);
@@ -559,6 +716,7 @@ export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, lo
   const finalized = await assertFinalizedCommit(cfg, fetchImpl);
   await assertFreezeFile(cfg, finalized, fetchImpl);
   await captureLegacyFrozen(cfg, finalized, fetchImpl);
+  await captureRetiredKeys(cfg, finalized, fetchImpl);
   startupState.verified = true;
   return { checked: true, reason: 'finalized', seq: cfg.seq, blockNumber: finalized.blockNumber };
 }

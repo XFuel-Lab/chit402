@@ -80,7 +80,9 @@ import {
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
-import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
+import { configureIssuerHistoryStore, currentIssuerHistory, writeIssuerHistory } from './issuer-history.js';
+import { assertIssuerHistoryMirrorBoot, issuerHistoryMirrorClaim, writeIssuerHistoryMirror } from './issuer-history-mirror.js';
+import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-policy.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
@@ -3719,6 +3721,17 @@ export function createApp() {
     }
   });
 
+  // Announcement of a commit-pinned third-party copy. Not a custodian.
+  // The gateway does not push that repo. Absent when the mirror is unset.
+  app.get('/.well-known/issuer-history-mirror.json', (req, res) => {
+    try {
+      return writeIssuerHistoryMirror(res);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET issuer-history-mirror error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // Announced receipt-policy versions. The signed policy on a v11 receipt
   // governs that receipt even after a later row is appended here.
   app.get('/.well-known/receipt-policy-history.json', (req, res) => {
@@ -5234,6 +5247,18 @@ export async function startServer() {
   // If ISSUER_PRIVATE_KEY is not set, an ephemeral key is generated (dev/test).
   const { kid } = initIssuerKey();
   logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
+
+  // The signing key is never a guardian. A partial mirror pin refuses to
+  // start. A pin whose sha256 is not the current well-known document refuses
+  // to start. Neither check reads a guardian private key.
+  try {
+    assertSigningKeyNotGuardian();
+    const mirror = assertIssuerHistoryMirrorBoot();
+    if (mirror) issuerHistoryMirrorClaim(currentIssuerHistory());
+  } catch (err) {
+    logger.error({ err }, 'Issuer history mirror or guardian check failed');
+    throw err;
+  }
 
   const app = createApp();
   await finishReceiptLogBoot(getReceiptMerkleTree());

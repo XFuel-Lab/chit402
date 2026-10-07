@@ -55,6 +55,7 @@ const {
   ROOT_COMMITTED_TOPIC,
   SKIP_LOG,
   _resetIssuerRootStartupState,
+  KEY_RETIRED_TOPIC,
 } = await import('../src/issuer-root.js');
 const {
   buildLegacyReceiptSet,
@@ -252,6 +253,9 @@ function chainFetch({ chainHex = '0x14a34', disagreeUrl = null } = {}) {
     if (body.method === 'eth_getLogs') {
       assert.equal(Number(body.params[0].toBlock), CHAIN.finalizedNumber);
       const topic0 = body.params[0].topics[0];
+      if (topic0 === KEY_RETIRED_TOPIC) {
+        return { ok: true, json: async () => ({ result: [] }) };
+      }
       const source = topic0 === CHAIN.frozen.topics[0] ? CHAIN.frozen : CHAIN.rootCommitted;
       return { ok: true, json: async () => ({ result: [source] }) };
     }

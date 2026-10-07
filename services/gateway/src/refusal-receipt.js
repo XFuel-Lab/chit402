@@ -23,10 +23,12 @@ import { jcsRfc8785 } from './offer-receipt.js';
 import { claimIdempotency, requestDigest, requestDigestCanonical, requestDigestMatches } from './request-binding.js';
 import {
   currentHistoryPin,
+  currentIssuerHistory,
   issuerHistorySnapshotClaim,
   publishedHistoryEntries,
   verifyHistorySnapshotClaims,
 } from './issuer-history.js';
+import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
 import {
   assertIssuanceOpen,
   bindIssuerRoot,
@@ -129,6 +131,7 @@ export function issueRefusalReceipt(row) {
     if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest);
     bound = { request_preimage, request_digest };
   }
+  const historyMirror = v2 ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
   const claims = {
     schema,
     payload_version: payloadVersion,
@@ -168,6 +171,7 @@ export function issueRefusalReceipt(row) {
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
       request_digest: bound.request_digest,
+      ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
     } : {}),
   };
   const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS, v2 ? jcsRfc8785 : undefined);

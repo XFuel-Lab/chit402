@@ -26,12 +26,16 @@ import { jcsCanonicalize, jcsRfc8785 } from './offer-receipt.js';
 import { V11_CANONICALIZATION } from './canonical-preimage.js';
 import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
 import {
+  assertSigningKeyNotRetired,
   bindIssuerRoot,
   issuerRootActive,
   issuerRootClaim,
   REFUSAL_PAYLOAD_VERSION_V2,
   REFUSAL_SCHEMA_V2,
+  retirementBlockForKid,
+  retirementNotAfterForKid,
 } from './issuer-root.js';
+import { assertSigningKeyNotGuardian, currentGuardianSetHash } from './issuer-guardian.js';
 
 export const ISSUER_HISTORY_SCHEMA = 'chit402.issuer_history.v1';
 export const ISSUER_HISTORY_VERSION = 1;
@@ -68,9 +72,24 @@ function publicJwk(jwk) {
   };
 }
 
-/** Fields covered by entry_hash. entry_hash itself is excluded. */
+function guardianSetHashField(entry) {
+  if (typeof entry?.guardian_set_hash !== 'string') return null;
+  const hash = entry.guardian_set_hash.toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hash) ? hash : null;
+}
+
+function retirementBlockField(entry) {
+  if (!Number.isInteger(entry?.retirement_block) || entry.retirement_block < 0) return null;
+  return entry.retirement_block;
+}
+
+/**
+ * Fields covered by entry_hash. entry_hash itself is excluded.
+ * guardian_set_hash and retirement_block are included only when the entry
+ * carries them. Omitting them keeps the flag-off and pinned snapshot bytes.
+ */
 export function issuerHistoryEntryBody(entry) {
-  return {
+  const body = {
     kid: entry.kid,
     jwk: publicJwk(entry.jwk),
     alg: entry.alg || 'ES256',
@@ -82,6 +101,11 @@ export function issuerHistoryEntryBody(entry) {
     custody: entry.custody,
     prev_hash: entry.prev_hash ?? null,
   };
+  const setHash = guardianSetHashField(entry);
+  if (setHash) body.guardian_set_hash = setHash;
+  const block = retirementBlockField(entry);
+  if (block != null) body.retirement_block = block;
+  return body;
 }
 
 export function issuerHistoryEntryHash(entry) {
@@ -154,7 +178,38 @@ function liveEntry(overrides = {}) {
  * preview of the entry chain.
  * @param {{ entries?: object[]|null, version?: number|null, seq?: number|null }} [opts]
  */
+/**
+ * v11 entries reference the committed guardian set by hash and show a
+ * registry retirement block. Flag-off drops both, even if an extra entry
+ * already has them, so the well-known document stays on the previous shape.
+ * @param {object} entry
+ */
+function withGuardianFacts(entry) {
+  if (!issuerRootActive()) {
+    const { guardian_set_hash: _set, retirement_block: _block, ...rest } = entry;
+    return rest;
+  }
+  const next = { ...entry };
+  const setHash = currentGuardianSetHash();
+  if (setHash) next.guardian_set_hash = setHash;
+  else delete next.guardian_set_hash;
+  const block = retirementBlockForKid(next.kid);
+  if (block != null) {
+    next.retirement_block = block;
+    if (next.status !== 'revoked') next.status = 'retired';
+    if (next.not_after == null) {
+      const notAfter = retirementNotAfterForKid(next.kid);
+      if (notAfter) next.not_after = notAfter;
+    }
+  } else {
+    delete next.retirement_block;
+  }
+  return next;
+}
+
 export function buildIssuerHistory({ entries = null, version = null, seq = null } = {}) {
+  assertSigningKeyNotGuardian();
+  assertSigningKeyNotRetired();
   const extras = entries || readExtraEntries();
   const current = getIssuerPublicKeyJwk();
   const prior = [];
@@ -163,8 +218,8 @@ export function buildIssuerHistory({ entries = null, version = null, seq = null 
     if (extra.kid === current.kid) currentOverride = extra;
     else prior.push(extra);
   }
-  const tail = liveEntry(currentOverride || {});
-  const chained = chainEntries([...prior, tail]);
+  const tail = withGuardianFacts(liveEntry(currentOverride || {}));
+  const chained = chainEntries([...prior.map(withGuardianFacts), tail]);
   const head = chained[chained.length - 1];
   const claims = {
     schema: ISSUER_HISTORY_SCHEMA,
@@ -413,7 +468,7 @@ export const ISSUER_HISTORY_EMBED_SCHEMA = 'chit402.issuer_history_embed.v1';
  * @param {object} entry
  */
 export function historyEmbedEntry(entry) {
-  return {
+  const body = {
     kid: entry.kid,
     jwk: entry.jwk,
     alg: entry.alg,
@@ -426,6 +481,11 @@ export function historyEmbedEntry(entry) {
     prev_hash: entry.prev_hash ?? null,
     entry_hash: entry.entry_hash,
   };
+  const setHash = guardianSetHashField(entry);
+  if (setHash) body.guardian_set_hash = setHash;
+  const block = retirementBlockField(entry);
+  if (block != null) body.retirement_block = block;
+  return body;
 }
 
 /**

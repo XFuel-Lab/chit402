@@ -22,8 +22,13 @@ Restart the process after changing these variables. The key check and the finali
 | `ISSUER_ROOT_CUTOVER` | `pause` stops issuance until the v11 config is complete. `off` is the default. |
 | `ISSUER_ROOT_FREEZE_FILE` | JSON file of freeze facts. Checked against `Frozen` at startup. |
 | `ISSUER_ROOT_LEGACY_SET` | JSON artifact from the legacy Merkle builder. Required before v11 issuance. |
+| `ISSUER_HISTORY_MIRROR_REPO` | Third-party repo that holds a commit-pinned copy of the issuer-history document. `owner/name` or `https://github.com/owner/name`. Unset means no mirror. |
+| `ISSUER_HISTORY_MIRROR_COMMIT` | 40-hex commit of that copy. Required when any mirror variable is set. |
+| `ISSUER_HISTORY_MIRROR_SHA256` | Lowercase hex SHA-256 of the committed file. It must equal the chit402-jcs-v1 hash of the current well-known document. |
+| `ISSUER_HISTORY_MIRROR_PATH` | Path inside the repo. Default `issuer-history.json`. |
+| `ISSUER_GUARDIAN_SET_FILE` | JSON file of public guardian keys and a threshold. No private key. Unset means history entries omit `guardian_set_hash`. |
 
-Signing never reads the chain. `strict` asks two RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error and does not sign v11 receipts, on Base Sepolia or on mainnet. It still refuses an unset `ISSUER_PRIVATE_KEY`. Topics and log decoding come from `services/gateway/abi/ChitIssuerRoot.json`, the contract artifact, not from a hand-written event signature.
+Signing never reads the chain. `strict` asks two RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. The same two RPCs must agree on every `KeyRetired` log up to that block. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error and does not sign v11 receipts, on Base Sepolia or on mainnet. It still refuses an unset `ISSUER_PRIVATE_KEY`. It also does not learn retirements, because it did not read the registry. Topics and log decoding come from `services/gateway/abi/ChitIssuerRoot.json`, the contract artifact, not from a hand-written event signature.
 
 If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs.
 
@@ -119,6 +124,23 @@ The same cap set to the decimal string `2000` hashes to `ecf4cdabe9b755e47761674
 
 Production boot (`NODE_ENV=production`) refuses to start unless `RECEIPT_POLICY_ID`, `RECEIPT_POLICY_VERSION`, `RECEIPT_POLICY_DISPUTE_WINDOW_SECONDS`, `RECEIPT_POLICY_RETENTION_DAYS`, and `RECEIPT_POLICY_RETENTION_MODE=compliance` are set. `RECEIPT_POLICY_MAX_CUMULATIVE_SPEND` is optional. Outside production, an empty config uses the dev defaults above. A partial config fails closed in every environment.
 
+Boot and signing also refuse unless both of these hold:
+
+- `retention_days` is at least 365.
+- `retention_days * 86400` is at least the longest dispute window plus 30 days.
+
+The longest dispute window is the maximum of this policy's `dispute_window_seconds` and the issuance window (`X402_ISSUANCE_DISPUTE_WINDOW_SEC`, or 7 days when that variable is unset). Thirty days is `2592000` seconds. A retention that merely outlives the window the receipt happens to use is not enough when a longer allowed window is configured. Equality with the floor passes. The check runs at boot and again when a v11 receipt is signed. Checking an already signed receipt does not apply the floor again: the signed `policy` object governs that receipt.
+
+Floor vector. `dispute_window_seconds` is 335 days (`28944000`), which is the longest window that still fits in 365 days after the 30-day margin. Terms:
+
+```
+{"dispute_window_seconds":28944000,"max_cumulative_spend":null,"policy_id":"chit402.receipt-policy","policy_version":"1","retention_days":365,"retention_mode":"compliance"}
+```
+
+`policy_hash` is `c3229215b3badbb0ba8515827f92390753553680cce1501124fe339b042d369c`.
+
+`retention_days` of 364 fails the day floor. A dispute window of `28944001` seconds with `retention_days` of 365 fails the margin. An issuance window of 340 days fails the margin even when the policy window stays at one day.
+
 `GET /.well-known/receipt-policy-history.json` is `chit402.receipt_policy_history.v1`: an append-only `entries` list of `{ policy_version, policy_hash, terms, effective_from }`. `terms` is the six fields without `policy_hash`. A new `policy_version` or `policy_hash` appends a row. Older rows stay. The history announces the change. It does not replace the terms inside an already signed receipt.
 
 PR #486 puts `retention_policy: { id, sha256 }` on the receipt-log bundle index from `RECEIPT_LOG_RETENTION_POLICY_ID` and `RECEIPT_LOG_RETENTION_POLICY_SHA256`. Those two values are this object's `policy_id` and `policy_hash`. This gateway is the source (`receiptPolicyRetentionClaim`). If either env var is set, boot requires both and requires them to equal that claim. #486 does not import this module, so it needs a follow-up to read `{ id, sha256 }` from here instead of a separately typed hash. Until that lands, an operator can point the log at a different digest only by skipping this check.
@@ -132,6 +154,8 @@ PR #486 puts `retention_policy: { id, sha256 }` on the receipt-log bundle index 
 | `issuer_root` fingerprint suffix on a new issuer-history version | RFC 8785 |
 | `issuer_history_snapshot.snapshot_hash`, and the v11 / refusal-v2 `issuer_history.hash` pin | RFC 8785 of the embed `entries` array only. SHA-256 of those UTF-8 bytes |
 | v11 `policy.policy_hash` | RFC 8785 of the policy terms, excluding `policy_hash` itself |
+| `guardian_set_hash` | RFC 8785 of `{ schema, threshold, guardians }`. Each guardian `jwk` is `{ crv, kty, x, y }`. Guardians are sorted by `kid`. The hash is not an input |
+| issuer-history mirror `sha256` | chit402-jcs-v1 of the whole well-known issuer-history document. Same digest as `X-Chit-History-Hash`. Not `snapshot_hash` |
 | well-known document hash (`?hash=` of the full issuer-history document, and the flag-off `issuer_history.hash` pin) | chit402-jcs-v1 (`jcsCanonicalize`) of the whole document |
 | `entry_hash` | chit402-jcs-v1. SHA-256 of the entry without `entry_hash` |
 | v7–v10 receipt `payload_hash`, flag-off refusal `payload_hash`, and every flag-off path | chit402-jcs-v1. Those bytes are not recomputed |
@@ -151,7 +175,7 @@ chit402-jcs-v1 writes every code unit U+0000 through U+001F as `\u00xx`, includi
 | `snapshot_hash` | SHA-256 of the RFC 8785 bytes of `entries` only. Same value as the `issuer_history.hash` pin. Not the well-known document hash |
 | `entries` | One object per history entry, in chain order |
 
-Each entry has `kid`, `jwk` (`kty`, `crv`, `x`, `y`, `kid`, `alg`, `use`), `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, `entry_hash`.
+Each entry has `kid`, `jwk` (`kty`, `crv`, `x`, `y`, `kid`, `alg`, `use`), `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, `entry_hash`. Two further fields are included only when they are set, and they are omitted rather than null: `guardian_set_hash` and `retirement_block`. The snapshot vector below omits both, so its bytes stay the same. Flag-off history never adds them.
 
 `snapshot_hash` is SHA-256 of the UTF-8 RFC 8785 canonicalization of the `entries` array alone, after each entry is reduced to `kid`, `jwk`, `alg`, `not_before`, `not_after`, `status`, `revoked_at`, `reason`, `custody`, `prev_hash`, and `entry_hash` (missing window fields are null). No trailing newline. It is not a hash of `schema`, `version`, `seq`, `head_hash`, or the well-known document. `entry_hash` inside each entry is still SHA-256 of the chit402-jcs-v1 entry body, without `entry_hash`.
 
@@ -183,6 +207,50 @@ Test vector. One entry, `reason` containing U+000A. The preimage is this single 
 The embed sits inside the v11 payload, so the bytes of this object that feed `payload_hash` are RFC 8785. One live key is 1052 bytes of that form. The full well-known document is larger because of the prose and the history JWS; those stay on `/.well-known/issuer-history.json`. Its document hash is unchanged.
 
 A receipt that already has a JWS is not re-signed. While the issuer root is on, a later covering root is an unsigned `covering_head` sidecar (`chit402.covering_head.v1`, `signed: false`). The stored `issuer_signature.jws` bytes stay put across a key rotation and a tree-head update. Flag-off v10 may still reseal `tree_head_hash` inside that same claim set. v9 and older are never restamped.
+
+## Independent issuer-history mirror
+
+The gateway never pushes, clones, or fetches a git remote. An operator copies the well-known document by hand:
+
+1. Take the exact bytes of `GET /.well-known/issuer-history.json` (the `body` stored for the current version). `sha256` of those UTF-8 bytes is the chit402-jcs-v1 document hash, the same value as `X-Chit-History-Hash`.
+2. Commit that file in a third-party repository at `issuer-history.json`, or at `ISSUER_HISTORY_MIRROR_PATH`.
+3. Set `ISSUER_HISTORY_MIRROR_REPO`, `ISSUER_HISTORY_MIRROR_COMMIT` to that commit, and `ISSUER_HISTORY_MIRROR_SHA256` to that digest. Restart.
+
+A partial set refuses to boot. A branch name is not a commit. A URL with userinfo is refused, so a token cannot sit in the repo string. `https://github.com/owner/name.git` is stored as `owner/name`.
+
+`GET /.well-known/issuer-history-mirror.json` is `chit402.issuer_history_mirror.v1`. It carries `role: "announcement"`, `custodian: false`, `repo`, `commit`, `path`, `sha256`, and a note that this process does not push. When the pin is unset the route is 404. When `sha256` is not the current document hash the route is 409 `issuer_history_mirror_stale`, and v11 signing throws the same code.
+
+The mirror object is not a field of the hashed issuer-history document. That document remains the announcement copy on this host. It is not a second custodian. Flag-off receipts do not carry `issuer_history_mirror`. When the flag is on and the pin matches, the v11 receipt and refusal v2 sign `{ repo, commit, path, sha256 }`.
+
+After a new history version the document hash changes. The pinned bytes include the history JWS. A restart that seals a new snapshot, because the version file was not persisted, changes that hash even when the key set is the same. Boot and v11 signing stay closed until the operator commits the new bytes and updates the commit and the sha256.
+
+## Guardian set and retirement
+
+Names in this section are provisional until PR #485 publishes `docs/product/issuer-root.md`. Match that file when it lands.
+
+`ISSUER_GUARDIAN_SET_FILE` is a JSON document:
+
+```json
+{
+  "schema": "chit402.guardian_set.v1",
+  "threshold": 2,
+  "guardians": [
+    { "kid": "<rfc7638 thumbprint>", "jwk": { "kty": "EC", "crv": "P-256", "x": "...", "y": "..." } }
+  ]
+}
+```
+
+`threshold` is an integer from 2 through the guardian count, and there are at least two guardians. `kid` must be the RFC 7638 thumbprint of that `jwk`. A `d` field or a PEM private key fails closed (`guardian_key_material`). The gateway signing key must not appear in the set (`issuer_key_is_guardian`). Safe keys and guardian private keys are not read from the environment, from AWS, or from CI. Tests generate throwaway public keys in process.
+
+`guardian_set_hash` is SHA-256 of the RFC 8785 bytes of `{ schema, threshold, guardians }`. Guardians are sorted by `kid`. Each `jwk` in that preimage is `{ crv, kty, x, y }`. The hash is not inside the preimage.
+
+While the issuer root is on and the file is set, every history entry in the new version includes `guardian_set_hash`. The field is inside `entry_hash` and inside `snapshot_hash`. When the file is unset the field is omitted, not null.
+
+A registry kid is the RFC 7638 thumbprint decoded from base64url into 32 bytes, then hex with a `0x` prefix. That is the same encoding as `kidToBytes32` on the contract branch. `KeyRetired` is decoded from the artifact ABI. Strict startup reads those logs up to the agreed finalized block. The two RPCs must return the same set. The cache stores the log's block number. Signing does not read the chain again.
+
+A history entry whose kid is in that cache has `retirement_block` set to the log block, `status` `retired` (a `revoked` entry stays revoked), and `not_after` filled from `KeyRetired.notAfter` when the entry had none and `notAfter` is above 0. Zero leaves the window open and does not become a timestamp. A kid the cache does not list omits `retirement_block`.
+
+The gateway refuses to sign with a kid the cache shows as retired (`issuer_key_retired`). That includes payment receipts, refusals, foreign ingest, and the issuer-history JWS. `skip` does not fill the cache. It already cannot sign v11.
 
 ## Cutover pause
 
