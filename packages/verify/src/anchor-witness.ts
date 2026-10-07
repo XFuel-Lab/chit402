@@ -7,6 +7,8 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
+import { AbiCoder, Interface, getBytes, hashMessage, keccak256, recoverAddress, toUtf8Bytes } from 'ethers';
+import { EPOCH1_FINAL_ROOT } from './epoch.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
@@ -123,6 +125,16 @@ export interface AnchorWitnessResult {
     chain_id: number | null;
     reason?: string;
   };
+  witness: {
+    checked: boolean;
+    valid: boolean;
+    configured: boolean;
+    address: string | null;
+    epoch: number | null;
+    size: number | null;
+    root: string | null;
+    reason?: string;
+  };
   proves: string[];
   does_not_prove: string[];
   errors: string[];
@@ -162,6 +174,266 @@ export function verifyMerkleInclusion(
     hash = new Uint8Array(next);
   }
   return Buffer.from(hash).toString('hex') === String(rootHex).replace(/^0x/, '').toLowerCase();
+}
+
+function parseNode(hexNode: string): Buffer | null {
+  const hex = String(hexNode || '').replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+function isPow2(n: number): boolean {
+  if (!Number.isSafeInteger(n) || n < 1) return false;
+  let x = n;
+  while (x % 2 === 0) x = Math.floor(x / 2);
+  return x === 1;
+}
+
+function shr1(n: number): number {
+  return Math.floor(n / 2);
+}
+
+function lsb(n: number): boolean {
+  return n % 2 === 1;
+}
+
+/**
+ * RFC 9162 §2.1.4.2. `proof` is the RFC node list. It does not include the
+ * old root. `m == n` requires an empty proof and equal roots.
+ * Shifts are `Math.floor(n / 2)`. A JavaScript `>>=` would truncate at 2^31.
+ * Sizes that are not safe integers are rejected.
+ */
+export function verifyConsistency(
+  m: number,
+  n: number,
+  oldRoot: string,
+  newRoot: string,
+  proof: string[],
+): boolean {
+  const old = parseNode(oldRoot);
+  const next = parseNode(newRoot);
+  if (!old || !next || !Number.isSafeInteger(m) || !Number.isSafeInteger(n) || m < 1 || n < m) return false;
+  if (m === n) return old.equals(next) && (!proof || proof.length === 0);
+  if (!Array.isArray(proof) || proof.length === 0) return false;
+  const nodes: Buffer[] = [];
+  if (isPow2(m)) nodes.push(old);
+  for (const step of proof) {
+    const parsed = parseNode(step);
+    if (!parsed) return false;
+    nodes.push(parsed);
+  }
+  if (!nodes.length) return false;
+  let fn = m - 1;
+  let sn = n - 1;
+  while (lsb(fn)) {
+    fn = shr1(fn);
+    sn = shr1(sn);
+  }
+  let fr: Uint8Array = nodes[0];
+  let sr: Uint8Array = nodes[0];
+  for (let i = 1; i < nodes.length; i += 1) {
+    if (sn === 0) return false;
+    const c = nodes[i];
+    if (lsb(fn) || fn === sn) {
+      fr = nodeHash(c, fr);
+      sr = nodeHash(c, sr);
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr1(fn);
+          sn = shr1(sn);
+        }
+      }
+    } else {
+      sr = nodeHash(sr, c);
+    }
+    fn = shr1(fn);
+    sn = shr1(sn);
+  }
+  return sn === 0 && Buffer.from(fr).equals(old) && Buffer.from(sr).equals(next);
+}
+
+const WITNESS_HEAD = new Interface([
+  'function head() view returns (uint256 epoch, uint256 size, bytes32 root)',
+]);
+
+/** Runtime code hash of ChitLogWitness, solc 0.8.24, optimizer 200. */
+export const CHIT_LOG_WITNESS_CODEHASH = '0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a';
+
+/** Init code without constructor args. Address and creation tx are unset until deploy. */
+export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56';
+export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 8769;
+export const CHIT_LOG_WITNESS_ADDRESS_PIN: string | null = null;
+
+/** Domain tag for a witness countersignature. Not the registration tag. */
+export const WITNESS_COUNTERSIGN_DOMAIN = keccak256(toUtf8Bytes('chit.logWitness.countersign.v1'));
+
+export interface WitnessCountersign {
+  id: string;
+  epoch: number | bigint;
+  key: string;
+  url: string;
+  treeSize: number | bigint;
+  root: string;
+  chainId: number | bigint;
+  registry: string;
+}
+
+export interface WitnessRow {
+  key?: string | null;
+  url?: string | null;
+  id?: string | null;
+}
+
+function hex32(value: string): string {
+  const raw = String(value || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(raw)) return '';
+  return `0x${raw}`;
+}
+
+/**
+ * EIP-191 digest over the witness key, its URL, the directory row id, and
+ * the directory epoch, plus the log head. chainId and registry keep it off
+ * another chain or another contract. A registration signature is a different tag.
+ */
+export function countersignDigest(claim: WitnessCountersign): string {
+  const url = String(claim.url || '');
+  const id = hex32(claim.id);
+  const root = hex32(claim.root);
+  const inner = keccak256(AbiCoder.defaultAbiCoder().encode(
+    ['bytes32', 'uint256', 'address', 'bytes32', 'uint256', 'address', 'bytes32', 'uint256', 'bytes32'],
+    [
+      WITNESS_COUNTERSIGN_DOMAIN,
+      BigInt(claim.chainId),
+      claim.registry,
+      id,
+      BigInt(claim.epoch),
+      claim.key,
+      keccak256(toUtf8Bytes(url)),
+      BigInt(claim.treeSize),
+      root,
+    ],
+  ));
+  return hashMessage(getBytes(inner));
+}
+
+/**
+ * Refuse unless the signature names this row's key and URL. The signer must
+ * be that key. A different row, a different epoch, or a registration signature
+ * does not pass.
+ */
+export function countersignatureMatches(
+  row: WitnessRow,
+  claim: WitnessCountersign,
+  signature: string,
+): { ok: boolean; reason?: string } {
+  const url = String(claim?.url || '');
+  const key = String(claim?.key || '').toLowerCase();
+  const rowKey = String(row?.key || '').toLowerCase();
+  const rowUrl = String(row?.url || '');
+  if (!key || key === '0x0000000000000000000000000000000000000000') {
+    return { ok: false, reason: 'witness_countersign_key' };
+  }
+  if (!url || !rowUrl || url !== rowUrl) return { ok: false, reason: 'witness_countersign_url' };
+  if (key !== rowKey) return { ok: false, reason: 'witness_countersign_key' };
+  const id = keccak256(toUtf8Bytes(url));
+  if (!hex32(claim.id) || hex32(claim.id) !== id) return { ok: false, reason: 'witness_countersign_row' };
+  if (row.id && hex32(row.id) !== id) return { ok: false, reason: 'witness_countersign_row' };
+  let recovered = '';
+  try {
+    recovered = recoverAddress(countersignDigest(claim), signature).toLowerCase();
+  } catch {
+    return { ok: false, reason: 'witness_countersign_signer' };
+  }
+  if (recovered !== key) return { ok: false, reason: 'witness_countersign_signer' };
+  return { ok: true };
+}
+export const CHIT_LOG_WITNESS_CREATION_TX_PIN: string | null = null;
+
+export interface WitnessCreation {
+  input?: string | null;
+  hash?: string | null;
+  receipt?: { status?: string | number | null; contractAddress?: string | null } | null;
+}
+
+export function witnessCreationMatches(
+  input: string | null | undefined,
+  receipt: WitnessCreation['receipt'],
+  address: string,
+): { ok: boolean; reason?: string } {
+  const raw = String(input || '').toLowerCase();
+  if (!raw.startsWith('0x')) return { ok: false, reason: 'witness_creation_input' };
+  const body = raw.slice(2);
+  const prefixLen = CHIT_LOG_WITNESS_INIT_CODE_BYTES * 2;
+  if (body.length <= prefixLen) return { ok: false, reason: 'witness_creation_input' };
+  const prefix = `0x${body.slice(0, prefixLen)}`;
+  try {
+    if (keccak256(prefix).toLowerCase() !== CHIT_LOG_WITNESS_INIT_CODE_HASH) {
+      return { ok: false, reason: 'witness_creation_input' };
+    }
+  } catch {
+    return { ok: false, reason: 'witness_creation_input' };
+  }
+  let decoded: readonly [string, string, bigint, bigint, string];
+  try {
+    decoded = AbiCoder.defaultAbiCoder().decode(
+      ['address', 'address', 'uint256', 'uint256', 'bytes32'],
+      `0x${body.slice(prefixLen)}`,
+    ) as unknown as readonly [string, string, bigint, bigint, string];
+  } catch {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const epoch = Number(decoded[2]);
+  const size = Number(decoded[3]);
+  const root = String(decoded[4]).replace(/^0x/, '').toLowerCase();
+  if (epoch !== 1 || size !== 4 || root !== EPOCH1_FINAL_ROOT) return { ok: false, reason: 'witness_creation_args' };
+  if (String(decoded[0]).toLowerCase() === '0x0000000000000000000000000000000000000000') {
+    return { ok: false, reason: 'witness_creation_args' };
+  }
+  const created = String(receipt?.contractAddress || '').toLowerCase();
+  if (!created || created !== String(address || '').toLowerCase()) return { ok: false, reason: 'witness_creation_address' };
+  const status = receipt?.status;
+  if (!(status === '0x1' || status === 1 || status === '0x01')) return { ok: false, reason: 'witness_creation_receipt' };
+  return { ok: true };
+}
+
+export async function fetchWitnessCreation(txHash: string, rpcUrl: string): Promise<WitnessCreation | null> {
+  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { input?: string; hash?: string } | null;
+  if (!tx) return null;
+  const receipt = await defaultRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash]) as WitnessCreation['receipt'];
+  return { input: tx.input || null, hash: tx.hash || txHash, receipt: receipt || null };
+}
+
+export async function fetchWitnessCode(address: string, rpcUrl: string): Promise<string | null> {
+  const code = await defaultRpc(rpcUrl, 'eth_getCode', [address, 'latest']) as string | null;
+  return typeof code === 'string' ? code : null;
+}
+
+export function witnessCodeMatches(bytecode: string | null | undefined): boolean {
+  const code = String(bytecode || '');
+  if (!code || code === '0x') return false;
+  try {
+    return keccak256(code).toLowerCase() === CHIT_LOG_WITNESS_CODEHASH;
+  } catch {
+    return false;
+  }
+}
+
+export interface WitnessHead {
+  epoch: number;
+  size: number;
+  root: string;
+}
+
+export async function fetchWitnessHead(address: string, rpcUrl: string): Promise<WitnessHead | null> {
+  const data = WITNESS_HEAD.encodeFunctionData('head', []);
+  const raw = await defaultRpc(rpcUrl, 'eth_call', [{ to: address, data }, 'latest']) as string | null;
+  if (!raw || raw === '0x') return null;
+  const [epoch, size, root] = WITNESS_HEAD.decodeFunctionResult('head', raw);
+  return {
+    epoch: Number(epoch),
+    size: Number(size),
+    root: String(root).replace(/^0x/, '').toLowerCase(),
+  };
 }
 
 export interface ParsedAnchorMemo {
@@ -303,6 +575,18 @@ export interface VerifyAnchoredRootInput {
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
+  witnessAddress?: string | null;
+  consistency?: {
+    first_tree_size?: number;
+    second_tree_size?: number;
+    first_root?: string;
+    second_root?: string;
+    proof?: string[];
+  } | null;
+  fetchWitness?: (address: string, rpcUrl: string) => Promise<WitnessHead | null>;
+  fetchWitnessCode?: (address: string, rpcUrl: string) => Promise<string | null>;
+  witnessCreationTx?: string | null;
+  fetchWitnessCreation?: (txHash: string, rpcUrl: string) => Promise<WitnessCreation | null>;
 }
 
 /**
@@ -490,10 +774,99 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
 
+  const witnessAddress = input.witnessAddress || null;
+  const witness = {
+    checked: false,
+    valid: false,
+    configured: Boolean(witnessAddress),
+    address: witnessAddress,
+    epoch: null as number | null,
+    size: null as number | null,
+    root: null as string | null,
+    reason: undefined as string | undefined,
+  };
+  if (!witnessAddress) {
+    doesNotProve.push('No witness contract address was set, so this run did not check a contract head. Mainnet has no ChitLogWitness address in this release.');
+  } else if (!inclusionValid || !root) {
+    witness.reason = 'inclusion_failed';
+    errors.push('witness:inclusion_failed');
+  } else {
+    witness.checked = true;
+    try {
+      const readCode = input.fetchWitnessCode || fetchWitnessCode;
+      const code = await readCode(witnessAddress, baseRpc);
+      if (!witnessCodeMatches(code)) {
+        witness.reason = 'witness_code';
+        errors.push('witness:witness_code');
+      }
+      const creationTx = input.witnessCreationTx
+        || process.env.CHIT_LOG_WITNESS_CREATION_TX
+        || CHIT_LOG_WITNESS_CREATION_TX_PIN;
+      const pinnedAddress = CHIT_LOG_WITNESS_ADDRESS_PIN;
+      if (!witness.reason && pinnedAddress && pinnedAddress.toLowerCase() !== witnessAddress.toLowerCase()) {
+        witness.reason = 'witness_address';
+        errors.push('witness:witness_address');
+      }
+      if (!witness.reason && !creationTx) {
+        witness.reason = 'witness_creation_unpinned';
+        errors.push('witness:witness_creation_unpinned');
+      } else if (!witness.reason && creationTx) {
+        const readCreation = input.fetchWitnessCreation || fetchWitnessCreation;
+        const created = await readCreation(creationTx, baseRpc);
+        const matched = witnessCreationMatches(created?.input, created?.receipt, witnessAddress);
+        if (!matched.ok) {
+          witness.reason = matched.reason || 'witness_creation';
+          errors.push(`witness:${witness.reason}`);
+        }
+      }
+      const read = input.fetchWitness || fetchWitnessHead;
+      const onchain = witness.reason ? null : await read(witnessAddress, baseRpc);
+      if (witness.reason) {
+        // already recorded
+      } else if (!onchain) {
+        witness.reason = 'head_missing';
+      } else {
+        witness.epoch = onchain.epoch;
+        witness.size = onchain.size;
+        witness.root = onchain.root;
+        const headEpoch = input.head.epoch == null ? null : Number(input.head.epoch);
+        const headSize = input.head.tree_size == null ? null : Number(input.head.tree_size);
+        if (headEpoch != null && headEpoch !== onchain.epoch) witness.reason = 'epoch_mismatch';
+        else if (headSize == null) witness.reason = 'head_size_missing';
+        else if (headSize < onchain.size) witness.reason = 'head_behind';
+        else if (headSize === onchain.size) {
+          witness.valid = onchain.root === root;
+          if (!witness.valid) witness.reason = 'root_mismatch';
+        } else {
+          const proof = input.consistency;
+          const nodes = proof?.proof || [];
+          const oldSize = Number(proof?.first_tree_size);
+          const newSize = Number(proof?.second_tree_size);
+          const oldRoot = normalizeRoot(proof?.first_root || null);
+          const newRoot = normalizeRoot(proof?.second_root || null);
+          if (!proof || !Array.isArray(nodes)) witness.reason = 'witness_proof_required';
+          else if (oldSize !== onchain.size || newSize !== headSize || oldRoot !== onchain.root || newRoot !== root) {
+            witness.reason = 'witness_proof_mismatch';
+          } else if (!verifyConsistency(onchain.size, headSize, onchain.root, root, nodes)) {
+            witness.reason = 'witness_proof_rejected';
+          } else witness.valid = true;
+        }
+      }
+    } catch (err) {
+      witness.reason = err instanceof Error ? err.message : 'witness_rpc_error';
+    }
+    if (!witness.valid && witness.reason) errors.push(`witness:${witness.reason}`);
+  }
+
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  const witnessFailed = witness.configured && !witness.valid;
+  if (!inclusionValid || epochReason || witnessFailed || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
+
+  const proves = witness.valid
+    ? [...ANCHOR_PROVES, `The Base witness contract at ${witness.address} stores this head, or this head is an RFC 6962 extension of the head it stores.`]
+    : ANCHOR_PROVES;
 
   return {
     overall,
@@ -501,7 +874,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     inclusion: { valid: inclusionValid, leaf: leafHex, leaf_source: leafSource, reason: inclusionReason },
     solana,
     base,
-    proves: ANCHOR_PROVES,
+    witness,
+    proves,
     does_not_prove: doesNotProve,
     errors,
   };

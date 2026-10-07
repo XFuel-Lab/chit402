@@ -4,6 +4,10 @@ artifacts
 typechain-types
 deployments
 
+# Foundry
+/out/
+/broadcast/
+
 # Cypress
 cypress/videos
 cypress/screenshots

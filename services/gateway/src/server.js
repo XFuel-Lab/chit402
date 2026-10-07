@@ -2770,11 +2770,26 @@ export function createApp() {
       const head = tree.latestSignedHead();
       const receiptLog = tree.bundleStatus();
       if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
-      return res.json({ ...head, receipt_log: receiptLog });
+      // The checkpoint note has its own URL. It is not a JWS claim.
+      const { checkpoint: _checkpoint, witness_pending: _pending, ...publicHead } = head;
+      return res.json({ ...publicHead, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
+  });
+
+  app.get('/v1/receipts/tree/checkpoint', (_req, res) => {
+    const text = getReceiptMerkleTree().checkpointText();
+    if (!text) {
+      return res.status(404).json({
+        schema: 'chit402.tree_checkpoint.v1',
+        status: 'not_yet_published',
+        published: false,
+      });
+    }
+    res.set('Cache-Control', 'no-cache');
+    return res.type('text/plain; charset=utf-8').send(text);
   });
 
   app.get('/v1/receipts/tree/epoch', (_req, res) => {
@@ -2816,7 +2831,14 @@ export function createApp() {
       const first = Number(req.query.first);
       const second = Number(req.query.second);
       const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
-      return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
+      const format = String(req.query.format || 'rfc6962').toLowerCase();
+      if (format !== 'rfc6962' && format !== 'legacy') {
+        return res.status(400).json({
+          error: 'bad_format',
+          message: 'format is rfc6962 (default) or legacy',
+        });
+      }
+      return res.json(getReceiptMerkleTree().consistency(first, second, epoch, format));
     } catch (err) {
       return res.status(400).json({ error: 'bad_tree_size', message: err.message });
     }

@@ -53,6 +53,7 @@ import {
   EPOCH1_FINAL_SIZE,
   EPOCH1_SIZE2_ROOT,
 } from './receipt-log-epoch.js';
+import { signTreeCheckpoint } from './receipt-checkpoint.js';
 export { FRESH_GENESIS_LOG, assertLatestBaseAnchor, readReceiptLogPin };
 
 export { ReceiptLogRefused, freshGenesisAllowed, receiptLogBootRequested, receiptLogStrict };
@@ -76,9 +77,18 @@ export function nodeHash(left, right) {
   return sha256(Buffer.concat([Buffer.from([0x01]), left, right]));
 }
 
-/** Root of an ordered list of leaf hashes. Empty tree hashes a single 0x00. */
+/**
+ * Root of an ordered list of leaf hashes.
+ *
+ * The empty tree hashes a single `0x00` byte: SHA-256(0x00). RFC 6962's empty
+ * root is SHA-256("") . This log never publishes size 0. Leaf 0 is genesis,
+ * so every signed head has size at least 1. Callers must not treat the empty
+ * digest as an RFC 6962 empty root.
+ */
+export const EMPTY_TREE_ROOT = sha256(Buffer.from([0x00]));
+
 export function rootOf(leaves) {
-  if (!leaves.length) return sha256(Buffer.from([0x00]));
+  if (!leaves.length) return Buffer.from(EMPTY_TREE_ROOT);
   let level = leaves.map((h) => Buffer.from(h));
   while (level.length > 1) {
     const next = [];
@@ -133,10 +143,16 @@ function largestPowerOfTwoLessThan(n) {
   return p;
 }
 
+function mthRange(leaves, start, end) {
+  return rootOf(leaves.slice(start, end));
+}
+
 /**
- * Consistency proof that the first `m` leaves are a prefix of the first `n`.
- * Node hashes, hex, oldest first. RFC 6962 §2.1.4 shape: subtrees that
- * complete the old tree and the new tree.
+ * RFC 6962 / RFC 9162 §2.1.4 consistency proof.
+ * Hex node hashes. The old root is omitted when it is already known
+ * (the initial `b = true` call, and any complete old subtree). Order is
+ * the RFC SUBPROOF order, not left to right.
+ * `m == n` is an empty proof.
  */
 export function consistencyProof(leaves, m, n) {
   if (!Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m || n > leaves.length) {
@@ -144,18 +160,134 @@ export function consistencyProof(leaves, m, n) {
   }
   if (m === n) return [];
   const proof = [];
-  function mth(start, end) {
-    return rootOf(leaves.slice(start, end));
+  function subproof(oldSize, start, end, known) {
+    const size = end - start;
+    if (oldSize === size) {
+      if (!known) proof.push(mthRange(leaves, start, end).toString('hex'));
+      return;
+    }
+    const k = largestPowerOfTwoLessThan(size);
+    if (oldSize <= k) {
+      subproof(oldSize, start, start + k, known);
+      proof.push(mthRange(leaves, start + k, end).toString('hex'));
+    } else {
+      subproof(oldSize - k, start + k, end, false);
+      proof.push(mthRange(leaves, start, start + k).toString('hex'));
+    }
   }
+  subproof(m, 0, n, true);
+  return proof;
+}
+
+function isPow2(n) {
+  if (!Number.isSafeInteger(n) || n < 1) return false;
+  let x = n;
+  while (x % 2 === 0) x = Math.floor(x / 2);
+  return x === 1;
+}
+
+function shr1(n) {
+  return Math.floor(n / 2);
+}
+
+function lsb(n) {
+  return n % 2 === 1;
+}
+
+function parseNode(hexNode) {
+  const hex = String(hexNode || '').replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+/**
+ * RFC 9162 §2.1.4.2. True when `proof` shows `oldRoot` at size `m` is a
+ * prefix of `newRoot` at size `n`.
+ */
+export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
+  const old = parseNode(oldRoot);
+  const next = parseNode(newRoot);
+  if (!old || !next || !Number.isSafeInteger(m) || !Number.isSafeInteger(n) || m < 1 || n < m) return false;
+  if (m === n) return old.equals(next) && (!proof || proof.length === 0);
+  if (!Array.isArray(proof) || proof.length === 0) return false;
+  const folded = foldConsistency(m, n, old, proof);
+  if (!folded) return false;
+  return folded.sn === 0 && folded.fr.equals(old) && folded.sr.equals(next);
+}
+
+/**
+ * RFC 9162 §2.1.4.2 fold. Shifts are `Math.floor(n / 2)`, not `>>=`, so a
+ * size above 2^31 is not truncated to a signed 32-bit integer. Sizes above
+ * `Number.MAX_SAFE_INTEGER` are rejected.
+ * When `m` is not a power of two, `oldRoot` is only the final comparison
+ * value. `consistencyPreview` uses that to build a fixture.
+ */
+function foldConsistency(m, n, oldRoot, proof) {
+  const nodes = [];
+  if (isPow2(m)) nodes.push(oldRoot);
+  for (const step of proof) {
+    const parsed = parseNode(step);
+    if (!parsed) return null;
+    nodes.push(parsed);
+  }
+  if (!nodes.length) return null;
+  let fn = m - 1;
+  let sn = n - 1;
+  while (lsb(fn)) {
+    fn = shr1(fn);
+    sn = shr1(sn);
+  }
+  let fr = nodes[0];
+  let sr = nodes[0];
+  for (let i = 1; i < nodes.length; i += 1) {
+    if (sn === 0) return null;
+    const c = nodes[i];
+    if (lsb(fn) || fn === sn) {
+      fr = nodeHash(c, fr);
+      sr = nodeHash(c, sr);
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr1(fn);
+          sn = shr1(sn);
+        }
+      }
+    } else {
+      sr = nodeHash(sr, c);
+    }
+    fn = shr1(fn);
+    sn = shr1(sn);
+  }
+  return { fr, sr, sn };
+}
+
+/**
+ * Roots a proof would have to match when `m` is not a power of two.
+ * The old root is the fold's `fr`. Used to test sizes above 2^31.
+ */
+export function consistencyPreview(m, n, proof) {
+  if (!Number.isSafeInteger(m) || !Number.isSafeInteger(n) || isPow2(m) || m < 1 || n <= m) return null;
+  const placeholder = Buffer.alloc(32, 0);
+  const folded = foldConsistency(m, n, placeholder, proof);
+  if (!folded || folded.sn !== 0) return null;
+  return { oldRoot: folded.fr.toString('hex'), newRoot: folded.sr.toString('hex') };
+}
+
+/**
+ * Pre-RFC consistency proof. Includes the old root and lists nodes left to
+ * right. `GET /v1/receipts/tree/consistency?format=legacy` still returns this.
+ * New callers use `consistencyProof`.
+ */
+export function consistencyProofLegacy(leaves, m, n) {
+  if (!Number.isInteger(m) || !Number.isInteger(n) || m < 1 || n < m || n > leaves.length) {
+    throw new Error('bad_tree_size');
+  }
+  if (m === n) return [];
+  const proof = [];
   function prove(start, end, oldEnd) {
     const size = end - start;
     if (size === 0) return;
-    if (end <= oldEnd) {
-      proof.push(mth(start, end).toString('hex'));
-      return;
-    }
-    if (start >= oldEnd) {
-      proof.push(mth(start, end).toString('hex'));
+    if (end <= oldEnd || start >= oldEnd) {
+      proof.push(mthRange(leaves, start, end).toString('hex'));
       return;
     }
     const k = largestPowerOfTwoLessThan(size);
@@ -166,19 +298,20 @@ export function consistencyProof(leaves, m, n) {
   return proof;
 }
 
-/**
- * Recompute the old and new roots from a consistency proof.
- * Returns true when both match the supplied roots.
- */
-export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
-  const oldHex = String(oldRoot || '').replace(/^0x/, '');
-  const newHex = String(newRoot || '').replace(/^0x/, '');
+/** Verifier for `consistencyProofLegacy`. Rejects an RFC 6962 proof. */
+export function verifyConsistencyLegacy(m, n, oldRoot, newRoot, proof) {
+  const oldHex = String(oldRoot || '').replace(/^0x/, '').toLowerCase();
+  const newHex = String(newRoot || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(oldHex) || !/^[0-9a-f]{64}$/.test(newHex)) return false;
   if (m === n) return oldHex === newHex && (!proof || proof.length === 0);
   if (!Array.isArray(proof) || proof.length === 0) return false;
   let i = 0;
   function take() {
     if (i >= proof.length) throw new Error('short_proof');
-    return Buffer.from(proof[i++], 'hex');
+    const parsed = parseNode(proof[i]);
+    i += 1;
+    if (!parsed) throw new Error('bad_node');
+    return parsed;
   }
   function check(start, end, oldEnd) {
     if (end <= oldEnd) {
@@ -306,6 +439,78 @@ async function feesFromSignedRaw(raw, fallback) {
   return fallback || FIXED_ANCHOR_FEES;
 }
 
+/**
+ * Sign the witness `append` call. Same type-2 fee shape as the bare-root
+ * anchor. The caller fsyncs `raw` and `hash` before broadcast. `hash` is
+ * keccak256 of those exact bytes, which recovery rebroadcasts.
+ * `chainId` must be the id `assertWitnessChain` just verified. There is no
+ * default, and 8453 is refused unless RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1.
+ * The bare-root anchor above still hardcodes 8453. It does not read
+ * BASE_CHAIN_ID. That path is the #486 anchor and is not changed here.
+ */
+export async function signWitnessAppendRaw({
+  privateKey,
+  nonce,
+  to,
+  calldata,
+  fees = null,
+  chainId,
+}) {
+  const { Wallet, keccak256 } = await import('ethers');
+  const wallet = new Wallet(privateKey);
+  const fee = fees || FIXED_ANCHOR_FEES;
+  const chain = Number(chainId);
+  if (!Number.isSafeInteger(chain) || chain <= 0) {
+    throw new ReceiptLogRefused(
+      'witness_chain_unset',
+      'witness append signs only a chain id that eth_chainId already verified',
+    );
+  }
+  if (chain === 8453 && process.env.RECEIPT_LOG_WITNESS_ALLOW_MAINNET !== '1') {
+    throw new ReceiptLogRefused(
+      'witness_mainnet_refused',
+      'witness refuses Base mainnet (8453) until Christopher signs off. RECEIPT_LOG_WITNESS_ALLOW_MAINNET=1 is that sign-off and nothing else.',
+    );
+  }
+  const raw = await wallet.signTransaction({
+    to,
+    value: 0n,
+    data: calldata,
+    nonce: Number(nonce),
+    chainId: chain,
+    type: 2,
+    gasLimit: fee.gasLimit,
+    maxFeePerGas: fee.maxFeePerGas,
+    maxPriorityFeePerGas: fee.maxPriorityFeePerGas,
+  });
+  return { raw, hash: keccak256(raw), from: wallet.address, to };
+}
+
+/**
+ * eth_chainId must match BASE_CHAIN_ID before a witness signature and again
+ * before those bytes are broadcast. A raw transaction signed for a different
+ * chain is not sent.
+ */
+async function gateWitnessBroadcast({ raw = null, request = null, witnessReadChainId = null } = {}) {
+  const { assertWitnessChain } = await import('./receipt-log-witness.js');
+  const chainId = await assertWitnessChain({
+    request,
+    readChainId: witnessReadChainId,
+    rpcUrl: baseRpcUrl() || null,
+  });
+  if (raw) {
+    const { Transaction } = await import('ethers');
+    const signedFor = Number(Transaction.from(raw).chainId);
+    if (signedFor !== chainId) {
+      throw new ReceiptLogRefused(
+        'witness_chain_mismatch',
+        `signed witness transaction is chain ${signedFor}, verified chain is ${chainId}`,
+      );
+    }
+  }
+  return chainId;
+}
+
 async function baseAnchorFees(request) {
   const url = baseRpcUrl();
   if (!url && !request) return FIXED_ANCHOR_FEES;
@@ -331,7 +536,7 @@ async function baseAnchorFees(request) {
   };
 }
 
-async function broadcastBaseRaw(raw) {
+export async function broadcastBaseRaw(raw) {
   const rpc = baseRpcUrl();
   if (!rpc) throw new Error('no_rpc');
   const { JsonRpcProvider } = await import('ethers');
@@ -583,13 +788,41 @@ function sideNeedsRetry(side, envReady) {
 
 const QUIET_REASONS = new Set(['no_key', 'no_rpc', 'bad_key', 'bad_cluster', 'day_already_anchored']);
 
+function witnessFlagOn() {
+  return process.env.RECEIPT_LOG_WITNESS === '1';
+}
+
+function witnessSide(head) {
+  return head?.anchors?.witness || head?.witness_pending || null;
+}
+
+function publicWitness(record) {
+  if (!record) return null;
+  return {
+    status: record.status,
+    reason: record.reason || null,
+    to: record.to || null,
+    tx: record.tx || null,
+    calldata: record.calldata || null,
+    ...(record.size != null ? { size: record.size } : {}),
+    ...(record.root ? { root: String(record.root).replace(/^0x/, '') } : {}),
+  };
+}
+
+function witnessNeedsRetry(head) {
+  if (!witnessFlagOn()) return false;
+  const side = witnessSide(head);
+  if (side?.status === 'witnessed') return false;
+  return true;
+}
+
 function anchorNeedsRetry(head) {
   if (!head) return true;
   const base = head.anchors?.base || head.anchor;
   const sol = head.anchors?.solana;
   const baseReady = Boolean(process.env.RECEIPT_ANCHOR_PRIVATE_KEY);
   const solReady = Boolean(process.env.SOLANA_ANCHOR_SECRET_KEY && process.env.SOLANA_RPC_URL);
-  return sideNeedsRetry(base, baseReady) || sideNeedsRetry(sol, solReady);
+  return sideNeedsRetry(base, baseReady) || sideNeedsRetry(sol, solReady) || witnessNeedsRetry(head);
 }
 
 function transportFailure(side) {
@@ -658,7 +891,9 @@ export function dailyAnchorDue(head, now = new Date()) {
   if (!anchorNeedsRetry(head)) return false;
   const base = head.anchors?.base || head.anchor;
   const sol = head.anchors?.solana;
-  if (!transportFailure(base) && !transportFailure(sol)) return true;
+  const witness = witnessSide(head);
+  const witnessBusy = witness && ['broadcast', 'reverted', 'failed', 'signed', 'blocked', 'replaced'].includes(witness.status);
+  if (!transportFailure(base) && !transportFailure(sol) && !witnessBusy) return true;
   const age = now.getTime() - Date.parse(head.published_at);
   if (Number.isFinite(age) && age >= 0 && age < ANCHOR_RETRY_MS) return false;
   return true;
@@ -899,13 +1134,17 @@ export class ReceiptMerkleTree {
     };
   }
 
-  consistency(m, n, epochNumber = null) {
+  consistency(m, n, epochNumber = null, format = 'rfc6962') {
+    const fmt = format === 'legacy' ? 'legacy' : 'rfc6962';
     const epoch = this._epochForConsistency(m, n, epochNumber);
-    const proof = consistencyProof(epoch.leaves, m, n);
+    const proof = fmt === 'legacy'
+      ? consistencyProofLegacy(epoch.leaves, m, n)
+      : consistencyProof(epoch.leaves, m, n);
     const oldRoot = hex(rootOf(epoch.leaves.slice(0, m)));
     const newRoot = hex(rootOf(epoch.leaves.slice(0, n)));
     return {
-      schema: 'chit402.consistency.v1',
+      schema: fmt === 'legacy' ? 'chit402.consistency.v1' : 'chit402.consistency.v2',
+      format: fmt,
       payload_version: 2,
       epoch: epoch.epoch,
       first_tree_size: m,
@@ -950,6 +1189,12 @@ export class ReceiptMerkleTree {
     nonce = null,
     lookup = null,
     request = null,
+    witnessSend = null,
+    witnessReadHead = null,
+    witnessReadReceipt = null,
+    witnessReadNonce = null,
+    witnessLookup = null,
+    witnessReadChainId = null,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
@@ -1124,6 +1369,22 @@ export class ReceiptMerkleTree {
     anchor = { ...anchor, prev_root: prevRoot };
     solana = { ...solana, prev_root: prevRoot };
     const anchors = { base: anchor, solana };
+    const witnessRecord = await this._witnessAppend({
+      root,
+      day,
+      witnessSend,
+      witnessReadHead,
+      witnessReadReceipt,
+      witnessReadNonce,
+      witnessLookup,
+      witnessReadChainId,
+      request,
+    });
+    // An unconfirmed witness is not a signed claim. `broadcast`, `reverted`,
+    // and `failed` stay on `witness_pending`, outside the JWS.
+    let witnessPending = null;
+    if (witnessRecord?.status === 'witnessed') anchors.witness = witnessRecord;
+    else if (witnessRecord) witnessPending = witnessRecord;
     // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
     // field inside the Base or Solana records. Epoch fields are version 2.
     const claims = {
@@ -1157,6 +1418,20 @@ export class ReceiptMerkleTree {
         issuer_jwk: getIssuerPublicKeyJwk(),
       },
     };
+    if (witnessPending) head.witness_pending = witnessPending;
+    // The checkpoint note is signed on its own. It is not a JWS claim.
+    // The public head route omits it. GET /v1/receipts/tree/checkpoint serves it.
+    try {
+      head.checkpoint = signTreeCheckpoint({
+        epoch: this.epoch,
+        treeSize: this.leaves.length,
+        root,
+        prevEpochSize: this.prevEpochSize || 0,
+        prevEpochRoot: this.prevEpochRoot,
+      });
+    } catch (err) {
+      logger.error({ err }, 'receipt checkpoint was not signed');
+    }
     const sameSlot = last
       && dayOf(last.published_at) === day
       && last.root === root
@@ -1168,6 +1443,377 @@ export class ReceiptMerkleTree {
     this._rememberAnchor(day, scope, head);
     this._persistHead(head);
     return head;
+  }
+
+  /**
+   * Daily witness append. Signs the append, fsyncs the raw transaction and
+   * its keccak hash, then broadcasts those same bytes. A crash before
+   * broadcast rebroadcasts that raw transaction. A nonce taken by something
+   * else is `replaced`. Returns null when RECEIPT_LOG_WITNESS is not `1`.
+   */
+  async _witnessAppend({
+    root,
+    day,
+    witnessSend,
+    witnessReadHead = null,
+    witnessReadReceipt = null,
+    witnessReadNonce = null,
+    witnessLookup = null,
+    witnessReadChainId = null,
+    request = null,
+  }) {
+    const {
+      planWitnessAppend,
+      confirmWitnessAppend,
+      receiptWitnessEnabled,
+      witnessPrivateKey,
+    } = await import('./receipt-log-witness.js');
+    if (!receiptWitnessEnabled()) return null;
+    const pending = this._latestWitnessIntent(root, day);
+    if (pending?.raw && pending.tx && !['replaced', 'reverted', 'witnessed'].includes(pending.status)) {
+      const resumed = await this._resumeWitnessIntent(pending, {
+        root,
+        day,
+        witnessSend,
+        witnessReadHead,
+        witnessReadReceipt,
+        witnessLookup,
+        witnessReadChainId,
+        request,
+      });
+      if (resumed) return resumed;
+    }
+    const plan = await planWitnessAppend(this, root, {
+      readHead: witnessReadHead || undefined,
+    });
+    if (!plan) return null;
+    if (plan.status !== 'ready') return publicWitness(plan);
+    const nonce = await this._witnessNonce({ root, day, readNonce: witnessReadNonce });
+    if (nonce == null) return publicWitness({ status: 'pending', reason: 'nonce_unknown', to: plan.to });
+    const key = witnessPrivateKey();
+    if (!key) return publicWitness({ status: 'pending', reason: 'no_key', to: plan.to });
+    let chainId;
+    try {
+      chainId = await gateWitnessBroadcast({ request, witnessReadChainId });
+    } catch (err) {
+      return publicWitness({
+        status: 'failed',
+        reason: err.code || err.message || 'witness_chain_unset',
+        to: plan.to,
+      });
+    }
+    let signed;
+    try {
+      const fees = typeof witnessSend === 'function' ? null : await baseAnchorFees(request);
+      signed = await signWitnessAppendRaw({
+        privateKey: key,
+        nonce,
+        to: plan.to,
+        calldata: plan.calldata,
+        fees,
+        chainId,
+      });
+    } catch (err) {
+      return publicWitness({ status: 'failed', reason: err.code || err.message || 'sign_failed', to: plan.to });
+    }
+    const signedIntent = this._noteWitnessIntent({
+      root,
+      day,
+      nonce,
+      tx: signed.hash,
+      raw: signed.raw,
+      status: 'signed',
+      to: signed.to,
+      from: signed.from,
+      calldata: plan.calldata,
+    });
+    try {
+      await gateWitnessBroadcast({ raw: signed.raw, request, witnessReadChainId });
+    } catch (err) {
+      return publicWitness({
+        status: 'failed',
+        reason: err.code || 'witness_chain_mismatch',
+        to: signed.to,
+        tx: signed.hash,
+        calldata: plan.calldata,
+      });
+    }
+    try {
+      if (typeof witnessSend === 'function') {
+        await witnessSend({
+          to: signed.to,
+          from: signed.from,
+          data: plan.calldata,
+          raw: signed.raw,
+          hash: signed.hash,
+          nonce,
+          value: '0',
+        });
+      } else {
+        await broadcastBaseRaw(signed.raw);
+      }
+    } catch (err) {
+      return publicWitness({
+        status: 'signed',
+        reason: err.message || 'send_failed',
+        to: signed.to,
+        tx: signed.hash,
+        raw: signed.raw,
+        calldata: plan.calldata,
+      });
+    }
+    this._noteWitnessIntent({ ...signedIntent, status: 'broadcast', raw: signed.raw, tx: signed.hash });
+    const confirmed = await confirmWitnessAppend({
+      tx: signed.hash,
+      newSize: this.leaves.length,
+      newRoot: root,
+      to: signed.to,
+      calldata: plan.calldata,
+      raw: signed.raw,
+    }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
+    this._noteWitnessIntent({
+      ...signedIntent,
+      ...confirmed,
+      raw: signed.raw,
+      tx: signed.hash,
+    });
+    return publicWitness({ ...confirmed, raw: signed.raw, tx: signed.hash });
+  }
+
+  async _resumeWitnessIntent(intent, {
+    root,
+    day,
+    witnessSend,
+    witnessReadHead,
+    witnessReadReceipt,
+    witnessLookup,
+    witnessReadChainId = null,
+    request,
+  }) {
+    const {
+      confirmWitnessAppend,
+      lookupWitnessSubmission,
+    } = await import('./receipt-log-witness.js');
+    let found;
+    try {
+      found = typeof witnessLookup === 'function'
+        ? await witnessLookup(intent)
+        : await lookupWitnessSubmission({
+          txHash: intent.tx,
+          nonce: intent.nonce,
+          from: intent.from,
+          to: intent.to,
+          calldata: intent.calldata,
+          request,
+        });
+    } catch (err) {
+      this._noteWitnessIntent({ ...intent, status: 'blocked', reason: err.message || 'rpc_error' });
+      return publicWitness({
+        status: 'blocked',
+        reason: err.message || 'rpc_error',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.receiptOk === true) {
+      const confirmed = await confirmWitnessAppend({
+        tx: intent.tx,
+        newSize: this.leaves.length,
+        newRoot: root,
+        to: intent.to,
+        calldata: intent.calldata,
+        raw: intent.raw,
+      }, {
+        readReceipt: async () => ({ status: '0x1' }),
+        readHead: witnessReadHead,
+      });
+      this._noteWitnessIntent({ ...intent, ...confirmed, raw: intent.raw, tx: intent.tx });
+      return publicWitness({ ...confirmed, raw: intent.raw, tx: intent.tx });
+    }
+    if (found?.reverted) {
+      this._noteWitnessIntent({ ...intent, status: 'reverted', raw: intent.raw, tx: found.tx || intent.tx });
+      return publicWitness({
+        status: 'reverted',
+        reason: 'reverted',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.replaced) {
+      this._noteWitnessIntent({ ...intent, status: 'replaced', raw: intent.raw, tx: found.tx || intent.tx });
+      return publicWitness({
+        status: 'replaced',
+        reason: found.reason || 'nonce_consumed',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.pending || found?.blocked) {
+      const status = found.blocked ? 'blocked' : 'broadcast';
+      this._noteWitnessIntent({ ...intent, status, raw: intent.raw, tx: intent.tx });
+      return publicWitness({
+        status,
+        reason: found.reason || 'unmined',
+        to: intent.to,
+        tx: intent.tx,
+        raw: intent.raw,
+        calldata: intent.calldata,
+      });
+    }
+    if (found?.rebroadcast) {
+      if (!intent.raw) {
+        this._noteWitnessIntent({ ...intent, status: 'blocked' });
+        return publicWitness({ status: 'blocked', reason: 'signed_raw_missing', tx: intent.tx, to: intent.to });
+      }
+      try {
+        await gateWitnessBroadcast({ raw: intent.raw, request, witnessReadChainId });
+        if (typeof witnessSend === 'function') {
+          await witnessSend({
+            to: intent.to,
+            from: intent.from,
+            data: intent.calldata,
+            raw: intent.raw,
+            hash: intent.tx,
+            nonce: intent.nonce,
+            value: '0',
+          });
+        } else {
+          await broadcastBaseRaw(intent.raw);
+        }
+      } catch (err) {
+        const refused = err.code === 'witness_chain_mismatch'
+          || err.code === 'witness_chain_unset'
+          || err.code === 'witness_mainnet_refused';
+        this._noteWitnessIntent({ ...intent, status: refused ? 'failed' : 'blocked', raw: intent.raw });
+        return publicWitness({
+          status: refused ? 'failed' : 'blocked',
+          reason: err.code || err.message || 'rebroadcast_failed',
+          to: intent.to,
+          tx: intent.tx,
+          raw: intent.raw,
+          calldata: intent.calldata,
+        });
+      }
+      this._noteWitnessIntent({ ...intent, status: 'broadcast', raw: intent.raw, tx: intent.tx });
+      const confirmed = await confirmWitnessAppend({
+        tx: intent.tx,
+        newSize: this.leaves.length,
+        newRoot: root,
+        to: intent.to,
+        calldata: intent.calldata,
+        raw: intent.raw,
+      }, { readReceipt: witnessReadReceipt, readHead: witnessReadHead });
+      this._noteWitnessIntent({ ...intent, ...confirmed, raw: intent.raw, tx: intent.tx });
+      return publicWitness({ ...confirmed, raw: intent.raw, tx: intent.tx });
+    }
+    this._noteWitnessIntent({ ...intent, status: 'blocked', raw: intent.raw });
+    return publicWitness({
+      status: 'blocked',
+      reason: found?.reason || 'witness_intent_blocked',
+      to: intent.to,
+      tx: intent.tx,
+      raw: intent.raw,
+      calldata: intent.calldata,
+    });
+  }
+
+  _latestWitnessIntent(root, day) {
+    const rows = (this.anchorIntents || []).filter((row) => (
+      row.chain === 'base-witness' && row.root === root && (day == null || row.day === day)
+    ));
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => ({
+      ...acc,
+      ...row,
+      raw: row.raw || acc.raw || null,
+      tx: row.tx || acc.tx || null,
+      from: row.from || acc.from || null,
+      to: row.to || acc.to || null,
+      calldata: row.calldata || acc.calldata || null,
+    }));
+  }
+
+  /**
+   * Reserve the appender's pending nonce and fsync it before the signature.
+   * A signed raw transaction for this root is not given a new nonce.
+   */
+  async _witnessNonce({ root, day, readNonce }) {
+    const prior = this._latestWitnessIntent(root, day);
+    if (prior?.raw && prior.tx && !['replaced', 'reverted'].includes(prior.status)) return prior.nonce;
+    if (prior && prior.nonce != null && !prior.tx && prior.status === 'intent') return prior.nonce;
+    let nonce = null;
+    if (typeof readNonce === 'function') nonce = await readNonce();
+    else {
+      try {
+        const { witnessSignerAddress, witnessRpcUrl } = await import('./receipt-log-witness.js');
+        const address = witnessSignerAddress();
+        const rpc = witnessRpcUrl();
+        if (address && rpc) {
+          const { JsonRpcProvider } = await import('ethers');
+          const provider = new JsonRpcProvider(rpc);
+          nonce = await provider.getTransactionCount(address, 'pending');
+        }
+      } catch {
+        nonce = null;
+      }
+    }
+    if (nonce == null) return null;
+    if (prior?.status === 'replaced' || prior?.status === 'reverted') {
+      const taken = Number(prior.nonce);
+      if (Number.isInteger(taken) && Number(nonce) <= taken) nonce = taken + 1;
+    }
+    if (!this.dir) return nonce;
+    const record = {
+      v: 1,
+      op: 'anchor_intent',
+      chain: 'base-witness',
+      root,
+      day,
+      nonce,
+      status: 'intent',
+      epoch: this.epoch,
+    };
+    appendJournal(this.dir, record);
+    this.anchorIntents.push(record);
+    return nonce;
+  }
+
+  _noteWitnessIntent(row) {
+    if (!row) return null;
+    const prior = this._latestWitnessIntent(row.root, row.day);
+    const record = {
+      v: 1,
+      op: 'anchor_intent',
+      chain: 'base-witness',
+      root: row.root,
+      day: row.day,
+      nonce: row.nonce ?? prior?.nonce ?? null,
+      tx: row.tx || prior?.tx || null,
+      raw: row.raw || prior?.raw || null,
+      from: row.from || prior?.from || null,
+      to: row.to || prior?.to || null,
+      calldata: row.calldata || prior?.calldata || null,
+      status: row.status,
+      epoch: this.epoch,
+    };
+    this.anchorIntents.push(record);
+    if (this.dir) appendJournal(this.dir, record);
+    return record;
+  }
+
+  /**
+   * Signed C2SP checkpoint for the latest signed head. Null when nothing
+   * has been signed. The note is not a field of the public JSON head.
+   */
+  checkpointText() {
+    const head = this.latestSignedHead();
+    return head?.checkpoint || null;
   }
 
   currentBundleIndexHash() {
@@ -2447,7 +3093,8 @@ function gateEpochRecord(tree) {
 /**
  * Chain half of boot. Reconciles a write-ahead anchor intent, then refuses
  * if the latest Base root is not in the journal. The fresh-genesis flag
- * skips the refusal.
+ * skips that anchor refusal and the epoch-record refusal. It does not skip
+ * the witness check when RECEIPT_LOG_WITNESS=1.
  */
 export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts = {}) {
   if (!tree) return tree;
@@ -2476,10 +3123,68 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
       ? async (raw) => { await broadcastBaseRaw(raw); }
       : null);
   if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast });
+  const {
+    assertWitnessJournal,
+    assertDistinctWitnessKey,
+    readWitnessCode,
+    readWitnessCreation,
+    receiptWitnessEnabled,
+    witnessAddress,
+    witnessCreationPin,
+    witnessCreationMatches,
+    assertWitnessChain,
+  } = await import('./receipt-log-witness.js');
+  const witnessOn = opts.witness === true || (opts.witness !== false && receiptWitnessEnabled());
+  let creationPin = null;
+  if (witnessOn) {
+    assertDistinctWitnessKey();
+    await assertWitnessChain({
+      rpcUrl: opts.rpcUrl,
+      request: opts.request,
+      readChainId: opts.readChainId,
+    });
+    creationPin = opts.creationPin || witnessCreationPin();
+    if (!creationPin?.address || !creationPin?.tx) {
+      throw new ReceiptLogRefused(
+        'witness_creation_unpinned',
+        'ChitLogWitness address and creation tx are not pinned. A runtime code hash does not prove the constructor ran.',
+      );
+    }
+    const creation = typeof opts.readCreation === 'function'
+      ? await opts.readCreation(creationPin.tx)
+      : await readWitnessCreation({ txHash: creationPin.tx, rpcUrl: opts.rpcUrl, request: opts.request });
+    if (!creation?.input || !creation?.receipt) {
+      throw new ReceiptLogRefused(
+        'witness_creation_unpinned',
+        'the pinned ChitLogWitness creation transaction was not loaded',
+      );
+    }
+    const created = witnessCreationMatches(creation.input, creation.receipt, creationPin.address);
+    if (!created.ok) {
+      throw new ReceiptLogRefused(created.reason || 'witness_creation', 'witness creation transaction does not match this build');
+    }
+    const configured = String(opts.address || witnessAddress() || '').toLowerCase();
+    if (configured && configured !== String(creationPin.address).toLowerCase()) {
+      throw new ReceiptLogRefused(
+        'witness_address',
+        `CHIT_LOG_WITNESS_ADDRESS ${configured} is not the pinned creation ${creationPin.address}`,
+      );
+    }
+  }
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
-  if (allow) return tree;
-  await assertLatestBaseAnchor(tree, opts);
-  gateEpochRecord(tree);
+  if (!allow) {
+    await assertLatestBaseAnchor(tree, opts);
+    gateEpochRecord(tree);
+  }
+  // The fresh-genesis flag does not skip the witness extension check.
+  if (witnessOn) {
+    const readCode = opts.readCode || (() => readWitnessCode({
+      address: creationPin.address,
+      rpcUrl: opts.rpcUrl,
+      request: opts.request,
+    }));
+    await assertWitnessJournal(tree, { ...opts, address: creationPin.address, readCode });
+  }
   return tree;
 }
 

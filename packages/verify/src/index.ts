@@ -1824,6 +1824,17 @@ export {
 export {
   verifyAnchoredRoot,
   verifyMerkleInclusion,
+  verifyConsistency,
+  fetchWitnessHead,
+  fetchWitnessCode,
+  fetchWitnessCreation,
+  witnessCodeMatches,
+  witnessCreationMatches,
+  countersignDigest,
+  countersignatureMatches,
+  WITNESS_COUNTERSIGN_DOMAIN,
+  CHIT_LOG_WITNESS_CODEHASH,
+  CHIT_LOG_WITNESS_INIT_CODE_HASH,
   extractMemos,
   parseAnchorMemo,
   leafHash,
@@ -1836,6 +1847,7 @@ export {
   type AnchorInclusion,
   type AnchorHead,
   type VerifyAnchoredRootInput,
+  type WitnessHead,
 } from './anchor-witness.js';
 
 export {

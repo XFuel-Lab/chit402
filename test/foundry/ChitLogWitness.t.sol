@@ -1,0 +1,509 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test, console2} from "forge-std/Test.sol";
+import {ChitLogWitness, ChitLogPins} from "../../contracts/witness/ChitLogWitness.sol";
+import {Rfc6962} from "../../contracts/witness/Rfc6962.sol";
+import {DeployChitLogWitness} from "../../script/DeployChitLogWitness.s.sol";
+
+contract ChitLogWitnessTest is Test {
+    address owner = address(0x0A11);
+    address appender = address(0xA99E);
+    address other = address(0xB0B);
+
+    ChitLogWitness witness;
+
+    function setUp() public {
+        witness = new ChitLogWitness(
+            owner, appender, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT
+        );
+    }
+
+    function test_constructorRejectsAnyOtherGenesis() public {
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 2, 1, ChitLogPins.EPOCH2_OPENING_ROOT);
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 1, 3, ChitLogPins.EPOCH1_FINAL_ROOT);
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        new ChitLogWitness(owner, appender, 1, 4, bytes32(uint256(1)));
+    }
+
+    // Runtime code hash of this solc 0.8.24 / optimizer-200 build.
+    // The same value is pinned in the gateway and in the verify package.
+    bytes32 internal constant CHIT_LOG_WITNESS_CODEHASH =
+        0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a;
+    bytes32 internal constant CHIT_LOG_WITNESS_INIT_CODE_HASH =
+        0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56;
+
+    function test_runtimeCodeIsPinned() public pure {
+        assertEq(keccak256(type(ChitLogWitness).runtimeCode), CHIT_LOG_WITNESS_CODEHASH);
+        assertEq(keccak256(type(ChitLogWitness).creationCode), CHIT_LOG_WITNESS_INIT_CODE_HASH);
+    }
+
+    function test_pinsMatchTheReceiptLog() public view {
+        assertEq(witness.epoch(), 1);
+        assertEq(witness.treeSize(), 4);
+        assertEq(witness.root(), ChitLogPins.EPOCH1_FINAL_ROOT);
+        (uint256 epoch, uint256 size, bytes32 root) = witness.head();
+        assertEq(epoch, 1);
+        assertEq(size, 4);
+        assertEq(root, ChitLogPins.EPOCH1_FINAL_ROOT);
+        assertEq(witness.owner(), owner);
+        assertEq(witness.appender(), appender);
+    }
+
+    function test_oct5ResetIsRefusedUntilTheSafeDeclaresEpoch2() public {
+        bytes32[] memory emptyProof = new bytes32[](0);
+        vm.prank(appender);
+        vm.expectRevert(
+            abi.encodeWithSelector(ChitLogWitness.SizeNotExtended.selector, 4, 1)
+        );
+        witness.append(1, ChitLogPins.EPOCH2_OPENING_ROOT, emptyProof);
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ChitLogWitness.PrevHeadMismatch.selector, 4, ChitLogPins.EPOCH1_FINAL_ROOT
+            )
+        );
+        witness.declareEpoch(2, 0, bytes32(0), 1, ChitLogPins.EPOCH2_OPENING_ROOT);
+
+        vm.prank(owner);
+        vm.expectEmit(true, false, false, true, address(witness));
+        emit ChitLogWitness.EpochDeclared(
+            2, 4, ChitLogPins.EPOCH1_FINAL_ROOT, 1, ChitLogPins.EPOCH2_OPENING_ROOT
+        );
+        witness.declareEpoch(
+            2, 4, ChitLogPins.EPOCH1_FINAL_ROOT, 1, ChitLogPins.EPOCH2_OPENING_ROOT
+        );
+        assertEq(witness.epoch(), 2);
+        assertEq(witness.treeSize(), 1);
+        assertEq(witness.root(), ChitLogPins.EPOCH2_OPENING_ROOT);
+    }
+
+    function test_epoch2RejectsAnyOtherOpening() public {
+        vm.prank(owner);
+        vm.expectRevert(ChitLogWitness.PinMismatch.selector);
+        witness.declareEpoch(2, 4, ChitLogPins.EPOCH1_FINAL_ROOT, 1, bytes32(uint256(9)));
+    }
+
+    function test_appenderCannotDeclareOrChangeRoles() public {
+        vm.startPrank(appender);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.NotOwner.selector, appender));
+        witness.declareEpoch(
+            2, 4, ChitLogPins.EPOCH1_FINAL_ROOT, 1, ChitLogPins.EPOCH2_OPENING_ROOT
+        );
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.NotOwner.selector, appender));
+        witness.setAppender(other);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.NotOwner.selector, appender));
+        witness.transferOwner(other);
+        vm.stopPrank();
+        assertEq(witness.appender(), appender);
+        assertEq(witness.owner(), owner);
+        assertEq(witness.epoch(), 1);
+    }
+
+    function test_ownerCannotAppend() public {
+        bytes32[] memory proof = new bytes32[](0);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.NotAppender.selector, owner));
+        witness.append(5, bytes32(uint256(1)), proof);
+    }
+
+    function test_ownerCanReplaceTheAppenderAndOnlyTheNewOneAppends() public {
+        vm.prank(owner);
+        witness.setAppender(other);
+        assertEq(witness.appender(), other);
+        bytes32[] memory proof = new bytes32[](0);
+        vm.prank(appender);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.NotAppender.selector, appender));
+        witness.append(5, bytes32(uint256(1)), proof);
+    }
+
+    function test_ethTransferReverts() public {
+        vm.deal(address(this), 1 ether);
+        (bool ok,) = address(witness).call{value: 1 ether}("");
+        assertFalse(ok);
+        assertEq(address(witness).balance, 0);
+    }
+
+    function test_vectorsMatchTheGoFixture() public view {
+        string memory raw = vm.readFile("services/gateway/test/fixtures/rfc6962-consistency-40.txt");
+        string[] memory lines = vm.split(raw, "\n");
+        uint256 checked = 0;
+        uint256 extensions = 0;
+        for (uint256 i = 0; i < lines.length; i++) {
+            if (bytes(lines[i]).length == 0) continue;
+            string[] memory parts = vm.split(lines[i], " ");
+            uint256 m = vm.parseUint(parts[0]);
+            uint256 n = vm.parseUint(parts[1]);
+            bytes32 oldRoot = vm.parseBytes32(string.concat("0x", parts[2]));
+            bytes32 newRoot = vm.parseBytes32(string.concat("0x", parts[3]));
+            bytes32[] memory proof = _proof(parts[4]);
+            assertTrue(Rfc6962.verify(m, n, oldRoot, newRoot, proof), lines[i]);
+            if (m < n) {
+                extensions++;
+                if (proof.length > 0) {
+                    proof[0] = bytes32(uint256(proof[0]) ^ 1);
+                    assertFalse(Rfc6962.verify(m, n, oldRoot, newRoot, proof));
+                }
+            }
+            checked++;
+        }
+        assertEq(checked, 820);
+        assertEq(extensions, 780);
+    }
+
+    function test_verifierAgreesAbove2To31() public {
+        string[] memory cmd = new string[](3);
+        cmd[0] = "node";
+        cmd[1] = "services/gateway/scripts/rfc6962-dump.mjs";
+        cmd[2] = "--above";
+        string memory line = _trim(string(vm.ffi(cmd)));
+        string[] memory parts = vm.split(line, " ");
+        uint256 m = vm.parseUint(parts[0]);
+        uint256 n = vm.parseUint(parts[1]);
+        assertGt(m, 2 ** 31);
+        bytes32 oldRoot = vm.parseBytes32(string.concat("0x", parts[2]));
+        bytes32 newRoot = vm.parseBytes32(string.concat("0x", parts[3]));
+        bytes32[] memory proof = _proof(parts[4]);
+        assertTrue(Rfc6962.verify(m, n, oldRoot, newRoot, proof));
+    }
+
+    function test_appendUsesTheOffChainProofAndRejectsAShrink() public {
+        (uint256 m, uint256 n, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(4, 8, 7);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 3, m, oldRoot);
+        vm.prank(appender);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.SizeNotExtended.selector, m, m));
+        local.append(m, newRoot, proof);
+        uint256 gasBefore = gasleft();
+        vm.prank(appender);
+        local.append(n, newRoot, proof);
+        uint256 used = gasBefore - gasleft();
+        console2.log("append gas m=4 n=8", used);
+        assertEq(local.treeSize(), n);
+        assertEq(local.root(), newRoot);
+        assertFalse(local.accepts(n, newRoot, proof));
+        bytes32[] memory wrong = proof;
+        if (wrong.length > 0) wrong[0] = bytes32(uint256(1));
+        vm.prank(appender);
+        vm.expectRevert(ChitLogWitness.ProofRejected.selector);
+        local.append(n + 1, bytes32(uint256(2)), wrong);
+    }
+
+    function testFuzz_appendMatchesJs(uint8 nRaw, uint8 mRaw, uint64 seed) public {
+        uint256 n = bound(nRaw, 2, 40);
+        uint256 m = bound(mRaw, 1, n - 1);
+        (uint256 gotM, uint256 gotN, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(m, n, seed);
+        assertEq(gotM, m);
+        assertEq(gotN, n);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 4, m, oldRoot);
+        assertTrue(local.accepts(n, newRoot, proof));
+        vm.prank(appender);
+        local.append(n, newRoot, proof);
+        assertEq(local.treeSize(), n);
+        assertEq(local.root(), newRoot);
+        vm.prank(appender);
+        vm.expectRevert(abi.encodeWithSelector(ChitLogWitness.SizeNotExtended.selector, n, m));
+        local.append(m, oldRoot, proof);
+    }
+
+    function test_gasLargerAppend() public {
+        (uint256 m, uint256 n, bytes32 oldRoot, bytes32 newRoot, bytes32[] memory proof) = _one(32, 40, 99);
+        ChitLogWitness local = new ChitLogWitnessHarness(owner, appender, 3, m, oldRoot);
+        uint256 gasBefore = gasleft();
+        vm.prank(appender);
+        local.append(n, newRoot, proof);
+        console2.log("append gas m=32 n=40", gasBefore - gasleft());
+        assertEq(local.root(), newRoot);
+    }
+
+    function _possession(uint256 pk, string memory url, address key) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, witness.registrationDigest(url, key));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _countersign(
+        uint256 pk,
+        bytes32 id,
+        uint256 epoch,
+        address key,
+        string memory url,
+        uint256 treeSize,
+        bytes32 root
+    ) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(pk, witness.countersignDigest(id, epoch, key, url, treeSize, root));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_countersignatureNamesTheRegisteredRow() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        bytes memory possession = _possession(pk, url, key);
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(url, key, possession);
+        bytes32 root = keccak256("head");
+        bytes memory sig = _countersign(pk, id, 0, key, url, 4, root);
+        assertTrue(witness.countersignatureMatches(id, 0, key, url, 4, root, sig));
+        assertFalse(witness.countersignatureMatches(id, 1, key, url, 4, root, sig));
+        assertFalse(witness.countersignatureMatches(id, 0, key, url, 4, root, possession));
+    }
+
+    function test_countersignatureRejectsADifferentKeyOrUrl() public {
+        uint256 pk = 0xA11;
+        uint256 otherPk = 0xB22;
+        address key = vm.addr(pk);
+        address otherKey = vm.addr(otherPk);
+        string memory url = "https://witness.example/chit-log";
+        string memory otherUrl = "https://other.example/chit-log";
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(url, key, _possession(pk, url, key));
+        bytes32 root = keccak256("head");
+        bytes memory otherKeySig = _countersign(otherPk, id, 0, otherKey, url, 4, root);
+        assertFalse(witness.countersignatureMatches(id, 0, otherKey, url, 4, root, otherKeySig));
+        bytes32 otherId = keccak256(bytes(otherUrl));
+        bytes memory otherUrlSig = _countersign(pk, otherId, 0, key, otherUrl, 4, root);
+        assertFalse(witness.countersignatureMatches(id, 0, key, otherUrl, 4, root, otherUrlSig));
+        assertFalse(witness.countersignatureMatches(otherId, 0, key, otherUrl, 4, root, otherUrlSig));
+    }
+
+    function test_missingProofOfPossessionIsRefused() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        bytes memory sig = _possession(pk, url, key);
+        vm.expectRevert(ChitLogWitness.PossessionMissing.selector);
+        witness.register(url, key, "");
+        vm.expectRevert(ChitLogWitness.EmptyKey.selector);
+        witness.register(url, address(0), sig);
+    }
+
+    function test_proofOverADifferentUrlIsRefused() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        bytes memory sig = _possession(pk, "https://witness.example/chit-log", key);
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register("https://other.example/chit-log", key, sig);
+    }
+
+    function test_proofByADifferentKeyIsRefused() public {
+        uint256 pkA = 0xA11;
+        uint256 pkB = 0xB22;
+        address keyA = vm.addr(pkA);
+        bytes memory sig = _possession(pkB, "https://witness.example/chit-log", vm.addr(pkB));
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register("https://witness.example/chit-log", keyA, sig);
+    }
+
+    function test_freshRegistrationInheritsNothing() public {
+        uint256 pkA = 0xA11;
+        uint256 pkB = 0xB22;
+        address keyA = vm.addr(pkA);
+        address keyB = vm.addr(pkB);
+        string memory url = "https://witness.example/chit-log";
+        string memory otherUrl = "https://other.example/chit-log";
+        bytes memory sigA = _possession(pkA, url, keyA);
+        bytes memory sigB = _possession(pkB, otherUrl, keyB);
+        vm.prank(address(0x571A));
+        bytes32 first = witness.register(url, keyA, sigA);
+        vm.prank(address(0x07A2));
+        bytes32 second = witness.register(otherUrl, keyB, sigB);
+        assertTrue(second != first);
+        (address secondKey, address secondOp,) = witness.witnessRecord(second);
+        assertEq(secondKey, keyB);
+        assertEq(secondOp, address(0x07A2));
+        (address firstKey, address firstOp,) = witness.witnessRecord(first);
+        assertEq(firstKey, keyA);
+        assertEq(firstOp, address(0x571A));
+    }
+
+    function test_possessionDoesNotReplayToAnotherChainOrContract() public {
+        uint256 pk = 0xC33;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        vm.chainId(84532);
+        bytes memory sig = _possession(pk, url, key);
+        vm.chainId(8453);
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register(url, key, sig);
+
+        vm.chainId(84532);
+        sig = _possession(pk, url, key);
+        ChitLogWitness otherWitness = new ChitLogWitness(
+            owner, appender, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT
+        );
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        otherWitness.register(url, key, sig);
+        witness.register(url, key, sig);
+        assertEq(witness.discoverable(keccak256(bytes(url))), true);
+    }
+
+    function test_nullKeyRowIsUndiscoverable() public view {
+        bytes32 id = keccak256("no-such-row");
+        (address key,,) = witness.witnessRecord(id);
+        assertEq(key, address(0));
+        assertEq(witness.discoverable(id), false);
+        assertEq(witness.independent(id), false);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = id;
+        assertEq(witness.quorum(ids), 0);
+    }
+
+    function test_ourHostOnlyCopyDoesNotCount() public {
+        uint256 pk = 0xD44;
+        address key = vm.addr(pk);
+        string memory ours = "https://api.chit402.com/.well-known/issuer-history.json";
+        assertEq(witness.copyOnOurHost(ours), true);
+        assertEq(witness.copyOnOurHost("https://logs.chit402.com/witness"), true);
+        assertEq(witness.copyOnOurHost("https://API.CHIT402.com/x"), true);
+        assertEq(witness.copyOnOurHost("/.well-known/issuer-history.json"), true);
+        assertEq(witness.copyOnOurHost("https://witness.example/chit-log"), false);
+        assertEq(witness.copyOnOurHost("https://chit402.com.example/witness"), false);
+        bytes memory sig = _possession(pk, ours, key);
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(ours, key, sig);
+        assertEq(witness.discoverable(id), true);
+        assertEq(witness.independent(id), false);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = id;
+        assertEq(witness.quorum(ids), 0);
+    }
+
+    function test_operatorUsDoesNotCount() public {
+        uint256 pk = 0xD44;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        string memory otherLog = "https://witness.example/other-log";
+        bytes memory sig = _possession(pk, url, key);
+        bytes memory sigOther = _possession(pk, otherLog, key);
+        vm.prank(owner);
+        bytes32 id = witness.register(url, key, sig);
+        assertEq(witness.independent(id), false);
+        vm.prank(address(0x571A));
+        bytes32 outside = witness.register(otherLog, key, sigOther);
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = id;
+        ids[1] = outside;
+        assertEq(witness.quorum(ids), 1);
+    }
+
+    function test_preflightCushionRollsBack() public {
+        DeployChitLogWitness deploy = new DeployChitLogWitness();
+        uint256 codeBefore = address(witness).code.length;
+        (uint256 measured, uint256 cushioned) = deploy.preflight(owner, appender);
+        assertEq(measured, deploy.DECLARE_EPOCH_GAS_MAX());
+        assertEq(cushioned, deploy.cushionGas(measured));
+        assertEq(deploy.cushionGas(deploy.APPEND_GAS_MAX()), 72_000);
+        assertEq(deploy.cushionGas(deploy.DECLARE_EPOCH_GAS_MAX()), 60_000);
+        assertEq(address(witness).code.length, codeBefore);
+        assertEq(witness.epoch(), 1);
+        console2.log("declareEpoch preflight gas", measured);
+        console2.log("declareEpoch cushioned gas", cushioned);
+    }
+
+    function _one(uint256 m, uint256 n, uint256 seed)
+        internal
+        returns (uint256, uint256, bytes32, bytes32, bytes32[] memory)
+    {
+        string[] memory cmd = new string[](6);
+        cmd[0] = "node";
+        cmd[1] = "services/gateway/scripts/rfc6962-dump.mjs";
+        cmd[2] = "--one";
+        cmd[3] = vm.toString(m);
+        cmd[4] = vm.toString(n);
+        cmd[5] = vm.toString(seed);
+        string memory line = string(vm.ffi(cmd));
+        // ffi keeps the trailing newline some runtimes add.
+        string[] memory parts = vm.split(line, " ");
+        return (
+            vm.parseUint(parts[0]),
+            vm.parseUint(parts[1]),
+            vm.parseBytes32(string.concat("0x", parts[2])),
+            vm.parseBytes32(string.concat("0x", parts[3])),
+            _proof(_trim(parts[4]))
+        );
+    }
+
+    function _trim(string memory body) internal pure returns (string memory) {
+        bytes memory raw = bytes(body);
+        uint256 len = raw.length;
+        while (len > 0 && (raw[len - 1] == bytes1(0x0a) || raw[len - 1] == bytes1(0x0d))) len--;
+        if (len == raw.length) return body;
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) out[i] = raw[i];
+        return string(out);
+    }
+
+    function _proof(string memory body) internal pure returns (bytes32[] memory nodes) {
+        if (keccak256(bytes(body)) == keccak256("-")) return new bytes32[](0);
+        string[] memory parts = vm.split(body, ",");
+        nodes = new bytes32[](parts.length);
+        for (uint256 i = 0; i < parts.length; i++) {
+            nodes[i] = vm.parseBytes32(string.concat("0x", parts[i]));
+        }
+    }
+}
+
+contract ChitLogWitnessInvariant is Test {
+    ChitLogWitness witness;
+    AppenderHandler handler;
+
+    function setUp() public {
+        witness = new ChitLogWitness(
+            address(this), address(0xA11), 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT
+        );
+        handler = new AppenderHandler(witness, address(0xA11));
+        targetContract(address(handler));
+    }
+
+    /// The appender is the only caller in this handler. Junk proofs revert.
+    /// Epoch, size, root, and both roles stay on the pinned epoch-1 head.
+    function invariant_appenderCannotMoveTheHead() public view {
+        assertEq(witness.epoch(), 1);
+        assertEq(witness.treeSize(), 4);
+        assertEq(witness.root(), ChitLogPins.EPOCH1_FINAL_ROOT);
+        assertEq(witness.owner(), address(this));
+        assertEq(witness.appender(), address(0xA11));
+    }
+}
+
+/// @dev Starts from the pinned constructor, then sets a test head. The
+///      production contract reverts on any other genesis.
+contract ChitLogWitnessHarness is ChitLogWitness {
+    constructor(address owner_, address appender_, uint256 epoch_, uint256 size_, bytes32 root_)
+        ChitLogWitness(owner_, appender_, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT)
+    {
+        _setHead(epoch_, size_, root_);
+    }
+}
+
+contract AppenderHandler is Test {
+    ChitLogWitness public witness;
+    address public appender;
+
+    constructor(ChitLogWitness w, address a) {
+        witness = w;
+        appender = a;
+    }
+
+    function appendJunk(uint256 newSize, bytes32 newRoot, uint256 salt) external {
+        bytes32[] memory proof = new bytes32[](newSize % 3);
+        for (uint256 i = 0; i < proof.length; i++) proof[i] = bytes32(salt + i);
+        vm.prank(appender);
+        try witness.append(newSize, newRoot, proof) {} catch {}
+    }
+
+    function declareJunk(uint256 epoch, uint256 size, bytes32 root) external {
+        vm.prank(appender);
+        try witness.declareEpoch(epoch, 4, ChitLogPins.EPOCH1_FINAL_ROOT, size, root) {} catch {}
+    }
+
+    function stealRoles(address next) external {
+        vm.prank(appender);
+        try witness.setAppender(next) {} catch {}
+        vm.prank(appender);
+        try witness.transferOwner(next) {} catch {}
+    }
+}

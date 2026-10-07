@@ -2,8 +2,9 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables. `quiet` suppresses the dotenv banner, which
+// otherwise writes to stdout and corrupts a CLI that prints proofs.
+dotenv.config({ quiet: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

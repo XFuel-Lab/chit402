@@ -72,9 +72,17 @@ Options:
   --rpc               With a receipt, an inclusion proof, and a tree head: check the
                       leaf, then the Solana memo and the Base calldata for that root.
                       A v2 head also needs the signed epoch record.
+                      When --witness or CHIT_LOG_WITNESS_ADDRESS is set, also read
+                      that contract's head and require this head to match it or to
+                      extend it with --consistency
   --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
   --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
                       origin plus /v1/receipts/tree/epoch
+  --witness <address> ChitLogWitness address. Omit it and the contract is not checked.
+                      This release has no mainnet address.
+  --consistency <file>
+                      RFC 6962 consistency proof (chit402.consistency.v2) from the
+                      contract head to this signed head
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
   --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
   --json              Output JSON instead of human-readable
@@ -174,6 +182,8 @@ function parseArgs(args: string[]): {
   headFile: string | null;
   epochRecordFile: string | null;
   epochUrl: string | null;
+  witnessAddress: string | null;
+  consistencyFile: string | null;
   positionals: string[];
   json: boolean;
   quiet: boolean;
@@ -201,6 +211,8 @@ function parseArgs(args: string[]): {
     headFile: null as string | null,
     epochRecordFile: null as string | null,
     epochUrl: null as string | null,
+    witnessAddress: null as string | null,
+    consistencyFile: null as string | null,
     positionals: [] as string[],
     json: false,
     quiet: false,
@@ -244,6 +256,10 @@ function parseArgs(args: string[]): {
       result.epochRecordFile = args[++i];
     } else if (arg === '--epoch-url' && args[i + 1]) {
       result.epochUrl = args[++i];
+    } else if (arg === '--witness' && args[i + 1]) {
+      result.witnessAddress = args[++i];
+    } else if (arg === '--consistency' && args[i + 1]) {
+      result.consistencyFile = args[++i];
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
     } else if (arg === '--strict-issuer-history') {
@@ -344,6 +360,17 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.base.tx) console.log(`  Base tx:       ${result.base.tx}`);
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
+  if (result.witness) {
+    const label = !result.witness.configured
+      ? 'not configured'
+      : (result.witness.checked ? mark(result.witness.valid) : (result.witness.reason || 'not checked'));
+    console.log(`  Witness:       ${label}`);
+    if (result.witness.address) console.log(`  Witness addr:  ${result.witness.address}`);
+    if (result.witness.size != null) console.log(`  Witness head:  epoch ${result.witness.epoch} size ${result.witness.size}`);
+    if (result.witness.reason && !result.witness.valid && result.witness.configured) {
+      console.log(`  Witness reason:${result.witness.reason}`);
+    }
+  }
   console.log('');
   console.log('  What this proves');
   console.log('  ─────────────────────────────────────────────────');
@@ -469,6 +496,22 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
     }
   }
+  const witnessAddress = args.witnessAddress || process.env.CHIT_LOG_WITNESS_ADDRESS || null;
+  let consistency = null;
+  if (args.consistencyFile) {
+    try {
+      consistency = readJson(args.consistencyFile) as {
+        first_tree_size?: number;
+        second_tree_size?: number;
+        first_root?: string;
+        second_root?: string;
+        proof?: string[];
+      };
+    } catch (err) {
+      console.error(`Error reading consistency proof: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
   const result = await verifyAnchoredRoot({
     receipt,
     inclusion,
@@ -477,6 +520,8 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     epochRecord,
     verifyEpochSignature,
+    witnessAddress,
+    consistency,
   });
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
   const lane = verified.receipt_lane;

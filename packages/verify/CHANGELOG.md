@@ -5,6 +5,9 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
 
+### Added
+- **Witness head check.** `xfuel-verify --rpc --witness <address>` reads `ChitLogWitness.head()`. The signed head must match that head, or `--consistency` must be an RFC 6962 proof from it. With no address, the command says the contract was not checked. The creation transaction input must be this build's init code plus the epoch-1 constructor args, and the receipt must have created that address. Until `CHIT_LOG_WITNESS_CREATION_TX` is set, the check fails `witness_creation_unpinned`. A matching runtime hash with other init code fails `witness_creation_input`. `BUILD_DIGEST.txt` moved because `src/anchor-witness.ts` and `src/cli.ts` changed. That file is the digest of this source tree. It does not rewrite the pinned epoch 1 genesis `422cceb1`. Not published. The package version is unchanged.
+
 ### Security
 - **Epoch 1 proofs fail closed.** A head may omit `epoch` only when it is `chit402.tree_head.v1` or payload version 1. A version 2 head with no `epoch` fails `epoch_missing`, including inside `verifyAnchoredRoot`. An epoch-1 inclusion root must be a pinned prefix: size 1 is the genesis leaf of digest `422cceb1`, size 2 is `ecf9a330…`, size 4 is `dd20e39a…`. Size 3 and every other size fail.
 - **`xfuel-verify --rpc` loads the signed epoch record.** A v2 head fetches `GET /v1/receipts/tree/epoch` from the receipt `verify_url` origin, or uses `--epoch-record` / `--epoch-url`. A missing or forged record still fails. Issuer history is fetched by default; `--no-issuer-history` is the offline skip, and a missing `/preimage` is not a verification failure.
