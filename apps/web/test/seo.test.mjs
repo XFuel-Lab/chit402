@@ -204,6 +204,11 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card shows hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
+  assert.match(chitHome, /Audit a Base wallet/);
+  assert.match(chitHome, /published on Base and Solana/);
+  assert.match(chitHome, /receipts\/tree\/head/);
+  assert.match(chitHome, /Pin our issuer key/);
+  assert.doesNotMatch(chitHome, /proven inclusion|independently verify inclusion/i);
   assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
   assert.match(chitHome, /90-second drop-in/, 'ChitHome surfaces 90s drop-in above fold');
   assert.match(
@@ -295,17 +300,22 @@ test('Book principal dashboard v1 wires live API beats', () => {
   assert.match(book, /to="\/docs\/chit-in-15-lines"/, 'Empty state links the quickstart');
 });
 
-test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
+test('Chit primary nav is Book, Audit, Docs, Pricing, Trust, and GitHub', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
-  assert.match(layout, /to: '\/pricing', label: 'Pricing'/, 'Chit nav includes Pricing');
-  assert.match(layout, /to: '\/products', label: 'Products'/, 'Chit nav includes Products top-level');
-  assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors');
-  assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
-  assert.doesNotMatch(
-    layout,
-    /chitNavLinks[\s\S]*Drop-in door/,
-    'Drop-in door is not in Chit primary nav',
-  );
+  const nav = layout.match(/const chitNavLinks[\s\S]*?\];/)?.[0] ?? '';
+  assert.match(nav, /to: '\/book', label: 'Book'/);
+  assert.match(nav, /to: '\/audit', label: 'Audit'/);
+  assert.match(nav, /to: '\/docs', label: 'Docs'/);
+  assert.match(nav, /to: '\/pricing', label: 'Pricing'/);
+  assert.match(nav, /to: '\/trust', label: 'Trust'/);
+  assert.doesNotMatch(nav, /Register|Activity|Board|Products|Doors|Home/);
+  assert.match(layout, /label: 'GitHub', external: true/);
+  assert.match(layout, /to="\/register"/, 'Register stays in the footer');
+  assert.match(layout, /to="\/activity"/);
+  assert.match(layout, /to="\/board"/);
+  assert.match(layout, /to="\/products"/);
+  assert.match(layout, /to="\/doors"/);
+  assert.doesNotMatch(layout, /chitNavLinks[\s\S]*Drop-in door/);
 });
 
 test('Docs hub leads with book; install doors on dedicated page', () => {
@@ -354,7 +364,12 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
   assert.doesNotMatch(layout, /Chit is the product/, 'Layout must not show global parent banner on Chit');
-  assert.doesNotMatch(layout, /By XFuel Lab/i, 'Layout footer must not show parent byline on Chit');
+  assert.match(layout, /Chit402 is built by XFuel Lab/, 'Footer names the lab once');
+  assert.doesNotMatch(
+    layout.replace('Chit402 is built by XFuel Lab', ''),
+    /By XFuel Lab/i,
+    'Layout footer must not show a parent byline',
+  );
   assert.match(layout, /config\.publicContactEmail/, 'Layout footer uses host public contact email');
   assert.doesNotMatch(layout, /mailto:security@xfuel\.app/, 'Layout must not hard-code security@xfuel.app mailto');
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');

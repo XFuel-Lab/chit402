@@ -83,6 +83,16 @@ export default function ChitHome() {
                   Drop-in docs
                 </Link>
               </div>
+              <p style={styles.checkYourself}>
+                Check it yourself:{' '}
+                <Link to="/audit" style={styles.checkLink}>Audit a Base wallet</Link>
+                {' · '}
+                <a href="https://api.chit402.com/v1/receipts/tree/head" style={styles.checkLink}>
+                  Today&apos;s receipt root, published on Base and Solana
+                </a>
+                {' · '}
+                <Link to="/trust" style={styles.checkLink}>Pin our issuer key</Link>
+              </p>
             </div>
             <LiveReceiptCard />
           </div>
@@ -242,6 +252,17 @@ const styles: Record<string, CSSProperties> = {
     alignItems: 'center',
     gap: '0.75rem',
     flexWrap: 'wrap' as const,
+  },
+  checkYourself: {
+    marginTop: '0.9rem',
+    marginBottom: 0,
+    fontSize: '0.85rem',
+    color: '#8a8a9a',
+    lineHeight: 1.6,
+  },
+  checkLink: {
+    color: '#00d4ff',
+    textDecoration: 'none',
   },
   ninetyTitle: {
     fontSize: '1.1rem',

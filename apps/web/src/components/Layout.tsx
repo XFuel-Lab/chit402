@@ -3,7 +3,9 @@ import { Outlet, NavLink } from 'react-router-dom';
 import { getHostConfig, isChitHost } from '../hostConfig';
 import SeoHead from './SeoHead';
 
-const xfuelNavLinks = [
+type NavItem = { to: string; label: string; external?: boolean };
+
+const xfuelNavLinks: NavItem[] = [
   { to: '/', label: 'Home' },
   { to: '/docs', label: 'Docs' },
   { to: '/doors', label: 'Doors' },
@@ -12,16 +14,10 @@ const xfuelNavLinks = [
   { to: '/audit', label: 'Audit' },
 ];
 
-const chitNavLinks = [
-  { to: '/', label: 'Home' },
+const chitNavLinks: NavItem[] = [
   { to: '/book', label: 'Book' },
-  { to: '/register', label: 'Register' },
-  { to: '/activity', label: 'Activity' },
   { to: '/audit', label: 'Audit' },
-  { to: '/board', label: 'Board' },
-  { to: '/products', label: 'Products' },
   { to: '/docs', label: 'Docs' },
-  { to: '/doors', label: 'Doors' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/trust', label: 'Trust' },
 ];
@@ -30,7 +26,9 @@ export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const config = getHostConfig();
   const isChit = isChitHost();
-  const navLinks = isChit ? chitNavLinks : xfuelNavLinks;
+  const navLinks: NavItem[] = isChit
+    ? [...chitNavLinks, { to: config.githubUrl, label: 'GitHub', external: true }]
+    : xfuelNavLinks;
 
   return (
     <>
@@ -49,19 +47,32 @@ export default function Layout() {
           </NavLink>
 
           <nav style={{ ...styles.nav, ...(menuOpen ? styles.navOpen : {}) }}>
-            {navLinks.map(({ to, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                onClick={() => setMenuOpen(false)}
-                style={({ isActive }) => ({
-                  ...styles.navLink,
-                  color: isActive ? '#00d4ff' : '#8a8a9a',
-                })}
-              >
-                {label}
-              </NavLink>
+            {navLinks.map(({ to, label, external }) => (
+              external ? (
+                <a
+                  key={label}
+                  href={to}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ ...styles.navLink, color: '#8a8a9a' }}
+                >
+                  {label}
+                </a>
+              ) : (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  onClick={() => setMenuOpen(false)}
+                  style={({ isActive }) => ({
+                    ...styles.navLink,
+                    color: isActive ? '#00d4ff' : '#8a8a9a',
+                  })}
+                >
+                  {label}
+                </NavLink>
+              )
             ))}
           </nav>
 
@@ -108,16 +119,29 @@ export default function Layout() {
             <span style={{ color: '#55556a', fontSize: '0.85rem' }}>
               {isChit ? 'Treasury desk for agent spend.' : 'The book: hub, model, amount. Apache-2.0.'}
             </span>
+            {isChit && (
+              <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>
+                Chit402 is built by XFuel Lab.
+              </span>
+            )}
           </div>
           <div style={styles.footerLinks}>
             <a href={config.githubUrl} target="_blank" rel="noreferrer">GitHub</a>
-            <a href={`https://twitter.com/${config.twitterHandle.replace('@', '')}`} target="_blank" rel="noreferrer">Twitter</a>
-            {isChit ? (
+            {isChit && (
               <>
-                <NavLink to="/pricing">Pricing</NavLink>
+                <a href="https://github.com/XFuel-Lab/chit402/blob/main/WHITEPAPER.md" target="_blank" rel="noreferrer">Whitepaper</a>
+                <a href="https://www.npmjs.com/package/chit402-sdk" target="_blank" rel="noreferrer">chit402-sdk</a>
+                <a href="https://www.npmjs.com/package/@xfuel/verify" target="_blank" rel="noreferrer">@xfuel/verify</a>
+                <NavLink to="/trust">Trust</NavLink>
+                <NavLink to="/register">Register</NavLink>
                 <NavLink to="/activity">Activity</NavLink>
+                <NavLink to="/board">Board</NavLink>
+                <NavLink to="/products">Products</NavLink>
+                <NavLink to="/doors">Doors</NavLink>
               </>
-            ) : (
+            )}
+            <a href={`https://twitter.com/${config.twitterHandle.replace('@', '')}`} target="_blank" rel="noreferrer">Twitter</a>
+            {!isChit && (
               <>
                 <NavLink to="/docs">Docs</NavLink>
                 <NavLink to="/security">Security</NavLink>
