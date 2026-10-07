@@ -106,7 +106,7 @@ test('a specimen with no receipt id fails fetch and still checks the entry hash'
   assert.doesNotMatch(formatReport(result), /^PASS entry_fingerprint/m);
   assert.equal(result.verdict, 'FAIL');
   assert.equal(exitCode(result), 1);
-  assert.equal(exitCode(result, { allowUnsigned: true }), 1);
+  assert.equal(exitCode(result, { exitPolicy: 'allow-unsigned' }), 1);
 });
 
 test('stamp verify_url is accepted with or without format=json and other hosts are rejected', async () => {
@@ -294,14 +294,15 @@ test('a foreign-ingest payout receipt with an issuer JWS passes while status is 
   assert.equal(result.verdict, 'PASS', report);
   assert.equal(result.steps.entry_fingerprint.status, 'PASS');
   assert.equal(exitCode(result), 0);
-  assert.equal(exitCode(result, { allowUnsigned: true }), 0);
+  assert.equal(exitCode(result, { exitPolicy: 'allow-unsigned' }), 0);
   assert.match(report, /^PASS entry_fingerprint/m);
   assert.doesNotMatch(report, /UNSIGNED \(registry-only\)/);
   assert.equal(result.steps.entry_fingerprint.signed_check, 'matched');
   const signedJson = JSON.parse(formatJson(result));
   assert.equal(signedJson.overall, 'pass');
   assert.equal(signedJson.signed_check, 'matched');
-  assert.equal(signedJson.exit_policy, 'default');
+  assert.equal(signedJson.exit_policy, 'strict');
+  assert.equal(signedJson.allow_unsigned, undefined);
 });
 
 test('a tampered entry fingerprint fails only that step on a foreign-ingest payout', async () => {
@@ -336,12 +337,9 @@ test('a signed stamp rejects a swapped entry the registry confirms', async () =>
   assert.equal(result.verdict, 'FAIL');
 });
 
-function withoutExitPolicy(parsed) {
-  const copy = JSON.parse(JSON.stringify(parsed));
-  delete copy.exit_policy;
-  delete copy.allow_unsigned;
-  delete copy.exit_code;
-  return copy;
+function policyDiffKeys(left, right) {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  return [...keys].filter((key) => JSON.stringify(left[key]) !== JSON.stringify(right[key])).sort();
 }
 
 function fingerprintLine(report) {
@@ -359,13 +357,13 @@ test('unstamped receipt plus a swapped entry is UNSIGNED, not PASS', async () =>
     fetchImpl,
   });
   const openReport = formatReport(open);
-  const acceptedReport = formatReport(open, { allowUnsigned: true });
+  const acceptedReport = formatReport(open, { exitPolicy: 'allow-unsigned' });
   assert.equal(open.verdict, 'UNSIGNED', openReport);
   assert.equal(open.steps.entry_fingerprint.status, 'UNSIGNED');
   assert.equal(open.steps.entry_fingerprint.signed_check, 'not_run');
   assert.notEqual(open.steps.entry_fingerprint.status, 'PASS');
   assert.equal(exitCode(open), 2);
-  assert.equal(exitCode(open, { allowUnsigned: true }), 0);
+  assert.equal(exitCode(open, { exitPolicy: 'allow-unsigned' }), 0);
   assert.match(openReport, /UNSIGNED \(registry-only\)\s+entry_fingerprint/);
   assert.doesNotMatch(openReport, /accepted by --allow-unsigned/);
   assert.match(openReport, /VERDICT UNSIGNED \(registry-only\)/);
@@ -377,18 +375,17 @@ test('unstamped receipt plus a swapped entry is UNSIGNED, not PASS', async () =>
   assert.equal(acceptedLine.includes('PASS'), false);
   assert.match(acceptedReport, /VERDICT UNSIGNED \(registry-only; accepted by --allow-unsigned\)/);
   const plain = JSON.parse(formatJson(open));
-  const allowed = JSON.parse(formatJson(open, { allowUnsigned: true }));
+  const allowed = JSON.parse(formatJson(open, { exitPolicy: 'allow-unsigned' }));
   assert.equal(plain.overall, 'unsigned');
   assert.equal(plain.verdict, 'unsigned');
   assert.equal(plain.signed_check, 'not_run');
-  assert.equal(plain.exit_policy, 'default');
+  assert.equal(plain.exit_policy, 'strict');
   assert.equal(plain.exit_code, 2);
-  assert.equal(plain.allow_unsigned, false);
+  assert.equal(plain.allow_unsigned, undefined);
   assert.equal(plain.steps.entry_fingerprint.status, 'UNSIGNED');
   assert.equal(plain.steps.entry_fingerprint.signed_check, 'not_run');
-  assert.deepEqual(withoutExitPolicy(plain), withoutExitPolicy(allowed));
+  assert.deepEqual(policyDiffKeys(plain, allowed), ['exit_code', 'exit_policy']);
   assert.equal(allowed.exit_policy, 'allow-unsigned');
-  assert.equal(allowed.allow_unsigned, true);
   assert.equal(allowed.exit_code, 0);
   assert.equal(allowed.verdict, 'unsigned');
   assert.equal(allowed.overall, 'unsigned');
@@ -405,36 +402,44 @@ test('a real fingerprint mismatch stays exit 1 when --allow-unsigned is set', as
   assert.match(result.steps.entry_fingerprint.detail, new RegExp(TAMPERED));
   assert.equal(result.verdict, 'FAIL');
   assert.equal(exitCode(result), 1);
-  assert.equal(exitCode(result, { allowUnsigned: true }), 1);
-  const parsed = JSON.parse(formatJson(result, { allowUnsigned: true }));
+  assert.equal(exitCode(result, { exitPolicy: 'allow-unsigned' }), 1);
+  const parsed = JSON.parse(formatJson(result, { exitPolicy: 'allow-unsigned' }));
   assert.equal(parsed.overall, 'fail');
   assert.equal(parsed.exit_code, 1);
 });
 
-test('CLI rejects --strict and a missing path with exit 3', () => {
+test('CLI rejects unknown exit_policy by name and a missing path with exit 3', () => {
   const script = join(root, 'scripts/verify-1f916-link.mjs');
-  const strict = spawnSync(process.execPath, [script, '--strict', positivePath], { encoding: 'utf8' });
-  assert.equal(strict.status, 3, strict.stdout + strict.stderr);
-  assert.match(strict.stderr, /--strict was removed/);
+  const named = spawnSync(process.execPath, [script, '--exit-policy', 'loose', positivePath], { encoding: 'utf8' });
+  assert.equal(named.status, 3, named.stdout + named.stderr);
+  assert.match(named.stderr, /unknown exit_policy loose/);
+  const missingValue = spawnSync(process.execPath, [script, '--exit-policy'], { encoding: 'utf8' });
+  assert.equal(missingValue.status, 3, missingValue.stdout + missingValue.stderr);
+  assert.match(missingValue.stderr, /unknown exit_policy/);
   const missing = spawnSync(process.execPath, [script], { encoding: 'utf8' });
   assert.equal(missing.status, 3, missing.stdout + missing.stderr);
   assert.match(missing.stderr, /usage:/);
 });
 
-test('parseArgs accepts --allow-unsigned and --json, and rejects --strict', () => {
+test('parseArgs takes --exit-policy and keeps --allow-unsigned as an alias', () => {
+  assert.deepEqual(parseArgs(['--exit-policy', 'allow-unsigned', 'specimen.json']), {
+    exitPolicy: 'allow-unsigned', json: false, target: 'specimen.json', error: '',
+  });
+  assert.deepEqual(parseArgs(['--exit-policy', 'strict', 'specimen.json']), {
+    exitPolicy: 'strict', json: false, target: 'specimen.json', error: '',
+  });
   assert.deepEqual(parseArgs(['--allow-unsigned', 'specimen.json']), {
-    allowUnsigned: true, json: false, target: 'specimen.json', error: '',
+    exitPolicy: 'allow-unsigned', json: false, target: 'specimen.json', error: '',
   });
   assert.deepEqual(parseArgs(['specimen.json', '--json']), {
-    allowUnsigned: false, json: true, target: 'specimen.json', error: '',
+    exitPolicy: 'strict', json: true, target: 'specimen.json', error: '',
   });
-  assert.deepEqual(parseArgs(['--json', '--allow-unsigned', 'specimen.json']), {
-    allowUnsigned: true, json: true, target: 'specimen.json', error: '',
-  });
-  assert.equal(parseArgs(['specimen.json']).allowUnsigned, false);
-  assert.match(parseArgs(['--strict', 'specimen.json']).error, /--strict was removed/);
-  assert.match(parseArgs(['specimen.json', '--strict']).error, /--strict was removed/);
-  assert.match(parseArgs(['--nope']).error, /unknown flag/);
+  assert.equal(parseArgs(['--allow-unsigned', '--exit-policy', 'allow-unsigned', 'a.json']).exitPolicy, 'allow-unsigned');
+  assert.equal(parseArgs(['--exit-policy', 'strict', '--allow-unsigned']).error, 'exit_policy is strict; --allow-unsigned sets allow-unsigned');
+  assert.equal(parseArgs(['--exit-policy', 'default']).error, 'unknown exit_policy default');
+  assert.equal(parseArgs(['--exit-policy', 'loose']).error, 'unknown exit_policy loose');
+  assert.match(parseArgs(['--exit-policy']).error, /unknown exit_policy/);
+  assert.match(parseArgs(['--strict', 'specimen.json']).error, /unknown flag --strict/);
 });
 
 describe('verifier fixture, not a public specimen', () => {
@@ -447,7 +452,7 @@ describe('verifier fixture, not a public specimen', () => {
     assert.match(result.steps.entry_fingerprint.detail, new RegExp(FINGERPRINT));
     assert.equal(result.verdict, 'UNSIGNED');
     assert.equal(exitCode(result), 2);
-    assert.equal(exitCode(result, { allowUnsigned: true }), 0);
+    assert.equal(exitCode(result, { exitPolicy: 'allow-unsigned' }), 0);
     const report = formatReport(result);
     assert.match(report, /UNSIGNED \(registry-only\)\s+entry_fingerprint/);
     assert.match(report, /VERDICT UNSIGNED \(registry-only\)/);
@@ -465,7 +470,7 @@ describe('verifier fixture, not a public specimen', () => {
     assert.match(result.steps.entry_fingerprint.detail, new RegExp(TAMPERED));
     assert.equal(result.verdict, 'FAIL');
     assert.equal(exitCode(result), 1);
-    assert.equal(exitCode(result, { allowUnsigned: true }), 1);
+    assert.equal(exitCode(result, { exitPolicy: 'allow-unsigned' }), 1);
   });
 
   test('CLI exits 2 for the unstamped fixture, 0 with --allow-unsigned, and 1 on a mismatch', { timeout: 180000 }, () => {
@@ -477,7 +482,7 @@ describe('verifier fixture, not a public specimen', () => {
     assert.doesNotMatch(open.stdout, /^PASS entry_fingerprint/m);
     assert.doesNotMatch(open.stdout, /VERDICT PASS/);
 
-    const allowed = spawnSync(process.execPath, [script, positivePath, '--allow-unsigned'], { encoding: 'utf8' });
+    const allowed = spawnSync(process.execPath, [script, '--exit-policy', 'allow-unsigned', positivePath], { encoding: 'utf8' });
     assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr);
     const acceptedLine = allowed.stdout.split('\n').find((line) => line.includes('entry_fingerprint'));
     assert.equal(acceptedLine.startsWith('UNSIGNED (registry-only; accepted by --allow-unsigned) '), true, acceptedLine);
@@ -491,24 +496,42 @@ describe('verifier fixture, not a public specimen', () => {
     assert.equal(parsed.overall, 'unsigned');
     assert.equal(parsed.verdict, 'unsigned');
     assert.equal(parsed.signed_check, 'not_run');
-    assert.equal(parsed.exit_policy, 'default');
+    assert.equal(parsed.exit_policy, 'strict');
     assert.equal(parsed.exit_code, 2);
+    assert.equal(parsed.allow_unsigned, undefined);
     assert.equal(parsed.steps.entry_fingerprint.status, 'UNSIGNED');
     assert.equal(parsed.steps.entry_fingerprint.signed_check, 'not_run');
     assert.notEqual(parsed.overall, 'pass');
 
-    const jsonAllowed = spawnSync(process.execPath, [script, '--json', '--allow-unsigned', positivePath], { encoding: 'utf8' });
+    const jsonAllowed = spawnSync(process.execPath, [script, '--json', '--exit-policy', 'allow-unsigned', positivePath], { encoding: 'utf8' });
     assert.equal(jsonAllowed.status, 0, jsonAllowed.stdout + jsonAllowed.stderr);
     const allowedJson = JSON.parse(jsonAllowed.stdout);
-    assert.deepEqual(withoutExitPolicy(parsed), withoutExitPolicy(allowedJson));
+    assert.deepEqual(policyDiffKeys(parsed, allowedJson), ['exit_code', 'exit_policy']);
     assert.equal(allowedJson.exit_policy, 'allow-unsigned');
-    assert.equal(allowedJson.allow_unsigned, true);
     assert.equal(allowedJson.exit_code, 0);
+    assert.equal(allowedJson.verdict, 'unsigned');
 
-    const bad = spawnSync(process.execPath, [script, '--allow-unsigned', tamperedPath], { encoding: 'utf8' });
+    const bad = spawnSync(process.execPath, [script, '--exit-policy', 'allow-unsigned', tamperedPath], { encoding: 'utf8' });
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);
     assert.match(bad.stdout, /PASS on_chain_tx/);
     assert.match(bad.stdout, /FAIL entry_fingerprint\s+fingerprint_mismatch/);
     assert.match(bad.stdout, /VERDICT FAIL/);
+  });
+
+  test('both public specimens stay signed PASS under either exit_policy', { timeout: 120000 }, async () => {
+    for (const path of [specimen1Path, specimen2Path]) {
+      const result = await verifyLink(load(path));
+      assert.equal(result.verdict, 'PASS', formatReport(result));
+      assert.equal(result.steps.entry_fingerprint.status, 'PASS', result.steps.entry_fingerprint.detail);
+      assert.equal(result.steps.entry_fingerprint.signed_check, 'matched');
+      const strict = JSON.parse(formatJson(result, { exitPolicy: 'strict' }));
+      const allowed = JSON.parse(formatJson(result, { exitPolicy: 'allow-unsigned' }));
+      assert.equal(strict.overall, 'pass');
+      assert.equal(strict.exit_code, 0);
+      assert.equal(allowed.exit_code, 0);
+      assert.deepEqual(policyDiffKeys(strict, allowed), ['exit_policy']);
+      assert.equal(strict.exit_policy, 'strict');
+      assert.equal(allowed.exit_policy, 'allow-unsigned');
+    }
   });
 });

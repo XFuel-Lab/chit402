@@ -4,7 +4,7 @@
  *
  *   node scripts/verify-1f916-link.mjs <specimen.json>
  *   node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
- *   node scripts/verify-1f916-link.mjs --allow-unsigned <specimen.json>
+ *   node scripts/verify-1f916-link.mjs --exit-policy allow-unsigned <specimen.json>
  *   node scripts/verify-1f916-link.mjs --json <specimen.json>
  *
  * Prints one line per step, then VERDICT. Node built-ins only.
@@ -17,12 +17,13 @@
  * Exit codes:
  *   0  every step PASS (signed fingerprint)
  *   1  a real check failed
- *   2  UNSIGNED (registry-only), no real failure
+ *   2  UNSIGNED (registry-only) under exit_policy strict
  *   3  usage error
- * --allow-unsigned maps exit 2 to 0. It does not rewrite the finding.
- * Human text then uses UNSIGNED (registry-only; accepted by --allow-unsigned).
+ * exit_policy is "strict" or "allow-unsigned". strict is the default and
+ * exits 2 for UNSIGNED. allow-unsigned maps that exit to 0 and does not
+ * rewrite the finding. --allow-unsigned is an alias for
+ * --exit-policy allow-unsigned. An unknown exit_policy value exits 3.
  * --json keeps verdict "unsigned" and overall "unsigned" either way.
- * exit_policy is "default" or "allow-unsigned". allow_unsigned is deprecated.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -530,20 +531,29 @@ export function verdictLabel(verdict) {
   return verdict;
 }
 
+const EXIT_POLICIES = new Set(['strict', 'allow-unsigned']);
+
 /**
- * @param {{ verdict: string }} result
- * @param {{ allowUnsigned?: boolean }} [opts]
+ * @param {string|undefined} value
+ * @returns {'strict'|'allow-unsigned'}
  */
-export function exitCode(result, opts = {}) {
-  if (result.verdict === 'PASS') return 0;
-  if (result.verdict === 'UNSIGNED') return opts.allowUnsigned ? 0 : 2;
-  return 1;
+export function resolveExitPolicy(value) {
+  if (value == null || value === 'strict') return 'strict';
+  if (value === 'allow-unsigned') return 'allow-unsigned';
+  throw new Error(`unknown exit_policy ${value}`);
 }
 
 /**
- * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
- * @param {{ allowUnsigned?: boolean }} [opts]
+ * @param {{ verdict: string }} result
+ * @param {{ exitPolicy?: string }} [opts]
  */
+export function exitCode(result, opts = {}) {
+  const policy = resolveExitPolicy(opts.exitPolicy);
+  if (result.verdict === 'PASS') return 0;
+  if (result.verdict === 'UNSIGNED') return policy === 'allow-unsigned' ? 0 : 2;
+  return 1;
+}
+
 const ACCEPTED_UNSIGNED = 'UNSIGNED (registry-only; accepted by --allow-unsigned)';
 
 /**
@@ -557,8 +567,8 @@ function stepLabel(status, accepted) {
 }
 
 export function formatJson(result, opts = {}) {
-  const allow = opts.allowUnsigned === true;
-  const code = exitCode(result, { allowUnsigned: allow });
+  const policy = resolveExitPolicy(opts.exitPolicy);
+  const code = exitCode(result, { exitPolicy: policy });
   const overall = result.verdict === 'PASS' ? 'pass'
     : result.verdict === 'UNSIGNED' ? 'unsigned'
       : 'fail';
@@ -568,19 +578,18 @@ export function formatJson(result, opts = {}) {
     overall,
     verdict,
     signed_check: signedCheck,
-    exit_policy: allow ? 'allow-unsigned' : 'default',
+    exit_policy: policy,
     exit_code: code,
-    allow_unsigned: allow,
     steps: result.steps,
   }, null, 2);
 }
 
 /**
  * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
- * @param {{ allowUnsigned?: boolean }} [opts]
+ * @param {{ exitPolicy?: string }} [opts]
  */
 export function formatReport(result, opts = {}) {
-  const accepted = opts.allowUnsigned === true && result.verdict === 'UNSIGNED';
+  const accepted = resolveExitPolicy(opts.exitPolicy) === 'allow-unsigned' && result.verdict === 'UNSIGNED';
   const lines = STEPS.map((name) => {
     const row = result.steps[name] || { status: 'FAIL', detail: 'missing' };
     const status = stepLabel(row.status, accepted);
@@ -606,31 +615,50 @@ export async function loadSpecimen(target, fetchImpl = fetch) {
   return JSON.parse(readFileSync(target, 'utf8'));
 }
 
-const USAGE = 'usage: node scripts/verify-1f916-link.mjs [--allow-unsigned] [--json] <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>';
+const USAGE = 'usage: node scripts/verify-1f916-link.mjs [--exit-policy strict|allow-unsigned] [--json] <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>';
+
+/**
+ * @param {string} error
+ */
+function usageError(error) {
+  return { exitPolicy: 'strict', json: false, target: '', error };
+}
 
 /**
  * @param {string[]} argv
  */
 export function parseArgs(argv) {
-  let allowUnsigned = false;
+  /** @type {'strict'|'allow-unsigned'|null} */
+  let exitPolicy = null;
   let json = false;
   /** @type {string[]} */
   const positionals = [];
-  for (const arg of argv) {
-    if (arg === '--allow-unsigned') allowUnsigned = true;
-    else if (arg === '--json') json = true;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--allow-unsigned') {
+      if (exitPolicy && exitPolicy !== 'allow-unsigned') {
+        return usageError(`exit_policy is ${exitPolicy}; --allow-unsigned sets allow-unsigned`);
+      }
+      exitPolicy = 'allow-unsigned';
+    } else if (arg === '--exit-policy') {
+      const value = argv[i + 1];
+      if (value == null || value.startsWith('--')) {
+        return usageError('unknown exit_policy (missing value)');
+      }
+      i += 1;
+      if (!EXIT_POLICIES.has(value)) return usageError(`unknown exit_policy ${value}`);
+      if (exitPolicy && exitPolicy !== value) {
+        return usageError(`exit_policy is ${exitPolicy}; refusing ${value}`);
+      }
+      exitPolicy = /** @type {'strict'|'allow-unsigned'} */ (value);
+    } else if (arg === '--json') json = true;
     else if (arg === '--strict') {
-      return {
-        allowUnsigned: false,
-        json: false,
-        target: '',
-        error: '--strict was removed. A missing agent_record_entry stamp is UNSIGNED (registry-only) and exits 2. Pass --allow-unsigned to exit 0 for that case.',
-      };
+      return usageError('unknown flag --strict. Use --exit-policy strict or --exit-policy allow-unsigned.');
     } else if (arg.startsWith('--')) {
-      return { allowUnsigned: false, json: false, target: '', error: `unknown flag ${arg}` };
+      return usageError(`unknown flag ${arg}`);
     } else positionals.push(arg);
   }
-  return { allowUnsigned, json, target: positionals[0] || '', error: '' };
+  return { exitPolicy: exitPolicy || 'strict', json, target: positionals[0] || '', error: '' };
 }
 
 async function main() {
@@ -654,9 +682,9 @@ async function main() {
     process.exit(1);
   }
   const result = await verifyLink(specimen);
-  const code = exitCode(result, { allowUnsigned: parsed.allowUnsigned });
-  if (parsed.json) console.log(formatJson(result, { allowUnsigned: parsed.allowUnsigned }));
-  else console.log(formatReport(result, { allowUnsigned: parsed.allowUnsigned }));
+  const code = exitCode(result, { exitPolicy: parsed.exitPolicy });
+  if (parsed.json) console.log(formatJson(result, { exitPolicy: parsed.exitPolicy }));
+  else console.log(formatReport(result, { exitPolicy: parsed.exitPolicy }));
   process.exit(code);
 }
 
