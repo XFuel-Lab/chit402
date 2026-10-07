@@ -123,13 +123,20 @@ const result = await verifyReceipt(receipt);
 console.log(result.issuer_signature.valid);      // true only for a trusted key
 console.log(result.issuer_signature.key_trusted);
 console.log(result.amount_usdc);                 // from verified claims, not the outer copy
-console.log(result.claim_mismatches);            // outer payment / caller_binding vs JWS
+console.log(result.claim_mismatches);            // any signed path whose outer copy disagrees
+console.log(result.unsigned_fields);             // outer paths the signature does not cover
+console.log(result.verified_scope);              // 'signed_claims'
 ```
 
 Amount, payer, payee, asset, and tx are read from the verified JWS claims.
-If the unsigned outer `payment` or `caller_binding` disagrees, verification
-fails. `--check-payer` on Base confirms payer, payee, asset, and amount in the
-USDC `Transfer` log.
+Every signed path is compared with the outer receipt. A mismatch fails.
+Paths the signature does not cover are `unsigned_fields` and are printed as
+`UNVERIFIED`. Overall does not verify them. The outer document `schema` is
+not a copy of the JWS `schema`. `--check-payer` on Base confirms payer, payee,
+asset, and amount in the USDC `Transfer` log.
+
+`xfuel-verify receipt.json inclusion.json head.json` also runs those receipt
+checks. A matching inclusion proof does not make a tampered receipt VERIFIED.
 
 A paid USDC receipt whose signed `binding.expected_commitment` is null is
 reported as “No payment-binding commitment”, not as an unmetered or TFUEL receipt.

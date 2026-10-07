@@ -119,7 +119,9 @@ export function inclusionProof(leaves, index) {
 
 /**
  * RFC 9162 §2.1.3.2. Index and tree size pick left or right. A `position`
- * label is not trusted. The proof must be exactly as long as that pair
+ * label is not the source of that side. When a label is present it must
+ * name the side the index already chose, so a swapped label fails. An
+ * omitted label does not. The proof must be exactly as long as that pair
  * requires, and index >= size is rejected. Leaf and node hashing are
  * unchanged. Consistency proofs and the empty root are not this function.
  * Lockstep with `verifyMerkleInclusion` in `@xfuel/verify`.
@@ -139,7 +141,11 @@ export function verifyInclusion(leaf, index, treeSize, rootHex, proof) {
     if (sn === 0) return false;
     if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    if ((fn % 2) === 1 || fn === sn) {
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (typeof step.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
+      return false;
+    }
+    if (siblingOnLeft) {
       hash = nodeHash(sib, hash);
       if ((fn % 2) === 0) {
         while ((fn % 2) === 0 && fn !== 0) {
