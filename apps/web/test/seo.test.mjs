@@ -254,6 +254,12 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
   assert.match(specimenPanel, /computeBurnRate/, 'Specimen panel previews burn rate');
   assert.match(specimenPanel, /computeModelMix/, 'Specimen panel previews model mix');
+  assert.match(book, /id="what-the-book-is"/, 'Book explains what it is');
+  assert.match(book, /client-attested/);
+  assert.match(book, /chit402\.refusal\.v1/);
+  assert.match(book, /not a full inclusion check/i);
+  assert.doesNotMatch(book, /prepaid hold|holds are live/i);
+  assert.doesNotMatch(book, /chit-1e57cdd7/);
 });
 
 test('Book principal dashboard v1 wires live API beats', () => {

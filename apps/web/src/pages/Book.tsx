@@ -1128,14 +1128,53 @@ export default function Book() {
           </>
         )}
 
-        <details className="book-blurb" style={{ marginTop: '2rem' }}>
-          <summary>What is the {productName} book?</summary>
-          <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: '0.75rem', maxWidth: '40rem' }}>
-            The book is the last-N collected spend for an agent session. Each entry records the hub,
-            the model, and the amount in USDC. The payer holds the book. Policy caps and audit export
-            sit beside the book — not inside the router. Signed receipts include a public{' '}
-            <code>verify_url</code>; SP1 is on demand, not every call.
-          </p>
+        <details className="book-blurb" id="what-the-book-is" style={{ marginTop: '2rem' }}>
+          <summary>What the book is, and isn&apos;t</summary>
+          <div style={{ color: 'var(--text-secondary)', lineHeight: 1.7, marginTop: '0.75rem', maxWidth: '40rem' }}>
+            <p>
+              <strong>Collected vs client-attested.</strong> Only a collected USDC{' '}
+              <code>payment.ref</code> writes the book. A stamp with no collected payment is
+              client-attested. It stays off the book until that payment is ingested.
+            </p>
+            <p>
+              <strong>What a receipt proves.</strong> {productName} signed the hub, the model, and
+              the amount. The signature is ES256. The <code>kid</code> is the one pinned on{' '}
+              <Link to="/trust">/trust</Link>.
+            </p>
+            <p>
+              <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
+              that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
+              It does not prove the model computed the answer. SP1 is on demand at $0.10. That proof
+              covers settlement, not correctness.
+            </p>
+            <p>
+              <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the
+              previous call&apos;s measured bill. A charge can sit unsettled until the next paid call.
+              The live flag is <code>GET /health</code> → <code>rolling_settlement</code>.
+            </p>
+            <p>
+              <strong>Daily anchoring.</strong> The receipt root is published daily on Base and on
+              Solana.{' '}
+              <a href="https://api.chit402.com/v1/receipts/tree/head">Today&apos;s head</a> names both
+              anchors. <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that those anchor
+              transactions are present. It is not a full inclusion check. 0.3.2 has not shipped.
+            </p>
+            <p>
+              <strong>Signed refusal.</strong> A blocked spend can come back as a signed refusal,
+              schema <code>chit402.refusal.v1</code>, from the same ES256 key. It is not a payment
+              receipt. <code>@xfuel/verify</code> 0.3.1 verifies it. The document is public at{' '}
+              <code>GET /refusal/:id</code>.
+            </p>
+            <p>
+              <strong>Not a router.</strong> {productName} is not a router and not a model shop. The
+              book is the last-N collected rows for the session that holds it. A live example that
+              returns 200 is{' '}
+              <a href="https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96">
+                chit-1ebc5616
+              </a>
+              .
+            </p>
+          </div>
         </details>
 
         <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
