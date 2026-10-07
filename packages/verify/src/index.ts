@@ -80,6 +80,7 @@ import { isKnownPaymentSchema, isRefusalDocument, isRefusalSchema } from './refu
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
+  historyUrlFromReceipt,
   readIssuerHistoryPin,
   verifyIssuerHistorySnapshot,
   type IssuerHistoryCheck,
@@ -96,9 +97,16 @@ import {
   verifyReceiptPolicyClaim,
   matchPolicyHistory,
   policyHistoryUrlFromReceipt,
+  policyRetentionFloor,
+  samePolicyTerms,
+  termsForPolicyVersion,
+  receiptPolicyTerms,
   uncheckedPolicy,
   type PolicyCheck,
+  type ReceiptPolicyTerms,
 } from './receipt-policy.js';
+import { assessIndependence, isChit402Origin, type IndependenceResult, type KidWindow } from './key-independence.js';
+import { assessGuardian, type GuardianRetirement, type GuardianSetChange } from './guardian.js';
 import {
   verifyIssuerRoot,
   resolvePinnedRoot,
@@ -406,6 +414,12 @@ export interface ReceiptVerification {
    * A false value is never a root pass. Other 0.3.0 checks are unchanged.
    */
   root_checked: boolean;
+  /**
+   * Commit pin, issuer-history snapshot, and the Base registry.
+   * A chit402-hosted history is `self_asserted`, never `independent`.
+   * One copy is never `independent`. A disagreement fails by name.
+   */
+  independence: IndependenceResult;
   /** `unpinned` when root_checked is false. */
   issuer_root: IssuerRootVerdict;
   warnings: string[];
@@ -1354,6 +1368,23 @@ export interface VerifyReceiptOptions {
   fetchPolicyHistory?: boolean;
   /** Explicit policy-history URL. Any https URL. */
   policyHistoryUrl?: string | null;
+  /** `--policy-version`. Cross-check signed terms against this published version. */
+  policyVersion?: string | null;
+  /** Pinned policy terms. Any difference from the signed terms is policy_pin_mismatch. */
+  policyPin?: unknown;
+  /**
+   * Commit-pinned issuer history from off this host.
+   * `document` is the file. `repo` and `commit` name the pin.
+   */
+  issuerCommit?: { repo?: string; commit?: string; document?: IssuerHistoryDocument | null } | null;
+  /** Host the issuer-history document was served from. A chit402 host is not independent. */
+  historyOrigin?: string | null;
+  /** Key window read from the Base registry. */
+  registryKey?: KidWindow | null;
+  guardian?: {
+    retirements?: GuardianRetirement[] | null;
+    chainSets?: GuardianSetChange[] | null;
+  } | null;
   /**
    * Stored canonical object (the GET /preimage body). SHA-256 must match
    * the signed payload_hash. Absent bytes are not rebuilt.
@@ -1728,6 +1759,28 @@ export async function verifyReceipt(
           policy_hash: verdict.policy_hash,
           history: 'not_checked',
         };
+      } else if (verdict.terms && !policyRetentionFloor(verdict.terms).ok) {
+        policyFailed = true;
+        errors.push('policy_retention_floor');
+        policy = {
+          checked: true,
+          ok: false,
+          reason: 'policy_retention_floor',
+          terms: verdict.terms,
+          policy_hash: verdict.policy_hash,
+          history: 'not_checked',
+        };
+      } else if (verdict.terms && policyPinDisagrees(verdict.terms, options)) {
+        policyFailed = true;
+        errors.push('policy_pin_mismatch');
+        policy = {
+          checked: true,
+          ok: false,
+          reason: 'policy_pin_mismatch',
+          terms: verdict.terms,
+          policy_hash: verdict.policy_hash,
+          history: 'not_checked',
+        };
       } else {
         const asked = options.policyHistory != null || options.fetchPolicyHistory === true;
         if (!asked) {
@@ -1834,6 +1887,35 @@ export async function verifyReceipt(
     }
   }
 
+  const signingKid = issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null;
+  const historyOrigin = options.historyOrigin
+    ?? (options.fetchIssuerHistory ? historyUrlFromReceipt(receipt) : null);
+  const snapshotDoc = historyDocument
+    ?? (historySnapshot ? { entries: historySnapshot.entries } as IssuerHistoryDocument : null);
+  const independence = assessIndependence({
+    kid: signingKid,
+    commit: options.issuerCommit?.document ?? null,
+    snapshot: snapshotDoc,
+    snapshotFromChit402: isChit402Origin(historyOrigin),
+    registry: options.registryKey ?? null,
+  });
+  if (independence.verdict === 'disagree' && independence.reason) {
+    errors.push(independence.reason);
+  }
+  const historyExtra = historyDocument as (IssuerHistoryDocument & {
+    guardians?: string[];
+    guardian_sets?: GuardianSetChange[];
+  }) | null;
+  const guardian = assessGuardian({
+    signingKid,
+    iat: signedIat === undefined ? null : unixSeconds(signedIat),
+    retirements: options.guardian?.retirements ?? null,
+    historyGuardians: historyExtra?.guardians ?? null,
+    historySets: historyExtra?.guardian_sets ?? null,
+    chainSets: options.guardian?.chainSets ?? null,
+  });
+  if (!guardian.ok && guardian.reason) errors.push(guardian.reason);
+
   const hasIssuerSig = !!receipt.issuer_signature;
   const jwksWasSupplied = !!(options.jwks || options.jwksUri || (options.fetchJwks && jwks));
   const claimRefused = issuer_signature.valid && claim_id === 'refused';
@@ -1861,10 +1943,12 @@ export async function verifyReceipt(
   const rootFailed = !!issuer_root && issuer_root.verdict.startsWith('fail_');
   const signedIatFailed = missingSignedIat;
   const v11ClaimFailed = canonicalizationFailed || snapshotFailed || policyFailed;
+  const independenceFailed = independence.verdict === 'disagree';
+  const guardianFailed = !guardian.ok;
   const rootSoft = !!issuer_root && (
     issuer_root.verdict === 'unverified_root' || issuer_root.verdict === 'pin_only'
   );
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed || v11ClaimFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed || rootFailed || signedIatFailed || v11ClaimFailed || independenceFailed || guardianFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1880,7 +1964,7 @@ export async function verifyReceipt(
   } else {
     overall = 'partial';
   }
-  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing || policyAbsent)) overall = 'partial';
+  if (overall === 'verified' && (rootSoft || historySelfAsserted || policyHistoryMissing || policyAbsent || independence.verdict === 'self_asserted')) overall = 'partial';
 
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
@@ -1939,6 +2023,7 @@ export async function verifyReceipt(
     issuer_history,
     policy,
     root_checked: issuer_root?.root_checked === true,
+    independence,
     issuer_root: issuer_root ?? {
       verdict: 'unpinned',
       reason: null,
@@ -1994,6 +2079,27 @@ async function resolvePolicyHistory(
   } catch {
     return missing;
   }
+}
+
+function policyPinDisagrees(terms: ReceiptPolicyTerms, options: VerifyReceiptOptions): boolean {
+  const version = options.policyVersion ?? null;
+  const pin = options.policyPin;
+  if (!version && (pin == null || pin === '')) return false;
+  if (pin != null && pin !== '') {
+    const direct = receiptPolicyTerms(pin);
+    if (direct && (!version || direct.policy_version === version)) {
+      return !samePolicyTerms(terms, direct);
+    }
+    const fromDoc = version ? termsForPolicyVersion(pin, version) : null;
+    if (fromDoc) return !samePolicyTerms(terms, fromDoc);
+    if (!version && !direct) return true;
+  }
+  if (version) {
+    const published = termsForPolicyVersion(options.policyHistory, version);
+    if (!published) return true;
+    return !samePolicyTerms(terms, published);
+  }
+  return true;
 }
 
 function readSignedIat(claims: Record<string, unknown> | null | undefined): unknown {

@@ -134,6 +134,36 @@ export function verifyReceiptPolicyClaim(policy: unknown): { ok: boolean; reason
   return { ok: true, reason: null, terms, policy_hash: expected };
 }
 
+/** retention_days must be at least 365 and must cover the dispute window. */
+export function policyRetentionFloor(terms: ReceiptPolicyTerms): { ok: boolean; reason: 'policy_retention_floor' | null } {
+  const disputeDays = terms.dispute_window_seconds / 86400;
+  if (terms.retention_days < 365 || terms.retention_days < disputeDays) {
+    return { ok: false, reason: 'policy_retention_floor' };
+  }
+  return { ok: true, reason: null };
+}
+
+export function samePolicyTerms(left: ReceiptPolicyTerms, right: ReceiptPolicyTerms): boolean {
+  return left.policy_id === right.policy_id
+    && left.policy_version === right.policy_version
+    && left.dispute_window_seconds === right.dispute_window_seconds
+    && left.retention_days === right.retention_days
+    && left.retention_mode === right.retention_mode
+    && left.max_cumulative_spend === right.max_cumulative_spend;
+}
+
+/** Terms for a pinned version inside a receipt-policy history document. */
+export function termsForPolicyVersion(doc: unknown, version: string): ReceiptPolicyTerms | null {
+  if (!doc || typeof doc !== 'object' || !Array.isArray((doc as { entries?: unknown }).entries)) return null;
+  for (const row of (doc as { entries: unknown[] }).entries) {
+    if (!row || typeof row !== 'object') continue;
+    const entry = row as { policy_version?: unknown; terms?: unknown };
+    if (String(entry.policy_version ?? '') !== version) continue;
+    return receiptPolicyTerms(entry.terms);
+  }
+  return null;
+}
+
 function issuedAtMs(issuedAt: unknown): number | null {
   if (typeof issuedAt === 'number' && Number.isFinite(issuedAt)) {
     return issuedAt > 1e12 ? issuedAt : issuedAt * 1000;

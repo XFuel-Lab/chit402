@@ -87,6 +87,16 @@ Options:
                       when --rpc or --fetch-jwks opts into the network.
   --no-policy-history Do not check receipt-policy history. The output says
                       the history was not checked.
+  --policy-version <v>
+                      Fail if the signed policy differs from published version v
+                      (policy_pin_mismatch).
+  --policy-pin <file>
+                      Pinned policy terms. Any difference is policy_pin_mismatch.
+  --issuer-commit <repo@sha>
+                      Commit pin for an off-host issuer-history copy.
+  --issuer-commit-file <path>
+                      That copy. One copy is never independent. A chit402 origin
+                      is self_asserted.
   --no-preimage       Do not require published hash preimages
   --pinned-chain <caip2>
                       Opt in to issuer-root checks. eip155:8453 or eip155:84532.
@@ -212,6 +222,10 @@ function parseArgs(args: string[]): {
   policyHistoryFile: string | null;
   noPolicyHistory: boolean;
   fetchPolicy: boolean;
+  policyVersion: string | null;
+  policyPinFile: string | null;
+  issuerCommit: string | null;
+  issuerCommitFile: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -251,6 +265,10 @@ function parseArgs(args: string[]): {
     policyHistoryFile: null as string | null,
     noPolicyHistory: false,
     fetchPolicy: false,
+    policyVersion: null as string | null,
+    policyPinFile: null as string | null,
+    issuerCommit: null as string | null,
+    issuerCommitFile: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -297,6 +315,14 @@ function parseArgs(args: string[]): {
       result.noPolicyHistory = true;
     } else if (arg === '--fetch') {
       result.fetchPolicy = true;
+    } else if (arg === '--policy-version' && args[i + 1]) {
+      result.policyVersion = args[++i];
+    } else if (arg === '--policy-pin' && args[i + 1]) {
+      result.policyPinFile = args[++i];
+    } else if (arg === '--issuer-commit' && args[i + 1]) {
+      result.issuerCommit = args[++i];
+    } else if (arg === '--issuer-commit-file' && args[i + 1]) {
+      result.issuerCommitFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
     } else if (arg === '--pinned-chain' && args[i + 1]) {
@@ -623,6 +649,33 @@ async function main(): Promise<number> {
       return 3;
     }
   }
+  let policyPin: unknown = null;
+  if (args.policyPinFile) {
+    try {
+      policyPin = JSON.parse(readFileSync(args.policyPinFile, 'utf8'));
+    } catch (err) {
+      console.error(`Error reading policy pin: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  let issuerCommit: { repo?: string; commit?: string; document?: IssuerHistoryDocument | null } | null = null;
+  if (args.issuerCommit || args.issuerCommitFile) {
+    const at = args.issuerCommit ? args.issuerCommit.split('@') : [];
+    let document: IssuerHistoryDocument | null = null;
+    if (args.issuerCommitFile) {
+      try {
+        document = JSON.parse(readFileSync(args.issuerCommitFile, 'utf8')) as IssuerHistoryDocument;
+      } catch (err) {
+        console.error(`Error reading issuer commit file: ${err instanceof Error ? err.message : String(err)}`);
+        return 3;
+      }
+    }
+    issuerCommit = {
+      repo: at[0] || undefined,
+      commit: at[1] || undefined,
+      document,
+    };
+  }
   let policyHistory: unknown = null;
   if (args.policyHistoryFile) {
     try {
@@ -682,6 +735,10 @@ async function main(): Promise<number> {
     skipIssuerHistory: args.noIssuerHistory,
     policyHistory,
     fetchPolicyHistory: !args.noPolicyHistory && !policyHistory && (args.fetchPolicy || args.fetchJwks || args.sawRpc),
+    policyVersion: args.policyVersion,
+    policyPin,
+    issuerCommit,
+    historyOrigin: issuerHistory ? null : undefined,
     canonicalPreimage,
     issuerRoot: rootRequested ? {
       pin: args.pinnedChain || args.pinnedRegistry
@@ -806,6 +863,12 @@ async function main(): Promise<number> {
       else if (result.policy.history === 'not_effective') console.log('  Policy history: effective_from is after issuance');
       else if (result.policy.history === 'missing') console.log('  Policy history: missing (not a pass)');
       else console.log('  Policy history: not checked');
+    }
+    if (result.independence) {
+      const label = result.independence.verdict === 'disagree'
+        ? `disagree ${result.independence.reason}`
+        : result.independence.verdict;
+      console.log(`  Key sources:   ${label}`);
     }
     if (result.root_checked === false) {
       console.log('  Issuer root:   not checked (root_checked: false). This is not a root pass.');

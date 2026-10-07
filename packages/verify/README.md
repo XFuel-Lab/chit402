@@ -95,6 +95,10 @@ A v11 receipt may sign `policy`. The object is exactly `policy_id`, `policy_vers
 
 `xfuel-verify --json` includes a `policy` section with those terms. Policy history (`--policy-history-file`, or `GET /.well-known/receipt-policy-history.json` when `--fetch`, `--fetch-jwks`, or `--rpc` opts into the network) must contain `policy_hash` with `effective_from` at or before the receipt's issued time. Without that opt-in the history is `not_checked`. It is not reported as a pass.
 
+`--policy-version <v>` or `--policy-pin <file>` cross-checks the signed terms against that pinned version. Any difference fails `policy_pin_mismatch`. `retention_days` under 365, or shorter than the dispute window, fails `policy_retention_floor`.
+
+`--issuer-commit repo@sha` and `--issuer-commit-file` supply an off-host copy of the issuer history. That copy, the snapshot, and the Base registry are compared. A disagreement fails by name (`commit_snapshot_disagree`, `commit_registry_disagree`, `snapshot_registry_disagree`). A document served from a chit402 host is `self_asserted` and is never `independent`. One copy is never `independent`. A key the guardian quorum retired fails `KEY_RETIRED` at or after that block. The signing key cannot also be a guardian. A guardian-set change that Base did not order fails `guardian_set_unordered`.
+
 ## Issuer Signature Verification (ES256)
 
 Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature
