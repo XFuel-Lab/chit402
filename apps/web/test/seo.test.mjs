@@ -308,6 +308,30 @@ test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
   );
 });
 
+test('install docs show keyless x402 before the partner API key', () => {
+  const options = readFileSync(join(root, 'src/components/PaidDoorOptions.tsx'), 'utf8');
+  const snippets = readFileSync(join(root, 'src/lib/paidDoorSnippets.ts'), 'utf8');
+  assert.ok(snippets.indexOf('wrapFetchWithPayment') < snippets.indexOf('X-API-Key'));
+  assert.match(options, /Keyless x402/);
+  assert.match(options, /Partner API key/);
+  const pages = [
+    'src/pages/Doors.tsx',
+    'src/pages/AcpDocs.tsx',
+    'src/pages/CloudflareDocs.tsx',
+    'src/pages/SwarmPlatforms.tsx',
+    'src/pages/OpenClawDocs.tsx',
+    'src/pages/ElizaPlugin.tsx',
+    'src/pages/FrameworkAdapters.tsx',
+    'src/pages/ChitIn15Lines.tsx',
+  ];
+  for (const rel of pages) {
+    const page = readFileSync(join(root, rel), 'utf8');
+    assert.match(page, /PaidDoorOptions/, `${rel} shows both pay options`);
+    assert.match(page, /X-API-Key|CHIT_API_KEY|CHIT402_API_KEY/, `${rel} keeps a partner key`);
+    assert.doesNotMatch(page, /@xfuel\/sidecar|from 'xfuel-sdk'|npx xfuel-mcp/);
+  }
+});
+
 test('Docs hub leads with book; install doors on dedicated page', () => {
   const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
   const doors = readFileSync(join(root, 'src/pages/Doors.tsx'), 'utf8');
@@ -316,11 +340,19 @@ test('Docs hub leads with book; install doors on dedicated page', () => {
   assert.match(docs, /to="\/doors"/, 'Docs hub links to /doors');
   assert.match(docs, /href: '\/products'/, 'Docs hub lists Products in start here');
   assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
-  assert.match(doors, /DocDoorGrid/, 'Doors page renders door cards');
   assert.match(doors, /<h1>Doors<\/h1>/, 'Doors page has first-class title');
+  assert.doesNotMatch(doors, /Equal-weight/);
+  assert.match(doors, /PaidDoorOptions/, 'Doors leads with keyless x402');
+  assert.match(doors, /CHIT402_API_KEY/, 'Doors keeps the partner API key');
+  assert.match(doors, /chit402-sdk/);
+  assert.match(doors, /chit402-mcp/);
+  assert.match(doors, /chit402-sidecar/);
+  assert.doesNotMatch(doors, /@xfuel\/sidecar/);
+  assert.doesNotMatch(doors, /xfuel-sdk/);
+  assert.doesNotMatch(doors, /xfuel-mcp/);
   assert.match(docsDoors, /Navigate to="\/doors"/, 'Legacy /docs/doors redirects to /doors');
-  const doorsBlock = doors.match(/export const installDoors[\s\S]*?];/)?.[0] ?? '';
-  assert.match(doorsBlock, /Chit in 15 lines/, 'Doors page includes drop-in');
+  const doorsBlock = doors.match(/export const moreDoors[\s\S]*?];/)?.[0] ?? '';
+  assert.match(doorsBlock, /Chat \/v1 wire/, 'Doors page links the wire page');
   assert.match(doorsBlock, /Eliza plugin/, 'Doors page includes Eliza');
 });
 

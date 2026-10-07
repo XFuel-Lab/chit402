@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 
 const langchainExample = `npm install chit402-adapters @langchain/openai
 
@@ -8,7 +9,7 @@ import { createChitChatOpenAI } from 'chit402-adapters/langchain';
 import { extractReceipt } from 'chit402-adapters/receipt';
 
 const llm = await createChitChatOpenAI({
-  apiKey: process.env.CHIT_API_KEY, // optional partner key; omit for x402-paid /v1
+  apiKey: process.env.CHIT_API_KEY, // partner key
   model: 'xfuel/auto',
 });
 
@@ -23,7 +24,7 @@ import { generateText } from 'ai';
 import { createChit } from 'chit402-adapters/ai-sdk';
 import { extractReceipt } from 'chit402-adapters/receipt';
 
-const chit = await createChit();
+const chit = await createChit({ apiKey: process.env.CHIT_API_KEY });
 const { text, response } = await generateText({
   model: chit('xfuel/auto'),
   prompt: 'Say hello in five words.',
@@ -48,9 +49,9 @@ export default function FrameworkAdapters() {
           <span className="docs-kicker">Framework</span>
           <h1>LangChain + AI SDK</h1>
           <p>
-            Swap <code>baseURL</code> to <code>{apiV1}</code>, pay USDC on Base, hold{' '}
-            <code>verify_url</code>. Chit402 is the book — hub, model, amount — not a cheaper
-            inference router.
+            Swap <code>baseURL</code> to <code>{apiV1}</code>. Keyless x402 first. A partner key
+            still works in the adapter snippets. /docs/langchain and /docs/ai-sdk are this page.
+            Chit402 is the book — hub, model, amount — not a cheaper inference router.
           </p>
         </header>
 
@@ -61,9 +62,9 @@ export default function FrameworkAdapters() {
 # plus @langchain/openai or @ai-sdk/openai + ai`}</code>
           </pre>
           <p style={styles.note}>
-            Canonical package: <code>@xfuel/adapters</code>. Public alias:{' '}
-            <code>chit402-adapters</code>.
+            Package: <code>chit402-adapters</code>.
           </p>
+          <PaidDoorOptions apiV1={apiV1} />
         </div>
 
         <div className="docs-panel">
