@@ -421,6 +421,7 @@ function packAllowance(agentId, remaining, session) {
  * @param {{
  *   identity?: object|null,
  *   spent?: bigint,
+ *   held?: bigint | string | number,
  *   session?: string|null,
  * }} [extra]
  */
@@ -440,6 +441,9 @@ export function packBook(entries, agentId, limit, extra = {}) {
     spent: caps.spent,
     remaining: caps.remaining,
   };
+  // Open holds shrink remaining. Show the amount so spent + held + remaining = cap.
+  // Absent when nothing is held, so a flag-off book stays the same shape.
+  if (caps.held != null) body.held = caps.held;
   if (extra.session) {
     body.allowance = packAllowance(agentId, caps.remaining, extra.session);
     body.private_spend = {

@@ -21,7 +21,7 @@ import {
   spendHoldTtlMs,
   DEFAULT_HOLD_TTL_MS,
 } from '../src/spend-hold.js';
-import { capViewOf } from '../src/agent-book.js';
+import { capViewOf, packBook } from '../src/agent-book.js';
 
 function yieldTurn() {
   return new Promise((resolve) => { setImmediate(resolve); });
@@ -65,6 +65,28 @@ test('cap view counts open holds and omits the field when nothing is held', () =
   const unlimited = capViewOf({ budget: null }, 2000n, 0n);
   assert.equal(unlimited.remaining, null);
   assert.equal(Object.hasOwn(unlimited, 'held'), false);
+});
+
+test('book JSON shows held when open holds shrink remaining', () => {
+  const open = packBook([], 7, 50, {
+    identity: { budget: '10000' },
+    spent: 2000n,
+    held: 3000n,
+  });
+  assert.equal(open.cap, '10000');
+  assert.equal(open.spent, '2000');
+  assert.equal(open.held, '3000');
+  assert.equal(open.remaining, '5000');
+  assert.equal(
+    BigInt(open.spent) + BigInt(open.held) + BigInt(open.remaining),
+    BigInt(open.cap),
+  );
+  const plain = packBook([], 7, 50, {
+    identity: { budget: '10000' },
+    spent: 2000n,
+  });
+  assert.equal(plain.remaining, '8000');
+  assert.equal(Object.hasOwn(plain, 'held'), false);
 });
 
 test('N parallel reserves cannot exceed the ceiling', async () => {
