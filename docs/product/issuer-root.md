@@ -252,6 +252,25 @@ A history entry whose kid is in that cache has `retirement_block` set to the log
 
 The gateway refuses to sign with a kid the cache shows as retired (`issuer_key_retired`). That includes payment receipts, refusals, foreign ingest, and the issuer-history JWS. `skip` does not fill the cache. It already cannot sign v11.
 
+## Verifier #484
+
+Checked against `cursor/verify-0.4.0-issuer-root-73ea` at `bace29e` (descendant of `576df5a`). Policy term names match: `policy_id`, `policy_version`, `dispute_window_seconds`, `retention_days`, `retention_mode`, `max_cumulative_spend`, `policy_hash`.
+
+The retention floor is stricter here than in the verifier, on purpose. This gateway refuses `retention_days` below 365, and also refuses a retention shorter than the longest dispute window plus 30 days. #484 fails `policy_retention_floor` when `retention_days` is below 365 or shorter than that receipt's own `dispute_window_seconds / 86400`. It does not add the 30-day margin. A receipt this gateway will sign still passes that check.
+
+These names are not the same. This document does not rename them.
+
+| Gateway | #484 |
+|---|---|
+| entry `guardian_set_hash` | not read; history embed drops it; the verifier looks for top-level `guardians` |
+| entry `retirement_block` | not read; retirements are `{ kid, blockNumber, blockTimestamp }` supplied by the caller |
+| signed `issuer_history_mirror` `{ repo, commit, path, sha256 }` | not read; `--issuer-commit repo@sha` and `--issuer-commit-file` supply `repo`, `commit`, and a document |
+| `issuer_key_retired` | `KEY_RETIRED` |
+| `issuer_key_is_guardian` | `signing_key_is_guardian` |
+| `issuer_history_mirror_stale` | `commit_snapshot_disagree`, `commit_registry_disagree`, or `snapshot_registry_disagree` |
+
+When `guardian_set_hash` and `retirement_block` are omitted, the snapshot vector still matches #484. A snapshot that includes either field will not recompute there until `historyEmbedEntry` keeps those keys.
+
 ## Cutover pause
 
 Genesis needs every pre-v11 `payload_hash` in the freeze, and v11 needs that commit's `root_seq`. A receipt signed between the snapshot and v11 would be in neither set.
