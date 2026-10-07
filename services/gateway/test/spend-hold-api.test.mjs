@@ -11,6 +11,7 @@ import fs from 'node:fs';
 
 import { SpendHoldStore } from '../src/spend-hold.js';
 import { createSpendHoldService, BASE_SEPOLIA_USDC } from '../src/spend-hold-api.js';
+import { renderReceiptHtml } from '../src/receipt.js';
 
 const FUNDER = '0x1111111111111111111111111111111111111111';
 const PAYTO = '0x2222222222222222222222222222222222222222';
@@ -164,6 +165,60 @@ test('release returns capacity and settle signs once', async () => {
     const stored = await got.json();
     assert.equal(stored.issuer_signature.jws, first.json.receipt.issuer_signature.jws);
     assert.equal(stored.verify_url, first.json.verify_url);
+    const html = renderReceiptHtml(stored);
+    assert.match(html, /ES256 signed receipt/);
+    assert.match(html, new RegExp(PAYER));
+    assert.match(html, /issuer_signature|JWKS/);
+  } finally {
+    server.close();
+  }
+});
+
+test('an expired hold is not receipted and does not keep the cap', async () => {
+  let now = 1_000;
+  const store = new SpendHoldStore({ ttlMs: 1_000, now: () => now });
+  const api = createSpendHoldService({
+    store,
+    token: TOKEN,
+    ceilings: new Map([[FUNDER, 5000n]]),
+  });
+  const { server, base } = await listen(api.handle);
+  try {
+    const placed = await call(base, 'POST', '/v1/spend/holds', holdBody(5000, 'expiring'));
+    assert.equal(placed.status, 201);
+    now = 3_000;
+    const settled = await call(base, 'POST', '/v1/spend/holds/expiring/settle', {
+      tx: `0x${'cd'.repeat(32)}`,
+      payer: PAYER,
+      resource: 'https://sandbox.example/v1/job',
+      agent_id: 7,
+    });
+    assert.notEqual(settled.status, 200);
+    assert.equal(settled.json.receipt, undefined);
+    assert.equal(settled.json.verify_url, undefined);
+    assert.equal(api.lookup('expiring'), null);
+    const again = await call(base, 'POST', '/v1/spend/holds', holdBody(5000, 'after-expiry'));
+    assert.equal(again.status, 201);
+  } finally {
+    server.close();
+  }
+});
+
+test('settle does not receipt when consume fails', async () => {
+  const { api, store } = service('5000');
+  const { server, base } = await listen(api.handle);
+  try {
+    const placed = await call(base, 'POST', '/v1/spend/holds', holdBody(5000, 'stuck'));
+    assert.equal(placed.status, 201);
+    store.consume = async () => ({ ok: false, code: 'hold_not_open', state: 'expired' });
+    const settled = await call(base, 'POST', '/v1/spend/holds/stuck/settle', {
+      tx: `0x${'cd'.repeat(32)}`,
+      payer: PAYER,
+      resource: 'https://sandbox.example/v1/job',
+    });
+    assert.equal(settled.status, 409);
+    assert.equal(settled.json.error.code, 'hold_not_open');
+    assert.equal(settled.json.verify_url, undefined);
   } finally {
     server.close();
   }

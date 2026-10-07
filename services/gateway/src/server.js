@@ -2946,10 +2946,7 @@ export function createApp() {
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) {
           if (wantsJson) return res.json(spendReceipt);
-          const safeId = /^[A-Za-z0-9_-]+$/.test(String(rawTaskId)) ? String(rawTaskId) : 'receipt';
-          return res.type('html').send(
-            `<!doctype html><meta charset="utf-8"><title>Chit402 receipt</title><p>${safeId}</p><p><a href="?format=json">JSON</a></p>`,
-          );
+          return res.type('html').send(renderReceiptHtml(spendReceipt));
         }
         if (wantsJson) {
           return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });

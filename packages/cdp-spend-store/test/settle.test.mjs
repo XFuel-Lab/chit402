@@ -7,12 +7,17 @@ import { applySpendControls } from '@coinbase/cdp-sdk/x402';
 import {
   attachChitReceipt,
   createChitSpendStore,
+  createSpendBook,
   BASE_SEPOLIA_NETWORK,
   BASE_SEPOLIA_USDC,
 } from '../src/index.js';
 import {
+  ASSET,
   FUNDER,
+  NETWORK,
   PAYER,
+  PAYTO,
+  RESOURCE,
   TOKEN,
   countingScheme,
   paymentRequired,
@@ -73,6 +78,56 @@ test('retrying the same CDP entry does not reserve twice, and settle does not re
     assert.equal(second.idempotent, true);
     assert.equal(second.receipt.issuer_signature.jws, first.receipt.issuer_signature.jws);
     assert.equal(second.verify_url, first.verify_url);
+  } finally {
+    await gateway.close();
+  }
+});
+
+test('a hold whose first POST failed still settles on retry', async () => {
+  const gateway = await startHoldGateway(5000n);
+  try {
+    let posts = 0;
+    const fetchImpl = async (url, init) => {
+      if (String(init?.method || 'GET').toUpperCase() === 'POST' && String(url).endsWith('/v1/spend/holds')) {
+        posts += 1;
+        if (posts === 1) throw new Error('socket reset');
+      }
+      return fetch(url, init);
+    };
+    const book = createSpendBook({
+      gatewayUrl: gateway.base,
+      token: TOKEN,
+      funder: FUNDER,
+      agentId: 7,
+      fetchImpl,
+    });
+    const entry = {
+      atomicAmount: 1000n,
+      asset: ASSET,
+      network: NETWORK,
+      payTo: PAYTO,
+      at: 9,
+    };
+    await assert.rejects(() => book.holdEntry(entry), /socket reset/);
+    await book.holdEntry(entry);
+    const payload = {
+      x402Version: 2,
+      resource: { url: RESOURCE },
+      accepted: { amount: '1000', asset: ASSET, network: NETWORK, payTo: PAYTO },
+      payload: { nonce: 'retry-1' },
+    };
+    book.notePayload(payload, payload.accepted);
+    const settled = await book.onPaymentResponse({
+      paymentPayload: payload,
+      settleResponse: {
+        success: true,
+        transaction: `0x${'ab'.repeat(32)}`,
+        payer: PAYER,
+        network: NETWORK,
+      },
+    });
+    assert.match(settled.verify_url, /\/receipt\/xfuel-/);
+    assert.equal(posts, 2);
   } finally {
     await gateway.close();
   }

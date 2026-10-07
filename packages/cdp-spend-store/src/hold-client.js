@@ -69,6 +69,10 @@ export function createSpendBook(options) {
   /** @type {Map<string, string[]>} */
   const queues = new Map();
   const byPayload = new WeakMap();
+  /** Request ids sitting in a queue, waiting for a payload. */
+  const queuedIds = new Set();
+  /** Request ids already bound to a payment payload. */
+  const boundIds = new Set();
   let lastReceipt = null;
 
   async function request(method, pathname, body) {
@@ -104,13 +108,17 @@ export function createSpendBook(options) {
   }
 
   function pushQueue(entry, requestId) {
+    if (queuedIds.has(requestId) || boundIds.has(requestId)) return;
     const key = matchKey(entry);
     const queue = queues.get(key) || [];
     queue.push(requestId);
     queues.set(key, queue);
+    queuedIds.add(requestId);
   }
 
   function dropQueue(requestId) {
+    queuedIds.delete(requestId);
+    boundIds.delete(requestId);
     for (const [key, queue] of queues) {
       const idx = queue.indexOf(requestId);
       if (idx >= 0) queue.splice(idx, 1);
@@ -140,7 +148,6 @@ export function createSpendBook(options) {
      */
     async holdEntry(entry) {
       let requestId = idsByObject.get(entry);
-      const fresh = !requestId;
       if (!requestId) {
         requestId = `${entryRequestId(funder, entry)}:${crypto.randomUUID()}`;
         idsByObject.set(entry, requestId);
@@ -154,7 +161,10 @@ export function createSpendBook(options) {
         pay_to: entry.payTo,
         entry_at: entry.at,
       });
-      if (fresh) pushQueue(entry, requestId);
+      // Queue only after the gateway accepts the hold. A retry of this same
+      // entry (the first POST was lost, or it is idempotent) still binds,
+      // and a second success does not enqueue the id twice.
+      pushQueue(entry, requestId);
       return { requestId };
     },
     async releaseEntry(entry) {
@@ -181,6 +191,8 @@ export function createSpendBook(options) {
       if (!queue || queue.length === 0) return;
       const requestId = queue.shift();
       if (queue.length === 0) queues.delete(key);
+      queuedIds.delete(requestId);
+      boundIds.add(requestId);
       byPayload.set(payload, requestId);
     },
     /**

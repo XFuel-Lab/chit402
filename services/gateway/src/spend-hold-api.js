@@ -453,7 +453,6 @@ export function createSpendHoldService({
         const outcome = await lock(async () => {
           const cached = receipts.get(requestId);
           if (cached) {
-            await store.consume(requestId, cached.payment?.gross_amount ?? null);
             return { status: 200, body: { ok: true, idempotent: true, receipt: cached, verify_url: cached.verify_url } };
           }
           const holds = await store.snapshot();
@@ -461,24 +460,28 @@ export function createSpendHoldService({
           if (!hold) {
             return { status: 404, body: { error: { code: 'hold_not_found', message: 'no hold for this request_id' } } };
           }
-          if (hold.state !== 'open') {
+          // Count the spend before signing. An expired hold must not receive
+          // a receipt: that payment would be missing from `spent` and a later
+          // reserve could pass the lifetime cap.
+          if (hold.state === 'open') {
+            const consumed = await store.consume(requestId, hold.reserved);
+            if (!consumed.ok) {
+              return {
+                status: 409,
+                body: {
+                  error: {
+                    code: consumed.code || 'hold_not_open',
+                    message: 'hold could not be settled',
+                    state: consumed.state || consumed.hold?.state || null,
+                  },
+                },
+              };
+            }
+          } else if (hold.state !== 'consumed') {
             return { status: 409, body: { error: { code: 'hold_not_open', message: 'hold is not open', state: hold.state } } };
           }
           const issued = issueReceipt({ requestId, hold, body, req });
           if (!issued.ok) return { status: issued.status, body: { error: issued.error } };
-          const consumed = await store.consume(requestId, hold.reserved);
-          if (!consumed.ok && consumed.code !== 'hold_not_found') {
-            return {
-              status: 200,
-              body: {
-                ok: true,
-                idempotent: false,
-                receipt: issued.receipt,
-                verify_url: issued.receipt.verify_url,
-                consume: consumed,
-              },
-            };
-          }
           return {
             status: 200,
             body: { ok: true, idempotent: false, receipt: issued.receipt, verify_url: issued.receipt.verify_url },

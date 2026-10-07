@@ -119,7 +119,10 @@ jobs:
 
       - name: Install gateway deps
         working-directory: services/gateway
-        run: npm install --no-audit --no-fund
+        # The gateway postinstall installs theta-inference by calling npm
+        # again. On Windows that recursion exits before these tests run.
+        # The spend-store suite only needs the gateway's own dependencies.
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Test @chit402/cdp-spend-store
         working-directory: packages/cdp-spend-store
