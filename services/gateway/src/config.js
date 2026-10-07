@@ -156,6 +156,19 @@ const config = {
     minimizeLogs: process.env.PRIVATE_SPEND_MINIMIZE_LOGS !== 'false',
   },
 
+  // Hold-then-settle for the prepaid ceiling and session max_cumulative_spend.
+  // Default off: the door still checks settled spend only. When on, a paid call
+  // reserves its worst-case quote before upstream and releases the hold on
+  // failure. TTL covers a request that never returns. See spend-hold.js.
+  spendHold: {
+    enabled: process.env.SPEND_HOLD_ENABLED === 'true',
+    ttlMs: (() => {
+      const n = parseInt(process.env.SPEND_HOLD_TTL_MS, 10);
+      if (!Number.isFinite(n) || n < 1) return 10 * 60 * 1000;
+      return n;
+    })(),
+  },
+
   // Provider Float Manager v0 (ADR 0005) — prepaid COGS; buyer rail stays USDC.
   // See docs/PROVIDER_FLOAT_TREASURY.md. No hot-path FX.
   providerFloats: {
