@@ -194,6 +194,39 @@ test('matching runtime code with other init code is not this constructor', async
   assert.equal(result.overall, 'failed');
 });
 
+test('a countersignature that names another key or URL is refused', async () => {
+  const { Signature, Wallet, keccak256, toUtf8Bytes } = await import('ethers');
+  const { countersignDigest, countersignatureMatches } = await import('../dist/anchor-witness.js');
+  const wallet = new Wallet(`0x${'11'.repeat(32)}`);
+  const url = 'https://witness.example/chit-log';
+  const id = keccak256(toUtf8Bytes(url));
+  const claim = {
+    id,
+    epoch: 0,
+    key: wallet.address,
+    url,
+    treeSize: 4,
+    root: `0x${'cd'.repeat(32)}`,
+    chainId: 84532,
+    registry: `0x${'ab'.repeat(20)}`,
+  };
+  const sig = Signature.from(wallet.signingKey.sign(countersignDigest(claim))).serialized;
+  const row = { key: wallet.address, url, id };
+  assert.equal(countersignatureMatches(row, claim, sig).ok, true);
+  assert.equal(
+    countersignatureMatches({ key: `0x${'22'.repeat(20)}`, url, id }, claim, sig).reason,
+    'witness_countersign_key',
+  );
+  assert.equal(
+    countersignatureMatches(row, { ...claim, url: 'https://other.example/chit-log' }, sig).reason,
+    'witness_countersign_url',
+  );
+  assert.equal(
+    countersignatureMatches(row, { ...claim, epoch: 1 }, sig).reason,
+    'witness_countersign_signer',
+  );
+});
+
 test('consistency above 2^31 agrees with the safe integer fold', () => {
   const m = 2147483651;
   const n = 2147483656;

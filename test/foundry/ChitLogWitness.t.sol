@@ -31,9 +31,9 @@ contract ChitLogWitnessTest is Test {
     // Runtime code hash of this solc 0.8.24 / optimizer-200 build.
     // The same value is pinned in the gateway and in the verify package.
     bytes32 internal constant CHIT_LOG_WITNESS_CODEHASH =
-        0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471;
+        0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a;
     bytes32 internal constant CHIT_LOG_WITNESS_INIT_CODE_HASH =
-        0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935;
+        0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56;
 
     function test_runtimeCodeIsPinned() public pure {
         assertEq(keccak256(type(ChitLogWitness).runtimeCode), CHIT_LOG_WITNESS_CODEHASH);
@@ -221,6 +221,52 @@ contract ChitLogWitnessTest is Test {
     function _possession(uint256 pk, string memory url, address key) internal view returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, witness.registrationDigest(url, key));
         return abi.encodePacked(r, s, v);
+    }
+
+    function _countersign(
+        uint256 pk,
+        bytes32 id,
+        uint256 epoch,
+        address key,
+        string memory url,
+        uint256 treeSize,
+        bytes32 root
+    ) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(pk, witness.countersignDigest(id, epoch, key, url, treeSize, root));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_countersignatureNamesTheRegisteredRow() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        bytes memory possession = _possession(pk, url, key);
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(url, key, possession);
+        bytes32 root = keccak256("head");
+        bytes memory sig = _countersign(pk, id, 0, key, url, 4, root);
+        assertTrue(witness.countersignatureMatches(id, 0, key, url, 4, root, sig));
+        assertFalse(witness.countersignatureMatches(id, 1, key, url, 4, root, sig));
+        assertFalse(witness.countersignatureMatches(id, 0, key, url, 4, root, possession));
+    }
+
+    function test_countersignatureRejectsADifferentKeyOrUrl() public {
+        uint256 pk = 0xA11;
+        uint256 otherPk = 0xB22;
+        address key = vm.addr(pk);
+        address otherKey = vm.addr(otherPk);
+        string memory url = "https://witness.example/chit-log";
+        string memory otherUrl = "https://other.example/chit-log";
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(url, key, _possession(pk, url, key));
+        bytes32 root = keccak256("head");
+        bytes memory otherKeySig = _countersign(otherPk, id, 0, otherKey, url, 4, root);
+        assertFalse(witness.countersignatureMatches(id, 0, otherKey, url, 4, root, otherKeySig));
+        bytes32 otherId = keccak256(bytes(otherUrl));
+        bytes memory otherUrlSig = _countersign(pk, otherId, 0, key, otherUrl, 4, root);
+        assertFalse(witness.countersignatureMatches(id, 0, key, otherUrl, 4, root, otherUrlSig));
+        assertFalse(witness.countersignatureMatches(otherId, 0, key, otherUrl, 4, root, otherUrlSig));
     }
 
     function test_missingProofOfPossessionIsRefused() public {

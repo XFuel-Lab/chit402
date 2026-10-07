@@ -7,7 +7,7 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
-import { AbiCoder, Interface, keccak256 } from 'ethers';
+import { AbiCoder, Interface, getBytes, hashMessage, keccak256, recoverAddress, toUtf8Bytes } from 'ethers';
 import { EPOCH1_FINAL_ROOT } from './epoch.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
@@ -257,12 +257,96 @@ const WITNESS_HEAD = new Interface([
 ]);
 
 /** Runtime code hash of ChitLogWitness, solc 0.8.24, optimizer 200. */
-export const CHIT_LOG_WITNESS_CODEHASH = '0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471';
+export const CHIT_LOG_WITNESS_CODEHASH = '0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a';
 
 /** Init code without constructor args. Address and creation tx are unset until deploy. */
-export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935';
-export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 7739;
+export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56';
+export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 8769;
 export const CHIT_LOG_WITNESS_ADDRESS_PIN: string | null = null;
+
+/** Domain tag for a witness countersignature. Not the registration tag. */
+export const WITNESS_COUNTERSIGN_DOMAIN = keccak256(toUtf8Bytes('chit.logWitness.countersign.v1'));
+
+export interface WitnessCountersign {
+  id: string;
+  epoch: number | bigint;
+  key: string;
+  url: string;
+  treeSize: number | bigint;
+  root: string;
+  chainId: number | bigint;
+  registry: string;
+}
+
+export interface WitnessRow {
+  key?: string | null;
+  url?: string | null;
+  id?: string | null;
+}
+
+function hex32(value: string): string {
+  const raw = String(value || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(raw)) return '';
+  return `0x${raw}`;
+}
+
+/**
+ * EIP-191 digest over the witness key, its URL, the directory row id, and
+ * the directory epoch, plus the log head. chainId and registry keep it off
+ * another chain or another contract. A registration signature is a different tag.
+ */
+export function countersignDigest(claim: WitnessCountersign): string {
+  const url = String(claim.url || '');
+  const id = hex32(claim.id);
+  const root = hex32(claim.root);
+  const inner = keccak256(AbiCoder.defaultAbiCoder().encode(
+    ['bytes32', 'uint256', 'address', 'bytes32', 'uint256', 'address', 'bytes32', 'uint256', 'bytes32'],
+    [
+      WITNESS_COUNTERSIGN_DOMAIN,
+      BigInt(claim.chainId),
+      claim.registry,
+      id,
+      BigInt(claim.epoch),
+      claim.key,
+      keccak256(toUtf8Bytes(url)),
+      BigInt(claim.treeSize),
+      root,
+    ],
+  ));
+  return hashMessage(getBytes(inner));
+}
+
+/**
+ * Refuse unless the signature names this row's key and URL. The signer must
+ * be that key. A different row, a different epoch, or a registration signature
+ * does not pass.
+ */
+export function countersignatureMatches(
+  row: WitnessRow,
+  claim: WitnessCountersign,
+  signature: string,
+): { ok: boolean; reason?: string } {
+  const url = String(claim?.url || '');
+  const key = String(claim?.key || '').toLowerCase();
+  const rowKey = String(row?.key || '').toLowerCase();
+  const rowUrl = String(row?.url || '');
+  if (!key || key === '0x0000000000000000000000000000000000000000') {
+    return { ok: false, reason: 'witness_countersign_key' };
+  }
+  if (!url || !rowUrl || url !== rowUrl) return { ok: false, reason: 'witness_countersign_url' };
+  if (key !== rowKey) return { ok: false, reason: 'witness_countersign_key' };
+  const id = keccak256(toUtf8Bytes(url));
+  if (!hex32(claim.id) || hex32(claim.id) !== id) return { ok: false, reason: 'witness_countersign_row' };
+  if (row.id && hex32(row.id) !== id) return { ok: false, reason: 'witness_countersign_row' };
+  let recovered = '';
+  try {
+    recovered = recoverAddress(countersignDigest(claim), signature).toLowerCase();
+  } catch {
+    return { ok: false, reason: 'witness_countersign_signer' };
+  }
+  if (recovered !== key) return { ok: false, reason: 'witness_countersign_signer' };
+  return { ok: true };
+}
 export const CHIT_LOG_WITNESS_CREATION_TX_PIN: string | null = null;
 
 export interface WitnessCreation {

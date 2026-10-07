@@ -28,7 +28,7 @@ export const WITNESS_ABI = [
 const iface = new Interface(WITNESS_ABI);
 
 /** Runtime code hash of ChitLogWitness at solc 0.8.24, optimizer 200. */
-export const CHIT_LOG_WITNESS_CODEHASH = '0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471';
+export const CHIT_LOG_WITNESS_CODEHASH = '0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a';
 
 /**
  * Creation (init) bytecode hash and length, without constructor args.
@@ -37,8 +37,8 @@ export const CHIT_LOG_WITNESS_CODEHASH = '0xc2a915f65e1c50210272ecbcb20350cd69d2
  * Boot and the verifier refuse a witness until both are set, because a
  * matching runtime hash can be returned by other init code.
  */
-export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935';
-export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 7739;
+export const CHIT_LOG_WITNESS_INIT_CODE_HASH = '0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56';
+export const CHIT_LOG_WITNESS_INIT_CODE_BYTES = 8769;
 export const CHIT_LOG_WITNESS_ADDRESS_PIN = null;
 export const CHIT_LOG_WITNESS_CREATION_TX_PIN = null;
 

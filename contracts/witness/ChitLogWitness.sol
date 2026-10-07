@@ -85,6 +85,10 @@ contract ChitLogWitness {
     ///         words ChitIssuerRoot binds into a root hash.
     bytes32 public constant REGISTER_DOMAIN = keccak256("chit.logWitness.register.v1");
 
+    /// @notice Domain for a countersignature of a log head. Distinct from
+    ///         REGISTER_DOMAIN, so a registration signature is not a countersignature.
+    bytes32 public constant COUNTERSIGN_DOMAIN = keccak256("chit.logWitness.countersign.v1");
+
     /// @notice One registration. A null `key` is the zero address and is not stored.
     struct WitnessRecord {
         address key;
@@ -219,6 +223,52 @@ contract ChitLogWitness {
         id = keccak256(bytes(url));
         _witnesses[id] = WitnessRecord({key: key, operator: msg.sender, url: url});
         emit WitnessRegistered(id, key, msg.sender);
+    }
+
+    /// @notice Digest a witness signs over its own key, URL, directory row,
+    ///         and the directory epoch, plus the log head. `chainId` and
+    ///         `registry` are bound the same way as registration.
+    function countersignDigest(
+        bytes32 id,
+        uint256 rowEpoch,
+        address key,
+        string calldata url,
+        uint256 logSize,
+        bytes32 logRoot
+    ) public view returns (bytes32) {
+        bytes32 inner = keccak256(
+            abi.encode(
+                COUNTERSIGN_DOMAIN,
+                block.chainid,
+                address(this),
+                id,
+                rowEpoch,
+                key,
+                keccak256(bytes(url)),
+                logSize,
+                logRoot
+            )
+        );
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", inner));
+    }
+
+    /// @notice True only when `signature` is by `key` over this URL, this row
+    ///         id, and this epoch, and that row stores the same key and URL.
+    function countersignatureMatches(
+        bytes32 id,
+        uint256 rowEpoch,
+        address key,
+        string calldata url,
+        uint256 logSize,
+        bytes32 logRoot,
+        bytes calldata signature
+    ) external view returns (bool) {
+        if (key == address(0) || bytes(url).length == 0 || signature.length == 0) return false;
+        if (id != keccak256(bytes(url))) return false;
+        WitnessRecord storage row = _witnesses[id];
+        if (row.key != key) return false;
+        if (keccak256(bytes(row.url)) != keccak256(bytes(url))) return false;
+        return _recover(countersignDigest(id, rowEpoch, key, url, logSize, logRoot), signature) == key;
     }
 
     function witnessRecord(bytes32 id) external view returns (address key, address operator, string memory url) {

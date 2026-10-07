@@ -21,6 +21,8 @@ A witness pointer is `register(url, key, signature)`. The signature is an EIP-19
 
 A new URL is a new id, `keccak256` of that URL's bytes. It is a fresh registration. It is not a rotation, and it copies nothing from any earlier row. Registering the same URL again replaces that row with the new key and the new operator. It does not keep the old operator.
 
+A countersignature is a different signature. Its domain is `keccak256("chit.logWitness.countersign.v1")`. The preimage names the witness key, the registered URL, the directory row id, and the directory epoch, then the log size and root, and it binds `chainId` and `registry` the same way registration does. A registration signature does not verify as a countersignature. `countersignatureMatches` refuses the signature when the named key or URL is not the key and URL stored on that row.
+
 A row whose `key` is the zero address is not stored, and a missing id reads as that empty key. It is not discoverable. It does not count toward `quorum` or `independent`. A row counts as an independent custodian only when the key is present, `operator` is neither the owner nor the appender, and the URL is not a copy we can rewrite. That copy is `chit402.com`, any subdomain, or a `/.well-known/` path with no other host. `operator` equal to the owner or the appender is us.
 
 A witness transaction is `broadcast` until a mined receipt succeeds and `head()` on the contract equals that size and root. Only then is it `witnessed`, and only then does the signed head include it. A reverted transaction is `reverted` and is not a signed claim. The daily retry looks at that witness side as well as Base and Solana.
@@ -33,8 +35,8 @@ The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f615
 
 A runtime code hash is not enough. Custom init code can return this contract's runtime bytecode and write any storage, so the constructor never ran. The check that binds the deployment is the creation transaction, not a log. `xfuel-verify --rpc --witness` and gateway boot require:
 
-- the runtime code hash of this build, `0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471`
-- the creation bytecode hash `0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935` (7,739 bytes, solc 0.8.24, optimizer 200)
+- the runtime code hash of this build, `0xde755e00171330aa511c157d3fb1134691fddd3e299c600f67c2e7af53562e1a`
+- the creation bytecode hash `0x5fa3f199791d61eff4f4c5097f736ce3cb047e2784b5e3c51044a08d52381b56` (8,769 bytes, solc 0.8.24, optimizer 200)
 - `CHIT_LOG_WITNESS_ADDRESS` and `CHIT_LOG_WITNESS_CREATION_TX`
 
 The creation transaction must be a contract creation. Its input must be that init code plus `abi.encode(owner, appender, 1, 4, dd20e39a…)`. The receipt's `contractAddress` must be the pinned address, and the receipt must have succeeded. Owner and appender are whatever that transaction used. Epoch, size, and root are fixed. Those two pins are empty in this build, because nothing has been deployed. Until both are set, `--witness` and a boot with `RECEIPT_LOG_WITNESS=1` fail `witness_creation_unpinned`. They do not treat a matching runtime hash as proof. An event in the receipt would not be enough: other init code can emit the same log.
