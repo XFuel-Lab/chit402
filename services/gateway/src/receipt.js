@@ -2890,7 +2890,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : ''}
     </section>`) }
 
-    ${renderInclusionSection(receipt.inclusion)}
+    ${renderInclusionSection(receipt.inclusion, receipt.carry_forward)}
     ${renderBookSeqSection(receipt.book_chain, receipt.receipt_lane)}
     ${renderSupersessionSection(receipt.supersession)}
     ${renderCoverageSection(receipt.coverage)}

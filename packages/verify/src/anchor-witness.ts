@@ -42,7 +42,8 @@ export const ANCHOR_DOES_NOT_PROVE = [
 
 export interface InclusionStep {
   hash: string;
-  position: string;
+  /** Ignored. RFC 9162 uses the leaf index and the tree size to pick the side. */
+  position?: string;
 }
 
 export interface AnchorReceipt {
@@ -151,7 +152,18 @@ export function normalizeRoot(root: string | null | undefined): string | null {
   return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
 }
 
-/** RFC 6962-style inclusion. Same rule as the gateway tree. */
+function half(n: number): number {
+  return Math.floor(n / 2);
+}
+
+/**
+ * RFC 9162 §2.1.3.2 inclusion. `index` and `treeSize` choose left or right
+ * at each step. `position` on a proof node is not trusted. A proof whose
+ * length is not the length that pair requires is rejected, as is
+ * `index >= treeSize`. Leaf and node bytes stay SHA-256(0x00 || leaf) and
+ * SHA-256(0x01 || left || right). Consistency proofs and the empty root
+ * are not this function.
+ */
 export function verifyMerkleInclusion(
   leaf: Buffer,
   index: number,
@@ -159,15 +171,35 @@ export function verifyMerkleInclusion(
   rootHex: string,
   proof: InclusionStep[],
 ): boolean {
-  if (!Array.isArray(proof) || index < 0 || index >= treeSize) return false;
-  let hash: Uint8Array = new Uint8Array(leaf);
+  if (!Array.isArray(proof)) return false;
+  const leafIndex = Number(index);
+  const size = Number(treeSize);
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
+  if (leafIndex < 0 || leafIndex >= size) return false;
+  const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return false;
+  let fn = leafIndex;
+  let sn = size - 1;
+  let hash: Buffer = Buffer.from(leaf);
   for (const step of proof) {
+    if (sn === 0) return false;
     if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    const next = step.position === 'left' ? nodeHash(sib, hash) : nodeHash(hash, sib);
-    hash = new Uint8Array(next);
+    if ((fn % 2) === 1 || fn === sn) {
+      hash = nodeHash(sib, hash);
+      if ((fn % 2) === 0) {
+        while ((fn % 2) === 0 && fn !== 0) {
+          fn = half(fn);
+          sn = half(sn);
+        }
+      }
+    } else {
+      hash = nodeHash(hash, sib);
+    }
+    fn = half(fn);
+    sn = half(sn);
   }
-  return Buffer.from(hash).toString('hex') === String(rootHex).replace(/^0x/, '').toLowerCase();
+  return sn === 0 && hash.toString('hex') === root;
 }
 
 export interface ParsedAnchorMemo {

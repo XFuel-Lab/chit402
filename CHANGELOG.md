@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Dated carry-forward.** When a receipt leaf is in an earlier signed epoch head and in the current signed epoch head, `@xfuel/verify` and the receipt page report `VERIFIED_CARRIED_FORWARD` with the issued time and epoch from the earlier head and the logged time, epoch, and leaf index from the current head. Inclusion is RFC 9162. A receipt in the current epoch is unchanged. A missing or invalid signature, a bad proof, a leaf mismatch, a current head time before the earlier head, an epoch id outside the pinned anchor list, or the same leaf at two indexes fails closed with the existing error code. Version stays 0.3.1. Not published.
+
 ### Fixed
 - **`@xfuel/verify` Windows `npm test`.** The epoch JWKS preload passed to `--import` is a `file://` URL, and `xfuel-verify` exits by setting `process.exitCode` after closing the fetch connection pool. Node 24 on Windows was aborting `npm publish`'s test run (`ERR_UNSUPPORTED_ESM_URL_SCHEME` on a `C:\` path, and `UV_HANDLE_CLOSING` after a verified epoch-1 check). Version stays 0.3.1. Not published.
 - **Epoch 1 can be checked from served data.** `GET /v1/receipts/tree/epoch/1/head` returns the closed epoch-1 head (root `dd20e39a…`, size 4) signed with the issuer key. Base `0x1d8d7ea2…` and Solana `61RHMsPP…` come from the committed pin. The GET does not write the journal, broadcast, or change the signed epoch record. The epoch 1 root and the epoch 2 opening stay byte-identical. Epoch-1 inclusion proofs name those anchors. `@xfuel/verify` 0.3.1 compares the full mainnet `getGenesisHash` (`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`). Not published. No deploy in this change.
