@@ -292,6 +292,15 @@ function readJson(file: string): unknown {
   return JSON.parse(content) as unknown;
 }
 
+function headStatus(file: string): string | null {
+  try {
+    const doc = readJson(file) as { status?: unknown };
+    return typeof doc?.status === 'string' ? doc.status : null;
+  } catch {
+    return null;
+  }
+}
+
 function printLane(lane: ReceiptLane): void {
   const bit = (value: boolean | null) => (value == null ? 'unknown' : (value ? 'true' : 'false'));
   console.log(`  Receipt lane (unsigned)`);
@@ -411,6 +420,11 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
   const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
   if (!receiptPath || !inclusionPath || !headPath) {
+    const candidates = [args.headFile, headPath, ...args.positionals];
+    if (candidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
+      console.error('Tree head is not_yet_published.');
+      return 3;
+    }
     console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
     console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
     return 3;
@@ -782,9 +796,46 @@ async function main(): Promise<number> {
   }
 }
 
+/**
+ * Node's fetch keeps its undici agent on this symbol after the first request.
+ * There is no public handle for that pool. Closing it lets the loop drain.
+ */
+const UNDICI_GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+
+type FetchDispatcher = {
+  close?: () => Promise<void> | void;
+  destroy?: () => Promise<void> | void;
+};
+
+function fetchDispatcher(): FetchDispatcher | undefined {
+  const bag = globalThis as unknown as Record<symbol, FetchDispatcher | undefined>;
+  return bag[UNDICI_GLOBAL_DISPATCHER];
+}
+
+/**
+ * process.exit() while a fetch keep-alive socket is already CLOSING aborts
+ * on Windows: Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)
+ * (src/win/async.c). Set the code and close the pool so the loop can drain.
+ */
+async function finish(code: number): Promise<void> {
+  process.exitCode = code;
+  const dispatcher = fetchDispatcher();
+  if (!dispatcher) return;
+  try {
+    const closing = dispatcher.close?.();
+    if (closing) await closing;
+  } catch {
+    try {
+      await dispatcher.destroy?.();
+    } catch {
+      // The verification result is already the exit code.
+    }
+  }
+}
+
 main()
-  .then((code) => process.exit(code))
+  .then((code) => finish(code))
   .catch((err) => {
     console.error('Unexpected error:', err);
-    process.exit(3);
+    return finish(3);
   });

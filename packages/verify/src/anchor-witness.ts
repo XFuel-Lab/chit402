@@ -14,9 +14,13 @@ import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PROGRAM_ID_V1 = 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo';
 
-/** Genesis hashes from the Solana cluster CAIP-2 references. */
+/**
+ * Full `getGenesisHash` values. CAIP-2 references keep only the first 32
+ * characters, and `getGenesisHash` returns the whole base58 hash. A prefix
+ * compare never matches mainnet-beta.
+ */
 export const SOLANA_GENESIS: Record<string, string> = {
-  'mainnet-beta': '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  'mainnet-beta': '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
   devnet: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',
   testnet: '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY',
 };
@@ -315,7 +319,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   let inclusionReason: string | undefined;
 
   const taskId = input.receipt?.task_id ? String(input.receipt.task_id) : '';
-  if (!taskId) {
+  const inclusionError = (input.inclusion as { error?: string } | null | undefined)?.error;
+  if (inclusionError === 'not_in_tree') {
+    inclusionReason = 'not_in_tree';
+  } else if (!taskId) {
     inclusionReason = 'missing_task_id';
   } else if (input.inclusion?.task_id && String(input.inclusion.task_id) !== taskId) {
     inclusionReason = 'task_mismatch';

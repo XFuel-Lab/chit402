@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -123,7 +123,9 @@ function runCli(fx, args, env) {
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
   writeFileSync(join(dir, 'epoch.json'), JSON.stringify(fx.record));
   const cli = join(pkgDir, 'dist', 'cli.js');
-  const preload = fileURLToPath(new URL('./jwks-fetch-preload.mjs', import.meta.url));
+  // --import is an ESM specifier. A raw C:\ path is parsed as protocol "c:"
+  // and Node exits ERR_UNSUPPORTED_ESM_URL_SCHEME before the CLI runs.
+  const preload = pathToFileURL(fileURLToPath(new URL('./jwks-fetch-preload.mjs', import.meta.url))).href;
   return spawnSync(process.execPath, [
     '--import', preload,
     cli,

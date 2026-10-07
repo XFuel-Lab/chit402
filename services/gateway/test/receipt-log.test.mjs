@@ -22,6 +22,11 @@ const {
   rootOf,
   anchorPrevRoot,
   ReceiptLogRefused,
+  closedEpochAnchorPair,
+  signPinnedClosedHead,
+  EPOCH1_FINAL_SOLANA_MEMO,
+  verifyTreeHead,
+  readReceiptLogPin,
 } = await import('../src/receipt-merkle.js');
 const {
   EPOCH1_FINAL_ROOT,
@@ -2372,6 +2377,161 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     else process.env.RECEIPT_LOG_BOOT = prevBoot;
     if (prevLogDir == null) delete process.env.RECEIPT_LOG_DIR;
     else process.env.RECEIPT_LOG_DIR = prevLogDir;
+    resetReceiptMerkleTree();
+  }
+});
+
+test('epoch 1 inclusion names the pin anchors and the closed head is signed', async () => {
+  const pin = readReceiptLogPin();
+  const pair = closedEpochAnchorPair(pin, 1, EPOCH1_FINAL_ROOT, 4);
+  assert.equal(pair.base.tx, '0x1d8d7ea255170c8d4b87bef9382e13555dded2072fd877ce35f995f1ab54ee09');
+  assert.equal(pair.solana.tx, '61RHMsPPseUc35v5oxDEtANEDCvXk5fmxZdrFDMknGWc5m7U8YhMfz4En1eFFj3z9n67ZtMiha1zkwnneL2LUiXk');
+  assert.equal(pair.solana.slot, 452921175);
+  const historical = signPinnedClosedHead({
+    epoch: 1,
+    root: EPOCH1_FINAL_ROOT,
+    treeSize: 4,
+    prevEpochRoot: null,
+    prevEpochSize: 0,
+    base: pair.base,
+    solana: pair.solana,
+  });
+  assert.equal(historical.root, EPOCH1_FINAL_ROOT);
+  assert.equal(historical.tree_size, 4);
+  assert.equal(historical.anchors.base.status, 'anchored');
+  assert.equal(historical.anchors.base.tx, pair.base.tx);
+  assert.equal(historical.anchors.solana.signature, pair.solana.tx);
+  assert.equal(historical.anchors.solana.cluster, 'mainnet-beta');
+  assert.equal(historical.anchors.solana.memo, EPOCH1_FINAL_SOLANA_MEMO);
+  assert.equal(historical.anchors.solana.slot, 452921175);
+  assert.equal(verifyTreeHead(historical).valid, true);
+  assert.equal(epochRecordClaims().epochs[0].final_root, EPOCH1_FINAL_ROOT);
+  assert.equal(epochRecordClaims().epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+
+  const rows = [
+    { task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af', row_hash: 'row-1' },
+    { task_id: 'leaf-2', row_hash: 'row-2' },
+    { task_id: 'leaf-3', row_hash: 'row-3' },
+  ];
+  const preimages = [
+    genesisBytes(EPOCH1_GENESIS_DIGEST),
+    Buffer.from(`${rows[0].task_id}|${rows[0].row_hash}`),
+    Buffer.from(`${rows[1].task_id}|${rows[1].row_hash}`),
+    Buffer.from(`${rows[2].task_id}|${rows[2].row_hash}`),
+  ];
+  const want = hex(rootOf(preimages.map((body) => epochLeafHash(body))));
+  const rebuilt = rebuildEpoch1FromRows(rows, { expectRoot: want });
+  assert.notEqual(rebuilt.root, EPOCH1_FINAL_ROOT);
+
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  const prevPin = process.env.RECEIPT_LOG_PIN_FILE;
+  process.env.RECEIPT_LOG_BOOT = '0';
+  delete process.env.RECEIPT_LOG_DIR;
+  delete process.env.RECEIPT_LOG_PIN_FILE;
+  resetReceiptMerkleTree();
+  const tree = getReceiptMerkleTree();
+  const dir = tmp();
+  tree.dir = dir;
+  const meta = rebuilt.preimages.map((body, index) => ({
+    task_id: index === 0 ? 'genesis' : String(rebuilt.rows[index - 1].task_id),
+    index,
+    kind: index === 0 ? 'genesis' : 'receipt',
+    preimage_b64: Buffer.from(body).toString('base64'),
+    epoch: 1,
+  }));
+  const byTask = new Map();
+  meta.forEach((item, index) => {
+    if (item.task_id) byTask.set(String(item.task_id), index);
+  });
+  tree.closedEpochs = [{
+    epoch: 1,
+    status: 'closed',
+    prevEpochRoot: null,
+    prevEpochSize: 0,
+    leaves: rebuilt.leaves,
+    meta,
+    byTask,
+    heads: [],
+  }];
+  tree.epoch = 2;
+  tree.prevEpochRoot = rebuilt.root;
+  tree.prevEpochSize = 4;
+  tree.leaves = [epochLeafHash(genesisBytes(EPOCH2_GENESIS_DIGEST))];
+  tree.heads = [];
+  tree.byTask = new Map();
+  assert.equal(hex(rootOf(tree.leaves)), EPOCH2_OPENING_ROOT);
+  assert.equal(tree.signedClosedEpochHead(1), null);
+  const pending = tree.inclusion(rows[0].task_id);
+  assert.equal(pending.epoch, 1);
+  assert.equal(pending.root, want);
+  assert.equal(pending.anchor_status, 'pending');
+  assert.equal(pending.anchor_tx, null);
+
+  const baseTx = `0x${'ab'.repeat(32)}`;
+  const solSig = 'SyntheticSig111111111111111111111111111111111111111111111111111111111111111111111';
+  const pinPath = path.join(dir, 'pin.json');
+  fs.writeFileSync(pinPath, JSON.stringify({
+    epochs: [{ epoch: 1, root: want, tree_size: 4 }],
+    anchors: [
+      { chain: 'base', root: want, tx: baseTx, epoch: 1, tree_size: 4, in_journal: true },
+      { chain: 'solana', root: want, tx: solSig, slot: 7, epoch: 1, tree_size: 4, in_journal: true },
+    ],
+  }));
+  process.env.RECEIPT_LOG_PIN_FILE = pinPath;
+  const head = tree.signedClosedEpochHead(1);
+  const again = tree.signedClosedEpochHead(1);
+  assert.equal(head.issuer_signature.jws, again.issuer_signature.jws);
+  assert.equal(head.root, want);
+  assert.equal(head.tree_size, 4);
+  assert.equal(head.anchors.base.tx, baseTx);
+  assert.equal(head.anchors.solana.signature, solSig);
+  assert.equal(verifyTreeHead(head).valid, true);
+  const inc = tree.inclusion(rows[0].task_id);
+  assert.equal(inc.anchor_status, 'anchored');
+  assert.equal(inc.anchor_tx, baseTx);
+  assert.equal(inc.solana_signature, solSig);
+  assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
+
+  const { createApp } = await import('../src/server.js');
+  const app = createApp();
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const served = await fetch(`${base}/v1/receipts/tree/epoch/1/head`);
+    const body = await served.json();
+    assert.equal(served.status, 200);
+    assert.equal(body.root, want);
+    assert.equal(body.tree_size, 4);
+    assert.equal(body.anchors.base.tx, baseTx);
+    assert.equal(body.anchors.solana.signature, solSig);
+    assert.equal(body.issuer_signature.jws, head.issuer_signature.jws);
+    const live = await fetch(`${base}/v1/receipts/tree/head`);
+    const liveBody = await live.json();
+    assert.equal(liveBody.status, 'not_yet_published');
+    assert.equal(liveBody.epoch, 2);
+    assert.equal(liveBody.root, EPOCH2_OPENING_ROOT);
+    const openEpoch = await fetch(`${base}/v1/receipts/tree/epoch/2/head`);
+    const openBody = await openEpoch.json();
+    assert.equal(openBody.status, 'not_yet_published');
+    const inclusionRes = await fetch(`${base}/v1/receipts/${rows[0].task_id}/inclusion`);
+    const inclusionBody = await inclusionRes.json();
+    assert.equal(inclusionBody.anchor_status, 'anchored');
+    assert.equal(inclusionBody.anchor_tx, baseTx);
+    assert.equal(inclusionBody.solana_signature, solSig);
+    assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
+    assert.equal(epochRecordClaims().epochs[0].final_root, EPOCH1_FINAL_ROOT);
+    assert.equal(epochRecordClaims().epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
+    if (prevPin == null) delete process.env.RECEIPT_LOG_PIN_FILE;
+    else process.env.RECEIPT_LOG_PIN_FILE = prevPin;
     resetReceiptMerkleTree();
   }
 });

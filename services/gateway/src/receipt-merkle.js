@@ -47,7 +47,12 @@ import {
   readReceiptLogPin,
   resolveAnchorSender,
 } from './receipt-log-anchor.js';
-import { assertPinnedEpochRecord } from './receipt-log-epoch.js';
+import {
+  assertPinnedEpochRecord,
+  EPOCH1_FINAL_ROOT,
+  EPOCH1_FINAL_SIZE,
+  EPOCH1_SIZE2_ROOT,
+} from './receipt-log-epoch.js';
 export { FRESH_GENESIS_LOG, assertLatestBaseAnchor, readReceiptLogPin };
 
 export { ReceiptLogRefused, freshGenesisAllowed, receiptLogBootRequested, receiptLogStrict };
@@ -472,6 +477,100 @@ function epochHeadCovering(heads, leaves, rootHex) {
   return null;
 }
 
+/**
+ * In-journal pin anchors for one closed epoch. Orphans and the size-2 head
+ * are on chain and are not this head.
+ */
+export function closedEpochAnchorPair(pin, epochNo, root, treeSize) {
+  const want = normalizeRoot(root);
+  const size = Number(treeSize);
+  if (!want || !Number.isInteger(size) || size < 1) return null;
+  const anchors = Array.isArray(pin?.anchors) ? pin.anchors : [];
+  const match = (chain) => anchors.find((row) => {
+    if ((row?.chain || 'base') !== chain) return false;
+    if (row.in_journal === false) return false;
+    if (Number(row.epoch) !== Number(epochNo)) return false;
+    if (Number(row.tree_size) !== size) return false;
+    return normalizeRoot(row.root) === want;
+  }) || null;
+  const base = match('base');
+  const solana = match('solana');
+  if (!base?.tx || !solana?.tx) return null;
+  return { base, solana };
+}
+
+/** Observed memo on the epoch-1 final Solana anchor. Prev is the size-2 root. */
+export const EPOCH1_FINAL_SOLANA_MEMO = `chit402:root:v1:global:2026-10-03:${EPOCH1_FINAL_ROOT}:${EPOCH1_SIZE2_ROOT}`;
+const EPOCH1_FINAL_PUBLISHED_AT = '2026-10-03T11:33:37.000Z';
+// Already on chain in the committed pin. Not a confirmAnchor transition.
+const PIN_ANCHORED = 'anchored';
+
+/**
+ * Issuer-signed closed-epoch head. Claims come from the journal root and the
+ * committed pin's transactions. This does not write the journal, broadcast,
+ * or change the epoch record.
+ */
+export function signPinnedClosedHead({
+  epoch,
+  root,
+  treeSize,
+  prevEpochRoot = null,
+  prevEpochSize = 0,
+  base,
+  solana,
+}) {
+  const rootHex = normalizeRoot(root);
+  const historical = rootHex === EPOCH1_FINAL_ROOT
+    && Number(treeSize) === EPOCH1_FINAL_SIZE
+    && Number(epoch) === 1;
+  const baseSide = {
+    status: PIN_ANCHORED,
+    chain: 'base',
+    chain_id: 8453,
+    tx: base.tx,
+    calldata: anchorCalldata(rootHex),
+    from: base.from || null,
+    reason: null,
+  };
+  const solanaSide = {
+    status: PIN_ANCHORED,
+    signature: solana.tx,
+    slot: solana.slot ?? null,
+    cluster: 'mainnet-beta',
+    memo: historical ? EPOCH1_FINAL_SOLANA_MEMO : null,
+    reason: null,
+  };
+  const claims = {
+    schema: TREE_HEAD_SCHEMA,
+    payload_version: TREE_HEAD_VERSION,
+    epoch: Number(epoch),
+    prev_epoch_root: prevEpochRoot || null,
+    prev_epoch_size: Number(prevEpochSize) || 0,
+    prev_root: historical ? EPOCH1_SIZE2_ROOT : ZERO_ROOT,
+    tree_size: Number(treeSize),
+    root: rootHex,
+    anchor_status: PIN_ANCHORED,
+    anchor_tx: base.tx,
+    anchor_from: base.from || null,
+    published_at: historical ? EPOCH1_FINAL_PUBLISHED_AT : null,
+    clock_tolerance_s: clockToleranceClaim(),
+    anchors: { base: baseSide, solana: solanaSide },
+  };
+  const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
+  return {
+    ...claims,
+    anchor: baseSide,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: TREE_HEAD_JWT_TYP,
+      payload_version: TREE_HEAD_VERSION,
+      jws,
+      kid,
+      issuer_jwk: getIssuerPublicKeyJwk(),
+    },
+  };
+}
+
 function sideNeedsRetry(side, envReady) {
   if (!side) return envReady;
   if (side.status === 'anchored' && (side.tx || side.signature)) return false;
@@ -774,7 +873,8 @@ export class ReceiptMerkleTree {
     if (index == null) return null;
     const proof = inclusionProof(epoch.leaves, index);
     const root = hex(rootOf(epoch.leaves));
-    const head = epochHeadCovering(epoch.heads, epoch.leaves, root);
+    let head = epochHeadCovering(epoch.heads, epoch.leaves, root);
+    if (!head && epoch.status === 'closed') head = this.signedClosedEpochHead(epoch.epoch);
     const baseSide = head ? (head.anchors?.base || head.anchor || null) : null;
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = head ? (head.anchors?.solana || null) : null;
@@ -2091,6 +2191,38 @@ export class ReceiptMerkleTree {
 
   latestHead() {
     return this.heads[this.heads.length - 1] || null;
+  }
+
+  /**
+   * Signed head for a closed epoch whose recomputed root is an in-journal
+   * pin anchor. Cached for this process. Does not write the journal.
+   * @param {number} epochNumber
+   * @param {object|null} [pin]
+   */
+  signedClosedEpochHead(epochNumber, pin = null) {
+    const wanted = Number(epochNumber);
+    if (!Number.isInteger(wanted) || wanted < 1) return null;
+    const closed = (this.closedEpochs || []).find((row) => Number(row.epoch) === wanted);
+    if (!closed?.leaves?.length) return null;
+    const root = hex(rootOf(closed.leaves));
+    const treeSize = closed.leaves.length;
+    const key = `${wanted}:${root}:${treeSize}`;
+    if (!this._signedClosedHeads) this._signedClosedHeads = new Map();
+    if (this._signedClosedHeads.has(key)) return this._signedClosedHeads.get(key);
+    const source = pin || readReceiptLogPin();
+    const pair = closedEpochAnchorPair(source, wanted, root, treeSize);
+    if (!pair) return null;
+    const head = signPinnedClosedHead({
+      epoch: wanted,
+      root,
+      treeSize,
+      prevEpochRoot: closed.prevEpochRoot || null,
+      prevEpochSize: closed.prevEpochSize || 0,
+      base: pair.base,
+      solana: pair.solana,
+    });
+    this._signedClosedHeads.set(key, head);
+    return head;
   }
 
   /** Last head that carries an issuer JWS. Historical observations are not served as published. */

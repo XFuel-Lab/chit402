@@ -8,7 +8,8 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /v1/receipts/tree/head` | Latest signed tree head (`chit402.tree_head.v1`) |
+| `GET /v1/receipts/tree/head` | Latest signed tree head (`chit402.tree_head.v2`), or `not_yet_published` |
+| `GET /v1/receipts/tree/epoch/:epoch/head` | Signed head of a closed epoch. Epoch 1 is the pinned final root, with its Base and Solana transactions. A public read does not broadcast. |
 | `GET /v1/receipts/:task_id/inclusion` | `leaf_index`, `tree_size`, `root`, `proof` |
 | `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
 

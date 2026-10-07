@@ -109,6 +109,8 @@ Existing receipt `tree_head_hash` values are not re-signed. Epoch 1 inclusion st
 
 `GET /v1/receipts/tree/epoch` returns the signed record. It does not publish a head.
 
+`GET /v1/receipts/tree/epoch/1/head` returns the closed epoch-1 head. The root and size are the journal's (`dd20e39a…`, size 4). The Base transaction `0x1d8d7ea2…` and the Solana signature `61RHMsPP…` are the in-journal rows of the committed pin. The issuer key signs that head on read. The GET does not write the journal, broadcast, or change the signed epoch record. Epoch-1 inclusion proofs use this head, so `anchor_status` is `anchored` and `anchor_tx` is that Base transaction. A closed epoch whose root is not an in-journal pin anchor stays `not_yet_published`.
+
 ### Rebuild epoch 1 on the server
 
 Run this on the gateway host, against the book file, before restarting the process onto this build. It refuses unless the root is exactly the epoch 1 final root. It does not broadcast and it does not re-sign a receipt.
