@@ -21,6 +21,7 @@ import {
   verifyReceipt,
   verifyRefusal,
   isRefusalDocument,
+  loadIssuerJwks,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   type XFuelReceipt,
   type Jwks,
@@ -33,6 +34,8 @@ import {
   type AnchorReceipt,
   type AnchorWitnessResult,
 } from './anchor-witness.js';
+import { type EpochRecord } from './epoch.js';
+import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
@@ -67,9 +70,13 @@ Options:
   --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
   --rpc <url>         Base RPC URL (default: https://mainnet.base.org)
   --rpc               With a receipt, an inclusion proof, and a tree head: check the
-                      leaf, then the Solana memo and the Base calldata for that root
+                      leaf, then the Solana memo and the Base calldata for that root.
+                      A v2 head also needs the signed epoch record.
+  --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
+  --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
+                      origin plus /v1/receipts/tree/epoch
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
-  --head <file>       Signed tree head JSON (chit402.tree_head.v1)
+  --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
   --strict-issuer-history
@@ -97,11 +104,17 @@ Trust:
   with the unsigned outer payment / caller_binding copy is a failure.
 
 Network behavior:
-  By default, no network requests are made. Network is only used when:
-  - --fetch-jwks or --jwks-url is passed
-  - --check-nullifier is passed (queries Base RPC for on-chain anchor)
-  - --check-payer is passed (queries Base or Solana RPC for USDC settlement)
-  - --rpc is passed with a receipt, an inclusion proof, and a tree head
+  JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
+  Issuer history is fetched by default when the receipt names a history URL
+  and neither --issuer-history-file nor --no-issuer-history is set. A payload
+  v10 receipt fails (exit 1) when that fetch cannot run. Offline mode is
+  --issuer-history-file <snapshot>, or --no-issuer-history to skip the window.
+  Other network uses:
+  - --fetch-jwks or --jwks-url
+  - --check-nullifier (Base RPC)
+  - --check-payer (Base or Solana RPC)
+  - --rpc with a receipt, an inclusion proof, and a tree head
+  - a v2 head, which fetches GET /v1/receipts/tree/epoch unless --epoch-record
 
   Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
 
@@ -131,8 +144,8 @@ Receipt lane (unsigned, beside book_seq):
   88201, 88403, and 88596).
 
 Examples:
-  # Local binding verification (no network)
-  xfuel-verify my-receipt.json
+  # Skip the issuer-history fetch. A v10 receipt otherwise needs that network call.
+  xfuel-verify my-receipt.json --no-issuer-history
 
   # Verify issuer signature with JWKS file
   xfuel-verify my-receipt.json --jwks-file issuer-jwks.json
@@ -159,6 +172,8 @@ function parseArgs(args: string[]): {
   anchorFlag: boolean;
   inclusionFile: string | null;
   headFile: string | null;
+  epochRecordFile: string | null;
+  epochUrl: string | null;
   positionals: string[];
   json: boolean;
   quiet: boolean;
@@ -184,6 +199,8 @@ function parseArgs(args: string[]): {
     anchorFlag: false,
     inclusionFile: null as string | null,
     headFile: null as string | null,
+    epochRecordFile: null as string | null,
+    epochUrl: null as string | null,
     positionals: [] as string[],
     json: false,
     quiet: false,
@@ -223,6 +240,10 @@ function parseArgs(args: string[]): {
       result.inclusionFile = args[++i];
     } else if (arg === '--head' && args[i + 1]) {
       result.headFile = args[++i];
+    } else if (arg === '--epoch-record' && args[i + 1]) {
+      result.epochRecordFile = args[++i];
+    } else if (arg === '--epoch-url' && args[i + 1]) {
+      result.epochUrl = args[++i];
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
     } else if (arg === '--strict-issuer-history') {
@@ -269,6 +290,15 @@ function formatAmount(units: string | null): string {
 function readJson(file: string): unknown {
   const content = file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
   return JSON.parse(content) as unknown;
+}
+
+function headStatus(file: string): string | null {
+  try {
+    const doc = readJson(file) as { status?: unknown };
+    return typeof doc?.status === 'string' ? doc.status : null;
+  } catch {
+    return null;
+  }
 }
 
 function printLane(lane: ReceiptLane): void {
@@ -328,11 +358,73 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('');
 }
 
+function headNeedsEpochRecord(head: AnchorHead): boolean {
+  const schema = (head as { schema?: string }).schema;
+  const version = (head as { payload_version?: number }).payload_version;
+  return head.epoch != null || schema === 'chit402.tree_head.v2' || version === 2;
+}
+
+function epochUrlFromReceipt(receipt: { verify_url?: string | null }): string | null {
+  const raw = receipt?.verify_url;
+  if (!raw) return null;
+  try {
+    return `${new URL(raw).origin}/v1/receipts/tree/epoch`;
+  } catch {
+    return null;
+  }
+}
+
+async function loadEpochRecord(
+  args: ReturnType<typeof parseArgs>,
+  receipt: { verify_url?: string | null },
+): Promise<EpochRecord | null> {
+  if (args.epochRecordFile) {
+    return JSON.parse(readFileSync(args.epochRecordFile, 'utf8')) as EpochRecord;
+  }
+  const url = args.epochUrl || epochUrlFromReceipt(receipt);
+  if (!url) return null;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const body = await res.json() as EpochRecord & { issuer_signature?: { jws?: string } };
+  if (!body?.issuer_signature?.jws) return null;
+  return body;
+}
+
+function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trustedKids?: readonly string[]): boolean {
+  const sig = record.issuer_signature;
+  const embedded = sig && 'issuer_jwk' in sig
+    ? (sig as { issuer_jwk?: Es256Jwk }).issuer_jwk
+    : undefined;
+  const kid = readJwsHeader(jws)?.kid;
+  const keys: Es256Jwk[] = [];
+  for (const key of jwks?.keys || []) {
+    if (!key || (key as Es256Jwk).kty !== 'EC') continue;
+    const jwk = key as Es256Jwk;
+    if (kid && jwk.kid !== kid) continue;
+    keys.push(jwk);
+  }
+  if (embedded && trustedKids?.includes(jwkThumbprint(embedded))) keys.push(embedded);
+  for (const key of keys) {
+    const verified = verifyIssuerJws(jws, key);
+    if (!verified.valid || !verified.payload) continue;
+    const payload = verified.payload;
+    if (JSON.stringify(payload.epochs ?? null) !== JSON.stringify(record.epochs ?? null)) return false;
+    if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(record.orphans ?? [])) return false;
+    return true;
+  }
+  return false;
+}
+
 async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const receiptPath = args.file;
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
   const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
   if (!receiptPath || !inclusionPath || !headPath) {
+    const candidates = [args.headFile, headPath, ...args.positionals];
+    if (candidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
+      console.error('Tree head is not_yet_published.');
+      return 3;
+    }
     console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
     console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
     return 3;
@@ -348,12 +440,43 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     console.error(`Error reading anchor inputs: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
   }
+  let epochRecord: EpochRecord | null = null;
+  let verifyEpochSignature: ((jws: string) => boolean) | undefined;
+  if (headNeedsEpochRecord(head)) {
+    try {
+      epochRecord = await loadEpochRecord(args, receipt as { verify_url?: string | null });
+    } catch {
+      epochRecord = null;
+    }
+    if (epochRecord?.issuer_signature?.jws) {
+      let fileJwks: Jwks | undefined;
+      if (args.jwksFile) {
+        try {
+          fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+        } catch (err) {
+          console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+          return 3;
+        }
+      }
+      const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
+        jwks: fileJwks,
+        jwksUri: args.jwksUrl || undefined,
+        fetchJwks: args.fetchJwks,
+      });
+      const trustedKids = args.noTrustedKid
+        ? []
+        : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+      verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
+    }
+  }
   const result = await verifyAnchoredRoot({
     receipt,
     inclusion,
     head,
     baseRpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
+    epochRecord,
+    verifyEpochSignature,
   });
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
   const lane = verified.receipt_lane;
@@ -673,9 +796,46 @@ async function main(): Promise<number> {
   }
 }
 
+/**
+ * Node's fetch keeps its undici agent on this symbol after the first request.
+ * There is no public handle for that pool. Closing it lets the loop drain.
+ */
+const UNDICI_GLOBAL_DISPATCHER = Symbol.for('undici.globalDispatcher.1');
+
+type FetchDispatcher = {
+  close?: () => Promise<void> | void;
+  destroy?: () => Promise<void> | void;
+};
+
+function fetchDispatcher(): FetchDispatcher | undefined {
+  const bag = globalThis as unknown as Record<symbol, FetchDispatcher | undefined>;
+  return bag[UNDICI_GLOBAL_DISPATCHER];
+}
+
+/**
+ * process.exit() while a fetch keep-alive socket is already CLOSING aborts
+ * on Windows: Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)
+ * (src/win/async.c). Set the code and close the pool so the loop can drain.
+ */
+async function finish(code: number): Promise<void> {
+  process.exitCode = code;
+  const dispatcher = fetchDispatcher();
+  if (!dispatcher) return;
+  try {
+    const closing = dispatcher.close?.();
+    if (closing) await closing;
+  } catch {
+    try {
+      await dispatcher.destroy?.();
+    } catch {
+      // The verification result is already the exit code.
+    }
+  }
+}
+
 main()
-  .then((code) => process.exit(code))
+  .then((code) => finish(code))
   .catch((err) => {
     console.error('Unexpected error:', err);
-    process.exit(3);
+    return finish(3);
   });

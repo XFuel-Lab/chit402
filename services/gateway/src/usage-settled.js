@@ -418,8 +418,12 @@ export class UsageSettledLedger {
     });
     /** Next seq to assign, per agent_id. */
     this._nextSeq = new Map();
-    /** Last row hash per agent_id. */
+    /** Highest seq seen, per agent_id. The reload tip is this seq, not file order. */
+    this._tipSeq = new Map();
+    /** Last row hash per agent_id. The hash of the highest seq, not the last line. */
     this._lastRowHash = new Map();
+    /** Fork notes that a reload must not resolve by keeping the last line. */
+    this._forks = new Map();
 
     if (this.persist) {
       try {
@@ -467,11 +471,18 @@ export class UsageSettledLedger {
     }
     if (row.seq != null && row.seq !== '') {
       const seq = Number(row.seq);
-      const next = this._nextSeq.get(id) || 1;
-      if (!row.prev_hash) row.prev_hash = this._lastRowHash.get(id) || null;
+      const tip = this._tipSeq.get(id) || 0;
+      if (!row.prev_hash && Number.isInteger(seq) && seq === tip + 1) {
+        row.prev_hash = this._lastRowHash.get(id) || null;
+      }
       if (!row.row_hash) row.row_hash = bookRowHash(row);
-      if (Number.isInteger(seq) && seq >= next) this._nextSeq.set(id, seq + 1);
-      if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
+      if (Number.isInteger(seq) && seq > tip) {
+        this._tipSeq.set(id, seq);
+        this._nextSeq.set(id, seq + 1);
+        if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
+      } else if (Number.isInteger(seq) && seq === tip && tip > 0) {
+        this._noteFork(id, { kind: 'duplicate_seq', seq, task_id: row.task_id || null });
+      }
       if (!row.book_chain) row.book_chain = signBookSeq(row);
       return;
     }
@@ -481,8 +492,17 @@ export class UsageSettledLedger {
     row.row_hash = bookRowHash(row);
     row.book_chain = signBookSeq(row);
     this._nextSeq.set(id, seq + 1);
+    this._tipSeq.set(id, seq);
     this._lastRowHash.set(id, row.row_hash);
     this._issueRefusal(row);
+  }
+
+  _noteFork(agentId, info) {
+    const id = Number(agentId);
+    const list = this._forks.get(id) || [];
+    list.push(info);
+    this._forks.set(id, list);
+    logger.warn({ agentId: id, ...info }, 'book chain fork');
   }
 
   /**
@@ -513,10 +533,17 @@ export class UsageSettledLedger {
   seqReport(agentId) {
     const id = Number(agentId);
     const rows = this._rowsForAgent(id).filter((e) => e.seq != null);
+    const analysis = analyzeSeq(rows);
+    const duplicateRows = this._forks.get(id) || [];
+    const forked = analysis.forked || duplicateRows.length > 0;
     return {
       schema: 'chit402.book_seq_report.v1',
       book_id: id,
-      ...analyzeSeq(rows),
+      ...analysis,
+      forked,
+      status: forked ? 'FORKED' : analysis.status,
+      gapless: analysis.gapless && duplicateRows.length === 0,
+      duplicate_rows: duplicateRows,
       supersession: summarizeSupersession(this._rowsForAgent(id)),
     };
   }
@@ -535,8 +562,31 @@ export class UsageSettledLedger {
   _index(row, { persist = true, notify = true } = {}) {
     this._stampSeq(row);
     this.entries.push(row);
-    if (row.payment_ref) this.byRef.set(String(row.payment_ref), row);
-    if (row.task_id) this.byTask.set(String(row.task_id), row);
+    if (row.payment_ref) {
+      const key = String(row.payment_ref);
+      const prior = this.byRef.get(key);
+      if (prior && prior !== row) {
+        this._noteFork(row.agent_id, {
+          kind: 'duplicate_payment_ref',
+          payment_ref: key,
+          task_id: row.task_id || null,
+        });
+      } else if (!prior) {
+        this.byRef.set(key, row);
+      }
+    }
+    if (row.task_id) {
+      const key = String(row.task_id);
+      const prior = this.byTask.get(key);
+      if (prior && prior !== row) {
+        this._noteFork(row.agent_id, {
+          kind: 'duplicate_task_id',
+          task_id: key,
+        });
+      } else if (!prior) {
+        this.byTask.set(key, row);
+      }
+    }
     if (row.refusal?.refusal_id) this.byRefusal.set(String(row.refusal.refusal_id), row);
     if (notify) emitBookRowWritten(row);
     if (persist && this.persist) this._persistRow(row);

@@ -71,7 +71,13 @@ import { AgentRegistry, registerAgent } from './agent-registry.js';
 import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
-import { getReceiptMerkleTree } from './receipt-merkle.js';
+import {
+  getReceiptMerkleTree,
+  bootReceiptLog,
+  receiptLogBootRequested,
+  finishReceiptLogBoot,
+} from './receipt-merkle.js';
+import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
@@ -799,6 +805,15 @@ export function createApp() {
   // combination should not take the gateway down, but it must not be quiet.
   checkPricingConfig(config.verifiedInference);
 
+  // The receipt log is append-only on disk. A bad journal, a root that does
+  // not match its stored head, or a missing journal beside anchored heads
+  // refuses to start. A public read never publishes.
+  if (receiptLogBootRequested()) {
+    const receiptLogDir = process.env.RECEIPT_LOG_DIR
+      || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'receipt-log') : null);
+    if (receiptLogDir) bootReceiptLog(receiptLogDir);
+  }
+
   // Payer ledger for rolling settlement. Same single-process JSON-on-disk model
   // as task-store — a restart must not forgive an invoice. The live flag stays
   // off until this persist path exists (ADR 0008).
@@ -830,6 +845,15 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist && !!agentsDir,
   });
+  const receiptLogS3 = s3ConfigFromEnv();
+  if (receiptLogS3) {
+    startHourlyBundleTimer({
+      tree: getReceiptMerkleTree,
+      config: receiptLogS3,
+      receipts: () => usageSettled.entries,
+      onError: (err) => logger.error({ err: err.message }, 'receipt log bundle upload failed'),
+    });
+  }
   setBookRowWrittenHook((entry) => {
     try {
       if (entry?.task_id) getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
@@ -2743,11 +2767,46 @@ export function createApp() {
   app.get('/v1/receipts/tree/head', async (_req, res) => {
     try {
       const tree = getReceiptMerkleTree();
-      let head = tree.latestHead();
-      if (!head) head = await tree.publishHead();
-      return res.json(head);
+      const head = tree.latestSignedHead();
+      const receiptLog = tree.bundleStatus();
+      if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
+      return res.json({ ...head, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  app.get('/v1/receipts/tree/epoch', (_req, res) => {
+    const record = getReceiptMerkleTree().epochRecord;
+    if (!record) {
+      return res.json({
+        schema: 'chit402.tree_epoch.v1',
+        status: 'not_yet_published',
+        published: false,
+      });
+    }
+    return res.json(record);
+  });
+
+  app.get('/v1/receipts/tree/epoch/:epoch/head', (req, res) => {
+    const epoch = Number(req.params.epoch);
+    if (!Number.isInteger(epoch) || epoch < 1) {
+      return res.status(400).json({ error: 'bad_epoch' });
+    }
+    try {
+      const head = getReceiptMerkleTree().signedClosedEpochHead(epoch);
+      if (!head) {
+        return res.json({
+          schema: 'chit402.tree_head.v2',
+          status: 'not_yet_published',
+          published: false,
+          epoch,
+        });
+      }
+      return res.json(head);
+    } catch (err) {
+      logger.error({ err }, 'closed epoch head error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -2756,7 +2815,8 @@ export function createApp() {
     try {
       const first = Number(req.query.first);
       const second = Number(req.query.second);
-      return res.json(getReceiptMerkleTree().consistency(first, second));
+      const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
+      return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
     } catch (err) {
       return res.status(400).json({ error: 'bad_tree_size', message: err.message });
     }
@@ -3720,6 +3780,7 @@ export function createApp() {
             warning: 'RECEIPT_SIGNING_SECRET is not set — receipts are UNSIGNED and cannot be verified.',
           }),
         },
+        receipt_log: getReceiptMerkleTree().bundleStatus(),
         // What the unmetered surface is costing us today. Receipts are free by
         // policy (ADR 0006); the compute behind them is not, and that subsidy was
         // previously neither capped nor measured anywhere.
@@ -5050,6 +5111,11 @@ async function _generateA2AProof(msg) {
  */
 export async function startServer() {
   const port = parseInt(process.env.M2M_API_PORT) || 3002;
+  // The durable receipt log is part of serving. Unit tests call createApp
+  // without this, so they do not have to carry the production pin.
+  if (process.env.RECEIPT_LOG_BOOT == null || process.env.RECEIPT_LOG_BOOT === '') {
+    process.env.RECEIPT_LOG_BOOT = '1';
+  }
 
   // Ensure AIListener is initialised
   try {
@@ -5078,6 +5144,7 @@ export async function startServer() {
   logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 
   const app = createApp();
+  await finishReceiptLogBoot(getReceiptMerkleTree());
 
   // Start the webhook dispatcher: watches activeTasks for terminal states
   // and delivers signed TaskSettled events to subscribers + per-task callbacks.

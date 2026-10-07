@@ -68,6 +68,10 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verif
 | 2 | Partial (binding ok, nullifier not checked) |
 | 3 | Input error |
 
+## Publish
+
+`publishConfig` sets `access` to `public` and does not name an owner. On the registry, `chit402-verify` (latest `0.2.0`) and `@xfuel/verify` (latest `0.2.1`) are both maintained by the npm user `xfuel`. Publish `@xfuel/verify` first. `npm whoami` must print `xfuel`. A `404` on `PUT https://registry.npmjs.org/chit402-verify` is that login, not a missing package and not a new scope: the name already exists.
+
 ## Documentation
 
 - [Chit402 Docs](https://chit402.com)

@@ -20,6 +20,11 @@ import logger from './logger.js';
  *   - lazily rehydrates from disk on a `get` miss — WITHOUT re-inserting into the hot
  *     map, so iteration (webhook dispatcher, GC, /health counts) stays "live tasks
  *     only" and terminal webhooks never re-fire.
+ *   - when a receipt read seals an issuer signature onto that rehydrated snapshot,
+ *     writes the file immediately and pins the object. `flushAll` only walks the
+ *     hot map, so it never sees the read snapshot. ES256 is non-deterministic;
+ *     leaving the signature only on the ephemeral object mints a new JWS on every
+ *     later GET.
  *
  * Durability model: single-node, one JSON file per task. Matches the Phase-1
  * single-process model; point `dir` at a shared volume or swap for Redis/Postgres
@@ -67,6 +72,9 @@ export class PersistentTaskStore extends Map {
     this._flushTimer = null;
     this._gcTimer = null;
     this._refIndex = new Map();
+    // Disk-only snapshots whose issuer signature was sealed on read.
+    // Not part of the hot map: webhook scan, GC, and /health stay live-only.
+    this._pinnedReads = new Map();
 
     if (this.persist) {
       try {
@@ -162,17 +170,58 @@ export class PersistentTaskStore extends Map {
 
   /** Write-through: keep the live reference, persist a snapshot, and index payment ref. */
   set(taskId, task) {
+    this._pinnedReads.delete(taskId);
+    this._attachSignaturePersist(task);
     super.set(taskId, task);
     this._writeSnapshot(task);
     this._indexPaymentRef(task);
     return this;
   }
 
-  /** Live reference if active; else the durable snapshot (read-only), else undefined. */
+  /**
+   * Live reference if active; else a pinned read (signature sealed after eviction);
+   * else the durable snapshot. A disk hit is not inserted into the hot map.
+   */
   get(taskId) {
     const live = super.get(taskId);
     if (live !== undefined) return live;
-    return this._readSnapshot(taskId);
+    const pinned = this._pinnedReads.get(taskId);
+    if (pinned) return pinned;
+    const snap = this._readSnapshot(taskId);
+    if (snap && typeof snap === 'object') this._attachSignaturePersist(snap);
+    return snap;
+  }
+
+  /**
+   * Non-enumerable hook so `buildReceipt({ persistSignature: true })` can write
+   * an issuer JWS that was sealed onto a snapshot `flushAll` will never visit.
+   * Redefined on each store so a task moved between stores does not write to the old one.
+   * @param {object} task
+   */
+  _attachSignaturePersist(task) {
+    if (!this.persist || !task || typeof task !== 'object') return task;
+    Object.defineProperty(task, 'persistSignatureSnapshot', {
+      value: () => this._persistSignatureSnapshot(task),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    return task;
+  }
+
+  /**
+   * Write the signature that was just attached. A hot-map task is flushed in
+   * place (the 10s timer is not required for the JWS to survive a restart).
+   * A rehydrated task stays out of the hot map and is pinned so the next `get`
+   * returns those same JWS bytes instead of parsing a pre-signature file.
+   * @param {object} task
+   */
+  _persistSignatureSnapshot(task) {
+    if (!this.persist || !task?.taskId) return;
+    const live = super.get(task.taskId);
+    if (live !== undefined && live !== task) return;
+    this._writeSnapshot(task);
+    if (live === undefined) this._pinnedReads.set(task.taskId, task);
   }
 
   /**
@@ -214,9 +263,12 @@ export class PersistentTaskStore extends Map {
         const taskRef = snap?.intent?.paymentRef;
         if (!taskRef) continue;
         // Match full ref or just the tx part
-        if (taskRef === ref) return snap;
         const colonIdx = taskRef.indexOf(':');
-        if (colonIdx > 0 && taskRef.slice(colonIdx + 1) === ref) return snap;
+        const txOnly = colonIdx > 0 ? taskRef.slice(colonIdx + 1) : '';
+        if (taskRef !== ref && txOnly !== ref) continue;
+        const pinned = snap.taskId ? this._pinnedReads.get(snap.taskId) : null;
+        if (pinned) return pinned;
+        return this._attachSignaturePersist(snap);
       } catch {
         // Skip unreadable files.
       }
@@ -232,6 +284,7 @@ export class PersistentTaskStore extends Map {
   delete(taskId) {
     const live = super.get(taskId);
     if (live !== undefined) this._writeSnapshot(live);
+    this._pinnedReads.delete(taskId);
     return super.delete(taskId);
   }
 
@@ -313,6 +366,7 @@ export class PersistentTaskStore extends Map {
     if (this._gcTimer) clearInterval(this._gcTimer);
     this._flushTimer = null;
     this._gcTimer = null;
+    this._pinnedReads.clear();
   }
 }
 
