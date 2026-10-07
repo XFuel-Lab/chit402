@@ -4,9 +4,26 @@
  *
  *   node scripts/verify-1f916-link.mjs <specimen.json>
  *   node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
+ *   node scripts/verify-1f916-link.mjs --exit-policy allow-unsigned <specimen.json>
+ *   node scripts/verify-1f916-link.mjs --json <specimen.json>
  *
- * Prints PASS or FAIL for each step, then VERDICT. Exit 0 only when every
- * step passes. Node built-ins only.
+ * Prints one line per step, then VERDICT. Node built-ins only.
+ *
+ * entry_fingerprint is PASS only when the issuer JWS stamps agent_record_entry
+ * and that fingerprint matches the registry. When the stamp is absent the
+ * step is UNSIGNED (registry-only): the registry hash matched, and the signed
+ * compare could not run. That is not a PASS and not a FAIL.
+ *
+ * Exit codes:
+ *   0  every step PASS (signed fingerprint)
+ *   1  a real check failed
+ *   2  UNSIGNED (registry-only) under exit_policy strict
+ *   3  usage error
+ * exit_policy is "strict" or "allow-unsigned". strict is the default and
+ * exits 2 for UNSIGNED. allow-unsigned maps that exit to 0 and does not
+ * rewrite the finding. --allow-unsigned is an alias for
+ * --exit-policy allow-unsigned. An unknown exit_policy value exits 3.
+ * --json keeps verdict "unsigned" and overall "unsigned" either way.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -360,7 +377,10 @@ export async function verifyLink(specimen, opts = {}) {
 
   steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
 
-  const verdict = STEPS.every((name) => steps[name]?.status === 'PASS') ? 'PASS' : 'FAIL';
+  const statuses = STEPS.map((name) => steps[name]?.status);
+  let verdict = 'PASS';
+  if (statuses.some((status) => status !== 'PASS' && status !== 'UNSIGNED')) verdict = 'FAIL';
+  else if (statuses.some((status) => status === 'UNSIGNED')) verdict = 'UNSIGNED';
   return { steps, verdict };
 }
 
@@ -437,6 +457,7 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
 /**
  * @param {object} specimen
  * @param {typeof fetch} fetchImpl
+ * @param {string|null} [signedFingerprint] fingerprint inside the issuer JWS
  */
 async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   const link = specimen?.agent_record_entry;
@@ -487,21 +508,95 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   if (published !== fingerprint) {
     return fail(`fingerprint_mismatch event ${eventId} published ${published} claimed ${fingerprint}`);
   }
-  if (signedFingerprint && String(signedFingerprint).toLowerCase() !== published) {
-    return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`);
+  // PASS means the issuer JWS stamped this fingerprint. A missing stamp matched
+  // the registry only, so a swapped entry would otherwise look signed.
+  if (!signedFingerprint) {
+    return { status: 'UNSIGNED', detail: `event ${eventId} ${fingerprint}`, signed_check: 'not_run' };
   }
-  return pass(`event ${eventId} ${fingerprint}`);
+  if (String(signedFingerprint).toLowerCase() !== published) {
+    return {
+      status: 'FAIL',
+      detail: `fingerprint_mismatch event ${eventId} jws ${signedFingerprint} published ${published}`,
+      signed_check: 'mismatch',
+    };
+  }
+  return { status: 'PASS', detail: `event ${eventId} ${fingerprint}`, signed_check: 'matched' };
+}
+
+/**
+ * @param {string} verdict
+ */
+export function verdictLabel(verdict) {
+  if (verdict === 'UNSIGNED') return 'UNSIGNED (registry-only)';
+  return verdict;
+}
+
+const EXIT_POLICIES = new Set(['strict', 'allow-unsigned']);
+
+/**
+ * @param {string|undefined} value
+ * @returns {'strict'|'allow-unsigned'}
+ */
+export function resolveExitPolicy(value) {
+  if (value == null || value === 'strict') return 'strict';
+  if (value === 'allow-unsigned') return 'allow-unsigned';
+  throw new Error(`unknown exit_policy ${value}`);
+}
+
+/**
+ * @param {{ verdict: string }} result
+ * @param {{ exitPolicy?: string }} [opts]
+ */
+export function exitCode(result, opts = {}) {
+  const policy = resolveExitPolicy(opts.exitPolicy);
+  if (result.verdict === 'PASS') return 0;
+  if (result.verdict === 'UNSIGNED') return policy === 'allow-unsigned' ? 0 : 2;
+  return 1;
+}
+
+const ACCEPTED_UNSIGNED = 'UNSIGNED (registry-only; accepted by --allow-unsigned)';
+
+/**
+ * @param {string} status
+ * @param {boolean} accepted
+ */
+function stepLabel(status, accepted) {
+  if (status === 'UNSIGNED' && accepted) return ACCEPTED_UNSIGNED;
+  if (status === 'UNSIGNED') return 'UNSIGNED (registry-only)';
+  return status;
+}
+
+export function formatJson(result, opts = {}) {
+  const policy = resolveExitPolicy(opts.exitPolicy);
+  const code = exitCode(result, { exitPolicy: policy });
+  const overall = result.verdict === 'PASS' ? 'pass'
+    : result.verdict === 'UNSIGNED' ? 'unsigned'
+      : 'fail';
+  const verdict = result.verdict === 'UNSIGNED' ? 'unsigned' : result.verdict;
+  const signedCheck = result.steps.entry_fingerprint?.signed_check || 'not_run';
+  return JSON.stringify({
+    overall,
+    verdict,
+    signed_check: signedCheck,
+    exit_policy: policy,
+    exit_code: code,
+    steps: result.steps,
+  }, null, 2);
 }
 
 /**
  * @param {{ steps: Record<string, {status: string, detail: string}>, verdict: string }} result
+ * @param {{ exitPolicy?: string }} [opts]
  */
-export function formatReport(result) {
+export function formatReport(result, opts = {}) {
+  const accepted = resolveExitPolicy(opts.exitPolicy) === 'allow-unsigned' && result.verdict === 'UNSIGNED';
   const lines = STEPS.map((name) => {
     const row = result.steps[name] || { status: 'FAIL', detail: 'missing' };
-    return `${row.status} ${name.padEnd(20)} ${row.detail}`;
+    const status = stepLabel(row.status, accepted);
+    return `${status} ${name.padEnd(20)} ${row.detail}`;
   });
-  lines.push(`VERDICT ${result.verdict}`);
+  const verdict = accepted ? ACCEPTED_UNSIGNED : verdictLabel(result.verdict);
+  lines.push(`VERDICT ${verdict}`);
   return lines.join('\n');
 }
 
@@ -520,23 +615,77 @@ export async function loadSpecimen(target, fetchImpl = fetch) {
   return JSON.parse(readFileSync(target, 'utf8'));
 }
 
+const USAGE = 'usage: node scripts/verify-1f916-link.mjs [--exit-policy strict|allow-unsigned] [--json] <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>';
+
+/**
+ * @param {string} error
+ */
+function usageError(error) {
+  return { exitPolicy: 'strict', json: false, target: '', error };
+}
+
+/**
+ * @param {string[]} argv
+ */
+export function parseArgs(argv) {
+  /** @type {'strict'|'allow-unsigned'|null} */
+  let exitPolicy = null;
+  let json = false;
+  /** @type {string[]} */
+  const positionals = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--allow-unsigned') {
+      if (exitPolicy && exitPolicy !== 'allow-unsigned') {
+        return usageError(`exit_policy is ${exitPolicy}; --allow-unsigned sets allow-unsigned`);
+      }
+      exitPolicy = 'allow-unsigned';
+    } else if (arg === '--exit-policy') {
+      const value = argv[i + 1];
+      if (value == null || value.startsWith('--')) {
+        return usageError('unknown exit_policy (missing value)');
+      }
+      i += 1;
+      if (!EXIT_POLICIES.has(value)) return usageError(`unknown exit_policy ${value}`);
+      if (exitPolicy && exitPolicy !== value) {
+        return usageError(`exit_policy is ${exitPolicy}; refusing ${value}`);
+      }
+      exitPolicy = /** @type {'strict'|'allow-unsigned'} */ (value);
+    } else if (arg === '--json') json = true;
+    else if (arg === '--strict') {
+      return usageError('unknown flag --strict. Use --exit-policy strict or --exit-policy allow-unsigned.');
+    } else if (arg.startsWith('--')) {
+      return usageError(`unknown flag ${arg}`);
+    } else positionals.push(arg);
+  }
+  return { exitPolicy: exitPolicy || 'strict', json, target: positionals[0] || '', error: '' };
+}
+
 async function main() {
-  const target = process.argv[2];
-  if (!target) {
-    console.error('usage: node scripts/verify-1f916-link.mjs <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
-    process.exit(2);
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.error || !parsed.target) {
+    console.error(parsed.error || USAGE);
+    if (parsed.error) console.error(USAGE);
+    process.exit(3);
   }
   let specimen;
   try {
-    specimen = await loadSpecimen(target);
+    specimen = await loadSpecimen(parsed.target);
   } catch (err) {
-    console.log(`FAIL specimen            ${err.message || 'unreadable'}`);
-    console.log('VERDICT FAIL');
+    const detail = err.message || 'unreadable';
+    if (parsed.json) {
+      console.log(JSON.stringify({ overall: 'fail', verdict: 'FAIL', exit_code: 1, error: detail }, null, 2));
+    } else {
+      console.log(`FAIL specimen            ${detail}`);
+      console.log('VERDICT FAIL');
+    }
     process.exit(1);
   }
   const result = await verifyLink(specimen);
-  console.log(formatReport(result));
-  process.exit(result.verdict === 'PASS' ? 0 : 1);
+  const code = exitCode(result, { exitPolicy: parsed.exitPolicy });
+  if (parsed.json) console.log(formatJson(result, { exitPolicy: parsed.exitPolicy }));
+  else console.log(formatReport(result, { exitPolicy: parsed.exitPolicy }));
+  process.exit(code);
 }
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

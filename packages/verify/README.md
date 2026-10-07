@@ -184,6 +184,32 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | 2 | Partial (binding ok, nullifier not checked) |
 | 3 | Input error |
 
+## 1F916 link checker
+
+`xfuel-verify` checks the payment receipt. It does not compare an Agent Record fingerprint. That check is `scripts/verify-1f916-link.mjs` in the chit402 repo. It is not part of this npm package, and this package version stays 0.3.0.
+
+A plain PASS requires the issuer JWS to stamp `agent_record_entry` and that fingerprint to match the hash 1F916 publishes. When the stamp is missing, the checker prints `UNSIGNED (registry-only)`. The registry hash matched, and the signed compare did not run. That is a third result, distinct from PASS and FAIL.
+
+```bash
+node scripts/verify-1f916-link.mjs specimen.json
+node scripts/verify-1f916-link.mjs --exit-policy allow-unsigned specimen.json
+node scripts/verify-1f916-link.mjs --json specimen.json
+```
+
+| Outcome | Label | Exit |
+|---------|-------|------|
+| Signed fingerprint matches | `PASS` | 0 |
+| Stamp missing, registry matches (`exit_policy` `strict`, the default) | `UNSIGNED (registry-only)` | 2 |
+| Same, with `--exit-policy allow-unsigned` | `UNSIGNED (registry-only; accepted by --allow-unsigned)` | 0 |
+| A check failed (including a fingerprint mismatch) | `FAIL` | 1 |
+| Usage error, including an unknown `exit_policy` value | stderr | 3 |
+
+`--exit-policy` is `strict` or `allow-unsigned`. `--allow-unsigned` is an alias that sets `allow-unsigned`. An unknown value is refused by name (`unknown exit_policy loose`) and exits 3. It is not treated as `strict`.
+
+The policy changes the exit code only. The human line names that acceptance and does not say PASS.
+
+`--json` sets `overall` to `pass`, `unsigned`, or `fail`. For a missing stamp, `verdict` is `unsigned` and `signed_check` is `not_run`. Those fields, and every step row, stay the same under both policies. `exit_policy` is `strict` or `allow-unsigned`. For an unsigned receipt, `exit_code` is 2 or 0. A signed receipt stays exit 0, so the JSON differs only in `exit_policy`.
+
 ## API Reference
 
 ### `verifyBinding(receipt)`

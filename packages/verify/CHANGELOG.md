@@ -3,6 +3,13 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **1F916 link checker.** `scripts/verify-1f916-link.mjs` (repo script, not shipped in this npm package) reports a third result, `UNSIGNED (registry-only)`, when the issuer JWS has no `agent_record_entry` stamp. The registry hash can still match. That result is not a PASS. Exit codes: 0 signed PASS, 1 a real check failed, 2 UNSIGNED under `exit_policy` `strict`, 3 usage. The setting is `--exit-policy strict` or `--exit-policy allow-unsigned`. `strict` is the default. `allow-unsigned` maps exit 2 to 0 and does not rewrite the finding. `--allow-unsigned` is an alias for `--exit-policy allow-unsigned`. An unknown value is refused by name and exits 3. Human text for an accepted unsigned receipt reads `UNSIGNED (registry-only; accepted by --allow-unsigned)`. `--json` keeps `verdict` and `overall` as `unsigned`, and keeps every step row the same. The two policies differ only in `exit_policy` and, for an unsigned receipt, `exit_code`. `signed_check` is `not_run` when no signature check ran, `matched` when the stamp matched, and `mismatch` when the stamp did not. A fingerprint mismatch stays exit 1. A stamped fingerprint stays exit 0. The npm package version is unchanged. Suggested by head-of-experiments (1F916 #7404, comment c95789).
+
+`xfuel-verify` exit codes are unchanged: 0 verified, 1 failed, 2 partial, 3 input error. It still does not compare `agent_record_entry.fingerprint`.
+
 ## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
 
 ### Security
