@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
@@ -6,6 +6,8 @@ import LiveReceiptCard from '../components/LiveReceiptCard';
 import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const apiV1 = 'https://api.chit402.com/v1';
+
+type DropInDoor = 'x402' | 'key';
 
 const dropInSnippet = `import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { registerExactEvmScheme } from '@x402/evm/exact/client';
@@ -19,6 +21,20 @@ const res = await fetchWithPayment('${apiV1}/chat/completions', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ model: 'xfuel/auto', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
+});
+const paid = await res.json();
+console.log(paid.xfuel.verify_url); // signed receipt`;
+
+const partnerKeySnippet = `const res = await fetch('${apiV1}/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-API-Key': process.env.CHIT402_API_KEY,
+  },
+  body: JSON.stringify({
+    model: 'xfuel/auto',
+    messages: [{ role: 'user', content: 'Say hello in five words.' }],
+  }),
 });
 const paid = await res.json();
 console.log(paid.xfuel.verify_url); // signed receipt`;
@@ -74,18 +90,14 @@ export default function ChitHome() {
           <div className="chit-ninety-door card">
             <h2 style={styles.ninetyTitle}>90-second drop-in</h2>
             <p style={styles.ninetyLead}>
-              Stamp who paid which call onto the possession book. Pay per call, no key: HTTP 402
-              USDC on Base or Solana, then a signed receipt you can{' '}
+              Stamp who paid which call onto the possession book. Pay per call over x402
+              (HTTP 402, USDC on Base or Solana), or use a partner API key. Either path
+              returns a signed receipt you can{' '}
               <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
               Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
               <Link to="/doors">/doors</Link>.
             </p>
-            <pre className="docs-code chit-ninety-code">
-              <code>{dropInSnippet.replace(apiV1, resolvedApiV1)}</code>
-            </pre>
-            <p style={styles.ninetyFoot}>
-              Partners with an existing key can still send <code>X-API-Key</code>.
-            </p>
+            <DropInSamples apiUrl={resolvedApiV1} />
           </div>
         </div>
       </section>
@@ -241,11 +253,75 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.65,
     marginBottom: '0.85rem',
   },
-  ninetyFoot: {
-    color: '#8a8a9a',
-    fontSize: '0.82rem',
-    lineHeight: 1.5,
-    marginTop: '0.65rem',
-    marginBottom: 0,
+  ninetyTabs: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '0.5rem',
+    marginBottom: '0.75rem',
+  },
+  ninetyTab: {
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    padding: '0.4rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px solid rgba(255,255,255,0.16)',
+    background: 'transparent',
+    color: '#d0d0dc',
+    cursor: 'pointer',
+  },
+  ninetyTabOn: {
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    fontWeight: 600,
+    padding: '0.4rem 0.8rem',
+    borderRadius: '999px',
+    border: '1px solid rgba(0,212,255,0.45)',
+    background: 'rgba(0,212,255,0.1)',
+    color: '#a5f3fc',
+    cursor: 'pointer',
   },
 };
+
+function DropInSamples({ apiUrl }: { apiUrl: string }) {
+  const [door, setDoor] = useState<DropInDoor>('x402');
+  const snippet = (door === 'x402' ? dropInSnippet : partnerKeySnippet).replace(apiV1, apiUrl);
+  const tabId = door === 'x402' ? 'drop-in-x402' : 'drop-in-key';
+
+  return (
+    <>
+      <div role="tablist" aria-label="How you pay the drop-in" style={styles.ninetyTabs}>
+        <button
+          type="button"
+          role="tab"
+          id="drop-in-x402"
+          aria-selected={door === 'x402'}
+          aria-controls="drop-in-panel"
+          style={door === 'x402' ? styles.ninetyTabOn : styles.ninetyTab}
+          onClick={() => setDoor('x402')}
+        >
+          Pay per call (x402)
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="drop-in-key"
+          aria-selected={door === 'key'}
+          aria-controls="drop-in-panel"
+          style={door === 'key' ? styles.ninetyTabOn : styles.ninetyTab}
+          onClick={() => setDoor('key')}
+        >
+          Partner API key
+        </button>
+      </div>
+      <pre
+        className="docs-code chit-ninety-code"
+        role="tabpanel"
+        id="drop-in-panel"
+        aria-labelledby={tabId}
+      >
+        <code>{snippet}</code>
+      </pre>
+    </>
+  );
+}

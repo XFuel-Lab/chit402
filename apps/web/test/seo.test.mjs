@@ -218,15 +218,16 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.doesNotMatch(ninetyBlock, /OpenAI/i, 'ChitHome 90s lead block stays book-first (no vendor wire branding)');
   assert.match(chitHome, /wrapFetchWithPayment\(/, 'ChitHome 90s sample uses the x402 fetch wrapper');
   const dropIn = chitHome.match(/const dropInSnippet = `([\s\S]*?)`;/)?.[1] ?? '';
-  assert.match(dropIn, /wrapFetchWithPayment/, '90s snippet pays with wrapFetchWithPayment');
-  assert.match(dropIn, /verify_url/, '90s snippet returns verify_url');
-  assert.doesNotMatch(dropIn, /X-API-Key/, '90s snippet does not lead with an API key');
-  assert.match(chitHome, /Pay per call, no key/, 'ChitHome 90s lead is keyless pay-per-call');
-  assert.match(
-    chitHome,
-    /Partners with an existing key can still send/,
-    'Partner keys stay a footnote under the snippet',
-  );
+  const partnerKey = chitHome.match(/const partnerKeySnippet = `([\s\S]*?)`;/)?.[1] ?? '';
+  assert.match(dropIn, /wrapFetchWithPayment/, '90s x402 snippet pays with wrapFetchWithPayment');
+  assert.match(dropIn, /verify_url/, '90s x402 snippet returns verify_url');
+  assert.doesNotMatch(dropIn, /X-API-Key/, '90s x402 snippet does not send an API key');
+  assert.match(partnerKey, /X-API-Key/, 'partner key snippet sends X-API-Key');
+  assert.match(partnerKey, /verify_url/, 'partner key snippet returns verify_url');
+  assert.match(chitHome, /Pay per call \(x402\)/, 'x402 tab is labeled Pay per call (x402)');
+  assert.match(chitHome, /Partner API key/, 'partner key tab is labeled Partner API key');
+  assert.match(chitHome, /useState<DropInDoor>\('x402'\)/, 'x402 tab is selected first');
+  assert.doesNotMatch(chitHome, /can still send/, 'partner key is not a leftover footnote');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
