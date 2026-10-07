@@ -378,6 +378,24 @@ export class SpendHoldStore {
     return this._openSum(String(scope), String(key), now);
   }
 
+  /**
+   * Open and consumed holds, after a TTL sweep. External callers join this
+   * with their own entry metadata. Released and expired rows stay out.
+   * @returns {Promise<object[]>}
+   */
+  snapshot() {
+    return this._lock(() => {
+      const now = this._now();
+      this._expire(now);
+      const rows = [];
+      for (const hold of this._byRequest.values()) {
+        if (hold.state !== OPEN && hold.state !== CONSUMED) continue;
+        rows.push(this._public(hold));
+      }
+      return rows;
+    });
+  }
+
   _verdict(ceilings, amount, now) {
     for (const leg of ceilings) {
       const settled = this._settled(leg);

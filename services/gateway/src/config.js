@@ -160,6 +160,9 @@ const config = {
   // Default off: the door still checks settled spend only. When on, a paid call
   // reserves its worst-case quote before upstream and releases the hold on
   // failure. TTL covers a request that never returns. See spend-hold.js.
+  // The same flag mounts POST /v1/spend/holds for external clients
+  // (packages/cdp-spend-store). That route also needs SPEND_HOLD_API_TOKEN
+  // and SPEND_HOLD_CEILINGS_JSON. It accepts Base Sepolia only.
   spendHold: {
     enabled: process.env.SPEND_HOLD_ENABLED === 'true',
     ttlMs: (() => {
