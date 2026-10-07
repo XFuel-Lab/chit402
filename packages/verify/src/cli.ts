@@ -78,6 +78,8 @@ Options:
                       the anchor wallets must match the signed head.
                       A v2 head also needs the signed epoch record.
                       A tree-head file with --rpc enters this mode.
+                      The same files without --rpc check the head signature and the
+                      index/size-bound inclusion offline. They do not call chain RPC.
   --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
   --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
                       origin plus /v1/receipts/tree/epoch
@@ -457,6 +459,28 @@ function looksLikeTreeHead(value: unknown): boolean {
   return Boolean(doc.anchors && doc.root && !doc.task_id);
 }
 
+function readOfflineWitness(args: ReturnType<typeof parseArgs>): {
+  head: AnchorHead | null;
+  inclusion: AnchorInclusion | null;
+} {
+  let head: AnchorHead | null = null;
+  let inclusion: AnchorInclusion | null = null;
+  for (const file of args.positionals.slice(1)) {
+    let doc: unknown;
+    try {
+      doc = readJson(file);
+    } catch (err) {
+      throw new Error(`Error reading ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const row = doc as { proof?: unknown; leaf_index?: unknown };
+    if (looksLikeTreeHead(doc)) head = doc as AnchorHead;
+    else if (doc && typeof doc === 'object' && (Array.isArray(row.proof) || row.leaf_index != null)) {
+      inclusion = doc as AnchorInclusion;
+    }
+  }
+  return { head, inclusion };
+}
+
 function fileLooksLikeHead(file: string | null): boolean {
   if (!file) return false;
   try {
@@ -724,6 +748,16 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
+  let offlineWitness: ReturnType<typeof readOfflineWitness> | null = null;
+  if (!anchorMode) {
+    try {
+      offlineWitness = readOfflineWitness(args);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 3;
+    }
+  }
+
   if (anchorMode) return runAnchor(args);
 
   if (!args.file) {
@@ -823,6 +857,8 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    head: offlineWitness?.head ?? undefined,
+    inclusion: offlineWitness?.inclusion ?? undefined,
   });
 
   if (args.json) {

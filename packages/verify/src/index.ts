@@ -85,6 +85,7 @@ import {
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import { verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 
 export {
   computePaymentCommitment,
@@ -1321,8 +1322,10 @@ export interface VerifyReceiptOptions {
    * Tree head to check against the signed `tree_head_hash`. An equal root is
    * the issuance prefix and proves inclusion of this receipt. A different root
    * verifies only when `inclusion` proves the leaf is in that head.
+   * A head that carries `issuer_signature` is checked offline: the signature
+   * must cover the outer size, root, and the other signed fields. No chain RPC.
    */
-  head?: ReceiptTreeHead | null;
+  head?: (ReceiptTreeHead & TreeHeadDocument) | null;
   /**
    * Inclusion witness for `head` when its root is not the signed prefix.
    * `leaf` is the 32-byte leaf hash hex. Without it the leaf is
@@ -1366,9 +1369,38 @@ function normalizeBoundRoot(root: unknown): string | null {
 }
 
 /**
- * True when the supplied head is the signed prefix, or a later head whose
- * inclusion proof contains this receipt's leaf.
+ * Bind a supplied inclusion proof to its leaf index and tree size.
+ * The head's size, when present, has to be the inclusion's size.
  */
+function offlineInclusionBound(
+  receipt: XFuelReceipt,
+  head: { root?: string | null; tree_size?: number | null } | null | undefined,
+  inclusion: NonNullable<VerifyReceiptOptions['inclusion']>,
+): { ok: true } | { ok: false; reason: string } {
+  const index = inclusion.leaf_index;
+  const size = inclusion.tree_size ?? head?.tree_size;
+  if (index == null || size == null || !Array.isArray(inclusion.proof)) {
+    return { ok: false, reason: 'inclusion_failed' };
+  }
+  if (head?.tree_size != null && inclusion.tree_size != null
+    && Number(head.tree_size) !== Number(inclusion.tree_size)) {
+    return { ok: false, reason: 'tree_size_mismatch' };
+  }
+  const root = normalizeBoundRoot(head?.root) || normalizeBoundRoot(
+    (inclusion as { root?: string | null }).root,
+  );
+  if (!root) return { ok: false, reason: 'bad_root' };
+  if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
+  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
+    && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
+    return { ok: false, reason: 'leaf_mismatch' };
+  }
+  const included = verifyMerkleInclusion(leaf, Number(index), Number(size), root, inclusion.proof);
+  return included ? { ok: true } : { ok: false, reason: 'inclusion_failed' };
+}
+
 function suppliedHeadCovers(
   receipt: XFuelReceipt,
   signedRoot: string,
@@ -1469,6 +1501,32 @@ export async function verifyReceipt(
     if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
       headMismatch = true;
       errors.push('tree_head_mismatch');
+    }
+  }
+
+  // Offline: a supplied tree head is trusted only when its ES256 signature
+  // covers the outer size, root, and the other fields anchor mode already
+  // compares. Chain RPC is not required for this check.
+  let headTrustFailed = false;
+  const suppliedHead = options.head as TreeHeadDocument | null | undefined;
+  if (suppliedHead?.issuer_signature?.jws) {
+    const trust = verifyTreeHeadTrust(suppliedHead, {
+      jwks,
+      trustedKids,
+      issuerHistory: options.issuerHistory ?? null,
+      strictIssuerHistory: options.strictIssuerHistory === true,
+    });
+    if (!trust.ok) {
+      headTrustFailed = true;
+      errors.push(trust.reason || 'head_signature_invalid');
+    }
+  }
+  let inclusionFailed = false;
+  if (options.inclusion && (options.inclusion.proof || options.inclusion.leaf_index != null)) {
+    const bound = offlineInclusionBound(receipt, options.head ?? null, options.inclusion);
+    if (!bound.ok) {
+      inclusionFailed = true;
+      errors.push(bound.reason);
     }
   }
 
@@ -1679,7 +1737,7 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1710,6 +1768,7 @@ export async function verifyReceipt(
   const receipt_lane = receiptLaneFromVerification({
     receipt,
     claims: {
+      schema: verifiedSchema,
       payment: signedPayment ? {
         ref: typeof signedPayment.ref === 'string' ? signedPayment.ref : null,
         rail: typeof signedPayment.rail === 'string' ? signedPayment.rail : null,

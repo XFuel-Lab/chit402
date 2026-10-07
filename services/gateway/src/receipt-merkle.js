@@ -116,16 +116,42 @@ export function inclusionProof(leaves, index) {
   return proof;
 }
 
+/**
+ * RFC 9162 §2.1.3.2. Index and tree size pick left or right. A `position`
+ * label is not trusted. The proof must be exactly as long as that pair
+ * requires, and index >= size is rejected. Leaf and node hashing are
+ * unchanged. Consistency proofs and the empty root are not this function.
+ */
 export function verifyInclusion(leaf, index, treeSize, rootHex, proof) {
-  if (!Array.isArray(proof) || index < 0 || index >= treeSize) return false;
+  if (!Array.isArray(proof)) return false;
+  const leafIndex = Number(index);
+  const size = Number(treeSize);
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
+  if (leafIndex < 0 || leafIndex >= size) return false;
+  const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return false;
+  let fn = leafIndex;
+  let sn = size - 1;
   let hash = Buffer.from(leaf);
-  let idx = index;
   for (const step of proof) {
+    if (sn === 0) return false;
+    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    hash = step.position === 'left' ? nodeHash(sib, hash) : nodeHash(hash, sib);
-    idx = Math.floor(idx / 2);
+    if ((fn % 2) === 1 || fn === sn) {
+      hash = nodeHash(sib, hash);
+      if ((fn % 2) === 0) {
+        while ((fn % 2) === 0 && fn !== 0) {
+          fn = Math.floor(fn / 2);
+          sn = Math.floor(sn / 2);
+        }
+      }
+    } else {
+      hash = nodeHash(hash, sib);
+    }
+    fn = Math.floor(fn / 2);
+    sn = Math.floor(sn / 2);
   }
-  return hash.toString('hex') === String(rootHex).replace(/^0x/, '');
+  return sn === 0 && hash.toString('hex') === root;
 }
 
 function largestPowerOfTwoLessThan(n) {
