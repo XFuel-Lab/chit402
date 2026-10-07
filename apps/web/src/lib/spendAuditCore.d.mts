@@ -7,6 +7,19 @@ export const ERC20_TRANSFER_SELECTOR: string;
 export const ERC20_TRANSFER_FROM_SELECTOR: string;
 export const AUDIT_WINDOW_BLOCKS: number;
 export const AUDIT_CHUNK_BLOCKS: number;
+export const AUDIT_CHUNK_FLOOR: number;
+export const AUDIT_RPC_CONCURRENCY: number;
+export const AUDIT_RPC_MIN_GAP_MS: number;
+export const AUDIT_MAX_LOG_CALLS: number;
+
+export function planLogRanges(fromBlock: number, toBlock: number, chunkBlocks: number): Array<[number, number]>;
+export function isLogRangeLimitError(err: unknown): boolean;
+export function statedLogRangeLimit(err: unknown): number | null;
+export function shrinkLogRange(
+  start: number,
+  end: number,
+  options?: { floor?: number; statedLimit?: number | null },
+): Array<[number, number]> | null;
 export const MAX_INCLUDED_TRANSFERS: number;
 export const MAX_RECEIPT_LOOKUPS: number;
 export const MAX_TX_READS: number;

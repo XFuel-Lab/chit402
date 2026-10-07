@@ -44,10 +44,32 @@ export const ERC20_TRANSFER_FROM_SELECTOR = '0x23b872dd';
 export const AUDIT_WINDOW_BLOCKS = 302400;
 
 /**
- * mainnet.base.org rejects a wider eth_getLogs filter with HTTP 413.
- * 2000 blocks is the widest span that returned 200 in the live probe.
+ * mainnet.base.org answers eth_getLogs over a wider span with HTTP 413
+ * ("eth_getLogs is limited to a 500 range": toBlock - fromBlock > 500).
+ * An inclusive span of 500 blocks stays inside that cap.
  */
-export const AUDIT_CHUNK_BLOCKS = 2000;
+export const AUDIT_CHUNK_BLOCKS = 500;
+
+/**
+ * Smallest inclusive span after a range-limit split. One block.
+ * A range that still fails at this size is recorded, not treated as empty.
+ */
+export const AUDIT_CHUNK_FLOOR = 1;
+
+/** Parallel eth_getLogs calls against the public Base RPC. */
+export const AUDIT_RPC_CONCURRENCY = 2;
+
+/**
+ * Minimum pause between eth_getLogs starts. A faster fan-out draws
+ * HTTP 429 from mainnet.base.org partway through a 7-day window.
+ */
+export const AUDIT_RPC_MIN_GAP_MS = 80;
+
+/**
+ * Cap on eth_getLogs calls for one scan, including splits and retries.
+ * Past this, remaining ranges are failures and the total stays withheld.
+ */
+export const AUDIT_MAX_LOG_CALLS = 8000;
 
 export const MAX_INCLUDED_TRANSFERS = 200;
 export const MAX_RECEIPT_LOOKUPS = 40;
@@ -68,6 +90,79 @@ const CAPS_NOTE =
 
 const SOLANA_NOTE =
   'Solana USDC is not scanned. Paste a Base address (0x and 40 hex digits).';
+
+/**
+ * Inclusive [start, end] ranges covering [fromBlock, toBlock].
+ * Each span is at most `chunkBlocks` (and at least 1).
+ * @param {number} fromBlock
+ * @param {number} toBlock
+ * @param {number} chunkBlocks
+ * @returns {Array<[number, number]>}
+ */
+export function planLogRanges(fromBlock, toBlock, chunkBlocks) {
+  const from = Math.floor(Number(fromBlock));
+  const to = Math.floor(Number(toBlock));
+  const size = Math.max(1, Math.floor(Number(chunkBlocks)) || 1);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
+  const ranges = [];
+  for (let start = from; start <= to; start += size) {
+    ranges.push([start, Math.min(to, start + size - 1)]);
+  }
+  return ranges;
+}
+
+/**
+ * HTTP 413 from mainnet.base.org, or a JSON-RPC message that names a block-range cap.
+ * @param {unknown} err
+ */
+export function isLogRangeLimitError(err) {
+  const message = String(err && typeof err === 'object' && 'message' in err ? err.message : err || '');
+  if (/rpc_http_413\b/.test(message)) return true;
+  if (/limited to a \d+ range/i.test(message)) return true;
+  if (/exceeds? max(?:imum)? block range/i.test(message)) return true;
+  if (/block range/i.test(message) && /too (?:large|wide|big)|exceed|limit/i.test(message)) return true;
+  return false;
+}
+
+/**
+ * Span named by "limited to a N range", or null when the error does not name one.
+ * The public Base RPC uses N as the maximum of (toBlock - fromBlock), so an
+ * inclusive span of N is inside the cap.
+ * @param {unknown} err
+ * @returns {number | null}
+ */
+export function statedLogRangeLimit(err) {
+  const message = String(err && typeof err === 'object' && 'message' in err ? err.message : err || '');
+  const match = message.match(/limited to a (\d+) range/i);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * Replace one refused inclusive range with smaller ranges.
+ * Uses the span named in the error when it is smaller than the current span.
+ * Otherwise halves. Never emits a span below `floor`.
+ * Returns null when the range is already at the floor.
+ * @param {number} start
+ * @param {number} end
+ * @param {{ floor?: number, statedLimit?: number | null }} [options]
+ * @returns {Array<[number, number]> | null}
+ */
+export function shrinkLogRange(start, end, options = {}) {
+  const floor = Math.max(1, Math.floor(options.floor ?? AUDIT_CHUNK_FLOOR));
+  const span = end - start + 1;
+  if (!Number.isFinite(span) || span <= floor) return null;
+  const stated = options.statedLimit;
+  let nextSize;
+  if (Number.isInteger(stated) && stated > 0 && stated < span) {
+    nextSize = Math.max(floor, stated);
+  } else {
+    nextSize = Math.max(floor, Math.floor(span / 2));
+  }
+  if (nextSize >= span) return null;
+  return planLogRanges(start, end, nextSize);
+}
 
 export function addressTopic(address) {
   const hex = String(address || '').toLowerCase().replace(/^0x/, '');

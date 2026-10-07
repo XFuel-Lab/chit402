@@ -4,7 +4,7 @@
 
 ## What it reads
 
-- **Base USDC out.** `eth_getLogs` on `https://mainnet.base.org` for `Transfer` events from the wallet on Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. That is the same contract and the same public RPC the receipt payer check uses. The window is 302400 blocks (about 7 days at a 2-second block). The public RPC rejects a wider `eth_getLogs` span, so the page walks the window in chunks of 2000 blocks.
+- **Base USDC out.** `eth_getLogs` on `https://mainnet.base.org` for `Transfer` events from the wallet on Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. That is the same contract and the same public RPC the receipt payer check uses. The window is 302400 blocks (about 7 days at a 2-second block). The public RPC rejects a wider `eth_getLogs` span with HTTP 413 (`eth_getLogs is limited to a 500 range`), so the page walks the window in chunks of 500 blocks. A chunk that still returns 413, or another range-limit error, is halved down to a single block. Log reads run two at a time, with a short gap between starts. HTTP 429 backs off and pauses the rest of the scan so the public RPC is not asked for the whole window at once.
 - **Public Chit receipt.** `GET /receipt/by-tx?tx=base:<hash>&format=json`. HTTP 404 means no public receipt for that transaction. A failed lookup is unavailable. It is not counted as unreceipted.
 
 Incoming transfers are not spend and are not included.
