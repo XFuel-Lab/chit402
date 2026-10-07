@@ -2,19 +2,20 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 
 const HISTORY = 'https://api.chit402.com/.well-known/issuer-history.json';
-const RECEIPT = 'https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af?format=json';
+const RECEIPT_ID = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+const RECEIPT = `https://api.chit402.com/receipt/${RECEIPT_ID}?format=json`;
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
-const example = `# Receipt issued after this gateway deploy. Older ids have no stored object.
+const example = `# Receipt JSON for this id returns 200. /preimage returns 404 today.
 curl -sS "${RECEIPT}" -o receipt.json
-curl -sS -D - "https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af/preimage" -o preimage.json
-# X-Chit-Hash-Alg: sha256
-# sha256(preimage.json) matches payload_hash inside the receipt JWS
+curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preimage.json
+# HTTP 404 preimage_unavailable — the canonical object was not stored with this
+# document, and the server does not rebuild it on read.
 curl -sS "${HISTORY}?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
-
-# One field, still available:
-# curl -sS "https://api.chit402.com/receipt/chit-39af100b-23dd-4d86-a16b-4556ca6796af/preimage/book_chain.row_hash?raw=1"`;
+npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history-file issuer-history.json
+# After a receipt is issued with a stored object, /preimage returns 200.
+# Then: npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+# sha256 of that body is payload_hash. X-Chit-Hash-Alg is sha256.`;
 
 export default function ReceiptCheckDocs() {
   return (
@@ -74,9 +75,10 @@ export default function ReceiptCheckDocs() {
             <code>{example}</code>
           </pre>
           <p style={styles.note}>
-            The canonical object, the pinned snapshot, and <code>preimages</code> answer after the gateway
-            deploy. A receipt from before that deploy has no stored object, so <code>/preimage</code> is 404.
-            Publish <code>@xfuel/verify</code> before <code>npx -p @xfuel/verify</code> checks the pin.
+            <code>GET /receipt/{RECEIPT_ID}</code> returns 200. <code>GET /receipt/{RECEIPT_ID}/preimage</code>{' '}
+            returns 404: the canonical object was not stored with that document. The same path returns the
+            stored bytes once a receipt is issued with them. <code>@xfuel/verify</code> 0.3.1 is published;
+            the command above checks the issuer-history pin on the receipt file without that preimage.
           </p>
         </div>
 

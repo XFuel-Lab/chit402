@@ -291,11 +291,24 @@ function validateTaskRequestBody(body = {}) {
  * Akash is listed for AkashML compute; Osmosis only when Cosmos IBC listeners are on.
  */
 function advertisedChains() {
-  const out = [CHAIN_IDS.BASE, CHAIN_IDS.THETA, CHAIN_IDS.AKASH];
+  // solana is a live USDC pay rail and a daily receipt-root anchor.
+  // It is not an A2A chain_id, so it stays out of CHAIN_IDS / VALID_CHAIN_IDS.
+  const out = [CHAIN_IDS.BASE, 'solana', CHAIN_IDS.THETA, CHAIN_IDS.AKASH];
   if (config.aiListener?.cosmosListeners) {
     out.push(CHAIN_IDS.OSMOSIS);
   }
   return out;
+}
+
+/** /health fee split. Unset XF / veXF buckets are not a live payout, so they stay off this payload. */
+function healthRevenueSplit() {
+  const split = describeSplit(resolveSplit());
+  return {
+    model: split.model,
+    note: 'Protocol fee lands at one Splits v2 address on Base. Unset bucket addresses are omitted.',
+    totalBps: split.totalBps,
+    buckets: split.buckets,
+  };
 }
 
 /**
@@ -337,7 +350,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
 - Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
-- Live receipt: https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e
+- Live receipt: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
@@ -349,13 +362,13 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - POST /a2a-message         : A2A card URL. Same x402 + chat fulfillment as /v1 (hub, model, amount). Unauth POST {} → 402.
 - POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp on this route (402 offers Base only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted here. Or pass task_id of a collected receipt whose on-chain payer is this wallet. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
-- GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
+- GET  /v1/models           : drop-in model id list. Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key via X-OpenRouter-Key; this host does not resell OpenRouter). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough.
 - Signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted.
 - Optional key (skips payment): "Authorization: Bearer <key>" or "X-API-Key: <key>".
 - Point any OpenAI client's baseURL at this host + /v1. Receipt in x-xfuel-*
-  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+  headers and the "xfuel" body field (ES256 issuer signature; it does not prove USDC moved).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
 
 ## Paid door (USDC / x402)
@@ -3788,6 +3801,8 @@ export function createApp() {
 
       return res.json({
         status:      'ok',
+        // Field name stays. No in-repo weekday public-hosts smoke matches it
+        // (workflows, tests, scripts, docs). External monitors may still.
         server:      'xfuel-m2m-api',
         version:     '1.0.0',
         timestamp:   new Date().toISOString(),
@@ -3829,7 +3844,7 @@ export function createApp() {
           max_bps:        MAX_FEE_BPS,
           min_task_amount: MIN_TASK_AMOUNT,
           a2a_relay_bps:  10,
-          revenue_split:  describeSplit(resolveSplit()),
+          revenue_split:  healthRevenueSplit(),
         },
         // ADR 0005 fingerprint — prepaid float COGS (buyer rail remains USDC).
         provider_floats: getFloatManager({
@@ -3841,7 +3856,7 @@ export function createApp() {
         chains: advertisedChains(),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
-          ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo key is rate-limited per IP. Bring your own X-API-Key for higher limits.' }
+          ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo keys do not grant free completions. Pay with x402 USDC, or use a partner X-API-Key.' }
           : { enabled: false },
       });
     } catch (err) {

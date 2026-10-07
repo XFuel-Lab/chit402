@@ -45,9 +45,15 @@ export const BOOK_SPECIMEN_ENTRIES: BookEntry[] = [
 
 export const BOOK_SPECIMEN_STATS = {
   agentLabel: 'agent 42 (specimen)',
+  /** $50 specimen ceiling. Not a live budget. */
   cap: '50000000',
-  spent: '4820000',
-  remaining: '45180000',
-  window: 'last 50 collected rows',
+  /**
+   * Payable rows only: live collected receipt 2000 + inflow 1250000.
+   * The policy-blocked row has no amount and is not in this sum.
+   */
+  spent: '1252000',
+  /** cap - spent. */
+  remaining: '48748000',
+  window: 'specimen ceiling',
   rowCount: BOOK_SPECIMEN_ENTRIES.length,
 };

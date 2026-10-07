@@ -14,7 +14,7 @@ Strangers can GET the export **shape** without a session:
 Columns match live `GET|POST /v1/agents/:agent_id/book/export` (`format=csv|json`): `task_id`, `evidence`, `collected_at`, `hub`, `model`, `amount`, `payment_ref`, `rail`, `bucket`, `payer_wallet`, `intent_id`, `attempt_index`, `replay_count`, `verify_url`, `explorer_url`. JSON rows also include `inflow_claim`, `inflow_corrections`, `auditor_url`, and related evidence fields.
 
 - Wallets are truncated (`0xREDACTED…`).
-- One row uses the public house receipt `chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e` (on-chain `payment.ref` is already public).
+- The live house receipt that returns 200 is `chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96`. Specimen rows in the JSON files are shape examples.
 - Other task ids are synthetic specimens — not live book sessions.
 
 ## Gap B — path-rotate observe fixture
