@@ -42,36 +42,85 @@ export function bookRowHash(row) {
   return crypto.createHash('sha256').update(bookRowPreimage(row)).digest('hex');
 }
 
+function prevOf(row) {
+  if (row?.prev_hash == null || row.prev_hash === '') return null;
+  return String(row.prev_hash);
+}
+
 /**
+ * Gap check plus fork check. A duplicate seq, two rows that share a prev_hash,
+ * or a prev_hash that is not the previous seq's row_hash marks the chain
+ * FORKED. The first row in input order keeps a duplicated seq. The last line
+ * does not win.
  * @param {object[]} rows rows that carry seq
- * @returns {{ gapless: boolean, gaps: number[], next_seq: number, count: number, max_seq: number }}
+ * @returns {{ gapless: boolean, gaps: number[], next_seq: number, count: number, max_seq: number, forked: boolean, status: string, duplicates: number[], prev_hash_mismatches: object[] }}
  */
 export function analyzeSeq(rows) {
   const seqs = [];
+  const bySeq = new Map();
+  const duplicates = [];
+  const seenPrev = new Map();
   for (const row of rows || []) {
     const n = Number(row?.seq);
-    if (Number.isInteger(n) && n > 0) seqs.push(n);
+    if (!Number.isInteger(n) || n <= 0) continue;
+    seqs.push(n);
+    if (bySeq.has(n)) {
+      if (!duplicates.includes(n)) duplicates.push(n);
+    } else {
+      bySeq.set(n, row);
+    }
+    const prev = prevOf(row);
+    if (prev) {
+      const holders = seenPrev.get(prev) || [];
+      holders.push(row);
+      seenPrev.set(prev, holders);
+    }
   }
-  seqs.sort((a, b) => a - b);
+  const unique = [...bySeq.keys()].sort((a, b) => a - b);
   const gaps = [];
   let expected = 1;
-  let prev = 0;
-  for (const seq of seqs) {
-    if (seq === prev) continue;
+  for (const seq of unique) {
     while (expected < seq) {
       gaps.push(expected);
       expected += 1;
     }
     if (seq === expected) expected += 1;
-    prev = seq;
   }
-  const max = seqs.length ? seqs[seqs.length - 1] : 0;
+  const mismatches = [];
+  for (const seq of unique) {
+    const row = bySeq.get(seq);
+    const actual = prevOf(row);
+    if (seq === unique[0] && seq === 1) {
+      if (actual) mismatches.push({ seq, reason: 'prev_hash_mismatch', expected: null, actual });
+      continue;
+    }
+    const parent = bySeq.get(seq - 1);
+    const expectedHash = parent?.row_hash ? String(parent.row_hash) : null;
+    if (!parent || actual !== expectedHash) {
+      mismatches.push({ seq, reason: 'prev_hash_mismatch', expected: expectedHash, actual });
+    }
+  }
+  const sharedPrev = [];
+  for (const [prev, holders] of seenPrev) {
+    const ids = [...new Set(holders.map((row) => Number(row.seq)))];
+    if (ids.length > 1) sharedPrev.push({ prev_hash: prev, seqs: ids });
+  }
+  const max = unique.length ? unique[unique.length - 1] : 0;
+  const forked = duplicates.length > 0 || mismatches.length > 0 || sharedPrev.length > 0;
+  let status = 'ok';
+  if (forked) status = 'FORKED';
+  else if (gaps.length > 0) status = 'gapped';
   return {
-    gapless: gaps.length === 0,
+    gapless: gaps.length === 0 && !forked,
     gaps,
     next_seq: max + 1,
     count: seqs.length,
     max_seq: max,
+    forked,
+    status,
+    duplicates,
+    prev_hash_mismatches: mismatches,
+    shared_prev: sharedPrev,
   };
 }
 
