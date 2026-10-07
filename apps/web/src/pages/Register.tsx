@@ -205,9 +205,8 @@ export default function Register() {
           <h2>What qualifies?</h2>
           <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             Only HMAC-valid receipts with <code>payment.collected: true</code> and a real{' '}
-            <code>payment.ref</code> (USDC on Base or Solana). The demo key{' '}
-            Public demo keys never register. Wrong possession after
-            register returns 401/403 on the book — not a public scoreboard.
+            <code>payment.ref</code> (USDC on Base or Solana). Public demo keys never register.
+            Wrong possession after register returns 401/403 on the book — not a public scoreboard.
           </p>
         </section>
 
