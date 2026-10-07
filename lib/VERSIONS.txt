@@ -1,2 +1,6 @@
 forge-std v1.9.6
 https://github.com/foundry-rs/forge-std/tree/v1.9.6
+
+safeconsole.sol is omitted. Test.sol and Script.sol imported it and never called it.
+IERC20, IERC165, IERC721, IERC1155, and IERC4626 are omitted. Nothing in this tree imports them.
+IMulticall3.sol stays. StdUtils.sol imports it.

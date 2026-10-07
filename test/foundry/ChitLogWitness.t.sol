@@ -329,14 +329,14 @@ contract ChitLogWitnessTest is Test {
         uint256 pk = 0xD44;
         address key = vm.addr(pk);
         string memory url = "https://witness.example/chit-log";
-        string memory other = "https://witness.example/other-log";
+        string memory otherLog = "https://witness.example/other-log";
         bytes memory sig = _possession(pk, url, key);
-        bytes memory sigOther = _possession(pk, other, key);
+        bytes memory sigOther = _possession(pk, otherLog, key);
         vm.prank(owner);
         bytes32 id = witness.register(url, key, sig);
         assertEq(witness.independent(id), false);
         vm.prank(address(0x571A));
-        bytes32 outside = witness.register(other, key, sigOther);
+        bytes32 outside = witness.register(otherLog, key, sigOther);
         bytes32[] memory ids = new bytes32[](2);
         ids[0] = id;
         ids[1] = outside;
