@@ -759,6 +759,18 @@ export function outputHashOf(task) {
 }
 
 /**
+ * Kind for a hash this gateway produced. `committed` is the listener's
+ * keccak256 (`ethers.keccak256`). `sha256_of_output` is the fallback hasher
+ * above. This is not a prefix guess.
+ * @param {{ kind?: string }|null|undefined} output
+ */
+function explicitOutputKind(output) {
+  if (output?.kind === 'sha256_of_output') return 'sha256';
+  if (output?.kind === 'committed') return 'keccak256';
+  return null;
+}
+
+/**
  * Fulfillment v1 envelope for a listener task or receipt snapshot.
  * @param {object} task
  * @param {{ payerWallet?: string|null, paymentRef?: string|null, jobKind?: string|null, resource?: string|null }} [opts]
@@ -777,6 +789,7 @@ export function fulfillmentEnvelopeOf(task, {
   const session = sessionOf(task);
   let resolvedPayer = payerWallet ?? session?.payer_wallet ?? null;
   if (!resolvedPayer) resolvedPayer = extractPayerWallet(task);
+  const storedCommitment = task?.fulfillment?.output_commitment ?? null;
   return buildFulfillmentEnvelope({
     jobKind: jobKind ?? task?.meta?.job_kind ?? task?.job_kind ?? null,
     resource: routeResource,
@@ -786,7 +799,8 @@ export function fulfillmentEnvelopeOf(task, {
     delegationHash: session?.delegation_hash ?? task?.meta?.delegation_hash ?? null,
     paymentRef: paymentRef ?? task?.intent?.paymentRef ?? task?.payment?.ref ?? null,
     outputHash: output?.value ?? task?.output?.hash ?? null,
-    outputCommitment: task?.fulfillment?.output_commitment ?? null,
+    hashKind: storedCommitment?.kind ? null : explicitOutputKind(output),
+    outputCommitment: storedCommitment,
     issuanceCommitment: task?.meta?.issuanceCommitment ?? task?.issuance_commitment ?? null,
     defaultJobKind: 'completions',
   });
@@ -879,6 +893,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     delegationHash: view.delegation_hash ?? view.session?.delegation_hash ?? null,
     paymentRef: view.payment?.ref ?? null,
     outputHash: view.output?.hash ?? null,
+    hashKind: view.output_commitment?.kind ? null : explicitOutputKind(view.output),
     outputCommitment: view.output_commitment ?? null,
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });

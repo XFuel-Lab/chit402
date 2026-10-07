@@ -200,6 +200,7 @@ describe('withReceipts', () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
     expect(body.deliverable_hash).toBe(await normalizeContentHash('page body'));
     expect(body.deliverable_hash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(body.deliverable_kind).toBe('sha256');
     expect(out.responseHeaders[CHIT_RECEIPT_HEADER]).toBe(
       `${API}/receipt/${encodeURIComponent('foreign-x402-hash')}`,
     );

@@ -28,6 +28,7 @@ import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preim
 import { fromCaip2Network } from './x402-facilitator.js';
 import {
   buildFulfillmentEnvelope,
+  OutputCommitmentError,
   fulfillmentFieldsFromIngestBody,
 } from './fulfillment-receipt.js';
 
@@ -526,6 +527,22 @@ function stringField(value) {
 }
 
 /**
+ * Fulfillment fields, or a 400-shaped rejection when a hash has no allowlisted kind.
+ * @param {object} body
+ */
+function fulfillmentFromBody(body) {
+  const fields = fulfillmentFieldsFromIngestBody(body);
+  if (fields.commitmentError) {
+    return {
+      ok: false,
+      error: 'invalid_output_commitment',
+      reason: fields.commitmentError,
+    };
+  }
+  return { ok: true, fulfillmentMeta: fields };
+}
+
+/**
  * Coalesce x402-shaped or minimal foreign-invoice bodies into payment_required + payment_response.
  * Minimal invoice: amount, payer, tx or payment_ref, payTo, plus resource | service_url | hub (+ optional model).
  *
@@ -540,11 +557,13 @@ export function normalizeIngestInput(body = {}) {
   const nano = parseNanoIngest(body);
   if (nano) {
     if (!nano.ok) return { ok: false, reason: nano.reason };
+    const fulfillment = fulfillmentFromBody(body);
+    if (!fulfillment.ok) return fulfillment;
     return {
       ok: true,
       rail: 'nano',
       nano: nano.value,
-      fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
+      fulfillmentMeta: fulfillment.fulfillmentMeta,
     };
   }
 
@@ -572,11 +591,13 @@ export function normalizeIngestInput(body = {}) {
         error: 'invalid_payment_response',
       };
     }
+    const fulfillment = fulfillmentFromBody(body);
+    if (!fulfillment.ok) return fulfillment;
     return {
       ok: true,
       paymentRequired,
       paymentResponse: parsed.paymentResponse,
-      fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
+      fulfillmentMeta: fulfillment.fulfillmentMeta,
     };
   }
 
@@ -627,6 +648,8 @@ export function normalizeIngestInput(body = {}) {
     };
   }
 
+  const fulfillment = fulfillmentFromBody(body);
+  if (!fulfillment.ok) return fulfillment;
   return {
     ok: true,
     paymentRequired: {
@@ -641,7 +664,7 @@ export function normalizeIngestInput(body = {}) {
       payer: String(payer),
       network,
     },
-    fulfillmentMeta: fulfillmentFieldsFromIngestBody(body),
+    fulfillmentMeta: fulfillment.fulfillmentMeta,
   };
 }
 
@@ -706,6 +729,7 @@ export function buildForeignReceipt({
   const network = bookNetwork(paymentResponse.network || paymentRequired.network || 'base');
   const paymentRef = `${network}:${paymentResponse.tx}`;
   const meta = fulfillmentMeta && typeof fulfillmentMeta === 'object' ? fulfillmentMeta : {};
+  if (meta.commitmentError) throw new OutputCommitmentError(meta.commitmentError);
   const fulfillment = buildFulfillmentEnvelope({
     jobKind: meta.jobKind,
     resource: paymentRequired.resource,
@@ -715,6 +739,7 @@ export function buildForeignReceipt({
     paymentRef,
     outputCommitment: meta.outputCommitment,
     deliverableHash: meta.deliverableHash,
+    hashKind: meta.hashKind,
     omitDeliverable: meta.omitDeliverable,
     defaultJobKind: 'other',
   });
