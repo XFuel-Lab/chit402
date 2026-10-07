@@ -147,7 +147,7 @@ function evictDisk(dir, keepDigest) {
       const parsed = JSON.parse(fs.readFileSync(full, 'utf8'));
       storedAt = Number(parsed?.stored_at) || 0;
     } catch {
-      storedAt = 0;
+      // Unreadable files sort first and are the ones eviction drops.
     }
     return { name, full, storedAt };
   }).sort((a, b) => a.storedAt - b.storedAt || (a.name < b.name ? -1 : 1));
