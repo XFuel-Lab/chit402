@@ -1,0 +1,27 @@
+[profile.default]
+src = "contracts/registry"
+out = "out"
+libs = ["lib"]
+test = "test/foundry"
+script = "script"
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+# via_ir is off. Safe v1.4.1 hits a Yul stack-too-deep under via_ir, and
+# ChitIssuerRoot does not need it. Optimizer runs match the repo's Hardhat profile.
+via_ir = false
+ffi = true
+fs_permissions = [{ access = "read", path = "./" }]
+gas_reports = ["ChitIssuerRoot", "SafeL2"]
+
+[fuzz]
+runs = 128
+
+[invariant]
+runs = 32
+depth = 20
+fail_on_revert = false
+
+# Base Sepolia only. No mainnet RPC endpoint is configured.
+[rpc_endpoints]
+base_sepolia = "https://sepolia.base.org"
