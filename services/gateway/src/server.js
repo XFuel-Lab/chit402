@@ -16,6 +16,7 @@ import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
+import { SpendHoldStore } from './spend-hold.js';
 import { resolvePrivateSpendContext } from './private-desk-attest.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { getHubCatalog } from './hub-catalog.js';
@@ -834,6 +835,14 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+  // Null unless the founder turns the flag on. Production keeps the settled-only check.
+  const spendHolds = config.spendHold?.enabled
+    ? new SpendHoldStore({
+      dir: agentsDir,
+      persist: !!config.taskStore?.persist && !!agentsDir,
+      ttlMs: config.spendHold.ttlMs,
+    })
+    : null;
   configureIssuerHistoryStore({
     dir: agentsDir,
     persist: !!config.taskStore?.persist && !!agentsDir,
@@ -1143,6 +1152,9 @@ export function createApp() {
       const spent = typeof usageSettled.sumCollectedByAgent === 'function'
         ? usageSettled.sumCollectedByAgent(identity.agent_id)
         : 0n;
+      const held = spendHolds
+        ? spendHolds.openReserved('agent', identity.agent_id)
+        : 0n;
       return {
         status: 200,
         body: {
@@ -1151,6 +1163,7 @@ export function createApp() {
           book: packBook(entries, identity.agent_id, 20, {
             identity,
             spent,
+            held,
             session: identity.session || null,
           }),
           proof: accepted.proof,
@@ -4091,6 +4104,9 @@ export function createApp() {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,
+        heldAtomic: spendHolds
+          ? (agentId) => spendHolds.openReserved('agent', agentId)
+          : null,
       });
       if (result.body == null) {
         return res.status(result.status).end();
@@ -4922,6 +4938,7 @@ export function createApp() {
     rateLimit, authenticate, isAuthorised, ledger: usageSettled, registry: agentRegistry,
     sessionStore,
     bookPolicy,
+    spendHolds,
   });
 
   registerBoardRoutes(app, {
