@@ -904,8 +904,8 @@ export class ReceiptMerkleTree {
     const oldInclusion = this._inclusionIn(old, id);
     const currentInclusion = this._inclusionIn(current, id);
     if (!oldInclusion || !currentInclusion) return null;
-    const oldHead = epochHeadCovering(old.heads, old.leaves, oldInclusion.root);
-    const currentHead = epochHeadCovering(current.heads, current.leaves, currentInclusion.root);
+    const oldHead = this._coveringHead(old, oldInclusion.root);
+    const currentHead = this._coveringHead(current, currentInclusion.root);
     const leaf = current.leaves[currentInclusion.leaf_index];
     const leafHex = Buffer.from(leaf).toString('hex');
     const currentInclusions = [];
@@ -949,8 +949,7 @@ export class ReceiptMerkleTree {
     if (index == null) return null;
     const proof = inclusionProof(epoch.leaves, index);
     const root = hex(rootOf(epoch.leaves));
-    let head = epochHeadCovering(epoch.heads, epoch.leaves, root);
-    if (!head && epoch.status === 'closed') head = this.signedClosedEpochHead(epoch.epoch);
+    const head = this._coveringHead(epoch, root);
     const baseSide = head ? (head.anchors?.base || head.anchor || null) : null;
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = head ? (head.anchors?.solana || null) : null;
@@ -2267,6 +2266,22 @@ export class ReceiptMerkleTree {
 
   latestHead() {
     return this.heads[this.heads.length - 1] || null;
+  }
+
+  /**
+   * Stored head for this root, or the closed-epoch head signed on read.
+   * Epoch 1 has no journal head; `signedClosedEpochHead` is that signature.
+   */
+  _coveringHead(epoch, rootHex) {
+    const stored = epochHeadCovering(epoch.heads, epoch.leaves, rootHex);
+    if (stored) return stored;
+    if (epoch.status !== 'closed') return null;
+    const signed = this.signedClosedEpochHead(epoch.epoch);
+    if (!signed?.issuer_signature?.jws) return null;
+    const root = String(signed.root || '').replace(/^0x/, '');
+    if (root !== String(rootHex || '').replace(/^0x/, '')) return null;
+    if (Number(signed.tree_size) !== epoch.leaves.length) return null;
+    return signed;
   }
 
   /**
