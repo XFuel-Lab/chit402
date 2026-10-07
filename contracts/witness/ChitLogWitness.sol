@@ -61,6 +61,10 @@ contract ChitLogWitness {
     event AppenderSet(address indexed previous, address indexed next);
     event OwnerTransferred(address indexed previous, address indexed next);
 
+    /// @notice A fresh witness pointer. `id` is keccak256 of the URL bytes.
+    ///         A new URL is a new id. This event is not a rotation.
+    event WitnessRegistered(bytes32 indexed id, address indexed key, address indexed operator);
+
     error NotOwner(address caller);
     error NotAppender(address caller);
     error ZeroAddress();
@@ -71,6 +75,24 @@ contract ChitLogWitness {
     error EpochNotAdvanced(uint256 current, uint256 next);
     error PrevHeadMismatch(uint256 size, bytes32 root);
     error PinMismatch();
+    error EmptyKey();
+    error EmptyUrl();
+    error PossessionMissing();
+    error PossessionRejected();
+
+    /// @notice Domain for a witness proof of possession. The preimage also
+    ///         binds `chainId` and `registry` (this contract), the same two
+    ///         words ChitIssuerRoot binds into a root hash.
+    bytes32 public constant REGISTER_DOMAIN = keccak256("chit.logWitness.register.v1");
+
+    /// @notice One registration. A null `key` is the zero address and is not stored.
+    struct WitnessRecord {
+        address key;
+        address operator;
+        string url;
+    }
+
+    mapping(bytes32 => WitnessRecord) private _witnesses;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner(msg.sender);
@@ -176,5 +198,140 @@ contract ChitLogWitness {
         if (next == address(0)) revert ZeroAddress();
         emit OwnerTransferred(owner, next);
         owner = next;
+    }
+
+    /// @notice EIP-191 digest the `key` must sign: URL, key, chain id, and
+    ///         this contract. A signature over another URL, key, chain, or
+    ///         contract does not recover `key`.
+    function registrationDigest(string calldata url, address key) public view returns (bytes32) {
+        bytes32 inner = keccak256(abi.encode(REGISTER_DOMAIN, block.chainid, address(this), key, keccak256(bytes(url))));
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", inner));
+    }
+
+    /// @notice Store a new witness pointer. The signature must be by `key`
+    ///         over this URL. No signature is refused. A different URL is a
+    ///         different id and copies nothing from any earlier row.
+    function register(string calldata url, address key, bytes calldata signature) external returns (bytes32 id) {
+        if (bytes(url).length == 0) revert EmptyUrl();
+        if (key == address(0)) revert EmptyKey();
+        if (signature.length == 0) revert PossessionMissing();
+        if (_recover(registrationDigest(url, key), signature) != key) revert PossessionRejected();
+        id = keccak256(bytes(url));
+        _witnesses[id] = WitnessRecord({key: key, operator: msg.sender, url: url});
+        emit WitnessRegistered(id, key, msg.sender);
+    }
+
+    function witnessRecord(bytes32 id) external view returns (address key, address operator, string memory url) {
+        WitnessRecord storage row = _witnesses[id];
+        return (row.key, row.operator, row.url);
+    }
+
+    /// @notice A null or empty key is not a witness a reader can pin.
+    function discoverable(bytes32 id) public view returns (bool) {
+        return _witnesses[id].key != address(0);
+    }
+
+    /// @notice True when this row can count as an independent custodian.
+    ///         A null key, an operator that is us, or a URL only on our host
+    ///         does not.
+    function independent(bytes32 id) public view returns (bool) {
+        WitnessRecord storage row = _witnesses[id];
+        if (row.key == address(0)) return false;
+        if (row.operator == owner || row.operator == appender) return false;
+        if (copyOnOurHost(row.url)) return false;
+        return true;
+    }
+
+    /// @notice How many of `ids` are independent. A null key adds nothing.
+    ///         An our-host-only copy adds nothing. Duplicates are not folded.
+    function quorum(bytes32[] calldata ids) external view returns (uint256 n) {
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (independent(ids[i])) n += 1;
+        }
+    }
+
+    /// @notice True when `url` is only a copy we can rewrite: `chit402.com`,
+    ///         any subdomain, or a `/.well-known/` path with no other host.
+    function copyOnOurHost(string memory url) public pure returns (bool) {
+        bytes memory lower = _lower(bytes(url));
+        if (lower.length == 0) return true;
+        uint256 start = 0;
+        bool sawScheme = false;
+        for (uint256 i = 0; i + 2 < lower.length; i++) {
+            if (lower[i] == 0x3a && lower[i + 1] == 0x2f && lower[i + 2] == 0x2f) {
+                start = i + 3;
+                sawScheme = true;
+                break;
+            }
+        }
+        if (!sawScheme && lower[0] == 0x2f) return _startsWith(lower, bytes("/.well-known/"));
+        uint256 hostStart = start;
+        uint256 path = lower.length;
+        for (uint256 i = start; i < lower.length; i++) {
+            if (lower[i] == 0x2f) {
+                path = i;
+                break;
+            }
+            if (lower[i] == 0x3f) {
+                path = i;
+                break;
+            }
+            if (lower[i] == 0x40) hostStart = i + 1;
+        }
+        uint256 hostEnd = path;
+        for (uint256 i = hostStart; i < path; i++) {
+            if (lower[i] == 0x3a) {
+                hostEnd = i;
+                break;
+            }
+        }
+        if (hostEnd <= hostStart) return true;
+        return _isOurHost(lower, hostStart, hostEnd);
+    }
+
+    function _isOurHost(bytes memory s, uint256 start, uint256 end) internal pure returns (bool) {
+        bytes memory host = bytes("chit402.com");
+        uint256 n = end - start;
+        if (n == host.length && _eq(s, start, host)) return true;
+        if (n > host.length + 1 && s[end - host.length - 1] == 0x2e && _eq(s, end - host.length, host)) return true;
+        return false;
+    }
+
+    function _lower(bytes memory raw) internal pure returns (bytes memory lower) {
+        lower = new bytes(raw.length);
+        for (uint256 i = 0; i < raw.length; i++) {
+            bytes1 c = raw[i];
+            if (c >= 0x41 && c <= 0x5A) c = bytes1(uint8(c) + 32);
+            lower[i] = c;
+        }
+    }
+
+    function _startsWith(bytes memory s, bytes memory prefix) internal pure returns (bool) {
+        if (s.length < prefix.length) return false;
+        return _eq(s, 0, prefix);
+    }
+
+    function _eq(bytes memory s, uint256 start, bytes memory other) internal pure returns (bool) {
+        if (start + other.length > s.length) return false;
+        for (uint256 i = 0; i < other.length; i++) {
+            if (s[start + i] != other[i]) return false;
+        }
+        return true;
+    }
+
+    function _recover(bytes32 digest, bytes calldata signature) internal pure returns (address) {
+        if (signature.length != 65) return address(0);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) return address(0);
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return address(0);
+        return ecrecover(digest, v, r, s);
     }
 }

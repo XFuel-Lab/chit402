@@ -17,6 +17,12 @@ When the flag is on and `CHIT_LOG_WITNESS_ADDRESS` is set:
 
 The appender is a separate key from the Safe and from the bare-root anchor key. Boot refuses `witness_same_key` when those two addresses are the same. The appender can append. It cannot open an epoch, and it cannot change the owner or the appender. The Safe is the owner.
 
+A witness pointer is `register(url, key, signature)`. The signature is an EIP-191 digest of `abi.encode(REGISTER_DOMAIN, chainId, registry, key, keccak256(url))`. `REGISTER_DOMAIN` is `keccak256("chit.logWitness.register.v1")`. `chainId` is the chain the contract is on. `registry` is this contract. Those two words are the same binding ChitIssuerRoot uses in a root hash. No signature is refused. A signature over another URL, another key, another chain, or another contract is refused.
+
+A new URL is a new id, `keccak256` of that URL's bytes. It is a fresh registration. It is not a rotation, and it copies nothing from any earlier row. Registering the same URL again replaces that row with the new key and the new operator. It does not keep the old operator.
+
+A row whose `key` is the zero address is not stored, and a missing id reads as that empty key. It is not discoverable. It does not count toward `quorum` or `independent`. A row counts as an independent custodian only when the key is present, `operator` is neither the owner nor the appender, and the URL is not a copy we can rewrite. That copy is `chit402.com`, any subdomain, or a `/.well-known/` path with no other host. `operator` equal to the owner or the appender is us.
+
 A witness transaction is `broadcast` until a mined receipt succeeds and `head()` on the contract equals that size and root. Only then is it `witnessed`, and only then does the signed head include it. A reverted transaction is `reverted` and is not a signed claim. The daily retry looks at that witness side as well as Base and Solana.
 
 The append uses the same durable path as the bare-root anchor. The gateway signs the type-2 transaction, fsyncs those raw bytes and their keccak hash, and only then broadcasts. A crash after that fsync rebroadcasts the same bytes. Recovery is `eth_getTransactionByHash`, then `eth_getTransactionCount` on a standard RPC. If the nonce is still unused, the same raw transaction is sent again. If something else consumed the nonce, the intent is `replaced` and those bytes are not sent again. Journaling only the nonce is not enough: a second signature at nonce N would be a different transaction.
@@ -27,8 +33,8 @@ The constructor accepts only epoch 1, size 4, root `dd20e39a39a225b7b3441bb7f615
 
 A runtime code hash is not enough. Custom init code can return this contract's runtime bytecode and write any storage, so the constructor never ran. The check that binds the deployment is the creation transaction, not a log. `xfuel-verify --rpc --witness` and gateway boot require:
 
-- the runtime code hash of this build, `0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a`
-- the creation bytecode hash `0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901` (3,613 bytes, solc 0.8.24, optimizer 200)
+- the runtime code hash of this build, `0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471`
+- the creation bytecode hash `0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935` (7,739 bytes, solc 0.8.24, optimizer 200)
 - `CHIT_LOG_WITNESS_ADDRESS` and `CHIT_LOG_WITNESS_CREATION_TX`
 
 The creation transaction must be a contract creation. Its input must be that init code plus `abi.encode(owner, appender, 1, 4, dd20e39a…)`. The receipt's `contractAddress` must be the pinned address, and the receipt must have succeeded. Owner and appender are whatever that transaction used. Epoch, size, and root are fixed. Those two pins are empty in this build, because nothing has been deployed. Until both are set, `--witness` and a boot with `RECEIPT_LOG_WITNESS=1` fail `witness_creation_unpinned`. They do not treat a matching runtime hash as proof. An event in the receipt would not be enough: other init code can emit the same log.
@@ -92,7 +98,7 @@ The gateway flag for that dry run is `RECEIPT_LOG_WITNESS=1` together with `BASE
 
 The deployer key (`SEPOLIA_THROWAWAY_PK`) pays for the contract creation and for the Safe `execTransaction` that calls `declareEpoch`. The Safe (`CHIT_LOG_WITNESS_OWNER`) must already be a 2-of-3, and two of its owners (`SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`) sign that inner call. The appender (`CHIT_LOG_WITNESS_APPENDER`) is the gateway key that will later call `append`. It needs Sepolia ETH only when the flag is turned on and it sends. The deploy itself does not spend from the appender.
 
-Before broadcast, the script eth_calls `declareEpoch` against a throwaway copy and rolls that state back. A revert aborts the script. There is no timestamp delay on this contract. The cushion is gas, 20% (`GAS_CUSHION_BPS` = 2000).
+Before broadcast, the script eth_calls `declareEpoch` against a throwaway copy, then eth_calls `register` with an in-process proof of possession for `https://witness.example/chit-log`, and rolls that state back. A revert aborts the script. The broadcast path still sends only the deploy and the Safe `declareEpoch`. It does not send `register`. There is no timestamp delay on this contract. The cushion is gas, 20% (`GAS_CUSHION_BPS` = 2000).
 
 `forge test --gas-report` on this commit (solc 0.8.24, optimizer 200) put `append` at a median of about 31,500 gas. The maximum moved between runs as the fuzzer did, in a band of about 54,000 to 56,000. `declareEpoch` stayed at a maximum of 42,616 and a median of about 24,800. The script budgets 60,000 gas for an append and 50,000 for `declareEpoch`. The 20% cushion on those budgets is 72,000 and 60,000. Those numbers are the contract functions. They do not include contract creation or the Safe `execTransaction` wrapper. This is not a mainnet quote.
 

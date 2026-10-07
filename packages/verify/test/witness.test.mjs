@@ -187,7 +187,7 @@ test('matching runtime code with other init code is not this constructor', async
     witnessCreationTx: CREATION_TX,
     fetchWitness: async () => ({ epoch: 1, size: 2, root }),
     fetchWitnessCode: async () => runtimeCode,
-    fetchWitnessCreation: async () => creationFor(address, `0x${'ab'.repeat(3613)}`),
+    fetchWitnessCreation: async () => creationFor(address, `0x${'ab'.repeat((initCode.length - 2) / 2)}`),
     fetchBaseTx: async () => ({ hash: head.anchor_tx, input: `0x${root}`, chainId: 8453 }),
   });
   assert.equal(result.witness.reason, 'witness_creation_input');

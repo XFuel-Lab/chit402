@@ -23,8 +23,9 @@ import {BroadcastChain} from "../contracts/witness/BroadcastChain.sol";
 /// call opens epoch 2 at size 1 root f2043ee9…. Both match receipt-log-pin.json.
 ///
 /// Before `startBroadcast`, the script deploys a throwaway copy, eth_calls
-/// `declareEpoch` as the Safe, and rolls that state back. A revert there
-/// aborts the script, so forge does not send the transaction.
+/// `declareEpoch` as the Safe, eth_calls `register` with an in-process proof
+/// of possession, and rolls that state back. A revert there aborts the script.
+/// The broadcast path sends the deploy and `declareEpoch` only.
 ///
 /// Gas cushion is 20% over the measured `declareEpoch` call (`GAS_CUSHION_BPS`
 /// = 2000). There is no timestamp delay on this contract, so the #485 standby
@@ -137,16 +138,37 @@ contract DeployChitLogWitness is Script {
         return (DECLARE_EPOCH_GAS_MAX, cushionGas(DECLARE_EPOCH_GAS_MAX));
     }
 
-    /// @dev Deploy a throwaway witness, eth_call declareEpoch as the Safe, then
-    ///      roll the state back.
+    /// @dev Deploy a throwaway witness, eth_call declareEpoch as the Safe,
+    ///      then eth_call `register` with an in-process proof of possession,
+    ///      and roll that state back. The broadcast path below does not send
+    ///      `register`.
     function _preflight(address safe, address appender, bytes memory inner) internal {
         uint256 snap = vm.snapshotState();
         ChitLogWitness staged =
             new ChitLogWitness(safe, appender, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT);
         vm.prank(safe);
         (bool ok, bytes memory ret) = address(staged).call(inner);
+        if (ok) (ok, ret) = _exercisePossession(staged);
         bool restored = vm.revertToState(snap);
         if (!restored || !ok) revert PreflightRevert(ok ? bytes("") : ret);
+    }
+
+    /// @dev Throwaway key from a label. It is not funded, not an env var, and
+    ///      the snapshot rollback drops the registration before any broadcast.
+    function _exercisePossession(ChitLogWitness staged) internal returns (bool ok, bytes memory why) {
+        uint256 pk = uint256(keccak256("chit.logWitness.preflight.possession")) >> 1;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        bytes32 digest = staged.registrationDigest(url, key);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
+        try staged.register(url, key, abi.encodePacked(r, s, v)) returns (bytes32 id) {
+            if (!staged.discoverable(id) || !staged.independent(id)) {
+                return (false, bytes("possession_not_independent"));
+            }
+            return (true, bytes(""));
+        } catch (bytes memory err) {
+            return (false, err);
+        }
     }
 
     function _load() internal view returns (Config memory c) {

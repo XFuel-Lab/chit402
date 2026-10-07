@@ -31,9 +31,9 @@ contract ChitLogWitnessTest is Test {
     // Runtime code hash of this solc 0.8.24 / optimizer-200 build.
     // The same value is pinned in the gateway and in the verify package.
     bytes32 internal constant CHIT_LOG_WITNESS_CODEHASH =
-        0xdb6c644296d0fd4ca867c38fc4fc9c2fd20ca19b4b8ed69b2701c32c9c79e63a;
+        0xc2a915f65e1c50210272ecbcb20350cd69d23b4325b38975c8390b68c56f9471;
     bytes32 internal constant CHIT_LOG_WITNESS_INIT_CODE_HASH =
-        0xdc6fe53c6d13b36e59069b4c23442cbfefda18aa28775f14bf2daae98f8bc901;
+        0x77b86c3c64f01ac77a722c0af49f512a68534cc74460107dba878c654ec4f935;
 
     function test_runtimeCodeIsPinned() public pure {
         assertEq(keccak256(type(ChitLogWitness).runtimeCode), CHIT_LOG_WITNESS_CODEHASH);
@@ -216,6 +216,131 @@ contract ChitLogWitnessTest is Test {
         local.append(n, newRoot, proof);
         console2.log("append gas m=32 n=40", gasBefore - gasleft());
         assertEq(local.root(), newRoot);
+    }
+
+    function _possession(uint256 pk, string memory url, address key) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, witness.registrationDigest(url, key));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_missingProofOfPossessionIsRefused() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        bytes memory sig = _possession(pk, url, key);
+        vm.expectRevert(ChitLogWitness.PossessionMissing.selector);
+        witness.register(url, key, "");
+        vm.expectRevert(ChitLogWitness.EmptyKey.selector);
+        witness.register(url, address(0), sig);
+    }
+
+    function test_proofOverADifferentUrlIsRefused() public {
+        uint256 pk = 0xA11;
+        address key = vm.addr(pk);
+        bytes memory sig = _possession(pk, "https://witness.example/chit-log", key);
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register("https://other.example/chit-log", key, sig);
+    }
+
+    function test_proofByADifferentKeyIsRefused() public {
+        uint256 pkA = 0xA11;
+        uint256 pkB = 0xB22;
+        address keyA = vm.addr(pkA);
+        bytes memory sig = _possession(pkB, "https://witness.example/chit-log", vm.addr(pkB));
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register("https://witness.example/chit-log", keyA, sig);
+    }
+
+    function test_freshRegistrationInheritsNothing() public {
+        uint256 pkA = 0xA11;
+        uint256 pkB = 0xB22;
+        address keyA = vm.addr(pkA);
+        address keyB = vm.addr(pkB);
+        string memory url = "https://witness.example/chit-log";
+        string memory otherUrl = "https://other.example/chit-log";
+        bytes memory sigA = _possession(pkA, url, keyA);
+        bytes memory sigB = _possession(pkB, otherUrl, keyB);
+        vm.prank(address(0x571A));
+        bytes32 first = witness.register(url, keyA, sigA);
+        vm.prank(address(0x07A2));
+        bytes32 second = witness.register(otherUrl, keyB, sigB);
+        assertTrue(second != first);
+        (address secondKey, address secondOp,) = witness.witnessRecord(second);
+        assertEq(secondKey, keyB);
+        assertEq(secondOp, address(0x07A2));
+        (address firstKey, address firstOp,) = witness.witnessRecord(first);
+        assertEq(firstKey, keyA);
+        assertEq(firstOp, address(0x571A));
+    }
+
+    function test_possessionDoesNotReplayToAnotherChainOrContract() public {
+        uint256 pk = 0xC33;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        vm.chainId(84532);
+        bytes memory sig = _possession(pk, url, key);
+        vm.chainId(8453);
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        witness.register(url, key, sig);
+
+        vm.chainId(84532);
+        sig = _possession(pk, url, key);
+        ChitLogWitness otherWitness = new ChitLogWitness(
+            owner, appender, 1, ChitLogPins.EPOCH1_FINAL_SIZE, ChitLogPins.EPOCH1_FINAL_ROOT
+        );
+        vm.expectRevert(ChitLogWitness.PossessionRejected.selector);
+        otherWitness.register(url, key, sig);
+        witness.register(url, key, sig);
+        assertEq(witness.discoverable(keccak256(bytes(url))), true);
+    }
+
+    function test_nullKeyRowIsUndiscoverable() public view {
+        bytes32 id = keccak256("no-such-row");
+        (address key,,) = witness.witnessRecord(id);
+        assertEq(key, address(0));
+        assertEq(witness.discoverable(id), false);
+        assertEq(witness.independent(id), false);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = id;
+        assertEq(witness.quorum(ids), 0);
+    }
+
+    function test_ourHostOnlyCopyDoesNotCount() public {
+        uint256 pk = 0xD44;
+        address key = vm.addr(pk);
+        string memory ours = "https://api.chit402.com/.well-known/issuer-history.json";
+        assertEq(witness.copyOnOurHost(ours), true);
+        assertEq(witness.copyOnOurHost("https://logs.chit402.com/witness"), true);
+        assertEq(witness.copyOnOurHost("https://API.CHIT402.com/x"), true);
+        assertEq(witness.copyOnOurHost("/.well-known/issuer-history.json"), true);
+        assertEq(witness.copyOnOurHost("https://witness.example/chit-log"), false);
+        assertEq(witness.copyOnOurHost("https://chit402.com.example/witness"), false);
+        bytes memory sig = _possession(pk, ours, key);
+        vm.prank(address(0x571A));
+        bytes32 id = witness.register(ours, key, sig);
+        assertEq(witness.discoverable(id), true);
+        assertEq(witness.independent(id), false);
+        bytes32[] memory ids = new bytes32[](1);
+        ids[0] = id;
+        assertEq(witness.quorum(ids), 0);
+    }
+
+    function test_operatorUsDoesNotCount() public {
+        uint256 pk = 0xD44;
+        address key = vm.addr(pk);
+        string memory url = "https://witness.example/chit-log";
+        string memory other = "https://witness.example/other-log";
+        bytes memory sig = _possession(pk, url, key);
+        bytes memory sigOther = _possession(pk, other, key);
+        vm.prank(owner);
+        bytes32 id = witness.register(url, key, sig);
+        assertEq(witness.independent(id), false);
+        vm.prank(address(0x571A));
+        bytes32 outside = witness.register(other, key, sigOther);
+        bytes32[] memory ids = new bytes32[](2);
+        ids[0] = id;
+        ids[1] = outside;
+        assertEq(witness.quorum(ids), 1);
     }
 
     function test_preflightCushionRollsBack() public {
