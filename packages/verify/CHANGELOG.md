@@ -3,6 +3,11 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+- **Content-addressed issuer pin in anchor mode.** A receipt or head that carries `issuer_key_pin` must match `docs/well-known/issuer-key.json` at a 40-hex commit whose SHA-256 is the pin file. A branch name is `ISSUER_PIN_MUTABLE_REF` and is not fetched. A hash mismatch is `ISSUER_PIN_HASH_MISMATCH`. A different issuer key, `issuer_root.kid`, or `/api/witnesses` kid is `ISSUER_PIN_MISMATCH`. A registration self-signature that does not verify is `ISSUER_SELF_SIG_INVALID`. A claimed era with no pin is `ISSUER_PIN_DOWNGRADE`. A new key without a `chit402.freeze.v1` event (`purpose: citizen_issuer_key`) signed by the previous key is `ISSUER_ROTATION_UNCONTROLLED`. The pin chain is `eip155:84532`. Receipts that do not claim the era are unchanged. Not published.
+
 ## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
 
 ### Security

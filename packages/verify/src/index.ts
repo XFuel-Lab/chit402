@@ -1846,6 +1846,40 @@ export {
 } from './anchor-witness.js';
 
 export {
+  assessIssuerPin,
+  issuerPinContentUrl,
+  issuerPinFileHash,
+  loadIssuerPinBytes,
+  readIssuerPinClaim,
+  registrationPreimage,
+  rotationStatement,
+  serializeIssuerPin,
+  verifyCitizenRotation,
+  verifyRegistrationSignature,
+  canonicalPublicKey,
+  ISSUER_REGISTRATION_CONTEXT,
+  ISSUER_ROTATION_CONTEXT,
+  ISSUER_PIN_VERSION,
+  ISSUER_PIN_SCHEMA,
+  ISSUER_PIN_PATH,
+  ISSUER_PIN_CHAIN_ID,
+  PUBLISHED_ISSUER_PIN_KID,
+  CITIZEN_FREEZE_SCHEMA,
+  CITIZEN_FREEZE_PURPOSE,
+  ISSUER_PIN_MISMATCH,
+  ISSUER_PIN_HASH_MISMATCH,
+  ISSUER_SELF_SIG_INVALID,
+  ISSUER_PIN_DOWNGRADE,
+  ISSUER_PIN_MUTABLE_REF,
+  ISSUER_ROTATION_UNCONTROLLED,
+  ISSUER_PIN_CHAIN_REFUSED,
+  type IssuerPinRef,
+  type IssuerPinAssessment,
+  type IssuerKeyPin,
+  type AssessIssuerPinInput,
+} from './issuer-pin.js';
+
+export {
   verifyCanonicalPreimageBytes,
   CANONICAL_PAYLOAD_VERSION,
 } from './canonical-preimage.js';

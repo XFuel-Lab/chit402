@@ -369,3 +369,7 @@ On an export-coverage snapshot, a bid-board window, or any other universe, `univ
 | `tx_hash` | Safe transaction hash, `0x` plus 32 bytes |
 
 Startup, in strict mode, reads each `Frozen` log at the same finalized block on both RPCs. `universeHash`, `enumeratedCount`, and `frozenBlock` come from the log. `blockhash` is the hash of that log's block. The file's `freeze_head.chain_id` must equal `ISSUER_ROOT_CHAIN_ID`. A mismatch refuses to start. The route then signs only a file row that still matches those startup facts. It does not read the chain again. A `skip` startup does not sign a freeze document. A stranger still checks the document against the `Frozen` log field by field (decoded ABI values).
+
+## Issuer key pin
+
+The content-addressed public key is [issuer-key-pin.md](issuer-key-pin.md). It is a file at one commit, plus the SHA-256 of that file. It is not a second issuer-root check and it does not register a log witness. A rotation of that key is a `chit402.freeze.v1` control event with `purpose: citizen_issuer_key`, signed by the previous pin key, in the same event that updates the pin and the registration self-signature. An edited pin file is not that event. Sepolia (`eip155:84532`) only.

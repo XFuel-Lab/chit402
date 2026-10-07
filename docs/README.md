@@ -74,6 +74,7 @@ Everything else is reference. Do not send partners this index.
 | [product/receipt-log.md](./product/receipt-log.md) | Durable receipt log, epochs, S3 bundles, restore |
 | [product/receipt-preimage.md](./product/receipt-preimage.md) | Public bytes for recomputable receipt hashes |
 | [product/issuer-key-history.md](./product/issuer-key-history.md) | Signed issuer key rotation history |
+| [product/issuer-key-pin.md](./product/issuer-key-pin.md) | Content-addressed issuer public key (Sepolia) |
 | [product/issuer-root.md](./product/issuer-root.md) | Payload v11 issuer root, cutover pause, legacy Merkle freeze |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |
 | [product/book-act.md](./product/book-act.md) | Act type on each book row |

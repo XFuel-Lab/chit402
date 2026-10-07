@@ -40,6 +40,7 @@ import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -128,6 +129,12 @@ Anchored root:
   match, 2 when the leaf is included but an anchor is still pending, 1 when a
   check fails.
 
+  A receipt or head with issuer_key_pin is a pinned era. Pass the pin file
+  and its commit SHA plus SHA-256. The verifier does not fetch a branch.
+  --issuer-pin <file> --issuer-pin-commit <40-hex> --issuer-pin-sha256 <64-hex>
+  Optional: --issuer-pin-sig, --issuer-witnesses, --issuer-prior-pin, --issuer-control.
+  Sepolia pin only (eip155:84532). See docs/product/issuer-key-pin.md.
+
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
   or Solana, and receipt when only the issuer asserts settlement. Unknown is
@@ -183,6 +190,13 @@ function parseArgs(args: string[]): {
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
   noPreimage: boolean;
+  issuerPinFile: string | null;
+  issuerPinCommit: string | null;
+  issuerPinSha256: string | null;
+  issuerPinSigFile: string | null;
+  issuerWitnessesFile: string | null;
+  issuerPriorPinFile: string | null;
+  issuerControlFile: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -210,6 +224,13 @@ function parseArgs(args: string[]): {
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
     noPreimage: false,
+    issuerPinFile: null as string | null,
+    issuerPinCommit: null as string | null,
+    issuerPinSha256: null as string | null,
+    issuerPinSigFile: null as string | null,
+    issuerWitnessesFile: null as string | null,
+    issuerPriorPinFile: null as string | null,
+    issuerControlFile: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -256,6 +277,20 @@ function parseArgs(args: string[]): {
       result.noIssuerHistory = true;
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
+    } else if (arg === '--issuer-pin' && args[i + 1]) {
+      result.issuerPinFile = args[++i];
+    } else if (arg === '--issuer-pin-commit' && args[i + 1]) {
+      result.issuerPinCommit = args[++i];
+    } else if (arg === '--issuer-pin-sha256' && args[i + 1]) {
+      result.issuerPinSha256 = args[++i];
+    } else if (arg === '--issuer-pin-sig' && args[i + 1]) {
+      result.issuerPinSigFile = args[++i];
+    } else if (arg === '--issuer-witnesses' && args[i + 1]) {
+      result.issuerWitnessesFile = args[++i];
+    } else if (arg === '--issuer-prior-pin' && args[i + 1]) {
+      result.issuerPriorPinFile = args[++i];
+    } else if (arg === '--issuer-control' && args[i + 1]) {
+      result.issuerControlFile = args[++i];
     } else if (arg === '--json') {
       result.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -340,6 +375,9 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.solana.cluster) console.log(`  Cluster:       ${result.solana.cluster}`);
   if (result.solana.memo) console.log(`  Memo:          ${result.solana.memo}`);
   if (result.solana.reason && !result.solana.valid) console.log(`  Solana reason: ${result.solana.reason}`);
+  if (result.issuer_pin?.checked) {
+    console.log(`  Issuer pin:    ${result.issuer_pin.ok ? '✓ YES' : '✗ NO'}${result.issuer_pin.code ? ` (${result.issuer_pin.code})` : ''}`);
+  }
   console.log(`  Base:          ${result.base.checked ? mark(result.base.valid) : (result.base.reason || 'not checked')}`);
   if (result.base.tx) console.log(`  Base tx:       ${result.base.tx}`);
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
@@ -469,6 +507,39 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
     }
   }
+  let issuerPin: AssessIssuerPinInput | undefined;
+  const pinClaim = readIssuerPinClaim(receipt).claimed || readIssuerPinClaim(head).claimed;
+  const pinFlags = Boolean(
+    args.issuerPinFile || args.issuerPinCommit || args.issuerPinSha256
+    || args.issuerPinSigFile || args.issuerWitnessesFile || args.issuerPriorPinFile || args.issuerControlFile,
+  );
+  if (pinFlags || pinClaim) {
+    try {
+      const claimRef = readIssuerPinClaim(receipt).ref || readIssuerPinClaim(head).ref;
+      const ref: IssuerPinRef | null = (args.issuerPinCommit || args.issuerPinSha256 || claimRef)
+        ? {
+          commit: args.issuerPinCommit || claimRef?.commit || '',
+          path: claimRef?.path || 'docs/well-known/issuer-key.json',
+          sha256: (args.issuerPinSha256 || claimRef?.sha256 || '').toLowerCase(),
+        }
+        : null;
+      let witnesses: unknown;
+      if (args.issuerWitnessesFile) witnesses = JSON.parse(readFileSync(args.issuerWitnessesFile, 'utf8'));
+      issuerPin = {
+        pinBytes: args.issuerPinFile ? readFileSync(args.issuerPinFile, 'utf8') : null,
+        sigBytes: args.issuerPinSigFile ? readFileSync(args.issuerPinSigFile, 'utf8') : null,
+        ref,
+        witnesses,
+        priorPinBytes: args.issuerPriorPinFile ? readFileSync(args.issuerPriorPinFile, 'utf8') : null,
+        controlJws: args.issuerControlFile ? readFileSync(args.issuerControlFile, 'utf8').trim() : null,
+        required: true,
+        anchorToPublished: !args.issuerPriorPinFile,
+      };
+    } catch (err) {
+      console.error(`Error reading issuer pin: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
   const result = await verifyAnchoredRoot({
     receipt,
     inclusion,
@@ -477,6 +548,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     epochRecord,
     verifyEpochSignature,
+    issuerPin,
   });
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
   const lane = verified.receipt_lane;

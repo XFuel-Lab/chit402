@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 import { BASE_RPC_URL } from './base-payer.js';
 import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
+import { assessIssuerPin, type AssessIssuerPinInput, type IssuerPinAssessment } from './issuer-pin.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -126,6 +127,7 @@ export interface AnchorWitnessResult {
   proves: string[];
   does_not_prove: string[];
   errors: string[];
+  issuer_pin: IssuerPinAssessment;
 }
 
 function sha256(buf: Uint8Array): Buffer {
@@ -303,6 +305,11 @@ export interface VerifyAnchoredRootInput {
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
+  /**
+   * Local pin bytes. Anchor mode does not fetch them. A receipt or head
+   * that carries `issuer_key_pin` fails closed when this is omitted.
+   */
+  issuerPin?: AssessIssuerPinInput | null;
 }
 
 /**
@@ -490,8 +497,23 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
 
+  const pinInput = input.issuerPin || {};
+  const issuerPin = assessIssuerPin({
+    ...pinInput,
+    receipt: pinInput.receipt ?? input.receipt,
+    head: pinInput.head ?? input.head,
+    required: pinInput.required === true || input.issuerPin != null,
+  });
+  if (issuerPin.checked && !issuerPin.ok && issuerPin.code) errors.push(issuerPin.code);
+
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  if (
+    !inclusionValid
+    || epochReason
+    || (solana.checked && !solana.valid)
+    || (base.checked && !base.valid)
+    || (issuerPin.checked && !issuerPin.ok)
+  ) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
@@ -504,5 +526,6 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     proves: ANCHOR_PROVES,
     does_not_prove: doesNotProve,
     errors,
+    issuer_pin: issuerPin,
   };
 }
