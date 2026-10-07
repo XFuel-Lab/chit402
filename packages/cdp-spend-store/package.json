@@ -1,0 +1,63 @@
+{
+  "name": "@chit402/cdp-spend-store",
+  "version": "0.1.0",
+  "description": "Cross-process x402 spend cap and Chit402 receipt for Coinbase CDP agent wallets. Base Sepolia only. Not published from CI.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/sandbox.test.mjs test/settle.test.mjs test/block-sign.test.mjs test/two-process.test.mjs",
+    "example:sepolia": "node examples/base-sepolia.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XFuel-Lab/chit402.git",
+    "directory": "packages/cdp-spend-store"
+  },
+  "peerDependencies": {
+    "@coinbase/cdp-sdk": "^1.58.0",
+    "@x402/core": "^2.28.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/extensions": "^2.28.0",
+    "@x402/svm": "^2.28.0"
+  },
+  "peerDependenciesMeta": {
+    "@coinbase/cdp-sdk": {
+      "optional": true
+    },
+    "@x402/core": {
+      "optional": true
+    },
+    "@x402/evm": {
+      "optional": true
+    },
+    "@x402/extensions": {
+      "optional": true
+    },
+    "@x402/svm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@coinbase/cdp-sdk": "1.58.0",
+    "@x402/core": "2.28.0",
+    "@x402/evm": "2.28.0",
+    "@x402/extensions": "2.28.0",
+    "@x402/svm": "2.28.0"
+  }
+}

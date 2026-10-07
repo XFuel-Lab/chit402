@@ -17,6 +17,7 @@ import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTo
 import { estimateCogsFromRequest } from './provider-rates.js';
 import { registerOpenAIRoutes } from './openai-gateway.js';
 import { SpendHoldStore } from './spend-hold.js';
+import { createSpendHoldService } from './spend-hold-api.js';
 import { resolvePrivateSpendContext } from './private-desk-attest.js';
 import { proveAllowedForKey, proofAvailability, refreshProverProbe } from './prove-gate.js';
 import { getHubCatalog } from './hub-catalog.js';
@@ -841,6 +842,17 @@ export function createApp() {
       dir: agentsDir,
       persist: !!config.taskStore?.persist && !!agentsDir,
       ttlMs: config.spendHold.ttlMs,
+    })
+    : null;
+  // External hold/settle for @chit402/cdp-spend-store. Same flag, same store.
+  // Absent unless SPEND_HOLD_ENABLED=true. Mainnet networks are rejected inside.
+  const spendHoldService = spendHolds
+    ? createSpendHoldService({
+      store: spendHolds,
+      token: process.env.SPEND_HOLD_API_TOKEN || '',
+      ceilingsJson: process.env.SPEND_HOLD_CEILINGS_JSON || '',
+      dir: agentsDir,
+      baseUrl: config.service?.publicBaseUrl || '',
     })
     : null;
   configureIssuerHistoryStore({
@@ -2931,6 +2943,14 @@ export function createApp() {
       }
 
       if (!task) {
+        const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
+        if (spendReceipt) {
+          if (wantsJson) return res.json(spendReceipt);
+          const safeId = /^[A-Za-z0-9_-]+$/.test(String(rawTaskId)) ? String(rawTaskId) : 'receipt';
+          return res.type('html').send(
+            `<!doctype html><meta charset="utf-8"><title>Chit402 receipt</title><p>${safeId}</p><p><a href="?format=json">JSON</a></p>`,
+          );
+        }
         if (wantsJson) {
           return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });
         }
@@ -4940,6 +4960,17 @@ export function createApp() {
     bookPolicy,
     spendHolds,
   });
+
+  if (spendHoldService) {
+    app.use('/v1/spend', (req, res) => {
+      spendHoldService.handle(req, res).catch((err) => {
+        logger.error({ err: err.message }, 'spend-hold api');
+        if (!res.headersSent) {
+          res.status(500).json({ error: { code: 'internal', message: 'spend hold failed' } });
+        }
+      });
+    });
+  }
 
   registerBoardRoutes(app, {
     posts: boardPosts,
