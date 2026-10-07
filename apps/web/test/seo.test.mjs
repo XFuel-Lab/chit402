@@ -527,7 +527,7 @@ test('false claims called out in the site alignment stay fixed', () => {
 test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
   const page = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
-  assert.match(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
+  assert.doesNotMatch(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
   assert.doesNotMatch(page, /XFuel API alias/i, 'Trust page must not brand legacy host as XFuel product');
   assert.match(page, /IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q/);
   assert.match(page, /RFC 7638/);

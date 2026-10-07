@@ -25,7 +25,7 @@
           "description": "XFuel API base URL. Defaults to the hosted public beta.",
           "isRequired": false,
           "format": "string",
-          "default": "https://api.xfuel.app"
+          "default": "https://api.chit402.com"
         },
         {
           "name": "XFUEL_API_KEY",

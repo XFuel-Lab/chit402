@@ -82,7 +82,7 @@ GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/search?query=xfuel
 Cataloging requires:
 
 1. **Public HTTPS resource returns 402 (not 401)**  
-   CDP re-fetches `POST`/`GET https://api.xfuel.app/task-request` **without** an API key after settle. Auth must not run before the challenge. The key is required for fulfillment only.
+   CDP re-fetches `POST`/`GET https://api.chit402.com/task-request` **without** an API key after settle. Auth must not run before the challenge. The key is required for fulfillment only.
 
 2. **x402 v2 PaymentRequired** on that 402 (and `GET /.well-known/x402`):
    - `x402Version: 2`
@@ -101,7 +101,7 @@ Cataloging requires:
 ```bash
 curl -sS -X POST https://api.cdp.coinbase.com/platform/v2/x402/validate \
   -H 'Content-Type: application/json' \
-  -d '{"resource":"https://api.xfuel.app/task-request","method":"POST"}'
+  -d '{"resource":"https://api.chit402.com/task-request","method":"POST"}'
 ```
 
 Want `valid: true` and `simulation.outcome: "accepted"`. Do not pay until that lands.
@@ -113,7 +113,7 @@ After deploying, confirm validate is green, then one ~$0.01 paid request (API ke
 ```bash
 # Prerequisites: XFUEL_PAYER_PRIVATE_KEY / DEPLOYER_PRIVATE_KEY set
 cd packages/sdk
-XFUEL_API_URL=https://api.xfuel.app XFUEL_API_KEY=xfuel-demo XFUEL_AMOUNT=10000 \
+XFUEL_API_URL=https://api.chit402.com XFUEL_API_KEY=xfuel-demo XFUEL_AMOUNT=10000 \
   npx tsx examples/flagship-demo.ts
 ```
 
@@ -124,7 +124,7 @@ curl "https://api.cdp.coinbase.com/platform/v2/x402/discovery/search?query=xfuel
 curl "https://api.cdp.coinbase.com/platform/v2/x402/discovery/merchant?payTo=<X402_PAY_TO>"
 ```
 
-Expected: XFuel with `resource: "https://api.xfuel.app/task-request"`.
+Expected: XFuel with `resource: "https://api.chit402.com/task-request"`.
 
 ### Troubleshooting
 
@@ -139,7 +139,7 @@ Expected: XFuel with `resource: "https://api.xfuel.app/task-request"`.
 Inspect the live 402 without paying:
 
 ```bash
-curl -sS -D - -X POST https://api.xfuel.app/task-request \
+curl -sS -D - -X POST https://api.chit402.com/task-request \
   -H 'Content-Type: application/json' \
   -d '{}'
 # Expect HTTP 402 + PAYMENT-REQUIRED header (no X-API-Key)
@@ -149,14 +149,14 @@ curl -sS -D - -X POST https://api.xfuel.app/task-request \
 
 x402scan ignores `GET /.well-known/x402`. After deploy, register the origin at
 [x402scan.com/resources/register](https://www.x402scan.com/resources/register)
-with origin `api.xfuel.app`. The scanner fetches `GET /openapi.json` and probes
+with origin `api.chit402.com`. The scanner fetches `GET /openapi.json` and probes
 `POST /v1/chat/completions` (must 402 on `{}` before body validation).
 
 ```bash
-curl -sS https://api.xfuel.app/openapi.json | jq '.paths | keys'
+curl -sS https://api.chit402.com/openapi.json | jq '.paths | keys'
 # ["/v1/chat/completions", "/task-request"]
 
-curl -sS -D - -X POST https://api.xfuel.app/v1/chat/completions \
+curl -sS -D - -X POST https://api.chit402.com/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{}'
 # Expect HTTP 402 + PAYMENT-REQUIRED (amount "10000"). Public demo keys do not skip payment.

@@ -122,7 +122,7 @@ function defaultExtractPayment(headers: Headers): { ref?: string; payer?: string
 export function createSidecarFetch(config: SidecarMiddlewareConfig = {}): typeof fetch {
   const {
     signingSecret,
-    xfuelBaseUrl = 'https://api.xfuel.app',
+    xfuelBaseUrl = 'https://api.chit402.com',
     onReceipt,
     extractPayment = defaultExtractPayment,
     pricing = {},
@@ -203,7 +203,7 @@ export function wrapFetchWithSidecar(
 ): typeof fetch {
   const {
     signingSecret,
-    xfuelBaseUrl = 'https://api.xfuel.app',
+    xfuelBaseUrl = 'https://api.chit402.com',
     onReceipt,
     extractPayment = defaultExtractPayment,
     pricing = {},

@@ -101,7 +101,7 @@ export default function Layout() {
           }}
         >
           XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
-          {' '}The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.xfuel.app</code>.
+          {' '}The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.chit402.com</code>.
           {' '}<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>POST /v1/chat/completions</code>
           {' '}is <strong>cost-plus, quoted, receipted</strong> — USDC on Base and Solana.
           {' '}Paying this host moves real mainnet USDC. Do not send funds unless you mean to.
