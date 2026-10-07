@@ -4,6 +4,92 @@ Names in this file are the ones the gateway (`#483`) and the verifier (`#484`) s
 
 The registry is immutable. The controller is a Safe. Guardians are a different set of keys. They do not sign receipts.
 
+## Names for #483 and #484
+
+Copy these identifiers. Do not rename them in the gateway or the verifier.
+
+### Guardian set
+
+| Name | Type | Where |
+|---|---|---|
+| `guardianSeq` | `uint64` | storage, events, every root preimage. Constructor seats `1`. |
+| `guardianThreshold` | `uint64` | storage. M of the seated set. |
+| `guardians` | `address[]` | strictly ascending. `guardians(uint256)` reads one. `guardianCount()` is the length. |
+| `guardianSetHash` | `bytes32` | `keccak256(abi.encode(guardians, guardianThreshold))`. |
+| `isGuardian` | `mapping(address => bool)` | |
+| `witnessSalt` | `bytes32` immutable | bound into the constructor witness PoP. Not a key. |
+| `guardianSet()` | view | returns `(seq, threshold, set, setHash)`. |
+| `rotateGuardians` | write | `(address[] newGuardians, uint64 newThreshold, bytes[] quorumSignatures, bytes[] witnessPops)`. |
+| `GuardianSetCommitted` | event | `guardianSeq` indexed, `guardianThreshold`, `guardianSetHash`, `guardians`, `blockNumber`. |
+
+### Retirement
+
+| Name | Type | Where |
+|---|---|---|
+| `recover` | write | `(bytes32 kid, bool invalidatePrior, bytes[] signatures)`. Relayer submits. Quorum authorizes. |
+| `KeyRecovered` | event | `kid` indexed, `retiredAt`, `retirementBlock`, `invalidatePrior`, `reasonCode`, `guardianSeq` indexed, `rootSeq` indexed. |
+| `retiredAt` | `uint64` | block timestamp of the recovery. Not a `KeyState` field. |
+| `retirementBlock` | `uint64` | `block.number` of the recovery. Event only. |
+| `invalidatePrior` | `bool` | default cut is `false`. |
+| `revokedAt` | `uint64` | `KeyState`. The `keyValidAt` cut. |
+| `wasActive` | `bool` | `KeyState`. Left unchanged by `recover`. |
+| `activatedAt` | `uint64` | `KeyState`. Validity start is `max(notBefore, activatedAt)`. |
+| `keyValidAt` | view | `(bytes32 kid, uint64 t) returns (bool ok, uint8 status)`. |
+| `reasonCode` | `uint8` | on `KeyRecovered` always `REASON_COMPROMISE` (`1`). |
+
+`invalidatePrior == false`: `revokedAt = max(retiredAt, validity start)`. `keyValidAt` is true only for `t < retiredAt` inside the window. `invalidatePrior == true`: `revokedAt` is the validity start, so the open window is empty. A standby that was never promoted is revoked at `notBefore`.
+
+### Policy codes
+
+| Name | Value |
+|---|---|
+| `STATUS_NONE` | `0` |
+| `STATUS_STANDBY` | `1` |
+| `STATUS_ACTIVE` | `2` |
+| `STATUS_RETIRED` | `3` |
+| `STATUS_REVOKED` | `4` |
+| `OP_ADD_STANDBY` | `1` |
+| `OP_PROMOTE` | `2` |
+| `OP_RETIRE` | `3` |
+| `OP_REVOKE` | `4` |
+| `REASON_COMPROMISE` | `1` |
+| `REASON_SUPERSEDED` | `2` |
+| `REASON_LOST` | `3` |
+| `REASON_OTHER` | `255` |
+
+Policy: `REASON_COMPROMISE` is guardian `recover` only. A controller `OP_REVOKE` with reason `1` reverts `CompromiseRequiresGuardians`. The controller may still `OP_REVOKE` with `2`, `3`, or `255`, and may still `OP_RETIRE` (a scheduled `notAfter`, not a compromise). Guardians cannot call `commit`, so they cannot add, promote, or rotate a signing key. `rotateGuardians` changes the guardian set only. The same address cannot be a controller signer and a guardian (`GuardianIsControllerSigner`).
+
+### Guardian and retirement errors
+
+| Error | Arguments |
+|---|---|
+| `CompromiseRequiresGuardians` | none |
+| `BadThreshold` | `uint64 threshold`, `uint256 guardians` |
+| `GuardianUnsorted` | `address guardian` |
+| `TooManyGuardians` | `uint256 count` |
+| `ZeroGuardian` | none |
+| `GuardianIsController` | `address guardian` |
+| `GuardianIsControllerSigner` | `address guardian` |
+| `ControllerOwnerCheckFailed` | `address guardian` |
+| `WitnessPopInvalid` | `address guardian` |
+| `QuorumNotMet` | `uint256 got`, `uint64 need` |
+| `NotGuardian` | `address signer` |
+| `DuplicateOrUnsortedSigner` | `address signer` |
+| `BadSignature` | none |
+| `GuardianSeqOverflow` | none |
+
+### Domain strings
+
+| Constant | String hashed with `keccak256` | On the contract ABI |
+|---|---|---|
+| `GENESIS_DOMAIN` | `chit.issuerRoot.genesis.v1` | yes |
+| `COMMIT_DOMAIN` | `chit.issuerRoot.commit.v1` | yes |
+| `WITNESS_POP_DOMAIN` | `chit.issuerRoot.witnessPop.v1` | no, `ChitIssuerDigests` only |
+| `RECOVER_AUTH_DOMAIN` | `chit.issuerRoot.recoverAuth.v1` | no, `ChitIssuerDigests` only |
+| `RECOVER_ROOT_DOMAIN` | `chit.issuerRoot.recoverRoot.v1` | no, `ChitIssuerDigests` only |
+| `GUARDIAN_AUTH_DOMAIN` | `chit.issuerRoot.guardianAuth.v1` | no, `ChitIssuerDigests` only |
+| `GUARDIAN_ROOT_DOMAIN` | `chit.issuerRoot.guardianRoot.v1` | no, `ChitIssuerDigests` only |
+
 ## Pinned history
 
 Every `rootHash` binds the issuer-history pin so a verifier can check a commit-pinned copy of `issuer-history` against the registry.
