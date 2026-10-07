@@ -9,6 +9,8 @@
 import { createHash } from 'node:crypto';
 import {
   compileAnchorWallets,
+  headOmitsPinnedSigner,
+  LEGACY_HEAD_UNPINNED_SIGNER,
   sameBaseAddress,
   verifyAnchorWalletDocument,
   verifyTreeHeadTrust,
@@ -499,6 +501,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     strictIssuerHistory: input.strictIssuerHistory === true,
   });
   if (!headTrust.ok && headTrust.reason) errors.push(headTrust.reason);
+  const legacyHead = headTrust.ok && headOmitsPinnedSigner(headTrust.payload);
+  if (legacyHead) errors.push(LEGACY_HEAD_UNPINNED_SIGNER);
 
   let publishedWallets: { base: string[]; solana: string[] } | null = null;
   if (input.anchorWalletDocument) {
@@ -562,6 +566,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       : (errors.find((code) => code.startsWith('anchor_') || code.startsWith('fee_payer')) || 'anchor_wallets_invalid');
     solana.reason = solana.fee_payer && errors.includes('fee_payer_unlisted') ? 'fee_payer_unlisted' : reason;
     base.reason = base.from && errors.includes('anchor_sender_unlisted') ? 'anchor_sender_unlisted' : reason;
+  } else if (legacyHead) {
+    solana.reason = LEGACY_HEAD_UNPINNED_SIGNER;
+    base.reason = LEGACY_HEAD_UNPINNED_SIGNER;
   } else {
     if (!signature) {
       solana.reason = 'pending';
@@ -652,7 +659,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   let overall: AnchorWitnessResult['overall'];
   const anchorSideFailed = (solana.reason && solana.reason !== 'pending')
     || (base.reason && base.reason !== 'pending');
-  if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || anchorSideFailed) overall = 'failed';
+  if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || legacyHead || anchorSideFailed) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 

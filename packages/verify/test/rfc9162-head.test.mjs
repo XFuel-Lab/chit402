@@ -14,10 +14,16 @@ const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
 
 const { verifyMerkleInclusion, verifyAnchoredRoot } = await import('../dist/anchor-witness.js');
-const { verifyTreeHeadTrust } = await import('../dist/anchor-trust.js');
+const {
+  verifyTreeHeadTrust,
+  headOmitsPinnedSigner,
+  LEGACY_HEAD_UNPINNED_SIGNER,
+  HEAD_TRUST_MESSAGES,
+} = await import('../dist/anchor-trust.js');
 const { verifyReceipt } = await import('../dist/index.js');
 
 const fixtureDir = path.join(pkgDir, 'test', 'fixtures');
+const epoch1Head = JSON.parse(readFileSync(path.join(fixtureDir, 'pardal-epoch1-head.json'), 'utf8'));
 const honestHead = JSON.parse(readFileSync(path.join(fixtureDir, 'pardal-head-honest.json'), 'utf8'));
 const tamperedHead = JSON.parse(readFileSync(path.join(fixtureDir, 'pardal-head-tampered.json'), 'utf8'));
 const honestInclusion = JSON.parse(readFileSync(path.join(fixtureDir, 'pardal-inclusion-honest.json'), 'utf8'));
@@ -116,6 +122,38 @@ test('anchor mode does not accept the five false index and size claims', async (
   const rewritten = await run(tamperedInclusion);
   assert.equal(rewritten.overall, 'failed');
   assert.equal(rewritten.inclusion.valid, false);
+});
+
+test('epoch-1 and epoch-2 heads signed before signer pinning are not VERIFIED', async () => {
+  assert.equal(
+    HEAD_TRUST_MESSAGES[LEGACY_HEAD_UNPINNED_SIGNER],
+    'This tree head was signed before anchor signer pinning. It does not name the Base sender or the Solana fee payer. Use a newer head.',
+  );
+  const receipt = {
+    task_id: honestInclusion.task_id,
+    row_hash: '6eaa2c1599fb5e3b9e2dc5b0e64ccf609277c4d893aa03ebd310c3584ce5cf9b',
+  };
+  for (const [name, head, inclusion] of [
+    ['epoch-2', honestHead, honestInclusion],
+    ['epoch-1', epoch1Head, honestInclusion],
+  ]) {
+    const trust = verifyTreeHeadTrust(head);
+    assert.equal(trust.ok, true, `${name} ${trust.reason || ''}`);
+    assert.equal(headOmitsPinnedSigner(trust.payload), true, name);
+    let calls = 0;
+    const result = await verifyAnchoredRoot({
+      receipt,
+      inclusion,
+      head,
+      fetchSolanaTx: async () => { calls += 1; return null; },
+      fetchBaseTx: async () => { calls += 1; return null; },
+      fetchGenesis: async () => { calls += 1; return ''; },
+    });
+    assert.equal(result.overall, 'failed', name);
+    assert.notEqual(result.overall, 'verified', name);
+    assert.ok(result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER), `${name} ${result.errors.join(',')}`);
+    assert.equal(calls, 0, name);
+  }
 });
 
 test('xfuel-verify without --rpc rejects a rewritten tree size', () => {

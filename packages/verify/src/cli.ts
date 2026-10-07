@@ -42,6 +42,7 @@ import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -385,6 +386,9 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('');
   console.log(`  Overall: ${result.overall.toUpperCase()}`);
   if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
+  if (result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER)) {
+    console.log(`  ${HEAD_TRUST_MESSAGES[LEGACY_HEAD_UNPINNED_SIGNER]}`);
+  }
   console.log('');
 }
 
