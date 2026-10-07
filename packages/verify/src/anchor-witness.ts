@@ -503,6 +503,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     receipt: pinInput.receipt ?? input.receipt,
     head: pinInput.head ?? input.head,
     required: pinInput.required === true || input.issuerPin != null,
+    anchorToPublished: pinInput.anchorToPublished ?? (pinInput.priorPinBytes == null || pinInput.priorPinBytes === ''),
   });
   if (issuerPin.checked && !issuerPin.ok && issuerPin.code) errors.push(issuerPin.code);
 

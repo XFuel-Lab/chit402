@@ -465,7 +465,7 @@ test('anchor mode accepts a matching sepolia pin without fetching a branch', asy
         solana: { status: 'anchored', signature: 'sig1', slot: 99, cluster: 'devnet', memo },
       },
     },
-    issuerPin: { pinBytes: bytes, ref, witnesses: { kid: key.kid } },
+    issuerPin: { pinBytes: bytes, ref, witnesses: { kid: key.kid }, anchorToPublished: false },
     fetchSolanaTx: async () => {
       fetched += 1;
       return {
@@ -484,6 +484,24 @@ test('anchor mode accepts a matching sepolia pin without fetching a branch', asy
   assert.equal(result.issuer_pin.ok, true);
   assert.equal(fetched, 2);
   assert.equal(issuerPinContentUrl('main').ok, false);
+});
+
+test('anchor mode refuses a pin whose kid is not the published specimen', async () => {
+  const key = makeKey();
+  const bytes = pinBytes(key);
+  const ref = refFor(bytes);
+  const result = await verifyAnchoredRoot({
+    receipt: {
+      task_id: 'task-1',
+      issuer_signature: { kid: key.kid, issuer_jwk: key.jwk },
+      issuer_key_pin: { era: 1, ...ref },
+    },
+    inclusion: { error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] },
+    head: { root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1 },
+    issuerPin: { pinBytes: bytes, ref },
+  });
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.issuer_pin.code, ISSUER_ROTATION_UNCONTROLLED);
 });
 
 test('the published sepolia pin is a public registration, not the production kid', () => {
