@@ -29,9 +29,9 @@ struct FreezeArg {
 | 1 | ADD_STANDBY | notBefore, at least `block.timestamp + 24 hours` | 0 |
 | 2 | PROMOTE | 0 | 0 |
 | 3 | RETIRE | notAfter, at or after the validity start (past or future) | 0 |
-| 4 | REVOKE | revokedAt, at or after the validity start, never 0 | 1, 2, 3, or 255 |
+| 4 | REVOKE | revokedAt, at or after the validity start, never 0 | 2, 3, or 255. Reason 1 is guardian `recover` only |
 
-reasonCode: **1 compromise, 2 superseded, 3 lost, 255 other**. Any other code reverts. The validity start is `max(notBefore, activatedAt)`.
+reasonCode: **1 compromise (guardian `recover` only), 2 superseded, 3 lost, 255 other**. Any other code reverts. The validity start is `max(notBefore, activatedAt)`. Guardian names and preimages: [docs/product/issuer-root.md](../../docs/product/issuer-root.md).
 
 ```text
 GENESIS_DOMAIN = keccak256("chit.issuerRoot.genesis.v1")
@@ -86,7 +86,7 @@ forge script script/DeployChitIssuerRoot.s.sol \
   --slow
 ```
 
-Required env: `SEPOLIA_THROWAWAY_PK`, `SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`, `CHIT_ISSUER_ROOT_CONTROLLER`, `CHIT_GENESIS_KID`, `CHIT_GENESIS_NOT_BEFORE`, `CHIT_STANDBY_KID`, `CHIT_HIST_SNAPSHOT`, `CHIT_LEGACY_UNIVERSE_ID`, `CHIT_LEGACY_UNIVERSE_HASH`, `CHIT_LEGACY_ENUMERATED_COUNT`. Optional `CHIT_HIST_VERSION` (default 1) and `CHIT_STANDBY_CUSHION` (seconds past the 24h minimum, default 3600).
+Required env: `SEPOLIA_THROWAWAY_PK`, `SEPOLIA_SAFE_OWNER_PK_1`, `SEPOLIA_SAFE_OWNER_PK_2`, `CHIT_ISSUER_ROOT_CONTROLLER`, `CHIT_GENESIS_KID`, `CHIT_GENESIS_NOT_BEFORE`, `CHIT_STANDBY_KID`, `CHIT_HIST_SNAPSHOT`, `CHIT_LEGACY_UNIVERSE_ID`, `CHIT_LEGACY_UNIVERSE_HASH`, `CHIT_LEGACY_ENUMERATED_COUNT`. Optional `CHIT_HIST_VERSION` (default 1) and `CHIT_STANDBY_CUSHION` (seconds past the 24h minimum, default 3600). Guardians, addresses and witness signatures only: `CHIT_GUARDIAN_COUNT`, `CHIT_GUARDIAN_THRESHOLD`, `CHIT_WITNESS_SALT`, `CHIT_GUARDIAN_1` .. `CHIT_GUARDIAN_N`, `CHIT_GUARDIAN_POP_1` .. `CHIT_GUARDIAN_POP_N`. The script reads Safe `getOwners()` and refuses a guardian who is also a controller signer. Field names: [docs/product/issuer-root.md](../../docs/product/issuer-root.md).
 
 The sample standby `notBefore` is the latest block timestamp plus 24 hours plus that cushion. A preflight `eth_call` of the genesis commit runs at that latest timestamp and is rolled back before `startBroadcast`. If it reverts, the script stops and forge does not send the transaction. The Sepolia dry run omitted the cushion (`notBefore = simulated timestamp + 24h`); the mined block was about a minute later and the commit reverted `ActivationTooSoon`.
 
@@ -122,6 +122,8 @@ Fork-measured on an Anvil fork of `https://sepolia.base.org` (chain id 84532). N
 | Commit with one key op plus one freeze through that Safe | ~150–220k | 210,013 |
 
 The Safe is the canonical SafeL2 `0x29fcB43b46531BcA003ddC8FCB67FFE91900C762` and factory `0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67`. These are receipt `gasUsed` values after `activatedAt` and the genesis `rootHash` landed. Deploy is higher than the earlier 1,410,063 because the constructor writes a second key slot and a nonzero genesis hash, and the creation code is larger. The one-op commit is lower than the earlier 170,961 because `rootHash` is already nonzero. `forge test --match-test test_forkMeasuredGas` checks the same path on a local fork and does not broadcast.
+
+Guardian calls, `gasleft` delta on `anvil --chain-id 84532` (not a broadcast). `recover` 124,246. `rotateGuardians` 195,053. Runtime code size of the registry in that test was 13,236 bytes.
 
 Human broadcast, only with a throwaway Sepolia key, after the env vars in the deploy section are set:
 

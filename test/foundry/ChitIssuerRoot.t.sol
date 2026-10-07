@@ -5,7 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {BroadcastChain} from "../../contracts/registry/BroadcastChain.sol";
 import {ChitIssuerCodes, ChitIssuerRoot} from "../../contracts/registry/ChitIssuerRoot.sol";
+import {ChitIssuerDigests} from "../../contracts/registry/ChitIssuerDigests.sol";
 import {DeployChitIssuerRoot} from "../../script/DeployChitIssuerRoot.s.sol";
+import {GuardianDeploy} from "./GuardianDeploy.sol";
 
 contract ChitIssuerRootTest is Test {
     bytes32 internal constant GENESIS_KID = 0x22f169982faf3e1918fefd2f89db2b5954fdbb3944e5758a66000439e253ab54;
@@ -17,18 +19,13 @@ contract ChitIssuerRootTest is Test {
     function setUp() public {
         vm.chainId(84532);
         vm.warp(GENESIS_NOT_BEFORE);
-        root = new ChitIssuerRoot(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
+        root = GuardianDeploy.deploy(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
     }
 
     function test_constructorSeedsActiveKeyAndDoesNotCommit() public {
         assertEq(root.controller(), address(this));
         assertEq(root.rootSeq(), 0);
-        assertEq(
-            root.rootHash(),
-            root.genesisRootHash(
-                block.chainid, address(root), address(this), GENESIS_KID, GENESIS_NOT_BEFORE, GENESIS_NOT_BEFORE, uint64(block.number)
-            )
-        );
+        assertEq(root.rootHash(), _genesisHash(root, GENESIS_KID, GENESIS_NOT_BEFORE));
         assertEq(root.supersededBy(), address(0));
         assertEq(root.ACTIVATION_DELAY(), 24 hours);
 
@@ -52,9 +49,7 @@ contract ChitIssuerRootTest is Test {
         bytes32 kid = keccak256("fresh-genesis");
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         vm.recordLogs();
-        vm.expectEmit(true, true, false, true, predicted);
-        emit ChitIssuerRoot.KeyActivated(kid, 100, 0);
-        ChitIssuerRoot fresh = new ChitIssuerRoot(address(this), kid, 100);
+        ChitIssuerRoot fresh = GuardianDeploy.deploy(address(this), kid, 100);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 fromContract;
         bytes32 activatedTopic = keccak256("KeyActivated(bytes32,uint64,uint64)");
@@ -67,21 +62,21 @@ contract ChitIssuerRootTest is Test {
             if (logs[i].topics[0] == activatedTopic) sawActivated = true;
             if (logs[i].topics[0] == seededTopic) sawSeeded = true;
         }
-        assertEq(fromContract, 2);
+        assertEq(fromContract, 3);
         assertTrue(sawActivated);
         assertTrue(sawSeeded);
         assertEq(fresh.rootSeq(), 0);
         assertEq(
             fresh.rootHash(),
-            fresh.genesisRootHash(block.chainid, address(fresh), address(this), kid, 100, 100, uint64(block.number))
+            _genesisHash(fresh, kid, 100)
         );
     }
 
     function test_constructorRejectsZeroControllerAndZeroKid() public {
         vm.expectRevert(ChitIssuerRoot.ZeroController.selector);
-        new ChitIssuerRoot(address(0), GENESIS_KID, 1);
+        new ChitIssuerRoot(address(0), GENESIS_KID, 1, new address[](0), 0, bytes32(0), new bytes[](0));
         vm.expectRevert(ChitIssuerRoot.ZeroKid.selector);
-        new ChitIssuerRoot(address(this), bytes32(0), 1);
+        new ChitIssuerRoot(address(this), bytes32(0), 1, new address[](0), 0, bytes32(0), new bytes[](0));
     }
 
     function test_onlyControllerCanWrite() public {
@@ -111,12 +106,12 @@ contract ChitIssuerRootTest is Test {
         assertEq(root.historySnapshot(), snap);
 
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.HistoryVersionRegressed.selector, uint64(0), uint64(1)));
-        root.commit(_one(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 1)), _noFreezes(), 0, snap);
+        root.commit(_one(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 2)), _noFreezes(), 0, snap);
 
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.HistorySnapshotMismatch.selector, keccak256("other"), snap));
-        root.commit(_one(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 1)), _noFreezes(), 1, keccak256("other"));
+        root.commit(_one(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 2)), _noFreezes(), 1, keccak256("other"));
 
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 1), 2, keccak256("hist-v2"));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE, 2), 2, keccak256("hist-v2"));
         assertEq(root.historyVersion(), 2);
     }
 
@@ -173,7 +168,7 @@ contract ChitIssuerRootTest is Test {
         vm.warp(GENESIS_NOT_BEFORE + 10 days);
         uint64 revokedAt = GENESIS_NOT_BEFORE + 3 days;
         assertLt(uint256(revokedAt), block.timestamp);
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, revokedAt, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, revokedAt, ChitIssuerCodes.REASON_LOST), 0, bytes32(0));
 
         (uint8 status, bool wasActive,,, uint64 stored,) = root.keys(GENESIS_KID);
         assertEq(status, ChitIssuerCodes.STATUS_REVOKED);
@@ -205,7 +200,7 @@ contract ChitIssuerRootTest is Test {
         bytes32 snapshot = root.historySnapshot();
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.RevokedAtInFuture.selector, futureNow + 1));
         root.commit(
-            _one(_op(ChitIssuerCodes.OP_REVOKE, futureKid, futureNow + 1, ChitIssuerCodes.REASON_COMPROMISE)),
+            _one(_op(ChitIssuerCodes.OP_REVOKE, futureKid, futureNow + 1, ChitIssuerCodes.REASON_LOST)),
             _noFreezes(),
             version,
             snapshot
@@ -227,22 +222,32 @@ contract ChitIssuerRootTest is Test {
 
     function test_revokedAtCannotPrecedeNotBeforeOrBeZero() public {
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.RevokedAtBeforeStart.selector, GENESIS_NOT_BEFORE - 1, GENESIS_NOT_BEFORE));
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE - 1, 1), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, GENESIS_NOT_BEFORE - 1, 2), 0, bytes32(0));
 
         bytes32 standby = keccak256("zero-revoke");
         uint64 notBefore = uint64(block.timestamp + 24 hours);
         _commit(_op(ChitIssuerCodes.OP_ADD_STANDBY, standby, notBefore, 0), 0, bytes32(0));
         vm.warp(notBefore);
         vm.expectRevert(ChitIssuerRoot.RevokedAtZero.selector);
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, standby, 0, 1), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, standby, 0, 2), 0, bytes32(0));
     }
 
     function test_reasonCodes() public {
-        uint8[4] memory ok = [uint8(1), 2, 3, 255];
+        uint8[3] memory ok = [uint8(2), 3, 255];
         for (uint256 i = 0; i < ok.length; i++) {
             bytes32 each = _activeStandby(vm.toString(ok[i]));
             _commitOn(each, ChitIssuerCodes.OP_REVOKE, uint64(block.timestamp), ok[i]);
         }
+        bytes32 compromiseKid = _activeStandby("compromise");
+        uint64 compromiseVersion = root.historyVersion();
+        bytes32 compromiseSnap = root.historySnapshot();
+        vm.expectRevert(ChitIssuerRoot.CompromiseRequiresGuardians.selector);
+        root.commit(
+            _one(_op(ChitIssuerCodes.OP_REVOKE, compromiseKid, uint64(block.timestamp), 1)),
+            _noFreezes(),
+            compromiseVersion,
+            compromiseSnap
+        );
         bytes32 badKid = _activeStandby("bad-reason");
         uint64 badNow = uint64(block.timestamp);
         uint64 version = root.historyVersion();
@@ -259,7 +264,7 @@ contract ChitIssuerRootTest is Test {
         uint64 revokedAt = GENESIS_NOT_BEFORE + 700;
         vm.warp(revokedAt);
         _commit(_op(ChitIssuerCodes.OP_RETIRE, GENESIS_KID, notAfter, 0), 0, bytes32(0));
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, revokedAt, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, revokedAt, ChitIssuerCodes.REASON_LOST), 0, bytes32(0));
 
         (bool ok,) = root.keyValidAt(GENESIS_KID, GENESIS_NOT_BEFORE + 250);
         assertTrue(ok);
@@ -376,7 +381,7 @@ contract ChitIssuerRootTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.AlreadySuperseded.selector, next));
         root.supersede(address(0x5678));
 
-        ChitIssuerRoot fresh = new ChitIssuerRoot(address(this), keccak256("g2"), 1);
+        ChitIssuerRoot fresh = GuardianDeploy.deploy(address(this), keccak256("g2"), 1);
         vm.expectRevert(ChitIssuerRoot.ZeroNextRegistry.selector);
         fresh.supersede(address(0));
         vm.expectRevert(ChitIssuerRoot.SupersedeSelf.selector);
@@ -389,27 +394,51 @@ contract ChitIssuerRootTest is Test {
     function test_rootHashBindsChainIdAndRegistry() public {
         ChitIssuerRoot.Op[] memory ops = _one(_op(ChitIssuerCodes.OP_RETIRE, GENESIS_KID, GENESIS_NOT_BEFORE, 0));
         bytes32 firstPrev = root.rootHash();
-        bytes32 first = root.commitmentHash(firstPrev, 1, 84532, address(root), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
+        bytes32 first = _commitHash(root, firstPrev, 1, 84532, uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         root.commit(ops, _noFreezes(), 0, bytes32(0));
         assertEq(root.rootHash(), first);
 
-        ChitIssuerRoot other = new ChitIssuerRoot(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
+        ChitIssuerRoot other = GuardianDeploy.deploy(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
         bytes32 otherHash =
-            other.commitmentHash(other.rootHash(), 1, 84532, address(other), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
+            _commitHash(other, other.rootHash(), 1, 84532, uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         assertTrue(otherHash != first);
         other.commit(ops, _noFreezes(), 0, bytes32(0));
         assertEq(other.rootHash(), otherHash);
 
         bytes32 otherChain =
-            root.commitmentHash(firstPrev, 1, 8453, address(root), uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
+            _commitHash(root, firstPrev, 1, 8453, uint64(block.number), ops, _noFreezes(), 0, bytes32(0));
         assertTrue(otherChain != first);
 
         vm.chainId(8453);
-        ChitIssuerRoot onOtherChain = new ChitIssuerRoot(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
+        ChitIssuerRoot onOtherChain = GuardianDeploy.deploy(address(this), GENESIS_KID, GENESIS_NOT_BEFORE);
         bytes32 chainPrev = onOtherChain.rootHash();
         onOtherChain.commit(ops, _noFreezes(), 0, bytes32(0));
         assertTrue(onOtherChain.rootHash() != first);
         _assertMatchesCommitment(onOtherChain, chainPrev, 8453, ops);
+    }
+
+    function _commitHash(
+        ChitIssuerRoot r,
+        bytes32 prev,
+        uint64 seq,
+        uint256 chainId,
+        uint64 blockNumber,
+        ChitIssuerRoot.Op[] memory ops,
+        ChitIssuerRoot.FreezeArg[] memory fz,
+        uint64 version,
+        bytes32 snap
+    ) internal view returns (bytes32) {
+        ChitIssuerDigests.CommitStatic memory preimage;
+        preimage.prevRootHash = prev;
+        preimage.seq = seq;
+        preimage.chainId = chainId;
+        preimage.registry = address(r);
+        preimage.blockNumber = blockNumber;
+        preimage.historyVersion = version;
+        preimage.historySnapshot = snap;
+        preimage.guardianSeq = r.guardianSeq();
+        preimage.guardianSetHash = r.guardianSetHash();
+        return r.commitmentHash(preimage, ops, fz);
     }
 
     function _hashCommit(
@@ -421,7 +450,7 @@ contract ChitIssuerRootTest is Test {
         uint64 version,
         bytes32 snap
     ) internal view returns (bytes32) {
-        return r.commitmentHash(prev, 1, block.chainid, address(r), blockNumber, ops, fz, version, snap);
+        return _commitHash(r, prev, 1, block.chainid, blockNumber, ops, fz, version, snap);
     }
 
     function _assertMatchesCommitment(ChitIssuerRoot r, bytes32 prev, uint256 chainId, ChitIssuerRoot.Op[] memory ops)
@@ -430,7 +459,7 @@ contract ChitIssuerRootTest is Test {
     {
         assertEq(
             r.rootHash(),
-            r.commitmentHash(prev, 1, chainId, address(r), uint64(block.number), ops, _noFreezes(), 0, bytes32(0))
+            _commitHash(r, prev, 1, chainId, uint64(block.number), ops, _noFreezes(), 0, bytes32(0))
         );
     }
 
@@ -454,8 +483,8 @@ contract ChitIssuerRootTest is Test {
         ChitIssuerRoot.Op[] memory backward = new ChitIssuerRoot.Op[](2);
         backward[0] = forward[1];
         backward[1] = forward[0];
-        bytes32 h1 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), 1, forward, _noFreezes(), 0, bytes32(0));
-        bytes32 h2 = root.commitmentHash(bytes32(0), 1, block.chainid, address(root), 1, backward, _noFreezes(), 0, bytes32(0));
+        bytes32 h1 = _commitHash(root, bytes32(0), 1, block.chainid, 1, forward, _noFreezes(), 0, bytes32(0));
+        bytes32 h2 = _commitHash(root, bytes32(0), 1, block.chainid, 1, backward, _noFreezes(), 0, bytes32(0));
         assertTrue(h1 != h2);
     }
 
@@ -466,7 +495,7 @@ contract ChitIssuerRootTest is Test {
         vm.warp(notBefore + 1 hours);
 
         ChitIssuerRoot.Op[] memory ops = new ChitIssuerRoot.Op[](2);
-        ops[0] = _op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, notBefore, ChitIssuerCodes.REASON_COMPROMISE);
+        ops[0] = _op(ChitIssuerCodes.OP_REVOKE, GENESIS_KID, notBefore, ChitIssuerCodes.REASON_LOST);
         ops[1] = _op(ChitIssuerCodes.OP_PROMOTE, standby, 0, 0);
         root.commit(ops, _noFreezes(), 0, bytes32(0));
 
@@ -545,8 +574,8 @@ contract ChitIssuerRootTest is Test {
         assertTrue(atPromotion);
 
         vm.expectRevert(abi.encodeWithSelector(ChitIssuerRoot.RevokedAtBeforeStart.selector, notBefore, activatedAt));
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, notBefore, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
-        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, activatedAt, ChitIssuerCodes.REASON_COMPROMISE), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, notBefore, ChitIssuerCodes.REASON_LOST), 0, bytes32(0));
+        _commit(_op(ChitIssuerCodes.OP_REVOKE, kid, activatedAt, ChitIssuerCodes.REASON_LOST), 0, bytes32(0));
         (bool beforeRevoke,) = root.keyValidAt(kid, activatedAt - 1);
         assertFalse(beforeRevoke);
         (bool atRevokeBoundary,) = root.keyValidAt(kid, activatedAt);
@@ -582,7 +611,7 @@ contract ChitIssuerRootTest is Test {
         opKind = uint8((opKind % 4) + 1);
         vm.warp(1_700_000_000);
         bytes32 kid = keccak256(abi.encode("transition", salt, fromStatus));
-        ChitIssuerRoot r = new ChitIssuerRoot(address(this), keccak256("fuzz-genesis"), 1);
+        ChitIssuerRoot r = GuardianDeploy.deploy(address(this), keccak256("fuzz-genesis"), 1);
         uint64 notBefore = uint64(uint256(1_700_000_000) + 24 hours + 1000);
         _seedStatus(r, kid, fromStatus, notBefore);
         _attemptTransition(r, kid, fromStatus, notBefore, opKind, ts, reason, warpBy);
@@ -599,7 +628,7 @@ contract ChitIssuerRootTest is Test {
         }
         if (fromStatus == 4) {
             r.commit(
-                _one(_op(ChitIssuerCodes.OP_REVOKE, kid, notBefore, ChitIssuerCodes.REASON_COMPROMISE)),
+                _one(_op(ChitIssuerCodes.OP_REVOKE, kid, notBefore, ChitIssuerCodes.REASON_LOST)),
                 _noFreezes(),
                 0,
                 bytes32(0)
@@ -670,7 +699,8 @@ contract ChitIssuerRootTest is Test {
             return ts >= notBefore;
         }
         if (opKind == 4) {
-            if (reason != 1 && reason != 2 && reason != 3 && reason != 255) return false;
+            if (reason == 1) return false;
+            if (reason != 2 && reason != 3 && reason != 255) return false;
             if (ts == 0 || status == 0 || status == 4 || ts < notBefore) return false;
             if (uint256(ts) > nowTs && (status != 1 || wasActive)) return false;
             return true;
@@ -713,6 +743,26 @@ contract ChitIssuerRootTest is Test {
         freezeArgs = new ChitIssuerRoot.FreezeArg[](0);
     }
 
+    function isOwner(address) external pure returns (bool) {
+        return false;
+    }
+
+    function _genesisHash(ChitIssuerRoot r, bytes32 kid, uint64 notBefore) internal view returns (bytes32) {
+        (uint64 seq, uint64 threshold, address[] memory set,) = r.guardianSet();
+        ChitIssuerDigests.GenesisStatic memory p;
+        p.chainId = block.chainid;
+        p.registry = address(r);
+        p.controller = address(this);
+        p.genesisKid = kid;
+        p.genesisNotBefore = notBefore;
+        p.activatedAt = notBefore;
+        p.blockNumber = uint64(block.number);
+        p.witnessSalt = r.witnessSalt();
+        p.guardianSeq = seq;
+        p.guardianThreshold = threshold;
+        return ChitIssuerDigests.genesisRootHash(p, set);
+    }
+
     function _jsHash(
         bytes32 prev,
         uint64 seq,
@@ -722,7 +772,7 @@ contract ChitIssuerRootTest is Test {
         uint64 version,
         bytes32 snapshot
     ) internal returns (bytes32) {
-        string[] memory cmd = new string[](20);
+        string[] memory cmd = new string[](24);
         cmd[0] = "node";
         cmd[1] = "scripts/issuer-root.mjs";
         cmd[2] = "hash";
@@ -750,8 +800,12 @@ contract ChitIssuerRootTest is Test {
             ",",
             vm.toString(uint256(op.reasonCode))
         );
-        string[] memory trimmed = new string[](19);
-        for (uint256 i = 0; i < 19; i++) trimmed[i] = cmd[i];
+        cmd[19] = "--guardian-seq";
+        cmd[20] = vm.toString(root.guardianSeq());
+        cmd[21] = "--guardian-set";
+        cmd[22] = vm.toString(root.guardianSetHash());
+        string[] memory trimmed = new string[](23);
+        for (uint256 i = 0; i < 23; i++) trimmed[i] = cmd[i];
         bytes memory out = vm.ffi(trimmed);
         if (out.length == 32) return bytes32(out);
         uint256 n = out.length;

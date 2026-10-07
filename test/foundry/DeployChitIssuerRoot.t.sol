@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {ChitIssuerRoot} from "../../contracts/registry/ChitIssuerRoot.sol";
 import {DeployChitIssuerRoot} from "../../script/DeployChitIssuerRoot.s.sol";
+import {GuardianDeploy} from "./GuardianDeploy.sol";
 
 /// @dev The dry run built standby notBefore as simulatedTimestamp + 24h.
 ///      The mined block was ~56s later, and commit reverted ActivationTooSoon.
@@ -19,7 +20,7 @@ contract DeployChitIssuerRootTest is Test {
         vm.warp(SIMULATED);
         vm.roll(10);
         script = new DeployChitIssuerRoot();
-        root = new ChitIssuerRoot(address(this), keccak256("genesis"), 1_700_000_000);
+        root = GuardianDeploy.deploy(address(this), keccak256("genesis"), 1_700_000_000);
     }
 
     function test_preflightRevertsWhenMinedTimestampPassesSimulation() public {
@@ -73,6 +74,10 @@ contract DeployChitIssuerRootTest is Test {
         (uint8 status,, uint64 notBefore,,,) = root.keys(keccak256("standby"));
         assertEq(status, 1);
         assertEq(notBefore, cushioned);
+    }
+
+    function isOwner(address) external pure returns (bool) {
+        return false;
     }
 
     function _data(uint64 notBefore) internal view returns (bytes memory) {

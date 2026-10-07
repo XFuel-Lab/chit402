@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Enum} from "safe-smart-account/common/Enum.sol";
 import {SafeL2} from "safe-smart-account/SafeL2.sol";
 import {ChitIssuerCodes, ChitIssuerRoot} from "../../contracts/registry/ChitIssuerRoot.sol";
+import {GuardianDeploy} from "./GuardianDeploy.sol";
 import {SafeFixture} from "./SafeFixture.sol";
 
 /// @notice Controller is a real Safe v1.4.1 proxy (SafeL2 singleton + factory), threshold 2 of 3.
@@ -17,7 +18,7 @@ contract ChitIssuerRootSafeTest is SafeFixture {
         vm.chainId(84532);
         vm.warp(NOT_BEFORE);
         safe = _deploySafeFromSource();
-        root = new ChitIssuerRoot(address(safe), genesis, NOT_BEFORE);
+        root = GuardianDeploy.deploy(address(safe), genesis, NOT_BEFORE);
     }
 
     function test_anyTwoOfThreeOwnersCanCommitAndOneCannot() public {
@@ -31,12 +32,12 @@ contract ChitIssuerRootSafeTest is SafeFixture {
         assertEq(root.rootSeq(), 1);
 
         bytes32 kid23 = keccak256("pair-23");
-        ChitIssuerRoot pair23 = new ChitIssuerRoot(address(safe), kid23, NOT_BEFORE);
+        ChitIssuerRoot pair23 = GuardianDeploy.deploy(address(safe), kid23, NOT_BEFORE);
         _exec(safe, address(pair23), _retire(kid23), ownerPk2, ownerPk3);
         assertEq(pair23.rootSeq(), 1);
 
         bytes32 kid12 = keccak256("pair-12");
-        ChitIssuerRoot pair12 = new ChitIssuerRoot(address(safe), kid12, NOT_BEFORE);
+        ChitIssuerRoot pair12 = GuardianDeploy.deploy(address(safe), kid12, NOT_BEFORE);
         _exec(safe, address(pair12), _retire(kid12), ownerPk1, ownerPk2);
         assertEq(pair12.rootSeq(), 1);
     }

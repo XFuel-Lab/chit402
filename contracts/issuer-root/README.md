@@ -1,5 +1,7 @@
 # ChitIssuerRoot ABI
 
+Field names for guardians, recovery, witness proofs of possession, and the pinned history are defined in [docs/product/issuer-root.md](../../docs/product/issuer-root.md). This file is the encoding notes for `keys()` and the older events.
+
 Canonical artifact: [`abi/ChitIssuerRoot.json`](abi/ChitIssuerRoot.json).
 
 Load the contract with `artifact.abi`. The rest of the file is the `keys()` layout and the `rootHash` preimage, which are not recoverable from the ABI alone. Solidity source is `contracts/registry/ChitIssuerRoot.sol`. Compiler: solc 0.8.24, optimizer 200 runs, via-IR off.

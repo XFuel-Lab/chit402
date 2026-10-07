@@ -25,6 +25,26 @@
           "name": "genesisNotBefore",
           "type": "uint64",
           "internalType": "uint64"
+        },
+        {
+          "name": "guardians_",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "guardianThreshold_",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "witnessSalt_",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "witnessPops",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
         }
       ],
       "stateMutability": "nonpayable"
@@ -309,29 +329,66 @@
       "name": "commitmentHash",
       "inputs": [
         {
-          "name": "prevRootHash",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "seq",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "chainId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "registry",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "blockNumber",
-          "type": "uint64",
-          "internalType": "uint64"
+          "name": "preimage",
+          "type": "tuple",
+          "internalType": "struct ChitIssuerDigests.CommitStatic",
+          "components": [
+            {
+              "name": "prevRootHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "seq",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "registry",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "blockNumber",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "historyVersion",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "historySnapshot",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "guardianSeq",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "guardianSetHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "opsHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "freezeHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            }
+          ]
         },
         {
           "name": "ops",
@@ -381,16 +438,6 @@
               "internalType": "uint64"
             }
           ]
-        },
-        {
-          "name": "histVersion",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "histSnapshot",
-          "type": "bytes32",
-          "internalType": "bytes32"
         }
       ],
       "outputs": [
@@ -451,44 +498,62 @@
     },
     {
       "type": "function",
-      "name": "genesisRootHash",
-      "inputs": [
+      "name": "guardianCount",
+      "inputs": [],
+      "outputs": [
         {
-          "name": "chainId",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        },
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "guardianSeq",
+      "inputs": [],
+      "outputs": [
         {
-          "name": "registry",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "controller_",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "genesisKid",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        },
-        {
-          "name": "genesisNotBefore",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "activatedAt",
-          "type": "uint64",
-          "internalType": "uint64"
-        },
-        {
-          "name": "blockNumber",
+          "name": "",
           "type": "uint64",
           "internalType": "uint64"
         }
       ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "guardianSet",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "seq",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "threshold",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "set",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "setHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "guardianSetHash",
+      "inputs": [],
       "outputs": [
         {
           "name": "",
@@ -496,7 +561,39 @@
           "internalType": "bytes32"
         }
       ],
-      "stateMutability": "pure"
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "guardianThreshold",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "guardians",
+      "inputs": [
+        {
+          "name": "index",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -520,6 +617,25 @@
           "name": "",
           "type": "uint64",
           "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isGuardian",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -599,6 +715,29 @@
     },
     {
       "type": "function",
+      "name": "recover",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "invalidatePrior",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "signatures",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "rootHash",
       "inputs": [],
       "outputs": [
@@ -625,6 +764,34 @@
     },
     {
       "type": "function",
+      "name": "rotateGuardians",
+      "inputs": [
+        {
+          "name": "newSet",
+          "type": "address[]",
+          "internalType": "address[]"
+        },
+        {
+          "name": "newThreshold",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "quorumSignatures",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        },
+        {
+          "name": "witnessPops",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "supersede",
       "inputs": [
         {
@@ -645,6 +812,19 @@
           "name": "",
           "type": "address",
           "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "witnessSalt",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
         }
       ],
       "stateMutability": "view"
@@ -731,6 +911,43 @@
     },
     {
       "type": "event",
+      "name": "GuardianSetCommitted",
+      "inputs": [
+        {
+          "name": "guardianSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        },
+        {
+          "name": "guardianThreshold",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "guardianSetHash",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "guardians",
+          "type": "address[]",
+          "indexed": false,
+          "internalType": "address[]"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "KeyActivated",
       "inputs": [
         {
@@ -743,6 +960,55 @@
           "name": "activatedAt",
           "type": "uint64",
           "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "KeyRecovered",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "retiredAt",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "retirementBlock",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "invalidatePrior",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        },
+        {
+          "name": "reasonCode",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        },
+        {
+          "name": "guardianSeq",
+          "type": "uint64",
+          "indexed": true,
           "internalType": "uint64"
         },
         {
@@ -947,6 +1213,11 @@
     },
     {
       "type": "error",
+      "name": "BadSignature",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "BadStatus",
       "inputs": [
         {
@@ -963,6 +1234,22 @@
     },
     {
       "type": "error",
+      "name": "BadThreshold",
+      "inputs": [
+        {
+          "name": "threshold",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "guardians",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "BlockNumberUnusable",
       "inputs": [
         {
@@ -974,8 +1261,73 @@
     },
     {
       "type": "error",
+      "name": "CompromiseRequiresGuardians",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ControllerOwnerCheckFailed",
+      "inputs": [
+        {
+          "name": "guardian",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DuplicateOrUnsortedSigner",
+      "inputs": [
+        {
+          "name": "signer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "EmptyCommit",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "GuardianIsController",
+      "inputs": [
+        {
+          "name": "guardian",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "GuardianIsControllerSigner",
+      "inputs": [
+        {
+          "name": "guardian",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "GuardianSeqOverflow",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "GuardianUnsorted",
+      "inputs": [
+        {
+          "name": "guardian",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
     },
     {
       "type": "error",
@@ -1076,6 +1428,17 @@
     },
     {
       "type": "error",
+      "name": "NotGuardian",
+      "inputs": [
+        {
+          "name": "signer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NotYetActive",
       "inputs": [
         {
@@ -1085,6 +1448,22 @@
         },
         {
           "name": "notBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "QuorumNotMet",
+      "inputs": [
+        {
+          "name": "got",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "need",
           "type": "uint64",
           "internalType": "uint64"
         }
@@ -1145,6 +1524,17 @@
     },
     {
       "type": "error",
+      "name": "TooManyGuardians",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "UnknownOp",
       "inputs": [
         {
@@ -1156,7 +1546,23 @@
     },
     {
       "type": "error",
+      "name": "WitnessPopInvalid",
+      "inputs": [
+        {
+          "name": "guardian",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ZeroController",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroGuardian",
       "inputs": []
     },
     {
@@ -1218,20 +1624,26 @@
   "rootHash": {
     "domains": {
       "GENESIS_DOMAIN": "keccak256(\"chit.issuerRoot.genesis.v1\")",
-      "COMMIT_DOMAIN": "keccak256(\"chit.issuerRoot.commit.v1\")"
+      "COMMIT_DOMAIN": "keccak256(\"chit.issuerRoot.commit.v1\")",
+      "WITNESS_POP_DOMAIN": "keccak256(\"chit.issuerRoot.witnessPop.v1\")",
+      "RECOVER_AUTH_DOMAIN": "keccak256(\"chit.issuerRoot.recoverAuth.v1\")",
+      "RECOVER_ROOT_DOMAIN": "keccak256(\"chit.issuerRoot.recoverRoot.v1\")",
+      "GUARDIAN_AUTH_DOMAIN": "keccak256(\"chit.issuerRoot.guardianAuth.v1\")",
+      "GUARDIAN_ROOT_DOMAIN": "keccak256(\"chit.issuerRoot.guardianRoot.v1\")"
     },
     "genesis": {
       "when": "constructor, stored at rootSeq 0",
-      "preimage": "keccak256(abi.encode(GENESIS_DOMAIN, chainId, registry, controller, genesisKid, genesisNotBefore, activatedAt, uint64(block.number)))",
+      "preimage": "keccak256(abi.encode(GENESIS_DOMAIN, GenesisStatic, guardians)). GenesisStatic is chainId, registry, controller, genesisKid, genesisNotBefore, activatedAt, blockNumber, witnessSalt, guardianSeq, guardianThreshold, historyVersion, historySnapshot. historyVersion and historySnapshot are 0.",
       "activatedAt": "genesisNotBefore",
       "events": [
         "KeyActivated(kid, activatedAt, 0)",
-        "GenesisSeeded(controller, kid, notBefore, activatedAt, blockNumber, rootHash)"
+        "GenesisSeeded(controller, kid, notBefore, activatedAt, blockNumber, rootHash)",
+        "GuardianSetCommitted(guardianSeq, guardianThreshold, guardianSetHash, guardians, blockNumber)"
       ]
     },
     "commit": {
       "when": "commit(), rootSeq increments from the previous value",
-      "preimage": "keccak256(abi.encode(COMMIT_DOMAIN, prevRootHash, rootSeq, chainId, registry, uint64(block.number), ops, freezeArgs, histVersion, histSnapshot))",
+      "preimage": "opsHash = keccak256(abi.encode(ops)); freezeHash = keccak256(abi.encode(freezeArgs)); keccak256(abi.encode(COMMIT_DOMAIN, CommitStatic)). CommitStatic is prevRootHash, rootSeq, chainId, registry, blockNumber, historyVersion, historySnapshot, guardianSeq, guardianSetHash, opsHash, freezeHash.",
       "blockNumber": "uint64(block.number) of the commit. This is frozenBlock for every freeze in the transaction. A reorg that replays the calldata in another block changes rootHash.",
       "blockhash": "Not stored. blockhash(block.number) is zero inside the transaction. Verifiers read the hash of the RootCommitted or Frozen log's block after it is sealed.",
       "events": [
@@ -1247,12 +1659,21 @@
         "4": "REVOKE"
       },
       "reasonCode": {
-        "1": "compromise",
+        "1": "compromise, guardian recover only",
         "2": "superseded",
         "3": "lost",
         "255": "other"
       }
     },
-    "freezeArg": "(bytes32 universeId, bytes32 universeHash, uint64 enumeratedCount)"
+    "freezeArg": "(bytes32 universeId, bytes32 universeHash, uint64 enumeratedCount)",
+    "note": "Field names and the struct layouts are defined in docs/product/issuer-root.md. Commit hashes ops and freezes as keccak256(abi.encode(...)) inside CommitStatic.",
+    "recover": {
+      "event": "KeyRecovered(kid, retiredAt, retirementBlock, invalidatePrior, reasonCode, guardianSeq, rootSeq)",
+      "preimage": "keccak256(abi.encode(RECOVER_ROOT_DOMAIN, RecoverStatic))"
+    },
+    "guardianRotation": {
+      "event": "GuardianSetCommitted(guardianSeq, guardianThreshold, guardianSetHash, guardians, blockNumber)",
+      "preimage": "keccak256(abi.encode(GUARDIAN_ROOT_DOMAIN, GuardianStatic, guardians))"
+    }
   }
 }

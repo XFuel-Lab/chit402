@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {console2} from "forge-std/console2.sol";
 import {ChitIssuerCodes, ChitIssuerRoot} from "../../contracts/registry/ChitIssuerRoot.sol";
+import {GuardianDeploy} from "./GuardianDeploy.sol";
 import {SafeFixture} from "./SafeFixture.sol";
 import {SafeL2} from "safe-smart-account/SafeL2.sol";
 
@@ -11,8 +12,16 @@ import {SafeL2} from "safe-smart-account/SafeL2.sol";
 contract DeployMeter {
     address public deployed;
 
-    function deploy(address controller, bytes32 kid, uint64 notBefore) external returns (address) {
-        deployed = address(new ChitIssuerRoot(controller, kid, notBefore));
+    function deploy(
+        address controller,
+        bytes32 kid,
+        uint64 notBefore,
+        address[] memory set,
+        uint64 threshold,
+        bytes32 salt,
+        bytes[] memory popSigs
+    ) external returns (address) {
+        deployed = address(new ChitIssuerRoot(controller, kid, notBefore, set, threshold, salt, popSigs));
         return deployed;
     }
 }
@@ -26,11 +35,10 @@ contract ChitIssuerRootForkTest is SafeFixture {
         bytes32 genesis = keccak256("fork-genesis");
         uint64 notBefore = uint64(block.timestamp > 0 ? block.timestamp - 1 : 0);
 
-        DeployMeter meter = new DeployMeter();
-        meter.deploy(address(safe), genesis, notBefore);
+        ChitIssuerRoot root = _forkRoot(safe, genesis, notBefore);
         uint256 deployMetered = vm.lastCallGas().gasTotalUsed;
         console2.log("FORK_GAS deploy_exec", deployMetered);
-        ChitIssuerRoot root = ChitIssuerRoot(meter.deployed());
+        // root is deployed by _forkRoot
         console2.log("FORK_GAS deploy_codesize", address(root).code.length);
 
         bytes32 standby = keccak256("fork-standby");
@@ -72,6 +80,14 @@ contract ChitIssuerRootForkTest is SafeFixture {
         assertEq(status, ChitIssuerCodes.STATUS_STANDBY);
         (bytes32 uhash,,,) = root.freezes(universe);
         assertEq(uhash, keccak256("fork-merkle"));
+    }
+
+    function _forkRoot(SafeL2 safe, bytes32 genesis, uint64 notBefore) internal returns (ChitIssuerRoot) {
+        (address[] memory set, uint64 threshold, bytes32 salt, bytes[] memory popSigs) =
+            GuardianDeploy.args(address(safe), genesis, notBefore);
+        DeployMeter meter = new DeployMeter();
+        meter.deploy(address(safe), genesis, notBefore, set, threshold, salt, popSigs);
+        return ChitIssuerRoot(meter.deployed());
     }
 
     function _encode(

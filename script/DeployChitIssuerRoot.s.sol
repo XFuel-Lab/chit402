@@ -30,6 +30,10 @@ import {BroadcastChain} from "../contracts/registry/BroadcastChain.sol";
 ///   CHIT_LEGACY_ENUMERATED_COUNT
 /// Optional: CHIT_HIST_VERSION (default 1)
 ///           CHIT_STANDBY_CUSHION (seconds past the 24h minimum; default 3600)
+/// Guardian addresses and witness proofs of possession, never private keys:
+///   CHIT_GUARDIAN_COUNT, CHIT_GUARDIAN_THRESHOLD, CHIT_WITNESS_SALT
+///   CHIT_GUARDIAN_1 .. CHIT_GUARDIAN_N
+///   CHIT_GUARDIAN_POP_1 .. CHIT_GUARDIAN_POP_N (0x hex signatures)
 ///
 /// The sample standby `notBefore` is `latestTimestamp + 24 hours + cushion`.
 /// The dry run used `simulatedTimestamp + 24 hours` and the mined block was
@@ -40,6 +44,10 @@ import {BroadcastChain} from "../contracts/registry/BroadcastChain.sol";
 ///
 /// Broadcast (human, after the env is exported in the local shell):
 ///   forge script script/DeployChitIssuerRoot.s.sol --rpc-url https://sepolia.base.org --broadcast --slow
+interface ISafeOwners {
+    function getOwners() external view returns (address[] memory);
+}
+
 interface ISafeExec {
     function execTransaction(
         address to,
@@ -99,6 +107,10 @@ contract DeployChitIssuerRoot is Script {
         bytes32 legacyHash;
         uint64 enumerated;
         uint64 histVersion;
+        address[] guardians;
+        bytes[] pops;
+        uint64 guardianThreshold;
+        bytes32 witnessSalt;
     }
 
     function run() external {
@@ -110,10 +122,12 @@ contract DeployChitIssuerRoot is Script {
         uint256 latest = latestBlockTimestamp();
         uint64 notBefore = standbyNotBefore(latest, standbyCushion());
         bytes memory inner = _genesisCalldata(g, notBefore);
-        _preflightAtLatest(g.controller, g.genesisKid, g.genesisNotBefore, inner, latest);
+        _preflightAtLatest(g, inner, latest);
 
         vm.startBroadcast(g.deployerPk);
-        ChitIssuerRoot root = new ChitIssuerRoot(g.controller, g.genesisKid, g.genesisNotBefore);
+        ChitIssuerRoot root = new ChitIssuerRoot(
+            g.controller, g.genesisKid, g.genesisNotBefore, g.guardians, g.guardianThreshold, g.witnessSalt, g.pops
+        );
         _exec(ISafeExec(g.controller), address(root), inner, g.ownerPk1, g.ownerPk2);
         vm.stopBroadcast();
         console2.log("ChitIssuerRoot", address(root));
@@ -180,7 +194,35 @@ contract DeployChitIssuerRoot is Script {
         g.legacyHash = vm.envBytes32("CHIT_LEGACY_UNIVERSE_HASH");
         g.enumerated = _u64("CHIT_LEGACY_ENUMERATED_COUNT");
         g.histVersion = uint64(vm.envOr("CHIT_HIST_VERSION", uint256(1)));
+        g.guardianThreshold = uint64(vm.envUint("CHIT_GUARDIAN_THRESHOLD"));
+        g.witnessSalt = vm.envBytes32("CHIT_WITNESS_SALT");
+        (g.guardians, g.pops) = _loadGuardians();
         if (g.standbyKid == g.genesisKid) revert SameKid();
+        _assertGuardiansNotSigners(g);
+    }
+
+    function _loadGuardians() internal view returns (address[] memory set, bytes[] memory pops) {
+        uint256 n = vm.envUint("CHIT_GUARDIAN_COUNT");
+        if (n == 0 || n > 5) revert("CHIT_GUARDIAN_COUNT must be 1..5");
+        set = new address[](n);
+        pops = new bytes[](n);
+        for (uint256 i = 0; i < n; i++) {
+            string memory id = vm.toString(i + 1);
+            set[i] = vm.envAddress(string.concat("CHIT_GUARDIAN_", id));
+            pops[i] = vm.parseBytes(vm.envString(string.concat("CHIT_GUARDIAN_POP_", id)));
+        }
+    }
+
+    /// @dev Deploy-time refusal of a controller signer also sitting as a guardian.
+    ///      The constructor repeats this with `isOwner`.
+    function _assertGuardiansNotSigners(Genesis memory g) internal view {
+        address[] memory owners = ISafeOwners(g.controller).getOwners();
+        for (uint256 i = 0; i < g.guardians.length; i++) {
+            if (g.guardians[i] == g.controller) revert("guardian is the controller");
+            for (uint256 j = 0; j < owners.length; j++) {
+                if (g.guardians[i] == owners[j]) revert("guardian is a controller signer");
+            }
+        }
     }
 
     function _requireSafeOwners(Genesis memory g) internal view {
@@ -196,17 +238,13 @@ contract DeployChitIssuerRoot is Script {
 
     /// @dev Deploy a throwaway copy at `latest`, eth_call the commit, then roll
     ///      back. The broadcast section below is reached only if that call succeeds.
-    function _preflightAtLatest(
-        address controller,
-        bytes32 genesisKid,
-        uint64 genesisNotBefore,
-        bytes memory inner,
-        uint256 latest
-    ) internal {
+    function _preflightAtLatest(Genesis memory g, bytes memory inner, uint256 latest) internal {
         uint256 snap = vm.snapshotState();
         vm.warp(latest);
-        ChitIssuerRoot staged = new ChitIssuerRoot(controller, genesisKid, genesisNotBefore);
-        _preflightCall(controller, address(staged), inner);
+        ChitIssuerRoot staged = new ChitIssuerRoot(
+            g.controller, g.genesisKid, g.genesisNotBefore, g.guardians, g.guardianThreshold, g.witnessSalt, g.pops
+        );
+        _preflightCall(g.controller, address(staged), inner);
         if (!vm.revertToState(snap)) revert PreflightRevert("");
     }
 

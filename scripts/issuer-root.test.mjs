@@ -82,42 +82,44 @@ test('hashCommitment matches cast abi-encode + keccak', () => {
     blockNumber: 99n,
     histVersion: 1n,
     histSnapshot: snapshot,
+    guardianSeq: 1n,
+    guardianSetHash: `0x${'11'.repeat(32)}`,
     ops: [{ kind: 1, kid, timestamp: 1788511925n, reasonCode: 0 }],
     freezes: [{ universeId: universe, universeHash: uhash, enumeratedCount: 3n }],
   });
 
+  const setHash = `0x${'11'.repeat(32)}`;
+  const opsHash = keccak256(
+    AbiCoder.defaultAbiCoder().encode(['tuple(uint8,bytes32,uint64,uint8)[]'], [[[1, kid, 1788511925, 0]]]),
+  );
+  const freezeHash = keccak256(
+    AbiCoder.defaultAbiCoder().encode(['tuple(bytes32,bytes32,uint64)[]'], [[[universe, uhash, 3]]]),
+  );
   const encoded = AbiCoder.defaultAbiCoder().encode(
-    [
-      'bytes32',
-      'bytes32',
-      'uint64',
-      'uint256',
-      'address',
-      'uint64',
-      'tuple(uint8,bytes32,uint64,uint8)[]',
-      'tuple(bytes32,bytes32,uint64)[]',
-      'uint64',
-      'bytes32',
-    ],
-    [COMMIT_DOMAIN, prev, 1, 84532, registry, 99, [[1, kid, 1788511925, 0]], [[universe, uhash, 3]], 1, snapshot],
+    ['bytes32', 'tuple(bytes32,uint64,uint256,address,uint64,uint64,bytes32,uint64,bytes32,bytes32,bytes32)'],
+    [COMMIT_DOMAIN, [prev, 1, 84532, registry, 99, 1, snapshot, 1, setHash, opsHash, freezeHash]],
   );
   assert.equal(keccak256(encoded), js);
 
+  const castOps = execFileSync(
+    'cast',
+    ['abi-encode', 'f((uint8,bytes32,uint64,uint8)[])', `[(1,${kid},1788511925,0)]`],
+    { encoding: 'utf8' },
+  ).trim();
+  const castFreezes = execFileSync(
+    'cast',
+    ['abi-encode', 'f((bytes32,bytes32,uint64)[])', `[(${universe},${uhash},3)]`],
+    { encoding: 'utf8' },
+  ).trim();
+  const castOpsHash = execFileSync('cast', ['keccak', castOps], { encoding: 'utf8' }).trim();
+  const castFreezeHash = execFileSync('cast', ['keccak', castFreezes], { encoding: 'utf8' }).trim();
   const castEncoded = execFileSync(
     'cast',
     [
       'abi-encode',
-      'f(bytes32,bytes32,uint64,uint256,address,uint64,(uint8,bytes32,uint64,uint8)[],(bytes32,bytes32,uint64)[],uint64,bytes32)',
+      'f(bytes32,(bytes32,uint64,uint256,address,uint64,uint64,bytes32,uint64,bytes32,bytes32,bytes32))',
       COMMIT_DOMAIN,
-      prev,
-      '1',
-      '84532',
-      registry,
-      '99',
-      `[(1,${kid},1788511925,0)]`,
-      `[(${universe},${uhash},3)]`,
-      '1',
-      snapshot,
+      `(${prev},1,84532,${registry},99,1,${snapshot},1,${setHash},${castOpsHash},${castFreezeHash})`,
     ],
     { encoding: 'utf8' },
   ).trim();

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ChitIssuerCodes, ChitIssuerRoot} from "../../contracts/registry/ChitIssuerRoot.sol";
+import {GuardianDeploy} from "./GuardianDeploy.sol";
 
 contract ChitIssuerRootHandler is Test {
     ChitIssuerRoot public root;
@@ -19,7 +20,11 @@ contract ChitIssuerRootHandler is Test {
 
     constructor() {
         genesisKid = keccak256("invariant-genesis");
-        root = new ChitIssuerRoot(address(this), genesisKid, 1_700_000_000);
+    }
+
+    function initialize() external {
+        if (address(root) != address(0)) return;
+        root = GuardianDeploy.deploy(address(this), genesisKid, 1_700_000_000);
         vm.warp(1_700_000_000);
     }
 
@@ -58,7 +63,7 @@ contract ChitIssuerRootHandler is Test {
         bytes32 kid = index % (tracked.length + 1) == 0 ? genesisKid : tracked[index % tracked.length];
         (uint8 status,, uint64 notBefore,,,) = root.keys(kid);
         if (status == ChitIssuerCodes.STATUS_NONE || status == ChitIssuerCodes.STATUS_REVOKED) return;
-        if (reason != 1 && reason != 2 && reason != 3 && reason != 255) reason = 1;
+        if (reason != 2 && reason != 3 && reason != 255) reason = 2;
         if (revokedAt < notBefore) revokedAt = notBefore;
         if (status != ChitIssuerCodes.STATUS_STANDBY && revokedAt > block.timestamp) {
             revokedAt = uint64(block.timestamp);
@@ -131,6 +136,10 @@ contract ChitIssuerRootHandler is Test {
         revokedAt;
     }
 
+    function isOwner(address) external pure returns (bool) {
+        return false;
+    }
+
     function _commit(ChitIssuerRoot.Op[] memory ops, ChitIssuerRoot.FreezeArg[] memory fz) internal returns (bool ok) {
         uint64 before = root.rootSeq();
         try root.commit(ops, fz, root.historyVersion(), root.historySnapshot()) {
@@ -149,6 +158,7 @@ contract ChitIssuerRootInvariantTest is Test {
 
     function setUp() public {
         handler = new ChitIssuerRootHandler();
+        handler.initialize();
         targetContract(address(handler));
         bytes4[] memory selectors = new bytes4[](7);
         selectors[0] = handler.warpForward.selector;
