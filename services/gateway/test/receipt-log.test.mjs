@@ -1873,6 +1873,51 @@ test('every anchored transition goes through confirmAnchor', async () => {
   assert.equal(solanaHits.length, 1);
 });
 
+test('a row with no task_id keeps its row_hash in the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 13, task_id: 'before-note', seq: 1, prev_hash: null, row_hash: 'n1' },
+    { agent_id: 13, seq: 2, prev_hash: 'n1', row_hash: 'n2' },
+    { agent_id: 13, task_id: 'after-note', seq: 3, prev_hash: 'n2', row_hash: 'n3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => [row.task_id, row.row_hash]), [
+    ['before-note', 'n1'],
+    ['after-note', 'n3'],
+  ]);
+  assert.deepEqual(plan.unlogged, []);
+});
+
+test('an untasked row with an empty hash breaks the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 14, task_id: 'before-blank', seq: 1, prev_hash: null, row_hash: 'b1' },
+    { agent_id: 14, seq: 2, prev_hash: 'b1', row_hash: '' },
+    { agent_id: 14, task_id: 'after-blank', seq: 3, prev_hash: null, row_hash: 'b3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['before-blank']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['after-blank', 'depends_on_refused'],
+  ]);
+});
+
 test('a leading seq gap is depends_on_refused and taints the rest of the chain', () => {
   const tree = new ReceiptMerkleTree();
   tree.closedEpochs = [{

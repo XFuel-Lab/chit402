@@ -639,7 +639,13 @@ export function planReceiptBackfill(tree, rows) {
         continue;
       }
       if (!id) {
-        if (leadingGap || seqGap || prevNotAccepted) tainted = true;
+        // A book line with no task_id is not a leaf. Its stored row_hash is
+        // still the prev_hash the next receipt names. An empty hash is a break.
+        if (tainted || leadingGap || seqGap || prevNotAccepted || empty) {
+          tainted = true;
+        } else if (hasStoredRowHash(row)) {
+          acceptedHashes.add(String(row.row_hash));
+        }
         if (seqOk) prevSeq = seq;
         continue;
       }
