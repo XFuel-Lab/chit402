@@ -15,7 +15,12 @@ import {
   attestProofGateError,
   PRIVACY_PRODUCT_ATTEST,
 } from './private-desk-attest.js';
-import { bindSessionFromRequest, sessionMatchesSettledPayer } from './session-delegation.js';
+import {
+  bindSessionFromRequest,
+  sessionMatchesSettledPayer,
+  extractSessionDelegation,
+  acceptDelegationProof,
+} from './session-delegation.js';
 import { apiKeyHashFromReq, cacheNamespace } from './buyer-attr.js';
 import { getHubCatalog, resolveCatalogModel, requestShape, toOpenAIList, modelSubstitution } from './hub-catalog.js';
 import { recordSuccess, recordFailure } from './provider-health.js';
@@ -42,7 +47,7 @@ import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
-import { publishedPrice } from './pricing.js';
+import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
 import { freeTierBucket, checkFreeAllowance, recordFreeSpend, usd as cogsUsd } from './free-tier.js';
 import { recordCollectedSpend, recordSettleBookRow, markRefundOwed as markUsageRefundOwed } from './usage-settled.js';
@@ -53,6 +58,11 @@ import {
   remainingBlocksDoor,
   capViewOf,
 } from './agent-book.js';
+import {
+  ceilingLegsFromContext,
+  ceilingErrorBody,
+  reservationAmount,
+} from './spend-hold.js';
 import { enforcePolicy } from './book-policy.js';
 import { extractIntentMeta, resolveIntentFields } from './intent-meta.js';
 import { withRefusal } from './refusal-receipt.js';
@@ -276,6 +286,100 @@ function sendV1PaymentRequired(res, body, headers = {}) {
  * @returns {Promise<{halted:boolean, payment?:{ref:string, amount:string}|null}>}
  *   `halted` → a 402/403 has already been written; the handler must return.
  */
+/**
+ * Session whose max_cumulative_spend shares the prepaid ceiling.
+ * The payment path passes the session already bound (revocation included).
+ * A probe with no bound session is read from the request, and an invalid
+ * proof is ignored here — the binder still rejects it before settle.
+ */
+function sessionForHold(explicit, req) {
+  if (explicit && (explicit.delegation_hash || explicit.max_cumulative_spend != null)) {
+    return explicit;
+  }
+  if (!req) return null;
+  try {
+    const proof = extractSessionDelegation(req);
+    if (!proof) return null;
+    const accepted = acceptDelegationProof(proof, {
+      verifyingContract: config.sessionDelegation?.verifyingContract,
+    });
+    return accepted.ok ? accepted.session : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Worst-case USDC for a hold: the same quote the exact scheme will charge
+ * (output at capped max_tokens), raised to the hop floor when the quote is
+ * missing or lower. Streaming buffers the completion, so this is known
+ * before upstream.
+ */
+async function worstCaseForRequest(req, registry, quoteOpts) {
+  const floorRaw = config.x402?.usdcFloor || config.x402?.usdcPriceDefault || String(DEFAULT_FLOOR_UNITS);
+  let quoted = null;
+  try {
+    const body = { ...(req.body || {}) };
+    if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
+    const privacyCtx = resolvePrivateSpendContext(req, {
+      privateSpendCfg: config.privateSpend,
+      isPrivateSpendSession: (r) => isPrivateSpendSession(r, registry),
+    });
+    quoted = await priceUSDCResolved(bodyForPrivacyPricing(body, privacyCtx), config.x402, quoteOpts);
+  } catch {
+    quoted = null;
+  }
+  return reservationAmount(quoted, floorRaw);
+}
+
+async function refuseCeiling(req, res, ledger, decision, { taskId, bookable }) {
+  const extra = {};
+  if (bookable?.agent_id != null) extra.agent_id = bookable.agent_id;
+  let entry = null;
+  if (bookable?.agent_id != null) {
+    entry = await recordSpendRefusal(ledger, {
+      agentId: bookable.agent_id,
+      taskId,
+      policyCode: 'CEILING_EXCEEDED',
+      reason: 'Prepaid spend ceiling would be exceeded by this call',
+      model: req.body?.model || null,
+      hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+      spentAtomic: decision.spent ?? null,
+      capAtomic: decision.cap ?? null,
+      amountRequested: decision.requested ?? null,
+    });
+  }
+  const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+  res.status(403).json(withRefusal(ceilingErrorBody(decision, extra), entry, baseUrl));
+}
+
+/**
+ * Consume a hold when the response succeeds, release it otherwise.
+ * `close` before the body finishes (client gone, timeout) releases too.
+ * A request that dies without either event is left for the hold TTL.
+ */
+function armSpendHold(res, spendHolds, hold, actualAmount) {
+  if (!spendHolds || !hold?.request_id) return;
+  let done = false;
+  const finish = (consume) => {
+    if (done) return;
+    done = true;
+    const op = consume
+      ? spendHolds.consume(hold.request_id, actualAmount ?? hold.reserved)
+      : spendHolds.release(hold.request_id);
+    Promise.resolve(op).catch((err) => {
+      logger.warn({ err: err.message, requestId: hold.request_id }, 'spend-hold: could not settle hold');
+    });
+  };
+  res.once('finish', () => {
+    finish(res.statusCode >= 200 && res.statusCode < 300);
+  });
+  res.once('close', () => {
+    if (res.writableEnded) return;
+    finish(false);
+  });
+}
+
 async function meterV1Request(req, res, {
   taskId,
   isAuthorised = null,
@@ -283,6 +387,8 @@ async function meterV1Request(req, res, {
   ledger = null,
   registry = null,
   bookPolicy = null,
+  spendHolds = null,
+  session = null,
 } = {}) {
   // When isAuthorised is passed, we use it to determine if the request is exempt.
   // Otherwise, fall back to the config-gated behavior for backward compat.
@@ -306,9 +412,11 @@ async function meterV1Request(req, res, {
   }
   // No valid auth and not exempt → must pay
 
-  // Per-agent prepaid ceiling: reject before settle when remaining < door floor.
+  // Per-agent prepaid ceiling. Flag off: settled spend only, no hold.
+  // Flag on: the reservation below counts settled spend plus open holds.
+  const holdOn = config.spendHold?.enabled === true && !!spendHolds;
   const bookable = resolveBookableAgent(req, registry);
-  if (bookable && ledger && typeof ledger.sumCollectedByAgent === 'function') {
+  if (!holdOn && bookable && ledger && typeof ledger.sumCollectedByAgent === 'function') {
     const spent = ledger.sumCollectedByAgent(bookable.agent_id);
     const caps = capViewOf(bookable, spent);
     if (remainingBlocksDoor(caps.remaining)) {
@@ -393,6 +501,62 @@ async function meterV1Request(req, res, {
     }
   }
 
+  // Hold-then-settle. A probe (no payment yet) only previews, so a 402 does
+  // not strand a reservation. The paid retry reserves before the handshake.
+  // A store failure refuses the call: proceeding without a hold is the race.
+  let activeHold = null;
+  if (holdOn) {
+    try {
+      const legs = ceilingLegsFromContext({
+        agentId: bookable?.agent_id,
+        budget: bookable?.budget,
+        settledByAgent: () => (
+          typeof ledger?.sumCollectedByAgent === 'function'
+            ? ledger.sumCollectedByAgent(bookable.agent_id)
+            : 0n
+        ),
+        session: sessionForHold(session, req),
+      });
+      if (legs.length > 0) {
+        const requested = await worstCaseForRequest(req, registry, quoteOpts);
+        if (requested == null) {
+          await refuseCeiling(req, res, ledger, {
+            ceiling: legs[0].scope,
+            scope_key: legs[0].key,
+            cap: legs[0].cap.toString(),
+            remaining: null,
+            requested: null,
+            spent: null,
+            held: null,
+          }, { taskId, bookable });
+          return { halted: true };
+        }
+        const { header: payHeader } = extractPaymentHeader(req);
+        const decision = payHeader
+          ? await spendHolds.reserve({ requestId: taskId, amount: requested, ceilings: legs })
+          : await spendHolds.preview({ amount: requested, ceilings: legs });
+        if (!decision.ok) {
+          await refuseCeiling(req, res, ledger, decision, { taskId, bookable });
+          return { halted: true };
+        }
+        activeHold = decision.hold || null;
+      }
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'spend-hold: reservation failed closed');
+      if (!res.headersSent) {
+        await refuseCeiling(req, res, ledger, {
+          ceiling: bookable ? 'agent' : 'session',
+          remaining: null,
+          requested: null,
+          spent: null,
+          held: null,
+          cap: null,
+        }, { taskId, bookable });
+      }
+      return { halted: true };
+    }
+  }
+
   try {
     const body = { ...(req.body || {}) };
     if (body.max_tokens != null || MAX_TOKENS_CAP > 0) body.max_tokens = clampMaxTokens(body.max_tokens);
@@ -421,8 +585,11 @@ async function meterV1Request(req, res, {
           issuance_commitment: decision.issuance_commitment || null,
           dispute_window: decision.dispute_window || null,
         },
+        hold: activeHold,
       };
     }
+
+    if (activeHold) await spendHolds.release(activeHold.request_id);
 
     if (decision.kind === 'challenge') {
       sendV1PaymentRequired(res, decision.body);
@@ -439,6 +606,9 @@ async function meterV1Request(req, res, {
     });
     return { halted: true };
   } catch (err) {
+    if (activeHold && spendHolds) {
+      try { await spendHolds.release(activeHold.request_id); } catch { /* TTL sweeps a hold this release missed */ }
+    }
     logger.error({ err, reqId: req.id }, 'openai-gateway: x402 metering error');
     return { halted: true, payment: null, meteringError: err };
   }
@@ -1977,7 +2147,7 @@ function priceForCatalogModel(m) {
 
 export function registerOpenAIRoutes(app, {
   rateLimit, authenticate, isAuthorised, ledger = null, registry = null,
-  sessionStore = null, bookPolicy = null,
+  sessionStore = null, bookPolicy = null, spendHolds = null,
 } = {}) {
   // Base middleware chain for all /v1 routes (no auth — that's route-specific)
   const baseChain = [openAiErrorShape, bearerToApiKey, rateLimit].filter(Boolean);
@@ -2083,7 +2253,7 @@ export function registerOpenAIRoutes(app, {
     let metering = { halted: false, payment: null };
     if (!paymentHeader) {
       metering = await meterV1Request(req, res, {
-        taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy,
+        taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy, spendHolds,
       });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
@@ -2236,6 +2406,7 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy,
+        spendHolds, session: boundSession,
       });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
@@ -2250,6 +2421,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
           && !sessionMatchesSettledPayer(boundSession, metering.payment.payer)) {
@@ -2259,6 +2431,9 @@ export function registerOpenAIRoutes(app, {
             settledPayer: metering.payment.payer,
           }, 'session-delegation: dropping session — payer mismatch after settle');
           boundSession = null;
+          // The book row (written next) is what the agent ceiling counts.
+          // The session cap must not keep a hold for a payer that is not the session.
+          dropSessionHold = true;
         }
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
@@ -2283,7 +2458,12 @@ export function registerOpenAIRoutes(app, {
           boundSession,
           agentId: resolveBookableAgent(req, registry)?.agent_id ?? null,
         });
+        if (dropSessionHold && metering.hold && spendHolds && settleRecord) {
+          await spendHolds.release(metering.hold.request_id);
+          metering.hold = null;
+        }
       }
+      if (metering.hold) armSpendHold(res, spendHolds, metering.hold, metering.payment?.amount);
     }
 
     // A call that settled pays its own COGS; only unmetered traffic draws on the
@@ -2746,6 +2926,7 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath: '/v1/responses', ledger, registry, bookPolicy,
+        spendHolds, session: boundSession,
       });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
@@ -2760,6 +2941,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
           && !sessionMatchesSettledPayer(boundSession, metering.payment.payer)) {
@@ -2769,6 +2951,7 @@ export function registerOpenAIRoutes(app, {
             settledPayer: metering.payment.payer,
           }, 'session-delegation: dropping session — payer mismatch after settle');
           boundSession = null;
+          dropSessionHold = true;
         }
         ({ task: paidTask } = registerPaidV1Shell({
           taskId,
@@ -2792,7 +2975,12 @@ export function registerOpenAIRoutes(app, {
           boundSession,
           agentId: resolveBookableAgent(req, registry)?.agent_id ?? null,
         });
+        if (dropSessionHold && metering.hold && spendHolds && settleRecord) {
+          await spendHolds.release(metering.hold.request_id);
+          metering.hold = null;
+        }
       }
+      if (metering.hold) armSpendHold(res, spendHolds, metering.hold, metering.payment?.amount);
     }
 
     // Free tier check for unmetered requests

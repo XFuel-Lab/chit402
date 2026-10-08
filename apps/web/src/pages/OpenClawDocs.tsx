@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 
 const installExample = `# OpenClaw skill (AgentSkills / ClawHub format — as of 2026-03)
 # Copy skills/openclaw-chit402 into ~/.openclaw/skills or your workspace /skills
@@ -13,7 +14,9 @@ export default function OpenClawDocs() {
 
   const skillPrompt = `Use Chit402 for inference spend:
 - baseURL: ${apiV1}
-- Env: CHIT_API_KEY, CHIT_MAX_USD_PER_CALL, CHIT_MAX_USD_SESSION
+- Keyless: pay the HTTP 402 (USDC on Base or Solana). No API key.
+- Partner key, still supported: CHIT_API_KEY or X-API-Key
+- Caps: CHIT_MAX_USD_PER_CALL, CHIT_MAX_USD_SESSION
 - After every paid call, return verify_url to the principal
 - Do not default to SP1 — signed ES256 receipt is table stakes`;
 
@@ -41,6 +44,11 @@ export default function OpenClawDocs() {
           <pre className="docs-code">
             <code>{installExample}</code>
           </pre>
+        </div>
+
+        <div className="docs-panel">
+          <h2>Pay the call</h2>
+          <PaidDoorOptions apiV1={apiV1} />
         </div>
 
         <div className="docs-panel">

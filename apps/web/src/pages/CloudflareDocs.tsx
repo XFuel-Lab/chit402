@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { getApiV1 } from '../apiHost';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 
 export default function CloudflareDocs() {
   const apiV1 = getApiV1();
@@ -27,8 +28,7 @@ const fetch = createSidecarFetch({
   onReceipt: (receipt) => console.log(receipt.task_id),
 });`;
 
-  const workerExample = `// Deploy @xfuel/sidecar worker for edge stamp
-// packages/sidecar/worker — see README for wrangler.toml snippet
+  const workerExample = `// Worker source: packages/sidecar/worker in the Chit402 repo
 npm install chit402-sidecar`;
 
   return (
@@ -45,11 +45,12 @@ npm install chit402-sidecar`;
         </header>
 
         <div className="docs-panel">
-          <h2>Path A — Chit baseURL (recommended)</h2>
+          <h2>Path A — Chit baseURL</h2>
           <p>
-            Swap your Worker&apos;s compatible <code>baseURL</code> to Chit. Pay USDC on Base via
-            x402. Hold the receipt — same beachhead as every other install wire.
+            Point the Worker at <code>{apiV1}</code>. Keyless x402 first. A partner key still works.
           </p>
+          <PaidDoorOptions apiV1={apiV1} />
+          <h3 style={{ fontSize: '1rem', margin: '1.25rem 0 0.5rem' }}>Partner key from Worker env</h3>
           <pre className="docs-code">
             <code>{directExample}</code>
           </pre>
@@ -58,9 +59,9 @@ npm install chit402-sidecar`;
         <div className="docs-panel">
           <h2>Path B — Sidecar stamp</h2>
           <p>
-            Keep OpenRouter, Groq, or another upstream. Wrap fetch with{' '}
-            <code>createSidecarFetch</code> so every call still produces a Chit-shaped receipt.
-            Ingest to the book when the principal is registered.
+            Keep the provider you already pay. Wrap fetch with <code>createSidecarFetch</code> from{' '}
+            <code>chit402-sidecar</code>. Without a collected USDC <code>payment.ref</code>, that
+            receipt is client-attested. Ingest to the book when the principal is registered.
           </p>
           <pre className="docs-code">
             <code>{sidecarExample}</code>
@@ -70,8 +71,8 @@ npm install chit402-sidecar`;
         <div className="docs-panel">
           <h2>Edge worker</h2>
           <p>
-            <code>@xfuel/sidecar</code> ships a Cloudflare Worker proxy under{' '}
-            <code>packages/sidecar/worker</code>. Public alias: <code>chit402-sidecar</code>.
+            The Worker proxy lives at <code>packages/sidecar/worker</code> in the repo. Install{' '}
+            <code>chit402-sidecar</code>.
           </p>
           <pre className="docs-code">
             <code>{workerExample}</code>

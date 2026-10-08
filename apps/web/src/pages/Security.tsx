@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
-import { ADDRESSES, isDeployed } from '../contracts';
 import { getHostConfig, isChitHost } from '../hostConfig';
 
 const BASESCAN = 'https://basescan.org';
@@ -26,7 +25,6 @@ export default function Security() {
   const auditChecklist = `${repoBase}/blob/main/docs/AUDIT_READINESS_CHECKLIST.md`;
   const positioning = `${repoBase}/blob/main/docs/POSITIONING.md`;
 
-  const verifier = ADDRESSES.verifier;
   const baseVerifier = '0x9373499645292715a2275A78eD65B14215C41c06';
 
   return (
@@ -38,7 +36,7 @@ export default function Security() {
           </span>
           <h1 style={styles.h1}>Security &amp; transparency</h1>
           <p style={styles.lead}>
-            Money and proofs settle on <strong>Base</strong>. Trust is tiered: signed receipts by default, on-chain SP1
+            USDC settles on <strong>Base and Solana</strong>. SP1 proofs settle on <strong>Base</strong>. Trust is tiered: signed receipts by default, on-chain SP1
             settlement proofs on demand. See our{' '}
             <a href={positioning} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               positioning
@@ -79,15 +77,14 @@ export default function Security() {
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
           <h2 style={styles.h2}>Live contracts (Base)</h2>
           <p style={{ ...styles.p, marginBottom: '1rem' }}>
-            Verify addresses on Basescan before relying on them. Env-configured addresses are baked in at build time from{' '}
-            <code style={{ fontSize: '0.85em' }}>Vercel / .env.local</code>.
+            Verify the address on Basescan before relying on it.
           </p>
-          {row('ZKVerifierSP1 (mainnet)', baseVerifier, true)}
+          {row('ZKVerifierSP1 (Base mainnet)', baseVerifier, true)}
           <a href={`${BASESCAN}/address/${baseVerifier}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.75rem' }}>
             Basescan → ZKVerifierSP1
           </a>
-          {row('ZKVerifierSP1 (env)', isDeployed(verifier) ? `${verifier.slice(0, 10)}…` : 'Not set (VITE_VERIFIER_ADDRESS)', true)}
           {row('Fee sink', 'X402_PAY_TO / protocol Safe · Splits v2 (USDC on Base)', false)}
+          {row('Solana USDC', 'Pay rail and daily receipt-root anchor. No verifier contract on this page.', false)}
           {row('Fundraising', 'Equity-first (SAFE). Token sales not open.', false)}
         </div>
 

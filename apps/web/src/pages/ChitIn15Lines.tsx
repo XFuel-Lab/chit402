@@ -2,16 +2,18 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
 
 const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
-const sdkPaidExample = `import { XFuelClient } from 'xfuel-sdk';
+const sdkPartnerExample = `npm install chit402-sdk
 
-// Pay USDC on Base or Solana via x402; hold verify_url on the response.
-const client = new XFuelClient({
+import { Chit402Client } from 'chit402-sdk';
+
+const client = new Chit402Client({
   baseUrl: 'https://api.chit402.com',
-  // apiKey: optional partner key — omit to pay per call with your wallet payer
+  apiKey: process.env.CHIT402_API_KEY,
 });
 
 const chat = await client.chatCompletions({
@@ -20,7 +22,7 @@ const chat = await client.chatCompletions({
 });
 
 console.log(chat.choices[0].message.content);
-console.log(chat.xfuel?.verify_url); // signed receipt after settle`;
+console.log(chat.xfuel?.verify_url);`;
 
 const wireFetchExample = (apiV1: string) => `const res = await fetch('${apiV1}/chat/completions', {
   method: 'POST',
@@ -63,11 +65,14 @@ export default function ChitIn15Lines() {
           <p>
             <code>POST /v1/chat/completions</code> without payment returns HTTP 402. Pay USDC on
             Base or Solana; the response includes a signed receipt with{' '}
-            <code>verify_url</code>. Use the SDK x402 payer or the{' '}
-            <Link to="/docs/eliza" style={{ color: '#00d4ff' }}>Eliza plugin</Link>.
+            <code>verify_url</code>. <code>chit402-sdk</code> does not sign that 402. Use the
+            keyless fetch, or pass a partner key. Eliza:{' '}
+            <Link to="/docs/eliza" style={{ color: '#00d4ff' }}>plugin</Link>.
           </p>
+          <PaidDoorOptions apiV1={apiV1} />
+          <h3 style={{ fontSize: '1rem', margin: '1.25rem 0 0.5rem' }}>Typed client, partner key</h3>
           <pre className="docs-code">
-            <code>{sdkPaidExample}</code>
+            <code>{sdkPartnerExample}</code>
           </pre>
           <p style={styles.note}>
             Register (<code>POST /v1/agents/register</code>) binds a <em>collected</em> receipt to

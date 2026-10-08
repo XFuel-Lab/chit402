@@ -24,9 +24,9 @@ After that, every job I run should record:
 - $Y (from the receipt)
 - settled y/n (from proof_outcome)
 
-Catalog: Theta + Akash + xfuel/auto only.
-Unmetered / demo traffic never writes the book.
-Do not claim we route to Groq, Together, or Fireworks.
+Catalog: GET ${apiHost}/v1/models. Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key: send X-OpenRouter-Key). Chit does not resell OpenRouter.
+Unmetered traffic never writes the book.
+Do not claim openrouter/* ids are house routes. Fireworks appears as openrouter/fireworks/….
 Do not ask me to send USDC manually.
 The API handles payment via HTTP 402 (x402) automatically.
 
@@ -82,9 +82,9 @@ export default function BookBot() {
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.75rem' }}>Catalog</h2>
           <p style={{ color: '#8a8a9a' }}>
-            Theta EdgeCloud + Akash Network + <code>xfuel/auto</code>.
-            We do not route to Groq, Together, or Fireworks on the public catalog.
-            <code>{apiV1}/models</code> shows what's live.
+            <code>{apiV1}/models</code> lists Theta EdgeCloud, Akash, <code>xfuel/auto</code>, and{' '}
+            <code>openrouter/…</code> ids, including Fireworks under that prefix. OpenRouter is
+            bring-your-own-key (<code>X-OpenRouter-Key</code>). Chit does not resell that inference.
           </p>
         </div>
 

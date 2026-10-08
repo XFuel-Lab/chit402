@@ -8,9 +8,10 @@ const CURRENT_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 const JWK_X = '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk';
 const JWK_Y = 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34';
 
-const verifyCli = `# Pin JWKS once (out-of-band), then verify a receipt JSON file
+const verifyCli = `# Pin JWKS once (out-of-band), then verify a receipt JSON file.
+# The CLI is the xfuel-verify bin inside the published package @xfuel/verify.
 curl -sS -o chit402-issuer.jwks.json ${JWKS_PRIMARY}
-npx xfuel-verify receipt.json --jwks-file chit402-issuer.jwks.json
+npx -p @xfuel/verify xfuel-verify receipt.json --jwks-file chit402-issuer.jwks.json
 
 # Or fetch JWKS in your agent and match issuer_signature.kid to a pinned kid first`;
 
@@ -120,8 +121,8 @@ export default function IssuerTrust() {
               key in JWKS.
             </li>
             <li>
-              Verify ES256: compact <code>issuer_signature.jws</code> against the pinned public key, or use{' '}
-              <code>xfuel-verify</code> / <code>@xfuel/verify</code> with your JWKS file.
+              Verify ES256: compact <code>issuer_signature.jws</code> against the pinned public key, or run{' '}
+              <code>npx -p @xfuel/verify xfuel-verify</code> with your JWKS file.
             </li>
             <li>
               Treat HMAC host fields and on-chain <code>payment.ref</code> as separate checks — issuer signature
