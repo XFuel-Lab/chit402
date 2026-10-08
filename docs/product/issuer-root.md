@@ -70,11 +70,11 @@ SHA-256 of those UTF-8 bytes, with no trailing newline, is `payload_hash` for a 
 
 A v2 refusal (`chit402.refusal.v2`, payload version 3) signs `request_digest`. A v11 receipt signs it when the gateway still has the client request, including a paid settle. Flag-off payloads omit it. A stored JWS is not re-signed to add or replace it.
 
-`request_digest` is lowercase hex SHA-256 of the RFC 8785 bytes of this object. Every key is present. A missing idempotency key or client nonce is null. The body bytes are not in the object. `body_commitment` is HMAC-SHA256 with a 32-byte salt as the key and the raw body as the message. The salt is not in the object, not in the JWS, and not in the public JSON. The gateway sends it once to the principal on `X-Chit-Request-Salt`. An unsalted SHA-256 of the body is not published: a stranger who guesses the prompt must not be able to confirm it.
+`request_digest` is lowercase hex SHA-256 of the RFC 8785 bytes of this object. Every key is present. A missing idempotency key or client nonce is null. The body bytes are not in the object. `body_commitment` is HMAC-SHA256 under the HKDF-SHA256 subkey for the label `v11/body` (IKM is the 32-byte salt, HKDF salt is empty, L is 32). The salt is not in the object, not in the JWS, and not in the public JSON. The gateway sends it once to the principal on `X-Chit-Request-Salt` with `Cache-Control: private, no-store`. An unsalted SHA-256 of the body is not published: a stranger who guesses the prompt must not be able to confirm it.
 
 | Field | Meaning |
 |---|---|
-| `body_commitment` | Lowercase hex HMAC-SHA256(salt, raw request body) |
+| `body_commitment` | Lowercase hex HMAC-SHA256(HKDF(`v11/body`), raw request body) |
 | `idempotency_key` | Client `Idempotency-Key` or `X-Idempotency-Key`, or null |
 | `method` | Uppercase HTTP method |
 | `nonce` | Client nonce (`X-XFuel-Nonce` or body `nonce`), or null |
@@ -92,9 +92,15 @@ Vector. The principal-only salt is `0123456789abcdef0123456789abcdef0123456789ab
 {"body_commitment":"0da674bf4dba4c32e5a87018e032f29157126d2b7aef18daa072e82637bbc7b1","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}
 ```
 
-`request_digest` is `2d63d49cc3bbfeb12bc6f494092c2517f6e695bb0f261a4965f059dd32adbd94`. The unsalted SHA-256 of that body is `93dda1aa54d9bb86b7c2cdfaad61fd78e5b81656484a8941eee498adc9a54e54`, and it does not appear in the preimage. Already-signed documents that published `body_sha256` stay as signed. `@xfuel/verify` hashes the supplied preimage text and does not rebuild it, so those documents still verify.
+`request_digest` is `78a29ef11d09b407b58fe01fdc22a98108bea8bf34ed6dc3830878744a2356bf`. The unsalted SHA-256 of that body is `93dda1aa54d9bb86b7c2cdfaad61fd78e5b81656484a8941eee498adc9a54e54`, and it does not appear in the preimage. Already-signed documents that published `body_sha256` stay as signed. `@xfuel/verify` hashes the supplied preimage text and does not rebuild it, so those documents still verify.
+
+The issuer key is held by the operator that signs receipts. The signed history entries do not describe that custody, and they do not name a process setting or a fallback.
 
 A refusal v2 without `request_digest`, or without the preimage, is `REQUEST_UNBOUND` and does not pass. `@xfuel/verify` in this branch reports that status. PR #484 must keep the same check: do not treat a v2 refusal that lacks `request_digest` as a pass. Recompute with `verifyRequestDigest(digest, preimageUtf8)`, which hashes the supplied text and does not rebuild it.
+
+### Payment amounts
+
+On a v11 payment receipt, `amount_gross` is the quoted price. `amount_settled` is `settled_amount`: the amount transferred by the bound payment (>= the quoted price). The gateway binds `settled_amount` to the payer's signed authorization value, not the server quote.
 
 ### `policy`
 
@@ -220,7 +226,7 @@ A partial set refuses to boot. A branch name is not a commit. A URL with userinf
 
 `GET /.well-known/issuer-history-mirror.json` is `chit402.issuer_history_mirror.v1`. It carries `role: "announcement"`, `custodian: false`, `repo`, `commit`, `path`, `sha256`, and a note that this process does not push. When the pin is unset the route is 404. When `sha256` is not the current document hash the route is 409 `issuer_history_mirror_stale`, and v11 signing throws the same code.
 
-The mirror object is not a field of the hashed issuer-history document. That document remains the announcement copy on this host. It is not a second custodian. Flag-off receipts do not carry `issuer_history_mirror`. When the flag is on and the pin matches, the v11 receipt and refusal v2 sign `{ repo, commit, path, sha256 }`.
+The mirror object is not a field of the hashed issuer-history document. That document remains the announcement copy on this host. It is not a second custodian. Flag-off receipts do not carry `issuer_history_mirror`. A v11 payment receipt and a v11 refusal do not sign `{ repo, commit, path, sha256 }` either. Issuance still calls the pin check: a configured sha256 that is not the current document hash throws `issuer_history_mirror_stale` and nothing is signed. The announcement route is where that object is published.
 
 After a new history version the document hash changes. The pinned bytes include the history JWS. A restart that seals a new snapshot, because the version file was not persisted, changes that hash even when the key set is the same. Boot and v11 signing stay closed until the operator commits the new bytes and updates the commit and the sha256.
 

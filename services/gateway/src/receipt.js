@@ -59,8 +59,17 @@ import {
 } from './issuer-history.js';
 import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
 import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
-import { bindRequestSalt, claimIdempotency, requestDigest, requestDigestCanonical, requestSalt } from './request-binding.js';
+import { bindRequestSalt, claimIdempotency, rebindRequestSalt, requestDigest, requestDigestCanonical, requestSalt, saltReceiptId, saltRecoverable } from './request-binding.js';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { getSaltStore } from './salt-store.js';
+import {
+  buildV11SignedClaims,
+  isV11Document,
+  minuteIssuedAt,
+  outputBytesOf,
+  publicV11Receipt,
+  renderV11ReceiptHtml,
+} from './v11-seal.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -896,7 +905,12 @@ function clientRequestBinding(view) {
   if (!request || !issuerRootActive()) return null;
   const request_preimage = requestDigestCanonical(request);
   const request_digest = requestDigest(request);
-  if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest, requestSalt(request));
+  if (request.idempotency_key) {
+    claimIdempotency(request.idempotency_key, request_digest, {
+      principal: request.payer || view?.caller_binding?.payer_wallet || '',
+      receiptId: saltReceiptId(request),
+    });
+  }
   return { request_preimage, request_digest };
 }
 
@@ -1056,6 +1070,7 @@ function publicRouteBlock(route) {
  */
 export function storedReceiptJson(receipt) {
   if (!receipt || typeof receipt !== 'object') return receipt;
+  if (isV11Document(receipt)) return receipt;
   const view = mergeReceiptView(receipt);
   const payment = publicPaymentBlock(view.payment);
   const route = publicRouteBlock(view.route);
@@ -1238,7 +1253,7 @@ export function treeHeadRestampAllowed(receipt) {
 }
 
 function attachCoveringHeadSidecar(receipt, claims) {
-  const taskId = receipt?.task_id;
+  const taskId = receipt?.task_id || receipt?.receipt_id;
   if (!taskId) return;
   const root = getReceiptMerkleTree().prefixRoot(taskId);
   if (!root) return;
@@ -1484,8 +1499,73 @@ function sessionClaimsFrozen(cachedClaims, draft) {
     === settlementIdentity(draft, { claimEra: true, claimId: comparedDraftSeat });
 }
 
+function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
+  assertIssuanceOpen();
+  // Stale mirror pin still refuses issuance. The pin is not a v11 field.
+  issuerHistoryMirrorClaim(currentIssuerHistory());
+  const receiptId = String(receipt.task_id || receipt.receipt_id);
+  const request = receipt.request || receipt.meta?.request || null;
+  let digest;
+  if (request && (request.body != null || request.rawBody != null) && request.method && request.path) {
+    if (!saltRecoverable(request)) {
+      const err = new Error('request salt is gone');
+      err.code = 'request_unbound';
+      throw err;
+    }
+    digest = requestDigest(request);
+    rebindRequestSalt(request, receiptId);
+  } else {
+    const holder = {
+      method: 'POST',
+      path: '/v1/chat/completions',
+      body: Buffer.alloc(0),
+      idempotency_key: null,
+      nonce: null,
+    };
+    digest = requestDigest(holder);
+    rebindRequestSalt(holder, receiptId);
+  }
+  const stored = getSaltStore().get(receiptId);
+  const saltHex = (request && requestSalt(request)) || (stored ? stored.toString('hex') : null);
+  if (!saltHex) {
+    const err = new Error('request salt is gone');
+    err.code = 'request_unbound';
+    throw err;
+  }
+  const kid = getIssuerKid();
+  const issuedAt = iat != null ? minuteIssuedAt(new Date(Number(iat) * 1000)) : undefined;
+  const claims = buildV11SignedClaims(receipt, {
+    kid,
+    salt: Buffer.from(saltHex, 'hex'),
+    outputBytes: outputBytesOf(receipt._v11Task || receipt),
+    receiptId,
+    requestDigest: digest,
+    issuedAt,
+  });
+  const payloadUtf8 = jcsRfc8785(claims);
+  const jwksUri = buildJwksUri(baseUrl);
+  const { jws, kid: signedKid } = signJws(claims, {
+    jku: jwksUri.startsWith('http') ? jwksUri : null,
+    payloadUtf8,
+  });
+  bindIssuerRoot(claims, signedKid, getIssuerPublicKeyJwk());
+  const payload_hash = crypto.createHash('sha256').update(payloadUtf8, 'utf8').digest('hex');
+  return {
+    alg: 'ES256',
+    payload_version: 11,
+    jws,
+    kid: signedKid,
+    issuer_jwk: getIssuerPublicKeyJwk(),
+    hash_alg: 'sha256',
+    payload_hash,
+    canonical_preimage: payloadUtf8,
+    _v11Claims: claims,
+  };
+}
+
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   assertIssuanceOpen();
+  if (issuerRootActive()) return signV11Receipt(receipt, { baseUrl, iat });
   const draft = canonicalSignedClaims(receipt, { iat });
   const canonicalize = draft.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
   const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS, canonicalize);
@@ -1594,6 +1674,10 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     return { checked: true, valid: false, reason: result.reason };
   }
 
+  if (result.payload?.v === 11) {
+    return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
+  }
+
   if (validateClaims && result.payload) {
     const view = mergeReceiptView(receipt);
     if (result.payload.task_id !== view.task_id) {
@@ -1660,6 +1744,10 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
   const jwsResult = verifyJwsWithJwks(sig.jws, jwks);
   if (!jwsResult.valid) {
     return { checked: jwsResult.reason === 'signature_invalid', valid: false, reason: jwsResult.reason };
+  }
+
+  if (jwsResult.payload?.v === 11) {
+    return { checked: true, valid: true, kid: jwsResult.kid || sig.kid, payload: jwsResult.payload };
   }
 
   if (validateClaims && jwsResult.payload) {
@@ -2222,6 +2310,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
           proof: `/prove-result?task_id=${task.taskId}`,
         },
   };
+  Object.defineProperty(draft, '_v11Task', { value: task, enumerable: false });
 
   const jwks_uri = buildJwksUri(base);
   // Session/parent fields are frozen on the first JWS for this task_id.
@@ -2242,11 +2331,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  const immutableStored = !!(issuer_signature?.jws && storedJwsImmutable({ issuer_signature, task_id: draft.task_id }));
   // Same idempotency key with a different request must not reuse this JWS.
-  const receiptRequest = clientRequestBinding(draft);
+  // A restart has no salt: do not recompute the digest and do not conflict.
+  let receiptRequest = null;
+  if (draft.request && !(immutableStored && !saltRecoverable(draft.request))) {
+    receiptRequest = clientRequestBinding(draft);
+  }
   if (receiptRequest && issuer_signature?.jws) {
     const cachedDigest = decodeReceiptClaims({ issuer_signature })?.request_digest || null;
-    if (cachedDigest !== receiptRequest.request_digest) {
+    if (cachedDigest && cachedDigest !== receiptRequest.request_digest) {
       const err = new Error('idempotency key was already used for a different request');
       err.code = 'idempotency_conflict';
       throw err;
@@ -2254,9 +2348,11 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
-    if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
+    if (cachedClaims?.v === 11) {
+      if (cachedClaims.receipt_id && cachedClaims.receipt_id !== draft.task_id) issuer_signature = null;
+    } else if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
       issuer_signature = null;
-    } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
+    } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft) && !immutableStored) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
       // A stored JWS is not replaced when it is immutable (v11, or the issuer
@@ -2396,6 +2492,18 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
 
   // Salt stays off the envelope. The response header is the principal's copy.
   bindRequestSalt(envelope, draft.request);
+  const v11Claims = issuer_signature?._v11Claims || null;
+  const decodedV11 = v11Claims || (decodeReceiptClaims({ issuer_signature })?.v === 11
+    ? decodeReceiptClaims({ issuer_signature })
+    : null);
+  if (decodedV11 && issuerRootActive()) {
+    return publicV11Receipt({
+      claims: decodedV11,
+      jws: issuer_signature.jws,
+      kid: issuer_signature.kid,
+      verifyUrl: draft.verify_url,
+    });
+  }
   return envelope;
 }
 
@@ -2770,6 +2878,7 @@ export function verifyIssuerForHtml(receipt) {
 
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
+  if (isV11Document(receipt)) return renderV11ReceiptHtml(receipt);
   const view = mergeReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};

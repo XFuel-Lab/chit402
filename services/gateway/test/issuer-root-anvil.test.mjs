@@ -199,8 +199,9 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
       },
       result: { provider: 'theta-edgecloud', model: 'theta/qwen3', output: 'private' },
     }, { signingSecret: 's', agentId: 4 });
-    assert.equal(decodeReceiptClaims(receipt).payload_version, 11);
-    assert.equal(decodeReceiptClaims(receipt).issuer_root.root_hash, process.env.ISSUER_ROOT_HASH);
+    assert.equal(decodeReceiptClaims(receipt).v, 11);
+    assert.equal(Object.prototype.hasOwnProperty.call(decodeReceiptClaims(receipt), 'issuer_root'), false);
+    assert.equal(decodeReceiptClaims(receipt).kid, receipt.issuer_signature.kid);
 
     const lied = JSON.parse(fs.readFileSync(setFile, 'utf8'));
     lied.leaves[0].payload_hash = '44'.repeat(32);

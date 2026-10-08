@@ -129,13 +129,15 @@ function b64urlJson(obj) {
  * Payload: object with named claims
  * 
  * @param {object} payload - Object payload (will be JSON serialized)
- * @param {{ jku?: string|null, typ?: string|null, kid?: string|null }} [opts]
+ * @param {{ jku?: string|null, typ?: string|null, kid?: string|null, payloadUtf8?: string|null }} [opts]
  *   Optional JWKS URL (jku), JWT typ, and key id override.
  *   `typ: null` omits the typ header (x402 offer-receipt artifacts are not chit402 receipts).
  *   `kid` overrides the thumbprint kid (did:web URL for offer-receipt).
+ *   `payloadUtf8`, when set, is the exact payload segment (v11 JCS). The default
+ *   path still JSON.stringifies `payload`.
  * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
  */
-export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null } = {}) {
+export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null, payloadUtf8 = null } = {}) {
   const { privateKey, kid: thumbKid } = initIssuerKey();
   const kid = kidOverride || thumbKid;
 
@@ -146,8 +148,11 @@ export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid:
   if (jku && typeof jku === 'string' && jku.startsWith('http')) {
     header.jku = jku;
   }
-  
-  const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
+
+  const payloadPart = payloadUtf8 != null
+    ? Buffer.from(String(payloadUtf8), 'utf8').toString('base64url')
+    : b64urlJson(payload);
+  const signingInput = `${b64urlJson(header)}.${payloadPart}`;
   const signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',

@@ -232,10 +232,10 @@ export function classifyLegacyRow(row) {
     return { class: 'not_a_receipt', task_id: taskId, payload_hash: null, payload_version: null };
   }
   const decoded = decodeJwsPayload(sig.jws);
-  const versionRaw = sig.payload_version ?? decoded?.payload_version;
+  const versionRaw = sig.payload_version ?? decoded?.payload_version ?? decoded?.v;
   const version = versionRaw == null || versionRaw === '' ? null : Number(versionRaw);
   const hasRoot = !!(decoded && decoded.issuer_root) || !!(sig.issuer_root);
-  if (hasRoot || (version != null && Number.isFinite(version) && version >= 11)) {
+  if (hasRoot || decoded?.v === 11 || (version != null && Number.isFinite(version) && version >= 11)) {
     return { class: 'v11', task_id: taskId, payload_hash: null, payload_version: version };
   }
   let hash = normalizePayloadHash(sig.payload_hash) || normalizePayloadHash(decoded?.payload_hash);

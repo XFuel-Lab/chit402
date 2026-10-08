@@ -39,6 +39,7 @@ const {
   historyEntriesSnapshotHash,
   issuerHistoryEntryHash,
   publishedHistoryEntries,
+  issuerHistorySnapshotClaim,
   resetIssuerHistoryStore,
   verifyHistorySnapshotClaims,
   verifyIssuerHistory,
@@ -381,12 +382,11 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     const resumed = buildReceipt(paidTask('xfuel-cutover-c'), { signingSecret: 's', agentId: 4 });
     const resumedClaims = decodeReceiptClaims(resumed);
     issued.push(resumed.issuer_signature.payload_hash);
-    assert.equal(resumedClaims.payload_version, 11);
-    assert.equal(resumedClaims.issuer_root.v, 1);
-    assert.equal(resumedClaims.issuer_root.chain_id, 'eip155:84532');
-    assert.equal(resumedClaims.issuer_root.root_seq, 1);
-    assert.equal(resumedClaims.issuer_root.kid, resumed.issuer_signature.kid);
-    assert.equal(resumedClaims.issuer_root.kid, getIssuerPublicKeyJwk().kid);
+    assert.equal(resumedClaims.v, 11);
+    assert.equal(Object.prototype.hasOwnProperty.call(resumedClaims, 'issuer_root'), false);
+    assert.equal(resumedClaims.kid, resumed.issuer_signature.kid);
+    assert.equal(resumedClaims.kid, getIssuerPublicKeyJwk().kid);
+    assert.equal(resumedClaims.chain, 'base');
     assert.equal(artifact.leaves.some((leaf) => leaf.payload_hash === resumed.issuer_signature.payload_hash), false);
     assert.equal(classifyLegacyRow({ task_id: resumed.task_id, issuer_signature: resumed.issuer_signature }).class, 'v11');
 
@@ -403,13 +403,14 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     assert.equal(treeHeadRestampAllowed(resumed), false);
 
     const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-cutover-c'), request: clientRequest() });
-    assert.equal(refusal.schema, 'chit402.refusal.v2');
-    assert.equal(refusal.payload_version, 3);
+    assert.equal(refusal.v, 11);
+    assert.equal(refusal.reason, 'cap_exceeded');
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
-    assert.equal(refusal.issuer_root.kid, refusal.issuer_signature.kid);
+    assert.equal(refusal.kid, refusal.issuer_signature.kid);
     const refusalPayload = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
-    assert.equal(refusalPayload.issuer_root.kid, refusal.issuer_signature.kid);
-    assert.equal(JSON.parse(refusal.canonical_preimage).issuer_root.root_seq, 1);
+    assert.equal(refusalPayload.kid, refusal.issuer_signature.kid);
+    assert.equal(Object.prototype.hasOwnProperty.call(refusalPayload, 'issuer_root'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(refusalPayload, 'cap_atomic'), false);
 
     const hist = JSON.parse(currentIssuerHistory().body);
     assert.equal(verifyIssuerHistory(hist).valid, true);
@@ -497,7 +498,7 @@ test('startup reads two RPCs at one finalized block and signing does not call th
       throw new Error('rpc unreachable');
     };
     const receipt = buildReceipt(paidTask('xfuel-rpc-down'), { signingSecret: 's', agentId: 4 });
-    assert.equal(decodeReceiptClaims(receipt).payload_version, 11);
+    assert.equal(decodeReceiptClaims(receipt).v, 11);
     assert.equal(agreed.seen.length, callsAtStartup);
 
     const drifted = chainFetch({ disagreeUrl: 'http://rpc.provider-b.test:10' });
@@ -570,7 +571,7 @@ test('enabled without a legacy snapshot refuses to issue', async () => {
     });
     await armStrict();
     const receipt = buildReceipt(paidTask('xfuel-after-snapshot'), { signingSecret: 's', agentId: 4 });
-    assert.equal(decodeReceiptClaims(receipt).payload_version, 11);
+    assert.equal(decodeReceiptClaims(receipt).v, 11);
   } finally {
     restoreEnv(prev);
   }
@@ -614,61 +615,38 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.equal(Buffer.byteLength(rfc, 'utf8'), 22);
     const receipt = buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
-    assert.deepEqual(claims.canonicalization, V11_CANONICALIZATION);
-    assert.equal(claims.canonicalization.hash_alg, 'sha-256');
-    assert.equal(claims.canonicalization.jcs, 'RFC8785');
-    assert.equal(Object.hasOwn(claims.canonicalization, 'string_escaping'), false);
-    assert.equal(claims.policy.policy_id, 'chit402.receipt-policy');
-    assert.equal(claims.policy.policy_version, '1');
-    assert.equal(claims.policy.dispute_window_seconds, 86400);
-    assert.equal(claims.policy.retention_days, 365);
-    assert.equal(claims.policy.retention_mode, 'compliance');
-    assert.equal(claims.policy.max_cumulative_spend, null);
-    assert.equal(claims.policy.policy_hash, '48a69e8a154e670ad67663feead6a6b7d9e0de6a8f733c49b108bf5d124502a8');
-    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
-    const preimageText = receipt.issuer_signature.canonical_preimage;
-    const preimage = JSON.parse(preimageText);
-    assert.equal(preimageText, jcsRfc8785(preimage));
-    assert.deepEqual(preimage.canonicalization, V11_CANONICALIZATION);
-    const snap = claims.issuer_history_snapshot;
-    assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
-    assert.equal(snap.snapshot_hash, claims.issuer_history.hash);
-    assert.equal(snap.snapshot_hash, historyEntriesSnapshotHash(snap.entries));
-    assert.equal(snap.version, claims.issuer_history.version);
-    assert.equal(snap.seq, claims.issuer_history.seq);
-    assert.equal(snap.entries.at(-1).entry_hash, snap.head_hash);
-    let prevHash = null;
-    for (const entry of snap.entries) {
-      assert.equal(entry.prev_hash ?? null, prevHash);
-      assert.equal(issuerHistoryEntryHash(entry), entry.entry_hash);
-      prevHash = entry.entry_hash;
+    assert.equal(claims.v, 11);
+    for (const key of ['canonicalization', 'policy', 'issuer_root', 'issuer_history', 'issuer_history_snapshot', 'provider', 'model']) {
+      assert.equal(Object.hasOwn(claims, key), false, key);
     }
-    const kidEntry = snap.entries.find((entry) => entry.kid === claims.issuer_root.kid);
-    assert.ok(kidEntry);
-    assert.equal(typeof kidEntry.not_before, 'string');
-    const snapBytes = Buffer.byteLength(jcsRfc8785(snap), 'utf8');
-    assert.ok(snapBytes <= 2560, `issuer_history_snapshot is ${snapBytes} bytes`);
-    console.log(`issuer_history_snapshot RFC8785 bytes: ${snapBytes}`);
+    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
+    const payloadText = Buffer.from(receipt.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8');
+    assert.equal(payloadText, jcsRfc8785(JSON.parse(payloadText)));
     const history = currentIssuerHistory();
     const publishedEntries = JSON.parse(history.body).entries;
+    const snap = issuerHistorySnapshotClaim();
+    assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
     assert.equal(snap.snapshot_hash, history.entries_snapshot_hash);
     assert.equal(snap.snapshot_hash, historyEntriesSnapshotHash(publishedEntries));
     assert.notEqual(snap.snapshot_hash, history.hash);
     assert.equal(history.body, jcsCanonicalize(JSON.parse(history.body)));
-    assert.equal(history.hash, crypto.createHash('sha256').update(history.body, 'utf8').digest('hex'));
-    assert.equal(verifyHistorySnapshotClaims(claims, { publishedEntries }).ok, true);
+    const kidEntry = snap.entries.find((entry) => entry.kid === getIssuerPublicKeyJwk().kid);
+    assert.ok(kidEntry);
+    assert.equal(Object.hasOwn(kidEntry, 'custody'), false);
+    const historyClaims = {
+      issuer_history: { hash: snap.snapshot_hash, version: snap.version, seq: snap.seq },
+      issuer_history_snapshot: snap,
+    };
+    assert.equal(verifyHistorySnapshotClaims(historyClaims, { publishedEntries }).ok, true);
 
     const boundRequest = clientRequest();
     const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-v11-embed'), request: boundRequest });
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
-    assert.deepEqual(refusalClaims.canonicalization, V11_CANONICALIZATION);
-    assert.equal(refusal.canonical_preimage, jcsRfc8785(JSON.parse(refusal.canonical_preimage)));
-    assert.equal(refusalClaims.issuer_history_snapshot.snapshot_hash, refusalClaims.issuer_history.hash);
+    assert.equal(refusalClaims.v, 11);
+    assert.equal(refusalClaims.reason, 'cap_exceeded');
     assert.equal(refusal.request_digest, requestDigest(boundRequest));
     assert.equal(JSON.stringify(refusal).includes(requestSalt(boundRequest)), false);
-    const published = buildPublicPreimages(refusal);
-    assert.equal(published.fields.request_digest.preimage_utf8, refusal.request_preimage);
-    assert.equal(published.fields.request_digest.hash, refusal.request_digest);
+    assert.equal(Object.hasOwn(refusal, 'request_preimage'), false);
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
   } finally {
     restoreEnv(prev);
@@ -682,12 +660,18 @@ test('a forged history embed cannot match snapshot_hash without changing the sig
     await armStrict();
     const receipt = buildReceipt(paidTask('xfuel-snapshot-bind'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
-    const pin = claims.issuer_history.hash;
-    const published = publishedHistoryEntries(claims.issuer_history);
-    assert.equal(pin, historyEntriesSnapshotHash(published));
+    assert.equal(Object.hasOwn(claims, 'issuer_history'), false);
     assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
-
-    const forged = structuredClone(claims);
+    const snap = issuerHistorySnapshotClaim();
+    const pin = snap.snapshot_hash;
+    const published = JSON.parse(currentIssuerHistory().body).entries;
+    assert.equal(pin, historyEntriesSnapshotHash(published));
+    const forged = {
+      payload_version: 11,
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history: { hash: pin, version: snap.version, seq: snap.seq },
+      issuer_history_snapshot: structuredClone(snap),
+    };
     const entry = forged.issuer_history_snapshot.entries.at(-1);
     entry.not_before = '2020-01-01T00:00:00.000Z';
     entry.jwk = { ...entry.jwk, x: 'A'.repeat(entry.jwk.x.length) };
@@ -705,22 +689,16 @@ test('a forged history embed cannot match snapshot_hash without changing the sig
     const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-snapshot-bind-refusal'), request: clientRequest() });
     assert.equal(verifyRefusalReceipt(refusal).valid, true);
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
-    assert.equal(refusalClaims.payload_version, 3);
-    const bad = structuredClone(refusalClaims);
-    const badEntry = bad.issuer_history_snapshot.entries.at(-1);
-    badEntry.not_before = '2020-01-01T00:00:00.000Z';
-    badEntry.jwk = { ...badEntry.jwk, x: 'B'.repeat(badEntry.jwk.x.length) };
-    badEntry.entry_hash = issuerHistoryEntryHash(badEntry);
-    bad.issuer_history_snapshot.head_hash = badEntry.entry_hash;
-    bad.issuer_history_snapshot.snapshot_hash = historyEntriesSnapshotHash(bad.issuer_history_snapshot.entries);
-    assert.notEqual(bad.issuer_history_snapshot.snapshot_hash, bad.issuer_history.hash);
+    assert.equal(refusalClaims.v, 11);
+    const bad = { ...refusalClaims, cap: '1' };
     const { jws } = signJws(bad, { typ: 'chit402-refusal+jwt' });
     const checked = verifyRefusalReceipt({
       ...refusal,
+      v: 11,
       issuer_signature: { ...refusal.issuer_signature, jws },
     });
     assert.equal(checked.valid, false);
-    assert.equal(checked.reason, 'snapshot_pin_mismatch');
+    assert.equal(checked.reason, 'v11_disallowed_field');
   } finally {
     restoreEnv(prev);
   }
@@ -743,8 +721,8 @@ test('v11 seals controls as RFC 8785; a flag-off receipt keeps chit402-jcs-v1', 
     useStableKey();
     await armStrict();
     const on = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
-    const onText = on.issuer_signature.canonical_preimage;
-    assert.equal(decodeReceiptClaims(on).payload_version, 11);
+    const onText = Buffer.from(on.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8');
+    assert.equal(decodeReceiptClaims(on).v, 11);
     assert.equal(onText, jcsRfc8785(JSON.parse(onText)));
     assert.notEqual(onText, jcsCanonicalize(JSON.parse(onText)));
     assert.match(onText, /\\t\\n\\u0001/);
@@ -798,8 +776,11 @@ test('explicit chain id and kid binding', async () => {
     useStableKey();
     await armStrict({ chainId: 'eip155:8453', chainHex: '0x2105' });
     const receipt = buildReceipt(paidTask('xfuel-chain-explicit'), { signingSecret: 's', agentId: 4 });
-    assert.equal(decodeReceiptClaims(receipt).issuer_root.chain_id, 'eip155:8453');
     const jwk = getIssuerPublicKeyJwk();
+    assert.equal(decodeReceiptClaims(receipt).v, 11);
+    assert.equal(decodeReceiptClaims(receipt).chain, 'base');
+    assert.equal(decodeReceiptClaims(receipt).kid, jwk.kid);
+    assert.equal(Object.prototype.hasOwnProperty.call(decodeReceiptClaims(receipt), 'issuer_root'), false);
     assert.throws(() => bindIssuerRoot({ issuer_root: { kid: 'not-the-kid' } }, jwk.kid, jwk), /thumbprint/);
     delete process.env.ISSUER_ROOT_CHAIN_ID;
     process.env.ISSUER_ROOT_CHAIN_ID = 'eip155:1';

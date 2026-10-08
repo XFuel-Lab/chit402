@@ -194,8 +194,8 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
   assert.equal(doc.entries.at(-1).kid, getIssuerKid());
   assert.equal(doc.entries.at(-1).status, 'active');
   assert.equal(doc.entries.at(-1).not_after, null);
-  assert.match(doc.entries.at(-1).custody, /ISSUER_PRIVATE_KEY/);
-  assert.equal(doc.entries.at(-1).custody, CUSTODY_STATEMENT);
+  assert.equal(Object.prototype.hasOwnProperty.call(doc.entries.at(-1), 'custody'), false);
+  assert.equal(JSON.stringify(doc).includes('ISSUER_PRIVATE_KEY'), false);
   assert.equal(doc.issuer_signature.alg, 'ES256');
   const kid = getIssuerKid();
   if (kid === 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q') {

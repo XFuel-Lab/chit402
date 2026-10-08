@@ -17,6 +17,7 @@ import net from 'net';
 import { fileURLToPath } from 'url';
 import { Interface, getAddress, zeroPadValue, toBeHex } from 'ethers';
 import logger from './logger.js';
+import { assertSaltStoreForIssuance } from './salt-store.js';
 import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import {
@@ -436,6 +437,7 @@ export function assertIssuanceOpen() {
   assertSigningKeyNotGuardian();
   assertSigningKeyNotRetired();
   const cfg = readIssuerRootConfig();
+  if (cfg.enabled) assertSaltStoreForIssuance();
   if (cfg.cutover === 'pause' && !cfg.ready) throw new IssuancePausedError();
   if (cfg.enabled && !cfg.ready) {
     if (!cfg.keyConfigured) {
@@ -480,8 +482,14 @@ export function bindIssuerRoot(claims, kid, jwk) {
     if (claim) throw new Error('issuer_root is set while ISSUER_ROOT_ENABLED is off');
     return;
   }
-  if (!claim || typeof claim !== 'object') throw new Error('issuer_root missing from signed claims');
   const thumb = computeJwkThumbprint(jwk);
+  if (claims?.v === 11) {
+    if (claims.kid !== kid || kid !== thumb || claims.kid !== thumb) {
+      throw new Error('issuer_root.kid must equal the JWS kid and the issuer_jwk thumbprint');
+    }
+    return;
+  }
+  if (!claim || typeof claim !== 'object') throw new Error('issuer_root missing from signed claims');
   if (claim.kid !== kid || kid !== thumb || claim.kid !== thumb) {
     throw new Error('issuer_root.kid must equal the JWS kid and the issuer_jwk thumbprint');
   }
@@ -853,6 +861,7 @@ export async function assertIssuerRootStartup({ fetchImpl = globalThis.fetch, lo
   if (!cfg.enabled) return { checked: false, reason: 'disabled' };
   const problem = configError(cfg);
   if (problem) throw new Error(problem);
+  assertSaltStoreForIssuance();
   if (cfg.startupCheck === 'skip') {
     if (String(process.env.ISSUER_ROOT_ALLOW_SKIP || '').trim() !== SKIP_ACK) {
       throw new Error('ISSUER_ROOT_STARTUP_CHECK=skip requires ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND');

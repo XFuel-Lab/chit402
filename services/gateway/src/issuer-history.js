@@ -17,7 +17,8 @@
  * the version that was current at issuance.
  *
  * The private key stays in the process environment. This document publishes
- * the public key and a custody sentence, not the secret.
+ * the public key. A custody note lives in the issuer-root description, not
+ * in a signed entry.
  */
 import crypto from 'crypto';
 import fs from 'fs';
@@ -98,9 +99,9 @@ export function issuerHistoryEntryBody(entry) {
     status: entry.status,
     revoked_at: entry.revoked_at ?? null,
     reason: entry.reason ?? null,
-    custody: entry.custody,
     prev_hash: entry.prev_hash ?? null,
   };
+  if (typeof entry.custody === 'string' && entry.custody) body.custody = entry.custody;
   const setHash = guardianSetHashField(entry);
   if (setHash) body.guardian_set_hash = setHash;
   const block = retirementBlockField(entry);
@@ -158,7 +159,7 @@ export function notBeforeForKid(kid, override) {
 
 function liveEntry(overrides = {}) {
   const jwk = publicJwk(getIssuerPublicKeyJwk());
-  return {
+  const entry = {
     kid: jwk.kid,
     jwk,
     alg: 'ES256',
@@ -167,8 +168,9 @@ function liveEntry(overrides = {}) {
     status: overrides.status || 'active',
     revoked_at: overrides.revoked_at ?? null,
     reason: overrides.reason ?? null,
-    custody: overrides.custody || CUSTODY_STATEMENT,
   };
+  if (typeof overrides.custody === 'string' && overrides.custody) entry.custody = overrides.custody;
+  return entry;
 }
 
 /**
@@ -477,10 +479,10 @@ export function historyEmbedEntry(entry) {
     status: entry.status,
     revoked_at: entry.revoked_at ?? null,
     reason: entry.reason ?? null,
-    custody: entry.custody,
     prev_hash: entry.prev_hash ?? null,
     entry_hash: entry.entry_hash,
   };
+  if (typeof entry.custody === 'string' && entry.custody) body.custody = entry.custody;
   const setHash = guardianSetHashField(entry);
   if (setHash) body.guardian_set_hash = setHash;
   const block = retirementBlockField(entry);

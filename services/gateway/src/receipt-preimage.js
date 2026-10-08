@@ -384,7 +384,7 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
         field: 'request_digest',
         alg: 'sha256',
         encoding: 'utf8',
-        rule: 'SHA-256 of the RFC 8785 object {body_commitment, idempotency_key, method, nonce, path}. body_commitment is HMAC-SHA256(salt, raw body). The salt is not in this preimage. Null when the client omitted the key or nonce. Already-signed preimages are hashed as published.',
+        rule: 'SHA-256 of the RFC 8785 object {body_commitment, idempotency_key, method, nonce, path}. body_commitment is HMAC-SHA256 under the HKDF subkey v11/body. The salt is not in this preimage. Null when the client omitted the key or nonce. Already-signed preimages are hashed as published.',
         preimage_utf8: receipt.request_preimage,
         hash,
       });

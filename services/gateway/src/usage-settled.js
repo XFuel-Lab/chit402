@@ -16,7 +16,8 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
-import { claimIdempotency, isRequestBindingError, requestDigest, requestSalt, refusalMatchesRequest } from './request-binding.js';
+import { bodyCommitmentHex, claimIdempotency, isRequestBindingError, requestDigest, requestSalt, refusalMatchesRequest, saltReceiptId, saltRecoverable } from './request-binding.js';
+import { scrubLedgerRow } from './v11-seal.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -610,7 +611,18 @@ export class UsageSettledLedger {
   _persistRow(row) {
     if (!this.persist) return;
     try {
-      fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
+      let body_commitment = null;
+      const salt = requestSalt(row?.request);
+      const body = row?.request?.rawBody != null ? row.request.rawBody : row?.request?.body;
+      if (salt && body != null) {
+        try {
+          body_commitment = bodyCommitmentHex(salt, body);
+        } catch {
+          body_commitment = null;
+        }
+      }
+      const request_digest = row?.refusal?.request_digest || row?.request_digest || null;
+      fs.appendFileSync(this._file(), `${JSON.stringify(scrubLedgerRow(row, { body_commitment, request_digest }))}\n`);
     } catch (err) {
       logger.warn({ err: err.message }, 'usage-settled: append failed');
     }
@@ -981,7 +993,12 @@ export class UsageSettledLedger {
                 code: 'idempotency_conflict',
               };
             }
-            if (request.idempotency_key) claimIdempotency(request.idempotency_key, requestDigest(request), requestSalt(request));
+            if (request.idempotency_key && saltRecoverable(request)) {
+              claimIdempotency(request.idempotency_key, requestDigest(request), {
+                principal: request.payer || '',
+                receiptId: saltReceiptId(request),
+              });
+            }
           } catch (err) {
             if (err.code === 'idempotency_conflict') {
               return { ok: false, reason: err.message, code: err.code };

@@ -234,7 +234,7 @@ test('a stale sha256 is not announced and a matching pin is', () => {
   }
 });
 
-test('v11 signs the pinned location and flag-on history still excludes it', async () => {
+test('a matching mirror pin lets v11 issue, and the receipt does not carry the pin', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
@@ -277,19 +277,19 @@ test('v11 signs the pinned location and flag-on history still excludes it', asyn
     pinMirror(record);
     const receipt = buildReceipt(paidTask('xfuel-mirror-v11'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
-    assert.equal(claims.payload_version, 11);
-    assert.deepEqual(claims.issuer_history_mirror, {
-      repo: 'example-org/issuer-history',
-      commit: 'a'.repeat(40),
-      path: 'issuer-history.json',
-      sha256: record.hash,
-    });
+    assert.equal(claims.v, 11);
+    assert.equal(Object.hasOwn(claims, 'issuer_history_mirror'), false);
+    assert.equal(JSON.stringify(receipt).includes('example-org/issuer-history'), false);
     const published = currentIssuerHistory();
     assert.equal(published.body.includes('issuer_history_mirror'), false);
     assert.equal(published.body.includes('example-org/issuer-history'), false);
     assert.equal(published.hash, record.hash);
     assert.equal(published.entries_snapshot_hash, without);
-    assert.equal(claims.issuer_history.hash, without);
+    process.env.ISSUER_HISTORY_MIRROR_SHA256 = 'ab'.repeat(32);
+    assert.throws(
+      () => buildReceipt(paidTask('xfuel-mirror-stale'), { signingSecret: 's', agentId: 4 }),
+      (err) => err.code === 'issuer_history_mirror_stale',
+    );
   } finally {
     restoreEnv(prev);
   }

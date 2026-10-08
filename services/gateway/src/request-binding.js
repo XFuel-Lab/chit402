@@ -5,7 +5,7 @@
  * trailing newline. Every key is present. Absent idempotency_key and nonce
  * are null.
  *
- *   body_commitment   lowercase hex HMAC-SHA256(salt, raw body bytes)
+ *   body_commitment   lowercase hex HMAC-SHA256(HKDF subkey "v11/body", raw body)
  *   idempotency_key   client Idempotency-Key, or null
  *   method            uppercase HTTP method
  *   nonce             client nonce, or null
@@ -14,8 +14,12 @@
  * The body is not in the preimage. Neither is the salt, and neither is an
  * unsalted SHA-256 of the body. A stranger who guesses the prompt cannot
  * confirm it from the public preimage. The salt is 32 bytes, disclosed only
- * to the principal (response header X-Chit-Request-Salt). It is not a JWS
- * claim and not a field of request_preimage.
+ * to the principal (response header X-Chit-Request-Salt, Cache-Control
+ * private, no-store). It is not a JWS claim and not a field of request_preimage.
+ *
+ * Every salt read and write goes through SaltStore. The salt is not an
+ * enumerable property of the request. Idempotency remembers the receipt id
+ * and the digest, scoped by payer, and does not remember the salt.
  *
  * Already-signed documents keep the preimage they were signed with. Verifiers
  * hash that published text. This module does not rebuild or re-sign them.
@@ -25,9 +29,11 @@
  */
 import crypto from 'crypto';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { getSaltStore } from './salt-store.js';
+import { hkdfSubkey, commitHmac, V11_LABEL_BODY } from './v11-seal.js';
 
 const SALT_RE = /^[0-9a-f]{64}$/;
-const salts = new WeakMap();
+const SALT_ID = Symbol('chit402.saltReceiptId');
 
 function sha256Hex(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -37,6 +43,7 @@ function bodyBytes(body) {
   if (body == null) return Buffer.alloc(0);
   if (Buffer.isBuffer(body)) return body;
   if (typeof body === 'string') return Buffer.from(body, 'utf8');
+  if (body instanceof Uint8Array) return Buffer.from(body);
   return Buffer.from(JSON.stringify(body), 'utf8');
 }
 
@@ -46,66 +53,180 @@ function bindingError(message) {
   return err;
 }
 
+function principalOf(request) {
+  if (!request || typeof request !== 'object') return '';
+  const payer = request.payer || request.payer_wallet || request.principal || '';
+  return payer == null ? '' : String(payer);
+}
+
+function slotKey(principal, key) {
+  return `${principal}\0${String(key)}`;
+}
+
 /**
- * Salt already chosen for this request object, or a caller-pinned salt.
- * Not copied onto public receipts.
+ * Receipt id whose SaltStore row holds this holder's salt.
+ * @param {object} holder
+ * @returns {string|null}
+ */
+export function saltReceiptId(holder) {
+  if (!holder || typeof holder !== 'object') return null;
+  const id = holder[SALT_ID];
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * @param {object} holder
+ * @param {string} receiptId
+ */
+export function bindSaltReceipt(holder, receiptId) {
+  if (!holder || typeof holder !== 'object' || !receiptId) return;
+  holder[SALT_ID] = String(receiptId);
+}
+
+function newReceiptId() {
+  return `salt-${crypto.randomBytes(16).toString('hex')}`;
+}
+
+/**
+ * True when the store still has this request's salt. Does not mint one.
+ * @param {object} request
+ */
+export function saltRecoverable(request) {
+  if (!request || typeof request !== 'object') return false;
+  if (typeof request.salt === 'string' && SALT_RE.test(request.salt)) return true;
+  const direct = saltReceiptId(request);
+  if (direct && getSaltStore().get(direct)) return true;
+  const key = request.idempotency_key;
+  if (key != null && key !== '') {
+    const prev = idempotency.get(slotKey(principalOf(request), key));
+    if (prev?.receiptId && getSaltStore().get(prev.receiptId)) return true;
+  }
+  return false;
+}
+
+/**
+ * Salt already chosen for this request, from SaltStore only.
+ * An enumerable `request.salt` is not read back after ensureRequestSalt.
  * @param {object} request
  * @returns {string|null}
  */
 export function requestSalt(request) {
   if (!request || typeof request !== 'object') return null;
-  const cached = salts.get(request);
-  if (cached) return cached;
-  const raw = request.salt;
-  if (typeof raw === 'string' && SALT_RE.test(raw)) return raw;
+  const id = saltReceiptId(request);
+  if (id) {
+    const got = getSaltStore().get(id);
+    if (got) return got.toString('hex');
+  }
+  const key = request.idempotency_key;
+  if (key != null && key !== '') {
+    const prev = idempotency.get(slotKey(principalOf(request), key));
+    if (prev?.receiptId) {
+      const got = getSaltStore().get(prev.receiptId);
+      if (got) return got.toString('hex');
+    }
+  }
   return null;
 }
 
 /**
- * One salt per request object. A replay of the same idempotency key reuses
- * the salt from the first claim so the digest stays stable. Mutates `request`
- * so a second requestDigest(sameObject) matches the first.
+ * One salt per request object. A replay of the same payer and idempotency
+ * key reuses the SaltStore row from the first claim. Does not set an
+ * enumerable `request.salt`. When the store no longer has the salt (process
+ * restart), returns null and does not mint a replacement.
  * @param {object} request
- * @returns {string}
+ * @returns {string|null}
  */
 export function ensureRequestSalt(request) {
   if (!request || typeof request !== 'object') throw bindingError('request_digest needs a request object');
+  const pinned = typeof request.salt === 'string' && SALT_RE.test(request.salt) ? request.salt : null;
+  if (Object.prototype.hasOwnProperty.call(request, 'salt')) delete request.salt;
+  if (pinned) {
+    const id = saltReceiptId(request) || newReceiptId();
+    getSaltStore().put(id, Buffer.from(pinned, 'hex'));
+    bindSaltReceipt(request, id);
+    return pinned;
+  }
   const existing = requestSalt(request);
   if (existing) {
-    salts.set(request, existing);
-    if (request.salt !== existing) request.salt = existing;
+    const id = saltReceiptId(request) || idempotency.get(slotKey(principalOf(request), request.idempotency_key || ''))?.receiptId;
+    if (id) bindSaltReceipt(request, id);
     return existing;
   }
   const key = request.idempotency_key;
   if (key != null && key !== '') {
-    const prev = idempotency.get(String(key));
-    if (prev?.salt && SALT_RE.test(prev.salt)) {
-      request.salt = prev.salt;
-      salts.set(request, prev.salt);
-      return prev.salt;
+    const prev = idempotency.get(slotKey(principalOf(request), key));
+    if (prev?.receiptId) {
+      bindSaltReceipt(request, prev.receiptId);
+      const got = getSaltStore().get(prev.receiptId);
+      if (got) return got.toString('hex');
+      return null;
     }
   }
-  const salt = crypto.randomBytes(32).toString('hex');
-  request.salt = salt;
-  salts.set(request, salt);
+  const salt = crypto.randomBytes(32);
+  const id = saltReceiptId(request) || newReceiptId();
+  getSaltStore().put(id, salt);
+  bindSaltReceipt(request, id);
+  return salt.toString('hex');
+}
+
+/**
+ * Move this holder's salt onto `receiptId` so the public id and the store key match.
+ * @param {object} holder
+ * @param {string} receiptId
+ */
+export function rebindRequestSalt(holder, receiptId) {
+  const salt = requestSalt(holder);
+  if (!salt || !receiptId) return null;
+  const next = String(receiptId);
+  const prev = saltReceiptId(holder);
+  getSaltStore().put(next, Buffer.from(salt, 'hex'));
+  if (prev && prev !== next) getSaltStore().delete(prev);
+  for (const slot of idempotency.values()) {
+    if (prev && slot.receiptId === prev) slot.receiptId = next;
+  }
+  bindSaltReceipt(holder, next);
+  if (Object.prototype.hasOwnProperty.call(holder, 'salt')) delete holder.salt;
   return salt;
 }
 
 /**
- * Remember a salt on `target` without adding an enumerable field.
- * Public JSON.stringify of a receipt must not show it.
+ * Pin a salt on `holder` under `receiptId`. Deletes any enumerable salt field.
+ * @param {object} holder
+ * @param {string} saltHex
+ * @param {string} [receiptId]
+ */
+export function adoptSalt(holder, saltHex, receiptId) {
+  if (!SALT_RE.test(String(saltHex || ''))) throw bindingError('request salt is not 32 bytes');
+  const id = receiptId || saltReceiptId(holder) || newReceiptId();
+  getSaltStore().put(id, Buffer.from(saltHex, 'hex'));
+  if (holder && typeof holder === 'object') {
+    bindSaltReceipt(holder, id);
+    if (Object.prototype.hasOwnProperty.call(holder, 'salt')) delete holder.salt;
+  }
+  return id;
+}
+
+/**
+ * Remember a salt receipt id on `target` without adding an enumerable field.
  * @param {object} target
  * @param {object|string|null} source
  */
 export function bindRequestSalt(target, source) {
-  const salt = typeof source === 'string' && SALT_RE.test(source) ? source : requestSalt(source);
-  if (target && typeof target === 'object' && salt) salts.set(target, salt);
+  if (typeof source === 'string' && SALT_RE.test(source)) {
+    return adoptSalt(target, source);
+  }
+  const id = saltReceiptId(source) || (source && typeof source === 'object' ? saltReceiptId(source.request) : null);
+  const salt = requestSalt(source) || (source && typeof source === 'object' ? requestSalt(source.request) : null);
+  if (target && typeof target === 'object' && id && salt) {
+    getSaltStore().put(id, Buffer.from(salt, 'hex'));
+    bindSaltReceipt(target, id);
+  }
   return salt || null;
 }
 
 /**
  * Disclose the salt to the principal who just received this response.
- * Public GET of the receipt does not call this.
+ * Sets Cache-Control: private, no-store. Public GET of the receipt does not call this.
  * @param {object} res
  * @param {...object} holders
  */
@@ -113,22 +234,34 @@ export function applyRequestSaltHeader(res, ...holders) {
   if (!res || typeof res.setHeader !== 'function') return;
   for (const holder of holders) {
     if (!holder || typeof holder !== 'object') continue;
-    const salt = requestSalt(holder) || requestSalt(holder.request) || requestSalt(holder.refusal);
+    const salt = requestSalt(holder)
+      || (holder.receipt_id ? saltFromId(holder.receipt_id) : null)
+      || (holder.refusal_id ? saltFromId(holder.refusal_id) : null)
+      || requestSalt(holder.request)
+      || requestSalt(holder.refusal);
     if (!salt) continue;
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Chit-Request-Salt', salt);
     return;
   }
 }
 
+function saltFromId(id) {
+  const got = getSaltStore().get(String(id));
+  return got ? got.toString('hex') : null;
+}
+
 /**
- * HMAC-SHA256(key = 32-byte salt, message = raw body). Lowercase hex.
+ * HMAC-SHA256(HKDF subkey v11/body, raw body). Lowercase hex.
+ * Does not lowercase or otherwise normalize the salt.
  * @param {string} saltHex
  * @param {Buffer|string|object|null} body
  */
 export function bodyCommitmentHex(saltHex, body) {
-  const salt = String(saltHex || '').trim().toLowerCase();
+  const salt = String(saltHex || '');
   if (!SALT_RE.test(salt)) throw bindingError('request salt is not 32 bytes');
-  return crypto.createHmac('sha256', Buffer.from(salt, 'hex')).update(bodyBytes(body)).digest('hex');
+  const sub = hkdfSubkey(Buffer.from(salt, 'hex'), V11_LABEL_BODY);
+  return commitHmac(sub, bodyBytes(body));
 }
 
 /**
@@ -143,6 +276,7 @@ export function requestDigestPreimage(request = {}) {
     throw bindingError('request_digest needs the raw request body');
   }
   const salt = ensureRequestSalt(request);
+  if (!salt) throw bindingError('request salt is gone');
   const commitment = bodyCommitmentHex(salt, request.rawBody != null ? request.rawBody : request.body);
   if (!/^[0-9a-f]{64}$/.test(commitment)) throw bindingError('request body commitment is not hmac-sha256');
   const idem = request.idempotency_key == null || request.idempotency_key === ''
@@ -204,6 +338,7 @@ export function clientRequestForRefusal(req, path) {
   const idem = headers['idempotency-key'] || headers['x-idempotency-key'] || body.idempotency_key || null;
   const nonce = headers['x-xfuel-nonce'] || (body.nonce != null && body.nonce !== '' ? body.nonce : null);
   const intent = headers['x-xfuel-intent'] || body.intent_id || body.intent || null;
+  const payer = body.payer || req?.payer || headers['x-payer'] || null;
   return {
     method: req?.method || 'POST',
     path: path && String(path).startsWith('/') ? String(path) : '/v1/chat/completions',
@@ -212,6 +347,7 @@ export function clientRequestForRefusal(req, path) {
     nonce: nonce != null ? String(nonce) : null,
     intent_id: intent ? String(intent).trim() : null,
     intent_supplied: !!(intent && String(intent).trim()),
+    ...(payer ? { payer: String(payer) } : {}),
   };
 }
 
@@ -227,34 +363,54 @@ export function resetIdempotencyStore() {
 }
 
 /**
- * Same idempotency key and same digest may proceed. A different digest
- * throws and does not return the earlier refusal or receipt.
+ * Same payer, same idempotency key, and same digest may proceed.
+ * A different digest throws and does not return the earlier refusal or receipt.
+ * The slot stores the receipt id, not the salt. A different principal is a different slot.
+ * The third argument may be a salt hex (legacy callers) or
+ * `{ principal, receiptId }`. A salt hex is resolved to a receipt id and not stored.
  * @param {string|null|undefined} key
  * @param {string} digest
+ * @param {string|{ principal?: string, receiptId?: string|null }|null} [saltOrOpts]
  */
-export function claimIdempotency(key, digest, salt = null) {
+export function claimIdempotency(key, digest, saltOrOpts = null) {
   if (key == null || key === '') return { replay: false };
-  const id = String(key);
+  let principal = '';
+  let receiptId = null;
+  if (saltOrOpts && typeof saltOrOpts === 'object') {
+    principal = saltOrOpts.principal ? String(saltOrOpts.principal) : '';
+    receiptId = saltOrOpts.receiptId || null;
+  } else if (typeof saltOrOpts === 'string' && SALT_RE.test(saltOrOpts)) {
+    receiptId = getSaltStore().receiptIdForSalt(saltOrOpts);
+  }
+  const id = slotKey(principal, key);
   const prev = idempotency.get(id);
-  const storedSalt = typeof salt === 'string' && SALT_RE.test(salt) ? salt : null;
   if (!prev) {
-    idempotency.set(id, { digest, salt: storedSalt });
-    return { replay: false };
+    idempotency.set(id, { digest, principal, receiptId });
+    return { replay: false, receiptId };
   }
   if (prev.digest !== digest) {
     const err = new Error('idempotency key was already used for a different request');
     err.code = 'idempotency_conflict';
     throw err;
   }
-  return { replay: true };
+  if (receiptId && !prev.receiptId) prev.receiptId = receiptId;
+  return { replay: true, receiptId: prev.receiptId || receiptId };
 }
 
 /**
  * A stored refusal does not answer a different request.
+ * When the salt is gone, the digest is not recomputed and the stored
+ * refusal still matches: a restart must not turn into idempotency_conflict.
  * @param {{ request_digest?: string }|null|undefined} refusal
  * @param {object} request
  */
 export function refusalMatchesRequest(refusal, request) {
   if (!refusal || typeof refusal.request_digest !== 'string') return false;
-  return refusal.request_digest === requestDigest(request);
+  if (!saltRecoverable(request)) return true;
+  try {
+    return refusal.request_digest === requestDigest(request);
+  } catch (err) {
+    if (err?.code === 'request_unbound') return true;
+    throw err;
+  }
 }

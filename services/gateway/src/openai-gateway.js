@@ -1928,6 +1928,7 @@ export function registerPaidV1Shell({
   req = null, resourcePath = '/v1/chat/completions',
 }) {
   const request = req ? clientRequestForRefusal(req, resourcePath) : null;
+  if (request && payment?.payer && !request.payer) request.payer = payment.payer;
   return registerTaskAndProve({
     taskId,
     model: model || 'xfuel/auto',

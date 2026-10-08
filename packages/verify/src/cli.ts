@@ -42,6 +42,7 @@ import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import { readOpenFile } from './v11-receipt.js';
 import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
 import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
@@ -250,6 +251,8 @@ function parseArgs(args: string[]): {
   issuerControlFile: string | null;
   version: boolean;
   anchorWalletsFile: string | null;
+  salt: string | null;
+  open: string[];
 } {
   const result = {
     file: null as string | null,
@@ -292,6 +295,8 @@ function parseArgs(args: string[]): {
     issuerControlFile: null as string | null,
     version: false,
     anchorWalletsFile: null as string | null,
+    salt: null as string | null,
+    open: [] as string[],
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -342,6 +347,10 @@ function parseArgs(args: string[]): {
       result.strictIssuerHistory = true;
     } else if (arg === '--issuer-history-file' && args[i + 1]) {
       result.issuerHistoryFile = args[++i];
+    } else if (arg === '--salt' && args[i + 1]) {
+      result.salt = args[++i];
+    } else if (arg === '--open' && args[i + 1]) {
+      result.open.push(args[++i]);
     } else if (arg === '--canonical-preimage' && args[i + 1]) {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
@@ -994,7 +1003,18 @@ async function main(): Promise<number> {
     return 3;
   }
 
-  if (!receipt.task_id) {
+  const v11 = (receipt as XFuelReceipt & { v?: number }).v === 11 || (receipt.issuer_signature?.jws
+    ? (() => {
+      try {
+        const part = String(receipt.issuer_signature.jws).split('.')[1];
+        const payload = JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as { v?: number };
+        return payload?.v === 11;
+      } catch {
+        return false;
+      }
+    })()
+    : false);
+  if (!receipt.task_id && !v11) {
     console.error('Invalid receipt: missing task_id');
     return 3;
   }
@@ -1086,6 +1106,21 @@ async function main(): Promise<number> {
     }
   }
 
+  let open: { output?: Buffer; accounting?: string; routing?: string; refusal?: string } | undefined;
+  if (args.open.length > 0) {
+    open = {};
+    try {
+      for (const spec of args.open) {
+        const opened = readOpenFile(spec);
+        if (opened.kind === 'output') open.output = opened.bytes;
+        else open[opened.kind] = opened.text;
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 3;
+    }
+  }
+
   const result = await verifyReceipt(receipt, {
     jwks,
     jwksUri: args.jwksUrl || undefined,
@@ -1102,6 +1137,8 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    salt: args.salt,
+    open,
     head: offlineWitness?.head ?? undefined,
     inclusion: offlineWitness?.inclusion ?? undefined,
     carry,

@@ -20,7 +20,8 @@ import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwk
 import { withPublicPreimages } from './receipt-preimage.js';
 import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { claimIdempotency, requestDigest, requestDigestCanonical, requestDigestMatches, requestSalt } from './request-binding.js';
+import { claimIdempotency, rebindRequestSalt, requestDigest, requestDigestCanonical, requestDigestMatches, requestSalt, saltReceiptId } from './request-binding.js';
+import { bookRefForInternal, buildV11RefusalClaims, minuteIssuedAt, publicV11Refusal, V11_REFUSAL_FIELDS } from './v11-seal.js';
 import {
   currentHistoryPin,
   currentIssuerHistory,
@@ -108,6 +109,36 @@ function bindingError(message, code) {
   return err;
 }
 
+function issueV11Refusal(row, request) {
+  issuerHistoryMirrorClaim(currentIssuerHistory());
+  const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
+  if (!request) throw bindingError('request_digest is required to bind this refusal', 'request_unbound');
+  const request_digest = requestDigest(request);
+  rebindRequestSalt(request, refusalId);
+  if (request.idempotency_key) {
+    claimIdempotency(request.idempotency_key, request_digest, {
+      principal: request.payer || '',
+      receiptId: saltReceiptId(request) || refusalId,
+    });
+  }
+  const salt = requestSalt(request);
+  if (!salt) throw bindingError('request salt is gone', 'request_unbound');
+  const bookRef = bookRefForInternal(row?.agent_id ?? row?.book_id ?? refusalId);
+  const kid = getIssuerKid();
+  const claims = buildV11RefusalClaims(row, {
+    kid,
+    salt: Buffer.from(salt, 'hex'),
+    requestDigest: request_digest,
+    bookRef,
+    refusalId,
+    issuedAt: minuteIssuedAt(row?.collected_at || row?.recorded_at || new Date()),
+  });
+  const payloadUtf8 = jcsRfc8785(claims);
+  const { jws, kid: signedKid } = signJws(claims, { typ: REFUSAL_JWT_TYP, payloadUtf8 });
+  bindIssuerRoot(claims, signedKid, getIssuerPublicKeyJwk());
+  return publicV11Refusal({ claims, jws, kid: signedKid, verifyUrl: null });
+}
+
 export function issueRefusalReceipt(row) {
   assertIssuanceOpen();
   const anchor = refusalAnchorClaims(row?.anchor);
@@ -117,6 +148,7 @@ export function issueRefusalReceipt(row) {
   if (intentSupplied && !intentId) {
     throw bindingError('intent_id is required when the request carried one', 'intent_id_required');
   }
+  if (issuerRootActive()) return issueV11Refusal(row, request);
   const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
   const nonce = crypto.randomBytes(16).toString('hex');
   const amount = textOrNull(row?.amount_requested);
@@ -204,6 +236,16 @@ export function refusalVerifyUrl(baseUrl, refusalId) {
 /** Copy with an absolute verify_url. The URL is not part of the signature. */
 export function presentRefusal(doc, baseUrl) {
   if (!doc || typeof doc !== 'object' || !doc.refusal_id) return null;
+  if (doc.v === 11) {
+    const claims = {};
+    for (const key of V11_REFUSAL_FIELDS) claims[key] = doc[key];
+    return publicV11Refusal({
+      claims,
+      jws: doc.issuer_signature?.jws,
+      kid: doc.issuer_signature?.kid,
+      verifyUrl: refusalVerifyUrl(baseUrl, doc.refusal_id),
+    });
+  }
   return withPublicPreimages({
     ...doc,
     verify_url: refusalVerifyUrl(baseUrl, doc.refusal_id),
@@ -253,16 +295,53 @@ function isRefusalSchema(schema) {
   return schema === REFUSAL_SCHEMA || schema === REFUSAL_SCHEMA_V2;
 }
 
-function jwsPayloadSchema(jws) {
+function jwsPayloadObject(jws) {
   if (!jws || typeof jws !== 'string') return null;
   const payloadB64 = jws.split('.')[1];
   if (!payloadB64) return null;
   try {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-    return typeof payload?.schema === 'string' ? payload.schema : null;
+    return payload && typeof payload === 'object' ? payload : null;
   } catch {
     return null;
   }
+}
+
+function jwsPayloadSchema(jws) {
+  const payload = jwsPayloadObject(jws);
+  return typeof payload?.schema === 'string' ? payload.schema : null;
+}
+
+function verifyV11RefusalPayload(doc, payload, result, sig) {
+  try {
+    const claims = {};
+    for (const key of V11_REFUSAL_FIELDS) claims[key] = payload[key];
+    if (Object.keys(payload).some((key) => !V11_REFUSAL_FIELDS.includes(key))) {
+      return { checked: true, valid: false, reason: 'v11_disallowed_field', payload };
+    }
+    publicV11Refusal({ claims, jws: sig.jws, kid: result.kid || sig.kid, verifyUrl: doc.verify_url || null });
+  } catch (err) {
+    return { checked: true, valid: false, reason: 'v11_disallowed_field', payload, detail: err.message };
+  }
+  if (doc.v != null && doc.v !== 11) return { checked: true, valid: false, reason: 'schema_mismatch', payload };
+  if (doc.reason != null && doc.reason !== payload.reason) {
+    return { checked: true, valid: false, reason: 'refusal_code_mismatch', payload };
+  }
+  if (doc.refusal_id != null && doc.refusal_id !== payload.refusal_id) {
+    return { checked: true, valid: false, reason: 'refusal_id_mismatch', payload };
+  }
+  if (doc.request_digest != null && doc.request_digest !== payload.request_digest) {
+    return { checked: true, valid: false, reason: 'request_digest_mismatch', payload };
+  }
+  return {
+    checked: true,
+    valid: true,
+    payload,
+    kid: result.kid || sig.kid || null,
+    refusal_id: payload.refusal_id,
+    refusal_code: payload.reason,
+    nonce: null,
+  };
 }
 
 function bookRowSame(outer, signed) {
@@ -287,8 +366,9 @@ export function verifyRefusalReceipt(doc, jwks = null) {
   }
   const sig = doc.issuer_signature;
   if (!sig?.jws) return { checked: false, valid: false, reason: 'no_signature' };
-  const peeked = jwsPayloadSchema(sig.jws);
-  if (!isRefusalSchema(doc.schema) && !isRefusalSchema(peeked)) {
+  const peekedPayload = jwsPayloadObject(sig.jws);
+  const peeked = peekedPayload && typeof peekedPayload.schema === 'string' ? peekedPayload.schema : null;
+  if (peekedPayload?.v !== 11 && doc.v !== 11 && !isRefusalSchema(doc.schema) && !isRefusalSchema(peeked)) {
     return { checked: false, valid: false, reason: 'not_a_refusal' };
   }
   const result = verifyJwsWithJwks(sig.jws, jwks || getJwks());
@@ -296,6 +376,7 @@ export function verifyRefusalReceipt(doc, jwks = null) {
     return { checked: true, valid: false, reason: result.reason || 'signature_invalid', kid: sig.kid || null };
   }
   const payload = result.payload || {};
+  if (payload.v === 11) return verifyV11RefusalPayload(doc, payload, result, sig);
   if (!isRefusalSchema(payload.schema) || (doc.schema != null && doc.schema !== payload.schema)) {
     return { checked: true, valid: false, reason: 'schema_mismatch', payload };
   }

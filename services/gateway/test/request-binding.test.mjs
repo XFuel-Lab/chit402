@@ -42,8 +42,8 @@ const REQUEST = {
   nonce: null,
   salt: SALT,
 };
-const PREIMAGE = '{"body_commitment":"0da674bf4dba4c32e5a87018e032f29157126d2b7aef18daa072e82637bbc7b1","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}';
-const DIGEST = '2d63d49cc3bbfeb12bc6f494092c2517f6e695bb0f261a4965f059dd32adbd94';
+const PREIMAGE = '{"body_commitment":"e0999743fe405e9e30642542e9bb27a015b05425e6f7e9ac9f782b3109a88f59","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}';
+const DIGEST = '78a29ef11d09b407b58fe01fdc22a98108bea8bf34ed6dc3830878744a2356bf';
 
 test('matching request_digest vector', () => {
   const terms = requestDigestPreimage(REQUEST);
@@ -63,7 +63,7 @@ test('matching request_digest vector', () => {
 test('a tampered body changes request_digest', () => {
   const tampered = requestDigest({ ...REQUEST, body: `${BODY} ` });
   assert.notEqual(tampered, DIGEST);
-  assert.equal(tampered, 'f62366c46cb347232258550ed5ff8d9c735179363dc1fa7e7b120f3118925257');
+  assert.equal(tampered, 'e555aad716602779ec85d9899c47da6a58eba729355a2cf11da7758902e7890c');
 });
 
 test('the same idempotency key with a different payload fails closed', () => {
@@ -378,14 +378,11 @@ test('a paid settle signs request_digest without publishing an unsalted body has
     const signed = JSON.stringify(claims);
     assert.equal(published.includes(salt), false);
     assert.equal(signed.includes(salt), false);
-    assert.equal(receipt.request_preimage.includes(salt), false);
+    assert.equal(receipt.request_preimage, undefined);
     assert.equal(published.includes(unsalted), false);
-    assert.equal(receipt.request_preimage.includes(unsalted), false);
-    assert.equal(receipt.request_preimage.includes('body_sha256'), false);
+    assert.equal(published.includes('body_sha256'), false);
     assert.equal(published.includes(raw), false);
-    const preimage = JSON.parse(receipt.request_preimage);
-    assert.equal(preimage.body_commitment, bodyCommitmentHex(salt, raw));
-    assert.notEqual(preimage.body_commitment, unsalted);
+    assert.equal(published.includes(bodyCommitmentHex(salt, raw)), false);
     assert.notEqual(receipt.request_digest, unsalted);
 
     const storedJws = receipt.issuer_signature.jws;
