@@ -68,7 +68,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
   // The exploit this guards: the buyer pays a $0.002 challenge, then declares a
   // $1.00 `amount` on the retry and mints a signed receipt claiming $1.00 gross.
   // Gross must come from the challenge the payment was bound to. See
-  // docs/KNOWN_ISSUES.md — our own flagship demo did exactly this.
+  // ../../../docs/bug-bounty.md — our own flagship demo did exactly this.
   const { url, close } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url, { usdcPriceDefault: '2000' });

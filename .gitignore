@@ -37,6 +37,11 @@ coverage.json
 
 # Environment variables
 .env
+# Untracked deploy identifiers. Copy the *.example files and fill them in locally.
+services/sp1-prover/aws-env.local.ps1
+services/sp1-prover/aws-env.local.json
+services/sp1-prover/service-endpoint.txt
+services/sp1-prover/service-endpoint-phase1.txt
 .env.local
 .env.production
 .env.docker

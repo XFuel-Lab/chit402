@@ -4,7 +4,7 @@
  * Buyer rail stays USDC/x402 on Base. Provider COGS burn against env-backed
  * floats (Theta USDC-preferred, AkashML ACT/USDC, Web2 credits). No hot-path FX.
  *
- * See docs/PROVIDER_FLOAT_TREASURY.md · docs/STRATEGY.md · ADR 0005.
+ * See ../../../docs/adr/0005-provider-float-cogs.md · ../../../docs/POSITIONING.md · ADR 0005.
  *
  * Env:
  *   PROVIDER_FLOATS_JSON={"theta-edgecloud":{"asset":"USDC","balance":"1000000","low_water":"100000","enabled":true},"akash-network":{"asset":"USDC","balance":"500000","low_water":"50000","enabled":true}}

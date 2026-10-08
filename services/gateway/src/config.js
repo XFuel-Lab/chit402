@@ -99,7 +99,7 @@ const config = {
     // (new programVKey). See docs/X402_ADAPTER.md §"Phase 2 proof binding".
     proofBinding: process.env.X402_PROOF_BINDING === 'true',
     // USDC pricing (smallest unit, 6dp). Tasks are metered against the rate card
-    // in pricing.js; these are the escape hatches. See docs/PRICING_STRATEGY.md.
+    // in pricing.js; these are the escape hatches. See ../../../docs/POSITIONING.md.
     //   usdcPriceDefault — legacy name for the floor a metered quote cannot go below
     //   usdcPrices       — hand-set flat price for a specific model, overrides the card
     //   rateCard         — retail base units per 1M tokens, per model family
@@ -153,7 +153,7 @@ const config = {
   },
 
   // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see
-  // gateway-pooled credentials only. See docs/PRIVATE_SPEND_THESIS.md.
+  // gateway-pooled credentials only. See ../../../docs/adr/0010-private-desk-attest.md.
   privateSpend: {
     enabled: process.env.PRIVATE_SPEND_ENABLED === 'true',
     // When true (default if Private Spend on), omit prompt/input bodies from long-lived logs.
@@ -177,7 +177,7 @@ const config = {
   },
 
   // Provider Float Manager v0 (ADR 0005) — prepaid COGS; buyer rail stays USDC.
-  // See docs/PROVIDER_FLOAT_TREASURY.md. No hot-path FX.
+  // See ../../../docs/adr/0005-provider-float-cogs.md. No hot-path FX.
   providerFloats: {
     json: process.env.PROVIDER_FLOATS_JSON || null,
     cogsBps: parseInt(process.env.PROVIDER_COGS_BPS, 10) || 7000,
@@ -212,7 +212,7 @@ const config = {
     // Batch size for AI-task proofs is 1 and cannot be configured: ai-listener
     // calls generateProof(req, urgent=true), and the prover host only handles
     // ai_task in its Single branch. So $2.00 is the operative row until Guest v2
-    // (new ELF + vKey) lands. See docs/KNOWN_ISSUES.md.
+    // (new ELF + vKey) lands. See ../../../docs/bug-bounty.md.
     tier2MinCogs: process.env.VI_TIER2_MIN_COGS || null,
     tier3MinCogs: process.env.VI_TIER3_MIN_COGS || null,
     defaultMechanism: process.env.VI_DEFAULT_MECHANISM || 'tee',

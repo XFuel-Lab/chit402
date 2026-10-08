@@ -2,23 +2,22 @@
 
 Entry point for agents and automation.
 
-1. [docs/STRATEGY.md](docs/STRATEGY.md) — company strategy (build-from source)  
-2. [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md) — as-deployed truth  
-3. [docs/POSITIONING.md](docs/POSITIONING.md) — messaging  
-4. [WHITEPAPER.md](WHITEPAPER.md) — design  
+1. [docs/POSITIONING.md](docs/POSITIONING.md) — messaging  
+2. [WHITEPAPER.md](WHITEPAPER.md) — design  
+3. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — how to deploy  
+4. [docs/M2M_API.md](docs/M2M_API.md) — machine API  
 
 Chit402 is the book. This agent spent Y on this job. You hold hub, model, and amount. `POST /v1/chat/completions` returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — USDC on Base or Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated. Signed receipt is table stakes.
 
-Beachhead: crypto-native agent teams — [docs/BEACHHEAD_ICP.md](docs/BEACHHEAD_ICP.md).  
-Provider COGS floats: [docs/PROVIDER_FLOAT_TREASURY.md](docs/PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](docs/adr/0005-provider-float-cogs.md). 
-Pricing: [docs/SPEND_INTELLIGENCE_THESIS.md](docs/SPEND_INTELLIGENCE_THESIS.md) · [docs/adr/0009-cost-plus-pricing.md](docs/adr/0009-cost-plus-pricing.md).  
+Beachhead: crypto-native agent teams.  
+Provider COGS floats: [ADR 0005](docs/adr/0005-provider-float-cogs.md).  
+Pricing: [docs/POSITIONING.md](docs/POSITIONING.md).  
 Mainnet USDC go-live: [docs/MAINNET_X402_CHECKLIST.md](docs/MAINNET_X402_CHECKLIST.md).  
-Privacy thesis (Private Spend): [docs/PRIVATE_SPEND_THESIS.md](docs/PRIVATE_SPEND_THESIS.md).  
-Design partners: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
+Private desk: [ADR 0010](docs/adr/0010-private-desk-attest.md).
 
 ## Try the demo
 
-Public gateway: `https://api.chit402.com` — `POST /v1/chat/completions` is live paid (x402 USDC). Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).  
+Public gateway: `https://api.chit402.com` — `POST /v1/chat/completions` is live paid (x402 USDC). Working copy: [docs/CHAT_COMPLETIONS_GATEWAY.md](docs/CHAT_COMPLETIONS_GATEWAY.md).  
 Windows: use `curl.exe` for raw HTTP — PowerShell `curl` is not real curl.
 
 Status: `GET /task-status?task_id=`  

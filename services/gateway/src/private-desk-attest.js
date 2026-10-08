@@ -1,6 +1,6 @@
 /**
  * Private Desk + Private + Attest product wiring (Phase 1–2).
- * See docs/adr/0010-private-desk-attest.md and docs/PRIVATE_SPEND_THESIS.md.
+ * See docs/adr/0010-private-desk-attest.md and ../../../docs/adr/0010-private-desk-attest.md.
  */
 
 import { proveAllowedForKey } from './prove-gate.js';

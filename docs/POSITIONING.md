@@ -1,8 +1,6 @@
 # Positioning
 
-Locked story for site, deck, README, and agents. Theta / EdgeCloud appears only as an optional GPU provider — never as settlement home. See [ADR 0002](adr/0002-base-settlement-home.md).
-
-Company strategy (GTM, rails, build sequence): [STRATEGY.md](./STRATEGY.md).
+Locked story for site, README, and agents. Theta / EdgeCloud appears only as an optional GPU provider — never as settlement home. See [ADR 0002](adr/0002-base-settlement-home.md).
 
 ## One line
 
@@ -16,7 +14,7 @@ Privacy add (when Private Spend v0 is live): Spend without briefing the frontier
 
 AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. Chit402 is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.002, routing cost + 1%). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — ES256 issuer signature, on-chain SP1 settlement proof on demand. The issuer signature does not prove USDC moved. HMAC is a separate host field.
 
-Private Spend (product mode, see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)): buyer pays Chit; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
+Private Spend (product mode, see [ADR 0010](adr/0010-private-desk-attest.md)): buyer pays Chit; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
 ## Trust tiers
 
@@ -35,7 +33,7 @@ Do not claim Tier 2 proves a black-box LLM ran correctly.
 
 ## Beachhead
 
-Crypto-native agent teams on Base (USDC / x402). See [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md).
+Crypto-native agent teams on Base (USDC / x402).
 
 ## Why us, in one claim
 
@@ -47,7 +45,7 @@ What is ours is that you can show "this agent spent Y on this job" with hub, mod
 a smart-router scoreboard and not a model shop catalog. A call which fails on one hub can complete
 on another, and the book names which one actually ran. Provider capacity failures are not
 hypothetical — ~2.5% of calls in our own model evaluation returned HTTP 504 `queue_timeout`, across
-two different models ([MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md)). Every other vendor in this
+two different models. Every other vendor in this
 space shows spend and declines to show provenance.
 
 ## Guardrails

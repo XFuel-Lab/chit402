@@ -4,12 +4,12 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "4096",
   "memory": "8192",
-  "executionRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskExecutionRole",
   "containerDefinitions": [
     {
       "name": "sp1-prover",
-      "image": "187510174358.dkr.ecr.us-east-1.amazonaws.com/sp1-prover:phase1-batch",
+      "image": "<AWS_ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/sp1-prover:phase1-batch",
       "portMappings": [
         {
           "containerPort": 8080,
@@ -29,7 +29,7 @@
       "secrets": [
         {
           "name": "NETWORK_PRIVATE_KEY",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:187510174358:secret:SP1_PRIVATE_KEY-NFV6WS"
+          "valueFrom": "<AWS_SECRET_ARN>"
         }
       ],
       "logConfiguration": {

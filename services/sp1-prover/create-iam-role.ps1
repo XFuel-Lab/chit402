@@ -1,3 +1,8 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Create ECS Task Execution Role
 # This role allows ECS to pull images and access secrets
 
@@ -59,7 +64,7 @@ $secretsPolicy = @"
       "Action": [
         "secretsmanager:GetSecretValue"
       ],
-      "Resource": "arn:aws:secretsmanager:$region:187510174358:secret:*"
+      "Resource": "arn:aws:secretsmanager:$region:$($script:AwsAccountId):secret:*"
     }
   ]
 }
@@ -81,7 +86,7 @@ Write-Host "========================================`n" -ForegroundColor Green
 
 Write-Host "Now update the ECS service:" -ForegroundColor Cyan
 Write-Host "  cd C:\Users\seeha\xfuel-protocol\sp1-prover" -ForegroundColor White
-Write-Host "  cmd /c `"aws ecs update-service --cluster sp1-prover-cluster --service sp1-prover-service --task-definition sp1-prover-task --force-new-deployment --region us-east-1`"`n" -ForegroundColor White
+Write-Host "  cmd /c `"aws ecs update-service --cluster $($script:EcsCluster) --service $($script:EcsService) --task-definition sp1-prover-task --force-new-deployment --region us-east-1`"`n" -ForegroundColor White
 
 Write-Host "Then check status:" -ForegroundColor Cyan
 Write-Host "  .\check-status.ps1`n" -ForegroundColor White

@@ -24,4 +24,4 @@ Tier 2 proves settlement metadata, not black-box model correctness. Tier 3 targe
 
 - [POMA_SPEC.md](./POMA_SPEC.md) (if present) / ModelRegistry
 - [ADR 0003](./adr/0003-verified-inference-cleanroom.md), [ADR 0004](./adr/0004-zkllm-prover-stack.md)
-- [RUNTIME_STATE.md](./RUNTIME_STATE.md)
+- [DEPLOYMENT.md](./DEPLOYMENT.md)

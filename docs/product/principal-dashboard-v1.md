@@ -1,7 +1,7 @@
 # Principal dashboard v1
 
 **Product fit locked:** 2026-09-06  
-**Greenlit (build):** Christopher, 2026-09-24  
+**Greenlit (build):** 2026-09-24  
 **Shipped:** www `/book` on chit402.com (possession-gated live book + specimen first paint)
 
 ## Buyer

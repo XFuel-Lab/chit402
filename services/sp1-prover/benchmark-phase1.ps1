@@ -3,8 +3,12 @@
 # Run from sp1-prover directory: .\benchmark-phase1.ps1
 
 param(
-    [string]$ServiceEndpoint = "http://100.26.247.5:8080"
+    [string]$ServiceEndpoint
 )
+. "$PSScriptRoot/import-aws-env.ps1"
+if ([string]::IsNullOrWhiteSpace($ServiceEndpoint)) {
+    $ServiceEndpoint = Require-NamedEnv 'SP1_PROVER_URL'
+}
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan

@@ -1,15 +1,26 @@
 # SP1 Prover on ECS Fargate (Succinct network mode)
 
-Runs the `sp1-prover` in **network mode** (`SP1_PROVER=network`) as a single
-on/off Fargate task. No GPU: heavy proving is delegated to the Succinct prover
-network; this container only holds the circuit, builds witnesses, and submits.
+Runs the prover in network mode (`SP1_PROVER=network`) as a single on/off Fargate task. No GPU: heavy proving is delegated to the Succinct prover network; this container only holds the circuit, builds witnesses, and submits.
 
-- **Region:** `us-east-1`  ·  **Account:** `187510174358`
-- **Cluster:** `xfuel-sp1-prover`
-- **Image:** `187510174358.dkr.ecr.us-east-1.amazonaws.com/xfuel-sp1-prover:network`
-- **Secret:** `NETWORK_PRIVATE_KEY` injected from Secrets Manager (never in the image)
+Identifiers are not stored in this tree. Export them in the shell or in the untracked file `services/sp1-prover/aws-env.local.ps1` (see `aws-env.local.ps1.example`).
 
-The backend (Lightsail) reaches this via `SP1_PROVER_URL`.
+| Variable | Meaning |
+|----------|---------|
+| `AWS_ACCOUNT_ID` | 12-digit AWS account id |
+| `AWS_REGION` | Region (examples use `us-east-1`) |
+| `ECS_CLUSTER` | ECS cluster name |
+| `ECR_REPOSITORY` | ECR repository name |
+| `AWS_SECRET_ARN` | Secrets Manager ARN for the prover key |
+| `SP1_PROVER_URL` | Base URL the gateway uses to reach the prover |
+| `ALB_HOST` | Load balancer hostname, if you record one locally |
+
+The task definition template is `sp1-prover-task.json`. Placeholders: `<AWS_ACCOUNT_ID>`, `<ECS_CLUSTER>`, `<ECR_REPOSITORY>`, `<AWS_SECRET_ARN>`.
+
+```bash
+bash deploy/ecs/register-task.sh deploy/ecs/sp1-prover-task.json
+```
+
+The gateway reaches the prover via `SP1_PROVER_URL`.
 
 ---
 
@@ -20,142 +31,90 @@ The image push only needed ECR. This deploy step additionally needs: ECS
 management if you create `ecsTaskExecutionRole` yourself (or let the ECS console
 create it for you). CloudWatch Logs `logs:CreateLogGroup` for the log group.
 
-## 1. Get the secret ARN and put it in the task def
+## 1. Get the secret ARN
 
 ```bash
 aws secretsmanager describe-secret \
-  --secret-id NETWORK_PRIVATE_KEY --region us-east-1 \
+  --secret-id NETWORK_PRIVATE_KEY --region "$AWS_REGION" \
   --query ARN --output text
 ```
 
-Already wired in `sp1-prover-task.json`:
-`arn:aws:secretsmanager:us-east-1:187510174358:secret:NETWORK_PRIVATE_KEY-eDxca0`
+Put that value in `AWS_SECRET_ARN`. The template references `<AWS_SECRET_ARN>`.
 
 ## 2. Task execution role (`ecsTaskExecutionRole`)
 
 If it doesn't already exist (the ECS console can auto-create it), create it with:
-ECR pull + CloudWatch logs (`AmazonECSTaskExecutionRolePolicy`) **and** read
-access to the Succinct key:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": "secretsmanager:GetSecretValue",
-    "Resource": "arn:aws:secretsmanager:us-east-1:187510174358:secret:NETWORK_PRIVATE_KEY-*"
-  }]
-}
-```
+ECR pull + CloudWatch logs (`AmazonECSTaskExecutionRolePolicy`) and read
+access to the prover key. The resource ARN is `AWS_SECRET_ARN` (or the same
+secret's wildcard form).
 
 ## 3. Log group + register the task definition
 
 ```bash
-aws logs create-log-group --log-group-name /ecs/xfuel-sp1-prover --region us-east-1
-
-aws ecs register-task-definition \
-  --cli-input-json file://deploy/ecs/sp1-prover-task.json --region us-east-1
+aws logs create-log-group --log-group-name "/ecs/${ECS_CLUSTER}" --region "$AWS_REGION"
+bash deploy/ecs/register-task.sh
 ```
 
-## 4. Create the service (ECS console — handles VPC/ALB)
+## 4. Create the service
 
-ECS → Clusters → `xfuel-sp1-prover` → Create service:
-- Launch type **Fargate**, task family `xfuel-sp1-prover`, desired tasks **1**
-- Networking: pick your VPC + 2 subnets
-- **Load balancer:** attach an **Application Load Balancer**, target group port **80**,
-  health check path **`/health`**, health check grace period **300s** (key gen takes minutes)
-- The ALB gives a stable DNS name → use it as `SP1_PROVER_URL`
+In the ECS console, open cluster `$ECS_CLUSTER` and create a service:
+
+- Launch type Fargate, task family `$ECS_CLUSTER`, desired tasks 1
+- Networking: pick your VPC and subnets
+- Load balancer: attach an application load balancer, target group port 80,
+  health check path `/health`, health check grace period 300s (key gen takes minutes)
+- The load balancer gives a stable DNS name. Use it as `SP1_PROVER_URL`
 
 ## 5. Lock down the security group
 
-The prover has **no auth** on `/prove`. On the ALB security group, allow inbound
-80/443 **only from the Lightsail box IP** (`<LIGHTSAIL_IP>/32`). Deny all else.
+The prover has no auth on `/prove`. On the load balancer security group, allow inbound
+80/443 only from the gateway host (`<ORIGIN_HOST>/32`). Deny all else.
 
 ## 6. Wire the backend
 
-On the Lightsail `.env`:
+On the gateway host `.env`:
 
 ```bash
-SP1_PROVER_URL=http://<ALB-DNS-NAME>
+SP1_PROVER_URL=http://<ALB_HOST>
 ```
 
-Remove any stale `ZAN_PROVER_URL` / `SP1_FALLBACK_URL`, then:
+Remove any stale prover URL overrides, then restart the gateway unit.
+
+## On / Off
+
+Scale the service in `$ECS_CLUSTER` to zero to stop paying for the container when no proofs are needed:
 
 ```bash
-npx pm2 restart xfuel-m2m --update-env
+aws ecs update-service --cluster "$ECS_CLUSTER" --service sp1-prover \
+  --desired-count 0 --region "$AWS_REGION"
+aws ecs update-service --cluster "$ECS_CLUSTER" --service sp1-prover \
+  --desired-count 1 --region "$AWS_REGION"
 ```
 
-Receipts flip `proof.status: skipped → pending → complete`.
+When off, inference still works; proofs report `unavailable`.
 
-## Stable endpoint (ALB)
-
-The Fargate task IP is ephemeral (changes on every redeploy). An Application Load
-Balancer gives a stable DNS name; ECS auto-registers each new task IP to the
-target group, so the URL never changes.
-
-- **ALB DNS:** `xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com`
-- **Target group:** `xfuel-sp1-tg` (HTTP :80, health check `/healthz`)
-- **SG:** `xfuel-sp1-alb-sg` — inbound :80 locked to the Lightsail IP only
-
-Backend wiring (on the Lightsail box):
-
-```bash
-SP1_PROVER_URL=http://xfuel-sp1-alb-1873465045.us-east-1.elb.amazonaws.com
-```
-
-## On / Off (save cost when idle)
-
-The service is `sp1-prover` in cluster `xfuel-sp1-prover`. Scale to zero to stop
-paying for the container when no proofs are needed:
-
-```bash
-# OFF (container cost → $0)
-aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover \
-  --desired-count 0 --region us-east-1
-# ON  (allow ~3-5 min for key generation before the first proof)
-aws ecs update-service --cluster xfuel-sp1-prover --service sp1-prover \
-  --desired-count 1 --region us-east-1
-```
-
-When OFF, inference still works (router tiers); proofs report `unavailable`.
-
-**Check the state from outside** — `GET /health` reports a `proofs` block, so a partner does not
-have to discover this from a receipt:
+`GET /health` reports a `proofs` block:
 
 ```json
 "proofs": {
   "signed_receipts": "always",
-  "settlement_proof": "unavailable",   // "open" | "allow_listed" | "unavailable"
+  "settlement_proof": "unavailable",
   "prover_configured": false,
-  "allow_list_size": 0,
-  "note": "No SP1 prover is reachable ... Inference and signed receipts are unaffected."
+  "allow_list_size": 0
 }
 ```
 
-`unavailable` means nothing is reachable (this scale-to-zero state); `allow_listed` means the prover
-is up but gated to named keys. They are different failures and used to be indistinguishable.
+`unavailable` means nothing is reachable. `allow_listed` means the prover is up but gated to named keys.
 
-**The container is not the whole bill.** Scaling to zero stops the Fargate task (the larger line,
-~$85/mo of the ~$134/mo fixed base) but the **ALB keeps charging (~$20/mo) with zero targets**,
-because an idle load balancer is billed for existing. If the prover is going to be off for weeks
-rather than hours, delete the ALB too and re-create it from the steps above — the DNS name changes,
-so `SP1_PROVER_URL` on the Lightsail box has to be updated when it comes back. For overnight or
-between-demo gaps, leave the ALB up: a stable URL is worth $0.66/day.
+Scaling to zero stops the task. An idle load balancer keeps billing until it is deleted. If you delete it, the DNS name changes, so update `SP1_PROVER_URL` when it comes back.
 
-**Cold start is ~3–5 minutes** for proving-key generation, which is why waking on demand at the
-moment a proof is requested does not work — the request would time out. Scale up *before* a partner
-session, not during one.
+Cold start is several minutes for proving-key generation. Scale up before a proof session, not during one.
 
-### Pair with the backend cost gate
-
-For a public/live demo, run the prover **off by default** and only spin it up for
-allow-listed partners. In the backend `.env`:
+For a public demo, run the prover off by default and only spin it up for allow-listed partners:
 
 ```bash
-PROVER_ENABLED=false            # signed receipts for everyone (Tier 0)
-PROVER_ALLOW_KEYS=zan-key,...   # only these keys trigger a Tier-1 SP1 proof
+PROVER_ENABLED=false
+PROVER_ALLOW_KEYS=
 ```
 
-Flow for a gated demo: set the allow-list, scale the service to 1 shortly before a
-partner runs their proof, then back to 0 afterward. Public traffic keeps getting
-real inference + signed receipts the whole time.
+Public traffic keeps getting inference and signed receipts the whole time.

@@ -39,7 +39,7 @@ Settlement-native, payment-bound proof-of-inference for agents. Trust ladder: si
 4. E2E: task → spot-check proof → on-chain verify → settle.
 
 Tests: `cd services/zkllm-prover && cargo test`.  
-Runtime honesty: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Deploy notes: [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Phase 6 (later)
 

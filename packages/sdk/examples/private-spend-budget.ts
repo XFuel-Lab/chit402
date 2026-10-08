@@ -1,7 +1,7 @@
 /**
  * Paid-path cookbook: quote → pay USDC → public receipt JSON → buyer stats.
  *
- * The first hour is a free /v1 base-URL swap — see docs/DESIGN_PARTNER_ONBOARDING.md.
+ * The first hour is a free /v1 base-URL swap — see ../../../docs/CHAT_COMPLETIONS_GATEWAY.md.
  * This example is the optional upgrade: settle a task and inspect your own numbers.
  *
  *   XFUEL_API_URL=https://api.chit402.com \
@@ -9,7 +9,7 @@
  *   npx tsx examples/private-spend-budget.ts
  *
  * When Private Spend is on, receipt.privacy.mode is vendor_blind (gateway-trusted,
- * not prompt encryption). Docs: docs/DESIGN_PARTNER_ONBOARDING.md
+ * not prompt encryption). Docs: ../../../docs/CHAT_COMPLETIONS_GATEWAY.md
  */
 import { XFuelClient, ChainId, createMockPayer, type X402Payer } from '../src/index.js';
 

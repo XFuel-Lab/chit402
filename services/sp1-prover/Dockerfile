@@ -51,7 +51,7 @@ WORKDIR /app
 # must live under the workspace root (/app); vendor hooks in-tree and rewrite paths
 # in the copied Cargo.toml only (source tree unchanged).
 # Build from repo root:
-#   docker build -f services/sp1-prover/Dockerfile -t xfuel-sp1-prover:guest-v51 .
+#   docker build -f services/sp1-prover/Dockerfile -t sp1-prover:guest-v51 .
 COPY services/sp1-prover/Cargo.toml /app/Cargo.toml
 COPY services/sp1-prover/rust-toolchain.toml /app/rust-toolchain.toml
 COPY services/sp1-prover/program /app/program

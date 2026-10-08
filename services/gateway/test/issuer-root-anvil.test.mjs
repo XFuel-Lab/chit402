@@ -27,7 +27,7 @@ process.env.TASK_STORE_PERSIST = 'false';
 
 function anvilPath() {
   const home = process.env.HOME || '';
-  const prefixes = ['/home/ubuntu/.foundry/bin', home ? `${home}/.foundry/bin` : ''].filter(Boolean);
+  const prefixes = [home ? `${home}/.foundry/bin` : ''].filter(Boolean);
   const path = [...prefixes, ...(process.env.PATH || '').split(':')].filter(Boolean).join(':');
   const probe = spawnSync('anvil', ['--version'], { encoding: 'utf8', env: { ...process.env, PATH: path } });
   if (probe.status === 0) return path;

@@ -270,7 +270,7 @@ export function v1OutputSchemaFromBazaar(extensions) {
  *
  * Settlement model: USDC lands in a Base treasury (X402_PAY_TO / Splits v2).
  * The payer is the AGENT's wallet (agent-side, pluggable); this module never
- * holds keys. See docs/STRATEGY.md · docs/PROVIDER_FLOAT_TREASURY.md.
+ * holds keys. See ../../../docs/POSITIONING.md · ../../../docs/adr/0005-provider-float-cogs.md.
  *
  * Status: adapter hardened (challenge binding, nonce/replay store, verify+settle,
  * pricing). Two facilitator protocols are supported via X402_FACILITATOR_PROVIDER:

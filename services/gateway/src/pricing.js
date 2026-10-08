@@ -5,7 +5,7 @@
  * input tokens against a ~750-token chat prompt, so one price for both either
  * loses money on the agent or gouges the ping. Measured against AkashML's rate,
  * the old flat $0.01 returned about $0.00006 of contribution on a median agent
- * call and lost money outright on a heavy one. See docs/KNOWN_ISSUES.md.
+ * call and lost money outright on a heavy one. See ../../../docs/bug-bounty.md.
  *
  * The model here is a **rate card we own**, not a markup on our cost. Cost per
  * task in this market falls ~5-10x a year; a cost-plus price would deflate with
@@ -77,7 +77,7 @@ export const DEFAULT_RATE = { in: 300_000, out: 900_000 };
  * Agent-shaped `xfuel/auto` requests resolve to `akash/zai-org/GLM-5.2`, so this
  * row prices the default agent route — the difference between charging for the
  * model we serve and losing $0.075 on every median agent call. Short completions
- * resolve to Llama and stay on the default row. See docs/MODEL_QUALITY_EVAL.md.
+ * resolve to Llama and stay on the default row. See ../../../docs/M2M_API.md.
  *
  * **These rows only bite if the caller is priced on the *resolved* id.** `quoteTask`
  * matches `model_id` verbatim and `xfuel/auto` matches nothing here, so the alias
@@ -323,7 +323,7 @@ export function platformFeeBps(cfg = {}) {
  * breaks even up to roughly PROVE $0.235. Above that it needs revisiting.
  *
  * It cannot be amortised down yet. AI-task proofs are unbatchable until Guest v2
- * (see docs/KNOWN_ISSUES.md), so every proof is one full-price request.
+ * (see ../../../docs/bug-bounty.md), so every proof is one full-price request.
  */
 export const DEFAULT_TIER2_PROOF_UNITS = 100_000;
 

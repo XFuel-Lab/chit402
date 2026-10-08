@@ -13,7 +13,7 @@ services/gateway/.data/receipt-log/
   bundle-index.json    local copy of the hourly S3 index hash
 ```
 
-On Lightsail that directory is `/home/ubuntu/xfuel-protocol/services/gateway/.data/receipt-log`. It is gitignored. `git pull` does not delete it.
+On the gateway host that directory is `<ENV_PATH>/.data/receipt-log`. It is gitignored. `git pull` does not delete it.
 
 Each journal line is written, then the file and the directory are fsynced. The checkpoint, anchor state, epoch record, and bundle index are written to a temp file in the same directory, fsynced, and renamed.
 
@@ -117,7 +117,7 @@ Existing receipt `tree_head_hash` values are not re-signed. Epoch 1 inclusion st
 Run this on the gateway host, against the book file, before restarting the process onto this build. It refuses unless the root is exactly the epoch 1 final root. It does not broadcast and it does not re-sign a receipt.
 
 ```bash
-cd /home/ubuntu/xfuel-protocol/services/gateway
+cd <ENV_PATH>
 node scripts/rebuild-receipt-epoch1.mjs \
   --jsonl .data/agents/usage-settled.jsonl \
   --out .data/receipt-log
@@ -234,7 +234,7 @@ Lifecycle rule, move bundles to Glacier after 90 days. Object Lock still applies
 ### Restore
 
 ```bash
-cd /home/ubuntu/xfuel-protocol/services/gateway
+cd <ENV_PATH>
 RECEIPT_LOG_S3_BUCKET=BUCKET_NAME RECEIPT_LOG_S3_REGION=us-east-1 \
   node scripts/restore-receipt-log.mjs
 ```
@@ -243,7 +243,7 @@ The script downloads the latest `receipt-log/index/<hour>.json`, checks each bun
 
 ## Rollout on Lightsail
 
-Do this before `systemctl restart xfuel-api` on the build that contains this log. Do not set the fresh-genesis flag.
+Do this before `systemctl restart <SYSTEMD_UNIT>` on the build that contains this log. Do not set the fresh-genesis flag.
 
 1. Pull the commit. Do not restart yet.
 2. Confirm `.data/agents/usage-settled.jsonl` is the live book.
@@ -252,7 +252,7 @@ Do this before `systemctl restart xfuel-api` on the build that contains this log
 5. Run the backfill dry-run, read the `would append` task ids, then run it again with `--apply`. Do this before restart. The script does not broadcast.
 6. Create the S3 bucket with Object Lock (compliance) and the lifecycle rule above. Attach the instance role. Set `RECEIPT_LOG_S3_BUCKET` and `RECEIPT_LOG_S3_REGION` in `.env` when you want hourly bundles. Leaving the bucket unset keeps bundles off. Set `RECEIPT_LOG_RETENTION_POLICY_ID` and `RECEIPT_LOG_RETENTION_POLICY_SHA256` together when a policy document should be named on the bundle index.
 7. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset. The committed pin already names the Base and Solana transactions. Boot still refuses a null `tx`. The pin is checked against the recomputed journal, not only against an empty directory. `ff950e72…` has no Solana transaction.
-8. Restart `xfuel-api` only after the rebuild and the backfill `--apply` have written the journal. An empty `.data/receipt-log` now refuses to start (`pin_unmet`) instead of serving a fresh log. If you restarted too early, stop the service, run the two scripts, then start.
+8. Restart `<SYSTEMD_UNIT>` only after the rebuild and the backfill `--apply` have written the journal. An empty `.data/receipt-log` now refuses to start (`pin_unmet`) instead of serving a fresh log. If you restarted too early, stop the service, run the two scripts, then start.
 9. `GET /v1/receipts/tree/head` may say `not_yet_published` until the next book append publishes the day's head. That GET must not create a Base or Solana transaction. The recomputed epoch 2 root is still in that response as `root`. `receipt_log.consecutive_failures` on `/health` is what the smoke check should alert on.
 10. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list and, after backfill `--apply`, the unlogged commitment (`count` and `commitment`). It does not return task ids, agent ids, or reasons.
 
