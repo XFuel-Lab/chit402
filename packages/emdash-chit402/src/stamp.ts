@@ -175,7 +175,10 @@ async function runStamp(
     },
     job_kind: 'other',
   };
-  if (deliverable) body.deliverable_hash = deliverable;
+  if (deliverable) {
+    body.deliverable_hash = deliverable;
+    body.deliverable_kind = 'sha256';
+  }
 
   const url = ingestUrl(config.apiUrl, config.agentId);
   const payload = JSON.stringify(body);
