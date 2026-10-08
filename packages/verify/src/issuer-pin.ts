@@ -301,7 +301,14 @@ export function verifyCitizenRotation(input: {
   nextCommit: string;
   controlJws: string | null;
 }): { ok: true } | { ok: false; code: string } {
-  if (input.prior.jwk.kid === input.next.jwk.kid) return { ok: true };
+  const priorKid = input.prior.jwk.kid || '';
+  const nextKid = input.next.jwk.kid || '';
+  // A prior that is not the published specimen is not a control key.
+  // Same-kid copies of an attacker pin do not waive the specimen gate.
+  if (priorKid !== PUBLISHED_ISSUER_PIN_KID) {
+    return { ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
+  }
+  if (nextKid === priorKid) return { ok: true };
   if (!input.controlJws) return { ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   if (!COMMIT_SHA.test(input.nextCommit) || !FILE_SHA.test(input.nextHash)) {
     return { ok: false, code: ISSUER_PIN_MUTABLE_REF };
@@ -312,8 +319,6 @@ export function verifyCitizenRotation(input: {
   if (payload.chain_id != null && payload.chain_id !== ISSUER_PIN_CHAIN_ID) {
     return { ok: false, code: ISSUER_PIN_CHAIN_REFUSED };
   }
-  const priorKid = input.prior.jwk.kid || '';
-  const nextKid = input.next.jwk.kid || '';
   const statement = rotationStatement({
     priorKid,
     nextKid,
@@ -346,8 +351,8 @@ export interface AssessIssuerPinInput {
   controlJws?: string | null;
   required?: boolean;
   /**
-   * When set, a kid other than {@link PUBLISHED_ISSUER_PIN_KID} is a
-   * rotation. It fails closed unless the previous pin is supplied.
+   * Ignored. The specimen kid gate is not optional. A caller cannot
+   * turn it off by passing a prior pin or by setting this to false.
    */
   anchorToPublished?: boolean;
 }
@@ -395,13 +400,13 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
   const signature = verifyRegistrationSignature(pin);
   if (!signature.ok) return { checked: true, ok: false, code: signature.code };
 
+  let rotatedFromSpecimen = false;
   if (input.priorPinBytes != null && input.priorPinBytes !== '') {
-    if (input.priorRef) {
-      const priorRef = refOk(input.priorRef);
-      if (!priorRef.ok) return { checked: true, ok: false, code: priorRef.code };
-      if (issuerPinFileHash(input.priorPinBytes) !== priorRef.ref.sha256) {
-        return { checked: true, ok: false, code: ISSUER_PIN_HASH_MISMATCH };
-      }
+    if (!input.priorRef) return { checked: true, ok: false, code: ISSUER_PIN_MUTABLE_REF };
+    const priorChecked = refOk(input.priorRef);
+    if (!priorChecked.ok) return { checked: true, ok: false, code: priorChecked.code };
+    if (issuerPinFileHash(input.priorPinBytes) !== priorChecked.ref.sha256) {
+      return { checked: true, ok: false, code: ISSUER_PIN_HASH_MISMATCH };
     }
     const prior = parsePinDocument(input.priorPinBytes);
     if (!prior.ok) return { checked: true, ok: false, code: prior.code };
@@ -414,16 +419,13 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
       controlJws: control,
     });
     if (!rotation.ok) return { checked: true, ok: false, code: rotation.code };
+    rotatedFromSpecimen = (prior.pin.jwk.kid || '') !== (pin.jwk.kid || '');
   } else if (pin.control) {
     return { checked: true, ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   }
 
   const pinKid = pin.jwk.kid || jwkThumbprint(pin.jwk);
-  if (
-    input.anchorToPublished
-    && (input.priorPinBytes == null || input.priorPinBytes === '')
-    && pinKid !== PUBLISHED_ISSUER_PIN_KID
-  ) {
+  if (pinKid !== PUBLISHED_ISSUER_PIN_KID && !rotatedFromSpecimen) {
     return { checked: true, ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   }
   const fromReceipt = receiptKids(input.receipt);

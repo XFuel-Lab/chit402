@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Issuer pin gate stays on.** A prior pin that is not the published Sepolia specimen does not become a trust root. Witness and prior flags do not downgrade a receipt that does not claim the pin.
 - **Sepolia issuer key pin.** `docs/well-known/issuer-key.json` is the public key at one git commit. `@xfuel/verify` anchor mode checks that commit and the file hash, and does not fetch a branch. The registration self-signature sits beside the pin. A new key needs a `citizen_issuer_key` freeze signed by the previous key. No receipt is re-signed. Not published. No deploy.
 
 ### Fixed

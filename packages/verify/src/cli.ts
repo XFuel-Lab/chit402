@@ -132,8 +132,11 @@ Anchored root:
   A receipt or head with issuer_key_pin is a pinned era. Pass the pin file
   and its commit SHA plus SHA-256. The verifier does not fetch a branch.
   --issuer-pin <file> --issuer-pin-commit <40-hex> --issuer-pin-sha256 <64-hex>
-  Optional: --issuer-pin-sig, --issuer-witnesses, --issuer-prior-pin, --issuer-control.
-  Sepolia pin only (eip155:84532). See docs/product/issuer-key-pin.md.
+  Optional with that pin: --issuer-pin-sig, --issuer-witnesses,
+  --issuer-prior-pin, --issuer-prior-commit, --issuer-prior-sha256, --issuer-control.
+  Those flags do not start the check on their own. A prior pin does not
+  replace the published specimen key. Sepolia only (eip155:84532).
+  See docs/product/issuer-key-pin.md.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -196,6 +199,8 @@ function parseArgs(args: string[]): {
   issuerPinSigFile: string | null;
   issuerWitnessesFile: string | null;
   issuerPriorPinFile: string | null;
+  issuerPriorCommit: string | null;
+  issuerPriorSha256: string | null;
   issuerControlFile: string | null;
 } {
   const result = {
@@ -230,6 +235,8 @@ function parseArgs(args: string[]): {
     issuerPinSigFile: null as string | null,
     issuerWitnessesFile: null as string | null,
     issuerPriorPinFile: null as string | null,
+    issuerPriorCommit: null as string | null,
+    issuerPriorSha256: null as string | null,
     issuerControlFile: null as string | null,
   };
 
@@ -289,6 +296,10 @@ function parseArgs(args: string[]): {
       result.issuerWitnessesFile = args[++i];
     } else if (arg === '--issuer-prior-pin' && args[i + 1]) {
       result.issuerPriorPinFile = args[++i];
+    } else if (arg === '--issuer-prior-commit' && args[i + 1]) {
+      result.issuerPriorCommit = args[++i];
+    } else if (arg === '--issuer-prior-sha256' && args[i + 1]) {
+      result.issuerPriorSha256 = args[++i];
     } else if (arg === '--issuer-control' && args[i + 1]) {
       result.issuerControlFile = args[++i];
     } else if (arg === '--json') {
@@ -509,11 +520,8 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   }
   let issuerPin: AssessIssuerPinInput | undefined;
   const pinClaim = readIssuerPinClaim(receipt).claimed || readIssuerPinClaim(head).claimed;
-  const pinFlags = Boolean(
-    args.issuerPinFile || args.issuerPinCommit || args.issuerPinSha256
-    || args.issuerPinSigFile || args.issuerWitnessesFile || args.issuerPriorPinFile || args.issuerControlFile,
-  );
-  if (pinFlags || pinClaim) {
+  const pinRequested = Boolean(args.issuerPinFile) || pinClaim;
+  if (pinRequested) {
     try {
       const claimRef = readIssuerPinClaim(receipt).ref || readIssuerPinClaim(head).ref;
       const ref: IssuerPinRef | null = (args.issuerPinCommit || args.issuerPinSha256 || claimRef)
@@ -525,15 +533,22 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
         : null;
       let witnesses: unknown;
       if (args.issuerWitnessesFile) witnesses = JSON.parse(readFileSync(args.issuerWitnessesFile, 'utf8'));
+      const priorRef: IssuerPinRef | null = args.issuerPriorPinFile
+        ? {
+          commit: args.issuerPriorCommit || '',
+          path: 'docs/well-known/issuer-key.json',
+          sha256: (args.issuerPriorSha256 || '').toLowerCase(),
+        }
+        : null;
       issuerPin = {
         pinBytes: args.issuerPinFile ? readFileSync(args.issuerPinFile, 'utf8') : null,
         sigBytes: args.issuerPinSigFile ? readFileSync(args.issuerPinSigFile, 'utf8') : null,
         ref,
         witnesses,
         priorPinBytes: args.issuerPriorPinFile ? readFileSync(args.issuerPriorPinFile, 'utf8') : null,
+        priorRef,
         controlJws: args.issuerControlFile ? readFileSync(args.issuerControlFile, 'utf8').trim() : null,
         required: true,
-        anchorToPublished: !args.issuerPriorPinFile,
       };
     } catch (err) {
       console.error(`Error reading issuer pin: ${err instanceof Error ? err.message : String(err)}`);

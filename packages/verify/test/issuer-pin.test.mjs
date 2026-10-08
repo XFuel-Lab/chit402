@@ -18,6 +18,7 @@ execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
 const {
   assessIssuerPin,
   canonicalPublicKey,
+  verifyCitizenRotation,
   issuerPinContentUrl,
   issuerPinFileHash,
   loadIssuerPinBytes,
@@ -85,6 +86,13 @@ function refFor(bytes, commit = COMMIT_A) {
   return { commit, path: ISSUER_PIN_PATH, sha256: issuerPinFileHash(bytes) };
 }
 
+function publishedPin() {
+  const pinPath = fileURLToPath(new URL('../../../docs/well-known/issuer-key.json', import.meta.url));
+  const bytes = readFileSync(pinPath, 'utf8');
+  const doc = JSON.parse(bytes);
+  return { bytes, doc, ref: refFor(bytes, COMMIT_A) };
+}
+
 function signFreeze(privateKey, kid, payload) {
   const header = { alg: 'ES256', typ: 'chit402-freeze+jwt', kid };
   const h = Buffer.from(JSON.stringify(header)).toString('base64url');
@@ -116,38 +124,36 @@ function controlFor(prior, next, nextBytes, commit) {
 }
 
 test('happy path matches the pin, issuer root, and witnesses source', () => {
-  const key = makeKey();
-  const bytes = pinBytes(key);
-  const ref = refFor(bytes);
+  const { bytes, doc, ref } = publishedPin();
   const result = assessIssuerPin({
     receipt: {
-      issuer_signature: { kid: key.kid, issuer_jwk: key.jwk },
-      issuer_root: { kid: key.kid },
+      issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk },
+      issuer_root: { kid: doc.jwk.kid },
       issuer_key_pin: { era: 1, ...ref },
     },
     pinBytes: bytes,
-    sigBytes: `${JSON.parse(bytes).self_signature}\n`,
+    sigBytes: `${doc.self_signature}\n`,
     ref,
-    witnesses: { source: '/api/witnesses', kid: key.kid, witnesses: [{ jwk: key.jwk }] },
+    witnesses: { source: '/api/witnesses', kid: doc.jwk.kid, witnesses: [{ jwk: doc.jwk }] },
     required: true,
+    anchorToPublished: false,
   });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, result.code);
   assert.equal(result.code, null);
   assert.equal(result.checked, true);
 });
 
 test('a receipt key that is not the pin is ISSUER_PIN_MISMATCH', () => {
-  const pinKey = makeKey();
+  const { bytes, doc, ref } = publishedPin();
   const other = makeKey();
-  const bytes = pinBytes(pinKey);
   const result = assessIssuerPin({
     receipt: {
       issuer_signature: { kid: other.kid, issuer_jwk: other.jwk },
-      issuer_root: { kid: pinKey.kid },
-      issuer_key_pin: { era: 1 },
+      issuer_root: { kid: doc.jwk.kid },
+      issuer_key_pin: { era: 1, ...ref },
     },
     pinBytes: bytes,
-    ref: refFor(bytes),
+    ref,
     required: true,
   });
   assert.equal(result.code, ISSUER_PIN_MISMATCH);
@@ -244,15 +250,15 @@ test('a self-signature for another key or a flipped byte fails', () => {
 });
 
 test('a missing self-signature stays unchecked and a missing pin on a non-era receipt is legacy', () => {
-  const key = makeKey();
-  const bytes = pinBytes(key, { selfSignature: null });
+  const { doc } = publishedPin();
+  const bytes = serializeIssuerPin({ ...doc, self_signature: null, control: null });
   const open = assessIssuerPin({
-    receipt: { issuer_signature: { kid: key.kid, issuer_jwk: key.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk }, issuer_key_pin: { era: 1 } },
     pinBytes: bytes,
     ref: refFor(bytes),
     required: true,
   });
-  assert.equal(open.ok, true);
+  assert.equal(open.ok, true, open.code);
   assert.equal(open.code, null);
 
   const legacy = assessIssuerPin({ receipt: { task_id: 'task-1', row_hash: 'row' } });
@@ -269,17 +275,16 @@ test('a pinned era that omits the pin is a downgrade', () => {
 });
 
 test('a rotated key without an updated pin fails closed', () => {
-  const current = makeKey();
+  const { bytes, ref } = publishedPin();
   const rotated = makeKey();
-  const bytes = pinBytes(current);
   const result = assessIssuerPin({
     receipt: {
       issuer_signature: { kid: rotated.kid, issuer_jwk: rotated.jwk },
       issuer_root: { kid: rotated.kid },
-      issuer_key_pin: { era: 1 },
+      issuer_key_pin: { era: 1, ...ref },
     },
     pinBytes: bytes,
-    ref: refFor(bytes),
+    ref,
     required: true,
   });
   assert.equal(result.code, ISSUER_PIN_MISMATCH);
@@ -315,30 +320,80 @@ test('an edited pin without the citizen freeze is not a rotation', () => {
   assert.equal(result.code, ISSUER_ROTATION_UNCONTROLLED);
 });
 
-test('a citizen freeze signed by the prior key accepts the rotation', () => {
-  const prior = makeKey();
-  const next = makeKey();
-  const priorBytes = pinBytes(prior);
-  const nextBytes = pinBytes(next);
-  const signed = controlFor(prior, next, nextBytes, COMMIT_B);
-  const pinnedRef = refFor(nextBytes, COMMIT_B);
+test('an attacker pin used as its own prior does not bypass the specimen gate', () => {
+  const attacker = makeKey();
+  const bytes = pinBytes(attacker);
+  const ref = refFor(bytes, COMMIT_B);
+  const sameKid = verifyCitizenRotation({
+    prior: pinDoc(attacker),
+    next: pinDoc(attacker),
+    nextHash: ref.sha256,
+    nextCommit: COMMIT_B,
+    controlJws: null,
+  });
+  assert.equal(sameKid.ok, false);
+  assert.equal(sameKid.code, ISSUER_ROTATION_UNCONTROLLED);
   const result = assessIssuerPin({
     receipt: {
-      issuer_signature: { kid: next.kid, issuer_jwk: next.jwk },
-      issuer_root: { kid: next.kid },
-      issuer_key_pin: { era: 1, ...pinnedRef },
+      issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk },
+      issuer_key_pin: { era: 1, ...ref },
     },
-    pinBytes: nextBytes,
-    ref: pinnedRef,
-    priorPinBytes: priorBytes,
-    priorRef: refFor(priorBytes),
-    controlJws: signed.jws,
-    witnesses: { kid: next.kid },
+    pinBytes: bytes,
+    ref,
+    priorPinBytes: bytes,
+    priorRef: ref,
+    anchorToPublished: false,
     required: true,
   });
-  assert.equal(result.ok, true, result.code);
-  assert.equal(signed.payload.purpose, CITIZEN_FREEZE_PURPOSE);
-  assert.equal(signed.payload.schema, CITIZEN_FREEZE_SCHEMA);
+  assert.equal(result.code, ISSUER_ROTATION_UNCONTROLLED);
+});
+
+test('a prior pin without a commit and hash is not a trust root', () => {
+  const { bytes: specimen } = publishedPin();
+  const attacker = makeKey();
+  const nextBytes = pinBytes(attacker);
+  const unbound = assessIssuerPin({
+    receipt: { issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk }, issuer_key_pin: { era: 1 } },
+    pinBytes: nextBytes,
+    ref: refFor(nextBytes, COMMIT_B),
+    priorPinBytes: specimen,
+    required: true,
+  });
+  assert.equal(unbound.code, ISSUER_PIN_MUTABLE_REF);
+  const branched = assessIssuerPin({
+    receipt: { issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk }, issuer_key_pin: { era: 1 } },
+    pinBytes: nextBytes,
+    ref: refFor(nextBytes, COMMIT_B),
+    priorPinBytes: specimen,
+    priorRef: { commit: 'main', path: ISSUER_PIN_PATH, sha256: issuerPinFileHash(specimen) },
+    required: true,
+  });
+  assert.equal(branched.code, ISSUER_PIN_MUTABLE_REF);
+});
+
+test('a freeze signed by a non-specimen key does not install that key', () => {
+  const { bytes: specimenBytes, doc } = publishedPin();
+  const attacker = makeKey();
+  const nextBytes = pinBytes(attacker);
+  const signed = controlFor(attacker, attacker, nextBytes, COMMIT_B);
+  const specimenRef = refFor(specimenBytes, COMMIT_A);
+  const nextRef = refFor(nextBytes, COMMIT_B);
+  const result = assessIssuerPin({
+    receipt: {
+      issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk },
+      issuer_key_pin: { era: 1, ...nextRef },
+    },
+    pinBytes: nextBytes,
+    ref: nextRef,
+    priorPinBytes: specimenBytes,
+    priorRef: specimenRef,
+    controlJws: signed.jws,
+    required: true,
+    anchorToPublished: false,
+  });
+  assert.equal(result.code, ISSUER_ROTATION_UNCONTROLLED);
+  assert.equal(doc.jwk.kid, PUBLISHED_ISSUER_PIN_KID);
+  assert.notEqual(attacker.kid, PUBLISHED_ISSUER_PIN_KID);
 });
 
 test('a rotation signed by the new key, or under another context, is refused', () => {
@@ -370,7 +425,9 @@ test('a rotation signed by the new key, or under another context, is refused', (
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: priorBytes,
+    priorRef: refFor(priorBytes, COMMIT_A),
     controlJws: attackerJws,
+    anchorToPublished: false,
     required: true,
   }).code, ISSUER_ROTATION_UNCONTROLLED);
 
@@ -398,7 +455,9 @@ test('a rotation signed by the new key, or under another context, is refused', (
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: priorBytes,
+    priorRef: refFor(priorBytes, COMMIT_A),
     controlJws: replayJws,
+    anchorToPublished: false,
     required: true,
   }).code, ISSUER_ROTATION_UNCONTROLLED);
 });
@@ -434,9 +493,8 @@ test('anchor mode fails closed on a downgrade and stays quiet when no era is cla
 });
 
 test('anchor mode accepts a matching sepolia pin without fetching a branch', async () => {
-  const key = makeKey();
-  const bytes = pinBytes(key);
-  const ref = refFor(bytes);
+  const { bytes, doc, ref } = publishedPin();
+  const key = { kid: doc.jwk.kid, jwk: doc.jwk };
   const taskId = 'task-1';
   const rowHash = 'row-hash-1';
   const leaf = createHash('sha256').update(Buffer.concat([
@@ -561,4 +619,88 @@ test('anchor CLI reports a downgrade without a network fetch', () => {
   const body = JSON.parse(run.stdout);
   assert.equal(body.issuer_pin.code, ISSUER_PIN_DOWNGRADE);
   assert.equal(body.overall, 'failed');
+});
+
+test('witness flags do not downgrade a receipt that does not claim a pin', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-aux-'));
+  const receipt = join(dir, 'receipt.json');
+  const inclusion = join(dir, 'inclusion.json');
+  const head = join(dir, 'head.json');
+  const witnesses = join(dir, 'witnesses.json');
+  const sig = join(dir, 'pin.sig');
+  const prior = join(dir, 'prior.json');
+  const control = join(dir, 'control.jws');
+  writeFileSync(receipt, `${JSON.stringify({ task_id: 'task-1', row_hash: 'row' })}\n`);
+  writeFileSync(inclusion, `${JSON.stringify({ error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] })}\n`);
+  writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1 })}\n`);
+  writeFileSync(witnesses, `${JSON.stringify({ kid: 'not-the-specimen' })}\n`);
+  writeFileSync(sig, 'not-a-signature\n');
+  writeFileSync(prior, pinBytes(makeKey()));
+  writeFileSync(control, 'header.payload.sig\n');
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const attacks = [
+    ['--issuer-witnesses', witnesses],
+    ['--issuer-pin-sig', sig],
+    ['--issuer-prior-pin', prior],
+    ['--issuer-control', control],
+    ['--issuer-pin-commit', COMMIT_A],
+    ['--issuer-pin-sha256', 'ab'.repeat(32)],
+  ];
+  for (const extra of attacks) {
+    const run = spawnSync(process.execPath, [cli, receipt, inclusion, head, '--rpc', '--json', ...extra], { encoding: 'utf8' });
+    assert.equal(run.status, 1, `${extra[0]} ${run.stderr}`);
+    const body = JSON.parse(run.stdout);
+    assert.equal(body.issuer_pin.checked, false, extra[0]);
+    assert.equal(body.issuer_pin.code, null, extra[0]);
+    assert.equal(body.errors.includes(ISSUER_PIN_DOWNGRADE), false, extra[0]);
+  }
+});
+
+test('a witnesses file does not replace a claimed pin', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-era-'));
+  const receipt = join(dir, 'receipt.json');
+  const inclusion = join(dir, 'inclusion.json');
+  const head = join(dir, 'head.json');
+  const witnesses = join(dir, 'witnesses.json');
+  writeFileSync(receipt, `${JSON.stringify({ task_id: 'task-1', row_hash: 'row' })}\n`);
+  writeFileSync(inclusion, `${JSON.stringify({ error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] })}\n`);
+  writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1, issuer_key_pin: { era: 1 } })}\n`);
+  writeFileSync(witnesses, `${JSON.stringify({ kid: PUBLISHED_ISSUER_PIN_KID })}\n`);
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const run = spawnSync(process.execPath, [cli, receipt, inclusion, head, '--rpc', '--json', '--issuer-witnesses', witnesses], { encoding: 'utf8' });
+  assert.equal(run.status, 1, run.stderr);
+  const body = JSON.parse(run.stdout);
+  assert.equal(body.issuer_pin.code, ISSUER_PIN_DOWNGRADE);
+});
+
+test('the CLI prior pin cannot install an attacker key', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-prior-'));
+  const attacker = makeKey();
+  const bytes = pinBytes(attacker);
+  const pinFile = join(dir, 'pin.json');
+  const receipt = join(dir, 'receipt.json');
+  const inclusion = join(dir, 'inclusion.json');
+  const head = join(dir, 'head.json');
+  writeFileSync(pinFile, bytes);
+  const ref = refFor(bytes, COMMIT_B);
+  writeFileSync(receipt, `${JSON.stringify({
+    task_id: 'task-1',
+    row_hash: 'row',
+    issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk },
+  })}\n`);
+  writeFileSync(inclusion, `${JSON.stringify({ error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] })}\n`);
+  writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1 })}\n`);
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const run = spawnSync(process.execPath, [
+    cli, receipt, inclusion, head, '--rpc', '--json',
+    '--issuer-pin', pinFile,
+    '--issuer-pin-commit', ref.commit,
+    '--issuer-pin-sha256', ref.sha256,
+    '--issuer-prior-pin', pinFile,
+    '--issuer-prior-commit', ref.commit,
+    '--issuer-prior-sha256', ref.sha256,
+  ], { encoding: 'utf8' });
+  assert.equal(run.status, 1, run.stderr);
+  const body = JSON.parse(run.stdout);
+  assert.equal(body.issuer_pin.code, ISSUER_ROTATION_UNCONTROLLED);
 });

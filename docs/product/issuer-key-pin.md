@@ -35,11 +35,15 @@ xfuel-verify receipt.json inclusion.json head.json --rpc \
 
 `--issuer-pin-sig` is the sibling signature. `--issuer-witnesses` is a saved `/api/witnesses` document. The command reads those files. It does not GET the commit.
 
+`--issuer-witnesses`, `--issuer-pin-sig`, `--issuer-prior-pin`, `--issuer-control`, `--issuer-pin-commit`, and `--issuer-pin-sha256` do not start the check. On a receipt that does not claim `issuer_key_pin`, those flags alone leave the anchor result unchanged. They are not `ISSUER_PIN_DOWNGRADE`. A witnesses file does not stand in for the pin.
+
 A claimed era with no pin file is `ISSUER_PIN_DOWNGRADE`. A file whose bytes are not the stated hash is `ISSUER_PIN_HASH_MISMATCH`. A receipt key that is not the pin is `ISSUER_PIN_MISMATCH`. A receipt that does not claim the era, and a command that does not pass `--issuer-pin`, keeps the previous anchor result.
 
 ## Rotation
 
-Anchor mode treats a kid other than the specimen in this file as a rotation when the previous pin is not passed. That kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. A new kid is not accepted because the pin file was edited. Publish the new JSON and the new self-signature in the same control-key event as a `chit402.freeze.v1` JWS (`typ: chit402-freeze+jwt`) with `purpose: citizen_issuer_key`. The previous pin key signs it. The statement is:
+The specimen kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. Passing `--issuer-prior-pin` does not turn that gate off. A prior whose kid is not this specimen is `ISSUER_ROTATION_UNCONTROLLED`, including when the same attacker file is passed as both the pin and the prior. The prior file is bound with `--issuer-prior-commit` and `--issuer-prior-sha256`. A prior with no commit, or a branch name, is `ISSUER_PIN_MUTABLE_REF`.
+
+A new kid is accepted only when this specimen key signs a `chit402.freeze.v1` JWS (`typ: chit402-freeze+jwt`) with `purpose: citizen_issuer_key` in the same event that updates the pin and the self-signature. The statement is:
 
 ```
 chit402-issuer-rotation-v1
@@ -52,7 +56,7 @@ chit402-issuer-rotation-v1
 eip155:84532
 ```
 
-Pass the previous pin with `--issuer-prior-pin` and the freeze JWS with `--issuer-control`. A new key without that event is `ISSUER_ROTATION_UNCONTROLLED`. A receipt signed by the new key while the pin is still the old key is `ISSUER_PIN_MISMATCH`.
+Pass the previous pin with `--issuer-prior-pin`, `--issuer-prior-commit`, and `--issuer-prior-sha256`, and the freeze JWS with `--issuer-control`. A new key without that event is `ISSUER_ROTATION_UNCONTROLLED`. A receipt signed by the new key while the pin is still the old key is `ISSUER_PIN_MISMATCH`.
 
 The freeze JWS is not inside the hashed pin file. The statement names the file hash, so the hash cannot include the JWS.
 

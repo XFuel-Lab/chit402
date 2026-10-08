@@ -6,6 +6,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 ## Unreleased
 
 ### Security
+- **Specimen key gate cannot be waived by a prior pin.** A prior whose kid is not the published Sepolia specimen is `ISSUER_ROTATION_UNCONTROLLED`, including a same-kid copy of an attacker pin. The prior file must name a 40-hex commit and the file hash (`--issuer-prior-commit`, `--issuer-prior-sha256`). `--issuer-witnesses` and the other pin flags do not start the check and do not downgrade a receipt that does not claim `issuer_key_pin`.
 - **Content-addressed issuer pin in anchor mode.** A receipt or head that carries `issuer_key_pin` must match `docs/well-known/issuer-key.json` at a 40-hex commit whose SHA-256 is the pin file. A branch name is `ISSUER_PIN_MUTABLE_REF` and is not fetched. A hash mismatch is `ISSUER_PIN_HASH_MISMATCH`. A different issuer key, `issuer_root.kid`, or `/api/witnesses` kid is `ISSUER_PIN_MISMATCH`. A registration self-signature that does not verify is `ISSUER_SELF_SIG_INVALID`. A claimed era with no pin is `ISSUER_PIN_DOWNGRADE`. A new key without a `chit402.freeze.v1` event (`purpose: citizen_issuer_key`) signed by the previous key is `ISSUER_ROTATION_UNCONTROLLED`. The pin chain is `eip155:84532`. Receipts that do not claim the era are unchanged. Not published.
 
 ## 0.3.1 — Epoch record on `--rpc`, full Solana genesis hash
