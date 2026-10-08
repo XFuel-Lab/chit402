@@ -2643,6 +2643,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const inclusionPath = path.join(work, 'inclusion.json');
   const headPath = path.join(work, 'head.json');
   const jwksPath = path.join(work, 'jwks.json');
+  // Log mode fails a receipt that has no issuer signature, even when the anchor matches.
   const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
