@@ -2672,16 +2672,22 @@ export function createApp() {
     if (!receipt || typeof receipt !== 'object') return receipt;
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     let prefix = null;
-    if (receipt.task_id && receipt.tree_head_hash) {
-      prefix = getReceiptMerkleTree().prefixLeafPreimages(receipt.task_id, (id) => {
-        const row = usageSettled.findByTask(id);
-        return row?.row_hash ?? null;
-      });
+    try {
+      if (receipt.task_id && receipt.tree_head_hash) {
+        prefix = getReceiptMerkleTree().publicPrefixAudit(receipt.task_id, (id) => {
+          const row = usageSettled.findByTask(id);
+          return row?.row_hash ?? null;
+        });
+      }
+    } catch (err) {
+      logger.error({ err, taskId: receipt.task_id }, 'public tree audit withheld');
+      prefix = null;
     }
     return withPublicPreimages(receipt, { baseUrl, prefix });
   }
 
   function sendPreimage(res, preimages, field, raw) {
+    res.set('Cache-Control', 'private, no-store');
     const entry = preimageField(preimages, field);
     if (!entry) {
       const withheld = (preimages?.not_recomputable || []).find((row) => row.field === field);
@@ -2691,14 +2697,23 @@ export function createApp() {
         reason: withheld?.reason || 'This field has no public preimage.',
       });
     }
-    if (String(raw || '') === '1' && !entry.leaves) {
-      const bytes = preimageBytes(entry);
+    const published = { ...entry };
+    delete published.leaves;
+    // A Merkle audit path is not one buffer. raw=1 must not fall through to
+    // the JSON object, and it must not concatenate other leaves.
+    if (String(raw || '') === '1') {
+      if (published.audit_path || published.leaf || entry.leaves) {
+        return res.status(404).json({
+          error: 'preimage_unavailable',
+          field,
+          reason: 'This field is a Merkle audit path. Raw bytes are not a single buffer.',
+        });
+      }
+      const bytes = preimageBytes(published);
       if (!bytes) return res.status(404).json({ error: 'preimage_unavailable', field });
-      res.set('Cache-Control', 'public, max-age=300');
       return res.type('application/octet-stream').send(bytes);
     }
-    res.set('Cache-Control', 'public, max-age=300');
-    return res.json(entry);
+    return res.json(published);
   }
 
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
@@ -2760,7 +2775,7 @@ export function createApp() {
       return res.redirect(302, canonicalUrl);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt/by-tx error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2814,7 +2829,7 @@ export function createApp() {
       return res.json({ ...head, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2848,7 +2863,7 @@ export function createApp() {
       return res.json(head);
     } catch (err) {
       logger.error({ err }, 'closed epoch head error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2859,7 +2874,8 @@ export function createApp() {
       const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
       return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
     } catch (err) {
-      return res.status(400).json({ error: 'bad_tree_size', message: err.message });
+      logger.error({ err }, 'tree consistency error');
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2897,11 +2913,16 @@ export function createApp() {
         return res.status(400).json({ error: code, message: err.message });
       }
       logger.error({ err }, 'inclusion error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
+    // HTML and JSON share this URL. A shared cache must not keep either
+    // body: the preimage used to include other leaves, and a stored copy
+    // of that body would keep the leak after this process stopped emitting it.
+    res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
     try {
       let { taskId: rawTaskId } = req.params;
 
@@ -2961,8 +2982,9 @@ export function createApp() {
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(publishReceipt(covered, req));
-        return res.type('html').send(renderReceiptHtml(covered));
+        const published = publishReceipt(covered, req);
+        if (wantsJson) return res.json(published);
+        return res.type('html').send(renderReceiptHtml(published));
       }
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
@@ -2976,8 +2998,9 @@ export function createApp() {
           }
           return res.json(exportDoc);
         }
-        if (wantsJson) return res.json(publishReceipt(covered, req));
-        return res.type('html').send(renderReceiptHtml(covered));
+        const published = publishReceipt(covered, req);
+        if (wantsJson) return res.json(published);
+        return res.type('html').send(renderReceiptHtml(published));
       }
 
       const aiListener = getAIListener();
@@ -2991,8 +3014,9 @@ export function createApp() {
       if (!task) {
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) {
-          if (wantsJson) return res.json(spendReceipt);
-          return res.type('html').send(renderReceiptHtml(spendReceipt));
+          const published = publishReceipt(spendReceipt, req);
+          if (wantsJson) return res.json(published);
+          return res.type('html').send(renderReceiptHtml(published));
         }
         if (wantsJson) {
           return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });
@@ -3024,11 +3048,12 @@ export function createApp() {
       }
 
       const covered = withBookCoverage(receipt);
-      if (wantsJson) return res.json(publishReceipt(storedReceiptJson(covered), req));
-      return res.type('html').send(renderReceiptHtml(covered));
+      const published = publishReceipt(wantsJson ? storedReceiptJson(covered) : covered, req);
+      if (wantsJson) return res.json(published);
+      return res.type('html').send(renderReceiptHtml(published));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -3089,7 +3114,7 @@ export function createApp() {
       return writeCanonicalPreimage(res, receipt, req.query);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt preimage error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -3100,7 +3125,7 @@ export function createApp() {
       return sendPreimage(res, published?.preimages, req.params.field, req.query.raw);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt preimage field error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 

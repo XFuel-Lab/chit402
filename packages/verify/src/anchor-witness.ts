@@ -216,6 +216,79 @@ function half(n: number): number {
 }
 
 /**
+ * RFC 9162 fold. Returns the recomputed root, or null when the proof is the
+ * wrong length for `(index, treeSize)` or a sibling is not 32 bytes.
+ * Index and tree size choose the side. A `position` label is not read here.
+ */
+export function inclusionRoot(
+  leaf: Buffer,
+  index: number,
+  treeSize: number,
+  proof: InclusionStep[],
+): string | null {
+  if (!Array.isArray(proof)) return null;
+  const leafIndex = Number(index);
+  const size = Number(treeSize);
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return null;
+  if (leafIndex < 0 || leafIndex >= size) return null;
+  let fn = leafIndex;
+  let sn = size - 1;
+  let hash: Buffer = Buffer.from(leaf);
+  for (const step of proof) {
+    if (sn === 0) return null;
+    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return null;
+    const sib = Buffer.from(step.hash, 'hex');
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (siblingOnLeft) {
+      hash = nodeHash(sib, hash);
+      if ((fn % 2) === 0) {
+        while ((fn % 2) === 0 && fn !== 0) {
+          fn = half(fn);
+          sn = half(sn);
+        }
+      }
+    } else {
+      hash = nodeHash(hash, sib);
+    }
+    fn = half(fn);
+    sn = half(sn);
+  }
+  if (sn !== 0) return null;
+  return hash.toString('hex');
+}
+
+/**
+ * A present `position` label must name the side `index` and `treeSize` already
+ * chose. An omitted label does not. This is the inclusion-proof check. The
+ * public audit path folds with `inclusionRoot` and does not read the label.
+ */
+function positionAgrees(index: number, treeSize: number, proof: InclusionStep[]): boolean {
+  if (!Array.isArray(proof)) return false;
+  const leafIndex = Number(index);
+  const size = Number(treeSize);
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
+  if (leafIndex < 0 || leafIndex >= size) return false;
+  let fn = leafIndex;
+  let sn = size - 1;
+  for (const step of proof) {
+    if (sn === 0) return false;
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (typeof step?.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
+      return false;
+    }
+    if (siblingOnLeft && (fn % 2) === 0) {
+      while ((fn % 2) === 0 && fn !== 0) {
+        fn = half(fn);
+        sn = half(sn);
+      }
+    }
+    fn = half(fn);
+    sn = half(sn);
+  }
+  return true;
+}
+
+/**
  * RFC 9162 §2.1.3.2 inclusion. `index` and `treeSize` choose left or right
  * at each step. A `position` label is not the source of that side. When a
  * label is present it must name the side the index already chose, so a
@@ -231,39 +304,10 @@ export function verifyMerkleInclusion(
   rootHex: string,
   proof: InclusionStep[],
 ): boolean {
-  if (!Array.isArray(proof)) return false;
-  const leafIndex = Number(index);
-  const size = Number(treeSize);
-  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
-  if (leafIndex < 0 || leafIndex >= size) return false;
   const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(root)) return false;
-  let fn = leafIndex;
-  let sn = size - 1;
-  let hash: Buffer = Buffer.from(leaf);
-  for (const step of proof) {
-    if (sn === 0) return false;
-    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
-    const sib = Buffer.from(step.hash, 'hex');
-    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
-    if (typeof step.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
-      return false;
-    }
-    if (siblingOnLeft) {
-      hash = nodeHash(sib, hash);
-      if ((fn % 2) === 0) {
-        while ((fn % 2) === 0 && fn !== 0) {
-          fn = half(fn);
-          sn = half(sn);
-        }
-      }
-    } else {
-      hash = nodeHash(hash, sib);
-    }
-    fn = half(fn);
-    sn = half(sn);
-  }
-  return sn === 0 && hash.toString('hex') === root;
+  if (!positionAgrees(index, treeSize, proof)) return false;
+  return inclusionRoot(leaf, index, treeSize, proof) === root;
 }
 
 export interface ParsedAnchorMemo {

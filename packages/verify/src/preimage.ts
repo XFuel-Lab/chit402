@@ -5,10 +5,25 @@
  */
 import { createHash } from 'node:crypto';
 import { keccak256 } from 'ethers';
+import { inclusionRoot } from './anchor-witness.js';
+import { boundRowHash } from './row-hash.js';
 
 export interface PreimageLeaf {
   preimage_utf8?: string;
   preimage_hex?: string;
+}
+
+export interface AuditSibling {
+  hash?: string;
+  /** Ignored. Index and tree size choose the side. */
+  position?: string;
+}
+
+export interface AuditPath {
+  index?: number;
+  tree_size?: number;
+  siblings?: AuditSibling[];
+  root?: string;
 }
 
 export interface PreimageEntry {
@@ -19,7 +34,11 @@ export interface PreimageEntry {
   preimage_hex?: string;
   hash?: string;
   merkle?: string;
+  /** Old public shape: every leaf body in the prefix. Still accepted. */
   leaves?: PreimageLeaf[];
+  /** This receipt's leaf body. Other leaves are not on this object. */
+  leaf?: PreimageLeaf & { index?: number; task_id?: string; kind?: string };
+  audit_path?: AuditPath;
   url?: string;
 }
 
@@ -92,8 +111,149 @@ function merkleRoot(leaves: PreimageLeaf[]): string | null {
   return nodes[0].toString('hex');
 }
 
+function hasAuditPath(entry: PreimageEntry): boolean {
+  return !!entry.audit_path && !!entry.leaf && Array.isArray(entry.audit_path.siblings);
+}
+
+/** The audit path folds to this receipt's leaf. A different leaf in the same prefix is not this receipt. */
+export const LEAF_NOT_BOUND = 'leaf_not_bound';
+
+function receiptTaskId(receipt: Record<string, unknown>): string {
+  return receipt.task_id == null || receipt.task_id === '' ? '' : String(receipt.task_id);
+}
+
+/**
+ * The row hash the leaf must name. `boundRowHash` agrees top-level
+ * `row_hash`, `book_chain.row_hash`, and `inclusion.row_hash`. Null and `''`
+ * are missing: do not hash `task_id|`. A disagreement is missing here too.
+ */
+function agreedRowHash(receipt: Record<string, unknown>): string | null {
+  const inclusion = receipt.inclusion;
+  const extra = inclusion && typeof inclusion === 'object'
+    ? inclusion as { row_hash?: string | null }
+    : null;
+  const bound = boundRowHash(
+    receipt as { row_hash?: string | null; book_chain?: { row_hash?: string | null } | null },
+    extra,
+  );
+  if (!bound.ok || bound.row == null || bound.row === '') return null;
+  return bound.row;
+}
+
+function decodeHexBytes(value: string): Buffer | null {
+  const hex = value.replace(/^0x/, '');
+  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+function unknownPreimageKey(leaf: object): boolean {
+  return Object.keys(leaf).some((key) => key.startsWith('preimage_') && key !== 'preimage_utf8' && key !== 'preimage_hex');
+}
+
+/**
+ * One leaf body, in bytes. `preimage_utf8` is that body. `preimage_hex` is
+ * either the same body or `0x00 || body` (the hash input). A leading `0x00`
+ * is the domain byte; a body that itself starts with `0x00` is ambiguous.
+ * Two encodings must name the same body. Any other encoding is rejected.
+ */
+function canonicalMerkleBody(leaf: PreimageLeaf): Buffer | null {
+  if (!leaf || typeof leaf !== 'object' || unknownPreimageKey(leaf)) return null;
+  const utf8Present = typeof leaf.preimage_utf8 === 'string';
+  const hexPresent = typeof leaf.preimage_hex === 'string' && leaf.preimage_hex !== '';
+  if (!utf8Present && !hexPresent) return null;
+  if (utf8Present && leaf.preimage_utf8 === '') return null;
+  const utf8Body = utf8Present ? Buffer.from(leaf.preimage_utf8 as string, 'utf8') : null;
+  let hexBody: Buffer | null = null;
+  if (hexPresent) {
+    const raw = decodeHexBytes(leaf.preimage_hex as string);
+    if (!raw || raw.length === 0) return null;
+    if (raw[0] === 0x00) {
+      if (raw.length < 2 || raw[1] === 0x00) return null;
+      hexBody = raw.subarray(1);
+    } else {
+      hexBody = raw;
+    }
+  }
+  if (utf8Body && hexBody && !utf8Body.equals(hexBody)) return null;
+  return utf8Body ?? hexBody;
+}
+
+/** SHA-256 input for an audit-path leaf: `0x00 ||` the canonical body. */
+function auditLeafHashInput(leaf: PreimageLeaf): Buffer | null {
+  const body = canonicalMerkleBody(leaf);
+  if (!body) return null;
+  return Buffer.concat([Buffer.from([0x00]), body]);
+}
+
+/**
+ * Bind an audit path to this receipt. Returns `leaf_not_bound` when any
+ * check fails, including when the agreed row hash is null, empty, or
+ * disagreed, or the leaf encoding does not canonicalize to `task_id|row_hash`.
+ * Inclusion leaf hash and leaf index are checked only when that field is present.
+ * Inclusion tree size is not compared: the witness can cover a longer log.
+ */
+export function auditLeafBinding(receipt: Record<string, unknown>, entry: PreimageEntry): string | null {
+  const leaf = entry.leaf;
+  const path = entry.audit_path;
+  if (!leaf || !path) return LEAF_NOT_BOUND;
+  const taskId = receiptTaskId(receipt);
+  if (!taskId || leaf.task_id == null || String(leaf.task_id) !== taskId) return LEAF_NOT_BOUND;
+  const rowHash = agreedRowHash(receipt);
+  const body = canonicalMerkleBody(leaf);
+  if (rowHash == null || !body) return LEAF_NOT_BOUND;
+  const expected = Buffer.from(`${taskId}|${rowHash}`, 'utf8');
+  if (!body.equals(expected)) return LEAF_NOT_BOUND;
+  const inclusion = receipt.inclusion;
+  if (inclusion && typeof inclusion === 'object') {
+    const claimedLeaf = (inclusion as { leaf?: unknown }).leaf;
+    if (claimedLeaf != null && claimedLeaf !== '') {
+      const input = auditLeafHashInput(leaf);
+      if (!input) return LEAF_NOT_BOUND;
+      const hashed = sha256(input).toString('hex');
+      const want = String(claimedLeaf).replace(/^0x/, '').toLowerCase();
+      if (hashed !== want) return LEAF_NOT_BOUND;
+    }
+    const claimedIndex = (inclusion as { leaf_index?: unknown }).leaf_index;
+    if (claimedIndex != null && claimedIndex !== '') {
+      const want = Number(claimedIndex);
+      const got = Number(path.index);
+      if (!Number.isSafeInteger(want) || got !== want) return LEAF_NOT_BOUND;
+    }
+  }
+  return null;
+}
+
+/**
+ * Recompute the prefix root from this leaf and the sibling hashes.
+ * A full `leaves` array is the pre-redaction shape and is not read here.
+ */
+function auditRoot(entry: PreimageEntry): string | null {
+  const path = entry.audit_path;
+  const leaf = entry.leaf;
+  if (!path || !leaf || !Array.isArray(path.siblings)) return null;
+  const index = Number(path.index);
+  const treeSize = Number(path.tree_size);
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(treeSize)) return null;
+  if (leaf.index != null && Number(leaf.index) !== index) return null;
+  const input = auditLeafHashInput(leaf);
+  if (!input) return null;
+  const got = inclusionRoot(
+    sha256(input),
+    index,
+    treeSize,
+    path.siblings.map((step) => ({ hash: String(step?.hash || '') })),
+  );
+  if (!got) return null;
+  if (path.root != null && path.root !== '') {
+    const claimed = String(path.root).replace(/^0x/, '').toLowerCase();
+    if (claimed !== got) return null;
+  }
+  return got;
+}
+
 function digestHex(entry: PreimageEntry): string | null {
-  if (entry.merkle === 'rfc6962' && Array.isArray(entry.leaves)) {
+  if (hasAuditPath(entry)) return auditRoot(entry);
+  if (entry.merkle === 'rfc6962' && Array.isArray(entry.leaves) && entry.leaves.length > 0) {
     return merkleRoot(entry.leaves);
   }
   const bytes = bytesOf(entry);
@@ -202,7 +362,15 @@ export async function verifyPublishedPreimages(
       continue;
     }
     if (entry.recomputable === false) continue;
-    if (!bytesOf(entry) && !(entry.leaves && entry.leaves.length) && entry.url && fetchImpl) {
+    if (hasAuditPath(entry)) {
+      const bound = auditLeafBinding(receipt, entry);
+      if (bound) {
+        errors.push(`preimage leaf is not this receipt for ${field}`);
+        fields.push({ field, ok: false, reason: bound });
+        continue;
+      }
+    }
+    if (!bytesOf(entry) && !(entry.leaves && entry.leaves.length) && !hasAuditPath(entry) && entry.url && fetchImpl) {
       try {
         const remote = await loadRemote(entry, fetchImpl, trustedHosts);
         if (remote) entry = remote;
