@@ -19,6 +19,8 @@ const {
   bootReceiptLog,
   getReceiptMerkleTree,
   resetReceiptMerkleTree,
+  baseAnchorSigner,
+  assertAnchorFeeCaps,
   rootOf,
   anchorPrevRoot,
   ReceiptLogRefused,
@@ -1775,6 +1777,223 @@ test('a stuck replacement stops when the fee cap is hit', async () => {
     else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
     if (prevCap == null) delete process.env.ANCHOR_MAX_FEE_WEI;
     else process.env.ANCHOR_MAX_FEE_WEI = prevCap;
+  }
+});
+
+function quoteRequest(baseFee, tip) {
+  return async (_url, method) => {
+    if (method === 'eth_chainId') return '0x2105';
+    if (method === 'eth_getBlockByNumber') return { baseFeePerGas: `0x${baseFee.toString(16)}` };
+    if (method === 'eth_maxPriorityFeePerGas') return `0x${tip.toString(16)}`;
+    throw new Error(`unexpected ${method}`);
+  };
+}
+
+function installSignerSpy() {
+  const real = baseAnchorSigner.sign;
+  let calls = 0;
+  baseAnchorSigner.sign = async (args) => {
+    calls += 1;
+    return real(args);
+  };
+  return {
+    get calls() { return calls; },
+    restore() { baseAnchorSigner.sign = real; },
+  };
+}
+
+test('an RPC quote above either anchor fee cap is not signed or broadcast', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevFee = process.env.ANCHOR_MAX_FEE_WEI;
+  const prevPriority = process.env.ANCHOR_MAX_PRIORITY_WEI;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.ANCHOR_MAX_FEE_WEI = '1000000000';
+  process.env.ANCHOR_MAX_PRIORITY_WEI = '100000000';
+  const { default: logger } = await import('../src/logger.js');
+  const originalError = logger.error;
+  const alerts = [];
+  logger.error = function (...args) {
+    alerts.push(args);
+    return originalError.apply(this, args);
+  };
+  const spy = installSignerSpy();
+  try {
+    const cases = [
+      { baseFee: 600_000_000n, tip: 50_000_000n },
+      { baseFee: 10n, tip: 150_000_000n },
+    ];
+    for (const { baseFee, tip } of cases) {
+      const before = spy.calls;
+      const dir = tmp();
+      const tree = new ReceiptMerkleTree();
+      tree.dir = dir;
+      tree.appendReceipt('row-1', 'hash-1', { publish: false });
+      let broadcasts = 0;
+      const head = await tree.publishHead({
+        force: true,
+        now: '2026-10-06T12:00:00.000Z',
+        nonce: 4,
+        request: quoteRequest(baseFee, tip),
+        send: async () => {
+          broadcasts += 1;
+          return `0x${'11'.repeat(32)}`;
+        },
+      });
+      assert.equal(spy.calls, before);
+      assert.equal(broadcasts, 0);
+      assert.equal(head.anchor_status, 'pending');
+      assert.equal(head.anchor.reason, 'anchor_fee_cap');
+      assert.equal(head.anchor.tx, null);
+      assert.equal(tree.bundleStatus().last_error, 'anchor_fee_cap');
+      assert.equal(anchorIntentRows(dir).some((row) => row.raw), false);
+      assert.equal(anchorIntentRows(dir).some((row) => row.status === 'signed' || row.status === 'broadcast'), false);
+      assert.equal(anchorIntentRows(dir).some((row) => row.status === 'intent'), true);
+    }
+    assert.equal(alerts.some((args) => JSON.stringify(args).includes('anchor_fee_cap')), true);
+  } finally {
+    logger.error = originalError;
+    spy.restore();
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevFee == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+    else process.env.ANCHOR_MAX_FEE_WEI = prevFee;
+    if (prevPriority == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    else process.env.ANCHOR_MAX_PRIORITY_WEI = prevPriority;
+  }
+});
+
+test('an RPC quote at or below the anchor fee caps is signed and broadcast', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevFee = process.env.ANCHOR_MAX_FEE_WEI;
+  const prevPriority = process.env.ANCHOR_MAX_PRIORITY_WEI;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.ANCHOR_MAX_FEE_WEI = '1000000000';
+  process.env.ANCHOR_MAX_PRIORITY_WEI = '100000000';
+  const spy = installSignerSpy();
+  const { Transaction } = await import('ethers');
+  try {
+    const cases = [
+      { baseFee: 450_000_000n, tip: 100_000_000n },
+      { baseFee: 100_000_000n, tip: 10_000_000n },
+    ];
+    for (const { baseFee, tip } of cases) {
+      const before = spy.calls;
+      const dir = tmp();
+      const tree = new ReceiptMerkleTree();
+      tree.dir = dir;
+      tree.appendReceipt('row-1', 'hash-1', { publish: false });
+      let raw = null;
+      const head = await tree.publishHead({
+        force: true,
+        now: '2026-10-06T12:00:00.000Z',
+        nonce: 4,
+        request: quoteRequest(baseFee, tip),
+        lookup: async () => ({ rebroadcast: true }),
+        send: async (args) => {
+          raw = args.raw;
+          return args.hash;
+        },
+      });
+      assert.equal(spy.calls, before + 1);
+      assert.ok(raw);
+      const tx = Transaction.from(raw);
+      assert.equal(tx.maxFeePerGas, baseFee * 2n + tip);
+      assert.equal(tx.maxPriorityFeePerGas, tip);
+      assert.equal(head.anchor.reason, 'unconfirmed');
+      assert.notEqual(head.anchor_status, 'pending');
+      assert.equal(anchorIntentRows(dir).some((row) => row.status === 'broadcast' && row.raw === raw), true);
+    }
+  } finally {
+    spy.restore();
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevFee == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+    else process.env.ANCHOR_MAX_FEE_WEI = prevFee;
+    if (prevPriority == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    else process.env.ANCHOR_MAX_PRIORITY_WEI = prevPriority;
+  }
+});
+
+test('production refuses to boot when an anchor fee cap is missing or not numeric', async () => {
+  const prevEnv = process.env.NODE_ENV;
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevFee = process.env.ANCHOR_MAX_FEE_WEI;
+  const prevPriority = process.env.ANCHOR_MAX_PRIORITY_WEI;
+  const spy = installSignerSpy();
+  process.env.NODE_ENV = 'production';
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  const cases = [
+    { fee: undefined, priority: '100', name: 'ANCHOR_MAX_FEE_WEI' },
+    { fee: '100', priority: undefined, name: 'ANCHOR_MAX_PRIORITY_WEI' },
+    { fee: '', priority: '100', name: 'ANCHOR_MAX_FEE_WEI' },
+    { fee: '100', priority: '', name: 'ANCHOR_MAX_PRIORITY_WEI' },
+    { fee: 'nope', priority: '100', name: 'ANCHOR_MAX_FEE_WEI' },
+    { fee: '100', priority: '1.5', name: 'ANCHOR_MAX_PRIORITY_WEI' },
+    { fee: '10gwei', priority: '100', name: 'ANCHOR_MAX_FEE_WEI' },
+  ];
+  function apply(entry) {
+    if (entry.fee == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+    else process.env.ANCHOR_MAX_FEE_WEI = entry.fee;
+    if (entry.priority == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    else process.env.ANCHOR_MAX_PRIORITY_WEI = entry.priority;
+  }
+  try {
+    for (const entry of cases) {
+      apply(entry);
+      assert.throws(
+        () => bootReceiptLog(tmp()),
+        (err) => err.code === 'anchor_fee_cap_config' && err.message.includes(entry.name),
+      );
+      assert.throws(
+        () => assertAnchorFeeCaps(),
+        (err) => err.code === 'anchor_fee_cap_config' && err.message.includes(entry.name),
+      );
+    }
+    apply(cases[0]);
+    const { startServer } = await import('../src/server.js');
+    await assert.rejects(
+      () => startServer(),
+      (err) => err.code === 'anchor_fee_cap_config' && err.message.includes('ANCHOR_MAX_FEE_WEI'),
+    );
+    for (const entry of [cases[0], cases[4]]) {
+      apply(entry);
+      const dir = tmp();
+      const tree = new ReceiptMerkleTree();
+      tree.dir = dir;
+      tree.appendReceipt('row-1', 'hash-1', { publish: false });
+      let broadcasts = 0;
+      await assert.rejects(
+        () => tree.publishHead({
+          force: true,
+          now: '2026-10-06T12:00:00.000Z',
+          nonce: 4,
+          send: async () => {
+            broadcasts += 1;
+            return `0x${'11'.repeat(32)}`;
+          },
+        }),
+        (err) => err.code === 'anchor_fee_cap_config' && err.message.includes(entry.name),
+      );
+      assert.equal(broadcasts, 0);
+      assert.equal(anchorIntentRows(dir).some((row) => row.raw), false);
+    }
+    assert.equal(spy.calls, 0);
+    process.env.NODE_ENV = 'test';
+    delete process.env.ANCHOR_MAX_FEE_WEI;
+    delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    assert.doesNotThrow(() => assertAnchorFeeCaps());
+    process.env.NODE_ENV = 'development';
+    assert.doesNotThrow(() => assertAnchorFeeCaps());
+  } finally {
+    spy.restore();
+    if (prevEnv == null) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevEnv;
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevFee == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+    else process.env.ANCHOR_MAX_FEE_WEI = prevFee;
+    if (prevPriority == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    else process.env.ANCHOR_MAX_PRIORITY_WEI = prevPriority;
   }
 });
 
