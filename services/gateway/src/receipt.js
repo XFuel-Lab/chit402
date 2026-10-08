@@ -9,6 +9,14 @@ import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import {
+  assertIssuanceOpen,
+  bindIssuerRoot,
+  isCutoverPaused,
+  issuerRootActive,
+  issuerRootClaim,
+  ISSUER_ROOT_PAYLOAD_VERSION,
+} from './issuer-root.js';
+import {
   sessionOf,
   publicSessionBlock,
   outerSessionPointer,
@@ -38,10 +46,21 @@ import {
 import {
   CANONICAL_PAYLOAD_VERSION,
   RECEIPT_CANONICAL_FIELDS,
+  V11_CANONICALIZATION,
   sealCanonicalObject,
   resealSignedClaims,
 } from './canonical-preimage.js';
-import { currentHistoryPin } from './issuer-history.js';
+import {
+  currentHistoryPin,
+  currentIssuerHistory,
+  issuerHistorySnapshotClaim,
+  publishedHistoryEntries,
+  verifyHistorySnapshotClaims,
+} from './issuer-history.js';
+import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
+import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
+import { bindRequestSalt, claimIdempotency, requestDigest, requestDigestCanonical, requestSalt } from './request-binding.js';
+import { jcsRfc8785 } from './offer-receipt.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -165,9 +184,16 @@ export function buildJwksUri(baseUrl = '') {
  * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
  * verify. v9 receipts keep the head pair they were signed with. A read never
- * re-signs or upgrades them. Only a receipt issued by this build is v10.
+ * re-signs or upgrades them. A receipt issued while the issuer root is off
+ * is v10. v11 is the same claims plus issuer_root, and only when that flag
+ * is on. This constant stays 10.
  */
 export const RECEIPT_PAYLOAD_VERSION = CANONICAL_PAYLOAD_VERSION;
+
+/** Payload version written into a newly signed receipt. */
+export function activeReceiptPayloadVersion() {
+  return issuerRootActive() ? ISSUER_ROOT_PAYLOAD_VERSION : RECEIPT_PAYLOAD_VERSION;
+}
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -865,6 +891,15 @@ function paymentClaimsOf(view) {
   };
 }
 
+function clientRequestBinding(view) {
+  const request = view?.request || view?.meta?.request || null;
+  if (!request || !issuerRootActive()) return null;
+  const request_preimage = requestDigestCanonical(request);
+  const request_digest = requestDigest(request);
+  if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest, requestSalt(request));
+  return { request_preimage, request_digest };
+}
+
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
@@ -897,6 +932,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     outputCommitment: view.output_commitment ?? null,
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });
+  const requestBinding = clientRequestBinding(view);
+  const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -949,7 +986,15 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
     issuer_history: currentHistoryPin(),
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    ...(issuerRootActive() ? {
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_root: issuerRootClaim(getIssuerKid()),
+      policy: signedReceiptPolicy(),
+      ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
+      ...(requestBinding ? { request_digest: requestBinding.request_digest } : {}),
+    } : {}),
+    payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
 }
@@ -1166,8 +1211,72 @@ function coveringHeadStale(cachedClaims, taskId) {
  * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
+/** Unsigned later covering root. Never a replacement for issuer_signature. */
+export const COVERING_HEAD_SCHEMA = 'chit402.covering_head.v1';
+
+/**
+ * v11, and any receipt served while the issuer root is on, keeps the JWS
+ * that was stored. A flag-off v10 receipt may still be restamped the way
+ * main does, except during the cutover pause.
+ */
+export function storedJwsImmutable(receipt) {
+  if (issuerRootActive()) return true;
+  const claims = decodeReceiptClaims(receipt);
+  const version = Number(claims?.payload_version ?? receipt?.issuer_signature?.payload_version);
+  return Number.isFinite(version) && version >= ISSUER_ROOT_PAYLOAD_VERSION;
+}
+
+/**
+ * A tree-head restamp re-signs the stored claims. That path is only the
+ * flag-off v10 refresh. It does not run for v11, and it does not run while
+ * the issuer root is on or issuance is paused.
+ */
+export function treeHeadRestampAllowed(receipt) {
+  if (storedJwsImmutable(receipt)) return false;
+  if (isCutoverPaused()) return false;
+  return true;
+}
+
+function attachCoveringHeadSidecar(receipt, claims) {
+  const taskId = receipt?.task_id;
+  if (!taskId) return;
+  const root = getReceiptMerkleTree().prefixRoot(taskId);
+  if (!root) return;
+  const signed = claims && Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')
+    ? (claims.tree_head_hash ?? null)
+    : null;
+  if (signed === root) return;
+  receipt.covering_head = {
+    schema: COVERING_HEAD_SCHEMA,
+    signed: false,
+    task_id: taskId,
+    tree_head_hash: root,
+    signed_tree_head_hash: signed,
+  };
+}
+
+/**
+ * Later covering root for a stored receipt.
+ * v11 leaves issuer_signature.jws byte-for-byte and records the new root on
+ * covering_head, which is unsigned. Flag-off v10 may still reseal that one
+ * claim inside the JWS. v9 and older are returned unchanged.
+ * @param {object} receipt
+ */
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
+  if (storedJwsImmutable(receipt) || !treeHeadRestampAllowed(receipt)) {
+    const original = receipt.issuer_signature;
+    const jws = original.jws;
+    const kid = original.kid;
+    const preimage = original.canonical_preimage;
+    const payloadHash = original.payload_hash;
+    if (storedJwsImmutable(receipt)) attachCoveringHeadSidecar(receipt, decodeReceiptClaims(receipt));
+    original.jws = jws;
+    if (kid) original.kid = kid;
+    if (preimage !== undefined) original.canonical_preimage = preimage;
+    if (payloadHash !== undefined) original.payload_hash = payloadHash;
+    return receipt;
+  }
   const claims = decodeReceiptClaims(receipt);
   if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
@@ -1376,16 +1485,19 @@ function sessionClaimsFrozen(cachedClaims, draft) {
 }
 
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+  assertIssuanceOpen();
   const draft = canonicalSignedClaims(receipt, { iat });
-  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS);
+  const canonicalize = draft.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
+  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS, canonicalize);
   const jwksUri = buildJwksUri(baseUrl);
   const { jws, kid } = signJws(sealed.claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
   });
   const issuer_jwk = getIssuerPublicKeyJwk();
+  bindIssuerRoot(sealed.claims, kid, issuer_jwk);
   return {
     alg: 'ES256',
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    payload_version: sealed.claims.payload_version,
     jws,
     kid,
     issuer_jwk,
@@ -1504,6 +1616,18 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: result.payload };
     }
+    const snapshot = verifyHistorySnapshotClaims(result.payload, {
+      publishedEntries: publishedHistoryEntries(result.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
+    }
+    if (Number(result.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(result.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: result.payload };
+      }
+    }
   }
 
   return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
@@ -1559,6 +1683,18 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     const window = verifySessionWindow(jwsResult.payload);
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: jwsResult.payload };
+    }
+    const snapshot = verifyHistorySnapshotClaims(jwsResult.payload, {
+      publishedEntries: publishedHistoryEntries(jwsResult.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
+    }
+    if (Number(jwsResult.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(jwsResult.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: jwsResult.payload };
+      }
     }
   }
 
@@ -1989,6 +2125,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const draft = {
     schema: 'xfuel.receipt.v4',
     task_id: task.taskId,
+    request: task.request || task.meta?.request || null,
     status: task.status,
     proof_outcome: outcome,
     verify_url: buildVerifyUrl(base, task.taskId, { reqHost }),
@@ -2092,6 +2229,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // Late session assign is a child receipt — never mutate genesis session claims.
   // A paid null claim_id stays cached until a book seat exists. Session
   // changes do not rewrite it. A legacy JWS that omits claim_id is not rewritten.
+  let coveringHead = null;
   // A stored JWS is reused. Assigning a new one (first seal, or a settlement
   // update the cache does not already cover) must hit disk immediately when
   // this task is a rehydrated snapshot: flushAll only walks the hot map.
@@ -2104,6 +2242,16 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  // Same idempotency key with a different request must not reuse this JWS.
+  const receiptRequest = clientRequestBinding(draft);
+  if (receiptRequest && issuer_signature?.jws) {
+    const cachedDigest = decodeReceiptClaims({ issuer_signature })?.request_digest || null;
+    if (cachedDigest !== receiptRequest.request_digest) {
+      const err = new Error('idempotency key was already used for a different request');
+      err.code = 'idempotency_conflict';
+      throw err;
+    }
+  }
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
     if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
@@ -2111,13 +2259,21 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
-      // Refresh the covering head inside the stored claim set. Do not drop
+      // A stored JWS is not replaced when it is immutable (v11, or the issuer
+      // root is on). The later root is an unsigned sidecar. Flag-off v10 may
+      // still reseal tree_head_hash inside the same claim set. Do not drop
       // the JWS and call signReceiptEcdsa: that would issue a new payload.
+      const before = issuer_signature.jws;
       const refreshed = stampCoveringTreeHead({
         task_id: draft.task_id,
         issuer_signature,
       });
       issuer_signature = refreshed.issuer_signature;
+      if (storedJwsImmutable({ issuer_signature, task_id: draft.task_id }) && issuer_signature.jws !== before) {
+        issuer_signature.jws = before;
+      }
+      coveringHead = refreshed.covering_head || null;
+      if (coveringHead && task && typeof task === 'object') task.coveringHead = coveringHead;
       rememberIssuerSignature(issuer_signature);
     }
   }
@@ -2148,6 +2304,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       issuer_jwk_pin: issuer_signature.kid,
       offline_key_source: 'issuer_signature.issuer_jwk',
     },
+    ...(receiptRequest ? {
+      request_digest: receiptRequest.request_digest,
+      request_preimage: receiptRequest.request_preimage,
+    } : {}),
     route_meta: {
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
@@ -2169,6 +2329,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     proof: draft.proof,
     links: draft.links,
     issuer_signature,
+    ...(coveringHead ? { covering_head: coveringHead } : {}),
   };
 
   if (task.meta?.refund?.status === 'refund_owed') {
@@ -2233,6 +2394,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     envelope.tolerance = signedClaims.tolerance ?? null;
   }
 
+  // Salt stays off the envelope. The response header is the principal's copy.
+  bindRequestSalt(envelope, draft.request);
   return envelope;
 }
 

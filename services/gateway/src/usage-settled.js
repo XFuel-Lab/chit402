@@ -16,6 +16,7 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
+import { claimIdempotency, isRequestBindingError, requestDigest, requestSalt, refusalMatchesRequest } from './request-binding.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -494,7 +495,20 @@ export class UsageSettledLedger {
     this._nextSeq.set(id, seq + 1);
     this._tipSeq.set(id, seq);
     this._lastRowHash.set(id, row.row_hash);
-    this._issueRefusal(row);
+    try {
+      this._issueRefusal(row, { rethrowBinding: true });
+    } catch (err) {
+      if (!isRequestBindingError(err)) throw err;
+      this._nextSeq.set(id, seq);
+      this._tipSeq.set(id, seq - 1);
+      if (row.prev_hash) this._lastRowHash.set(id, row.prev_hash);
+      else this._lastRowHash.delete(id);
+      delete row.seq;
+      delete row.prev_hash;
+      delete row.row_hash;
+      delete row.book_chain;
+      throw err;
+    }
   }
 
   _noteFork(agentId, info) {
@@ -510,12 +524,13 @@ export class UsageSettledLedger {
    * seq, so it does not mint a new nonce. Signing failure still keeps the row.
    * @param {object} row
    */
-  _issueRefusal(row) {
+  _issueRefusal(row, { rethrowBinding = false } = {}) {
     const blocked = row?.event === 'policy_blocked' || row?.evidence === 'policy_blocked';
     if (!blocked || row.refusal) return;
     try {
       row.refusal = issueRefusalReceipt(row);
     } catch (err) {
+      if (rethrowBinding && isRequestBindingError(err)) throw err;
       logger.warn({ err: err.message, task_id: row.task_id }, 'refusal receipt not signed');
     }
   }
@@ -944,6 +959,7 @@ export class UsageSettledLedger {
     periodStart = null,
     anchor = null,
     amountRequested = null,
+    request = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -956,6 +972,23 @@ export class UsageSettledLedger {
     if (this.byTask.has(tid)) {
       const existing = this.byTask.get(tid);
       if (existing?.event === 'policy_blocked') {
+        if (request && existing.refusal) {
+          try {
+            if (existing.refusal.request_digest && !refusalMatchesRequest(existing.refusal, request)) {
+              return {
+                ok: false,
+                reason: 'idempotency key was already used for a different request',
+                code: 'idempotency_conflict',
+              };
+            }
+            if (request.idempotency_key) claimIdempotency(request.idempotency_key, requestDigest(request), requestSalt(request));
+          } catch (err) {
+            if (err.code === 'idempotency_conflict') {
+              return { ok: false, reason: err.message, code: err.code };
+            }
+            throw err;
+          }
+        }
         return { ok: true, entry: existing, duplicate: true };
       }
       return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
@@ -987,8 +1020,17 @@ export class UsageSettledLedger {
       cap_atomic: capAtomic != null ? String(capAtomic) : null,
       period_start: periodStart || null,
       anchor: refusalAnchorOrUnavailable(anchor),
+      request: request && typeof request === 'object' ? request : null,
+      intent_supplied: request?.intent_supplied === true,
     };
-    this._index(entry);
+    try {
+      this._index(entry);
+    } catch (err) {
+      if (isRequestBindingError(err)) {
+        return { ok: false, reason: err.message, code: err.code };
+      }
+      throw err;
+    }
     return { ok: true, entry, duplicate: false };
   }
 

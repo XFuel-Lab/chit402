@@ -906,3 +906,49 @@ test('the memo scan pages with before and fails closed at the page cap', async (
     await new Promise((resolve) => capRpc.close(resolve));
   }
 });
+
+test('a pending leaf still fails a missing issuer pin and a missing epoch record', async () => {
+  const fx = epoch2Fixture();
+  const pending = pendingInclusion({ root: fx.root });
+  const common = {
+    receipt: { task_id: 'd', row_hash: 'rd' },
+    inclusion: pending,
+    trustedKids: [fx.key.kid],
+    checkNewestAnchor: true,
+    ...fetchers(fx),
+  };
+  const honest = await verifyAnchoredRoot({ ...common, head: fx.head });
+  assert.equal(honest.overall, 'pending');
+  assert.equal(honest.issuer_pin.checked, false);
+
+  const pinned = sealHead({
+    ...fx.head,
+    issuer_key_pin: {
+      era: 1,
+      commit: 'a'.repeat(40),
+      path: 'docs/well-known/issuer-key.json',
+      sha256: 'b'.repeat(64),
+    },
+  }, fx.key);
+  const downgraded = await verifyAnchoredRoot({ ...common, head: pinned });
+  assert.equal(downgraded.overall, 'failed');
+  assert.notEqual(downgraded.overall, 'pending');
+  assert.ok(downgraded.errors.includes('ISSUER_PIN_DOWNGRADE'));
+  assert.equal(downgraded.issuer_pin.checked, true);
+  assert.equal(downgraded.issuer_pin.ok, false);
+
+  const epochHead = sealHead({
+    schema: 'chit402.tree_head.v2',
+    payload_version: 2,
+    root: fx.root,
+    tree_size: 4,
+    epoch: 2,
+    prev_epoch_root: '11'.repeat(32),
+    prev_epoch_size: 4,
+    anchors: fx.head.anchors,
+  }, fx.key);
+  const unlinked = await verifyAnchoredRoot({ ...common, head: epochHead });
+  assert.equal(unlinked.overall, 'failed');
+  assert.notEqual(unlinked.overall, 'pending');
+  assert.ok(unlinked.errors.includes('epoch_record_missing'));
+});

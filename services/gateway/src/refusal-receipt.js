@@ -16,15 +16,31 @@
  * means the issuer had no block. verify_url is not inside the signature.
  */
 import crypto from 'crypto';
-import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import { withPublicPreimages } from './receipt-preimage.js';
-import { REFUSAL_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
-import { currentHistoryPin } from './issuer-history.js';
-
+import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
+import { jcsRfc8785 } from './offer-receipt.js';
+import { claimIdempotency, requestDigest, requestDigestCanonical, requestDigestMatches, requestSalt } from './request-binding.js';
+import {
+  currentHistoryPin,
+  currentIssuerHistory,
+  issuerHistorySnapshotClaim,
+  publishedHistoryEntries,
+  verifyHistorySnapshotClaims,
+} from './issuer-history.js';
+import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
+import {
+  assertIssuanceOpen,
+  bindIssuerRoot,
+  issuerRootActive,
+  issuerRootClaim,
+  REFUSAL_PAYLOAD_VERSION_V2,
+  REFUSAL_SCHEMA_V2,
+} from './issuer-root.js';
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
-/** Versions a verifier accepts. Version 1 has no history pin. */
-export const REFUSAL_PAYLOAD_VERSIONS = Object.freeze([1, 2]);
-/** New refusals. Version 1 still verifies. */
+/** Versions a verifier accepts. Version 1 has no history pin. Version 3 is refusal schema v2. */
+export const REFUSAL_PAYLOAD_VERSIONS = Object.freeze([1, 2, 3]);
+/** New refusals while the issuer root is off. Version 1 still verifies. */
 export const REFUSAL_PAYLOAD_VERSION = 2;
 export const REFUSAL_JWT_TYP = 'chit402-refusal+jwt';
 
@@ -86,14 +102,39 @@ export function refusalAnchorClaims(anchor) {
  * Sign a refusal for a policy_blocked row that already has seq and row_hash.
  * @param {object} row
  */
+function bindingError(message, code) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
 export function issueRefusalReceipt(row) {
+  assertIssuanceOpen();
   const anchor = refusalAnchorClaims(row?.anchor);
+  const request = row?.request && typeof row.request === 'object' ? row.request : null;
+  const intentSupplied = row?.intent_supplied === true || request?.intent_supplied === true;
+  const intentId = row?.intent_id || request?.intent_id || null;
+  if (intentSupplied && !intentId) {
+    throw bindingError('intent_id is required when the request carried one', 'intent_id_required');
+  }
   const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
   const nonce = crypto.randomBytes(16).toString('hex');
   const amount = textOrNull(row?.amount_requested);
+  const v2 = issuerRootActive();
+  const schema = v2 ? REFUSAL_SCHEMA_V2 : REFUSAL_SCHEMA;
+  const payloadVersion = v2 ? REFUSAL_PAYLOAD_VERSION_V2 : REFUSAL_PAYLOAD_VERSION;
+  let bound = null;
+  if (v2) {
+    if (!request) throw bindingError('request_digest is required to bind this refusal', 'request_unbound');
+    const request_preimage = requestDigestCanonical(request);
+    const request_digest = requestDigest(request);
+    if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest, requestSalt(request));
+    bound = { request_preimage, request_digest };
+  }
+  const historyMirror = v2 ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
   const claims = {
-    schema: REFUSAL_SCHEMA,
-    payload_version: REFUSAL_PAYLOAD_VERSION,
+    schema,
+    payload_version: payloadVersion,
     kind: 'refusal',
     refusal_id: refusalId,
     nonce,
@@ -103,7 +144,7 @@ export function issueRefusalReceipt(row) {
     agent_id: Number(row.agent_id),
     book_id: Number(row.agent_id),
     task_id: String(row.task_id),
-    intent_id: row?.intent_id || null,
+    intent_id: intentId || null,
     attempt_index: row?.attempt_index != null ? Number(row.attempt_index) : null,
     amount_requested: amount,
     asset: amount != null ? 'USDC' : null,
@@ -125,15 +166,23 @@ export function issueRefusalReceipt(row) {
     charged: false,
     amount_charged: '0',
     issuer_history: currentHistoryPin(),
+    ...(v2 ? {
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_root: issuerRootClaim(getIssuerKid()),
+      request_digest: bound.request_digest,
+      ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
+    } : {}),
   };
-  const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS);
+  const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS, v2 ? jcsRfc8785 : undefined);
   const { jws, kid } = signJws(sealed.claims, { typ: REFUSAL_JWT_TYP });
+  bindIssuerRoot(sealed.claims, kid, getIssuerPublicKeyJwk());
   return {
     ...sealed.claims,
     issuer_signature: {
       alg: 'ES256',
       typ: REFUSAL_JWT_TYP,
-      payload_version: REFUSAL_PAYLOAD_VERSION,
+      payload_version: payloadVersion,
       jws,
       kid,
       issuer_jwk: getIssuerPublicKeyJwk(),
@@ -142,6 +191,7 @@ export function issueRefusalReceipt(row) {
       canonical_preimage: sealed.preimage,
     },
     canonical_preimage: sealed.preimage,
+    request_preimage: bound?.request_preimage || null,
     verify_url: null,
   };
 }
@@ -199,6 +249,10 @@ function anchorSame(outer, signed) {
     && same(outer.state_root, signed.state_root);
 }
 
+function isRefusalSchema(schema) {
+  return schema === REFUSAL_SCHEMA || schema === REFUSAL_SCHEMA_V2;
+}
+
 function jwsPayloadSchema(jws) {
   if (!jws || typeof jws !== 'string') return null;
   const payloadB64 = jws.split('.')[1];
@@ -234,7 +288,7 @@ export function verifyRefusalReceipt(doc, jwks = null) {
   const sig = doc.issuer_signature;
   if (!sig?.jws) return { checked: false, valid: false, reason: 'no_signature' };
   const peeked = jwsPayloadSchema(sig.jws);
-  if (doc.schema !== REFUSAL_SCHEMA && peeked !== REFUSAL_SCHEMA) {
+  if (!isRefusalSchema(doc.schema) && !isRefusalSchema(peeked)) {
     return { checked: false, valid: false, reason: 'not_a_refusal' };
   }
   const result = verifyJwsWithJwks(sig.jws, jwks || getJwks());
@@ -242,7 +296,7 @@ export function verifyRefusalReceipt(doc, jwks = null) {
     return { checked: true, valid: false, reason: result.reason || 'signature_invalid', kid: sig.kid || null };
   }
   const payload = result.payload || {};
-  if (payload.schema !== REFUSAL_SCHEMA || (doc.schema != null && doc.schema !== payload.schema)) {
+  if (!isRefusalSchema(payload.schema) || (doc.schema != null && doc.schema !== payload.schema)) {
     return { checked: true, valid: false, reason: 'schema_mismatch', payload };
   }
   const version = Number(payload.payload_version);
@@ -254,6 +308,23 @@ export function verifyRefusalReceipt(doc, jwks = null) {
     if (!pin || typeof pin.hash !== 'string' || pin.version == null || pin.seq == null) {
       return { checked: true, valid: false, reason: 'issuer_history_pin_missing', payload };
     }
+    // Refusal v2 is payload version 3. The same snapshot rules as payment
+    // v11 apply here. A gate of payload_version >= 11 would skip them.
+    if (version === REFUSAL_PAYLOAD_VERSION_V2) {
+      const snapshot = verifyHistorySnapshotClaims(payload, {
+        publishedEntries: publishedHistoryEntries(payload.issuer_history) ?? undefined,
+      });
+      if (!snapshot.ok) {
+        return { checked: true, valid: false, reason: snapshot.reason, payload };
+      }
+      if (typeof payload.request_digest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.request_digest)
+        || typeof doc.request_preimage !== 'string' || !doc.request_preimage) {
+        return { checked: true, valid: false, reason: 'REQUEST_UNBOUND', payload };
+      }
+      if (!requestDigestMatches(payload.request_digest, doc.request_preimage)) {
+        return { checked: true, valid: false, reason: 'request_digest_mismatch', payload };
+      }
+    }
     if (typeof payload.payload_hash !== 'string' || !/^[0-9a-f]{64}$/.test(payload.payload_hash)) {
       return { checked: true, valid: false, reason: 'payload_hash_missing', payload };
     }
@@ -263,6 +334,25 @@ export function verifyRefusalReceipt(doc, jwks = null) {
         return { checked: true, valid: false, reason: 'payload_hash_mismatch', payload };
       }
     }
+  }
+  const rootSchema = payload.schema === REFUSAL_SCHEMA_V2 || version >= REFUSAL_PAYLOAD_VERSION_V2;
+  if (rootSchema) {
+    const root = payload.issuer_root;
+    if (!root || typeof root !== 'object' || typeof root.kid !== 'string') {
+      return { checked: true, valid: false, reason: 'issuer_root_missing', payload };
+    }
+    const signedKid = result.kid || sig.kid || null;
+    if (root.kid !== signedKid) {
+      return { checked: true, valid: false, reason: 'issuer_root_kid_mismatch', payload };
+    }
+    if (sig.issuer_jwk) {
+      const thumb = computeJwkThumbprint(sig.issuer_jwk);
+      if (thumb !== root.kid) {
+        return { checked: true, valid: false, reason: 'issuer_root_kid_mismatch', payload };
+      }
+    }
+  } else if (payload.issuer_root) {
+    return { checked: true, valid: false, reason: 'issuer_root_unexpected', payload };
   }
   if (payload.kind !== 'refusal') {
     return { checked: true, valid: false, reason: 'kind_mismatch', payload };
@@ -337,7 +427,7 @@ export function renderRefusalHtml(doc) {
   </style>
 </head>
 <body>
-  <p class="muted">chit402.refusal.v1 · payload version ${esc(doc?.payload_version ?? REFUSAL_PAYLOAD_VERSION)} · no USDC charged</p>
+  <p class="muted">${esc(doc?.schema || REFUSAL_SCHEMA)} · payload version ${esc(doc?.payload_version ?? REFUSAL_PAYLOAD_VERSION)} · no USDC charged</p>
   <h1>Refusal ${esc(doc?.refusal_code || '')}</h1>
   <p>The issuer signed that it refused this spend. This is not a payment receipt.</p>
   <dl>

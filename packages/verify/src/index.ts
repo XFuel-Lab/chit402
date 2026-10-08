@@ -2014,6 +2014,7 @@ export {
   isRefusalDocument,
   verifyRefusal,
   REFUSAL_SCHEMA,
+  REFUSAL_SCHEMA_V2,
   REFUSAL_PAYLOAD_VERSION,
   REFUSAL_PROVES,
   REFUSAL_DOES_NOT_PROVE,
@@ -2021,6 +2022,12 @@ export {
   type RefusalVerification,
   type RefusalJwks,
 } from './refusal.js';
+
+export {
+  verifyRequestDigest,
+  requestDigestOfPreimage,
+  type RequestBindingStatus,
+} from './request-binding.js';
 
 export {
   acceptTreeHeadSchema,
@@ -2075,6 +2082,40 @@ export {
   type AnchorHead,
   type VerifyAnchoredRootInput,
 } from './anchor-witness.js';
+
+export {
+  assessIssuerPin,
+  issuerPinContentUrl,
+  issuerPinFileHash,
+  loadIssuerPinBytes,
+  readIssuerPinClaim,
+  registrationPreimage,
+  rotationStatement,
+  serializeIssuerPin,
+  verifyCitizenRotation,
+  verifyRegistrationSignature,
+  canonicalPublicKey,
+  ISSUER_REGISTRATION_CONTEXT,
+  ISSUER_ROTATION_CONTEXT,
+  ISSUER_PIN_VERSION,
+  ISSUER_PIN_SCHEMA,
+  ISSUER_PIN_PATH,
+  ISSUER_PIN_CHAIN_ID,
+  PUBLISHED_ISSUER_PIN_KID,
+  CITIZEN_FREEZE_SCHEMA,
+  CITIZEN_FREEZE_PURPOSE,
+  ISSUER_PIN_MISMATCH,
+  ISSUER_PIN_HASH_MISMATCH,
+  ISSUER_SELF_SIG_INVALID,
+  ISSUER_PIN_DOWNGRADE,
+  ISSUER_PIN_MUTABLE_REF,
+  ISSUER_ROTATION_UNCONTROLLED,
+  ISSUER_PIN_CHAIN_REFUSED,
+  type IssuerPinRef,
+  type IssuerPinAssessment,
+  type IssuerKeyPin,
+  type AssessIssuerPinInput,
+} from './issuer-pin.js';
 
 export {
   PINNED_BASE_ANCHOR_WALLET,

@@ -1,0 +1,17 @@
+{
+  "schema": "chit402.issuer_key_pin.v1",
+  "version": 1,
+  "chain_id": "eip155:84532",
+  "created_at": "2026-10-07T18:00:00.000Z",
+  "jwk": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "q89Tes4-TPClhKC5Z3Uqunyjk35ROsYky8pngyrQ-RI",
+    "y": "3Bl39JQkaJEpUqqbrDeNq-KGkXSLkjHLHkQtvp2lkfU",
+    "kid": "kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c",
+    "alg": "ES256",
+    "use": "sig"
+  },
+  "self_signature": "BUewGb-BuDyBJvbCDdlmWIwbkU2QSSAAYhWURWoGa5BxUDQdnXGLOW60F80w3c3EhPfqCQvY7I_61MZxLUC04w",
+  "control": null
+}
