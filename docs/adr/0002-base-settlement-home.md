@@ -19,4 +19,4 @@ ADR 0001 moved fee currency to USDC on Base. Ops reality also requires Base for 
 
 Safe-compatible ops; co-located fees + proofs + (later) token; clear provider-agnostic story. Cost: redeploy verifier on Base; update env/examples. EdgeCloud routing volume is preserved.
 
-Live verifier: see [RUNTIME_STATE.md](../RUNTIME_STATE.md).
+Live verifier: see [DEPLOYMENT.md](../DEPLOYMENT.md).

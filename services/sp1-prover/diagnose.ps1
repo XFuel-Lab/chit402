@@ -1,3 +1,7 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Diagnose ECS Status
 # Check what's happening with the deployment
 
@@ -9,8 +13,8 @@ Get-Content $envPath | ForEach-Object {
 }
 
 $region = "us-east-1"
-$cluster = "sp1-prover-cluster"
-$service = "sp1-prover-service"
+$cluster = "$($script:EcsCluster)"
+$service = "$($script:EcsService)"
 
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "  ECS Deployment Diagnostics" -ForegroundColor Cyan

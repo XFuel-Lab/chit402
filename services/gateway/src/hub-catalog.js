@@ -5,7 +5,7 @@
  * AkashML GET /v1/models), caches briefly, and exposes OpenAI-shaped model
  * rows with hub-prefixed ids (e.g. theta/qwen3, akash/zai-org/GLM-5.2).
  *
- * See docs/STRATEGY.md · canvases multimodal catalog PMF.
+ * See ../../../docs/POSITIONING.md · canvases multimodal catalog PMF.
  *
  * Env:
  *   HUB_CATALOG_TTL_MS=60000
@@ -507,7 +507,7 @@ export function requestShape(req = {}) {
 
 /**
  * What `xfuel/auto` should resolve to, per request shape. Evidence-led — see
- * docs/MODEL_QUALITY_EVAL.md.
+ * ../../../docs/M2M_API.md.
  *
  * Entries are preference keys, not a promise that the exact string is listed
  * today. `pickAutoPreference` matches them onto live catalog rows (exact id,

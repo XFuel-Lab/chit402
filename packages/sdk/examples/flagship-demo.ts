@@ -10,7 +10,7 @@
  *
  * This is the paid-path hero: `/task-request` → USDC → shareable receipt.
  * Design partners start on the free OpenAI surface (`/v1`) — see
- * docs/DESIGN_PARTNER_ONBOARDING.md. Rolling settlement means the *first*
+ * ../../../docs/CHAT_COMPLETIONS_GATEWAY.md. Rolling settlement means the *first*
  * paid call from a new payer has no settlement ref (the bill lands on the next
  * request). A short prompt will not mint an on-chain proof unless you pass
  * `proof_tier: 'settlement'` (opt-in $0.10); automatic proofs need ≥ $2.00 of

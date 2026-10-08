@@ -1,3 +1,8 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Update ECS Service with Phase 0.5 Image
 # Assumes image is already in ECR
 # Run from sp1-prover directory: .\update-ecs-service.ps1
@@ -6,7 +11,7 @@ Write-Host "`n================================================" -ForegroundColor
 Write-Host "  UPDATE ECS SERVICE - PHASE 0.5" -ForegroundColor Yellow
 Write-Host "================================================`n" -ForegroundColor Cyan
 
-$ACCOUNT_ID = "187510174358"
+$ACCOUNT_ID = "$($script:AwsAccountId)"
 $REGION = "us-east-1"
 $REPO_NAME = "sp1-prover"
 $IMAGE_TAG = "phase0.5-optimized"
@@ -51,7 +56,7 @@ $taskDefJson = @"
       "secrets": [
         {
           "name": "NETWORK_PRIVATE_KEY",
-          "valueFrom": "arn:aws:secretsmanager:$REGION`:$ACCOUNT_ID`:secret:SP1_PRIVATE_KEY-NFV6WS"
+          "valueFrom": "$(Require-NamedEnv 'AWS_SECRET_ARN')"
         }
       ],
       "logConfiguration": {
@@ -88,8 +93,8 @@ if ($LASTEXITCODE -eq 0) {
 # Step 3: Update service
 Write-Host "`n[STEP 3] Updating ECS service..." -ForegroundColor Cyan
 $updateOutput = & $awsCmd ecs update-service `
-    --cluster sp1-cluster `
-    --service sp1-prover-service `
+    --cluster $($script:EcsCluster) `
+    --service $($script:EcsService) `
     --task-definition sp1-prover-task `
     --force-new-deployment 2>&1
 
@@ -110,7 +115,7 @@ while ($attempt -lt $maxAttempts -and -not $deployed) {
     Start-Sleep -Seconds 30
     $attempt++
     
-    $serviceStatus = & $awsCmd ecs describe-services --cluster sp1-cluster --services sp1-prover-service --query "services[0].deployments" | ConvertFrom-Json
+    $serviceStatus = & $awsCmd ecs describe-services --cluster $($script:EcsCluster) --services $($script:EcsService) --query "services[0].deployments" | ConvertFrom-Json
     
     $primaryDeployment = $serviceStatus | Where-Object { $_.status -eq "PRIMARY" }
     if ($primaryDeployment) {
@@ -132,9 +137,9 @@ if (-not $deployed) {
 
 # Step 5: Get endpoint
 Write-Host "`n[STEP 5] Getting service endpoint..." -ForegroundColor Cyan
-$tasks = & $awsCmd ecs list-tasks --cluster sp1-cluster --service-name sp1-prover-service --query "taskArns[0]" --output text
+$tasks = & $awsCmd ecs list-tasks --cluster $($script:EcsCluster) --service-name $($script:EcsService) --query "taskArns[0]" --output text
 if ($tasks -and $tasks -ne "None") {
-    $taskDetails = & $awsCmd ecs describe-tasks --cluster sp1-cluster --tasks $tasks | ConvertFrom-Json
+    $taskDetails = & $awsCmd ecs describe-tasks --cluster $($script:EcsCluster) --tasks $tasks | ConvertFrom-Json
     $eniId = $taskDetails.tasks[0].attachments[0].details | Where-Object { $_.name -eq "networkInterfaceId" } | Select-Object -ExpandProperty value
     
     if ($eniId) {

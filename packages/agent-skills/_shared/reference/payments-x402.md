@@ -151,7 +151,7 @@ against the Coinbase CDP facilitator, `X402_NETWORK=base`, `X402_PROOF_BINDING=t
 An unpaid `usdc` request returns a bound 402 challenge; a retry with a valid
 `X-PAYMENT` (+ nonce) is verified and settled, and `payment_rail="usdc"` +
 `payment_ref` are attached to the task. The host is `api.chit402.com` (public beta); the
-money is real — see `docs/RUNTIME_STATE.md`. Base Sepolia is the rollback path. ZAN is
+money is real — see `../../../../docs/DEPLOYMENT.md`. Base Sepolia is the rollback path. ZAN is
 optional, not required, and not a blocker. Always trust the `payment_rail` field in the
 status response.
 
@@ -162,4 +162,4 @@ default; Solana is an optional second rail for Solana-native agents.
 
 For local/CI, run the mock facilitator (`services/gateway/src/x402-mock-facilitator.js`);
 the full loop is covered by `services/gateway/test/x402-server.test.mjs`. See
-[`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.
+[`../../../../docs/DEPLOYMENT.md`](../../../../docs/DEPLOYMENT.md) for as-deployed config.

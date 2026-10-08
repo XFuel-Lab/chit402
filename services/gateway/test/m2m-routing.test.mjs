@@ -55,7 +55,7 @@ test('scoping auto to one hub keeps the evidence-led ordering within it', () => 
 // completes an agent loop (6/6 against Llama's 0/6), but it is a reasoning model
 // that returns nothing below max_tokens=256 and burns ~110 output tokens to say
 // one word — so making it the blanket default breaks short completions and bills
-// ~37x for them. See docs/MODEL_QUALITY_EVAL.md.
+// ~37x for them. See ../../../docs/M2M_API.md.
 
 test('a tool-carrying request is recognised as agent work', () => {
   assert.equal(requestShape({ tools: [{ type: 'function' }] }), 'agent');

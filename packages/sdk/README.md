@@ -54,7 +54,7 @@ A 402 from `submitTask` is an `XFuelApiError` with `error.challenge.accepts` (th
 
 On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate change.
 
-Production: pass `{ baseUrl, apiKey }`. As-deployed: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
+Production: pass `{ baseUrl, apiKey }`. As-deployed: [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
 ## Proofs
 
@@ -62,7 +62,7 @@ Settlement proofs attest fees / payment binding / output commitment — not blac
 
 ## Docs
 
-- [Design partner onboarding](../../docs/DESIGN_PARTNER_ONBOARDING.md)
+- [Design partner onboarding](../../docs/CHAT_COMPLETIONS_GATEWAY.md)
 - [docs/M2M_API.md](../../docs/M2M_API.md)
 - [docs/X402_ADAPTER.md](../../docs/X402_ADAPTER.md)
 - [Agent playbook](../agent-skills/AGENT_PLAYBOOK.md)

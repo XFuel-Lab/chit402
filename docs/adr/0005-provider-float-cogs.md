@@ -1,7 +1,7 @@
 # ADR 0005 — Provider Float COGS (Dual-Rail Treasury)
 
 Status: Accepted. Date: 2026-08-06.  
-Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0002](./0002-base-settlement-home.md), [STRATEGY.md](../STRATEGY.md), [PROVIDER_FLOAT_TREASURY.md](../PROVIDER_FLOAT_TREASURY.md), [LEGAL_LAUNCH_CHECKLIST.md](../LEGAL_LAUNCH_CHECKLIST.md).
+Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0002](./0002-base-settlement-home.md).
 
 ## Context
 
@@ -16,7 +16,7 @@ ADR 0001 already distinguished pass-through (crypto-native) vs collect-and-forwa
 3. **No hot-path FX:** batch refill floats from treasury (CEX/DEX/card/EdgeCloud USDC top-up). Never bridge/swap per task before inference returns.
 4. **Prefer USDC billing on Theta EdgeCloud** when available; TFUEL float is optional ops, not settlement identity.
 5. **Receipts expose COGS** (`provider_cogs`) separately from buyer `payment` fields — for audit and margin, not as a second buyer rail.
-6. **Web2 collect-and-forward** remains gated on counsel ([LEGAL_LAUNCH_CHECKLIST.md](../LEGAL_LAUNCH_CHECKLIST.md)).
+6. **Web2 collect-and-forward** remains gated on counsel.
 
 ## Consequences
 
@@ -27,6 +27,5 @@ ADR 0001 already distinguished pass-through (crypto-native) vs collect-and-forwa
 
 ## Links
 
-- Ops detail: [PROVIDER_FLOAT_TREASURY.md](../PROVIDER_FLOAT_TREASURY.md)
-- Company strategy: [STRATEGY.md](../STRATEGY.md)
+- Positioning: [POSITIONING.md](../POSITIONING.md)
 - Providers: [providers/README.md](../providers/README.md)

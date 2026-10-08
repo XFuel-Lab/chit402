@@ -2,7 +2,7 @@
 
 Operator runbook to turn on **real USDC fees on Base mainnet**. Sprint 1 money path.
 
-Related: [X402_ADAPTER.md](./X402_ADAPTER.md), [RUNTIME_STATE.md](./RUNTIME_STATE.md), [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md), [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md).
+Related: [X402_ADAPTER.md](./X402_ADAPTER.md), [DEPLOYMENT.md](./DEPLOYMENT.md), [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md).
 
 ## Why this matters
 
@@ -18,7 +18,7 @@ Gateway code speaks the standard x402 `/verify` + `/settle` protocol and mints C
 - [ ] `X402_FACILITATOR_URL` set in the host env (required; no code default on mainnet)
 - [ ] `BASE_RPC_URL` set in the host env (required for settlement confirmation; `SETTLEMENT_RPC_URL` is the alias)
 - [ ] Base mainnet receiving address — prefer a **Safe** (or Splits v2) as `X402_PAY_TO`
-- [ ] Counsel note started for collect-and-forward / money-transmission if Web2 providers are paid from XFuel balances ([LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md))
+- [ ] Counsel note started for collect-and-forward / money-transmission if Web2 providers are paid from XFuel balances
 - [ ] Demo / production gateway host can reach CDP (`api.cdp.coinbase.com`)
 
 ## Env block (production)
@@ -87,12 +87,12 @@ npx tsx examples/flagship-demo.ts
 | `BASE_RPC_URL` or `SETTLEMENT_RPC_URL` set (confirmation RPC) | |
 | CDP JWT auth succeeds (`/verify` not 401) | |
 | USDC fee tx visible on Basescan to `X402_PAY_TO` | |
-| RUNTIME_STATE updated: mainnet x402 = Real | |
+| Deploy notes record mainnet x402 as live | |
 | No mock facilitator in prod env | |
 
 ## After go-live
 
-1. Update [RUNTIME_STATE.md](./RUNTIME_STATE.md) — flip “USDC / x402 Base mainnet” to Real; remove facilitator blocker.
+1. Record that Base mainnet x402 is live and the facilitator is not a mock. See [DEPLOYMENT.md](./DEPLOYMENT.md).
 2. Keep testnet demo on Sepolia if desired (separate host or env).
 3. Do not enable broad Web2 collect-and-forward revenue until counsel signs off.
 

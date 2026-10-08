@@ -57,7 +57,7 @@ The SDK defaults to `https://api.chit402.com` + the public demo key, so
   the secondary rail. When `payment` is omitted, the server `X402_DEFAULT_RAIL` applies.
 - The server-side 402 handshake is **live on the public host** (`X402_ENABLED=true`,
   `X402_FACILITATOR_PROVIDER=cdp`, `X402_NETWORK=base`).
-  See [`docs/RUNTIME_STATE.md`](../../../../docs/RUNTIME_STATE.md) for as-deployed config.
+  See [`../../../../docs/DEPLOYMENT.md`](../../../../docs/DEPLOYMENT.md) for as-deployed config.
 - **Agent side:** an unpaid `usdc` request gets a `402` challenge; retry with the
   `X-PAYMENT` header (+ `X-PAYMENT-NONCE` echoing `accepts[].extra.nonce`). The payer is
   **pluggable and agent-side** — skills/SDK never hold private keys.

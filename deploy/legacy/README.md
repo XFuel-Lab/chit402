@@ -25,7 +25,7 @@ Do **not** put new Base manifests under `deploy/legacy/manifests/`.
 | `../ecs/` | SP1 prover AWS task |
 | `../manifests/base-verifier-*.json` | Live Base verifier manifest |
 
-Live addresses: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).  
+Live addresses: [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).  
 Canonical deploy docs: [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
 ## What’s here

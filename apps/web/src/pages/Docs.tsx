@@ -42,9 +42,9 @@ const startHere: DocLink[] = [
     internal: true,
   },
   {
-    title: 'Runtime state',
-    description: 'As-deployed endpoints, receipt surfaces, and current blockers.',
-    href: `${GITHUB}/docs/RUNTIME_STATE.md`,
+    title: 'Deployment',
+    description: 'How to deploy the gateway, contracts, and prover.',
+    href: `${GITHUB}/docs/DEPLOYMENT.md`,
     meta: 'ops',
     external: true,
   },

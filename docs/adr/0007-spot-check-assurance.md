@@ -1,7 +1,7 @@
 # ADR 0007 — Spot-Check Assurance: Pool the Statistics, Not the Sample
 
 Status: Proposed. Date: 2026-08-13.
-Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0003](./0003-verified-inference-cleanroom.md), [ADR 0004](./0004-zkllm-prover-stack.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+Related: [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [ADR 0003](./0003-verified-inference-cleanroom.md), [ADR 0004](./0004-zkllm-prover-stack.md).
 
 ## Context
 

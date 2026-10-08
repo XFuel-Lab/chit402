@@ -1,0 +1,11 @@
+# Copy to aws-env.local.ps1 (gitignored). Do not commit real values.
+$env:AWS_ACCOUNT_ID = ''
+$env:ECS_CLUSTER = ''
+$env:ECS_SERVICE = ''
+$env:ECR_REPOSITORY = ''
+$env:AWS_SECRET_ARN = ''
+$env:AWS_SECURITY_GROUP_ID = ''
+$env:PROVER_DEPLOYMENT_NAME = ''
+$env:SP1_PROVER_URL = ''
+$env:SP1_PROVER_HOST = ''
+$env:SP1_PROVER_PORT = ''
