@@ -258,25 +258,29 @@ export function fulfillmentFieldsFromIngestBody(body = {}) {
   let hashKind = kindText(src.deliverable_kind ?? src.deliverableKind ?? src.hash_kind ?? src.hashKind);
   let commitmentError = null;
 
-  if (outputCommitment && typeof outputCommitment === 'object' && outputCommitment.hash) {
-    const fromCommitment = parseDigest(outputCommitment.hash);
-    const fromClient = deliverableHash != null ? parseDigest(deliverableHash) : null;
-    if (fromCommitment?.error) commitmentError = fromCommitment.error;
-    else if (fromClient?.error) commitmentError = fromClient.error;
-    else if (fromCommitment?.hash && fromClient?.hash && fromCommitment.hash !== fromClient.hash) {
-      commitmentError = 'deliverable_hash does not match output_commitment.hash';
-    }
+  if (outputCommitment && typeof outputCommitment === 'object') {
     const commitmentKind = kindText(outputCommitment.kind);
+    let fromCommitment = null;
+    if (outputCommitment.hash) {
+      fromCommitment = parseDigest(outputCommitment.hash);
+      const fromClient = deliverableHash != null ? parseDigest(deliverableHash) : null;
+      if (fromCommitment?.error) commitmentError = fromCommitment.error;
+      else if (fromClient?.error) commitmentError = fromClient.error;
+      else if (fromCommitment?.hash && fromClient?.hash && fromCommitment.hash !== fromClient.hash) {
+        commitmentError = 'deliverable_hash does not match output_commitment.hash';
+      }
+    }
     if (!commitmentError && commitmentKind && !OUTPUT_HASH_KIND_SET.has(commitmentKind)) {
       commitmentError = `output_commitment.kind must be sha256 or keccak256, not ${commitmentKind.slice(0, 32)}`;
-    }
-    if (!commitmentError && fromCommitment?.labeled && commitmentKind && fromCommitment.labeled !== commitmentKind) {
-      commitmentError = `output_commitment.kind ${commitmentKind} does not match the ${fromCommitment.labeled} hash label`;
     }
     if (!commitmentError && hashKind && commitmentKind && hashKind !== commitmentKind) {
       commitmentError = `deliverable_kind ${hashKind} does not match output_commitment.kind ${commitmentKind}`;
     }
     if (!hashKind && commitmentKind) hashKind = commitmentKind;
+    const effectiveKind = commitmentKind || hashKind;
+    if (!commitmentError && fromCommitment?.labeled && effectiveKind && fromCommitment.labeled !== effectiveKind) {
+      commitmentError = `output_commitment.kind ${effectiveKind} does not match the ${fromCommitment.labeled} hash label`;
+    }
   }
 
   if (!commitmentError && hashKind && !OUTPUT_HASH_KIND_SET.has(hashKind)) {

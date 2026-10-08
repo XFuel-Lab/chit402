@@ -114,6 +114,59 @@ describe('output commitment kind', () => {
     assert.equal(clash.error, 'invalid_output_commitment');
   });
 
+  test('a labeled commitment hash that disagrees with deliverable_kind is rejected before signing', () => {
+    const hex = 'cd'.repeat(32);
+    const clash = normalizeIngestInput(invoice({
+      output_commitment: { status: 'committed', hash: `sha256:${hex}` },
+      deliverable_kind: 'keccak256',
+    }));
+    assert.equal(clash.ok, false);
+    assert.equal(clash.error, 'invalid_output_commitment');
+    assert.match(clash.reason, /does not match the sha256/);
+
+    const agreed = normalizeIngestInput(invoice({
+      output_commitment: { status: 'committed', hash: `sha256:${hex}` },
+      deliverable_kind: 'sha256',
+    }));
+    assert.equal(agreed.ok, true, agreed.reason);
+    const receipt = buildForeignReceipt({
+      taskId: 'foreign-kind-label',
+      paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
+      paymentResponse: { tx: '0xlabel', payer: '0xp', network: 'base' },
+      rail: 'usdc',
+      fulfillmentMeta: agreed.fulfillmentMeta,
+    });
+    assert.equal(receipt.fulfillment.output_commitment.kind, 'sha256');
+    assert.equal(receipt.fulfillment.output_commitment.hash, `0x${hex}`);
+    assert.match(receipt.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
+  });
+
+  test('output_commitment.kind applies when the digest is only on deliverable_hash', () => {
+    const split = normalizeIngestInput(invoice({
+      output_commitment: { kind: 'keccak256' },
+      deliverable_hash: KECCAK,
+    }));
+    assert.equal(split.ok, true, split.reason);
+    assert.equal(split.fulfillmentMeta.hashKind, 'keccak256');
+    const receipt = buildForeignReceipt({
+      taskId: 'foreign-kind-split',
+      paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
+      paymentResponse: { tx: '0xsplit', payer: '0xp', network: 'base' },
+      rail: 'usdc',
+      fulfillmentMeta: split.fulfillmentMeta,
+    });
+    assert.equal(receipt.fulfillment.output_commitment.kind, 'keccak256');
+    assert.equal(receipt.fulfillment.output_commitment.hash, KECCAK);
+    assert.match(receipt.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
+
+    const labeledClash = normalizeIngestInput(invoice({
+      output_commitment: { kind: 'sha256' },
+      deliverable_hash: `keccak256:${'ab'.repeat(32)}`,
+    }));
+    assert.equal(labeledClash.ok, false);
+    assert.match(labeledClash.reason, /does not match the keccak256/);
+  });
+
   test('a missing or unknown kind is rejected', () => {
     assert.throws(
       () => outputCommitmentOf({ hash: KECCAK }),
