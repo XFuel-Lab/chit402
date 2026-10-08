@@ -107,6 +107,17 @@ function signReceiptJws(privateKey, kid, payload) {
   return `${h}.${p}.${signRaw(privateKey, `${h}.${p}`)}`;
 }
 
+function signedBy(key) {
+  const jws = signReceiptJws(key.privateKey, key.kid, {
+    task_id: 'task-pin',
+    issuer_root: { v: 1, kid: key.kid, chain_id: ISSUER_PIN_CHAIN_ID },
+  });
+  return {
+    issuer_signature: { jws, kid: key.kid, issuer_jwk: key.jwk },
+    issuer_root: { kid: key.kid },
+  };
+}
+
 function controlFor(prior, next, nextBytes, commit) {
   const pinSha256 = issuerPinFileHash(nextBytes);
   const statement = rotationStatement({
@@ -130,24 +141,35 @@ function controlFor(prior, next, nextBytes, commit) {
   return { payload, jws: signFreeze(prior.privateKey, prior.kid, payload), pinSha256 };
 }
 
-test('happy path matches the pin, issuer root, and witnesses source', () => {
-  const { bytes, doc, ref } = publishedPin();
+test('happy path matches a verifying JWS under the test key', () => {
+  const key = makeKey();
+  const bytes = pinBytes(key);
+  const ref = refFor(bytes);
+  const signature = JSON.parse(bytes).self_signature;
   const result = assessIssuerPin({
-    receipt: {
-      issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk },
-      issuer_root: { kid: doc.jwk.kid },
-      issuer_key_pin: { era: 1, ...ref },
-    },
+    receipt: { ...signedBy(key), issuer_key_pin: { era: 1, ...ref } },
     pinBytes: bytes,
-    sigBytes: `${doc.self_signature}\n`,
+    sigBytes: `${signature}\n`,
     ref,
-    witnesses: { source: '/api/witnesses', kid: doc.jwk.kid, witnesses: [{ jwk: doc.jwk }] },
+    witnesses: { source: '/api/witnesses', kid: key.kid, witnesses: [{ jwk: key.jwk }] },
     required: true,
     anchorToPublished: false,
   });
-  assert.equal(result.ok, true, result.code);
-  assert.equal(result.code, null);
+  // The JWS, envelope, root, and witnesses agree with this pin. The specimen
+  // gate still refuses a key that is not the published Sepolia pin.
   assert.equal(result.checked, true);
+  assert.notEqual(result.code, ISSUER_PIN_MISMATCH);
+  assert.notEqual(result.code, ISSUER_SELF_SIG_INVALID);
+  assert.equal(result.code, ISSUER_ROTATION_UNCONTROLLED);
+
+  const witness = assessIssuerPin({
+    receipt: { ...signedBy(key), issuer_key_pin: { era: 1, ...ref } },
+    pinBytes: bytes,
+    ref,
+    witnesses: { kid: 'not-the-pin' },
+    required: true,
+  });
+  assert.equal(witness.code, ISSUER_PIN_MISMATCH);
 });
 
 test('a jws-only receipt passes with a correct pin', () => {
@@ -282,26 +304,33 @@ test('differing receipt and head pins fail even when one matches', () => {
   });
   assert.equal(rehashed.code, ISSUER_PIN_MISMATCH);
 
+  const agreedKey = makeKey();
+  const agreedBytes = pinBytes(agreedKey);
+  const agreedRef = refFor(agreedBytes);
+  const agreedBody = { ...signedBy(agreedKey), issuer_key_pin: { era: 1, ...agreedRef } };
   const agreed = assessIssuerPin({
-    receipt: { ...shared, issuer_key_pin: { era: 1, ...ref } },
-    head: { ...shared, issuer_key_pin: { era: 1, ...ref } },
-    pinBytes: bytes,
-    ref,
+    receipt: agreedBody,
+    head: agreedBody,
+    pinBytes: agreedBytes,
+    ref: agreedRef,
     required: true,
   });
-  assert.equal(agreed.ok, true, agreed.code);
+  assert.notEqual(agreed.code, ISSUER_PIN_MISMATCH);
+  assert.equal(agreed.code, ISSUER_ROTATION_UNCONTROLLED);
 });
 
 test('a partial pin claim is completed by the supplied pin', () => {
-  const { bytes, doc, ref } = publishedPin();
-  const kid = { issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk } };
+  const key = makeKey();
+  const bytes = pinBytes(key);
+  const ref = refFor(bytes);
+  const kid = signedBy(key);
   const commitOnly = assessIssuerPin({
     receipt: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
     pinBytes: bytes,
     ref,
     required: true,
   });
-  assert.equal(commitOnly.ok, true, commitOnly.code);
+  assert.equal(commitOnly.code, ISSUER_ROTATION_UNCONTROLLED, commitOnly.code);
 
   const hashOnly = assessIssuerPin({
     head: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
@@ -309,7 +338,7 @@ test('a partial pin claim is completed by the supplied pin', () => {
     ref,
     required: true,
   });
-  assert.equal(hashOnly.ok, true, hashOnly.code);
+  assert.equal(hashOnly.code, ISSUER_ROTATION_UNCONTROLLED, hashOnly.code);
 
   const split = assessIssuerPin({
     receipt: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
@@ -317,7 +346,8 @@ test('a partial pin claim is completed by the supplied pin', () => {
     pinBytes: bytes,
     required: true,
   });
-  assert.equal(split.ok, true, split.code);
+  assert.equal(split.ok, false);
+  assert.equal(split.code, ISSUER_PIN_DOWNGRADE);
 
   const wrongCommit = assessIssuerPin({
     receipt: { ...kid, issuer_key_pin: { era: 1, commit: COMMIT_B } },
@@ -354,6 +384,62 @@ test('a partial pin claim is completed by the supplied pin', () => {
   });
   assert.equal(bothHashes.ok, false);
   assert.equal(bothHashes.code, ISSUER_PIN_MUTABLE_REF);
+});
+
+test('stitched complementary partials do not make a pin', () => {
+  const key = makeKey();
+  const bytes = pinBytes(key);
+  const ref = refFor(bytes);
+  const kid = signedBy(key);
+  const stitched = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
+    head: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
+    pinBytes: bytes,
+    required: true,
+  });
+  assert.equal(issuerPinFileHash(bytes), ref.sha256);
+  assert.equal(stitched.ok, false);
+  assert.equal(stitched.code, ISSUER_PIN_DOWNGRADE);
+});
+
+test('a stripped JWS with matching unsigned kids fails', () => {
+  const { bytes, doc, ref } = publishedPin();
+  const result = assessIssuerPin({
+    receipt: {
+      issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk },
+      issuer_root: { kid: doc.jwk.kid },
+      issuer_key_pin: { era: 1, ...ref },
+    },
+    pinBytes: bytes,
+    ref,
+    witnesses: { source: '/api/witnesses', kid: doc.jwk.kid, witnesses: [{ jwk: doc.jwk }] },
+    required: true,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, ISSUER_PIN_MISMATCH);
+});
+
+test('an uppercase commit matches its lowercase pin', () => {
+  const key = makeKey();
+  const bytes = pinBytes(key);
+  const ref = refFor(bytes);
+  const result = assessIssuerPin({
+    receipt: {
+      ...signedBy(key),
+      issuer_key_pin: {
+        era: 1,
+        commit: ref.commit.toUpperCase(),
+        path: ref.path,
+        sha256: ref.sha256.toUpperCase(),
+      },
+    },
+    pinBytes: bytes,
+    ref,
+    required: true,
+  });
+  assert.notEqual(result.code, ISSUER_PIN_MUTABLE_REF);
+  assert.notEqual(result.code, ISSUER_PIN_MISMATCH);
+  assert.equal(result.code, ISSUER_ROTATION_UNCONTROLLED);
 });
 
 test('a receipt key that is not the pin is ISSUER_PIN_MISMATCH', () => {
@@ -463,16 +549,17 @@ test('a self-signature for another key or a flipped byte fails', () => {
 });
 
 test('a missing self-signature stays unchecked and a missing pin on a non-era receipt is legacy', () => {
-  const { doc } = publishedPin();
-  const bytes = serializeIssuerPin({ ...doc, self_signature: null, control: null });
+  const key = makeKey();
+  const bytes = pinBytes(key, { selfSignature: null });
+  const ref = refFor(bytes);
   const open = assessIssuerPin({
-    receipt: { issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(key), issuer_key_pin: { era: 1, ...ref } },
     pinBytes: bytes,
-    ref: refFor(bytes),
+    ref,
     required: true,
   });
-  assert.equal(open.ok, true, open.code);
-  assert.equal(open.code, null);
+  assert.notEqual(open.code, ISSUER_SELF_SIG_INVALID);
+  assert.equal(open.code, ISSUER_ROTATION_UNCONTROLLED);
 
   const legacy = assessIssuerPin({ receipt: { task_id: 'task-1', row_hash: 'row' } });
   assert.equal(legacy.checked, false);
@@ -507,7 +594,7 @@ test('a pin that is not the published kid fails closed without the previous pin'
   const key = makeKey();
   const bytes = pinBytes(key);
   const result = assessIssuerPin({
-    receipt: { issuer_signature: { kid: key.kid, issuer_jwk: key.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(key), issuer_key_pin: { era: 1 } },
     pinBytes: bytes,
     ref: refFor(bytes),
     required: true,
@@ -523,7 +610,7 @@ test('an edited pin without the citizen freeze is not a rotation', () => {
   const priorBytes = pinBytes(prior);
   const nextBytes = pinBytes(next);
   const result = assessIssuerPin({
-    receipt: { issuer_signature: { kid: next.kid, issuer_jwk: next.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(next), issuer_key_pin: { era: 1 } },
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: priorBytes,
@@ -547,10 +634,7 @@ test('an attacker pin used as its own prior does not bypass the specimen gate', 
   assert.equal(sameKid.ok, false);
   assert.equal(sameKid.code, ISSUER_ROTATION_UNCONTROLLED);
   const result = assessIssuerPin({
-    receipt: {
-      issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk },
-      issuer_key_pin: { era: 1, ...ref },
-    },
+    receipt: { ...signedBy(attacker), issuer_key_pin: { era: 1, ...ref } },
     pinBytes: bytes,
     ref,
     priorPinBytes: bytes,
@@ -566,7 +650,7 @@ test('a prior pin without a commit and hash is not a trust root', () => {
   const attacker = makeKey();
   const nextBytes = pinBytes(attacker);
   const unbound = assessIssuerPin({
-    receipt: { issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(attacker), issuer_key_pin: { era: 1 } },
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: specimen,
@@ -574,7 +658,7 @@ test('a prior pin without a commit and hash is not a trust root', () => {
   });
   assert.equal(unbound.code, ISSUER_PIN_MUTABLE_REF);
   const branched = assessIssuerPin({
-    receipt: { issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(attacker), issuer_key_pin: { era: 1 } },
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: specimen,
@@ -592,10 +676,7 @@ test('a freeze signed by a non-specimen key does not install that key', () => {
   const specimenRef = refFor(specimenBytes, COMMIT_A);
   const nextRef = refFor(nextBytes, COMMIT_B);
   const result = assessIssuerPin({
-    receipt: {
-      issuer_signature: { kid: attacker.kid, issuer_jwk: attacker.jwk },
-      issuer_key_pin: { era: 1, ...nextRef },
-    },
+    receipt: { ...signedBy(attacker), issuer_key_pin: { era: 1, ...nextRef } },
     pinBytes: nextBytes,
     ref: nextRef,
     priorPinBytes: specimenBytes,
@@ -634,7 +715,7 @@ test('a rotation signed by the new key, or under another context, is refused', (
   };
   const attackerJws = signFreeze(next.privateKey, next.kid, attackerPayload);
   assert.equal(assessIssuerPin({
-    receipt: { issuer_signature: { kid: next.kid, issuer_jwk: next.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(next), issuer_key_pin: { era: 1 } },
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: priorBytes,
@@ -664,7 +745,7 @@ test('a rotation signed by the new key, or under another context, is refused', (
   };
   const replayJws = signFreeze(prior.privateKey, prior.kid, replayPayload);
   assert.equal(assessIssuerPin({
-    receipt: { issuer_signature: { kid: next.kid, issuer_jwk: next.jwk }, issuer_key_pin: { era: 1 } },
+    receipt: { ...signedBy(next), issuer_key_pin: { era: 1 } },
     pinBytes: nextBytes,
     ref: refFor(nextBytes, COMMIT_B),
     priorPinBytes: priorBytes,
@@ -705,7 +786,7 @@ test('anchor mode fails closed on a downgrade and stays quiet when no era is cla
   assert.ok(downgraded.errors.includes(ISSUER_PIN_DOWNGRADE));
 });
 
-test('anchor mode accepts a matching sepolia pin without fetching a branch', async () => {
+test('anchor mode fetches anchors and refuses an unsigned claimed pin', async () => {
   const { bytes, doc, ref } = publishedPin();
   const key = { kid: doc.jwk.kid, jwk: doc.jwk };
   const taskId = 'task-1';
@@ -751,8 +832,8 @@ test('anchor mode accepts a matching sepolia pin without fetching a branch', asy
       return { hash: `0x${'ab'.repeat(32)}`, input: `0x${root}`, chainId: 8453 };
     },
   });
-  assert.equal(result.overall, 'verified', result.errors.join(','));
-  assert.equal(result.issuer_pin.ok, true);
+  assert.equal(result.overall, 'failed', result.errors.join(','));
+  assert.equal(result.issuer_pin.code, ISSUER_PIN_MISMATCH);
   assert.equal(fetched, 2);
   assert.equal(issuerPinContentUrl('main').ok, false);
 });
@@ -764,7 +845,7 @@ test('anchor mode refuses a pin whose kid is not the published specimen', async 
   const result = await verifyAnchoredRoot({
     receipt: {
       task_id: 'task-1',
-      issuer_signature: { kid: key.kid, issuer_jwk: key.jwk },
+      ...signedBy(key),
       issuer_key_pin: { era: 1, ...ref },
     },
     inclusion: { error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] },
@@ -798,7 +879,8 @@ test('the published sepolia pin is a public registration, not the production kid
     anchorToPublished: true,
   });
   assert.equal(doc.jwk.kid, PUBLISHED_ISSUER_PIN_KID);
-  assert.equal(result.ok, true, result.code);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, ISSUER_PIN_MISMATCH);
 });
 
 test('published pin ref names a commit and the file hash', () => {

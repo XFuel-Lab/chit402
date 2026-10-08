@@ -291,11 +291,16 @@ function payloadIssuerRootKid(payload: Record<string, unknown> | null | undefine
  * comes from that protected header, and a v11 `issuer_root.kid` comes from
  * the verified payload. Unsigned envelope copies are not a second source of
  * truth: when they disagree with the signed values the check fails closed.
- * With no JWS, the envelope fields are the only copies a legacy receipt has.
+ *
+ * When the receipt or the head claims `issuer_key_pin`, unsigned
+ * `issuer_signature.kid`, `issuer_jwk`, and `issuer_root.kid` do not satisfy
+ * the check. A missing JWS fails closed. Stripping the JWS and leaving a
+ * matching unsigned kid is `ISSUER_PIN_MISMATCH`.
  */
 function receiptKids(
   receipt: unknown,
   pin: Es256Jwk,
+  requireVerifiedJws: boolean,
 ): { ok: true; kids: string[]; issuerRoot: string | null } | { ok: false; code: typeof ISSUER_PIN_MISMATCH } {
   const root = readRecord(receipt);
   const sig = readRecord(root?.issuer_signature);
@@ -307,18 +312,23 @@ function receiptKids(
     if (typeof embedded.kid === 'string' && embedded.kid) embeddedKids.push(embedded.kid);
   }
   const outerRootKid = payloadIssuerRootKid(root);
+  const pinKid = pin.kid || jwkThumbprint(pin);
   const jws = typeof sig?.jws === 'string' ? sig.jws : '';
   if (!jws) {
-    const kids: string[] = [];
-    if (outerKid) kids.push(outerKid);
-    kids.push(...embeddedKids);
-    return { ok: true, kids, issuerRoot: outerRootKid };
+    const unsigned = [...(outerKid ? [outerKid] : []), ...embeddedKids];
+    if (outerRootKid) unsigned.push(outerRootKid);
+    if (!requireVerifiedJws) {
+      return { ok: true, kids: unsigned, issuerRoot: outerRootKid };
+    }
+    for (const kid of unsigned) {
+      if (kid !== pinKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
+    }
+    return { ok: true, kids: [], issuerRoot: null };
   }
 
   const verified = verifyIssuerJws(jws, pin);
   if (!verified.valid || !verified.payload) return { ok: false, code: ISSUER_PIN_MISMATCH };
   const header = readJwsHeader(jws);
-  const pinKid = pin.kid || jwkThumbprint(pin);
   const signedKid = typeof header?.kid === 'string' && header.kid ? header.kid : pinKid;
   if (signedKid !== pinKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
   const signedRootKid = payloadIssuerRootKid(verified.payload);
@@ -398,11 +408,13 @@ export interface AssessIssuerPinInput {
 
 function refOk(ref: IssuerPinRef | null | undefined): { ok: true; ref: IssuerPinRef } | { ok: false; code: string } {
   if (!ref) return { ok: false, code: ISSUER_PIN_DOWNGRADE };
-  if (!COMMIT_SHA.test(ref.commit) || ref.path !== ISSUER_PIN_PATH) {
+  const commit = typeof ref.commit === 'string' ? ref.commit.trim().toLowerCase() : '';
+  const sha256 = typeof ref.sha256 === 'string' ? ref.sha256.trim().toLowerCase() : '';
+  if (!COMMIT_SHA.test(commit) || ref.path !== ISSUER_PIN_PATH) {
     return { ok: false, code: ISSUER_PIN_MUTABLE_REF };
   }
-  if (!FILE_SHA.test(ref.sha256.toLowerCase())) return { ok: false, code: ISSUER_PIN_HASH_MISMATCH };
-  return { ok: true, ref: { commit: ref.commit, path: ref.path, sha256: ref.sha256.toLowerCase() } };
+  if (!FILE_SHA.test(sha256)) return { ok: false, code: ISSUER_PIN_HASH_MISMATCH };
+  return { ok: true, ref: { commit, path: ref.path, sha256 } };
 }
 
 function namedPinField(value: string | undefined): string | null {
@@ -411,42 +423,98 @@ function namedPinField(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+interface PinIdentity {
+  commit: string | null;
+  path: string | null;
+  sha256: string | null;
+}
+
+function pinIdentity(ref: IssuerPinRef): PinIdentity {
+  return {
+    commit: namedPinField(ref.commit)?.toLowerCase() ?? null,
+    path: namedPinField(ref.path),
+    sha256: namedPinField(ref.sha256)?.toLowerCase() ?? null,
+  };
+}
+
+function sourceIsComplete(field: PinIdentity): boolean {
+  return !!field.commit && !!field.sha256;
+}
+
 /**
- * Every pin ref the receipt, the head, and the caller supplied. One complete
- * source is enough. A claim that names only a commit or only a hash is filled
- * from the other sources. Two sources that name different commits or hashes
- * fail closed instead of keeping whichever one matches the file.
+ * Agree one named field. An empty side does not fill the other and does not
+ * disagree with it.
+ */
+function agreeNamed(
+  current: string | null,
+  next: string | null,
+): { ok: true; value: string | null } | { ok: false; code: typeof ISSUER_PIN_MISMATCH } {
+  if (!next) return { ok: true, value: current };
+  if (current && current !== next) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  return { ok: true, value: next };
+}
+
+function mergePinFields(
+  fields: PinIdentity[],
+): { ok: true; field: PinIdentity } | { ok: false; code: typeof ISSUER_PIN_MISMATCH } {
+  let commit: string | null = null;
+  let path: string | null = null;
+  let sha256: string | null = null;
+  for (const field of fields) {
+    const nextCommit = agreeNamed(commit, field.commit);
+    if (!nextCommit.ok) return nextCommit;
+    commit = nextCommit.value;
+    const nextPath = agreeNamed(path, field.path);
+    if (!nextPath.ok) return nextPath;
+    path = nextPath.value;
+    const nextHash = agreeNamed(sha256, field.sha256);
+    if (!nextHash.ok) return nextHash;
+    sha256 = nextHash.value;
+  }
+  return { ok: true, field: { commit, path, sha256 } };
+}
+
+/**
+ * Every pin ref the receipt, the head, and the caller supplied.
+ *
+ * A source fills a blank commit or hash only when that source already names
+ * both. A commit from one claim and a hash from another are not one pin.
+ * Two sources that name different commits or hashes fail closed. Commit hex
+ * is compared in lowercase, the same way as the file hash.
  */
 function agreedPinRef(
   refs: Array<IssuerPinRef | null | undefined>,
 ): { ok: true; ref: IssuerPinRef } | { ok: false; code: string } {
   const present = refs.filter((item): item is IssuerPinRef => !!item);
   if (present.length === 0) return { ok: false, code: ISSUER_PIN_DOWNGRADE };
-  let commit: string | null = null;
-  let path: string | null = null;
-  let sha256: string | null = null;
-  for (const ref of present) {
-    const nextCommit = namedPinField(ref.commit);
-    const nextPath = namedPinField(ref.path);
-    const nextHash = namedPinField(ref.sha256)?.toLowerCase() ?? null;
-    if (nextCommit) {
-      if (commit && commit !== nextCommit) return { ok: false, code: ISSUER_PIN_MISMATCH };
-      commit = nextCommit;
-    }
-    if (nextPath) {
-      if (path && path !== nextPath) return { ok: false, code: ISSUER_PIN_MISMATCH };
-      path = nextPath;
-    }
-    if (nextHash) {
-      if (sha256 && sha256 !== nextHash) return { ok: false, code: ISSUER_PIN_MISMATCH };
-      sha256 = nextHash;
-    }
+  const fields = present.map(pinIdentity);
+  const complete = fields.filter(sourceIsComplete);
+  const partial = fields.filter((field) => !sourceIsComplete(field));
+  if (complete.length === 0) {
+    const merged = mergePinFields(fields);
+    if (!merged.ok) return merged;
+    const checked = refOk({
+      commit: merged.field.commit || '',
+      path: merged.field.path || ISSUER_PIN_PATH,
+      sha256: merged.field.sha256 || '',
+    });
+    if (!checked.ok) return checked;
+    return { ok: false, code: ISSUER_PIN_DOWNGRADE };
   }
-  return refOk({
-    commit: commit || '',
-    path: path || ISSUER_PIN_PATH,
-    sha256: sha256 || '',
+  const merged = mergePinFields(complete);
+  if (!merged.ok) return merged;
+  const checked = refOk({
+    commit: merged.field.commit || '',
+    path: merged.field.path || ISSUER_PIN_PATH,
+    sha256: merged.field.sha256 || '',
   });
+  if (!checked.ok) return checked;
+  for (const field of partial) {
+    if (field.commit && field.commit !== checked.ref.commit) return { ok: false, code: ISSUER_PIN_MISMATCH };
+    if (field.path && field.path !== checked.ref.path) return { ok: false, code: ISSUER_PIN_MISMATCH };
+    if (field.sha256 && field.sha256 !== checked.ref.sha256) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  return checked;
 }
 
 /**
@@ -486,10 +554,24 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
   // Signed kids are checked before the specimen gate so a JWS that does not
   // verify, or a signed kid that disagrees with the envelope, is
   // ISSUER_PIN_MISMATCH rather than a rotation error.
-  const fromReceipt = receiptKids(input.receipt, pin.jwk);
+  const fromReceipt = receiptKids(input.receipt, pin.jwk, claimed);
   if (!fromReceipt.ok) return { checked: true, ok: false, code: fromReceipt.code };
-  const fromHead = receiptKids(input.head, pin.jwk);
+  const fromHead = receiptKids(input.head, pin.jwk, claimed);
   if (!fromHead.ok) return { checked: true, ok: false, code: fromHead.code };
+  const signedKids = [...fromReceipt.kids, ...fromHead.kids];
+  if (claimed && signedKids.length === 0) {
+    return { checked: true, ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  const compared = [...signedKids];
+  if (fromReceipt.issuerRoot) compared.push(fromReceipt.issuerRoot);
+  if (fromHead.issuerRoot) compared.push(fromHead.issuerRoot);
+  if (input.witnesses !== undefined) compared.push(...witnessKids(input.witnesses));
+  if (required && compared.length === 0) {
+    return { checked: true, ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  for (const kid of compared) {
+    if (kid !== pinKid) return { checked: true, ok: false, code: ISSUER_PIN_MISMATCH };
+  }
 
   let rotatedFromSpecimen = false;
   if (input.priorPinBytes != null && input.priorPinBytes !== '') {
@@ -517,16 +599,6 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
 
   if (pinKid !== PUBLISHED_ISSUER_PIN_KID && !rotatedFromSpecimen) {
     return { checked: true, ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
-  }
-  const compared = [...fromReceipt.kids, ...fromHead.kids];
-  if (fromReceipt.issuerRoot) compared.push(fromReceipt.issuerRoot);
-  if (fromHead.issuerRoot) compared.push(fromHead.issuerRoot);
-  if (input.witnesses !== undefined) compared.push(...witnessKids(input.witnesses));
-  if (required && compared.length === 0) {
-    return { checked: true, ok: false, code: ISSUER_PIN_MISMATCH };
-  }
-  for (const kid of compared) {
-    if (kid !== pinKid) return { checked: true, ok: false, code: ISSUER_PIN_MISMATCH };
   }
   return { checked: true, ok: true, code: null };
 }
