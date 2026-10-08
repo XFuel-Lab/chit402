@@ -33,7 +33,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
     "axios": "^1.19.0",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "12.9.0",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
     "express": "^5.2.1",

@@ -9,12 +9,19 @@
  * `{receipt_id, wrap_kid, alg:'A256GCM', iv, ct, tag}` and the same AAD,
  * the UTF-8 bytes of `v11/salt` concatenated with `receipt_id`.
  *
- * The process store (kind `memory`, or kind `encrypted` with `durable`
- * false) seals the raw 32-byte salt. `iv`, `ct`, and `tag` are base64url.
- * The record has no `salt` field. It lives in this process only.
+ * The process store (kind `memory`, or kind `encrypted`) seals the raw
+ * 32-byte salt. `iv`, `ct`, and `tag` are base64url. The record has no
+ * `salt` field. It lives in this process only. `durable` is false there.
+ * A caller cannot set `durable: true` on that store.
  *
- * The file store (kind `encrypted`, `durable` true) is what production
- * boots when `RECEIPT_SALT_DIR` and a wrap key are set. The ciphertext is
+ * The file store (kind `encrypted`, `durable` true, on disk) is what
+ * production boots when `RECEIPT_SALT_DIR` and a wrap key are set. A
+ * partial config (a directory without a key, or a key without a
+ * directory) refuses to boot. It does not fall back to memory. The
+ * wrap key env is `RECEIPT_SALT_WRAP_KEYS` or
+ * `RECEIPT_SALT_WRAP_KEY_FILE`. `SALT_WRAP_KEY` is the single-key alias.
+ * Setting that alias beside `RECEIPT_SALT_WRAP_KEYS` refuses to boot.
+ * The wrap key must not be the issuer private key. The ciphertext is
  * JSON `{salt, private_fields}`. `iv`, `ct`, and `tag` are base64. The wrap
  * key is loaded from the environment and is never written under the data
  * directory. `wrap_kid` selects the key so a rotated key still opens older
@@ -26,8 +33,9 @@
  *
  * Production is every NODE_ENV other than `test` and `development`.
  * Unset NODE_ENV is production. Production with the issuer root on refuses
- * v11 issuance unless the active store is encrypted and durable.
- * `ISSUER_ROOT_ENABLED` also refuses a memory store in every environment.
+ * v11 issuance unless the active store is the encrypted file store.
+ * `ISSUER_ROOT_ENABLED` refuses every in-memory store, including one whose
+ * kind is `encrypted`.
  * `SALT_STORE_ALLOW_EPHEMERAL=true` is the local opt-in for the production
  * check only.
  */
@@ -46,6 +54,8 @@ export const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const SALT_STORE_PROD_REASON = 'production v11 issuance requires the encrypted SaltStore';
 
 const SALT_LEN = 32;
+const GCM_TAG_BYTES = 16;
+const CIPHER = 'aes-256-gcm';
 const RECORD_KEYS = ['receipt_id', 'wrap_kid', 'alg', 'iv', 'ct', 'tag'];
 const BANNED_FIELD_KEYS = new Set([
   'prompt',
@@ -80,6 +90,48 @@ function assertNoRaw(value) {
       throw new Error(`refusing to store raw field ${key}`);
     }
     assertNoRaw(child);
+  }
+}
+
+function gcmCipher(key, iv) {
+  return crypto.createCipheriv(CIPHER, key, iv, { authTagLength: GCM_TAG_BYTES });
+}
+
+function gcmDecipher(key, iv) {
+  return crypto.createDecipheriv(CIPHER, key, iv, { authTagLength: GCM_TAG_BYTES });
+}
+
+/**
+ * The wrap key is not the issuer signing key. A PEM, a PKCS8 blob, or the
+ * P-256 private scalar `d` all refuse.
+ * @param {Iterable<Buffer>} keys
+ * @param {string} issuerPrivateKey PEM, hex, or raw scalar. Empty skips the check.
+ */
+function assertWrapKeysAreNotIssuer(keys, issuerPrivateKey) {
+  const raw = String(issuerPrivateKey || '').trim();
+  if (!raw) return;
+  /** @type {Buffer[]} */
+  const scalars = [];
+  try {
+    const parsed = crypto.createPrivateKey(raw);
+    const jwk = parsed.export({ format: 'jwk' });
+    if (jwk && typeof jwk === 'object' && jwk.d) {
+      scalars.push(Buffer.from(jwk.d, 'base64url'));
+    }
+  } catch {
+    // Not a parseable private key. String equality still applies.
+  }
+  for (const key of keys) {
+    if (!Buffer.isBuffer(key)) continue;
+    const forms = [key.toString('base64'), key.toString('hex'), key.toString('base64url')];
+    if (forms.includes(raw)) {
+      throw new Error('salt wrap key must not be the issuer key');
+    }
+    for (const scalar of scalars) {
+      if (scalar.length === key.length && scalar.equals(key)) {
+        throw new Error('salt wrap key must not be the issuer key');
+      }
+    }
   }
 }
 
@@ -138,7 +190,7 @@ export function sealSaltRecord(receiptId, salt, wrapKey, wrapKid) {
   if (!Buffer.isBuffer(salt) || salt.length !== SALT_LEN) throw new Error('salt must be 32 bytes');
   if (!Buffer.isBuffer(wrapKey) || wrapKey.length !== SALT_LEN) throw new Error('wrap key must be 32 bytes');
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', wrapKey, iv);
+  const cipher = gcmCipher(wrapKey, iv);
   cipher.setAAD(saltAad(receiptId));
   const ct = Buffer.concat([cipher.update(salt), cipher.final()]);
   const tag = cipher.getAuthTag();
@@ -168,7 +220,7 @@ export function openSaltRecord(record, wrapKey) {
       throw new Error(`salt record missing ${field}`);
     }
   }
-  const decipher = crypto.createDecipheriv('aes-256-gcm', wrapKey, Buffer.from(record.iv, 'base64url'));
+  const decipher = gcmDecipher(wrapKey, Buffer.from(record.iv, 'base64url'));
   decipher.setAAD(saltAad(record.receipt_id));
   decipher.setAuthTag(Buffer.from(record.tag, 'base64url'));
   const salt = Buffer.concat([
@@ -189,7 +241,7 @@ export function decryptRecord(record, key, receiptId = record?.receipt_id) {
   const iv = Buffer.from(record.iv, 'base64');
   const ct = Buffer.from(record.ct, 'base64');
   const tag = Buffer.from(record.tag, 'base64');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = gcmDecipher(key, iv);
   decipher.setAAD(saltAad(receiptId));
   decipher.setAuthTag(tag);
   const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
@@ -350,8 +402,9 @@ export class MemorySaltStore extends MapSaltStore {
 /**
  * Caller-supplied wrap key, or a directory of encrypted records.
  *
- * `new EncryptedSaltStore(wrapKey, wrapKid, { durable })` keeps ciphertext
- * in this process. `durable: true` is only for a store that survives restart.
+ * `new EncryptedSaltStore(wrapKey, wrapKid)` keeps ciphertext in this
+ * process. That store is not durable. `{ durable: true }` does not change
+ * that.
  *
  * `new EncryptedSaltStore({ dir, keys, currentKid })` writes one file per
  * receipt. That store is durable.
@@ -385,8 +438,10 @@ export class EncryptedSaltStore extends MapSaltStore {
     const key = Buffer.isBuffer(wrapKey) ? wrapKey : Buffer.from(String(wrapKey || ''), 'hex');
     if (key.length !== SALT_LEN) throw new Error('encrypted SaltStore wrap key must be 32 bytes');
     const kid = wrapKid || `enc-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
-    const durable = !!(opts && typeof opts === 'object' && opts.durable === true);
-    super('encrypted', key, kid, durable);
+    // opts is accepted so older callers still construct. Durability is the
+    // directory store only. An in-memory flag must not pass the boot gate.
+    void opts;
+    super('encrypted', key, kid, false);
     this._disk = false;
   }
 
@@ -488,7 +543,7 @@ export class EncryptedSaltStore extends MapSaltStore {
     const key = this.keys.get(this.currentKid);
     if (!key) throw new Error('current wrap kid is not loaded');
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const cipher = gcmCipher(key, iv);
     const aad = saltAad(receiptId);
     cipher.setAAD(aad);
     const plaintext = Buffer.from(JSON.stringify({
@@ -570,7 +625,9 @@ export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store, 
   const ephemeral = allowEphemeral === true;
   if (!isProductionEnv(nodeEnv) || ephemeral) return { ok: true, reason: null };
   const current = store || getSaltStore();
-  if (current?.kind === 'encrypted' && current?.durable === true) return { ok: true, reason: null };
+  if (current?.kind === 'encrypted' && current?.durable === true && current?._disk === true) {
+    return { ok: true, reason: null };
+  }
   return { ok: false, reason: SALT_STORE_PROD_REASON };
 }
 
@@ -596,40 +653,58 @@ export function assertSaltStoreForIssuance(env = process.env) {
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {MemorySaltStore|EncryptedSaltStore}
  */
-export function bootSaltStore(env = process.env) {
-  const dir = env.RECEIPT_SALT_DIR || '';
-  const keyFile = env.RECEIPT_SALT_WRAP_KEY_FILE || '';
+export function bootSaltStore(env = process.env, issuerPrivateKey = '') {
+  const dir = String(env.RECEIPT_SALT_DIR || '').trim();
+  const keyFile = String(env.RECEIPT_SALT_WRAP_KEY_FILE || '').trim();
+  const named = String(env.RECEIPT_SALT_WRAP_KEYS || '').trim();
+  const legacy = String(env.SALT_WRAP_KEY || '').trim();
+  if (named && legacy) {
+    throw new Error('RECEIPT_SALT_WRAP_KEYS and SALT_WRAP_KEY are both set; set one wrap key source');
+  }
   if (keyFile && dir && keyFileInsideDir(keyFile, dir)) {
     throw new Error('wrap key file must live outside the salt data dir');
   }
-  let keysJson = env.RECEIPT_SALT_WRAP_KEYS || '';
+  let keysJson = named;
   if (!keysJson && keyFile) {
     const raw = fs.readFileSync(keyFile, 'utf8').trim();
     const kid = env.RECEIPT_SALT_WRAP_KID || 'current';
     keysJson = JSON.stringify({ [kid]: raw });
   }
-  if (!keysJson || !dir) return new MemorySaltStore();
+  if (!keysJson && legacy) {
+    const kid = env.RECEIPT_SALT_WRAP_KID || 'current';
+    keysJson = JSON.stringify({ [kid]: legacy });
+  }
+  const configured = Boolean(dir || keysJson || keyFile || named || legacy);
+  if (!keysJson || !dir) {
+    if (configured) {
+      throw new Error(
+        'salt store config is partial: set RECEIPT_SALT_DIR and one wrap key (RECEIPT_SALT_WRAP_KEYS, RECEIPT_SALT_WRAP_KEY_FILE, or SALT_WRAP_KEY), or set none of them',
+      );
+    }
+    return new MemorySaltStore();
+  }
   const parsed = JSON.parse(keysJson);
   const keys = new Map();
   for (const [kid, value] of Object.entries(parsed)) {
     keys.set(kid, decodeKey(value));
   }
+  assertWrapKeysAreNotIssuer(keys.values(), issuerPrivateKey);
   const currentKid = env.RECEIPT_SALT_WRAP_KID || [...keys.keys()][0];
   return new EncryptedSaltStore({ dir, keys, currentKid });
 }
 
 /**
- * Every environment: a memory store cannot back v11 issuance.
+ * Every environment: an in-memory store cannot back v11 issuance.
+ * Kind `encrypted` is not enough. The store has to be the file store.
  * Called at the top of createApp, before other init.
- * @param {{ kind?: string }|null} store
+ * @param {{ kind?: string, durable?: boolean, _disk?: boolean }|null} store
  * @param {NodeJS.ProcessEnv} [env]
  */
 export function assertV11IssuanceAllowed(store, env = process.env) {
   const enabled = String(env.ISSUER_ROOT_ENABLED || '').trim().toLowerCase() === 'true';
   if (!enabled) return;
-  if (!store || store.kind !== 'encrypted') {
-    throw new Error(
-      'ISSUER_ROOT_ENABLED refuses v11 issuance with a memory-only salt store. Wire the encrypted SaltStore before enabling v11.',
-    );
-  }
+  if (store && store.kind === 'encrypted' && store.durable === true && store._disk === true) return;
+  throw new Error(
+    'ISSUER_ROOT_ENABLED refuses v11 issuance with a memory-only salt store. The store must be encrypted and durable on disk. An in-memory store is not enough, including kind encrypted.',
+  );
 }

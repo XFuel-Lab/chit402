@@ -2174,6 +2174,8 @@ export {
   isReceiptShell,
   shellFromHolder,
   compareShellToJws,
+  holderDocumentFromOwnerView,
+  shellHolderVerdict,
   openV11Commitment,
   decodeJwsPayload as decodeShellJwsPayload,
   SHELL_SCHEMA,

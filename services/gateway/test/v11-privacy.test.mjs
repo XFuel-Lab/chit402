@@ -244,7 +244,17 @@ test('production boot with the memory store refuses v11 issuance', async () => {
     assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
     setSaltStore(new EncryptedSaltStore(crypto.randomBytes(32), undefined, { durable: true }));
     assert.equal(getSaltStore().kind, 'encrypted');
+    assert.equal(getSaltStore().durable, false);
+    assert.equal(getSaltStore()._disk, false);
+    assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
+    const saltDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chit-salt-durable-'));
+    setSaltStore(new EncryptedSaltStore({
+      dir: saltDir,
+      keys: new Map([['current', crypto.randomBytes(32)]]),
+      currentKid: 'current',
+    }));
     assert.equal(getSaltStore().durable, true);
+    assert.equal(getSaltStore()._disk, true);
     assert.doesNotThrow(() => {
       try { assertIssuanceOpen(); } catch (err) {
         if (err.code === 'salt_store_refused') throw err;

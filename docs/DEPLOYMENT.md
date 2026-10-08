@@ -43,6 +43,16 @@ npx hardhat run deploy/base-verifier.cjs --network base
 
 Live mainnet verifier: `0x9373499645292715a2275A78eD65B14215C41c06` (8453).
 
+## Receipt shell rollout
+
+Public `GET /receipt/:id` is an unsigned shell. The holder JWS stays on the owner view. Ship in this order:
+
+1. Publish `@xfuel/verify` 0.3.4 (this package) and the SDK notes that point partners at it. Confirm with `npm view @xfuel/verify version`. A verifier older than 0.3.4 can print VERIFIED for a holder signed by any key.
+2. Deploy the gateway that returns the shell on the public verify URL and keeps the JWS on the owner view.
+3. Update partner docs after those two are live.
+
+Do not turn on the public shell while partners still run a verifier that treats the embedded holder key as a trust root.
+
 ## Gateway
 
 ```bash

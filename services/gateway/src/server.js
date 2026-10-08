@@ -948,7 +948,7 @@ function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
  * Called from `startServer()` or directly in tests.
  */
 export function createApp() {
-  const saltStore = bootSaltStore(process.env);
+  const saltStore = bootSaltStore(process.env, process.env.ISSUER_PRIVATE_KEY);
   setSaltStore(saltStore);
   assertV11IssuanceAllowed(saltStore, process.env);
   const ownerStore = openOwnerStore(resolveOwnerStorePath(process.env));

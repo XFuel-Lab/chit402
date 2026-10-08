@@ -3,6 +3,9 @@
  * A shell is inclusion and payment facts without the holder signature.
  * INCLUDED_SHELL is never VERIFIED. A gated URL without the holder JWS
  * is owner_proof_required.
+ * `--jws` is VERIFIED only when the holder key is trusted, inclusion
+ * passed, and the signed payment is present. The key inside the holder
+ * is not a trust root.
  */
 import crypto from 'node:crypto';
 
@@ -114,6 +117,87 @@ const COMPARE_FIELDS = [
   'payment_tx',
   'issued_at',
 ] as const;
+
+/**
+ * The owner view returns `{ jws, salt, private_fields }`. A saved holder
+ * receipt has `issuer_signature`. Either can be the `--jws` file.
+ * An `issuer_jwk` on the owner-view body is ignored. Trust is a pinned
+ * kid or a JWKS entry, not a key the response carries.
+ */
+export function holderDocumentFromOwnerView(doc: Record<string, unknown> | string): Record<string, unknown> {
+  if (typeof doc === 'string') {
+    const compact = doc.trim();
+    if (compact.split('.').length === 3) return holderDocumentFromOwnerView({ jws: compact });
+    throw new Error('holder is not a receipt or an owner-view response');
+  }
+  const signature = doc.issuer_signature;
+  if (signature && typeof signature === 'object' && typeof (signature as { jws?: unknown }).jws === 'string') {
+    return doc;
+  }
+  const jws = typeof doc.jws === 'string' ? doc.jws : null;
+  if (!jws || jws.split('.').length !== 3) {
+    throw new Error('owner view is missing the holder JWS');
+  }
+  const claims = decodeJwsPayload(jws) || {};
+  let kid: string | undefined;
+  try {
+    const header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8')) as { kid?: string };
+    if (typeof header.kid === 'string') kid = header.kid;
+  } catch {
+    kid = undefined;
+  }
+  return {
+    ...claims,
+    task_id: claims.task_id ?? null,
+    issuer_signature: {
+      jws,
+      kid,
+      payload_version: claims.payload_version ?? null,
+    },
+  };
+}
+
+export interface ShellHolderCheck {
+  signatureValid: boolean;
+  keyTrusted: boolean;
+  signatureReason?: string | null;
+  inclusionSupplied: boolean;
+  inclusionOk: boolean;
+  inclusionReason?: string | null;
+  paymentRef?: string | null;
+  bindingExpected?: boolean;
+  bindingMatches?: boolean;
+  shellLeaf?: string | null;
+  provedLeaf?: string | null;
+}
+
+/**
+ * VERIFIED requires a trusted issuer key, a passing inclusion proof, and a
+ * signed payment. A shell alone, a missing proof, or a key that only
+ * verifies because it is embedded in the holder is not VERIFIED.
+ */
+export function shellHolderVerdict(check: ShellHolderCheck): { verified: boolean; reason: string | null } {
+  if (!check.signatureValid || !check.keyTrusted) {
+    return { verified: false, reason: check.signatureReason || 'key untrusted' };
+  }
+  if (!check.inclusionSupplied || !check.inclusionOk) {
+    return { verified: false, reason: check.inclusionReason || 'inclusion_missing' };
+  }
+  const shellLeaf = check.shellLeaf ? String(check.shellLeaf).replace(/^0x/i, '').toLowerCase() : '';
+  const proved = check.provedLeaf ? String(check.provedLeaf).replace(/^0x/i, '').toLowerCase() : '';
+  if (shellLeaf && proved && shellLeaf !== proved) {
+    return { verified: false, reason: 'inclusion_mismatch' };
+  }
+  if (shellLeaf && !proved) {
+    return { verified: false, reason: 'inclusion_mismatch' };
+  }
+  const ref = check.paymentRef ? String(check.paymentRef) : '';
+  if (!ref) return { verified: false, reason: 'payment_unchecked' };
+  if (check.bindingExpected && !check.bindingMatches) {
+    return { verified: false, reason: 'payment_unchecked' };
+  }
+  return { verified: true, reason: null };
+}
 
 export function compareShellToJws(shell: Record<string, unknown>, holder: Record<string, unknown> | string): { ok: boolean; field?: string } {
   const holderDoc = typeof holder === 'string' ? { issuer_signature: { jws: holder } } : holder;

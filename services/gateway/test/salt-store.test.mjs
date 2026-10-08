@@ -139,9 +139,24 @@ test('wiring: prod-config boot with the memory store refuses v11 issuance', asyn
     () => assertV11IssuanceAllowed(new MemorySaltStore(), { ISSUER_ROOT_ENABLED: 'true' }),
     /ISSUER_ROOT_ENABLED[\s\S]*memory-only/,
   );
+  const memoryEncrypted = new EncryptedSaltStore(crypto.randomBytes(32), 'memory');
+  assert.equal(memoryEncrypted.kind, 'encrypted');
+  assert.equal(memoryEncrypted.durable, false);
+  assert.throws(
+    () => assertV11IssuanceAllowed(memoryEncrypted, { ISSUER_ROOT_ENABLED: 'true' }),
+    /memory-only/,
+  );
+  const flagged = new EncryptedSaltStore(crypto.randomBytes(32), 'flagged', { durable: true });
+  assert.equal(flagged.durable, false);
+  assert.throws(
+    () => assertV11IssuanceAllowed(flagged, { ISSUER_ROOT_ENABLED: 'true' }),
+    /memory-only/,
+  );
   const prev = process.env.ISSUER_ROOT_ENABLED;
   process.env.ISSUER_ROOT_ENABLED = 'true';
   delete process.env.RECEIPT_SALT_WRAP_KEYS;
+  delete process.env.RECEIPT_SALT_WRAP_KEY_FILE;
+  delete process.env.SALT_WRAP_KEY;
   delete process.env.RECEIPT_SALT_DIR;
   try {
     const { createApp } = await import('../src/server.js');
@@ -150,4 +165,51 @@ test('wiring: prod-config boot with the memory store refuses v11 issuance', asyn
     if (prev == null) delete process.env.ISSUER_ROOT_ENABLED;
     else process.env.ISSUER_ROOT_ENABLED = prev;
   }
+});
+
+test('partial salt config and a wrap key that is the issuer key refuse to boot', () => {
+  const dir = tmp();
+  const wrap = crypto.randomBytes(32).toString('base64');
+  assert.throws(
+    () => bootSaltStore({ RECEIPT_SALT_DIR: dir }),
+    /partial/,
+  );
+  assert.throws(
+    () => bootSaltStore({ RECEIPT_SALT_WRAP_KEYS: JSON.stringify({ current: wrap }) }),
+    /partial/,
+  );
+  assert.throws(
+    () => bootSaltStore({ SALT_WRAP_KEY: wrap }),
+    /partial/,
+  );
+  assert.throws(
+    () => bootSaltStore({
+      RECEIPT_SALT_DIR: dir,
+      RECEIPT_SALT_WRAP_KEYS: JSON.stringify({ current: wrap }),
+      SALT_WRAP_KEY: wrap,
+    }),
+    /both set/,
+  );
+  const aliased = bootSaltStore({ RECEIPT_SALT_DIR: dir, SALT_WRAP_KEY: wrap });
+  assert.equal(aliased.kind, 'encrypted');
+  assert.equal(aliased.durable, true);
+  assert.equal(aliased._disk, true);
+  assert.doesNotThrow(() => assertV11IssuanceAllowed(aliased, { ISSUER_ROOT_ENABLED: 'true' }));
+
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const jwk = privateKey.export({ format: 'jwk' });
+  const scalar = Buffer.from(jwk.d, 'base64url').toString('base64');
+  assert.throws(
+    () => bootSaltStore({
+      RECEIPT_SALT_DIR: dir,
+      SALT_WRAP_KEY: scalar,
+    }, pem),
+    /must not be the issuer key/,
+  );
+  const src = fs.readFileSync(new URL('../src/salt-store.js', import.meta.url), 'utf8');
+  assert.match(src, /GCM_TAG_BYTES = 16/);
+  assert.match(src, /authTagLength: GCM_TAG_BYTES/);
+  assert.equal(src.includes('ISSUER_PRIVATE_KEY'), false);
+  assert.equal(src.includes('initIssuerKey'), false);
 });

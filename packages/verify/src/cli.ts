@@ -41,9 +41,11 @@ import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './
 import {
   compareShellToJws,
   decodeJwsPayload,
+  holderDocumentFromOwnerView,
   INCLUDED_SHELL_LINE,
   isReceiptShell,
   openV11Commitment,
+  shellHolderVerdict,
 } from './shell.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
@@ -215,6 +217,13 @@ Examples:
 
   # Pipe from curl
   curl -s https://api.chit402.com/receipt/task-123?format=json | xfuel-verify -
+
+  # Public shell. INCLUDED_SHELL is not VERIFIED.
+  xfuel-verify shell.json
+
+  # Owner view. VERIFIED needs a trusted issuer key, an inclusion proof,
+  # and a signed payment. The key inside the holder is not enough.
+  xfuel-verify shell.json --jws owner-view.json --inclusion inclusion.json --head head.json
 `;
 
 function parseArgs(args: string[]): {
@@ -1019,7 +1028,9 @@ async function main(): Promise<number> {
     }
   }
 
-  if (anchorMode) return runAnchor(args);
+  // A shell plus a holder is not anchor mode. Inclusion is checked with the
+  // holder. Anchor mode would verify the unsigned shell and skip the key.
+  if (anchorMode && !args.jwsFile && !args.acceptShell) return runAnchor(args);
 
   if (!args.file) {
     console.log(HELP);
@@ -1046,31 +1057,98 @@ async function main(): Promise<number> {
     }
     let holder: Record<string, unknown>;
     try {
-      holder = JSON.parse(readFileSync(args.jwsFile, 'utf8')) as Record<string, unknown>;
+      const text = readFileSync(args.jwsFile, 'utf8');
+      let parsed: Record<string, unknown> | string = text;
+      try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        parsed = text;
+      }
+      holder = holderDocumentFromOwnerView(parsed);
     } catch (err) {
       console.error(`Error reading JWS: ${err instanceof Error ? err.message : String(err)}`);
       return 3;
     }
-    const compared = compareShellToJws(receipt as unknown as Record<string, unknown>, holder);
+    const shellDoc = receipt as unknown as Record<string, unknown>;
+    const compared = compareShellToJws(shellDoc, holder);
     if (!compared.ok) {
       console.log('shell_jws_mismatch');
       if (compared.field) console.log(`  Field:         ${compared.field}`);
       console.log('  Overall: FAILED');
       return 1;
     }
-    const issuer = (holder.issuer_signature && typeof holder.issuer_signature === 'object')
-      ? holder.issuer_signature as { jws?: string; issuer_jwk?: Es256Jwk }
-      : {};
-    const jws = issuer.jws;
-    const checked = jws && issuer.issuer_jwk ? verifyIssuerJws(jws, issuer.issuer_jwk) : { valid: false, reason: 'missing_jwk' };
-    if (!checked.valid) {
+    let jwks: Jwks | undefined;
+    if (args.jwksFile) {
+      try {
+        jwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+      } catch (err) {
+        console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+        return 3;
+      }
+    }
+    let inclusion = offlineWitness?.inclusion ?? null;
+    let head = offlineWitness?.head ?? null;
+    try {
+      if (args.inclusionFile) inclusion = readJson(args.inclusionFile) as AnchorInclusion;
+      if (args.headFile) head = readJson(args.headFile) as AnchorHead;
+    } catch (err) {
+      console.error(`Error reading inclusion: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+    const trustedKids = args.noTrustedKid
+      ? []
+      : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+    const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
+      jwks,
+      jwksUri: args.jwksUrl || undefined,
+      fetchJwks: args.fetchJwks,
+      trustedKids,
+      checkPayer: args.checkPayer,
+      rpcUrl: args.rpcUrl || undefined,
+      solanaRpcUrl: args.solanaRpcUrl || undefined,
+      requirePreimages: false,
+      skipIssuerHistory: args.noIssuerHistory || !args.issuerHistoryFile,
+      issuerHistory: null,
+      fetchIssuerHistory: false,
+      salt: args.salt,
+      head: head ?? undefined,
+      inclusion: inclusion ?? undefined,
+    });
+    const inclusionErrors = result.errors.filter((err) => /inclusion|leaf|row_hash|bad_root|tree_size|tree_head|no_leaf/.test(err));
+    const shellLeaf = (shellDoc.inclusion && typeof shellDoc.inclusion === 'object')
+      ? (shellDoc.inclusion as { leaf_hash?: unknown }).leaf_hash
+      : null;
+    const provedLeaf = inclusion && typeof (inclusion as { leaf?: unknown }).leaf === 'string'
+      ? (inclusion as { leaf: string }).leaf
+      : null;
+    const verdict = shellHolderVerdict({
+      signatureValid: result.issuer_signature.valid === true,
+      keyTrusted: result.issuer_signature.key_trusted === true,
+      signatureReason: result.issuer_signature.reason || (result.issuer_signature.key_trusted ? null : 'key untrusted'),
+      inclusionSupplied: inclusion != null,
+      inclusionOk: inclusion != null && inclusionErrors.length === 0,
+      inclusionReason: inclusion == null ? 'inclusion_missing' : (inclusionErrors[0] || null),
+      paymentRef: result.tx,
+      bindingExpected: !!result.binding.expected,
+      bindingMatches: result.binding.matches === true,
+      shellLeaf: shellLeaf == null ? null : String(shellLeaf),
+      provedLeaf,
+    });
+    if (!verdict.verified || (result.overall !== 'verified' && result.overall !== 'verified_carried_forward')) {
+      const reason = verdict.reason || result.errors[0] || 'failed';
+      console.log(reason);
       console.log('  Overall: FAILED');
-      if (checked.reason) console.log(`  Reason:        ${checked.reason}`);
       return 1;
     }
+    if (args.checkPayer && !result.payer.valid) {
+      console.log(result.payer.reason || 'payment_unchecked');
+      console.log('  Overall: FAILED');
+      return 1;
+    }
+    const issuer = holder.issuer_signature as { jws?: string } | undefined;
     if (args.salt) {
       const opened = openV11Commitment({
-        payload: decodeJwsPayload(jws),
+        payload: decodeJwsPayload(issuer?.jws),
         saltHex: args.salt || '',
         body: Buffer.alloc(0),
       });

@@ -154,9 +154,12 @@ test('the client-agnostic hook also blocks signing, then settles once', async ()
     const got = await fetch(settled.verify_url);
     assert.equal(got.status, 200);
     const stored = await got.json();
-    assert.equal(stored.issuer_signature.jws, settled.receipt.issuer_signature.jws);
-    assert.equal(stored.payment.ref, `base-sepolia:${tx}`);
-    assert.equal(stored.caller_binding.payer_wallet, PAYER);
+    assert.equal(stored.schema, 'chit402.receipt_shell.v1');
+    assert.equal(stored.unsigned, true);
+    assert.equal(stored.issuer_signature, undefined);
+    assert.equal(stored.payment_tx, tx);
+    assert.equal(JSON.stringify(stored).includes(PAYER), false);
+    assert.equal(JSON.stringify(stored).includes(settled.receipt.issuer_signature.jws), false);
   } finally {
     await gateway.close();
   }

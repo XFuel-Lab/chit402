@@ -3,6 +3,11 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.4 — Shell holder trust
+
+### Security
+- **`xfuel-verify shell.json --jws holder` does not print VERIFIED for a holder signed by an untrusted key.** The key inside the holder, including an `issuer_jwk` on an owner-view response, is not a trust root. VERIFIED requires a pinned kid or a JWKS entry, a passing inclusion proof, and a signed payment that matches the shell. A shell with no proof, a bad proof, or a leaf that does not match the proof is not VERIFIED. A shell without `--jws` stays `INCLUDED_SHELL`. Publish 0.3.4 before a gateway that serves the public shell. Not published.
+
 ## Unreleased
 
 ### Security
