@@ -2,7 +2,7 @@
 
 Off unless `ISSUER_ROOT_ENABLED=true`. With the flag unset, payment receipts stay payload v10, refusals stay `chit402.refusal.v1` at payload version 2, and `GET /.well-known/issuer-history.json` is unchanged. `GET /freeze/:universeId` and `GET /receipt/:id/legacy-proof` return 404.
 
-The issuer private key is still the base64 PEM in `ISSUER_PRIVATE_KEY`. That is the same variable AWS Secrets Manager injects into the process environment. There is no second key loader. The Safe that writes `ChitIssuerRoot` is not this key.
+The issuer private key is the base64 PEM in the gateway environment variable `ISSUER_PRIVATE_KEY`. Production sets that variable from the host `.env` file. The loader reads only `process.env`. The process does not call a cloud KMS or Secrets Manager. There is no second key loader. The Safe that writes `ChitIssuerRoot` is not this key.
 
 Restart the process after changing these variables. The key check and the finalized-commit check run at startup, not on a later request.
 

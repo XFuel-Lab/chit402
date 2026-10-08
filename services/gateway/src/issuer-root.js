@@ -8,9 +8,10 @@
  * when the flag is on and ISSUER_ROOT_STARTUP_CHECK is strict (the default
  * when enabled). Signing never calls an RPC.
  *
- * ISSUER_PRIVATE_KEY stays a base64 PEM in the process environment, which is
- * how AWS Secrets Manager injection already reaches issuer-key.js. The Safe
- * that writes the registry is not this key.
+ * ISSUER_PRIVATE_KEY is a base64 PEM in the gateway environment variable.
+ * Production sets it from the host .env file. The loader reads only
+ * process.env. The process does not call a cloud KMS or Secrets Manager.
+ * The Safe that writes the registry is not this key.
  */
 import fs from 'fs';
 import net from 'net';

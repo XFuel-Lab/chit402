@@ -6,9 +6,10 @@
  * signature that complements the HMAC (host-trust) signatures.
  *
  * Key format: ES256 (ECDSA with P-256/secp256r1 and SHA-256)
- *   - Private key: PEM format, base64-encoded in ISSUER_PRIVATE_KEY env var.
- *     AWS Secrets Manager injection that lands in that env var is the
- *     supported production path. There is no separate key file.
+ *   - Private key: PEM format, base64-encoded in the gateway environment
+ *     variable ISSUER_PRIVATE_KEY. Production sets it from the host .env file.
+ *     The loader reads only process.env. The process does not call a cloud KMS
+ *     or Secrets Manager. There is no second key loader.
  *   - Public key: JWK format in /.well-known/jwks.json
  *   - Key ID (kid): SHA-256 thumbprint of the JWK (RFC 7638)
  *
