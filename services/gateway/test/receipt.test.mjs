@@ -371,10 +371,12 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
   assert.ok(!html.includes('class="taskid">xfuel-'), 'xfuel- prefix should not appear in display');
 });
 
-test('renderReceiptNotFound: escapes the task id', () => {
+test('renderReceiptNotFound does not echo the requested id', () => {
   const html = renderReceiptNotFound('<b>x</b>');
   assert.ok(!html.includes('<b>x</b>'));
-  assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(!html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(!html.includes('<b>'));
+  assert.match(html, /Receipt not found/);
 });
 
 test('buildReceipt: rolling first call is pending, not a legacy rail, and carries usage', () => {

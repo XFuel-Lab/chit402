@@ -247,6 +247,11 @@ export function writeCanonicalPreimage(res, source, query = {}) {
       reason: 'The stored canonical object does not match its payload hash.',
     });
   }
+  // Own-data and deterministic: these are the canonical bytes stored at
+  // issuance for this document alone. They are not rebuilt on read, other
+  // receipts are not in them, and SHA-256 of the body is the signed
+  // payload_hash. A shared cache may keep that fixed body. meta=1 is a
+  // different URL. Field preimages and the receipt page stay private.
   res.set('Cache-Control', 'public, max-age=300');
   res.set('X-Chit-Hash-Alg', stored.alg);
   res.set('X-Chit-Payload-Hash', stored.hash);

@@ -463,10 +463,15 @@ export function withPublicPreimages(receipt, opts = {}) {
 }
 
 export function preimageField(preimages, field) {
-  if (!preimages || !field) return null;
+  if (!preimages || field == null || field === '') return null;
+  const fields = preimages.fields;
+  if (!fields || typeof fields !== 'object') return null;
   const key = String(field);
-  if (preimages.fields && preimages.fields[key]) return preimages.fields[key];
-  return null;
+  // Own keys only. `__proto__` and other prototype names are not fields.
+  if (!Object.hasOwn(fields, key)) return null;
+  const entry = fields[key];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  return entry;
 }
 
 export function preimageBytes(entry) {

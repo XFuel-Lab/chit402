@@ -86,12 +86,18 @@ export interface UnloggedSection {
   rows: UnloggedRow[];
 }
 
+/** Public shape. The digest covers the sorted task ids and the count. */
+export interface UnloggedCommitment {
+  count: number;
+  commitment: string;
+}
+
 export interface EpochRecord {
   schema?: string;
   payload_version?: number;
   epochs?: EpochRecordEntry[];
   orphans?: unknown[];
-  unlogged?: UnloggedSection | null;
+  unlogged?: UnloggedSection | UnloggedCommitment | null;
   issuer_signature?: { jws?: string | null } | null;
 }
 
@@ -109,8 +115,8 @@ export function unloggedListHash(rows: UnloggedRow[]): string {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
-export function verifyUnloggedSection(section: UnloggedSection | null | undefined): { ok: boolean; reason?: string } {
-  if (!section || !Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
+export function verifyUnloggedSection(section: UnloggedSection | UnloggedCommitment | null | undefined): { ok: boolean; reason?: string } {
+  if (!section || !('rows' in section) || !Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
   const list = canonicalUnloggedRows(section.rows);
   if (JSON.stringify(list) !== JSON.stringify(section.rows)) return { ok: false, reason: 'unlogged_canonical' };
   for (const row of list) {
@@ -122,16 +128,69 @@ export function verifyUnloggedSection(section: UnloggedSection | null | undefine
   return { ok: true };
 }
 
-/** Reason for a task the issuer attested as outside the tree. Null if the list does not verify. */
+/**
+ * SHA-256 of `{"count":N,"ids":[...]}`. Ids are unique and sorted by UTF-16
+ * code unit. The same bytes the gateway signs into a version 3 epoch record.
+ */
+export function unloggedIdCommitment(rows: Array<Partial<UnloggedRow> | string> | null | undefined): UnloggedCommitment {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(typeof row === 'string' ? row : (row?.task_id || ''));
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  ids.sort();
+  const count = ids.length;
+  const commitment = createHash('sha256').update(JSON.stringify({ count, ids })).digest('hex');
+  return { count, commitment };
+}
+
+/**
+ * Version 3 shape. Extra keys are a disclosure. Pass `ids` to recompute
+ * the digest; without them only the shape is checked.
+ */
+export function verifyUnloggedCommitment(
+  section: UnloggedCommitment | UnloggedSection | null | undefined,
+  ids?: string[] | null,
+): { ok: boolean; reason?: string } {
+  if (!section || typeof section !== 'object' || Array.isArray(section)) {
+    return { ok: false, reason: 'unlogged_missing' };
+  }
+  for (const key of Object.keys(section)) {
+    if (key !== 'count' && key !== 'commitment') return { ok: false, reason: 'unlogged_disclosed' };
+  }
+  const commitment = (section as UnloggedCommitment).commitment;
+  const count = (section as UnloggedCommitment).count;
+  if (!Number.isInteger(count) || count < 0) return { ok: false, reason: 'unlogged_count' };
+  if (typeof commitment !== 'string' || !/^[0-9a-f]{64}$/.test(commitment)) {
+    return { ok: false, reason: 'unlogged_commitment' };
+  }
+  if (ids != null) {
+    const expect = unloggedIdCommitment(ids);
+    if (expect.count !== count || expect.commitment !== commitment) {
+      return { ok: false, reason: 'unlogged_commitment' };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Reason for a task a version 2 record attested as outside the tree.
+ * Null when the list does not verify. A version 3 commitment has no reason.
+ */
 export function unloggedReasonForTask(
   record: EpochRecord | null | undefined,
   taskId: string | null | undefined,
 ): UnloggedRow | null {
   if (Number(record?.payload_version) !== 2) return null;
-  const checked = verifyUnloggedSection(record?.unlogged);
-  if (!checked.ok || !record?.unlogged) return null;
+  const section = record?.unlogged;
+  if (!section || !('rows' in section)) return null;
+  const checked = verifyUnloggedSection(section);
+  if (!checked.ok) return null;
   const id = String(taskId || '');
-  return record.unlogged.rows.find((row) => row.task_id === id) || null;
+  return section.rows.find((row) => row.task_id === id) || null;
 }
 
 export interface EpochRecordOptions {
@@ -248,6 +307,11 @@ export function verifyEpochRecord(
     if (record.unlogged != null) return { ok: false, reason: 'unlogged_unexpected' };
   } else if (version === 2) {
     const listed = verifyUnloggedSection(record.unlogged);
+    if (!listed.ok) return listed;
+    const chains = v2OrphanChains(orphans);
+    if (!chains.ok) return chains;
+  } else if (version === 3) {
+    const listed = verifyUnloggedCommitment(record.unlogged);
     if (!listed.ok) return listed;
     const chains = v2OrphanChains(orphans);
     if (!chains.ok) return chains;

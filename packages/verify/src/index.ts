@@ -2028,6 +2028,8 @@ export {
   verifyEpochRecord,
   verifyEpochInclusion,
   verifyUnloggedSection,
+  verifyUnloggedCommitment,
+  unloggedIdCommitment,
   unloggedReasonForTask,
   canonicalUnloggedRows,
   TREE_HEAD_SCHEMA_V1,
@@ -2046,6 +2048,7 @@ export {
   type EpochRecordOptions,
   type UnloggedRow,
   type UnloggedSection,
+  type UnloggedCommitment,
 } from './epoch.js';
 
 export {

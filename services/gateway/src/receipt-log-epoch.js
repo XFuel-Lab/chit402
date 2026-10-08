@@ -10,10 +10,18 @@
 import crypto from 'crypto';
 
 export const EPOCH_RECORD_SCHEMA = 'chit402.tree_epoch.v1';
-/** Roots and orphans only. Still valid. Kept in the journal when version 2 is appended. */
+/** Roots and orphans only. Still valid. Kept in the journal when a later version is appended. */
 export const EPOCH_RECORD_VERSION = 1;
-/** Version 2 adds the signed unlogged list. Epochs and orphans stay the version 1 bytes. */
+/**
+ * Version 2 signed the unlogged rows (task_id, agent_id, reason).
+ * Those records still verify. A public response does not serve them.
+ */
 export const EPOCH_RECORD_VERSION_UNLOGGED = 2;
+/**
+ * Version 3 signs a commitment over the sorted task ids and the count.
+ * The ids, agent ids, and reasons are not in the signed object.
+ */
+export const EPOCH_RECORD_VERSION_COMMITMENT = 3;
 export const EPOCH_RECORD_JWT_TYP = 'chit402-tree-epoch+jwt';
 export const UNLOGGED_REASONS = Object.freeze(['missing_row_hash', 'forked', 'depends_on_refused']);
 
@@ -209,6 +217,81 @@ export function unloggedSection(rows) {
   return { count: list.length, hash, rows: list };
 }
 
+/**
+ * Public commitment. `ids` are the unique task ids, sorted by UTF-16 code
+ * unit. The hash is SHA-256 of the UTF-8 JSON `{"count":N,"ids":[...]}`.
+ * Agent ids and reasons are not inputs.
+ * @param {Array<{ task_id?: string }>|string[]|null|undefined} rows
+ */
+export function unloggedIdCommitment(rows) {
+  const ids = [];
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(typeof row === 'string' ? row : (row?.task_id || ''));
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  ids.sort();
+  const count = ids.length;
+  const commitment = crypto.createHash('sha256').update(JSON.stringify({ count, ids })).digest('hex');
+  return { count, commitment };
+}
+
+/**
+ * Version 3 shape: count plus a 64-char hex commitment, and nothing else.
+ * Pass `ids` to recompute the commitment. Without them the check is the
+ * shape only; the signature binds the issuer to the digest.
+ * @param {object|null|undefined} section
+ * @param {string[]|null|undefined} [ids]
+ */
+export function verifyUnloggedCommitment(section, ids) {
+  if (!section || typeof section !== 'object' || Array.isArray(section)) {
+    return { ok: false, reason: 'unlogged_missing' };
+  }
+  for (const key of Object.keys(section)) {
+    if (key !== 'count' && key !== 'commitment') return { ok: false, reason: 'unlogged_disclosed' };
+  }
+  if (!Number.isInteger(section.count) || section.count < 0) return { ok: false, reason: 'unlogged_count' };
+  if (typeof section.commitment !== 'string' || !/^[0-9a-f]{64}$/.test(section.commitment)) {
+    return { ok: false, reason: 'unlogged_commitment' };
+  }
+  if (ids != null) {
+    const expect = unloggedIdCommitment(ids);
+    if (expect.count !== section.count || expect.commitment !== section.commitment) {
+      return { ok: false, reason: 'unlogged_commitment' };
+    }
+  }
+  return { ok: true };
+}
+
+/** True when a public copy of this record would name another row. */
+export function epochRecordDisclosesUnlogged(record) {
+  const section = record?.unlogged;
+  if (section == null) return false;
+  if (typeof section !== 'object' || Array.isArray(section)) return true;
+  if (Array.isArray(section.rows)) return true;
+  for (const key of Object.keys(section)) {
+    if (key !== 'count' && key !== 'commitment') return true;
+  }
+  return Object.keys(section).length !== 2;
+}
+
+/**
+ * Record safe to serve. A version 2 list stays in the journal and still
+ * verifies, and this withholds it: the signature covers the rows, so the
+ * rows cannot be stripped and the signature kept. No new signature is made.
+ */
+export function publicEpochRecord(record) {
+  if (!record || typeof record !== 'object') return record;
+  if (!epochRecordDisclosesUnlogged(record)) return record;
+  return {
+    schema: record.schema || EPOCH_RECORD_SCHEMA,
+    status: 'withheld',
+    published: false,
+  };
+}
+
 export function verifyUnloggedSection(section) {
   if (!section || typeof section !== 'object') return { ok: false, reason: 'unlogged_missing' };
   if (!Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
@@ -239,10 +322,11 @@ export function attestedUnloggedEntry(record, taskId) {
 }
 
 /**
- * Version 2 claims. `epochs` is the same array as `base` (the version 1
+ * Version 3 claims. `epochs` is the same array as `base` (the version 1
  * roots). Orphans are the corrected canonical list, not a copy of a version
  * 1 record that omitted ff950e72 or marked Solana anchors base-only.
- * The version 1 object is not modified.
+ * The version 1 object is not modified. The unlogged section is a commitment,
+ * not the rows.
  */
 export function epochRecordWithUnlogged(base, unloggedRows) {
   if (!base?.epochs) {
@@ -252,10 +336,10 @@ export function epochRecordWithUnlogged(base, unloggedRows) {
   }
   return {
     schema: base.schema || EPOCH_RECORD_SCHEMA,
-    payload_version: EPOCH_RECORD_VERSION_UNLOGGED,
+    payload_version: EPOCH_RECORD_VERSION_COMMITMENT,
     epochs: base.epochs,
     orphans: ORPHANED_ROOTS.map((row) => ({ ...row })),
-    unlogged: unloggedSection(unloggedRows),
+    unlogged: unloggedIdCommitment(unloggedRows),
   };
 }
 
@@ -370,13 +454,18 @@ export function assertPinnedEpochRecord(record) {
     if (!listed.ok) return listed;
     const chains = assertV2OrphanChains(record.orphans);
     if (!chains.ok) return chains;
+  } else if (version === EPOCH_RECORD_VERSION_COMMITMENT) {
+    const listed = verifyUnloggedCommitment(record.unlogged);
+    if (!listed.ok) return listed;
+    const chains = assertV2OrphanChains(record.orphans);
+    if (!chains.ok) return chains;
   } else {
     return { ok: false, reason: 'epoch_record_version' };
   }
   return { ok: true };
 }
 
-/** Version 2 only. Version 1 records predate this correction and still boot. */
+/** Version 2 and version 3. Version 1 records predate this correction and still boot. */
 function assertV2OrphanChains(orphans) {
   const early = orphans.find((row) => row?.root === ORPHAN_FF950E72);
   if (!early) return { ok: false, reason: 'orphan_ff950e72_missing' };
