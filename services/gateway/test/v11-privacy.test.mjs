@@ -598,16 +598,100 @@ test('T5 a spoofed X-Payer is not the principal', () => {
   assert.equal(JSON.stringify(request).includes(spoof), false);
 });
 
-test('T16-T19 owner view keeps the book ref and opens with the salt', async () => {
+test('T16 an AAD swap does not open the salt', () => {
+  const wrap = crypto.randomBytes(32);
+  const store = new EncryptedSaltStore(wrap, 'wrap-test');
+  const saltA = crypto.randomBytes(32);
+  const saltB = crypto.randomBytes(32);
+  store.put('rcpt-a', saltA);
+  store.put('rcpt-b', saltB);
+  const recordA = store.peek('rcpt-a');
+  const recordB = store.peek('rcpt-b');
+  assert.throws(() => openSaltRecord({ ...recordA, receipt_id: recordB.receipt_id }, wrap));
+  assert.throws(() => openSaltRecord({ ...recordB, receipt_id: recordA.receipt_id }, wrap));
+  assert.throws(() => openSaltRecord({
+    ...recordA,
+    iv: recordB.iv,
+    ct: recordB.ct,
+    tag: recordB.tag,
+  }, wrap));
+  store._rows.get('rcpt-a').record = { ...recordB, receipt_id: 'rcpt-a' };
+  assert.equal(store.get('rcpt-a'), null);
+  assert.equal(store.get('rcpt-b').equals(saltB), true);
+});
+
+test('T17 the salt wrap key is not the issuer key', () => {
+  const prev = snapshotEnv();
+  try {
+    process.env.NODE_ENV = 'test';
+    delete process.env.ISSUER_PRIVATE_KEY;
+    delete process.env.ISSUER_KID;
+    delete process.env.ALLOW_EPHEMERAL_ISSUER_KEY;
+    _resetIssuerKey();
+    const issuer = initIssuerKey();
+    const pem = issuer.privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const der = issuer.privateKey.export({ type: 'pkcs8', format: 'der' });
+    assert.throws(() => new EncryptedSaltStore(Buffer.from(pem)));
+    assert.throws(() => new EncryptedSaltStore(der));
+    const wrap = crypto.randomBytes(32);
+    const store = new EncryptedSaltStore(wrap, 'wrap-not-issuer');
+    assert.equal(store._key.equals(wrap), true);
+    assert.equal(store._key.equals(der), false);
+    assert.equal(der.includes(store._key), false);
+    assert.notEqual(store._kid, issuer.kid);
+    const saltSrc = fs.readFileSync(fileURLToPath(new URL('../src/salt-store.js', import.meta.url)), 'utf8');
+    assert.equal(saltSrc.includes('ISSUER_PRIVATE_KEY'), false);
+    assert.equal(saltSrc.includes('initIssuerKey'), false);
+  } finally {
+    _resetIssuerKey();
+    restoreEnv(prev);
+  }
+});
+
+test('T18 public receipt GETs do not read the salt', () => {
+  const src = fs.readFileSync(fileURLToPath(new URL('../src/server.js', import.meta.url)), 'utf8');
+  const start = src.indexOf("app.get('/receipt/by-tx'");
+  const end = src.indexOf("app.post('/receipt/:taskId/handoff/origin'");
+  assert.ok(start > 0 && end > start);
+  const gets = src.slice(start, end);
+  for (const needle of ['getSaltStore', 'requestSalt', 'applyRequestSaltHeader', 'X-Chit-Request-Salt', 'openSaltRecord']) {
+    assert.equal(gets.includes(needle), false, needle);
+  }
+  const publishStart = src.indexOf('function publishReceipt');
+  const publishEnd = src.indexOf('function sendPreimage');
+  const publish = src.slice(publishStart, publishEnd);
+  assert.equal(publish.includes('getSaltStore'), false);
+  assert.equal(publish.includes('requestSalt'), false);
+  const refusalStart = src.indexOf("app.get('/refusal/");
+  if (refusalStart > 0) {
+    const refusal = src.slice(refusalStart, refusalStart + 2500);
+    assert.equal(refusal.includes('getSaltStore'), false);
+    assert.equal(refusal.includes('applyRequestSaltHeader'), false);
+  }
+});
+
+test('T19 the owner view keeps one book ref and the public document has no salt', async () => {
   const prev = snapshotEnv();
   try {
     await arm();
     const task = paidTask('xfuel-v11-owner', { output: 'ok', agentId: 4 });
     const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
     const salt = headersFrom(receipt, task.request)['x-chit-request-salt'];
+    assert.match(salt, /^[0-9a-f]{64}$/);
     assert.equal(v11Commit(salt, V11_LABEL_OUTPUT, Buffer.from('ok')), receipt.output_commitment);
     assert.notEqual(v11Commit(salt, V11_LABEL_ACCOUNTING, Buffer.from('ok')), receipt.output_commitment);
-    assert.equal(JSON.stringify(receipt).includes(salt), false);
+    const surfaces = [
+      JSON.stringify(receipt),
+      JSON.stringify(storedReceiptJson(receipt)),
+      renderReceiptHtml(receipt),
+      buildReceiptOgSvg(receipt),
+      JSON.stringify(buildAuditorExport(receipt)),
+      capturePreimage(receipt),
+    ];
+    for (const surface of surfaces) {
+      assert.equal(surface.includes(salt), false);
+      assert.equal(surface.includes('x-chit-request-salt'), false);
+    }
     const persisted = task.meta.v11BookRef;
     assert.equal(persisted, receipt.book_ref);
     resetBookRefs();
