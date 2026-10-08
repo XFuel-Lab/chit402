@@ -5,7 +5,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 > Who paid which call — export, policy, evidence. Possession book for agent spend.
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
-> The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1).
+> The wire is api.chit402.com/v1.
 
 ## Money pages (chit402.com)
 
@@ -135,14 +135,14 @@ const XFUEL_LLMS = `# XFuel Protocol
 > /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
 > remaining under prepaid_ceiling). POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
-> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
+> api.chit402.com moves real mainnet USDC. Canonical: api.chit402.com.
 
 ## Money pages (xfuel.app)
 
 - /agent-shop : Live catalog — Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key). GET /v1/models shows what's live.
 - /book       : Possession-gated last-N collected spend. This agent spent Y on this job.
 - /book-bot   : Paste-into-bot prompt. Your SEO bot spent it. You hold the book.
-- /v1         : Not the API — points you to api.xfuel.app/v1.
+- /v1         : Not the API — points you to api.chit402.com/v1.
 - /pricing    : USDC on Base and Solana. Cost-plus, quoted, receipted.
 
 ## Start here (chat completions / responses)
