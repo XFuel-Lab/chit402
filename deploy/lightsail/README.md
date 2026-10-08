@@ -56,11 +56,22 @@ quietly — the service starts, serves traffic, and is wrong:
 | `PROVIDER_FLOATS_JSON` | Optional, but a float id must exist per provider you route to or that provider's COGS never burns. Ids are `theta-edgecloud` and `akash-network` |
 | `FREE_TIER_DAILY_COGS_USD` | Defaults to `$1` per caller per UTC day, so **leaving it unset still enforces a ceiling**. Past it, unmetered `/v1` returns 402 `free_tier_exhausted`. The demo key is one bucket for all public traffic, making this the cap on public exposure (~10 agent-shaped calls or ~110 short completions). `0` restores uncapped serving; COGS is measured either way. Visible at `GET /health` → `free_tier` |
 
+## Anchor fee caps
+
+The first Base anchor signs the gas quote from `BASE_RPC_URL`. A lying RPC can otherwise set the tip, and one anchor can spend `100000 gas × tip`, up to the whole wallet. Production (`NODE_ENV=production`) refuses to boot if either variable is unset or not an integer. Nothing overrides that check. Development and test may leave them unset, and unset means no cap.
+
+| Var | Default to set |
+|-----|----------------|
+| `ANCHOR_MAX_FEE_WEI` | `20000000000` (20 gwei) |
+| `ANCHOR_MAX_PRIORITY_WEI` | `2000000000` (2 gwei) |
+
+Normal Base base fees sit well under 1 gwei, and the priority tip is a fraction of a gwei. 20 gwei is a generous multiple of that, so a busy period still anchors. The anchor transaction uses 100,000 gas, so 20 gwei bounds one anchor at 0.002 ETH. A full drain of the anchor wallet takes many anchors (a 0.05 ETH float is 25 anchors at the cap). 2 gwei bounds the priority tip the same way. Set both lower when the wallet is thinner. Raise them only when anchors sit pending with `anchor_fee_cap` during a real Base fee spike. A quote above either cap is not signed and not broadcast; the anchor stays pending.
+
 Check names without printing values:
 
 ```bash
 cd ~/xfuel-protocol/services/gateway
-for v in RECEIPT_SIGNING_SECRET AKASHML_API_KEY ALLOW_MOCK_INFERENCE PROVIDER_FLOATS_JSON FREE_TIER_DAILY_COGS_USD; do
+for v in RECEIPT_SIGNING_SECRET AKASHML_API_KEY ALLOW_MOCK_INFERENCE PROVIDER_FLOATS_JSON FREE_TIER_DAILY_COGS_USD ANCHOR_MAX_FEE_WEI ANCHOR_MAX_PRIORITY_WEI; do
   grep -q "^$v=" .env && echo "SET      $v" || echo "MISSING  $v"
 done
 ```

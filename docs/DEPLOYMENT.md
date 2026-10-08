@@ -53,7 +53,16 @@ npm install
 npm run m2m-server
 ```
 
-Production demo box uses PM2 app `xfuel-m2m` — [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Production demo box uses PM2 app `xfuel-m2m` — [RUNTIME_STATE.md](./RUNTIME_STATE.md). The live box is Lightsail — [deploy/lightsail/README.md](../deploy/lightsail/README.md).
+
+Production (`NODE_ENV=production`) refuses to boot unless both anchor gas caps are integers. There is no skip flag. Development and test may leave them unset, and unset means no cap.
+
+| Var | Value to set |
+|-----|----------------|
+| `ANCHOR_MAX_FEE_WEI` | `20000000000` (20 gwei) |
+| `ANCHOR_MAX_PRIORITY_WEI` | `2000000000` (2 gwei) |
+
+Normal Base fees are well under 1 gwei. 20 gwei is a generous multiple of that. The anchor uses 100,000 gas, so this bounds one anchor at 0.002 ETH and a full drain takes many anchors (25 at the cap for a 0.05 ETH float). Set both lower for a thinner wallet. Raise them only when anchors stay pending with `anchor_fee_cap` during a real fee spike. A quote above either cap is not signed.
 
 ## Verify
 

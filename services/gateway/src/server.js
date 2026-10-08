@@ -79,6 +79,7 @@ import {
   receiptLogBootRequested,
   finishReceiptLogBoot,
   publicLogWitness,
+  assertAnchorFeeCaps,
 } from './receipt-merkle.js';
 import { attestedUnloggedEntry } from './receipt-log-epoch.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
@@ -5237,6 +5238,7 @@ async function _generateA2AProof(msg) {
  * M2M_API_PORT (default 3002, separate from the bridge health port 3001).
  */
 export async function startServer() {
+  assertAnchorFeeCaps();
   const port = parseInt(process.env.M2M_API_PORT) || 3002;
   // The durable receipt log is part of serving. Unit tests call createApp
   // without this, so they do not have to carry the production pin.

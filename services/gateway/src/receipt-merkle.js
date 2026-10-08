@@ -295,6 +295,17 @@ export async function signBaseAnchorRaw({ privateKey, nonce, calldata, fees = nu
   };
 }
 
+/**
+ * First-sign goes through this object. Tests replace `sign` to prove a
+ * quote over the cap never reaches the signer. Replacement signs
+ * `signBaseAnchorRaw` directly and does not use this seam.
+ */
+export const baseAnchorSigner = {
+  sign(args) {
+    return signBaseAnchorRaw(args);
+  },
+};
+
 /** How long to wait before another send after `attempts` transient failures. */
 export function anchorBackoffMs(attempts) {
   const n = Math.max(0, Math.min(Number(attempts) || 0, 6));
@@ -686,14 +697,69 @@ export function anchorStuckMs(env = process.env) {
   return Number.isFinite(raw) && raw >= 0 ? raw : ANCHOR_STUCK_MS;
 }
 
-export function anchorMaxFeeWei(env = process.env) {
-  const raw = env.ANCHOR_MAX_FEE_WEI;
+function parseAnchorWei(raw) {
   if (raw == null || raw === '') return null;
   try {
     return BigInt(raw);
   } catch {
     return null;
   }
+}
+
+/** Max `maxFeePerGas` (wei). Unset or non-numeric means no cap. */
+export function anchorMaxFeeWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_FEE_WEI);
+}
+
+/** Max `maxPriorityFeePerGas` (wei). Unset or non-numeric means no cap. */
+export function anchorMaxPriorityWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_PRIORITY_WEI);
+}
+
+/**
+ * Production must name both caps. There is no flag that skips this.
+ * Dev and test may leave them unset, and unset means no cap.
+ * @throws {ReceiptLogRefused}
+ */
+export function assertAnchorFeeCaps(env = process.env) {
+  if (env.NODE_ENV !== 'production') return;
+  for (const name of ['ANCHOR_MAX_FEE_WEI', 'ANCHOR_MAX_PRIORITY_WEI']) {
+    const raw = env[name];
+    if (raw == null || raw === '') {
+      throw new ReceiptLogRefused(
+        'anchor_fee_cap_config',
+        `${name} is unset. Production refuses to boot without a numeric wei cap.`,
+      );
+    }
+    if (parseAnchorWei(raw) == null) {
+      throw new ReceiptLogRefused(
+        'anchor_fee_cap_config',
+        `${name} is not numeric. Production refuses to boot without a numeric wei cap.`,
+      );
+    }
+  }
+}
+
+function anchorQuoteOverCap(fees, env = process.env) {
+  const maxFee = anchorMaxFeeWei(env);
+  const maxPriority = anchorMaxPriorityWei(env);
+  if (maxFee != null && BigInt(fees.maxFeePerGas) > maxFee) return true;
+  if (maxPriority != null && BigInt(fees.maxPriorityFeePerGas) > maxPriority) return true;
+  return false;
+}
+
+function noteAnchorFeeCap(tree, quoted) {
+  tree.lastAnchorError = 'anchor_fee_cap';
+  logger.error(
+    {
+      reason: 'anchor_fee_cap',
+      max_fee: quoted.maxFeePerGas.toString(),
+      max_priority: quoted.maxPriorityFeePerGas.toString(),
+      cap_fee: anchorMaxFeeWei()?.toString() ?? null,
+      cap_priority: anchorMaxPriorityWei()?.toString() ?? null,
+    },
+    'anchor fee cap: RPC quote exceeds ANCHOR_MAX_FEE_WEI or ANCHOR_MAX_PRIORITY_WEI. Refusing to sign or broadcast. The anchor stays pending.',
+  );
 }
 
 /**
@@ -2287,6 +2353,8 @@ export class ReceiptMerkleTree {
   async _signAndBroadcastIntent(reserved, { send, lookup, request, root, day }) {
     const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
     if (!key) return this._anchorResult({ status: 'pending', root, reason: 'no_key' });
+    // Production with a missing or non-numeric cap never reaches the signer.
+    assertAnchorFeeCaps();
     try {
       await this._gateAnchorChain(request);
     } catch (err) {
@@ -2294,12 +2362,22 @@ export class ReceiptMerkleTree {
     }
     let signed;
     try {
-      const fees = typeof send === 'function' ? null : await baseAnchorFees(request);
-      signed = await signBaseAnchorRaw({
+      // An injected send without an RPC transport keeps the fixed schedule.
+      // A request transport is the RPC quote, including production where
+      // send is absent. The cap applies to whichever quote we would sign.
+      const dynamic = typeof send === 'function' && typeof request !== 'function'
+        ? null
+        : await baseAnchorFees(request);
+      const quoted = dynamic || FIXED_ANCHOR_FEES;
+      if (anchorQuoteOverCap(quoted)) {
+        noteAnchorFeeCap(this, quoted);
+        return this._anchorResult({ status: 'pending', root, reason: 'anchor_fee_cap' });
+      }
+      signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: reserved.nonce,
         calldata: anchorCalldata(root),
-        fees,
+        fees: quoted,
       });
     } catch (err) {
       if (err?.code === 'anchor_chain_mismatch') {
@@ -2878,6 +2956,7 @@ function solanaFeePayerOrNull() {
  * flag is set and the directory has no journal.
  */
 export function bootReceiptLog(dir, opts = {}) {
+  assertAnchorFeeCaps();
   resolveAnchorSender();
   // A fee-payer env that disagrees with the Solana key refuses boot.
   // A missing or unparsable key stays pending until publish, as before.
