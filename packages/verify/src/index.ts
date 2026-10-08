@@ -246,6 +246,8 @@ export interface XFuelReceipt {
   tolerance?: { base?: number; solana?: number } | null;
   /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
   book_seq?: number | null;
+  /** Log leaf hash. Same field verifyAnchoredRoot reads before book_chain.row_hash. */
+  row_hash?: string | null;
   book_chain?: { seq?: number | null; row_hash?: string | null } | null;
   /** Unsigned derived refusal section. Ignored by signature verification. */
   receipt_lane?: {
@@ -1457,6 +1459,25 @@ function normalizeBoundRoot(root: unknown): string | null {
 }
 
 /**
+ * Same order as verifyAnchoredRoot: top-level row_hash, then book_chain, then
+ * the inclusion document. One source is enough. Two or three that differ fail
+ * closed. The value used for the leaf is the one they agree on.
+ */
+function boundRowHash(
+  receipt: { row_hash?: string | null; book_chain?: { row_hash?: string | null } | null },
+  inclusion?: { row_hash?: string | null } | null,
+): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' } {
+  const present: string[] = [];
+  if (typeof receipt.row_hash === 'string') present.push(receipt.row_hash);
+  if (typeof receipt.book_chain?.row_hash === 'string') present.push(receipt.book_chain.row_hash);
+  if (typeof inclusion?.row_hash === 'string') present.push(inclusion.row_hash);
+  if (present.length === 0) return { ok: true, row: '' };
+  const agreed = present[0];
+  if (present.some((value) => value !== agreed)) return { ok: false, reason: 'row_hash_mismatch' };
+  return { ok: true, row: agreed };
+}
+
+/**
  * Bind a supplied inclusion proof to its leaf index and tree size.
  * The head's size, when present, has to be the inclusion's size.
  */
@@ -1479,8 +1500,9 @@ function offlineInclusionBound(
   );
   if (!root) return { ok: false, reason: 'bad_root' };
   if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
-  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return bound;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return { ok: false, reason: 'leaf_mismatch' };
@@ -1510,8 +1532,9 @@ function suppliedHeadCovers(
   if (signed === supplied) return true;
   if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
   if (receipt.task_id == null) return false;
-  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return false;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return false;

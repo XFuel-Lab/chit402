@@ -179,13 +179,25 @@ function trustCompactJws(
   return { ok: false, trust: null, kid, payload: null, reason: 'head_signature_invalid' };
 }
 
+function historyEntryMatches(entry: { kid?: string; jwk?: Es256Jwk }, kid: string): boolean {
+  if (entry.kid === kid) return true;
+  return Boolean(entry.jwk && isEs256PublicJwk(entry.jwk) && jwkThumbprint(entry.jwk) === kid);
+}
+
 function historyEntryKey(doc: IssuerHistoryDocument, kid: string | null): Es256Jwk | null {
   if (!kid) return null;
   for (const entry of doc.entries || []) {
     if (!entry?.jwk || !isEs256PublicJwk(entry.jwk)) continue;
-    if (entry.kid === kid || jwkThumbprint(entry.jwk) === kid) return entry.jwk;
+    if (historyEntryMatches(entry, kid)) return entry.jwk;
   }
   return null;
+}
+
+function historyEntryForKid(doc: IssuerHistoryDocument, kid: string) {
+  for (const entry of doc.entries || []) {
+    if (entry && historyEntryMatches(entry, kid)) return entry;
+  }
+  return undefined;
 }
 
 function stable(value: unknown): string {
@@ -359,10 +371,10 @@ function headHistoryWindow(
   kid: string,
   publishedAt: unknown,
 ): { ok: boolean; reason: string | null } {
+  const entry = historyEntryForKid(doc, kid);
+  if (!entry?.kid) return { ok: false, reason: 'kid_not_in_history' };
   const hasTime = publishedAt != null && publishedAt !== '';
-  if (hasTime) return issuerKeyWindow(doc, kid, publishedAt);
-  const entry = (doc.entries || []).find((row) => row.kid === kid);
-  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
+  if (hasTime) return issuerKeyWindow(doc, entry.kid, publishedAt);
   const notBefore = entry.not_before ? Date.parse(entry.not_before) : NaN;
   if (!Number.isFinite(notBefore)) return { ok: false, reason: 'not_before_missing' };
   if (notBefore > Date.now()) return { ok: false, reason: 'issued_before_not_before' };
