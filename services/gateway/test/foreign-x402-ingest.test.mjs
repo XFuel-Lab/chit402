@@ -1244,12 +1244,13 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   const identity = hooks.agentRegistry.allocate({ taskId: 'foreign-ingest-smoke' });
   hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
 
+  const tx = evmTx('smokeverifytx');
   const seeded = await ingestForeignX402({
     foreign_invoice: {
       amount: '5000',
       payer: WALLET_A,
       payTo: '0xExternalPayBox',
-      tx: evmTx('smokeverifytx'),
+      tx,
       hub: 'external.shop',
       model: '/v1/run',
     },
@@ -1272,7 +1273,7 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   const receipt = receiptBody;
   assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
   assert.equal(receipt.task_id, seeded.body.task_id);
-  assert.equal(receipt.payment_tx, '0xsmokeverifytx');
+  assert.equal(receipt.payment_tx, tx);
   assert.equal(receipt.issuer_signature, undefined);
   assert.equal(JSON.stringify(receipt).toLowerCase().includes(WALLET_A.toLowerCase()), false);
 });
