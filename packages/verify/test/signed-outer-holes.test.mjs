@@ -293,4 +293,19 @@ test('log mode fails a receipt whose amount was changed', () => {
   assert.doesNotMatch(text.stdout, /Overall: VERIFIED/);
   assert.match(text.stdout, /payment\.gross_amount: outer 100000 ≠ signed 10000/);
   assert.match(text.stdout, /UNVERIFIED/);
+
+  const quiet = runCli([
+    receiptPath,
+    inclusionPath,
+    headPath,
+    '--rpc',
+    '--quiet',
+    '--no-issuer-history',
+    '--no-preimage',
+    '--epoch-url', 'http://127.0.0.1:9',
+  ]);
+  assert.notEqual(quiet.status, 0, quiet.stdout + quiet.stderr);
+  assert.doesNotMatch(quiet.stdout, /Overall: VERIFIED/);
+  assert.match(quiet.stdout, /payment\.gross_amount: outer 100000 ≠ signed 10000/);
+  assert.match(quiet.stdout, /Receipt checks:/);
 });

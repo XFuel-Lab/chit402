@@ -89,9 +89,18 @@ function productionFixture() {
   const kid = jwkThumbprint(exported);
   const publicJwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, kid, alg: 'ES256', use: 'sig' };
   const claims = epochClaims();
-  const receipt = {
+  const receiptClaims = {
     task_id: TASK_ID,
     book_chain: { row_hash: ROW_HASH },
+  };
+  const receipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signCompact(receiptClaims, privateKey, kid, 'chit402-receipt+jwt'),
+      kid,
+      issuer_jwk: publicJwk,
+    },
   };
   const leaf = createHash('sha256')
     .update(Buffer.concat([Buffer.from([0x00]), Buffer.from(`${TASK_ID}|${ROW_HASH}`)]))
@@ -227,6 +236,7 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.kid,
       '--no-issuer-history',
+      '--no-preimage',
     ]);
     const text = `${run.stdout || ''}\n${run.stderr || ''}`;
     assert.equal(run.status, 0, text);
