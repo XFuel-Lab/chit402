@@ -13,6 +13,7 @@
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
+import { boundRowHash } from './row-hash.js';
 import {
   verifyCarryForward,
   type CarryForwardView,
@@ -91,6 +92,7 @@ import {
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import { verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 
 export {
   computePaymentCommitment,
@@ -245,6 +247,8 @@ export interface XFuelReceipt {
   tolerance?: { base?: number; solana?: number } | null;
   /** Append position. Unsigned relative to the payment JWS; signed inside book_chain. */
   book_seq?: number | null;
+  /** Log leaf hash. Same field verifyAnchoredRoot reads before book_chain.row_hash. */
+  row_hash?: string | null;
   book_chain?: { seq?: number | null; row_hash?: string | null } | null;
   /** Unsigned derived refusal section. Ignored by signature verification. */
   receipt_lane?: {
@@ -348,8 +352,15 @@ export interface ReceiptVerification {
   amount_usdc: string | null;
   /** Settlement ref from verified signed claims. Null when the signature is not trusted. */
   tx: string | null;
-  /** Unsigned outer fields that disagree with the JWS payload. */
+  /** Signed claim paths whose outer copy disagrees. */
   claim_mismatches: ClaimMismatch[];
+  /**
+   * Outer paths the payment JWS does not cover. Overall does not verify them.
+   * `issuer_signature` is omitted: those bytes are the signature that was checked.
+   */
+  unsigned_fields: string[];
+  /** Overall covers signed claims and the checks named in `errors`. */
+  verified_scope: 'signed_claims';
   /**
    * `not_present_legacy` — v8 (or older) payload with no claim_id key. Still verifies.
    * `ok` — claim_id-era payload, and a payment.ref is paired with a seat.
@@ -1049,70 +1060,124 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function normFact(value: unknown, address = false): string | null {
-  const text = claimString(value);
-  if (text == null) return null;
-  return address ? text.toLowerCase() : text;
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatClaim(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+/** 0x hex is compared case-insensitively. Checksum case is not a different claim. */
+function sameLeaf(signed: unknown, outer: unknown): boolean {
+  if (Array.isArray(signed) || Array.isArray(outer)) {
+    return JSON.stringify(signed) === JSON.stringify(outer);
+  }
+  if (typeof signed === 'string' && typeof outer === 'string') {
+    if (/^0x[0-9a-fA-F]+$/.test(signed) && /^0x[0-9a-fA-F]+$/.test(outer)) {
+      return signed.toLowerCase() === outer.toLowerCase();
+    }
+    return signed === outer;
+  }
+  if (signed == null || outer == null) return signed == null && outer == null;
+  return Object.is(signed, outer);
 }
 
 /**
- * Fields a verifier may quote. Compared only when both the unsigned outer
- * copy and the JWS payload carry a value.
+ * The outer receipt `schema` (`xfuel.receipt.v3`) is the document type.
+ * The JWS `schema` (`chit402.foreign_payout.v1`) is the payload type.
+ * They share a name and are not copies of each other.
  */
-const CLAIM_COMPARE: Array<{
-  field: string;
-  outer: (receipt: XFuelReceipt) => unknown;
-  signed: (claims: Record<string, unknown>) => unknown;
-  address?: boolean;
-}> = [
-  { field: 'task_id', outer: (r) => r.task_id, signed: (c) => c.task_id },
-  { field: 'payment.rail', outer: (r) => r.payment?.rail, signed: (c) => asRecord(c.payment)?.rail },
-  { field: 'payment.ref', outer: (r) => r.payment?.ref, signed: (c) => asRecord(c.payment)?.ref },
-  { field: 'payment.gross_amount', outer: (r) => r.payment?.gross_amount, signed: (c) => asRecord(c.payment)?.gross_amount },
-  { field: 'payment.settled_amount', outer: (r) => r.payment?.settled_amount, signed: (c) => asRecord(c.payment)?.settled_amount },
-  { field: 'payment.net_amount', outer: (r) => r.payment?.net_amount, signed: (c) => asRecord(c.payment)?.net_amount },
-  { field: 'payment.asset', outer: (r) => r.payment?.asset, signed: (c) => asRecord(c.payment)?.asset, address: true },
-  { field: 'payment.payee', outer: (r) => r.payment?.payee, signed: (c) => asRecord(c.payment)?.payee, address: true },
-  { field: 'caller_binding.payer_wallet', outer: (r) => r.caller_binding?.payer_wallet, signed: (c) => asRecord(c.caller_binding)?.payer_wallet, address: true },
-  { field: 'caller_binding.agent_pubkey', outer: (r) => r.caller_binding?.agent_pubkey, signed: (c) => asRecord(c.caller_binding)?.agent_pubkey },
-  { field: 'caller_binding.api_key_hash', outer: (r) => r.caller_binding?.api_key_hash, signed: (c) => asRecord(c.caller_binding)?.api_key_hash },
-  { field: 'claim_id', outer: (r) => r.claim_id, signed: (c) => c.claim_id },
-  { field: 'route.model', outer: (r) => r.route?.model, signed: (c) => asRecord(c.route)?.model },
-  { field: 'route.provider', outer: (r) => r.route?.provider, signed: (c) => asRecord(c.route)?.provider },
-  { field: 'output.hash', outer: (r) => r.output?.hash, signed: (c) => asRecord(c.output)?.hash },
-  { field: 'binding.expected_commitment', outer: (r) => r.binding?.expected_commitment, signed: (c) => asRecord(c.binding)?.expected_commitment },
-  { field: 'provider_cogs.actual', outer: (r) => r.provider_cogs?.actual, signed: (c) => asRecord(c.provider_cogs)?.actual },
-];
+function schemaIsNotACopy(path: string): boolean {
+  return path === 'schema';
+}
 
-/** Flag unsigned outer copies that disagree with the JWS payload. */
+function compareSignedNode(
+  signed: unknown,
+  outer: unknown,
+  prefix: string,
+  mismatches: ClaimMismatch[],
+): void {
+  if (!isPlain(signed)) return;
+  if (!isPlain(outer)) {
+    mismatches.push({
+      field: prefix || '$',
+      outer: formatClaim(outer),
+      signed: formatClaim(signed),
+    });
+    return;
+  }
+  for (const key of Object.keys(signed)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (schemaIsNotACopy(path)) continue;
+    if (!Object.prototype.hasOwnProperty.call(outer, key)) continue;
+    const sv = signed[key];
+    const ov = outer[key];
+    if (isPlain(sv) && isPlain(ov)) {
+      compareSignedNode(sv, ov, path, mismatches);
+      continue;
+    }
+    if (!sameLeaf(sv, ov)) {
+      mismatches.push({ field: path, outer: formatClaim(ov), signed: formatClaim(sv) });
+    }
+  }
+}
+
+/**
+ * Walk every signed claim. When the outer receipt has the same path, the
+ * values must match, including null against a filled-in outer copy. A path
+ * the outer receipt omits is not a copy, so it is not a mismatch.
+ */
 export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, unknown> | null): ClaimMismatch[] {
   if (!claims) return [];
   const mismatches: ClaimMismatch[] = [];
-  for (const spec of CLAIM_COMPARE) {
-    const outer = normFact(spec.outer(receipt), spec.address);
-    const signed = normFact(spec.signed(claims), spec.address);
-    if (outer == null || signed == null || outer === signed) continue;
-    mismatches.push({
-      field: spec.field,
-      outer: claimString(spec.outer(receipt)),
-      signed: claimString(spec.signed(claims)),
-    });
-  }
-  // v9 head pair. Compared when the outer key is present, including a null
-  // signed hash against a filled-in outer copy. v8 claims skip this.
-  if (headBindingVerdict(claims) === 'ok') {
-    const disagree = outerHeadDisagrees(receipt, claims);
-    if (disagree) {
-      const outerValue = disagree === 'tree_head_hash' ? receipt.tree_head_hash : receipt.tolerance;
-      const signedValue = disagree === 'tree_head_hash' ? claims.tree_head_hash : claims.tolerance;
-      mismatches.push({
-        field: disagree,
-        outer: outerValue == null ? null : JSON.stringify(outerValue),
-        signed: signedValue == null ? null : JSON.stringify(signedValue),
-      });
-    }
-  }
+  compareSignedNode(claims, receipt, '', mismatches);
   return mismatches;
+}
+
+function pushUnsignedLeaves(value: unknown, path: string, paths: string[]): void {
+  if (isPlain(value)) {
+    const keys = Object.keys(value).sort();
+    if (keys.length === 0) {
+      paths.push(path);
+      return;
+    }
+    for (const key of keys) pushUnsignedLeaves(value[key], `${path}.${key}`, paths);
+    return;
+  }
+  paths.push(path);
+}
+
+function collectUnsigned(
+  outer: unknown,
+  signed: unknown,
+  prefix: string,
+  paths: string[],
+): void {
+  if (!isPlain(outer)) return;
+  const signedObj = isPlain(signed) ? signed : null;
+  for (const key of Object.keys(outer).sort()) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    // The signature container is the credential that was checked, not an unsigned claim.
+    if (!prefix && key === 'issuer_signature') continue;
+    const signedHas = !!signedObj && Object.prototype.hasOwnProperty.call(signedObj, key);
+    if (!signedHas || schemaIsNotACopy(path)) {
+      pushUnsignedLeaves(outer[key], path, paths);
+      continue;
+    }
+    const sv = signedObj[key];
+    if (isPlain(outer[key]) && isPlain(sv)) collectUnsigned(outer[key], sv, path, paths);
+  }
+}
+
+/** Outer paths the signed claims do not cover. Sorted. Not a failure by themselves. */
+export function unsignedOuterFields(receipt: unknown, claims: Record<string, unknown> | null): string[] {
+  const paths: string[] = [];
+  collectUnsigned(receipt, claims, '', paths);
+  return paths;
 }
 
 function receiptViewFromClaims(receipt: XFuelReceipt, claims: Record<string, unknown>): XFuelReceipt {
@@ -1333,8 +1398,13 @@ export interface VerifyReceiptOptions {
    * Tree head to check against the signed `tree_head_hash`. An equal root is
    * the issuance prefix and proves inclusion of this receipt. A different root
    * verifies only when `inclusion` proves the leaf is in that head.
+   * A tree-head witness (anything beyond `{ root, tree_size }`) is checked
+   * offline. A missing `issuer_signature` fails closed. The signature must
+   * cover the outer size, root, and the other signed fields. The issuer-history
+   * document fetched for this call is the one that trusts the head's kid.
+   * No chain RPC.
    */
-  head?: ReceiptTreeHead | null;
+  head?: (ReceiptTreeHead & TreeHeadDocument) | null;
   /**
    * Inclusion witness for `head` when its root is not the signed prefix.
    * `leaf` is the 32-byte leaf hash hex. Without it the leaf is
@@ -1390,9 +1460,61 @@ function normalizeBoundRoot(root: unknown): string | null {
 }
 
 /**
- * True when the supplied head is the signed prefix, or a later head whose
- * inclusion proof contains this receipt's leaf.
+ * Row hash for an offline leaf. Null and `''` are missing: do not hash `task_id|`.
  */
+function inclusionRow(
+  receipt: XFuelReceipt,
+  inclusion: { row_hash?: string | null } | null | undefined,
+): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' | 'no_leaf' } {
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return bound;
+  if (bound.row == null || bound.row === '') return { ok: false, reason: 'no_leaf' };
+  return { ok: true, row: bound.row };
+}
+
+/**
+ * Bind a supplied inclusion proof to its leaf index and tree size.
+ * The head's size, when present, has to be the inclusion's size.
+ */
+function offlineInclusionBound(
+  receipt: XFuelReceipt,
+  head: { root?: string | null; tree_size?: number | null } | null | undefined,
+  inclusion: NonNullable<VerifyReceiptOptions['inclusion']>,
+): { ok: true } | { ok: false; reason: string } {
+  const index = inclusion.leaf_index;
+  const size = inclusion.tree_size ?? head?.tree_size;
+  if (index == null || size == null || !Array.isArray(inclusion.proof)) {
+    return { ok: false, reason: 'inclusion_failed' };
+  }
+  if (head?.tree_size != null && inclusion.tree_size != null
+    && Number(head.tree_size) !== Number(inclusion.tree_size)) {
+    return { ok: false, reason: 'tree_size_mismatch' };
+  }
+  const root = normalizeBoundRoot(head?.root) || normalizeBoundRoot(
+    (inclusion as { root?: string | null }).root,
+  );
+  if (!root) return { ok: false, reason: 'bad_root' };
+  if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
+  const bound = inclusionRow(receipt, inclusion);
+  if (!bound.ok) return bound;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
+  if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
+    && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
+    return { ok: false, reason: 'leaf_mismatch' };
+  }
+  const included = verifyMerkleInclusion(leaf, Number(index), Number(size), root, inclusion.proof);
+  return included ? { ok: true } : { ok: false, reason: 'inclusion_failed' };
+}
+
+/**
+ * `{ root }` and `{ root, tree_size }` only compare a signed tree_head_hash.
+ * Any other supplied head is an offline tree-head witness and needs a signature.
+ */
+function offlineHeadNeedsSignature(head: TreeHeadDocument | null | undefined): boolean {
+  if (!head || typeof head !== 'object') return false;
+  return Object.keys(head).some((key) => key !== 'root' && key !== 'tree_size');
+}
+
 function suppliedHeadCovers(
   receipt: XFuelReceipt,
   signedRoot: string,
@@ -1405,8 +1527,9 @@ function suppliedHeadCovers(
   if (signed === supplied) return true;
   if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
   if (receipt.task_id == null) return false;
-  const row = inclusion.row_hash ?? receipt.book_chain?.row_hash ?? '';
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  const bound = inclusionRow(receipt, inclusion);
+  if (!bound.ok) return false;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return false;
@@ -1469,6 +1592,7 @@ export async function verifyReceipt(
     ? decodeJwsPayload(receipt.issuer_signature.jws)
     : null;
   const claim_mismatches = diffOuterClaims(receipt, decoded);
+  const unsigned_fields = unsignedOuterFields(receipt, decoded);
   for (const mismatch of claim_mismatches) {
     errors.push(`outer/signed mismatch: ${mismatch.field} (outer ${mismatch.outer}, signed ${mismatch.signed})`);
   }
@@ -1493,6 +1617,82 @@ export async function verifyReceipt(
     if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
       headMismatch = true;
       errors.push('tree_head_mismatch');
+    }
+  }
+
+  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
+    ?? decoded?.iat
+    ?? receipt.created_at
+    ?? null;
+  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
+  const payloadVersion = Number(verifiedClaims?.payload_version);
+  // Payload v10 signs the history pin. A missing pin fails even when the
+  // caller did not pass a history file or ask for a fetch.
+  const pinRequired = !options.skipIssuerHistory
+    && Number.isFinite(payloadVersion)
+    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
+    options.issuerHistory
+    || options.issuerHistoryBytes
+    || options.fetchIssuerHistory
+    || options.strictIssuerHistory
+    || options.issuerHistoryUrl
+    || historyPin
+  ));
+  const issuer_history = historyAsked
+    ? await checkReceiptIssuerHistory(receipt, {
+      document: options.issuerHistory ?? null,
+      documentBytes: options.issuerHistoryBytes ?? null,
+      fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
+      strict: options.strictIssuerHistory === true,
+      historyUrl: options.issuerHistoryUrl ?? null,
+      jwks,
+      trustedKids,
+      fetchImpl: options.fetchImpl,
+      trustedHosts,
+      issuedAt,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+      pin: historyPin,
+      requirePin: pinRequired,
+    })
+    : {
+      checked: false,
+      ok: true,
+      unreachable: false,
+      warning: null,
+      reason: null,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+      document: null,
+      loaded: false,
+    };
+
+  // Offline: a tree-head witness is trusted only when its ES256 signature
+  // covers the outer size, root, and the other fields anchor mode already
+  // compares. A missing signature is head_signature_missing. The history
+  // body loaded above is the one this check trusts. Chain RPC is not used.
+  let headTrustFailed = false;
+  const suppliedHead = options.head as TreeHeadDocument | null | undefined;
+  if (offlineHeadNeedsSignature(suppliedHead)) {
+    const trust = verifyTreeHeadTrust(suppliedHead, {
+      jwks,
+      trustedKids,
+      issuerHistory: issuer_history.document,
+      strictIssuerHistory: options.strictIssuerHistory === true,
+    });
+    if (!trust.ok) {
+      headTrustFailed = true;
+      errors.push(trust.reason || 'head_signature_invalid');
+    } else if (issuer_history.loaded && !issuer_history.document) {
+      headTrustFailed = true;
+      errors.push('issuer_history_invalid');
+    }
+  }
+  let inclusionFailed = false;
+  if (options.inclusion && (options.inclusion.proof || options.inclusion.leaf_index != null)) {
+    const bound = offlineInclusionBound(receipt, options.head ?? null, options.inclusion);
+    if (!bound.ok) {
+      inclusionFailed = true;
+      errors.push(bound.reason);
     }
   }
 
@@ -1632,49 +1832,6 @@ export async function verifyReceipt(
     }
   }
 
-  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
-    ?? decoded?.iat
-    ?? receipt.created_at
-    ?? null;
-  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
-  const payloadVersion = Number(verifiedClaims?.payload_version);
-  // Payload v10 signs the history pin. A missing pin fails even when the
-  // caller did not pass a history file or ask for a fetch.
-  const pinRequired = !options.skipIssuerHistory
-    && Number.isFinite(payloadVersion)
-    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
-  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
-    options.issuerHistory
-    || options.issuerHistoryBytes
-    || options.fetchIssuerHistory
-    || options.strictIssuerHistory
-    || options.issuerHistoryUrl
-    || historyPin
-  ));
-  const issuer_history = historyAsked
-    ? await checkReceiptIssuerHistory(receipt, {
-      document: options.issuerHistory ?? null,
-      documentBytes: options.issuerHistoryBytes ?? null,
-      fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
-      strict: options.strictIssuerHistory === true,
-      historyUrl: options.issuerHistoryUrl ?? null,
-      jwks,
-      trustedKids,
-      fetchImpl: options.fetchImpl,
-      trustedHosts,
-      issuedAt,
-      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-      pin: historyPin,
-      requirePin: pinRequired,
-    })
-    : {
-      checked: false,
-      ok: true,
-      unreachable: false,
-      warning: null,
-      reason: null,
-      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-    };
   if (issuer_history.warning) warnings.push(issuer_history.warning);
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
     errors.push(`issuer history: ${issuer_history.reason}`);
@@ -1703,7 +1860,7 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || preimageFailed || historyFailed || canonicalPreimageFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -1731,23 +1888,25 @@ export async function verifyReceipt(
 
   let carry_forward: CarryForwardView | null | undefined;
   if (options.carry) {
-    const row = receipt.book_chain?.row_hash
-      ?? options.carry.row_hash
-      ?? '';
-    const leaf = receipt.task_id == null
+    const bound = boundRowHash(receipt, { row_hash: options.carry.row_hash });
+    const leaf = !bound.ok || bound.row == null || bound.row === '' || receipt.task_id == null
       ? null
-      : leafHash(Buffer.from(`${receipt.task_id}|${row}`));
-    const verdict = leaf
-      ? verifyCarryForward({
-        leaf,
-        oldHead: options.carry.oldHead,
-        oldInclusion: options.carry.oldInclusion,
-        currentHead: options.carry.currentHead,
-        currentInclusions: options.carry.currentInclusions,
-        trustedKids,
-        jwks,
-      })
-      : { applicable: true as const, ok: false as const, status: null, reason: 'not_in_tree' };
+      : leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
+    const verdict = !bound.ok
+      ? { applicable: true as const, ok: false as const, status: null, reason: bound.reason }
+      : (bound.row == null || bound.row === '')
+        ? { applicable: true as const, ok: false as const, status: null, reason: 'row_hash_missing' }
+        : leaf
+          ? verifyCarryForward({
+            leaf,
+            oldHead: options.carry.oldHead,
+            oldInclusion: options.carry.oldInclusion,
+            currentHead: options.carry.currentHead,
+            currentInclusions: options.carry.currentInclusions,
+            trustedKids,
+            jwks,
+          })
+          : { applicable: true as const, ok: false as const, status: null, reason: 'not_in_tree' };
     if (verdict.applicable && !verdict.ok) {
       errors.push(verdict.reason);
       overall = 'failed';
@@ -1769,6 +1928,7 @@ export async function verifyReceipt(
   const receipt_lane = receiptLaneFromVerification({
     receipt,
     claims: {
+      schema: verifiedSchema,
       payment: signedPayment ? {
         ref: typeof signedPayment.ref === 'string' ? signedPayment.ref : null,
         rail: typeof signedPayment.rail === 'string' ? signedPayment.rail : null,
@@ -1795,6 +1955,8 @@ export async function verifyReceipt(
     amount_usdc: facts.amount_usdc,
     tx: facts.tx,
     claim_mismatches,
+    unsigned_fields,
+    verified_scope: 'signed_claims',
     claim_id,
     head_binding: signedBinding
       ? { tree_head_hash: signedBinding.tree_head_hash, tolerance: signedBinding.tolerance }
@@ -1913,6 +2075,18 @@ export {
   type AnchorHead,
   type VerifyAnchoredRootInput,
 } from './anchor-witness.js';
+
+export {
+  PINNED_BASE_ANCHOR_WALLET,
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  ANCHOR_WALLET_SOURCES_NOT_CONSULTED,
+  LEGACY_HEAD_UNPINNED_SIGNER,
+  HEAD_TRUST_MESSAGES,
+  headOmitsPinnedSigner,
+  verifyTreeHeadTrust,
+  verifyAnchorWalletDocument,
+  compileAnchorWallets,
+} from './anchor-trust.js';
 
 export {
   verifyCanonicalPreimageBytes,

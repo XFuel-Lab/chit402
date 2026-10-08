@@ -22,7 +22,7 @@ const {
   checkReceiptIssuerHistory,
 } = await import('../dist/issuer-history.js');
 const { jwkThumbprint, DEFAULT_TRUSTED_ISSUER_KIDS } = await import('../dist/jws.js');
-const { verifyReceipt, verifyCanonicalPreimageBytes } = await import('../dist/index.js');
+const { verifyReceipt, verifyCanonicalPreimageBytes, computePaymentCommitment } = await import('../dist/index.js');
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const { issuerHistoryDocumentHash } = await import('../dist/issuer-history.js');
 
@@ -77,6 +77,53 @@ test('a published row preimage must match, and a missing one fails closed', asyn
   assert.equal(legacy.ok, true);
   assert.equal(legacy.checked, false);
   assert.deepEqual(requiredPreimageFields({ output: { hash: '0xabc' } }), []);
+});
+
+test('requirePreimages covers a non-empty top-level row_hash', async () => {
+  const hash = 'ab'.repeat(32);
+  assert.deepEqual(requiredPreimageFields({ row_hash: hash }), ['row_hash']);
+  assert.equal(requiredPreimageFields({ row_hash: '' }).includes('row_hash'), false);
+  assert.equal(requiredPreimageFields({ book_chain: { row_hash: hash } }).includes('row_hash'), false);
+
+  const missing = await verifyPublishedPreimages(
+    { task_id: 'task-top-row', row_hash: hash },
+    { requirePreimages: true },
+  );
+  assert.equal(missing.ok, false);
+  assert.match(missing.errors.join(' '), /preimage missing for row_hash/);
+
+  const taskId = 'task-top-row';
+  const paymentRef = `base:0x${'ab'.repeat(32)}`;
+  const amount = '10000';
+  const { commitment } = computePaymentCommitment({
+    paymentRef,
+    taskId,
+    rail: 'usdc',
+    amount,
+  });
+  const unverified = await verifyReceipt({
+    task_id: taskId,
+    status: 'completed',
+    row_hash: hash,
+    payment: { rail: 'usdc', ref: paymentRef, net_amount: amount },
+    binding: { expected_commitment: commitment, amount, rail: 'usdc', covers: ['payment'] },
+  }, { requirePreimages: true, skipIssuerHistory: true });
+  assert.equal(unverified.overall, 'failed');
+  assert.match(unverified.errors.join(' '), /preimage missing for row_hash/);
+  assert.notEqual(unverified.overall, 'verified');
+
+  const line = '7|1|task-top-row||collected';
+  const good = sha256Hex(line);
+  const present = await verifyPublishedPreimages({
+    task_id: 'task-top-row',
+    row_hash: good,
+    preimages: {
+      fields: {
+        row_hash: { alg: 'sha256', recomputable: true, preimage_utf8: line, hash: good },
+      },
+    },
+  }, { requirePreimages: true });
+  assert.equal(present.ok, true, present.errors.join('; '));
 });
 
 test('binding preimage is keccak256 of the packed bytes', async () => {

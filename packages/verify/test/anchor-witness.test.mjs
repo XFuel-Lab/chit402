@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,6 +22,42 @@ const {
   ANCHOR_DOES_NOT_PROVE,
   SOLANA_GENESIS,
 } = await import('../dist/anchor-witness.js');
+const {
+  PINNED_BASE_ANCHOR_WALLET,
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+} = await import('../dist/anchor-trust.js');
+const { jwkThumbprint } = await import('../dist/jws.js');
+
+function b64url(value) {
+  const json = typeof value === 'string' ? value : JSON.stringify(value);
+  return Buffer.from(json).toString('base64url');
+}
+
+function issuerKey() {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const exported = publicKey.export({ format: 'jwk' });
+  const kid = jwkThumbprint(exported);
+  const publicJwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, kid, alg: 'ES256', use: 'sig' };
+  return { privateKey, kid, publicJwk };
+}
+
+function sealHead(head, key) {
+  const { issuer_signature: _ignored, ...rest } = head;
+  const claims = JSON.parse(JSON.stringify(rest));
+  const header = { alg: 'ES256', typ: 'chit402-tree-head+jwt', kid: key.kid };
+  const signingInput = `${b64url(header)}.${b64url(claims)}`;
+  const signature = sign('sha256', Buffer.from(signingInput), { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
+  return {
+    ...claims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-tree-head+jwt',
+      jws: `${signingInput}.${signature.toString('base64url')}`,
+      kid: key.kid,
+      issuer_jwk: key.publicJwk,
+    },
+  };
+}
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest();
@@ -54,21 +90,30 @@ function fixture() {
     root,
     tree_size: 2,
     anchors: {
-      base: { status: 'anchored', tx: '0x' + 'ab'.repeat(32), calldata: `0x${root}`, chain_id: 8453 },
+      base: {
+        status: 'anchored',
+        tx: '0x' + 'ab'.repeat(32),
+        calldata: `0x${root}`,
+        chain_id: 8453,
+        from: PINNED_BASE_ANCHOR_WALLET,
+      },
       solana: {
         status: 'anchored',
         signature: 'sig1',
         slot: 99,
         cluster: 'devnet',
         memo,
+        fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER,
       },
     },
   };
+  const key = issuerKey();
   const solanaTx = {
     slot: 99,
     meta: { err: null },
     transaction: {
       message: {
+        accountKeys: [{ pubkey: PINNED_SOLANA_ANCHOR_FEE_PAYER, signer: true, writable: true }],
         instructions: [{
           program: 'spl-memo',
           programId: 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
@@ -77,8 +122,19 @@ function fixture() {
       },
     },
   };
-  const baseTx = { hash: head.anchors.base.tx, input: `0x${root}`, chainId: 8453 };
-  return { receipt, inclusion, head, memo, root, solanaTx, baseTx, leaf };
+  const baseTx = { hash: head.anchors.base.tx, input: `0x${root}`, chainId: 8453, from: PINNED_BASE_ANCHOR_WALLET };
+  return {
+    receipt,
+    inclusion,
+    head: sealHead(head, key),
+    key,
+    trustedKids: [key.kid],
+    memo,
+    root,
+    solanaTx,
+    baseTx,
+    leaf,
+  };
 }
 
 function fetchers(fx, overrides = {}) {
@@ -113,6 +169,7 @@ test('inclusion plus both anchors verifies, and the boundary text is explicit', 
     receipt: fx.receipt,
     inclusion: fx.inclusion,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'verified');
@@ -138,6 +195,7 @@ test('a flipped inclusion proof fails before any RPC', async () => {
     receipt: fx.receipt,
     inclusion: bad,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'failed');
@@ -162,6 +220,7 @@ test('a memo that does not carry this root fails', async () => {
     receipt: fx.receipt,
     inclusion: fx.inclusion,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'failed');
@@ -175,6 +234,7 @@ test('Base calldata that is not the root fails', async () => {
     receipt: fx.receipt,
     inclusion: fx.inclusion,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'failed');
@@ -184,11 +244,13 @@ test('Base calldata that is not the root fails', async () => {
 test('a devnet RPC genesis does not satisfy a mainnet-beta head', async () => {
   const fx = fixture();
   fx.head.anchors.solana.cluster = 'mainnet-beta';
+  fx.head = sealHead(fx.head, fx.key);
   const fetched = fetchers(fx, { genesis: SOLANA_GENESIS.devnet });
   const result = await verifyAnchoredRoot({
     receipt: fx.receipt,
     inclusion: fx.inclusion,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'failed');
@@ -197,13 +259,15 @@ test('a devnet RPC genesis does not satisfy a mainnet-beta head', async () => {
 
 test('pending anchors are partial and do not fetch', async () => {
   const fx = fixture();
-  fx.head.anchors.solana = { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: fx.memo };
-  fx.head.anchors.base = { status: 'pending', tx: null, calldata: `0x${fx.root}`, chain_id: 8453 };
+  fx.head.anchors.solana = { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: fx.memo, fee_payer: null };
+  fx.head.anchors.base = { status: 'pending', tx: null, calldata: `0x${fx.root}`, chain_id: 8453, from: null };
+  fx.head = sealHead(fx.head, fx.key);
   const fetched = fetchers(fx);
   const result = await verifyAnchoredRoot({
     receipt: fx.receipt,
     inclusion: fx.inclusion,
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.overall, 'partial');
@@ -218,12 +282,29 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
   const fx = fixture();
   fx.head.anchors.solana.status = 'pending';
   fx.head.anchors.solana.signature = null;
+  fx.head.anchors.solana.fee_payer = null;
   fx.head.anchors.base.status = 'pending';
   fx.head.anchors.base.tx = null;
+  fx.head.anchors.base.from = null;
+  fx.head = sealHead(fx.head, fx.key);
+  const receiptClaims = { task_id: fx.receipt.task_id, row_hash: fx.receipt.row_hash };
+  const receiptHeader = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: fx.key.kid };
+  const receiptInput = `${b64url(receiptHeader)}.${b64url(receiptClaims)}`;
+  const receiptSig = sign('sha256', Buffer.from(receiptInput), { key: fx.key.privateKey, dsaEncoding: 'ieee-p1363' });
+  const signedReceipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: `${receiptInput}.${receiptSig.toString('base64url')}`,
+      kid: fx.key.kid,
+      issuer_jwk: fx.key.publicJwk,
+    },
+  };
   const dir = mkdtempSync(join(tmpdir(), 'chit-anchor-'));
-  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(fx.receipt));
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(signedReceipt));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(fx.inclusion));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
+  writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));
   const cli = join(pkgDir, 'dist', 'cli.js');
   const run = spawnSync(process.execPath, [
     cli,
@@ -231,6 +312,10 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
     join(dir, 'inclusion.json'),
     join(dir, 'head.json'),
     '--rpc',
+    '--jwks-file', join(dir, 'jwks.json'),
+    '--trusted-kid', fx.key.kid,
+    '--no-issuer-history',
+    '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 2);
   assert.match(run.stdout, /What this proves/);
@@ -268,11 +353,13 @@ test('genesis hashes are the full getGenesisHash values, not the CAIP-2 prefix',
   for (const [cluster, literal] of Object.entries(GENESIS_LITERALS)) {
     const fx = fixture();
     fx.head.anchors.solana.cluster = cluster;
+    fx.head = sealHead(fx.head, fx.key);
     const fetched = fetchers(fx, { genesis: literal });
     const result = await verifyAnchoredRoot({
       receipt: fx.receipt,
       inclusion: fx.inclusion,
       head: fx.head,
+      trustedKids: fx.trustedKids,
       ...fetched,
     });
     assert.equal(result.solana.reason, undefined, cluster);
@@ -288,6 +375,7 @@ test('an inclusion endpoint 404 body is not_in_tree', async () => {
     receipt: fx.receipt,
     inclusion: { error: 'not_in_tree', task_id: fx.receipt.task_id },
     head: fx.head,
+    trustedKids: fx.trustedKids,
     ...fetched,
   });
   assert.equal(result.inclusion.reason, 'not_in_tree');

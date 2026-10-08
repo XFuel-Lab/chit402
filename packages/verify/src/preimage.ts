@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { keccak256 } from 'ethers';
 import { inclusionRoot } from './anchor-witness.js';
+import { boundRowHash } from './row-hash.js';
 
 export interface PreimageLeaf {
   preimage_utf8?: string;
@@ -56,6 +57,7 @@ export interface PreimageCheck {
 }
 
 const ALWAYS_REQUIRED = [
+  'row_hash',
   'book_chain.row_hash',
   'book_row.row_hash',
   'inclusion.leaf',
@@ -120,12 +122,22 @@ function receiptTaskId(receipt: Record<string, unknown>): string {
   return receipt.task_id == null || receipt.task_id === '' ? '' : String(receipt.task_id);
 }
 
-function bookRowHash(receipt: Record<string, unknown>): string | null {
-  const chain = receipt.book_chain;
-  if (!chain || typeof chain !== 'object') return null;
-  const hash = (chain as { row_hash?: unknown }).row_hash;
-  if (hash == null || hash === '') return null;
-  return String(hash);
+/**
+ * The row hash the leaf must name. `boundRowHash` agrees top-level
+ * `row_hash`, `book_chain.row_hash`, and `inclusion.row_hash`. Null and `''`
+ * are missing: do not hash `task_id|`. A disagreement is missing here too.
+ */
+function agreedRowHash(receipt: Record<string, unknown>): string | null {
+  const inclusion = receipt.inclusion;
+  const extra = inclusion && typeof inclusion === 'object'
+    ? inclusion as { row_hash?: string | null }
+    : null;
+  const bound = boundRowHash(
+    receipt as { row_hash?: string | null; book_chain?: { row_hash?: string | null } | null },
+    extra,
+  );
+  if (!bound.ok || bound.row == null || bound.row === '') return null;
+  return bound.row;
 }
 
 function decodeHexBytes(value: string): Buffer | null {
@@ -175,8 +187,8 @@ function auditLeafHashInput(leaf: PreimageLeaf): Buffer | null {
 
 /**
  * Bind an audit path to this receipt. Returns `leaf_not_bound` when any
- * check fails, including when the book row hash is absent or the leaf
- * encoding does not canonicalize to `task_id|row_hash`.
+ * check fails, including when the agreed row hash is null, empty, or
+ * disagreed, or the leaf encoding does not canonicalize to `task_id|row_hash`.
  * Inclusion leaf hash and leaf index are checked only when that field is present.
  * Inclusion tree size is not compared: the witness can cover a longer log.
  */
@@ -186,7 +198,7 @@ export function auditLeafBinding(receipt: Record<string, unknown>, entry: Preima
   if (!leaf || !path) return LEAF_NOT_BOUND;
   const taskId = receiptTaskId(receipt);
   if (!taskId || leaf.task_id == null || String(leaf.task_id) !== taskId) return LEAF_NOT_BOUND;
-  const rowHash = bookRowHash(receipt);
+  const rowHash = agreedRowHash(receipt);
   const body = canonicalMerkleBody(leaf);
   if (rowHash == null || !body) return LEAF_NOT_BOUND;
   const expected = Buffer.from(`${taskId}|${rowHash}`, 'utf8');

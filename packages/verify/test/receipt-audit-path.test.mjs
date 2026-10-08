@@ -416,6 +416,36 @@ function domainHex(text) {
   return Buffer.concat([Buffer.from([0x00]), Buffer.from(text, 'utf8')]).toString('hex');
 }
 
+test('a null, empty, or disagreeing row hash does not bind the leaf', async () => {
+  const field = auditField(tree, ownIndex);
+
+  const missing = wrap(field);
+  delete missing.book_chain;
+  delete missing.row_hash;
+  const noRow = await verifyPublishedPreimages(missing, { requirePreimages: true });
+  assert.equal(noRow.ok, false);
+  assert.equal(reason(noRow), 'leaf_not_bound');
+
+  const empty = wrap(field, { book_chain: { task_id: 'xfuel-own', row_hash: '' } });
+  const emptyRow = await verifyPublishedPreimages(empty, { requirePreimages: true });
+  assert.equal(emptyRow.ok, false);
+  assert.equal(reason(emptyRow), 'leaf_not_bound');
+
+  const clash = wrap(field, { row_hash: 'not-the-book-row' });
+  const bad = await verifyPublishedPreimages(clash, { requirePreimages: true });
+  assert.equal(bad.ok, false);
+  assert.equal(reason(bad), 'leaf_not_bound');
+
+  const agreed = wrap(field, { row_hash: 'own-row' });
+  agreed.preimages.not_recomputable.push({
+    field: 'row_hash',
+    hash: 'own-row',
+    reason: 'This fixture binds the audit path. It does not recompute the top-level row hash.',
+  });
+  const ok = await verifyPublishedPreimages(agreed, { requirePreimages: true });
+  assert.equal(ok.ok, true, ok.errors.join('; '));
+});
+
 test('a hex-encoded preimage of a different leaf is leaf_not_bound', async () => {
   const ownId = 'xfuel-own';
   const midId = 'xfuel-mid';
