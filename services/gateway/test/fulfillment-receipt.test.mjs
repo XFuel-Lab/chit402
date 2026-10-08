@@ -36,9 +36,10 @@ describe('fulfillment-receipt v1', () => {
     assert.ok(FULFILLMENT_JOB_KINDS.includes('scrape'));
   });
 
-  test('outputCommitmentOf: hash vs UNVERIFIED omission', () => {
-    const committed = outputCommitmentOf({ hash: '0x' + 'ab'.repeat(32) });
+  test('outputCommitmentOf: explicit kind vs UNVERIFIED omission', () => {
+    const committed = outputCommitmentOf({ hash: '0x' + 'ab'.repeat(32), kind: 'sha256' });
     assert.equal(committed.status, 'committed');
+    assert.equal(committed.kind, 'sha256');
     assert.ok(committed.hash);
 
     const missing = outputCommitmentOf({});
@@ -66,6 +67,9 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(fields.intentId, 'intent-r1');
     assert.equal(fields.attemptIndex, 2);
     assert.equal(fields.deliverableHash, hashDeliverablePayload(payload));
+    assert.equal(fields.hashKind, 'sha256');
+    assert.equal(fields.outputCommitment.kind, 'sha256');
+    assert.equal(fields.commitmentError, undefined);
   });
 
   test('buildForeignReceipt attaches fulfillment envelope', () => {
@@ -82,11 +86,13 @@ describe('fulfillment-receipt v1', () => {
       fulfillmentMeta: {
         jobKind: 'swap',
         deliverableHash: hash,
+        hashKind: 'sha256',
         intentId: 'intent-swap-1',
       },
     });
     assert.equal(receipt.fulfillment.intent.job_kind, 'swap');
     assert.equal(receipt.fulfillment.output_commitment.hash, hash);
+    assert.equal(receipt.fulfillment.output_commitment.kind, 'sha256');
     assert.equal(receipt.fulfillment.authorization.payer_wallet, '0xpayer');
     assert.match(receipt.fulfillment.authorization.payment_ref, /^base:0xdead$/);
   });
@@ -126,6 +132,7 @@ describe('fulfillment-receipt v1', () => {
     }, { baseUrl: 'https://api.chit402.com', persistSignature: false });
     assert.equal(receipt.fulfillment.intent.job_kind, 'completions');
     assert.equal(receipt.fulfillment.output_commitment.hash, outputHash);
+    assert.equal(receipt.fulfillment.output_commitment.kind, 'keccak256');
     assert.equal(receipt.verify_url, 'https://api.chit402.com/receipt/task-fulfill-1');
     assert.equal(receipt.issuer_signature.payload_version, RECEIPT_PAYLOAD_VERSION);
   });
@@ -166,7 +173,11 @@ describe('fulfillment-receipt v1', () => {
       },
       paymentResponse: { tx: '0xacp', payer: '0xpayer', network: 'base' },
       rail: 'usdc',
-      fulfillmentMeta: { jobKind: 'acp_job', deliverableHash: hashDeliverablePayload('done') },
+      fulfillmentMeta: {
+        jobKind: 'acp_job',
+        deliverableHash: hashDeliverablePayload('done'),
+        hashKind: 'sha256',
+      },
     });
     const pub = buildPublicForeignIngestReceipt(snapshot, {
       baseUrl: 'https://api.chit402.com',
@@ -177,6 +188,22 @@ describe('fulfillment-receipt v1', () => {
   });
 
   test('normalizeIngestInput passes fulfillment meta from fulfillment_invoice', () => {
+    const hash = '0x' + 'ee'.repeat(32);
+    const missing = normalizeIngestInput({
+      session: 'ignored-here',
+      fulfillment_invoice: {
+        amount: '1000',
+        payer: '0xp',
+        payTo: '0xt',
+        tx: '0x1',
+        hub: 'jobs.example',
+        job_kind: 'review',
+        deliverable_hash: hash,
+      },
+    });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error, 'invalid_output_commitment');
+
     const n = normalizeIngestInput({
       session: 'ignored-here',
       fulfillment_invoice: {
@@ -186,12 +213,14 @@ describe('fulfillment-receipt v1', () => {
         tx: '0x1',
         hub: 'jobs.example',
         job_kind: 'review',
-        deliverable_hash: '0x' + 'ee'.repeat(32),
+        deliverable_hash: hash,
+        deliverable_kind: 'keccak256',
       },
     });
     assert.equal(n.ok, true);
     assert.equal(n.fulfillmentMeta.jobKind, 'review');
-    assert.ok(n.fulfillmentMeta.deliverableHash);
+    assert.equal(n.fulfillmentMeta.deliverableHash, hash);
+    assert.equal(n.fulfillmentMeta.hashKind, 'keccak256');
   });
 
   test('bookFulfillmentRowOf compact export', () => {

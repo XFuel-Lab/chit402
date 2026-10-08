@@ -50,14 +50,62 @@ export function normalizeJobKind(value, { resource = null, defaultKind = 'other'
   return JOB_KIND_SET.has(fallback) ? fallback : 'other';
 }
 
-function normalizeHash(value) {
+/** Algorithms a sender may name. The gateway does not infer one from a prefix. */
+export const OUTPUT_HASH_KINDS = Object.freeze(['sha256', 'keccak256']);
+const OUTPUT_HASH_KIND_SET = new Set(OUTPUT_HASH_KINDS);
+const DIGEST_HEX = /^[0-9a-fA-F]{64}$/;
+
+export class OutputCommitmentError extends Error {
+  /**
+   * @param {string} message
+   */
+  constructor(message) {
+    super(message);
+    this.name = 'OutputCommitmentError';
+    this.code = 'invalid_output_commitment';
+  }
+}
+
+/**
+ * Parse a 32-byte digest. A `sha256:` or `keccak256:` prefix is a label, not a guess.
+ * @param {unknown} value
+ * @returns {{ hash: string, labeled: string|null } | { error: string } | null}
+ */
+function parseDigest(value) {
   if (value == null || value === '') return null;
-  const s = String(value).trim();
+  if (typeof value !== 'string') return { error: 'output hash must be a 32-byte hex string' };
+  const s = value.trim();
   if (!s) return null;
-  if (/^0x[0-9a-fA-F]{64}$/.test(s)) return s.toLowerCase();
-  if (/^sha256:[0-9a-fA-F]{64}$/i.test(s)) return s.toLowerCase();
-  if (/^[0-9a-fA-F]{64}$/.test(s)) return `0x${s.toLowerCase()}`;
-  return s;
+  let body = s;
+  let labeled = null;
+  const prefixed = body.match(/^(sha256|keccak256):(.*)$/i);
+  if (prefixed) {
+    labeled = prefixed[1].toLowerCase();
+    body = prefixed[2].trim();
+  }
+  if (body.startsWith('0x') || body.startsWith('0X')) body = body.slice(2);
+  if (!DIGEST_HEX.test(body)) {
+    return { error: 'output hash must be 32 bytes of hex for sha256 or keccak256' };
+  }
+  return { hash: `0x${body.toLowerCase()}`, labeled };
+}
+
+/**
+ * @param {unknown} kind
+ * @param {{ labeled: string|null }} parsed
+ */
+function requireKind(kind, parsed) {
+  if (typeof kind !== 'string' || !kind.trim()) {
+    throw new OutputCommitmentError('output_commitment.kind is required and must be sha256 or keccak256');
+  }
+  const k = kind.trim().toLowerCase();
+  if (!OUTPUT_HASH_KIND_SET.has(k)) {
+    throw new OutputCommitmentError(`output_commitment.kind must be sha256 or keccak256, not ${k.slice(0, 32)}`);
+  }
+  if (parsed.labeled && parsed.labeled !== k) {
+    throw new OutputCommitmentError(`output_commitment.kind ${k} does not match the ${parsed.labeled} hash label`);
+  }
+  return k;
 }
 
 /**
@@ -67,6 +115,8 @@ function normalizeHash(value) {
  *   deliverableHash?: string|null,
  *   outputHash?: string|null,
  *   hash?: string|null,
+ *   kind?: string|null,
+ *   hashKind?: string|null,
  *   omitDeliverable?: boolean,
  * }} input
  */
@@ -80,29 +130,33 @@ export function outputCommitmentOf(input = {}) {
         omission_rule: raw.omission_rule || OUTPUT_OMISSION_RULES.MISSING_DELIVERABLE,
       };
     }
-    const h = normalizeHash(raw.hash ?? raw.value);
-    if (h) {
+    const parsed = parseDigest(raw.hash ?? raw.value);
+    if (parsed?.error) throw new OutputCommitmentError(parsed.error);
+    if (parsed?.hash) {
+      const objectKind = typeof raw.kind === 'string' && raw.kind.trim() ? raw.kind : null;
+      const siblingKind = input.kind ?? input.hashKind ?? input.hash_kind;
       return {
         status: OUTPUT_COMMITMENT_STATUS.COMMITTED,
-        hash: h,
-        kind: raw.kind || (h.startsWith('0x') ? 'keccak256' : 'sha256'),
+        hash: parsed.hash,
+        kind: requireKind(objectKind ?? siblingKind, parsed),
         omission_rule: null,
       };
     }
   }
 
-  const h = normalizeHash(
+  const parsed = parseDigest(
     input.hash
     ?? input.deliverableHash
     ?? input.deliverable_hash
     ?? input.outputHash
     ?? input.output_hash,
   );
-  if (h) {
+  if (parsed?.error) throw new OutputCommitmentError(parsed.error);
+  if (parsed?.hash) {
     return {
       status: OUTPUT_COMMITMENT_STATUS.COMMITTED,
-      hash: h,
-      kind: h.startsWith('0x') ? 'keccak256' : 'sha256',
+      hash: parsed.hash,
+      kind: requireKind(input.kind ?? input.hashKind ?? input.hash_kind, parsed),
       omission_rule: null,
     };
   }
@@ -156,6 +210,7 @@ export function buildFulfillmentEnvelope(params = {}) {
     outputHash: params.outputHash,
     deliverableHash: params.deliverableHash,
     hash: params.hash,
+    kind: params.hashKind ?? params.hash_kind ?? params.kind,
     omitDeliverable: params.omitDeliverable,
   });
 
@@ -180,8 +235,16 @@ export function buildFulfillmentEnvelope(params = {}) {
   };
 }
 
+function kindText(value) {
+  if (typeof value !== 'string') return null;
+  const k = value.trim().toLowerCase();
+  return k || null;
+}
+
 /**
  * Extract fulfillment fields from an ingest body (flat or nested).
+ * A raw `deliverable` is hashed here as sha256. A sender-supplied hash
+ * must name `deliverable_kind` or `output_commitment.kind`.
  * @param {object} body
  */
 export function fulfillmentFieldsFromIngestBody(body = {}) {
@@ -190,9 +253,90 @@ export function fulfillmentFieldsFromIngestBody(body = {}) {
   const invoice = body.fulfillment_invoice || body.foreign_invoice || body.invoice || body;
   const src = { ...invoice, ...nested, ...body };
 
+  let outputCommitment = src.output_commitment ?? src.outputCommitment ?? nested.output_commitment ?? null;
   let deliverableHash = src.deliverable_hash ?? src.deliverableHash ?? null;
-  if (!deliverableHash && src.deliverable != null) {
-    deliverableHash = hashDeliverablePayload(src.deliverable);
+  let hashKind = kindText(src.deliverable_kind ?? src.deliverableKind ?? src.hash_kind ?? src.hashKind);
+  let commitmentError = null;
+
+  if (outputCommitment && typeof outputCommitment === 'object') {
+    const commitmentKind = kindText(outputCommitment.kind);
+    let fromCommitment = null;
+    if (outputCommitment.hash) {
+      fromCommitment = parseDigest(outputCommitment.hash);
+      const fromClient = deliverableHash != null ? parseDigest(deliverableHash) : null;
+      if (fromCommitment?.error) commitmentError = fromCommitment.error;
+      else if (fromClient?.error) commitmentError = fromClient.error;
+      else if (fromCommitment?.hash && fromClient?.hash && fromCommitment.hash !== fromClient.hash) {
+        commitmentError = 'deliverable_hash does not match output_commitment.hash';
+      }
+    }
+    if (!commitmentError && commitmentKind && !OUTPUT_HASH_KIND_SET.has(commitmentKind)) {
+      commitmentError = `output_commitment.kind must be sha256 or keccak256, not ${commitmentKind.slice(0, 32)}`;
+    }
+    if (!commitmentError && hashKind && commitmentKind && hashKind !== commitmentKind) {
+      commitmentError = `deliverable_kind ${hashKind} does not match output_commitment.kind ${commitmentKind}`;
+    }
+    if (!hashKind && commitmentKind) hashKind = commitmentKind;
+    const effectiveKind = commitmentKind || hashKind;
+    if (!commitmentError && fromCommitment?.labeled && effectiveKind && fromCommitment.labeled !== effectiveKind) {
+      commitmentError = `output_commitment.kind ${effectiveKind} does not match the ${fromCommitment.labeled} hash label`;
+    }
+  }
+
+  if (!commitmentError && hashKind && !OUTPUT_HASH_KIND_SET.has(hashKind)) {
+    commitmentError = `output_commitment.kind must be sha256 or keccak256, not ${hashKind.slice(0, 32)}`;
+  }
+  if (!commitmentError && deliverableHash != null && src.deliverable == null) {
+    const labeled = parseDigest(deliverableHash);
+    if (labeled?.error) commitmentError = labeled.error;
+    else if (labeled?.labeled && hashKind && labeled.labeled !== hashKind) {
+      commitmentError = `output_commitment.kind ${hashKind} does not match the ${labeled.labeled} hash label`;
+    }
+  }
+
+  if (!commitmentError && src.deliverable != null) {
+    const hashed = hashDeliverablePayload(src.deliverable);
+    if (deliverableHash != null) {
+      const supplied = parseDigest(deliverableHash);
+      if (supplied?.error) commitmentError = supplied.error;
+      else if (supplied?.hash && supplied.hash !== hashed) {
+        commitmentError = 'deliverable does not match deliverable_hash; the gateway sha256 is the commitment';
+      }
+    }
+    if (hashKind && hashKind !== 'sha256') {
+      commitmentError = 'a gateway-hashed deliverable is sha256; a different kind cannot be attached';
+    }
+    if (outputCommitment && typeof outputCommitment === 'object' && kindText(outputCommitment.kind) && kindText(outputCommitment.kind) !== 'sha256') {
+      commitmentError = 'a gateway-hashed deliverable is sha256; output_commitment.kind cannot override it';
+    }
+    deliverableHash = hashed;
+    hashKind = 'sha256';
+    if (!commitmentError) {
+      outputCommitment = {
+        status: OUTPUT_COMMITMENT_STATUS.COMMITTED,
+        hash: hashed,
+        kind: 'sha256',
+      };
+    }
+  }
+
+  const hasHash = deliverableHash != null && deliverableHash !== ''
+    || (outputCommitment && typeof outputCommitment === 'object' && outputCommitment.hash);
+  const unverified = outputCommitment && typeof outputCommitment === 'object'
+    && outputCommitment.status === OUTPUT_COMMITMENT_STATUS.UNVERIFIED
+    && !outputCommitment.hash;
+  if (!commitmentError && hasHash && !unverified && !hashKind) {
+    commitmentError = 'output_commitment.kind is required and must be sha256 or keccak256';
+  }
+  if (
+    !commitmentError
+    && hashKind
+    && outputCommitment
+    && typeof outputCommitment === 'object'
+    && outputCommitment.hash
+    && !kindText(outputCommitment.kind)
+  ) {
+    outputCommitment = { ...outputCommitment, kind: hashKind };
   }
 
   return {
@@ -200,9 +344,11 @@ export function fulfillmentFieldsFromIngestBody(body = {}) {
     resource: src.resource ?? src.service_url ?? src.serviceUrl ?? nested.intent?.resource ?? null,
     intentId: src.intent_id ?? src.intentId ?? nested.intent?.intent_id ?? null,
     attemptIndex: src.attempt_index ?? src.attemptIndex ?? nested.intent?.attempt_index ?? null,
-    outputCommitment: src.output_commitment ?? src.outputCommitment ?? nested.output_commitment ?? null,
+    outputCommitment,
     deliverableHash,
+    hashKind,
     omitDeliverable: src.omit_deliverable === true,
+    ...(commitmentError ? { commitmentError } : {}),
   };
 }
 
@@ -263,7 +409,11 @@ export const FULFILLMENT_OPENAPI_SCHEMA = {
       properties: {
         status: { type: 'string', enum: ['committed', 'UNVERIFIED'] },
         hash: { type: ['string', 'null'] },
-        kind: { type: ['string', 'null'] },
+        kind: {
+          type: ['string', 'null'],
+          enum: [...OUTPUT_HASH_KINDS],
+          description: 'Required when hash is set. sha256 or keccak256. The gateway does not infer this from a 0x prefix.',
+        },
         omission_rule: { type: ['string', 'null'] },
       },
     },
