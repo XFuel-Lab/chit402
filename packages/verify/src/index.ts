@@ -1460,17 +1460,21 @@ function normalizeBoundRoot(root: unknown): string | null {
 
 /**
  * Same order as verifyAnchoredRoot: top-level row_hash, then book_chain, then
- * the inclusion document. A receipt that stores the hash only at the top level
- * still binds.
+ * the inclusion document. One source is enough. Two or three that differ fail
+ * closed. The value used for the leaf is the one they agree on.
  */
 function boundRowHash(
   receipt: { row_hash?: string | null; book_chain?: { row_hash?: string | null } | null },
   inclusion?: { row_hash?: string | null } | null,
-): string {
-  if (typeof receipt.row_hash === 'string') return receipt.row_hash;
-  if (typeof receipt.book_chain?.row_hash === 'string') return receipt.book_chain.row_hash;
-  if (typeof inclusion?.row_hash === 'string') return inclusion.row_hash;
-  return '';
+): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' } {
+  const present: string[] = [];
+  if (typeof receipt.row_hash === 'string') present.push(receipt.row_hash);
+  if (typeof receipt.book_chain?.row_hash === 'string') present.push(receipt.book_chain.row_hash);
+  if (typeof inclusion?.row_hash === 'string') present.push(inclusion.row_hash);
+  if (present.length === 0) return { ok: true, row: '' };
+  const agreed = present[0];
+  if (present.some((value) => value !== agreed)) return { ok: false, reason: 'row_hash_mismatch' };
+  return { ok: true, row: agreed };
 }
 
 /**
@@ -1496,8 +1500,9 @@ function offlineInclusionBound(
   );
   if (!root) return { ok: false, reason: 'bad_root' };
   if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
-  const row = boundRowHash(receipt, inclusion);
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return bound;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return { ok: false, reason: 'leaf_mismatch' };
@@ -1527,8 +1532,9 @@ function suppliedHeadCovers(
   if (signed === supplied) return true;
   if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
   if (receipt.task_id == null) return false;
-  const row = boundRowHash(receipt, inclusion);
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return false;
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return false;

@@ -442,6 +442,15 @@ test('a history entry matched by jwk thumbprint still passes the kid window', ()
     assert.notEqual(trusted.reason, 'kid_not_in_history');
     assert.notEqual(trusted.reason, 'head_kid_window');
   }
+  const outside = sealHead({ ...unsigned, published_at: '2026-01-01T00:00:00Z' }, key);
+  delete outside.issuer_signature.issuer_jwk;
+  const early = verifyTreeHeadTrust(outside, {
+    trustedKids: [key.kid],
+    issuerHistory: history,
+  });
+  assert.equal(early.ok, false);
+  assert.equal(early.reason, 'head_kid_window');
+  assert.notEqual(early.reason, 'kid_not_in_history');
 });
 
 test('offline verifyReceipt rejects a head whose issuer signature was removed', async () => {

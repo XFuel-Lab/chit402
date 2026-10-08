@@ -172,6 +172,18 @@ test('offline inclusion reads a top-level receipt row_hash', async () => {
   assert.equal(ok.errors.includes('inclusion_failed'), false, ok.errors.join(','));
   assert.equal(ok.errors.includes('leaf_mismatch'), false, ok.errors.join(','));
 
+  const agreed = await verifyReceipt({
+    ...receipt,
+    book_chain: { row_hash: row },
+  }, {
+    head: honestHead,
+    inclusion: { ...honestInclusion, row_hash: row },
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(agreed.errors.includes('row_hash_mismatch'), false, agreed.errors.join(','));
+  assert.equal(agreed.errors.includes('inclusion_failed'), false, agreed.errors.join(','));
+
   const wrong = await verifyReceipt({ ...receipt, row_hash: 'ab'.repeat(32) }, {
     head: honestHead,
     inclusion: honestInclusion,
@@ -183,6 +195,27 @@ test('offline inclusion reads a top-level receipt row_hash', async () => {
     wrong.errors.includes('leaf_mismatch') || wrong.errors.includes('inclusion_failed'),
     wrong.errors.join(','),
   );
+
+  const disagreeBook = await verifyReceipt({
+    ...receipt,
+    book_chain: { row_hash: 'cd'.repeat(32) },
+  }, {
+    head: honestHead,
+    inclusion: honestInclusion,
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(disagreeBook.overall, 'failed');
+  assert.equal(disagreeBook.errors.includes('row_hash_mismatch'), true, disagreeBook.errors.join(','));
+
+  const disagreeInclusion = await verifyReceipt(receipt, {
+    head: honestHead,
+    inclusion: { ...honestInclusion, row_hash: 'ef'.repeat(32) },
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(disagreeInclusion.overall, 'failed');
+  assert.equal(disagreeInclusion.errors.includes('row_hash_mismatch'), true, disagreeInclusion.errors.join(','));
 });
 
 test('a tree head with the issuer signature removed does not verify offline', async () => {
