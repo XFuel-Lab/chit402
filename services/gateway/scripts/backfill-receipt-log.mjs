@@ -10,10 +10,17 @@
  *     --jsonl .data/agents/usage-settled.jsonl \
  *     --dir .data/receipt-log
  *   node scripts/backfill-receipt-log.mjs --jsonl ... --dir ... --apply
+ *
+ * Loads `.env` the same way the server does. A directory with no journal
+ * exits before planning, so a missing file is not reported as
+ * epoch1_has_no_receipt_leaf.
  */
+import '../src/config.js';
 import fs from 'fs';
+import path from 'path';
 import { ReceiptMerkleTree } from '../src/receipt-merkle.js';
 import { planReceiptBackfill } from '../src/receipt-log-anchor.js';
+import { JOURNAL_NAME } from '../src/receipt-log-store.js';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -34,8 +41,15 @@ const rows = fs.readFileSync(jsonl, 'utf8')
   .filter((line) => line.trim())
   .map((line) => JSON.parse(line));
 
+const abs = path.resolve(dir);
+const journalPath = path.join(abs, JOURNAL_NAME);
+if (!fs.existsSync(journalPath)) {
+  console.error(`REFUSED: no journal at ${abs}`);
+  process.exit(1);
+}
+
 const tree = new ReceiptMerkleTree();
-tree.load(dir);
+tree.load(abs);
 let plan;
 try {
   plan = planReceiptBackfill(tree, rows);
