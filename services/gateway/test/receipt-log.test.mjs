@@ -2682,6 +2682,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     '--trusted-kid', signed.kid,
     '--anchor-wallets-file', walletsPath,
     '--no-issuer-history',
+    '--no-preimage',
     '--json',
   ];
   try {

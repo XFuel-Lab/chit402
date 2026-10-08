@@ -212,6 +212,45 @@ test('a carried-forward receipt is dated from the signed heads', async () => {
   assert.equal(result.errors.length, 0);
 });
 
+test('a disagreeing row hash does not carry forward', async () => {
+  const fx = carryFixture();
+  const top = await verifyReceipt({
+    ...fx.receipt,
+    row_hash: 'not-the-logged-row',
+  }, {
+    trustedKids: [fx.keys.kid],
+    carry: carryOf(fx),
+  });
+  assert.equal(top.overall, 'failed');
+  assert.equal(top.carry_forward, undefined);
+  assert.ok(top.errors.includes('row_hash_mismatch'));
+  assert.notEqual(top.overall, 'verified_carried_forward');
+
+  const caller = await verifyReceipt(fx.receipt, {
+    trustedKids: [fx.keys.kid],
+    carry: { ...carryOf(fx), row_hash: 'other-row' },
+  });
+  assert.equal(caller.overall, 'failed');
+  assert.ok(caller.errors.includes('row_hash_mismatch'));
+  assert.notEqual(caller.overall, 'verified_carried_forward');
+});
+
+test('carry-forward with no row hash fails row_hash_missing', async () => {
+  const fx = carryFixture();
+  const receipt = { ...fx.receipt };
+  delete receipt.book_chain;
+  const carry = carryOf(fx);
+  delete carry.row_hash;
+  const result = await verifyReceipt(receipt, {
+    trustedKids: [fx.keys.kid],
+    carry,
+  });
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.carry_forward, undefined);
+  assert.ok(result.errors.includes('row_hash_missing'));
+  assert.notEqual(result.overall, 'verified_carried_forward');
+});
+
 test('a receipt that was never logged fails closed with not_in_tree', async () => {
   const fx = carryFixture();
   const result = await verifyReceipt(fx.receipt, {

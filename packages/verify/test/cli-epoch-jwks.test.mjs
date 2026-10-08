@@ -154,6 +154,7 @@ function runCli(fx, args, env) {
     '--epoch-record', join(dir, 'epoch.json'),
     '--rpc', 'http://127.0.0.1:9',
     '--no-issuer-history',
+    '--no-preimage',
     '--json',
     ...args,
   ], {
