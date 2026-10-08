@@ -11,6 +11,7 @@
  */
 import crypto from 'crypto';
 import { deriveEvidence } from './usage-settled.js';
+import { takeStableCoverageSignature } from './coverage-signature-cache.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 
 function jwksUri(baseUrl = '') {
@@ -215,26 +216,53 @@ export function coverageClaims(coverage) {
 }
 
 /**
+ * Header signJws will attach for this coverage JWS. The cache key includes it,
+ * so a different kid, typ, or jku cannot reuse a signature.
+ * @param {string} baseUrl
+ * @param {string} kid
+ */
+export function coverageJwsHeader(baseUrl, kid) {
+  const uri = jwksUri(baseUrl);
+  const header = { alg: 'ES256', typ: COVERAGE_JWT_TYP, kid };
+  if (uri.startsWith('http')) header.jku = uri;
+  return header;
+}
+
+/**
+ * Sign coverage claims, or return the signature already stored for this
+ * exact claim set and the current issuer key. A client-supplied
+ * issuer_signature on `coverage` is ignored. Receipt issuer JWS bytes are
+ * not minted or replaced here.
+ *
  * @param {object} coverage
  * @param {{ baseUrl?: string }} [opts]
  */
 export function signExportCoverage(coverage, { baseUrl = '' } = {}) {
   const claims = coverageClaims(coverage);
-  const uri = jwksUri(baseUrl);
-  const { jws, kid } = signJws(claims, {
-    jku: uri.startsWith('http') ? uri : null,
-    typ: COVERAGE_JWT_TYP,
+  const publicJwk = getIssuerPublicKeyJwk();
+  const header = coverageJwsHeader(baseUrl, publicJwk.kid);
+  const issuer_signature = takeStableCoverageSignature(claims, {
+    header,
+    publicJwk,
+    sign: () => {
+      const uri = jwksUri(baseUrl);
+      const { jws, kid } = signJws(claims, {
+        jku: uri.startsWith('http') ? uri : null,
+        typ: COVERAGE_JWT_TYP,
+      });
+      return {
+        alg: 'ES256',
+        typ: COVERAGE_JWT_TYP,
+        payload_version: EXPORT_COVERAGE_VERSION,
+        jws,
+        kid,
+        issuer_jwk: getIssuerPublicKeyJwk(),
+      };
+    },
   });
   return {
     ...coverage,
-    issuer_signature: {
-      alg: 'ES256',
-      typ: COVERAGE_JWT_TYP,
-      payload_version: EXPORT_COVERAGE_VERSION,
-      jws,
-      kid,
-      issuer_jwk: getIssuerPublicKeyJwk(),
-    },
+    issuer_signature,
   };
 }
 
