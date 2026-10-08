@@ -645,6 +645,27 @@ test('O10 public surfaces for v1–v11 shells omit excluded fields', async () =>
   }
 });
 
+test('O12 the owner view returns this receipt row_hash', async () => {
+  const taskId = 'xfuel-owner-rowhash';
+  plant(taskId, PAYER_A, 4);
+  const appended = app.locals.__test.usageSettled.append({
+    task_id: taskId,
+    payment: {
+      rail: 'usdc',
+      collected: true,
+      ref: `base:0x${'ef'.repeat(32)}`,
+      gross_amount: '2000',
+    },
+    route: { model: MODEL },
+  }, { payer: PAYER_A, agentId: 4 });
+  assert.equal(appended.ok, true, appended.reason);
+  const row = appended.entry.book_chain?.row_hash || appended.entry.row_hash;
+  assert.match(String(row), /^[0-9a-f]{64}$/i);
+  const opened = await openEvm(payerA, { receipt_ids: [taskId] });
+  const body = await (await fetch(`${base}/v1/receipts/${taskId}/owner`, { headers: auth(opened.body.token) })).json();
+  assert.equal(body.row_hash, row);
+});
+
 test('O12 the owner view returns the original JWS bytes', async () => {
   const opened = await openEvm(payerA, { receipt_ids: [TASK_A] });
   const first = await (await fetch(`${base}/v1/receipts/${TASK_A}/owner`, { headers: auth(opened.body.token) })).json();

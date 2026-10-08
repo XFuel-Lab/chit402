@@ -1121,6 +1121,13 @@ async function main(): Promise<number> {
     const provedLeaf = inclusion && typeof (inclusion as { leaf?: unknown }).leaf === 'string'
       ? (inclusion as { leaf: string }).leaf
       : null;
+    // A head the user wrote by hand ({root, tree_size}) is not a log. The
+    // inclusion only counts against a head that carries an issuer JWS;
+    // verifyReceipt() checks that JWS against the same trust set.
+    const headSig = head && typeof head === 'object'
+      ? (head as { issuer_signature?: { jws?: unknown } }).issuer_signature
+      : null;
+    const headSigned = !!headSig && typeof headSig.jws === 'string' && headSig.jws.split('.').length === 3;
     const verdict = shellHolderVerdict({
       signatureValid: result.issuer_signature.valid === true,
       keyTrusted: result.issuer_signature.key_trusted === true,
@@ -1128,6 +1135,7 @@ async function main(): Promise<number> {
       inclusionSupplied: inclusion != null,
       inclusionOk: inclusion != null && inclusionErrors.length === 0,
       inclusionReason: inclusion == null ? 'inclusion_missing' : (inclusionErrors[0] || null),
+      headSigned,
       paymentRef: result.tx,
       bindingExpected: !!result.binding.expected,
       bindingMatches: result.binding.matches === true,

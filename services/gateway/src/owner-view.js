@@ -484,10 +484,13 @@ export function createOwnerView(deps) {
     const stored = deps.saltStore?.get?.(loaded.taskId)
       || deps.saltStore?.get?.(receipt?.task_id)
       || null;
+    const row = loaded.ledgerRow?.book_chain?.row_hash ?? loaded.ledgerRow?.row_hash ?? null;
     return {
       jws: originalJws(receipt),
       salt: stored?.salt ?? null,
       private_fields: stored?.privateFields ?? privateFieldsOf(receipt),
+      // Own leaf preimage part (task_id|row_hash) so the owner can prove inclusion.
+      row_hash: typeof row === 'string' ? row : null,
     };
   }
 

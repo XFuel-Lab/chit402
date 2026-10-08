@@ -73,7 +73,7 @@ function run(args) {
   return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15000 });
 }
 
-test('1ebc5616 shell is INCLUDED_SHELL and the owner view can be VERIFIED', () => {
+test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIFIED', () => {
   const holder = JSON.parse(readFileSync(holderPath, 'utf8'));
   const shell = shellFromHolder(holder);
   const raw = JSON.stringify(shell);
@@ -116,12 +116,13 @@ test('1ebc5616 shell is INCLUDED_SHELL and the owner view can be VERIFIED', () =
     shellPath, '--jws', ownerPath, '--jwks-file', jwksPath,
     '--inclusion', inclusionPath, '--head', headPath,
   ]);
-  assert.equal(held.status, 0, `${held.stdout}\n${held.stderr}`);
-  assert.match(held.stdout, /Overall: VERIFIED/);
+  // The fixture head is {root, tree_size} with no signature: not a log.
+  notVerified(held);
+  assert.match(held.stdout, /head_signature_missing/);
 
   const holderOnly = run([shellPath, '--jws', holderPath, '--inclusion', inclusionPath, '--head', headPath]);
-  assert.equal(holderOnly.status, 0, `${holderOnly.stdout}\n${holderOnly.stderr}`);
-  assert.match(holderOnly.stdout, /Overall: VERIFIED/);
+  notVerified(holderOnly);
+  assert.match(holderOnly.stdout, /head_signature_missing/);
 
   const tampered = { ...shell, amount_gross: '1' };
   const tamperedPath = join(dir, 'tampered.json');

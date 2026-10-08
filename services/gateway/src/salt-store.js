@@ -112,14 +112,21 @@ function assertWrapKeysAreNotIssuer(keys, issuerPrivateKey) {
   if (!raw) return;
   /** @type {Buffer[]} */
   const scalars = [];
-  try {
-    const parsed = crypto.createPrivateKey(raw);
-    const jwk = parsed.export({ format: 'jwk' });
-    if (jwk && typeof jwk === 'object' && jwk.d) {
-      scalars.push(Buffer.from(jwk.d, 'base64url'));
+  // The gateway's issuer key env value is a base64-encoded PEM
+  // (see issuer-key.js). Try that form as well as a raw PEM.
+  const candidates = [raw];
+  const decoded = Buffer.from(raw, 'base64').toString('utf8');
+  if (decoded.includes('PRIVATE KEY')) candidates.push(decoded);
+  for (const candidate of candidates) {
+    try {
+      const parsed = crypto.createPrivateKey(candidate);
+      const jwk = parsed.export({ format: 'jwk' });
+      if (jwk && typeof jwk === 'object' && jwk.d) {
+        scalars.push(Buffer.from(jwk.d, 'base64url'));
+      }
+    } catch {
+      // Not a parseable private key in this form. String equality still applies.
     }
-  } catch {
-    // Not a parseable private key. String equality still applies.
   }
   for (const key of keys) {
     if (!Buffer.isBuffer(key)) continue;

@@ -146,9 +146,14 @@ export function holderDocumentFromOwnerView(doc: Record<string, unknown> | strin
   } catch {
     kid = undefined;
   }
+  // Owner view carries this receipt's own book row hash so the leaf
+  // task_id|row_hash can be rebuilt. It is not a signed claim; the leaf
+  // still has to be in a signed tree head.
+  const rowHash = typeof doc.row_hash === 'string' && /^[0-9a-f]{64}$/i.test(doc.row_hash) ? doc.row_hash : null;
   return {
     ...claims,
     task_id: claims.task_id ?? null,
+    ...(rowHash ? { book_chain: { row_hash: rowHash } } : {}),
     issuer_signature: {
       jws,
       kid,
@@ -169,6 +174,8 @@ export interface ShellHolderCheck {
   bindingMatches?: boolean;
   shellLeaf?: string | null;
   provedLeaf?: string | null;
+  /** The supplied head carries an issuer JWS (checked by verifyReceipt). */
+  headSigned?: boolean;
 }
 
 /**
@@ -191,6 +198,10 @@ export function shellHolderVerdict(check: ShellHolderCheck): { verified: boolean
   if (shellLeaf && !proved) {
     return { verified: false, reason: 'inclusion_mismatch' };
   }
+  // A {root, tree_size} written by hand (or a proof's own root) is not a log.
+  if (check.headSigned !== true) {
+    return { verified: false, reason: 'head_signature_missing' };
+  }
   const ref = check.paymentRef ? String(check.paymentRef) : '';
   if (!ref) return { verified: false, reason: 'payment_unchecked' };
   if (check.bindingExpected && !check.bindingMatches) {
@@ -199,9 +210,22 @@ export function shellHolderVerdict(check: ShellHolderCheck): { verified: boolean
   return { verified: true, reason: null };
 }
 
+/**
+ * Expected shell from the signed JWS claims only. Outer holder fields
+ * (payment.settled_amount, payment.network, payment_meta, task_id) are
+ * not signed and are not used, so they cannot ride along under VERIFIED.
+ */
+export function signedShellFromHolder(holder: Record<string, unknown> | string): Record<string, unknown> {
+  const holderDoc = typeof holder === 'string' ? { issuer_signature: { jws: holder } } : holder;
+  const sig = (holderDoc.issuer_signature && typeof holderDoc.issuer_signature === 'object')
+    ? holderDoc.issuer_signature as { jws?: unknown }
+    : {};
+  return shellFromHolder({ issuer_signature: { jws: typeof sig.jws === 'string' ? sig.jws : null } });
+}
+
 export function compareShellToJws(shell: Record<string, unknown>, holder: Record<string, unknown> | string): { ok: boolean; field?: string } {
   const holderDoc = typeof holder === 'string' ? { issuer_signature: { jws: holder } } : holder;
-  const expected = shellFromHolder(holderDoc);
+  const expected = signedShellFromHolder(holderDoc);
   for (const field of COMPARE_FIELDS) {
     if (String(shell[field] ?? '') !== String(expected[field] ?? '')) {
       return { ok: false, field };
