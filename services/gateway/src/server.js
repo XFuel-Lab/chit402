@@ -2774,7 +2774,7 @@ export function createApp() {
       return res.redirect(302, canonicalUrl);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt/by-tx error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2828,7 +2828,7 @@ export function createApp() {
       return res.json({ ...head, receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2862,7 +2862,7 @@ export function createApp() {
       return res.json(head);
     } catch (err) {
       logger.error({ err }, 'closed epoch head error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
@@ -2873,7 +2873,8 @@ export function createApp() {
       const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
       return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
     } catch (err) {
-      return res.status(400).json({ error: 'bad_tree_size', message: err.message });
+      logger.error({ err }, 'tree consistency error');
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 

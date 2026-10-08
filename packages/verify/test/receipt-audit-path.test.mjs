@@ -66,7 +66,7 @@ function treeOf(bodies) {
   };
 }
 
-function auditField(tree, index) {
+function auditField(tree, index, taskId = 'xfuel-own') {
   return {
     field: 'tree_head_hash',
     alg: 'sha256',
@@ -76,7 +76,7 @@ function auditField(tree, index) {
     leaf: {
       index,
       kind: 'receipt',
-      task_id: 'xfuel-own',
+      task_id: taskId,
       preimage_utf8: tree.bodies[index],
     },
     audit_path: {
@@ -105,12 +105,41 @@ function leavesField(tree) {
   };
 }
 
-function wrap(field) {
+function rowHashOf(taskId, body) {
+  const prefix = `${taskId}|`;
+  return body.startsWith(prefix) ? body.slice(prefix.length) : null;
+}
+
+function wrap(field, over = {}) {
+  const taskId = over.task_id || field.leaf?.task_id || 'xfuel-own';
+  const rowHash = rowHashOf(taskId, field.leaf?.preimage_utf8 || '') || 'own-row';
+  const book = over.book_chain || { task_id: taskId, row_hash: rowHash };
+  const not = [{
+    field: 'book_chain.row_hash',
+    hash: book.row_hash,
+    reason: 'This fixture binds the audit path. It does not recompute the book row.',
+  }];
+  if (over.inclusion?.leaf) {
+    not.push({
+      field: 'inclusion.leaf',
+      hash: over.inclusion.leaf,
+      reason: 'This fixture binds the audit path. It does not recompute the inclusion preimage.',
+    });
+  }
   return {
-    task_id: 'xfuel-own',
+    task_id: taskId,
     tree_head_hash: field.hash,
-    preimages: { fields: { tree_head_hash: field } },
+    book_chain: book,
+    ...over,
+    preimages: {
+      fields: { tree_head_hash: field },
+      not_recomputable: not,
+    },
   };
+}
+
+function reason(result) {
+  return result.fields.find((row) => row.field === 'tree_head_hash')?.reason;
 }
 
 const bodies = [
@@ -128,6 +157,14 @@ test('an audit path recomputes the prefix root, and the old leaves array still d
 
   const saved = await verifyPublishedPreimages(wrap(leavesField(tree)), { requirePreimages: true });
   assert.equal(saved.ok, true, saved.errors.join('; '));
+
+  const legacy = {
+    task_id: 'xfuel-own',
+    tree_head_hash: tree.root,
+    preimages: { fields: { tree_head_hash: leavesField(tree) } },
+  };
+  const unboundLegacy = await verifyPublishedPreimages(legacy, { requirePreimages: true });
+  assert.equal(unboundLegacy.ok, true, unboundLegacy.errors.join('; '));
 
   const mixed = auditField(tree, ownIndex);
   mixed.leaves = [{ index: 0, task_id: 'xfuel-injected', preimage_utf8: 'forged-foreign-body' }];
@@ -195,9 +232,16 @@ function signReceiptClaims(payload) {
 }
 
 function signedAuditReceipt() {
-  const field = auditField(tree, ownIndex);
+  const taskId = 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+  const rowHash = '43651fc3fbc8c678bd41c40c6158be0878896c213e9b6809cbd4f4851c2c1835';
+  const local = treeOf([
+    'genesis-body-not-this-receipt',
+    'xfuel-546baa6c|foreign-row',
+    `${taskId}|${rowHash}`,
+  ]);
+  const field = auditField(local, 2, taskId);
   const claims = {
-    task_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96',
+    task_id: taskId,
     iss: 'chit402',
     iat: 1,
     payload_version: 9,
@@ -221,7 +265,28 @@ function signedAuditReceipt() {
     caller_binding: claims.caller_binding,
     tree_head_hash: claims.tree_head_hash,
     tolerance: claims.tolerance,
-    preimages: { fields: { tree_head_hash: field } },
+    book_chain: { task_id: taskId, row_hash: rowHash },
+    inclusion: {
+      task_id: taskId,
+      leaf: local.hashes[2].toString('hex'),
+      leaf_index: 2,
+      tree_size: local.bodies.length + 11,
+    },
+    preimages: {
+      fields: { tree_head_hash: field },
+      not_recomputable: [
+        {
+          field: 'book_chain.row_hash',
+          hash: rowHash,
+          reason: 'This fixture binds the audit path. It does not recompute the book row.',
+        },
+        {
+          field: 'inclusion.leaf',
+          hash: local.hashes[2].toString('hex'),
+          reason: 'This fixture binds the audit path. It does not recompute the inclusion preimage.',
+        },
+      ],
+    },
     issuer_signature: {
       alg: 'ES256',
       jws: signed.jws,
@@ -271,4 +336,74 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
   });
   assert.equal(failed.overall, 'failed');
   assert.match(failed.errors.join(' '), /preimage/);
+});
+
+test('a three-leaf swap that still matches the root is leaf_not_bound', async () => {
+  const ownId = 'xfuel-own';
+  const midId = 'xfuel-mid';
+  const local = treeOf([
+    'genesis-body-not-this-receipt',
+    `${midId}|mid-row`,
+    `${ownId}|own-row`,
+  ]);
+  const own = auditField(local, 2, ownId);
+  const mid = auditField(local, 1, midId);
+  const swapped = {
+    ...own,
+    leaf: mid.leaf,
+    audit_path: { ...mid.audit_path, root: local.root },
+    hash: local.root,
+  };
+  const asMid = wrap(swapped);
+  const midOk = await verifyPublishedPreimages(asMid, { requirePreimages: true });
+  assert.equal(midOk.ok, true, midOk.errors.join('; '));
+
+  const stolen = wrap(swapped, {
+    task_id: ownId,
+    book_chain: { task_id: ownId, row_hash: 'own-row' },
+    inclusion: {
+      leaf: local.hashes[2].toString('hex'),
+      leaf_index: 2,
+      tree_size: local.bodies.length + 4,
+    },
+  });
+  const result = await verifyPublishedPreimages(stolen, { requirePreimages: true });
+  assert.equal(result.ok, false);
+  assert.equal(reason(result), 'leaf_not_bound');
+  assert.equal(result.errors.some((line) => line.includes('preimage_mismatch')), false);
+});
+
+test('a mismatched task id, preimage, inclusion leaf, or index is leaf_not_bound', async () => {
+  const bound = wrap(auditField(tree, ownIndex));
+  const leafHash = tree.hashes[ownIndex].toString('hex');
+
+  const task = structuredClone(bound);
+  task.preimages.fields.tree_head_hash.leaf.task_id = 'xfuel-other';
+  const badTask = await verifyPublishedPreimages(task, { requirePreimages: true });
+  assert.equal(badTask.ok, false);
+  assert.equal(reason(badTask), 'leaf_not_bound');
+
+  const preimage = structuredClone(bound);
+  preimage.book_chain.row_hash = 'not-the-leaf-row';
+  const badPreimage = await verifyPublishedPreimages(preimage, { requirePreimages: true });
+  assert.equal(badPreimage.ok, false);
+  assert.equal(reason(badPreimage), 'leaf_not_bound');
+
+  const leaf = structuredClone(bound);
+  leaf.inclusion = { leaf: 'ab'.repeat(32), leaf_index: ownIndex, tree_size: 40 };
+  const badLeaf = await verifyPublishedPreimages(leaf, { requirePreimages: true });
+  assert.equal(badLeaf.ok, false);
+  assert.equal(reason(badLeaf), 'leaf_not_bound');
+
+  const index = structuredClone(bound);
+  index.inclusion = { leaf: leafHash, leaf_index: ownIndex - 1, tree_size: tree.bodies.length + 9 };
+  const badIndex = await verifyPublishedPreimages(index, { requirePreimages: true });
+  assert.equal(badIndex.ok, false);
+  assert.equal(reason(badIndex), 'leaf_not_bound');
+
+  const held = wrap(auditField(tree, ownIndex), {
+    inclusion: { leaf: leafHash, leaf_index: ownIndex, tree_size: tree.bodies.length + 9 },
+  });
+  const ok = await verifyPublishedPreimages(held, { requirePreimages: true });
+  assert.equal(ok.ok, true, ok.errors.join('; '));
 });

@@ -113,6 +113,55 @@ function hasAuditPath(entry: PreimageEntry): boolean {
   return !!entry.audit_path && !!entry.leaf && Array.isArray(entry.audit_path.siblings);
 }
 
+/** The audit path folds to this receipt's leaf. A different leaf in the same prefix is not this receipt. */
+export const LEAF_NOT_BOUND = 'leaf_not_bound';
+
+function receiptTaskId(receipt: Record<string, unknown>): string {
+  return receipt.task_id == null || receipt.task_id === '' ? '' : String(receipt.task_id);
+}
+
+function bookRowHash(receipt: Record<string, unknown>): string | null {
+  const chain = receipt.book_chain;
+  if (!chain || typeof chain !== 'object') return null;
+  const hash = (chain as { row_hash?: unknown }).row_hash;
+  if (hash == null || hash === '') return null;
+  return String(hash);
+}
+
+/**
+ * Bind an audit path to this receipt. Returns `leaf_not_bound` when any
+ * check fails, including when the book row hash is absent.
+ * Inclusion leaf hash and leaf index are checked only when that field is present.
+ * Inclusion tree size is not compared: the witness can cover a longer log.
+ */
+export function auditLeafBinding(receipt: Record<string, unknown>, entry: PreimageEntry): string | null {
+  const leaf = entry.leaf;
+  const path = entry.audit_path;
+  if (!leaf || !path) return LEAF_NOT_BOUND;
+  const taskId = receiptTaskId(receipt);
+  if (!taskId || leaf.task_id == null || String(leaf.task_id) !== taskId) return LEAF_NOT_BOUND;
+  const rowHash = bookRowHash(receipt);
+  if (rowHash == null || leaf.preimage_utf8 !== `${taskId}|${rowHash}`) return LEAF_NOT_BOUND;
+  const inclusion = receipt.inclusion;
+  if (inclusion && typeof inclusion === 'object') {
+    const claimedLeaf = (inclusion as { leaf?: unknown }).leaf;
+    if (claimedLeaf != null && claimedLeaf !== '') {
+      const input = leafInput(leaf);
+      if (!input) return LEAF_NOT_BOUND;
+      const hashed = sha256(input).toString('hex');
+      const want = String(claimedLeaf).replace(/^0x/, '').toLowerCase();
+      if (hashed !== want) return LEAF_NOT_BOUND;
+    }
+    const claimedIndex = (inclusion as { leaf_index?: unknown }).leaf_index;
+    if (claimedIndex != null && claimedIndex !== '') {
+      const want = Number(claimedIndex);
+      const got = Number(path.index);
+      if (!Number.isSafeInteger(want) || got !== want) return LEAF_NOT_BOUND;
+    }
+  }
+  return null;
+}
+
 /**
  * Recompute the prefix root from this leaf and the sibling hashes.
  * A full `leaves` array is the pre-redaction shape and is not read here.
@@ -277,6 +326,14 @@ export async function verifyPublishedPreimages(
       errors.push(`preimage mismatch for ${field}: recomputed hash does not match the receipt`);
       fields.push({ field, ok: false, reason: 'preimage_mismatch' });
       continue;
+    }
+    if (hasAuditPath(entry)) {
+      const bound = auditLeafBinding(receipt, entry);
+      if (bound) {
+        errors.push(`preimage leaf is not this receipt for ${field}`);
+        fields.push({ field, ok: false, reason: bound });
+        continue;
+      }
     }
     fields.push({ field, ok: true });
   }

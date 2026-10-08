@@ -18,6 +18,7 @@ delete process.env.SOLANA_RPC_URL;
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 const { getReceiptMerkleTree, resetReceiptMerkleTree } = await import('../src/receipt-merkle.js');
+const logger = (await import('../src/logger.js')).default;
 
 const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
 const { verifyPublishedPreimages } = await import('../../../packages/verify/dist/preimage.js');
@@ -36,6 +37,7 @@ const FOREIGN = [
 
 let server;
 let base;
+let httpApp;
 let genesisBody = '';
 const planted = [];
 
@@ -91,29 +93,36 @@ before(async () => {
   genesisBody = tree.genesisLeaf().bytes.toString('utf8');
   await initAIListener();
   const store = getAIListener().activeTasks;
-  const ids = [
-    FOREIGN[0],
-    FOREIGN[1],
-    FOREIGN[2],
-    SPECIMEN,
-    FOREIGN[3],
-    FOREIGN[4],
-    FOREIGN[5],
-    FOREIGN[6],
-  ];
-  ids.forEach((taskId, i) => {
-    const rowHash = `audit-row-${i}-${taskId}`;
+  httpApp = createApp();
+  const ledger = httpApp.locals.__test.usageSettled;
+  const plant = (taskId, rowHash, nibble) => {
     tree.appendReceipt(taskId, rowHash, { publish: false });
-    const body = `${taskId}|${rowHash}`;
-    planted.push({ taskId, body, index: tree.byTask.get(taskId) });
-    store.set(taskId, paidTask(taskId, (i + 1).toString(16)));
+    planted.push({
+      taskId,
+      body: `${taskId}|${rowHash}`,
+      index: tree.byTask.get(taskId),
+    });
+    store.set(taskId, paidTask(taskId, nibble));
+  };
+  FOREIGN.slice(0, 3).forEach((taskId, i) => {
+    plant(taskId, `audit-row-${i}-${taskId}`, (i + 1).toString(16));
+  });
+  ledger._index({
+    task_id: SPECIMEN,
+    agent_id: 187,
+    evidence: 'collected',
+    amount: '2000',
+    collected_at: '2026-09-05T17:14:11.000Z',
+  }, { persist: false, notify: false });
+  const booked = ledger.findByTask(SPECIMEN);
+  plant(SPECIMEN, booked.book_chain.row_hash, '4');
+  FOREIGN.slice(3).forEach((taskId, i) => {
+    plant(taskId, `audit-row-${i + 4}-${taskId}`, (i + 5).toString(16));
   });
   assert.ok(planted.every((row) => row.index > 0));
   assert.equal(planted.find((row) => row.taskId === SPECIMEN).index, 4);
-
-  const app = createApp();
   await new Promise((resolve) => {
-    server = app.listen(0, '127.0.0.1', () => {
+    server = httpApp.listen(0, '127.0.0.1', () => {
       base = `http://127.0.0.1:${server.address().port}`;
       resolve();
     });
@@ -259,5 +268,53 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     mutate(copy);
     const failed = await verifyPublishedPreimages(copy, { requirePreimages: true });
     assert.equal(failed.ok, false, JSON.stringify(failed));
+  }
+});
+
+test('receipt error bodies stay generic and the log keeps the cause', async () => {
+  const secret = 'xfuel-error-leaf-body-not-for-clients';
+  const tree = getReceiptMerkleTree();
+  const ledger = httpApp.locals.__test.usageSettled;
+  const originals = {
+    latestSignedHead: tree.latestSignedHead,
+    signedClosedEpochHead: tree.signedClosedEpochHead,
+    consistency: tree.consistency,
+    findByPaymentQuery: ledger.findByPaymentQuery,
+    error: logger.error,
+  };
+  const logged = [];
+  logger.error = (obj, msg) => {
+    const err = obj && typeof obj === 'object' ? obj.err : null;
+    logged.push(`${msg || ''} ${err?.message || ''}`);
+    return originals.error.call(logger, obj, msg);
+  };
+  const boom = () => {
+    throw new Error(`boom ${secret}`);
+  };
+  tree.latestSignedHead = boom;
+  tree.signedClosedEpochHead = boom;
+  tree.consistency = boom;
+  ledger.findByPaymentQuery = boom;
+  try {
+    const paths = [
+      `/receipt/by-tx?tx=0x${'e7'.repeat(32)}`,
+      '/v1/receipts/tree/head',
+      '/v1/receipts/tree/epoch/1/head',
+      '/v1/receipts/tree/consistency?first=1&second=2',
+    ];
+    for (const path of paths) {
+      const res = await fetchText(path);
+      assert.equal(res.status, 500, `${path} ${res.text}`);
+      assert.deepEqual(JSON.parse(res.text), { error: 'internal', message: 'internal error' });
+      assert.equal(res.text.includes(secret), false, path);
+    }
+    assert.equal(logged.some((line) => line.includes(secret)), true);
+    assert.equal(logged.filter((line) => line.includes(secret)).length >= paths.length, true);
+  } finally {
+    tree.latestSignedHead = originals.latestSignedHead;
+    tree.signedClosedEpochHead = originals.signedClosedEpochHead;
+    tree.consistency = originals.consistency;
+    ledger.findByPaymentQuery = originals.findByPaymentQuery;
+    logger.error = originals.error;
   }
 });
