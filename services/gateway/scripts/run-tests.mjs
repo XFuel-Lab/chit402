@@ -40,10 +40,13 @@ if (files.length === 0) {
 // exit 0. That under-counted receipt.test.mjs by a different amount on each
 // run (main reported 1144/1145; one merged run reported 1132). Serial
 // execution keeps the summary equal to every test() in the tree.
+const env = { ...process.env };
+if (!env.NODE_ENV) env.NODE_ENV = 'test';
+
 const { status, error, signal } = spawnSync(
   process.execPath,
   ['--test', '--test-concurrency=1', '--test-timeout=120000', '--test-force-exit', ...process.argv.slice(2), ...files],
-  { stdio: 'inherit', cwd: gatewayDir, timeout: 10 * 60 * 1000, killSignal: 'SIGKILL' },
+  { stdio: 'inherit', cwd: gatewayDir, env, timeout: 10 * 60 * 1000, killSignal: 'SIGKILL' },
 );
 
 if (error) {

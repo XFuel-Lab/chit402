@@ -84,7 +84,11 @@ import { attestedUnloggedEntry } from './receipt-log-epoch.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
-import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
+import { configureIssuerHistoryStore, currentIssuerHistory, writeIssuerHistory } from './issuer-history.js';
+import { applyRequestSaltHeader, captureRawRequestBody, clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
+import { assertIssuerHistoryMirrorBoot, issuerHistoryMirrorClaim, writeIssuerHistoryMirror } from './issuer-history-mirror.js';
+import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
+import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-policy.js';
 import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
@@ -121,6 +125,13 @@ import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
 import { getJwks, initIssuerKey } from './issuer-key.js';
+import {
+  assertIssuerRootStartup,
+  freezeDocumentFor,
+  isCutoverPaused,
+  issuerRootActive,
+  legacyProofForReceipt,
+} from './issuer-root.js';
 import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
 
 /**
@@ -352,6 +363,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
+- Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
 - Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
 - Live receipt: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
@@ -903,14 +915,24 @@ export function createApp() {
     });
   });
   setReceiptBoundHook((receipt, entry) => {
+    const storedJws = receipt?.issuer_signature?.jws || null;
     stampCoveringTreeHead(receipt);
+    const version = Number(receipt?.issuer_signature?.payload_version);
+    const immutable = issuerRootActive() || (Number.isFinite(version) && version >= 11);
+    if (immutable && storedJws && receipt?.issuer_signature && receipt.issuer_signature.jws !== storedJws) {
+      receipt.issuer_signature.jws = storedJws;
+    }
     const snap = entry?.receipt_snapshot;
     if (!snap || !receipt) return;
-    if (receipt.issuer_signature) snap.issuer_signature = receipt.issuer_signature;
-    if (Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
+    if (receipt.covering_head) snap.covering_head = receipt.covering_head;
+    if (receipt.issuer_signature) {
+      const snapJws = snap.issuer_signature?.jws || null;
+      if (!(immutable && snapJws)) snap.issuer_signature = receipt.issuer_signature;
+    }
+    if (!immutable && Object.prototype.hasOwnProperty.call(receipt, 'tree_head_hash')) {
       snap.tree_head_hash = receipt.tree_head_hash ?? null;
     }
-    if (Object.prototype.hasOwnProperty.call(receipt, 'tolerance')) {
+    if (!immutable && Object.prototype.hasOwnProperty.call(receipt, 'tolerance')) {
       snap.tolerance = receipt.tolerance;
     }
   });
@@ -1082,8 +1104,20 @@ export function createApp() {
         policyCode: check.code || 'approval_ttl_expired',
         reason: check.reason || 'SessionAct approval expired',
         anchor: peekRefusalAnchor(),
+        request: clientRequestForRefusal(req, req.path || req.originalUrl || '/v1/sessions'),
       });
       if (recorded?.ok) refusalEntry = recorded.entry;
+      else if (isRequestBindingError({ code: recorded?.code })) {
+        return {
+          ...check,
+          allowed: false,
+          code: recorded.code,
+          reason: recorded.reason,
+          agent_id: identity.agent_id,
+          task_id: taskId,
+          refusal_entry: null,
+        };
+      }
     }
     return {
       ...check,
@@ -1388,12 +1422,12 @@ export function createApp() {
     // v1 x402: X-PAYMENT, X-PAYMENT-NONCE; v2 x402: PAYMENT-SIGNATURE, PAYMENT-NONCE
     res.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted');
+    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted, X-Chit-Request-Salt');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '1mb', verify: captureRawRequestBody }));
 
   // JSON body-parse errors → clean 4xx (otherwise they hit the 500 handler).
   // Malformed JSON = 400; oversized body (> 1mb limit above) = 413.
@@ -1635,6 +1669,7 @@ export function createApp() {
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       let settledAmount = null;
+      let quotedAmount = null;
       let payerWallet = null;
       let payTo = null;
       let paymentAsset = null;
@@ -1707,6 +1742,7 @@ export function createApp() {
                   paymentRail = 'usdc';
                   paymentRef = hs.paymentRef;
                   settledAmount = hs.settledAmount;
+                  quotedAmount = hs.quotedAmount || null;
                   payerWallet = hs.payerWallet || null;
                   payTo = hs.payTo || null;
                   paymentAsset = hs.asset || null;
@@ -1736,6 +1772,7 @@ export function createApp() {
               paymentRail = 'usdc';
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
+              quotedAmount = decision.quotedAmount || null;
               payerWallet = decision.payerWallet || null;
               settledResponseRef = decision.paymentRef || null;
               settledResponsePayer = decision.payerWallet || null;
@@ -1935,6 +1972,8 @@ export function createApp() {
         apiKeyHash: apiKeyHashFromReq(req),
         // Payer wallet from x402 settlement (for caller_binding entitlement proof)
         payerWallet: boundSession?.payer_wallet || payerWallet,
+        quotedAmount: quotedAmount || null,
+        boundSettledAmount: settledAmount || null,
         payTo: payTo || null,
         paymentAsset: paymentAsset || null,
         session: boundSession,
@@ -2598,6 +2637,32 @@ export function createApp() {
       }
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /task-status error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /freeze/:universeId — signed freeze document. 404 when the flag is off.
+  app.get('/freeze/:universeId', rateLimit, (req, res) => {
+    try {
+      const doc = freezeDocumentFor(req.params.universeId);
+      if (!doc) return res.status(404).json({ error: 'not_found' });
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.json(doc);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /freeze error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // GET /receipt/:taskId/legacy-proof — frozen pre-v11 inclusion. 404 when off.
+  app.get('/receipt/:taskId/legacy-proof', rateLimit, (req, res) => {
+    try {
+      const proof = legacyProofForReceipt(req.params.taskId);
+      if (!proof) return res.status(404).json({ error: 'not_found' });
+      res.set('Cache-Control', 'public, max-age=300');
+      return res.json(proof);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET /receipt legacy-proof error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
@@ -3357,6 +3422,17 @@ export function createApp() {
           delegationHash: hash,
         });
         if (!approvalGate.allowed) {
+          if (isRequestBindingError({ code: approvalGate.code })) {
+            const status = approvalGate.code === 'idempotency_conflict' ? 409 : 400;
+            return res.status(status).json({
+              error: {
+                message: approvalGate.reason,
+                type: approvalGate.code,
+                code: approvalGate.code,
+              },
+            });
+          }
+          applyRequestSaltHeader(res, approvalGate.refusal_entry);
           return res.status(403).json(withRefusal({
             error: 'policy_blocked',
             type: 'policy_blocked',
@@ -3532,6 +3608,17 @@ export function createApp() {
       const actionHint = action || req.body?.action;
       const approvalGate = gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
       if (!approvalGate.allowed) {
+        if (isRequestBindingError({ code: approvalGate.code })) {
+          const status = approvalGate.code === 'idempotency_conflict' ? 409 : 400;
+          return res.status(status).json({
+            error: {
+              message: approvalGate.reason,
+              type: approvalGate.code,
+              code: approvalGate.code,
+            },
+          });
+        }
+        applyRequestSaltHeader(res, approvalGate.refusal_entry);
         return res.status(403).json(withRefusal({
           error: 'policy_blocked',
           type: 'policy_blocked',
@@ -3711,7 +3798,11 @@ export function createApp() {
   // ═══════════════════════════════════════════════════════════════════════
 
   app.get('/llms.txt', (_req, res) => {
-    res.type('text/plain; charset=utf-8').send(LLMS_TXT);
+    let body = LLMS_TXT;
+    if (issuerRootActive()) {
+      body += '\n- Freeze document: GET /freeze/:universeId — chit402.freeze.v1, signed by the issuer key.\n- Legacy receipt proof: GET /receipt/:id/legacy-proof — inclusion against the frozen legacy_receipts_pre_v11 root.\n';
+    }
+    res.type('text/plain; charset=utf-8').send(body);
   });
 
   // GET /public/specimens/:name — redacted stranger-auditable fixtures (no auth).
@@ -3791,6 +3882,28 @@ export function createApp() {
     }
   });
 
+  // Announcement of a commit-pinned third-party copy. Not a custodian.
+  // The gateway does not push that repo. Absent when the mirror is unset.
+  app.get('/.well-known/issuer-history-mirror.json', (req, res) => {
+    try {
+      return writeIssuerHistoryMirror(res);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET issuer-history-mirror error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // Announced receipt-policy versions. The signed policy on a v11 receipt
+  // governs that receipt even after a later row is appended here.
+  app.get('/.well-known/receipt-policy-history.json', (req, res) => {
+    try {
+      return writeReceiptPolicyHistory(res);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET receipt-policy-history error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
   // Anchor wallets the verifier accepts besides the package pin.
   // issuer_root and dns are reserved for the Base registry and _issuer.chit402.com.
   app.get('/.well-known/anchor-wallets.json', (req, res) => {
@@ -3844,7 +3957,36 @@ export function createApp() {
   app.get('/openapi.json', rateLimit, (req, res) => {
     try {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      res.json(buildOpenApiSpec(baseUrl));
+      const spec = buildOpenApiSpec(baseUrl);
+      if (issuerRootActive() && spec.paths) {
+        spec.paths['/freeze/{universeId}'] = {
+          get: {
+            operationId: 'getFreeze',
+            summary: 'Signed freeze document',
+            description: 'chit402.freeze.v1. Facts come from the gateway freeze file. 404 when the universe is unknown.',
+            tags: ['Receipts'],
+            parameters: [{ name: 'universeId', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              200: { description: 'chit402.freeze.v1' },
+              404: { description: 'Unknown universe, or issuer root is off.' },
+            },
+          },
+        };
+        spec.paths['/receipt/{taskId}/legacy-proof'] = {
+          get: {
+            operationId: 'getLegacyReceiptProof',
+            summary: 'Legacy pre-v11 Merkle inclusion proof',
+            description: 'Inclusion of a frozen payload_hash in legacy_receipts_pre_v11. 404 when the receipt is not in the set.',
+            tags: ['Receipts'],
+            parameters: [{ name: 'taskId', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              200: { description: 'chit402.legacy_proof.v1' },
+              404: { description: 'Not in the frozen set, or issuer root is off.' },
+            },
+          },
+        };
+      }
+      res.json(spec);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /openapi.json error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -5265,10 +5407,48 @@ export async function startServer() {
     }
   }
 
+  // Issuer root, when enabled, checks the finalized commit once here.
+  // Signing does not read the chain. An unset ISSUER_PRIVATE_KEY refuses
+  // to start while the flag is on (no ephemeral v11 key).
+  try {
+    const rootStartup = await assertIssuerRootStartup();
+    if (rootStartup.checked) {
+      logger.info({ seq: rootStartup.seq }, 'Issuer root commit is finalized');
+    } else if (isCutoverPaused()) {
+      logger.warn('ISSUER_ROOT_CUTOVER=pause: receipt and refusal issuance is stopped until the v11 root config is set');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Issuer root startup check failed');
+    throw err;
+  }
+
+  // Production refuses to boot without receipt-policy terms. A v11 receipt
+  // signs those terms. The #486 retention_policy env pair must match them.
+  try {
+    const policy = assertReceiptPolicyBoot();
+    logger.info({ policy_id: policy.id, policy_hash: policy.sha256 }, 'Receipt policy terms loaded');
+  } catch (err) {
+    logger.error({ err }, 'Receipt policy startup check failed');
+    throw err;
+  }
+
   // Initialize the issuer ECDSA key for receipt signing.
-  // If ISSUER_PRIVATE_KEY is not set, an ephemeral key is generated (dev/test).
+  // Production refuses a missing or empty ISSUER_PRIVATE_KEY. Local and test
+  // runs still generate an ephemeral key when the variable is unset.
   const { kid } = initIssuerKey();
   logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
+
+  // The signing key is never a guardian. A partial mirror pin refuses to
+  // start. A pin whose sha256 is not the current well-known document refuses
+  // to start. Neither check reads a guardian private key.
+  try {
+    assertSigningKeyNotGuardian();
+    const mirror = assertIssuerHistoryMirrorBoot();
+    if (mirror) issuerHistoryMirrorClaim(currentIssuerHistory());
+  } catch (err) {
+    logger.error({ err }, 'Issuer history mirror or guardian check failed');
+    throw err;
+  }
 
   const app = createApp();
   await finishReceiptLogBoot(getReceiptMerkleTree());

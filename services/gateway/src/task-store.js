@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { scrubTaskForDisk } from './v11-seal.js';
 
 /**
  * PersistentTaskStore — a durable, restart-safe task store.
@@ -152,7 +153,7 @@ export class PersistentTaskStore extends Map {
     try {
       const target = this._fileFor(task.taskId);
       const tmp = `${target}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, safeStringify(task));
+      fs.writeFileSync(tmp, safeStringify(scrubTaskForDisk(task)));
       fs.renameSync(tmp, target); // atomic replace
     } catch (err) {
       logger.warn({ err: err.message, taskId: task.taskId }, 'task-store: snapshot write failed');

@@ -15,9 +15,12 @@ import { signJws, getIssuerPublicKeyJwk, getIssuerKid } from './issuer-key.js';
 export const OFFER_RECEIPT_KEY = 'offer-receipt';
 
 /**
- * RFC 8785 JSON Canonicalization for the flat offer/receipt payloads
- * (objects, arrays, strings, finite numbers, booleans, null).
+ * chit402-jcs-v1. Objects, arrays, strings, finite numbers, booleans, null.
  * Undefined object members are omitted. Key order is UTF-16 code unit order.
+ * Every code unit U+0000 through U+001F, including U+0008, U+0009, U+000A,
+ * U+000C, and U+000D, is `\u00xx` lowercase. Payload versions through v10,
+ * flag-off receipts, entry_hash, and the well-known issuer-history document
+ * stay on this function. Payload v11 uses {@link jcsRfc8785}.
  * @param {unknown} value
  * @returns {string}
  */
@@ -60,7 +63,7 @@ function jcsString(str) {
 }
 
 function jcsObject(obj) {
-  const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const keys = Object.keys(obj).sort(utf16Compare);
   const pairs = [];
   for (const key of keys) {
     const value = obj[key];
@@ -69,6 +72,71 @@ function jcsObject(obj) {
     }
   }
   return `{${pairs.join(',')}}`;
+}
+
+/** UTF-16 code-unit order, the same comparison RFC 8785 requires. */
+function utf16Compare(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * True RFC 8785 (JCS). String escaping and number serialization are
+ * ECMAScript `JSON.stringify`: `\b` `\t` `\n` `\f` `\r` for U+0008, U+0009,
+ * U+000A, U+000C, and U+000D, and lowercase `\u00xx` for the other C0
+ * controls. Object keys are sorted by UTF-16 code unit before serialization,
+ * because `JSON.stringify` enumerates integer-index keys first.
+ * Lone surrogates and non-finite numbers are rejected.
+ *
+ * Used only for payload v11, refusal v2, the v11 issuer_history_snapshot
+ * embed (it is inside that payload), and the issuer_root fingerprint.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function jcsRfc8785(value) {
+  return rfc8785Value(value);
+}
+
+function assertWellFormedUtf16(str) {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = str.charCodeAt(i + 1);
+      if (!(next >= 0xDC00 && next <= 0xDFFF)) {
+        throw new Error('Cannot canonicalize a lone surrogate');
+      }
+      i += 1;
+    } else if (code >= 0xDC00 && code <= 0xDFFF) {
+      throw new Error('Cannot canonicalize a lone surrogate');
+    }
+  }
+}
+
+function rfc8785String(str) {
+  assertWellFormedUtf16(str);
+  return JSON.stringify(str);
+}
+
+function rfc8785Value(value) {
+  if (value === null || value === undefined) return 'null';
+  const type = typeof value;
+  if (type === 'boolean') return value ? 'true' : 'false';
+  if (type === 'number') {
+    if (!Number.isFinite(value)) throw new Error('Cannot canonicalize Infinity or NaN');
+    if (Object.is(value, -0)) return '0';
+    return JSON.stringify(value);
+  }
+  if (type === 'string') return rfc8785String(value);
+  if (Array.isArray(value)) return `[${value.map(rfc8785Value).join(',')}]`;
+  if (type === 'object') {
+    const keys = Object.keys(value).sort(utf16Compare);
+    const pairs = [];
+    for (const key of keys) {
+      const child = value[key];
+      if (child !== undefined) pairs.push(`${rfc8785String(key)}:${rfc8785Value(child)}`);
+    }
+    return `{${pairs.join(',')}}`;
+  }
+  throw new Error(`Cannot canonicalize value of type ${type}`);
 }
 
 /** Host of an absolute http(s) URL, or null. Default ports are stripped (URL.host). */

@@ -306,8 +306,9 @@ test('overpay of quote+1 settles with settledAmount = quote+1', async () => {
       body: {},
     }, { taskId: 'stopgap-overpay', cfg, amount: String(quote) });
     assert.equal(decision.kind, 'settled');
+    assert.equal(decision.quotedAmount, String(quote));
     assert.equal(decision.settledAmount, String(quote + 1));
-    assert.notEqual(decision.settledAmount, String(quote));
+    assert.notEqual(decision.settledAmount, decision.quotedAmount);
     assert.equal(decision.payTo, HOUSE);
     assert.match(decision.paymentRef, new RegExp(`^base:${TX}$`));
   } finally {
