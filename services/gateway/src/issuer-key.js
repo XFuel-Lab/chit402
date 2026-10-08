@@ -6,7 +6,9 @@
  * signature that complements the HMAC (host-trust) signatures.
  *
  * Key format: ES256 (ECDSA with P-256/secp256r1 and SHA-256)
- *   - Private key: PEM format, base64-encoded in ISSUER_PRIVATE_KEY env var
+ *   - Private key: PEM format, base64-encoded in the gateway environment
+ *     variable ISSUER_PRIVATE_KEY. Production sets it from the host environment.
+ *     The loader reads only process.env. There is no second key loader.
  *   - Public key: JWK format in /.well-known/jwks.json
  *   - Key ID (kid): SHA-256 thumbprint of the JWK (RFC 7638)
  *
@@ -21,6 +23,59 @@ import crypto from 'crypto';
 let _privateKey = null;
 let _publicKeyJwk = null;
 let _kid = null;
+
+/** Published api.chit402.com issuer kid. Production uses this unless ISSUER_KID names another. */
+const PRODUCTION_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
+
+function issuerKeyMaterial() {
+  const raw = process.env.ISSUER_PRIVATE_KEY;
+  if (raw == null) return null;
+  const trimmed = String(raw).trim();
+  return trimmed || null;
+}
+
+/**
+ * Production is every NODE_ENV other than test and development. Unset is production.
+ * @param {string|undefined|null} [nodeEnv]
+ */
+export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {
+  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
+  return env !== 'test' && env !== 'development';
+}
+
+/**
+ * Production never mints a temporary key. An empty env value counts as missing.
+ * ISSUER_ROOT_ENABLED and the skip acknowledgement do not override this.
+ * ALLOW_EPHEMERAL_ISSUER_KEY=true is the local opt-in.
+ */
+function assertProductionIssuerKeyPresent(envKey) {
+  if (String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true') return;
+  if (isProductionIssuerEnv() && !envKey) {
+    const err = new Error('production refuses to boot when ISSUER_PRIVATE_KEY is missing or empty');
+    err.code = 'issuer_key_missing';
+    throw err;
+  }
+}
+
+function assertIssuerKeyType(privateKey) {
+  const curve = privateKey.asymmetricKeyDetails?.namedCurve;
+  if (privateKey.asymmetricKeyType !== 'ec' || curve !== 'prime256v1') {
+    const err = new Error('issuer signing key must be ES256 (P-256)');
+    err.code = 'issuer_key_type';
+    throw err;
+  }
+}
+
+function assertIssuerKid(kid) {
+  const explicit = String(process.env.ISSUER_KID || '').trim();
+  const ephemeral = String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true';
+  const configured = explicit || (isProductionIssuerEnv() && !ephemeral ? PRODUCTION_ISSUER_KID : '');
+  if (configured && kid !== configured) {
+    const err = new Error('issuer kid does not match the configured kid');
+    err.code = 'issuer_kid_mismatch';
+    throw err;
+  }
+}
 
 /**
  * Generate an ephemeral P-256 key pair (for testing/dev when no key is configured).
@@ -40,13 +95,21 @@ function generateKeyPair() {
 export function initIssuerKey() {
   if (_privateKey) return { privateKey: _privateKey, publicKeyJwk: _publicKeyJwk, kid: _kid };
 
-  const envKey = process.env.ISSUER_PRIVATE_KEY || null;
+  const envKey = issuerKeyMaterial();
+  assertProductionIssuerKeyPresent(envKey);
+  // v11 refuses an ephemeral key. The flag-off path still generates one for local runs.
+  if (String(process.env.ISSUER_ROOT_ENABLED || '').trim() === 'true' && !envKey) {
+    throw new Error(
+      'ISSUER_ROOT_ENABLED=true refuses to start when ISSUER_PRIVATE_KEY is unset. An ephemeral issuer key cannot sign v11 receipts.',
+    );
+  }
   let privateKey;
   let publicKey;
 
   if (envKey) {
     const pem = Buffer.from(envKey, 'base64').toString('utf8');
     privateKey = crypto.createPrivateKey({ key: pem, format: 'pem' });
+    assertIssuerKeyType(privateKey);
     publicKey = crypto.createPublicKey(privateKey);
   } else {
     const pair = generateKeyPair();
@@ -56,6 +119,7 @@ export function initIssuerKey() {
 
   const jwk = publicKey.export({ format: 'jwk' });
   const kid = computeJwkThumbprint(jwk);
+  assertIssuerKid(kid);
 
   _privateKey = privateKey;
   _publicKeyJwk = {
@@ -119,13 +183,15 @@ function b64urlJson(obj) {
  * Payload: object with named claims
  * 
  * @param {object} payload - Object payload (will be JSON serialized)
- * @param {{ jku?: string|null, typ?: string|null, kid?: string|null }} [opts]
+ * @param {{ jku?: string|null, typ?: string|null, kid?: string|null, payloadUtf8?: string|null }} [opts]
  *   Optional JWKS URL (jku), JWT typ, and key id override.
  *   `typ: null` omits the typ header (x402 offer-receipt artifacts are not chit402 receipts).
  *   `kid` overrides the thumbprint kid (did:web URL for offer-receipt).
+ *   `payloadUtf8`, when set, is the exact payload segment (v11 JCS). The default
+ *   path still JSON.stringifies `payload`.
  * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
  */
-export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null } = {}) {
+export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null, payloadUtf8 = null } = {}) {
   const { privateKey, kid: thumbKid } = initIssuerKey();
   const kid = kidOverride || thumbKid;
 
@@ -136,8 +202,11 @@ export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid:
   if (jku && typeof jku === 'string' && jku.startsWith('http')) {
     header.jku = jku;
   }
-  
-  const signingInput = `${b64urlJson(header)}.${b64urlJson(payload)}`;
+
+  const payloadPart = payloadUtf8 != null
+    ? Buffer.from(String(payloadUtf8), 'utf8').toString('base64url')
+    : b64urlJson(payload);
+  const signingInput = `${b64urlJson(header)}.${payloadPart}`;
   const signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',

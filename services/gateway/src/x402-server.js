@@ -504,14 +504,18 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
 /**
  * Run the x402 handshake for a task request. Returns a decision the caller acts on:
  *   { kind:'challenge', body }     → no X-PAYMENT present; reply 402 with this body
- *   { kind:'settled', paymentRef, settledAmount }
+ *   { kind:'settled', paymentRef, quotedAmount, settledAmount }
  *                                  → payment verified + settled (paymentRef = network:txRef).
- *                                    `settledAmount` is the EIP-3009 value on the
- *                                    authorization sent to the facilitator. Solana uses
- *                                    the server quote. An unsigned copy or a client
- *                                    amount label cannot raise it. A signed overpay of
- *                                    quote+1 settles as quote+1. Callers must NOT trust
- *                                    `body.amount`.
+ *                                    `quotedAmount` is the server quote (`challenge.amount`).
+ *                                    It is not copied from the settled transfer.
+ *                                    With the payment-binding guard on, `settledAmount` is
+ *                                    `signedPaid` (the EIP-3009 value on the authorization
+ *                                    sent to the facilitator), not `challenge.amount`.
+ *                                    Solana has no EIP-3009 value, so that path uses the
+ *                                    server quote. An unsigned copy or a client amount
+ *                                    label cannot raise it. A signed overpay of quote+1
+ *                                    settles as quote+1. Callers keep the two figures
+ *                                    separate and must NOT trust `body.amount`.
  *   { kind:'failed', reason }      → verify/settle failed; caller decides fallback vs error
  *
  * @param {Object} req  Express-like request ({ headers, body })
@@ -684,7 +688,8 @@ export async function runX402Handshake(req, {
   const challenge = nonce ? bound.store.get(nonce) : null;
   let boundAmount;
   if (!allowUnbound && signedPaid != null) {
-    // Receipt gross is the signed transfer, not the server quote.
+    // Guard on: the settled transfer is the facilitator-bound authorization.
+    // quotedAmount stays challenge.amount and is not this value.
     boundAmount = signedPaid;
   } else {
     try {
@@ -773,9 +778,11 @@ export async function runX402Handshake(req, {
 
   const txRef = allowUnbound ? (s.txRef || 'unknown') : s.txRef;
   const payerWallet = s.payer || v.payer || payerFromPaymentHeader(paymentHeader) || null;
+  const quotedAmount = challenge?.amount != null ? String(challenge.amount) : null;
   return {
     kind: 'settled',
     paymentRef: `${settledNetwork}:${txRef}`,
+    quotedAmount,
     settledAmount: String(boundAmount),
     payerWallet,
     payTo: challenge?.payTo || null,

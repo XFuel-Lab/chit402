@@ -19,6 +19,7 @@ import {
 } from './anchor-trust.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { unloggedReasonForTask, verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
+import { assessIssuerPin, type AssessIssuerPinInput, type IssuerPinAssessment } from './issuer-pin.js';
 import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { boundRowHash } from './row-hash.js';
@@ -192,6 +193,7 @@ export interface AnchorWitnessResult {
   proves: string[];
   does_not_prove: string[];
   errors: string[];
+  issuer_pin: IssuerPinAssessment;
 }
 
 function sha256(buf: Uint8Array): Buffer {
@@ -574,6 +576,11 @@ export interface VerifyAnchoredRootInput {
   fetchNewestAnchor?: (feePayer: string, rpcUrl: string) => Promise<NewestAnchor | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
+  /**
+   * Local pin bytes. Anchor mode does not fetch them. A receipt or head
+   * that carries `issuer_key_pin` fails closed when this is omitted.
+   */
+  issuerPin?: AssessIssuerPinInput | null;
   jwks?: { keys: Es256Jwk[] };
   trustedKids?: readonly string[];
   issuerHistory?: IssuerHistoryDocument | null;
@@ -852,6 +859,16 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
 
+  const pinInput = input.issuerPin || {};
+  const issuerPin = assessIssuerPin({
+    ...pinInput,
+    receipt: pinInput.receipt ?? input.receipt,
+    head: pinInput.head ?? input.head,
+    required: pinInput.required === true || input.issuerPin != null,
+  });
+  if (issuerPin.checked && !issuerPin.ok && issuerPin.code) errors.push(issuerPin.code);
+  const pinFailed = issuerPin.checked && !issuerPin.ok;
+
   let staleReason: string | undefined;
   const claimsAnchor = Boolean(solanaSignature(input.head) || baseTxHash(input.head));
   if (input.checkNewestAnchor === true && claimsAnchor) {
@@ -884,10 +901,23 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     && !legacyHead
     && !epochReason
     && !staleReason
+    && !pinFailed
     && headHasAnchor
     && !errors.includes('head_not_anchored');
   if (pendingOk) overall = 'pending';
-  else if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || legacyHead || anchorSideFailed || staleReason || errors.includes('head_not_anchored')) overall = 'failed';
+  else if (
+    !inclusionValid
+    || epochReason
+    || !headTrust.ok
+    || walletFailed
+    || legacyHead
+    || anchorSideFailed
+    || staleReason
+    || errors.includes('head_not_anchored')
+    || (solana.checked && !solana.valid)
+    || (base.checked && !base.valid)
+    || pinFailed
+  ) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
@@ -930,5 +960,6 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       : ANCHOR_PROVES,
     does_not_prove: doesNotProve,
     errors,
+    issuer_pin: issuerPin,
   };
 }
