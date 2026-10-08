@@ -3,46 +3,16 @@
   "specimen": true,
   "agent_id": 0,
   "exported_at": "2026-09-10T12:00:00.000Z",
-  "row_count": 5,
+  "row_count": 4,
   "totals": {
-    "usdc_sum": "30000",
+    "usdc_sum": "28000",
     "count": 3,
     "by_rail": {
-      "usdc": { "count": 3, "amount": "30000" }
+      "usdc": { "count": 3, "amount": "28000" }
     }
   },
   "policy": null,
   "rows": [
-    {
-      "task_id": "chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-      "evidence": "collected",
-      "collected_at": "2026-09-01T14:29:54.000Z",
-      "hub": "openrouter",
-      "model": "openai/gpt-4o-mini",
-      "amount": "2000",
-      "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
-      "rail": "usdc",
-      "bucket": null,
-      "payer_wallet": "0xREDACTED…c90cfe03",
-      "intent_id": null,
-      "attempt_index": null,
-      "replay_count": 0,
-      "replay_events": null,
-      "arrival_status": null,
-      "omission_rule": null,
-      "ingress_receipt": null,
-      "inflow_claim": null,
-      "inflow_corrections": null,
-      "policy_code": null,
-      "reason": null,
-      "policy_key": null,
-      "spent_atomic": null,
-      "cap_atomic": null,
-      "period_start": null,
-      "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-      "auditor_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e?format=auditor",
-      "explorer_url": "https://basescan.org/tx/0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03"
-    },
     {
       "task_id": "xfuel-hemei-inflow-1",
       "evidence": "inflow_claimed",
@@ -179,5 +149,5 @@
     }
   ],
   "attestation_note": "On-chain attestation is payment.ref + verify_url + issuer JWS on each receipt. Rows with evidence=UNVERIFIED lack proven payer/payment.ref/amount — never treat as zero payment. RECORDED_BY_SETTLE rows show the recorder claim at settle cutoff; promote to collected with ingress_receipt. ARRIVAL_UNVERIFIED rows are explicit omission at cutoff (no ingress_receipt) — visible, amount null, excluded from totals. inflow_claimed rows carry a signed bucket/allocation (no payment.ref) — corrections are append-only. Verify offline; no separate attestation chain in v1.",
-  "specimen_note": "Redacted stranger-auditable specimen for hemei design-partner gap A. Not a live book export — no session tokens. Wallets truncated; synthetic task_ids except the public house receipt. Shape matches GET|POST /v1/agents/:agent_id/book/export (format=csv|json)."
+  "specimen_note": "Redacted stranger-auditable specimen for hemei design-partner gap A. Not a live book export — no session tokens. Wallets truncated. Task ids are synthetic. totals.usdc_sum is the sum of rows that carry an amount (15000 + 5000 + 8000). The policy_blocked row has no amount and is not in that sum. Shape matches GET|POST /v1/agents/:agent_id/book/export (format=csv|json)."
 }

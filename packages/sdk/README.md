@@ -3,7 +3,7 @@
 TypeScript / JavaScript client for the Chit402 M2M API.
 
 npm: `xfuel-sdk` · License: Apache-2.0  
-Docs: https://chit402.com · API: https://api.chit402.com (alias: https://api.xfuel.app)
+Docs: https://chit402.com · API: https://api.chit402.com
 
 Public beta. **Payments are real USDC on Base mainnet** via Coinbase x402. Do not point a real wallet at it unless you mean to pay.
 

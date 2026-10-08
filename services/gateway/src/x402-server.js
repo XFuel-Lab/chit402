@@ -343,7 +343,7 @@ export async function resolvePricingModel(body = {}) {
  *   before serving, and quoting the uncapped figure would bill for output the
  *   caller cannot receive.
  *   `baseUrl` is the public base URL for building absolute resource links (required
- *   for CDP Bazaar cataloging). Example: https://api.xfuel.app
+ *   for CDP Bazaar cataloging). Example: https://api.chit402.com
  *   `resource` is the absolute catalog URL for this challenge (default: /task-request).
  */
 export async function runX402Handshake(req, {

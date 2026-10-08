@@ -18,7 +18,7 @@ import {
   type AnchorWalletList,
 } from './anchor-trust.js';
 import { BASE_RPC_URL } from './base-payer.js';
-import { verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
+import { unloggedReasonForTask, verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
@@ -57,7 +57,8 @@ export const ANCHOR_DOES_NOT_PROVE = [
 
 export interface InclusionStep {
   hash: string;
-  position: string;
+  /** Ignored. RFC 9162 uses the leaf index and the tree size to pick the side. */
+  position?: string;
 }
 
 export interface AnchorReceipt {
@@ -142,7 +143,13 @@ export interface BaseAnchorTx {
 export interface AnchorWitnessResult {
   overall: 'verified' | 'partial' | 'failed';
   root: string | null;
-  inclusion: { valid: boolean; leaf: string | null; leaf_source: string; reason?: string };
+  inclusion: {
+    valid: boolean;
+    leaf: string | null;
+    leaf_source: string;
+    reason?: string;
+    unlogged_reason?: string;
+  };
   solana: {
     checked: boolean;
     valid: boolean;
@@ -663,10 +670,22 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
+  let unloggedReason: string | undefined;
+  if (!inclusionValid && !epochReason) {
+    const listed = unloggedReasonForTask(input.epochRecord, taskId);
+    if (listed) unloggedReason = listed.reason;
+  }
+
   return {
     overall,
     root,
-    inclusion: { valid: inclusionValid, leaf: leafHex, leaf_source: leafSource, reason: inclusionReason },
+    inclusion: {
+      valid: inclusionValid,
+      leaf: leafHex,
+      leaf_source: leafSource,
+      reason: inclusionReason,
+      ...(unloggedReason ? { unlogged_reason: unloggedReason } : {}),
+    },
     solana,
     base,
     head_signature: {

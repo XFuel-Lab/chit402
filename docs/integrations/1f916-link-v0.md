@@ -77,7 +77,6 @@ The receipt's existing signing field identifies who signed it: `issuer_signature
 Today Chit402 issues. Live receipts carry `iss` `chit402` and kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. The verifying key is published at:
 
 - https://api.chit402.com/.well-known/jwks.json
-- alias https://api.xfuel.app/.well-known/jwks.json
 
 `verification.jwks_uri` on the receipt repeats the first URL. Pin and rotation: https://www.chit402.com/trust. Algorithm: [VERIFY_ALGORITHM.md](../VERIFY_ALGORITHM.md) §10.
 

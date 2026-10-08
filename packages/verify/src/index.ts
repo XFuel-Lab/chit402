@@ -13,6 +13,12 @@
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
+import {
+  verifyCarryForward,
+  type CarryForwardView,
+  type CarryHead,
+  type CarryInclusion,
+} from './carry-forward.js';
 import { createPublicKey, verify, type KeyObject } from 'node:crypto';
 import {
   computePaymentCommitment,
@@ -371,7 +377,13 @@ export interface ReceiptVerification {
   /** Kid window against the signed issuer history. Unreachable is a warning unless strict. */
   issuer_history: IssuerHistoryCheck;
   warnings: string[];
-  overall: 'verified' | 'partial' | 'failed';
+  /**
+   * Set only when the leaf is included under an earlier signed epoch head
+   * and under the current signed epoch head. Dates are those head claims.
+   * Absent for a receipt in the current epoch.
+   */
+  carry_forward?: CarryForwardView | null;
+  overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   errors: string[];
 }
 
@@ -1356,6 +1368,18 @@ export interface VerifyReceiptOptions {
   /** `--no-issuer-history`. A signed pin is not checked. */
   skipIssuerHistory?: boolean;
   /**
+   * Earlier-epoch head and current-epoch head for a leaf that was carried
+   * into the current log. Omitted for a receipt that is only in the current
+   * epoch. Dates are read from the signed heads, not from this object.
+   */
+  carry?: {
+    oldHead: CarryHead;
+    oldInclusion: CarryInclusion;
+    currentHead: CarryHead;
+    currentInclusions: CarryInclusion[];
+    row_hash?: string | null;
+  } | null;
+  /**
    * Stored canonical object (the GET /preimage body). SHA-256 must match
    * the signed payload_hash. Absent bytes are not rebuilt.
    */
@@ -1734,7 +1758,7 @@ export async function verifyReceipt(
   );
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
-  let overall: 'verified' | 'partial' | 'failed';
+  let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
   if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
@@ -1761,6 +1785,41 @@ export async function verifyReceipt(
   if (verifiedSchema === REFUSAL_SCHEMA || isRefusalDocument(receipt as unknown)) {
     errors.push('refusal document is not a payment receipt');
     overall = 'failed';
+  }
+
+  let carry_forward: CarryForwardView | null | undefined;
+  if (options.carry) {
+    const row = receipt.book_chain?.row_hash
+      ?? options.carry.row_hash
+      ?? '';
+    const leaf = receipt.task_id == null
+      ? null
+      : leafHash(Buffer.from(`${receipt.task_id}|${row}`));
+    const verdict = leaf
+      ? verifyCarryForward({
+        leaf,
+        oldHead: options.carry.oldHead,
+        oldInclusion: options.carry.oldInclusion,
+        currentHead: options.carry.currentHead,
+        currentInclusions: options.carry.currentInclusions,
+        trustedKids,
+        jwks,
+      })
+      : { applicable: true as const, ok: false as const, status: null, reason: 'not_in_tree' };
+    if (verdict.applicable && !verdict.ok) {
+      errors.push(verdict.reason);
+      overall = 'failed';
+    } else if (verdict.applicable && verdict.ok && overall === 'verified') {
+      overall = 'verified_carried_forward';
+      carry_forward = {
+        status: verdict.status,
+        issued_at: verdict.issued_at,
+        issued_epoch: verdict.issued_epoch,
+        logged_at: verdict.logged_at,
+        logged_epoch: verdict.logged_epoch,
+        leaf_index: verdict.leaf_index,
+      };
+    }
   }
 
   const signedPayment = asRecord(verifiedClaims?.payment);
@@ -1803,6 +1862,7 @@ export async function verifyReceipt(
     preimages,
     issuer_history,
     warnings,
+    ...(carry_forward ? { carry_forward } : {}),
     overall,
     errors,
   };
@@ -1864,6 +1924,9 @@ export {
   verifyEpochLink,
   verifyEpochRecord,
   verifyEpochInclusion,
+  verifyUnloggedSection,
+  unloggedReasonForTask,
+  canonicalUnloggedRows,
   TREE_HEAD_SCHEMA_V1,
   TREE_HEAD_SCHEMA_V2,
   EPOCH1_FINAL_ROOT,
@@ -1878,7 +1941,20 @@ export {
   type EpochRecord,
   type EpochRecordEntry,
   type EpochRecordOptions,
+  type UnloggedRow,
+  type UnloggedSection,
 } from './epoch.js';
+
+export {
+  verifyCarryForward,
+  PINNED_ANCHOR_EPOCHS,
+  CARRY_FORWARD_STATUS,
+  type CarryForwardInput,
+  type CarryForwardVerdict,
+  type CarryForwardView,
+  type CarryHead,
+  type CarryInclusion,
+} from './carry-forward.js';
 
 export {
   verifyAnchoredRoot,

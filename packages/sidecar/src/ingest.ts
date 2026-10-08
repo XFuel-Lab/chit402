@@ -10,7 +10,7 @@
 import type { SidecarReceipt } from './receipt.js';
 
 export interface IngestConfig {
-  /** XFuel API base URL (default: https://api.xfuel.app) */
+  /** XFuel API base URL (default: https://api.chit402.com) */
   xfuelBaseUrl?: string;
   /** Agent API key */
   apiKey: string;
@@ -55,7 +55,7 @@ export async function ingestToBook(
   payload: IngestPayload,
   config: IngestConfig
 ): Promise<IngestResult> {
-  const baseUrl = (config.xfuelBaseUrl || 'https://api.xfuel.app').replace(/\/$/, '');
+  const baseUrl = (config.xfuelBaseUrl || 'https://api.chit402.com').replace(/\/$/, '');
   const url = `${baseUrl}/v1/agents/${config.agentId}/book/ingest`;
 
   try {
@@ -140,7 +140,7 @@ export function receiptToIngestPayload(
 export async function registerAgent(
   config: { xfuelBaseUrl?: string; apiKey: string }
 ): Promise<{ ok: boolean; agent_id?: number; session?: string; error?: string }> {
-  const baseUrl = (config.xfuelBaseUrl || 'https://api.xfuel.app').replace(/\/$/, '');
+  const baseUrl = (config.xfuelBaseUrl || 'https://api.chit402.com').replace(/\/$/, '');
   const url = `${baseUrl}/v1/agents/register`;
 
   try {

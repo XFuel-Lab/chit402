@@ -3,6 +3,11 @@
 All notable changes to the Chit402 MCP server are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- Default API URL is `https://api.chit402.com` (`server.json` and the SDK default). Republish `xfuel-mcp` for the npm package and the registry card to match.
+
 ## 0.4.1 — MCP book + receipt door
 
 ### Added

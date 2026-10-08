@@ -38,6 +38,8 @@ const {
   EPOCH2_OPENING_ROOT,
   checkEpochLinks,
   epochRecordClaims,
+  epochRecordWithUnlogged,
+  attestedUnloggedEntry,
   genesisBytes,
   epochLeafHash,
   rebuildEpoch1FromRows,
@@ -1871,7 +1873,96 @@ test('every anchored transition goes through confirmAnchor', async () => {
   assert.equal(solanaHits.length, 1);
 });
 
-test('backfill refuses a forked book and a leaf with no row_hash', () => {
+test('a row with no task_id keeps its row_hash in the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 13, task_id: 'before-note', seq: 1, prev_hash: null, row_hash: 'n1' },
+    { agent_id: 13, seq: 2, prev_hash: 'n1', row_hash: 'n2' },
+    { agent_id: 13, task_id: 'after-note', seq: 3, prev_hash: 'n2', row_hash: 'n3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => [row.task_id, row.row_hash]), [
+    ['before-note', 'n1'],
+    ['after-note', 'n3'],
+  ]);
+  assert.deepEqual(plan.unlogged, []);
+});
+
+test('an untasked row with an empty hash breaks the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 14, task_id: 'before-blank', seq: 1, prev_hash: null, row_hash: 'b1' },
+    { agent_id: 14, seq: 2, prev_hash: 'b1', row_hash: '' },
+    { agent_id: 14, task_id: 'after-blank', seq: 3, prev_hash: null, row_hash: 'b3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['before-blank']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['after-blank', 'depends_on_refused'],
+  ]);
+});
+
+test('a leading seq gap is depends_on_refused and taints the rest of the chain', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 11, task_id: 'gap-start', seq: 3, prev_hash: null, row_hash: 'g3' },
+    { agent_id: 11, task_id: 'gap-next', seq: 4, prev_hash: 'g3', row_hash: 'g4' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append, []);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['gap-start', 'depends_on_refused'],
+    ['gap-next', 'depends_on_refused'],
+  ]);
+});
+
+test('a row whose parent is missing is depends_on_refused', () => {
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: 'leaf-1', kind: 'receipt' },
+    ],
+  }];
+  const rows = [
+    { agent_id: 4, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
+    { agent_id: 12, task_id: 'chain-start', seq: 1, prev_hash: null, row_hash: 'p1' },
+    { agent_id: 12, task_id: 'missing-parent', seq: 3, prev_hash: 'not-a-parent', row_hash: 'p3' },
+  ];
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['chain-start']);
+  assert.equal(plan.append[0].row_hash, 'p1');
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['missing-parent', 'depends_on_refused'],
+  ]);
+});
+
+test('backfill lists a forked agent instead of aborting the file', () => {
   const tree = new ReceiptMerkleTree();
   tree.closedEpochs = [{
     epoch: 1,
@@ -1884,13 +1975,15 @@ test('backfill refuses a forked book and a leaf with no row_hash', () => {
     { agent_id: 3, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
     { agent_id: 3, task_id: 'dup-a', seq: 2, prev_hash: 'aa', row_hash: 'bb' },
     { agent_id: 3, task_id: 'dup-b', seq: 2, prev_hash: 'aa', row_hash: '' },
+    { agent_id: 8, task_id: 'clean-after', seq: 1, prev_hash: null, row_hash: 'cc' },
   ];
-  assert.throws(() => planReceiptBackfill(tree, rows), (err) => {
-    assert.equal(err.code, 'backfill_refused');
-    assert.ok(err.refusals.some((row) => row.reason === 'FORKED'));
-    assert.ok(err.refusals.some((row) => row.reason === 'missing_row_hash' && row.task_id === 'dup-b'));
-    return true;
-  });
+  const plan = planReceiptBackfill(tree, rows);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['clean-after']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['dup-a', 'forked'],
+    ['dup-b', 'forked'],
+  ]);
+  assert.equal(plan.append[0].row_hash, 'cc');
 });
 
 test('restore checks the signed bundle index hash and object lock compliance', async () => {
@@ -2181,6 +2274,19 @@ test('a forged epoch record is not a pinned epoch', async () => {
   pinned.issuer_signature = { jws: 'a.b.c' };
   assert.equal(assertPinnedEpochRecord(pinned).ok, true);
   assert.equal(pinned.orphans.find((row) => row.root_prefix === 'd7f6c548').unrecoverable, true);
+  const legacy = epochRecordClaims();
+  legacy.payload_version = 1;
+  legacy.orphans = legacy.orphans
+    .filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3')
+    .map((row) => (row.root_prefix === 'd7f6c548' || String(row.root || '').startsWith('20d88791')
+      ? { ...row, chain: 'base' }
+      : row));
+  legacy.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(legacy).ok, true);
+  const dropped = epochRecordWithUnlogged(epochRecordClaims(), []);
+  dropped.orphans = dropped.orphans.filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3');
+  dropped.issuer_signature = { jws: 'a.b.c' };
+  assert.equal(assertPinnedEpochRecord(dropped).reason, 'orphan_ff950e72_missing');
 });
 
 test('backfill dry-run lists each refusal', () => {
@@ -2200,9 +2306,217 @@ test('backfill dry-run lists each refusal', () => {
     '--jsonl', jsonl,
     '--dir', dir,
   ], { cwd: gatewayRoot, encoding: 'utf8' });
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /would list as unlogged dup-a forked/);
+  assert.match(out.stdout, /would list as unlogged dup-b forked/);
+  assert.match(out.stderr, /would list as unlogged 2 row\(s\)/);
+  assert.doesNotMatch(out.stdout + out.stderr, /epoch1_has_no_receipt_leaf/);
+});
+
+test('clean rows append and the pinned epoch bytes stay put', () => {
+  const anchor = 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af';
+  const rows = [
+    { agent_id: 7, task_id: 'older', seq: 1, prev_hash: null, row_hash: 'h0' },
+    { agent_id: 7, task_id: anchor, seq: 2, prev_hash: 'h0', row_hash: 'h1' },
+    { agent_id: 7, task_id: 'leaf-2', seq: 3, prev_hash: 'h1', row_hash: 'h2' },
+    { agent_id: 7, task_id: 'leaf-3', seq: 4, prev_hash: 'h2', row_hash: 'h3' },
+    { agent_id: 9, task_id: 'openai-old', seq: 1, prev_hash: null, row_hash: '' },
+    { agent_id: 9, task_id: 'openai-next', seq: 2, prev_hash: null, row_hash: 'stored-next' },
+    { agent_id: 149, task_id: 'fork-149-a', seq: 1, prev_hash: null, row_hash: 'fa' },
+    { agent_id: 149, task_id: 'fork-149-b', seq: 1, prev_hash: null, row_hash: 'fb' },
+    { agent_id: 187, task_id: 'fork-187-a', seq: 2, prev_hash: 'gone', row_hash: 'ga' },
+    { agent_id: 187, task_id: 'fork-187-b', seq: 1, prev_hash: null, row_hash: 'gb' },
+    { agent_id: 8, task_id: 'board-clean', seq: 1, prev_hash: null, row_hash: 'clean-hash' },
+    { agent_id: 7, task_id: 'xfuel-clean', seq: 5, prev_hash: 'h3', row_hash: 'h4' },
+  ];
+  const tree = new ReceiptMerkleTree();
+  tree.closedEpochs = [{
+    epoch: 1,
+    status: 'closed',
+    root: EPOCH1_FINAL_ROOT,
+    meta: [
+      { task_id: 'genesis', kind: 'genesis' },
+      { task_id: anchor, kind: 'receipt' },
+      { task_id: 'leaf-2', kind: 'receipt' },
+      { task_id: 'leaf-3', kind: 'receipt' },
+    ],
+    leaves: [Buffer.alloc(32), Buffer.alloc(32), Buffer.alloc(32), Buffer.alloc(32)],
+  }];
+  tree.epoch = 2;
+  tree.prevEpochRoot = EPOCH1_FINAL_ROOT;
+  tree.prevEpochSize = 4;
+  const opening = epochLeafHash(genesisBytes(EPOCH2_GENESIS_DIGEST));
+  tree.leaves = [opening];
+  tree.meta = [{ task_id: 'genesis', kind: 'genesis', epoch: 2 }];
+  tree.byTask = new Map([['genesis', 0]]);
+  tree.epochRecord = epochRecordClaims();
+  const plan = planReceiptBackfill(tree, rows);
+  const again = planReceiptBackfill(tree, rows);
+  assert.deepEqual(again, plan);
+  assert.deepEqual(plan.append.map((row) => row.task_id), ['board-clean', 'xfuel-clean']);
+  assert.deepEqual(plan.append.map((row) => row.row_hash), ['clean-hash', 'h4']);
+  assert.deepEqual(plan.unlogged.map((row) => [row.task_id, row.reason]), [
+    ['openai-old', 'missing_row_hash'],
+    ['openai-next', 'depends_on_refused'],
+    ['fork-149-a', 'forked'],
+    ['fork-149-b', 'forked'],
+    ['fork-187-a', 'forked'],
+    ['fork-187-b', 'forked'],
+  ]);
+  const v1 = epochRecordClaims();
+  const v2 = epochRecordWithUnlogged(v1, plan.unlogged);
+  assert.equal(v1.payload_version, 1);
+  assert.equal(v1.unlogged, undefined);
+  assert.equal(v2.payload_version, 2);
+  assert.equal(JSON.stringify(v2.epochs), JSON.stringify(v1.epochs));
+  assert.equal(JSON.stringify(v2.orphans), JSON.stringify(v1.orphans));
+  const stale = epochRecordClaims();
+  stale.orphans = stale.orphans.filter((row) => row.root !== 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3')
+    .map((row) => (row.root_prefix === 'd7f6c548' || String(row.root || '').startsWith('20d88791')
+      ? { ...row, chain: 'base' }
+      : row));
+  const corrected = epochRecordWithUnlogged(stale, plan.unlogged);
+  assert.equal(JSON.stringify(corrected.epochs), JSON.stringify(stale.epochs));
+  assert.notEqual(JSON.stringify(corrected.orphans), JSON.stringify(stale.orphans));
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('ff950e72')).chain, 'base');
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('ff950e72')).solana, 'absent');
+  assert.equal(corrected.orphans.find((row) => String(row.root || '').startsWith('20d88791')).chain, 'base_and_solana');
+  assert.equal(corrected.orphans.find((row) => row.root_prefix === 'd7f6c548').chain, 'base_and_solana');
+  assert.equal(corrected.orphans.find((row) => row.root_prefix === 'd7f6c548').root, null);
+  assert.equal(v2.epochs[0].final_root, EPOCH1_FINAL_ROOT);
+  assert.equal(v2.epochs[0].final_size, 4);
+  assert.equal(v2.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+  assert.equal(v2.unlogged.count, plan.unlogged.length);
+  assert.equal(v2.unlogged.hash.length, 64);
+  const epoch1Before = tree.closedEpochs[0].root;
+  const openingBefore = Buffer.from(tree.leaves[0]).toString('hex');
+  assert.equal(openingBefore, EPOCH2_OPENING_ROOT);
+  for (const row of plan.append) tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  assert.equal(tree.closedEpochs[0].root, epoch1Before);
+  assert.equal(tree.closedEpochs[0].root, EPOCH1_FINAL_ROOT);
+  assert.equal(Buffer.from(tree.leaves[0]).toString('hex'), EPOCH2_OPENING_ROOT);
+  assert.equal(tree.epoch, 2);
+  assert.equal(tree.leaves.length, 3);
+  assert.equal(tree.heads.length, 0);
+  const listed = attestedUnloggedEntry({ ...v2, payload_version: 2 }, 'openai-next');
+  assert.equal(listed.reason, 'depends_on_refused');
+  assert.equal(attestedUnloggedEntry(v1, 'openai-next'), null);
+});
+
+test('inclusion of an unlogged id returns the signed reason', async () => {
+  const claims = epochRecordWithUnlogged(epochRecordClaims(), [
+    { task_id: 'openai-old', agent_id: 4, reason: 'missing_row_hash' },
+  ]);
+  const { jws, kid } = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
+  const record = { ...claims, issuer_signature: { jws, kid } };
+  const prevBoot = process.env.RECEIPT_LOG_BOOT;
+  const prevDir = process.env.RECEIPT_LOG_DIR;
+  delete process.env.RECEIPT_LOG_BOOT;
+  delete process.env.RECEIPT_LOG_DIR;
+  resetReceiptMerkleTree();
+  let server;
+  try {
+    const { createApp } = await import('../src/server.js');
+    const app = createApp();
+    getReceiptMerkleTree().epochRecord = record;
+    server = await new Promise((resolve) => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+    const port = server.address().port;
+    const inclusion = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/v1/receipts/openai-old/inclusion`, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => resolve({
+          status: res.statusCode,
+          json: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+        }));
+      }).on('error', reject);
+    });
+    assert.equal(inclusion.status, 404);
+    assert.equal(inclusion.json.error, 'not_in_tree');
+    assert.equal(inclusion.json.reason, 'missing_row_hash');
+    assert.equal(inclusion.json.agent_id, 4);
+    const epoch = await new Promise((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/v1/receipts/tree/epoch`, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      }).on('error', reject);
+    });
+    assert.equal(epoch.payload_version, 2);
+    assert.equal(epoch.epochs[0].final_root, EPOCH1_FINAL_ROOT);
+    assert.equal(epoch.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+    assert.equal(epoch.unlogged.rows[0].reason, 'missing_row_hash');
+    assert.equal(JSON.stringify(epoch.orphans), JSON.stringify(epochRecordClaims().orphans));
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
+    else process.env.RECEIPT_LOG_BOOT = prevBoot;
+    if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = prevDir;
+    resetReceiptMerkleTree();
+  }
+});
+
+test('rebuild refuses to sign when ISSUER_PRIVATE_KEY is unset', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const outDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, '{}\n');
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: '' };
+  const out = spawnSync(process.execPath, [
+    'scripts/rebuild-receipt-epoch1.mjs',
+    '--jsonl', jsonl,
+    '--out', outDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8', env });
   assert.notEqual(out.status, 0);
-  assert.match(out.stderr, /refuse agent 3: FORKED/);
-  assert.match(out.stderr, /refuse dup-b: missing_row_hash/);
+  assert.match(out.stderr, /REFUSED: ISSUER_PRIVATE_KEY is not set/);
+  assert.match(out.stderr, /ephemeral key/);
+  assert.match(out.stderr, /no_matching_key/);
+  assert.equal(fs.existsSync(path.join(outDir, 'journal.jsonl')), false);
+  assert.doesNotMatch(out.stderr, /epoch record signed: true/);
+});
+
+test('rebuild with a configured key still refuses a book that is not epoch 1', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const outDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, JSON.stringify({
+    agent_id: 1,
+    task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af',
+    row_hash: 'not-the-historical-row',
+  }) + '\n');
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: Buffer.from(pem).toString('base64') };
+  const out = spawnSync(process.execPath, [
+    'scripts/rebuild-receipt-epoch1.mjs',
+    '--jsonl', jsonl,
+    '--out', outDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8', env });
+  assert.notEqual(out.status, 0);
+  assert.match(out.stderr, /REFUSED:/);
+  assert.match(out.stderr, /epoch1_root_mismatch|epoch 1 must recompute/);
+  assert.doesNotMatch(out.stderr, /ephemeral key/);
+  assert.doesNotMatch(out.stderr, /epoch record signed: true/);
+  assert.equal(fs.existsSync(path.join(outDir, 'journal.jsonl')), false);
+});
+
+test('backfill names a directory that has no journal', () => {
+  const dir = tmp();
+  const jsonl = path.join(dir, 'book.jsonl');
+  const logDir = path.join(dir, 'receipt-log');
+  fs.writeFileSync(jsonl, '{}\n');
+  fs.mkdirSync(logDir);
+  const out = spawnSync(process.execPath, [
+    'scripts/backfill-receipt-log.mjs',
+    '--jsonl', jsonl,
+    '--dir', logDir,
+  ], { cwd: gatewayRoot, encoding: 'utf8' });
+  assert.notEqual(out.status, 0);
+  assert.ok(out.stderr.includes(`REFUSED: no journal at ${logDir}`), out.stderr);
+  assert.doesNotMatch(out.stderr, /epoch1_has_no_receipt_leaf/);
 });
 
 function runCli(args) {

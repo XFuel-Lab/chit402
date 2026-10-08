@@ -7,7 +7,12 @@ import { fileURLToPath } from 'node:url';
 const {
   SAMPLE_BASE_ADDRESS,
   BASE_USDC,
+  AUDIT_CHUNK_BLOCKS,
   parseAuditQuery,
+  planLogRanges,
+  shrinkLogRange,
+  isLogRangeLimitError,
+  statedLogRangeLimit,
   decodeUsdcTransferLog,
   classifySpend,
   buildSpendAuditReport,
@@ -318,15 +323,37 @@ test('a dead Base RPC fails closed with no report total', async () => {
 });
 
 test('a failed log range withholds the total even when no rows came back', async () => {
+  const spans = [];
   const result = await runPublicSpendAudit(PAYER, {
-    fetchImpl: mockRpc({ logStatus: 413 }),
-    windowBlocks: 1000,
+    fetchImpl: async (url, init = {}) => {
+      const target = String(url);
+      if (target.includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x3e7' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        const from = Number.parseInt(body.params[0].fromBlock, 16);
+        const to = Number.parseInt(body.params[0].toBlock, 16);
+        spans.push(to - from + 1);
+        return jsonResponse({ error: { message: 'range' } }, 413);
+      }
+      throw new Error(`unexpected ${target}`);
+    },
+    windowBlocks: 999,
     chunkBlocks: 1000,
+    chunkFloor: 250,
+    minGapMs: 0,
+    sleep: async () => {},
   });
   assert.equal(result.ok, true);
   assert.equal(result.report.headline.usdc_out_atomic, null);
   assert.equal(result.report.coverage.scan_complete, false);
   assert.ok(result.report.coverage.failed_ranges.length > 0);
+  assert.ok(spans.includes(1000));
+  assert.ok(spans.every((span) => span >= 250));
+  assert.ok(result.report.coverage.failed_ranges.every((range) => (
+    range.to_block - range.from_block + 1 >= 250
+  )));
 });
 
 test('an agent id probes the book and does not scan the chain', async () => {
@@ -372,4 +399,250 @@ test('/audit is wired into the public site', () => {
   assert.match(llms, /\/audit/);
   assert.match(vercel, /\/audit/);
   assert.match(pkg, /spendAudit\.test\.mjs/);
+});
+
+test('planLogRanges covers the window in spans of at most 500 blocks', () => {
+  assert.equal(AUDIT_CHUNK_BLOCKS, 500);
+  const ranges = planLogRanges(10, 1610, AUDIT_CHUNK_BLOCKS);
+  assert.deepEqual(ranges[0], [10, 509]);
+  assert.equal(ranges.at(-1)[1], 1610);
+  let cursor = 10;
+  for (const [start, end] of ranges) {
+    assert.equal(start, cursor);
+    assert.ok(end >= start);
+    assert.ok(end - start + 1 <= 500);
+    cursor = end + 1;
+  }
+  assert.equal(cursor, 1611);
+  assert.deepEqual(planLogRanges(5, 4, 500), []);
+});
+
+test('shrinkLogRange follows a stated cap, otherwise halves, and stops at the floor', () => {
+  const stated = shrinkLogRange(0, 1999, { statedLimit: 500, floor: 1 });
+  assert.ok(stated.every(([start, end]) => end - start + 1 <= 500));
+  assert.equal(stated[0][0], 0);
+  assert.equal(stated.at(-1)[1], 1999);
+
+  assert.deepEqual(shrinkLogRange(0, 1999, { floor: 1 }), [[0, 999], [1000, 1999]]);
+  assert.equal(shrinkLogRange(5, 5, { floor: 1 }), null);
+  assert.equal(shrinkLogRange(0, 399, { floor: 400 }), null);
+
+  const limited = new Error('rpc_http_413: eth_getLogs is limited to a 500 range');
+  assert.equal(isLogRangeLimitError(limited), true);
+  assert.equal(statedLogRangeLimit(limited), 500);
+  assert.equal(isLogRangeLimitError(new Error('block range too large')), true);
+  assert.equal(isLogRangeLimitError(new Error('rpc_http_429')), false);
+  assert.equal(statedLogRangeLimit(new Error('rpc_http_413')), null);
+});
+
+test('Solana USDC is not scanned stays on the report', () => {
+  const solana = buildSpendAuditReport({ query: { kind: 'solana', address: '1'.repeat(44) } });
+  assert.match(solana.headline.label, /Solana USDC is not scanned/);
+  assert.equal(solana.headline.usdc_out_atomic, null);
+
+  const base = buildSpendAuditReport({
+    query: { kind: 'base', address: PAYER },
+    chain: { logs: [], failedRanges: [], scanComplete: true, fromBlock: 1, toBlock: 2 },
+  });
+  assert.ok(base.coverage.notes.some((note) => note.includes('Solana USDC is not scanned')));
+  assert.match(base.coverage.solana, /Solana USDC is not scanned/);
+});
+
+test('the default chunk is 500 blocks and a wider filter is reduced after HTTP 413', async () => {
+  const spans = [];
+  const head = 5000;
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      const target = String(url);
+      if (target.includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      if (target.includes('/v1/agents/')) return jsonResponse(null, 401);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: `0x${head.toString(16)}` });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        const from = Number.parseInt(body.params[0].fromBlock, 16);
+        const to = Number.parseInt(body.params[0].toBlock, 16);
+        const span = to - from + 1;
+        spans.push(span);
+        if (span > 500) {
+          return {
+            ok: false,
+            status: 413,
+            json: async () => ({
+              error: { code: -32614, message: 'eth_getLogs is limited to a 500 range' },
+            }),
+          };
+        }
+        const row = transferLog({ block: 3200 });
+        return jsonResponse({ result: from <= 3200 && to >= 3200 ? [row] : [] });
+      }
+      if (body.method === 'eth_getTransactionByHash') {
+        return jsonResponse({ result: { input: `${ERC20_TRANSFER_SELECTOR}${'00'.repeat(32)}` } });
+      }
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 2000,
+    chunkBlocks: 2000,
+    minGapMs: 0,
+    sleep: async () => {},
+  });
+  assert.ok(spans.some((span) => span > 500));
+  assert.ok(spans.filter((span) => span <= 500).length > 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.report.coverage.scan_complete, true);
+  assert.equal(result.report.headline.usdc_out_atomic, '1000000');
+  assert.equal(result.report.coverage.failed_ranges.length, 0);
+});
+
+test('a 413 without a stated cap is halved until the RPC accepts the span', async () => {
+  const spans = [];
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x31f' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        const from = Number.parseInt(body.params[0].fromBlock, 16);
+        const to = Number.parseInt(body.params[0].toBlock, 16);
+        const span = to - from + 1;
+        spans.push(span);
+        if (span > 400) {
+          return {
+            ok: false,
+            status: 413,
+            json: async () => ({ message: 'payload too large' }),
+          };
+        }
+        return jsonResponse({ result: [] });
+      }
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 799,
+    chunkBlocks: 800,
+    minGapMs: 0,
+    sleep: async () => {},
+  });
+  assert.ok(spans.includes(800));
+  assert.ok(spans.includes(400));
+  assert.equal(result.report.headline.status, 'empty');
+  assert.equal(result.report.headline.usdc_out_atomic, '0');
+});
+
+test('log reads stay inside the concurrency bound', async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x1388' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => { setTimeout(resolve, 20); });
+        inFlight -= 1;
+        return jsonResponse({ result: [] });
+      }
+      if (body.method === 'eth_getTransactionByHash') return jsonResponse({ result: { input: '0x' } });
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 2000,
+    chunkBlocks: 500,
+    concurrency: 2,
+    minGapMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(result.report.headline.status, 'empty');
+  assert.ok(maxInFlight >= 2);
+  assert.ok(maxInFlight <= 2);
+});
+
+test('HTTP 429 backs off using Retry-After and then completes', async () => {
+  const sleeps = [];
+  let logCalls = 0;
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x64' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        logCalls += 1;
+        if (logCalls === 1) {
+          return {
+            ok: false,
+            status: 429,
+            headers: { get: (name) => (String(name).toLowerCase() === 'retry-after' ? '2' : null) },
+            json: async () => ({ error: { message: 'too many requests' } }),
+          };
+        }
+        return jsonResponse({ result: [] });
+      }
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 100,
+    chunkBlocks: 500,
+    minGapMs: 0,
+    sleep: async (ms) => { sleeps.push(ms); },
+  });
+  assert.ok(sleeps.includes(2000));
+  assert.equal(result.report.headline.status, 'empty');
+  assert.equal(result.report.headline.usdc_out_atomic, '0');
+});
+
+test('a range that keeps returning 429 fails closed without spinning', async () => {
+  let logCalls = 0;
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x64' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        logCalls += 1;
+        return jsonResponse({}, 429);
+      }
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 50,
+    chunkBlocks: 500,
+    minGapMs: 0,
+    sleep: async () => {},
+  });
+  assert.ok(logCalls >= 2);
+  assert.ok(logCalls <= 16);
+  assert.equal(result.report.headline.usdc_out_atomic, null);
+  assert.equal(result.report.coverage.scan_complete, false);
+});
+
+test('rows from a successful range do not become a total when another range failed', async () => {
+  const result = await runPublicSpendAudit(PAYER, {
+    fetchImpl: async (url, init = {}) => {
+      if (String(url).includes('/receipt/by-tx')) return jsonResponse({ error: 'not_found' }, 404);
+      const body = JSON.parse(init.body || '{}');
+      if (body.method === 'eth_blockNumber') return jsonResponse({ result: '0x3e8' });
+      if (body.method === 'eth_getBlockByNumber') return jsonResponse({ result: { timestamp: '0x66ff0000' } });
+      if (body.method === 'eth_getLogs') {
+        const from = Number.parseInt(body.params[0].fromBlock, 16);
+        if (from === 500) return jsonResponse({}, 500);
+        return jsonResponse({ result: [transferLog({ block: 100 })] });
+      }
+      if (body.method === 'eth_getTransactionByHash') {
+        return jsonResponse({ result: { input: `${ERC20_TRANSFER_SELECTOR}${'00'.repeat(32)}` } });
+      }
+      throw new Error(`unexpected ${body.method}`);
+    },
+    windowBlocks: 1000,
+    chunkBlocks: 500,
+    minGapMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.ok(result.report.transfers.length > 0);
+  assert.equal(result.report.headline.usdc_out_atomic, null);
+  assert.equal(result.report.totals.usdc_out_atomic, null);
+  assert.equal(result.report.coverage.scan_complete, false);
+  assert.match(result.report.headline.label, /No wallet total is shown/);
 });

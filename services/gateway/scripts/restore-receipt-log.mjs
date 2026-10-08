@@ -11,7 +11,10 @@
  * newest signed anchored head inside the bundles is used. The index hash and
  * the full recomputed root must match that head.
  * Does not write the local journal and does not broadcast.
+ *
+ * Loads `.env` the same way the server does (`src/config.js`).
  */
+import '../src/config.js';
 import fs from 'fs';
 import { EPOCH1_FINAL_ROOT, EPOCH1_FINAL_SIZE, EPOCH2_OPENING_ROOT, EPOCH2_OPENING_SIZE } from '../src/receipt-log-epoch.js';
 import { verifyTreeHead } from '../src/receipt-merkle.js';
