@@ -407,3 +407,121 @@ test('a mismatched task id, preimage, inclusion leaf, or index is leaf_not_bound
   const ok = await verifyPublishedPreimages(held, { requirePreimages: true });
   assert.equal(ok.ok, true, ok.errors.join('; '));
 });
+
+function bodyHex(text) {
+  return Buffer.from(text, 'utf8').toString('hex');
+}
+
+function domainHex(text) {
+  return Buffer.concat([Buffer.from([0x00]), Buffer.from(text, 'utf8')]).toString('hex');
+}
+
+test('a hex-encoded preimage of a different leaf is leaf_not_bound', async () => {
+  const ownId = 'xfuel-own';
+  const midId = 'xfuel-mid';
+  const local = treeOf([
+    'genesis-body-not-this-receipt',
+    `${midId}|mid-row`,
+    `${ownId}|own-row`,
+  ]);
+  const own = auditField(local, 2, ownId);
+  const mid = auditField(local, 1, midId);
+  const midBody = mid.leaf.preimage_utf8;
+  const stolen = {
+    ...own,
+    leaf: {
+      index: mid.leaf.index,
+      kind: 'receipt',
+      task_id: ownId,
+      preimage_hex: domainHex(midBody),
+    },
+    audit_path: { ...mid.audit_path, root: local.root },
+    hash: local.root,
+  };
+  const asMid = wrap({
+    ...stolen,
+    leaf: { ...stolen.leaf, task_id: midId },
+  }, {
+    task_id: midId,
+    book_chain: { task_id: midId, row_hash: 'mid-row' },
+  });
+  const midOk = await verifyPublishedPreimages(asMid, { requirePreimages: true });
+  assert.equal(midOk.ok, true, midOk.errors.join('; '));
+
+  const ownHex = auditField(local, 2, ownId);
+  const ownBody = ownHex.leaf.preimage_utf8;
+  delete ownHex.leaf.preimage_utf8;
+  ownHex.leaf.preimage_hex = bodyHex(ownBody);
+  const ownOk = await verifyPublishedPreimages(wrap(ownHex), { requirePreimages: true });
+  assert.equal(ownOk.ok, true, ownOk.errors.join('; '));
+
+  const rawBody = {
+    ...stolen,
+    leaf: { ...stolen.leaf, preimage_hex: bodyHex(midBody) },
+  };
+  for (const field of [stolen, rawBody]) {
+    const result = await verifyPublishedPreimages(wrap(field, {
+      task_id: ownId,
+      book_chain: { task_id: ownId, row_hash: 'own-row' },
+    }), { requirePreimages: true });
+    assert.equal(result.ok, false);
+    assert.equal(reason(result), 'leaf_not_bound');
+  }
+});
+
+test('a mixed encoding where utf8 and hex disagree is leaf_not_bound', async () => {
+  const ownId = 'xfuel-own';
+  const midId = 'xfuel-mid';
+  const local = treeOf([
+    'genesis-body-not-this-receipt',
+    `${midId}|mid-row`,
+    `${ownId}|own-row`,
+  ]);
+  const own = auditField(local, 2, ownId);
+  const mid = auditField(local, 1, midId);
+  const swapped = {
+    ...own,
+    leaf: {
+      ...own.leaf,
+      index: mid.leaf.index,
+      preimage_utf8: own.leaf.preimage_utf8,
+      preimage_hex: domainHex(mid.leaf.preimage_utf8),
+    },
+    audit_path: { ...mid.audit_path, root: local.root },
+    hash: local.root,
+  };
+  const result = await verifyPublishedPreimages(wrap(swapped), { requirePreimages: true });
+  assert.equal(result.ok, false);
+  assert.equal(reason(result), 'leaf_not_bound');
+  assert.equal(result.errors.some((line) => line.includes('preimage_mismatch')), false);
+
+  const consistent = auditField(local, 2, ownId);
+  consistent.leaf.preimage_hex = domainHex(consistent.leaf.preimage_utf8);
+  const agreed = await verifyPublishedPreimages(wrap(consistent), { requirePreimages: true });
+  assert.equal(agreed.ok, true, agreed.errors.join('; '));
+
+  const raw = auditField(local, 2, ownId);
+  raw.leaf.preimage_hex = `0x${bodyHex(raw.leaf.preimage_utf8)}`;
+  const rawOk = await verifyPublishedPreimages(wrap(raw), { requirePreimages: true });
+  assert.equal(rawOk.ok, true, rawOk.errors.join('; '));
+});
+
+test('an unknown or ambiguous leaf encoding is leaf_not_bound', async () => {
+  const unknown = auditField(tree, ownIndex);
+  unknown.leaf.preimage_base64 = Buffer.from(unknown.leaf.preimage_utf8, 'utf8').toString('base64');
+  const badKey = await verifyPublishedPreimages(wrap(unknown), { requirePreimages: true });
+  assert.equal(badKey.ok, false);
+  assert.equal(reason(badKey), 'leaf_not_bound');
+
+  const invalid = auditField(tree, ownIndex);
+  invalid.leaf.preimage_hex = 'zz';
+  const badHex = await verifyPublishedPreimages(wrap(invalid), { requirePreimages: true });
+  assert.equal(badHex.ok, false);
+  assert.equal(reason(badHex), 'leaf_not_bound');
+
+  const ambiguous = auditField(tree, ownIndex);
+  ambiguous.leaf.preimage_hex = `0000${bodyHex(ambiguous.leaf.preimage_utf8)}`;
+  const badNul = await verifyPublishedPreimages(wrap(ambiguous), { requirePreimages: true });
+  assert.equal(badNul.ok, false);
+  assert.equal(reason(badNul), 'leaf_not_bound');
+});

@@ -128,9 +128,55 @@ function bookRowHash(receipt: Record<string, unknown>): string | null {
   return String(hash);
 }
 
+function decodeHexBytes(value: string): Buffer | null {
+  const hex = value.replace(/^0x/, '');
+  if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+  return Buffer.from(hex, 'hex');
+}
+
+function unknownPreimageKey(leaf: object): boolean {
+  return Object.keys(leaf).some((key) => key.startsWith('preimage_') && key !== 'preimage_utf8' && key !== 'preimage_hex');
+}
+
+/**
+ * One leaf body, in bytes. `preimage_utf8` is that body. `preimage_hex` is
+ * either the same body or `0x00 || body` (the hash input). A leading `0x00`
+ * is the domain byte; a body that itself starts with `0x00` is ambiguous.
+ * Two encodings must name the same body. Any other encoding is rejected.
+ */
+function canonicalMerkleBody(leaf: PreimageLeaf): Buffer | null {
+  if (!leaf || typeof leaf !== 'object' || unknownPreimageKey(leaf)) return null;
+  const utf8Present = typeof leaf.preimage_utf8 === 'string';
+  const hexPresent = typeof leaf.preimage_hex === 'string' && leaf.preimage_hex !== '';
+  if (!utf8Present && !hexPresent) return null;
+  if (utf8Present && leaf.preimage_utf8 === '') return null;
+  const utf8Body = utf8Present ? Buffer.from(leaf.preimage_utf8 as string, 'utf8') : null;
+  let hexBody: Buffer | null = null;
+  if (hexPresent) {
+    const raw = decodeHexBytes(leaf.preimage_hex as string);
+    if (!raw || raw.length === 0) return null;
+    if (raw[0] === 0x00) {
+      if (raw.length < 2 || raw[1] === 0x00) return null;
+      hexBody = raw.subarray(1);
+    } else {
+      hexBody = raw;
+    }
+  }
+  if (utf8Body && hexBody && !utf8Body.equals(hexBody)) return null;
+  return utf8Body ?? hexBody;
+}
+
+/** SHA-256 input for an audit-path leaf: `0x00 ||` the canonical body. */
+function auditLeafHashInput(leaf: PreimageLeaf): Buffer | null {
+  const body = canonicalMerkleBody(leaf);
+  if (!body) return null;
+  return Buffer.concat([Buffer.from([0x00]), body]);
+}
+
 /**
  * Bind an audit path to this receipt. Returns `leaf_not_bound` when any
- * check fails, including when the book row hash is absent.
+ * check fails, including when the book row hash is absent or the leaf
+ * encoding does not canonicalize to `task_id|row_hash`.
  * Inclusion leaf hash and leaf index are checked only when that field is present.
  * Inclusion tree size is not compared: the witness can cover a longer log.
  */
@@ -141,12 +187,15 @@ export function auditLeafBinding(receipt: Record<string, unknown>, entry: Preima
   const taskId = receiptTaskId(receipt);
   if (!taskId || leaf.task_id == null || String(leaf.task_id) !== taskId) return LEAF_NOT_BOUND;
   const rowHash = bookRowHash(receipt);
-  if (rowHash == null || leaf.preimage_utf8 !== `${taskId}|${rowHash}`) return LEAF_NOT_BOUND;
+  const body = canonicalMerkleBody(leaf);
+  if (rowHash == null || !body) return LEAF_NOT_BOUND;
+  const expected = Buffer.from(`${taskId}|${rowHash}`, 'utf8');
+  if (!body.equals(expected)) return LEAF_NOT_BOUND;
   const inclusion = receipt.inclusion;
   if (inclusion && typeof inclusion === 'object') {
     const claimedLeaf = (inclusion as { leaf?: unknown }).leaf;
     if (claimedLeaf != null && claimedLeaf !== '') {
-      const input = leafInput(leaf);
+      const input = auditLeafHashInput(leaf);
       if (!input) return LEAF_NOT_BOUND;
       const hashed = sha256(input).toString('hex');
       const want = String(claimedLeaf).replace(/^0x/, '').toLowerCase();
@@ -174,7 +223,7 @@ function auditRoot(entry: PreimageEntry): string | null {
   const treeSize = Number(path.tree_size);
   if (!Number.isSafeInteger(index) || !Number.isSafeInteger(treeSize)) return null;
   if (leaf.index != null && Number(leaf.index) !== index) return null;
-  const input = leafInput(leaf);
+  const input = auditLeafHashInput(leaf);
   if (!input) return null;
   const got = inclusionRoot(
     sha256(input),
@@ -301,6 +350,14 @@ export async function verifyPublishedPreimages(
       continue;
     }
     if (entry.recomputable === false) continue;
+    if (hasAuditPath(entry)) {
+      const bound = auditLeafBinding(receipt, entry);
+      if (bound) {
+        errors.push(`preimage leaf is not this receipt for ${field}`);
+        fields.push({ field, ok: false, reason: bound });
+        continue;
+      }
+    }
     if (!bytesOf(entry) && !(entry.leaves && entry.leaves.length) && !hasAuditPath(entry) && entry.url && fetchImpl) {
       try {
         const remote = await loadRemote(entry, fetchImpl, trustedHosts);
@@ -326,14 +383,6 @@ export async function verifyPublishedPreimages(
       errors.push(`preimage mismatch for ${field}: recomputed hash does not match the receipt`);
       fields.push({ field, ok: false, reason: 'preimage_mismatch' });
       continue;
-    }
-    if (hasAuditPath(entry)) {
-      const bound = auditLeafBinding(receipt, entry);
-      if (bound) {
-        errors.push(`preimage leaf is not this receipt for ${field}`);
-        fields.push({ field, ok: false, reason: bound });
-        continue;
-      }
     }
     fields.push({ field, ok: true });
   }
