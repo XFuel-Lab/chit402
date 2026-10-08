@@ -31,6 +31,7 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
 const memory = new Map();
 const stats = { signed: 0, hits: 0 };
 let storeSeq = 0;
+let storeSeqSeeded = false;
 
 function cacheMax() {
   const n = Number(process.env.COVERAGE_SIG_CACHE_MAX);
@@ -131,6 +132,45 @@ function readDisk(digest) {
   }
 }
 
+/**
+ * Continue past the highest stored_at already on disk.
+ * A process restart zeroes storeSeq. Leftover files still hold the old
+ * counter, so a fresh 1 would sort as older than they are and the next
+ * write would delete the signature just minted.
+ */
+function seedStoreSeqFromDisk() {
+  if (storeSeqSeeded) return;
+  storeSeqSeeded = true;
+  const dir = coverageSignatureDir();
+  if (!dir) return;
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  let max = storeSeq;
+  for (const name of names) {
+    if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      const n = Number(parsed?.stored_at);
+      if (Number.isFinite(n) && n > max) max = n;
+    } catch {
+      // Unreadable files do not raise the counter.
+    }
+  }
+  storeSeq = max;
+}
+
+function nextStoredAt() {
+  seedStoreSeqFromDisk();
+  storeSeq += 1;
+  return storeSeq;
+}
+
+/** A process restart: the counter is zero and the files stay. */
+export function restartCoverageStoreSeq() {
+  storeSeq = 0;
+  storeSeqSeeded = false;
+}
+
 function evictDisk(dir, keepDigest) {
   let names;
   try {
@@ -216,7 +256,7 @@ export function takeStableCoverageSignature(claims, { header, publicJwk, sign })
     schema: CACHE_SCHEMA,
     digest,
     canonical,
-    stored_at: ++storeSeq,
+    stored_at: nextStoredAt(),
     issuer_signature: cloneSignature(issuerSignature),
   };
   remember(digest, record);

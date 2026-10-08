@@ -32,6 +32,7 @@ const {
   coverageSignatureDir,
   coverageSignatureStats,
   resetCoverageSignatureStats,
+  restartCoverageStoreSeq,
 } = await import('../src/coverage-signature-cache.js');
 const {
   _resetIssuerKey,
@@ -306,6 +307,52 @@ test('the cache stays bounded', () => {
     if (previous == null) delete process.env.COVERAGE_SIG_CACHE_MAX;
     else process.env.COVERAGE_SIG_CACHE_MAX = previous;
     clearCoverageSignatureCache();
+  }
+});
+
+test('a restart keeps post-restart signatures ahead of leftover sequence numbers', () => {
+  fresh();
+  const previous = process.env.COVERAGE_SIG_CACHE_MAX;
+  process.env.COVERAGE_SIG_CACHE_MAX = '2';
+  try {
+    clearCoverageSignatureCache();
+    for (const [name, at] of [['aa'.repeat(32), 5000], ['bb'.repeat(32), 5001]]) {
+      fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({
+        schema: 'chit402.coverage_signature_cache.v1',
+        digest: name,
+        stored_at: at,
+        canonical: 'stale',
+        issuer_signature: { jws: 'stale' },
+      }));
+    }
+    restartCoverageStoreSeq();
+    resetCoverageSignatureStats();
+    const coverageFor = (id) => buildExportCoverage({
+      bookId: id,
+      universe: [],
+      enumerated: [],
+      scanComplete: true,
+      scope: { limit: 1 },
+      subjectTaskId: `restart-${id}`,
+    });
+    const first = signExportCoverage(coverageFor(41));
+    const second = signExportCoverage(coverageFor(42));
+    clearCoverageSignatureMemory();
+    restartCoverageStoreSeq();
+    const againFirst = signExportCoverage(coverageFor(41));
+    const againSecond = signExportCoverage(coverageFor(42));
+    assert.equal(againFirst.issuer_signature.jws, first.issuer_signature.jws);
+    assert.equal(againSecond.issuer_signature.jws, second.issuer_signature.jws);
+    assert.equal(coverageSignatureStats().signed, 2);
+    const names = fs.readdirSync(dir).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
+    assert.ok(names.length <= 2);
+    assert.equal(names.includes(`${'aa'.repeat(32)}.json`), false);
+    assert.equal(names.includes(`${'bb'.repeat(32)}.json`), false);
+  } finally {
+    if (previous == null) delete process.env.COVERAGE_SIG_CACHE_MAX;
+    else process.env.COVERAGE_SIG_CACHE_MAX = previous;
+    clearCoverageSignatureCache();
+    restartCoverageStoreSeq();
   }
 });
 
