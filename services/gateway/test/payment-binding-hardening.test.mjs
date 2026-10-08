@@ -278,7 +278,7 @@ test('PT2 settled recipient must be the configured house payee', async () => {
       cfg: baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt({ to: ATTACKER })) }),
       store,
       nonce,
-      paymentHeader: evmHeader({ to: ATTACKER }),
+      paymentHeader: evmHeader({ to: HOUSE }),
     });
     assert.equal(decision.code, 'settle_unconfirmed');
     assert.equal(decision.kind, 'failed');
@@ -417,7 +417,8 @@ test('PT6 facilitator fields that are not a confirmed transfer are refused', asy
         store,
         nonce,
       });
-      assert.equal(decision.code, 'settle_unconfirmed', item.label);
+      const want = item.label === 'wrong network' ? 'network_not_accepted' : 'settle_unconfirmed';
+      assert.equal(decision.code, want, item.label);
       assert.ok(store.listPending().length >= 1, item.label);
     } finally {
       await new Promise((r) => server.close(r));
@@ -644,6 +645,7 @@ test('PT11 a job leg pays the worker, not the house', async () => {
       strictTaskId: true,
       taskId: 'board-job-payment-1',
       expectedPayer: PAYER,
+      paymentHeader: evmHeader({ to: WORKER }),
     });
     assert.equal(toHouse.code, 'settle_unconfirmed');
 

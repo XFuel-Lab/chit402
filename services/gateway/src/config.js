@@ -80,6 +80,10 @@ const config = {
     apiKey: process.env.X402_FACILITATOR_API_KEY || process.env.ZAN_X402_API_KEY || null,
     payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury / Safe
     network: process.env.X402_NETWORK || 'base-sepolia',    // base-sepolia | base
+    // Emergency rollback for the handshake payment-binding guard.
+    // Unset or anything other than 'true' enforces the guard (production default).
+    // 'true' skips it and restores the previous handshake.
+    allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
     asset: process.env.X402_ASSET || 'USDC',
     challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
     issuanceDisputeWindowSec: parseInt(process.env.X402_ISSUANCE_DISPUTE_WINDOW_SEC, 10)

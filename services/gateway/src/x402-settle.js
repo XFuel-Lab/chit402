@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import logger from './logger.js';
 import { verifyPayment, settlePayment, challengeStore as defaultStore } from './x402-adapter.js';
-import { isSolanaNetwork, toCaip2Network } from './x402-facilitator.js';
+import { decodePaymentHeader, isSolanaNetwork, toCaip2Network } from './x402-facilitator.js';
 import {
   assertX402Boot,
   bindingEnforced,
@@ -78,6 +78,44 @@ function blobNetwork(paymentHeader) {
   }
 }
 
+/** Base Sepolia USDC. Naming this asset on a Base challenge is not mainnet. */
+const BASE_SEPOLIA_USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
+
+function evmAssetAddress(raw) {
+  if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(raw)) return null;
+  return raw.toLowerCase();
+}
+
+/** Recipients inside the signed authorization. Accepts-field payees are not requirements. */
+function signedRecipients(decoded) {
+  if (!decoded || typeof decoded !== 'object') return [];
+  const found = [];
+  const push = (value) => {
+    if (typeof value === 'string' && value !== '') found.push(value);
+  };
+  push(decoded.payload?.authorization?.to);
+  const auth = decoded.authorization;
+  if (auth && typeof auth === 'object') {
+    push(auth.to);
+    if (auth.message && typeof auth.message === 'object') push(auth.message.to);
+  }
+  return found;
+}
+
+function declaredEvmAsset(decoded) {
+  if (!decoded || typeof decoded !== 'object') return null;
+  const candidates = [
+    decoded.accepted?.asset,
+    decoded.asset,
+    decoded.authorization?.domain?.verifyingContract,
+  ];
+  for (const candidate of candidates) {
+    const addr = evmAssetAddress(candidate);
+    if (addr) return addr;
+  }
+  return null;
+}
+
 /**
  * @returns {Promise<object>} handshake decision
  */
@@ -132,6 +170,22 @@ export async function settleBoundPayment({
   if (!expectedPayTo || !samePayee(challenge.payTo, expectedPayTo, { solana })) {
     return refused(req, 'challenge_mismatch', { preSettle: true });
   }
+  const decoded = decodePaymentHeader(paymentHeader);
+  if (!solana) {
+    for (const recipient of signedRecipients(decoded)) {
+      if (!samePayee(recipient, expectedPayTo, { solana: false })) {
+        return refused(req, 'challenge_mismatch', { preSettle: true });
+      }
+    }
+    const declaredAsset = declaredEvmAsset(decoded);
+    const pinnedAsset = evmAssetAddress(challenge.asset);
+    if (declaredAsset && canonicalNetwork(challenge.network) === 'base' && declaredAsset === BASE_SEPOLIA_USDC) {
+      return refused(req, 'network_not_accepted', { preSettle: true });
+    }
+    if (declaredAsset && pinnedAsset && declaredAsset !== pinnedAsset) {
+      return refused(req, 'network_not_accepted', { preSettle: true });
+    }
+  }
   const resourceWant = expectedResourceOf({ resource, baseUrl });
   const resourceHave = challenge.resource ? String(challenge.resource).replace(/\/$/, '') : '';
   if (resourceHave && resourceWant && resourceHave !== resourceWant) {
@@ -161,6 +215,13 @@ export async function settleBoundPayment({
   }
 
   const authEarly = readEvmAuthorization(paymentHeader);
+  if (!solana && authEarly?.value) {
+    try {
+      if (BigInt(authEarly.value) < BigInt(String(routeQuote))) {
+        return refused(req, 'challenge_mismatch', { preSettle: true });
+      }
+    } catch { /* the chain read is the authority when the value is not an integer */ }
+  }
   const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
     ? `${canonicalNetwork(challenge.network)}|${String(challenge.asset || '').toLowerCase()}|${String(authEarly.from).toLowerCase()}|${String(authEarly.nonce).toLowerCase()}`
     : null;
@@ -240,6 +301,10 @@ export async function settleBoundPayment({
     network: settled.network || toCaip2Network(challenge.network),
   };
   // ZAN mocks echo the short network. Accept it when it matches the challenge.
+  if (settled.network && !sameNetwork(settled.network, challenge.network)) {
+    pend('facilitator_network');
+    return refused(req, 'network_not_accepted');
+  }
   if (!fields.network) fields.network = challenge.network;
   if (!facilitatorFieldsOk(fields, challenge)) {
     pend('facilitator_fields');
