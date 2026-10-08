@@ -47,7 +47,7 @@ The block is not inside the payment JWS, the book-seq JWS, or the coverage JWS. 
 | `book_chain.row_hash` | SHA-256 | UTF-8 `agent_id\|seq\|task_id\|prev_hash\|event`. `agent_id` is `book_id`. |
 | `book_row.row_hash` on a refusal | SHA-256 | The same line. `event` is `policy_blocked`. |
 | `inclusion.leaf` | SHA-256 | `0x00` ‖ UTF-8 `task_id\|row_hash`. `preimage_hex` is that whole input. |
-| `tree_head_hash` | SHA-256, RFC 6962 | Ordered leaf bodies of the log prefix that ends at this receipt, when every leaf's bytes are still retained. |
+| `tree_head_hash` | SHA-256, RFC 6962 | This receipt's own leaf body (`leaf.preimage_utf8`) plus `audit_path`: `index`, `tree_size`, sibling hashes, and `root`. The root is the log prefix that ends at this receipt. Sibling entries are hashes. Other leaves' task ids and bodies are not in the public receipt. A saved response that still has the old `leaves` array verifies during the transition. |
 | `binding.expected_commitment` | keccak256 | `abi.encodePacked(paymentRefHash, taskIdHash, rail, amount)`, or the inference form that also packs `modelCommitment` and `outputHash`, when that commitment is non-null. |
 | `coverage.universe_hash` | SHA-256 | Only for a finished empty set: SHA-256 of the empty string. `enumerated_hash` is the same bytes when the window is empty. |
 | `job_spec_hash` | SHA-256, `0x` prefix | `JSON.stringify({text, budget, deadline, acceptance})` with that key order. The board job publishes this. There is no separate award-object hash. |
@@ -63,6 +63,6 @@ The block is not inside the payment JWS, the book-seq JWS, or the coverage JWS. 
 | `coverage.universe_hash` and `coverage.enumerated_hash` when the set is non-empty | They commit to possession-gated book rows (`task_id\|evidence\|amount\|payment_ref\|collected_at`, then SHA-256 of the ordered lines). A book holder recomputes them from the export. The rows are not published on the receipt. |
 | `hmac_attestation.value` | HMAC-SHA256 over the canonical payload array with the gateway secret. The tag is not a bare SHA-256. The secret is not public. On a receipt that is not vendor-blind, `preimage_utf8` under `not_recomputable` shows the array so the covered bytes are visible. A vendor-blind receipt does not publish those bytes, because they can name the provider. |
 | `delegation_hash` | EIP-712 digest of the session authorization. The typed-data bytes are not on the public receipt. |
-| `tree_head_hash` when a prefix leaf's body was not retained | The root cannot be rebuilt from this receipt. The inclusion proof still checks one leaf against a later root. |
+| `tree_head_hash` when this receipt's leaf body was not retained | The root cannot be rebuilt from this receipt. The inclusion proof still checks one leaf against a later root. Other leaves are not fetched to fill the gap. |
 
 Private-desk vendor identity, prompt text, and output text are not copied into a public preimage.

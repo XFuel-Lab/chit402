@@ -842,6 +842,60 @@ export class ReceiptMerkleTree {
     };
   }
 
+  /**
+   * Public audit path for the prefix that ends at this receipt.
+   * Copies this leaf's body and the sibling hashes required to recompute
+   * the prefix root. Other leaves stay in the log. Their task ids and
+   * bodies are not copied, and a failure reason does not name them.
+   * `prefixLeafPreimages` still returns every body for internal checks.
+   * A public response must use this method.
+   * @param {unknown} taskId
+   * @param {(taskId: string) => string|null|undefined} [rowHashOf]
+   */
+  publicPrefixAudit(taskId, rowHashOf = null) {
+    const closed = this._findClosed(taskId);
+    const index = closed
+      ? closed.byTask.get(String(taskId))
+      : this.byTask.get(String(taskId));
+    if (index == null) return { ok: false, reason: 'not_in_tree' };
+    const metaList = closed ? closed.meta : this.meta;
+    const leafList = closed ? closed.leaves : this.leaves;
+    const meta = metaList[index] || {};
+    let body = null;
+    if (meta.preimage_b64) {
+      body = Buffer.from(meta.preimage_b64, 'base64');
+    } else if (
+      typeof rowHashOf === 'function'
+      && meta.task_id
+      && meta.kind !== 'genesis'
+      && meta.task_id !== 'genesis'
+    ) {
+      const rowHash = rowHashOf(String(taskId));
+      if (rowHash != null) body = Buffer.from(`${meta.task_id}|${rowHash}`);
+    }
+    if (!body) return { ok: false, reason: 'leaf_preimage_unavailable' };
+    const hashed = leafHash(body);
+    const stored = leafList[index];
+    if (!stored || hashed.toString('hex') !== Buffer.from(stored).toString('hex')) {
+      return { ok: false, reason: 'leaf_preimage_mismatch' };
+    }
+    const prefix = leafList.slice(0, index + 1);
+    const proof = inclusionProof(prefix, index) || [];
+    return {
+      ok: true,
+      root: hex(rootOf(prefix)),
+      leaf_index: index,
+      tree_size: prefix.length,
+      leaf: {
+        index,
+        kind: meta.kind || (meta.task_id === 'genesis' ? 'genesis' : 'receipt'),
+        task_id: meta.task_id || null,
+        preimage_utf8: body.toString('utf8'),
+      },
+      siblings: proof.map((step) => ({ hash: step.hash })),
+    };
+  }
+
   appendReceipt(taskId, rowHash, { publish = true } = {}) {
     if (!taskId) return null;
     if (this.byTask.has(String(taskId))) return this.inclusion(taskId);
