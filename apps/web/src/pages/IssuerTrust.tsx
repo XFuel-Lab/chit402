@@ -3,7 +3,6 @@ import type { CSSProperties } from 'react';
 
 /** Live production issuer (verify: GET JWKS URLs before changing). */
 const JWKS_PRIMARY = 'https://api.chit402.com/.well-known/jwks.json';
-const JWKS_ALIAS = 'https://api.xfuel.app/.well-known/jwks.json';
 const CURRENT_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 const JWK_X = '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk';
 const JWK_Y = 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34';
@@ -30,17 +29,12 @@ export default function IssuerTrust() {
         </header>
 
         <div className="docs-panel">
-          <h2>JWKS (authoritative + alias)</h2>
-          <p>Same issuer key material on both hosts. Prefer the Chit402 hostname; the api.xfuel.app alias tracks legacy integrators.</p>
+          <h2>JWKS</h2>
+          <p>Pin this URL out of band. It is the issuer key for collected receipts.</p>
           <ul style={styles.list}>
             <li>
               <a href={JWKS_PRIMARY} target="_blank" rel="noreferrer">
                 {JWKS_PRIMARY}
-              </a>
-            </li>
-            <li>
-              <a href={JWKS_ALIAS} target="_blank" rel="noreferrer">
-                {JWKS_ALIAS}
               </a>
             </li>
           </ul>

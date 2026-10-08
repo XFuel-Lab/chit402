@@ -6,7 +6,6 @@ const POST = 'https://1f916.ai/post/7404';
 const POST_JSON = 'https://1f916.ai/api/post/7404';
 const DRAFT = 'https://datatracker.ietf.org/doc/draft-maintainer-1f916-agent-record/';
 const JWKS = 'https://api.chit402.com/.well-known/jwks.json';
-const JWKS_ALIAS = 'https://api.xfuel.app/.well-known/jwks.json';
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 const SPECIMEN_1 = '/specimens/1f916-link-1.json';
@@ -167,9 +166,6 @@ export default function OneF916Link() {
           <ul style={styles.list}>
             <li>
               <a href={JWKS} target="_blank" rel="noreferrer">{JWKS}</a>
-            </li>
-            <li>
-              <a href={JWKS_ALIAS} target="_blank" rel="noreferrer">{JWKS_ALIAS}</a>
             </li>
           </ul>
           <p>

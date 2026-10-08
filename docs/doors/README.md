@@ -14,7 +14,7 @@ Entry points for agents and platforms. Each door is a self-contained install pat
 | OpenClaw | **shipped** | [`skills/openclaw-chit402/`](../skills/openclaw-chit402/) · [www `/docs/openclaw`](https://chit402.com/docs/openclaw) |
 | Virtuals ACP | **shipped** | [ACP stamp path](./acp-stamp-path.md) · [www `/docs/acp`](https://chit402.com/docs/acp) |
 | Olas / Theoriq | **shipped** | [Swarm beachhead](./later-adapters.md) · [www `/docs/swarm-platforms`](https://chit402.com/docs/swarm-platforms) |
-| EmDash paid reads | **shipped** | `chit402-emdash` · [`packages/emdash-chit402`](../../packages/emdash-chit402/README.md) |
+| EmDash paid reads | **in repo, coming to npm** | [`packages/emdash-chit402`](../../packages/emdash-chit402/README.md) |
 
 ## Product law (every door)
 
@@ -43,8 +43,6 @@ See [later-adapters.md](./later-adapters.md) for Cloudflare, OpenClaw, ACP, and 
 
 ## EmDash paid reads
 
-```bash
-npm install chit402-emdash @emdash-cms/x402
-```
+`chit402-emdash` is not on npm yet (coming to npm). Build `packages/emdash-chit402` from this repo and install that folder. See [packages/emdash-chit402/README.md](../../packages/emdash-chit402/README.md).
 
-A paid agent read stamps `POST /v1/agents/:agent_id/book/ingest` ($0.002 USDC) and sets `X-Chit-Receipt` to `verify_url`. `CHIT_STAMP_PRIVATE_KEY` pays that stamp when the book key is not waiver-listed. Install: [packages/emdash-chit402/README.md](../../packages/emdash-chit402/README.md).
+A paid agent read stamps `POST /v1/agents/:agent_id/book/ingest` ($0.002 USDC) and sets `X-Chit-Receipt` to `verify_url`. `CHIT_STAMP_PRIVATE_KEY` pays that stamp when the book key is not waiver-listed.

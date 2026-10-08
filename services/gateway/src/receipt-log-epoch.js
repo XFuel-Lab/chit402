@@ -10,8 +10,12 @@
 import crypto from 'crypto';
 
 export const EPOCH_RECORD_SCHEMA = 'chit402.tree_epoch.v1';
+/** Roots and orphans only. Still valid. Kept in the journal when version 2 is appended. */
 export const EPOCH_RECORD_VERSION = 1;
+/** Version 2 adds the signed unlogged list. Epochs and orphans stay the version 1 bytes. */
+export const EPOCH_RECORD_VERSION_UNLOGGED = 2;
 export const EPOCH_RECORD_JWT_TYP = 'chit402-tree-epoch+jwt';
+export const UNLOGGED_REASONS = Object.freeze(['missing_row_hash', 'forked', 'depends_on_refused']);
 
 export const EPOCH1_GENESIS_DIGEST = '422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368';
 export const EPOCH1_FINAL_ROOT = 'dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973';
@@ -49,15 +53,26 @@ export const EPOCH2_OPENING_SIZE = 1;
  * d7f6c548 is stored as a prefix: the leaves were not recovered, and the
  * remaining bytes are not invented.
  */
+export const ORPHAN_FF950E72 = 'ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3';
+
 export const ORPHANED_ROOTS = Object.freeze([
+  {
+    root: ORPHAN_FF950E72,
+    kind: 'genesis_only',
+    chain: 'base',
+    solana: 'absent',
+    base_tx: '0xf100906ada9e73713cf4d9503c4ad9a994f5a593c1d7714c1437db10f9d0f3d4',
+    base_nonce: 0,
+    note: 'Sep 30 genesis. Base nonce 0 self-transfer from 0x1844D1F5FE42aff1Cce6F776514Fd40374079582. Calldata is this root. The anchor memo wallet has no Solana memo for it. Not a prefix of epoch 1.',
+  },
   {
     root: '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9',
     kind: 'genesis_only',
     verifier_binary_build_digest: '207e981d0c50dfe0294ab085893e88a930f1b664b4dfec221f82afd666831145',
-    chain: 'base',
+    chain: 'base_and_solana',
     window: '2026-09-30 to 2026-10-01',
     times_anchored: 5,
-    note: 'The same genesis-only root was anchored five times after process restarts (Sep 30 twice, Oct 1 three times). It is not a prefix of epoch 1.',
+    note: 'The same genesis-only root was anchored five times after process restarts (Sep 30 twice, Oct 1 three times), on Base (nonces 1, 2, 4, 5, 6) and on Solana. It is not a prefix of epoch 1.',
   },
   {
     root: null,
@@ -65,9 +80,9 @@ export const ORPHANED_ROOTS = Object.freeze([
     recovered: false,
     unrecoverable: true,
     kind: 'populated_lost',
-    chain: 'base',
+    chain: 'base_and_solana',
     observed_et: '2026-10-01 8:01 AM ET',
-    note: 'A populated tree was anchored on Base and lost on the next restart. The full root is that transaction calldata. The leaves were not recovered, so this record keeps the prefix and does not invent the remaining bytes.',
+    note: 'A populated tree was anchored on Base (nonce 3) and on Solana, then lost on the next restart. The full root is that transaction calldata. The leaves were not recovered, so this record keeps the prefix and does not invent the remaining bytes.',
   },
   {
     root: EPOCH2_OPENING_ROOT,
@@ -176,6 +191,74 @@ export function rebuildEpoch1FromRows(rows, {
   };
 }
 
+/**
+ * Canonical unlogged rows. Key order is task_id, agent_id, reason.
+ * The hash is SHA-256 of JSON.stringify(this array). No row_hash is derived.
+ */
+export function canonicalUnloggedRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    task_id: String(row?.task_id || ''),
+    agent_id: row?.agent_id == null || row?.agent_id === '' ? null : Number(row.agent_id),
+    reason: String(row?.reason || ''),
+  }));
+}
+
+export function unloggedSection(rows) {
+  const list = canonicalUnloggedRows(rows);
+  const hash = crypto.createHash('sha256').update(JSON.stringify(list)).digest('hex');
+  return { count: list.length, hash, rows: list };
+}
+
+export function verifyUnloggedSection(section) {
+  if (!section || typeof section !== 'object') return { ok: false, reason: 'unlogged_missing' };
+  if (!Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
+  const list = canonicalUnloggedRows(section.rows);
+  if (JSON.stringify(list) !== JSON.stringify(section.rows)) {
+    return { ok: false, reason: 'unlogged_canonical' };
+  }
+  for (const row of list) {
+    if (!row.task_id) return { ok: false, reason: 'unlogged_task' };
+    if (!UNLOGGED_REASONS.includes(row.reason)) return { ok: false, reason: 'unlogged_reason' };
+  }
+  if (Number(section.count) !== list.length) return { ok: false, reason: 'unlogged_count' };
+  const hash = crypto.createHash('sha256').update(JSON.stringify(list)).digest('hex');
+  if (section.hash !== hash) return { ok: false, reason: 'unlogged_hash' };
+  return { ok: true };
+}
+
+/**
+ * Reason from a version 2 record whose unlogged section hashes. Null when
+ * the section is absent, not version 2, or does not verify.
+ */
+export function attestedUnloggedEntry(record, taskId) {
+  if (Number(record?.payload_version) !== EPOCH_RECORD_VERSION_UNLOGGED) return null;
+  const checked = verifyUnloggedSection(record?.unlogged);
+  if (!checked.ok) return null;
+  const id = String(taskId || '');
+  return record.unlogged.rows.find((row) => row.task_id === id) || null;
+}
+
+/**
+ * Version 2 claims. `epochs` is the same array as `base` (the version 1
+ * roots). Orphans are the corrected canonical list, not a copy of a version
+ * 1 record that omitted ff950e72 or marked Solana anchors base-only.
+ * The version 1 object is not modified.
+ */
+export function epochRecordWithUnlogged(base, unloggedRows) {
+  if (!base?.epochs) {
+    const err = new Error('epoch_record_incomplete');
+    err.code = 'epoch_record_incomplete';
+    throw err;
+  }
+  return {
+    schema: base.schema || EPOCH_RECORD_SCHEMA,
+    payload_version: EPOCH_RECORD_VERSION_UNLOGGED,
+    epochs: base.epochs,
+    orphans: ORPHANED_ROOTS.map((row) => ({ ...row })),
+    unlogged: unloggedSection(unloggedRows),
+  };
+}
+
 export function epochRecordClaims({
   epoch1Root = EPOCH1_FINAL_ROOT,
   epoch1Size = EPOCH1_FINAL_SIZE,
@@ -279,5 +362,31 @@ export function assertPinnedEpochRecord(record) {
   if (!record.orphans.some((row) => row?.root === EPOCH2_OPENING_ROOT)) {
     return { ok: false, reason: 'orphans_incomplete' };
   }
+  const version = Number(record.payload_version) || EPOCH_RECORD_VERSION;
+  if (version === EPOCH_RECORD_VERSION) {
+    if (record.unlogged != null) return { ok: false, reason: 'unlogged_unexpected' };
+  } else if (version === EPOCH_RECORD_VERSION_UNLOGGED) {
+    const listed = verifyUnloggedSection(record.unlogged);
+    if (!listed.ok) return listed;
+    const chains = assertV2OrphanChains(record.orphans);
+    if (!chains.ok) return chains;
+  } else {
+    return { ok: false, reason: 'epoch_record_version' };
+  }
+  return { ok: true };
+}
+
+/** Version 2 only. Version 1 records predate this correction and still boot. */
+function assertV2OrphanChains(orphans) {
+  const early = orphans.find((row) => row?.root === ORPHAN_FF950E72);
+  if (!early) return { ok: false, reason: 'orphan_ff950e72_missing' };
+  if (early.chain !== 'base' || early.solana !== 'absent') {
+    return { ok: false, reason: 'orphan_ff950e72_chain' };
+  }
+  const genesisOnly = '20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9';
+  const genesis = orphans.find((row) => row?.root === genesisOnly);
+  if (genesis?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_20d88791_chain' };
+  const lost = orphans.find((row) => row?.root_prefix === 'd7f6c548');
+  if (lost?.chain !== 'base_and_solana') return { ok: false, reason: 'orphan_d7f6c548_chain' };
   return { ok: true };
 }

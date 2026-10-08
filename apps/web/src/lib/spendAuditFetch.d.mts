@@ -9,6 +9,11 @@ export function scanBaseUsdcOut(address: string, options?: {
   signal?: AbortSignal;
   windowBlocks?: number;
   chunkBlocks?: number;
+  chunkFloor?: number;
+  concurrency?: number;
+  minGapMs?: number;
+  maxLogCalls?: number;
+  sleep?: (ms: number) => Promise<void>;
   onProgress?: (message: string) => void;
 }): Promise<{
   fromBlock: number;
@@ -42,4 +47,9 @@ export function runPublicSpendAudit(raw: string, options?: {
   onProgress?: (message: string) => void;
   windowBlocks?: number;
   chunkBlocks?: number;
+  chunkFloor?: number;
+  concurrency?: number;
+  minGapMs?: number;
+  maxLogCalls?: number;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<{ ok: true; report: Record<string, unknown> } | { ok: false; error: string; message?: string; report?: undefined }>;
