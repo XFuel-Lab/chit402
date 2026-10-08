@@ -86,10 +86,19 @@ function fixture() {
   const leaf = sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(`${taskId}|${rowHash}`)]));
   const sibling = sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from('genesis')]));
   const root = nodeHash(sibling, leaf).toString('hex');
-  const receipt = {
+  const receiptClaims = {
     task_id: taskId,
     row_hash: rowHash,
     verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' },
+  };
+  const receipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signCompact(receiptClaims, privateKey, kid, 'chit402-receipt+jwt'),
+      kid,
+      issuer_jwk: publicJwk,
+    },
   };
   const inclusion = {
     task_id: taskId,

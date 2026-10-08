@@ -710,15 +710,24 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   });
   // Inclusion was already checked above. Passing it again re-derives the leaf
   // from book_chain.row_hash only, which rejects a receipt that stores row_hash
-  // at the top level. Signature and signed-versus-outer comparison are the
-  // receipt checks log mode adds. A signed receipt that fails those, or any
-  // other single-receipt check, cannot be VERIFIED.
+  // at the top level. Log mode still requires the receipt itself. A missing or
+  // stripped issuer signature, a partial check, or a signed-versus-outer
+  // mismatch fails the combined result. An inclusion match is not VERIFIED.
   const issuerSig = (receipt as { issuer_signature?: { jws?: string; value?: string } }).issuer_signature;
-  const signedReceipt = Boolean(issuerSig?.jws || issuerSig?.value);
-  const receiptFailed = verified.claim_mismatches.length > 0
-    || (signedReceipt && verified.overall === 'failed');
+  const signaturePresent = Boolean(issuerSig?.jws || issuerSig?.value);
+  const receiptVerified = signaturePresent
+    && verified.issuer_signature.valid === true
+    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward')
+    && verified.claim_mismatches.length === 0;
+  const receiptFailed = !receiptVerified;
+  const receiptErrors = [...verified.errors];
+  if (!signaturePresent) {
+    receiptErrors.push(verified.issuer_signature.reason || 'receipt_signature_missing');
+  } else if (verified.overall === 'partial') {
+    receiptErrors.push(verified.issuer_signature.reason || 'receipt_check_partial');
+  }
   const errors = receiptFailed
-    ? [...result.errors, ...verified.errors.filter((err) => !result.errors.includes(err))]
+    ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
   const combined = {
     ...result,
@@ -738,7 +747,9 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   } else {
     printAnchor(combined, false, args.quiet);
     if (!args.quiet || receiptFailed) {
-      const receiptLabel = result.overall === 'pending' ? 'PENDING' : verified.overall.toUpperCase();
+      const receiptLabel = result.overall === 'pending' && !receiptFailed
+        ? 'PENDING'
+        : verified.overall.toUpperCase();
       console.log(`  Receipt checks: ${receiptLabel} (signed claims only)`);
       if (verified.claim_mismatches.length > 0) {
         for (const mismatch of verified.claim_mismatches) {

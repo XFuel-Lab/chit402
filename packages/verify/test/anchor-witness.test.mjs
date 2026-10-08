@@ -287,8 +287,21 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
   fx.head.anchors.base.tx = null;
   fx.head.anchors.base.from = null;
   fx.head = sealHead(fx.head, fx.key);
+  const receiptClaims = { task_id: fx.receipt.task_id, row_hash: fx.receipt.row_hash };
+  const receiptHeader = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: fx.key.kid };
+  const receiptInput = `${b64url(receiptHeader)}.${b64url(receiptClaims)}`;
+  const receiptSig = sign('sha256', Buffer.from(receiptInput), { key: fx.key.privateKey, dsaEncoding: 'ieee-p1363' });
+  const signedReceipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: `${receiptInput}.${receiptSig.toString('base64url')}`,
+      kid: fx.key.kid,
+      issuer_jwk: fx.key.publicJwk,
+    },
+  };
   const dir = mkdtempSync(join(tmpdir(), 'chit-anchor-'));
-  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(fx.receipt));
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(signedReceipt));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(fx.inclusion));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));

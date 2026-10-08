@@ -41,22 +41,33 @@ function issuerKey() {
   return { privateKey, kid, publicJwk };
 }
 
-function sealHead(head, key) {
-  const { issuer_signature: _ignored, ...rest } = head;
+function seal(doc, key, typ) {
+  const { issuer_signature: _ignored, ...rest } = doc;
   const claims = JSON.parse(JSON.stringify(rest));
-  const header = { alg: 'ES256', typ: 'chit402-tree-head+jwt', kid: key.kid };
+  const header = { alg: 'ES256', typ, kid: key.kid };
   const signingInput = `${b64url(header)}.${b64url(claims)}`;
   const signature = sign('sha256', Buffer.from(signingInput), { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
   return {
     ...claims,
     issuer_signature: {
       alg: 'ES256',
-      typ: 'chit402-tree-head+jwt',
+      typ,
       jws: `${signingInput}.${signature.toString('base64url')}`,
       kid: key.kid,
       issuer_jwk: key.publicJwk,
     },
   };
+}
+
+function sealHead(head, key) {
+  return seal(head, key, 'chit402-tree-head+jwt');
+}
+
+function signedReceipt(key, taskId, rowHash) {
+  const claims = rowHash
+    ? { task_id: taskId, book_chain: { row_hash: rowHash } }
+    : { task_id: taskId };
+  return seal(claims, key, 'chit402-receipt+jwt');
 }
 
 function sha256(buf) {
@@ -308,9 +319,7 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
   try {
     for (let index = 0; index < 4; index += 1) {
-      const receipt = index === 0
-        ? { task_id: 'genesis' }
-        : { task_id: fx.ids[index], row_hash: fx.rows[index] };
+      const receipt = signedReceipt(fx.key, fx.ids[index], fx.rows[index]);
       const inclusion = {
         task_id: fx.ids[index],
         status: 'anchored',
@@ -360,7 +369,7 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
         anchor_chain: 'base,solana',
       },
     };
-    writeFileSync(join(dir, 'receipt.json'), JSON.stringify({ task_id: 'd', row_hash: 'rd' }));
+    writeFileSync(join(dir, 'receipt.json'), JSON.stringify(signedReceipt(fx.key, 'd', 'rd')));
     writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(pending));
     const late = await runCli([
       cli,
@@ -379,6 +388,26 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
     assert.match(late.stdout, /Overall: PENDING/);
     assert.match(late.stdout, /pending_anchor/);
     assert.equal(/(?<!UN)VERIFIED/.test(lateText), false);
+
+    const stripped = signedReceipt(fx.key, 'd', 'rd');
+    delete stripped.issuer_signature;
+    writeFileSync(join(dir, 'receipt.json'), JSON.stringify(stripped));
+    const bare = await runCli([
+      cli,
+      join(dir, 'receipt.json'),
+      join(dir, 'inclusion.json'),
+      join(dir, 'head.json'),
+      '--rpc', url,
+      '--solana-rpc', url,
+      '--jwks-file', join(dir, 'jwks.json'),
+      '--trusted-kid', fx.key.kid,
+      '--no-issuer-history',
+      '--no-preimage',
+    ]);
+    const bareText = `${bare.stdout}\n${bare.stderr}`;
+    assert.equal(bare.status, 1, bareText);
+    assert.match(bare.stdout, /Overall: FAILED/);
+    assert.equal(/(?<!UN)VERIFIED/.test(bareText), false);
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
   }
