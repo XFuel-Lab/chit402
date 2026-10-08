@@ -1,7 +1,7 @@
 /**
  * Per-receipt Open Graph share card images (1200×630 PNG).
  */
-import { mergeReceiptView } from './receipt.js';
+import { mergeReceiptView, redactPublicReceipt } from './receipt.js';
 import {
   buildReceiptOgMeta,
   displayTaskIdForShare,
@@ -20,7 +20,7 @@ function escSvg(text) {
 
 /** SVG share card (1200×630) — rasterized to PNG for crawlers. */
 export function buildReceiptOgSvg(receipt) {
-  const view = mergeReceiptView(receipt);
+  const view = mergeReceiptView(redactPublicReceipt(receipt));
   const meta = buildReceiptOgMeta(receipt, view);
   const displayId = displayTaskIdForShare(receipt.task_id || view.task_id);
   const proof = view.proof?.outcome === 'valid' ? 'Proven' : 'Signed';

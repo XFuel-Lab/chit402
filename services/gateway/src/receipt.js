@@ -1038,6 +1038,58 @@ export function storedReceiptJson(receipt) {
   delete out.session;
   delete out.agent_pubkey;
   delete out.session_act;
+  return redactPublicReceipt(out);
+}
+
+/**
+ * Copy for a public receipt view. Drops unsigned fields only.
+ * Token counts, the resolved model, the router choice (`requested`,
+ * `requested_model`, `substituted`), the stamp-fee payment ref, and the
+ * float low-water flag. Signed fields, `payload_hash`, and the JWS are copied
+ * through unchanged. The stamp-fee ref is not signed.
+ * @param {object|null|undefined} receipt
+ */
+export function redactPublicReceipt(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const out = { ...receipt };
+  if (out.usage && typeof out.usage === 'object' && !Array.isArray(out.usage)) {
+    const usage = { ...out.usage };
+    delete usage.prompt_tokens;
+    delete usage.completion_tokens;
+    delete usage.total_tokens;
+    if (Object.keys(usage).length === 0) delete out.usage;
+    else out.usage = usage;
+  }
+  if (out.route && typeof out.route === 'object' && !Array.isArray(out.route)) {
+    const route = { ...out.route };
+    delete route.resolved;
+    delete route.requested;
+    delete route.requested_model;
+    delete route.substituted;
+    out.route = route;
+  }
+  if (out.route_meta && typeof out.route_meta === 'object' && !Array.isArray(out.route_meta)) {
+    const meta = { ...out.route_meta };
+    delete meta.resolved;
+    delete meta.requested;
+    delete meta.requested_model;
+    delete meta.substituted;
+    out.route_meta = meta;
+  }
+  if (out.stamp && typeof out.stamp === 'object' && !Array.isArray(out.stamp)) {
+    if (Object.prototype.hasOwnProperty.call(out.stamp, 'payment_ref')) {
+      const stamp = { ...out.stamp };
+      delete stamp.payment_ref;
+      out.stamp = stamp;
+    }
+  }
+  if (out.provider_cogs && typeof out.provider_cogs === 'object' && !Array.isArray(out.provider_cogs)) {
+    if (Object.prototype.hasOwnProperty.call(out.provider_cogs, 'below_low_water')) {
+      const cogs = { ...out.provider_cogs };
+      delete cogs.below_low_water;
+      out.provider_cogs = cogs;
+    }
+  }
   return out;
 }
 
@@ -2607,6 +2659,7 @@ export function verifyIssuerForHtml(receipt) {
 
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
+  receipt = redactPublicReceipt(receipt);
   const view = mergeReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};
@@ -2630,7 +2683,9 @@ export function renderReceiptHtml(receipt) {
         : '<span class="muted">—</span>');
 
   const usage = receipt.usage;
-  const usageRows = usage
+  const hasTokenCounts = usage
+    && (usage.prompt_tokens != null || usage.completion_tokens != null || usage.total_tokens != null);
+  const usageRows = hasTokenCounts
     ? `${row('Tokens', `${esc(usage.total_tokens ?? '—')} <span class="muted">(${esc(usage.prompt_tokens ?? 0)}→${esc(usage.completion_tokens ?? 0)})</span>`)}`
     : '';
 
@@ -3074,7 +3129,8 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
-  const view = mergeReceiptView(receipt);
+  const source = redactPublicReceipt(receipt);
+  const view = mergeReceiptView(source);
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],

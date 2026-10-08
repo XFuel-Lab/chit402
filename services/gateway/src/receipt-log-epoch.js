@@ -278,18 +278,33 @@ export function epochRecordDisclosesUnlogged(record) {
 }
 
 /**
- * Record safe to serve. A version 2 list stays in the journal and still
- * verifies, and this withholds it: the signature covers the rows, so the
- * rows cannot be stripped and the signature kept. No new signature is made.
+ * A signed version 1 record: roots and orphans, a JWS, and no row list.
+ * Later versions are not this. An unsigned object is not this.
  */
-export function publicEpochRecord(record) {
+export function isSignedEpochV1(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const version = Number(record.payload_version) || EPOCH_RECORD_VERSION;
+  if (version !== EPOCH_RECORD_VERSION) return false;
+  if (typeof record.issuer_signature?.jws !== 'string' || record.issuer_signature.jws.length === 0) {
+    return false;
+  }
+  if (epochRecordDisclosesUnlogged(record)) return false;
+  return true;
+}
+
+/**
+ * Record safe to serve. A version 1 or version 3 record is returned as stored.
+ * A record that still names rows is not stripped and is not replaced by an
+ * unsigned stub: the last signed version 1 record is returned unchanged, or
+ * null when none was kept. No new signature is made.
+ * @param {object|null|undefined} record latest stored record
+ * @param {object|null|undefined} [priorV1] last signed version 1 record
+ */
+export function publicEpochRecord(record, priorV1 = null) {
   if (!record || typeof record !== 'object') return record;
   if (!epochRecordDisclosesUnlogged(record)) return record;
-  return {
-    schema: record.schema || EPOCH_RECORD_SCHEMA,
-    status: 'withheld',
-    published: false,
-  };
+  if (isSignedEpochV1(priorV1)) return priorV1;
+  return null;
 }
 
 export function verifyUnloggedSection(section) {

@@ -226,9 +226,21 @@ export function storedCanonicalPreimage(source) {
 }
 
 /**
+ * Public only after `tree_head_hash` is a non-empty string. A missing or
+ * null hash is a pre-leaf read and must not be cached by a shared cache.
+ * @param {object|null|undefined} source
+ * @returns {string}
+ */
+export function canonicalPreimageCacheControl(source) {
+  const hash = source && typeof source === 'object' ? source.tree_head_hash : null;
+  if (typeof hash === 'string' && hash.length > 0) return 'public, max-age=300';
+  return 'private, no-store';
+}
+
+/**
  * Write the stored bytes. `?meta=1` describes the algorithm without the body.
  * The default body is the stored canonical object, so SHA-256 of the body
- * equals `payload_hash`.
+ * equals `payload_hash` for the bytes that are stored with this response.
  * @param {import('express').Response} res
  * @param {object|null|undefined} source
  * @param {{ meta?: unknown }} [query]
@@ -247,12 +259,14 @@ export function writeCanonicalPreimage(res, source, query = {}) {
       reason: 'The stored canonical object does not match its payload hash.',
     });
   }
-  // Own-data and deterministic: these are the canonical bytes stored at
-  // issuance for this document alone. They are not rebuilt on read, other
-  // receipts are not in them, and SHA-256 of the body is the signed
-  // payload_hash. A shared cache may keep that fixed body. meta=1 is a
-  // different URL. Field preimages and the receipt page stay private.
-  res.set('Cache-Control', 'public, max-age=300');
+  // Own-data: these are the canonical bytes stored for this document alone.
+  // They are not a fixed issuance body while tree_head_hash is still empty,
+  // because a later leaf append can restamp that field. Until the hash is
+  // set, a shared cache must not keep the body. Once it is a non-empty
+  // string, SHA-256 of the body is the signed payload_hash and a public
+  // cache may keep it. meta=1 is a different URL. Field preimages and the
+  // receipt page stay private.
+  res.set('Cache-Control', canonicalPreimageCacheControl(source));
   res.set('X-Chit-Hash-Alg', stored.alg);
   res.set('X-Chit-Payload-Hash', stored.hash);
   res.set('X-Chit-Canonicalization', stored.encoding);

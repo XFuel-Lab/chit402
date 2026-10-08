@@ -2415,8 +2415,7 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   assert.equal(verifyUnloggedSection(legacy.unlogged).ok, true);
   assert.equal(attestedUnloggedEntry(v2, 'openai-next'), null);
   assert.equal(attestedUnloggedEntry(v1, 'openai-next'), null);
-  assert.equal(publicEpochRecord(legacy).published, false);
-  assert.equal(JSON.stringify(publicEpochRecord(legacy)).includes('openai-next'), false);
+  assert.equal(publicEpochRecord(legacy), null);
   assert.equal(publicEpochRecord(v2), v2);
 });
 

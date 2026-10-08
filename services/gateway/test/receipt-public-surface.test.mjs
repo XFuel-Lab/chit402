@@ -28,6 +28,7 @@ const { preimageField } = await import('../src/receipt-preimage.js');
 
 const A = 'xfuel-pub-a-11111111-1111-4111-8111-111111111111';
 const B = 'xfuel-pub-b-22222222-2222-4222-8222-222222222222';
+const PRE = 'xfuel-pub-pre-33333333-3333-4333-8333-333333333333';
 const AGENT_B = 918273645;
 const ROW_B = 'row-foreign-b-not-shared';
 const WALLET_B = '0xB0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0';
@@ -87,6 +88,20 @@ before(async () => {
   };
   plant(A, 'row-own-a', REF_A, 187, '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52');
   plant(B, ROW_B, REF_B, AGENT_B, WALLET_B);
+  store.set(PRE, paidTask(PRE, `base:0x${'c3'.repeat(32)}`, 188, '0x1111111111111111111111111111111111111111'));
+  planted.push(PRE);
+  const taskA = store.get(A);
+  taskA.usage = { prompt_tokens: 4242, completion_tokens: 4343, total_tokens: 8585, source: 'provider' };
+  taskA.meta.requestedModel = 'xfuel/auto';
+  taskA.meta.modelSubstituted = true;
+  taskA.meta.providerCogs = {
+    provider: 'akash-network',
+    float_id: 'akash-network',
+    estimated: '12',
+    actual: '12',
+    basis: 'measured',
+    below_low_water: true,
+  };
   ledger._index({
     task_id: A,
     agent_id: 187,
@@ -151,13 +166,19 @@ test('prototype field names are not a preimage', () => {
   assert.equal(preimageField({ fields: viaProto }, 'inherited'), null);
 });
 
-test('a version 2 row list is withheld and a commitment does not name ids', () => {
+test('a version 2 row list is not served as an unsigned stub', () => {
   const rows = [{ task_id: B, agent_id: AGENT_B, reason: 'forked' }];
   const legacy = { ...epochRecordClaims(), payload_version: 2, unlogged: unloggedSection(rows) };
-  const hidden = publicEpochRecord(legacy);
-  assert.equal(hidden.published, false);
-  assert.equal(JSON.stringify(hidden).includes(B), false);
-  assert.equal(hidden.issuer_signature, undefined);
+  assert.equal(publicEpochRecord(legacy), null);
+  const v1 = {
+    ...epochRecordClaims(),
+    issuer_signature: { jws: 'v1-header.v1-payload.v1-sig', kid: 'k' },
+  };
+  const served = publicEpochRecord(legacy, v1);
+  assert.equal(served, v1);
+  assert.equal(served.issuer_signature.jws, v1.issuer_signature.jws);
+  assert.equal(JSON.stringify(served).includes(B), false);
+  assert.equal(JSON.stringify(served).includes('withheld'), false);
 });
 
 test('?tx= cannot serve another receipt under this id', async () => {
@@ -273,12 +294,22 @@ test('the listed public 500 handlers do not interpolate err.message', () => {
 test('consistency rejects a leading zero the way a tree size does', async () => {
   const ok = await fetchText('/v1/receipts/tree/consistency?first=1&second=2');
   assert.equal(ok.status, 200, ok.text.slice(0, 160));
-  for (const q of ['first=01&second=2', 'first=1&second=02', 'first=01&second=03', 'first=1e2&second=2', 'first=+1&second=2', 'first=0&second=1']) {
+  for (const q of ['first=01&second=2', 'first=1&second=02', 'first=01&second=03', 'first=1e2&second=2', 'first=+1&second=2', 'first=0&second=1', 'first=%201&second=2', 'first=1%20&second=2']) {
     const res = await fetchText(`/v1/receipts/tree/consistency?${q}`);
     assert.equal(res.status, 400, `${q} ${res.status} ${res.text}`);
     assert.deepEqual(JSON.parse(res.text), { error: 'bad_tree_size' });
     assert.equal(res.text.includes('01'), false, q);
   }
+  for (const q of ['first=1&second=2&epoch=01', 'first=1&second=2&epoch=%201', 'first=1&second=2&epoch=1e2']) {
+    const res = await fetchText(`/v1/receipts/tree/consistency?${q}`);
+    assert.equal(res.status, 400, `${q} ${res.status} ${res.text}`);
+    assert.deepEqual(JSON.parse(res.text), { error: 'bad_epoch' });
+    assert.equal(res.text.includes('01'), false, q);
+  }
+  const epochPath = await fetchText('/v1/receipts/tree/epoch/01/head');
+  assert.equal(epochPath.status, 400, epochPath.text);
+  assert.deepEqual(JSON.parse(epochPath.text), { error: 'bad_epoch' });
+  assert.equal(epochPath.text.includes('01'), false);
   for (const q of ['tree_size=01', 'tree_size=+1', 'tree_size=1e2', 'tree_size=0', 'tree_size=02']) {
     const res = await fetchText(`/v1/receipts/${A}/inclusion?${q}`);
     assert.equal(res.status, 400, `${q} ${res.status} ${res.text}`);
@@ -380,6 +411,285 @@ test('negotiated receipt responses are private and preimages do not publish the 
   const missingInclusion = await fetchText('/v1/receipts/not-a-leaf/inclusion');
   assert.deepEqual(JSON.parse(missingInclusion.text), { error: 'not_in_tree' });
   assertNoForeign(missingInclusion.text, 'inclusion 404');
+});
+
+test('a disclosing epoch record serves the last signed v1 or 404', async () => {
+  const tree = getReceiptMerkleTree();
+  const saved = tree.epochRecord;
+  const savedV1 = tree.epochRecordV1;
+  const v2 = {
+    ...epochRecordClaims(),
+    payload_version: 2,
+    unlogged: unloggedSection([{ task_id: B, agent_id: AGENT_B, reason: 'forked' }]),
+    issuer_signature: { jws: 'v2.payload.sig', kid: 'k2' },
+  };
+  try {
+    tree.epochRecord = v2;
+    tree.epochRecordV1 = null;
+    const missing = await fetchText('/v1/receipts/tree/epoch');
+    assert.equal(missing.status, 404, missing.text);
+    assert.deepEqual(JSON.parse(missing.text), { error: 'not_found' });
+    assert.equal(missing.text.includes('withheld'), false);
+    assert.equal(missing.text.includes(B), false);
+    assertNoForeign(missing.text, 'epoch 404');
+
+    const v1 = {
+      ...epochRecordClaims(),
+      issuer_signature: { jws: 'v1-header.v1-payload.v1-sig', kid: 'k1' },
+    };
+    tree.epochRecordV1 = v1;
+    const served = await fetchText('/v1/receipts/tree/epoch');
+    assert.equal(served.status, 200, served.text.slice(0, 180));
+    const body = JSON.parse(served.text);
+    assert.equal(body.issuer_signature.jws, v1.issuer_signature.jws);
+    assert.equal(body.payload_version, 1);
+    assert.equal(body.unlogged, undefined);
+    assert.equal(body.status, undefined);
+    assert.equal(served.text.includes('withheld'), false);
+    assertNoForeign(served.text, 'epoch v1');
+  } finally {
+    tree.epochRecord = saved;
+    tree.epochRecordV1 = savedV1;
+  }
+});
+
+test('a pre-leaf canonical preimage is not publicly cacheable', async () => {
+  const pre = await fetchText(`/receipt/${PRE}/preimage`);
+  assert.equal(pre.status, 200, pre.text.slice(0, 180));
+  assert.match(pre.headers.get('cache-control') || '', /private/);
+  assert.match(pre.headers.get('cache-control') || '', /no-store/);
+  assert.equal((pre.headers.get('cache-control') || '').includes('max-age=300'), false);
+  const meta = await fetchText(`/receipt/${PRE}/preimage?meta=1`);
+  assert.equal(meta.status, 200, meta.text.slice(0, 120));
+  assert.match(meta.headers.get('cache-control') || '', /no-store/);
+  const leafed = await fetchText(`/receipt/${A}/preimage`);
+  assert.equal(leafed.status, 200, leafed.text.slice(0, 160));
+  assert.match(leafed.headers.get('cache-control') || '', /public/);
+  assert.match(leafed.headers.get('cache-control') || '', /max-age=300/);
+});
+
+test('public receipt views drop unsigned token, route, stamp, and float fields', async () => {
+  const { redactPublicReceipt } = await import('../src/receipt.js');
+  const stamped = redactPublicReceipt({
+    task_id: A,
+    issuer_signature: { jws: 'keep.this.jws', payload_hash: 'abc' },
+    stamp: { fee_usd: '0.002', payment_ref: 'base:0xstampfee', paid_by: 'submitter' },
+    usage: { prompt_tokens: 4242, completion_tokens: 4343, total_tokens: 8585, source: 'provider' },
+    route: { model: 'served', resolved: 'served', requested: 'xfuel/auto', requested_model: 'xfuel/auto', substituted: true },
+    provider_cogs: { actual: '12', below_low_water: true },
+  });
+  assert.equal(stamped.issuer_signature.jws, 'keep.this.jws');
+  assert.equal(stamped.issuer_signature.payload_hash, 'abc');
+  assert.equal(stamped.stamp.fee_usd, '0.002');
+  assert.equal(stamped.stamp.payment_ref, undefined);
+  assert.equal(stamped.stamp.paid_by, 'submitter');
+  assert.equal(stamped.usage.prompt_tokens, undefined);
+  assert.equal(stamped.usage.source, 'provider');
+  assert.equal(stamped.route.model, 'served');
+  assert.equal(stamped.route.resolved, undefined);
+  assert.equal(stamped.route.requested, undefined);
+  assert.equal(stamped.provider_cogs.actual, '12');
+  assert.equal(stamped.provider_cogs.below_low_water, undefined);
+
+  const json = await fetchText(`/receipt/${A}?format=json`);
+  assert.equal(json.status, 200, json.text.slice(0, 160));
+  const doc = JSON.parse(json.text);
+  assert.equal(doc.usage?.prompt_tokens, undefined);
+  assert.equal(doc.usage?.completion_tokens, undefined);
+  assert.equal(doc.usage?.total_tokens, undefined);
+  assert.equal(doc.route.resolved, undefined);
+  assert.equal(doc.route.requested, undefined);
+  assert.equal(doc.route.requested_model, undefined);
+  assert.equal(doc.route.substituted, undefined);
+  assert.equal(doc.route_meta.requested_model, undefined);
+  assert.equal(doc.route.model.includes('Llama'), true);
+  assert.equal(doc.provider_cogs.below_low_water, undefined);
+  assert.equal(doc.provider_cogs.actual, '12');
+  assert.equal(json.text.includes('xfuel/auto'), false);
+  assert.equal(json.text.includes('4242'), false);
+  assert.equal(json.text.includes('4343'), false);
+  assert.equal(json.text.includes('below_low_water'), false);
+  const again = await fetchText(`/receipt/${A}?format=json`);
+  assert.equal(JSON.parse(again.text).issuer_signature.jws, doc.issuer_signature.jws);
+
+  const html = await fetchText(`/receipt/${A}`);
+  assert.equal(html.status, 200);
+  assert.equal(html.text.includes('xfuel/auto'), false);
+  assert.equal(html.text.includes('4242'), false);
+  assert.equal(html.text.includes('4343'), false);
+  assert.equal(html.text.includes('low water'), false);
+  assert.equal(html.text.includes('below_low_water'), false);
+
+  const auditor = await fetchText(`/receipt/${A}?format=auditor`);
+  assert.equal(auditor.status, 200, auditor.text.slice(0, 120));
+  assert.equal(auditor.text.includes('xfuel/auto'), false);
+  assert.equal(auditor.text.includes('4242'), false);
+  assert.equal(auditor.text.includes('below_low_water'), false);
+
+  const card = await fetchText(`/receipt/${A}/og.png`);
+  assert.equal(card.status, 200);
+  assert.equal(card.text.includes('xfuel/auto'), false);
+  assert.equal(card.text.includes('4242'), false);
+
+  const followed = await fetchText(`/receipt/by-tx?tx=${TX_A}&format=json`);
+  assert.equal(followed.status, 302, followed.text);
+  const loc = followed.headers.get('location') || '';
+  const canonical = await fetchText(new URL(loc).pathname + new URL(loc).search);
+  assert.equal(canonical.status, 200, canonical.text.slice(0, 120));
+  assert.equal(canonical.text.includes('xfuel/auto'), false);
+  assert.equal(canonical.text.includes('4242'), false);
+});
+
+test('published fixtures stay VERIFIED after unsigned fields are dropped', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { redactPublicReceipt } = await import('../src/receipt.js');
+  const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
+  const dir = fileURLToPath(new URL('../../../packages/verify/test/fixtures/public/', import.meta.url));
+  for (const name of ['chit-1ebc5616.json', 'chit-39af100b.json']) {
+    const original = JSON.parse(readFileSync(`${dir}${name}`, 'utf8'));
+    const jws = original.issuer_signature.jws;
+    const redacted = redactPublicReceipt(original);
+    assert.equal(redacted.issuer_signature.jws, jws, name);
+    assert.equal(redacted.usage?.prompt_tokens, undefined, name);
+    assert.equal(redacted.usage?.completion_tokens, undefined, name);
+    assert.equal(redacted.route?.resolved, undefined, name);
+    assert.equal(redacted.route?.requested, undefined, name);
+    assert.equal(redacted.provider_cogs?.below_low_water, undefined, name);
+    assert.equal(redacted.stamp?.payment_ref, undefined, name);
+    assert.equal(original.issuer_signature.jws, jws, name);
+    const before = await verifyReceipt(original, {});
+    const after = await verifyReceipt(redacted, {});
+    assert.equal(before.overall, 'verified', name);
+    assert.equal(after.overall, 'verified', name);
+    assert.equal(before.issuer_signature.valid, true, name);
+    assert.equal(after.issuer_signature.valid, true, name);
+  }
+});
+
+test('non-receipt 500 bodies do not echo the exception', async () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/server.js', import.meta.url)), 'utf8');
+  for (const label of [
+    'GET /.well-known/x402 error',
+    'GET /openapi.json error',
+    'GET /stats error',
+    'GET /stats/door error',
+    'GET /health error',
+    'book export get error',
+    'book export post error',
+    'book gaps error',
+    'POST /task-quote error',
+    'POST /task-request error',
+    'POST /v1/agents/register error',
+  ]) {
+    const at = src.indexOf(label);
+    assert.ok(at > 0, label);
+    const window = src.slice(at, at + 220);
+    assert.equal(window.includes('err.message'), false, window);
+  }
+  assert.equal(src.includes("status: 'error', message: err.message"), false);
+
+  const secret = 'ENOENT /var/lib/chit-secret-nonreceipt';
+  const tree = getReceiptMerkleTree();
+  const bundle = tree.bundleStatus.bind(tree);
+  tree.bundleStatus = () => { throw new Error(secret); };
+  try {
+    const health = await fetchText('/health');
+    assert.equal(health.status, 503, health.text);
+    assert.deepEqual(JSON.parse(health.text), { error: 'internal', code: 'health_failed' });
+    assert.equal(health.text.includes(secret), false);
+    assert.equal(health.text.includes('ENOENT'), false);
+  } finally {
+    tree.bundleStatus = bundle;
+  }
+
+  const store = getAIListener().activeTasks;
+  const hadSnapshots = typeof store.allSnapshots === 'function';
+  const snapshots = hadSnapshots ? store.allSnapshots.bind(store) : null;
+  store.allSnapshots = () => ({
+    [Symbol.iterator]() { throw new Error(secret); },
+  });
+  try {
+    for (const [path, code] of [['/stats?format=json', 'stats_failed'], ['/stats/door', 'stats_door_failed']]) {
+      const res = await fetchText(path);
+      assert.equal(res.status, 500, `${path} ${res.text}`);
+      assert.deepEqual(JSON.parse(res.text), { error: 'internal', code });
+      assert.equal(res.text.includes(secret), false, path);
+      assert.equal(res.text.includes('/var/lib'), false, path);
+    }
+  } finally {
+    if (hadSnapshots) store.allSnapshots = snapshots;
+    else delete store.allSnapshots;
+  }
+
+  const { getFloatManager } = await import('../src/provider-float.js');
+  const floats = getFloatManager();
+  const select = floats.selectForQuote.bind(floats);
+  floats.selectForQuote = () => { throw new Error(secret); };
+  try {
+    const quote = await fetch(`${base}/task-quote`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    const text = await quote.text();
+    assert.equal(quote.status, 500, text.slice(0, 180));
+    assert.deepEqual(JSON.parse(text), { error: 'internal', code: 'task_quote_failed' });
+    assert.equal(text.includes(secret), false);
+  } finally {
+    floats.selectForQuote = select;
+  }
+
+  const config = (await import('../src/config.js')).default;
+  const savedX402 = config.x402;
+  config.x402 = new Proxy({}, { get() { throw new Error(secret); } });
+  try {
+    for (const [path, code] of [['/.well-known/x402', 'x402_failed'], ['/openapi.json', 'openapi_failed']]) {
+      const res = await fetchText(path);
+      assert.equal(res.status, 500, `${path} ${res.text.slice(0, 160)}`);
+      assert.deepEqual(JSON.parse(res.text), { error: 'internal', code });
+      assert.equal(res.text.includes(secret), false, path);
+    }
+  } finally {
+    config.x402 = savedX402;
+  }
+
+  const registry = httpApp.locals.__test.agentRegistry;
+  const getAgent = registry.get.bind(registry);
+  registry.get = () => { throw new Error(secret); };
+  try {
+    for (const [path, code] of [
+      ['/v1/agents/1/book/export', 'book_export_failed'],
+      ['/v1/agents/1/book/gaps', 'book_gaps_failed'],
+    ]) {
+      const res = await fetchText(path, { 'x-xfuel-session': 'not-a-session' });
+      assert.equal(res.status, 500, `${path} ${res.text.slice(0, 160)}`);
+      assert.deepEqual(JSON.parse(res.text), { error: 'internal', code });
+      assert.equal(res.text.includes(secret), false, path);
+    }
+    const posted = await fetch(`${base}/v1/agents/1/book/export`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-xfuel-session': 'not-a-session' },
+      body: '{}',
+    });
+    const postedText = await posted.text();
+    assert.equal(posted.status, 500, postedText.slice(0, 160));
+    assert.deepEqual(JSON.parse(postedText), { error: 'internal', code: 'book_export_failed' });
+    assert.equal(postedText.includes(secret), false);
+  } finally {
+    registry.get = getAgent;
+  }
+});
+
+test('a test file that ends without its summary line fails the runner', async () => {
+  const { filesMissingTapSummary } = await import('../scripts/run-tests.mjs');
+  const files = ['test/a.test.mjs', 'test/b.test.mjs'];
+  assert.deepEqual(filesMissingTapSummary('ok 1 - test/a.test.mjs\nok 2 - test/b.test.mjs\n', files), []);
+  assert.deepEqual(filesMissingTapSummary('    ok 1 - test/a.test.mjs\n', files), files);
+  assert.deepEqual(
+    filesMissingTapSummary('ok 1 - test/a.test.mjs\n    ok 1 - inner\n', files),
+    ['test/b.test.mjs'],
+  );
+  assert.deepEqual(filesMissingTapSummary('not ok 2 - test/a.test.mjs\n', ['test/a.test.mjs']), []);
 });
 
 test('public receipt routes for one id do not carry the other receipt', async () => {

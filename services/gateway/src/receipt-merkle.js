@@ -763,6 +763,7 @@ export class ReceiptMerkleTree {
     this.closedEpochs = [];
     this.anchorState = { schema: 'chit402.receipt_anchor_state.v1', solana: {}, base: {} };
     this.epochRecord = null;
+    this.epochRecordV1 = null;
     this.bundleIndex = emptyBundleIndex();
     this.anchorIntents = [];
     this.lastBundleOkAt = null;
@@ -2760,6 +2761,7 @@ export class ReceiptMerkleTree {
     this.heads = live.heads;
     this.anchorState = loaded.anchorState || this.anchorState;
     this.epochRecord = loaded.epochRecord || null;
+    this.epochRecordV1 = loaded.epochRecordV1 || null;
     this.anchorIntents = Array.isArray(loaded.intents) ? loaded.intents : [];
     if (loaded.bundleIndex) {
       this.bundleIndex = loaded.bundleIndex;

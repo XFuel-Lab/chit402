@@ -193,11 +193,11 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   assert.equal(publicReceipt.status, 'failed');
   assert.equal(publicReceipt.proof_outcome, 'invalid');
   assert.equal(publicView.route.model, 'akash/openai/gpt-oss-120b');
-  assert.equal(publicView.route.requested, 'gpt-4o-mini');
-  assert.equal(publicView.route.requested_model, 'gpt-4o-mini');
-  assert.equal(publicReceipt.route_meta.requested_model, 'gpt-4o-mini');
-  assert.equal(publicReceipt.route_meta.substituted, true);
-  assert.equal(publicView.route.substituted, true);
+  assert.equal(publicView.route.requested, undefined);
+  assert.equal(publicView.route.requested_model, undefined);
+  assert.equal(publicReceipt.route_meta.requested_model, undefined);
+  assert.equal(publicReceipt.route_meta.substituted, undefined);
+  assert.equal(publicView.route.substituted, undefined);
   assert.equal(publicReceipt.refund.refund_status, 'owed');
   assert.equal(publicView.payment.collected, false);
   assert.equal(publicReceipt.refund.payer, body.xfuel.refund.payer);
