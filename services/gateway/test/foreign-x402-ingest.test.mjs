@@ -641,7 +641,7 @@ test('Solana network sets rail to solana, not usdc', async () => {
   assert.equal(result.ok, true);
   assert.equal(result.status, 201);
   assert.equal(result.body.payment.rail, 'solana', 'Solana network → solana rail');
-  assert.equal(result.body.payment.ref, 'solana:3vZ9Y9X...solana-sig');
+  assert.equal(result.body.payment.ref, `solana:${SOL_SIG}`);
 
   const entry = ledger.entries[0];
   assert.equal(entry.rail, 'solana');
@@ -1642,7 +1642,8 @@ test('POST book/ingest without a stamp payment is 402 for $0.002', async () => {
 test('pilot waiver key stamps free up to the cap, then 402; default is off', async () => {
   const hooks = httpApp.locals.__test;
   const identity = hooks.agentRegistry.allocate({ taskId: 'stamp-waiver' });
-  hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
+  const waiverWallet = '0x4444444444444444444444444444444444444444';
+  hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: waiverWallet });
   hooks.agentRegistry.setBudget(identity.agent_id, '9000');
   const prevKeys = process.env.STAMP_WAIVER_KEYS;
   const prevCap = process.env.STAMP_WAIVER_CAP;
@@ -1663,7 +1664,7 @@ test('pilot waiver key stamps free up to the cap, then 402; default is off', asy
           amount: '1000',
           payTo: '0xShopTreasury',
         },
-        payment_response: { tx, payer: WALLET_A, network: 'base' },
+        payment_response: { tx, payer: waiverWallet, network: 'base' },
       }),
     });
 

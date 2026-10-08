@@ -259,6 +259,23 @@ export async function settleBoundPayment({
   }
   if (active.isTxSpent(norm.key)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
+    const prior = typeof active.txFactsOf === 'function' ? active.txFactsOf(norm.key) : null;
+    // A confirmed transfer already in the book is an idempotent replay, not a
+    // second collect. A transfer marked spent without confirmation stays refused.
+    if (prior?.amount && prior.payer && prior.payTo) {
+      return {
+        kind: 'settled',
+        confirmed: true,
+        paymentRef: norm.key,
+        settledAmount: String(prior.amount),
+        payerWallet: prior.payer,
+        payTo: prior.payTo,
+        asset: challenge.asset,
+        taskId,
+        replay: true,
+        settlementEvidence: prior.evidence || null,
+      };
+    }
     return refused(req, 'payment_replayed');
   }
   const authKey = !solana && auth?.from && auth?.nonce
@@ -311,7 +328,16 @@ export async function settleBoundPayment({
     logIndex: chain.logIndex ?? null,
     slot: chain.slot ?? null,
   });
-  active.markTxSpent(norm.key);
+  active.markTxSpent(norm.key, {
+    amount: String(chain.amount),
+    payer: chain.payer,
+    payTo: chain.payTo,
+    evidence: {
+      blockNumber: chain.blockNumber ?? null,
+      logIndex: chain.logIndex ?? null,
+      slot: chain.slot ?? null,
+    },
+  });
   if (authKey) active.markAuthSpent(authKey, norm.key);
 
   let issuance_commitment = null;

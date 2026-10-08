@@ -343,6 +343,7 @@ export class ChallengeStore {
     this.spent = new Set(); // nonce already settled
     this.authSpent = new Map(); // authorization key → tx ref
     this.txSpent = new Set(); // normalized payment ref
+    this.txFacts = new Map(); // ref → confirmed amount, payer, payTo
     this.pending = []; // unsigned owner-only rows; never a receipt
   }
 
@@ -473,8 +474,14 @@ export class ChallengeStore {
     return !!(key && this.txSpent.has(key));
   }
 
-  markTxSpent(key) {
-    if (key) this.txSpent.add(key);
+  markTxSpent(key, facts = null) {
+    if (!key) return;
+    this.txSpent.add(key);
+    if (facts && typeof facts === 'object') this.txFacts.set(key, facts);
+  }
+
+  txFactsOf(key) {
+    return (key && this.txFacts.get(key)) || null;
   }
 
   recordPending(row) {
@@ -505,6 +512,7 @@ export class ChallengeStore {
       spent: [...this.spent],
       authSpent: [...this.authSpent.entries()],
       txSpent: [...this.txSpent],
+      txFacts: [...this.txFacts.entries()],
       pending: this.pending,
     };
   }
@@ -514,6 +522,7 @@ export class ChallengeStore {
     this.spent = new Set(raw?.spent || []);
     this.authSpent = new Map(raw?.authSpent || []);
     this.txSpent = new Set(raw?.txSpent || []);
+    this.txFacts = new Map(raw?.txFacts || []);
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
   }
 

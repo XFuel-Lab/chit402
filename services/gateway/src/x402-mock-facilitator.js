@@ -1,9 +1,14 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
-import { installEchoChainReader, clearChainReaderForTests } from './x402-chain.js';
+import { installEchoChainReader, clearChainReaderForTests } from './x402-chain-hook.js';
 
 const MOCK_TX = '0x' + 'ab'.repeat(32);
 const MOCK_PAYER = '0x' + '55'.repeat(20);
+
+function mintTxHash() {
+  return `0x${crypto.randomBytes(32).toString('hex')}`;
+}
 
 /**
  * Mock x402 facilitator for dev/CI.
@@ -34,12 +39,15 @@ const MOCK_PAYER = '0x' + '55'.repeat(20);
 export function createMockFacilitator(config = {}) {
   const {
     valid = true,
-    txRef = MOCK_TX,
     requireApiKey = false,
     amountMustMatch = false,
     settleDelayMs = 0,
     payer: payerOverride = null,
   } = config;
+  // An explicit txRef is one transfer (idempotent replay tests). Otherwise each
+  // settle is its own on-chain hash so a later challenge is not a replay.
+  const fixedTx = Object.prototype.hasOwnProperty.call(config, 'txRef') ? config.txRef : null;
+  const nextTx = () => (fixedTx || mintTxHash());
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -73,14 +81,16 @@ export function createMockFacilitator(config = {}) {
         if (amountMustMatch && !(parsed.expected && parsed.expected.amount)) {
           return send(200, { valid: false, reason: 'amount_mismatch' });
         }
+        const preview = fixedTx || MOCK_TX;
         return send(200, valid
-          ? { valid: true, txRef }
+          ? { valid: true, txRef: preview }
           : { valid: false, reason: 'mock_rejected' });
       }
 
       if (url.endsWith('/settle')) {
         const finish = () => {
           server.settleCount = (server.settleCount || 0) + 1;
+          const txRef = nextTx();
           if (isStandardX402) {
             return send(200, valid
               ? { success: true, transaction: txRef, network, payer }

@@ -40,6 +40,7 @@ function makePaymentHeader({
   payTo = '0xtreasury',
   from = '0xpayer',
   nonce = 'abc123',
+  authNonce = '0x' + 'ab'.repeat(32),
 } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const blob = {
@@ -53,7 +54,7 @@ function makePaymentHeader({
     authorization: {
       type: 'eip3009-transferWithAuthorization',
       domain: { name: 'USDC', version: '2', chainId: 84532, verifyingContract: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
-      message: { from, to: payTo, value: amount, validAfter: 0, validBefore: now + 3600, nonce: '0x' + 'ab'.repeat(32) },
+      message: { from, to: payTo, value: amount, validAfter: 0, validBefore: now + 3600, nonce: authNonce },
       signature: '0x' + '11'.repeat(65),
     },
   };
@@ -737,7 +738,7 @@ test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): C
     const nonce = challenge.body.accepts[0].extra.nonce;
 
     // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle via facilitator
-    const header = makePaymentHeader({ nonce });
+    const header = makePaymentHeader({ nonce, authNonce: '0x' + 'ef'.repeat(32) });
     const reqPayV2 = {
       headers: { 'payment-signature': header, 'payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },

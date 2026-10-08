@@ -70,7 +70,7 @@ export class DurableChallengeStore {
     this.lockPath = `${file}.lock`;
     this.ttlMs = ttlMs;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!fs.existsSync(file)) writeState(file, { map: [], spent: [], authSpent: [], txSpent: [], pending: [] });
+    if (!fs.existsSync(file)) writeState(file, { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] });
     // Fail closed if the file cannot be parsed.
     readState(file);
   }
@@ -97,7 +97,8 @@ export class DurableChallengeStore {
   isAuthSpent(key) { return this._with((s) => s.isAuthSpent(key)); }
   markAuthSpent(key, ref) { return this._with((s) => s.markAuthSpent(key, ref)); }
   isTxSpent(key) { return this._with((s) => s.isTxSpent(key)); }
-  markTxSpent(key) { return this._with((s) => s.markTxSpent(key)); }
+  markTxSpent(key, facts) { return this._with((s) => s.markTxSpent(key, facts)); }
+  txFactsOf(key) { return this._with((s) => s.txFactsOf(key)); }
   recordPending(row) { return this._with((s) => s.recordPending(row)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }

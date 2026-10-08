@@ -995,6 +995,11 @@ export async function ingestForeignX402(body = {}, {
   const paymentRef = `${network}:${paymentResponse.tx}`;
   const rail = railFromNetwork(network);
 
+  // The stamp challenge is the unpaid probe. Verify and payer binding run
+  // after it, and nothing is written until the on-chain payer is this agent.
+  const stamp = await collectIngestStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
+
   // Verify the payment on-chain — FAIL CLOSED. Dedupe runs only after the
   // on-chain payer is bound to this agent, so a stranger cannot squat the ref.
   if (!verify || typeof verify !== 'function') {
@@ -1119,12 +1124,6 @@ export async function ingestForeignX402(body = {}, {
     }
     paymentRequired.amount = derived;
   }
-
-  // Stamp is $0.002 USDC paid by the submitter (x402 Base/Solana), or waived.
-  // It must not call registry.setBudget — the ingested amount is already spend,
-  // and debiting the cap as well reduced remaining twice.
-  const stamp = await collectIngestStamp(ensureStamp);
-  if (!stamp.ok) return stamp;
 
   // Generate synthetic task id
   const taskId = generateForeignTaskId();

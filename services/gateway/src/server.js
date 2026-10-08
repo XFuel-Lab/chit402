@@ -4146,7 +4146,13 @@ export function createApp() {
         if (decision.preSettle) {
           const code = decision.code || decision.reason;
           if (isBindingRefusal(code)) {
-            return { ok: false, status: paymentErrorStatus(code), error: code, code };
+            return {
+              ok: false,
+              status: paymentErrorStatus(code),
+              error: code,
+              code,
+              message: 'Register stamp is $0.002 USDC on Base only. Nothing was settled.',
+            };
           }
           return {
             ok: false,
@@ -4207,13 +4213,18 @@ export function createApp() {
             ...result.challenge,
             error: result.error,
             code: result.code || result.error,
+            message: result.message,
             stamp_fee: String(STAMP_FEE_UNITS),
             stamp_fee_usd: '0.002',
           });
         }
         const closed = result.code || result.error;
         if (isBindingRefusal(closed)) {
-          return res.status(result.status).json({ error: closed, code: closed });
+          return res.status(result.status).json({
+            error: closed,
+            code: closed,
+            ...(result.message ? { message: result.message } : {}),
+          });
         }
         return res.status(result.status).json({
           error: result.error,

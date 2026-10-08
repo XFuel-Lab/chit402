@@ -108,7 +108,7 @@ test('handshake amount override prices the challenge, not the current body', asy
       headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
       body: { payment: { rail: 'usdc' } },
     }, { taskId: 'x402-rolling', cfg, amount: '20240' });
-    assert.equal(settled.kind, 'settled');
+    assert.equal(settled.kind, 'settled', settled.reason || settled.code);
     assert.equal(settled.settledAmount, '20240');
   } finally {
     await close();

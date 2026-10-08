@@ -8,6 +8,21 @@ import logger from './logger.js';
 import { decodeBase58, encodeBase58, isEvmTxHash, isSolanaSignature, sameNetwork } from './payment-ref.js';
 import { isSolanaNetwork, decodePaymentHeader } from './x402-facilitator.js';
 import { sameEvmAddress, samePayee, truncateWallet } from './x402-flags.js';
+import {
+  setChainReaderForTests,
+  clearChainReaderForTests,
+  getChainReaderForTests,
+  echoChainReader,
+  installEchoChainReader,
+} from './x402-chain-hook.js';
+
+export {
+  setChainReaderForTests,
+  clearChainReaderForTests,
+  getChainReaderForTests,
+  echoChainReader,
+  installEchoChainReader,
+};
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
@@ -24,43 +39,6 @@ const MEMO_PROGRAMS = new Set([
 
 const ED25519_P = (1n << 255n) - 19n;
 const ED25519_D = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
-
-let testChainReader = null;
-
-export function setChainReaderForTests(fn) {
-  testChainReader = typeof fn === 'function' ? fn : null;
-}
-
-export function clearChainReaderForTests() {
-  testChainReader = null;
-}
-
-export function getChainReaderForTests() {
-  return testChainReader;
-}
-
-/** Test double: confirm the facilitator fields at the challenge amount. */
-export async function echoChainReader({ challenge, facilitator }) {
-  const tx = facilitator?.transaction || facilitator?.txRef || null;
-  const payer = facilitator?.payer || null;
-  if (!challenge || !tx || !payer) return { ok: false, code: 'settle_unconfirmed' };
-  return {
-    ok: true,
-    confirmed: true,
-    amount: String(challenge.amount),
-    payer,
-    payTo: challenge.payTo,
-    transaction: tx,
-    network: challenge.network,
-    logIndex: 0,
-    blockNumber: 1,
-    slot: null,
-  };
-}
-
-export function installEchoChainReader() {
-  setChainReaderForTests(echoChainReader);
-}
 
 function modPow(base, exp, mod) {
   let result = 1n;

@@ -43,6 +43,7 @@ delete process.env.THETA_EDGE_URL;
 delete process.env.THETA_EDGECLOUD_API_KEY;
 
 // Create a tracked mock facilitator that records settle calls (for regression tests)
+import crypto from 'node:crypto';
 import http from 'node:http';
 function createTrackedMockFacilitator() {
   const server = http.createServer((req, res) => {
@@ -64,7 +65,7 @@ function createTrackedMockFacilitator() {
       const isStandardX402 = !!parsed.paymentPayload;
       const payer = parsed.paymentPayload?.payload?.authorization?.from || `0x${'55'.repeat(20)}`;
       const network = parsed.network || parsed.paymentRequirements?.network || 'base';
-      const txRef = `0x${'ab'.repeat(32)}`;
+      const txRef = `0x${crypto.randomBytes(32).toString('hex')}`;
 
       if (url.endsWith('/verify')) {
         if (isStandardX402) {
@@ -236,16 +237,15 @@ test('unauth + PAYMENT-SIGNATURE → handshake runs and settles (CDP Bankr case)
 
   assert.equal(paidRes.status, 202, `v2 PAYMENT-SIGNATURE must settle, got ${JSON.stringify(paid)}`);
   assert.ok(paid.task_id, 'paid call returns a task_id');
-  const txRef = `0x${'ab'.repeat(32)}`;
   const settleHeader = paidRes.headers.get('payment-response');
   assert.equal(settleHeader, paidRes.headers.get('x-payment-response'));
   assert.match(settleHeader, /^[A-Za-z0-9+/]*={0,2}$/);
   const settle = JSON.parse(Buffer.from(settleHeader, 'base64').toString('utf8'));
   assert.equal(settle.success, true);
-  assert.equal(settle.transaction, txRef);
+  assert.match(settle.transaction, /^0x[0-9a-f]{64}$/);
   assert.equal(settle.network, 'eip155:8453');
   assert.equal(settle.payer, `0x${'55'.repeat(20)}`);
-  assert.equal(paid.payment_ref, `base:${txRef}`);
+  assert.equal(paid.payment_ref, `base:${settle.transaction}`);
 
   const { status } = await waitComplete(paid.task_id);
   assert.ok(['completed', 'fee_collected'].includes(status.status), `task must complete after paid settlement, got ${status.status}`);
