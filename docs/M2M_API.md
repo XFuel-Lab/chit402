@@ -4,7 +4,7 @@ REST API for agents and applications. Submit tasks, retrieve proofs, send A2A me
 
 Server: `services/gateway` (default port 3002).  
 Hosted: `https://api.chit402.com`.  
-As-deployed notes: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Deploy notes: [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ## Quick start
 
@@ -57,7 +57,7 @@ Submit an AI task.
 | `callback_url` | no | Per-task webhook |
 | `callback_secret` | no | HMAC secret for per-task webhook |
 
-**First hour** is unmetered `/v1` — [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md). `flagship-demo.ts` is the paid `/task-request` path (402 without a payer).
+Unmetered `/v1` is documented in [CHAT_COMPLETIONS_GATEWAY.md](./CHAT_COMPLETIONS_GATEWAY.md). `flagship-demo.ts` is the paid `/task-request` path (402 without a payer).
 
 Optional raw HTTP — on **Windows PowerShell use `curl.exe`** (plain `curl` is not real curl):
 
@@ -89,8 +89,7 @@ Two things follow from asking for tools:
 
 - **`xfuel/auto` routes differently.** A request carrying tools (or a tool result)
   is agent work, and resolves to the model that completes multi-turn loops; a
-  plain completion resolves to the cheaper, non-reasoning model. See
-  [MODEL_QUALITY_EVAL.md](./MODEL_QUALITY_EVAL.md).
+  plain completion resolves to the cheaper, non-reasoning model.
 - **Not every hub can serve them.** Theta EdgeCloud's on-demand API has no tools
   parameter, so a tool request routed there fails with `tools_unsupported_on_hub`
   rather than returning prose your loop cannot parse. Name an AkashML model, or

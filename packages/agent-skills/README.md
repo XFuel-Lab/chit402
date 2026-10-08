@@ -4,7 +4,7 @@ Chit402 is the book. This agent spent Y on this job. You hold hub, model, and am
 
 Start here: [AGENT_PLAYBOOK.md](./AGENT_PLAYBOOK.md).  
 Protocol map: [AGENTS.md](../../AGENTS.md).  
-As-deployed: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
+As-deployed: [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
 Chat completions drop-in: point `baseURL` at `${XFUEL_API_URL}/v1` — see [docs/CHAT_COMPLETIONS_GATEWAY.md](../../docs/CHAT_COMPLETIONS_GATEWAY.md).
 

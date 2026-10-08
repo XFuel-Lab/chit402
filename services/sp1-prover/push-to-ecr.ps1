@@ -1,3 +1,6 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+
 # Load AWS credentials from .env.local and push to ECR
 # Run this in PowerShell: .\push-to-ecr.ps1
 
@@ -52,7 +55,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Write-Host "`n[STEP 3] Logging into ECR..." -ForegroundColor Cyan
-$loginResult = aws ecr get-login-password --region $env:AWS_DEFAULT_REGION | docker login --username AWS --password-stdin 187510174358.dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com 2>&1
+$loginResult = aws ecr get-login-password --region $env:AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $($script:AwsAccountId).dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "✅ Login successful" -ForegroundColor Green
 } else {
@@ -64,12 +67,12 @@ Write-Host "`n[STEP 4] Pushing image to ECR..." -ForegroundColor Cyan
 Write-Host "This will take 5-10 minutes (24GB image)..." -ForegroundColor Yellow
 Write-Host "Progress will be shown below:`n" -ForegroundColor White
 
-docker push 187510174358.dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com/sp1-prover-cuda:latest
+docker push $($script:AwsAccountId).dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com/sp1-prover-cuda:latest
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n✅ SUCCESS! Image pushed to ECR!" -ForegroundColor Green
     Write-Host "`nYour image URL:" -ForegroundColor Cyan
-    Write-Host "  187510174358.dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com/sp1-prover-cuda:latest" -ForegroundColor Yellow
+    Write-Host "  $($script:AwsAccountId).dkr.ecr.$env:AWS_DEFAULT_REGION.amazonaws.com/sp1-prover-cuda:latest" -ForegroundColor Yellow
     Write-Host "`nNext step: Deploy on Theta EdgeCloud dashboard!" -ForegroundColor Green
 } else {
     Write-Host "`n❌ Push failed!" -ForegroundColor Red

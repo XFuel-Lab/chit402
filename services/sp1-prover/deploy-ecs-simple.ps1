@@ -1,3 +1,9 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+$script:AwsSecurityGroupId = Require-NamedEnv 'AWS_SECURITY_GROUP_ID'
+
 # Simple ECS Deployment Script
 # Creates task definition and service manually
 
@@ -14,7 +20,7 @@ Get-Content $envPath | ForEach-Object {
 }
 
 $region = "us-east-1"
-$image = "187510174358.dkr.ecr.us-east-1.amazonaws.com/sp1-prover-network:latest"
+$image = "$($script:AwsAccountId).dkr.ecr.us-east-1.amazonaws.com/sp1-prover-network:latest"
 
 Write-Host "`n[STEP 1] Register Task Definition" -ForegroundColor Cyan
 
@@ -25,7 +31,7 @@ $output = aws ecs register-task-definition `
     --requires-compatibilities FARGATE `
     --cpu 512 `
     --memory 1024 `
-    --execution-role-arn "arn:aws:iam::187510174358:role/ecsTaskExecutionRole" `
+    --execution-role-arn "arn:aws:iam::$($script:AwsAccountId):role/ecsTaskExecutionRole" `
     --container-definitions "[{`"name`":`"sp1-prover`",`"image`":`"$image`",`"portMappings`":[{`"containerPort`":8080,`"protocol`":`"tcp`"}],`"environment`":[{`"name`":`"RUST_LOG`",`"value`":`"info`"}],`"secrets`":[{`"name`":`"SP1_PRIVATE_KEY`",`"valueFrom`":`"$sp1Key`"}],`"logConfiguration`":{`"logDriver`":`"awslogs`",`"options`":{`"awslogs-group`":`"/ecs/sp1-prover`",`"awslogs-region`":`"$region`",`"awslogs-stream-prefix`":`"ecs`"}}}]" `
     --region $region 2>&1
 
@@ -43,12 +49,12 @@ Write-Host "`n[STEP 2] Create/Update Service" -ForegroundColor Cyan
 $vpcId = aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region $region
 $subnets = aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpcId" --query "Subnets[*].SubnetId" --output text --region $region
 $subnetList = $subnets -split '\s+'
-$sgId = "sg-0f5c4c2b7a5f35763"  # From previous run
+$sgId = "$($script:AwsSecurityGroupId)"
 
 # Try to create service
 $createOutput = aws ecs create-service `
-    --cluster sp1-prover-cluster `
-    --service-name sp1-prover-service `
+    --cluster $($script:EcsCluster) `
+    --service-name $($script:EcsService) `
     --task-definition sp1-prover-task `
     --desired-count 1 `
     --launch-type FARGATE `
@@ -58,8 +64,8 @@ $createOutput = aws ecs create-service `
 if ($createOutput -match "service already exists") {
     Write-Host "[OK] Service exists, updating..." -ForegroundColor Yellow
     aws ecs update-service `
-        --cluster sp1-prover-cluster `
-        --service sp1-prover-service `
+        --cluster $($script:EcsCluster) `
+        --service $($script:EcsService) `
         --task-definition sp1-prover-task `
         --region $region | Out-Null
     Write-Host "[OK] Service updated!" -ForegroundColor Green
@@ -73,10 +79,10 @@ if ($createOutput -match "service already exists") {
 Write-Host "`n[STEP 3] Getting Public IP (wait 60s for task to start)..." -ForegroundColor Cyan
 Start-Sleep -Seconds 60
 
-$taskArn = aws ecs list-tasks --cluster sp1-prover-cluster --service-name sp1-prover-service --region $region --query "taskArns[0]" --output text
+$taskArn = aws ecs list-tasks --cluster $($script:EcsCluster) --service-name $($script:EcsService) --region $region --query "taskArns[0]" --output text
 
 if ($taskArn -and $taskArn -ne "None") {
-    $taskJson = aws ecs describe-tasks --cluster sp1-prover-cluster --tasks $taskArn --region $region
+    $taskJson = aws ecs describe-tasks --cluster $($script:EcsCluster) --tasks $taskArn --region $region
     $taskDetails = $taskJson | ConvertFrom-Json
     
     $eni = $taskDetails.tasks[0].attachments[0].details | Where-Object { $_.name -eq "networkInterfaceId" }
@@ -94,5 +100,5 @@ if ($taskArn -and $taskArn -ne "None") {
     }
 } else {
     Write-Host "[WAIT] Task still starting. Check AWS Console:" -ForegroundColor Yellow
-    Write-Host "  https://console.aws.amazon.com/ecs/v2/clusters/sp1-prover-cluster/services`n" -ForegroundColor White
+    Write-Host "  https://console.aws.amazon.com/ecs/v2/clusters/$($script:EcsCluster)/services`n" -ForegroundColor White
 }

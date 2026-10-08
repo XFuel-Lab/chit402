@@ -1,0 +1,67 @@
+# Issuer key pin (Sepolia)
+
+The issuer public key for a pinned era is `docs/well-known/issuer-key.json` at one git commit. The verifier takes that commit SHA and the SHA-256 of the file bytes. It does not fetch a branch name, `HEAD`, or `main`. A mutable ref is `ISSUER_PIN_MUTABLE_REF`.
+
+The specimen pointer is `docs/well-known/issuer-key.ref.json`: commit `6c6d0a9483762f1120a0bacb067a0560f9d781b8`, SHA-256 `d14688282f5e8efe7efafbfc1f18192f93377b8d82f6400c388c4be4236600fb`. That commit is the pin. The pointer file is not a second copy of the key.
+
+This file is not the gateway deploy and it is not `GET /.well-known/jwks.json`. It does not replace issuer-root startup, and it does not register a log witness. When a receipt carries `issuer_root.kid`, that kid must equal the pin. When the caller supplies a `/api/witnesses` document, each issuer `kid` or P-256 `jwk` in it must equal the pin. Witness account addresses are not issuer keys.
+
+`docs/well-known/issuer-key.sig` is the registration self-signature. The same value is `self_signature` inside the JSON. The file hash covers the JSON, so stripping the signature changes the hash.
+
+The preimage is UTF-8, one field per line:
+
+```
+chit402-issuer-registration-v1
+1
+<kid>
+<created_at>
+{"crv":"...","kty":"EC","x":"...","y":"..."}
+```
+
+`1` is the version. `<kid>` is the RFC 7638 thumbprint. The signature is ES256, IEEE-P1363, base64url. It is not a receipt JWS. A signature over another context, another key, or another `created_at` is `ISSUER_SELF_SIG_INVALID`. A pin with no `self_signature` still checks the key. Registries that only check key shape can verify this signature for possession.
+
+The pin `chain_id` is `eip155:84532`. Base mainnet (`eip155:8453`) is `ISSUER_PIN_CHAIN_REFUSED`.
+
+## Anchor check
+
+`xfuel-verify receipt.json inclusion.json head.json --rpc` runs the pin check when the receipt or the head has `issuer_key_pin`, or when `--issuer-pin` is set.
+
+```bash
+xfuel-verify receipt.json inclusion.json head.json --rpc \
+  --issuer-pin docs/well-known/issuer-key.json \
+  --issuer-pin-commit <40-hex> \
+  --issuer-pin-sha256 <64-hex>
+```
+
+`--issuer-pin-sig` is the sibling signature. `--issuer-witnesses` is a saved `/api/witnesses` document. The command reads those files. It does not GET the commit.
+
+`--issuer-witnesses`, `--issuer-pin-sig`, `--issuer-prior-pin`, `--issuer-control`, `--issuer-pin-commit`, and `--issuer-pin-sha256` do not start the check. On a receipt that does not claim `issuer_key_pin`, those flags alone leave the anchor result unchanged. They are not `ISSUER_PIN_DOWNGRADE`. A witnesses file does not stand in for the pin.
+
+A claimed era with no pin file is `ISSUER_PIN_DOWNGRADE`. A file whose bytes are not the stated hash is `ISSUER_PIN_HASH_MISMATCH`. A receipt key that is not the pin is `ISSUER_PIN_MISMATCH`. A receipt that does not claim the era, and a command that does not pass `--issuer-pin`, keeps the previous anchor result.
+
+When the receipt or the head claims `issuer_key_pin`, a compact JWS that verifies under the pin key is required. The kid is the one in that protected header, and a v11 `issuer_root.kid` is the one in the verified payload. Unsigned `issuer_signature.kid`, `issuer_jwk`, and `issuer_root.kid` do not satisfy the check. Stripping the JWS and leaving those fields equal to the pin is `ISSUER_PIN_MISMATCH`. A JWS that does not verify under the pin is the same code.
+
+A source fills a missing commit or file hash only when that source already names both. A commit on the receipt and a hash on the head are not one pin (`ISSUER_PIN_DOWNGRADE`). Commit hex is lowercased before it is compared, the same way as the file hash. If the receipt and the head both name `issuer_key_pin`, the commit, path, and file hash must be the same, and the same as `--issuer-pin-commit` / `--issuer-pin-sha256` when those are set.
+
+## Rotation
+
+The specimen kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. Passing `--issuer-prior-pin` does not turn that gate off. A prior whose kid is not this specimen is `ISSUER_ROTATION_UNCONTROLLED`, including when the same attacker file is passed as both the pin and the prior. The prior file is bound with `--issuer-prior-commit` and `--issuer-prior-sha256`. A prior with no commit, or a branch name, is `ISSUER_PIN_MUTABLE_REF`.
+
+A new kid is accepted only when this specimen key signs a `chit402.freeze.v1` JWS (`typ: chit402-freeze+jwt`) with `purpose: citizen_issuer_key` in the same event that updates the pin and the self-signature. The statement is:
+
+```
+chit402-issuer-rotation-v1
+1
+<prior kid>
+<next kid>
+<sha256 of the new pin file>
+<40-hex commit of the new pin file>
+<created_at>
+eip155:84532
+```
+
+Pass the previous pin with `--issuer-prior-pin`, `--issuer-prior-commit`, and `--issuer-prior-sha256`, and the freeze JWS with `--issuer-control`. A new key without that event is `ISSUER_ROTATION_UNCONTROLLED`. A receipt signed by the new key while the pin is still the old key is `ISSUER_PIN_MISMATCH`.
+
+The freeze JWS is not inside the hashed pin file. The statement names the file hash, so the hash cannot include the JWS.
+
+The file in this repo is a Sepolia registration specimen. It is not the production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. The private key is not in the repo, in CI, or in a Safe. This document does not sign a receipt.

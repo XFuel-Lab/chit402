@@ -61,6 +61,7 @@ import {
   type ReceiptPayerClaims,
   type PayerRail,
 } from './payer.js';
+import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl } from './v11-receipt.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -1451,6 +1452,18 @@ export interface VerifyReceiptOptions {
    * the signed payload_hash. Absent bytes are not rebuilt.
    */
   canonicalPreimage?: string | null;
+  /** Holder salt. 64 lowercase hex. Malformed values are rejected, not normalized. */
+  salt?: string | null;
+  /**
+   * Holder openings. `output` is raw bytes. The others are UTF-8 JSON of the
+   * committed object.
+   */
+  open?: {
+    output?: Buffer | null;
+    accounting?: string | null;
+    routing?: string | null;
+    refusal?: string | null;
+  } | null;
 }
 
 function normalizeBoundRoot(root: unknown): string | null {
@@ -1545,10 +1558,24 @@ function suppliedHeadCovers(
   );
 }
 
+/** v1–v10 verifier. A v11 payload is `unsupported_version` and is not checked as v10. */
+export async function verifyReceiptUpToV10(
+  receipt: XFuelReceipt,
+  options: VerifyReceiptOptions = {},
+): Promise<ReceiptVerification> {
+  return verifyReceiptUpToV10Impl(receipt, options, verifyReceipt);
+}
+
 export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
+  const preDecoded = receipt?.issuer_signature?.jws
+    ? decodeJwsPayload(receipt.issuer_signature.jws)
+    : null;
+  if (preDecoded?.v === 11) {
+    return verifyV11Receipt(receipt, options);
+  }
   const errors: string[] = [];
   const trustedKids = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const trustedHosts = options.trustedJwksHosts ?? DEFAULT_TRUSTED_JWKS_HOSTS;
@@ -2014,6 +2041,7 @@ export {
   isRefusalDocument,
   verifyRefusal,
   REFUSAL_SCHEMA,
+  REFUSAL_SCHEMA_V2,
   REFUSAL_PAYLOAD_VERSION,
   REFUSAL_PROVES,
   REFUSAL_DOES_NOT_PROVE,
@@ -2023,11 +2051,19 @@ export {
 } from './refusal.js';
 
 export {
+  verifyRequestDigest,
+  requestDigestOfPreimage,
+  type RequestBindingStatus,
+} from './request-binding.js';
+
+export {
   acceptTreeHeadSchema,
   verifyEpochLink,
   verifyEpochRecord,
   verifyEpochInclusion,
   verifyUnloggedSection,
+  verifyUnloggedCommitment,
+  unloggedIdCommitment,
   unloggedReasonForTask,
   canonicalUnloggedRows,
   TREE_HEAD_SCHEMA_V1,
@@ -2046,6 +2082,7 @@ export {
   type EpochRecordOptions,
   type UnloggedRow,
   type UnloggedSection,
+  type UnloggedCommitment,
 } from './epoch.js';
 
 export {
@@ -2075,6 +2112,40 @@ export {
   type AnchorHead,
   type VerifyAnchoredRootInput,
 } from './anchor-witness.js';
+
+export {
+  assessIssuerPin,
+  issuerPinContentUrl,
+  issuerPinFileHash,
+  loadIssuerPinBytes,
+  readIssuerPinClaim,
+  registrationPreimage,
+  rotationStatement,
+  serializeIssuerPin,
+  verifyCitizenRotation,
+  verifyRegistrationSignature,
+  canonicalPublicKey,
+  ISSUER_REGISTRATION_CONTEXT,
+  ISSUER_ROTATION_CONTEXT,
+  ISSUER_PIN_VERSION,
+  ISSUER_PIN_SCHEMA,
+  ISSUER_PIN_PATH,
+  ISSUER_PIN_CHAIN_ID,
+  PUBLISHED_ISSUER_PIN_KID,
+  CITIZEN_FREEZE_SCHEMA,
+  CITIZEN_FREEZE_PURPOSE,
+  ISSUER_PIN_MISMATCH,
+  ISSUER_PIN_HASH_MISMATCH,
+  ISSUER_SELF_SIG_INVALID,
+  ISSUER_PIN_DOWNGRADE,
+  ISSUER_PIN_MUTABLE_REF,
+  ISSUER_ROTATION_UNCONTROLLED,
+  ISSUER_PIN_CHAIN_REFUSED,
+  type IssuerPinRef,
+  type IssuerPinAssessment,
+  type IssuerKeyPin,
+  type AssessIssuerPinInput,
+} from './issuer-pin.js';
 
 export {
   PINNED_BASE_ANCHOR_WALLET,

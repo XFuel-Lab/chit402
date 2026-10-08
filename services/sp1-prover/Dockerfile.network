@@ -41,7 +41,7 @@ WORKDIR /app
 
 # NOTE: build context is the REPO ROOT (not sp1-prover/), because the workspace
 # Cargo.toml references ../core-layer/sp1-hooks. Build with:
-#   docker build --platform linux/amd64 -f services/sp1-prover/Dockerfile.network -t xfuel-sp1-prover:network .
+#   docker build --platform linux/amd64 -f services/sp1-prover/Dockerfile.network -t sp1-prover:network .
 COPY services/sp1-prover/Cargo.toml /app/Cargo.toml
 COPY services/sp1-prover/rust-toolchain.toml /app/rust-toolchain.toml
 COPY services/sp1-prover/program /app/program

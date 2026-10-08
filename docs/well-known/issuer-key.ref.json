@@ -1,0 +1,7 @@
+{
+  "schema": "chit402.issuer_key_pin_ref.v1",
+  "commit": "6c6d0a9483762f1120a0bacb067a0560f9d781b8",
+  "path": "docs/well-known/issuer-key.json",
+  "sha256": "d14688282f5e8efe7efafbfc1f18192f93377b8d82f6400c388c4be4236600fb",
+  "chain_id": "eip155:84532"
+}

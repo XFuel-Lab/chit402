@@ -18,6 +18,7 @@ import {
   epochRecordClaims,
   epochRootOf,
   genesisBytes,
+  isSignedEpochV1,
 } from './receipt-log-epoch.js';
 
 export const JOURNAL_NAME = 'journal.jsonl';
@@ -245,6 +246,7 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
   let current = null;
   let foldedAnchors = emptyAnchorState();
   let epochRecord = null;
+  let epochRecordV1 = null;
   let bundleIndex = null;
   const intents = [];
 
@@ -301,6 +303,7 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
       intents.push(row);
     } else if (row.op === 'epoch_record') {
       epochRecord = row.record || null;
+      if (isSignedEpochV1(epochRecord)) epochRecordV1 = epochRecord;
     } else if (row.op === 'bundle_index') {
       bundleIndex = row.index || null;
     } else {
@@ -364,6 +367,7 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
       throw new ReceiptLogRefused('corrupt_epoch_record', `epoch record does not parse: ${err.message}`);
     }
   }
+  if (!epochRecordV1 && isSignedEpochV1(epochRecord)) epochRecordV1 = epochRecord;
   if (!bundleIndex && fs.existsSync(bundlePath)) {
     try {
       bundleIndex = readJson(bundlePath);
@@ -377,6 +381,7 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
     epochs,
     anchorState: mergeAnchor(foldedAnchors, anchorState),
     epochRecord,
+    epochRecordV1,
     bundleIndex,
     intents,
   };

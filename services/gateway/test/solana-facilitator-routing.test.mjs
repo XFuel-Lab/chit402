@@ -54,6 +54,7 @@ function makePaymentHeader({
 const requestLog = { cdp: [], solana: [] };
 
 function createTrackingMock(name, txRefPrefix) {
+  const sockets = new Set();
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -62,6 +63,7 @@ function createTrackingMock(name, txRefPrefix) {
 
       const send = (status, obj) => {
         res.statusCode = status;
+        res.setHeader('Connection', 'close');
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(obj));
       };
@@ -79,6 +81,12 @@ function createTrackingMock(name, txRefPrefix) {
       return send(404, { error: 'not_found' });
     });
   });
+  server.keepAliveTimeout = 1;
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  server.sockets = sockets;
   return server;
 }
 
@@ -89,7 +97,23 @@ function startTrackingMock(name, txRefPrefix) {
       const { port } = server.address();
       resolve({
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(r)),
+        close: () => new Promise((resolve) => {
+          for (const socket of server.sockets || []) {
+            socket.destroy();
+            socket.unref();
+          }
+          if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+          if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+          server.unref();
+          let settled = false;
+          const done = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          server.close(done);
+          setTimeout(done, 50);
+        }),
       });
     });
   });

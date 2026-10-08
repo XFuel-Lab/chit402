@@ -11,11 +11,14 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { paymentRefIndexKey } from './payment-ref.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
+import { bodyCommitmentHex, claimIdempotency, isRequestBindingError, requestDigest, requestSalt, refusalMatchesRequest, saltReceiptId, saltRecoverable } from './request-binding.js';
+import { scrubLedgerRow } from './v11-seal.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -410,6 +413,7 @@ export class UsageSettledLedger {
     /** @type {object[]} */
     this.entries = [];
     this.byRef = new Map();
+    this.refCollisionCount = 0;
     this.byTask = new Map();
     /** refusal_id → ledger row. Public GET /refusal/:id. */
     this.byRefusal = new Map();
@@ -442,6 +446,8 @@ export class UsageSettledLedger {
   }
 
   _load() {
+    this._indexingLoad = true;
+    this.refCollisionCount = 0;
     try {
       const text = fs.readFileSync(this._file(), 'utf8');
       for (const line of text.split('\n')) {
@@ -449,10 +455,18 @@ export class UsageSettledLedger {
         const row = JSON.parse(line);
         this._index(row, { persist: false, notify: false });
       }
+      if (this.refCollisionCount > 0) {
+        logger.warn(
+          { count: this.refCollisionCount },
+          'usage-settled: normalized payment_ref collisions kept',
+        );
+      }
     } catch (err) {
       if (err.code !== 'ENOENT') {
         logger.warn({ err: err.message }, 'usage-settled: load failed');
       }
+    } finally {
+      this._indexingLoad = false;
     }
   }
 
@@ -494,7 +508,20 @@ export class UsageSettledLedger {
     this._nextSeq.set(id, seq + 1);
     this._tipSeq.set(id, seq);
     this._lastRowHash.set(id, row.row_hash);
-    this._issueRefusal(row);
+    try {
+      this._issueRefusal(row, { rethrowBinding: true });
+    } catch (err) {
+      if (!isRequestBindingError(err)) throw err;
+      this._nextSeq.set(id, seq);
+      this._tipSeq.set(id, seq - 1);
+      if (row.prev_hash) this._lastRowHash.set(id, row.prev_hash);
+      else this._lastRowHash.delete(id);
+      delete row.seq;
+      delete row.prev_hash;
+      delete row.row_hash;
+      delete row.book_chain;
+      throw err;
+    }
   }
 
   _noteFork(agentId, info) {
@@ -510,12 +537,13 @@ export class UsageSettledLedger {
    * seq, so it does not mint a new nonce. Signing failure still keeps the row.
    * @param {object} row
    */
-  _issueRefusal(row) {
+  _issueRefusal(row, { rethrowBinding = false } = {}) {
     const blocked = row?.event === 'policy_blocked' || row?.evidence === 'policy_blocked';
     if (!blocked || row.refusal) return;
     try {
       row.refusal = issueRefusalReceipt(row);
     } catch (err) {
+      if (rethrowBinding && isRequestBindingError(err)) throw err;
       logger.warn({ err: err.message, task_id: row.task_id }, 'refusal receipt not signed');
     }
   }
@@ -563,9 +591,12 @@ export class UsageSettledLedger {
     this._stampSeq(row);
     this.entries.push(row);
     if (row.payment_ref) {
-      const key = String(row.payment_ref);
+      const raw = String(row.payment_ref);
+      const norm = paymentRefIndexKey(raw);
+      const key = norm || raw;
       const prior = this.byRef.get(key);
       if (prior && prior !== row) {
+        if (this._indexingLoad) this.refCollisionCount += 1;
         this._noteFork(row.agent_id, {
           kind: 'duplicate_payment_ref',
           payment_ref: key,
@@ -574,6 +605,7 @@ export class UsageSettledLedger {
       } else if (!prior) {
         this.byRef.set(key, row);
       }
+      if (raw !== key && !this.byRef.has(raw)) this.byRef.set(raw, row);
     }
     if (row.task_id) {
       const key = String(row.task_id);
@@ -595,14 +627,40 @@ export class UsageSettledLedger {
   _persistRow(row) {
     if (!this.persist) return;
     try {
-      fs.appendFileSync(this._file(), `${JSON.stringify(row)}\n`);
+      let body_commitment = null;
+      const salt = requestSalt(row?.request);
+      const body = row?.request?.rawBody != null ? row.request.rawBody : row?.request?.body;
+      if (salt && body != null) {
+        try {
+          body_commitment = bodyCommitmentHex(salt, body);
+        } catch {
+          body_commitment = null;
+        }
+      }
+      const request_digest = row?.refusal?.request_digest || row?.request_digest || null;
+      fs.appendFileSync(this._file(), `${JSON.stringify(scrubLedgerRow(row, { body_commitment, request_digest }))}\n`);
     } catch (err) {
       logger.warn({ err: err.message }, 'usage-settled: append failed');
     }
   }
 
   findByRef(paymentRef) {
-    return this.byRef.get(String(paymentRef)) || null;
+    const raw = String(paymentRef);
+    const direct = this.byRef.get(raw);
+    if (direct) return direct;
+    const norm = paymentRefIndexKey(raw);
+    return norm ? (this.byRef.get(norm) || null) : null;
+  }
+
+  /** Extra dedupe alias (tx + log index). Not a stored receipt field. */
+  aliasRef(alias, paymentRef) {
+    if (!alias) return false;
+    const row = this.findByRef(paymentRef);
+    if (!row) return false;
+    const prior = this.byRef.get(String(alias));
+    if (prior && prior !== row) return false;
+    this.byRef.set(String(alias), row);
+    return true;
   }
 
   /**
@@ -698,7 +756,7 @@ export class UsageSettledLedger {
 
     const taskId = String(receipt.task_id);
     const paymentRef = String(receipt.payment.ref);
-    if (this.byRef.has(paymentRef)) {
+    if (this.findByRef(paymentRef)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     if (this.byTask.has(taskId)) {
@@ -944,6 +1002,7 @@ export class UsageSettledLedger {
     periodStart = null,
     anchor = null,
     amountRequested = null,
+    request = null,
   }) {
     const id = Number(agentId);
     if (!Number.isInteger(id) || id < 1) {
@@ -956,6 +1015,28 @@ export class UsageSettledLedger {
     if (this.byTask.has(tid)) {
       const existing = this.byTask.get(tid);
       if (existing?.event === 'policy_blocked') {
+        if (request && existing.refusal) {
+          try {
+            if (existing.refusal.request_digest && !refusalMatchesRequest(existing.refusal, request)) {
+              return {
+                ok: false,
+                reason: 'idempotency key was already used for a different request',
+                code: 'idempotency_conflict',
+              };
+            }
+            if (request.idempotency_key && saltRecoverable(request)) {
+              claimIdempotency(request.idempotency_key, requestDigest(request), {
+                principal: request.payer || '',
+                receiptId: saltReceiptId(request),
+              });
+            }
+          } catch (err) {
+            if (err.code === 'idempotency_conflict') {
+              return { ok: false, reason: err.message, code: err.code };
+            }
+            throw err;
+          }
+        }
         return { ok: true, entry: existing, duplicate: true };
       }
       return { ok: false, reason: 'duplicate task_id', code: 'duplicate_task' };
@@ -987,8 +1068,17 @@ export class UsageSettledLedger {
       cap_atomic: capAtomic != null ? String(capAtomic) : null,
       period_start: periodStart || null,
       anchor: refusalAnchorOrUnavailable(anchor),
+      request: request && typeof request === 'object' ? request : null,
+      intent_supplied: request?.intent_supplied === true,
     };
-    this._index(entry);
+    try {
+      this._index(entry);
+    } catch (err) {
+      if (isRequestBindingError(err)) {
+        return { ok: false, reason: err.message, code: err.code };
+      }
+      throw err;
+    }
     return { ok: true, entry, duplicate: false };
   }
 
@@ -1085,7 +1175,7 @@ export class UsageSettledLedger {
     if (this.byTask.has(tid)) {
       return { ok: true, entry: this.byTask.get(tid), duplicate: true };
     }
-    if (this.byRef.has(ref)) {
+    if (this.findByRef(ref)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     const entry = {
@@ -1154,7 +1244,7 @@ export class UsageSettledLedger {
       return { ok: true, entry: this.byTask.get(tid), duplicate: true };
     }
     const ref = paymentRef != null && String(paymentRef).trim() ? String(paymentRef).trim() : null;
-    if (ref && this.byRef.has(ref)) {
+    if (ref && this.findByRef(ref)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     const entry = {

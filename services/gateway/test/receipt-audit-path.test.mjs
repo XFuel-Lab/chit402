@@ -333,7 +333,13 @@ test('receipt error bodies stay generic and the log keeps the cause', async () =
     for (const path of paths) {
       const res = await fetchText(path);
       assert.equal(res.status, 500, `${path} ${res.text}`);
-      assert.deepEqual(JSON.parse(res.text), { error: 'internal', message: 'internal error' });
+      const body = JSON.parse(res.text);
+      assert.equal(body.error, 'internal');
+      if (path.includes('/consistency')) {
+        assert.deepEqual(body, { error: 'internal', code: 'consistency_failed' });
+      } else {
+        assert.deepEqual(body, { error: 'internal', message: 'internal error' });
+      }
       assert.equal(res.text.includes(secret), false, path);
     }
     assert.equal(logged.some((line) => line.includes(secret)), true);

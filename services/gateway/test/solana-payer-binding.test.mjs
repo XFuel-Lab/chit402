@@ -11,14 +11,14 @@ import { buildReceipt, mergeReceiptView, decodeReceiptClaims, callerBindingOf, v
 const SOLANA_PAYER = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
 const SOLANA_TX = '5'.repeat(87);
 
-function makeSvmPaymentHeader({ nonce, resourceUrl = 'https://api.chit402.com/v1/chat/completions' } = {}) {
+function makeSvmPaymentHeader({ nonce, amount = '2000', resourceUrl = 'https://api.chit402.com/v1/chat/completions' } = {}) {
   const blob = {
     x402Version: 2,
     resource: { url: resourceUrl, description: 'Chit paid inference', mimeType: 'application/json' },
     accepted: {
       scheme: 'exact',
       network: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
-      amount: '2000',
+      amount,
       asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
       payTo: 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww',
       maxTimeoutSeconds: 60,
@@ -128,14 +128,23 @@ test('Solana settle path stamps caller_binding.payer_wallet in signed JWS claims
     assert.ok(solAccept, 'challenge must include Solana accepts entry');
     const nonce = solAccept.extra.nonce;
 
-    const paymentHeader = makeSvmPaymentHeader({ nonce });
+    // The signed SVM amount has to meet the server quote. A hardcoded 2000 is
+    // below a live catalog quote for xfuel/auto, so the payload uses the
+    // challenge amount and the pay call quotes that same figure.
+    const paymentHeader = makeSvmPaymentHeader({ nonce, amount: solAccept.amount });
     const settled = await runX402Handshake({
       headers: {
         'payment-signature': paymentHeader,
         'x-payment-nonce': nonce,
       },
       body: { model: 'xfuel/auto' },
-    }, { taskId: 'xfuel-solana-payer-bind', cfg, baseUrl, resource: `${baseUrl}/v1/chat/completions` });
+    }, {
+      taskId: 'xfuel-solana-payer-bind',
+      cfg,
+      baseUrl,
+      resource: `${baseUrl}/v1/chat/completions`,
+      amount: solAccept.amount,
+    });
 
     assert.equal(settled.kind, 'settled');
     assert.equal(settled.payerWallet, SOLANA_PAYER, 'handshake must surface facilitator payer');

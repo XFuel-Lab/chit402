@@ -1,3 +1,7 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:ProverDeploymentName = Require-NamedEnv 'PROVER_DEPLOYMENT_NAME'
+
 # Deploy SP1 Prover to Theta EdgeCloud - PowerShell Version
 # Uses AWS Secrets Manager for credentials
 # Run: .\deploy-to-theta.ps1
@@ -8,9 +12,9 @@ $ErrorActionPreference = "Stop"
 $CONFIG = @{
     ThetaApiKeyArn = $env:THETA_API_KEY
     AwsRegion = if ($env:AWS_REGION) { $env:AWS_REGION } else { "us-east-1" }
-    EcrRegistry = "187510174358.dkr.ecr.us-east-1.amazonaws.com"
+    EcrRegistry = "$($script:AwsAccountId).dkr.ecr.us-east-1.amazonaws.com"
     ImageName = "sp1-prover-cuda:latest"
-    DeploymentName = "xfuel-sp1-prover"
+    DeploymentName = "$($script:ProverDeploymentName)"
 }
 
 # Load .env.local if exists

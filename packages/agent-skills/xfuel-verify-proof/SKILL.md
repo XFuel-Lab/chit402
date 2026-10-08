@@ -17,7 +17,7 @@ Confirm that an XFuel task produced a valid SP1 settlement proof and settled on-
 
 - `XFUEL_API_URL`, `XFUEL_API_KEY`.
 - Optional on-chain check: Base RPC + `ZK_VERIFIER_ADDRESS` (`ZKVerifierSP1` on Base).
-  See `../_shared/reference/env-and-endpoints.md` and `docs/RUNTIME_STATE.md`.
+  See `../_shared/reference/env-and-endpoints.md` and `../../../docs/DEPLOYMENT.md`.
 
 ## Parameters
 

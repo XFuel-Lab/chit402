@@ -176,3 +176,17 @@ test('canonicalSidecarPayload is deterministic', () => {
   assert.ok(Array.isArray(parsed));
   assert.equal(parsed.length, 8);
 });
+
+test('an unverified payment ref is asserted and not collected', () => {
+  const receipt = buildSidecarReceipt({
+    hub: 'api.openrouter.ai',
+    model: 'gpt-4',
+    amount: '10000',
+    output: 'Test',
+    paymentRef: 'base:0xabc',
+    verified: false,
+  });
+  assert.equal(receipt.payment.collected, false);
+  assert.equal(receipt.payment.asserted, true);
+  assert.equal(receipt.payment.ref, 'base:0xabc');
+});

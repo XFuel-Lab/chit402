@@ -1,3 +1,6 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:ProverDeploymentName = Require-NamedEnv 'PROVER_DEPLOYMENT_NAME'
+
 # Deploy SP1 Prover to Theta EdgeCloud via API
 # This script uses your THETA_API_KEY from AWS Secrets Manager
 
@@ -64,7 +67,7 @@ Write-Host "   Project ID: $projectId" -ForegroundColor White
 Write-Host "`n[3/4] Deploying container..." -ForegroundColor Yellow
 
 $deploymentBody = @{
-    name = "xfuel-sp1-prover"
+    name = "$($script:ProverDeploymentName)"
     image = "xfuel/sp1-prover-cuda:latest"
     ports = @(
         @{

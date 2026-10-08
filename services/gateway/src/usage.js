@@ -10,7 +10,7 @@
  * `cached_prompt_tokens` is carried even though nothing consumes it yet: on
  * agent traffic ~90% of the prompt is a repeated prefix, so the cached split is
  * the difference between an accurate COGS figure and one that is ~5x too high.
- * See docs/KNOWN_ISSUES.md.
+ * See ../../../docs/bug-bounty.md.
  */
 
 /** Rough count — ~4 chars/token. Only used when a provider reports no usage. */

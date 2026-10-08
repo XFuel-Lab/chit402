@@ -4,7 +4,7 @@ Chit402 is the book. This agent spent Y on this job. You hold hub, model, and am
 
 `POST /v1/chat/completions` returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — pay USDC on Base or Solana. `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes (ES256 issuer signature); SP1 settlement proof is on demand. The issuer signature does not prove USDC moved. The product is the collected row — sidecar + ingest if you already pay a provider; without a collected USDC `payment.ref` the receipt is client-attested only. Register is fail-closed: a collected HMAC-valid receipt plus a plain EOA (personal_sign), AAWP official, or smart-account `agentWallet`.
 
-To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/RUNTIME_STATE.md). Full documentation hub: [docs/](docs/README.md).
+To learn more about the protocol design, read the [whitepaper](WHITEPAPER.md). For live endpoints and what is real vs mock today, see [runtime state](docs/DEPLOYMENT.md). Full documentation hub: [docs/](docs/README.md).
 
 **Live app:** https://chit402.com  
 **Public API:** https://api.chit402.com
@@ -45,7 +45,7 @@ npm install
 npm run m2m-server
 ```
 
-The gateway listens on `http://localhost:3002` by default. Env examples live under `services/gateway/`. Production layout is documented in [runtime state](docs/RUNTIME_STATE.md).
+The gateway listens on `http://localhost:3002` by default. Env examples live under `services/gateway/`. Production layout is documented in [deployment](docs/DEPLOYMENT.md).
 
 ### Website
 
@@ -65,7 +65,7 @@ curl.exe -sS -D - -X POST https://api.chit402.com/v1/chat/completions \
   -d '{}'
 ```
 
-Unauthenticated `/v1` returns HTTP 402 with payment requirements (USDC on Base or Solana). The receipt prices the next call. Working copy: [docs/DESIGN_PARTNER_ONBOARDING.md](docs/DESIGN_PARTNER_ONBOARDING.md).
+Unauthenticated `/v1` returns HTTP 402 with payment requirements (USDC on Base or Solana). The receipt prices the next call. Working copy: [docs/CHAT_COMPLETIONS_GATEWAY.md](docs/CHAT_COMPLETIONS_GATEWAY.md).
 
 ```
 npm install chit402-sdk
@@ -116,7 +116,6 @@ node scripts/solana-anchor-smoke
 |-----|-------------|
 | [WHITEPAPER.md](WHITEPAPER.md) | Protocol design |
 | [docs/README.md](docs/README.md) | Documentation hub |
-| [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md) | As-deployed state |
 | [docs/POSITIONING.md](docs/POSITIONING.md) | Messaging |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment |
 | [docs/TESTING.md](docs/TESTING.md) | Tests |

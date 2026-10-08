@@ -31,6 +31,6 @@ Tier 2 proves correct settlement metadata, not black-box model correctness. Tier
 
 ## Related
 
-- [RUNTIME_STATE.md](./RUNTIME_STATE.md) — what is real vs mock today
+- [DEPLOYMENT.md](./DEPLOYMENT.md) — how the gateway and prover are deployed
 - [VERIFIED_INFERENCE_TIERS.md](./VERIFIED_INFERENCE_TIERS.md)
 - [SECURITY.md](../SECURITY.md)

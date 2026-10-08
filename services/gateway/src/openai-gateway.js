@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
+import { applyRequestSaltHeader, bindRequestSalt, clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
@@ -45,6 +46,7 @@ import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import { clientPaymentCode, paymentErrorStatus } from './x402-flags.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
@@ -221,10 +223,23 @@ function isPrivateSpendSession(req, registry) {
  * Shapes the body for both x402 clients (reads `accepts`) and OpenAI clients
  * (reads `error.message`).
  */
-/**
- * Append a policy_blocked row and its signed refusal. Never throws.
- * The paid path is not involved: this runs only after a deliberate refusal.
- */
+function requestBindingHttpError(err) {
+  if (!isRequestBindingError(err)) {
+    return null;
+  }
+  const status = err.code === 'idempotency_conflict' ? 409 : 400;
+  return {
+    status,
+    body: {
+      error: {
+        message: err.message,
+        type: err.code,
+        code: err.code,
+      },
+    },
+  };
+}
+
 async function recordSpendRefusal(ledger, fields) {
   if (!ledger || typeof ledger.recordPolicyBlocked !== 'function') return null;
   let anchor = null;
@@ -236,8 +251,16 @@ async function recordSpendRefusal(ledger, fields) {
   }
   try {
     const recorded = ledger.recordPolicyBlocked({ ...fields, anchor });
+    if (!recorded?.ok && isRequestBindingError({ code: recorded?.code })) {
+      const err = new Error(recorded.reason || recorded.code);
+      err.code = recorded.code;
+      throw err;
+    }
     return recorded?.ok ? recorded.entry : null;
   } catch (err) {
+    if (isRequestBindingError(err)) {
+      throw err;
+    }
     logger.warn({ err: err.message }, 'refusal receipt not issued');
     return null;
   }
@@ -332,24 +355,35 @@ async function worstCaseForRequest(req, registry, quoteOpts) {
   return reservationAmount(quoted, floorRaw);
 }
 
-async function refuseCeiling(req, res, ledger, decision, { taskId, bookable }) {
+async function refuseCeiling(req, res, ledger, decision, { taskId, bookable, resourcePath = '/v1/chat/completions' }) {
   const extra = {};
   if (bookable?.agent_id != null) extra.agent_id = bookable.agent_id;
   let entry = null;
   if (bookable?.agent_id != null) {
-    entry = await recordSpendRefusal(ledger, {
-      agentId: bookable.agent_id,
-      taskId,
-      policyCode: 'CEILING_EXCEEDED',
-      reason: 'Prepaid spend ceiling would be exceeded by this call',
-      model: req.body?.model || null,
-      hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-      spentAtomic: decision.spent ?? null,
-      capAtomic: decision.cap ?? null,
-      amountRequested: decision.requested ?? null,
-    });
+    try {
+      entry = await recordSpendRefusal(ledger, {
+        agentId: bookable.agent_id,
+        taskId,
+        policyCode: 'CEILING_EXCEEDED',
+        reason: 'Prepaid spend ceiling would be exceeded by this call',
+        model: req.body?.model || null,
+        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+        spentAtomic: decision.spent ?? null,
+        capAtomic: decision.cap ?? null,
+        amountRequested: decision.requested ?? null,
+        request: clientRequestForRefusal(req, resourcePath),
+      });
+    } catch (err) {
+      const httpErr = requestBindingHttpError(err);
+      if (httpErr) {
+        res.status(httpErr.status).json(httpErr.body);
+        return;
+      }
+      throw err;
+    }
   }
   const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+  applyRequestSaltHeader(res, entry);
   res.status(403).json(withRefusal(ceilingErrorBody(decision, extra), entry, baseUrl));
 }
 
@@ -420,17 +454,29 @@ async function meterV1Request(req, res, {
     const spent = ledger.sumCollectedByAgent(bookable.agent_id);
     const caps = capViewOf(bookable, spent);
     if (remainingBlocksDoor(caps.remaining)) {
-      const entry = await recordSpendRefusal(ledger, {
-        agentId: bookable.agent_id,
-        taskId,
-        policyCode: 'budget_exhausted',
-        reason: 'Agent budget remaining is below the hop floor',
-        model: req.body?.model || null,
-        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-        spentAtomic: caps.spent ?? null,
-        capAtomic: caps.cap ?? null,
-      });
+      let entry = null;
+      try {
+        entry = await recordSpendRefusal(ledger, {
+          agentId: bookable.agent_id,
+          taskId,
+          policyCode: 'budget_exhausted',
+          reason: 'Agent budget remaining is below the hop floor',
+          model: req.body?.model || null,
+          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+          spentAtomic: caps.spent ?? null,
+          capAtomic: caps.cap ?? null,
+          request: clientRequestForRefusal(req, resourcePath),
+        });
+      } catch (err) {
+        const httpErr = requestBindingHttpError(err);
+        if (httpErr) {
+          res.status(httpErr.status).json(httpErr.body);
+          return { halted: true };
+        }
+        throw err;
+      }
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      applyRequestSaltHeader(res, entry);
       res.status(403).json(withRefusal({
         error: {
           message: 'Agent budget remaining is below the hop floor',
@@ -471,22 +517,34 @@ async function meterV1Request(req, res, {
     if (!policyCheck.allowed) {
       const intentMeta = extractIntentMeta(req);
       const intentFields = resolveIntentFields(intentMeta, ledger, bookable.agent_id);
-      const entry = await recordSpendRefusal(ledger, {
-        agentId: bookable.agent_id,
-        taskId,
-        policyCode: policyCheck.code || 'policy_blocked',
-        reason: policyCheck.reason || 'policy blocked',
-        model: req.body?.model || null,
-        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-        intentId: intentFields.intent_id,
-        attemptIndex: intentFields.attempt_index,
-        policyKey: policyCheck.policy_key || null,
-        spentAtomic: policyCheck.spent_atomic ?? null,
-        capAtomic: policyCheck.cap_atomic ?? null,
-        periodStart: policyCheck.period_start || null,
-        amountRequested: quotedAmount,
-      });
+      let entry = null;
+      try {
+        entry = await recordSpendRefusal(ledger, {
+          agentId: bookable.agent_id,
+          taskId,
+          policyCode: policyCheck.code || 'policy_blocked',
+          reason: policyCheck.reason || 'policy blocked',
+          model: req.body?.model || null,
+          hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+          intentId: intentFields.intent_id,
+          attemptIndex: intentFields.attempt_index,
+          policyKey: policyCheck.policy_key || null,
+          spentAtomic: policyCheck.spent_atomic ?? null,
+          capAtomic: policyCheck.cap_atomic ?? null,
+          periodStart: policyCheck.period_start || null,
+          amountRequested: quotedAmount,
+          request: clientRequestForRefusal(req, resourcePath),
+        });
+      } catch (err) {
+        const httpErr = requestBindingHttpError(err);
+        if (httpErr) {
+          res.status(httpErr.status).json(httpErr.body);
+          return { halted: true };
+        }
+        throw err;
+      }
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      applyRequestSaltHeader(res, entry);
       res.status(403).json(withRefusal({
         error: {
           message: policyCheck.reason,
@@ -528,7 +586,7 @@ async function meterV1Request(req, res, {
             requested: null,
             spent: null,
             held: null,
-          }, { taskId, bookable });
+          }, { taskId, bookable, resourcePath });
           return { halted: true };
         }
         const { header: payHeader } = extractPaymentHeader(req);
@@ -536,7 +594,7 @@ async function meterV1Request(req, res, {
           ? await spendHolds.reserve({ requestId: taskId, amount: requested, ceilings: legs })
           : await spendHolds.preview({ amount: requested, ceilings: legs });
         if (!decision.ok) {
-          await refuseCeiling(req, res, ledger, decision, { taskId, bookable });
+          await refuseCeiling(req, res, ledger, decision, { taskId, bookable, resourcePath });
           return { halted: true };
         }
         activeHold = decision.hold || null;
@@ -551,7 +609,7 @@ async function meterV1Request(req, res, {
           spent: null,
           held: null,
           cap: null,
-        }, { taskId, bookable });
+        }, { taskId, bookable, resourcePath });
       }
       return { halted: true };
     }
@@ -579,6 +637,8 @@ async function meterV1Request(req, res, {
         payment: {
           ref: decision.paymentRef,
           amount: decision.settledAmount,
+          quotedAmount: decision.quotedAmount ?? null,
+          settledAmount: decision.settledAmount,
           payer: decision.payerWallet,
           payTo: decision.payTo,
           asset: decision.asset,
@@ -596,12 +656,14 @@ async function meterV1Request(req, res, {
       return { halted: true };
     }
 
-    logger.warn({ reqId: req.id, reason: decision.reason }, 'openai-gateway: x402 payment failed');
-    res.status(402).json({
+    const code = clientPaymentCode(decision.code || decision.reason);
+    logger.warn({ reqId: req.id, code }, 'openai-gateway: x402 payment failed');
+    if (decision.retryAfter) res.set('Retry-After', String(decision.retryAfter));
+    res.status(paymentErrorStatus(code)).json({
       error: {
-        message: `Payment could not be settled: ${decision.reason}`,
+        message: 'Payment could not be settled',
         type: 'payment_required',
-        code: decision.reason || 'settle_failed',
+        code,
       },
     });
     return { halted: true };
@@ -1355,6 +1417,7 @@ function registerTaskAndProve({
   usage = null, payment = null, deferProve = false,
   status = 'completed', failureReason = null,
   session = null,
+  request = null,
 }) {
   const taskId = providedTaskId || `xfuel-${crypto.randomUUID()}`;
   let aiListener = null;
@@ -1405,6 +1468,10 @@ function registerTaskAndProve({
       requestedModel: requestedModel || null,
       apiKeyHash: apiKeyHash || null,
       payerWallet: payment?.payer || session?.payer_wallet || null,
+      quotedAmount: payment?.quotedAmount != null ? String(payment.quotedAmount) : null,
+      boundSettledAmount: payment?.settledAmount != null
+        ? String(payment.settledAmount)
+        : (payment?.amount != null ? String(payment.amount) : null),
       payTo: payment?.payTo || null,
       paymentAsset: payment?.asset || null,
       issuanceCommitment: payment?.issuance_commitment || null,
@@ -1421,6 +1488,7 @@ function registerTaskAndProve({
     status,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    request: request && typeof request === 'object' ? request : null,
     feeAmount,
     netAmount,
     feeBps,
@@ -1723,6 +1791,7 @@ function setReceiptHeaders(res, receipt, resourceUrl = null) {
   res.setHeader('x-xfuel-proof-status', receipt.proof.status);
   res.setHeader('x-xfuel-proof-url', receipt.proof.links.proof);
   if (receipt.verify_url) res.setHeader('x-xfuel-verify-url', receipt.verify_url);
+  applyRequestSaltHeader(res, receipt);
   if (receipt.agent_id != null) res.setHeader('x-xfuel-agent-id', String(receipt.agent_id));
   if (receipt.openrouter?.generation_id) {
     res.setHeader('X-OpenRouter-Generation-Id', receipt.openrouter.generation_id);
@@ -1779,7 +1848,7 @@ function withBookSpend(receipt, {
       );
       return receipt;
     }
-    return {
+    const next = {
       ...receipt,
       agent_id: recorded.agent_id,
       session: recorded.session,
@@ -1803,6 +1872,8 @@ function withBookSpend(receipt, {
         replay_of: recorded.replay_of || null,
       },
     };
+    bindRequestSalt(next, receipt);
+    return next;
   } catch (err) {
     logger.warn({ err: err.message, taskId: receipt.task_id }, 'openai-gateway: UsageSettled append threw');
     return receipt;
@@ -1860,10 +1931,16 @@ function writeSettleBookRow({
  * Register a paid /v1 task immediately after x402 settlement so a downstream
  * failure never leaves money moved with no durable task or public receipt.
  */
-function registerPaidV1Shell({
+export function registerPaidV1Shell({
   taskId, payment, model, messages, apiKeyHash, privateSpend, privacyProduct = null,
   privacyAttest = null, session = null, requestedModel = null,
+  req = null, resourcePath = '/v1/chat/completions',
 }) {
+  const request = req ? clientRequestForRefusal(req, resourcePath) : null;
+  if (request) {
+    delete request.payer;
+    if (payment?.payer) request.payer = String(payment.payer);
+  }
   return registerTaskAndProve({
     taskId,
     model: model || 'xfuel/auto',
@@ -1879,6 +1956,7 @@ function registerPaidV1Shell({
     privacyAttest,
     payment,
     session,
+    request,
     status: 'processing',
   });
 }
@@ -2446,6 +2524,8 @@ export function registerOpenAIRoutes(app, {
           privacyProduct: privacyCtx.product,
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
+          req,
+          resourcePath,
         }));
         await attachQuotedPricing(paidTask, req, privacyCtx, { byok: orAccess.mode === 'byok' });
         settleRecord = writeSettleBookRow({
@@ -2642,6 +2722,7 @@ export function registerOpenAIRoutes(app, {
         usage: { ...counts, source },
         payment: metering.payment,
         session: boundSession,
+        request: clientRequestForRefusal(req, resourcePath),
       }));
     }
 
@@ -2964,6 +3045,8 @@ export function registerOpenAIRoutes(app, {
           privacyProduct: privacyCtx.product,
           privacyAttest: privacyCtx.privateAttest ? 'tier2' : null,
           session: boundSession,
+          req,
+          resourcePath: '/v1/responses',
         }));
         settleRecord = writeSettleBookRow({
           taskId,
@@ -3138,6 +3221,7 @@ export function registerOpenAIRoutes(app, {
         usage: { ...counts, source },
         payment: metering.payment,
         session: boundSession,
+        request: clientRequestForRefusal(req, '/v1/responses'),
       }));
     }
 
@@ -3223,6 +3307,7 @@ export function registerOpenAIRoutes(app, {
       proveAllowed,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
+      request: clientRequestForRefusal(req, '/v1/images/generations'),
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
@@ -3288,6 +3373,7 @@ export function registerOpenAIRoutes(app, {
       proveAllowed,
       apiKeyHash: apiKeyHashFromReq(req),
       privateSpend,
+      request: clientRequestForRefusal(req, '/v1/audio/transcriptions'),
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;

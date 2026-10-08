@@ -10,11 +10,11 @@ https://chit402.com · https://api.chit402.com
 
 | You are… | Open |
 |----------|------|
-| A design partner / builder | [DESIGN_PARTNER_ONBOARDING.md](./DESIGN_PARTNER_ONBOARDING.md) |
-| Checking live state | [RUNTIME_STATE.md](./RUNTIME_STATE.md) |
-| The founder | [STRATEGY.md](./STRATEGY.md) · [BEACHHEAD_ICP.md](./BEACHHEAD_ICP.md) |
+| A builder | [M2M_API.md](./M2M_API.md) |
+| Deploying | [DEPLOYMENT.md](./DEPLOYMENT.md) |
+| Reading the product story | [POSITIONING.md](./POSITIONING.md) |
 
-Everything else is reference. Do not send partners this index.
+Everything else is reference.
 
 ---
 
@@ -23,10 +23,6 @@ Everything else is reference. Do not send partners this index.
 | Doc | Purpose |
 |-----|---------|
 | [POSITIONING.md](./POSITIONING.md) | Locked messaging |
-| [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md) | USDC in / provider float COGS |
-| [TIER3_TIMEBOX_DECISION.md](./TIER3_TIMEBOX_DECISION.md) | zkLLM narrow / continue gates |
-| [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md) | Spend / vendor-blind privacy |
-| [SPEND_INTELLIGENCE_THESIS.md](./SPEND_INTELLIGENCE_THESIS.md) | Agent spend analytics (thesis) |
 | [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md) | Turn on Base mainnet USDC fees |
 | [../WHITEPAPER.md](../WHITEPAPER.md) | Protocol design |
 | [../README.md](../README.md) | Clone, build, try the API |
@@ -74,6 +70,8 @@ Everything else is reference. Do not send partners this index.
 | [product/receipt-log.md](./product/receipt-log.md) | Durable receipt log, epochs, S3 bundles, restore |
 | [product/receipt-preimage.md](./product/receipt-preimage.md) | Public bytes for recomputable receipt hashes |
 | [product/issuer-key-history.md](./product/issuer-key-history.md) | Signed issuer key rotation history |
+| [product/issuer-key-pin.md](./product/issuer-key-pin.md) | Content-addressed issuer public key (Sepolia) |
+| [product/issuer-root.md](./product/issuer-root.md) | Payload v11 issuer root, cutover pause, legacy Merkle freeze |
 | [product/verifier-digest.md](./product/verifier-digest.md) | Verifier source digest in the tree genesis |
 | [product/book-act.md](./product/book-act.md) | Act type on each book row |
 | [product/correction-authority.md](./product/correction-authority.md) | Subject vs writer on corrections |
@@ -98,6 +96,5 @@ Everything else is reference. Do not send partners this index.
 | [Technical-Specifications.md](./Technical-Specifications.md) | Gas / benchmarks |
 | [providers/README.md](./providers/README.md) | Provider tiers |
 | [REFERENCES-AND-ATTRIBUTION.md](./REFERENCES-AND-ATTRIBUTION.md) | Research credits |
-| [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md) | Legal planning |
 
 Agents: [../AGENTS.md](../AGENTS.md).

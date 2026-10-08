@@ -2,21 +2,23 @@
 
 Operator runbook to turn on **real USDC fees on Base mainnet**. Sprint 1 money path.
 
-Related: [X402_ADAPTER.md](./X402_ADAPTER.md), [RUNTIME_STATE.md](./RUNTIME_STATE.md), [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md), [LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md).
+Related: [X402_ADAPTER.md](./X402_ADAPTER.md), [DEPLOYMENT.md](./DEPLOYMENT.md), [ADR 0001](./adr/0001-usdc-revenue-and-router-verifier-positioning.md).
 
 ## Why this matters
 
-Public `https://x402.org/facilitator` is **Base Sepolia only**. Mainnet settlement uses the Coinbase CDP facilitator:
+Public `https://x402.org/facilitator` is **Base Sepolia only**. Mainnet settlement uses a Base mainnet facilitator (Coinbase CDP is the usual one: `https://api.cdp.coinbase.com/platform/v2/x402`).
 
-`https://api.cdp.coinbase.com/platform/v2/x402`
+The gateway does **not** fill that URL in. With `X402_NETWORK=base` and no `X402_FACILITATOR_URL`, `POST` settlement returns **503** `gateway_not_configured` and does not call a facilitator. Chain confirmation also refuses before that call when `BASE_RPC_URL` (alias `SETTLEMENT_RPC_URL`) is unset, so a missing RPC cannot move funds and then fail closed.
 
-Gateway code already speaks the standard x402 `/verify` + `/settle` protocol and mints CDP EdDSA JWTs when `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET` are set (`services/gateway/src/cdp-jwt.js`).
+Gateway code speaks the standard x402 `/verify` + `/settle` protocol and mints CDP EdDSA JWTs when `CDP_API_KEY_ID` + `CDP_API_KEY_SECRET` are set (`services/gateway/src/cdp-jwt.js`).
 
 ## Prerequisites
 
-- [ ] Coinbase CDP project with Secret API Key (ID + Secret)
+- [ ] Coinbase CDP project with Secret API Key (ID + Secret), or another Base mainnet facilitator
+- [ ] `X402_FACILITATOR_URL` set in the host env (required; no code default on mainnet)
+- [ ] `BASE_RPC_URL` set in the host env (required for settlement confirmation; `SETTLEMENT_RPC_URL` is the alias)
 - [ ] Base mainnet receiving address — prefer a **Safe** (or Splits v2) as `X402_PAY_TO`
-- [ ] Counsel note started for collect-and-forward / money-transmission if Web2 providers are paid from XFuel balances ([LEGAL_LAUNCH_CHECKLIST.md](./LEGAL_LAUNCH_CHECKLIST.md))
+- [ ] Counsel note started for collect-and-forward / money-transmission if Web2 providers are paid from XFuel balances
 - [ ] Demo / production gateway host can reach CDP (`api.cdp.coinbase.com`)
 
 ## Env block (production)
@@ -26,8 +28,14 @@ X402_ENABLED=true
 X402_DEFAULT_RAIL=usdc
 X402_FACILITATOR_PROVIDER=x402
 X402_NETWORK=base
-# Optional explicit URL — if unset and network=base, gateway defaults to CDP:
-# X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+# Required. Placeholder only — put the live URL in the host env, not in git.
+# Unset on mainnet returns 503 gateway_not_configured. There is no CDP default in code.
+X402_FACILITATOR_URL=<BASE_MAINNET_FACILITATOR_URL>
+# Required. Settlement confirmation reads Base through this URL before a receipt.
+# SETTLEMENT_RPC_URL is accepted as an alias. Unset refuses before the facilitator is called.
+BASE_RPC_URL=<BASE_MAINNET_RPC_URL>
+# Required only when X402_SOLANA_ENABLED=true. Unset refuses Solana settle before the facilitator is called.
+# SOLANA_RPC_URL=<SOLANA_RPC_URL>
 X402_PAY_TO=0x<SAFE_OR_SPLITS_ON_BASE>
 X402_USDC_PRICE_DEFAULT=10000
 X402_FALLBACK_TFUEL=false
@@ -75,14 +83,16 @@ npx tsx examples/flagship-demo.ts
 | Check | Pass |
 |-------|------|
 | `X402_NETWORK=base` on live gateway | |
+| `X402_FACILITATOR_URL` set (mainnet has no built-in facilitator URL) | |
+| `BASE_RPC_URL` or `SETTLEMENT_RPC_URL` set (confirmation RPC) | |
 | CDP JWT auth succeeds (`/verify` not 401) | |
 | USDC fee tx visible on Basescan to `X402_PAY_TO` | |
-| RUNTIME_STATE updated: mainnet x402 = Real | |
+| Deploy notes record mainnet x402 as live | |
 | No mock facilitator in prod env | |
 
 ## After go-live
 
-1. Update [RUNTIME_STATE.md](./RUNTIME_STATE.md) — flip “USDC / x402 Base mainnet” to Real; remove facilitator blocker.
+1. Record that Base mainnet x402 is live and the facilitator is not a mock. See [DEPLOYMENT.md](./DEPLOYMENT.md).
 2. Keep testnet demo on Sepolia if desired (separate host or env).
 3. Do not enable broad Web2 collect-and-forward revenue until counsel signs off.
 

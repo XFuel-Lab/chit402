@@ -31,7 +31,7 @@ npm install
 npm run m2m-server
 ```
 
-As-deployed layout: [docs/RUNTIME_STATE.md](docs/RUNTIME_STATE.md).  
+As-deployed layout: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  
 Tests: [docs/TESTING.md](docs/TESTING.md).
 
 ## Where to work

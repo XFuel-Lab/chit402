@@ -12,6 +12,7 @@ import { UsageSettledLedger, entryQualifiesForCap, BOOK_EVIDENCE, recordSettleBo
 import { bindBookVerifier, bookHmacPayload } from '../src/agent-book.js';
 import { BoardPostStore, PUBLIC_LIVE_KEYS, BACKING_STAMP, BACKING_SPEND, confirmBoardReport, createBoardComment, createEndpointReport, findLink, findSecret, flagBoardComment, flagBoardPost, getBoardPost, hideBoardComment, hideBoardPost, listBoardComments, listBoardPosts, planHouseSeed, takedownBoardComment, takedownBoardPost, toggleBoardLike, toPublicPost } from '../src/board-posts.js';
 import { registerBoardRoutes } from '../src/board-routes.js';
+import config from '../src/config.js';
 
 const WALLET = `0x${'ab'.repeat(20)}`;
 const OTHER_WALLET = `0x${'cd'.repeat(20)}`;
@@ -568,6 +569,8 @@ test('board store reloads posts from disk', async () => {
 });
 
 test('HTTP: session gate, 402 stamp, duplicate, secret, and plain-text body', async () => {
+  const prevPayTo = config.x402.payTo;
+  config.x402.payTo = `0x${'11'.repeat(20)}`;
   const ctx = world();
   addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   addChitReceipt(ctx.ledger, ctx.other.agent_id, { taskId: 'other-task', ref: 'base:0xotherpay' });
@@ -584,7 +587,14 @@ test('HTTP: session gate, 402 stamp, duplicate, secret, and plain-text body', as
     runX402Handshake: async () => {
       if (mode === 'challenge') return { kind: 'challenge', body: { accepts: [{ scheme: 'exact' }] } };
       mode = 'challenge';
-      return { kind: 'settled', paymentRef: `base:http-${crypto.randomBytes(3).toString('hex')}`, settledAmount: '2000', payerWallet: WALLET };
+      return {
+        kind: 'settled',
+        confirmed: true,
+        paymentRef: `base:http-${crypto.randomBytes(3).toString('hex')}`,
+        settledAmount: '2000',
+        payerWallet: WALLET,
+        payTo: config.x402.payTo,
+      };
     },
     setPaymentHeaders: () => {},
     baseUrlFor: () => 'https://api.chit402.com',
@@ -697,6 +707,7 @@ test('HTTP: session gate, 402 stamp, duplicate, secret, and plain-text body', as
     if (prev == null) delete process.env.BOARD_OPS_TOKEN;
     else process.env.BOARD_OPS_TOKEN = prev;
   } finally {
+    config.x402.payTo = prevPayTo;
     await new Promise((resolve) => server.close(resolve));
   }
 });

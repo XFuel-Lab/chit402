@@ -3,6 +3,7 @@
  * loads so x402 config (snapshotted at import) points at the mock facilitator.
  * No live key and no live network.
  */
+import crypto from 'node:crypto';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -74,8 +75,9 @@ const facilitator = await startServer((req, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(obj));
     };
-    if (url.endsWith('/verify')) return send(200, { valid: true, txRef: EVM_TX, isValid: true, payer: EVM_PAYER });
-    if (url.endsWith('/settle')) return send(200, { settled: true, txRef: EVM_TX, success: true, transaction: EVM_TX, network: 'base', payer: EVM_PAYER });
+    const txRef = `0x${crypto.randomBytes(32).toString('hex')}`;
+    if (url.endsWith('/verify')) return send(200, { valid: true, txRef, isValid: true, payer: EVM_PAYER });
+    if (url.endsWith('/settle')) return send(200, { settled: true, txRef, success: true, transaction: txRef, network: 'base', payer: EVM_PAYER });
     return send(404, { error: 'not_found', body: body.slice(0, 40) });
   });
 });
@@ -137,6 +139,9 @@ process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
 process.env.X402_FACILITATOR_API_KEY = 'testkey';
 process.env.ZAN_X402_GATEWAY_URL = facilitator.url;
+
+const { installEchoChainReader } = await import('../src/x402-chain.js');
+installEchoChainReader();
 process.env.X402_COST_PLUS = 'true';
 process.env.X402_PLATFORM_FEE_BPS = '100';
 // A configured partner key turns off open mode, so an OpenRouter bearer is not
@@ -542,9 +547,10 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(receipt.provider_cogs.openrouter_generation.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(receipt.openrouter.generation_id, 'gen-http-1');
   assert.equal(receipt.route.model, 'openai/gpt-4o-mini-2024-07-18');
-  assert.equal(receipt.route.requested_model, 'openrouter/openai/gpt-4o-mini');
-  assert.equal(receipt.route.substituted, false);
-  assert.equal(receipt.route_meta.substituted, false);
+  assert.equal(receipt.route.requested_model, undefined);
+  assert.equal(receipt.route.substituted, undefined);
+  assert.equal(receipt.route_meta.requested_model, undefined);
+  assert.equal(receipt.route_meta.substituted, undefined);
   assert.equal(receipt.settlement_status, paidBody.xfuel.settlement_status);
   assert.equal(receipt.idempotent_replay, paidBody.xfuel.idempotent_replay);
   assert.equal(receipt.replay_of, paidBody.xfuel.replay_of);

@@ -22,7 +22,7 @@ delete process.env.THETA_EDGE_URL;
 delete process.env.AKASHML_API_KEY;
 
 const { url: facUrl, close: closeFac } = await startMockFacilitator({
-  txRef: '0xfirstpaidsettlementtx00000000000000000000000000000000000001',
+  txRef: `0x${'ab'.repeat(32)}`,
 });
 process.env.ZAN_X402_GATEWAY_URL = facUrl;
 

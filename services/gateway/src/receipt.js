@@ -9,6 +9,14 @@ import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import {
+  assertIssuanceOpen,
+  bindIssuerRoot,
+  isCutoverPaused,
+  issuerRootActive,
+  issuerRootClaim,
+  ISSUER_ROOT_PAYLOAD_VERSION,
+} from './issuer-root.js';
+import {
   sessionOf,
   publicSessionBlock,
   outerSessionPointer,
@@ -38,10 +46,30 @@ import {
 import {
   CANONICAL_PAYLOAD_VERSION,
   RECEIPT_CANONICAL_FIELDS,
+  V11_CANONICALIZATION,
   sealCanonicalObject,
   resealSignedClaims,
 } from './canonical-preimage.js';
-import { currentHistoryPin } from './issuer-history.js';
+import {
+  currentHistoryPin,
+  currentIssuerHistory,
+  issuerHistorySnapshotClaim,
+  publishedHistoryEntries,
+  verifyHistorySnapshotClaims,
+} from './issuer-history.js';
+import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
+import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
+import { bindRequestSalt, claimIdempotency, rebindRequestSalt, requestDigest, requestDigestCanonical, requestSalt, saltReceiptId, saltRecoverable } from './request-binding.js';
+import { jcsRfc8785 } from './offer-receipt.js';
+import { getSaltStore } from './salt-store.js';
+import {
+  buildV11SignedClaims,
+  isV11Document,
+  minuteIssuedAt,
+  outputBytesOf,
+  publicV11Receipt,
+  renderV11ReceiptHtml,
+} from './v11-seal.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -165,9 +193,16 @@ export function buildJwksUri(baseUrl = '') {
  * The HMAC array stays the v8 field list. Payload versions <= 7 keep the historical
  * net/fee split and still verify. v8 receipts that omit the head pair still
  * verify. v9 receipts keep the head pair they were signed with. A read never
- * re-signs or upgrades them. Only a receipt issued by this build is v10.
+ * re-signs or upgrades them. A receipt issued while the issuer root is off
+ * is v10. v11 is the same claims plus issuer_root, and only when that flag
+ * is on. This constant stays 10.
  */
 export const RECEIPT_PAYLOAD_VERSION = CANONICAL_PAYLOAD_VERSION;
+
+/** Payload version written into a newly signed receipt. */
+export function activeReceiptPayloadVersion() {
+  return issuerRootActive() ? ISSUER_ROOT_PAYLOAD_VERSION : RECEIPT_PAYLOAD_VERSION;
+}
 
 /** v8 canonical HMAC field order. Lockstep with packages/sdk and packages/verify. */
 const CANONICAL_V8_FIELDS = [
@@ -865,6 +900,20 @@ function paymentClaimsOf(view) {
   };
 }
 
+function clientRequestBinding(view) {
+  const request = view?.request || view?.meta?.request || null;
+  if (!request || !issuerRootActive()) return null;
+  const request_preimage = requestDigestCanonical(request);
+  const request_digest = requestDigest(request);
+  if (request.idempotency_key) {
+    claimIdempotency(request.idempotency_key, request_digest, {
+      principal: view?.caller_binding?.payer_wallet || '',
+      receiptId: saltReceiptId(request),
+    });
+  }
+  return { request_preimage, request_digest };
+}
+
 export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
@@ -897,6 +946,8 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     outputCommitment: view.output_commitment ?? null,
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });
+  const requestBinding = clientRequestBinding(view);
+  const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -949,7 +1000,15 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
     issuer_history: currentHistoryPin(),
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    ...(issuerRootActive() ? {
+      canonicalization: V11_CANONICALIZATION,
+      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_root: issuerRootClaim(getIssuerKid()),
+      policy: signedReceiptPolicy(),
+      ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
+      ...(requestBinding ? { request_digest: requestBinding.request_digest } : {}),
+    } : {}),
+    payload_version: activeReceiptPayloadVersion(),
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
 }
@@ -1011,6 +1070,7 @@ function publicRouteBlock(route) {
  */
 export function storedReceiptJson(receipt) {
   if (!receipt || typeof receipt !== 'object') return receipt;
+  if (isV11Document(receipt)) return receipt;
   const view = mergeReceiptView(receipt);
   const payment = publicPaymentBlock(view.payment);
   const route = publicRouteBlock(view.route);
@@ -1038,6 +1098,58 @@ export function storedReceiptJson(receipt) {
   delete out.session;
   delete out.agent_pubkey;
   delete out.session_act;
+  return redactPublicReceipt(out);
+}
+
+/**
+ * Copy for a public receipt view. Drops unsigned fields only.
+ * Token counts, the resolved model, the router choice (`requested`,
+ * `requested_model`, `substituted`), the stamp-fee payment ref, and the
+ * float low-water flag. Signed fields, `payload_hash`, and the JWS are copied
+ * through unchanged. The stamp-fee ref is not signed.
+ * @param {object|null|undefined} receipt
+ */
+export function redactPublicReceipt(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const out = { ...receipt };
+  if (out.usage && typeof out.usage === 'object' && !Array.isArray(out.usage)) {
+    const usage = { ...out.usage };
+    delete usage.prompt_tokens;
+    delete usage.completion_tokens;
+    delete usage.total_tokens;
+    if (Object.keys(usage).length === 0) delete out.usage;
+    else out.usage = usage;
+  }
+  if (out.route && typeof out.route === 'object' && !Array.isArray(out.route)) {
+    const route = { ...out.route };
+    delete route.resolved;
+    delete route.requested;
+    delete route.requested_model;
+    delete route.substituted;
+    out.route = route;
+  }
+  if (out.route_meta && typeof out.route_meta === 'object' && !Array.isArray(out.route_meta)) {
+    const meta = { ...out.route_meta };
+    delete meta.resolved;
+    delete meta.requested;
+    delete meta.requested_model;
+    delete meta.substituted;
+    out.route_meta = meta;
+  }
+  if (out.stamp && typeof out.stamp === 'object' && !Array.isArray(out.stamp)) {
+    if (Object.prototype.hasOwnProperty.call(out.stamp, 'payment_ref')) {
+      const stamp = { ...out.stamp };
+      delete stamp.payment_ref;
+      out.stamp = stamp;
+    }
+  }
+  if (out.provider_cogs && typeof out.provider_cogs === 'object' && !Array.isArray(out.provider_cogs)) {
+    if (Object.prototype.hasOwnProperty.call(out.provider_cogs, 'below_low_water')) {
+      const cogs = { ...out.provider_cogs };
+      delete cogs.below_low_water;
+      out.provider_cogs = cogs;
+    }
+  }
   return out;
 }
 
@@ -1166,8 +1278,72 @@ function coveringHeadStale(cachedClaims, taskId) {
  * v9 and older are returned unchanged. A read must not upgrade them.
  * @param {object} receipt
  */
+/** Unsigned later covering root. Never a replacement for issuer_signature. */
+export const COVERING_HEAD_SCHEMA = 'chit402.covering_head.v1';
+
+/**
+ * v11, and any receipt served while the issuer root is on, keeps the JWS
+ * that was stored. A flag-off v10 receipt may still be restamped the way
+ * main does, except during the cutover pause.
+ */
+export function storedJwsImmutable(receipt) {
+  if (issuerRootActive()) return true;
+  const claims = decodeReceiptClaims(receipt);
+  const version = Number(claims?.payload_version ?? receipt?.issuer_signature?.payload_version);
+  return Number.isFinite(version) && version >= ISSUER_ROOT_PAYLOAD_VERSION;
+}
+
+/**
+ * A tree-head restamp re-signs the stored claims. That path is only the
+ * flag-off v10 refresh. It does not run for v11, and it does not run while
+ * the issuer root is on or issuance is paused.
+ */
+export function treeHeadRestampAllowed(receipt) {
+  if (storedJwsImmutable(receipt)) return false;
+  if (isCutoverPaused()) return false;
+  return true;
+}
+
+function attachCoveringHeadSidecar(receipt, claims) {
+  const taskId = receipt?.task_id || receipt?.receipt_id;
+  if (!taskId) return;
+  const root = getReceiptMerkleTree().prefixRoot(taskId);
+  if (!root) return;
+  const signed = claims && Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')
+    ? (claims.tree_head_hash ?? null)
+    : null;
+  if (signed === root) return;
+  receipt.covering_head = {
+    schema: COVERING_HEAD_SCHEMA,
+    signed: false,
+    task_id: taskId,
+    tree_head_hash: root,
+    signed_tree_head_hash: signed,
+  };
+}
+
+/**
+ * Later covering root for a stored receipt.
+ * v11 leaves issuer_signature.jws byte-for-byte and records the new root on
+ * covering_head, which is unsigned. Flag-off v10 may still reseal that one
+ * claim inside the JWS. v9 and older are returned unchanged.
+ * @param {object} receipt
+ */
 export function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
+  if (storedJwsImmutable(receipt) || !treeHeadRestampAllowed(receipt)) {
+    const original = receipt.issuer_signature;
+    const jws = original.jws;
+    const kid = original.kid;
+    const preimage = original.canonical_preimage;
+    const payloadHash = original.payload_hash;
+    if (storedJwsImmutable(receipt)) attachCoveringHeadSidecar(receipt, decodeReceiptClaims(receipt));
+    original.jws = jws;
+    if (kid) original.kid = kid;
+    if (preimage !== undefined) original.canonical_preimage = preimage;
+    if (payloadHash !== undefined) original.payload_hash = payloadHash;
+    return receipt;
+  }
   const claims = decodeReceiptClaims(receipt);
   if (!claims || Number(claims.payload_version) < CANONICAL_PAYLOAD_VERSION) return receipt;
   if (!Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash')) return receipt;
@@ -1375,17 +1551,88 @@ function sessionClaimsFrozen(cachedClaims, draft) {
     === settlementIdentity(draft, { claimEra: true, claimId: comparedDraftSeat });
 }
 
+function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
+  assertIssuanceOpen();
+  // Stale mirror pin still refuses issuance. The pin is not a v11 field.
+  issuerHistoryMirrorClaim(currentIssuerHistory());
+  const receiptId = String(receipt.task_id || receipt.receipt_id);
+  const request = receipt.request || receipt.meta?.request || null;
+  let digest;
+  if (request && (request.body != null || request.rawBody != null) && request.method && request.path) {
+    if (!saltRecoverable(request)) {
+      const err = new Error('request salt is gone');
+      err.code = 'request_unbound';
+      throw err;
+    }
+    digest = requestDigest(request);
+    rebindRequestSalt(request, receiptId);
+  } else {
+    const holder = {
+      method: 'POST',
+      path: '/v1/chat/completions',
+      body: Buffer.alloc(0),
+      idempotency_key: null,
+      nonce: null,
+    };
+    digest = requestDigest(holder);
+    rebindRequestSalt(holder, receiptId);
+  }
+  const stored = getSaltStore().get(receiptId);
+  const saltHex = (request && requestSalt(request)) || (stored ? stored.toString('hex') : null);
+  if (!saltHex) {
+    const err = new Error('request salt is gone');
+    err.code = 'request_unbound';
+    throw err;
+  }
+  const kid = getIssuerKid();
+  const issuedAt = iat != null ? minuteIssuedAt(new Date(Number(iat) * 1000)) : undefined;
+  const task = receipt._v11Task || null;
+  const claims = buildV11SignedClaims(receipt, {
+    kid,
+    salt: Buffer.from(saltHex, 'hex'),
+    outputBytes: outputBytesOf(task || receipt),
+    receiptId,
+    requestDigest: digest,
+    issuedAt,
+    agentId: task?.meta?.agentId ?? task?.meta?.agent_id ?? null,
+    bookRef: task?.meta?.v11BookRef ?? null,
+  });
+  const payloadUtf8 = jcsRfc8785(claims);
+  const jwksUri = buildJwksUri(baseUrl);
+  const { jws, kid: signedKid } = signJws(claims, {
+    jku: jwksUri.startsWith('http') ? jwksUri : null,
+    payloadUtf8,
+  });
+  bindIssuerRoot(claims, signedKid, getIssuerPublicKeyJwk());
+  const payload_hash = crypto.createHash('sha256').update(payloadUtf8, 'utf8').digest('hex');
+  return {
+    alg: 'ES256',
+    payload_version: 11,
+    jws,
+    kid: signedKid,
+    issuer_jwk: getIssuerPublicKeyJwk(),
+    hash_alg: 'sha256',
+    payload_hash,
+    canonical_preimage: payloadUtf8,
+    _v11Claims: claims,
+  };
+}
+
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+  assertIssuanceOpen();
+  if (issuerRootActive()) return signV11Receipt(receipt, { baseUrl, iat });
   const draft = canonicalSignedClaims(receipt, { iat });
-  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS);
+  const canonicalize = draft.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
+  const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS, canonicalize);
   const jwksUri = buildJwksUri(baseUrl);
   const { jws, kid } = signJws(sealed.claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
   });
   const issuer_jwk = getIssuerPublicKeyJwk();
+  bindIssuerRoot(sealed.claims, kid, issuer_jwk);
   return {
     alg: 'ES256',
-    payload_version: RECEIPT_PAYLOAD_VERSION,
+    payload_version: sealed.claims.payload_version,
     jws,
     kid,
     issuer_jwk,
@@ -1482,6 +1729,10 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     return { checked: true, valid: false, reason: result.reason };
   }
 
+  if (result.payload?.v === 11) {
+    return { checked: true, valid: true, kid: sig.kid, payload: result.payload };
+  }
+
   if (validateClaims && result.payload) {
     const view = mergeReceiptView(receipt);
     if (result.payload.task_id !== view.task_id) {
@@ -1503,6 +1754,18 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     const window = verifySessionWindow(result.payload);
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: result.payload };
+    }
+    const snapshot = verifyHistorySnapshotClaims(result.payload, {
+      publishedEntries: publishedHistoryEntries(result.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
+    }
+    if (Number(result.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(result.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: result.payload };
+      }
     }
   }
 
@@ -1538,6 +1801,10 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     return { checked: jwsResult.reason === 'signature_invalid', valid: false, reason: jwsResult.reason };
   }
 
+  if (jwsResult.payload?.v === 11) {
+    return { checked: true, valid: true, kid: jwsResult.kid || sig.kid, payload: jwsResult.payload };
+  }
+
   if (validateClaims && jwsResult.payload) {
     const view = mergeReceiptView(receipt);
     if (jwsResult.payload.task_id !== view.task_id) {
@@ -1559,6 +1826,18 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     const window = verifySessionWindow(jwsResult.payload);
     if (window.checked && !window.valid) {
       return { checked: true, valid: false, reason: window.reason, payload: jwsResult.payload };
+    }
+    const snapshot = verifyHistorySnapshotClaims(jwsResult.payload, {
+      publishedEntries: publishedHistoryEntries(jwsResult.payload.issuer_history) ?? undefined,
+    });
+    if (snapshot.checked && !snapshot.ok) {
+      return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
+    }
+    if (Number(jwsResult.payload.payload_version) >= 11) {
+      const policy = verifyReceiptPolicyClaim(jwsResult.payload.policy);
+      if (!policy.ok) {
+        return { checked: true, valid: false, reason: policy.reason, payload: jwsResult.payload };
+      }
     }
   }
 
@@ -1957,6 +2236,12 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const reportedRail = paymentRail === 'reported';
   const inheritedTask = isInheritedSettlementTask(task);
   const chargedAmount = task.intent?.amount || '0';
+  const quotedAmount = task.meta?.quotedAmount != null
+    ? String(task.meta.quotedAmount)
+    : (task.intent?.quotedAmount != null ? String(task.intent.quotedAmount) : null);
+  const boundSettled = task.meta?.boundSettledAmount != null
+    ? String(task.meta.boundSettledAmount)
+    : (task.intent?.boundSettledAmount != null ? String(task.intent.boundSettledAmount) : null);
   const onChainSettlement = !inheritedTask && !reportedRail && paymentRail === 'usdc' && !!paymentRef;
   const accounting = (inheritedTask || reportedRail || paymentRail === 'unmetered')
     ? null
@@ -1989,6 +2274,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const draft = {
     schema: 'xfuel.receipt.v4',
     task_id: task.taskId,
+    request: task.request || task.meta?.request || null,
     status: task.status,
     proof_outcome: outcome,
     verify_url: buildVerifyUrl(base, task.taskId, { reqHost }),
@@ -2032,6 +2318,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
           payee: reportedRail ? null : (paymentRef ? payeeOf(task, { payTo }) : null),
           gross_amount: chargedAmount,
           settled_amount: onChainSettlement ? String(chargedAmount) : null,
+          quoted_amount: quotedAmount,
+          bound_settled: boundSettled,
           accounting,
           tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
           floor_applied: pricing?.floor_applied ?? (accounting
@@ -2085,6 +2373,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
           proof: `/prove-result?task_id=${task.taskId}`,
         },
   };
+  Object.defineProperty(draft, '_v11Task', { value: task, enumerable: false });
 
   const jwks_uri = buildJwksUri(base);
   // Session/parent fields are frozen on the first JWS for this task_id.
@@ -2092,6 +2381,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // Late session assign is a child receipt — never mutate genesis session claims.
   // A paid null claim_id stays cached until a book seat exists. Session
   // changes do not rewrite it. A legacy JWS that omits claim_id is not rewritten.
+  let coveringHead = null;
   // A stored JWS is reused. Assigning a new one (first seal, or a settlement
   // update the cache does not already cover) must hit disk immediately when
   // this task is a rehydrated snapshot: flushAll only walks the hot map.
@@ -2104,26 +2394,63 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  const immutableStored = !!(issuer_signature?.jws && storedJwsImmutable({ issuer_signature, task_id: draft.task_id }));
+  // Same idempotency key with a different request must not reuse this JWS.
+  // A restart has no salt: do not recompute the digest and do not conflict.
+  let receiptRequest = null;
+  if (draft.request && !(immutableStored && !saltRecoverable(draft.request))) {
+    receiptRequest = clientRequestBinding(draft);
+  }
+  if (receiptRequest && issuer_signature?.jws) {
+    const cachedDigest = decodeReceiptClaims({ issuer_signature })?.request_digest || null;
+    if (cachedDigest && cachedDigest !== receiptRequest.request_digest) {
+      const err = new Error('idempotency key was already used for a different request');
+      err.code = 'idempotency_conflict';
+      throw err;
+    }
+  }
   if (issuer_signature?.jws) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
-    if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
+    if (cachedClaims?.v === 11) {
+      if (cachedClaims.receipt_id && cachedClaims.receipt_id !== draft.task_id) issuer_signature = null;
+    } else if (cachedClaims?.task_id && cachedClaims.task_id !== draft.task_id) {
       issuer_signature = null;
-    } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft)) {
+    } else if (cachedClaims && !sessionClaimsFrozen(cachedClaims, draft) && !immutableStored) {
       issuer_signature = null;
     } else if (cachedClaims && coveringHeadStale(cachedClaims, draft.task_id)) {
-      // Refresh the covering head inside the stored claim set. Do not drop
+      // A stored JWS is not replaced when it is immutable (v11, or the issuer
+      // root is on). The later root is an unsigned sidecar. Flag-off v10 may
+      // still reseal tree_head_hash inside the same claim set. Do not drop
       // the JWS and call signReceiptEcdsa: that would issue a new payload.
+      const before = issuer_signature.jws;
       const refreshed = stampCoveringTreeHead({
         task_id: draft.task_id,
         issuer_signature,
       });
       issuer_signature = refreshed.issuer_signature;
+      if (storedJwsImmutable({ issuer_signature, task_id: draft.task_id }) && issuer_signature.jws !== before) {
+        issuer_signature.jws = before;
+      }
+      coveringHead = refreshed.covering_head || null;
+      if (coveringHead && task && typeof task === 'object') task.coveringHead = coveringHead;
       rememberIssuerSignature(issuer_signature);
     }
   }
   if (!issuer_signature?.jws) {
-    issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
-    rememberIssuerSignature(issuer_signature);
+    try {
+      issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+      rememberIssuerSignature(issuer_signature);
+    } catch (err) {
+      if (err?.code !== 'payment_unbound') throw err;
+      return {
+        schema: draft.schema,
+        task_id: draft.task_id,
+        status: draft.status,
+        proof_outcome: 'pending',
+        verify_url: draft.verify_url,
+        issuer_signature: null,
+      };
+    }
   }
   const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })
@@ -2148,6 +2475,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       issuer_jwk_pin: issuer_signature.kid,
       offline_key_source: 'issuer_signature.issuer_jwk',
     },
+    ...(receiptRequest ? {
+      request_digest: receiptRequest.request_digest,
+      request_preimage: receiptRequest.request_preimage,
+    } : {}),
     route_meta: {
       message_type: draft.route.message_type,
       chain_id: draft.route.chain_id,
@@ -2169,6 +2500,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     proof: draft.proof,
     links: draft.links,
     issuer_signature,
+    ...(coveringHead ? { covering_head: coveringHead } : {}),
   };
 
   if (task.meta?.refund?.status === 'refund_owed') {
@@ -2233,6 +2565,22 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     envelope.tolerance = signedClaims.tolerance ?? null;
   }
 
+  // Salt stays off the envelope. The response header is the principal's copy.
+  bindRequestSalt(envelope, draft.request);
+  const v11Claims = issuer_signature?._v11Claims || null;
+  const decodedV11 = v11Claims || (decodeReceiptClaims({ issuer_signature })?.v === 11
+    ? decodeReceiptClaims({ issuer_signature })
+    : null);
+  if (decodedV11) {
+    return publicV11Receipt({
+      claims: decodedV11,
+      jws: issuer_signature.jws,
+      kid: issuer_signature.kid,
+      verifyUrl: draft.verify_url,
+      canonicalPreimage: issuer_signature.canonical_preimage || null,
+      payloadHash: issuer_signature.payload_hash || null,
+    });
+  }
   return envelope;
 }
 
@@ -2607,6 +2955,8 @@ export function verifyIssuerForHtml(receipt) {
 
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
+  if (isV11Document(receipt)) return renderV11ReceiptHtml(receipt);
+  receipt = redactPublicReceipt(receipt);
   const view = mergeReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};
@@ -2630,7 +2980,9 @@ export function renderReceiptHtml(receipt) {
         : '<span class="muted">—</span>');
 
   const usage = receipt.usage;
-  const usageRows = usage
+  const hasTokenCounts = usage
+    && (usage.prompt_tokens != null || usage.completion_tokens != null || usage.total_tokens != null);
+  const usageRows = hasTokenCounts
     ? `${row('Tokens', `${esc(usage.total_tokens ?? '—')} <span class="muted">(${esc(usage.prompt_tokens ?? 0)}→${esc(usage.completion_tokens ?? 0)})</span>`)}`
     : '';
 
@@ -3000,8 +3352,8 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
 </html>`;
 }
 
-/** Minimal standalone HTML for an unknown/expired task id. */
-export function renderReceiptNotFound(_taskId) {
+/** Fixed HTML for an unknown receipt. The requested id is not included. */
+export function renderReceiptNotFound() {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3015,7 +3367,6 @@ export function renderReceiptNotFound(_taskId) {
   .wrap { max-width: 560px; margin: 0 auto; padding: 80px 20px; text-align: center; }
   .brand { font-weight: 700; font-size: 18px; margin-bottom: 24px; }
   .brand span { color: #6ea8fe; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0e1420; padding: 2px 6px; border-radius: 6px; color: #cbd3e1; word-break: break-all; }
   .muted { color: #8b95a7; }
 </style>
 </head>
@@ -3023,7 +3374,7 @@ export function renderReceiptNotFound(_taskId) {
   <div class="wrap">
     <div class="brand">Chit402</div>
     <h1>Receipt not found</h1>
-    <p class="muted">That receipt is not available on this node.</p>
+    <p class="muted">No receipt is known for this request.</p>
   </div>
 </body>
 </html>`;
@@ -3072,10 +3423,12 @@ function privacyVendorBlindCheck(view, pol) {
  * @param {{ policy?: object }} [opts]
  */
 export function buildAuditorExport(receipt, { policy = null } = {}) {
+  if (isV11Document(receipt)) return receipt;
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
-  const view = mergeReceiptView(receipt);
+  const source = redactPublicReceipt(receipt);
+  const view = mergeReceiptView(source);
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],

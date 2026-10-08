@@ -2,7 +2,7 @@
 
 End-to-end flows for agents using XFuel. Skills: [README.md](./README.md). SDK examples: [../sdk/examples/](../sdk/examples/).
 
-As-deployed reality: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
+As-deployed reality: [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
 ## Mental model
 
@@ -96,7 +96,7 @@ on-chain proofs will not attach until it is up. `signed_receipts` is always `"al
 
 ## Flow 7 — Budget + Private Spend (design partners)
 
-Partner-facing first hour: [docs/DESIGN_PARTNER_ONBOARDING.md](../../docs/DESIGN_PARTNER_ONBOARDING.md).  
+Partner-facing first hour: [../../docs/CHAT_COMPLETIONS_GATEWAY.md](../../docs/CHAT_COMPLETIONS_GATEWAY.md).  
 Cookbook example: [`examples/private-spend-budget.ts`](../sdk/examples/private-spend-budget.ts).
 
 1. Use the **partner API key** (not the public `xfuel-demo` key).
@@ -106,7 +106,7 @@ Cookbook example: [`examples/private-spend-budget.ts`](../sdk/examples/private-s
 5. Call `GET /stats/me` or SDK `getMyStats()` for **your** paid tasks / USDC fees.
 6. Auditor pack: `GET /receipt/:id?format=auditor` or SDK `getAuditorExport(taskId)` — policy + totals, no prompts.
 
-Thesis: [docs/PRIVATE_SPEND_THESIS.md](../../docs/PRIVATE_SPEND_THESIS.md).
+Thesis: [../../docs/adr/0010-private-desk-attest.md](../../docs/adr/0010-private-desk-attest.md).
 
 Honest trust: Private Spend is **gateway-trusted**. It is not prompt encryption. For content privacy, ask for the confidential / TEE provider tier.
 

@@ -1,6 +1,7 @@
 /**
  * Issuance-commitment bind + L1 dispute window (design-partner seat).
  */
+import crypto from 'node:crypto';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -13,6 +14,7 @@ import {
   issuanceBindForChallenge,
 } from '../src/issuance-commitment.js';
 import { runX402Handshake } from '../src/x402-server.js';
+import { installEchoChainReader, clearChainReaderForTests } from '../src/x402-chain.js';
 import { BookDisputeStore, CLAIM_TYPES, fileAndAdjudicate } from '../src/book-dispute.js';
 
 const USDC_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -105,19 +107,26 @@ before(async () => {
         res.end(JSON.stringify(obj));
       };
       if (req.method !== 'POST') return send(404, {});
+      let parsed = {};
+      try { parsed = body ? JSON.parse(body) : {}; } catch { parsed = {}; }
       const url = req.url || '';
-      if (url.endsWith('/verify')) return send(200, { isValid: true, payer: '0xpayer' });
+      const from = parsed.paymentPayload?.payload?.authorization?.from
+        || '0x1111111111111111111111111111111111111111';
+      const tx = `0x${crypto.randomBytes(32).toString('hex')}`;
+      const network = parsed.paymentRequirements?.network || 'base-sepolia';
+      if (url.endsWith('/verify')) return send(200, { isValid: true, payer: from });
       if (url.endsWith('/settle')) {
         return send(200, {
           success: true,
-          transaction: '0xsettletx',
-          network: 'base-sepolia',
-          payer: '0xpayer',
+          transaction: tx,
+          network,
+          payer: from,
         });
       }
       return send(404, {});
     });
   });
+  installEchoChainReader();
   await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve));
   mockUrl = `http://127.0.0.1:${mockServer.address().port}`;
   testCfg = {
@@ -132,6 +141,7 @@ before(async () => {
 });
 
 after(async () => {
+  clearChainReaderForTests();
   await new Promise((resolve) => mockServer.close(resolve));
 });
 

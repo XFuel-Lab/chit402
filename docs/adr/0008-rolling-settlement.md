@@ -1,7 +1,7 @@
 # ADR 0008 — Rolling Settlement: Charge the Previous Call
 
 Status: **Accepted — live on public gateway (`api.chit402.com`) `/task-request` since 2026-08-16** (was briefly named `api-testnet.xfuel.app` in the demo era; that hostname is retired). `/v1` stays free (ADR 0006). Date: 2026-08-13.
-Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md), [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md).
 
 ## Context
 
@@ -10,7 +10,7 @@ knowable then, so `pricing.js` quotes output at `max_tokens`. Agents ask for a l
 ceiling and use a fraction of it, so buyers are systematically overcharged. Measured
 on a ceiling-heavy call — 1,000 prompt tokens, `max_tokens: 20000`, 1,000 tokens
 actually produced, priced on the GLM-5.2 row — the quote is **$0.183 against $0.012 of
-real usage, a 15x overcharge**. This was a High-severity entry in `KNOWN_ISSUES.md`; the remedy is live.
+real usage, a 15x overcharge**. This was a high-severity pricing bug; the remedy is live.
 
 The known remedy is the x402 `upto` scheme, which settles actual usage and refunds the
 difference. `X402_SCHEME_MIGRATION.md` scopes that as an x402 v1→v2 migration plus

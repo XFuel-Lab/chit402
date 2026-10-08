@@ -59,10 +59,24 @@ const config = {
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
+    // Emergency rollback only. Off (unset or false) enforces server-issued challenges.
+    // Boot refuses true when X402_NETWORK is a mainnet network.
+    allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
+    // Server-only Base RPC for settlement confirmation. Never taken from a client.
+    baseRpcUrl: process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
+    // Server-only Solana RPC for settlement confirmation. Never taken from a client.
+    solanaRpcUrl: process.env.SOLANA_RPC_URL || null,
+    solanaFinalizeWaitMs: (() => {
+      const n = parseInt(process.env.X402_SOLANA_FINALIZE_WAIT_MS, 10);
+      return Number.isFinite(n) && n >= 0 ? n : 30000;
+    })(),
+    challengeStorePath: process.env.X402_CHALLENGE_STORE || null,
     // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
     facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
-    // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
-    // network-aware default (base-sepolia → x402.org; base → CDP mainnet URL).
+    // Standard x402 facilitator URL (facilitatorProvider='x402').
+    // Required on Base mainnet. Null does not fall back to a CDP URL: settle
+    // returns 503 gateway_not_configured until X402_FACILITATOR_URL is set.
+    // Base Sepolia still uses the public x402.org facilitator when this is unset.
     facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
     gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // ZAN facilitator (verify + settle)
     // ZAN key OR static bearer for non-CDP facilitators. CDP mainnet uses
@@ -70,6 +84,10 @@ const config = {
     apiKey: process.env.X402_FACILITATOR_API_KEY || process.env.ZAN_X402_API_KEY || null,
     payTo: process.env.X402_PAY_TO || null,                 // Base USDC treasury / Safe
     network: process.env.X402_NETWORK || 'base-sepolia',    // base-sepolia | base
+    // Emergency rollback for the handshake payment-binding guard.
+    // Unset or anything other than 'true' enforces the guard (production default).
+    // 'true' skips it and restores the previous handshake.
+    allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
     asset: process.env.X402_ASSET || 'USDC',
     challengeTtlMs: parseInt(process.env.X402_CHALLENGE_TTL_MS, 10) || 120000,
     issuanceDisputeWindowSec: parseInt(process.env.X402_ISSUANCE_DISPUTE_WINDOW_SEC, 10)
@@ -95,7 +113,7 @@ const config = {
     // (new programVKey). See docs/X402_ADAPTER.md §"Phase 2 proof binding".
     proofBinding: process.env.X402_PROOF_BINDING === 'true',
     // USDC pricing (smallest unit, 6dp). Tasks are metered against the rate card
-    // in pricing.js; these are the escape hatches. See docs/PRICING_STRATEGY.md.
+    // in pricing.js; these are the escape hatches. See ../../../docs/POSITIONING.md.
     //   usdcPriceDefault — legacy name for the floor a metered quote cannot go below
     //   usdcPrices       — hand-set flat price for a specific model, overrides the card
     //   rateCard         — retail base units per 1M tokens, per model family
@@ -149,7 +167,7 @@ const config = {
   },
 
   // Private Spend v0 — vendor-blind routing mode. Buyer pays XFuel; providers see
-  // gateway-pooled credentials only. See docs/PRIVATE_SPEND_THESIS.md.
+  // gateway-pooled credentials only. See ../../../docs/adr/0010-private-desk-attest.md.
   privateSpend: {
     enabled: process.env.PRIVATE_SPEND_ENABLED === 'true',
     // When true (default if Private Spend on), omit prompt/input bodies from long-lived logs.
@@ -173,7 +191,7 @@ const config = {
   },
 
   // Provider Float Manager v0 (ADR 0005) — prepaid COGS; buyer rail stays USDC.
-  // See docs/PROVIDER_FLOAT_TREASURY.md. No hot-path FX.
+  // See ../../../docs/adr/0005-provider-float-cogs.md. No hot-path FX.
   providerFloats: {
     json: process.env.PROVIDER_FLOATS_JSON || null,
     cogsBps: parseInt(process.env.PROVIDER_COGS_BPS, 10) || 7000,
@@ -208,7 +226,7 @@ const config = {
     // Batch size for AI-task proofs is 1 and cannot be configured: ai-listener
     // calls generateProof(req, urgent=true), and the prover host only handles
     // ai_task in its Single branch. So $2.00 is the operative row until Guest v2
-    // (new ELF + vKey) lands. See docs/KNOWN_ISSUES.md.
+    // (new ELF + vKey) lands. See ../../../docs/bug-bounty.md.
     tier2MinCogs: process.env.VI_TIER2_MIN_COGS || null,
     tier3MinCogs: process.env.VI_TIER3_MIN_COGS || null,
     defaultMechanism: process.env.VI_DEFAULT_MECHANISM || 'tee',

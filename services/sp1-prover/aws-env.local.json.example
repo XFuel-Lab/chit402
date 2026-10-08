@@ -1,0 +1,10 @@
+{
+  "AWS_ACCOUNT_ID": "",
+  "ECS_CLUSTER": "",
+  "ECS_SERVICE": "",
+  "ECR_REPOSITORY": "",
+  "AWS_SECRET_ARN": "",
+  "AWS_SECURITY_GROUP_ID": "",
+  "PROVER_DEPLOYMENT_NAME": "",
+  "SP1_PROVER_URL": ""
+}

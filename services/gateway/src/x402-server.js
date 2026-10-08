@@ -21,8 +21,17 @@ import { estimateCogsFromRequest } from './provider-rates.js';
 import { normalizeRequestedTier } from './tier-policy.js';
 import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.js';
 import { getAddress } from 'ethers';
-import { isSolanaNetwork, payerFromPaymentHeader, paymentHeaderNetwork } from './x402-facilitator.js';
+import {
+  isSolanaNetwork,
+  payerFromPaymentHeader,
+  paymentHeaderNetwork,
+  decodePaymentHeader,
+  fromCaip2Network,
+} from './x402-facilitator.js';
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
+import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
+import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -327,14 +336,139 @@ export async function resolvePricingModel(body = {}) {
   return { body, model: null, requested };
 }
 
+/** Base Sepolia USDC. A settlement that names this asset is not Base mainnet. */
+const BASE_SEPOLIA_USDC = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+
+function preSettleFail(reason) {
+  return { kind: 'failed', reason, preSettle: true };
+}
+
+function networksMatch(a, b) {
+  if (a == null || a === '' || b == null || b === '') return false;
+  return fromCaip2Network(a) === fromCaip2Network(b);
+}
+
+/** EVM addresses compare checksummed. Solana compares exact base58, never lowercased. */
+function payeesEqual(a, b, solana) {
+  // A number or object in a payee field fails closed. It is not skipped and not stringified into a match.
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a === '' || b === '') return false;
+  const left = a;
+  const right = b;
+  if (solana) return left === right;
+  try {
+    return getAddress(left) === getAddress(right);
+  } catch {
+    return left === right;
+  }
+}
+
+function evmAssetAddress(raw) {
+  if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(raw)) return null;
+  try { return getAddress(raw); } catch { return null; }
+}
+
+/** Every recipient the client named. One matching field must not hide another. */
+function declaredPayees(decoded) {
+  if (!decoded) return [];
+  const found = [];
+  // Any non-empty value counts, not only strings: a number or object in a
+  // payee field must fail the match, not be skipped.
+  const push = (value) => {
+    if (value != null && value !== '') found.push(value);
+  };
+  push(decoded.payTo);
+  push(decoded.accepted?.payTo);
+  push(decoded.payload?.authorization?.to);
+  const auth = decoded.authorization;
+  if (auth && typeof auth === 'object') {
+    push(auth.to);
+    if (auth.message && typeof auth.message === 'object') push(auth.message.to);
+  }
+  return found;
+}
+
+function declaredEvmAsset(decoded) {
+  if (!decoded) return null;
+  const candidates = [
+    decoded.accepted?.asset,
+    decoded.asset,
+    decoded.authorization?.domain?.verifyingContract,
+    decoded.payload?.authorization?.domain?.verifyingContract,
+  ];
+  for (const candidate of candidates) {
+    const addr = evmAssetAddress(candidate);
+    if (addr) return addr;
+  }
+  return null;
+}
+
+function expectedPayee(pinned, cfg, payTo) {
+  if (isSolanaNetwork(pinned.network)) return cfg.solana?.payTo || null;
+  return payTo || cfg.payTo || null;
+}
+
+function configuredShortNetworks(cfg) {
+  const out = [];
+  if (cfg.network) out.push(fromCaip2Network(cfg.network));
+  if (cfg.solana?.enabled && cfg.solana.network) out.push(fromCaip2Network(cfg.solana.network));
+  return out;
+}
+
+/**
+ * Challenge, payee, and network checks that do not call the facilitator.
+ * @returns {object|null} a pre-settle failure, or null when the challenge may proceed
+ */
+function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, payTo = null } = {}) {
+  if (evmOnly && isSolanaNetwork(pinned.network)) {
+    return preSettleFail('register_base_only');
+  }
+  const allowed = configuredShortNetworks(cfg);
+  if (!allowed.includes(fromCaip2Network(pinned.network))) {
+    return preSettleFail('network_not_accepted');
+  }
+  const headerNet = paymentHeaderNetwork(paymentHeader);
+  if (headerNet && !networksMatch(headerNet, pinned.network)) {
+    return preSettleFail('network_not_accepted');
+  }
+  const decoded = decodePaymentHeader(paymentHeader);
+  const asset = declaredEvmAsset(decoded);
+  const pinnedShort = fromCaip2Network(pinned.network);
+  if (asset && pinnedShort === 'base' && asset === getAddress(BASE_SEPOLIA_USDC)) {
+    return preSettleFail('network_not_accepted');
+  }
+  const pinnedAsset = evmAssetAddress(pinned.asset);
+  if (asset && pinnedAsset && asset !== pinnedAsset) {
+    return preSettleFail('network_not_accepted');
+  }
+  const solana = isSolanaNetwork(pinned.network);
+  const wantPayee = expectedPayee(pinned, cfg, payTo);
+  if (!payeesEqual(pinned.payTo, wantPayee, solana)) {
+    return preSettleFail('challenge_mismatch');
+  }
+  for (const payee of declaredPayees(decoded)) {
+    if (!payeesEqual(payee, wantPayee, solana)) {
+      return preSettleFail('challenge_mismatch');
+    }
+  }
+  return null;
+}
+
 /**
  * Run the x402 handshake for a task request. Returns a decision the caller acts on:
  *   { kind:'challenge', body }     → no X-PAYMENT present; reply 402 with this body
- *   { kind:'settled', paymentRef, settledAmount }
+ *   { kind:'settled', paymentRef, quotedAmount, settledAmount }
  *                                  → payment verified + settled (paymentRef = network:txRef).
- *                                    `settledAmount` is the amount bound to the 402 challenge
- *                                    the buyer paid against — the only figure a receipt may
- *                                    report as gross. Callers must NOT trust `body.amount`.
+ *                                    `quotedAmount` is the server quote (`challenge.amount`).
+ *                                    It is not copied from the settled transfer.
+ *                                    With the payment-binding guard on, `settledAmount` is
+ *                                    `signedPaid` (the EIP-3009 value on the authorization
+ *                                    sent to the facilitator), not `challenge.amount`.
+ *                                    Solana has no EIP-3009 value, so that path uses the
+ *                                    server quote. An unsigned copy or a client amount
+ *                                    label cannot raise it. A signed overpay of quote+1
+ *                                    settles as quote+1. Callers keep the two figures
+ *                                    separate and must NOT trust `body.amount`.
  *   { kind:'failed', reason }      → verify/settle failed; caller decides fallback vs error
  *
  * @param {Object} req  Express-like request ({ headers, body })
@@ -358,17 +492,20 @@ export async function runX402Handshake(req, {
   evmOnly = false,
   expectedPayer = null,
   payTo = null,
+  strictTaskId = false,
+  store = null,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
   if (bindParse.requested && !bindParse.ok) {
     return { kind: 'failed', reason: bindParse.reason };
   }
-  // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
-  // (falling back to the adapter's public-reference default when null).
+  // Facilitator URL is server config only. Base mainnet does not fill in a CDP
+  // default: a null facilitatorUrl stays null and settle returns
+  // gateway_not_configured. Base Sepolia may still use the public reference.
   const provider = (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan';
-  // x402: only facilitatorUrl (null → adapter's public reference). Do NOT fall back
-  // to ZAN_X402_GATEWAY_URL — that silently routes live demos through the local mock.
+  // x402: only facilitatorUrl. Do NOT fall back to ZAN_X402_GATEWAY_URL —
+  // that silently routes live demos through the local mock.
   const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || null) : cfg.gatewayUrl;
   const gwOpts = {
     provider,
@@ -393,6 +530,7 @@ export async function runX402Handshake(req, {
         ...bindParse.bind,
       };
     }
+    const activeStore = store || getActiveChallengeStore() || challengeStore;
     const { body: challengeBody } = buildPaymentChallenge(
       {
         taskId,
@@ -410,22 +548,25 @@ export async function runX402Handshake(req, {
           network: cfg.solana.network,
         },
       },
-      { store: challengeStore },
+      { store: activeStore },
     );
-    if (bindParse.requested && bindParse.ok && challengeBody?.accepts?.[0]?.extra?.nonce) {
-      const stored = issuanceBindForChallenge(bindParse.bind, {
-        challengeNonce: challengeBody.accepts[0].extra.nonce,
-        settlementContract: challengeBody.accepts[0].asset,
-      });
-      if (!stored.ok) {
-        return { kind: 'failed', reason: stored.reason };
-      }
-      const nonce = challengeBody.accepts[0].extra.nonce;
-      const rec = challengeStore.get(nonce);
-      if (rec) {
+    const qHash = quoteBodyHash(priceBody);
+    for (const entry of challengeBody?.accepts || []) {
+      const issuedNonce = entry?.extra?.nonce;
+      if (!issuedNonce) continue;
+      const rec = activeStore.get(issuedNonce);
+      if (!rec) continue;
+      rec.quoteBodyHash = qHash;
+      rec.routeQuote = charge;
+      if (bindParse.requested && bindParse.ok && entry === challengeBody.accepts[0]) {
+        const stored = issuanceBindForChallenge(bindParse.bind, {
+          challengeNonce: issuedNonce,
+          settlementContract: entry.asset,
+        });
+        if (!stored.ok) return { kind: 'failed', reason: stored.reason };
         rec.issuance_bind = { required: true, ...stored.bind };
-        challengeStore.put(nonce, rec);
       }
+      activeStore.put(issuedNonce, rec);
     }
     return { kind: 'challenge', body: challengeBody };
   }
@@ -449,28 +590,78 @@ export async function runX402Handshake(req, {
     }
   }
 
-  // Verify (binding) then settle (marks nonce spent).
+  // Payment-binding guard. Off only when cfg.allowUnboundPayments is exactly
+  // true (X402_ALLOW_UNBOUND), which is the emergency rollback.
   // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
+  if (bindingEnforced(cfg)) {
+    return settleBoundPayment({
+      req,
+      taskId,
+      cfg,
+      priceBody,
+      amount,
+      baseUrl,
+      resource,
+      l1Anchor,
+      quoteOpts,
+      expectedPayer,
+      payTo,
+      strictTaskId,
+      store,
+      paymentHeader,
+      clientVersion,
+      nonce,
+      resolveQuote: () => priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
+    });
+  }
+  noteUnboundUse('runX402Handshake', { taskId });
+  // Rollback only. The enforced path returned above.
+  const allowUnbound = true;
+  const releaseClaim = () => {};
+  const signedPaid = null;
   // Pass the client x402 version so the facilitator client sends the right protocol.
-  const bound = { ...gwOpts, nonce, x402Version: clientVersion };
+  const bound = {
+    ...gwOpts,
+    store: store || getActiveChallengeStore() || challengeStore,
+    nonce,
+    x402Version: clientVersion,
+    allowUnbound: true,
+    solanaFacilitatorUrl: cfg.solana?.facilitatorUrl || null,
+    cfg,
+  };
 
   const v = await verifyPayment(paymentHeader, bound);
-  if (!v.valid) return { kind: 'failed', reason: v.reason || 'verify_failed' };
+  if (!v.valid) {
+    releaseClaim();
+    return { kind: 'failed', reason: v.reason || 'verify_failed' };
+  }
 
   // Read the challenge BEFORE settling — settle marks the nonce spent and drops the record.
   // Verify is idempotent and does not.
-  const challenge = nonce ? challengeStore.get(nonce) : null;
+  const challenge = nonce ? bound.store.get(nonce) : null;
   let boundAmount;
-  try {
-    boundAmount = challenge?.amount
-      ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {}));
-  } catch (err) {
-    // Never fail a request whose payment already verified — fall back to floor.
-    boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '2000');
-    logger.warn({ err: err.message, taskId }, 'x402: priceUSDCResolved failed after verify; using floor');
+  if (!allowUnbound && signedPaid != null) {
+    // Guard on: the settled transfer is the facilitator-bound authorization.
+    // quotedAmount stays challenge.amount and is not this value.
+    boundAmount = signedPaid;
+  } else {
+    try {
+      boundAmount = challenge?.amount
+        ?? (amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {}));
+    } catch (err) {
+      // Legacy path only: a verified payment whose price lookup throws uses the floor.
+      boundAmount = String(cfg.usdcFloor ?? cfg.usdcPriceDefault ?? '2000');
+      logger.warn({ err: err.message, taskId }, 'x402: priceUSDCResolved failed after verify; using floor');
+    }
   }
-  const settledNetwork = challenge?.network || cfg.network;
+  // The receipt network is the server challenge's network. Never relabel a
+  // client-chosen chain as cfg.network.
+  const settledNetwork = challenge?.network || (allowUnbound ? cfg.network : null);
+  if (!settledNetwork) {
+    releaseClaim();
+    return preSettleFail('challenge_required');
+  }
 
   let bindCheck = null;
   if (challenge?.issuance_bind?.required) {
@@ -481,12 +672,16 @@ export async function runX402Handshake(req, {
       settlementContract: challenge.asset,
     });
     if (!bindCheck.ok) {
+      releaseClaim();
       return { kind: 'failed', reason: bindCheck.reason };
     }
   }
 
   const s = await settlePayment(paymentHeader, bound);
-  if (!s.settled) return { kind: 'failed', reason: s.reason || 'settle_failed' };
+  if (!s.settled) {
+    releaseClaim();
+    return { kind: 'failed', reason: s.reason || 'settle_failed' };
+  }
 
   let issuance_commitment = null;
   let dispute_window = null;
@@ -501,6 +696,7 @@ export async function runX402Handshake(req, {
       anchor = await fetchBaseL1Anchor(l1Anchor);
     } catch (err) {
       logger.warn({ err: err.message, taskId }, 'x402: dispute window anchor failed');
+      releaseClaim();
       return { kind: 'failed', reason: 'dispute_window_anchor_failed' };
     }
     try {
@@ -513,15 +709,34 @@ export async function runX402Handshake(req, {
       });
     } catch (err) {
       logger.warn({ err: err.message, taskId }, 'x402: dispute window build failed');
+      releaseClaim();
       return { kind: 'failed', reason: 'dispute_window_anchor_failed' };
     }
   }
 
-  const txRef = s.txRef || 'unknown';
+  if (!allowUnbound) {
+    if (!s.txRef || s.txRef === 'unknown') {
+      logger.error({ taskId }, 'x402: settle returned no transaction; refusing receipt');
+      releaseClaim();
+      return { kind: 'failed', reason: 'settle_unconfirmed' };
+    }
+    if (s.network && !networksMatch(s.network, settledNetwork)) {
+      logger.error(
+        { taskId, network: s.network },
+        'x402: settle network does not match the server challenge',
+      );
+      releaseClaim();
+      return { kind: 'failed', reason: 'network_not_accepted' };
+    }
+  }
+
+  const txRef = allowUnbound ? (s.txRef || 'unknown') : s.txRef;
   const payerWallet = s.payer || v.payer || payerFromPaymentHeader(paymentHeader) || null;
+  const quotedAmount = challenge?.amount != null ? String(challenge.amount) : null;
   return {
     kind: 'settled',
     paymentRef: `${settledNetwork}:${txRef}`,
+    quotedAmount,
     settledAmount: String(boundAmount),
     payerWallet,
     payTo: challenge?.payTo || null,

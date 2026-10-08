@@ -255,6 +255,11 @@ export function markSettleFailed(payerId, reason = null) {
 export function applyPaymentToOwedTask(task, { paymentRef, settledAmount, protocolFeeBps = 50 } = {}) {
   if (!task) return null;
   task.intent = task.intent || {};
+  task.meta = task.meta || {};
+  if (task.meta.quotedAmount == null && task.intent.amount != null && task.intent.amount !== '') {
+    task.meta.quotedAmount = String(task.intent.amount);
+  }
+  task.meta.boundSettledAmount = String(settledAmount);
   task.intent.paymentRef = paymentRef;
   task.intent.paymentRail = 'usdc';
   task.intent.amount = String(settledAmount);

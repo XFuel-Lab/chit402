@@ -13,10 +13,12 @@ import {
   readJwsHeader,
   type Es256Jwk,
 } from './jws.js';
+import { verifyRequestDigest, type RequestBindingStatus } from './request-binding.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
-/** Versions a verifier accepts. Version 1 has no history pin. */
-export const REFUSAL_PAYLOAD_VERSIONS = [1, 2] as const;
+export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
+/** Versions a verifier accepts. Version 1 has no history pin. Version 3 is refusal v2. */
+export const REFUSAL_PAYLOAD_VERSIONS = [1, 2, 3] as const;
 /** Current issuance version. Version 1 still verifies. */
 export const REFUSAL_PAYLOAD_VERSION = 2;
 
@@ -103,6 +105,7 @@ export interface RefusalVerification {
   payload_version?: number;
   issuer_history?: { hash?: string; version?: number; seq?: number } | null;
   payload_hash?: string | null;
+  request_binding?: RequestBindingStatus | null;
 }
 
 /** Schema inside the JWS payload. Unverified; callers still check the signature. */
@@ -122,8 +125,10 @@ export function jwsPayloadSchema(doc: unknown): string | null {
 
 export function isRefusalDocument(doc: unknown): doc is RefusalDocument {
   if (!doc || typeof doc !== 'object') return false;
-  if ((doc as { schema?: unknown }).schema === REFUSAL_SCHEMA) return true;
-  return jwsPayloadSchema(doc) === REFUSAL_SCHEMA;
+  const schema = (doc as { schema?: unknown }).schema;
+  if (schema === REFUSAL_SCHEMA || schema === REFUSAL_SCHEMA_V2) return true;
+  const signedSchema = jwsPayloadSchema(doc);
+  return signedSchema === REFUSAL_SCHEMA || signedSchema === REFUSAL_SCHEMA_V2;
 }
 
 function jwksCandidates(jwks: RefusalJwks | undefined, kid: string | undefined): Es256Jwk[] {
@@ -154,6 +159,12 @@ function bookRowSame(outer: RefusalBookRow | null | undefined, signed: RefusalBo
     && same(outer.prev_hash || null, signed.prev_hash || null)
     && same(outer.row_hash, signed.row_hash)
     && same(outer.event, signed.event);
+}
+
+function requestPreimageOf(doc: RefusalDocument & { request_preimage?: unknown; preimages?: { fields?: Record<string, { preimage_utf8?: unknown }> } }): string | null {
+  if (typeof doc.request_preimage === 'string' && doc.request_preimage) return doc.request_preimage;
+  const published = doc.preimages?.fields?.request_digest?.preimage_utf8;
+  return typeof published === 'string' && published ? published : null;
 }
 
 function failed(reason: string, extra: Partial<RefusalVerification> = {}): RefusalVerification {
@@ -222,13 +233,25 @@ export function verifyRefusal(
   }
   if (!trusted) return failed(KEY_UNTRUSTED, { kid: kid || null });
 
-  const signed = payload as unknown as RefusalDocument;
-  if (signed.schema !== REFUSAL_SCHEMA) return failed('schema_mismatch', { kid });
+  const signed = payload as unknown as RefusalDocument & { request_digest?: unknown };
+  const boundRefusal = signed.schema === REFUSAL_SCHEMA_V2 || Number(signed.payload_version) === 3;
+  if (boundRefusal) {
+    const digest = signed.request_digest;
+    const preimage = requestPreimageOf(doc);
+    if (typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest) || !preimage) {
+      return { ...failed('REQUEST_UNBOUND', { kid }), request_binding: 'REQUEST_UNBOUND' };
+    }
+    const recomputed = verifyRequestDigest(digest, preimage);
+    if (!recomputed.ok) {
+      return { ...failed('request_digest_mismatch', { kid }), request_binding: 'request_digest_mismatch' };
+    }
+  }
+  if (signed.schema !== REFUSAL_SCHEMA && signed.schema !== REFUSAL_SCHEMA_V2) return failed('schema_mismatch', { kid });
   // The outer schema is unsigned. A present value that disagrees with the
   // signed schema fails. An omitted outer schema still follows the JWS.
   if (doc.schema != null && doc.schema !== signed.schema) return failed('schema_mismatch', { kid });
   const version = Number(signed.payload_version);
-  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version as 1 | 2)) {
+  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version as 1 | 2 | 3)) {
     return failed('payload_version_mismatch', { kid });
   }
   if (doc.payload_version != null && Number(doc.payload_version) !== version) {

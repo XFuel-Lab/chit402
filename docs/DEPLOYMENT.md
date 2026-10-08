@@ -2,8 +2,6 @@
 
 Deploy the Base-settled core, Verified Inference surfaces, and the agent gateway.
 
-As-deployed topology: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
-
 ## Prerequisites
 
 - Node.js 20+, npm 10+
@@ -21,7 +19,7 @@ X402_PAY_TO=0x...                  # Base USDC fee sink
 XF_TOKEN_ADDRESS=0x...             # optional, post-TGE
 ```
 
-Gateway payment / prover vars: [X402_ADAPTER.md](./X402_ADAPTER.md), [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Gateway payment / prover vars: [X402_ADAPTER.md](./X402_ADAPTER.md).
 
 ## Go-forward scripts
 
@@ -53,7 +51,7 @@ npm install
 npm run m2m-server
 ```
 
-Production demo box uses PM2 app `xfuel-m2m` — [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Production process names live in untracked host config. See `deploy/lightsail/`.
 
 ## Verify
 

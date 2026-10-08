@@ -239,7 +239,10 @@ test('verifyPayment returns gateway_not_configured without env', async () => {
   // facilitator path is covered hermetically in x402-facilitator.test.mjs. Pinning
   // keeps this file independent of the repo .env (config.js dotenv.config() would
   // otherwise leak X402_FACILITATOR_PROVIDER=x402 into the shared test process).
-  const r = await verifyPayment('some-header', { provider: 'zan' });
+  const store = new ChallengeStore();
+  const nonce = `0x${'ab'.repeat(32)}`;
+  store.put(nonce, { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury', asset: 'USDC' });
+  const r = await verifyPayment('some-header', { provider: 'zan', store, nonce });
   assert.equal(r.valid, false);
   assert.equal(r.reason, 'gateway_not_configured');
 });
@@ -373,28 +376,46 @@ test('verify + settle against mock facilitator (happy path + replay)', async () 
   }
 });
 
-test('verify proceeds unbound when challenge is unknown (allows Solana PayAI memos)', async () => {
-  // When a nonce is provided but not in the store, verification proceeds to the
-  // facilitator rather than failing early. This enables Solana payments where
-  // PayAI uses a different memo format (commons-x402-*) than our nonce.
+test('verify refuses when the challenge is unknown', async () => {
   const { url, close } = await startMockFacilitator();
   try {
     const store = new ChallengeStore();
     const r = await verifyPayment('X-PAYMENT-blob', {
-      gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef',
+      provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef',
     });
-    // Facilitator is called and confirms the payment is valid
-    assert.equal(r.valid, true);
-    assert.equal(r.unbound, true); // Marked as unbound since challenge wasn't found
+    assert.equal(r.valid, false);
+    assert.equal(r.reason, 'challenge_required');
+    assert.equal(r.unbound, undefined);
   } finally {
     await close();
+  }
+});
+
+test('verify allows an unknown challenge only when unbound rollback is on', async () => {
+  const prev = process.env.X402_ALLOW_UNBOUND;
+  process.env.X402_ALLOW_UNBOUND = 'true';
+  const { url, close } = await startMockFacilitator();
+  try {
+    const store = new ChallengeStore();
+    const r = await verifyPayment('X-PAYMENT-blob', {
+      provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef', network: 'base-sepolia',
+    });
+    assert.equal(r.valid, true);
+    assert.equal(r.unbound, true);
+  } finally {
+    await close();
+    if (prev === undefined) delete process.env.X402_ALLOW_UNBOUND;
+    else process.env.X402_ALLOW_UNBOUND = prev;
   }
 });
 
 test('verify surfaces facilitator rejection', async () => {
   const { url, close } = await startMockFacilitator({ valid: false });
   try {
-    const r = await verifyPayment('X-PAYMENT-blob', { provider: 'zan', gatewayUrl: url, apiKey: 'k' });
+    const store = new ChallengeStore();
+    const nonce = `0x${'11'.repeat(32)}`;
+    store.put(nonce, { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury' });
+    const r = await verifyPayment('X-PAYMENT-blob', { provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce });
     assert.equal(r.valid, false);
     assert.equal(r.reason, 'mock_rejected');
   } finally {

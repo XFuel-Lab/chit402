@@ -1,21 +1,51 @@
 /**
- * SaltStore — persistence seam for v11 receipt salts and private fields.
+ * SaltStore — v11 receipt salts and private fields.
  *
- * #483 (issuer root) keeps salts in memory today. It should call `put` / `get`
- * on the store booted here. Encrypted records on disk are exactly
- * `{receipt_id, wrap_kid, alg:'A256GCM', iv, ct, tag}`.
- * AAD is the UTF-8 bytes of `'v11/salt' || receipt_id` (no separator).
+ * Issuance calls get / put / delete on the process store (`getSaltStore`).
+ * The salt is not an enumerable request field, a log line, or a plaintext
+ * field of the stored record.
  *
- * The wrap key is loaded from the environment and is never written under the
- * data directory. v11 issuance must refuse to boot on the memory store.
+ * Two durable shapes share one record envelope
+ * `{receipt_id, wrap_kid, alg:'A256GCM', iv, ct, tag}` and the same AAD,
+ * the UTF-8 bytes of `v11/salt` concatenated with `receipt_id`.
+ *
+ * The process store (kind `memory`, or kind `encrypted` with `durable`
+ * false) seals the raw 32-byte salt. `iv`, `ct`, and `tag` are base64url.
+ * The record has no `salt` field. It lives in this process only.
+ *
+ * The file store (kind `encrypted`, `durable` true) is what production
+ * boots when `RECEIPT_SALT_DIR` and a wrap key are set. The ciphertext is
+ * JSON `{salt, private_fields}`. `iv`, `ct`, and `tag` are base64. The wrap
+ * key is loaded from the environment and is never written under the data
+ * directory. `wrap_kid` selects the key so a rotated key still opens older
+ * rows. Raw prompts and plaintext outputs are rejected.
+ *
+ * `get` returns the 32-byte salt as a Buffer. `salt` and `privateFields`
+ * sit on that buffer as non-enumerable properties so the owner view can
+ * read them without a second shape.
+ *
+ * Production is every NODE_ENV other than `test` and `development`.
+ * Unset NODE_ENV is production. Production with the issuer root on refuses
+ * v11 issuance unless the active store is encrypted and durable.
+ * `ISSUER_ROOT_ENABLED` also refuses a memory store in every environment.
+ * `SALT_STORE_ALLOW_EPHEMERAL=true` is the local opt-in for the production
+ * check only.
  */
+
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+export const SALT_AAD_LABEL = 'v11/salt';
+export const SALT_AAD_PREFIX = SALT_AAD_LABEL;
 export const SALT_ALG = 'A256GCM';
-export const SALT_AAD_PREFIX = 'v11/salt';
+export const SALT_RECORD_FIELDS = Object.freeze(['receipt_id', 'wrap_kid', 'alg', 'iv', 'ct', 'tag']);
+export const MEMORY_WRAP_KID = 'memory-ephemeral';
+/** Idempotency window. A process-local salt is not kept longer than this. */
+export const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const SALT_STORE_PROD_REASON = 'production v11 issuance requires the encrypted SaltStore';
 
+const SALT_LEN = 32;
 const RECORD_KEYS = ['receipt_id', 'wrap_kid', 'alg', 'iv', 'ct', 'tag'];
 const BANNED_FIELD_KEYS = new Set([
   'prompt',
@@ -30,8 +60,12 @@ const BANNED_FIELD_KEYS = new Set([
   'output',
 ]);
 
+/**
+ * @param {string} receiptId
+ * @returns {Buffer}
+ */
 export function saltAad(receiptId) {
-  return Buffer.from(`${SALT_AAD_PREFIX}${String(receiptId)}`, 'utf8');
+  return Buffer.from(`${SALT_AAD_LABEL}${receiptId}`, 'utf8');
 }
 
 function assertNoRaw(value) {
@@ -51,7 +85,7 @@ function assertNoRaw(value) {
 
 function decodeKey(b64) {
   const key = Buffer.from(String(b64 || ''), 'base64');
-  if (key.length !== 32) throw new Error('wrap key must be 32 bytes');
+  if (key.length !== SALT_LEN) throw new Error('wrap key must be 32 bytes');
   return key;
 }
 
@@ -61,71 +95,351 @@ function safeName(receiptId) {
   return `${id}.json`;
 }
 
-export class MemorySaltStore {
-  constructor() {
-    this.kind = 'memory';
-    this.rows = new Map();
+function keyFileInsideDir(keyFile, dir) {
+  const file = path.resolve(keyFile);
+  const root = path.resolve(dir);
+  return file === root || file.startsWith(root + path.sep);
+}
+
+function isDiskOpts(value) {
+  return !!value
+    && typeof value === 'object'
+    && !Buffer.isBuffer(value)
+    && typeof value.dir === 'string'
+    && value.keys
+    && typeof value.keys.get === 'function';
+}
+
+/**
+ * Buffer salt plus the owner-view fields. The extra fields are not enumerable.
+ * @param {{ salt?: string|null, privateFields?: object|null }} opened
+ * @param {Buffer|null} [bytes]
+ */
+function asSaltValue(opened, bytes = null) {
+  const saltStr = opened?.salt == null ? null : String(opened.salt);
+  const buf = bytes
+    || (/^[0-9a-f]{64}$/i.test(saltStr || '') ? Buffer.from(saltStr, 'hex') : Buffer.alloc(0));
+  Object.defineProperty(buf, 'salt', { value: saltStr, enumerable: false });
+  Object.defineProperty(buf, 'privateFields', {
+    value: opened?.privateFields ?? null,
+    enumerable: false,
+  });
+  return buf;
+}
+
+/**
+ * @param {string} receiptId
+ * @param {Buffer} salt
+ * @param {Buffer} wrapKey
+ * @param {string} wrapKid
+ */
+export function sealSaltRecord(receiptId, salt, wrapKey, wrapKid) {
+  if (!receiptId || typeof receiptId !== 'string') throw new Error('salt record needs a receipt_id');
+  if (!Buffer.isBuffer(salt) || salt.length !== SALT_LEN) throw new Error('salt must be 32 bytes');
+  if (!Buffer.isBuffer(wrapKey) || wrapKey.length !== SALT_LEN) throw new Error('wrap key must be 32 bytes');
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', wrapKey, iv);
+  cipher.setAAD(saltAad(receiptId));
+  const ct = Buffer.concat([cipher.update(salt), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    receipt_id: receiptId,
+    wrap_kid: wrapKid,
+    alg: SALT_ALG,
+    iv: iv.toString('base64url'),
+    ct: ct.toString('base64url'),
+    tag: tag.toString('base64url'),
+  };
+}
+
+/**
+ * @param {object} record
+ * @param {Buffer} wrapKey
+ * @returns {Buffer}
+ */
+export function openSaltRecord(record, wrapKey) {
+  if (!record || typeof record !== 'object') throw new Error('salt record missing');
+  if (Object.prototype.hasOwnProperty.call(record, 'salt')) {
+    throw new Error('salt record must not carry a plaintext salt');
+  }
+  if (record.alg !== SALT_ALG) throw new Error('salt record alg must be A256GCM');
+  for (const field of SALT_RECORD_FIELDS) {
+    if (typeof record[field] !== 'string' || record[field] === '') {
+      throw new Error(`salt record missing ${field}`);
+    }
+  }
+  const decipher = crypto.createDecipheriv('aes-256-gcm', wrapKey, Buffer.from(record.iv, 'base64url'));
+  decipher.setAAD(saltAad(record.receipt_id));
+  decipher.setAuthTag(Buffer.from(record.tag, 'base64url'));
+  const salt = Buffer.concat([
+    decipher.update(Buffer.from(record.ct, 'base64url')),
+    decipher.final(),
+  ]);
+  if (salt.length !== SALT_LEN) throw new Error('opened salt is not 32 bytes');
+  return salt;
+}
+
+/**
+ * Open a file record. Plaintext is JSON `{salt, private_fields}`.
+ * @param {object} record
+ * @param {Buffer} key
+ * @param {string} [receiptId]
+ */
+export function decryptRecord(record, key, receiptId = record?.receipt_id) {
+  const iv = Buffer.from(record.iv, 'base64');
+  const ct = Buffer.from(record.ct, 'base64');
+  const tag = Buffer.from(record.tag, 'base64');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAAD(saltAad(receiptId));
+  decipher.setAuthTag(tag);
+  const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
+  const decoded = JSON.parse(plain.toString('utf8'));
+  return {
+    salt: decoded.salt ?? null,
+    privateFields: decoded.private_fields ?? null,
+  };
+}
+
+class MapSaltStore {
+  /**
+   * @param {'memory'|'encrypted'} kind
+   * @param {Buffer} wrapKey
+   * @param {string} wrapKid
+   * @param {boolean} [durable]
+   */
+  constructor(kind, wrapKey, wrapKid, durable = false) {
+    this.kind = kind;
+    this.durable = durable === true;
+    this._key = wrapKey;
+    this._kid = wrapKid;
+    /** @type {Map<string, { record: object, expiresAt: number }>} */
+    this._rows = new Map();
+    /** HMAC(wrapKey, salt) → receipt id. The salt is not the map key. */
+    this._bySalt = new Map();
+    /** @type {Map<string, object|null>} */
+    this._private = new Map();
   }
 
-  put({ receiptId, salt, privateFields = null }) {
-    if (!receiptId) throw new Error('receipt_id required');
-    assertNoRaw(privateFields);
-    if (salt != null && typeof salt !== 'string') throw new Error('salt must be a string');
-    this.rows.set(String(receiptId), {
-      salt: salt == null ? null : String(salt),
-      privateFields: privateFields ?? null,
-    });
+  saltIndex(bytes) {
+    return crypto.createHmac('sha256', this._key).update(bytes).digest('hex');
   }
 
+  /**
+   * @param {string|{ receiptId: string, salt?: string|null, privateFields?: object|null }} receiptId
+   * @param {Buffer|string} [salt]
+   * @param {number} [ttlMs]
+   */
+  put(receiptId, salt, ttlMs = IDEMPOTENCY_WINDOW_MS) {
+    if (receiptId && typeof receiptId === 'object' && !Buffer.isBuffer(receiptId)) {
+      const id = receiptId.receiptId;
+      const privateFields = receiptId.privateFields ?? null;
+      assertNoRaw(privateFields);
+      if (!id) throw new Error('receipt_id required');
+      const saltStr = receiptId.salt == null ? null : String(receiptId.salt);
+      if (saltStr != null && !/^[0-9a-f]{64}$/i.test(saltStr)) {
+        throw new Error('salt must be 32 bytes');
+      }
+      this._private.set(String(id), privateFields);
+      if (saltStr == null) return null;
+      return this.put(String(id), Buffer.from(saltStr, 'hex'), ttlMs);
+    }
+    const id = String(receiptId);
+    const bytes = Buffer.isBuffer(salt) ? salt : Buffer.from(String(salt), 'hex');
+    const prev = this._rows.get(id);
+    if (prev) {
+      try {
+        const old = this.saltIndex(openSaltRecord(prev.record, this._key));
+        if (this._bySalt.get(old) === id) this._bySalt.delete(old);
+      } catch {
+        // replaced row was not readable; drop it
+      }
+    }
+    const record = sealSaltRecord(id, bytes, this._key, this._kid);
+    const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : IDEMPOTENCY_WINDOW_MS;
+    this._rows.set(id, { record, expiresAt: Date.now() + ttl });
+    this._bySalt.set(this.saltIndex(bytes), id);
+    return record;
+  }
+
+  /**
+   * @param {string} receiptId
+   * @returns {Buffer|null}
+   */
   get(receiptId) {
-    return this.rows.get(String(receiptId)) || null;
+    const id = String(receiptId);
+    const row = this._rows.get(id);
+    if (!row) return null;
+    if (row.expiresAt <= Date.now()) {
+      this.delete(receiptId);
+      return null;
+    }
+    try {
+      const bytes = openSaltRecord(row.record, this._key);
+      return asSaltValue({
+        salt: bytes.toString('hex'),
+        privateFields: this._private.get(id) ?? null,
+      }, bytes);
+    } catch {
+      this.delete(receiptId);
+      return null;
+    }
+  }
+
+  /**
+   * Ciphertext record for tests. No plaintext salt.
+   * @param {string} receiptId
+   * @returns {object|null}
+   */
+  peek(receiptId) {
+    const row = this._rows.get(String(receiptId));
+    if (!row) return null;
+    if (row.expiresAt <= Date.now()) {
+      this.delete(receiptId);
+      return null;
+    }
+    return { ...row.record };
+  }
+
+  /**
+   * @param {string} saltHex
+   * @returns {string|null}
+   */
+  receiptIdForSalt(saltHex) {
+    const hex = String(saltHex || '').trim();
+    if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+    const id = this._bySalt.get(this.saltIndex(Buffer.from(hex, 'hex')));
+    if (!id) return null;
+    if (!this.get(id)) return null;
+    return id;
+  }
+
+  /**
+   * @param {string} receiptId
+   */
+  delete(receiptId) {
+    const id = String(receiptId);
+    const row = this._rows.get(id);
+    if (row) {
+      try {
+        const index = this.saltIndex(openSaltRecord(row.record, this._key));
+        if (this._bySalt.get(index) === id) this._bySalt.delete(index);
+      } catch {
+        // already unreadable
+      }
+    }
+    this._rows.delete(id);
+    this._private.delete(id);
+  }
+
+  clear() {
+    this._rows.clear();
+    this._bySalt.clear();
+    this._private.clear();
   }
 }
 
-export class EncryptedSaltStore {
+/**
+ * Ephemeral process key. Kind `memory`.
+ */
+export class MemorySaltStore extends MapSaltStore {
+  constructor() {
+    super('memory', crypto.randomBytes(SALT_LEN), MEMORY_WRAP_KID, false);
+  }
+}
+
+/**
+ * Caller-supplied wrap key, or a directory of encrypted records.
+ *
+ * `new EncryptedSaltStore(wrapKey, wrapKid, { durable })` keeps ciphertext
+ * in this process. `durable: true` is only for a store that survives restart.
+ *
+ * `new EncryptedSaltStore({ dir, keys, currentKid })` writes one file per
+ * receipt. That store is durable.
+ */
+export class EncryptedSaltStore extends MapSaltStore {
   /**
-   * @param {{ dir: string, keys: Map<string, Buffer>, currentKid: string }} opts
+   * @param {Buffer|string|{ dir: string, keys: Map<string, Buffer>, currentKid: string }} wrapKey
+   * @param {string} [wrapKid]
+   * @param {{ durable?: boolean }} [opts]
    */
-  constructor({ dir, keys, currentKid }) {
-    if (!dir) throw new Error('salt data dir required');
-    if (!keys || keys.size === 0) throw new Error('wrap key required');
-    if (!currentKid || !keys.has(currentKid)) throw new Error('current wrap kid required');
-    this.kind = 'encrypted';
-    this.dir = path.resolve(dir);
-    this.keys = keys;
-    this.currentKid = currentKid;
-    fs.mkdirSync(this.dir, { recursive: true });
+  constructor(wrapKey, wrapKid, opts = {}) {
+    if (isDiskOpts(wrapKey)) {
+      const currentKid = wrapKey.currentKid;
+      const key = wrapKey.keys.get(currentKid);
+      if (!currentKid || !Buffer.isBuffer(key) || key.length !== SALT_LEN) {
+        throw new Error('current wrap kid required');
+      }
+      super('encrypted', key, currentKid, true);
+      this._disk = true;
+      this.dir = path.resolve(wrapKey.dir);
+      this.keys = wrapKey.keys;
+      this.currentKid = currentKid;
+      for (const [kid, value] of this.keys) {
+        if (!Buffer.isBuffer(value) || value.length !== SALT_LEN) {
+          throw new Error(`wrap key ${kid} must be 32 bytes`);
+        }
+      }
+      fs.mkdirSync(this.dir, { recursive: true });
+      return;
+    }
+    const key = Buffer.isBuffer(wrapKey) ? wrapKey : Buffer.from(String(wrapKey || ''), 'hex');
+    if (key.length !== SALT_LEN) throw new Error('encrypted SaltStore wrap key must be 32 bytes');
+    const kid = wrapKid || `enc-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+    const durable = !!(opts && typeof opts === 'object' && opts.durable === true);
+    super('encrypted', key, kid, durable);
+    this._disk = false;
   }
 
   recordPath(receiptId) {
     return path.join(this.dir, safeName(receiptId));
   }
 
-  put({ receiptId, salt, privateFields = null }) {
-    if (!receiptId) throw new Error('receipt_id required');
-    assertNoRaw(privateFields);
-    const key = this.keys.get(this.currentKid);
-    if (!key) throw new Error('current wrap kid is not loaded');
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const aad = saltAad(receiptId);
-    cipher.setAAD(aad);
-    const plaintext = Buffer.from(JSON.stringify({
-      salt: salt == null ? null : String(salt),
-      private_fields: privateFields ?? null,
-    }), 'utf8');
-    const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    const record = {
-      receipt_id: String(receiptId),
-      wrap_kid: this.currentKid,
-      alg: SALT_ALG,
-      iv: iv.toString('base64'),
-      ct: ct.toString('base64'),
-      tag: tag.toString('base64'),
-    };
-    const file = this.recordPath(receiptId);
-    fs.writeFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  put(receiptId, salt, ttlMs = IDEMPOTENCY_WINDOW_MS) {
+    if (this._disk) return this._putDisk(receiptId, salt);
+    return super.put(receiptId, salt, ttlMs);
+  }
+
+  get(receiptId) {
+    if (this._disk) return this._getDisk(receiptId);
+    return super.get(receiptId);
+  }
+
+  peek(receiptId) {
+    if (!this._disk) return super.peek(receiptId);
+    const record = this.readRecord(receiptId);
+    return record ? { ...record } : null;
+  }
+
+  delete(receiptId) {
+    if (!this._disk) return super.delete(receiptId);
+    const id = String(receiptId);
+    const file = this.recordPath(id);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    this._private.delete(id);
+    for (const [index, rowId] of this._bySalt) {
+      if (rowId === id) this._bySalt.delete(index);
+    }
+  }
+
+  receiptIdForSalt(saltHex) {
+    if (!this._disk) return super.receiptIdForSalt(saltHex);
+    const hex = String(saltHex || '').trim();
+    if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+    const cached = this._bySalt.get(this.saltIndex(Buffer.from(hex, 'hex')));
+    if (cached && this.get(cached)) return cached;
+    let names = [];
+    try {
+      names = fs.readdirSync(this.dir);
+    } catch {
+      return null;
+    }
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const id = name.slice(0, -5);
+      const got = this.get(id);
+      if (got && got.toString('hex') === hex) return id;
+    }
+    return null;
   }
 
   readRecord(receiptId) {
@@ -142,39 +456,140 @@ export class EncryptedSaltStore {
     return parsed;
   }
 
-  get(receiptId) {
+  rotate(kid) {
+    if (!this._disk) throw new Error('process salt store has one wrap key');
+    if (!this.keys.has(kid)) throw new Error('unknown wrap kid');
+    this.currentKid = kid;
+    this._kid = kid;
+    this._key = this.keys.get(kid);
+  }
+
+  _putDisk(receiptIdOrOpts, salt) {
+    let receiptId;
+    let saltValue;
+    let privateFields;
+    if (receiptIdOrOpts && typeof receiptIdOrOpts === 'object' && !Buffer.isBuffer(receiptIdOrOpts)) {
+      receiptId = receiptIdOrOpts.receiptId;
+      saltValue = receiptIdOrOpts.salt;
+      privateFields = receiptIdOrOpts.privateFields ?? null;
+      assertNoRaw(privateFields);
+    } else {
+      receiptId = receiptIdOrOpts;
+      saltValue = salt;
+      privateFields = this._private.get(String(receiptId)) ?? null;
+    }
+    if (!receiptId) throw new Error('receipt_id required');
+    if (saltValue != null && typeof saltValue !== 'string' && !Buffer.isBuffer(saltValue)) {
+      throw new Error('salt must be a string');
+    }
+    const saltStr = saltValue == null
+      ? null
+      : (Buffer.isBuffer(saltValue) ? saltValue.toString('hex') : String(saltValue));
+    const key = this.keys.get(this.currentKid);
+    if (!key) throw new Error('current wrap kid is not loaded');
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const aad = saltAad(receiptId);
+    cipher.setAAD(aad);
+    const plaintext = Buffer.from(JSON.stringify({
+      salt: saltStr,
+      private_fields: privateFields ?? null,
+    }), 'utf8');
+    const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const record = {
+      receipt_id: String(receiptId),
+      wrap_kid: this.currentKid,
+      alg: SALT_ALG,
+      iv: iv.toString('base64'),
+      ct: ct.toString('base64'),
+      tag: tag.toString('base64'),
+    };
+    fs.writeFileSync(this.recordPath(receiptId), `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    this._private.set(String(receiptId), privateFields ?? null);
+    if (saltStr && /^[0-9a-f]{64}$/i.test(saltStr)) {
+      this._bySalt.set(this.saltIndex(Buffer.from(saltStr, 'hex')), String(receiptId));
+    }
+    return record;
+  }
+
+  _getDisk(receiptId) {
     const record = this.readRecord(receiptId);
     if (!record) return null;
     const key = this.keys.get(record.wrap_kid);
     if (!key) throw new Error('unknown wrap kid');
-    return decryptRecord(record, key);
-  }
-
-  rotate(kid) {
-    if (!this.keys.has(kid)) throw new Error('unknown wrap kid');
-    this.currentKid = kid;
+    try {
+      return asSaltValue(decryptRecord(record, key));
+    } catch {
+      return null;
+    }
   }
 }
 
-export function decryptRecord(record, key, receiptId = record?.receipt_id) {
-  const iv = Buffer.from(record.iv, 'base64');
-  const ct = Buffer.from(record.ct, 'base64');
-  const tag = Buffer.from(record.tag, 'base64');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAAD(saltAad(receiptId));
-  decipher.setAuthTag(tag);
-  const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
-  const decoded = JSON.parse(plain.toString('utf8'));
-  return {
-    salt: decoded.salt ?? null,
-    privateFields: decoded.private_fields ?? null,
-  };
+/** @type {MemorySaltStore|EncryptedSaltStore} */
+let active = new MemorySaltStore();
+
+export function getSaltStore() {
+  return active;
 }
 
-function keyFileInsideDir(keyFile, dir) {
-  const file = path.resolve(keyFile);
-  const root = path.resolve(dir);
-  return file === root || file.startsWith(root + path.sep);
+/**
+ * @param {MemorySaltStore|EncryptedSaltStore} store
+ */
+export function setSaltStore(store) {
+  if (!store || (store.kind !== 'memory' && store.kind !== 'encrypted')) {
+    throw new Error('SaltStore kind must be memory or encrypted');
+  }
+  active = store;
+  return active;
+}
+
+export function resetSaltStore() {
+  active = new MemorySaltStore();
+  return active;
+}
+
+/**
+ * Production is anything other than explicit test or development.
+ * Unset NODE_ENV is production.
+ * @param {string|undefined|null} nodeEnv
+ */
+export function isProductionEnv(nodeEnv = process.env.NODE_ENV) {
+  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
+  return env !== 'test' && env !== 'development';
+}
+
+/**
+ * Pure check. Production + issuer root refuses v11 issuance unless the store
+ * is encrypted and durable. `allowEphemeral` (SALT_STORE_ALLOW_EPHEMERAL)
+ * is the local opt-in.
+ * @param {{ nodeEnv?: string, issuerRootEnabled?: boolean, store?: { kind?: string, durable?: boolean }, allowEphemeral?: boolean }} [opts]
+ */
+export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store, allowEphemeral } = {}) {
+  if (!issuerRootEnabled) return { ok: true, reason: null };
+  const ephemeral = allowEphemeral === true;
+  if (!isProductionEnv(nodeEnv) || ephemeral) return { ok: true, reason: null };
+  const current = store || getSaltStore();
+  if (current?.kind === 'encrypted' && current?.durable === true) return { ok: true, reason: null };
+  return { ok: false, reason: SALT_STORE_PROD_REASON };
+}
+
+/**
+ * Throws when this process must not issue v11.
+ * Caller has already decided the issuer root is on.
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function assertSaltStoreForIssuance(env = process.env) {
+  const decision = saltStoreAllowsV11Issuance({
+    nodeEnv: env.NODE_ENV,
+    issuerRootEnabled: true,
+    store: getSaltStore(),
+    allowEphemeral: String(env.SALT_STORE_ALLOW_EPHEMERAL || '').trim() === 'true',
+  });
+  if (decision.ok) return;
+  const err = new Error(decision.reason);
+  err.code = 'salt_store_refused';
+  throw err;
 }
 
 /**
@@ -204,7 +619,7 @@ export function bootSaltStore(env = process.env) {
 }
 
 /**
- * Prod-shaped boot: memory salts cannot back v11 issuance.
+ * Every environment: a memory store cannot back v11 issuance.
  * Called at the top of createApp, before other init.
  * @param {{ kind?: string }|null} store
  * @param {NodeJS.ProcessEnv} [env]

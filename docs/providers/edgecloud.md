@@ -17,6 +17,6 @@ Optional GPU provider tier — not settlement home ([ADR 0002](../adr/0002-base-
 ## Related
 
 - [README.md](./README.md)
-- [RUNTIME_STATE.md](../RUNTIME_STATE.md)
+- [DEPLOYMENT.md](../DEPLOYMENT.md)
 
 Prefer `/task-request` and `/v1/*` over legacy `/theta-ai/*` route names.
