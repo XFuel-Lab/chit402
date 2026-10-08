@@ -680,16 +680,45 @@ test('non-receipt 500 bodies do not echo the exception', async () => {
   }
 });
 
-test('a test file that ends without its summary line fails the runner', async () => {
-  const { filesMissingTapSummary } = await import('../scripts/run-tests.mjs');
-  const files = ['test/a.test.mjs', 'test/b.test.mjs'];
-  assert.deepEqual(filesMissingTapSummary('ok 1 - test/a.test.mjs\nok 2 - test/b.test.mjs\n', files), []);
-  assert.deepEqual(filesMissingTapSummary('    ok 1 - test/a.test.mjs\n', files), files);
+test('filesWithoutCompletion lists files that did not finish', async () => {
+  const { filesWithoutCompletion } = await import('../scripts/run-tests.mjs');
+  const a = '/tmp/a.test.mjs';
+  const b = '/tmp/b.test.mjs';
+  const both = `${JSON.stringify({ file: a, passed: true })}\n${JSON.stringify({ file: b, passed: true })}\n`;
+  assert.deepEqual(filesWithoutCompletion(both, [a, b]), []);
+  assert.deepEqual(filesWithoutCompletion(`${JSON.stringify({ file: a, passed: true })}\n`, [a, b]), [b]);
+  assert.deepEqual(filesWithoutCompletion('', [a, b]), [a, b]);
   assert.deepEqual(
-    filesMissingTapSummary('ok 1 - test/a.test.mjs\n    ok 1 - inner\n', files),
-    ['test/b.test.mjs'],
+    filesWithoutCompletion(`${JSON.stringify({ file: a, passed: false })}\n{"fi`, [a, b]),
+    [b],
   );
-  assert.deepEqual(filesMissingTapSummary('not ok 2 - test/a.test.mjs\n', ['test/a.test.mjs']), []);
+});
+
+test('the file-done reporter records a finished file', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { filesWithoutCompletion } = await import('../scripts/run-tests.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'file-done-'));
+  const file = join(dir, 'one.test.mjs');
+  const out = join(dir, 'files.jsonl');
+  writeFileSync(file, "import { test } from 'node:test';\ntest('one', () => {});\n");
+  const reporter = fileURLToPath(new URL('../scripts/file-done-reporter.mjs', import.meta.url));
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, [
+    '--test',
+    `--test-reporter=${reporter}`,
+    `--test-reporter-destination=${out}`,
+    file,
+  ], { env, encoding: 'utf8' });
+  try {
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(filesWithoutCompletion(readFileSync(out, 'utf8'), [file]), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('public receipt routes for one id do not carry the other receipt', async () => {

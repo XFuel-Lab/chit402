@@ -13,30 +13,35 @@
  * and in every shell.
  */
 
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const gatewayDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * TAP file lines that mean a file finished. A truncated run can exit 0
- * without one of these, so a missing line is a failure even when the
- * process status is 0. Indented subtest lines do not count.
- * @param {string} output
- * @param {string[]} files paths as passed to node --test, e.g. test/a.test.mjs
+ * Files that never produced a completion record. `records` is JSON lines from
+ * file-done-reporter. A blank line is skipped. A partial last line does not
+ * throw. TAP text is not consulted: a passing file has no `ok N - <file>` line.
+ * @param {string} records
+ * @param {string[]} files absolute paths, the same paths the reporter writes
  * @returns {string[]}
  */
-export function filesMissingTapSummary(output, files) {
-  const text = String(output || '');
-  const missing = [];
-  for (const file of files) {
-    const escaped = file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`^(?:ok|not ok) \\d+ - ${escaped}(?:\\s|$)`, 'm');
-    if (!re.test(text)) missing.push(file);
+export function filesWithoutCompletion(records, files) {
+  const done = new Set();
+  const lines = String(records || '').split('\n');
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row && row.file) done.add(row.file);
+    } catch {
+      // A partial last line, or any line that is not JSON, is not a completion.
+    }
   }
-  return missing;
+  return files.filter((file) => !done.has(file));
 }
 
 function main() {
@@ -48,7 +53,8 @@ function main() {
   // A green run over zero files is the one outcome worse than a red one.
   if (files.length === 0) {
     console.error('run-tests: no test/*.test.mjs files found — refusing to report success.');
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   // Node options have to precede the file list. A per-test timeout so one hung
@@ -62,37 +68,61 @@ function main() {
   // run (main reported 1144/1145; one merged run reported 1132). Serial
   // execution keeps the summary equal to every test() in the tree.
   //
-  // stdout is captured so a file that ends without its `ok N - test/<file>`
-  // line fails the run. The TAP is still written through to this process.
-  const { status, error, signal, stdout, stderr } = spawnSync(
+  // Completion is a second reporter, not a TAP line. Node 20 and 22 do not
+  // print `ok N - test/<file>` for a passing file. TAP streams to stdout.
+  // An unset NODE_ENV means 'development', which starts pino-pretty in a
+  // worker thread whose MessagePort can keep a finished file alive.
+  const dir = mkdtempSync(join(tmpdir(), 'run-tests-'));
+  const recordFile = join(dir, 'files.jsonl');
+  const reporter = join(gatewayDir, 'scripts', 'file-done-reporter.mjs');
+  const { status, error, signal } = spawnSync(
     process.execPath,
-    ['--test', '--test-concurrency=1', '--test-timeout=120000', '--test-force-exit', ...process.argv.slice(2), ...files],
+    [
+      '--test',
+      '--test-concurrency=1',
+      '--test-timeout=120000',
+      '--test-force-exit',
+      '--test-reporter=tap',
+      '--test-reporter-destination=stdout',
+      `--test-reporter=${reporter}`,
+      `--test-reporter-destination=${recordFile}`,
+      ...process.argv.slice(2),
+      ...files,
+    ],
     {
+      stdio: 'inherit',
       cwd: gatewayDir,
       timeout: 10 * 60 * 1000,
       killSignal: 'SIGKILL',
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
     },
   );
 
-  if (stdout) process.stdout.write(stdout);
-  if (stderr) process.stderr.write(stderr);
+  let records = '';
+  try {
+    records = readFileSync(recordFile, 'utf8');
+  } catch {
+    records = '';
+  }
+  rmSync(dir, { recursive: true, force: true });
 
   if (error) {
     console.error(`run-tests: ${error.message}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   if (signal) {
     console.error(`run-tests: test process killed (${signal})`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
-  const missing = filesMissingTapSummary(stdout, files);
+  const missing = filesWithoutCompletion(records, files.map((file) => resolve(gatewayDir, file)));
   if (missing.length > 0) {
-    console.error(`run-tests: ended without a file summary: ${missing.join(', ')}`);
-    process.exit(1);
+    console.error(`run-tests: these files did not finish: ${missing.join(', ')}`);
+    process.exitCode = 1;
+    return;
   }
-  process.exit(status ?? 1);
+  process.exitCode = status ?? 1;
 }
 
 const invokedDirectly = process.argv[1]

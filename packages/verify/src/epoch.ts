@@ -115,9 +115,16 @@ export function unloggedListHash(rows: UnloggedRow[]): string {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
-export function verifyUnloggedSection(section: UnloggedSection | UnloggedCommitment | null | undefined): { ok: boolean; reason?: string } {
-  if (!section || !('rows' in section) || !Array.isArray(section.rows)) return { ok: false, reason: 'unlogged_missing' };
-  const list = canonicalUnloggedRows(section.rows);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function verifyUnloggedSection(section: unknown): { ok: boolean; reason?: string } {
+  // `in` throws on a string, a number, or a boolean. A hostile value fails closed.
+  if (!isPlainObject(section) || !('rows' in section) || !Array.isArray(section.rows)) {
+    return { ok: false, reason: 'unlogged_missing' };
+  }
+  const list = canonicalUnloggedRows(section.rows as Array<Partial<UnloggedRow>>);
   if (JSON.stringify(list) !== JSON.stringify(section.rows)) return { ok: false, reason: 'unlogged_canonical' };
   for (const row of list) {
     if (!row.task_id) return { ok: false, reason: 'unlogged_task' };
@@ -186,11 +193,12 @@ export function unloggedReasonForTask(
 ): UnloggedRow | null {
   if (Number(record?.payload_version) !== 2) return null;
   const section = record?.unlogged;
-  if (!section || !('rows' in section)) return null;
+  if (!isPlainObject(section) || !('rows' in section) || !Array.isArray(section.rows)) return null;
   const checked = verifyUnloggedSection(section);
   if (!checked.ok) return null;
   const id = String(taskId || '');
-  return section.rows.find((row) => row.task_id === id) || null;
+  const rows = section.rows as UnloggedRow[];
+  return rows.find((row) => row.task_id === id) || null;
 }
 
 export interface EpochRecordOptions {
