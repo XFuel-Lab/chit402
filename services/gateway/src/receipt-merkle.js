@@ -3063,8 +3063,16 @@ function inclusionAnchorLine(inclusion) {
   return `included in root ${root}, pending anchor`;
 }
 
-export function renderInclusionSection(inclusion, carry = null) {
+export function renderInclusionSection(inclusion, carry = null, receiptOk = true) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (inclusion?.status === 'pending_anchor' && receiptOk === false) {
+    return `<section class="card">
+      <h2>Outside witness <span class="scope">FAILED</span></h2>
+      <div class="row"><span class="k">Status</span><span class="v"><code>FAILED</code></span></div>
+      <div class="row"><span class="k">Reason</span><span class="v"><code>receipt_failed</code></span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">This leaf is past the anchored head, and the receipt did not verify. A failed receipt is a failure.</p>
+    </section>`;
+  }
   if (inclusion?.status === 'pending_anchor') {
     return `<section class="card">
       <h2>Outside witness <span class="scope">PENDING</span></h2>

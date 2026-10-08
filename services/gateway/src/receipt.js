@@ -2905,7 +2905,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : ''}
     </section>`) }
 
-    ${renderInclusionSection(receipt.inclusion, receipt.carry_forward)}
+    ${renderInclusionSection(receipt.inclusion, receipt.carry_forward, issuerVerified.verified)}
     ${renderBookSeqSection(receipt.book_chain, receipt.receipt_lane)}
     ${renderSupersessionSection(receipt.supersession)}
     ${renderCoverageSection(receipt.coverage)}

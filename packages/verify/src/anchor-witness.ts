@@ -420,30 +420,13 @@ function pendingGeometryReason(inclusion: AnchorInclusion | null | undefined): s
 }
 
 /**
- * Keep the newer of two memos. Same root is one anchor. Different roots
- * with no slot or block time to order them cannot be called the newest.
- */
-function preferNewerAnchor(current: NewestAnchor, candidate: NewestAnchor): NewestAnchor {
-  const slotCurrent = finiteNumber(current.slot);
-  const slotCandidate = finiteNumber(candidate.slot);
-  if (slotCurrent != null && slotCandidate != null && slotCurrent !== slotCandidate) {
-    return slotCandidate > slotCurrent ? candidate : current;
-  }
-  const timeCurrent = finiteNumber(current.blockTime);
-  const timeCandidate = finiteNumber(candidate.blockTime);
-  if (timeCurrent != null && timeCandidate != null && timeCurrent !== timeCandidate) {
-    return timeCandidate > timeCurrent ? candidate : current;
-  }
-  if (current.root === candidate.root) return current;
-  throw new Error('newest_anchor_unavailable');
-}
-
-/**
- * Newest chit402 root memo from this fee payer. `getSignaturesForAddress`
- * is newest-first. Pages use `before` until the first memo. A listed
+ * Newest chit402 root memo paid by this fee payer. `getSignaturesForAddress`
+ * is newest-first and includes transactions that only mention the address.
+ * A memo whose fee payer is anyone else is ignored and is not newer.
+ * Pages use `before` until the first memo this payer actually paid. A listed
  * signature whose transaction is null or whose fetch throws fails the scan.
- * Walking `NEWEST_ANCHOR_PAGE_CAP` full pages without a memo fails the scan.
- * A short page with no memo means this payer has no anchor.
+ * Walking `NEWEST_ANCHOR_PAGE_CAP` full pages without such a memo fails the scan.
+ * A short page with no memo from this payer means this payer has no anchor.
  */
 export async function fetchNewestSolanaAnchorRoot(
   feePayer: string,
@@ -470,6 +453,7 @@ export async function fetchNewestSolanaAnchorRoot(
         throw new Error('newest_anchor_unavailable');
       }
       if (!tx) throw new Error('newest_anchor_unavailable');
+      if (solanaFeePayer(tx) !== feePayer) continue;
       for (const memo of extractMemos(tx)) {
         const parsed = parseAnchorMemo(memo);
         if (!parsed?.root) continue;
@@ -537,9 +521,10 @@ export interface VerifyAnchoredRootInput {
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   /**
    * When set, and the head claims an anchor, the served root must equal the
-   * newest Solana memo across every payer on the anchor-wallet list. A
-   * missing fee payer is `newest_anchor_unavailable`. The CLI sets this
-   * for `--rpc`.
+   * newest Solana memo paid by `anchors.solana.fee_payer`, and that payer
+   * must be on the signed anchor-wallet list. A memo from any other payer
+   * is ignored. A missing or unlisted fee payer is `newest_anchor_unavailable`.
+   * The CLI sets this for `--rpc`.
    */
   checkNewestAnchor?: boolean;
   fetchNewestAnchor?: (feePayer: string, rpcUrl: string) => Promise<NewestAnchor | null>;
@@ -826,22 +811,18 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   let staleReason: string | undefined;
   const claimsAnchor = Boolean(solanaSignature(input.head) || baseTxHash(input.head));
   if (input.checkNewestAnchor === true && claimsAnchor) {
-    if (!signedPayer || !root) {
+    const payerOnList = Boolean(
+      signedPayer && walletListed(walletList.solana, signedPayer, 'solana'),
+    );
+    if (!signedPayer || !root || !payerOnList) {
       staleReason = 'newest_anchor_unavailable';
     } else {
-      const payers = [...walletList.solana];
-      if (!payers.includes(signedPayer)) payers.push(signedPayer);
       try {
-        let newest: NewestAnchor | null = null;
-        for (const payer of payers) {
-          const found = input.fetchNewestAnchor
-            ? await input.fetchNewestAnchor(payer, solanaRpc)
-            : await fetchNewestSolanaAnchorRoot(payer, solanaRpc, input.fetchSolanaTx);
-          if (!found?.root) continue;
-          newest = newest ? preferNewerAnchor(newest, found) : found;
-        }
-        if (!newest?.root) staleReason = 'newest_anchor_unavailable';
-        else if (newest.root !== root) staleReason = 'stale_head';
+        const found = input.fetchNewestAnchor
+          ? await input.fetchNewestAnchor(signedPayer, solanaRpc)
+          : await fetchNewestSolanaAnchorRoot(signedPayer, solanaRpc, input.fetchSolanaTx);
+        if (!found?.root) staleReason = 'newest_anchor_unavailable';
+        else if (found.root !== root) staleReason = 'stale_head';
       } catch {
         staleReason = 'newest_anchor_unavailable';
       }

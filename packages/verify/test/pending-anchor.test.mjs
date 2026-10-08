@@ -154,13 +154,13 @@ function epoch2Fixture() {
   return { leaves, root, memo, key, head, ids, rows };
 }
 
-function solanaTx(memo) {
+function solanaTx(memo, feePayer = PINNED_SOLANA_ANCHOR_FEE_PAYER) {
   return {
     slot: 99,
     meta: { err: null },
     transaction: {
       message: {
-        accountKeys: [{ pubkey: PINNED_SOLANA_ANCHOR_FEE_PAYER, signer: true, writable: true }],
+        accountKeys: [{ pubkey: feePayer, signer: true, writable: true }],
         instructions: [{
           program: 'spl-memo',
           programId: 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
@@ -561,7 +561,7 @@ test('an in-range pending leaf fails and a broken bound is not pending', async (
   assert.equal(openLive.errors.includes('pending_leaf_in_head'), false);
 });
 
-test('a missing fee payer and a newer memo on another listed payer fail closed', async () => {
+test('a missing fee payer fails closed and another listed payer cannot force stale_head', async () => {
   const fx = epoch2Fixture();
   const baseOnly = sealHead({
     schema: 'chit402.tree_head.v1',
@@ -621,10 +621,7 @@ test('a missing fee payer and a newer memo on another listed payer fail closed',
     proof: inclusionProof(fx.leaves.slice(0, 4), 1),
   };
   const newer = 'ee'.repeat(32);
-  const byPayer = async (payer) => {
-    if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 200 };
-    return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
-  };
+  const asked = [];
   const hidden = await verifyAnchoredRoot({
     receipt: { task_id: 'a', row_hash: 'ra' },
     inclusion: included,
@@ -633,27 +630,152 @@ test('a missing fee payer and a newer memo on another listed payer fail closed',
     checkNewestAnchor: true,
     anchorWalletDocument: wallets,
     ...fetchers(fx),
-    fetchNewestAnchor: byPayer,
-  });
-  assert.equal(hidden.overall, 'failed');
-  assert.ok(hidden.errors.includes('stale_head'));
-  assert.notEqual(hidden.overall, 'verified');
-
-  const olderAlt = await verifyAnchoredRoot({
-    receipt: { task_id: 'a', row_hash: 'ra' },
-    inclusion: included,
-    head: fx.head,
-    trustedKids: [fx.key.kid],
-    checkNewestAnchor: true,
-    anchorWalletDocument: wallets,
-    ...fetchers(fx),
     fetchNewestAnchor: async (payer) => {
-      if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 10 };
-      return { root: fx.root, signature: 'sig-anchored-4', slot: 200 };
+      asked.push(payer);
+      if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 200 };
+      return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
     },
   });
-  assert.equal(olderAlt.overall, 'verified');
-  assert.equal(olderAlt.errors.includes('stale_head'), false);
+  assert.deepEqual(asked, [PINNED_SOLANA_ANCHOR_FEE_PAYER]);
+  assert.equal(hidden.overall, 'verified');
+  assert.equal(hidden.errors.includes('stale_head'), false);
+});
+
+test('a foreign-payer memo with a newer root does not force stale_head', async () => {
+  const fx = epoch2Fixture();
+  const stranger = 'C'.repeat(32);
+  const foreignRoot = 'ee'.repeat(32);
+  const foreignMemo = `chit402:root:v1:global:2026-10-08:${foreignRoot}:${'0'.repeat(64)}`;
+  const rpc = jsonRpc((msg) => {
+    if (msg.method === 'getSignaturesForAddress') {
+      return [
+        { signature: 'sig-foreign', err: null, slot: 500, blockTime: 500 },
+        { signature: 'sig-anchored-4', err: null, slot: 99, blockTime: 99 },
+      ];
+    }
+    if (msg.method === 'getTransaction') {
+      if (msg.params[0] === 'sig-foreign') return solanaTx(foreignMemo, stranger);
+      return solanaTx(fx.memo);
+    }
+    if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
+    if (msg.method === 'eth_chainId') return '0x2105';
+    if (msg.method === 'eth_getTransactionByHash') {
+      return { hash: fx.head.anchors.base.tx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET };
+    }
+    return null;
+  });
+  const port = await listen(rpc);
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    const found = await fetchNewestSolanaAnchorRoot(PINNED_SOLANA_ANCHOR_FEE_PAYER, url);
+    assert.equal(found.root, fx.root);
+    assert.equal(found.signature, 'sig-anchored-4');
+    const inclusion = {
+      task_id: 'a',
+      status: 'anchored',
+      anchor_status: 'anchored',
+      leaf_index: 1,
+      tree_size: 4,
+      root: fx.root,
+      leaf: fx.leaves[1].toString('hex'),
+      proof: inclusionProof(fx.leaves.slice(0, 4), 1),
+    };
+    const result = await verifyAnchoredRoot({
+      receipt: { task_id: 'a', row_hash: 'ra' },
+      inclusion,
+      head: fx.head,
+      trustedKids: [fx.key.kid],
+      checkNewestAnchor: true,
+      solanaRpcUrl: url,
+      baseRpcUrl: url,
+    });
+    assert.equal(result.overall, 'verified');
+    assert.equal(result.errors.includes('stale_head'), false);
+  } finally {
+    await new Promise((resolve) => rpc.close(resolve));
+  }
+});
+
+test('a pending leaf on a failed receipt is FAILED', async () => {
+  const fx = epoch2Fixture();
+  const rpc = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      let result = null;
+      if (msg.method === 'getGenesisHash') result = SOLANA_GENESIS.devnet;
+      else if (msg.method === 'eth_chainId') result = '0x2105';
+      else if (msg.method === 'eth_getTransactionByHash') {
+        result = { hash: fx.head.anchors.base.tx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
+      } else if (msg.method === 'getSignaturesForAddress') {
+        result = [{ signature: fx.head.anchors.solana.signature, err: null }];
+      } else if (msg.method === 'getTransaction') {
+        result = solanaTx(fx.memo);
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+    });
+  });
+  const port = await listen(rpc);
+  const dir = mkdtempSync(join(tmpdir(), 'chit-pending-failed-'));
+  const url = `http://127.0.0.1:${port}`;
+  const cli = join(pkgDir, 'dist', 'cli.js');
+  const pending = {
+    status: 'pending_anchor',
+    anchor_status: 'pending',
+    task_id: 'd',
+    leaf_index: 4,
+    tree_size: 4,
+    live_tree_size: 5,
+    anchored_tree_size: 4,
+    root: fx.root,
+    proof: null,
+  };
+  writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));
+  writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
+  writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(pending));
+  const tampered = signedReceipt(fx.key, 'd', 'rd');
+  tampered.book_chain.row_hash = 'tampered';
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify(tampered));
+  const args = [
+    cli,
+    join(dir, 'receipt.json'),
+    join(dir, 'inclusion.json'),
+    join(dir, 'head.json'),
+    '--rpc', url,
+    '--solana-rpc', url,
+    '--jwks-file', join(dir, 'jwks.json'),
+    '--trusted-kid', fx.key.kid,
+    '--no-issuer-history',
+  ];
+  try {
+    const textRun = await runCli([...args, '--no-preimage']);
+    const text = `${textRun.stdout}\n${textRun.stderr}`;
+    assert.equal(textRun.status, 1, text);
+    assert.match(textRun.stdout, /Overall: FAILED/);
+    assert.equal(/Overall:\s+PENDING/.test(text), false);
+    assert.equal(/Receipt checks:\s+PENDING/.test(text), false);
+
+    const jsonRun = await runCli([...args, '--json', '--no-preimage']);
+    assert.equal(jsonRun.status, 1, `${jsonRun.stdout}\n${jsonRun.stderr}`);
+    const parsed = JSON.parse(jsonRun.stdout);
+    assert.equal(parsed.overall, 'failed');
+    assert.notEqual(parsed.receipt_check.overall, 'pending');
+    assert.equal(parsed.receipt_check.overall, 'failed');
+
+    const honest = signedReceipt(fx.key, 'd', 'rd');
+    writeFileSync(join(dir, 'receipt.json'), JSON.stringify(honest));
+    const preimage = await runCli([...args, '--json']);
+    assert.equal(preimage.status, 1, `${preimage.stdout}\n${preimage.stderr}`);
+    const preimageBody = JSON.parse(preimage.stdout);
+    assert.equal(preimageBody.overall, 'failed');
+    assert.notEqual(preimageBody.receipt_check.overall, 'pending');
+    assert.equal(preimageBody.receipt_check.overall, 'failed');
+    assert.ok(preimageBody.receipt_check.errors.some((err) => String(err).includes('preimage')));
+  } finally {
+    await new Promise((resolve) => rpc.close(resolve));
+  }
 });
 
 function jsonRpc(handler) {

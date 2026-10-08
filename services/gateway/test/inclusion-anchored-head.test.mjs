@@ -341,4 +341,48 @@ test('a pending leaf renders PENDING ahead of a carry-forward line', () => {
   );
   assert.match(html, /PENDING/);
   assert.equal(html.includes('VERIFIED'), false);
+
+  const failed = renderInclusionSection(
+    {
+      status: 'pending_anchor',
+      anchored_tree_size: 4,
+      live_tree_size: 5,
+      leaf_index: 4,
+    },
+    null,
+    false,
+  );
+  assert.match(failed, /FAILED/);
+  assert.equal(failed.includes('PENDING'), false);
+  assert.equal(failed.includes('VERIFIED'), false);
+});
+
+test('the receipt page reports a failed receipt instead of PENDING', async () => {
+  const { buildReceipt, renderReceiptHtml } = await import('../src/receipt.js');
+  const receipt = buildReceipt({
+    taskId: 'xfuel-pending-failed',
+    status: 'completed',
+    createdAt: '2026-10-08T12:00:00.000Z',
+    updatedAt: '2026-10-08T12:00:01.000Z',
+    intent: {
+      type: 'inference_request',
+      model: 'openai/gpt-4o-mini',
+      amount: '2000',
+      paymentRail: 'usdc',
+      paymentRef: `base:0x${'ab'.repeat(32)}`,
+    },
+    result: { model: 'openai/gpt-4o-mini', provider: 'openrouter' },
+    sp1Proof: null,
+  }, { baseUrl: 'https://api.chit402.com', reqHost: 'api.chit402.com' });
+  receipt.inclusion = {
+    status: 'pending_anchor',
+    anchored_tree_size: 4,
+    live_tree_size: 5,
+    leaf_index: 4,
+  };
+  receipt.issuer_signature = { alg: 'ES256', jws: 'not.a.signature' };
+  const html = renderReceiptHtml(receipt);
+  assert.match(html, />FAILED</);
+  assert.equal(html.includes('>PENDING<'), false);
+  assert.match(html, /not verified/);
 });
