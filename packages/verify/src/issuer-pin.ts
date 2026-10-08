@@ -405,28 +405,48 @@ function refOk(ref: IssuerPinRef | null | undefined): { ok: true; ref: IssuerPin
   return { ok: true, ref: { commit: ref.commit, path: ref.path, sha256: ref.sha256.toLowerCase() } };
 }
 
-function samePinRef(a: IssuerPinRef, b: IssuerPinRef): boolean {
-  return a.commit === b.commit && a.path === b.path && a.sha256 === b.sha256;
+function namedPinField(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 /**
- * Every pin ref the receipt, the head, and the caller supplied. One source
- * is enough. Two sources that name different commits or hashes fail closed
- * instead of keeping whichever one matches the file.
+ * Every pin ref the receipt, the head, and the caller supplied. One complete
+ * source is enough. A claim that names only a commit or only a hash is filled
+ * from the other sources. Two sources that name different commits or hashes
+ * fail closed instead of keeping whichever one matches the file.
  */
 function agreedPinRef(
   refs: Array<IssuerPinRef | null | undefined>,
 ): { ok: true; ref: IssuerPinRef } | { ok: false; code: string } {
   const present = refs.filter((item): item is IssuerPinRef => !!item);
   if (present.length === 0) return { ok: false, code: ISSUER_PIN_DOWNGRADE };
-  const first = refOk(present[0]);
-  if (!first.ok) return first;
-  for (const item of present.slice(1)) {
-    const next = refOk(item);
-    if (!next.ok) return next;
-    if (!samePinRef(first.ref, next.ref)) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  let commit: string | null = null;
+  let path: string | null = null;
+  let sha256: string | null = null;
+  for (const ref of present) {
+    const nextCommit = namedPinField(ref.commit);
+    const nextPath = namedPinField(ref.path);
+    const nextHash = namedPinField(ref.sha256)?.toLowerCase() ?? null;
+    if (nextCommit) {
+      if (commit && commit !== nextCommit) return { ok: false, code: ISSUER_PIN_MISMATCH };
+      commit = nextCommit;
+    }
+    if (nextPath) {
+      if (path && path !== nextPath) return { ok: false, code: ISSUER_PIN_MISMATCH };
+      path = nextPath;
+    }
+    if (nextHash) {
+      if (sha256 && sha256 !== nextHash) return { ok: false, code: ISSUER_PIN_MISMATCH };
+      sha256 = nextHash;
+    }
   }
-  return first;
+  return refOk({
+    commit: commit || '',
+    path: path || ISSUER_PIN_PATH,
+    sha256: sha256 || '',
+  });
 }
 
 /**

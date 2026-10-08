@@ -292,6 +292,43 @@ test('differing receipt and head pins fail even when one matches', () => {
   assert.equal(agreed.ok, true, agreed.code);
 });
 
+test('a partial pin claim is completed by the supplied pin', () => {
+  const { bytes, doc, ref } = publishedPin();
+  const kid = { issuer_signature: { kid: doc.jwk.kid, issuer_jwk: doc.jwk } };
+  const commitOnly = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
+    pinBytes: bytes,
+    ref,
+    required: true,
+  });
+  assert.equal(commitOnly.ok, true, commitOnly.code);
+
+  const hashOnly = assessIssuerPin({
+    head: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
+    pinBytes: bytes,
+    ref,
+    required: true,
+  });
+  assert.equal(hashOnly.ok, true, hashOnly.code);
+
+  const split = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
+    head: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
+    pinBytes: bytes,
+    required: true,
+  });
+  assert.equal(split.ok, true, split.code);
+
+  const wrongCommit = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, commit: COMMIT_B } },
+    pinBytes: bytes,
+    ref,
+    required: true,
+  });
+  assert.equal(wrongCommit.ok, false);
+  assert.equal(wrongCommit.code, ISSUER_PIN_MISMATCH);
+});
+
 test('a receipt key that is not the pin is ISSUER_PIN_MISMATCH', () => {
   const { bytes, doc, ref } = publishedPin();
   const other = makeKey();
