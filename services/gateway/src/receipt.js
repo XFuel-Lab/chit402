@@ -496,7 +496,7 @@ export function taskIdWithPreferredPrefix(storedTaskId, preferredPrefix) {
  * single `verify_url` threaded consistently across every surface (M2M API,
  * OpenAI gateway, SDK, MCP) so an agent always gets one link it can share.
  *
- * @param {string} baseUrl - base URL for absolute links (e.g. 'https://api.xfuel.app')
+ * @param {string} baseUrl - base URL for absolute links (e.g. 'https://api.chit402.com')
  * @param {string} taskId - stored task ID (xfuel-<uuid>)
  * @param {{ reqHost?: string }} [opts] - options for host-aware prefix selection
  * @returns {string} verify URL with appropriate prefix based on host
@@ -3051,7 +3051,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : ''}
     </section>`) }
 
-    ${renderInclusionSection(receipt.inclusion)}
+    ${renderInclusionSection(receipt.inclusion, receipt.carry_forward)}
     ${renderBookSeqSection(receipt.book_chain, receipt.receipt_lane)}
     ${renderSupersessionSection(receipt.supersession)}
     ${renderCoverageSection(receipt.coverage)}

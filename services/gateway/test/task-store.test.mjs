@@ -111,7 +111,7 @@ test('gcPersisted prunes expired scratch and keeps a public receipt of any age',
   a.set('task-old', sampleTask('task-old', { updatedAt: old, createdAt: old }));
   a.set('task-new', sampleTask('task-new'));
   // Pre-v9 house receipt: numeric timestamps, payment ref, payload_version 7.
-  // This is the shape gc used to unlink after 30 days (chit-1e57cdd7, 2026-09-01).
+  // This is the shape gc used to unlink after 30 days (the retired specimen row, 2026-09-01).
   a.set('xfuel-old-receipt', sampleTask('xfuel-old-receipt', {
     updatedAt: old,
     createdAt: old,

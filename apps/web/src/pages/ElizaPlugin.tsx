@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 
-const installExample = `npm install chit402-elizaos
-# canonical: @xfuel/plugin-elizaos`;
+const installExample = `npm install @xfuel/plugin-elizaos`;
 
 const characterExample = `{
   "plugins": ["@xfuel/plugin-elizaos"],
@@ -30,6 +30,15 @@ export default function ElizaPlugin() {
             collected <code>verify_url</code> receipts.
           </p>
         </header>
+
+        <div className="docs-panel">
+          <h2>Pay the call</h2>
+          <p>
+            Keyless x402 first. The character settings below keep the partner{' '}
+            <code>CHIT_API_KEY</code>.
+          </p>
+          <PaidDoorOptions apiV1={apiV1} />
+        </div>
 
         <div className="docs-panel">
           <h2>Install</h2>

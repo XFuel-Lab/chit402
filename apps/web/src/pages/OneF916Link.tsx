@@ -6,7 +6,6 @@ const POST = 'https://1f916.ai/post/7404';
 const POST_JSON = 'https://1f916.ai/api/post/7404';
 const DRAFT = 'https://datatracker.ietf.org/doc/draft-maintainer-1f916-agent-record/';
 const JWKS = 'https://api.chit402.com/.well-known/jwks.json';
-const JWKS_ALIAS = 'https://api.xfuel.app/.well-known/jwks.json';
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 const SPECIMEN_1 = '/specimens/1f916-link-1.json';
@@ -25,11 +24,11 @@ const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
 const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
 const STAMP_SCRIPT = 'services/gateway/scripts/stamp-foreign-payout.mjs';
 
-const verifyCli = `npx xfuel-verify receipt.json --fetch-jwks --check-payer
+const verifyCli = `npx -p @xfuel/verify xfuel-verify receipt.json --fetch-jwks --check-payer
 
 # A facilitator (or any other issuer) publishes its own key.
 # --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
-# npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
+# npx -p @xfuel/verify xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
 
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
@@ -168,9 +167,6 @@ export default function OneF916Link() {
             <li>
               <a href={JWKS} target="_blank" rel="noreferrer">{JWKS}</a>
             </li>
-            <li>
-              <a href={JWKS_ALIAS} target="_blank" rel="noreferrer">{JWKS_ALIAS}</a>
-            </li>
           </ul>
           <p>
             The schema is issuer-agnostic. A facilitator, or any other party, is the issuer
@@ -242,7 +238,7 @@ export default function OneF916Link() {
             </li>
           </ol>
           <p>
-            <code>xfuel-verify</code> runs the signature and the chain check on a receipt file.
+            <code>npx -p @xfuel/verify xfuel-verify</code> runs the signature and the chain check on a receipt file.
             It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> prints PASS or
             FAIL for the receipt fetch, the signature, the book chain, the Base transfer, and
             the entry fingerprint. The receipt JSON still omits <code>agent_record_entry</code>;

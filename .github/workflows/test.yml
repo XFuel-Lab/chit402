@@ -6,8 +6,10 @@ on:
   pull_request:
     # ready_for_review is not in the default set. A draft open that does not
     # start Actions would otherwise never run when the PR is marked ready.
+    # cursor/spend-hold-ceiling-0d9c is PR #495. This package's PR is stacked
+    # on it, and the filter matches the base branch.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, develop]
+    branches: [main, develop, cursor/spend-hold-ceiling-0d9c]
 
 jobs:
   # ── Path-change detection ──────────────────────────────────
@@ -101,6 +103,33 @@ jobs:
       - name: Gateway tests (receipts + x402 adapter)
         working-directory: services/gateway
         run: npm test
+
+  # ── CDP spend store (Linux + Windows) ──────────────────────
+  # Two-process cap test uses node:child_process and node:path.
+  cdp-spend-store:
+    name: CDP spend store
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Install gateway deps
+        working-directory: services/gateway
+        # The gateway postinstall installs theta-inference by calling npm
+        # again. On Windows that recursion exits before these tests run.
+        # The spend-store suite only needs the gateway's own dependencies.
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Test @chit402/cdp-spend-store
+        working-directory: packages/cdp-spend-store
+        run: npm install --no-audit --no-fund && npm test
 
   # ── @xfuel/verify on Windows (Node 24) ─────────────────────
   # Linux CI does not run this package's own suite. npm publish runs it

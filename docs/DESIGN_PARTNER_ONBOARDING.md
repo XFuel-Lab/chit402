@@ -6,7 +6,7 @@ You are in. XFuel is the book: this agent spent Y on this job, and you hold hub,
 
 | Seat | What they need |
 |------|----------------|
-| **Builder** | Point `baseURL` at `https://api.xfuel.app/v1`, get a signed receipt on every call |
+| **Builder** | Point `baseURL` at `https://api.chit402.com/v1`, get a signed receipt on every call |
 | **USDC signer** | Review `verify_url`, see the collected spend, forward receipts to finance/auditors |
 
 ## Close
@@ -33,7 +33,7 @@ You should already have:
 
 If either is missing, reply on that channel before you start.
 
-Gateway: `https://api.xfuel.app`  
+Gateway: `https://api.chit402.com`  
 Public beta. **Payments on this host are real USDC on Base mainnet.** Treat the key like a credential.
 
 ---
@@ -47,7 +47,7 @@ import OpenAI from 'openai';
 
 const client = new OpenAI({
   apiKey: process.env.XFUEL_API_KEY,
-  baseURL: 'https://api.xfuel.app/v1',
+  baseURL: 'https://api.chit402.com/v1',
 });
 
 const res = await client.chat.completions.create({
@@ -73,12 +73,12 @@ Every response carries the same artifact two ways:
 |-------|-----------------|
 | Headers | `x-xfuel-task-id`, `x-xfuel-provider`, `x-xfuel-verify-url` |
 | Body | `xfuel` on the chat completion |
-| Public page | `https://api.xfuel.app/receipt/<task_id>` — no auth, shareable |
+| Public page | `https://api.chit402.com/receipt/<task_id>` — no auth, shareable |
 
 Open the verify URL. Then fetch JSON you can keep in your own logs:
 
 ```bash
-curl -sS "https://api.xfuel.app/receipt/<task_id>?format=json"
+curl -sS "https://api.chit402.com/receipt/<task_id>?format=json"
 ```
 
 Fields that matter on a first pass:
@@ -95,7 +95,7 @@ Fields that matter on a first pass:
 Auditor pack (policy + totals, **no prompts or raw outputs**):
 
 ```text
-https://api.xfuel.app/receipt/<task_id>?format=auditor
+https://api.chit402.com/receipt/<task_id>?format=auditor
 ```
 
 ---
@@ -114,7 +114,7 @@ import { XFuelClient } from 'xfuel-sdk';
 import { createEip3009Payer } from 'xfuel-sdk/onchain';
 
 const client = new XFuelClient({
-  baseUrl: 'https://api.xfuel.app',
+  baseUrl: 'https://api.chit402.com',
   apiKey: process.env.XFUEL_API_KEY,
 });
 
@@ -151,7 +151,7 @@ We do not claim a signed receipt or an SP1 proof verifies black-box model correc
 
 **Demo ceiling.** Demo traffic stops once your key has burned about **$1 of provider cost in a UTC day**. That is enough to try the receipt, not enough to farm. Use the paid path for real volume.
 
-**Hostname vs money.** `api.xfuel.app` settles **mainnet USDC**. A quote that looks like play money is not.
+**Hostname vs money.** `api.chit402.com` settles **mainnet USDC**. A quote that looks like play money is not.
 
 **The first paid call has no settlement ref.** Rolling settlement collects the last call on the next request. Open the receipt: it should say **bill pending**, not look empty. The explorer link appears on the receipt that actually paid.
 

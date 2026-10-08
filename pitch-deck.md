@@ -42,7 +42,7 @@ Token-light: USDC fees to protocol Safe / Splits v2 on Base. Downstream policy s
 ## 8. Traction / status
 
 - `ZKVerifierSP1` live on Base mainnet
-- Public gateway: api.xfuel.app
+- Public gateway: api.chit402.com
 - Tier 1 + Tier 2 live; x402 on Base mainnet
 - SDK + MCP published
 

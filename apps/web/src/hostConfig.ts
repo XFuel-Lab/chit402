@@ -54,7 +54,7 @@ const XFUEL_CONFIG: HostConfig = {
   name: 'XFuel',
   tagline: 'XFuel is the book.',
   domain: 'xfuel.app',
-  apiDomain: 'api.xfuel.app',
+  apiDomain: 'api.chit402.com',
   ogImage: 'https://www.xfuel.app/og-image.png',
   navLogo: '/xfuel-icon.svg',
   favicon: '/xfuel-icon.svg',

@@ -119,7 +119,7 @@ Two things follow, one good and one uncomfortable:
   test we run should run **now, while this is novel**, and should cite AA rather than argue from
   first principles.
 - **IRIS is explicitly an audit of gateways, and we are a gateway.** Anyone can point it at
-  `api.xfuel.app`. That is a moat if our receipts are real and independently corroborable, and an
+  `api.chit402.com`. That is a moat if our receipts are real and independently corroborable, and an
   existential embarrassment if they are decorative.
 
 ## 5. Nobody publishes availability for DePIN

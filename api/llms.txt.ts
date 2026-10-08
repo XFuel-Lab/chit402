@@ -5,7 +5,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 > Who paid which call — export, policy, evidence. Possession book for agent spend.
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
-> The wire is api.chit402.com/v1 (alias: api.xfuel.app/v1).
+> The wire is api.chit402.com/v1.
 
 ## Money pages (chit402.com)
 
@@ -34,11 +34,11 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - Receipt lane (unsigned, beside book_seq): settled_by is observed_transfer or receipt, or null if unknown. Ordering is seq + settled_by + (anchor_changed AND not settled). Boundary: complete over registry marks, blind to payments the registry never joined. freeze only when book_seq is set, settled_by is receipt, anchor_changed_since_binding is true, and the row is not settled. Anchor change alone does not freeze. classification unverifiable_from_registry means past expiry with settled_by, receipt_id, observed_tx_hash, and observed_transfer_id all null. That is not unpaid. local_check, when set, is a Base USDC payee and amount and does not claim payment. Payment payload_version is unchanged. Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596).
-- GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs behind the door. Public, no key.
+- GET  /v1/models           : drop-in model id list. Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key via X-OpenRouter-Key; this host does not resell OpenRouter). Public, no key.
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 - Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
 - Point any chat-completions client's baseURL at api.chit402.com + /v1. Receipt in x-xfuel-*
-  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+  headers and the "xfuel" body field (ES256 issuer signature; it does not prove USDC moved).
 
 ## Paid door (USDC / x402)
 
@@ -135,14 +135,14 @@ const XFUEL_LLMS = `# XFuel Protocol
 > /v1/agents/:agent_id/book is possession-gated (last-N spend + budget Y /
 > remaining under prepaid_ceiling). POST /v1/agents/register
 > is fail-closed. /task-request is the other paid door. Paying
-> api.xfuel.app moves real mainnet USDC. Canonical: api.xfuel.app.
+> api.chit402.com moves real mainnet USDC. Canonical: api.chit402.com.
 
 ## Money pages (xfuel.app)
 
-- /agent-shop : Live catalog — Theta + Akash + xfuel/auto. GET /v1/models shows what's live.
+- /agent-shop : Live catalog — Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key). GET /v1/models shows what's live.
 - /book       : Possession-gated last-N collected spend. This agent spent Y on this job.
 - /book-bot   : Paste-into-bot prompt. Your SEO bot spent it. You hold the book.
-- /v1         : Not the API — points you to api.xfuel.app/v1.
+- /v1         : Not the API — points you to api.chit402.com/v1.
 - /pricing    : USDC on Base and Solana. Cost-plus, quoted, receipted.
 
 ## Start here (chat completions / responses)
@@ -156,12 +156,12 @@ const XFUEL_LLMS = `# XFuel Protocol
 - POST /v1/agents/register  : fail-closed. A wallet with USDC on Base can omit task_id and pay the $0.002 stamp (402 with a Base accepts entry only, then PAYMENT-SIGNATURE from that wallet). Solana is not accepted on this route. Or pass task_id of a collected receipt whose payer is this wallet. Plain EOA personal_sign. Demo receipts do not qualify.
 - GET|POST /v1/agents/:agent_id/book : possession-gated last-N collected spend for that agent_id (cap, spent, remaining). Set budget Y in the POST body. Prepaid ceiling until Y is raised. Not a public index.
 - Receipt lane (unsigned, beside book_seq): settled_by is observed_transfer or receipt, or null if unknown. Ordering is seq + settled_by + (anchor_changed AND not settled). Boundary: complete over registry marks, blind to payments the registry never joined. freeze only when book_seq is set, settled_by is receipt, anchor_changed_since_binding is true, and the row is not settled. Anchor change alone does not freeze. classification unverifiable_from_registry means past expiry with settled_by, receipt_id, observed_tx_hash, and observed_transfer_id all null. That is not unpaid. local_check, when set, is a Base USDC payee and amount and does not claim payment. Payment payload_version is unchanged. Design by Turbo on 1F916 (post 6579, comments 88201, 88403, and 88596).
-- GET  /v1/models           : drop-in model id list (install path, not the product). Wire hubs Theta + Akash; xfuel/auto. Public, no key.
+- GET  /v1/models           : drop-in model id list. Theta, Akash, xfuel/auto, and openrouter/* (bring-your-own-key via X-OpenRouter-Key; this host does not resell OpenRouter). Public, no key.
 - POST /v1/images/generations · POST /v1/audio/transcriptions (modality routes).
 - No account. No API key. A wallet that can pay the 402 is enough. Register is only to hold the book after a collected receipt.
 - Partner key (when issued): "Authorization: Bearer <key>" or "X-API-Key: <key>". No public demo key.
 - Point any compatible chat client's baseURL at this host + /v1. Receipt in x-xfuel-*
-  headers and the "xfuel" body field (HMAC-signed; not an on-chain tx).
+  headers and the "xfuel" body field (ES256 issuer signature; it does not prove USDC moved).
 - proof_outcome may be pending on the chat body — poll GET /task-status.
 
 ## Paid door (USDC / x402)

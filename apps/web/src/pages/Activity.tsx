@@ -55,7 +55,7 @@ function formatUsdcFees(baseUnits: string | null): string | null {
   if (!Number.isFinite(n)) return null;
   return (n / 1e6).toLocaleString(undefined, {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
+    maximumFractionDigits: 6,
   });
 }
 
@@ -193,7 +193,7 @@ export default function Activity() {
               {volumeFailed || usdcLabel == null ? '—' : `$${usdcLabel}`}
             </p>
             <p style={styles.sub}>
-              protocol fees · last 7d
+              protocol fee, not what callers paid · last 7d
               {volumeFailed && ' · unavailable'}
             </p>
             <p style={{ ...styles.sub, marginTop: '0.75rem', fontSize: '0.8rem' }}>

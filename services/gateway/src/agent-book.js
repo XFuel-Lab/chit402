@@ -329,40 +329,61 @@ export function groupEntriesByIntent(entries) {
   return intents;
 }
 
+function heldAtomicOf(held) {
+  if (held == null || held === '') return 0n;
+  if (typeof held === 'bigint') return held > 0n ? held : 0n;
+  try {
+    const n = BigInt(String(held).trim() || '0');
+    return n > 0n ? n : 0n;
+  } catch {
+    return 0n;
+  }
+}
+
+function withHeld(view, held) {
+  if (held > 0n) view.held = held.toString();
+  return view;
+}
+
 /**
  * Cap / spent / remaining for one agent under prepaid_ceiling.
+ * `held` is open reservations. Remaining is cap − settled − held.
+ * A zero hold leaves the view unchanged (no `held` field).
  * @param {{ budget?: string|null }} identity
  * @param {bigint} spent
+ * @param {bigint | string | number} [held]
  */
-export function capViewOf(identity, spent) {
+export function capViewOf(identity, spent, held = 0n) {
   const spentStr = spent.toString();
+  const heldBi = heldAtomicOf(held);
+  const committed = spent + heldBi;
   const raw = identity?.budget;
   if (raw == null || raw === '') {
-    return {
+    return withHeld({
       window: CAP_WINDOW,
       cap: null,
       spent: spentStr,
       remaining: null,
-    };
+    }, heldBi);
   }
   let cap;
   try {
     cap = BigInt(String(raw).trim());
   } catch {
-    return {
+    return withHeld({
       window: CAP_WINDOW,
       cap: null,
       spent: spentStr,
       remaining: null,
-    };
+    }, heldBi);
   }
-  const remaining = cap > spent ? cap - spent : 0n;
-  return {
+  const remaining = cap > committed ? cap - committed : 0n;
+  return withHeld({
     window: CAP_WINDOW,
     cap: cap.toString(),
     spent: spentStr,
     remaining: remaining.toString(),
-  };
+  }, heldBi);
 }
 
 function annotateBookSupersession(body, ledger) {
@@ -400,12 +421,14 @@ function packAllowance(agentId, remaining, session) {
  * @param {{
  *   identity?: object|null,
  *   spent?: bigint,
+ *   held?: bigint | string | number,
  *   session?: string|null,
  * }} [extra]
  */
 export function packBook(entries, agentId, limit, extra = {}) {
   const spent = extra.spent != null ? extra.spent : 0n;
-  const caps = capViewOf(extra.identity || null, spent);
+  const held = extra.held != null ? extra.held : 0n;
+  const caps = capViewOf(extra.identity || null, spent, held);
   const intents = groupEntriesByIntent(entries);
   const body = {
     agent_id: Number(agentId),
@@ -418,6 +441,9 @@ export function packBook(entries, agentId, limit, extra = {}) {
     spent: caps.spent,
     remaining: caps.remaining,
   };
+  // Open holds shrink remaining. Show the amount so spent + held + remaining = cap.
+  // Absent when nothing is held, so a flag-off book stays the same shape.
+  if (caps.held != null) body.held = caps.held;
   if (extra.session) {
     body.allowance = packAllowance(agentId, caps.remaining, extra.session);
     body.private_spend = {
@@ -517,7 +543,9 @@ export function remainingBlocksDoor(remaining) {
  *   registry?: { get: Function },
  * }} deps
  */
-export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } = {}) {
+export function readAgentBook(agentId, claim = {}, {
+  ledger, verify, registry, heldAtomic = null,
+} = {}) {
   const window = clampBookLimit(claim.limit);
   const session = claim.session ? String(claim.session) : null;
   const proof = claim.proof ? String(claim.proof) : null;
@@ -545,10 +573,20 @@ export function readAgentBook(agentId, claim = {}, { ledger, verify, registry } 
   const spent = typeof ledger.sumCollectedByAgent === 'function'
     ? ledger.sumCollectedByAgent(id)
     : 0n;
+  let held = 0n;
+  if (typeof heldAtomic === 'function') {
+    try {
+      const raw = heldAtomic(id);
+      held = typeof raw === 'bigint' ? raw : BigInt(String(raw ?? '0'));
+    } catch {
+      held = 0n;
+    }
+  }
   const sessionKey = session || identity?.session || null;
   const body = packBook(entries, id, window, {
     identity,
     spent,
+    held,
     session: sessionKey,
     coverage: selected.coverage,
     sequence: typeof ledger.seqReport === 'function' ? ledger.seqReport(id) : null,

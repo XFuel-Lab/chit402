@@ -11,7 +11,7 @@
  *   [vars]
  *   UPSTREAM_BASE_URL = "https://openrouter.ai/api"
  *   XFUEL_SIGNING_SECRET = "..."
- *   XFUEL_BASE_URL = "https://api.xfuel.app"
+ *   XFUEL_BASE_URL = "https://api.chit402.com"
  */
 
 export interface Env {
@@ -19,7 +19,7 @@ export interface Env {
   UPSTREAM_BASE_URL: string;
   /** Optional HMAC signing secret for tamper-evident receipts */
   XFUEL_SIGNING_SECRET?: string;
-  /** XFuel API base URL for verify_url (default: https://api.xfuel.app) */
+  /** XFuel API base URL for verify_url (default: https://api.chit402.com) */
   XFUEL_BASE_URL?: string;
   /** Optional: forward the upstream API key from a secret */
   UPSTREAM_API_KEY?: string;
@@ -174,7 +174,7 @@ async function handleChatCompletions(
     const outputHash = output ? await hashOutput(output) : null;
     const taskId = generateTaskId();
 
-    const xfuelBaseUrl = (env.XFUEL_BASE_URL || 'https://api.xfuel.app').replace(/\/$/, '');
+    const xfuelBaseUrl = (env.XFUEL_BASE_URL || 'https://api.chit402.com').replace(/\/$/, '');
 
     const receipt: SidecarWorkerReceipt = {
       schema: 'xfuel.receipt.v3',
