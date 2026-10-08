@@ -74,6 +74,46 @@ describe('output commitment kind', () => {
     assert.equal(viaObject.hash, KECCAK);
   });
 
+  test('a kind-less commitment object keeps the sibling hash kind', () => {
+    const direct = outputCommitmentOf({
+      outputCommitment: { status: 'committed', hash: KECCAK },
+      hashKind: 'keccak256',
+    });
+    assert.equal(direct.kind, 'keccak256');
+    assert.equal(direct.hash, KECCAK);
+
+    const explicit = outputCommitmentOf({
+      outputCommitment: { status: 'committed', hash: KECCAK, kind: 'sha256' },
+      hashKind: 'keccak256',
+    });
+    assert.equal(explicit.kind, 'sha256');
+
+    const normalized = normalizeIngestInput(invoice({
+      output_commitment: { status: 'committed', hash: KECCAK },
+      deliverable_kind: 'keccak256',
+    }));
+    assert.equal(normalized.ok, true, normalized.reason);
+    assert.equal(normalized.fulfillmentMeta.hashKind, 'keccak256');
+    assert.equal(normalized.fulfillmentMeta.outputCommitment.kind, 'keccak256');
+    const receipt = buildForeignReceipt({
+      taskId: 'foreign-kind-sibling',
+      paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
+      paymentResponse: { tx: '0xsibling', payer: '0xp', network: 'base' },
+      rail: 'usdc',
+      fulfillmentMeta: normalized.fulfillmentMeta,
+    });
+    assert.equal(receipt.fulfillment.output_commitment.kind, 'keccak256');
+    assert.equal(receipt.fulfillment.output_commitment.hash, KECCAK);
+    assert.match(receipt.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
+
+    const clash = normalizeIngestInput(invoice({
+      output_commitment: { status: 'committed', hash: KECCAK, kind: 'sha256' },
+      deliverable_kind: 'keccak256',
+    }));
+    assert.equal(clash.ok, false);
+    assert.equal(clash.error, 'invalid_output_commitment');
+  });
+
   test('a missing or unknown kind is rejected', () => {
     assert.throws(
       () => outputCommitmentOf({ hash: KECCAK }),

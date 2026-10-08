@@ -133,10 +133,12 @@ export function outputCommitmentOf(input = {}) {
     const parsed = parseDigest(raw.hash ?? raw.value);
     if (parsed?.error) throw new OutputCommitmentError(parsed.error);
     if (parsed?.hash) {
+      const objectKind = typeof raw.kind === 'string' && raw.kind.trim() ? raw.kind : null;
+      const siblingKind = input.kind ?? input.hashKind ?? input.hash_kind;
       return {
         status: OUTPUT_COMMITMENT_STATUS.COMMITTED,
         hash: parsed.hash,
-        kind: requireKind(raw.kind, parsed),
+        kind: requireKind(objectKind ?? siblingKind, parsed),
         omission_rule: null,
       };
     }
@@ -321,6 +323,16 @@ export function fulfillmentFieldsFromIngestBody(body = {}) {
     && !outputCommitment.hash;
   if (!commitmentError && hasHash && !unverified && !hashKind) {
     commitmentError = 'output_commitment.kind is required and must be sha256 or keccak256';
+  }
+  if (
+    !commitmentError
+    && hashKind
+    && outputCommitment
+    && typeof outputCommitment === 'object'
+    && outputCommitment.hash
+    && !kindText(outputCommitment.kind)
+  ) {
+    outputCommitment = { ...outputCommitment, kind: hashKind };
   }
 
   return {
