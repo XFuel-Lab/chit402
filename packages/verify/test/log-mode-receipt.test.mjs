@@ -135,6 +135,8 @@ function rpcServer(fx) {
       else if (msg.method === 'eth_chainId') result = '0x2105';
       else if (msg.method === 'eth_getTransactionByHash') {
         result = { hash: fx.baseTx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
+      } else if (msg.method === 'getSignaturesForAddress') {
+        result = [{ signature: 'sig-log-mode', err: null }];
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: 99,

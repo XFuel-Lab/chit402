@@ -70,12 +70,16 @@ export interface AnchorReceipt {
 
 export interface AnchorInclusion {
   task_id?: string;
+  status?: string;
+  anchor_status?: string;
   leaf_index: number;
   tree_size: number;
+  live_tree_size?: number | null;
+  anchored_tree_size?: number | null;
   root: string;
   leaf?: string;
   row_hash?: string | null;
-  proof: InclusionStep[];
+  proof?: InclusionStep[] | null;
 }
 
 export interface AnchorHead {
@@ -142,7 +146,7 @@ export interface BaseAnchorTx {
 }
 
 export interface AnchorWitnessResult {
-  overall: 'verified' | 'partial' | 'failed';
+  overall: 'verified' | 'partial' | 'pending' | 'failed';
   root: string | null;
   inclusion: {
     valid: boolean;
@@ -150,6 +154,8 @@ export interface AnchorWitnessResult {
     leaf_source: string;
     reason?: string;
     unlogged_reason?: string;
+    anchored_tree_size?: number | null;
+    live_tree_size?: number | null;
   };
   solana: {
     checked: boolean;
@@ -414,6 +420,107 @@ export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string)
   };
 }
 
+export interface NewestAnchor {
+  root: string;
+  signature: string;
+  slot?: number | null;
+  blockTime?: number | null;
+}
+
+/** Newest-first page size for `getSignaturesForAddress`. */
+export const NEWEST_ANCHOR_PAGE_LIMIT = 25;
+/** Full pages walked before a missing memo is `newest_anchor_unavailable`. */
+export const NEWEST_ANCHOR_PAGE_CAP = 8;
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asSafeInt(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
+  if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * Pending is a leaf past the anchored head. An index inside that head is
+ * `pending_leaf_in_head`. Any other broken bound is `pending_bounds`.
+ * `live_tree_size` is checked only when the inclusion names it.
+ */
+function pendingGeometryReason(inclusion: AnchorInclusion | null | undefined): string | null {
+  const size = asSafeInt(inclusion?.tree_size);
+  const index = asSafeInt(inclusion?.leaf_index);
+  if (size == null || index == null || size < 1) return 'pending_bounds';
+  if (index < size) return 'pending_leaf_in_head';
+  const liveRaw = inclusion?.live_tree_size;
+  if (liveRaw != null) {
+    const live = asSafeInt(liveRaw);
+    if (live == null || size >= live || index >= live) return 'pending_bounds';
+  }
+  return null;
+}
+
+/**
+ * Newest chit402 root memo paid by this fee payer. `getSignaturesForAddress`
+ * is newest-first and includes transactions that only mention the address.
+ * A memo whose fee payer is anyone else is ignored and is not newer.
+ * Pages use `before` until the first memo this payer actually paid. A listed
+ * signature whose transaction is null or whose fetch throws fails the scan.
+ * Walking `NEWEST_ANCHOR_PAGE_CAP` full pages without such a memo fails the scan.
+ * A short page with no memo from this payer means this payer has no anchor.
+ */
+export async function fetchNewestSolanaAnchorRoot(
+  feePayer: string,
+  rpcUrl: string,
+  fetchTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>,
+): Promise<NewestAnchor | null> {
+  const load = fetchTx || ((signature, url) => fetchSolanaTransaction(signature, url) as Promise<SolanaAnchorTx | null>);
+  let before: string | undefined;
+  for (let page = 0; page < NEWEST_ANCHOR_PAGE_CAP; page += 1) {
+    const query: { limit: number; before?: string } = { limit: NEWEST_ANCHOR_PAGE_LIMIT };
+    if (before) query.before = before;
+    const listed = await defaultRpc(rpcUrl, 'getSignaturesForAddress', [feePayer, query]);
+    if (!Array.isArray(listed)) throw new Error('newest_anchor_unavailable');
+    if (listed.length === 0) return null;
+    for (const row of listed) {
+      if (!row || typeof row !== 'object') continue;
+      const record = row as { signature?: unknown; err?: unknown; slot?: unknown; blockTime?: unknown };
+      if (record.err) continue;
+      if (typeof record.signature !== 'string' || record.signature.length === 0) continue;
+      let tx: SolanaAnchorTx | null;
+      try {
+        tx = await load(record.signature, rpcUrl);
+      } catch {
+        throw new Error('newest_anchor_unavailable');
+      }
+      if (!tx) throw new Error('newest_anchor_unavailable');
+      if (solanaFeePayer(tx) !== feePayer) continue;
+      for (const memo of extractMemos(tx)) {
+        const parsed = parseAnchorMemo(memo);
+        if (!parsed?.root) continue;
+        const rowSlot = finiteNumber(record.slot);
+        return {
+          root: parsed.root,
+          signature: record.signature,
+          slot: rowSlot != null ? rowSlot : finiteNumber(tx.slot),
+          blockTime: finiteNumber(record.blockTime),
+        };
+      }
+    }
+    if (listed.length < NEWEST_ANCHOR_PAGE_LIMIT) return null;
+    const tail = listed[listed.length - 1] as { signature?: unknown };
+    if (typeof tail?.signature !== 'string' || tail.signature.length === 0) {
+      throw new Error('newest_anchor_unavailable');
+    }
+    if (page + 1 === NEWEST_ANCHOR_PAGE_CAP) throw new Error('newest_anchor_unavailable');
+    before = tail.signature;
+  }
+  throw new Error('newest_anchor_unavailable');
+}
+
 /** Fee payer is the first account. A parsed key that is explicitly not a signer does not count. */
 export function solanaFeePayer(tx: SolanaAnchorTx | null | undefined): string | null {
   const keys = tx?.transaction?.message?.accountKeys || [];
@@ -456,6 +563,15 @@ export interface VerifyAnchoredRootInput {
   fetchSolanaTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>;
   fetchGenesis?: (rpcUrl: string) => Promise<string>;
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
+  /**
+   * When set, and the head claims an anchor, the served root must equal the
+   * newest Solana memo paid by `anchors.solana.fee_payer`, and that payer
+   * must be on the signed anchor-wallet list. A memo from any other payer
+   * is ignored. A missing or unlisted fee payer is `newest_anchor_unavailable`.
+   * The CLI sets this for `--rpc`.
+   */
+  checkNewestAnchor?: boolean;
+  fetchNewestAnchor?: (feePayer: string, rpcUrl: string) => Promise<NewestAnchor | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
   jwks?: { keys: Es256Jwk[] };
@@ -486,7 +602,17 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
 
   const taskId = input.receipt?.task_id ? String(input.receipt.task_id) : '';
   const inclusionError = (input.inclusion as { error?: string } | null | undefined)?.error;
-  if (inclusionError === 'not_in_tree') {
+  const pendingLeaf = input.inclusion?.status === 'pending_anchor';
+  if (pendingLeaf) {
+    if (!taskId) inclusionReason = 'missing_task_id';
+    else if (input.inclusion?.task_id && String(input.inclusion.task_id) !== taskId) inclusionReason = 'task_mismatch';
+    else if (!root) inclusionReason = 'bad_root';
+    else if (inclusionRoot && inclusionRoot !== root) inclusionReason = 'root_mismatch';
+    else if (input.head.tree_size != null && input.inclusion.tree_size != null
+      && Number(input.head.tree_size) !== Number(input.inclusion.tree_size)) {
+      inclusionReason = 'tree_size_mismatch';
+    } else inclusionReason = pendingGeometryReason(input.inclusion) || 'pending_anchor';
+  } else if (inclusionError === 'not_in_tree') {
     inclusionReason = 'not_in_tree';
   } else if (!taskId) {
     inclusionReason = 'missing_task_id';
@@ -525,7 +651,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       if (!inclusionValid) inclusionReason = 'inclusion_failed';
     }
   }
-  if (!inclusionValid && inclusionReason) errors.push(inclusionReason);
+  if (!(pendingLeaf && inclusionReason === 'pending_anchor') && !inclusionValid && inclusionReason) {
+    errors.push(inclusionReason);
+  }
 
   let epochReason: string | undefined;
   if (input.head?.epoch == null) {
@@ -616,7 +744,16 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     errors.push('fee_payer_unlisted');
   }
 
-  if (!inclusionValid) {
+  const claimsAnchored = input.inclusion?.status === 'anchored' || input.inclusion?.anchor_status === 'anchored';
+  const headHasAnchor = Boolean(solanaSignature(input.head) || baseTxHash(input.head));
+  if (!headHasAnchor && (claimsAnchored || (pendingLeaf && inclusionReason === 'pending_anchor'))) {
+    errors.push('head_not_anchored');
+  }
+
+  if (pendingLeaf && inclusionReason === 'pending_anchor') {
+    solana.reason = 'pending_anchor';
+    base.reason = 'pending_anchor';
+  } else if (!inclusionValid) {
     solana.reason = 'inclusion_failed';
     base.reason = 'inclusion_failed';
   } else if (!headTrust.ok || walletFailed) {
@@ -715,10 +852,42 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     }
   }
 
+  let staleReason: string | undefined;
+  const claimsAnchor = Boolean(solanaSignature(input.head) || baseTxHash(input.head));
+  if (input.checkNewestAnchor === true && claimsAnchor) {
+    const payerOnList = Boolean(
+      signedPayer && walletListed(walletList.solana, signedPayer, 'solana'),
+    );
+    if (!signedPayer || !root || !payerOnList) {
+      staleReason = 'newest_anchor_unavailable';
+    } else {
+      try {
+        const found = input.fetchNewestAnchor
+          ? await input.fetchNewestAnchor(signedPayer, solanaRpc)
+          : await fetchNewestSolanaAnchorRoot(signedPayer, solanaRpc, input.fetchSolanaTx);
+        if (!found?.root) staleReason = 'newest_anchor_unavailable';
+        else if (found.root !== root) staleReason = 'stale_head';
+      } catch {
+        staleReason = 'newest_anchor_unavailable';
+      }
+    }
+    if (staleReason) errors.push(staleReason);
+  }
+
   let overall: AnchorWitnessResult['overall'];
-  const anchorSideFailed = (solana.reason && solana.reason !== 'pending')
-    || (base.reason && base.reason !== 'pending');
-  if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || legacyHead || anchorSideFailed) overall = 'failed';
+  const anchorSideFailed = (solana.reason && solana.reason !== 'pending' && solana.reason !== 'pending_anchor')
+    || (base.reason && base.reason !== 'pending' && base.reason !== 'pending_anchor');
+  const pendingOk = pendingLeaf
+    && inclusionReason === 'pending_anchor'
+    && headTrust.ok
+    && !walletFailed
+    && !legacyHead
+    && !epochReason
+    && !staleReason
+    && headHasAnchor
+    && !errors.includes('head_not_anchored');
+  if (pendingOk) overall = 'pending';
+  else if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || legacyHead || anchorSideFailed || staleReason || errors.includes('head_not_anchored')) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
@@ -737,6 +906,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       leaf_source: leafSource,
       reason: inclusionReason,
       ...(unloggedReason ? { unlogged_reason: unloggedReason } : {}),
+      ...(input.inclusion?.anchored_tree_size != null ? { anchored_tree_size: input.inclusion.anchored_tree_size } : {}),
+      ...(input.inclusion?.live_tree_size != null ? { live_tree_size: input.inclusion.live_tree_size } : {}),
     },
     solana,
     base,
@@ -754,7 +925,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       sources: walletList.sources,
       not_consulted: walletList.not_consulted,
     },
-    proves: ANCHOR_PROVES,
+    proves: overall === 'pending'
+      ? ['This leaf is past the anchored tree size. It waits for the next anchor.']
+      : ANCHOR_PROVES,
     does_not_prove: doesNotProve,
     errors,
   };

@@ -408,10 +408,24 @@ export function receiptLaneForEntry(entry, { tree = null, payer = null, now = Da
   let leafIndex = null;
   let heads = null;
   const taskId = entry.task_id;
-  if (tree && taskId && typeof tree.inclusion === 'function') {
-    const inclusion = tree.inclusion(taskId);
-    if (inclusion && Number.isInteger(inclusion.leaf_index)) leafIndex = inclusion.leaf_index;
-    if (Array.isArray(tree.heads)) heads = tree.heads;
+  // Index only. inclusion() throws head_rejected / head_mismatch, and this
+  // lane is on the book, lineage, and export path. A rejected frontier
+  // contributes no heads, so the row stays unknown rather than
+  // verified-included.
+  if (tree && taskId) {
+    try {
+      if (typeof tree.leafIndexOf === 'function') {
+        const index = tree.leafIndexOf(taskId);
+        if (Number.isInteger(index) && index >= 0) leafIndex = index;
+      }
+      if (typeof tree.laneHeadsFor === 'function') {
+        const lane = tree.laneHeadsFor(taskId);
+        const laneHeads = Array.isArray(lane?.heads) ? lane.heads : [];
+        if (lane?.frontierRejected !== true && laneHeads.length > 0) heads = laneHeads;
+      }
+    } catch {
+      heads = null;
+    }
   }
   return buildReceiptLane({
     entry: { ...entry, evidence },

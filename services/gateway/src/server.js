@@ -2881,14 +2881,40 @@ export function createApp() {
 
   app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
     const tree = getReceiptMerkleTree();
-    const found = tree.inclusion(req.params.task_id);
-    if (found) return res.json(found);
-    const unlogged = attestedUnloggedEntry(tree.epochRecord, req.params.task_id);
-    return res.status(404).json({
-      error: 'not_in_tree',
-      task_id: req.params.task_id,
-      ...(unlogged ? { reason: unlogged.reason, agent_id: unlogged.agent_id } : {}),
-    });
+    let treeSize = null;
+    if (req.query.tree_size != null && String(req.query.tree_size) !== '') {
+      const raw = String(req.query.tree_size).trim();
+      if (!/^[1-9]\d*$/.test(raw)) {
+        return res.status(400).json({
+          error: 'bad_tree_size',
+          message: 'tree_size must be a positive integer',
+        });
+      }
+      treeSize = Number(raw);
+      if (!Number.isSafeInteger(treeSize) || treeSize < 1) {
+        return res.status(400).json({
+          error: 'bad_tree_size',
+          message: 'tree_size must be a positive integer',
+        });
+      }
+    }
+    try {
+      const found = tree.inclusion(req.params.task_id, treeSize == null ? {} : { treeSize });
+      if (found) return res.json(found);
+      const unlogged = attestedUnloggedEntry(tree.epochRecord, req.params.task_id);
+      return res.status(404).json({
+        error: 'not_in_tree',
+        task_id: req.params.task_id,
+        ...(unlogged ? { reason: unlogged.reason, agent_id: unlogged.agent_id } : {}),
+      });
+    } catch (err) {
+      const code = err?.code;
+      if (code === 'bad_tree_size' || code === 'no_signed_head' || code === 'head_mismatch' || code === 'head_rejected' || code === 'leaf_not_in_head') {
+        return res.status(400).json({ error: code, message: err.message });
+      }
+      logger.error({ err }, 'inclusion error');
+      return res.status(500).json({ error: 'internal', message: 'internal error' });
+    }
   });
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
