@@ -76,6 +76,7 @@ import {
   bootReceiptLog,
   receiptLogBootRequested,
   finishReceiptLogBoot,
+  publicLogWitness,
 } from './receipt-merkle.js';
 import { attestedUnloggedEntry } from './receipt-log-epoch.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
@@ -2878,9 +2879,7 @@ export function createApp() {
             ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
             ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
             receipt_lane: receiptLaneForEntry(ledgerRow, { tree: getReceiptMerkleTree() }),
-            ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
-              ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
-              : {}),
+            ...publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
           };
         } catch (err) {
           logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');
@@ -3004,9 +3003,7 @@ export function createApp() {
           ...receipt,
           coverage,
           ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
-          ...(getReceiptMerkleTree().inclusion(ledgerRow.task_id)
-            ? { inclusion: getReceiptMerkleTree().inclusion(ledgerRow.task_id) }
-            : {}),
+          ...publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
         };
       } catch {
         /* coverage is optional for the preimage route */
