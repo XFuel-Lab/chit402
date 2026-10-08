@@ -38,6 +38,7 @@ export interface PreimageCheck {
 }
 
 const ALWAYS_REQUIRED = [
+  'row_hash',
   'book_chain.row_hash',
   'book_row.row_hash',
   'inclusion.leaf',

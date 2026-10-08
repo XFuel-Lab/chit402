@@ -157,12 +157,15 @@ export function verifyIssuerHistoryDocument(
   return { valid: false, reason: 'signature_invalid' };
 }
 
-export function issuerKeyWindow(
-  doc: IssuerHistoryDocument,
-  kid: string,
+export function issuerEntryWindow(
+  entry: {
+    not_before?: string | null;
+    not_after?: string | null;
+    status?: string | null;
+    revoked_at?: string | null;
+  } | null | undefined,
   issuedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  const entry = (doc.entries || []).find((row) => row.kid === kid);
   if (!entry) return { ok: false, reason: 'kid_not_in_history' };
   const issued = parseTime(issuedAt);
   if (issued == null) return { ok: false, reason: 'issued_at_missing' };
@@ -178,6 +181,16 @@ export function issuerKeyWindow(
     if (issued >= revoked) return { ok: false, reason: 'kid_revoked_before_issuance' };
   }
   return { ok: true, reason: null };
+}
+
+export function issuerKeyWindow(
+  doc: IssuerHistoryDocument,
+  kid: string,
+  issuedAt: unknown,
+): { ok: boolean; reason: string | null } {
+  const entry = (doc.entries || []).find((row) => row.kid === kid);
+  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
+  return issuerEntryWindow(entry, issuedAt);
 }
 
 export function issuerHistoryDocumentHash(doc: unknown): string {

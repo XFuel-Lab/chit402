@@ -21,6 +21,7 @@ import { BASE_RPC_URL } from './base-payer.js';
 import { unloggedReasonForTask, verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
 import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
+import { boundRowHash } from './row-hash.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -502,11 +503,15 @@ export function solanaFeePayer(tx: SolanaAnchorTx | null | undefined): string | 
   return first?.pubkey || null;
 }
 
-function rowHashFrom(receipt: AnchorReceipt, inclusion: AnchorInclusion): { rowHash: string; source: 'receipt' | 'inclusion' } | null {
-  if (typeof receipt.row_hash === 'string') return { rowHash: receipt.row_hash, source: 'receipt' };
-  if (typeof receipt.book_chain?.row_hash === 'string') return { rowHash: receipt.book_chain.row_hash, source: 'receipt' };
-  if (typeof inclusion.row_hash === 'string') return { rowHash: inclusion.row_hash, source: 'inclusion' };
-  return null;
+function rowHashFrom(
+  receipt: AnchorReceipt,
+  inclusion: AnchorInclusion,
+): { rowHash: string; source: 'receipt' | 'inclusion' } | { reason: 'row_hash_mismatch' } | null {
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return { reason: 'row_hash_mismatch' };
+  if (bound.row == null || bound.row === '') return null;
+  const fromReceipt = typeof receipt.row_hash === 'string' || typeof receipt.book_chain?.row_hash === 'string';
+  return { rowHash: bound.row, source: fromReceipt ? 'receipt' : 'inclusion' };
 }
 
 function solanaSignature(head: AnchorHead): string | null {
@@ -593,17 +598,15 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   } else {
     const row = rowHashFrom(input.receipt, input.inclusion);
     let leaf: Buffer | null = null;
-    if (row) {
+    if (row && 'reason' in row) {
+      inclusionReason = row.reason;
+    } else if (row) {
       leaf = leafHash(Buffer.from(`${taskId}|${row.rowHash}`));
       leafSource = row.source;
       if (input.inclusion.leaf && input.inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
         inclusionReason = 'leaf_mismatch';
         leaf = null;
       }
-    } else if (input.inclusion.leaf && /^[0-9a-fA-F]{64}$/.test(input.inclusion.leaf)) {
-      leaf = Buffer.from(input.inclusion.leaf, 'hex');
-      leafSource = 'inclusion';
-      doesNotProve.push('The leaf was taken from the inclusion object. The receipt had no row_hash, so this check did not recompute the leaf from the receipt bytes.');
     } else {
       inclusionReason = 'no_leaf';
     }

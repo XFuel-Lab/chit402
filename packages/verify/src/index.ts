@@ -13,6 +13,7 @@
 
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
+import { boundRowHash } from './row-hash.js';
 import {
   verifyCarryForward,
   type CarryForwardView,
@@ -1459,22 +1460,16 @@ function normalizeBoundRoot(root: unknown): string | null {
 }
 
 /**
- * Same order as verifyAnchoredRoot: top-level row_hash, then book_chain, then
- * the inclusion document. One source is enough. Two or three that differ fail
- * closed. The value used for the leaf is the one they agree on.
+ * Row hash for an offline leaf. Null and `''` are missing: do not hash `task_id|`.
  */
-function boundRowHash(
-  receipt: { row_hash?: string | null; book_chain?: { row_hash?: string | null } | null },
-  inclusion?: { row_hash?: string | null } | null,
-): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' } {
-  const present: string[] = [];
-  if (typeof receipt.row_hash === 'string') present.push(receipt.row_hash);
-  if (typeof receipt.book_chain?.row_hash === 'string') present.push(receipt.book_chain.row_hash);
-  if (typeof inclusion?.row_hash === 'string') present.push(inclusion.row_hash);
-  if (present.length === 0) return { ok: true, row: '' };
-  const agreed = present[0];
-  if (present.some((value) => value !== agreed)) return { ok: false, reason: 'row_hash_mismatch' };
-  return { ok: true, row: agreed };
+function inclusionRow(
+  receipt: XFuelReceipt,
+  inclusion: { row_hash?: string | null } | null | undefined,
+): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' | 'no_leaf' } {
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return bound;
+  if (bound.row == null || bound.row === '') return { ok: false, reason: 'no_leaf' };
+  return { ok: true, row: bound.row };
 }
 
 /**
@@ -1500,7 +1495,7 @@ function offlineInclusionBound(
   );
   if (!root) return { ok: false, reason: 'bad_root' };
   if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
-  const bound = boundRowHash(receipt, inclusion);
+  const bound = inclusionRow(receipt, inclusion);
   if (!bound.ok) return bound;
   const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
@@ -1532,7 +1527,7 @@ function suppliedHeadCovers(
   if (signed === supplied) return true;
   if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
   if (receipt.task_id == null) return false;
-  const bound = boundRowHash(receipt, inclusion);
+  const bound = inclusionRow(receipt, inclusion);
   if (!bound.ok) return false;
   const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
@@ -1893,23 +1888,25 @@ export async function verifyReceipt(
 
   let carry_forward: CarryForwardView | null | undefined;
   if (options.carry) {
-    const row = receipt.book_chain?.row_hash
-      ?? options.carry.row_hash
-      ?? '';
-    const leaf = receipt.task_id == null
+    const bound = boundRowHash(receipt, { row_hash: options.carry.row_hash });
+    const leaf = !bound.ok || bound.row == null || bound.row === '' || receipt.task_id == null
       ? null
-      : leafHash(Buffer.from(`${receipt.task_id}|${row}`));
-    const verdict = leaf
-      ? verifyCarryForward({
-        leaf,
-        oldHead: options.carry.oldHead,
-        oldInclusion: options.carry.oldInclusion,
-        currentHead: options.carry.currentHead,
-        currentInclusions: options.carry.currentInclusions,
-        trustedKids,
-        jwks,
-      })
-      : { applicable: true as const, ok: false as const, status: null, reason: 'not_in_tree' };
+      : leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
+    const verdict = !bound.ok
+      ? { applicable: true as const, ok: false as const, status: null, reason: bound.reason }
+      : (bound.row == null || bound.row === '')
+        ? { applicable: true as const, ok: false as const, status: null, reason: 'row_hash_missing' }
+        : leaf
+          ? verifyCarryForward({
+            leaf,
+            oldHead: options.carry.oldHead,
+            oldInclusion: options.carry.oldInclusion,
+            currentHead: options.carry.currentHead,
+            currentInclusions: options.carry.currentInclusions,
+            trustedKids,
+            jwks,
+          })
+          : { applicable: true as const, ok: false as const, status: null, reason: 'not_in_tree' };
     if (verdict.applicable && !verdict.ok) {
       errors.push(verdict.reason);
       overall = 'failed';

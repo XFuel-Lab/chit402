@@ -1472,19 +1472,26 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
   });
 
   test('a later head verifies when its inclusion proof covers the leaf', async () => {
-    const leafA = leafHash(Buffer.from('a|'));
-    const leafB = leafHash(Buffer.from('b|'));
-    const leafC = leafHash(Buffer.from('c|'));
+    const rowA = 'aa'.repeat(32);
+    const rowB = 'bb'.repeat(32);
+    const rowC = 'cc'.repeat(32);
+    const leafA = leafHash(Buffer.from(`a|${rowA}`));
+    const leafB = leafHash(Buffer.from(`b|${rowB}`));
+    const leafC = leafHash(Buffer.from(`c|${rowC}`));
     const node = (left, right) => createHash('sha256')
       .update(Buffer.concat([Buffer.from([0x01]), Buffer.from(left), Buffer.from(right)]))
       .digest();
     const issued = node(leafA, leafB).toString('hex');
     const laterRoot = node(node(leafA, leafB), leafC).toString('hex');
-    const receipt = envelope({}, { ...payload, task_id: 'b', tree_head_hash: issued });
+    const receipt = envelope(
+      { row_hash: rowB },
+      { ...payload, task_id: 'b', tree_head_hash: issued },
+    );
     const inclusion = {
       leaf: leafB.toString('hex'),
       leaf_index: 1,
       tree_size: 3,
+      row_hash: rowB,
       proof: [
         { hash: leafA.toString('hex'), position: 'left' },
         { hash: leafC.toString('hex'), position: 'right' },
@@ -1515,6 +1522,57 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
       head: { root: issued },
     });
     assert.equal(same.overall, 'verified', same.errors.join('; '));
+  });
+
+  test('an offline inclusion with no row hash fails', async () => {
+    const row = 'bb'.repeat(32);
+    const leaf = leafHash(Buffer.from(`b|${row}`));
+    const root = leaf.toString('hex');
+    const receipt = envelope({}, { ...payload, task_id: 'b', tree_head_hash: root });
+    const inclusion = {
+      leaf: leaf.toString('hex'),
+      leaf_index: 0,
+      tree_size: 1,
+      root,
+      proof: [],
+    };
+    const result = await verifyReceipt(receipt, {
+      trustedKids: [receipt.issuer_signature.kid],
+      head: { root, tree_size: 1 },
+      inclusion,
+    });
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.errors.includes('no_leaf'), true, result.errors.join('; '));
+    assert.notEqual(result.overall, 'verified');
+  });
+
+  test('an empty-suffix leaf that is in the tree still fails offline', async () => {
+    const taskId = 'b';
+    const emptyLeaf = leafHash(Buffer.from(`${taskId}|`));
+    const root = emptyLeaf.toString('hex');
+    assert.equal(verifyMerkleInclusion(emptyLeaf, 0, 1, root, []), true);
+    const inclusion = {
+      leaf: emptyLeaf.toString('hex'),
+      leaf_index: 0,
+      tree_size: 1,
+      root,
+      proof: [],
+    };
+    const missing = envelope({}, { ...payload, task_id: taskId, tree_head_hash: root });
+    const blank = envelope(
+      { row_hash: '' },
+      { ...payload, task_id: taskId, tree_head_hash: root },
+    );
+    for (const receipt of [missing, blank]) {
+      const result = await verifyReceipt(receipt, {
+        trustedKids: [receipt.issuer_signature.kid],
+        head: { root, tree_size: 1 },
+        inclusion,
+      });
+      assert.equal(result.overall, 'failed', result.errors.join('; '));
+      assert.equal(result.errors.includes('no_leaf'), true, result.errors.join('; '));
+      assert.notEqual(result.overall, 'verified');
+    }
   });
 
   test('a v8 receipt without the pair still verifies', async () => {

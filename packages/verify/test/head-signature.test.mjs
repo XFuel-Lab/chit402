@@ -116,10 +116,19 @@ function fixture() {
   return { key, head, receipt, inclusion, solanaTx, baseTx, root };
 }
 
-function run(fx, { head = fx.head, trustedKids = [fx.key.kid], baseTx = fx.baseTx, solanaTx = fx.solanaTx, jwks, issuerHistory } = {}) {
+function run(fx, {
+  head = fx.head,
+  trustedKids = [fx.key.kid],
+  baseTx = fx.baseTx,
+  solanaTx = fx.solanaTx,
+  jwks,
+  issuerHistory,
+  receipt = fx.receipt,
+  inclusion = fx.inclusion,
+} = {}) {
   return verifyAnchoredRoot({
-    receipt: fx.receipt,
-    inclusion: fx.inclusion,
+    receipt,
+    inclusion,
     head,
     trustedKids,
     jwks,
@@ -591,4 +600,147 @@ test('a fetched issuer history that does not verify cannot pin-trust the head', 
   assert.equal(forged.overall, 'failed');
   assert.equal(forged.errors.includes('issuer_history_invalid'), true, forged.errors.join(','));
   assert.notEqual(forged.overall, 'verified');
+});
+
+test('anchor mode fails when row-hash sources disagree', async () => {
+  const fx = fixture();
+  const disagreed = await run(fx, {
+    receipt: {
+      task_id: fx.receipt.task_id,
+      row_hash: fx.receipt.row_hash,
+      book_chain: { row_hash: 'cd'.repeat(32) },
+    },
+  });
+  assert.equal(disagreed.inclusion.valid, false);
+  assert.equal(disagreed.inclusion.reason, 'row_hash_mismatch');
+  assert.equal(disagreed.overall, 'failed');
+  assert.equal(disagreed.errors.includes('row_hash_mismatch'), true);
+  assert.notEqual(disagreed.overall, 'verified');
+
+  const foreign = await run(fx, {
+    inclusion: { ...fx.inclusion, row_hash: 'ef'.repeat(32) },
+  });
+  assert.equal(foreign.inclusion.reason, 'row_hash_mismatch');
+  assert.equal(foreign.overall, 'failed');
+  assert.notEqual(foreign.overall, 'verified');
+});
+
+test('anchor mode does not adopt inclusion.leaf when the receipt has no row hash', async () => {
+  const fx = fixture();
+  const result = await run(fx, { receipt: { task_id: fx.receipt.task_id } });
+  assert.equal(result.inclusion.valid, false);
+  assert.equal(result.inclusion.reason, 'no_leaf');
+  assert.equal(result.errors.includes('no_leaf'), true);
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.does_not_prove.some((line) => /inclusion object/.test(line)), false);
+  assert.notEqual(result.overall, 'verified');
+});
+
+function historyFrom(signer, bodies) {
+  let prev = null;
+  const entries = bodies.map((body) => {
+    const full = { ...body, prev_hash: prev };
+    const entryHash = issuerHistoryEntryHash(full);
+    prev = entryHash;
+    return { ...full, entry_hash: entryHash };
+  });
+  const headHash = entries[entries.length - 1].entry_hash;
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    entry_count: entries.length,
+    head_hash: headHash,
+  };
+  return {
+    schema: 'chit402.issuer_history.v1',
+    entries,
+    head_hash: headHash,
+    issuer_signature: {
+      jws: signClaims(claims, signer, 'chit402-issuer-history+jwt'),
+      kid: signer.kid,
+      issuer_jwk: signer.publicJwk,
+    },
+  };
+}
+
+function headFor(key, publishedAt) {
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  const head = sealHead({ ...unsigned, published_at: publishedAt }, key);
+  delete head.issuer_signature.issuer_jwk;
+  return head;
+}
+
+test('a thumbprint match uses that entry window, not an earlier row with the same label', () => {
+  const active = issuerKey();
+  const revoked = issuerKey();
+  const open = {
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    reason: null,
+    custody: 'test',
+  };
+  const history = historyFrom(active, [
+    {
+      ...open,
+      kid: 'shared-label',
+      jwk: active.publicJwk,
+      status: 'active',
+      revoked_at: null,
+    },
+    {
+      ...open,
+      kid: 'shared-label',
+      jwk: revoked.publicJwk,
+      status: 'revoked',
+      revoked_at: '2026-09-20T00:00:00Z',
+    },
+  ]);
+  const trusted = verifyTreeHeadTrust(headFor(revoked, '2026-10-03T11:33:37.000Z'), {
+    trustedKids: [active.kid],
+    issuerHistory: history,
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_kid_window');
+  assert.match(trusted.message, /kid_revoked_before_issuance/);
+  assert.notEqual(trusted.reason, 'kid_not_in_history');
+});
+
+test('duplicate history matches for one kid or thumbprint fail closed', () => {
+  const key = issuerKey();
+  const open = {
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+  };
+  const sameKid = historyFrom(key, [
+    { ...open, kid: key.kid },
+    { ...open, kid: key.kid },
+  ]);
+  const byKid = verifyTreeHeadTrust(headFor(key, '2026-10-03T11:33:37.000Z'), {
+    trustedKids: [key.kid],
+    issuerHistory: sameKid,
+  });
+  assert.equal(byKid.ok, false);
+  assert.equal(byKid.reason, 'head_kid_window');
+  assert.match(byKid.message, /kid_ambiguous/);
+
+  const sameThumb = historyFrom(key, [
+    { ...open, kid: 'label-a' },
+    { ...open, kid: 'label-b' },
+  ]);
+  const byThumb = verifyTreeHeadTrust(headFor(key, '2026-10-03T11:33:37.000Z'), {
+    trustedKids: [key.kid],
+    issuerHistory: sameThumb,
+  });
+  assert.equal(byThumb.ok, false);
+  assert.equal(byThumb.reason, 'head_kid_window');
+  assert.match(byThumb.message, /kid_ambiguous/);
 });
