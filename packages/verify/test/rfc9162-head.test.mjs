@@ -156,6 +156,49 @@ test('epoch-1 and epoch-2 heads signed before signer pinning are not VERIFIED', 
   }
 });
 
+test('a tree head with the issuer signature removed does not verify offline', async () => {
+  const receipt = {
+    task_id: honestInclusion.task_id,
+    status: 'completed',
+    book_chain: { row_hash: '6eaa2c1599fb5e3b9e2dc5b0e64ccf609277c4d893aa03ebd310c3584ce5cf9b' },
+  };
+  const stripped = { ...honestHead };
+  delete stripped.issuer_signature;
+  const result = await verifyReceipt(receipt, {
+    head: stripped,
+    inclusion: honestInclusion,
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.errors.includes('head_signature_missing'), true, result.errors.join(','));
+  assert.notEqual(result.overall, 'verified');
+});
+
+test('xfuel-verify without --rpc rejects a head that has no issuer signature', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-offline-unsigned-'));
+  const receiptPath = path.join(dir, 'receipt.json');
+  const headPath = path.join(dir, 'head.json');
+  const stripped = { ...honestHead };
+  delete stripped.issuer_signature;
+  writeFileSync(receiptPath, JSON.stringify({
+    task_id: honestInclusion.task_id,
+    status: 'completed',
+  }));
+  writeFileSync(headPath, JSON.stringify(stripped));
+  const cli = path.join(pkgDir, 'dist', 'cli.js');
+  const run = spawnSync(process.execPath, [
+    cli,
+    receiptPath,
+    headPath,
+    '--no-issuer-history',
+    '--no-preimage',
+  ], { encoding: 'utf8' });
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stdout, /head_signature_missing/);
+  assert.doesNotMatch(run.stdout, /Overall: VERIFIED/);
+});
+
 test('xfuel-verify without --rpc rejects a rewritten tree size', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-offline-head-'));
   const receiptPath = path.join(dir, 'receipt.json');

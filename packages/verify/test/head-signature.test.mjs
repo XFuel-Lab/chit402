@@ -12,6 +12,7 @@ const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
 
 const { verifyAnchoredRoot, SOLANA_GENESIS } = await import('../dist/anchor-witness.js');
+const { verifyReceipt } = await import('../dist/index.js');
 const {
   PINNED_BASE_ANCHOR_WALLET,
   PINNED_SOLANA_ANCHOR_FEE_PAYER,
@@ -384,4 +385,153 @@ test('a published_at before not_before still fails the kid window', () => {
   assert.equal(trusted.ok, false);
   assert.equal(trusted.reason, 'head_kid_window');
   assert.match(trusted.message, /issued_before_not_before/);
+});
+
+function historyFetch(body) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    return { ok: true, text: async () => JSON.stringify(body) };
+  };
+  return { calls, fetchImpl };
+}
+
+test('offline verifyReceipt rejects a head whose issuer signature was removed', async () => {
+  const fx = fixture();
+  const stripped = { ...fx.head };
+  delete stripped.issuer_signature;
+  const result = await verifyReceipt(fx.receipt, {
+    head: stripped,
+    trustedKids: [fx.key.kid],
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.errors.includes('head_signature_missing'), true, result.errors.join(','));
+  assert.notEqual(result.overall, 'verified');
+});
+
+test('offline head trust uses issuer history fetched for the receipt', async () => {
+  const current = issuerKey();
+  const retired = issuerKey();
+  const retiredBody = {
+    kid: retired.kid,
+    jwk: retired.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'retired',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+    prev_hash: null,
+  };
+  const retiredHash = issuerHistoryEntryHash(retiredBody);
+  const currentBody = {
+    kid: current.kid,
+    jwk: current.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+    prev_hash: retiredHash,
+  };
+  const currentHash = issuerHistoryEntryHash(currentBody);
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    entry_count: 2,
+    head_hash: currentHash,
+  };
+  const history = {
+    schema: 'chit402.issuer_history.v1',
+    entries: [
+      { ...retiredBody, entry_hash: retiredHash },
+      { ...currentBody, entry_hash: currentHash },
+    ],
+    head_hash: currentHash,
+    issuer_signature: {
+      jws: signClaims(claims, current, 'chit402-issuer-history+jwt'),
+      kid: current.kid,
+      issuer_jwk: current.publicJwk,
+    },
+  };
+  const fx = fixture();
+  const head = sealHead({
+    ...fx.head,
+    published_at: '2026-10-03T11:33:37.000Z',
+  }, retired);
+  delete head.issuer_signature.issuer_jwk;
+  const receipt = {
+    ...fx.receipt,
+    verify_url: 'https://api.chit402.com/receipt/offline-head',
+  };
+  const fetched = historyFetch(history);
+  const result = await verifyReceipt(receipt, {
+    head,
+    trustedKids: [current.kid],
+    requirePreimages: false,
+    fetchIssuerHistory: true,
+    fetchImpl: fetched.fetchImpl,
+  });
+  assert.equal(fetched.calls.length, 1);
+  assert.match(fetched.calls[0], /\/\.well-known\/issuer-history\.json$/);
+  assert.equal(result.overall, 'partial', result.errors.join(','));
+  assert.equal(result.errors.includes('head_key_untrusted'), false);
+  assert.equal(result.errors.includes('head_signature_missing'), false);
+  assert.equal(result.errors.includes('issuer_history_invalid'), false);
+
+  const ignored = await verifyReceipt(receipt, {
+    head,
+    trustedKids: [current.kid],
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(ignored.overall, 'failed');
+  assert.equal(ignored.errors.includes('head_key_untrusted'), true, ignored.errors.join(','));
+
+  const stripped = { ...head };
+  delete stripped.issuer_signature;
+  const unsigned = await verifyReceipt(receipt, {
+    head: stripped,
+    trustedKids: [current.kid],
+    requirePreimages: false,
+    fetchIssuerHistory: true,
+    fetchImpl: historyFetch(history).fetchImpl,
+  });
+  assert.equal(unsigned.overall, 'failed');
+  assert.equal(unsigned.errors.includes('head_signature_missing'), true, unsigned.errors.join(','));
+  assert.notEqual(unsigned.overall, 'verified');
+});
+
+test('a fetched issuer history that does not verify cannot pin-trust the head', async () => {
+  const fx = fixture();
+  const receipt = {
+    ...fx.receipt,
+    verify_url: 'https://api.chit402.com/receipt/offline-head',
+  };
+  const pinned = await verifyReceipt(receipt, {
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.notEqual(pinned.overall, 'failed', pinned.errors.join(','));
+  assert.equal(pinned.errors.includes('head_signature_invalid'), false);
+
+  const fetched = historyFetch({ schema: 'forged' });
+  const forged = await verifyReceipt(receipt, {
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    requirePreimages: false,
+    fetchIssuerHistory: true,
+    fetchImpl: fetched.fetchImpl,
+  });
+  assert.equal(fetched.calls.length, 1);
+  assert.equal(forged.overall, 'failed');
+  assert.equal(forged.errors.includes('issuer_history_invalid'), true, forged.errors.join(','));
+  assert.notEqual(forged.overall, 'verified');
 });

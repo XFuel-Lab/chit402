@@ -1334,8 +1334,11 @@ export interface VerifyReceiptOptions {
    * Tree head to check against the signed `tree_head_hash`. An equal root is
    * the issuance prefix and proves inclusion of this receipt. A different root
    * verifies only when `inclusion` proves the leaf is in that head.
-   * A head that carries `issuer_signature` is checked offline: the signature
-   * must cover the outer size, root, and the other signed fields. No chain RPC.
+   * A tree-head witness (anything beyond `{ root, tree_size }`) is checked
+   * offline. A missing `issuer_signature` fails closed. The signature must
+   * cover the outer size, root, and the other signed fields. The issuer-history
+   * document fetched for this call is the one that trusts the head's kid.
+   * No chain RPC.
    */
   head?: (ReceiptTreeHead & TreeHeadDocument) | null;
   /**
@@ -1423,6 +1426,15 @@ function offlineInclusionBound(
   }
   const included = verifyMerkleInclusion(leaf, Number(index), Number(size), root, inclusion.proof);
   return included ? { ok: true } : { ok: false, reason: 'inclusion_failed' };
+}
+
+/**
+ * `{ root }` and `{ root, tree_size }` only compare a signed tree_head_hash.
+ * Any other supplied head is an offline tree-head witness and needs a signature.
+ */
+function offlineHeadNeedsSignature(head: TreeHeadDocument | null | undefined): boolean {
+  if (!head || typeof head !== 'object') return false;
+  return Object.keys(head).some((key) => key !== 'root' && key !== 'tree_size');
 }
 
 function suppliedHeadCovers(
@@ -1528,21 +1540,71 @@ export async function verifyReceipt(
     }
   }
 
-  // Offline: a supplied tree head is trusted only when its ES256 signature
+  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
+    ?? decoded?.iat
+    ?? receipt.created_at
+    ?? null;
+  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
+  const payloadVersion = Number(verifiedClaims?.payload_version);
+  // Payload v10 signs the history pin. A missing pin fails even when the
+  // caller did not pass a history file or ask for a fetch.
+  const pinRequired = !options.skipIssuerHistory
+    && Number.isFinite(payloadVersion)
+    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
+    options.issuerHistory
+    || options.issuerHistoryBytes
+    || options.fetchIssuerHistory
+    || options.strictIssuerHistory
+    || options.issuerHistoryUrl
+    || historyPin
+  ));
+  const issuer_history = historyAsked
+    ? await checkReceiptIssuerHistory(receipt, {
+      document: options.issuerHistory ?? null,
+      documentBytes: options.issuerHistoryBytes ?? null,
+      fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
+      strict: options.strictIssuerHistory === true,
+      historyUrl: options.issuerHistoryUrl ?? null,
+      jwks,
+      trustedKids,
+      fetchImpl: options.fetchImpl,
+      trustedHosts,
+      issuedAt,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+      pin: historyPin,
+      requirePin: pinRequired,
+    })
+    : {
+      checked: false,
+      ok: true,
+      unreachable: false,
+      warning: null,
+      reason: null,
+      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+      document: null,
+      loaded: false,
+    };
+
+  // Offline: a tree-head witness is trusted only when its ES256 signature
   // covers the outer size, root, and the other fields anchor mode already
-  // compares. Chain RPC is not required for this check.
+  // compares. A missing signature is head_signature_missing. The history
+  // body loaded above is the one this check trusts. Chain RPC is not used.
   let headTrustFailed = false;
   const suppliedHead = options.head as TreeHeadDocument | null | undefined;
-  if (suppliedHead?.issuer_signature?.jws) {
+  if (offlineHeadNeedsSignature(suppliedHead)) {
     const trust = verifyTreeHeadTrust(suppliedHead, {
       jwks,
       trustedKids,
-      issuerHistory: options.issuerHistory ?? null,
+      issuerHistory: issuer_history.document,
       strictIssuerHistory: options.strictIssuerHistory === true,
     });
     if (!trust.ok) {
       headTrustFailed = true;
       errors.push(trust.reason || 'head_signature_invalid');
+    } else if (issuer_history.loaded && !issuer_history.document) {
+      headTrustFailed = true;
+      errors.push('issuer_history_invalid');
     }
   }
   let inclusionFailed = false;
@@ -1690,49 +1752,6 @@ export async function verifyReceipt(
     }
   }
 
-  const issuedAt = (verifiedClaims && 'iat' in verifiedClaims ? verifiedClaims.iat : null)
-    ?? decoded?.iat
-    ?? receipt.created_at
-    ?? null;
-  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
-  const payloadVersion = Number(verifiedClaims?.payload_version);
-  // Payload v10 signs the history pin. A missing pin fails even when the
-  // caller did not pass a history file or ask for a fetch.
-  const pinRequired = !options.skipIssuerHistory
-    && Number.isFinite(payloadVersion)
-    && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
-  const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
-    options.issuerHistory
-    || options.issuerHistoryBytes
-    || options.fetchIssuerHistory
-    || options.strictIssuerHistory
-    || options.issuerHistoryUrl
-    || historyPin
-  ));
-  const issuer_history = historyAsked
-    ? await checkReceiptIssuerHistory(receipt, {
-      document: options.issuerHistory ?? null,
-      documentBytes: options.issuerHistoryBytes ?? null,
-      fetchHistory: options.fetchIssuerHistory === true || options.strictIssuerHistory === true,
-      strict: options.strictIssuerHistory === true,
-      historyUrl: options.issuerHistoryUrl ?? null,
-      jwks,
-      trustedKids,
-      fetchImpl: options.fetchImpl,
-      trustedHosts,
-      issuedAt,
-      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-      pin: historyPin,
-      requirePin: pinRequired,
-    })
-    : {
-      checked: false,
-      ok: true,
-      unreachable: false,
-      warning: null,
-      reason: null,
-      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-    };
   if (issuer_history.warning) warnings.push(issuer_history.warning);
   if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
     errors.push(`issuer history: ${issuer_history.reason}`);

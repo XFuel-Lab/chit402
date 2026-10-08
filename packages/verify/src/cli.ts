@@ -716,7 +716,7 @@ async function runRefusal(
     issuer_history: result.issuer_history,
   } as Record<string, unknown>) : null;
   const history = args.skipIssuerHistory
-    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null }
+    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null, document: null, loaded: false }
     : await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
       document: args.issuerHistory,
       documentBytes: args.issuerHistoryBytes,
