@@ -7,10 +7,10 @@ of duplicating config details.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `XFUEL_API_URL` | Base URL of the M2M API server | `https://api.xfuel.app` (public beta; `http://localhost:3002` to self-host) |
+| `XFUEL_API_URL` | Base URL of the M2M API server | `https://api.chit402.com` (public beta; `http://localhost:3002` to self-host) |
 | `XFUEL_API_KEY` | M2M API key (sent as `X-API-Key`) | `xfuel-demo` (shared public demo key, rate-limited; bring your own for higher limits) |
 
-The SDK defaults to `https://api.xfuel.app` + the public demo key, so
+The SDK defaults to `https://api.chit402.com` + the public demo key, so
 `new XFuelClient()` works with zero config. The chat-completions surface
 (`GET /v1/models`, `POST /v1/chat/completions`) lives on the same server.
 

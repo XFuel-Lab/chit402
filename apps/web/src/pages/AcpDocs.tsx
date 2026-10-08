@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import { getApiV1 } from '../apiHost';
+import PaidDoorOptions from '../components/PaidDoorOptions';
 
 const preferredPath = `// Preferred: keep ACP settle for agent commerce;
 // send inference spend through Chit for the signed receipt book.
@@ -42,6 +43,7 @@ ACP can keep its own settle path; Chit stamps hub/model/amount for finance.
 Register once (POST /v1/agents/register) to hold the possession-gated book.`;
 
 export default function AcpDocs() {
+  const apiV1 = getApiV1();
   return (
     <div className="page docs-page">
       <div className="container" style={{ maxWidth: 720 }}>
@@ -59,8 +61,10 @@ export default function AcpDocs() {
           <p>
             Point your agent&apos;s chat-completions client at Chit&apos;s <code>/v1</code> wire. ACP
             handles agent-to-agent settlement; Chit stamps the inference receipt the principal can
-            audit.
+            audit. Keyless x402 first. A partner key still works.
           </p>
+          <PaidDoorOptions apiV1={apiV1} />
+          <h3 style={{ fontSize: '1rem', margin: '1.25rem 0 0.5rem' }}>Partner key</h3>
           <pre className="docs-code">
             <code>{preferredPath}</code>
           </pre>

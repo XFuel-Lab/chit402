@@ -2,7 +2,7 @@
  * XFuel Sidecar Receipt Builder
  *
  * Emits XFuel-shaped receipts for foreign OpenAI-compatible providers.
- * Same schema as api.xfuel.app — hub, model, amount, output_hash, payment binding.
+ * Same schema as api.chit402.com — hub, model, amount, output_hash, payment binding.
  *
  * Per whitepaper: HMAC on a sidecar row means "this client recorded it."
  * The signature is tamper-evident but NOT merchant-attested unless the upstream
@@ -93,7 +93,7 @@ export interface BuildReceiptParams {
   payTo?: string;
   /** HMAC signing secret (optional — omit for unsigned) */
   signingSecret?: string;
-  /** XFuel API base URL for verify_url (default: https://api.xfuel.app) */
+  /** XFuel API base URL for verify_url (default: https://api.chit402.com) */
   xfuelBaseUrl?: string;
   /** Agent ID for ingest linking */
   agentId?: number | string;
@@ -194,7 +194,7 @@ export function buildSidecarReceipt(params: BuildReceiptParams): SidecarReceipt 
     payer,
     payTo,
     signingSecret,
-    xfuelBaseUrl = 'https://api.xfuel.app',
+    xfuelBaseUrl = 'https://api.chit402.com',
   } = params;
 
   const taskId = generateSidecarTaskId();

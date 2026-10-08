@@ -23,7 +23,7 @@ get_book / get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gate
 
 verify_receipt fetches /receipt/:task_id?format=json and checks binding offline (@xfuel/verify). Prefer this over get_proof for the default "prove it" flow. get_proof / verify_proof are optional Tier-2 SP1 settlement checks.
 
-Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.chit402.com (alias: api.xfuel.app) is the public beta; paying it moves mainnet USDC.`;
+Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.chit402.com is the public beta; paying it moves mainnet USDC.`;
 
 export type TransportKind = 'stdio' | 'http';
 

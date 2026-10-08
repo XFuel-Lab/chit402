@@ -162,7 +162,7 @@ const TASK_REQUEST_OUTPUT_EXAMPLE = {
   status: 'accepted',
   payment_rail: 'usdc',
   payment_ref: 'base:0x...',
-  verify_url: 'https://api.xfuel.app/receipt/ai-task-12345',
+  verify_url: 'https://api.chit402.com/receipt/chit-ai-task-12345',
   gross_amount: '50000',
   fee_amount: '250',
   net_amount: '49750',
@@ -179,7 +179,7 @@ const CHAT_COMPLETIONS_OUTPUT_EXAMPLE = {
     finish_reason: 'stop',
   }],
   usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  xfuel: { verify_url: 'https://api.xfuel.app/receipt/xfuel-abc123' },
+  xfuel: { verify_url: 'https://api.chit402.com/receipt/chit-abc123' },
 };
 
 /**
@@ -500,7 +500,7 @@ export function setX402PaymentResponseHeaders(res, settle) {
  * @param {string} p.taskId
  * @param {string} p.maxAmountRequired  smallest-unit string (USDC 6dp)
  * @param {string} [p.resource]         absolute resource URL (required for bazaar)
- * @param {string} [p.baseUrl]          base URL for building absolute links (e.g. https://api.xfuel.app)
+ * @param {string} [p.baseUrl]          base URL for building absolute links (e.g. https://api.chit402.com)
  * @param {string} [p.payTo]            Base USDC treasury address
  * @param {string} [p.network]          base | base-sepolia | eip155:8453 | …
  * @param {string} [p.description]

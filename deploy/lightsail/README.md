@@ -1,6 +1,6 @@
 # Lightsail gateway ops
 
-Canonical way to run the public API at `https://api.xfuel.app` and `https://api.chit402.com` — **not** PM2, **not** `/opt/.../theta-bridge`. Do not provision `api-testnet.xfuel.app` (retired demo name; DNS intentionally NXDOMAIN).
+Canonical way to run the public API at `https://api.chit402.com` — **not** PM2, **not** `/opt/.../theta-bridge`. Keep `api.xfuel.app` on the same site block so that hostname still resolves. Do not provision `api-testnet.xfuel.app` (retired demo name; DNS intentionally NXDOMAIN). Do not give `api.xfuel.app` out as the default.
 
 DNS for `*.xfuel.app` is at Namecheap. Extra API names are A records to this instance’s static IP. TLS is terminated on the box (Caddy or nginx + certbot), not on Vercel. Add a new name to the existing site block and cert; do not stand up a second proxy or instance.
 
@@ -22,7 +22,7 @@ api.chit402.com, api.xfuel.app {
 
 certbot + nginx — cert covers `api.chit402.com` and `api.xfuel.app`; add both to `server_name`, reload.
 
-Receipt links: Set `PUBLIC_HOSTS=api.chit402.com,api.xfuel.app` in `.env` so receipts use the incoming Host header when it matches an allowed host (enables correct self-links from both canonical names). Optionally keep `PUBLIC_BASE_URL=https://api.xfuel.app` as a fallback for requests from unrecognized hosts. Then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
+Receipt links: Set `PUBLIC_HOSTS=api.chit402.com,api.xfuel.app` in `.env` so a request that still arrives on the older hostname gets self-links on that host. Set `PUBLIC_BASE_URL=https://api.chit402.com` as the fallback for unrecognized hosts. Then `sudo systemctl restart xfuel-api`. Do not rotate `RECEIPT_SIGNING_SECRET`.
 
 ## Layout
 
@@ -92,7 +92,7 @@ curl -sS http://127.0.0.1:3002/health
 # PASS: revenue_split is an object (usdc-base-splits / buckets)
 # FAIL: revenue_split string "30% BBB / 30% LP / ..."  → still old process
 
-curl -sS https://api.xfuel.app/task-quote \
+curl -sS https://api.chit402.com/task-quote \
   -H 'content-type: application/json' -H 'X-API-Key: xfuel-demo' \
   -d '{"model_id":"xfuel/auto","amount":"10000"}'
 # PASS: "network":"base"
@@ -110,7 +110,7 @@ sudo systemctl status xfuel-api --no-pager
 Then verify from a workstation — one command, and it exits non-zero on any failure:
 
 ```bash
-node scripts/dev/_verify_deploy.mjs https://api.xfuel.app
+node scripts/dev/_verify_deploy.mjs https://api.chit402.com
 ```
 
 It checks that the build actually deployed, signing is on, the quote prices the model that will

@@ -1,6 +1,6 @@
 import { getHostConfig } from './hostConfig';
 
-/** Canonical public gateway. api.xfuel.app is a live alias. */
+/** Canonical public gateway. */
 export function getApiHost(): string {
   return `https://${getHostConfig().apiDomain}`;
 }

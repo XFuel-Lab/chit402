@@ -7,6 +7,13 @@ const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
 
 const startHere: DocLink[] = [
   {
+    title: 'What the book is, and isn\'t',
+    description: 'Collected vs client-attested, what a receipt proves, settled vs unsettled, daily anchors.',
+    href: '/book#what-the-book-is',
+    meta: 'book',
+    internal: true,
+  },
+  {
     title: 'Products',
     description: 'Stamp, Private Desk, and Private + Attest — book-first seats and what you hold after settle.',
     href: '/products',
@@ -226,6 +233,34 @@ export default function Docs() {
         </nav>
 
         <DocSection title="Start here" items={startHere} />
+
+        <div className="docs-panel">
+          <h2>What&apos;s new</h2>
+          <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.7, paddingLeft: '1.2rem' }}>
+            <li>
+              <strong>2026-09-30</strong> — the receipt root is published daily on Base and on Solana.
+              The current head is{' '}
+              <a href={`${apiHost}/v1/receipts/tree/head`}>GET /v1/receipts/tree/head</a>.{' '}
+              <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that the anchor transaction
+              is present. It is not a full inclusion check.
+            </li>
+            <li>
+              <strong>2026-10-06</strong> — the public receipt log is durable and tied to an epoch.
+            </li>
+            <li>
+              <strong>2026-10-03</strong> — a blocked spend can return a signed refusal
+              (<code>chit402.refusal.v1</code>). <code>@xfuel/verify</code> 0.3.1 verifies it.
+            </li>
+            <li>
+              <strong>2026-10-04</strong> — public spend audit at <Link to="/audit">/audit</Link>.
+            </li>
+            <li>
+              <strong>2026-10-04</strong> — hash preimages and signed issuer key history.
+              Check them on <Link to="/docs/receipt-check">Receipt check</Link>. Published receipts
+              from before the object was stored still return 404 on <code>/preimage</code>.
+            </li>
+          </ul>
+        </div>
         <DocSection title="Builders" items={builders} />
         <DocSection title="Operators" items={operators} />
         <DocSection title="Auditors" items={auditors} />

@@ -2,7 +2,7 @@
  * A stored receipt older than TASK_STORE_RETENTION_MS must still resolve.
  *
  * gcPersisted used to unlink every snapshot whose updatedAt/createdAt was older
- * than 30 days. The public house receipt chit-1e57cdd7 (Base tx 2026-09-01)
+ * than 30 days. The retired specimen row (Base tx 2026-09-01)
  * 404'd that way while GET /receipt/by-tx still redirected off the usage ledger.
  * Pre-v9 payloads are not a reason to drop the row.
  */

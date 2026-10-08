@@ -49,7 +49,7 @@ const CHIT_HOME_SEO: SeoConfig = {
 const CHIT_V1_SEO_FULL: SeoConfig = {
   ...CHIT_V1_SEO,
   h1: 'Bot drop-in. Wallet pays. You hold the book.',
-  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a demo key, the gateway returns HTTP 402.',
+  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
 };
 
 function transformHtml(html: string, seo: SeoConfig, pathname: string): string {

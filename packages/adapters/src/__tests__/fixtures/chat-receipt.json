@@ -9,8 +9,8 @@
     }
   ],
   "xfuel": {
-    "task_id": "chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "task_id": "chit-adapter-fixture-1",
+    "verify_url": "https://api.chit402.com/receipt/chit-adapter-fixture-1",
     "hub": "akash",
     "model": "xfuel/auto",
     "amount": "10000"

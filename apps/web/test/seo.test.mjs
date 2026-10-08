@@ -204,6 +204,11 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card shows hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
+  assert.match(chitHome, /Audit a Base wallet/);
+  assert.match(chitHome, /published on Base and Solana/);
+  assert.match(chitHome, /receipts\/tree\/head/);
+  assert.match(chitHome, /Pin our issuer key/);
+  assert.doesNotMatch(chitHome, /proven inclusion|independently verify inclusion/i);
   assert.match(chitHome, /Verify live receipt/, 'ChitHome links live verify');
   assert.match(chitHome, /90-second drop-in/, 'ChitHome surfaces 90s drop-in above fold');
   assert.match(
@@ -216,7 +221,18 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /to="\/doors"/, 'ChitHome links install doors from 90s section');
   const ninetyBlock = chitHome.match(/chit-ninety-door[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? '';
   assert.doesNotMatch(ninetyBlock, /OpenAI/i, 'ChitHome 90s lead block stays book-first (no vendor wire branding)');
-  assert.match(chitHome, /fetch\(/, 'ChitHome 90s sample uses neutral fetch wire');
+  assert.match(chitHome, /wrapFetchWithPayment\(/, 'ChitHome 90s sample uses the x402 fetch wrapper');
+  const dropIn = chitHome.match(/const dropInSnippet = `([\s\S]*?)`;/)?.[1] ?? '';
+  const partnerKey = chitHome.match(/const partnerKeySnippet = `([\s\S]*?)`;/)?.[1] ?? '';
+  assert.match(dropIn, /wrapFetchWithPayment/, '90s x402 snippet pays with wrapFetchWithPayment');
+  assert.match(dropIn, /verify_url/, '90s x402 snippet returns verify_url');
+  assert.doesNotMatch(dropIn, /X-API-Key/, '90s x402 snippet does not send an API key');
+  assert.match(partnerKey, /X-API-Key/, 'partner key snippet sends X-API-Key');
+  assert.match(partnerKey, /verify_url/, 'partner key snippet returns verify_url');
+  assert.match(chitHome, /Pay per call \(x402\)/, 'x402 tab is labeled Pay per call (x402)');
+  assert.match(chitHome, /Partner API key/, 'partner key tab is labeled Partner API key');
+  assert.match(chitHome, /useState<DropInDoor>\('x402'\)/, 'x402 tab is selected first');
+  assert.doesNotMatch(chitHome, /can still send/, 'partner key is not a leftover footnote');
   assert.match(chitHome, /Also works/, 'ChitHome demotes adapters to Also works');
   assert.match(chitHome, /api\.chit402\.com\/v1/, 'ChitHome names wire in 90s drop-in');
   assert.match(chitHome, /\/docs\/chit-in-15-lines/, 'ChitHome links to drop-in door page');
@@ -243,6 +259,12 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
   assert.match(specimenPanel, /computeBurnRate/, 'Specimen panel previews burn rate');
   assert.match(specimenPanel, /computeModelMix/, 'Specimen panel previews model mix');
+  assert.match(book, /id="what-the-book-is"/, 'Book explains what it is');
+  assert.match(book, /client-attested/);
+  assert.match(book, /chit402\.refusal\.v1/);
+  assert.match(book, /not a full inclusion check/i);
+  assert.doesNotMatch(book, /prepaid hold|holds are live/i);
+  assert.doesNotMatch(book, /chit-1e57cdd7/);
 });
 
 test('Book principal dashboard v1 wires live API beats', () => {
@@ -284,17 +306,46 @@ test('Book principal dashboard v1 wires live API beats', () => {
   assert.match(book, /to="\/docs\/chit-in-15-lines"/, 'Empty state links the quickstart');
 });
 
-test('Chit primary nav has Trust, Doors, and no Drop-in door', () => {
+test('Chit primary nav is Book, Audit, Docs, Pricing, Trust, and GitHub', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
-  assert.match(layout, /to: '\/pricing', label: 'Pricing'/, 'Chit nav includes Pricing');
-  assert.match(layout, /to: '\/products', label: 'Products'/, 'Chit nav includes Products top-level');
-  assert.match(layout, /to: '\/doors', label: 'Doors'/, 'Chit nav includes Doors');
-  assert.match(layout, /to: '\/trust', label: 'Trust'/, 'Chit nav includes Trust');
-  assert.doesNotMatch(
-    layout,
-    /chitNavLinks[\s\S]*Drop-in door/,
-    'Drop-in door is not in Chit primary nav',
-  );
+  const nav = layout.match(/const chitNavLinks[\s\S]*?\];/)?.[0] ?? '';
+  assert.match(nav, /to: '\/book', label: 'Book'/);
+  assert.match(nav, /to: '\/audit', label: 'Audit'/);
+  assert.match(nav, /to: '\/docs', label: 'Docs'/);
+  assert.match(nav, /to: '\/pricing', label: 'Pricing'/);
+  assert.match(nav, /to: '\/trust', label: 'Trust'/);
+  assert.doesNotMatch(nav, /Register|Activity|Board|Products|Doors|Home/);
+  assert.match(layout, /label: 'GitHub', external: true/);
+  assert.match(layout, /to="\/register"/, 'Register stays in the footer');
+  assert.match(layout, /to="\/activity"/);
+  assert.match(layout, /to="\/board"/);
+  assert.match(layout, /to="\/products"/);
+  assert.match(layout, /to="\/doors"/);
+  assert.doesNotMatch(layout, /chitNavLinks[\s\S]*Drop-in door/);
+});
+
+test('install docs show keyless x402 before the partner API key', () => {
+  const options = readFileSync(join(root, 'src/components/PaidDoorOptions.tsx'), 'utf8');
+  const snippets = readFileSync(join(root, 'src/lib/paidDoorSnippets.ts'), 'utf8');
+  assert.ok(snippets.indexOf('wrapFetchWithPayment') < snippets.indexOf('X-API-Key'));
+  assert.match(options, /Keyless x402/);
+  assert.match(options, /Partner API key/);
+  const pages = [
+    'src/pages/Doors.tsx',
+    'src/pages/AcpDocs.tsx',
+    'src/pages/CloudflareDocs.tsx',
+    'src/pages/SwarmPlatforms.tsx',
+    'src/pages/OpenClawDocs.tsx',
+    'src/pages/ElizaPlugin.tsx',
+    'src/pages/FrameworkAdapters.tsx',
+    'src/pages/ChitIn15Lines.tsx',
+  ];
+  for (const rel of pages) {
+    const page = readFileSync(join(root, rel), 'utf8');
+    assert.match(page, /PaidDoorOptions/, `${rel} shows both pay options`);
+    assert.match(page, /X-API-Key|CHIT_API_KEY|CHIT402_API_KEY/, `${rel} keeps a partner key`);
+    assert.doesNotMatch(page, /@xfuel\/sidecar|from 'xfuel-sdk'|npx xfuel-mcp/);
+  }
 });
 
 test('Docs hub leads with book; install doors on dedicated page', () => {
@@ -305,11 +356,19 @@ test('Docs hub leads with book; install doors on dedicated page', () => {
   assert.match(docs, /to="\/doors"/, 'Docs hub links to /doors');
   assert.match(docs, /href: '\/products'/, 'Docs hub lists Products in start here');
   assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
-  assert.match(doors, /DocDoorGrid/, 'Doors page renders door cards');
   assert.match(doors, /<h1>Doors<\/h1>/, 'Doors page has first-class title');
+  assert.doesNotMatch(doors, /Equal-weight/);
+  assert.match(doors, /PaidDoorOptions/, 'Doors leads with keyless x402');
+  assert.match(doors, /CHIT402_API_KEY/, 'Doors keeps the partner API key');
+  assert.match(doors, /chit402-sdk/);
+  assert.match(doors, /chit402-mcp/);
+  assert.match(doors, /chit402-sidecar/);
+  assert.doesNotMatch(doors, /@xfuel\/sidecar/);
+  assert.doesNotMatch(doors, /xfuel-sdk/);
+  assert.doesNotMatch(doors, /xfuel-mcp/);
   assert.match(docsDoors, /Navigate to="\/doors"/, 'Legacy /docs/doors redirects to /doors');
-  const doorsBlock = doors.match(/export const installDoors[\s\S]*?];/)?.[0] ?? '';
-  assert.match(doorsBlock, /Chit in 15 lines/, 'Doors page includes drop-in');
+  const doorsBlock = doors.match(/export const moreDoors[\s\S]*?];/)?.[0] ?? '';
+  assert.match(doorsBlock, /Chat \/v1 wire/, 'Doors page links the wire page');
   assert.match(doorsBlock, /Eliza plugin/, 'Doors page includes Eliza');
 });
 
@@ -343,7 +402,12 @@ test('Layout supports dual branding for Chit and XFuel', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /isChitHost/, 'Layout checks for Chit host');
   assert.doesNotMatch(layout, /Chit is the product/, 'Layout must not show global parent banner on Chit');
-  assert.doesNotMatch(layout, /By XFuel Lab/i, 'Layout footer must not show parent byline on Chit');
+  assert.match(layout, /Chit402 is built by XFuel Lab/, 'Footer names the lab once');
+  assert.doesNotMatch(
+    layout.replace('Chit402 is built by XFuel Lab', ''),
+    /By XFuel Lab/i,
+    'Layout footer must not show a parent byline',
+  );
   assert.match(layout, /config\.publicContactEmail/, 'Layout footer uses host public contact email');
   assert.doesNotMatch(layout, /mailto:security@xfuel\.app/, 'Layout must not hard-code security@xfuel.app mailto');
   assert.match(layout, /config\.name/, 'Layout uses dynamic brand name');
@@ -391,7 +455,8 @@ test('1F916 link draft is a public docs page', () => {
   assert.doesNotMatch(page, /1ebc5616/);
   assert.doesNotMatch(page, /chit-1b7ac401/);
   assert.doesNotMatch(page, /chit-5d775d12/);
-  assert.match(page, /xfuel-verify/);
+  assert.match(page, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.doesNotMatch(page, /npx xfuel-verify/);
   assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
   assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);
   assert.match(llms, /\/docs\/1f916-link/);
@@ -435,10 +500,34 @@ test('Security page uses host-aware product naming', () => {
   assert.doesNotMatch(security, /XFuel is pre-audit/, 'Security must not hard-code XFuel pre-audit on Chit');
 });
 
+test('false claims called out in the site alignment stay fixed', () => {
+  const trust = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
+  const register = readFileSync(join(root, 'src/pages/Register.tsx'), 'utf8');
+  const gateway = readFileSync(join(root, 'src/pages/GatewayV1.tsx'), 'utf8');
+  const security = readFileSync(join(root, 'src/pages/Security.tsx'), 'utf8');
+  const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  assert.match(trust, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.doesNotMatch(trust, /npx xfuel-verify/);
+  assert.doesNotMatch(register, /The demo key/);
+  assert.match(register, /Public demo keys never register/);
+  assert.doesNotMatch(gateway, /HMAC-signed/);
+  assert.doesNotMatch(gateway, /do not proxy to third-party/i);
+  assert.match(gateway, /openrouter/);
+  assert.match(gateway, /ES256/);
+  assert.doesNotMatch(security, /baked in at build time/);
+  assert.doesNotMatch(security, /ZKVerifierSP1 \(env\)/);
+  assert.match(security, /Base and Solana/);
+  assert.doesNotMatch(receipt, /Publish <code>@xfuel\/verify<\/code> before/);
+  assert.match(receipt, /chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96/);
+  assert.doesNotMatch(receipt, /chit-1e57cdd7/);
+  assert.doesNotMatch(middleware, /or a demo key/);
+});
+
 test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
   const page = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
   assert.match(page, /api\.chit402\.com\/\.well-known\/jwks\.json/);
-  assert.match(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
+  assert.doesNotMatch(page, /api\.xfuel\.app\/\.well-known\/jwks\.json/);
   assert.doesNotMatch(page, /XFuel API alias/i, 'Trust page must not brand legacy host as XFuel product');
   assert.match(page, /IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q/);
   assert.match(page, /RFC 7638/);

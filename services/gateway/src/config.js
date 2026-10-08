@@ -156,6 +156,22 @@ const config = {
     minimizeLogs: process.env.PRIVATE_SPEND_MINIMIZE_LOGS !== 'false',
   },
 
+  // Hold-then-settle for the prepaid ceiling and session max_cumulative_spend.
+  // Default off: the door still checks settled spend only. When on, a paid call
+  // reserves its worst-case quote before upstream and releases the hold on
+  // failure. TTL covers a request that never returns. See spend-hold.js.
+  // The same flag mounts POST /v1/spend/holds for external clients
+  // (packages/cdp-spend-store). That route also needs SPEND_HOLD_API_TOKEN
+  // and SPEND_HOLD_CEILINGS_JSON. It accepts Base Sepolia only.
+  spendHold: {
+    enabled: process.env.SPEND_HOLD_ENABLED === 'true',
+    ttlMs: (() => {
+      const n = parseInt(process.env.SPEND_HOLD_TTL_MS, 10);
+      if (!Number.isFinite(n) || n < 1) return 10 * 60 * 1000;
+      return n;
+    })(),
+  },
+
   // Provider Float Manager v0 (ADR 0005) — prepaid COGS; buyer rail stays USDC.
   // See docs/PROVIDER_FLOAT_TREASURY.md. No hot-path FX.
   providerFloats: {
@@ -371,7 +387,7 @@ const config = {
     nodeEnv: process.env.NODE_ENV || 'development',
     // Canonical public base URL for building absolute, shareable links (the
     // `verify_url` / receipt link). Set this when the server sits behind a proxy
-    // or CDN (e.g. https://api.xfuel.app) so links aren't derived from the
+    // or CDN (e.g. https://api.chit402.com) so links aren't derived from the
     // internal host. When unset, links are derived from the request host.
     publicBaseUrl: process.env.PUBLIC_BASE_URL || null,
     // Allowed public hostnames for host-aware URL construction (comma-separated).
