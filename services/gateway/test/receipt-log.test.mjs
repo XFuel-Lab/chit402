@@ -2643,10 +2643,21 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const inclusionPath = path.join(work, 'inclusion.json');
   const headPath = path.join(work, 'head.json');
   const jwksPath = path.join(work, 'jwks.json');
-  fs.writeFileSync(receiptPath, JSON.stringify({
+  const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
     verify_url: `http://127.0.0.1:${gatewayPort}/receipt/cli-row`,
+  };
+  const receiptSig = signJws(receiptClaims, { typ: 'chit402-receipt+jwt' });
+  fs.writeFileSync(receiptPath, JSON.stringify({
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-receipt+jwt',
+      jws: receiptSig.jws,
+      kid: receiptSig.kid,
+      issuer_jwk: jwk,
+    },
   }));
   fs.writeFileSync(inclusionPath, JSON.stringify(tree.inclusion('cli-row')));
   fs.writeFileSync(headPath, JSON.stringify(head));
@@ -2667,6 +2678,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     '--trusted-kid', signed.kid,
     '--anchor-wallets-file', walletsPath,
     '--no-issuer-history',
+    '--no-preimage',
     '--json',
   ];
   try {
