@@ -208,8 +208,35 @@ test('GET /inclusion rejects a tree_size past the live tree', async () => {
       const junk = await fetch(`${base}/v1/receipts/leaf-a/inclusion?tree_size=nope`);
       assert.equal(junk.status, 400);
       assert.equal((await junk.json()).error, 'bad_tree_size');
+      const zero = await fetch(`${base}/v1/receipts/leaf-a/inclusion?tree_size=0`);
+      assert.equal(zero.status, 400);
+      assert.equal((await zero.json()).error, 'bad_tree_size');
+      const padded = await fetch(`${base}/v1/receipts/leaf-a/inclusion?tree_size=01`);
+      assert.equal(padded.status, 400);
+      assert.equal((await padded.json()).error, 'bad_tree_size');
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+});
+
+test('a pending leaf renders PENDING ahead of a carry-forward line', () => {
+  const html = renderInclusionSection(
+    {
+      status: 'pending_anchor',
+      anchored_tree_size: 4,
+      live_tree_size: 5,
+      leaf_index: 4,
+    },
+    {
+      status: 'VERIFIED_CARRIED_FORWARD',
+      issued_at: '2026-10-03T00:00:00.000Z',
+      issued_epoch: 1,
+      logged_at: '2026-10-08T00:00:00.000Z',
+      logged_epoch: 2,
+      leaf_index: 4,
+    },
+  );
+  assert.match(html, /PENDING/);
+  assert.equal(html.includes('VERIFIED'), false);
 });

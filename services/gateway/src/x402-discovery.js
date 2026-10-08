@@ -2275,7 +2275,7 @@ export function buildOpenApiSpec(baseUrl = '') {
               in: 'query',
               required: false,
               schema: { type: 'integer', minimum: 1 },
-              description: 'Signed head size to prove against. Omitted means the newest anchored signed head.',
+              description: 'Signed head size to prove against. A canonical positive integer with no leading zeros. Omitted means the newest anchored signed head.',
             },
           ],
           responses: {

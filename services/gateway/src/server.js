@@ -2868,7 +2868,7 @@ export function createApp() {
     let treeSize = null;
     if (req.query.tree_size != null && String(req.query.tree_size) !== '') {
       const raw = String(req.query.tree_size).trim();
-      if (!/^\d+$/.test(raw)) {
+      if (!/^[1-9]\d*$/.test(raw)) {
         return res.status(400).json({
           error: 'bad_tree_size',
           message: 'tree_size must be a positive integer',

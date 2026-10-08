@@ -378,33 +378,118 @@ export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string)
 export interface NewestAnchor {
   root: string;
   signature: string;
+  slot?: number | null;
+  blockTime?: number | null;
+}
+
+/** Newest-first page size for `getSignaturesForAddress`. */
+export const NEWEST_ANCHOR_PAGE_LIMIT = 25;
+/** Full pages walked before a missing memo is `newest_anchor_unavailable`. */
+export const NEWEST_ANCHOR_PAGE_CAP = 8;
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asSafeInt(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
+  if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * Pending is a leaf past the anchored head. An index inside that head is
+ * `pending_leaf_in_head`. Any other broken bound is `pending_bounds`.
+ * `live_tree_size` is checked only when the inclusion names it.
+ */
+function pendingGeometryReason(inclusion: AnchorInclusion | null | undefined): string | null {
+  const size = asSafeInt(inclusion?.tree_size);
+  const index = asSafeInt(inclusion?.leaf_index);
+  if (size == null || index == null || size < 1) return 'pending_bounds';
+  if (index < size) return 'pending_leaf_in_head';
+  const liveRaw = inclusion?.live_tree_size;
+  if (liveRaw != null) {
+    const live = asSafeInt(liveRaw);
+    if (live == null || size >= live || index >= live) return 'pending_bounds';
+  }
+  return null;
+}
+
+/**
+ * Keep the newer of two memos. Same root is one anchor. Different roots
+ * with no slot or block time to order them cannot be called the newest.
+ */
+function preferNewerAnchor(current: NewestAnchor, candidate: NewestAnchor): NewestAnchor {
+  const slotCurrent = finiteNumber(current.slot);
+  const slotCandidate = finiteNumber(candidate.slot);
+  if (slotCurrent != null && slotCandidate != null && slotCurrent !== slotCandidate) {
+    return slotCandidate > slotCurrent ? candidate : current;
+  }
+  const timeCurrent = finiteNumber(current.blockTime);
+  const timeCandidate = finiteNumber(candidate.blockTime);
+  if (timeCurrent != null && timeCandidate != null && timeCurrent !== timeCandidate) {
+    return timeCandidate > timeCurrent ? candidate : current;
+  }
+  if (current.root === candidate.root) return current;
+  throw new Error('newest_anchor_unavailable');
 }
 
 /**
  * Newest chit402 root memo from this fee payer. `getSignaturesForAddress`
- * is newest-first. The first successful memo is the newest anchor.
- * A head whose root is older than that memo is not the current anchor.
+ * is newest-first. Pages use `before` until the first memo. A listed
+ * signature whose transaction is null or whose fetch throws fails the scan.
+ * Walking `NEWEST_ANCHOR_PAGE_CAP` full pages without a memo fails the scan.
+ * A short page with no memo means this payer has no anchor.
  */
 export async function fetchNewestSolanaAnchorRoot(
   feePayer: string,
   rpcUrl: string,
   fetchTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>,
 ): Promise<NewestAnchor | null> {
-  const listed = await defaultRpc(rpcUrl, 'getSignaturesForAddress', [feePayer, { limit: 25 }]);
-  if (!Array.isArray(listed)) return null;
   const load = fetchTx || ((signature, url) => fetchSolanaTransaction(signature, url) as Promise<SolanaAnchorTx | null>);
-  for (const row of listed) {
-    if (!row || typeof row !== 'object') continue;
-    const signature = (row as { signature?: unknown; err?: unknown }).signature;
-    const err = (row as { err?: unknown }).err;
-    if (err || typeof signature !== 'string' || signature.length === 0) continue;
-    const tx = await load(signature, rpcUrl);
-    for (const memo of extractMemos(tx)) {
-      const parsed = parseAnchorMemo(memo);
-      if (parsed?.root) return { root: parsed.root, signature };
+  let before: string | undefined;
+  for (let page = 0; page < NEWEST_ANCHOR_PAGE_CAP; page += 1) {
+    const query: { limit: number; before?: string } = { limit: NEWEST_ANCHOR_PAGE_LIMIT };
+    if (before) query.before = before;
+    const listed = await defaultRpc(rpcUrl, 'getSignaturesForAddress', [feePayer, query]);
+    if (!Array.isArray(listed)) throw new Error('newest_anchor_unavailable');
+    if (listed.length === 0) return null;
+    for (const row of listed) {
+      if (!row || typeof row !== 'object') continue;
+      const record = row as { signature?: unknown; err?: unknown; slot?: unknown; blockTime?: unknown };
+      if (record.err) continue;
+      if (typeof record.signature !== 'string' || record.signature.length === 0) continue;
+      let tx: SolanaAnchorTx | null;
+      try {
+        tx = await load(record.signature, rpcUrl);
+      } catch {
+        throw new Error('newest_anchor_unavailable');
+      }
+      if (!tx) throw new Error('newest_anchor_unavailable');
+      for (const memo of extractMemos(tx)) {
+        const parsed = parseAnchorMemo(memo);
+        if (!parsed?.root) continue;
+        const rowSlot = finiteNumber(record.slot);
+        return {
+          root: parsed.root,
+          signature: record.signature,
+          slot: rowSlot != null ? rowSlot : finiteNumber(tx.slot),
+          blockTime: finiteNumber(record.blockTime),
+        };
+      }
     }
+    if (listed.length < NEWEST_ANCHOR_PAGE_LIMIT) return null;
+    const tail = listed[listed.length - 1] as { signature?: unknown };
+    if (typeof tail?.signature !== 'string' || tail.signature.length === 0) {
+      throw new Error('newest_anchor_unavailable');
+    }
+    if (page + 1 === NEWEST_ANCHOR_PAGE_CAP) throw new Error('newest_anchor_unavailable');
+    before = tail.signature;
   }
-  return null;
+  throw new Error('newest_anchor_unavailable');
 }
 
 /** Fee payer is the first account. A parsed key that is explicitly not a signer does not count. */
@@ -446,8 +531,10 @@ export interface VerifyAnchoredRootInput {
   fetchGenesis?: (rpcUrl: string) => Promise<string>;
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   /**
-   * When set, the head root must equal the newest Solana anchor memo from
-   * the signed fee payer. The CLI sets this for `--rpc`.
+   * When set, and the head claims an anchor, the served root must equal the
+   * newest Solana memo across every payer on the anchor-wallet list. A
+   * missing fee payer is `newest_anchor_unavailable`. The CLI sets this
+   * for `--rpc`.
    */
   checkNewestAnchor?: boolean;
   fetchNewestAnchor?: (feePayer: string, rpcUrl: string) => Promise<NewestAnchor | null>;
@@ -490,7 +577,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     else if (input.head.tree_size != null && input.inclusion.tree_size != null
       && Number(input.head.tree_size) !== Number(input.inclusion.tree_size)) {
       inclusionReason = 'tree_size_mismatch';
-    } else inclusionReason = 'pending_anchor';
+    } else inclusionReason = pendingGeometryReason(input.inclusion) || 'pending_anchor';
   } else if (inclusionError === 'not_in_tree') {
     inclusionReason = 'not_in_tree';
   } else if (!taskId) {
@@ -734,18 +821,27 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
 
   let staleReason: string | undefined;
-  const scanNewest = input.checkNewestAnchor === true
-    && Boolean(signedPayer)
-    && (Boolean(solanaSignature(input.head)) || pendingLeaf);
-  if (scanNewest && signedPayer && root) {
-    try {
-      const newest = input.fetchNewestAnchor
-        ? await input.fetchNewestAnchor(signedPayer, solanaRpc)
-        : await fetchNewestSolanaAnchorRoot(signedPayer, solanaRpc, input.fetchSolanaTx);
-      if (!newest?.root) staleReason = 'newest_anchor_unavailable';
-      else if (newest.root !== root) staleReason = 'stale_head';
-    } catch {
+  const claimsAnchor = Boolean(solanaSignature(input.head) || baseTxHash(input.head));
+  if (input.checkNewestAnchor === true && claimsAnchor) {
+    if (!signedPayer || !root) {
       staleReason = 'newest_anchor_unavailable';
+    } else {
+      const payers = [...walletList.solana];
+      if (!payers.includes(signedPayer)) payers.push(signedPayer);
+      try {
+        let newest: NewestAnchor | null = null;
+        for (const payer of payers) {
+          const found = input.fetchNewestAnchor
+            ? await input.fetchNewestAnchor(payer, solanaRpc)
+            : await fetchNewestSolanaAnchorRoot(payer, solanaRpc, input.fetchSolanaTx);
+          if (!found?.root) continue;
+          newest = newest ? preferNewerAnchor(newest, found) : found;
+        }
+        if (!newest?.root) staleReason = 'newest_anchor_unavailable';
+        else if (newest.root !== root) staleReason = 'stale_head';
+      } catch {
+        staleReason = 'newest_anchor_unavailable';
+      }
     }
     if (staleReason) errors.push(staleReason);
   }

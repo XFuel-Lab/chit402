@@ -163,8 +163,10 @@ Anchored root:
   prove. Exit 0 when the receipt checks pass and both chains match, 2 when the
   leaf is included but an anchor is still pending, or when the leaf is past
   the anchored tree (PENDING, not a tamper failure), and the receipt checks
-  did not fail, 1 when a check fails. With --rpc, the head root must equal
-  the newest Solana anchor memo from the signed fee payer.
+  did not fail, 1 when a check fails. A pending leaf must sit at an index
+  at or past the anchored size. With --rpc, a claimed anchor must name a
+  Solana fee payer, and the head root must equal the newest memo across
+  every payer on the anchor-wallet list.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -735,7 +737,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     overall: receiptFailed ? 'failed' as const : result.overall,
     receipt_lane: verified.receipt_lane,
     receipt_check: {
-      overall: verified.overall,
+      overall: result.overall === 'pending' ? 'pending' as const : verified.overall,
       verified_scope: verified.verified_scope,
       claim_mismatches: verified.claim_mismatches,
       unsigned_fields: verified.unsigned_fields,
@@ -747,7 +749,8 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   } else {
     printAnchor(combined, false, args.quiet);
     if (!args.quiet || receiptFailed) {
-      const receiptLabel = result.overall === 'pending' && !receiptFailed
+      const anchorPending = result.overall === 'pending';
+      const receiptLabel = anchorPending && !receiptFailed
         ? 'PENDING'
         : verified.overall.toUpperCase();
       console.log(`  Receipt checks: ${receiptLabel} (signed claims only)`);
@@ -756,7 +759,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
           console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
         }
       }
-      printUnsigned(verified.unsigned_fields);
+      if (!anchorPending) printUnsigned(verified.unsigned_fields);
       console.log('');
     }
     if (!args.quiet) printLane(verified.receipt_lane);

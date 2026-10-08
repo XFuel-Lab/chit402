@@ -21,10 +21,14 @@ const {
   verifyMerkleInclusion,
   leafHash,
   SOLANA_GENESIS,
+  fetchNewestSolanaAnchorRoot,
+  NEWEST_ANCHOR_PAGE_LIMIT,
+  NEWEST_ANCHOR_PAGE_CAP,
 } = await import('../dist/anchor-witness.js');
 const {
   PINNED_BASE_ANCHOR_WALLET,
   PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  ANCHOR_WALLETS_SCHEMA,
 } = await import('../dist/anchor-trust.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
 
@@ -387,7 +391,26 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
     assert.equal(late.status, 2, lateText);
     assert.match(late.stdout, /Overall: PENDING/);
     assert.match(late.stdout, /pending_anchor/);
-    assert.equal(/(?<!UN)VERIFIED/.test(lateText), false);
+    assert.equal(lateText.includes('VERIFIED'), false);
+    assert.equal(lateText.includes('UNVERIFIED'), false);
+
+    const jsonRun = await runCli([
+      cli,
+      join(dir, 'receipt.json'),
+      join(dir, 'inclusion.json'),
+      join(dir, 'head.json'),
+      '--json',
+      '--rpc', url,
+      '--solana-rpc', url,
+      '--jwks-file', join(dir, 'jwks.json'),
+      '--trusted-kid', fx.key.kid,
+      '--no-issuer-history',
+      '--no-preimage',
+    ]);
+    assert.equal(jsonRun.status, 2, `${jsonRun.stdout}\n${jsonRun.stderr}`);
+    const parsed = JSON.parse(jsonRun.stdout);
+    assert.equal(parsed.overall, 'pending');
+    assert.equal(parsed.receipt_check.overall, 'pending');
 
     const stripped = signedReceipt(fx.key, 'd', 'rd');
     delete stripped.issuer_signature;
@@ -471,4 +494,293 @@ test('a stale head cannot hide a leaf when --rpc is set', async () => {
   });
   assert.equal(honest.overall, 'pending');
   assert.equal(leafHash(Buffer.from('d|rd')).toString('hex'), fx.leaves[4].toString('hex'));
+});
+
+function pendingInclusion(extra = {}) {
+  return {
+    status: 'pending_anchor',
+    anchor_status: 'pending',
+    task_id: 'd',
+    leaf_index: 4,
+    tree_size: 4,
+    anchored_tree_size: 4,
+    live_tree_size: 5,
+    root: null,
+    proof: null,
+    ...extra,
+  };
+}
+
+test('an in-range pending leaf fails and a broken bound is not pending', async () => {
+  const fx = epoch2Fixture();
+  const common = {
+    receipt: { task_id: 'd', row_hash: 'rd' },
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    checkNewestAnchor: true,
+    ...fetchers(fx),
+  };
+  const inside = await verifyAnchoredRoot({
+    ...common,
+    inclusion: pendingInclusion({
+      leaf_index: 1,
+      proof: inclusionProof(fx.leaves.slice(0, 4), 1),
+      root: fx.root,
+    }),
+  });
+  assert.equal(inside.overall, 'failed');
+  assert.ok(inside.errors.includes('pending_leaf_in_head'));
+  assert.notEqual(inside.overall, 'pending');
+  assert.notEqual(inside.overall, 'verified');
+
+  const liveTooSmall = await verifyAnchoredRoot({
+    ...common,
+    inclusion: pendingInclusion({ leaf_index: 4, tree_size: 4, live_tree_size: 4, root: fx.root }),
+  });
+  assert.equal(liveTooSmall.overall, 'failed');
+  assert.ok(liveTooSmall.errors.includes('pending_bounds'));
+
+  const pastLive = await verifyAnchoredRoot({
+    ...common,
+    inclusion: pendingInclusion({ leaf_index: 5, tree_size: 4, live_tree_size: 5, root: fx.root }),
+  });
+  assert.equal(pastLive.overall, 'failed');
+  assert.ok(pastLive.errors.includes('pending_bounds'));
+
+  const leadingZero = await verifyAnchoredRoot({
+    ...common,
+    inclusion: pendingInclusion({ leaf_index: 4, tree_size: '04', live_tree_size: 5, root: fx.root }),
+  });
+  assert.equal(leadingZero.overall, 'failed');
+  assert.ok(leadingZero.errors.includes('pending_bounds') || leadingZero.errors.includes('tree_size_mismatch'));
+
+  const withoutLive = pendingInclusion({ leaf_index: 4, tree_size: 4, root: fx.root });
+  delete withoutLive.live_tree_size;
+  const openLive = await verifyAnchoredRoot({ ...common, inclusion: withoutLive });
+  assert.equal(openLive.overall, 'pending');
+  assert.equal(openLive.errors.includes('pending_leaf_in_head'), false);
+});
+
+test('a missing fee payer and a newer memo on another listed payer fail closed', async () => {
+  const fx = epoch2Fixture();
+  const baseOnly = sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: fx.root,
+    tree_size: 4,
+    anchors: {
+      base: { ...fx.head.anchors.base },
+      solana: {
+        status: 'pending',
+        signature: null,
+        slot: null,
+        cluster: null,
+        memo: null,
+        fee_payer: null,
+      },
+    },
+  }, fx.key);
+  const pending = pendingInclusion({ root: fx.root });
+  let scanned = 0;
+  const missingPayer = await verifyAnchoredRoot({
+    receipt: { task_id: 'd', row_hash: 'rd' },
+    inclusion: pending,
+    head: baseOnly,
+    trustedKids: [fx.key.kid],
+    checkNewestAnchor: true,
+    fetchNewestAnchor: async () => {
+      scanned += 1;
+      return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
+    },
+    fetchBaseTx: async () => ({
+      hash: fx.head.anchors.base.tx,
+      input: `0x${fx.root}`,
+      chainId: 8453,
+      from: PINNED_BASE_ANCHOR_WALLET,
+    }),
+  });
+  assert.equal(missingPayer.overall, 'failed');
+  assert.ok(missingPayer.errors.includes('newest_anchor_unavailable'));
+  assert.equal(scanned, 0);
+  assert.notEqual(missingPayer.overall, 'pending');
+
+  const altPayer = 'B'.repeat(32);
+  const wallets = seal({
+    schema: ANCHOR_WALLETS_SCHEMA,
+    base: [PINNED_BASE_ANCHOR_WALLET],
+    solana: [PINNED_SOLANA_ANCHOR_FEE_PAYER, altPayer],
+  }, fx.key, 'chit402-anchor-wallets+jwt');
+  const included = {
+    task_id: 'a',
+    status: 'anchored',
+    anchor_status: 'anchored',
+    leaf_index: 1,
+    tree_size: 4,
+    root: fx.root,
+    leaf: fx.leaves[1].toString('hex'),
+    proof: inclusionProof(fx.leaves.slice(0, 4), 1),
+  };
+  const newer = 'ee'.repeat(32);
+  const byPayer = async (payer) => {
+    if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 200 };
+    return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
+  };
+  const hidden = await verifyAnchoredRoot({
+    receipt: { task_id: 'a', row_hash: 'ra' },
+    inclusion: included,
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    checkNewestAnchor: true,
+    anchorWalletDocument: wallets,
+    ...fetchers(fx),
+    fetchNewestAnchor: byPayer,
+  });
+  assert.equal(hidden.overall, 'failed');
+  assert.ok(hidden.errors.includes('stale_head'));
+  assert.notEqual(hidden.overall, 'verified');
+
+  const olderAlt = await verifyAnchoredRoot({
+    receipt: { task_id: 'a', row_hash: 'ra' },
+    inclusion: included,
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    checkNewestAnchor: true,
+    anchorWalletDocument: wallets,
+    ...fetchers(fx),
+    fetchNewestAnchor: async (payer) => {
+      if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 10 };
+      return { root: fx.root, signature: 'sig-anchored-4', slot: 200 };
+    },
+  });
+  assert.equal(olderAlt.overall, 'verified');
+  assert.equal(olderAlt.errors.includes('stale_head'), false);
+});
+
+function jsonRpc(handler) {
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      const out = handler(msg);
+      const body = out && out.error
+        ? { jsonrpc: '2.0', id: msg.id, error: out.error }
+        : { jsonrpc: '2.0', id: msg.id, result: out };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    });
+  });
+  return server;
+}
+
+test('a null or thrown transaction fails the memo scan and does not keep an older memo', async () => {
+  const fx = epoch2Fixture();
+  const nullRpc = jsonRpc((msg) => {
+    if (msg.method === 'getSignaturesForAddress') {
+      return [
+        { signature: 'sig-gone', err: null, slot: 300 },
+        { signature: 'sig-anchored-4', err: null, slot: 99 },
+      ];
+    }
+    if (msg.method === 'getTransaction') {
+      if (msg.params[0] === 'sig-gone') return null;
+      return solanaTx(fx.memo);
+    }
+    if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
+    if (msg.method === 'eth_chainId') return '0x2105';
+    if (msg.method === 'eth_getTransactionByHash') {
+      return { hash: fx.head.anchors.base.tx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET };
+    }
+    return null;
+  });
+  const nullPort = await listen(nullRpc);
+  const nullUrl = `http://127.0.0.1:${nullPort}`;
+  try {
+    await assert.rejects(
+      () => fetchNewestSolanaAnchorRoot(PINNED_SOLANA_ANCHOR_FEE_PAYER, nullUrl),
+      /newest_anchor_unavailable/,
+    );
+    const pending = pendingInclusion({ root: fx.root });
+    const hidden = await verifyAnchoredRoot({
+      receipt: { task_id: 'd', row_hash: 'rd' },
+      inclusion: pending,
+      head: fx.head,
+      trustedKids: [fx.key.kid],
+      checkNewestAnchor: true,
+      solanaRpcUrl: nullUrl,
+      baseRpcUrl: nullUrl,
+    });
+    assert.equal(hidden.overall, 'failed');
+    assert.ok(hidden.errors.includes('newest_anchor_unavailable'));
+    assert.notEqual(hidden.overall, 'pending');
+  } finally {
+    await new Promise((resolve) => nullRpc.close(resolve));
+  }
+
+  const throwRpc = jsonRpc((msg) => {
+    if (msg.method === 'getSignaturesForAddress') {
+      return [{ signature: 'sig-anchored-4', err: null, slot: 99 }];
+    }
+    if (msg.method === 'getTransaction') return { error: { message: 'rpc blew up' } };
+    return null;
+  });
+  const throwPort = await listen(throwRpc);
+  try {
+    await assert.rejects(
+      () => fetchNewestSolanaAnchorRoot(PINNED_SOLANA_ANCHOR_FEE_PAYER, `http://127.0.0.1:${throwPort}`),
+      /newest_anchor_unavailable/,
+    );
+  } finally {
+    await new Promise((resolve) => throwRpc.close(resolve));
+  }
+});
+
+test('the memo scan pages with before and fails closed at the page cap', async () => {
+  const fx = epoch2Fixture();
+  const limit = NEWEST_ANCHOR_PAGE_LIMIT;
+  const befores = [];
+  const pageRpc = jsonRpc((msg) => {
+    if (msg.method !== 'getSignaturesForAddress') {
+      const signature = msg.params?.[0];
+      if (signature === 'memo-sig') return solanaTx(fx.memo);
+      return { slot: 1, meta: { err: null }, transaction: { message: { instructions: [] } } };
+    }
+    const before = msg.params[1]?.before || null;
+    befores.push(before);
+    if (!before) {
+      return Array.from({ length: limit }, (_, i) => ({ signature: `pad-${i}`, err: null, slot: 1000 - i }));
+    }
+    return [{ signature: 'memo-sig', err: null, slot: 1 }];
+  });
+  const pagePort = await listen(pageRpc);
+  try {
+    const found = await fetchNewestSolanaAnchorRoot(
+      PINNED_SOLANA_ANCHOR_FEE_PAYER,
+      `http://127.0.0.1:${pagePort}`,
+    );
+    assert.equal(found.root, fx.root);
+    assert.deepEqual(befores, [null, `pad-${limit - 1}`]);
+  } finally {
+    await new Promise((resolve) => pageRpc.close(resolve));
+  }
+
+  let pages = 0;
+  const capRpc = jsonRpc((msg) => {
+    if (msg.method === 'getSignaturesForAddress') {
+      const start = pages * limit;
+      pages += 1;
+      return Array.from({ length: limit }, (_, i) => ({ signature: `cap-${start + i}`, err: null, slot: 1 }));
+    }
+    return { slot: 1, meta: { err: null }, transaction: { message: { instructions: [] } } };
+  });
+  const capPort = await listen(capRpc);
+  try {
+    await assert.rejects(
+      () => fetchNewestSolanaAnchorRoot(PINNED_SOLANA_ANCHOR_FEE_PAYER, `http://127.0.0.1:${capPort}`),
+      /newest_anchor_unavailable/,
+    );
+    assert.equal(pages, NEWEST_ANCHOR_PAGE_CAP);
+  } finally {
+    await new Promise((resolve) => capRpc.close(resolve));
+  }
 });

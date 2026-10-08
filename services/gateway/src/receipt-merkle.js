@@ -3014,6 +3014,17 @@ function inclusionAnchorLine(inclusion) {
 
 export function renderInclusionSection(inclusion, carry = null) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (inclusion?.status === 'pending_anchor') {
+    return `<section class="card">
+      <h2>Outside witness <span class="scope">PENDING</span></h2>
+      <div class="row"><span class="k">Status</span><span class="v"><code>PENDING</code></span></div>
+      <div class="row"><span class="k">Reason</span><span class="v"><code>pending_anchor</code></span></div>
+      <div class="row"><span class="k">Anchored size</span><span class="v"><code>${esc(inclusion.anchored_tree_size)}</code></span></div>
+      <div class="row"><span class="k">Live size</span><span class="v"><code>${esc(inclusion.live_tree_size)}</code></span></div>
+      <div class="row"><span class="k">Leaf</span><span class="v"><code>${esc(inclusion.leaf_index)}</code></span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">This leaf is in the live tree and past the newest anchored head. It is pending the next anchor. It is not a tamper finding.</p>
+    </section>`;
+  }
   if (carry?.status === 'VERIFIED_CARRIED_FORWARD') {
     return `<section class="card">
       <h2>Receipt log <span class="scope">VERIFIED_CARRIED_FORWARD</span></h2>
@@ -3031,17 +3042,6 @@ export function renderInclusionSection(inclusion, carry = null) {
       <h2>Receipt log <span class="scope">failed</span></h2>
       <div class="row"><span class="k">Status</span><span class="v"><code>failed</code></span></div>
       <div class="row"><span class="k">Error</span><span class="v"><code>${esc(carry.error || carry.reason)}</code></span></div>
-    </section>`;
-  }
-  if (inclusion?.status === 'pending_anchor') {
-    return `<section class="card">
-      <h2>Outside witness <span class="scope">PENDING</span></h2>
-      <div class="row"><span class="k">Status</span><span class="v"><code>PENDING</code></span></div>
-      <div class="row"><span class="k">Reason</span><span class="v"><code>pending_anchor</code></span></div>
-      <div class="row"><span class="k">Anchored size</span><span class="v"><code>${esc(inclusion.anchored_tree_size)}</code></span></div>
-      <div class="row"><span class="k">Live size</span><span class="v"><code>${esc(inclusion.live_tree_size)}</code></span></div>
-      <div class="row"><span class="k">Leaf</span><span class="v"><code>${esc(inclusion.leaf_index)}</code></span></div>
-      <p class="muted" style="margin:8px 0 0;font-size:12px">This leaf is in the live tree and past the newest anchored head. It is pending the next anchor. It is not a tamper finding.</p>
     </section>`;
   }
   if (!inclusion || inclusion.root == null) return '';
