@@ -2644,14 +2644,16 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const headPath = path.join(work, 'head.json');
   const jwksPath = path.join(work, 'jwks.json');
   // Log mode fails a receipt that has no issuer signature, even when the anchor matches.
+  // verify_url stays outside the signature so the epoch fetch is not a signed claim.
   const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
-    verify_url: `http://127.0.0.1:${gatewayPort}/receipt/cli-row`,
   };
   const receiptSig = signJws(receiptClaims, { typ: 'chit402-receipt+jwt' });
+  const verifyUrl = `http://127.0.0.1:${gatewayPort}/receipt/cli-row`;
   fs.writeFileSync(receiptPath, JSON.stringify({
     ...receiptClaims,
+    verify_url: verifyUrl,
     issuer_signature: {
       alg: 'ES256',
       typ: 'chit402-receipt+jwt',
@@ -2659,6 +2661,11 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
       kid: receiptSig.kid,
       issuer_jwk: jwk,
     },
+  }));
+  const unsignedPath = path.join(work, 'receipt-unsigned.json');
+  fs.writeFileSync(unsignedPath, JSON.stringify({
+    ...receiptClaims,
+    verify_url: verifyUrl,
   }));
   fs.writeFileSync(inclusionPath, JSON.stringify(tree.inclusion('cli-row')));
   fs.writeFileSync(headPath, JSON.stringify(head));
@@ -2683,6 +2690,15 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     '--json',
   ];
   try {
+    const unsigned = await runCli([cli, unsignedPath, ...args.slice(2)]);
+    assert.equal(unsigned.status, 1, unsigned.stdout + unsigned.stderr);
+    const unsignedBody = JSON.parse(unsigned.stdout);
+    assert.equal(unsignedBody.overall, 'failed');
+    assert.equal(unsignedBody.receipt_check.overall, 'partial');
+    assert.ok(
+      unsignedBody.errors.includes('No issuer signature present on receipt'),
+      unsignedBody.errors.join(','),
+    );
     const ok = await runCli(args);
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     const forgedClaims = epochRecordClaims({ epoch1Root: 'ab'.repeat(32) });
