@@ -27,6 +27,7 @@ import {
   paymentHeaderNetwork,
   decodePaymentHeader,
   fromCaip2Network,
+  toPaymentPayload,
 } from './x402-facilitator.js';
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
 
@@ -384,14 +385,27 @@ function evmAssetAddress(raw) {
   try { return getAddress(raw); } catch { return null; }
 }
 
-function declaredPayee(decoded) {
-  if (!decoded) return null;
-  const auth = decoded.payload?.authorization
-    || decoded.authorization?.message
-    || (decoded.authorization && typeof decoded.authorization === 'object' ? decoded.authorization : null);
-  const to = auth?.to || decoded.accepted?.payTo || decoded.payTo || null;
-  if (to == null || to === '') return null;
-  return String(to);
+function svmTransaction(decoded) {
+  const tx = decoded?.payload?.transaction || decoded?.transaction;
+  return typeof tx === 'string' && tx.length > 0 ? tx : null;
+}
+
+/** Every recipient the client named. One matching field must not hide another. */
+function declaredPayees(decoded) {
+  if (!decoded) return [];
+  const found = [];
+  const push = (value) => {
+    if (typeof value === 'string' && value !== '') found.push(value);
+  };
+  push(decoded.payTo);
+  push(decoded.accepted?.payTo);
+  push(decoded.payload?.authorization?.to);
+  const auth = decoded.authorization;
+  if (auth && typeof auth === 'object') {
+    push(auth.to);
+    if (auth.message && typeof auth.message === 'object') push(auth.message.to);
+  }
+  return found;
 }
 
 function declaredEvmAsset(decoded) {
@@ -410,25 +424,27 @@ function declaredEvmAsset(decoded) {
 }
 
 /**
- * Amount the payer actually signed.
- * EVM: EIP-3009 `authorization.value`.
- * Solana: the transfer amount on the verified SVM payload.
- * Dummy blobs that carry neither return null; the caller then uses the
- * challenge amount, which the guard has already floored at the quote.
+ * Amount a bound settle may put on the receipt.
+ *
+ * EVM: `authorization.value` from the payload `toPaymentPayload` sends to the
+ * facilitator. An unsigned copy sitting next to the signed authorization is
+ * ignored. Solana has no EIP-3009 value; the client `amount` label is not a
+ * transfer, so the receipt uses the server quote. Dummy blobs return null and
+ * the caller keeps the challenge amount.
  */
-function signedSettlementAmount(header) {
+function boundSettledAmount(header, x402Version, quote) {
   const decoded = decodePaymentHeader(header);
   if (!decoded) return null;
-  const auth = decoded.payload?.authorization
-    || decoded.authorization?.message
-    || (decoded.authorization?.value != null ? decoded.authorization : null);
-  const evm = integerAmount(auth?.value);
-  if (evm != null) return evm;
-  const tx = decoded.payload?.transaction || decoded.transaction;
-  if (typeof tx === 'string' && tx.length > 0) {
-    return integerAmount(decoded.payload?.amount ?? decoded.accepted?.amount ?? decoded.amount);
+  const version = x402Version === 2 ? 2 : 1;
+  if (version === 2 && svmTransaction(decoded)) return integerAmount(quote);
+  let sent;
+  try {
+    sent = toPaymentPayload(decoded, { x402Version: version });
+  } catch {
+    return null;
   }
-  return null;
+  if (svmTransaction(sent) && !sent?.payload?.authorization) return integerAmount(quote);
+  return integerAmount(sent?.payload?.authorization?.value);
 }
 
 function expectedPayee(pinned, cfg, payTo) {
@@ -474,9 +490,10 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
   if (!payeesEqual(pinned.payTo, wantPayee, solana)) {
     return preSettleFail('challenge_mismatch');
   }
-  const clientPayee = declaredPayee(decoded);
-  if (clientPayee && !payeesEqual(clientPayee, wantPayee, solana)) {
-    return preSettleFail('challenge_mismatch');
+  for (const payee of declaredPayees(decoded)) {
+    if (!payeesEqual(payee, wantPayee, solana)) {
+      return preSettleFail('challenge_mismatch');
+    }
   }
   return null;
 }
@@ -486,12 +503,12 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
  *   { kind:'challenge', body }     → no X-PAYMENT present; reply 402 with this body
  *   { kind:'settled', paymentRef, settledAmount }
  *                                  → payment verified + settled (paymentRef = network:txRef).
- *                                    `settledAmount` is the payer's signed value
- *                                    (EIP-3009 authorization.value, or the Solana transfer
- *                                    amount). The guard requires it to be at least the
- *                                    server quote, so an exact payment equals the quote
- *                                    and an overpayment settles at the amount signed.
- *                                    Callers must NOT trust `body.amount`.
+ *                                    `settledAmount` is the EIP-3009 value on the
+ *                                    authorization sent to the facilitator. Solana uses
+ *                                    the server quote. An unsigned copy or a client
+ *                                    amount label cannot raise it. A signed overpay of
+ *                                    quote+1 settles as quote+1. Callers must NOT trust
+ *                                    `body.amount`.
  *   { kind:'failed', reason }      → verify/settle failed; caller decides fallback vs error
  *
  * @param {Object} req  Express-like request ({ headers, body })
@@ -639,7 +656,7 @@ export async function runX402Handshake(req, {
     const live = challengeStore.get(nonce);
     if (!live) return preSettleFail('challenge_required');
     if (!amountAtLeast(live.amount, quote)) return preSettleFail('challenge_mismatch');
-    signedPaid = signedSettlementAmount(paymentHeader);
+    signedPaid = boundSettledAmount(paymentHeader, clientVersion, quote);
     if (signedPaid != null && !amountAtLeast(signedPaid, quote)) {
       return preSettleFail('challenge_mismatch');
     }

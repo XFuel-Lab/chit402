@@ -455,7 +455,7 @@ test('network check: a Sepolia settle response is not labeled base:', async () =
   }
 });
 
-test('Solana overpay settles at the payload amount to the Solana house payee', async () => {
+test('Solana client amount label cannot raise settledAmount above the quote', async () => {
   const mock = await startMock();
   const previous = process.env.X402_SOLANA_FACILITATOR_URL;
   process.env.X402_SOLANA_FACILITATOR_URL = mock.url;
@@ -466,18 +466,92 @@ test('Solana overpay settles at the payload amount to the Solana house payee', a
     assert.ok(sol, 'challenge includes a Solana accept');
     const decision = await runX402Handshake({
       headers: {
-        'payment-signature': solanaHeader({ amount: '2001', nonce: sol.extra.nonce }),
+        'payment-signature': solanaHeader({ amount: '999999999000', nonce: sol.extra.nonce }),
         'payment-nonce': sol.extra.nonce,
       },
       body: {},
     }, { taskId: 'stopgap-solana', cfg, amount: '2000' });
     assert.equal(decision.kind, 'settled');
-    assert.equal(decision.settledAmount, '2001');
+    assert.equal(decision.settledAmount, '2000');
+    assert.notEqual(decision.settledAmount, '999999999000');
     assert.equal(decision.payTo, SOL_HOUSE);
     assert.equal(decision.paymentRef, `solana:${SOL_TX}`);
   } finally {
     if (previous === undefined) delete process.env.X402_SOLANA_FACILITATOR_URL;
     else process.env.X402_SOLANA_FACILITATOR_URL = previous;
+    await mock.close();
+  }
+});
+
+test('Base unsigned authorization copy cannot raise settledAmount', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-decoy', amount: '2000' });
+    const nonce = body.accepts[0].extra.nonce;
+    const now = Math.floor(Date.now() / 1000);
+    const header = JSON.stringify({
+      x402Version: 1,
+      scheme: 'exact',
+      network: 'eip155:8453',
+      asset: BASE_USDC,
+      amount: '2000',
+      payTo: HOUSE,
+      authorization: {
+        type: 'eip3009-transferWithAuthorization',
+        domain: { name: 'USD Coin', version: '2', chainId: 8453, verifyingContract: BASE_USDC },
+        message: {
+          from: PAYER,
+          to: HOUSE,
+          value: '2000',
+          validAfter: 0,
+          validBefore: now + 3600,
+          nonce: '0x' + '11'.repeat(32),
+        },
+        signature: '0x' + '22'.repeat(65),
+      },
+      payload: {
+        authorization: {
+          from: PAYER,
+          to: HOUSE,
+          value: '999999999000',
+          validAfter: '0',
+          validBefore: String(now + 3600),
+          nonce: '0x' + '11'.repeat(32),
+        },
+      },
+    });
+    const decision = await runX402Handshake({
+      headers: { 'x-payment': header, 'x-payment-nonce': nonce },
+      body: {},
+    }, { taskId: 'stopgap-decoy', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'settled');
+    assert.equal(decision.settledAmount, '2000');
+    assert.notEqual(decision.settledAmount, '999999999000');
+    assert.equal(decision.payTo, HOUSE);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('every client payee must match the house payee', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-payees', amount: '2000' });
+    const nonce = body.accepts[0].extra.nonce;
+    const split = JSON.parse(evmHeader({ amount: '2000', payTo: HOUSE }));
+    split.accepted.payTo = ATTACKER;
+    const decision = await runX402Handshake({
+      headers: { 'x-payment': JSON.stringify(split), 'x-payment-nonce': nonce },
+      body: {},
+    }, { taskId: 'stopgap-payees', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'failed');
+    assert.equal(decision.reason, 'challenge_mismatch');
+    assert.equal(decision.paymentRef, undefined);
+    assert.equal(mock.counts.verify, 0);
+    assert.equal(mock.counts.settle, 0);
+  } finally {
     await mock.close();
   }
 });
