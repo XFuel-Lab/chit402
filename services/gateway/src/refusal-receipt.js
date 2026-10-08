@@ -530,13 +530,14 @@ export function renderRefusalHtml(doc) {
 </html>`;
 }
 
-export function renderRefusalNotFound(id) {
+/** Fixed HTML for an unknown refusal. The requested id is not included. */
+export function renderRefusalNotFound() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Refusal not found</title></head>
 <body>
   <h1>Refusal not found</h1>
-  <p>No signed refusal is stored for <code>${esc(id)}</code>.</p>
+  <p>No signed refusal is stored for this request.</p>
 </body>
 </html>`;
 }

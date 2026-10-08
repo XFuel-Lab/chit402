@@ -532,9 +532,10 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(receipt.provider_cogs.openrouter_generation.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(receipt.openrouter.generation_id, 'gen-http-1');
   assert.equal(receipt.route.model, 'openai/gpt-4o-mini-2024-07-18');
-  assert.equal(receipt.route.requested_model, 'openrouter/openai/gpt-4o-mini');
-  assert.equal(receipt.route.substituted, false);
-  assert.equal(receipt.route_meta.substituted, false);
+  assert.equal(receipt.route.requested_model, undefined);
+  assert.equal(receipt.route.substituted, undefined);
+  assert.equal(receipt.route_meta.requested_model, undefined);
+  assert.equal(receipt.route_meta.substituted, undefined);
   assert.equal(receipt.settlement_status, paidBody.xfuel.settlement_status);
   assert.equal(receipt.idempotent_replay, paidBody.xfuel.idempotent_replay);
   assert.equal(receipt.replay_of, paidBody.xfuel.replay_of);

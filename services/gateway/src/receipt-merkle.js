@@ -51,6 +51,9 @@ import {
 import {
   assertPinnedEpochRecord,
   verifyUnloggedSection,
+  verifyUnloggedCommitment,
+  EPOCH_RECORD_VERSION_COMMITMENT,
+  EPOCH_RECORD_VERSION_UNLOGGED,
   EPOCH1_FINAL_ROOT,
   EPOCH1_FINAL_SIZE,
   EPOCH1_SIZE2_ROOT,
@@ -760,6 +763,7 @@ export class ReceiptMerkleTree {
     this.closedEpochs = [];
     this.anchorState = { schema: 'chit402.receipt_anchor_state.v1', solana: {}, base: {} };
     this.epochRecord = null;
+    this.epochRecordV1 = null;
     this.bundleIndex = emptyBundleIndex();
     this.anchorIntents = [];
     this.lastBundleOkAt = null;
@@ -2757,6 +2761,7 @@ export class ReceiptMerkleTree {
     this.heads = live.heads;
     this.anchorState = loaded.anchorState || this.anchorState;
     this.epochRecord = loaded.epochRecord || null;
+    this.epochRecordV1 = loaded.epochRecordV1 || null;
     this.anchorIntents = Array.isArray(loaded.intents) ? loaded.intents : [];
     if (loaded.bundleIndex) {
       this.bundleIndex = loaded.bundleIndex;
@@ -2781,10 +2786,16 @@ export class ReceiptMerkleTree {
       if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) {
         throw new ReceiptLogRefused('epoch_signature', 'epoch record unlogged list does not match the signature');
       }
-      if (Number(this.epochRecord.payload_version) === 2) {
+      const epochVersion = Number(this.epochRecord.payload_version);
+      if (epochVersion === EPOCH_RECORD_VERSION_UNLOGGED) {
         const listed = verifyUnloggedSection(this.epochRecord.unlogged);
         if (!listed.ok) {
           throw new ReceiptLogRefused(listed.reason || 'unlogged_hash', 'epoch record unlogged list does not verify');
+        }
+      } else if (epochVersion === EPOCH_RECORD_VERSION_COMMITMENT) {
+        const listed = verifyUnloggedCommitment(this.epochRecord.unlogged);
+        if (!listed.ok) {
+          throw new ReceiptLogRefused(listed.reason || 'unlogged_commitment', 'epoch record unlogged commitment does not verify');
         }
       }
     } else if (this.epochRecord && receiptLogStrict()) {

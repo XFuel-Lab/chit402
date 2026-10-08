@@ -3,8 +3,9 @@
  * Append book rows that are not leaves yet.
  *
  * Dry-run is the default. It prints `would append` and `would list as
- * unlogged`. --apply writes the clean leaves and a payload version 2 epoch
- * record. It does not publish, broadcast, derive a row_hash, or write the
+ * unlogged`. --apply writes the clean leaves and a payload version 3 epoch
+ * record whose unlogged section is a commitment, not the row list. It does
+ * not publish, broadcast, derive a row_hash, or write the
  * book. A forked agent's rows, an empty row_hash, and a row whose chain
  * depends on one of those are listed and skipped. The version 1 epoch
  * record stays in the journal.

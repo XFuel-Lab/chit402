@@ -13,7 +13,6 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee } from './x402-flags.js';
-import { sendPublicInternal } from './public-error.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
@@ -36,7 +35,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson, stampCoveringTreeHead } from './receipt.js';
+import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson, stampCoveringTreeHead, redactPublicReceipt } from './receipt.js';
 import {
   configureOpenRouterBroadcast,
   findOpenRouterPublicReceipt,
@@ -83,7 +82,7 @@ import {
   finishReceiptLogBoot,
   publicLogWitness,
 } from './receipt-merkle.js';
-import { attestedUnloggedEntry } from './receipt-log-epoch.js';
+import { publicEpochRecord } from './receipt-log-epoch.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
@@ -822,6 +821,114 @@ function feeInfoFor(rail, economics, appliedBps) {
     description: `USDC/x402 pays the payee settled_amount in full. Route margin${margin} is internal accounting inside that amount, not an on-chain deduction.`,
     collector,
   };
+}
+
+/** Fixed public 404. The body does not echo the path, id, or query. */
+function sendPublicNotFound(res, wantsHtml) {
+  res.set('Cache-Control', 'private, no-store');
+  if (wantsHtml) {
+    return res.status(404).type('html').send(renderReceiptNotFound());
+  }
+  return res.status(404).json({ error: 'not_found' });
+}
+
+function sendPublicRefusalNotFound(res, wantsHtml) {
+  res.set('Cache-Control', 'private, no-store');
+  if (wantsHtml) {
+    return res.status(404).type('html').send(renderRefusalNotFound());
+  }
+  return res.status(404).json({ error: 'not_found' });
+}
+
+/** Generic 500. The detail stays in the server log. */
+function sendPublicInternal(res, err, logLabel, code, req) {
+  logger.error({ err, reqId: req?.id }, logLabel);
+  return res.status(500).json({ error: 'internal', code });
+}
+
+/**
+ * Canonical positive integer: digits only, no sign, no leading zero, no
+ * whitespace. `01`, `+1`, `1e2`, and ` 1` are rejected. The text is not trimmed.
+ */
+function canonicalPositiveInteger(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const raw = typeof value === 'string' ? value : String(value);
+  if (raw !== raw.trim()) return null;
+  if (!/^[1-9]\d*$/.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return n;
+}
+
+/**
+ * The client's spelling of one query parameter. Express may turn `01` or
+ * `+1` into the number 1; the proof uses the raw text instead.
+ * Duplicate keys and a broken escape are rejected.
+ */
+function rawQueryValue(req, name) {
+  const url = String(req.originalUrl || req.url || '');
+  const mark = url.indexOf('?');
+  if (mark < 0) return undefined;
+  let found;
+  for (const part of url.slice(mark + 1).split('&')) {
+    if (!part) continue;
+    const eq = part.indexOf('=');
+    const key = eq < 0 ? part : part.slice(0, eq);
+    const val = eq < 0 ? '' : part.slice(eq + 1);
+    let decodedKey;
+    let decodedVal;
+    try {
+      decodedKey = decodeURIComponent(key);
+      decodedVal = decodeURIComponent(val);
+    } catch {
+      return null;
+    }
+    if (decodedKey !== name) continue;
+    if (found !== undefined) return null;
+    found = decodedVal;
+  }
+  return found;
+}
+
+/** Absent or empty `tx` does not constrain the lookup. A non-string does. */
+function txQueryValue(req) {
+  if (!Object.hasOwn(req.query || {}, 'tx')) return undefined;
+  const tx = req.query.tx;
+  if (typeof tx !== 'string') return null;
+  const trimmed = tx.trim();
+  if (!trimmed) return undefined;
+  return trimmed;
+}
+
+function addPaymentRef(refs, value) {
+  if (value == null) return;
+  const text = String(value).trim();
+  if (!text) return;
+  refs.add(text);
+  const colon = text.indexOf(':');
+  if (colon > 0 && colon < text.length - 1) refs.add(text.slice(colon + 1));
+}
+
+/** True when `tx` is a payment ref on this receipt, task, or ledger row. */
+function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
+  if (typeof tx !== 'string' || !tx) return false;
+  const refs = new Set();
+  addPaymentRef(refs, task?.intent?.paymentRef);
+  addPaymentRef(refs, task?.intent?.payment_ref);
+  addPaymentRef(refs, receipt?.payment?.ref);
+  addPaymentRef(refs, receipt?.payment_ref);
+  addPaymentRef(refs, receipt?.tx);
+  addPaymentRef(refs, receipt?.settlement?.payment_ref);
+  addPaymentRef(refs, ledgerRow?.payment_ref);
+  addPaymentRef(refs, ledgerRow?.tx);
+  const snap = ledgerRow?.receipt_snapshot;
+  addPaymentRef(refs, snap?.payment?.ref);
+  addPaymentRef(refs, snap?.payment_ref);
+  addPaymentRef(refs, snap?.tx);
+  if (refs.has(tx)) return true;
+  const colon = tx.indexOf(':');
+  if (colon > 0 && refs.has(tx.slice(colon + 1))) return true;
+  return false;
 }
 
 // ─── Express App Factory ─────────────────────────────────────────────────────
@@ -2124,8 +2231,7 @@ export function createApp() {
         },
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /task-request error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /task-request error', 'task_request_failed', req);
     }
   });
 
@@ -2213,8 +2319,7 @@ export function createApp() {
         provider_floats: floatMgr.publicSummary(),
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /task-quote error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /task-quote error', 'task_quote_failed', req);
     }
   });
 
@@ -2331,8 +2436,7 @@ export function createApp() {
           'Submit `submit.data` from the Chit validator address (or SUBMITTER_ROLE on the adapter).',
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /erc8004/validate error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /erc8004/validate error', 'erc8004_validate_failed', req);
     }
   });
 
@@ -2405,8 +2509,7 @@ export function createApp() {
 
       return res.json(proofPayload);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /prove-result error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /prove-result error', 'prove_result_failed', req);
     }
   });
 
@@ -2567,8 +2670,7 @@ export function createApp() {
         result_hash: resultHash,
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /a2a-settle-fair-exchange error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /a2a-settle-fair-exchange error', 'a2a_settle_failed', req);
     }
   });
 
@@ -2663,8 +2765,7 @@ export function createApp() {
         });
       }
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /task-status error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /task-status error', 'task_status_failed', req);
     }
   });
 
@@ -2701,7 +2802,9 @@ export function createApp() {
     // HTML and JSON share this URL. Append Accept to Vary so a cache
     // cannot serve one representation to a client that asked for the other.
     // res.vary keeps the CORS middleware's Vary: Origin.
+    // A refusal page is not a stored issuance blob, so it is not cached.
     res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
     try {
       let raw = req.params.refusalId;
       const jsonSuffix = raw && raw.endsWith('.json');
@@ -2711,52 +2814,37 @@ export function createApp() {
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
       const row = usageSettled.findByRefusal(raw);
-      if (!row?.refusal) {
-        if (wantsJson) {
-          return res.status(404).json({
-            error: 'not_found',
-            message: `No refusal found for ${raw}`,
-            refusal_id: raw,
-          });
-        }
-        return res.status(404).type('html').send(renderRefusalNotFound(raw));
-      }
+      if (!row?.refusal) return sendPublicRefusalNotFound(res, !wantsJson);
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const doc = presentRefusal(row.refusal, baseUrl);
-      res.set('Cache-Control', 'public, max-age=300');
       if (wantsJson) return res.json(doc);
       return res.type('html').send(renderRefusalHtml(doc));
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /refusal/:refusalId error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /refusal/:refusalId error', 'refusal_failed');
     }
   });
 
   app.get('/refusal/:refusalId/preimage', rateLimit, (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
     try {
       const row = usageSettled.findByRefusal(req.params.refusalId);
-      if (!row?.refusal) {
-        return res.status(404).json({ error: 'not_found', refusal_id: req.params.refusalId });
-      }
+      if (!row?.refusal) return sendPublicRefusalNotFound(res, false);
       return writeCanonicalPreimage(res, row.refusal, req.query);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /refusal preimage error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /refusal preimage error', 'refusal_preimage_failed');
     }
   });
 
   app.get('/refusal/:refusalId/preimage/:field', rateLimit, (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
     try {
       const row = usageSettled.findByRefusal(req.params.refusalId);
-      if (!row?.refusal) {
-        return res.status(404).json({ error: 'not_found', refusal_id: req.params.refusalId });
-      }
+      if (!row?.refusal) return sendPublicRefusalNotFound(res, false);
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const doc = presentRefusal(row.refusal, baseUrl);
       return sendPreimage(res, doc?.preimages, req.params.field, req.query.raw);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /refusal preimage field error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /refusal preimage field error', 'refusal_preimage_failed');
     }
   });
 
@@ -2775,19 +2863,14 @@ export function createApp() {
       logger.error({ err, taskId: receipt.task_id }, 'public tree audit withheld');
       prefix = null;
     }
-    return withPublicPreimages(receipt, { baseUrl, prefix });
+    return redactPublicReceipt(withPublicPreimages(receipt, { baseUrl, prefix }));
   }
 
   function sendPreimage(res, preimages, field, raw) {
     res.set('Cache-Control', 'private, no-store');
     const entry = preimageField(preimages, field);
     if (!entry) {
-      const withheld = (preimages?.not_recomputable || []).find((row) => row.field === field);
-      return res.status(404).json({
-        error: 'preimage_unavailable',
-        field,
-        reason: withheld?.reason || 'This field has no public preimage.',
-      });
+      return res.status(404).json({ error: 'preimage_unavailable' });
     }
     const published = { ...entry };
     delete published.leaves;
@@ -2795,14 +2878,10 @@ export function createApp() {
     // the JSON object, and it must not concatenate other leaves.
     if (String(raw || '') === '1') {
       if (published.audit_path || published.leaf || entry.leaves) {
-        return res.status(404).json({
-          error: 'preimage_unavailable',
-          field,
-          reason: 'This field is a Merkle audit path. Raw bytes are not a single buffer.',
-        });
+        return res.status(404).json({ error: 'preimage_unavailable' });
       }
       const bytes = preimageBytes(published);
-      if (!bytes) return res.status(404).json({ error: 'preimage_unavailable', field });
+      if (!bytes) return res.status(404).json({ error: 'preimage_unavailable' });
       return res.type('application/octet-stream').send(bytes);
     }
     return res.json(published);
@@ -2827,9 +2906,11 @@ export function createApp() {
   // Task store first (native receipts). Foreign-ingest and stamped payouts
   // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
   app.get('/receipt/by-tx', rateLimit, (req, res) => {
+    res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
     try {
       const tx = req.query.tx;
-      if (!tx) {
+      if (!tx || typeof tx !== 'string') {
         return res.status(400).json({
           error: 'validation_error',
           message: 'tx query parameter is required',
@@ -2849,16 +2930,7 @@ export function createApp() {
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 
-      if (!taskId) {
-        if (wantsJson) {
-          return res.status(404).json({
-            error: 'not_found',
-            message: `No receipt found for tx ${tx}`,
-            tx,
-          });
-        }
-        return res.status(404).type('html').send(renderReceiptNotFound(tx));
-      }
+      if (!taskId) return sendPublicNotFound(res, !wantsJson);
 
       // Redirect to canonical verify_url so the URL shape is consistent.
       // GET /receipt/:id rebuilds a foreign row from its snapshot, including the issuer JWS.
@@ -2903,8 +2975,11 @@ export function createApp() {
         });
       }
 
-      const png = await renderReceiptOgPng(receipt);
-      res.set('Cache-Control', 'public, max-age=3600, immutable');
+      const png = await renderReceiptOgPng(redactPublicReceipt(receipt));
+      // Own-data: title, this receipt's id, model, and proof label only.
+      // Not deterministic: proof and collection status change after issuance,
+      // so a public immutable cache would pin a stale card. private, no-store.
+      res.set('Cache-Control', 'private, no-store');
       return res.type('png').send(png);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt/:taskId/og.png error');
@@ -2926,20 +3001,26 @@ export function createApp() {
   });
 
   app.get('/v1/receipts/tree/epoch', (_req, res) => {
-    const record = getReceiptMerkleTree().epochRecord;
-    if (!record) {
+    res.set('Cache-Control', 'private, no-store');
+    const tree = getReceiptMerkleTree();
+    // No record yet is the unpublished stub. A record that still names rows
+    // is not replaced by an unsigned body: the last signed version 1 record
+    // is served, or 404 when that record was never written.
+    if (!tree.epochRecord) {
       return res.json({
         schema: 'chit402.tree_epoch.v1',
         status: 'not_yet_published',
         published: false,
       });
     }
+    const record = publicEpochRecord(tree.epochRecord, tree.epochRecordV1);
+    if (!record) return sendPublicNotFound(res, false);
     return res.json(record);
   });
 
   app.get('/v1/receipts/tree/epoch/:epoch/head', (req, res) => {
-    const epoch = Number(req.params.epoch);
-    if (!Number.isInteger(epoch) || epoch < 1) {
+    const epoch = canonicalPositiveInteger(req.params.epoch);
+    if (epoch == null) {
       return res.status(400).json({ error: 'bad_epoch' });
     }
     try {
@@ -2960,30 +3041,47 @@ export function createApp() {
   });
 
   app.get('/v1/receipts/tree/consistency', (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
     try {
-      const first = Number(req.query.first);
-      const second = Number(req.query.second);
-      const epoch = req.query.epoch == null || req.query.epoch === '' ? null : Number(req.query.epoch);
+      const first = canonicalPositiveInteger(rawQueryValue(req, 'first'));
+      const second = canonicalPositiveInteger(rawQueryValue(req, 'second'));
+      if (first == null || second == null) {
+        return res.status(400).json({ error: 'bad_tree_size' });
+      }
+      const epochSpelled = rawQueryValue(req, 'epoch');
+      let epoch = null;
+      if (epochSpelled === null) {
+        return res.status(400).json({ error: 'bad_epoch' });
+      }
+      if (epochSpelled !== undefined && epochSpelled !== '') {
+        epoch = canonicalPositiveInteger(epochSpelled);
+        if (epoch == null) return res.status(400).json({ error: 'bad_epoch' });
+      }
       return res.json(getReceiptMerkleTree().consistency(first, second, epoch));
     } catch (err) {
-      logger.error({ err }, 'tree consistency error');
-      return res.status(500).json({ error: 'internal', message: 'internal error' });
+      if (err?.message === 'bad_tree_size') {
+        return res.status(400).json({ error: 'bad_tree_size' });
+      }
+      return sendPublicInternal(res, err, 'tree consistency error', 'consistency_failed');
     }
   });
 
   app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
     const tree = getReceiptMerkleTree();
+    // Same raw spelling as consistency. Express may turn `01` or `+1` into 1.
+    // Absent or empty means "newest anchored head". A duplicate key fails closed.
+    const spelled = rawQueryValue(req, 'tree_size');
     let treeSize = null;
-    if (req.query.tree_size != null && String(req.query.tree_size) !== '') {
-      const raw = String(req.query.tree_size).trim();
-      if (!/^[1-9]\d*$/.test(raw)) {
-        return res.status(400).json({
-          error: 'bad_tree_size',
-          message: 'tree_size must be a positive integer',
-        });
-      }
-      treeSize = Number(raw);
-      if (!Number.isSafeInteger(treeSize) || treeSize < 1) {
+    if (spelled === null) {
+      return res.status(400).json({
+        error: 'bad_tree_size',
+        message: 'tree_size must be a positive integer',
+      });
+    }
+    if (spelled !== undefined && spelled !== '') {
+      treeSize = canonicalPositiveInteger(spelled);
+      if (treeSize == null) {
         return res.status(400).json({
           error: 'bad_tree_size',
           message: 'tree_size must be a positive integer',
@@ -2993,19 +3091,14 @@ export function createApp() {
     try {
       const found = tree.inclusion(req.params.task_id, treeSize == null ? {} : { treeSize });
       if (found) return res.json(found);
-      const unlogged = attestedUnloggedEntry(tree.epochRecord, req.params.task_id);
-      return res.status(404).json({
-        error: 'not_in_tree',
-        task_id: req.params.task_id,
-        ...(unlogged ? { reason: unlogged.reason, agent_id: unlogged.agent_id } : {}),
-      });
+      // A miss names no other row. The epoch commitment is the public attestation.
+      return res.status(404).json({ error: 'not_in_tree' });
     } catch (err) {
       const code = err?.code;
       if (code === 'bad_tree_size' || code === 'no_signed_head' || code === 'head_mismatch' || code === 'head_rejected' || code === 'leaf_not_in_head') {
-        return res.status(400).json({ error: code, message: err.message });
+        return res.status(400).json({ error: code });
       }
-      logger.error({ err }, 'inclusion error');
-      return res.status(500).json({ error: 'internal', message: 'internal error' });
+      return sendPublicInternal(res, err, 'inclusion error', 'inclusion_failed');
     }
   });
 
@@ -3031,6 +3124,12 @@ export function createApp() {
         || wantsAuditor
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
+      const tx = txQueryValue(req);
+      const rejectsTx = (receipt, task) => {
+        if (tx === undefined) return false;
+        if (tx === null) return true;
+        return !receiptOwnsTx(tx, { receipt, task, ledgerRow });
+      };
 
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
@@ -3066,6 +3165,7 @@ export function createApp() {
       };
 
       if (openRouterReceipt) {
+        if (rejectsTx(openRouterReceipt, null)) return sendPublicNotFound(res, !wantsJson);
         const covered = withBookCoverage(openRouterReceipt);
         if (wantsAuditor) {
           const exportDoc = buildAuditorExport(covered, { policy: null });
@@ -3082,6 +3182,7 @@ export function createApp() {
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
       if (foreignReceipt) {
+        if (rejectsTx(foreignReceipt, null)) return sendPublicNotFound(res, !wantsJson);
         const covered = withBookCoverage(foreignReceipt);
         if (wantsAuditor) {
           const exportDoc = buildAuditorExport(covered, { policy: null });
@@ -3096,24 +3197,17 @@ export function createApp() {
       }
 
       const aiListener = getAIListener();
-      // Support ?tx=<signature> query param as fallback lookup for Solana payments
-      const txFallback = req.query.tx;
-      let task = _findTask(aiListener, taskId);
-      if (!task && txFallback) {
-        task = _findTaskByPaymentRef(aiListener, txFallback);
-      }
+      // ?tx= may confirm this id. It must not select a different receipt.
+      const task = _findTask(aiListener, taskId);
 
       if (!task) {
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
-        if (spendReceipt) {
+        if (spendReceipt && !rejectsTx(spendReceipt, null)) {
           const published = publishReceipt(spendReceipt, req);
           if (wantsJson) return res.json(published);
           return res.type('html').send(renderReceiptHtml(published));
         }
-        if (wantsJson) {
-          return res.status(404).json({ error: 'not_found', message: `Task ${rawTaskId} not found`, task_id: rawTaskId });
-        }
-        return res.status(404).type('html').send(renderReceiptNotFound(rawTaskId));
+        return sendPublicNotFound(res, !wantsJson);
       }
 
       const receipt = buildReceipt(task, {
@@ -3126,6 +3220,7 @@ export function createApp() {
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
       });
+      if (rejectsTx(receipt, task)) return sendPublicNotFound(res, !wantsJson);
 
       if (wantsAuditor) {
         let policy = null;
@@ -3201,8 +3296,9 @@ export function createApp() {
 
   app.get('/receipt/:taskId/preimage', rateLimit, (req, res) => {
     try {
+      res.set('Cache-Control', 'private, no-store');
       const receipt = loadPreimageReceipt(req);
-      if (!receipt) return res.status(404).json({ error: 'not_found', task_id: req.params.taskId });
+      if (!receipt) return sendPublicNotFound(res, false);
       return writeCanonicalPreimage(res, receipt, req.query);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt preimage error');
@@ -3212,8 +3308,9 @@ export function createApp() {
 
   app.get('/receipt/:taskId/preimage/:field', rateLimit, (req, res) => {
     try {
+      res.set('Cache-Control', 'private, no-store');
       const published = loadPreimageReceipt(req);
-      if (!published) return res.status(404).json({ error: 'not_found', task_id: req.params.taskId });
+      if (!published) return sendPublicNotFound(res, false);
       return sendPreimage(res, published?.preimages, req.params.field, req.query.raw);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt preimage field error');
@@ -3302,8 +3399,7 @@ export function createApp() {
         },
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/handoff/origin error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /receipt/:taskId/handoff/origin error', 'handoff_origin_failed', req);
     }
   });
 
@@ -3408,8 +3504,7 @@ export function createApp() {
         },
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/handoff/dest error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /receipt/:taskId/handoff/dest error', 'handoff_dest_failed', req);
     }
   });
 
@@ -3516,8 +3611,7 @@ export function createApp() {
         receipt,
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /receipt/:taskId/session/handoff error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /receipt/:taskId/session/handoff error', 'session_handoff_failed', req);
     }
   });
 
@@ -3616,8 +3710,7 @@ export function createApp() {
         typed_data: typed,
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/:delegation_hash/challenge error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /v1/sessions/:delegation_hash/challenge error', 'session_challenge_failed', req);
     }
   });
 
@@ -3684,8 +3777,7 @@ export function createApp() {
       }
       return res.status(executed.status).json(executed.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/:delegation_hash/act error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /v1/sessions/:delegation_hash/act error', 'session_act_failed', req);
     }
   });
 
@@ -3773,8 +3865,7 @@ export function createApp() {
         agent_key_type: AGENT_KEY_TYPE_SECP256K1,
       });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/sessions/revoke error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /v1/sessions/revoke error', 'session_revoke_failed', req);
     }
   });
 
@@ -3904,8 +3995,7 @@ export function createApp() {
     try {
       return writeIssuerHistory(res, req.query);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET issuer-history error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET issuer-history error', 'issuer_history_failed');
     }
   });
 
@@ -3937,8 +4027,7 @@ export function createApp() {
     try {
       return writeAnchorWallets(res);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET anchor-wallets error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET anchor-wallets error', 'anchor_wallets_failed');
     }
   });
 
@@ -3964,8 +4053,7 @@ export function createApp() {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.type('application/a2a+json').json(buildAgentCard(baseUrl));
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /.well-known/agent-card.json error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /.well-known/agent-card.json error', 'agent_card_failed');
     }
   });
 
@@ -3974,8 +4062,7 @@ export function createApp() {
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       res.json(buildX402Manifest(baseUrl));
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /.well-known/x402 error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /.well-known/x402 error', 'x402_failed', req);
     }
   });
 
@@ -4015,8 +4102,7 @@ export function createApp() {
       }
       res.json(spec);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /openapi.json error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /openapi.json error', 'openapi_failed', req);
     }
   });
 
@@ -4096,7 +4182,8 @@ export function createApp() {
           : { enabled: false },
       });
     } catch (err) {
-      return res.status(503).json({ status: 'error', message: err.message });
+      logger.error({ err }, 'GET /health error');
+      return res.status(503).json({ error: 'internal', code: 'health_failed' });
     }
   });
 
@@ -4134,8 +4221,7 @@ export function createApp() {
       if (wantsJson) return res.json(_statsCache.data);
       return res.type('html').send(renderStatsHtml(_statsCache.data));
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /stats error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /stats error', 'stats_failed', req);
     }
   });
 
@@ -4160,8 +4246,7 @@ export function createApp() {
       }
       return res.json(_doorPublicCache.data);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /stats/door error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /stats/door error', 'stats_door_failed', req);
     }
   });
 
@@ -4191,8 +4276,7 @@ export function createApp() {
       };
       return res.json(data);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /stats/me error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /stats/me error', 'stats_me_failed', req);
     }
   });
 
@@ -4222,8 +4306,7 @@ export function createApp() {
       }
       return res.json(_doorMetricsCache.data);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /v1/internal/door-metrics error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'GET /v1/internal/door-metrics error', 'door_metrics_failed', req);
     }
   });
 
@@ -4375,7 +4458,7 @@ export function createApp() {
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
-      return sendPublicInternal(res, err, 'POST /v1/agents/register error', 'register_failed', req);
+      return sendPublicInternal(res, err, 'POST /v1/agents/register error', 'agent_register_failed', req);
     }
   });
 
@@ -4430,8 +4513,7 @@ export function createApp() {
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/agents/:agent_id/book/inflow error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /v1/agents/:agent_id/book/inflow error', 'book_inflow_failed', req);
     }
   });
 
@@ -4453,8 +4535,7 @@ export function createApp() {
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'POST /v1/agents/:agent_id/book/inflow/correct error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'POST /v1/agents/:agent_id/book/inflow/correct error', 'book_inflow_correct_failed', req);
     }
   });
 
@@ -4591,7 +4672,7 @@ export function createApp() {
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
-      return sendPublicInternal(res, err, 'POST /v1/agents/:agent_id/book/ingest error', 'ingest_failed', req);
+      return sendPublicInternal(res, err, 'POST /v1/agents/:agent_id/book/ingest error', 'book_ingest_failed', req);
     }
   });
 
@@ -4652,8 +4733,7 @@ export function createApp() {
       }
       return res.json({ agent_id: id, policy: result.policy });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book policy error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book policy error', 'book_policy_failed', req);
     }
   });
 
@@ -4728,8 +4808,7 @@ export function createApp() {
       }
       return res.send(result.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book export get error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book export get error', 'book_export_failed', req);
     }
   });
 
@@ -4780,8 +4859,7 @@ export function createApp() {
       }
       return res.send(result.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book export post error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book export post error', 'book_export_failed', req);
     }
   });
 
@@ -4818,8 +4896,7 @@ export function createApp() {
       }
       return res.json(usageSettled.seqReport(id));
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book gaps error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book gaps error', 'book_gaps_failed', req);
     }
   });
 
@@ -4859,8 +4936,7 @@ export function createApp() {
       }
       return res.status(201).json(result.assignment);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book assign error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book assign error', 'book_assign_failed', req);
     }
   });
 
@@ -4910,8 +4986,7 @@ export function createApp() {
       }
       return res.json(result.assignment);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book assign revoke error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book assign revoke error', 'book_assign_revoke_failed', req);
     }
   });
 
@@ -4981,8 +5056,7 @@ export function createApp() {
       }
       return res.status(201).json(result);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book dispute error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book dispute error', 'book_dispute_failed', req);
     }
   });
 
@@ -5067,8 +5141,7 @@ export function createApp() {
       }
       return res.status(body.action === 'open' ? 201 : 200).json(result);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book escrow error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book escrow error', 'book_escrow_failed', req);
     }
   });
 
@@ -5171,8 +5244,7 @@ export function createApp() {
       const created = body.action === 'open' || body.action === 'fund';
       return res.status(created ? 201 : 200).json(result);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book a2a-escrow error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book a2a-escrow error', 'book_a2a_escrow_failed', req);
     }
   });
 
@@ -5206,8 +5278,7 @@ export function createApp() {
       }
       return res.json({ agent_id: id, session: result.session, rotated_at: new Date().toISOString() });
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book rotate error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book rotate error', 'book_rotate_failed', req);
     }
   });
 
@@ -5223,8 +5294,7 @@ export function createApp() {
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
-      logger.error({ err, reqId: req.id }, 'book webhook error');
-      return res.status(500).json({ error: 'internal', message: err.message });
+      return sendPublicInternal(res, err, 'book webhook error', 'book_webhook_failed', req);
     }
   }
 
@@ -5305,10 +5375,8 @@ export function createApp() {
   // ── 404 fallback ────────────────────────────────────────────────────────
 
   app.use((_req, res) => {
-    res.status(404).json({
-      error: 'not_found',
-      message: 'Unknown endpoint. Available: POST /task-request, POST /task-quote, GET /prove-result, POST /a2a-message, POST /a2a-settle-fair-exchange, POST /erc8004/validate, POST /v1/agents/register, GET|POST /v1/agents/:agent_id/book, POST /v1/agents/:agent_id/book/ingest, GET /v1/agents/:agent_id/book/lineage/:task_id, GET|POST /v1/agents/:agent_id/book/policy, GET|POST /v1/agents/:agent_id/book/export, PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook, GET|POST /v1/agents/:agent_id/book/assign, DELETE /v1/agents/:agent_id/book/assign/:assignment_id, GET /v1/book/slice, GET|POST /v1/agents/:agent_id/book/dispute, POST /v1/agents/:agent_id/book/escrow, GET|POST /v1/agents/:agent_id/book/a2a-escrow, POST /v1/agents/:agent_id/book/rotate, GET|POST /v1/board/posts, GET /v1/board/posts/:id, GET /v1/board/posts/:id/comments, POST /v1/board/posts/:id/comments, POST /v1/board/posts/:id/reply, POST /v1/board/posts/:id/like, POST /v1/board/posts/:id/confirms, POST /v1/board/posts/:id/takedown, POST /v1/board/posts/:id/flag, POST /v1/board/posts/:id/hide, GET|POST /v1/board/jobs, GET /v1/board/jobs/:id, POST /v1/board/jobs/:id/bid, POST /v1/board/jobs/:id/pick, POST /v1/board/jobs/:id/deliver, POST /v1/board/jobs/:id/pay, POST /v1/board/jobs/:id/reveal, POST /v1/board/jobs/:id/challenge, GET /v1/agents/:agent_id/record, POST /v1/board/inbound/completions, GET /task-status, GET /receipt/:taskId, GET /receipt/by-tx, POST /receipt/:taskId/session/handoff, GET /v1/sessions/:delegation_hash, POST /v1/sessions/:delegation_hash/challenge, POST /v1/sessions/:delegation_hash/act, POST /v1/sessions/revoke, PUT|GET|DELETE /webhook, GET /health, GET /stats, GET /stats/door, GET /stats/me, GET /llms.txt, GET /chit402-icon.svg, GET /.well-known/x402, GET /.well-known/x402list.txt, GET /.well-known/jwks.json, GET /.well-known/did.json, GET /.well-known/revocations, GET /.well-known/agent-card.json, POST /v1/openrouter/books, POST|PUT /v1/openrouter/broadcast, GET /v1/openrouter/books/:book_id/receipts, GET /v1/openrouter/books/:book_id/summary, GET /openapi.json, GET /v1/models, GET /v1/models/:id, GET|POST /v1/chat/completions, POST /v1/images/generations, POST /v1/audio/transcriptions',
-    });
+    res.set('Cache-Control', 'private, no-store');
+    res.status(404).json({ error: 'not_found' });
   });
 
   // ── Global error handler ────────────────────────────────────────────────

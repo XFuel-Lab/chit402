@@ -1098,6 +1098,58 @@ export function storedReceiptJson(receipt) {
   delete out.session;
   delete out.agent_pubkey;
   delete out.session_act;
+  return redactPublicReceipt(out);
+}
+
+/**
+ * Copy for a public receipt view. Drops unsigned fields only.
+ * Token counts, the resolved model, the router choice (`requested`,
+ * `requested_model`, `substituted`), the stamp-fee payment ref, and the
+ * float low-water flag. Signed fields, `payload_hash`, and the JWS are copied
+ * through unchanged. The stamp-fee ref is not signed.
+ * @param {object|null|undefined} receipt
+ */
+export function redactPublicReceipt(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const out = { ...receipt };
+  if (out.usage && typeof out.usage === 'object' && !Array.isArray(out.usage)) {
+    const usage = { ...out.usage };
+    delete usage.prompt_tokens;
+    delete usage.completion_tokens;
+    delete usage.total_tokens;
+    if (Object.keys(usage).length === 0) delete out.usage;
+    else out.usage = usage;
+  }
+  if (out.route && typeof out.route === 'object' && !Array.isArray(out.route)) {
+    const route = { ...out.route };
+    delete route.resolved;
+    delete route.requested;
+    delete route.requested_model;
+    delete route.substituted;
+    out.route = route;
+  }
+  if (out.route_meta && typeof out.route_meta === 'object' && !Array.isArray(out.route_meta)) {
+    const meta = { ...out.route_meta };
+    delete meta.resolved;
+    delete meta.requested;
+    delete meta.requested_model;
+    delete meta.substituted;
+    out.route_meta = meta;
+  }
+  if (out.stamp && typeof out.stamp === 'object' && !Array.isArray(out.stamp)) {
+    if (Object.prototype.hasOwnProperty.call(out.stamp, 'payment_ref')) {
+      const stamp = { ...out.stamp };
+      delete stamp.payment_ref;
+      out.stamp = stamp;
+    }
+  }
+  if (out.provider_cogs && typeof out.provider_cogs === 'object' && !Array.isArray(out.provider_cogs)) {
+    if (Object.prototype.hasOwnProperty.call(out.provider_cogs, 'below_low_water')) {
+      const cogs = { ...out.provider_cogs };
+      delete cogs.below_low_water;
+      out.provider_cogs = cogs;
+    }
+  }
   return out;
 }
 
@@ -2904,6 +2956,7 @@ export function verifyIssuerForHtml(receipt) {
 /** Render a clean, standalone, shareable HTML receipt page. */
 export function renderReceiptHtml(receipt) {
   if (isV11Document(receipt)) return renderV11ReceiptHtml(receipt);
+  receipt = redactPublicReceipt(receipt);
   const view = mergeReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};
@@ -2927,7 +2980,9 @@ export function renderReceiptHtml(receipt) {
         : '<span class="muted">—</span>');
 
   const usage = receipt.usage;
-  const usageRows = usage
+  const hasTokenCounts = usage
+    && (usage.prompt_tokens != null || usage.completion_tokens != null || usage.total_tokens != null);
+  const usageRows = hasTokenCounts
     ? `${row('Tokens', `${esc(usage.total_tokens ?? '—')} <span class="muted">(${esc(usage.prompt_tokens ?? 0)}→${esc(usage.completion_tokens ?? 0)})</span>`)}`
     : '';
 
@@ -3297,8 +3352,8 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
 </html>`;
 }
 
-/** Minimal standalone HTML for an unknown/expired task id. */
-export function renderReceiptNotFound(taskId) {
+/** Fixed HTML for an unknown receipt. The requested id is not included. */
+export function renderReceiptNotFound() {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3312,7 +3367,6 @@ export function renderReceiptNotFound(taskId) {
   .wrap { max-width: 560px; margin: 0 auto; padding: 80px 20px; text-align: center; }
   .brand { font-weight: 700; font-size: 18px; margin-bottom: 24px; }
   .brand span { color: #6ea8fe; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0e1420; padding: 2px 6px; border-radius: 6px; color: #cbd3e1; word-break: break-all; }
   .muted { color: #8b95a7; }
 </style>
 </head>
@@ -3320,9 +3374,7 @@ export function renderReceiptNotFound(taskId) {
   <div class="wrap">
     <div class="brand">Chit402</div>
     <h1>Receipt not found</h1>
-    <p class="muted">No task with id <code>${esc(taskId)}</code> is known to this node.
-    Settled receipts are persisted and remain resolvable; check the id, or the
-    receipt may have passed its retention window.</p>
+    <p class="muted">No receipt is known for this request.</p>
   </div>
 </body>
 </html>`;
@@ -3375,7 +3427,8 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
-  const view = mergeReceiptView(receipt);
+  const source = redactPublicReceipt(receipt);
+  const view = mergeReceiptView(source);
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],
