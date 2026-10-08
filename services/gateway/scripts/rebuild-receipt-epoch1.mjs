@@ -8,19 +8,35 @@
  * f2043ee9) and a signed epoch record. Does not broadcast, and does not
  * re-sign any receipt.
  *
+ * Loads `.env` the same way the server does (`src/config.js`). Refuses when
+ * ISSUER_PRIVATE_KEY is unset so the epoch record is never signed with an
+ * ephemeral key. Boot would reject that signature (`epoch_signature` /
+ * `no_matching_key`).
+ *
  *   node scripts/rebuild-receipt-epoch1.mjs \
  *     --jsonl .data/agents/usage-settled.jsonl \
  *     --out .data/receipt-log
  */
+import '../src/config.js';
 import fs from 'fs';
 import path from 'path';
-import { signJws, getIssuerPublicKeyJwk } from '../src/issuer-key.js';
+import {
+  initIssuerKey,
+  signJws,
+  getIssuerPublicKeyJwk,
+  getJwks,
+  verifyJwsWithJwks,
+} from '../src/issuer-key.js';
 import {
   EPOCH1_FINAL_ROOT,
   EPOCH_RECORD_JWT_TYP,
   rebuildEpoch1FromRows,
 } from '../src/receipt-log-epoch.js';
-import { writeRestoredEpochs } from '../src/receipt-log-store.js';
+import {
+  EPOCH_RECORD_NAME,
+  JOURNAL_NAME,
+  writeRestoredEpochs,
+} from '../src/receipt-log-store.js';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -50,6 +66,18 @@ if (!jsonl || !out) {
   process.exit(2);
 }
 
+if (!String(process.env.ISSUER_PRIVATE_KEY || '').trim()) {
+  console.error('REFUSED: ISSUER_PRIVATE_KEY is not set. Refusing to sign the epoch record with an ephemeral key. Boot would reject that signature (epoch_signature / no_matching_key). Source services/gateway/.env from this directory, or export the production key, and re-run.');
+  process.exit(1);
+}
+
+try {
+  initIssuerKey();
+} catch (err) {
+  console.error(`REFUSED: ISSUER_PRIVATE_KEY could not be loaded: ${err.message}`);
+  process.exit(1);
+}
+
 const rows = fs.readFileSync(jsonl, 'utf8')
   .split('\n')
   .filter((line) => line.trim())
@@ -69,8 +97,17 @@ if (rebuilt.root !== EPOCH1_FINAL_ROOT) {
   process.exit(1);
 }
 
-const record = writeRestoredEpochs(path.resolve(out), rebuilt, { signRecord });
+const outDir = path.resolve(out);
+const record = writeRestoredEpochs(outDir, rebuilt, { signRecord });
+const verified = verifyJwsWithJwks(record.issuer_signature?.jws, getJwks());
+if (!verified.valid) {
+  fs.rmSync(path.join(outDir, JOURNAL_NAME), { force: true });
+  fs.rmSync(path.join(outDir, EPOCH_RECORD_NAME), { force: true });
+  console.error(`REFUSED: epoch record failed verification (${verified.reason || 'invalid'}). The journal just written was removed so this command can be re-run.`);
+  process.exit(1);
+}
 console.error(`epoch 1 root ${rebuilt.root} size ${rebuilt.tree_size}`);
-console.error(`wrote ${path.resolve(out)}`);
-console.error(`epoch record signed: ${Boolean(record.issuer_signature?.jws)}`);
+console.error(`wrote ${outDir}`);
+console.error(`epoch record kid: ${record.issuer_signature.kid}`);
+console.error('epoch record signed: true');
 console.error('No transaction was broadcast. No receipt was re-signed.');

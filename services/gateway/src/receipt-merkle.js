@@ -49,6 +49,7 @@ import {
 } from './receipt-log-anchor.js';
 import {
   assertPinnedEpochRecord,
+  verifyUnloggedSection,
   EPOCH1_FINAL_ROOT,
   EPOCH1_FINAL_SIZE,
   EPOCH1_SIZE2_ROOT,
@@ -115,16 +116,42 @@ export function inclusionProof(leaves, index) {
   return proof;
 }
 
+/**
+ * RFC 9162 §2.1.3.2. Index and tree size pick left or right. A `position`
+ * label is not trusted. The proof must be exactly as long as that pair
+ * requires, and index >= size is rejected. Leaf and node hashing are
+ * unchanged. Lockstep with `verifyMerkleInclusion` in `@xfuel/verify`.
+ */
 export function verifyInclusion(leaf, index, treeSize, rootHex, proof) {
-  if (!Array.isArray(proof) || index < 0 || index >= treeSize) return false;
+  if (!Array.isArray(proof)) return false;
+  const leafIndex = Number(index);
+  const size = Number(treeSize);
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
+  if (leafIndex < 0 || leafIndex >= size) return false;
+  const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return false;
+  let fn = leafIndex;
+  let sn = size - 1;
   let hash = Buffer.from(leaf);
-  let idx = index;
   for (const step of proof) {
+    if (sn === 0) return false;
+    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    hash = step.position === 'left' ? nodeHash(sib, hash) : nodeHash(hash, sib);
-    idx = Math.floor(idx / 2);
+    if ((fn % 2) === 1 || fn === sn) {
+      hash = nodeHash(sib, hash);
+      if ((fn % 2) === 0) {
+        while ((fn % 2) === 0 && fn !== 0) {
+          fn = Math.floor(fn / 2);
+          sn = Math.floor(sn / 2);
+        }
+      }
+    } else {
+      hash = nodeHash(hash, sib);
+    }
+    fn = Math.floor(fn / 2);
+    sn = Math.floor(sn / 2);
   }
-  return hash.toString('hex') === String(rootHex).replace(/^0x/, '');
+  return sn === 0 && hash.toString('hex') === root;
 }
 
 function largestPowerOfTwoLessThan(n) {
@@ -853,6 +880,55 @@ export class ReceiptMerkleTree {
     return hex(rootOf(this.leaves.slice(0, index + 1)));
   }
 
+  /**
+   * Leaf present in an earlier epoch and in a later epoch. Null when the
+   * task is only in one epoch, which is the current-epoch case.
+   */
+  carryForwardFor(taskId) {
+    const id = String(taskId);
+    const views = [];
+    for (const epoch of this.closedEpochs || []) views.push(epoch);
+    views.push({
+      epoch: this.epoch,
+      leaves: this.leaves,
+      byTask: this.byTask,
+      heads: this.heads,
+      prevEpochRoot: this.prevEpochRoot,
+      prevEpochSize: this.prevEpochSize,
+    });
+    const hits = views.filter((epoch) => epoch.byTask?.has(id));
+    if (hits.length < 2) return null;
+    const old = hits[0];
+    const current = hits[hits.length - 1];
+    if (Number(old.epoch) === Number(current.epoch)) return null;
+    const oldInclusion = this._inclusionIn(old, id);
+    const currentInclusion = this._inclusionIn(current, id);
+    if (!oldInclusion || !currentInclusion) return null;
+    const oldHead = this._coveringHead(old, oldInclusion.root);
+    const currentHead = this._coveringHead(current, currentInclusion.root);
+    const leaf = current.leaves[currentInclusion.leaf_index];
+    const leafHex = Buffer.from(leaf).toString('hex');
+    const currentInclusions = [];
+    for (let index = 0; index < current.leaves.length; index += 1) {
+      if (Buffer.from(current.leaves[index]).toString('hex') !== leafHex) continue;
+      const proof = inclusionProof(current.leaves, index);
+      currentInclusions.push({
+        leaf: leafHex,
+        leaf_index: index,
+        tree_size: current.leaves.length,
+        proof,
+      });
+    }
+    oldInclusion.leaf = Buffer.from(old.leaves[oldInclusion.leaf_index]).toString('hex');
+    return assessCarryForward({
+      leaf,
+      oldHead,
+      oldInclusion,
+      currentHead,
+      currentInclusions,
+    });
+  }
+
   inclusion(taskId) {
     const closed = this._findClosed(taskId);
     if (closed) return this._inclusionIn(closed, taskId);
@@ -873,8 +949,7 @@ export class ReceiptMerkleTree {
     if (index == null) return null;
     const proof = inclusionProof(epoch.leaves, index);
     const root = hex(rootOf(epoch.leaves));
-    let head = epochHeadCovering(epoch.heads, epoch.leaves, root);
-    if (!head && epoch.status === 'closed') head = this.signedClosedEpochHead(epoch.epoch);
+    const head = this._coveringHead(epoch, root);
     const baseSide = head ? (head.anchors?.base || head.anchor || null) : null;
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = head ? (head.anchors?.solana || null) : null;
@@ -2194,6 +2269,22 @@ export class ReceiptMerkleTree {
   }
 
   /**
+   * Stored head for this root, or the closed-epoch head signed on read.
+   * Epoch 1 has no journal head; `signedClosedEpochHead` is that signature.
+   */
+  _coveringHead(epoch, rootHex) {
+    const stored = epochHeadCovering(epoch.heads, epoch.leaves, rootHex);
+    if (stored) return stored;
+    if (epoch.status !== 'closed') return null;
+    const signed = this.signedClosedEpochHead(epoch.epoch);
+    if (!signed?.issuer_signature?.jws) return null;
+    const root = String(signed.root || '').replace(/^0x/, '');
+    if (root !== String(rootHex || '').replace(/^0x/, '')) return null;
+    if (Number(signed.tree_size) !== epoch.leaves.length) return null;
+    return signed;
+  }
+
+  /**
    * Signed head for a closed epoch whose recomputed root is an in-journal
    * pin anchor. Cached for this process. Does not write the journal.
    * @param {number} epochNumber
@@ -2304,6 +2395,17 @@ export class ReceiptMerkleTree {
       }
       if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(this.epochRecord.orphans ?? [])) {
         throw new ReceiptLogRefused('epoch_signature', 'epoch record orphans do not match the signature');
+      }
+      const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
+      const recordUnlogged = this.epochRecord.unlogged === undefined ? null : this.epochRecord.unlogged;
+      if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) {
+        throw new ReceiptLogRefused('epoch_signature', 'epoch record unlogged list does not match the signature');
+      }
+      if (Number(this.epochRecord.payload_version) === 2) {
+        const listed = verifyUnloggedSection(this.epochRecord.unlogged);
+        if (!listed.ok) {
+          throw new ReceiptLogRefused(listed.reason || 'unlogged_hash', 'epoch record unlogged list does not verify');
+        }
       }
     } else if (this.epochRecord && receiptLogStrict()) {
       throw new ReceiptLogRefused('epoch_unsigned', 'epoch record is missing its signature');
@@ -2515,6 +2617,139 @@ export function verifyTreeHead(head, jwks = null) {
   return { valid: true, payload };
 }
 
+/** Epoch ids on the committed pin. An id outside this set is not a log epoch. */
+export function pinnedAnchorEpochIds(pin = readReceiptLogPin()) {
+  const ids = new Set();
+  for (const row of pin?.anchors || []) {
+    const epoch = Number(row?.epoch);
+    if (Number.isInteger(epoch) && epoch >= 1) ids.add(epoch);
+  }
+  for (const row of pin?.epochs || []) {
+    const epoch = Number(row?.epoch);
+    if (Number.isInteger(epoch) && epoch >= 1) ids.add(epoch);
+  }
+  return ids;
+}
+
+const SIGNED_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+function carryFail(reason) {
+  return { applicable: true, ok: false, status: null, reason };
+}
+
+function hexLeafClaim(value) {
+  if (typeof value !== 'string') return null;
+  const hex = value.replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
+
+/**
+ * Dates come from the signed head payload only. Lockstep with
+ * `verifyCarryForward` in packages/verify/src/carry-forward.ts.
+ */
+export function assessCarryForward(input, pin = readReceiptLogPin()) {
+  const pinned = input.pinnedEpochs || pinnedAnchorEpochIds(pin);
+  const oldHead = readCarryHead(input.oldHead, pinned);
+  if (!oldHead.ok) return oldHead;
+  const currentHead = readCarryHead(input.currentHead, pinned);
+  if (!currentHead.ok) return currentHead;
+  if (oldHead.epoch === currentHead.epoch) {
+    return { applicable: false, ok: true, status: null };
+  }
+  if (currentHead.epoch < oldHead.epoch) return carryFail('head_mismatch');
+  const oldMs = Date.parse(oldHead.published_at);
+  const currentMs = Date.parse(currentHead.published_at);
+  if (!(currentMs >= oldMs)) return carryFail('head_mismatch');
+
+  const oldLeaf = hexLeafClaim(input.oldInclusion?.leaf);
+  const currentLeaves = (input.currentInclusions || [])
+    .map((row) => hexLeafClaim(row?.leaf))
+    .filter(Boolean);
+  if (oldLeaf && currentLeaves.some((row) => row !== oldLeaf)) return carryFail('tree_head_mismatch');
+
+  const leafHex = Buffer.from(input.leaf).toString('hex');
+  const oldIncluded = carryInclusion(input.leaf, leafHex, input.oldInclusion, oldHead);
+  if (!oldIncluded.ok) return oldIncluded;
+  const inclusions = input.currentInclusions;
+  if (!Array.isArray(inclusions) || inclusions.length === 0) return carryFail('not_in_tree');
+  const positions = new Set();
+  for (const row of inclusions) {
+    const included = carryInclusion(input.leaf, leafHex, row, currentHead);
+    if (!included.ok) return included;
+    positions.add(included.leaf_index);
+  }
+  if (positions.size !== 1) return carryFail('inclusion_failed');
+  return {
+    applicable: true,
+    ok: true,
+    status: 'VERIFIED_CARRIED_FORWARD',
+    issued_at: oldHead.published_at,
+    issued_epoch: oldHead.epoch,
+    logged_at: currentHead.published_at,
+    logged_epoch: currentHead.epoch,
+    leaf_index: [...positions][0],
+  };
+}
+
+function readCarryHead(head, pinned) {
+  if (!head?.issuer_signature?.jws) return carryFail('epoch_signature_missing');
+  const checked = verifyTreeHead(head);
+  if (!checked.valid) {
+    if (checked.reason === 'no_signature') return carryFail('epoch_signature_missing');
+    return carryFail(checked.reason || 'signature_invalid');
+  }
+  const payload = checked.payload || {};
+  const publishedAt = typeof payload.published_at === 'string' && SIGNED_TIME.test(payload.published_at)
+    ? payload.published_at
+    : null;
+  if (!publishedAt || !Number.isFinite(Date.parse(publishedAt))) return carryFail('head_mismatch');
+  if (head.published_at != null && head.published_at !== publishedAt) return carryFail('head_mismatch');
+  const epoch = Number(payload.epoch);
+  if (!Number.isInteger(epoch) || epoch < 1 || !pinned.has(epoch)) return carryFail('bad_epoch');
+  if (head.epoch != null && Number(head.epoch) !== epoch) return carryFail('head_mismatch');
+  const root = String(payload.root || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return carryFail('head_mismatch');
+  const treeSize = Number(payload.tree_size);
+  if (!Number.isSafeInteger(treeSize) || treeSize < 1) return carryFail('head_mismatch');
+  return { ok: true, published_at: publishedAt, epoch, root, tree_size: treeSize };
+}
+
+function carryInclusion(leaf, leafHex, inclusion, head) {
+  if (!inclusion || inclusion.error === 'not_in_tree') return carryFail('not_in_tree');
+  if (!Array.isArray(inclusion.proof)) return carryFail('not_in_tree');
+  const claimed = hexLeafClaim(inclusion.leaf);
+  if (claimed && claimed !== leafHex) return carryFail('tree_head_mismatch');
+  if (inclusion.tree_size != null && Number(inclusion.tree_size) !== head.tree_size) {
+    return carryFail('inclusion_failed');
+  }
+  const index = Number(inclusion.leaf_index);
+  if (!Number.isSafeInteger(index)) return carryFail('inclusion_failed');
+  const proved = verifyInclusion(leaf, index, head.tree_size, head.root, inclusion.proof);
+  if (!proved) return carryFail('inclusion_failed');
+  return { ok: true, leaf_index: index };
+}
+
+export function publicLogWitness(tree, taskId) {
+  if (!tree || taskId == null) return {};
+  const inclusion = typeof tree.inclusion === 'function' ? tree.inclusion(taskId) : null;
+  const carry = typeof tree.carryForwardFor === 'function' ? tree.carryForwardFor(taskId) : null;
+  const out = {};
+  if (inclusion) out.inclusion = inclusion;
+  if (carry?.status === 'VERIFIED_CARRIED_FORWARD') {
+    out.carry_forward = {
+      status: carry.status,
+      issued_at: carry.issued_at,
+      issued_epoch: carry.issued_epoch,
+      logged_at: carry.logged_at,
+      logged_epoch: carry.logged_epoch,
+      leaf_index: carry.leaf_index,
+    };
+  } else if (carry && carry.ok === false) {
+    out.carry_forward = { status: 'failed', error: carry.reason };
+  }
+  return out;
+}
+
 function inclusionAnchorLine(inclusion) {
   const root = inclusion.root;
   const base = inclusion.anchor_tx;
@@ -2525,9 +2760,28 @@ function inclusionAnchorLine(inclusion) {
   return `included in root ${root}, pending anchor`;
 }
 
-export function renderInclusionSection(inclusion) {
-  if (!inclusion || inclusion.root == null) return '';
+export function renderInclusionSection(inclusion, carry = null) {
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (carry?.status === 'VERIFIED_CARRIED_FORWARD') {
+    return `<section class="card">
+      <h2>Receipt log <span class="scope">VERIFIED_CARRIED_FORWARD</span></h2>
+      <div class="row"><span class="k">Status</span><span class="v"><code>VERIFIED_CARRIED_FORWARD</code></span></div>
+      <div class="row"><span class="k">Issued at</span><span class="v"><code>${esc(carry.issued_at)}</code></span></div>
+      <div class="row"><span class="k">Issued epoch</span><span class="v"><code>${esc(carry.issued_epoch)}</code></span></div>
+      <div class="row"><span class="k">Logged at</span><span class="v"><code>${esc(carry.logged_at)}</code></span></div>
+      <div class="row"><span class="k">Logged epoch</span><span class="v"><code>${esc(carry.logged_epoch)}</code></span></div>
+      <div class="row"><span class="k">Leaf index</span><span class="v"><code>${esc(carry.leaf_index)}</code></span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">Issued at is the earlier epoch head's signed time. Logged at is the current epoch head's signed time. The leaf index is the inclusion proof in that current head.</p>
+    </section>`;
+  }
+  if (carry && carry.status === 'failed') {
+    return `<section class="card">
+      <h2>Receipt log <span class="scope">failed</span></h2>
+      <div class="row"><span class="k">Status</span><span class="v"><code>failed</code></span></div>
+      <div class="row"><span class="k">Error</span><span class="v"><code>${esc(carry.error || carry.reason)}</code></span></div>
+    </section>`;
+  }
+  if (!inclusion || inclusion.root == null) return '';
   const line = inclusionAnchorLine(inclusion);
   return `<section class="card">
       <h2>Outside witness <span class="scope">chit402.inclusion.v1</span></h2>

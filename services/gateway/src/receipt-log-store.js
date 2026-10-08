@@ -463,6 +463,16 @@ export function writeEpochRecordFile(dir, record) {
   atomicWrite(path.join(dir, EPOCH_RECORD_NAME), `${JSON.stringify(record)}\n`);
 }
 
+/**
+ * Append a later epoch record. Earlier journal lines stay, including a
+ * payload version 1 record. The file copy is the latest record.
+ */
+export function appendSignedEpochRecord(dir, record) {
+  appendJournal(dir, { v: 1, op: 'epoch_record', record });
+  writeEpochRecordFile(dir, record);
+  return record;
+}
+
 export function writeBundleIndexFile(dir, index) {
   atomicWrite(path.join(dir, BUNDLE_INDEX_NAME), `${JSON.stringify(index)}\n`);
 }
