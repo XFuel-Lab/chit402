@@ -1,6 +1,6 @@
 # Providers
 
-XFuel routes inference to pluggable providers. Settlement (USDC / proofs) is on Base — [ADR 0002](../adr/0002-base-settlement-home.md). Provider COGS use prepaid floats — [PROVIDER_FLOAT_TREASURY.md](../PROVIDER_FLOAT_TREASURY.md) · [ADR 0005](../adr/0005-provider-float-cogs.md). Strategy: [STRATEGY.md](../STRATEGY.md).
+XFuel routes inference to pluggable providers. Settlement (USDC / proofs) is on Base — [ADR 0002](../adr/0002-base-settlement-home.md). Provider COGS use prepaid floats — [ADR 0005](../adr/0005-provider-float-cogs.md).
 
 | Provider | Role |
 |----------|------|
@@ -28,9 +28,9 @@ The billing distinction is why AkashML is a first-class provider and the SDL/lea
 
 Confidential tier uses an OpenAI-shaped `/chat/completions` endpoint (e.g. Phala). When unset, the router skips it. Receipts may show `privacy.mode=content_tee` when this tier wins. This is **not** the same as Verified Inference `VI_TEE_*` (assurance attestation).
 
-Private Spend (vendor-blind) is orthogonal — [PRIVATE_SPEND_THESIS.md](../PRIVATE_SPEND_THESIS.md).
+Private Spend (vendor-blind) is orthogonal — [ADR 0010](../adr/0010-private-desk-attest.md).
 
-Buyers always pay USDC on Base. Do not surface TFUEL/AKT as buyer rails. Historical Theta EVM notes (if present) are provider-ops only — not settlement-home docs. Prefer [RUNTIME_STATE.md](../RUNTIME_STATE.md).
+Buyers always pay USDC on Base. Do not surface TFUEL/AKT as buyer rails. Historical Theta EVM notes (if present) are provider-ops only — not settlement-home docs. Prefer [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 ## Theta EdgeCloud is a desktop-GPU marketplace, not pooled consumer devices
 

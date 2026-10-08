@@ -18,6 +18,6 @@ XFuel is the book — this agent spent Y on this job, and you hold hub, model, a
 
 ## Consequences
 
-Near-zero bespoke revenue Solidity; on-strategy; faster path to live. Open: collect-and-forward custody — [LEGAL_LAUNCH_CHECKLIST.md](../LEGAL_LAUNCH_CHECKLIST.md).
+Near-zero bespoke revenue Solidity; faster path to live. Open: collect-and-forward custody remains a counsel review before mainnet revenue.
 
 Related: [POSITIONING.md](../POSITIONING.md), [ADR 0002](./0002-base-settlement-home.md).

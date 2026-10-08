@@ -1,3 +1,6 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+
 # Alternative ECR Push - Bypasses Docker Desktop Proxy
 # Uses docker save + AWS CLI direct upload
 # Run from sp1-prover directory: .\push-ecr-alternative.ps1
@@ -8,7 +11,7 @@ Write-Host "  (Bypasses Docker Desktop Proxy)" -ForegroundColor Yellow
 Write-Host "================================================`n" -ForegroundColor Cyan
 
 # Configuration
-$ACCOUNT_ID = "187510174358"
+$ACCOUNT_ID = "$($script:AwsAccountId)"
 $REGION = "us-east-1"
 $REPO_NAME = "sp1-prover"
 $IMAGE_TAG = "phase0.5-optimized"

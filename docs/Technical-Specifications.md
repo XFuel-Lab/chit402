@@ -52,7 +52,7 @@ Library: `SP1ProofHooks.sol` / `xfuel-sp1-hooks`.
 
 ## Prover
 
-Tier-2 settlement proofs: `services/sp1-prover` on AWS ECS, validated on Succinct, ~25s per proof. Topology: [RUNTIME_STATE.md](./RUNTIME_STATE.md).
+Tier-2 settlement proofs: `services/sp1-prover` on AWS ECS, validated on Succinct, ~25s per proof. Deploy notes: [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 Tier-3 Verified Inference: `services/zkllm-prover` (active build).
 

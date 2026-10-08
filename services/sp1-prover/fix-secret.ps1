@@ -1,3 +1,7 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Fix SP1_PRIVATE_KEY Secret Format
 # The secret is stored as JSON but needs to be plain text
 
@@ -39,7 +43,7 @@ Write-Host "     Secret updated!" -ForegroundColor Green
 
 # Force new deployment to pick up the change
 Write-Host "`n[3/3] Restarting ECS service..." -ForegroundColor Yellow
-cmd /c "aws ecs update-service --cluster sp1-prover-cluster --service sp1-prover-service --force-new-deployment --region $region 2>&1" | Out-Null
+cmd /c "aws ecs update-service --cluster $($script:EcsCluster) --service $($script:EcsService) --force-new-deployment --region $region 2>&1" | Out-Null
 Write-Host "     Service restarting..." -ForegroundColor Green
 
 Write-Host "`n========================================" -ForegroundColor Green
@@ -47,4 +51,4 @@ Write-Host "  Secret Fixed!" -ForegroundColor Green
 Write-Host "========================================`n" -ForegroundColor Green
 
 Write-Host "Wait 30 seconds for container to restart, then test:" -ForegroundColor Cyan
-Write-Host "  curl.exe -X POST http://100.26.209.192:8080/prove -H `"Content-Type: application/json`" -d `"@test-data/deposit-1tfuel.json`"`n" -ForegroundColor White
+Write-Host "  curl.exe -X POST $(Require-NamedEnv 'SP1_PROVER_URL')/prove -H `"Content-Type: application/json`" -d `"@test-data/deposit-1tfuel.json`"`n" -ForegroundColor White

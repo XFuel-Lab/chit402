@@ -1,9 +1,12 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+
 # Push SP1 Prover (Network Mode) to ECR and Deploy to ECS
 # Run this after docker build completes
 
 $ErrorActionPreference = "Stop"
 
-$ECR_REGISTRY = "187510174358.dkr.ecr.us-east-1.amazonaws.com"
+$ECR_REGISTRY = "$($script:AwsAccountId).dkr.ecr.us-east-1.amazonaws.com"
 $IMAGE_NAME = "sp1-prover-network"
 $AWS_REGION = "us-east-1"
 

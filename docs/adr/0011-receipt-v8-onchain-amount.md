@@ -1,7 +1,7 @@
 # ADR 0011 — Receipt v8: signed amount is the on-chain transfer
 
 Status: **Accepted**. Date: 2026-09-27.
-Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [ADR 0009](./0009-cost-plus-pricing.md), [VERIFY_ALGORITHM.md](../VERIFY_ALGORITHM.md).
+Related: [ADR 0001](./0001-usdc-revenue-and-router-verifier-positioning.md), [POSITIONING.md](../POSITIONING.md), [VERIFY_ALGORITHM.md](../VERIFY_ALGORITHM.md).
 
 ## Context
 

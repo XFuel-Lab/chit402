@@ -13,6 +13,19 @@ on:
     branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/verify-head-issuer-bind-ce2e]
 
 jobs:
+  public-identifiers:
+    name: Public identifier guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Guard unit tests
+        run: node --test scripts/check-public-identifiers.test.mjs
+      - name: Scan tracked files
+        run: node scripts/check-public-identifiers.mjs
+
   # ── Path-change detection ──────────────────────────────────
   changes:
     name: Detect Changes

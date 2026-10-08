@@ -1,7 +1,8 @@
 # SP1 Prover Benchmark Script
 # Tests proof generation with different test data sizes
 
-$ecsUrl = "http://54.174.193.127:8080/prove"
+. "$PSScriptRoot/import-aws-env.ps1"
+$ecsUrl = "$(Require-NamedEnv 'SP1_PROVER_URL')/prove"
 $testFiles = @("deposit-small.json", "deposit-medium.json", "deposit-large.json")
 $results = @()
 

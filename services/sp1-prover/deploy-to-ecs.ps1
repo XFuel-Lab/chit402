@@ -1,3 +1,8 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Deploy SP1 Prover to AWS ECS
 # Creates ECS cluster, task definition, and service
 
@@ -27,11 +32,11 @@ if (Test-Path $envPath) {
     exit 1
 }
 
-$ECR_REGISTRY = "187510174358.dkr.ecr.us-east-1.amazonaws.com"
+$ECR_REGISTRY = "$($script:AwsAccountId).dkr.ecr.us-east-1.amazonaws.com"
 $IMAGE_NAME = "sp1-prover-network"
 $AWS_REGION = if ($env:AWS_REGION) { $env:AWS_REGION } else { "us-east-1" }
-$CLUSTER_NAME = "sp1-prover-cluster"
-$SERVICE_NAME = "sp1-prover-service"
+$CLUSTER_NAME = "$($script:EcsCluster)"
+$SERVICE_NAME = "$($script:EcsService)"
 $TASK_FAMILY = "sp1-prover-task"
 
 Write-Host "[DEPLOYING] to AWS ECS`n" -ForegroundColor Cyan
@@ -63,7 +68,7 @@ $taskDefJson = @"
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::$($script:AwsAccountId):role/ecsTaskExecutionRole",
   "containerDefinitions": [
     {
       "name": "sp1-prover",

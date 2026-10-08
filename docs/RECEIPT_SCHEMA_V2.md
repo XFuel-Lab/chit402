@@ -70,7 +70,7 @@ Buyer `payment.rail` stays USDC / x402 (default). Provider inventory burn is sep
 ```
 
 Amounts are integer strings in the float asset's smallest units (USDC = 6dp).  
-Impl: `services/gateway/src/provider-float.js` · ops: [PROVIDER_FLOAT_TREASURY.md](./PROVIDER_FLOAT_TREASURY.md).
+Impl: `services/gateway/src/provider-float.js` · ops: [ADR 0005](./adr/0005-provider-float-cogs.md).
 
 ## Privacy (Private Spend v0)
 
@@ -88,7 +88,7 @@ When Private Desk / Private Spend is active, receipts may include:
 
 Private + Attest adds `"product": "private_attest"`, `"label": "Private + Attest"`, `"attest": "tier2"`, and itemized `payment.tier2_proof` ($0.10). See [ADR 0010](./adr/0010-private-desk-attest.md).
 
-This does **not** mean prompts are encrypted. See [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md).
+This does **not** mean prompts are encrypted. See [ADR 0010](./adr/0010-private-desk-attest.md).
 
 Buyer-only usage: authenticated `GET /stats/me` (API key hash filter).
 

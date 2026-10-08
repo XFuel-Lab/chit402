@@ -1,16 +1,15 @@
 [Unit]
-Description=XFuel gateway (M2M + OpenAI + x402)
-Documentation=https://github.com/XFuel-Lab/xfuel-protocol/blob/main/docs/RUNTIME_STATE.md
+Description=Gateway API
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/xfuel-protocol/services/gateway
+User=<SERVICE_USER>
+Group=<SERVICE_USER>
+WorkingDirectory=<ENV_PATH>
 
-# Load .env via bash so CDP base64 secrets (containing + / =) are not mangled
+# Load .env via bash so values that contain + / = are not mangled
 # by systemd EnvironmentFile parsing.
 ExecStart=/bin/bash -lc 'set -a; source ./.env; set +a; exec /usr/bin/node src/server.js'
 
@@ -25,7 +24,6 @@ KillMode=control-group
 KillSignal=SIGTERM
 SendSIGKILL=yes
 
-# Hardening (safe defaults)
 NoNewPrivileges=true
 PrivateTmp=true
 

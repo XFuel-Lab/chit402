@@ -3,7 +3,7 @@
 Scaffold around cited zkGPT prior art. **Not a live or demo proof path.**
 
 Go-forward Tier-3: self-owned [zkllm-prover](../zkllm-prover/).  
-Live tiers today: Tier-1 signed + Tier-2 SP1 — [RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
+Live tiers today: Tier-1 signed + Tier-2 SP1 — [DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
 Citation: https://eprint.iacr.org/2025/1184 · [REFERENCES-AND-ATTRIBUTION.md](../../docs/REFERENCES-AND-ATTRIBUTION.md).
 

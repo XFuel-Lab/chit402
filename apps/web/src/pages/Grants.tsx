@@ -237,7 +237,7 @@ export default function Grants() {
             Reach out directly — XFuel is open to ecosystem partnerships, co-grant applications,
             and integration conversations.
           </p>
-          <a href="mailto:founderxfuel@gmail.com" className="btn btn-primary">
+          <a href="mailto:chris@chit402.com" className="btn btn-primary">
             Contact the Founder ↗
           </a>
         </div>

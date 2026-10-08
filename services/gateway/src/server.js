@@ -1764,7 +1764,7 @@ export function createApp() {
       // only figure a receipt may attest — otherwise `amount` and the collected
       // payment are two independent numbers and a $0.01 payment can mint a $1.00
       // receipt. The declared `amount` remains authoritative only for rails with
-      // no settlement to derive from (legacy TFUEL). See docs/KNOWN_ISSUES.md.
+      // no settlement to derive from (legacy TFUEL). See ../../../docs/bug-bounty.md.
       //
       // A rolling-fronted call has not been paid yet: gross stays 0 until the
       // next request settles the measured bill onto this task_id.
@@ -1822,7 +1822,7 @@ export function createApp() {
           error: 'provider_float_exhausted',
           reason: floatPick.reason,
           estimated_cogs: floatPick.estimated?.toString?.() || String(floatPick.estimated),
-          note: 'Prepaid provider float cannot cover COGS. Refill from treasury (docs/PROVIDER_FLOAT_TREASURY.md).',
+          note: 'Prepaid provider float cannot cover COGS. Refill from treasury (../../../docs/adr/0005-provider-float-cogs.md).',
         });
       }
       // Pending COGS — filled in by reconcileAfterServe once a provider wins.

@@ -4,7 +4,7 @@
 
 Verifiable settlement and payments for AI compute.
 
-This document describes protocol design. For live endpoints and what is real versus mock, see [runtime state](docs/RUNTIME_STATE.md). For product messaging, see [positioning](docs/POSITIONING.md).
+This document describes protocol design. For how to deploy, see [deployment](docs/DEPLOYMENT.md). For product messaging, see [positioning](docs/POSITIONING.md).
 
 ---
 
@@ -148,7 +148,7 @@ Build history: [CHANGELOG](CHANGELOG.md).
 
 ## References
 
-- [Runtime state](docs/RUNTIME_STATE.md) — as-deployed endpoints
+- [Runtime state](docs/DEPLOYMENT.md) — as-deployed endpoints
 - [Positioning](docs/POSITIONING.md) — messaging
 - [Architecture decisions](docs/adr/) — ADRs
 - [Technical specifications](docs/Technical-Specifications.md) — gas / benchmarks

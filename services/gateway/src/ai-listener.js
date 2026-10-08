@@ -1228,7 +1228,7 @@ class AIListener {
 
     // Last-resort default only — the catalog resolution above normally decides.
     // GLM-5.2 is the one model that completes a multi-turn agent loop reliably
-    // (6/6 against Llama 3.3 70B's 0/6); see docs/MODEL_QUALITY_EVAL.md.
+    // (6/6 against Llama 3.3 70B's 0/6); see ../../../docs/M2M_API.md.
     const model = resolved?.alias
       || intent.modelId
       || process.env.AKASHML_DEFAULT_MODEL

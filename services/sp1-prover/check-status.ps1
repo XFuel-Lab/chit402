@@ -1,3 +1,7 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+
 # Check SP1 Prover Status and Get Endpoint
 # Run this every 30 seconds until you get the IP
 
@@ -11,8 +15,8 @@ if (Test-Path $envPath) {
 }
 
 $region = "us-east-1"
-$cluster = "sp1-prover-cluster"
-$service = "sp1-prover-service"
+$cluster = "$($script:EcsCluster)"
+$service = "$($script:EcsService)"
 
 Write-Host "`nChecking SP1 Prover status...`n" -ForegroundColor Cyan
 

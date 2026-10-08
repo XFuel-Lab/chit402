@@ -4,7 +4,7 @@
  * The existing tool suite only proves one round trip: call out, result back,
  * answer. Agents do not work that way — they chain calls where each argument
  * depends on the last result, and roughly 9% of turns hit a tool failure they
- * have to recover from (Copilot telemetry, docs/KNOWN_ISSUES.md). A model can
+ * have to recover from (Copilot telemetry, ../../docs/bug-bounty.md). A model can
  * pass a single round trip and still be unusable in a loop.
  *
  * Two scenarios, both requiring dependent calls:

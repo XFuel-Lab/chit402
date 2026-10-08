@@ -2,7 +2,7 @@
 /**
  * Reachability audit: which gateway sources does production actually load?
  *
- * Production runs `node src/server.js` (systemd xfuel-api) per docs/RUNTIME_STATE.md.
+ * Production runs `node src/server.js` under the host systemd unit. See deploy/lightsail/README.md.
  * Anything not in that import closure cannot execute in production, no matter how
  * many tests reference it. Static import/require scan, including dynamic import().
  *

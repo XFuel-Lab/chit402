@@ -3,15 +3,17 @@
 // Run: node deploy-to-theta.cjs
 
 const { execSync } = require('child_process');
+const { requireEnv } = require('./import-aws-env.cjs');
 require('dotenv').config({ path: '../.env.local' });
 
-// Configuration
+// Configuration. AWS_ACCOUNT_ID and PROVER_DEPLOYMENT_NAME come from the
+// environment or untracked aws-env.local.json.
 const CONFIG = {
   thetaApiKeyArn: process.env.THETA_API_KEY,
   awsRegion: process.env.AWS_REGION || 'us-east-1',
-  ecrRegistry: '187510174358.dkr.ecr.us-east-1.amazonaws.com',
+  ecrRegistry: `${requireEnv('AWS_ACCOUNT_ID')}.dkr.ecr.${process.env.AWS_REGION || 'us-east-1'}.amazonaws.com`,
   imageName: 'sp1-prover-cuda:latest',
-  deploymentName: 'xfuel-sp1-prover'
+  deploymentName: requireEnv('PROVER_DEPLOYMENT_NAME'),
 };
 
 // Fetch secret from AWS Secrets Manager

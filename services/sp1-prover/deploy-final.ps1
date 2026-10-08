@@ -1,3 +1,9 @@
+. "$PSScriptRoot/import-aws-env.ps1"
+$script:AwsAccountId = Require-AwsAccountId
+$script:EcsCluster = Require-NamedEnv 'ECS_CLUSTER'
+$script:EcsService = Require-NamedEnv 'ECS_SERVICE'
+$script:AwsSecurityGroupId = Require-NamedEnv 'AWS_SECURITY_GROUP_ID'
+
 # Simple ECS Deployment - Step by Step
 # Run in PowerShell
 
@@ -14,7 +20,7 @@ Get-Content $envPath | ForEach-Object {
 Write-Host "[OK] Credentials loaded" -ForegroundColor Green
 
 $region = "us-east-1"
-$image = "187510174358.dkr.ecr.us-east-1.amazonaws.com/sp1-prover-network:latest"
+$image = "$($script:AwsAccountId).dkr.ecr.us-east-1.amazonaws.com/sp1-prover-network:latest"
 
 # Step 1: Create log group
 Write-Host "`n[1/4] Creating log group..." -ForegroundColor Cyan
@@ -31,7 +37,7 @@ $jsonContent = @"
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "512",
   "memory": "1024",
-  "executionRoleArn": "arn:aws:iam::187510174358:role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::$($script:AwsAccountId):role/ecsTaskExecutionRole",
   "containerDefinitions": [{
     "name": "sp1-prover",
     "image": "$image",
@@ -74,17 +80,17 @@ Write-Host "`n[3/4] Creating ECS service..." -ForegroundColor Cyan
 $vpcId = cmd /c "aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query Vpcs[0].VpcId --output text --region $region"
 $subnet1 = cmd /c "aws ec2 describe-subnets --filters Name=vpc-id,Values=$vpcId --query Subnets[0].SubnetId --output text --region $region"
 $subnet2 = cmd /c "aws ec2 describe-subnets --filters Name=vpc-id,Values=$vpcId --query Subnets[1].SubnetId --output text --region $region"
-$sgId = "sg-0f5c4c2b7a5f35763"
+$sgId = "$($script:AwsSecurityGroupId)"
 
 Write-Host "   VPC: $vpcId, Subnets: $subnet1, $subnet2" -ForegroundColor Gray
 
 # Try create service
 $networkConfig = "awsvpcConfiguration={subnets=[$subnet1,$subnet2],securityGroups=[$sgId],assignPublicIp=ENABLED}"
-$svcResult = cmd /c "aws ecs create-service --cluster sp1-prover-cluster --service-name sp1-prover-service --task-definition sp1-prover-task --desired-count 1 --launch-type FARGATE --network-configuration $networkConfig --region $region 2>&1"
+$svcResult = cmd /c "aws ecs create-service --cluster $($script:EcsCluster) --service-name $($script:EcsService) --task-definition sp1-prover-task --desired-count 1 --launch-type FARGATE --network-configuration $networkConfig --region $region 2>&1"
 
 if ($svcResult -match "already exists") {
     Write-Host "[OK] Service exists - updating..." -ForegroundColor Yellow
-    cmd /c "aws ecs update-service --cluster sp1-prover-cluster --service sp1-prover-service --task-definition sp1-prover-task --force-new-deployment --region $region" | Out-Null
+    cmd /c "aws ecs update-service --cluster $($script:EcsCluster) --service $($script:EcsService) --task-definition sp1-prover-task --force-new-deployment --region $region" | Out-Null
     Write-Host "[OK] Service updated" -ForegroundColor Green
 } else {
     Write-Host "[OK] Service created" -ForegroundColor Green
@@ -94,10 +100,10 @@ if ($svcResult -match "already exists") {
 Write-Host "`n[4/4] Waiting for task (60s)..." -ForegroundColor Cyan
 Start-Sleep -Seconds 60
 
-$taskArn = cmd /c "aws ecs list-tasks --cluster sp1-prover-cluster --service-name sp1-prover-service --region $region --query taskArns[0] --output text"
+$taskArn = cmd /c "aws ecs list-tasks --cluster $($script:EcsCluster) --service-name $($script:EcsService) --region $region --query taskArns[0] --output text"
 
 if ($taskArn -and $taskArn -ne "None" -and $taskArn.Length -gt 10) {
-    $eniId = cmd /c "aws ecs describe-tasks --cluster sp1-prover-cluster --tasks $taskArn --region $region --query tasks[0].attachments[0].details[?name==``networkInterfaceId``].value --output text"
+    $eniId = cmd /c "aws ecs describe-tasks --cluster $($script:EcsCluster) --tasks $taskArn --region $region --query tasks[0].attachments[0].details[?name==``networkInterfaceId``].value --output text"
     
     if ($eniId -and $eniId.Length -gt 5) {
         $publicIp = cmd /c "aws ec2 describe-network-interfaces --network-interface-ids $eniId --region $region --query NetworkInterfaces[0].Association.PublicIp --output text"
@@ -114,7 +120,7 @@ if ($taskArn -and $taskArn -ne "None" -and $taskArn.Length -gt 10) {
     }
 } else {
     Write-Host "[WAIT] No tasks yet. Check AWS Console:" -ForegroundColor Yellow
-    Write-Host "  https://console.aws.amazon.com/ecs/v2/clusters/sp1-prover-cluster" -ForegroundColor White
+    Write-Host "  https://console.aws.amazon.com/ecs/v2/clusters/$($script:EcsCluster)" -ForegroundColor White
 }
 
 # Cleanup

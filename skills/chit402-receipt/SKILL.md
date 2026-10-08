@@ -306,4 +306,4 @@ https://www.chit402.com/docs/cloudflare-x402
 
 - [references/api.md](references/api.md) — endpoints, headers, example 402/200
 - [references/verify-offline.md](references/verify-offline.md) — pin-first JWS + payer bind
-- Repo: `docs/VERIFY_ALGORITHM.md`, `docs/X402_ADAPTER.md`, `docs/DESIGN_PARTNER_ONBOARDING.md`
+- Repo: `docs/VERIFY_ALGORITHM.md`, `docs/X402_ADAPTER.md`, `../../docs/CHAT_COMPLETIONS_GATEWAY.md`

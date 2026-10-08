@@ -69,7 +69,7 @@ SP1_PROVER=cpu cargo run -p xfuel-inference-spike-host --release -- 16
 - **Groth16 prove time** and that `SP1Verifier.sol` accepts the wrapped proof (Base testnet).
 - The printed **`programVKey`** (a new guest ⇒ new vkey to register on-chain).
 
-## Findings — spike run 1 (2026-07-20, Docker `xfuel-sp1-prover:latest`)
+## Findings — spike run 1 (2026-07-20, Docker `sp1-prover:latest`)
 
 - ✅ **arkworks compiles to the zkVM target.** `cargo prove build` of the guest compiled
   `ark-ff`, `ark-poly`, `ark-serialize`, `ark-std`, `ark-relations`, `ark-snark`, and `sha3` for

@@ -17,9 +17,8 @@ A hub is **discovery + rate + capacity + inference**, in that order. The catalog
 plane: `provider-rates.js`, `pricing.js`, routing and `/v1/models` all read from it, so a row that
 is wrong in the catalogue is wrong everywhere downstream.
 
-Since [ADR 0009](../../../docs/adr/0009-cost-plus-pricing.md) the gateway prices as **measured
-provider COGS + 10%**. That changes the stakes of this work: the rate you parse is no longer an
-internal margin figure, it is the buyer's invoice.
+The gateway prices as measured provider COGS plus a published margin. That changes the stakes of
+this work: the rate you parse is the buyer's invoice.
 
 ## The two failure modes that cost money
 
@@ -84,11 +83,11 @@ Copy this and track it:
 - [ ] RECONCILE one model's rate against an independent price for the same model
 - [ ] openai-gateway.js: infer<Hub>() + recordSuccess/recordFailure on both paths
 - [ ] provider-health.js: generalise probing if the hub publishes no capacity
-- [ ] autoPreferenceFor: add to the order lists only with eval evidence (MODEL_QUALITY_EVAL.md)
+- [ ] autoPreferenceFor: add to the order lists only with eval evidence
 - [ ] env.example: <HUB>_BASE_URL, <HUB>_API_KEY, documented
 - [ ] Tests below; `npm test` in services/gateway (auto-discovers test/*.test.mjs)
 - [ ] node scripts/dev/_verify_deploy.mjs <url> after deploy
-- [ ] Update docs/RUNTIME_STATE.md and KNOWN_ISSUES.md if the hub changed behaviour
+- [ ] Update ../../../docs/DEPLOYMENT.md if the hub changed behaviour
 ```
 
 ## Non-negotiable invariants
@@ -125,6 +124,6 @@ Hub polls must be stubbed via the injected `fetchFn` — no test may hit a live 
 ## Housekeeping
 
 `HUB_CATALOG_OFFLINE=true` forces the seed for tests. If the hub should appear offline, add rows to
-`CATALOG_SEED`. Keep `docs/RUNTIME_STATE.md` (as-deployed truth), `docs/KNOWN_ISSUES.md` and
+`CATALOG_SEED`. Keep `../../../docs/DEPLOYMENT.md` (as-deployed truth), `../../../docs/bug-bounty.md` and
 `services/gateway/env.example` in sync — and if the hub's economics change the pricing argument,
 that belongs in an ADR, not in this file.

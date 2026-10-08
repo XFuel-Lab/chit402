@@ -59,7 +59,7 @@ console.log(`\nVerifying ${base}\n${'─'.repeat(60)}`);
     !!body?.proofs,
     body?.proofs ? `tier2=${body.proofs.tier2_sp1?.status ?? 'n/a'}` : 'no proofs block — the host is running pre-2026-08-12 code',
   );
-  // Pre-existing fingerprint from RUNTIME_STATE.md: catches a revived legacy process.
+  // Pre-existing fingerprint: catches a revived legacy process.
   const split = body?.fee_config?.revenue_split?.model;
   record(
     'not the legacy process (revenue_split is v2)',

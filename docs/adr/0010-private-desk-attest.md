@@ -1,7 +1,7 @@
 # ADR 0010 — Private Desk and Private + Attest
 
 Status: accepted (2026-09-21)  
-Related: [PRIVATE_SPEND_THESIS.md](../PRIVATE_SPEND_THESIS.md), [ADR 0009](./0009-cost-plus-pricing.md), Phase 0 note `PRIVATE-DESK-ATTEST-PHASE0.md`.
+Related: [POSITIONING.md](../POSITIONING.md).
 
 ## Context
 

@@ -59,7 +59,7 @@ Paid $0.01 USDC on Base for xfuel/auto (openrouter) — receipt: https://api.chi
 
 JSON/tool payload should include top-level `verify_url` when structured output is used.
 
-## Christopher → @bankrbot paste
+## Install paste
 
 **Message 1 — install skill:**
 
