@@ -12,7 +12,7 @@
  * previous pin key (`purpose: citizen_issuer_key`), not an edited file.
  */
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
-import { isEs256PublicJwk, jwkThumbprint, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import { isEs256PublicJwk, jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
 
 export const ISSUER_REGISTRATION_CONTEXT = 'chit402-issuer-registration-v1';
 export const ISSUER_ROTATION_CONTEXT = 'chit402-issuer-rotation-v1';
@@ -279,19 +279,58 @@ function witnessKids(source: unknown): string[] {
   return out;
 }
 
-function receiptKids(receipt: unknown): { kids: string[]; issuerRoot: string | null } {
+function payloadIssuerRootKid(payload: Record<string, unknown> | null | undefined): string | null {
+  const issuerRoot = readRecord(payload?.issuer_root);
+  return typeof issuerRoot?.kid === 'string' && issuerRoot.kid ? issuerRoot.kid : null;
+}
+
+/**
+ * Kids the pin check is allowed to trust.
+ *
+ * A compact `issuer_signature.jws` is verified against the pin key. The kid
+ * comes from that protected header, and a v11 `issuer_root.kid` comes from
+ * the verified payload. Unsigned envelope copies are not a second source of
+ * truth: when they disagree with the signed values the check fails closed.
+ * With no JWS, the envelope fields are the only copies a legacy receipt has.
+ */
+function receiptKids(
+  receipt: unknown,
+  pin: Es256Jwk,
+): { ok: true; kids: string[]; issuerRoot: string | null } | { ok: false; code: typeof ISSUER_PIN_MISMATCH } {
   const root = readRecord(receipt);
-  const kids: string[] = [];
   const sig = readRecord(root?.issuer_signature);
-  if (typeof sig?.kid === 'string') kids.push(sig.kid);
+  const outerKid = typeof sig?.kid === 'string' && sig.kid ? sig.kid : null;
   const embedded = readRecord(sig?.issuer_jwk);
+  const embeddedKids: string[] = [];
   if (embedded && isEs256PublicJwk(asJwk(embedded))) {
-    kids.push(jwkThumbprint(asJwk(embedded)));
-    if (typeof embedded.kid === 'string') kids.push(embedded.kid);
+    embeddedKids.push(jwkThumbprint(asJwk(embedded)));
+    if (typeof embedded.kid === 'string' && embedded.kid) embeddedKids.push(embedded.kid);
   }
-  const issuerRoot = readRecord(root?.issuer_root);
-  const rootKid = typeof issuerRoot?.kid === 'string' ? issuerRoot.kid : null;
-  return { kids, issuerRoot: rootKid };
+  const outerRootKid = payloadIssuerRootKid(root);
+  const jws = typeof sig?.jws === 'string' ? sig.jws : '';
+  if (!jws) {
+    const kids: string[] = [];
+    if (outerKid) kids.push(outerKid);
+    kids.push(...embeddedKids);
+    return { ok: true, kids, issuerRoot: outerRootKid };
+  }
+
+  const verified = verifyIssuerJws(jws, pin);
+  if (!verified.valid || !verified.payload) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  const header = readJwsHeader(jws);
+  const pinKid = pin.kid || jwkThumbprint(pin);
+  const signedKid = typeof header?.kid === 'string' && header.kid ? header.kid : pinKid;
+  if (signedKid !== pinKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  const signedRootKid = payloadIssuerRootKid(verified.payload);
+  if (outerKid && outerKid !== signedKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  for (const kid of embeddedKids) {
+    if (kid !== signedKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  if (signedRootKid && signedRootKid !== signedKid) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  if (outerRootKid && outerRootKid !== (signedRootKid || signedKid)) {
+    return { ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  return { ok: true, kids: [signedKid], issuerRoot: signedRootKid };
 }
 
 export function verifyCitizenRotation(input: {
@@ -366,6 +405,30 @@ function refOk(ref: IssuerPinRef | null | undefined): { ok: true; ref: IssuerPin
   return { ok: true, ref: { commit: ref.commit, path: ref.path, sha256: ref.sha256.toLowerCase() } };
 }
 
+function samePinRef(a: IssuerPinRef, b: IssuerPinRef): boolean {
+  return a.commit === b.commit && a.path === b.path && a.sha256 === b.sha256;
+}
+
+/**
+ * Every pin ref the receipt, the head, and the caller supplied. One source
+ * is enough. Two sources that name different commits or hashes fail closed
+ * instead of keeping whichever one matches the file.
+ */
+function agreedPinRef(
+  refs: Array<IssuerPinRef | null | undefined>,
+): { ok: true; ref: IssuerPinRef } | { ok: false; code: string } {
+  const present = refs.filter((item): item is IssuerPinRef => !!item);
+  if (present.length === 0) return { ok: false, code: ISSUER_PIN_DOWNGRADE };
+  const first = refOk(present[0]);
+  if (!first.ok) return first;
+  for (const item of present.slice(1)) {
+    const next = refOk(item);
+    if (!next.ok) return next;
+    if (!samePinRef(first.ref, next.ref)) return { ok: false, code: ISSUER_PIN_MISMATCH };
+  }
+  return first;
+}
+
 /**
  * Compare a receipt's issuer key to the pinned file, and to issuer_root
  * and a /api/witnesses document when those sources are present.
@@ -383,8 +446,7 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
   if (input.pinBytes == null || input.pinBytes === '') {
     return { checked: true, ok: false, code: ISSUER_PIN_DOWNGRADE };
   }
-  const ref = input.ref || receiptClaim.ref || headClaim.ref;
-  const checkedRef = refOk(ref);
+  const checkedRef = agreedPinRef([input.ref, receiptClaim.ref, headClaim.ref]);
   if (!checkedRef.ok) return { checked: true, ok: false, code: checkedRef.code };
   if (issuerPinFileHash(input.pinBytes) !== checkedRef.ref.sha256) {
     return { checked: true, ok: false, code: ISSUER_PIN_HASH_MISMATCH };
@@ -399,6 +461,15 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
   }
   const signature = verifyRegistrationSignature(pin);
   if (!signature.ok) return { checked: true, ok: false, code: signature.code };
+
+  const pinKid = pin.jwk.kid || jwkThumbprint(pin.jwk);
+  // Signed kids are checked before the specimen gate so a JWS that does not
+  // verify, or a signed kid that disagrees with the envelope, is
+  // ISSUER_PIN_MISMATCH rather than a rotation error.
+  const fromReceipt = receiptKids(input.receipt, pin.jwk);
+  if (!fromReceipt.ok) return { checked: true, ok: false, code: fromReceipt.code };
+  const fromHead = receiptKids(input.head, pin.jwk);
+  if (!fromHead.ok) return { checked: true, ok: false, code: fromHead.code };
 
   let rotatedFromSpecimen = false;
   if (input.priorPinBytes != null && input.priorPinBytes !== '') {
@@ -424,12 +495,9 @@ export function assessIssuerPin(input: AssessIssuerPinInput): IssuerPinAssessmen
     return { checked: true, ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   }
 
-  const pinKid = pin.jwk.kid || jwkThumbprint(pin.jwk);
   if (pinKid !== PUBLISHED_ISSUER_PIN_KID && !rotatedFromSpecimen) {
     return { checked: true, ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   }
-  const fromReceipt = receiptKids(input.receipt);
-  const fromHead = receiptKids(input.head);
   const compared = [...fromReceipt.kids, ...fromHead.kids];
   if (fromReceipt.issuerRoot) compared.push(fromReceipt.issuerRoot);
   if (fromHead.issuerRoot) compared.push(fromHead.issuerRoot);

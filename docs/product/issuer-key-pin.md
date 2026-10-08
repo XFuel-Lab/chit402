@@ -39,6 +39,8 @@ xfuel-verify receipt.json inclusion.json head.json --rpc \
 
 A claimed era with no pin file is `ISSUER_PIN_DOWNGRADE`. A file whose bytes are not the stated hash is `ISSUER_PIN_HASH_MISMATCH`. A receipt key that is not the pin is `ISSUER_PIN_MISMATCH`. A receipt that does not claim the era, and a command that does not pass `--issuer-pin`, keeps the previous anchor result.
 
+When `issuer_signature.jws` is present, the kid is the one in that verified protected header, and a v11 `issuer_root.kid` is the one in the verified payload. Unsigned `issuer_signature.kid`, `issuer_jwk`, and `issuer_root.kid` do not override those. A JWS that does not verify under the pin is `ISSUER_PIN_MISMATCH`, including when the unsigned kid matches. If the receipt and the head both name `issuer_key_pin`, the commit, path, and file hash must be the same, and the same as `--issuer-pin-commit` / `--issuer-pin-sha256` when those are set.
+
 ## Rotation
 
 The specimen kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. Passing `--issuer-prior-pin` does not turn that gate off. A prior whose kid is not this specimen is `ISSUER_ROTATION_UNCONTROLLED`, including when the same attacker file is passed as both the pin and the prior. The prior file is bound with `--issuer-prior-commit` and `--issuer-prior-sha256`. A prior with no commit, or a branch name, is `ISSUER_PIN_MUTABLE_REF`.
