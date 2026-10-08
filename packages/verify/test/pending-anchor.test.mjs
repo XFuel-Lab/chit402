@@ -119,7 +119,7 @@ function inclusionProof(leaves, index) {
 }
 
 function epoch2Fixture() {
-  const bodies = ['genesis', 'a|ra', 'b|rb', 'c|rc', 'd|rd'];
+  const bodies = ['genesis|rg', 'a|ra', 'b|rb', 'c|rc', 'd|rd'];
   const leaves = bodies.map((body) => sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(body)])));
   const anchored = leaves.slice(0, 4);
   const root = rootOf(anchored).toString('hex');
@@ -150,7 +150,7 @@ function epoch2Fixture() {
     },
   }, key);
   const ids = ['genesis', 'a', 'b', 'c', 'd'];
-  const rows = [null, 'ra', 'rb', 'rc', 'rd'];
+  const rows = ['rg', 'ra', 'rb', 'rc', 'rd'];
   return { leaves, root, memo, key, head, ids, rows };
 }
 
