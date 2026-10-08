@@ -34,7 +34,7 @@
     "@aws-sdk/client-s3": "^3.1086.0",
     "axios": "^1.19.0",
     "better-sqlite3": "12.9.0",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.5",
     "ethers": "^6.17.0",
     "express": "^5.2.1",
     "pino": "^10.3.1",
