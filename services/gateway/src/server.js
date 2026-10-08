@@ -14,7 +14,7 @@ import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolv
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee } from './x402-flags.js';
 import { sendPublicInternal } from './public-error.js';
-import { openDurableChallengeStore, markChallengeStoreFailed } from './x402-durable-store.js';
+import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -5446,9 +5446,12 @@ export async function startServer() {
     throw err;
   }
   if (config.x402?.enabled) {
-    const storePath = config.x402.challengeStorePath
-      || (process.env.NODE_ENV === 'production' ? 'data/x402-challenges.json' : null);
-    if (process.env.NODE_ENV === 'production' && !storePath) {
+    // MF4: only an exact test/development NODE_ENV may run without the durable store.
+    const { storePath, required } = challengeStorePlan({
+      nodeEnv: process.env.NODE_ENV,
+      configured: config.x402.challengeStorePath,
+    });
+    if (required && !storePath) {
       markChallengeStoreFailed();
       logger.error('x402 challenge store path missing; x402 will refuse');
     } else if (storePath) {

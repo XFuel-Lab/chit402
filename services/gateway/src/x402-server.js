@@ -500,11 +500,12 @@ export async function runX402Handshake(req, {
   if (bindParse.requested && !bindParse.ok) {
     return { kind: 'failed', reason: bindParse.reason };
   }
-  // For the standard x402 facilitator, the URL comes from cfg.facilitatorUrl
-  // (falling back to the adapter's public-reference default when null).
+  // Facilitator URL is server config only. Base mainnet does not fill in a CDP
+  // default: a null facilitatorUrl stays null and settle returns
+  // gateway_not_configured. Base Sepolia may still use the public reference.
   const provider = (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan';
-  // x402: only facilitatorUrl (null → adapter's public reference). Do NOT fall back
-  // to ZAN_X402_GATEWAY_URL — that silently routes live demos through the local mock.
+  // x402: only facilitatorUrl. Do NOT fall back to ZAN_X402_GATEWAY_URL —
+  // that silently routes live demos through the local mock.
   const gatewayUrl = provider === 'x402' ? (cfg.facilitatorUrl || null) : cfg.gatewayUrl;
   const gwOpts = {
     provider,

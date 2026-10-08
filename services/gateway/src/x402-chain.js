@@ -102,7 +102,10 @@ export function deriveCreate2Address(factory, salt, initCodeHash) {
 
 /**
  * ERC-6492 wrapper: abi.encode(address factory, bytes factoryCalldata, bytes innerSig) || magic.
- * factoryCalldata is abi.encode(bytes32 salt, bytes32 initCodeHash).
+ * Factory calldata is not one ABI shape. A CREATE2 salt and init-code hash are recognized
+ * only when that calldata is exactly two bytes32 words. Any other well-formed wrapper is
+ * still ERC-6492. Settlement binds on Transfer(from) + AuthorizationUsed(from, nonce),
+ * not on this derivation or on receipt.contractAddress.
  * A truncated magic suffix is refused (not treated as an EOA signature).
  */
 export function parseErc6492Signature(signature) {
@@ -117,15 +120,31 @@ export function parseErc6492Signature(signature) {
         ['address', 'bytes', 'bytes'],
         encoded,
       );
-      const words = ethers.AbiCoder.defaultAbiCoder().decode(['bytes32', 'bytes32'], factoryCalldata);
-      const derived = deriveCreate2Address(factory, words[0], words[1]);
+      // ethers decodes bytes32,bytes32 from the first 64 bytes of longer calldata
+      // without throwing, so createAccount(bytes[],uint256) would invent a CREATE2
+      // address. A short payload throws and used to be classified as invalid, which
+      // refused the payer before the log check. Only an exact two-word payload is a
+      // salt and init-code hash.
+      const raw = typeof factoryCalldata === 'string' ? factoryCalldata : ethers.hexlify(factoryCalldata);
+      const wordsHex = raw.startsWith('0x') ? raw.slice(2) : raw;
+      let salt = null;
+      let initCodeHash = null;
+      let derived = null;
+      if (wordsHex.length === 128) {
+        try {
+          const words = ethers.AbiCoder.defaultAbiCoder().decode(['bytes32', 'bytes32'], raw);
+          salt = words[0];
+          initCodeHash = words[1];
+          derived = deriveCreate2Address(factory, salt, initCodeHash);
+        } catch { /* 64 bytes, but not a CREATE2 salt and init-code hash */ }
+      }
       return {
         kind: 'erc6492',
         factory,
-        factoryCalldata,
+        factoryCalldata: raw,
         innerSig,
-        salt: words[0],
-        initCodeHash: words[1],
+        salt,
+        initCodeHash,
         derived,
       };
     } catch {
@@ -188,15 +207,11 @@ export function confirmEvmReceipt(receipt, {
   if (authorization?.signature) {
     wrapped = parseErc6492Signature(authorization.signature);
     if (wrapped.kind === 'erc6492_invalid') return { ok: false, code: 'settle_unconfirmed' };
-    if (wrapped.kind === 'erc6492') {
-      if (!authorization.from || !sameEvmAddress(wrapped.derived, authorization.from)) {
-        return { ok: false, code: 'settle_unconfirmed' };
-      }
-      const deployed = receipt.contractAddress || null;
-      if (!deployed || !sameEvmAddress(deployed, wrapped.derived)) {
-        return { ok: false, code: 'settle_unconfirmed' };
-      }
-    }
+    // MF3: do not require a derived factory address or receipt.contractAddress.
+    // A call receipt has contractAddress null, and a loose ABI decode of real
+    // factory calldata invents a CREATE2 address. USDC emits
+    // AuthorizationUsed(authorizer = from) only after it checked the signature
+    // for `from`, so the Transfer + AuthorizationUsed match below is the binding.
   }
 
   const payer = authorization?.from || null;

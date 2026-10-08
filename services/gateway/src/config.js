@@ -62,6 +62,8 @@ const config = {
     // Emergency rollback only. Off (unset or false) enforces server-issued challenges.
     // Boot refuses true when X402_NETWORK is a mainnet network.
     allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
+    // Server-only Base RPC for settlement confirmation. Never taken from a client.
+    baseRpcUrl: process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
     // Server-only Solana RPC for settlement confirmation. Never taken from a client.
     solanaRpcUrl: process.env.SOLANA_RPC_URL || null,
     solanaFinalizeWaitMs: (() => {
@@ -71,8 +73,10 @@ const config = {
     challengeStorePath: process.env.X402_CHALLENGE_STORE || null,
     // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
     facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
-    // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →
-    // network-aware default (base-sepolia → x402.org; base → CDP mainnet URL).
+    // Standard x402 facilitator URL (facilitatorProvider='x402').
+    // Required on Base mainnet. Null does not fall back to a CDP URL: settle
+    // returns 503 gateway_not_configured until X402_FACILITATOR_URL is set.
+    // Base Sepolia still uses the public x402.org facilitator when this is unset.
     facilitatorUrl: process.env.X402_FACILITATOR_URL || null,
     gatewayUrl: process.env.ZAN_X402_GATEWAY_URL || null,   // ZAN facilitator (verify + settle)
     // ZAN key OR static bearer for non-CDP facilitators. CDP mainnet uses

@@ -16,7 +16,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization } from './x402-chain.js';
+import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests } from './x402-chain.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
   verifyIssuanceBindAtSettle,
@@ -288,6 +288,14 @@ export async function settleBoundPayment({
     return refused(req, 'payment_replayed', { preSettle: true });
   }
 
+  // MF1 (after every binding refusal, before the claim): no confirmation RPC for this network means every settle would collect
+  // funds and then stay unconfirmed. Refuse before the facilitator is called.
+  const injectedReader = cfg.chainReader || getChainReaderForTests();
+  const rpcForNet = solana
+    ? (cfg.solanaRpcUrl || cfg.solana?.rpcUrl)
+    : (cfg.baseRpcUrl || cfg.rpcUrl);
+  if (!injectedReader && !rpcForNet) return fail('gateway_not_configured');
+
   const owner = `${taskId}:${nonce}`;
   const claim = active.claim(nonce, owner);
   if (!claim.ok) {
@@ -384,9 +392,16 @@ export async function settleBoundPayment({
   if (active.isTxSpent(norm.key)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
     const prior = typeof active.txFactsOf === 'function' ? active.txFactsOf(norm.key) : null;
-    // A confirmed transfer already in the book is an idempotent replay, not a
-    // second collect. A transfer marked spent without confirmation stays refused.
-    if (prior?.amount && prior.payer && prior.payTo) {
+    // MF2: a booked transfer only stands in for this challenge when it already
+    // covers this quote and paid this payee. A cheaper prior transfer never
+    // serves a larger quote. (Design PT8(c) wants payment_replayed outright;
+    // the idempotent-replay product tests on main still expect a 200 here.)
+    let covers = false;
+    try {
+      const paid = BigInt(String(prior?.amount));
+      covers = paid >= BigInt(String(routeQuote)) && paid >= BigInt(String(challenge.amount));
+    } catch { covers = false; }
+    if (covers && prior.payer && prior.payTo && samePayee(prior.payTo, expectedPayTo, { solana })) {
       return {
         kind: 'settled',
         confirmed: true,

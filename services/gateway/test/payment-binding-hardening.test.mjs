@@ -710,10 +710,13 @@ test('PT12 ERC-6492 deploys the derived payer and refuses a truncated wrapper', 
     const nonceBad = putChallenge(storeBad);
     const wrong = await settle({
       cfg: baseCfg(fac.url, {
-        chainReader: chainFromReceipt(evmReceipt({
-          from: derived,
-          contractAddress: ATTACKER,
-        })),
+        // The factory deployed a different address, so USDC never accepted a
+        // signature for `from`: no AuthorizationUsed(authorizer = derived).
+        chainReader: chainFromReceipt((() => {
+          const r = evmReceipt({ from: derived });
+          r.logs[1].topics[1] = ethers.zeroPadValue(ATTACKER, 32);
+          return r;
+        })()),
       }),
       store: storeBad,
       nonce: nonceBad,

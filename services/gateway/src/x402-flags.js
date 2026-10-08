@@ -33,6 +33,13 @@ const MAINNET = new Set([
   'solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp',
 ]);
 
+const TESTNET = new Set([
+  'base-sepolia',
+  'eip155:84532',
+  'solana-devnet',
+  'solana:etwtrabzayq6imfeykouru166vu2xqa1',
+]);
+
 /** Refusal counters for the first days after the guard is on. */
 const refusalCounts = new Map();
 
@@ -60,8 +67,10 @@ export function isMainnetNetwork(network) {
  */
 export function assertX402Boot(cfg = {}) {
   if (!allowUnboundFrom(cfg)) return;
+  // L: allow the flag only on known testnets. An unknown or padded string
+  // ("base ", "BASE-MAINNET", "mainnet-beta") counts as mainnet.
   const nets = [cfg.network, cfg.solana?.network].filter(Boolean);
-  if (nets.some((n) => isMainnetNetwork(n))) {
+  if (nets.some((n) => !TESTNET.has(String(n).toLowerCase()))) {
     const err = new Error('X402_ALLOW_UNBOUND refused on a mainnet network');
     err.code = 'x402_boot_refused';
     throw err;

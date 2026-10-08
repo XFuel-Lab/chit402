@@ -139,3 +139,15 @@ export function openDurableChallengeStore(file) {
     throw err;
   }
 }
+
+/**
+ * Durable challenge store plan for boot. Anything other than an exact
+ * NODE_ENV of test or development is treated as production.
+ */
+export function challengeStorePlan({ nodeEnv, configured } = {}) {
+  const devOrTest = nodeEnv === 'test' || nodeEnv === 'development';
+  return {
+    required: !devOrTest,
+    storePath: configured || (devOrTest ? null : 'data/x402-challenges.json'),
+  };
+}
