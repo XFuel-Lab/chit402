@@ -183,6 +183,9 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
       const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       let result = null;
       if (msg.method === 'getGenesisHash') result = MAINNET_GENESIS;
+      else if (msg.method === 'getSignaturesForAddress') {
+        result = [{ signature: SOLANA_SIG, err: null }];
+      }
       else if (msg.method === 'eth_chainId') result = '0x2105';
       else if (msg.method === 'eth_getTransactionByHash') {
         result = { hash: BASE_TX, input: `0x${EPOCH1_FINAL_ROOT}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };

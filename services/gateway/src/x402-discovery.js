@@ -2264,11 +2264,21 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptInclusion',
           summary: 'Inclusion proof for one receipt',
-          description: 'Public. leaf_index, tree_size, root, and the proof path.',
+          description: 'Public. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head.',
           tags: ['Receipts'],
-          parameters: [{ name: 'task_id', in: 'path', required: true, schema: { type: 'string' } }],
+          parameters: [
+            { name: 'task_id', in: 'path', required: true, schema: { type: 'string' } },
+            {
+              name: 'tree_size',
+              in: 'query',
+              required: false,
+              schema: { type: 'integer', minimum: 1 },
+              description: 'Signed head size to prove against. Omitted means the newest anchored signed head.',
+            },
+          ],
           responses: {
-            200: { description: 'chit402.inclusion.v1' },
+            200: { description: 'chit402.inclusion.v1, or status pending_anchor' },
+            400: { description: 'tree_size is not a signed head, or is past the live tree.' },
             404: { description: 'Receipt is not in the tree yet.' },
           },
         },

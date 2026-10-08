@@ -513,6 +513,46 @@ function epochHeadCovering(heads, leaves, rootHex) {
 }
 
 /**
+ * A head is anchored only when a chain record exists: Base `tx` or Solana
+ * `signature`, with status `anchored`. A pending side is not an anchor.
+ */
+export function headAnchorFacts(head) {
+  const base = head?.anchors?.base || head?.anchor || null;
+  const sol = head?.anchors?.solana || null;
+  const baseOn = Boolean(base && base.status === 'anchored' && base.tx);
+  const solOn = Boolean(sol && sol.status === 'anchored' && sol.signature);
+  const chains = [];
+  if (baseOn) chains.push('base');
+  if (solOn) chains.push('solana');
+  return {
+    anchored: chains.length > 0,
+    anchor_tx: baseOn ? base.tx : null,
+    solana_signature: solOn ? sol.signature : null,
+    anchor_chain: chains.length ? chains.join(',') : null,
+    signature: head?.issuer_signature || null,
+  };
+}
+
+function inclusionError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+function namedSignedHead(head) {
+  const facts = headAnchorFacts(head);
+  return {
+    tree_size: Number(head.tree_size),
+    root: normalizeRoot(head.root),
+    signature: facts.signature,
+    anchor_tx: facts.anchor_tx,
+    anchor_chain: facts.anchor_chain,
+    solana_signature: facts.solana_signature,
+    anchored: facts.anchored,
+  };
+}
+
+/**
  * In-journal pin anchors for one closed epoch. Orphans and the size-2 head
  * are on chain and are not this head.
  */
@@ -941,19 +981,204 @@ export class ReceiptMerkleTree {
     });
   }
 
-  inclusion(taskId) {
-    const closed = this._findClosed(taskId);
-    if (closed) return this._inclusionIn(closed, taskId);
-    const index = this.byTask.get(String(taskId));
-    if (index == null) return null;
-    return this._inclusionIn({
+  _openEpoch() {
+    return {
       epoch: this.epoch,
+      status: 'open',
       leaves: this.leaves,
       byTask: this.byTask,
       heads: this.heads,
       prevEpochRoot: this.prevEpochRoot,
       prevEpochSize: this.prevEpochSize,
-    }, taskId);
+    };
+  }
+
+  _locate(taskId) {
+    const closed = this._findClosed(taskId);
+    if (closed) return closed;
+    if (this.byTask.get(String(taskId)) == null) return null;
+    return this._openEpoch();
+  }
+
+  /**
+   * Newest signed head whose root is on chain. The latest anchored head in
+   * publication order wins. An anchored head that fails its signature, or
+   * whose root is not the prefix of that size, is refused rather than
+   * replaced with an older head.
+   */
+  _newestAnchoredHead(epoch) {
+    const heads = epoch.heads || [];
+    for (let i = heads.length - 1; i >= 0; i -= 1) {
+      if (!headAnchorFacts(heads[i]).anchored) continue;
+      return this._acceptAnchoredHead(epoch, heads[i]);
+    }
+    if (epoch.status === 'closed' && typeof this.signedClosedEpochHead === 'function') {
+      const signed = this.signedClosedEpochHead(epoch.epoch);
+      if (signed && headAnchorFacts(signed).anchored) return this._acceptAnchoredHead(epoch, signed);
+    }
+    return null;
+  }
+
+  _acceptAnchoredHead(epoch, head) {
+    if (!head?.issuer_signature?.jws) {
+      throw inclusionError('head_rejected', 'anchored head has no issuer signature');
+    }
+    const checked = verifyTreeHead(head);
+    if (!checked.valid) {
+      const code = checked.reason === 'head_mismatch' ? 'head_mismatch' : 'head_rejected';
+      throw inclusionError(code, `anchored head was rejected (${checked.reason || 'invalid'})`);
+    }
+    const size = Number(head.tree_size);
+    const live = epoch.leaves.length;
+    if (!Number.isSafeInteger(size) || size < 1 || size > live) {
+      throw inclusionError('head_mismatch', 'anchored head tree_size is outside the live tree');
+    }
+    const prefix = hex(rootOf(epoch.leaves.slice(0, size)));
+    if (normalizeRoot(head.root) !== prefix) {
+      throw inclusionError('head_mismatch', 'anchored head root does not match tree_size');
+    }
+    return head;
+  }
+
+  _candidateHeads(epoch) {
+    const heads = [...(epoch.heads || [])];
+    if (epoch.status === 'closed' && typeof this.signedClosedEpochHead === 'function') {
+      const signed = this.signedClosedEpochHead(epoch.epoch);
+      if (signed) heads.push(signed);
+    }
+    return heads;
+  }
+
+  /** Signed head of exactly `treeSize`, or a 4xx error. */
+  _requireSignedHead(epoch, treeSize) {
+    const live = epoch.leaves.length;
+    if (!Number.isSafeInteger(treeSize) || treeSize < 1 || treeSize > live) {
+      throw inclusionError(
+        'bad_tree_size',
+        `tree_size must be a positive integer no greater than the live tree (${live})`,
+      );
+    }
+    const candidates = this._candidateHeads(epoch);
+    let unsigned = false;
+    let mismatch = false;
+    for (let i = candidates.length - 1; i >= 0; i -= 1) {
+      const head = candidates[i];
+      if (Number(head?.tree_size) !== treeSize) continue;
+      if (!head?.issuer_signature?.jws) {
+        unsigned = true;
+        continue;
+      }
+      const checked = verifyTreeHead(head);
+      if (!checked.valid) {
+        if (checked.reason === 'head_mismatch') mismatch = true;
+        else unsigned = true;
+        continue;
+      }
+      const prefix = hex(rootOf(epoch.leaves.slice(0, treeSize)));
+      if (normalizeRoot(head.root) !== prefix) {
+        mismatch = true;
+        continue;
+      }
+      return head;
+    }
+    if (mismatch) {
+      throw inclusionError('head_mismatch', `signed head at tree_size ${treeSize} does not match the recomputed root`);
+    }
+    if (unsigned) {
+      throw inclusionError('head_rejected', `tree_size ${treeSize} has no valid issuer signature`);
+    }
+    throw inclusionError('no_signed_head', `no signed head at tree_size ${treeSize}`);
+  }
+
+  /**
+   * Public inclusion. Default head is the newest anchored signed head.
+   * `treeSize` selects one signed head. A leaf past that head is
+   * `pending_anchor` when the head is the anchored frontier, and a 4xx
+   * otherwise. With no anchored head yet, the proof stays on the live tree
+   * and is not reported as anchored.
+   */
+  inclusion(taskId, options = {}) {
+    const requested = options.treeSize == null || options.treeSize === '' ? null : Number(options.treeSize);
+    const located = this._locate(taskId);
+    const epoch = located || this._openEpoch();
+    if (requested != null) {
+      const head = this._requireSignedHead(epoch, requested);
+      if (!located) return null;
+      return this._inclusionAgainstHead(epoch, taskId, head);
+    }
+    if (!located) return null;
+    const anchored = this._newestAnchoredHead(epoch);
+    if (anchored) return this._inclusionAgainstHead(epoch, taskId, anchored);
+    return this._inclusionIn(epoch, taskId);
+  }
+
+  _inclusionAgainstHead(epoch, taskId, head) {
+    const index = epoch.byTask.get(String(taskId));
+    if (index == null) return null;
+    const size = Number(head.tree_size);
+    const live = epoch.leaves.length;
+    const facts = headAnchorFacts(head);
+    const named = namedSignedHead(head);
+    if (index >= size) {
+      const frontier = facts.anchored ? this._newestAnchoredHead(epoch) : null;
+      const onFrontier = frontier
+        && Number(frontier.tree_size) === size
+        && normalizeRoot(frontier.root) === named.root;
+      if (!onFrontier) {
+        throw inclusionError('leaf_not_in_head', `leaf index ${index} is not in the signed head of size ${size}`);
+      }
+      return {
+        schema: 'chit402.inclusion.v1',
+        payload_version: 2,
+        status: 'pending_anchor',
+        epoch: epoch.epoch,
+        prev_epoch_root: epoch.prevEpochRoot || null,
+        prev_epoch_size: epoch.prevEpochSize || 0,
+        task_id: String(taskId),
+        leaf_index: index,
+        leaf: epoch.leaves[index].toString('hex'),
+        tree_size: size,
+        live_tree_size: live,
+        anchored_tree_size: size,
+        root: named.root,
+        proof: null,
+        anchor_status: 'pending',
+        anchor_tx: facts.anchor_tx,
+        anchor_chain: facts.anchor_chain,
+        solana_signature: facts.solana_signature,
+        anchors: head.anchors || null,
+        head: named,
+        verified_at: new Date().toISOString(),
+      };
+    }
+    const proof = inclusionProof(epoch.leaves.slice(0, size), index);
+    const root = hex(rootOf(epoch.leaves.slice(0, size)));
+    if (root !== named.root) {
+      throw inclusionError('head_mismatch', 'signed head root does not match tree_size');
+    }
+    return {
+      schema: 'chit402.inclusion.v1',
+      payload_version: 2,
+      status: facts.anchored ? 'anchored' : 'included',
+      epoch: epoch.epoch,
+      prev_epoch_root: epoch.prevEpochRoot || null,
+      prev_epoch_size: epoch.prevEpochSize || 0,
+      task_id: String(taskId),
+      leaf_index: index,
+      leaf: epoch.leaves[index].toString('hex'),
+      tree_size: size,
+      live_tree_size: live,
+      anchored_tree_size: facts.anchored ? size : null,
+      root,
+      proof: proof.map((step) => ({ hash: step.hash, position: step.position })),
+      anchor_status: facts.anchored ? 'anchored' : 'pending',
+      anchor_tx: facts.anchored ? facts.anchor_tx : null,
+      anchor_chain: facts.anchored ? facts.anchor_chain : null,
+      solana_signature: facts.anchored ? facts.solana_signature : null,
+      anchors: head.anchors || null,
+      head: named,
+      verified_at: new Date().toISOString(),
+    };
   }
 
   _inclusionIn(epoch, taskId) {
@@ -1210,7 +1435,9 @@ export class ReceiptMerkleTree {
     }
 
     anchor = { ...anchor, prev_root: prevRoot };
-    solana = { ...solana, prev_root: prevRoot };
+    // Name the fee payer on a fresh anchor too. A later head copies it from
+    // the prior memo. The verifier refuses an anchored Solana side that omits it.
+    solana = { ...solana, prev_root: prevRoot, fee_payer: solana.fee_payer || solanaFeePayerOrNull() };
     const anchors = { base: anchor, solana };
     // Flat signed claims. clock_tolerance_s is a sibling of anchors, not a
     // field inside the Base or Solana records. Epoch fields are version 2.
@@ -2804,6 +3031,17 @@ export function renderInclusionSection(inclusion, carry = null) {
       <h2>Receipt log <span class="scope">failed</span></h2>
       <div class="row"><span class="k">Status</span><span class="v"><code>failed</code></span></div>
       <div class="row"><span class="k">Error</span><span class="v"><code>${esc(carry.error || carry.reason)}</code></span></div>
+    </section>`;
+  }
+  if (inclusion?.status === 'pending_anchor') {
+    return `<section class="card">
+      <h2>Outside witness <span class="scope">PENDING</span></h2>
+      <div class="row"><span class="k">Status</span><span class="v"><code>PENDING</code></span></div>
+      <div class="row"><span class="k">Reason</span><span class="v"><code>pending_anchor</code></span></div>
+      <div class="row"><span class="k">Anchored size</span><span class="v"><code>${esc(inclusion.anchored_tree_size)}</code></span></div>
+      <div class="row"><span class="k">Live size</span><span class="v"><code>${esc(inclusion.live_tree_size)}</code></span></div>
+      <div class="row"><span class="k">Leaf</span><span class="v"><code>${esc(inclusion.leaf_index)}</code></span></div>
+      <p class="muted" style="margin:8px 0 0;font-size:12px">This leaf is in the live tree and past the newest anchored head. It is pending the next anchor. It is not a tamper finding.</p>
     </section>`;
   }
   if (!inclusion || inclusion.root == null) return '';

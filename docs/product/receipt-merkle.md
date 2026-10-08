@@ -10,10 +10,10 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 |----------|---------|
 | `GET /v1/receipts/tree/head` | Latest signed tree head (`chit402.tree_head.v2`), or `not_yet_published` |
 | `GET /v1/receipts/tree/epoch/:epoch/head` | Signed head of a closed epoch. Epoch 1 is the pinned final root, with its Base and Solana transactions. A public read does not broadcast. |
-| `GET /v1/receipts/:task_id/inclusion` | `leaf_index`, `tree_size`, `root`, `proof` |
+| `GET /v1/receipts/:task_id/inclusion` | Proof against the newest anchored signed head: `leaf_index`, `tree_size`, `root`, `proof`, and `head` (`tree_size`, `root`, `signature`, anchor tx and chain when known). `?tree_size=N` selects that signed head. A leaf past the anchored size is `status: pending_anchor` with `anchored_tree_size` and `live_tree_size`, and no proof. |
 | `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
 
-The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor. The verify page names a Base transaction, a Solana transaction, both, or `pending anchor`. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md).
+The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor. Inclusion uses the newest anchored signed head, so a leaf appended after that head is `pending_anchor` until the next anchor. The verify page names a Base transaction, a Solana transaction, both, or `PENDING` for a leaf that is not in the anchored head yet. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md).
 
 ## Dual anchor
 

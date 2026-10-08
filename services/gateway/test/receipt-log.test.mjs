@@ -2630,6 +2630,8 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
         };
       } else if (msg.method === 'getGenesisHash') {
         result = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+      } else if (msg.method === 'getSignaturesForAddress') {
+        result = [{ signature: head.anchors.solana.signature, err: null }];
       }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));

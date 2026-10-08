@@ -161,8 +161,10 @@ Anchored root:
   issuer-history anchor_wallets list). The on-chain issuer-root registry and
   the DNS anchor are not read. Prints what this proves and what it does not
   prove. Exit 0 when the receipt checks pass and both chains match, 2 when the
-  leaf is included but an anchor is still pending and the receipt checks did
-  not fail, 1 when a check fails.
+  leaf is included but an anchor is still pending, or when the leaf is past
+  the anchored tree (PENDING, not a tamper failure), and the receipt checks
+  did not fail, 1 when a check fails. With --rpc, the head root must equal
+  the newest Solana anchor memo from the signed fee payer.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -396,7 +398,11 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.head_signature.kid) console.log(`  Head kid:      ${result.head_signature.kid}`);
   if (result.head_signature.message) console.log(`  Head reason:   ${result.head_signature.message}`);
   const unlogged = result.inclusion.unlogged_reason ? ` unlogged:${result.inclusion.unlogged_reason}` : '';
-  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}${unlogged}`);
+  if (result.overall === 'pending') {
+    console.log(`  Inclusion:     PENDING${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}`);
+  } else {
+    console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}${unlogged}`);
+  }
   console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
   console.log(`  Solana:        ${result.solana.checked ? mark(result.solana.valid) : (result.solana.reason || 'not checked')}`);
   if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
@@ -419,6 +425,10 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('  ─────────────────────────────────────────────────');
   for (const line of result.does_not_prove) console.log(`  ${line}`);
   console.log('');
+  if (result.overall === 'pending') {
+    console.log(`  Anchored size: ${result.inclusion.anchored_tree_size ?? '—'}`);
+    console.log(`  Live size:     ${result.inclusion.live_tree_size ?? '—'}`);
+  }
   console.log(`  Overall: ${result.overall.toUpperCase()}`);
   if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
   if (result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER)) {
@@ -661,6 +671,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     head,
     baseRpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
+    checkNewestAnchor: args.sawRpc,
     epochRecord,
     verifyEpochSignature,
     jwks: loaded.jwks,
@@ -727,7 +738,8 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   } else {
     printAnchor(combined, false, args.quiet);
     if (!args.quiet || receiptFailed) {
-      console.log(`  Receipt checks: ${verified.overall.toUpperCase()} (signed claims only)`);
+      const receiptLabel = result.overall === 'pending' ? 'PENDING' : verified.overall.toUpperCase();
+      console.log(`  Receipt checks: ${receiptLabel} (signed claims only)`);
       if (verified.claim_mismatches.length > 0) {
         for (const mismatch of verified.claim_mismatches) {
           console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
@@ -739,7 +751,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     if (!args.quiet) printLane(verified.receipt_lane);
   }
   if (combined.overall === 'verified') return 0;
-  if (combined.overall === 'partial') return 2;
+  if (combined.overall === 'partial' || combined.overall === 'pending') return 2;
   return 1;
 }
 
