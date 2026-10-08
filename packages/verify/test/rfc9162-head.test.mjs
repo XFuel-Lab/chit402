@@ -156,6 +156,35 @@ test('epoch-1 and epoch-2 heads signed before signer pinning are not VERIFIED', 
   }
 });
 
+test('offline inclusion reads a top-level receipt row_hash', async () => {
+  const row = '6eaa2c1599fb5e3b9e2dc5b0e64ccf609277c4d893aa03ebd310c3584ce5cf9b';
+  const receipt = {
+    task_id: honestInclusion.task_id,
+    status: 'completed',
+    row_hash: row,
+  };
+  const ok = await verifyReceipt(receipt, {
+    head: honestHead,
+    inclusion: honestInclusion,
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(ok.errors.includes('inclusion_failed'), false, ok.errors.join(','));
+  assert.equal(ok.errors.includes('leaf_mismatch'), false, ok.errors.join(','));
+
+  const wrong = await verifyReceipt({ ...receipt, row_hash: 'ab'.repeat(32) }, {
+    head: honestHead,
+    inclusion: honestInclusion,
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  });
+  assert.equal(wrong.overall, 'failed');
+  assert.ok(
+    wrong.errors.includes('leaf_mismatch') || wrong.errors.includes('inclusion_failed'),
+    wrong.errors.join(','),
+  );
+});
+
 test('a tree head with the issuer signature removed does not verify offline', async () => {
   const receipt = {
     task_id: honestInclusion.task_id,

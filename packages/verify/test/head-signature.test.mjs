@@ -396,6 +396,54 @@ function historyFetch(body) {
   return { calls, fetchImpl };
 }
 
+test('a history entry matched by jwk thumbprint still passes the kid window', () => {
+  const key = issuerKey();
+  const body = {
+    kid: 'label-not-thumb',
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+    prev_hash: null,
+  };
+  const entryHash = issuerHistoryEntryHash(body);
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    entry_count: 1,
+    head_hash: entryHash,
+  };
+  const history = {
+    schema: 'chit402.issuer_history.v1',
+    entries: [{ ...body, entry_hash: entryHash }],
+    head_hash: entryHash,
+    issuer_signature: {
+      jws: signClaims(claims, key, 'chit402-issuer-history+jwt'),
+      kid: key.kid,
+      issuer_jwk: key.publicJwk,
+    },
+  };
+  const fx = fixture();
+  const unsigned = { ...fx.head };
+  delete unsigned.issuer_signature;
+  for (const publishedAt of [null, '2026-10-03T11:33:37.000Z']) {
+    const head = sealHead({ ...unsigned, published_at: publishedAt }, key);
+    delete head.issuer_signature.issuer_jwk;
+    const trusted = verifyTreeHeadTrust(head, {
+      trustedKids: [key.kid],
+      issuerHistory: history,
+    });
+    assert.equal(trusted.ok, true, `${publishedAt} ${trusted.reason || ''} ${trusted.message || ''}`);
+    assert.equal(trusted.trust, 'issuer_history');
+    assert.notEqual(trusted.reason, 'kid_not_in_history');
+    assert.notEqual(trusted.reason, 'head_kid_window');
+  }
+});
+
 test('offline verifyReceipt rejects a head whose issuer signature was removed', async () => {
   const fx = fixture();
   const stripped = { ...fx.head };
