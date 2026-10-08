@@ -4,8 +4,21 @@ import config from './config.js';
 /**
  * Create a logger instance with appropriate configuration
  */
+/** Salt and the disclosure header never reach a log line. */
+export const LOG_REDACT = {
+  paths: [
+    'salt',
+    'request.salt',
+    'req.headers["x-chit-request-salt"]',
+    'headers["x-chit-request-salt"]',
+    'res.headers["x-chit-request-salt"]',
+  ],
+  censor: '[Redacted]',
+};
+
 const logger = pino({
   level: config.service.logLevel,
+  redact: LOG_REDACT,
   transport: config.service.nodeEnv === 'development' ? {
     target: 'pino-pretty',
     options: {

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
 
-const { verifyRefusal, verifyReceipt } = await import('../dist/index.js');
+const { verifyRefusal, verifyReceipt, verifyRequestDigest } = await import('../dist/index.js');
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const jwk = publicKey.export({ format: 'jwk' });
@@ -147,6 +147,46 @@ test('rewriting the outer schema to a receipt schema is not a verified payment',
   assert.equal(payment.overall, 'failed');
   assert.ok(payment.errors.some((line) => line.includes('not a payment receipt')));
   assert.equal(verifyRefusal(doc, { jwks }).reason, 'schema_mismatch');
+});
+
+const REQUEST_PREIMAGE = '{"body_sha256":"93dda1aa54d9bb86b7c2cdfaad61fd78e5b81656484a8941eee498adc9a54e54","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}';
+const REQUEST_DIGEST = 'a9a7ca02eb504b94c7efb7a3a5832c0fc847e37cf6930ca48db3c0b6e04498f6';
+
+function resign(doc, payload) {
+  doc.issuer_signature.jws = signRefusal(payload);
+  doc.schema = payload.schema;
+  doc.payload_version = payload.payload_version;
+  return doc;
+}
+
+test('refusal v2 without request_digest is REQUEST_UNBOUND and not a pass', () => {
+  const doc = document();
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  payload.schema = 'chit402.refusal.v2';
+  payload.payload_version = 3;
+  resign(doc, payload);
+  const result = verifyRefusal(doc, { jwks });
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'REQUEST_UNBOUND');
+  assert.equal(result.request_binding, 'REQUEST_UNBOUND');
+});
+
+test('refusal v2 request_digest recomputes from the supplied preimage', () => {
+  assert.equal(verifyRequestDigest(REQUEST_DIGEST, REQUEST_PREIMAGE).ok, true);
+  const doc = document();
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  payload.schema = 'chit402.refusal.v2';
+  payload.payload_version = 3;
+  payload.request_digest = REQUEST_DIGEST;
+  resign(doc, payload);
+  doc.request_preimage = REQUEST_PREIMAGE;
+  const ok = verifyRefusal(doc, { jwks });
+  assert.notEqual(ok.reason, 'REQUEST_UNBOUND');
+  assert.notEqual(ok.reason, 'request_digest_mismatch');
+  doc.request_preimage = REQUEST_PREIMAGE.replace('POST', 'GET');
+  const tampered = verifyRefusal(doc, { jwks });
+  assert.equal(tampered.valid, false);
+  assert.equal(tampered.reason, 'request_digest_mismatch');
 });
 
 test('UNAVAILABLE is a signed anchor, not a missing document', () => {

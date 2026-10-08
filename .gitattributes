@@ -2,3 +2,6 @@
 # look for `/bin/bash\r` and fail at exec ("no such file or directory"), which
 # breaks container entrypoints (e.g. services/sp1-prover/watchdog.sh).
 *.sh text eol=lf
+docs/well-known/issuer-key.json text eol=lf
+docs/well-known/issuer-key.sig text eol=lf
+docs/well-known/issuer-key.ref.json text eol=lf

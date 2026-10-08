@@ -89,6 +89,8 @@ counts only when the verifying key is trusted:
 
 The epoch record and the tree head use those same sources, with or without `--rpc`. `xfuel-verify receipt.json inclusion.json head.json` checks the head signature and the inclusion proof offline. `--rpc` adds the chain checks. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list (the package pin, or a verified `/.well-known/anchor-wallets.json`). The chain sender and fee payer must be those wallets. `--version` prints the package version.
 
+Anchor mode also checks a content-addressed issuer pin when the receipt or the head carries `issuer_key_pin`, or when you pass `--issuer-pin`. The pin is a 40-hex commit plus the SHA-256 of `docs/well-known/issuer-key.json`. A branch name is not fetched. A claimed pin requires `issuer_signature.jws` verified under that key. Unsigned envelope kids do not satisfy the check. The registration self-signature is checked when the file has one. A claimed era with no pin fails `ISSUER_PIN_DOWNGRADE`. Receipts that do not claim the era skip this check. The pin chain is Base Sepolia (`eip155:84532`). See [issuer-key-pin.md](../../docs/product/issuer-key-pin.md).
+
 `issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
 arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
 including when `--jwks-file` points at the real JWKS.

@@ -1,0 +1,66 @@
+{
+  "chainId": 84532,
+  "registry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+  "rootHash": "0x5eba49cc6a6aaf2268daaec5bdb926f5f5238fbe0e5c86d81451dec81cb580a9",
+  "rootSeq": "1",
+  "finalizedNumber": 130,
+  "finalizedHash": "0x41dda8fcd0ce6310aa2920950faf2f005ebfb1355349f1a81b3877c369d6424d",
+  "commitBlock": 2,
+  "legacy": {
+    "schema": "chit402.legacy_receipt_set.v1",
+    "universe_id": "b623c1816e895dd967c4e51f0e066dafda546195a909e9b51283be4b5109caf4",
+    "universe": {
+      "schema": "chit402.universe.v1",
+      "book_id": "chit402:global",
+      "window_id": "legacy_receipts_pre_v11",
+      "predicate_hash": "a45aaf907ba425c1474bc96187b73b5b5e42f6696b6e8dbc34d3acb047fd37d1"
+    },
+    "predicate": {
+      "schema": "chit402.universe_predicate.v1",
+      "name": "legacy_receipts_pre_v11",
+      "subject": "book receipt",
+      "include": "book row with a stored issuer signature, payload_version below 11, and no issuer_root claim in the JWS payload",
+      "exclude": "rows with no issuer signature; payload_version 11 or greater; any issuer_root claim",
+      "leaf": "stored payload_hash bytes",
+      "re_sign": false
+    },
+    "enumerated_count": 1,
+    "root": "0x4635e1fa62a599a7880a8d14a56f720a1d40f6e5448ab5a5e39bedc8bd87fa8e",
+    "hash_alg": "sha256",
+    "leaf_rule": "sha256(0x00 || payload_hash bytes)",
+    "node_rule": "sha256(0x01 || left || right)",
+    "sort": "payload_hash bytes ascending",
+    "odd": "duplicate last node when a level has more than one node and an odd count",
+    "empty_root": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+    "skipped_v11_count": 0,
+    "leaves": [
+      {
+        "index": 0,
+        "task_id": "xfuel-legacy-a",
+        "payload_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "payload_version": 10
+      }
+    ]
+  },
+  "rootCommitted": {
+    "topics": [
+      "0x11e8d8cb775434e3f86defaa2b977eb935c2cbadc8bb52d737ff7a5812f2c08a",
+      "0x0000000000000000000000000000000000000000000000000000000000000001"
+    ],
+    "data": "0x5eba49cc6a6aaf2268daaec5bdb926f5f5238fbe0e5c86d81451dec81cb580a9000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002",
+    "blockNumber": "0x2",
+    "blockHash": "0xa28a9759d91c7d0c2ce51566924e45d69a4827564bb6cebdd73adb591e2a58bd"
+  },
+  "frozen": {
+    "topics": [
+      "0x92b1bfaf6fb95f2593e231d48b7a55d7d8715a1d2f7414e5ee792e660762ba77",
+      "0xb623c1816e895dd967c4e51f0e066dafda546195a909e9b51283be4b5109caf4",
+      "0x0000000000000000000000000000000000000000000000000000000000000001"
+    ],
+    "data": "0x4635e1fa62a599a7880a8d14a56f720a1d40f6e5448ab5a5e39bedc8bd87fa8e00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002",
+    "blockNumber": "0x2",
+    "blockHash": "0xa28a9759d91c7d0c2ce51566924e45d69a4827564bb6cebdd73adb591e2a58bd"
+  },
+  "frozenBlockHash": "0xa28a9759d91c7d0c2ce51566924e45d69a4827564bb6cebdd73adb591e2a58bd",
+  "frozenBlock": 2
+}

@@ -1,0 +1,1258 @@
+{
+  "name": "ChitIssuerRoot",
+  "solc": "0.8.24",
+  "optimizer": {
+    "enabled": true,
+    "runs": 200
+  },
+  "viaIR": false,
+  "source": "contracts/registry/ChitIssuerRoot.sol",
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "controller_",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "genesisKid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "genesisNotBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "ACTIVATION_DELAY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "COMMIT_DOMAIN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "GENESIS_DOMAIN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_ADD_STANDBY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_PROMOTE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_RETIRE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_REVOKE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "REASON_COMPROMISE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "REASON_LOST",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "REASON_OTHER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "REASON_SUPERSEDED",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STATUS_ACTIVE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STATUS_NONE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STATUS_RETIRED",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STATUS_REVOKED",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STATUS_STANDBY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "commit",
+      "inputs": [
+        {
+          "name": "ops",
+          "type": "tuple[]",
+          "internalType": "struct ChitIssuerRoot.Op[]",
+          "components": [
+            {
+              "name": "kind",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "kid",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "timestamp",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "reasonCode",
+              "type": "uint8",
+              "internalType": "uint8"
+            }
+          ]
+        },
+        {
+          "name": "freezeArgs",
+          "type": "tuple[]",
+          "internalType": "struct ChitIssuerRoot.FreezeArg[]",
+          "components": [
+            {
+              "name": "universeId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "universeHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "enumeratedCount",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        },
+        {
+          "name": "histVersion",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "histSnapshot",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "commitmentHash",
+      "inputs": [
+        {
+          "name": "prevRootHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "seq",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "ops",
+          "type": "tuple[]",
+          "internalType": "struct ChitIssuerRoot.Op[]",
+          "components": [
+            {
+              "name": "kind",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "kid",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "timestamp",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "reasonCode",
+              "type": "uint8",
+              "internalType": "uint8"
+            }
+          ]
+        },
+        {
+          "name": "freezeArgs",
+          "type": "tuple[]",
+          "internalType": "struct ChitIssuerRoot.FreezeArg[]",
+          "components": [
+            {
+              "name": "universeId",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "universeHash",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "enumeratedCount",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        },
+        {
+          "name": "histVersion",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "histSnapshot",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "controller",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "freezes",
+      "inputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "universeHash",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "enumeratedCount",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "frozenBlock",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "genesisRootHash",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller_",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "genesisKid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "genesisNotBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "activatedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "historySnapshot",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "historyVersion",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "keyValidAt",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "t",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ok",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "status",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "keys",
+      "inputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "status",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "wasActive",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "notAfter",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "revokedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "activatedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "rootHash",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "rootSeq",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "supersede",
+      "inputs": [
+        {
+          "name": "next",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "supersededBy",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "Frozen",
+      "inputs": [
+        {
+          "name": "universeId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "universeHash",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "enumeratedCount",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "frozenBlock",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "GenesisSeeded",
+      "inputs": [
+        {
+          "name": "controller",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "activatedAt",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootHash",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "KeyActivated",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "activatedAt",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "KeyRetired",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "notAfter",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "KeyRevoked",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "revokedAt",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "reasonCode",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "KeyStandby",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "RootCommitted",
+      "inputs": [
+        {
+          "name": "rootSeq",
+          "type": "uint64",
+          "indexed": true,
+          "internalType": "uint64"
+        },
+        {
+          "name": "rootHash",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "historyVersion",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        },
+        {
+          "name": "historySnapshot",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint64",
+          "indexed": false,
+          "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Superseded",
+      "inputs": [
+        {
+          "name": "next",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "ActivationTooSoon",
+      "inputs": [
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "earliest",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadyFrozen",
+      "inputs": [
+        {
+          "name": "universeId",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadyRevoked",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadySuperseded",
+      "inputs": [
+        {
+          "name": "current",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BadReason",
+      "inputs": [
+        {
+          "name": "reasonCode",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BadStatus",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "status",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BlockNumberUnusable",
+      "inputs": [
+        {
+          "name": "blockNumber",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "EmptyCommit",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "HistorySnapshotMismatch",
+      "inputs": [
+        {
+          "name": "provided",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "current",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "HistoryVersionRegressed",
+      "inputs": [
+        {
+          "name": "provided",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "current",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "KeyAlreadyExists",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "KeyMissing",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NonZeroReason",
+      "inputs": [
+        {
+          "name": "reasonCode",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NonZeroTimestamp",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotAfterBeforeStart",
+      "inputs": [
+        {
+          "name": "notAfter",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotController",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotYetActive",
+      "inputs": [
+        {
+          "name": "kid",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "notBefore",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "RegistrySuperseded",
+      "inputs": [
+        {
+          "name": "supersededBy",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "RevokedAtBeforeStart",
+      "inputs": [
+        {
+          "name": "revokedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "earliest",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "RevokedAtInFuture",
+      "inputs": [
+        {
+          "name": "revokedAt",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "RevokedAtZero",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SeqOverflow",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SupersedeSelf",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "UnknownOp",
+      "inputs": [
+        {
+          "name": "kind",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ZeroController",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroKid",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroNextRegistry",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ZeroUniverseId",
+      "inputs": []
+    }
+  ],
+  "keys": {
+    "getter": "keys(bytes32)",
+    "returns": [
+      {
+        "name": "status",
+        "type": "uint8",
+        "notes": "0 none, 1 standby, 2 active, 3 retired, 4 revoked"
+      },
+      {
+        "name": "wasActive",
+        "type": "bool",
+        "notes": "true once the key has been active, including after revoke"
+      },
+      {
+        "name": "notBefore",
+        "type": "uint64"
+      },
+      {
+        "name": "notAfter",
+        "type": "uint64",
+        "notes": "0 means open"
+      },
+      {
+        "name": "revokedAt",
+        "type": "uint64",
+        "notes": "0 means not revoked"
+      },
+      {
+        "name": "activatedAt",
+        "type": "uint64",
+        "notes": "0 until PROMOTE; genesis sets this to notBefore. Validity starts at max(notBefore, activatedAt)."
+      }
+    ],
+    "slots": {
+      "perKey": 2,
+      "base": "keccak256(abi.encode(kid, uint256(4)))",
+      "slot0": "status | wasActive | notBefore | notAfter | revokedAt",
+      "slot1": "activatedAt in the low 64 bits"
+    }
+  },
+  "rootHash": {
+    "domains": {
+      "GENESIS_DOMAIN": "keccak256(\"chit.issuerRoot.genesis.v1\")",
+      "COMMIT_DOMAIN": "keccak256(\"chit.issuerRoot.commit.v1\")"
+    },
+    "genesis": {
+      "when": "constructor, stored at rootSeq 0",
+      "preimage": "keccak256(abi.encode(GENESIS_DOMAIN, chainId, registry, controller, genesisKid, genesisNotBefore, activatedAt, uint64(block.number)))",
+      "activatedAt": "genesisNotBefore",
+      "events": [
+        "KeyActivated(kid, activatedAt, 0)",
+        "GenesisSeeded(controller, kid, notBefore, activatedAt, blockNumber, rootHash)"
+      ]
+    },
+    "commit": {
+      "when": "commit(), rootSeq increments from the previous value",
+      "preimage": "keccak256(abi.encode(COMMIT_DOMAIN, prevRootHash, rootSeq, chainId, registry, uint64(block.number), ops, freezeArgs, histVersion, histSnapshot))",
+      "blockNumber": "uint64(block.number) of the commit. This is frozenBlock for every freeze in the transaction. A reorg that replays the calldata in another block changes rootHash.",
+      "blockhash": "Not stored. blockhash(block.number) is zero inside the transaction. Verifiers read the hash of the RootCommitted or Frozen log's block after it is sealed.",
+      "events": [
+        "one key or freeze event per argument, then RootCommitted(rootSeq, rootHash, historyVersion, historySnapshot, blockNumber)"
+      ]
+    },
+    "op": {
+      "type": "(uint8 kind, bytes32 kid, uint64 timestamp, uint8 reasonCode)",
+      "kinds": {
+        "1": "ADD_STANDBY",
+        "2": "PROMOTE",
+        "3": "RETIRE",
+        "4": "REVOKE"
+      },
+      "reasonCode": {
+        "1": "compromise",
+        "2": "superseded",
+        "3": "lost",
+        "255": "other"
+      }
+    },
+    "freezeArg": "(bytes32 universeId, bytes32 universeHash, uint64 enumeratedCount)"
+  }
+}

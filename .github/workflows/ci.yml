@@ -7,7 +7,7 @@ on:
     # ready_for_review is not in the default set. A draft open that does not
     # start Actions would otherwise never run when the PR is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, master, develop]
+    branches: [main, master, develop, cursor/gateway-v11-issuer-root-5306]
 
 jobs:
   public-identifiers:

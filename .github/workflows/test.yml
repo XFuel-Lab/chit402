@@ -6,11 +6,12 @@ on:
   pull_request:
     # ready_for_review is not in the default set. A draft open that does not
     # start Actions would otherwise never run when the PR is marked ready.
-    # cursor/spend-hold-ceiling-0d9c is PR #495. cursor/verify-head-issuer-bind-ce2e
-    # is PR #492. This verifier change is stacked on #492, and the filter matches
-    # that base so Verify package (Windows) runs.
+    # cursor/spend-hold-ceiling-0d9c is PR #495.
+    # cursor/gateway-v11-issuer-root-5306 is the base of stacked draft #499.
+    # cursor/verify-head-issuer-bind-ce2e was the #492 stack. The filter matches
+    # those bases so Verify package (Windows) runs.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/verify-head-issuer-bind-ce2e]
+    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e]
 
 jobs:
   public-identifiers:
@@ -102,6 +103,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '20'
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
 
       - name: Install gateway deps
         working-directory: services/gateway
