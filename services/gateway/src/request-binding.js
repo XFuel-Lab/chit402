@@ -77,6 +77,47 @@ export function requestDigestOfPreimage(preimageUtf8) {
   return sha256Hex(Buffer.from(preimageUtf8, 'utf8'));
 }
 
+const BINDING_HTTP_CODES = new Set(['idempotency_conflict', 'intent_id_required', 'request_unbound']);
+
+/** True for the three request-binding failures the HTTP layer must not swallow. */
+export function isRequestBindingError(err) {
+  return !!err && BINDING_HTTP_CODES.has(err.code);
+}
+
+/**
+ * Keep the exact bytes express parsed, so body_sha256 is the wire body.
+ * JSON.stringify of the parsed object drops trailing whitespace.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} _res
+ * @param {Buffer} buf
+ */
+export function captureRawRequestBody(req, _res, buf) {
+  req.rawBody = Buffer.from(buf);
+}
+
+/**
+ * The client request a refusal binds. `body` is the raw bytes when the
+ * JSON parser captured them.
+ * @param {object} req
+ * @param {string} path
+ */
+export function clientRequestForRefusal(req, path) {
+  const headers = req?.headers || {};
+  const body = req?.body && typeof req.body === 'object' ? req.body : {};
+  const idem = headers['idempotency-key'] || headers['x-idempotency-key'] || body.idempotency_key || null;
+  const nonce = headers['x-xfuel-nonce'] || (body.nonce != null && body.nonce !== '' ? body.nonce : null);
+  const intent = headers['x-xfuel-intent'] || body.intent_id || body.intent || null;
+  return {
+    method: req?.method || 'POST',
+    path: path && String(path).startsWith('/') ? String(path) : '/v1/chat/completions',
+    body: req?.rawBody != null ? req.rawBody : JSON.stringify(req?.body ?? {}),
+    idempotency_key: idem ? String(idem) : null,
+    nonce: nonce != null ? String(nonce) : null,
+    intent_id: intent ? String(intent).trim() : null,
+    intent_supplied: !!(intent && String(intent).trim()),
+  };
+}
+
 export function requestDigestMatches(digest, preimageUtf8) {
   const got = requestDigestOfPreimage(preimageUtf8);
   return typeof digest === 'string' && got === digest;

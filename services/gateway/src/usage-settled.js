@@ -16,7 +16,7 @@ import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
-import { claimIdempotency, requestDigest, refusalMatchesRequest } from './request-binding.js';
+import { claimIdempotency, isRequestBindingError, requestDigest, refusalMatchesRequest } from './request-binding.js';
 import { summarizeSupersession, supersessionForRow } from './supersession-fork.js';
 import {
   ClaimSettlementStore,
@@ -495,7 +495,20 @@ export class UsageSettledLedger {
     this._nextSeq.set(id, seq + 1);
     this._tipSeq.set(id, seq);
     this._lastRowHash.set(id, row.row_hash);
-    this._issueRefusal(row);
+    try {
+      this._issueRefusal(row, { rethrowBinding: true });
+    } catch (err) {
+      if (!isRequestBindingError(err)) throw err;
+      this._nextSeq.set(id, seq);
+      this._tipSeq.set(id, seq - 1);
+      if (row.prev_hash) this._lastRowHash.set(id, row.prev_hash);
+      else this._lastRowHash.delete(id);
+      delete row.seq;
+      delete row.prev_hash;
+      delete row.row_hash;
+      delete row.book_chain;
+      throw err;
+    }
   }
 
   _noteFork(agentId, info) {
@@ -511,12 +524,13 @@ export class UsageSettledLedger {
    * seq, so it does not mint a new nonce. Signing failure still keeps the row.
    * @param {object} row
    */
-  _issueRefusal(row) {
+  _issueRefusal(row, { rethrowBinding = false } = {}) {
     const blocked = row?.event === 'policy_blocked' || row?.evidence === 'policy_blocked';
     if (!blocked || row.refusal) return;
     try {
       row.refusal = issueRefusalReceipt(row);
     } catch (err) {
+      if (rethrowBinding && isRequestBindingError(err)) throw err;
       logger.warn({ err: err.message, task_id: row.task_id }, 'refusal receipt not signed');
     }
   }
@@ -1009,7 +1023,14 @@ export class UsageSettledLedger {
       request: request && typeof request === 'object' ? request : null,
       intent_supplied: request?.intent_supplied === true,
     };
-    this._index(entry);
+    try {
+      this._index(entry);
+    } catch (err) {
+      if (isRequestBindingError(err)) {
+        return { ok: false, reason: err.message, code: err.code };
+      }
+      throw err;
+    }
     return { ok: true, entry, duplicate: false };
   }
 

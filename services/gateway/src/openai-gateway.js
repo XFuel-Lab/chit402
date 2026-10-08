@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
+import { clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
@@ -221,29 +222,8 @@ function isPrivateSpendSession(req, registry) {
  * Shapes the body for both x402 clients (reads `accepts`) and OpenAI clients
  * (reads `error.message`).
  */
-/**
- * Append a policy_blocked row and its signed refusal. Never throws.
- * The paid path is not involved: this runs only after a deliberate refusal.
- */
-function clientRequestForRefusal(req, path) {
-  const headers = req?.headers || {};
-  const body = req?.body && typeof req.body === 'object' ? req.body : {};
-  const idem = headers['idempotency-key'] || headers['x-idempotency-key'] || body.idempotency_key || null;
-  const nonce = headers['x-xfuel-nonce'] || (body.nonce != null && body.nonce !== '' ? body.nonce : null);
-  const intent = headers['x-xfuel-intent'] || body.intent_id || body.intent || null;
-  return {
-    method: req?.method || 'POST',
-    path: path && String(path).startsWith('/') ? String(path) : '/v1/chat/completions',
-    body: req?.rawBody != null ? req.rawBody : JSON.stringify(req?.body ?? {}),
-    idempotency_key: idem ? String(idem) : null,
-    nonce: nonce != null ? String(nonce) : null,
-    intent_id: intent ? String(intent).trim() : null,
-    intent_supplied: !!(intent && String(intent).trim()),
-  };
-}
-
 function requestBindingHttpError(err) {
-  if (!err || (err.code !== 'idempotency_conflict' && err.code !== 'intent_id_required' && err.code !== 'request_unbound')) {
+  if (!isRequestBindingError(err)) {
     return null;
   }
   const status = err.code === 'idempotency_conflict' ? 409 : 400;
@@ -270,14 +250,14 @@ async function recordSpendRefusal(ledger, fields) {
   }
   try {
     const recorded = ledger.recordPolicyBlocked({ ...fields, anchor });
-    if (!recorded?.ok && recorded?.code === 'idempotency_conflict') {
-      const err = new Error(recorded.reason || 'idempotency key was already used for a different request');
-      err.code = 'idempotency_conflict';
+    if (!recorded?.ok && isRequestBindingError({ code: recorded?.code })) {
+      const err = new Error(recorded.reason || recorded.code);
+      err.code = recorded.code;
       throw err;
     }
     return recorded?.ok ? recorded.entry : null;
   } catch (err) {
-    if (err.code === 'idempotency_conflict' || err.code === 'intent_id_required' || err.code === 'request_unbound') {
+    if (isRequestBindingError(err)) {
       throw err;
     }
     logger.warn({ err: err.message }, 'refusal receipt not issued');
@@ -374,22 +354,32 @@ async function worstCaseForRequest(req, registry, quoteOpts) {
   return reservationAmount(quoted, floorRaw);
 }
 
-async function refuseCeiling(req, res, ledger, decision, { taskId, bookable }) {
+async function refuseCeiling(req, res, ledger, decision, { taskId, bookable, resourcePath = '/v1/chat/completions' }) {
   const extra = {};
   if (bookable?.agent_id != null) extra.agent_id = bookable.agent_id;
   let entry = null;
   if (bookable?.agent_id != null) {
-    entry = await recordSpendRefusal(ledger, {
-      agentId: bookable.agent_id,
-      taskId,
-      policyCode: 'CEILING_EXCEEDED',
-      reason: 'Prepaid spend ceiling would be exceeded by this call',
-      model: req.body?.model || null,
-      hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
-      spentAtomic: decision.spent ?? null,
-      capAtomic: decision.cap ?? null,
-      amountRequested: decision.requested ?? null,
-    });
+    try {
+      entry = await recordSpendRefusal(ledger, {
+        agentId: bookable.agent_id,
+        taskId,
+        policyCode: 'CEILING_EXCEEDED',
+        reason: 'Prepaid spend ceiling would be exceeded by this call',
+        model: req.body?.model || null,
+        hub: req.body?.model?.includes('/') ? String(req.body.model).split('/')[0] : null,
+        spentAtomic: decision.spent ?? null,
+        capAtomic: decision.cap ?? null,
+        amountRequested: decision.requested ?? null,
+        request: clientRequestForRefusal(req, resourcePath),
+      });
+    } catch (err) {
+      const httpErr = requestBindingHttpError(err);
+      if (httpErr) {
+        res.status(httpErr.status).json(httpErr.body);
+        return;
+      }
+      throw err;
+    }
   }
   const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
   res.status(403).json(withRefusal(ceilingErrorBody(decision, extra), entry, baseUrl));
@@ -592,7 +582,7 @@ async function meterV1Request(req, res, {
             requested: null,
             spent: null,
             held: null,
-          }, { taskId, bookable });
+          }, { taskId, bookable, resourcePath });
           return { halted: true };
         }
         const { header: payHeader } = extractPaymentHeader(req);
@@ -600,7 +590,7 @@ async function meterV1Request(req, res, {
           ? await spendHolds.reserve({ requestId: taskId, amount: requested, ceilings: legs })
           : await spendHolds.preview({ amount: requested, ceilings: legs });
         if (!decision.ok) {
-          await refuseCeiling(req, res, ledger, decision, { taskId, bookable });
+          await refuseCeiling(req, res, ledger, decision, { taskId, bookable, resourcePath });
           return { halted: true };
         }
         activeHold = decision.hold || null;
@@ -615,7 +605,7 @@ async function meterV1Request(req, res, {
           spent: null,
           held: null,
           cap: null,
-        }, { taskId, bookable });
+        }, { taskId, bookable, resourcePath });
       }
       return { halted: true };
     }
