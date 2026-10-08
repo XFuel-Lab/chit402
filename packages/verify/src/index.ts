@@ -349,8 +349,15 @@ export interface ReceiptVerification {
   amount_usdc: string | null;
   /** Settlement ref from verified signed claims. Null when the signature is not trusted. */
   tx: string | null;
-  /** Unsigned outer fields that disagree with the JWS payload. */
+  /** Signed claim paths whose outer copy disagrees. */
   claim_mismatches: ClaimMismatch[];
+  /**
+   * Outer paths the payment JWS does not cover. Overall does not verify them.
+   * `issuer_signature` is omitted: those bytes are the signature that was checked.
+   */
+  unsigned_fields: string[];
+  /** Overall covers signed claims and the checks named in `errors`. */
+  verified_scope: 'signed_claims';
   /**
    * `not_present_legacy` — v8 (or older) payload with no claim_id key. Still verifies.
    * `ok` — claim_id-era payload, and a payment.ref is paired with a seat.
@@ -1050,70 +1057,124 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function normFact(value: unknown, address = false): string | null {
-  const text = claimString(value);
-  if (text == null) return null;
-  return address ? text.toLowerCase() : text;
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatClaim(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value);
+}
+
+/** 0x hex is compared case-insensitively. Checksum case is not a different claim. */
+function sameLeaf(signed: unknown, outer: unknown): boolean {
+  if (Array.isArray(signed) || Array.isArray(outer)) {
+    return JSON.stringify(signed) === JSON.stringify(outer);
+  }
+  if (typeof signed === 'string' && typeof outer === 'string') {
+    if (/^0x[0-9a-fA-F]+$/.test(signed) && /^0x[0-9a-fA-F]+$/.test(outer)) {
+      return signed.toLowerCase() === outer.toLowerCase();
+    }
+    return signed === outer;
+  }
+  if (signed == null || outer == null) return signed == null && outer == null;
+  return Object.is(signed, outer);
 }
 
 /**
- * Fields a verifier may quote. Compared only when both the unsigned outer
- * copy and the JWS payload carry a value.
+ * The outer receipt `schema` (`xfuel.receipt.v3`) is the document type.
+ * The JWS `schema` (`chit402.foreign_payout.v1`) is the payload type.
+ * They share a name and are not copies of each other.
  */
-const CLAIM_COMPARE: Array<{
-  field: string;
-  outer: (receipt: XFuelReceipt) => unknown;
-  signed: (claims: Record<string, unknown>) => unknown;
-  address?: boolean;
-}> = [
-  { field: 'task_id', outer: (r) => r.task_id, signed: (c) => c.task_id },
-  { field: 'payment.rail', outer: (r) => r.payment?.rail, signed: (c) => asRecord(c.payment)?.rail },
-  { field: 'payment.ref', outer: (r) => r.payment?.ref, signed: (c) => asRecord(c.payment)?.ref },
-  { field: 'payment.gross_amount', outer: (r) => r.payment?.gross_amount, signed: (c) => asRecord(c.payment)?.gross_amount },
-  { field: 'payment.settled_amount', outer: (r) => r.payment?.settled_amount, signed: (c) => asRecord(c.payment)?.settled_amount },
-  { field: 'payment.net_amount', outer: (r) => r.payment?.net_amount, signed: (c) => asRecord(c.payment)?.net_amount },
-  { field: 'payment.asset', outer: (r) => r.payment?.asset, signed: (c) => asRecord(c.payment)?.asset, address: true },
-  { field: 'payment.payee', outer: (r) => r.payment?.payee, signed: (c) => asRecord(c.payment)?.payee, address: true },
-  { field: 'caller_binding.payer_wallet', outer: (r) => r.caller_binding?.payer_wallet, signed: (c) => asRecord(c.caller_binding)?.payer_wallet, address: true },
-  { field: 'caller_binding.agent_pubkey', outer: (r) => r.caller_binding?.agent_pubkey, signed: (c) => asRecord(c.caller_binding)?.agent_pubkey },
-  { field: 'caller_binding.api_key_hash', outer: (r) => r.caller_binding?.api_key_hash, signed: (c) => asRecord(c.caller_binding)?.api_key_hash },
-  { field: 'claim_id', outer: (r) => r.claim_id, signed: (c) => c.claim_id },
-  { field: 'route.model', outer: (r) => r.route?.model, signed: (c) => asRecord(c.route)?.model },
-  { field: 'route.provider', outer: (r) => r.route?.provider, signed: (c) => asRecord(c.route)?.provider },
-  { field: 'output.hash', outer: (r) => r.output?.hash, signed: (c) => asRecord(c.output)?.hash },
-  { field: 'binding.expected_commitment', outer: (r) => r.binding?.expected_commitment, signed: (c) => asRecord(c.binding)?.expected_commitment },
-  { field: 'provider_cogs.actual', outer: (r) => r.provider_cogs?.actual, signed: (c) => asRecord(c.provider_cogs)?.actual },
-];
+function schemaIsNotACopy(path: string): boolean {
+  return path === 'schema';
+}
 
-/** Flag unsigned outer copies that disagree with the JWS payload. */
+function compareSignedNode(
+  signed: unknown,
+  outer: unknown,
+  prefix: string,
+  mismatches: ClaimMismatch[],
+): void {
+  if (!isPlain(signed)) return;
+  if (!isPlain(outer)) {
+    mismatches.push({
+      field: prefix || '$',
+      outer: formatClaim(outer),
+      signed: formatClaim(signed),
+    });
+    return;
+  }
+  for (const key of Object.keys(signed)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (schemaIsNotACopy(path)) continue;
+    if (!Object.prototype.hasOwnProperty.call(outer, key)) continue;
+    const sv = signed[key];
+    const ov = outer[key];
+    if (isPlain(sv) && isPlain(ov)) {
+      compareSignedNode(sv, ov, path, mismatches);
+      continue;
+    }
+    if (!sameLeaf(sv, ov)) {
+      mismatches.push({ field: path, outer: formatClaim(ov), signed: formatClaim(sv) });
+    }
+  }
+}
+
+/**
+ * Walk every signed claim. When the outer receipt has the same path, the
+ * values must match, including null against a filled-in outer copy. A path
+ * the outer receipt omits is not a copy, so it is not a mismatch.
+ */
 export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, unknown> | null): ClaimMismatch[] {
   if (!claims) return [];
   const mismatches: ClaimMismatch[] = [];
-  for (const spec of CLAIM_COMPARE) {
-    const outer = normFact(spec.outer(receipt), spec.address);
-    const signed = normFact(spec.signed(claims), spec.address);
-    if (outer == null || signed == null || outer === signed) continue;
-    mismatches.push({
-      field: spec.field,
-      outer: claimString(spec.outer(receipt)),
-      signed: claimString(spec.signed(claims)),
-    });
-  }
-  // v9 head pair. Compared when the outer key is present, including a null
-  // signed hash against a filled-in outer copy. v8 claims skip this.
-  if (headBindingVerdict(claims) === 'ok') {
-    const disagree = outerHeadDisagrees(receipt, claims);
-    if (disagree) {
-      const outerValue = disagree === 'tree_head_hash' ? receipt.tree_head_hash : receipt.tolerance;
-      const signedValue = disagree === 'tree_head_hash' ? claims.tree_head_hash : claims.tolerance;
-      mismatches.push({
-        field: disagree,
-        outer: outerValue == null ? null : JSON.stringify(outerValue),
-        signed: signedValue == null ? null : JSON.stringify(signedValue),
-      });
-    }
-  }
+  compareSignedNode(claims, receipt, '', mismatches);
   return mismatches;
+}
+
+function pushUnsignedLeaves(value: unknown, path: string, paths: string[]): void {
+  if (isPlain(value)) {
+    const keys = Object.keys(value).sort();
+    if (keys.length === 0) {
+      paths.push(path);
+      return;
+    }
+    for (const key of keys) pushUnsignedLeaves(value[key], `${path}.${key}`, paths);
+    return;
+  }
+  paths.push(path);
+}
+
+function collectUnsigned(
+  outer: unknown,
+  signed: unknown,
+  prefix: string,
+  paths: string[],
+): void {
+  if (!isPlain(outer)) return;
+  const signedObj = isPlain(signed) ? signed : null;
+  for (const key of Object.keys(outer).sort()) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    // The signature container is the credential that was checked, not an unsigned claim.
+    if (!prefix && key === 'issuer_signature') continue;
+    const signedHas = !!signedObj && Object.prototype.hasOwnProperty.call(signedObj, key);
+    if (!signedHas || schemaIsNotACopy(path)) {
+      pushUnsignedLeaves(outer[key], path, paths);
+      continue;
+    }
+    const sv = signedObj[key];
+    if (isPlain(outer[key]) && isPlain(sv)) collectUnsigned(outer[key], sv, path, paths);
+  }
+}
+
+/** Outer paths the signed claims do not cover. Sorted. Not a failure by themselves. */
+export function unsignedOuterFields(receipt: unknown, claims: Record<string, unknown> | null): string[] {
+  const paths: string[] = [];
+  collectUnsigned(receipt, claims, '', paths);
+  return paths;
 }
 
 function receiptViewFromClaims(receipt: XFuelReceipt, claims: Record<string, unknown>): XFuelReceipt {
@@ -1513,6 +1574,7 @@ export async function verifyReceipt(
     ? decodeJwsPayload(receipt.issuer_signature.jws)
     : null;
   const claim_mismatches = diffOuterClaims(receipt, decoded);
+  const unsigned_fields = unsignedOuterFields(receipt, decoded);
   for (const mismatch of claim_mismatches) {
     errors.push(`outer/signed mismatch: ${mismatch.field} (outer ${mismatch.outer}, signed ${mismatch.signed})`);
   }
@@ -1873,6 +1935,8 @@ export async function verifyReceipt(
     amount_usdc: facts.amount_usdc,
     tx: facts.tx,
     claim_mismatches,
+    unsigned_fields,
+    verified_scope: 'signed_claims',
     claim_id,
     head_binding: signedBinding
       ? { tree_head_hash: signedBinding.tree_head_hash, tolerance: signedBinding.tolerance }

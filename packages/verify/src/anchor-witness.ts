@@ -210,11 +210,12 @@ function half(n: number): number {
 
 /**
  * RFC 9162 §2.1.3.2 inclusion. `index` and `treeSize` choose left or right
- * at each step. `position` on a proof node is not trusted. A proof whose
- * length is not the length that pair requires is rejected, as is
- * `index >= treeSize`. Leaf and node bytes stay SHA-256(0x00 || leaf) and
- * SHA-256(0x01 || left || right). Consistency proofs and the empty root
- * are not this function.
+ * at each step. A `position` label is not the source of that side. When a
+ * label is present it must name the side the index already chose, so a
+ * swapped label fails. An omitted label does not. A proof whose length is
+ * not the length that pair requires is rejected, as is `index >= treeSize`.
+ * Leaf and node bytes stay SHA-256(0x00 || leaf) and SHA-256(0x01 || left ||
+ * right). Consistency proofs and the empty root are not this function.
  */
 export function verifyMerkleInclusion(
   leaf: Buffer,
@@ -237,7 +238,11 @@ export function verifyMerkleInclusion(
     if (sn === 0) return false;
     if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    if ((fn % 2) === 1 || fn === sn) {
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (typeof step.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
+      return false;
+    }
+    if (siblingOnLeft) {
       hash = nodeHash(sib, hash);
       if ((fn % 2) === 0) {
         while ((fn % 2) === 0 && fn !== 0) {

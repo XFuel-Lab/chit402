@@ -39,7 +39,7 @@ test('the live inclusion proof verifies only at index 1 of size 3', () => {
     hash: step.hash,
     position: step.position === 'left' ? 'right' : 'left',
   }));
-  assert.equal(verifyMerkleInclusion(leaf, 1, 3, root, flipped), true);
+  assert.equal(verifyMerkleInclusion(leaf, 1, 3, root, flipped), false);
   for (const [index, size] of [[0, 3], [2, 3], [1, 1000], [999, 1000], [0, 1], [500, 999]]) {
     assert.equal(verifyMerkleInclusion(leaf, index, size, root, proof), false, `${index} of ${size}`);
   }

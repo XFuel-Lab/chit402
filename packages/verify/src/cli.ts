@@ -125,8 +125,11 @@ Trust:
   issuer_jwk whose RFC 7638 thumbprint equals a pinned trusted kid. The
   embedded key alone is not a trust root. Untrusted keys report "key untrusted".
 
-  Amount, payer, payee, and tx are read from verified signed claims. A mismatch
-  with the unsigned outer payment / caller_binding copy is a failure.
+  Amount, payer, payee, and tx are read from verified signed claims. Every
+  signed field is compared with the outer receipt at the same path. A mismatch
+  fails. Outer fields the signature does not cover are printed as UNVERIFIED.
+  The outer document schema is not a copy of the JWS schema. Log mode (a
+  receipt, an inclusion proof, and a tree head) runs these receipt checks too.
 
 Network behavior:
   JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
@@ -147,7 +150,9 @@ Anchored root:
   xfuel-verify receipt.json inclusion.json head.json --rpc
   xfuel-verify receipt.json --inclusion inclusion.json --head head.json --rpc https://mainnet.base.org
 
-  Checks the tree head's ES256 issuer signature (production pin, issuer
+  Also runs the single-receipt checks (issuer signature and signed-versus-outer
+  comparison). Those must pass before Overall can be VERIFIED. Then it checks
+  the tree head's ES256 issuer signature (production pin, issuer
   history, or JWKS, same rules as a receipt). The signed root, size, epoch,
   and anchors must match the head. Then it checks Merkle inclusion, requires
   the Solana memo and fee payer, and requires the Base calldata and sender.
@@ -155,8 +160,9 @@ Anchored root:
   package pin, plus a verified /.well-known/anchor-wallets.json or
   issuer-history anchor_wallets list). The on-chain issuer-root registry and
   the DNS anchor are not read. Prints what this proves and what it does not
-  prove. Exit 0 when both chains match, 2 when the leaf is included but an
-  anchor is still pending, 1 when a check fails.
+  prove. Exit 0 when the receipt checks pass and both chains match, 2 when the
+  leaf is included but an anchor is still pending and the receipt checks did
+  not fail, 1 when a check fails.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -668,17 +674,81 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       issuer_signature?: { jws?: string };
     } | null,
   });
-  const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
-  const lane = verified.receipt_lane;
-  if (args.json) {
-    console.log(JSON.stringify({ ...result, receipt_lane: lane }, null, 2));
-  } else {
-    printAnchor(result, false, args.quiet);
-    if (!args.quiet) printLane(lane);
+  let canonicalPreimage: string | null = null;
+  if (args.canonicalPreimageFile) {
+    canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
   }
-  if (result.overall === 'verified') return 0;
-  if (result.overall === 'partial') return 2;
+  const historyBytes = args.issuerHistoryFile ? readFileSync(args.issuerHistoryFile, 'utf8') : null;
+  const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, {
+    jwks: loaded.jwks,
+    jwksUri: args.jwksUrl || undefined,
+    fetchJwks: args.fetchJwks,
+    trustedKids,
+    checkNullifier: args.checkNullifier,
+    checkPayer: args.checkPayer,
+    rpcUrl: args.rpcUrl || undefined,
+    solanaRpcUrl: args.solanaRpcUrl || undefined,
+    requirePreimages: !args.noPreimage,
+    issuerHistory: args.issuerHistoryFile ? issuerHistory : null,
+    issuerHistoryBytes: historyBytes,
+    fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
+    strictIssuerHistory: args.strictIssuerHistory,
+    skipIssuerHistory: args.noIssuerHistory,
+    canonicalPreimage,
+    head,
+  });
+  // Inclusion was already checked above. Passing it again re-derives the leaf
+  // from book_chain.row_hash only, which rejects a receipt that stores row_hash
+  // at the top level. Signature and signed-versus-outer comparison are the
+  // receipt checks log mode adds. A signed receipt that fails those, or any
+  // other single-receipt check, cannot be VERIFIED.
+  const issuerSig = (receipt as { issuer_signature?: { jws?: string; value?: string } }).issuer_signature;
+  const signedReceipt = Boolean(issuerSig?.jws || issuerSig?.value);
+  const receiptFailed = verified.claim_mismatches.length > 0
+    || (signedReceipt && verified.overall === 'failed');
+  const errors = receiptFailed
+    ? [...result.errors, ...verified.errors.filter((err) => !result.errors.includes(err))]
+    : result.errors;
+  const combined = {
+    ...result,
+    errors,
+    overall: receiptFailed ? 'failed' as const : result.overall,
+    receipt_lane: verified.receipt_lane,
+    receipt_check: {
+      overall: verified.overall,
+      verified_scope: verified.verified_scope,
+      claim_mismatches: verified.claim_mismatches,
+      unsigned_fields: verified.unsigned_fields,
+      errors: verified.errors,
+    },
+  };
+  if (args.json) {
+    console.log(JSON.stringify(combined, null, 2));
+  } else {
+    printAnchor(combined, false, args.quiet);
+    if (!args.quiet || receiptFailed) {
+      console.log(`  Receipt checks: ${verified.overall.toUpperCase()} (signed claims only)`);
+      if (verified.claim_mismatches.length > 0) {
+        for (const mismatch of verified.claim_mismatches) {
+          console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
+        }
+      }
+      printUnsigned(verified.unsigned_fields);
+      console.log('');
+    }
+    if (!args.quiet) printLane(verified.receipt_lane);
+  }
+  if (combined.overall === 'verified') return 0;
+  if (combined.overall === 'partial') return 2;
   return 1;
+}
+
+function printUnsigned(fields: string[]): void {
+  console.log('  Scope:         signed claims only. Unsigned fields are UNVERIFIED.');
+  if (fields.length === 0) return;
+  console.log(`  Unsigned fields (${fields.length})`);
+  console.log('  ─────────────────────────────────────────────────');
+  for (const field of fields) console.log(`  UNVERIFIED     ${field}`);
 }
 
 async function runRefusal(
@@ -988,6 +1058,8 @@ async function main(): Promise<number> {
         console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
       }
     }
+    console.log('');
+    printUnsigned(result.unsigned_fields);
     console.log('');
     console.log(`  Nullifier`);
     console.log(`  ─────────────────────────────────────────────────`);

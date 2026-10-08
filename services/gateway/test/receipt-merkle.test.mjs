@@ -134,7 +134,7 @@ test('the same task is not appended twice', () => {
   assert.equal(tree.leaves.length, size);
 });
 
-test('inclusion follows index and size, not the position label', () => {
+test('inclusion follows index and size, and a swapped position label fails', () => {
   const leaf = Buffer.from('395c0548278d35c42450b9ad0e39cb83c0c64a935037d23fafde9aebe0a21985', 'hex');
   const root = '1e3c8ad7ba0910dcee9194902681cf3bfc5445c59b2068230514b15b4e4fa28e';
   const proof = [
@@ -146,7 +146,7 @@ test('inclusion follows index and size, not the position label', () => {
     hash: step.hash,
     position: step.position === 'left' ? 'right' : 'left',
   }));
-  assert.equal(verifyInclusion(leaf, 1, 3, root, flipped), true);
+  assert.equal(verifyInclusion(leaf, 1, 3, root, flipped), false);
   const claims = [[0, 3], [2, 3], [1, 1000], [999, 1000], [0, 1], [500, 999]];
   for (const [index, size] of claims) {
     assert.equal(verifyInclusion(leaf, index, size, root, proof), false, `${index},${size}`);

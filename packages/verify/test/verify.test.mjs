@@ -1436,7 +1436,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     receipt.tolerance = { base: 999999, solana: 999999 };
     const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
     assert.equal(result.overall, 'failed');
-    assert.ok(result.claim_mismatches.some((row) => row.field === 'tolerance'));
+    assert.ok(result.claim_mismatches.some((row) => row.field === 'tolerance' || row.field.startsWith('tolerance.')));
     assert.deepEqual(result.head_binding.tolerance, tolerance);
     assert.notDeepEqual(result.head_binding.tolerance, receipt.tolerance);
   });
