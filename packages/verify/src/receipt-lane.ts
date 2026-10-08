@@ -497,6 +497,7 @@ export function buildReceiptLane({
 }
 
 interface SignedClaims {
+  schema?: string | null;
   payment?: { ref?: string | null; rail?: string | null; collected?: boolean | null } | null;
   settlement?: { kind?: string | null } | null;
 }
@@ -548,7 +549,8 @@ export function receiptLaneFromVerification({
   const kind = claims?.settlement?.kind ?? null;
   const signedRef = claims?.payment?.ref ?? null;
   const reported = kind === 'reported';
-  const asserts = issuerValid === true && !!signedRef && !reported;
+  const foreignPayout = issuerValid === true && claims?.schema === 'chit402.foreign_payout.v1';
+  const asserts = issuerValid === true && !!signedRef && !reported && !foreignPayout;
   const collected = kind === 'settled' || kind === 'inherited'
     ? true
     : (kind === 'unsettled' || reported ? false : (claims?.payment?.collected ?? null));
@@ -570,7 +572,9 @@ export function receiptLaneFromVerification({
       collected,
     } : null,
     collected,
-    evidence: reported ? 'openrouter_reported' : null,
+    evidence: foreignPayout ? 'foreign_ingest' : (reported ? 'openrouter_reported' : null),
+    source: foreignPayout ? 'foreign_ingest' : null,
+    foreign_x402: foreignPayout ? true : undefined,
     ...(binding ? {
       expiry: binding.expiry ?? null,
       receipt_id: binding.receipt_id ?? null,

@@ -40,6 +40,9 @@ export const PINNED_BASE_ANCHOR_WALLET = '0x1844D1F5FE42aff1Cce6F776514Fd4037407
 /** Fee payer of Solana memo 61RHMsPPseUc35v5oxDEtANEDCvXk5fmxZdrFDMknGWc5m7U8YhMfz4En1eFFj3z9n67ZtMiha1zkwnneL2LUiXk. */
 export const PINNED_SOLANA_ANCHOR_FEE_PAYER = 'BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD';
 
+/** A head signed before `anchors.base.from` and `anchors.solana.fee_payer` existed. Never VERIFIED. */
+export const LEGACY_HEAD_UNPINNED_SIGNER = 'LEGACY_HEAD_UNPINNED_SIGNER';
+
 export const ANCHOR_WALLETS_SCHEMA = 'chit402.anchor_wallets.v1';
 export const ANCHOR_WALLETS_JWT_TYP = 'chit402-anchor-wallets+jwt';
 
@@ -57,6 +60,7 @@ export const HEAD_TRUST_MESSAGES: Record<string, string> = {
   anchor_wallets_invalid: 'Issuer anchor-wallet list did not verify.',
   anchor_sender_missing: 'Signed head does not name anchors.base.from. An anchored Base transaction must name its sender.',
   fee_payer_missing: 'Signed head does not name anchors.solana.fee_payer. An anchored Solana memo must name its fee payer.',
+  LEGACY_HEAD_UNPINNED_SIGNER: 'This tree head was signed before anchor signer pinning. It does not name the Base sender or the Solana fee payer. Use a newer head.',
   anchor_sender_unlisted: 'Base anchor wallet is not on the issuer anchor-wallet list.',
   fee_payer_unlisted: 'Solana fee payer is not on the issuer anchor-wallet list.',
   sender_mismatch: 'Base transaction sender does not match the signed anchor wallet.',
@@ -209,6 +213,34 @@ const MATCHED_FIELDS = [
   'published_at',
   'anchors',
 ] as const;
+
+function signerNamed(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function anchoredSide(side: { status?: string | null; tx?: unknown; signature?: unknown } | null | undefined, id: 'tx' | 'signature'): boolean {
+  if (!side || side.status === 'pending') return false;
+  return signerNamed(side[id]);
+}
+
+/**
+ * True when a verified head anchors a chain but the signature does not name
+ * that chain's signer. Those fields were added after the epoch-1 head and
+ * after the epoch-2 head signed at 07:43 ET on 2026-10-07. A pending side
+ * is not this case.
+ */
+export function headOmitsPinnedSigner(payload: Record<string, unknown> | null | undefined): boolean {
+  const anchors = payload?.anchors as {
+    base?: { status?: string | null; tx?: unknown; from?: unknown };
+    solana?: { status?: string | null; signature?: unknown; fee_payer?: unknown };
+  } | null | undefined;
+  if (!anchors || typeof anchors !== 'object') return false;
+  const base = anchors.base;
+  const solana = anchors.solana;
+  if (anchoredSide(base, 'tx') && !signerNamed(base?.from)) return true;
+  if (anchoredSide(solana, 'signature') && !signerNamed(solana?.fee_payer)) return true;
+  return false;
+}
 
 /** Signed payload must carry the same root, size, epoch, and anchors the check uses. */
 export function headClaimsMatch(outer: TreeHeadDocument, payload: Record<string, unknown>): string | null {

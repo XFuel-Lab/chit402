@@ -42,6 +42,7 @@ import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -78,6 +79,8 @@ Options:
                       the anchor wallets must match the signed head.
                       A v2 head also needs the signed epoch record.
                       A tree-head file with --rpc enters this mode.
+                      The same files without --rpc check the head signature and the
+                      index/size-bound inclusion offline. They do not call chain RPC.
   --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
   --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
                       origin plus /v1/receipts/tree/epoch
@@ -383,6 +386,9 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('');
   console.log(`  Overall: ${result.overall.toUpperCase()}`);
   if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
+  if (result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER)) {
+    console.log(`  ${HEAD_TRUST_MESSAGES[LEGACY_HEAD_UNPINNED_SIGNER]}`);
+  }
   console.log('');
 }
 
@@ -455,6 +461,28 @@ function looksLikeTreeHead(value: unknown): boolean {
   if (doc.status === 'not_yet_published') return true;
   if (typeof doc.schema === 'string' && doc.schema.startsWith('chit402.tree_head.')) return true;
   return Boolean(doc.anchors && doc.root && !doc.task_id);
+}
+
+function readOfflineWitness(args: ReturnType<typeof parseArgs>): {
+  head: AnchorHead | null;
+  inclusion: AnchorInclusion | null;
+} {
+  let head: AnchorHead | null = null;
+  let inclusion: AnchorInclusion | null = null;
+  for (const file of args.positionals.slice(1)) {
+    let doc: unknown;
+    try {
+      doc = readJson(file);
+    } catch (err) {
+      throw new Error(`Error reading ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const row = doc as { proof?: unknown; leaf_index?: unknown };
+    if (looksLikeTreeHead(doc)) head = doc as AnchorHead;
+    else if (doc && typeof doc === 'object' && (Array.isArray(row.proof) || row.leaf_index != null)) {
+      inclusion = doc as AnchorInclusion;
+    }
+  }
+  return { head, inclusion };
 }
 
 function fileLooksLikeHead(file: string | null): boolean {
@@ -724,6 +752,16 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
+  let offlineWitness: ReturnType<typeof readOfflineWitness> | null = null;
+  if (!anchorMode) {
+    try {
+      offlineWitness = readOfflineWitness(args);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 3;
+    }
+  }
+
   if (anchorMode) return runAnchor(args);
 
   if (!args.file) {
@@ -823,6 +861,8 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    head: offlineWitness?.head ?? undefined,
+    inclusion: offlineWitness?.inclusion ?? undefined,
   });
 
   if (args.json) {
