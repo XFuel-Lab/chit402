@@ -948,7 +948,7 @@ export async function settlePayment(paymentHeader, opts = {}) {
     const settled = !!data.settled;
     const txRef = data.txRef || data.transaction || null;
     if (settled && store && nonce) store.markSpent(nonce);
-    return { settled, txRef, reason: data.reason };
+    return { settled, txRef, network: data.network || null, reason: data.reason };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 settlePayment failed');
     return { settled: false, reason: 'gateway_error' };
