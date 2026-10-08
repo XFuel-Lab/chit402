@@ -23,9 +23,9 @@
     "note": "Server-attested metadata only until prover runs guest v2 with SP1_PUBLIC_VALUES_V2=true"
   },
   "tier1_public_receipt": {
-    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-    "json": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e?format=json",
-    "basescan_settlement": "https://basescan.org/tx/0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03"
+    "verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+    "json": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json",
+    "basescan_settlement": "https://basescan.org/tx/0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f"
   },
   "smoke_doc": "docs/product/tier2-in-proof-binding-smoke.md",
   "ops_taps": [

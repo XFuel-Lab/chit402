@@ -136,6 +136,10 @@ test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaa
   assert.ok(!bazaarBody.message_type);
   const decoded = JSON.parse(Buffer.from(headers['PAYMENT-REQUIRED'], 'base64').toString('utf8'));
   assert.equal(decoded.resource.url, body.resource.url);
+  assert.equal(
+    body.extensions.bazaar.info.output.example.xfuel.verify_url,
+    'https://api.chit402.com/receipt/chit-abc123',
+  );
 });
 
 test('buildPaymentChallenge: falls back to relative path when no baseUrl', () => {

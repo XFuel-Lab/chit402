@@ -4,12 +4,12 @@
   "description": "Observation-only fixture proving payer_wallet ↔ payment.ref bindings survive session path-rotation. POST /v1/agents/:agent_id/book/rotate remains possession-gated — this file does not expose session tokens.",
   "agent_id": 0,
   "parent_receipt": {
-    "task_id": "chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-    "wire_task_id": "xfuel-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
-    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
-    "payer_wallet": "0xREDACTED…c90cfe03",
+    "task_id": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+    "wire_task_id": "xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+    "payment_ref": "base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f",
+    "payer_wallet": "0x2536…e499",
     "amount": "2000",
-    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e"
+    "verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96"
   },
   "path_rotate": {
     "path_label": "POST /v1/agents/{agent_id}/book/rotate",
@@ -19,15 +19,15 @@
     "note": "Old possession session invalid after rotate; ledger bindings stay on agent_id."
   },
   "before_rotate": {
-    "payer_wallet": "0xREDACTED…c90cfe03",
-    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
+    "payer_wallet": "0x2536…e499",
+    "payment_ref": "base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f",
     "totals_usdc_sum": "2000"
   },
   "after_rotate": {
-    "payer_wallet": "0xREDACTED…c90cfe03",
-    "payment_ref": "base:0x1f840073f8a55a7d0fe8ae0fe50bc99e4c8e9da5a946ec68c11e1b19c90cfe03",
+    "payer_wallet": "0x2536…e499",
+    "payment_ref": "base:0xf63ed6a83106d84a04b18a53ebbd73ff4c1fce280ec1a6035c5bdc2bed283f6f",
     "totals_usdc_sum": "2000",
-    "verify_url": "https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e",
+    "verify_url": "https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
     "verify_url_resolves": true,
     "verify_url_note": "Public GET /receipt/:taskId requires no session — settlement proof is receipt + chain, not possession."
   },

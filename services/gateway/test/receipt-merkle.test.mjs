@@ -14,6 +14,7 @@ const {
   describeAnchor,
   renderInclusionSection,
   resetReceiptMerkleTree,
+  publicLogWitness,
 } = await import('../src/receipt-merkle.js');
 
 test('inclusion proof verifies and a flipped step does not', async () => {
@@ -131,4 +132,136 @@ test('the same task is not appended twice', () => {
   const size = tree.leaves.length;
   tree.appendReceipt('once', 'z');
   assert.equal(tree.leaves.length, size);
+});
+
+test('a receipt only in the current epoch has no carry-forward result', async () => {
+  const tree = new ReceiptMerkleTree();
+  tree.appendReceipt('solo', 'hh');
+  assert.equal(tree.carryForwardFor('solo'), null);
+  const html = renderInclusionSection(tree.inclusion('solo'));
+  assert.equal(html.includes('VERIFIED_CARRIED_FORWARD'), false);
+  assert.match(html, /Inclusion/);
+});
+
+test('a leaf carried into a later epoch renders the dated status', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
+  delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.appendReceipt('carried', 'row');
+    await tree.publishHead({ force: true, now: '2026-10-03T11:33:37.000Z' });
+    tree.closedEpochs.push({
+      epoch: 1,
+      status: 'closed',
+      leaves: tree.leaves.map((row) => Buffer.from(row)),
+      byTask: new Map(tree.byTask),
+      heads: tree.heads.slice(),
+      meta: tree.meta.map((row) => ({ ...row })),
+      prevEpochRoot: null,
+      prevEpochSize: 0,
+    });
+    tree.epoch = 2;
+    tree.leaves = [];
+    tree.meta = [];
+    tree.byTask = new Map();
+    tree.heads = [];
+    tree._epochOpened = false;
+    tree.ensureGenesis();
+    tree._push('carried', Buffer.from('carried|row'), 'receipt');
+    await tree.publishHead({ force: true, now: '2026-10-05T11:22:57.000Z' });
+    const carry = tree.carryForwardFor('carried');
+    assert.equal(carry.status, 'VERIFIED_CARRIED_FORWARD', carry.reason);
+    assert.equal(carry.issued_at, '2026-10-03T11:33:37.000Z');
+    assert.equal(carry.issued_epoch, 1);
+    assert.equal(carry.logged_at, '2026-10-05T11:22:57.000Z');
+    assert.equal(carry.logged_epoch, 2);
+    assert.equal(typeof carry.leaf_index, 'number');
+    const witness = publicLogWitness(tree, 'carried');
+    const html = renderInclusionSection(witness.inclusion, witness.carry_forward);
+    assert.match(html, /VERIFIED_CARRIED_FORWARD/);
+    assert.match(html, /2026-10-03T11:33:37\.000Z/);
+    assert.match(html, /2026-10-05T11:22:57\.000Z/);
+    assert.match(html, /Issued epoch/);
+    assert.equal(html.includes('valid'), false);
+
+    const dup = Buffer.from(tree.leaves[carry.leaf_index]);
+    tree.leaves.push(dup);
+    await tree.publishHead({ force: true, now: '2026-10-06T00:00:00.000Z' });
+    const replay = tree.carryForwardFor('carried');
+    assert.equal(replay.ok, false);
+    assert.equal(replay.reason, 'inclusion_failed');
+    const failedHtml = renderInclusionSection(null, { status: 'failed', error: replay.reason });
+    assert.match(failedHtml, /inclusion_failed/);
+    assert.equal(failedHtml.includes('VERIFIED_CARRIED_FORWARD'), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+    else process.env.SOLANA_RPC_URL = prevSolRpc;
+    resetReceiptMerkleTree();
+  }
+});
+
+test('a closed epoch with no stored head uses the head signed on read', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevSol = process.env.SOLANA_ANCHOR_SECRET_KEY;
+  const prevSolRpc = process.env.SOLANA_RPC_URL;
+  delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+  delete process.env.SOLANA_RPC_URL;
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.appendReceipt('carried', 'row');
+    const signed = await tree.publishHead({ force: true, now: '2026-10-03T11:33:37.000Z' });
+    tree.closedEpochs.push({
+      epoch: 1,
+      status: 'closed',
+      leaves: tree.leaves.map((row) => Buffer.from(row)),
+      byTask: new Map(tree.byTask),
+      heads: [],
+      meta: tree.meta.map((row) => ({ ...row })),
+      prevEpochRoot: null,
+      prevEpochSize: 0,
+    });
+    tree.signedClosedEpochHead = () => signed;
+    tree.epoch = 2;
+    tree.leaves = [];
+    tree.meta = [];
+    tree.byTask = new Map();
+    tree.heads = [];
+    tree._epochOpened = false;
+    tree.ensureGenesis();
+    tree._push('carried', Buffer.from('carried|row'), 'receipt');
+    await tree.publishHead({ force: true, now: '2026-10-05T11:22:57.000Z' });
+    const carry = tree.carryForwardFor('carried');
+    assert.equal(carry.status, 'VERIFIED_CARRIED_FORWARD', carry.reason);
+    assert.equal(carry.issued_at, '2026-10-03T11:33:37.000Z');
+    assert.equal(carry.issued_epoch, 1);
+    assert.equal(carry.logged_at, '2026-10-05T11:22:57.000Z');
+    assert.equal(carry.logged_epoch, 2);
+    const html = renderInclusionSection(null, {
+      status: carry.status,
+      issued_at: carry.issued_at,
+      issued_epoch: carry.issued_epoch,
+      logged_at: carry.logged_at,
+      logged_epoch: carry.logged_epoch,
+      leaf_index: carry.leaf_index,
+    });
+    assert.match(html, /VERIFIED_CARRIED_FORWARD/);
+    assert.equal(html.includes('epoch_signature_missing'), false);
+  } finally {
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    if (prevSol == null) delete process.env.SOLANA_ANCHOR_SECRET_KEY;
+    else process.env.SOLANA_ANCHOR_SECRET_KEY = prevSol;
+    if (prevSolRpc == null) delete process.env.SOLANA_RPC_URL;
+    else process.env.SOLANA_RPC_URL = prevSolRpc;
+    resetReceiptMerkleTree();
+  }
 });

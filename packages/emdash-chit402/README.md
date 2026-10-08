@@ -6,8 +6,19 @@ The stamp is the existing book door, `POST /v1/agents/:agent_id/book/ingest`, at
 
 ## Install
 
+`chit402-emdash` is not on npm yet. It is coming to npm. Until then, build it from this repo and install the folder. `@emdash-cms/x402` is the published EmDash package.
+
 ```bash
-npm install chit402-emdash @emdash-cms/x402
+git clone https://github.com/XFuel-Lab/chit402.git
+cd chit402/packages/emdash-chit402
+npm install
+npm run build
+```
+
+From the EmDash app, point npm at that built folder:
+
+```bash
+npm install /path/to/chit402/packages/emdash-chit402 @emdash-cms/x402
 ```
 
 `astro.config.mjs` keeps the EmDash payment integration. The page wraps `Astro.locals.x402`. `CHIT_STAMP_PRIVATE_KEY` is the publisher key that pays the $0.002 stamp. A viem account, or `createEip3009Payer` from `xfuel-sdk/onchain`, can be passed as `signer` instead of the raw key.
