@@ -127,7 +127,7 @@ The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-3
 
 Run the script from `services/gateway` so it loads `.env` the same way the server does. It refuses, and does not sign, when `ISSUER_PRIVATE_KEY` is unset. An ephemeral key is not used: boot would reject that epoch record (`epoch_signature` / `no_matching_key`). On success it prints `epoch record kid:` and `epoch record signed: true` only after that signature verifies against the same key. A directory from a run that did not print a kid was signed with a throwaway key. Move it aside and run the script again. Do not copy it into place. The book file is not modified.
 
-Then backfill every later book row that is not already a leaf. Dry-run is the default. Publish the v3-aware `@xfuel/verify` and confirm it with `npm view @xfuel/verify version` before `--apply`. npm serves 0.3.1 today, and the 0.3.2 verifier rejects a version 3 epoch record. `--apply` writes the leaves and a version 3 record. It does not publish or broadcast.
+Then backfill every later book row that is not already a leaf. Dry-run is the default. Publish the v3-aware `@xfuel/verify` and confirm it with `npm view @xfuel/verify version` before `--apply`. npm serves 0.3.1 today. 0.3.1, and the 0.3.2 on main before this change, reject a version 3 epoch record (`epoch_record_version`). The first v3-aware release is 0.3.3; `npm view @xfuel/verify version` must print 0.3.3 or later. `--apply` writes the leaves and a version 3 record. It does not publish or broadcast.
 
 ```bash
 node scripts/backfill-receipt-log.mjs \
@@ -248,7 +248,7 @@ Do this before `systemctl restart xfuel-api` on the build that contains this log
 1. Pull the commit. Do not restart yet.
 2. Confirm `.data/agents/usage-settled.jsonl` is the live book.
 3. Run `rebuild-receipt-epoch1.mjs` as above. It must print the epoch 1 root and `epoch record signed: true`. If it prints `REFUSED`, do not restart.
-4. Publish the v3-aware `@xfuel/verify` and confirm it with `npm view @xfuel/verify version`. npm serves 0.3.1 today, and the 0.3.2 verifier rejects a version 3 epoch record. Do this before `--apply`.
+4. Publish the v3-aware `@xfuel/verify` and confirm it with `npm view @xfuel/verify version`. npm serves 0.3.1 today. 0.3.1, and the 0.3.2 on main before this change, reject a version 3 epoch record (`epoch_record_version`). The first v3-aware release is 0.3.3; `npm view @xfuel/verify version` must print 0.3.3 or later. Do this before `--apply`.
 5. Run the backfill dry-run, read the `would append` task ids, then run it again with `--apply`. Do this before restart. The script does not broadcast.
 6. Create the S3 bucket with Object Lock (compliance) and the lifecycle rule above. Attach the instance role. Set `RECEIPT_LOG_S3_BUCKET` and `RECEIPT_LOG_S3_REGION` in `.env` when you want hourly bundles. Leaving the bucket unset keeps bundles off. Set `RECEIPT_LOG_RETENTION_POLICY_ID` and `RECEIPT_LOG_RETENTION_POLICY_SHA256` together when a policy document should be named on the bundle index.
 7. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset. The committed pin already names the Base and Solana transactions. Boot still refuses a null `tx`. The pin is checked against the recomputed journal, not only against an empty directory. `ff950e72…` has no Solana transaction.
