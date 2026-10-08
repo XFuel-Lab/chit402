@@ -1460,6 +1460,19 @@ function normalizeBoundRoot(root: unknown): string | null {
 }
 
 /**
+ * Row hash for an offline leaf. Null and `''` are missing: do not hash `task_id|`.
+ */
+function inclusionRow(
+  receipt: XFuelReceipt,
+  inclusion: { row_hash?: string | null } | null | undefined,
+): { ok: true; row: string } | { ok: false; reason: 'row_hash_mismatch' | 'no_leaf' } {
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return bound;
+  if (bound.row == null || bound.row === '') return { ok: false, reason: 'no_leaf' };
+  return { ok: true, row: bound.row };
+}
+
+/**
  * Bind a supplied inclusion proof to its leaf index and tree size.
  * The head's size, when present, has to be the inclusion's size.
  */
@@ -1482,9 +1495,9 @@ function offlineInclusionBound(
   );
   if (!root) return { ok: false, reason: 'bad_root' };
   if (receipt.task_id == null) return { ok: false, reason: 'missing_task_id' };
-  const bound = boundRowHash(receipt, inclusion);
+  const bound = inclusionRow(receipt, inclusion);
   if (!bound.ok) return bound;
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row ?? ''}`));
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return { ok: false, reason: 'leaf_mismatch' };
@@ -1514,9 +1527,9 @@ function suppliedHeadCovers(
   if (signed === supplied) return true;
   if (!inclusion || !Array.isArray(inclusion.proof) || inclusion.leaf_index == null) return true;
   if (receipt.task_id == null) return false;
-  const bound = boundRowHash(receipt, inclusion);
+  const bound = inclusionRow(receipt, inclusion);
   if (!bound.ok) return false;
-  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row ?? ''}`));
+  const leaf = leafHash(Buffer.from(`${receipt.task_id}|${bound.row}`));
   if (typeof inclusion.leaf === 'string' && /^[0-9a-fA-F]{64}$/.test(inclusion.leaf)
     && inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
     return false;
