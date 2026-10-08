@@ -52,6 +52,8 @@ To move real funds: `createEip3009Payer(wallet)` from `xfuel-sdk/onchain`. That 
 
 A 402 from `submitTask` is an `XFuelApiError` with `error.challenge.accepts` (the x402 handshake). Or use `submitTaskWithPayment`.
 
+On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate change.
+
 Production: pass `{ baseUrl, apiKey }`. As-deployed: [docs/RUNTIME_STATE.md](../../docs/RUNTIME_STATE.md).
 
 ## Proofs

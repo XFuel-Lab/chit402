@@ -59,6 +59,16 @@ const config = {
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
     fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
+    // Emergency rollback only. Off (unset or false) enforces server-issued challenges.
+    // Boot refuses true when X402_NETWORK is a mainnet network.
+    allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
+    // Server-only Solana RPC for settlement confirmation. Never taken from a client.
+    solanaRpcUrl: process.env.SOLANA_RPC_URL || null,
+    solanaFinalizeWaitMs: (() => {
+      const n = parseInt(process.env.X402_SOLANA_FINALIZE_WAIT_MS, 10);
+      return Number.isFinite(n) && n >= 0 ? n : 30000;
+    })(),
+    challengeStorePath: process.env.X402_CHALLENGE_STORE || null,
     // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
     facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
     // Standard x402 facilitator URL (used when facilitatorProvider='x402'); null →

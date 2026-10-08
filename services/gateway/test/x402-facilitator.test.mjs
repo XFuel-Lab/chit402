@@ -20,6 +20,18 @@ import { buildBazaarExtension } from '../src/x402-adapter.js';
 import { runX402Handshake } from '../src/x402-server.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
+function challengeFromHeader(header, extra = {}) {
+  const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+  const src = decoded.accepted || decoded;
+  return {
+    network: src.network || decoded.network || 'base-sepolia',
+    amount: String(src.amount ?? decoded.amount ?? src.maxAmountRequired ?? decoded.maxAmountRequired ?? '50000'),
+    payTo: src.payTo || decoded.payTo || '0xtreasury',
+    feePayer: src.extra?.feePayer || decoded.extra?.feePayer,
+    ...extra,
+  };
+}
+
 // Build an X-PAYMENT header the way the SDK's createEip3009Payer does: a base64
 // JSON envelope with an EIP-3009 authorization message + signature.
 function makePaymentHeader({
@@ -613,7 +625,7 @@ test('v2 verifyViaFacilitator slims Bankr fat accepted before sending to facilit
       from: '0xbankrwallet',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true, 'Bankr fat accepted must verify after slimming');
 
     // Verify the fat fields were stripped before sending
@@ -670,7 +682,7 @@ test('verifyViaFacilitator surfaces facilitator rejection', async () => {
   try {
     const r = await verifyViaFacilitator(makePaymentHeader(), { gateway: url, challenge: { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury' } });
     assert.equal(r.valid, false);
-    assert.equal(r.reason, 'mock_rejected');
+    assert.equal(r.reason, 'verify_failed');
   } finally {
     await close();
   }
@@ -935,38 +947,25 @@ test('verifyViaFacilitator builds valid requirements from CDP v2 decoded.accepte
     });
 
     // No challenge passed - this simulates when nonce extraction fails
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 /* unbound */ });
 
-    assert.equal(r.valid, true, 'CDP v2 without challenge binding must still verify');
-    assert.equal(r.payer, '0xbankrwallet');
+    assert.equal(r.valid, false);
+    assert.equal(r.reason, 'challenge_required');
+    assert.equal(receivedRequirements, null);
 
-    // CRITICAL: Verify the requirements were built correctly from decoded.accepted
-    // Before the fix: amount field would be missing (v1 uses maxAmountRequired), payTo undefined
-    // After the fix: v2 uses `amount` and values are correctly extracted from decoded.accepted
-    assert.ok(receivedRequirements, 'mock must receive paymentRequirements');
-    // v2 uses `amount`, NOT `maxAmountRequired` (per x402 spec section 5.1.2)
-    assert.equal(
-      receivedRequirements.amount, '75000',
-      'v2 must use `amount` field extracted from decoded.accepted.amount'
-    );
-    assert.equal(
-      receivedRequirements.maxAmountRequired, undefined,
-      'v2 must NOT have maxAmountRequired (v1-only field)'
-    );
-    assert.equal(
-      receivedRequirements.payTo, '0xbankrtreasury',
-      'payTo must be extracted from decoded.accepted.payTo, not undefined'
-    );
-    // For v2, network MUST be CAIP-2 format to match what the payer signed.
-    // CDP facilitator rejects short form 'base' with invalid_network.
-    assert.equal(
-      receivedRequirements.network, 'eip155:84532',
-      'v2 paymentRequirements.network must be CAIP-2 (eip155:84532), not short form'
-    );
-    // v2 does NOT have v1 discovery fields
-    assert.equal(receivedRequirements.resource, undefined, 'v2 has no resource');
-    assert.equal(receivedRequirements.description, undefined, 'v2 has no description');
-    assert.equal(receivedRequirements.mimeType, undefined, 'v2 has no mimeType');
+    const prev = process.env.X402_ALLOW_UNBOUND;
+    process.env.X402_ALLOW_UNBOUND = 'true';
+    try {
+      const rolled = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+      assert.equal(rolled.valid, true);
+      assert.equal(receivedRequirements.amount, '75000');
+      assert.equal(receivedRequirements.payTo, '0xbankrtreasury');
+      assert.equal(receivedRequirements.network, 'eip155:84532');
+      assert.equal(receivedRequirements.maxAmountRequired, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.X402_ALLOW_UNBOUND;
+      else process.env.X402_ALLOW_UNBOUND = prev;
+    }
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -1013,13 +1012,11 @@ test('verifyViaFacilitator surfaces CDP invalidReason in error (not just facilit
 
   try {
     const header = makePaymentHeader();
-    const r = await verifyViaFacilitator(header, { gateway: url });
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.valid, false);
-    // Before the fix: reason would be 'facilitator_http_400' (no details)
-    // After the fix: reason should include the CDP invalidReason
-    assert.match(r.reason, /amount_required/, 'must surface CDP invalidReason in error');
-    assert.match(r.reason, /facilitator_http_400/, 'must still include HTTP status');
+    assert.equal(r.reason, 'verify_failed');
+    assert.equal(String(r.reason).includes('amount_required'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -1061,7 +1058,7 @@ test('v2 verifyViaFacilitator sends CAIP-2 network to facilitator (invalid_netwo
       from: '0xbankrwallet',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true);
 
     // CRITICAL: The facilitator must receive CAIP-2 network, not short form.
@@ -1105,7 +1102,7 @@ test('v1 verifyViaFacilitator sends short network for backward compatibility', a
     });
 
     // x402Version: 1 (default) for XFuel SDK
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true);
 
     // v1 must use short form for backward compatibility
@@ -1159,7 +1156,7 @@ test('verifyViaFacilitator sends CDP v2 paymentPayload with accepted field (sche
       from: '0xbankrwallet',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true);
 
     // CRITICAL: Verify the paymentPayload has the correct CDP v2 schema.
@@ -1220,7 +1217,7 @@ test('settleViaFacilitator sends CDP v2 paymentPayload with accepted field (sche
       from: '0xbankrwallet',
     });
 
-    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.settled, true);
 
     // CDP v2 schema validation on settle path
@@ -1261,7 +1258,7 @@ test('XFuel SDK v1 paymentPayload still uses top-level scheme/network for ZAN/te
       from: '0xsdkuser',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 1, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true);
 
     // v1 SDK: top-level scheme/network for backward compatibility
@@ -1378,7 +1375,7 @@ test('v2 verifyViaFacilitator sends spec-compliant paymentRequirements (amount, 
       resourceUrl: 'https://api.xfuel.app/v1/chat/completions',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true, 'v2 must verify');
 
     // Verify the FULL body posted to the facilitator
@@ -1438,7 +1435,7 @@ test('v2 settleViaFacilitator sends spec-compliant paymentRequirements (amount, 
       from: '0xbankrwallet',
     });
 
-    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.settled, true, 'v2 must settle');
 
     // paymentRequirements: v2 spec shape
@@ -1920,7 +1917,7 @@ test('verifyViaFacilitator returns specific reason for fractional validAfter', a
   });
 
   // No mock server needed — the payload validation fails before HTTP call
-  const r = await verifyViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2 });
+  const r = await verifyViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2, challenge: challengeFromHeader(header) });
 
   assert.equal(r.valid, false);
   assert.match(
@@ -1935,7 +1932,7 @@ test('settleViaFacilitator returns specific reason for bytes16 nonce', async () 
     nonce: 'ab'.repeat(16),  // <-- bytes16
   });
 
-  const r = await settleViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2 });
+  const r = await settleViaFacilitator(header, { gateway: 'http://unused.test', x402Version: 2, challenge: challengeFromHeader(header) });
 
   assert.equal(r.settled, false);
   assert.match(
@@ -1973,7 +1970,7 @@ test('v2 verifyViaFacilitator sends coerced integer strings to mock facilitator'
       nonce: 'cd'.repeat(32),  // 64-hex without 0x
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true, 'Bankr float-string header must verify after coercion');
 
     // Verify the coerced values were sent to the facilitator
@@ -2147,18 +2144,12 @@ test('verifyViaFacilitator surfaces CDP invalidMessage slug in reason (Bankr rec
 
   try {
     const header = makePaymentHeader();
-    const r = await verifyViaFacilitator(header, { gateway: url });
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.valid, false);
-    // Must include HTTP status
-    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
-    // Must include invalidReason
-    assert.match(r.reason, /invalid_exact_evm_payload_signature/, 'must include invalidReason');
-    // Must include invalidMessage slug with recovery code
-    assert.match(r.reason, /recovery_code_171/, 'must include recovery code from invalidMessage');
-    // Should be structured as facilitator_http_400:reason:slug
-    const parts = r.reason.split(':');
-    assert.ok(parts.length >= 3, 'reason must have at least 3 colon-separated parts');
+    assert.equal(r.reason, 'verify_failed');
+    assert.equal(String(r.reason).includes('recovery_code_171'), false);
+    assert.equal(String(r.reason).includes('invalid_exact_evm_payload_signature'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -2187,14 +2178,11 @@ test('verifyViaFacilitator keeps current behavior when invalidMessage is absent'
 
   try {
     const header = makePaymentHeader();
-    const r = await verifyViaFacilitator(header, { gateway: url });
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.valid, false);
-    // Must include HTTP status and invalidReason
-    assert.match(r.reason, /facilitator_http_400:amount_required/, 'must include status:reason');
-    // Should NOT have a third part (no invalidMessage slug)
-    const parts = r.reason.split(':');
-    assert.equal(parts.length, 2, 'reason should have exactly 2 parts when no invalidMessage');
+    assert.equal(r.reason, 'verify_failed');
+    assert.equal(String(r.reason).includes('amount_required'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -2223,13 +2211,11 @@ test('verifyViaFacilitator handles invalidMessage without invalidReason', async 
 
   try {
     const header = makePaymentHeader();
-    const r = await verifyViaFacilitator(header, { gateway: url });
+    const r = await verifyViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.valid, false);
-    // Must include HTTP status
-    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
-    // Should include the invalidMessage slug even without invalidReason
-    assert.match(r.reason, /something_went_wrong/, 'must include invalidMessage slug');
+    assert.equal(r.reason, 'verify_failed');
+    assert.equal(String(r.reason).includes('something_went_wrong'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -2261,15 +2247,11 @@ test('settleViaFacilitator surfaces CDP invalidMessage slug in reason', async ()
 
   try {
     const header = makePaymentHeader();
-    const r = await settleViaFacilitator(header, { gateway: url });
+    const r = await settleViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.settled, false);
-    // Must include HTTP status
-    assert.match(r.reason, /facilitator_http_400/, 'must include HTTP status');
-    // Must include invalidReason
-    assert.match(r.reason, /invalid_exact_evm_payload_signature/, 'must include invalidReason');
-    // Must include invalidMessage slug with recovery code
-    assert.match(r.reason, /recovery_code_171/, 'must include recovery code from invalidMessage');
+    assert.equal(r.reason, 'settle_failed');
+    assert.equal(String(r.reason).includes('recovery_code_171'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -2296,12 +2278,11 @@ test('settleViaFacilitator keeps current behavior when invalidMessage is absent'
 
   try {
     const header = makePaymentHeader();
-    const r = await settleViaFacilitator(header, { gateway: url });
+    const r = await settleViaFacilitator(header, { gateway: url, challenge: challengeFromHeader(header) });
 
     assert.equal(r.settled, false);
-    assert.match(r.reason, /facilitator_http_400:insufficient_funds/, 'must include status:reason');
-    const parts = r.reason.split(':');
-    assert.equal(parts.length, 2, 'reason should have exactly 2 parts when no invalidMessage');
+    assert.equal(r.reason, 'settle_failed');
+    assert.equal(String(r.reason).includes('insufficient_funds'), false);
   } finally {
     await new Promise((r) => server.close(r));
   }
@@ -2646,7 +2627,7 @@ test('verifyViaFacilitator sends SVM payload to mock PayAI unchanged', async () 
       feePayer: 'TestFeePayer11111111111111111111111111111111',
     });
 
-    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.valid, true, 'SVM payload must verify');
 
     // paymentPayload: SVM structure preserved
@@ -2696,7 +2677,7 @@ test('settleViaFacilitator sends SVM payload to mock PayAI unchanged', async () 
       transaction: 'AQAAAAAAAAAAAAAAAAAAAAABAgMEBQY=',
     });
 
-    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2 });
+    const r = await settleViaFacilitator(header, { gateway: url, x402Version: 2, challenge: challengeFromHeader(header) });
     assert.equal(r.settled, true, 'SVM payload must settle');
     assert.equal(r.txRef, 'SolTxSig123', 'Solana tx signature returned');
 
@@ -2919,7 +2900,11 @@ test('verifyViaFacilitator forwards memo to facilitator in both payload and requ
     decoded.accepted.extra.memo = 'challengeNonce123';  // Client-injected memo
     const headerWithMemo = Buffer.from(JSON.stringify(decoded), 'utf8').toString('base64');
 
-    const r = await verifyViaFacilitator(headerWithMemo, { gateway: url, x402Version: 2 });
+    const r = await verifyViaFacilitator(headerWithMemo, {
+      gateway: url,
+      x402Version: 2,
+      challenge: challengeFromHeader(headerWithMemo, { memo: 'challengeNonce123' }),
+    });
     assert.equal(r.valid, true, 'verify succeeds');
 
     // CRITICAL: Both payload and requirements must have memo for Path 1

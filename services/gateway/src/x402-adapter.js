@@ -339,52 +339,188 @@ function nonceVariants(nonce) {
 export class ChallengeStore {
   constructor({ ttlMs = DEFAULT_TTL_MS } = {}) {
     this.ttlMs = ttlMs;
-    this.map = new Map();   // nonce → { taskId, amount, asset, network, payTo, resource, expiresAt }
-    this.spent = new Set(); // nonce (or txRef) already settled → replay protection
+    this.map = new Map();   // nonce → record (issued | claimed | spent | released | unknown)
+    this.spent = new Set(); // nonce already settled
+    this.authSpent = new Map(); // authorization key → tx ref
+    this.txSpent = new Set(); // normalized payment ref
+    this.pending = []; // unsigned owner-only rows; never a receipt
   }
 
   put(nonce, data) {
     this._gc();
-    this.map.set(nonce, { ...data, nonce, expiresAt: Date.now() + this.ttlMs });
+    const prev = this.map.get(nonce);
+    const expiresAt = data?.expiresAt || prev?.expiresAt || (Date.now() + this.ttlMs);
+    this.map.set(nonce, {
+      ...data,
+      nonce,
+      expiresAt,
+      state: data?.state || 'issued',
+    });
     return this.map.get(nonce);
   }
 
-  get(nonce) {
-    // Try the exact nonce first, then alternate forms for backward compat.
+  patch(nonce, fields) {
+    const rec = this._find(nonce);
+    if (!rec) return null;
+    Object.assign(rec.rec, fields);
+    return rec.rec;
+  }
+
+  _find(nonce) {
     for (const key of nonceVariants(nonce)) {
-      const c = this.map.get(key);
-      if (c) {
-        if (Date.now() > c.expiresAt) {
-          this.map.delete(key);
-          return null;
-        }
-        return c;
-      }
+      const rec = this.map.get(key);
+      if (rec) return { key, rec };
     }
     return null;
   }
 
+  get(nonce) {
+    const found = this._find(nonce);
+    if (!found) return null;
+    const { key, rec } = found;
+    if (rec.state === 'spent') return null;
+    if (rec.state === 'unknown') return rec;
+    if (rec.state === 'claimed' && rec.lease_until && Date.now() > rec.lease_until) {
+      rec.state = 'unknown';
+      return rec;
+    }
+    if (rec.state !== 'claimed' && Date.now() > rec.expiresAt) {
+      this.map.delete(key);
+      return null;
+    }
+    return rec;
+  }
+
   isSpent(nonce) {
-    // Check all variants for spent status.
     for (const key of nonceVariants(nonce)) {
       if (this.spent.has(key)) return true;
+      const rec = this.map.get(key);
+      if (rec?.state === 'spent') return true;
     }
     return false;
   }
 
-  markSpent(nonce) {
-    if (nonce) {
-      // Mark the exact nonce and delete all variants from the map.
-      this.spent.add(nonce);
-      for (const key of nonceVariants(nonce)) {
-        this.map.delete(key);
+  markSpent(nonce, meta = null) {
+    if (!nonce) return;
+    this.spent.add(nonce);
+    for (const key of nonceVariants(nonce)) {
+      this.spent.add(key);
+      const rec = this.map.get(key);
+      if (rec) {
+        rec.state = 'spent';
+        if (meta && typeof meta === 'object') Object.assign(rec, { settlement: meta });
       }
     }
+  }
+
+  /**
+   * Atomic in-process claim. Callers must not await between the check and the set.
+   * A second caller gets payment_in_flight. An expired lease becomes unknown
+   * and is not released.
+   */
+  claim(nonce, owner, leaseMs = 60_000) {
+    if (this.isSpent(nonce)) return { ok: false, reason: 'payment_replayed' };
+    const found = this._find(nonce);
+    if (!found) return { ok: false, reason: 'challenge_required' };
+    const rec = found.rec;
+    if (rec.state === 'unknown') return { ok: false, reason: 'settle_unconfirmed' };
+    if (rec.state === 'spent') return { ok: false, reason: 'payment_replayed' };
+    if (rec.state === 'claimed') {
+      if (rec.lease_until && Date.now() > rec.lease_until) {
+        rec.state = 'unknown';
+        return { ok: false, reason: 'settle_unconfirmed' };
+      }
+      return { ok: false, reason: 'payment_in_flight' };
+    }
+    if (rec.state && rec.state !== 'issued') return { ok: false, reason: 'payment_in_flight' };
+    if (Date.now() > rec.expiresAt) {
+      this.map.delete(found.key);
+      return { ok: false, reason: 'challenge_required' };
+    }
+    rec.state = 'claimed';
+    rec.lease_owner = owner || 'local';
+    rec.lease_until = Date.now() + leaseMs;
+    return { ok: true, challenge: rec };
+  }
+
+  release(nonce, owner) {
+    const found = this._find(nonce);
+    if (!found) return false;
+    const rec = found.rec;
+    if (rec.state !== 'claimed') return false;
+    if (owner && rec.lease_owner && rec.lease_owner !== owner) return false;
+    rec.state = 'issued';
+    rec.lease_owner = null;
+    rec.lease_until = null;
+    return true;
+  }
+
+  markUnknown(nonce) {
+    const found = this._find(nonce);
+    if (!found) return;
+    found.rec.state = 'unknown';
+  }
+
+  isAuthSpent(key) {
+    return !!(key && this.authSpent.has(key));
+  }
+
+  markAuthSpent(key, ref) {
+    if (key) this.authSpent.set(key, ref || true);
+  }
+
+  isTxSpent(key) {
+    return !!(key && this.txSpent.has(key));
+  }
+
+  markTxSpent(key) {
+    if (key) this.txSpent.add(key);
+  }
+
+  recordPending(row) {
+    const rec = {
+      id: `pending-${Date.now().toString(36)}-${this.pending.length}`,
+      at: new Date().toISOString(),
+      status: 'pending',
+      ...row,
+    };
+    this.pending.push(rec);
+    return rec;
+  }
+
+  listPending() {
+    return this.pending.slice();
+  }
+
+  updatePending(id, fields) {
+    const rec = this.pending.find((p) => p.id === id);
+    if (!rec) return null;
+    Object.assign(rec, fields);
+    return rec;
+  }
+
+  dumpState() {
+    return {
+      map: [...this.map.entries()],
+      spent: [...this.spent],
+      authSpent: [...this.authSpent.entries()],
+      txSpent: [...this.txSpent],
+      pending: this.pending,
+    };
+  }
+
+  loadState(raw) {
+    this.map = new Map(raw?.map || []);
+    this.spent = new Set(raw?.spent || []);
+    this.authSpent = new Map(raw?.authSpent || []);
+    this.txSpent = new Set(raw?.txSpent || []);
+    this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
   }
 
   _gc() {
     const now = Date.now();
     for (const [k, v] of this.map) {
+      if (v.state === 'spent' || v.state === 'unknown' || v.state === 'claimed') continue;
       if (now > v.expiresAt) this.map.delete(k);
     }
   }
@@ -732,42 +868,53 @@ function resolveProvider(opts = {}) {
  * @param {Object} [opts.challenge] - Bound challenge from the store
  * @returns {{ provider: string, gateway: string, apiKey: string|null }}
  */
+function allowUnbound(opts = {}) {
+  if (Object.prototype.hasOwnProperty.call(opts, 'allowUnbound')) return opts.allowUnbound === true;
+  return process.env.X402_ALLOW_UNBOUND === 'true';
+}
+
 function resolveGateway(opts = {}) {
   const provider = resolveProvider(opts);
+  const unbound = allowUnbound(opts);
 
-  // Determine network from challenge (bound) or opts (from payment blob)
-  const network = opts.challenge?.network || opts.network || process.env.X402_NETWORK || 'base-sepolia';
+  // The route is the challenge network. A client blob network is not a route.
+  const network = opts.challenge?.network || (unbound ? opts.network : null) || null;
+  if (!network) {
+    return { provider, gateway: null, apiKey: null, reason: 'gateway_not_configured' };
+  }
 
-  // ── Solana payments route to PayAI ──────────────────────────────────────────
-  // If the challenge was explicitly marked for PayAI, or the network is Solana.
-  // NOTE: opts.gatewayUrl is NOT used here. It comes from cfg.facilitatorUrl (Base CDP)
-  // and would incorrectly route Solana payments to the EVM facilitator.
   const isPayAI = opts.challenge?.facilitator === 'payai' || isSolanaNetwork(network);
   if (isPayAI) {
+    const gateway = opts.solanaFacilitatorUrl
+      || opts.cfg?.solana?.facilitatorUrl
+      || process.env.X402_SOLANA_FACILITATOR_URL
+      || null;
     return {
-      provider: 'x402', // PayAI speaks standard x402 protocol
-      gateway: process.env.X402_SOLANA_FACILITATOR_URL
-        || PAYAI_FACILITATOR_URL,
-      apiKey: opts.apiKey || null, // PayAI free tier needs no key
+      provider: 'x402',
+      gateway,
+      apiKey: opts.apiKey || null,
+      reason: gateway ? null : 'gateway_not_configured',
     };
   }
 
-  // ── EVM payments route to CDP/network-aware default ─────────────────────────
   if (provider === 'x402') {
+    const mainnet = network === 'base' || network === 'eip155:8453';
+    const gateway = opts.gatewayUrl
+      || opts.cfg?.facilitatorUrl
+      || (mainnet ? null : defaultFacilitatorUrlForNetwork(network));
     return {
       provider,
-      // Public testnet facilitator (Base Sepolia) needs no API key.
-      // Base mainnet defaults to CDP facilitator URL (needs CDP JWT env).
-      gateway: opts.gatewayUrl
-        || process.env.X402_FACILITATOR_URL
-        || defaultFacilitatorUrlForNetwork(network),
-      apiKey: opts.apiKey || process.env.X402_FACILITATOR_API_KEY || null,
+      gateway: gateway || null,
+      apiKey: opts.apiKey || null,
+      reason: gateway ? null : 'gateway_not_configured',
     };
   }
+  const gateway = opts.gatewayUrl || opts.cfg?.gatewayUrl || null;
   return {
     provider,
-    gateway: opts.gatewayUrl || process.env.ZAN_X402_GATEWAY_URL || null,
-    apiKey: opts.apiKey || process.env.ZAN_X402_API_KEY || null,
+    gateway,
+    apiKey: opts.apiKey || null,
+    reason: gateway ? null : 'gateway_not_configured',
   };
 }
 
@@ -785,10 +932,15 @@ function resolveGateway(opts = {}) {
 function checkBinding(opts) {
   const store = opts.store === undefined ? challengeStore : opts.store;
   const nonce = opts.nonce || opts.challenge?.nonce || null;
+  const unboundOk = allowUnbound(opts);
 
-  // Binding is optional: callers that don't pass a nonce/challenge skip it
-  // (preserves the simple verifyPayment(header, { gatewayUrl }) contract).
-  if (!nonce) return { ok: true, challenge: opts.challenge || null };
+  if (!nonce) {
+    if (unboundOk) {
+      logger.error({ where: 'checkBinding' }, 'x402: unbound payment path used');
+      return { ok: true, challenge: opts.challenge || null, unbound: true };
+    }
+    return { ok: false, reason: 'challenge_required' };
+  }
 
   if (store && store.isSpent(nonce)) return { ok: false, reason: 'payment_replayed' };
 
@@ -796,14 +948,19 @@ function checkBinding(opts) {
   if (store) {
     const stored = store.get(nonce);
     if (!stored) {
-      // Challenge not found. For Solana payments, proceed anyway and let the
-      // facilitator verify the payment on-chain. The receipt will be created
-      // without a pre-bound amount (uses floor or facilitator-reported amount).
-      // This enables receipts for payments made without our 402 handshake.
-      logger.info({ nonce: nonce?.slice(0, 16) }, 'x402: challenge not found, proceeding unbound');
-      return { ok: true, challenge: null, unbound: true };
+      if (unboundOk) {
+        logger.error({ where: 'checkBinding' }, 'x402: unbound payment path used');
+        return { ok: true, challenge: null, unbound: true };
+      }
+      return { ok: false, reason: 'challenge_required' };
     }
     challenge = stored;
+  } else if (!challenge) {
+    if (unboundOk) {
+      logger.error({ where: 'checkBinding' }, 'x402: unbound payment path used');
+      return { ok: true, challenge: null, unbound: true };
+    }
+    return { ok: false, reason: 'challenge_required' };
   }
   return { ok: true, challenge };
 }
@@ -832,20 +989,18 @@ export async function verifyPayment(paymentHeader, opts = {}) {
   const challenge = bind.challenge;
   const unbound = !!bind.unbound;
 
-  // For unbound payments (no matching challenge), extract network from the payment header
-  // so Solana payments can still route to PayAI correctly.
+  // Client facilitator URLs and blob networks are ignored on the enforced path.
   let networkFromHeader = null;
-  if (!challenge) {
+  if (unbound && !challenge) {
     const decoded = decodePaymentHeader(paymentHeader);
     networkFromHeader = decoded?.accepted?.network || decoded?.network || null;
   }
 
-  // Pass the resolved challenge to resolveGateway for network-aware routing.
-  // For unbound payments, pass the network extracted from the header.
   const { provider, gateway, apiKey } = resolveGateway({
     ...opts,
     challenge,
-    network: networkFromHeader || opts.network,
+    network: networkFromHeader || (unbound ? opts.network : null),
+    allowUnbound: unbound,
   });
   // ZAN gateway requires an API key; the standard x402 public facilitator does not.
   if (!gateway || (provider === 'zan' && !apiKey)) {
@@ -912,18 +1067,17 @@ export async function settlePayment(paymentHeader, opts = {}) {
   const store = opts.store === undefined ? challengeStore : opts.store;
   const nonce = opts.nonce || challenge?.nonce || null;
 
-  // For unbound payments (no matching challenge), extract network from the payment header
   let networkFromHeader = null;
-  if (!challenge) {
+  if (unbound && !challenge) {
     const decoded = decodePaymentHeader(paymentHeader);
     networkFromHeader = decoded?.accepted?.network || decoded?.network || null;
   }
 
-  // Pass the resolved challenge to resolveGateway for network-aware routing.
   const { provider, gateway, apiKey } = resolveGateway({
     ...opts,
     challenge,
-    network: networkFromHeader || opts.network,
+    network: networkFromHeader || (unbound ? opts.network : null),
+    allowUnbound: unbound,
   });
   if (!gateway || (provider === 'zan' && !apiKey)) {
     return { settled: false, reason: 'gateway_not_configured' };
@@ -932,7 +1086,7 @@ export async function settlePayment(paymentHeader, opts = {}) {
   if (provider === 'x402') {
     // Pass client x402 version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE) to the facilitator.
     const r = await settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version: opts.x402Version });
-    if (r.settled && store && nonce) store.markSpent(nonce);
+    if (r.settled && store && nonce && !opts.deferSpent) store.markSpent(nonce);
     return { ...r, unbound };
   }
 
@@ -940,15 +1094,27 @@ export async function settlePayment(paymentHeader, opts = {}) {
     const res = await fetch(`${gateway.replace(/\/$/, '')}/settle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-      body: JSON.stringify({ payment: paymentHeader, nonce: nonce || undefined }),
+      body: JSON.stringify({
+        payment: paymentHeader,
+        nonce: nonce || undefined,
+        network: challenge?.network || undefined,
+      }),
       signal: AbortSignal.timeout(20000),
     });
     if (!res.ok) return { settled: false, reason: `gateway_http_${res.status}` };
     const data = await res.json();
-    const settled = !!data.settled;
+    const settled = !!(data.settled || data.success);
     const txRef = data.txRef || data.transaction || null;
-    if (settled && store && nonce) store.markSpent(nonce);
-    return { settled, txRef, reason: data.reason };
+    if (settled && store && nonce && !opts.deferSpent) store.markSpent(nonce);
+    return {
+      settled,
+      success: data.success !== undefined ? !!data.success : settled,
+      txRef,
+      transaction: data.transaction || txRef,
+      payer: data.payer || null,
+      network: data.network || null,
+      reason: data.reason,
+    };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 settlePayment failed');
     return { settled: false, reason: 'gateway_error' };

@@ -21,6 +21,7 @@ export interface SidecarReceiptPayment {
   net_amount: string;
   fee_amount: string;
   collected: boolean;
+  asserted?: boolean;
   payer?: string;
   payTo?: string;
   collected_at?: string;
@@ -97,6 +98,12 @@ export interface BuildReceiptParams {
   xfuelBaseUrl?: string;
   /** Agent ID for ingest linking */
   agentId?: number | string;
+  /**
+   * Set only after a facilitator verify/settle or an on-chain read.
+   * `false` marks a client-asserted header as uncollected.
+   * Omit to keep the historical `paymentRef` ⇒ collected behavior.
+   */
+  verified?: boolean;
 }
 
 /**
@@ -195,10 +202,12 @@ export function buildSidecarReceipt(params: BuildReceiptParams): SidecarReceipt 
     payTo,
     signingSecret,
     xfuelBaseUrl = 'https://api.chit402.com',
+    verified,
   } = params;
 
   const taskId = generateSidecarTaskId();
-  const isCollected = !!paymentRef;
+  const asserted = !!paymentRef && verified === false;
+  const isCollected = verified === undefined ? !!paymentRef : verified === true && !!paymentRef;
   const outputHash = output ? hashOutput(output) : null;
 
   const receipt: SidecarReceipt = {
@@ -216,6 +225,7 @@ export function buildSidecarReceipt(params: BuildReceiptParams): SidecarReceipt 
       net_amount: amount,
       fee_amount: '0',
       collected: isCollected,
+      ...(asserted ? { asserted: true } : {}),
       ...(payer && { payer }),
       ...(payTo && { payTo }),
       ...(isCollected && { collected_at: new Date().toISOString() }),

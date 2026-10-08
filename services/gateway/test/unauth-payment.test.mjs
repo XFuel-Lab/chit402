@@ -62,9 +62,9 @@ function createTrackedMockFacilitator() {
       try { parsed = body ? JSON.parse(body) : {}; } catch { return send(400, { error: 'bad_json' }); }
 
       const isStandardX402 = !!parsed.paymentPayload;
-      const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
-      const network = parsed.paymentRequirements?.network || 'base-sepolia';
-      const txRef = '0xmockpaymenttxref0000000000000000000000000000000000000000000000';
+      const payer = parsed.paymentPayload?.payload?.authorization?.from || `0x${'55'.repeat(20)}`;
+      const network = parsed.network || parsed.paymentRequirements?.network || 'base';
+      const txRef = `0x${'ab'.repeat(32)}`;
 
       if (url.endsWith('/verify')) {
         if (isStandardX402) {
@@ -79,7 +79,7 @@ function createTrackedMockFacilitator() {
         if (isStandardX402) {
           return send(200, { success: true, transaction: txRef, network, payer });
         }
-        return send(200, { settled: true, txRef });
+        return send(200, { settled: true, success: true, txRef, transaction: txRef, network, payer });
       }
 
       return send(404, { error: 'not_found' });
@@ -98,6 +98,8 @@ function createTrackedMockFacilitator() {
 const { url: facUrl, close: closeFac } = await createTrackedMockFacilitator();
 process.env.ZAN_X402_GATEWAY_URL = facUrl;
 
+const { installEchoChainReader, clearChainReaderForTests } = await import('../src/x402-chain.js');
+installEchoChainReader();
 const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -200,6 +202,7 @@ before(async () => {
 });
 
 after(async () => {
+  clearChainReaderForTests();
   globalThis.fetch = realFetch;
   await new Promise((resolve) => server.close(resolve));
   await closeFac();
@@ -233,17 +236,15 @@ test('unauth + PAYMENT-SIGNATURE → handshake runs and settles (CDP Bankr case)
 
   assert.equal(paidRes.status, 202, `v2 PAYMENT-SIGNATURE must settle, got ${JSON.stringify(paid)}`);
   assert.ok(paid.task_id, 'paid call returns a task_id');
-  const txRef = '0xmockpaymenttxref0000000000000000000000000000000000000000000000';
+  const txRef = `0x${'ab'.repeat(32)}`;
   const settleHeader = paidRes.headers.get('payment-response');
   assert.equal(settleHeader, paidRes.headers.get('x-payment-response'));
   assert.match(settleHeader, /^[A-Za-z0-9+/]*={0,2}$/);
   const settle = JSON.parse(Buffer.from(settleHeader, 'base64').toString('utf8'));
-  assert.deepEqual(settle, {
-    success: true,
-    transaction: txRef,
-    network: 'eip155:8453',
-    payer: null,
-  });
+  assert.equal(settle.success, true);
+  assert.equal(settle.transaction, txRef);
+  assert.equal(settle.network, 'eip155:8453');
+  assert.equal(settle.payer, `0x${'55'.repeat(20)}`);
   assert.equal(paid.payment_ref, `base:${txRef}`);
 
   const { status } = await waitComplete(paid.task_id);

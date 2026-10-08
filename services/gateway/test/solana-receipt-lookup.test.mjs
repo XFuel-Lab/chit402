@@ -122,12 +122,40 @@ describe('PersistentTaskStore payment ref index', () => {
   });
 });
 
-describe('checkBinding allows unbound Solana payments', async () => {
-  // Import after env setup
-  const { verifyPayment, settlePayment, challengeStore } = await import('../src/x402-adapter.js');
+describe('checkBinding requires a live challenge', async () => {
+  const { verifyPayment, ChallengeStore } = await import('../src/x402-adapter.js');
+  const { startMockFacilitator } = await import('../src/x402-mock-facilitator.js');
 
-  test('checkBinding returns ok:true with unbound:true when nonce not found', () => {
-    // This is tested implicitly through verifyPayment/settlePayment
-    // The key behavior: verification proceeds even without a matching challenge
+  test('unknown nonce is challenge_required', async () => {
+    const { url, close } = await startMockFacilitator();
+    try {
+      const store = new ChallengeStore();
+      const r = await verifyPayment('X-PAYMENT-blob', {
+        provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef',
+      });
+      assert.equal(r.valid, false);
+      assert.equal(r.reason, 'challenge_required');
+      assert.equal(r.unbound, undefined);
+    } finally {
+      await close();
+    }
+  });
+
+  test('unknown nonce is allowed only with the testnet rollback flag', async () => {
+    const prev = process.env.X402_ALLOW_UNBOUND;
+    process.env.X402_ALLOW_UNBOUND = 'true';
+    const { url, close } = await startMockFacilitator();
+    try {
+      const store = new ChallengeStore();
+      const r = await verifyPayment('X-PAYMENT-blob', {
+        provider: 'zan', gatewayUrl: url, apiKey: 'k', store, nonce: 'deadbeef', network: 'base-sepolia',
+      });
+      assert.equal(r.valid, true);
+      assert.equal(r.unbound, true);
+    } finally {
+      await close();
+      if (prev === undefined) delete process.env.X402_ALLOW_UNBOUND;
+      else process.env.X402_ALLOW_UNBOUND = prev;
+    }
   });
 });

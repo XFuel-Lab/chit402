@@ -1,5 +1,9 @@
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { installEchoChainReader, clearChainReaderForTests } from './x402-chain.js';
+
+const MOCK_TX = '0x' + 'ab'.repeat(32);
+const MOCK_PAYER = '0x' + '55'.repeat(20);
 
 /**
  * Mock x402 facilitator for dev/CI.
@@ -30,9 +34,11 @@ import { pathToFileURL } from 'node:url';
 export function createMockFacilitator(config = {}) {
   const {
     valid = true,
-    txRef = '0xmockpaymenttxref0000000000000000000000000000000000000000000000',
+    txRef = MOCK_TX,
     requireApiKey = false,
     amountMustMatch = false,
+    settleDelayMs = 0,
+    payer: payerOverride = null,
   } = config;
 
   const server = http.createServer((req, res) => {
@@ -54,8 +60,8 @@ export function createMockFacilitator(config = {}) {
 
       // Standard x402 protocol (payload-bearing body) → x402-shaped responses.
       const isStandardX402 = !!parsed.paymentPayload;
-      const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
-      const network = parsed.paymentRequirements?.network || 'base-sepolia';
+      const payer = payerOverride || parsed.paymentPayload?.payload?.authorization?.from || MOCK_PAYER;
+      const network = parsed.paymentRequirements?.network || parsed.network || 'base-sepolia';
 
       if (url.endsWith('/verify')) {
         server.verifyCount = (server.verifyCount || 0) + 1;
@@ -73,15 +79,20 @@ export function createMockFacilitator(config = {}) {
       }
 
       if (url.endsWith('/settle')) {
-        server.settleCount = (server.settleCount || 0) + 1;
-        if (isStandardX402) {
+        const finish = () => {
+          server.settleCount = (server.settleCount || 0) + 1;
+          if (isStandardX402) {
+            return send(200, valid
+              ? { success: true, transaction: txRef, network, payer }
+              : { success: false, errorReason: 'mock_settle_rejected' });
+          }
           return send(200, valid
-            ? { success: true, transaction: txRef, network, payer }
-            : { success: false, errorReason: 'mock_settle_rejected' });
-        }
-        return send(200, valid
-          ? { settled: true, txRef }
-          : { settled: false, reason: 'mock_settle_rejected' });
+            ? { settled: true, success: true, txRef, transaction: txRef, network, payer }
+            : { settled: false, success: false, reason: 'mock_settle_rejected' });
+        };
+        if (settleDelayMs > 0) setTimeout(finish, settleDelayMs);
+        else finish();
+        return;
       }
 
       return send(404, { error: 'not_found' });
@@ -103,10 +114,14 @@ export function startMockFacilitator(config = {}) {
   return new Promise((resolve) => {
     server.listen(config.port || 0, '127.0.0.1', () => {
       const { port } = server.address();
+      installEchoChainReader();
       resolve({
         server,
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(r)),
+        close: () => new Promise((r) => server.close(() => {
+          clearChainReaderForTests();
+          r();
+        })),
       });
     });
   });

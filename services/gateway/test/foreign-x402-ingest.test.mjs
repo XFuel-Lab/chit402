@@ -74,13 +74,17 @@ function nanoFetch({ mutate } = {}) {
 }
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
+function evmTx(label) {
+  return `0x${crypto.createHash('sha256').update(String(label)).digest('hex')}`;
+}
+const SOL_SIG = '99eUso3aSbE9tqGSTXzo3TLfKb9RkMTURrHKQ1K7Zh3BbeqPevr5E1iCbpTjqHuTFLtfxTTD5ekfVuZFzQyEQf8';
 
 function makeSession() {
   return crypto.randomBytes(32).toString('hex');
 }
 
 /** Mock verify that always returns valid: true, with verification details */
-const verifyOk = async () => ({ valid: true, txHash: '0xabc', blockNumber: 12345 });
+const verifyOk = async (args) => ({ valid: true, payer: args?.payer || WALLET_A, txHash: args?.paymentRef, blockNumber: 12345 });
 
 /** Mock verify that always returns valid: false */
 const verifyFail = async () => ({ valid: false, reason: 'mock rejection' });
@@ -91,10 +95,11 @@ const verifyThrows = async () => { throw new Error('verify exploded'); };
 /** Mock verify that throws with network error (chain unreadable) */
 const verifyChainUnreadable = async () => { throw new Error('failed to fetch tx receipt: network timeout'); };
 
-function setupDeps() {
+function setupDeps(wallet = WALLET_A) {
   const registry = new AgentRegistry();
   const ledger = new UsageSettledLedger();
   const identity = registry.allocate({ taskId: 'initial' });
+  if (wallet) registry.bindWallet(identity.agent_id, { agentWallet: wallet });
   return { registry, ledger, identity };
 }
 
@@ -359,7 +364,7 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
       payTo: '0xGrokBotTreasury',
     },
     payment_response: {
-      tx: '0xabc123def456',
+      tx: evmTx('abc123def456'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -376,7 +381,7 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(result.status, 201);
   assert.equal(result.body.agent_id, identity.agent_id);
   assert.match(result.body.task_id, /^foreign-x402-/);
-  assert.equal(result.body.payment.ref, 'base:0xabc123def456');
+  assert.equal(result.body.payment.ref, `base:${evmTx('abc123def456')}`);
   assert.equal(result.body.payment.rail, 'usdc');
   assert.equal(result.body.payment.amount, '10000');
   assert.equal(result.body.route.hub, 'api.grokbot.app');
@@ -391,14 +396,14 @@ test('happy path: foreign x402 → book row (with valid verify)', async () => {
   assert.equal(ledger.entries.length, 1);
   const entry = ledger.entries[0];
   assert.equal(entry.agent_id, identity.agent_id);
-  assert.equal(entry.payment_ref, 'base:0xabc123def456');
+  assert.equal(entry.payment_ref, `base:${evmTx('abc123def456')}`);
   assert.equal(entry.hub, 'api.grokbot.app');
   assert.equal(entry.model, '/v1/chat/completions');
   assert.equal(entry.evidence, BOOK_EVIDENCE.FOREIGN_INGEST);
   assert.ok(entry.receipt_snapshot?.foreign_x402);
   assert.equal(entry.book_chain.payload_version, 4);
   assert.equal(entry.book_chain.book_id, identity.agent_id);
-  assert.equal(entry.book_chain.payment_ref, 'base:0xabc123def456');
+  assert.equal(entry.book_chain.payment_ref, `base:${evmTx('abc123def456')}`);
   assert.equal(entry.issuer_signature, undefined);
 });
 
@@ -442,7 +447,7 @@ test('upto below the cap ingests the PAYMENT-RESPONSE amount, and otherwise the 
   let verifiedAgainst;
   const verifySettled = async (args) => {
     verifiedAgainst = args.amount;
-    return { valid: true, verifiedAmount: '10000', txHash: V2_TX };
+    return { valid: true, payer: WALLET_A, verifiedAmount: '10000', txHash: V2_TX };
   };
   const settled = await ingestForeignX402({
     payment_required: {
@@ -492,7 +497,7 @@ test('upto below the cap ingests the PAYMENT-RESPONSE amount, and otherwise the 
     session: identity2.session,
     verify: async (args) => {
       chainProbe = args.amount;
-      return { valid: true, verifiedAmount: '8000' };
+      return { valid: true, payer: WALLET_A, verifiedAmount: '8000' };
     },
   });
   assert.equal(fromChain.ok, true, fromChain.message);
@@ -519,7 +524,7 @@ test('upto below the cap ingests the PAYMENT-RESPONSE amount, and otherwise the 
     registry: registry3,
     agentId: identity3.agent_id,
     session: identity3.session,
-    verify: async () => ({ valid: true, verifiedAmount: '60000' }),
+    verify: async () => ({ valid: true, payer: WALLET_A, verifiedAmount: '60000' }),
   });
   assert.equal(overCeiling.ok, false);
   assert.equal(overCeiling.status, 400);
@@ -538,7 +543,7 @@ test('a paid ingest stamp is its own book row, signed to the same seat', async (
       payTo: '0xGrokBotTreasury',
     },
     payment_response: {
-      tx: '0xforeign',
+      tx: evmTx('foreign'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -558,9 +563,9 @@ test('a paid ingest stamp is its own book row, signed to the same seat', async (
   assert.equal(result.ok, true, result.message);
   assert.equal(result.body.stamp_payment_ref, 'base:0xstamp');
   assert.match(result.body.stamp_task_id, /^ingest-stamp-/);
-  const foreign = ledger.findByRef('base:0xforeign');
+  const foreign = ledger.findByRef(`base:${evmTx('foreign')}`);
   const stamp = ledger.findByRef('base:0xstamp');
-  assert.equal(foreign.book_chain.payment_ref, 'base:0xforeign');
+  assert.equal(foreign.book_chain.payment_ref, `base:${evmTx('foreign')}`);
   assert.equal(foreign.book_chain.book_id, identity.agent_id);
   assert.equal(stamp.event, 'ingest_stamp');
   assert.equal(stamp.evidence, 'ingest_stamp');
@@ -580,7 +585,7 @@ test('minimal foreign_invoice ingest → book row with verify_url', async () => 
       amount: '9900',
       payer: WALLET_A,
       payTo: '0xMoonPaySink',
-      tx: '0xminimaltx',
+      tx: evmTx('minimaltx'),
       hub: 'api.moonpay.example',
       model: '/paybox/settle',
     },
@@ -609,7 +614,7 @@ test('minimal foreign_invoice ingest → book row with verify_url', async () => 
 });
 
 test('Solana network sets rail to solana, not usdc', async () => {
-  const { registry, ledger, identity } = setupDeps();
+  const { registry, ledger, identity } = setupDeps('SolanaPayerAddress456');
 
   // Mock verify that would throw for Solana (real impl does) — but we use verifyOk to bypass
   // since the test is about rail detection, not actual Solana verification.
@@ -620,7 +625,7 @@ test('Solana network sets rail to solana, not usdc', async () => {
       payTo: 'SoLanaTreasuryAddress123',
     },
     payment_response: {
-      tx: '3vZ9Y9X...solana-sig',
+      tx: SOL_SIG,
       payer: 'SolanaPayerAddress456',
       network: 'solana',
     },
@@ -703,7 +708,7 @@ test('reject replay (same tx twice) — ledger is nullifier', async () => {
       payTo: '0xExampleTreasury',
     },
     payment_response: {
-      tx: '0xreplayme',
+      tx: evmTx('replayme'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -850,7 +855,7 @@ test('house self-pay is allowed if real on-chain tx (with valid verify)', async 
       payTo: '0xBasetreasury',
     },
     payment_response: {
-      tx: '0xhouseselfpay',
+      tx: evmTx('houseselfpay'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -881,7 +886,7 @@ test('FAIL CLOSED: verify unavailable → 502, no book row', async () => {
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xnoverify',
+      tx: evmTx('noverify'),
       payer: WALLET_A,
     },
     session: identity.session,
@@ -910,7 +915,7 @@ test('FAIL CLOSED: verify throws → 502, no book row', async () => {
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xverifythrows',
+      tx: evmTx('verifythrows'),
       payer: WALLET_A,
     },
     session: identity.session,
@@ -925,7 +930,7 @@ test('FAIL CLOSED: verify throws → 502, no book row', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.status, 502);
   assert.equal(result.error, 'verify_failed');
-  assert.match(result.message, /exploded/i);
+  assert.match(result.message, /Payment verification failed/);
   assert.equal(ledger.entries.length, 0, 'no row when verify throws');
 });
 
@@ -939,7 +944,7 @@ test('FAIL CLOSED: verify returns valid: false → 400, no book row', async () =
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xverifyrejects',
+      tx: evmTx('verifyrejects'),
       payer: WALLET_A,
     },
     session: identity.session,
@@ -954,7 +959,7 @@ test('FAIL CLOSED: verify returns valid: false → 400, no book row', async () =
   assert.equal(result.ok, false);
   assert.equal(result.status, 400);
   assert.equal(result.error, 'payment_invalid');
-  assert.match(result.message, /mock rejection/i);
+  assert.match(result.message, /did not confirm/);
   assert.equal(ledger.entries.length, 0, 'no row when verify fails');
 });
 
@@ -969,7 +974,7 @@ test('FAIL CLOSED: only valid: true writes a row', async () => {
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xverifyundef',
+      tx: evmTx('verifyundef'),
       payer: WALLET_A,
     },
     session: identity.session,
@@ -994,7 +999,7 @@ test('FAIL CLOSED: only valid: true writes a row', async () => {
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xverifyok',
+      tx: evmTx('verifyok'),
       payer: WALLET_A,
     },
     session: identity.session,
@@ -1021,7 +1026,7 @@ test('FAIL CLOSED: chain unreadable (network error) → 502, no book row', async
       payTo: '0xTreasury',
     },
     payment_response: {
-      tx: '0xchainunreadable',
+      tx: evmTx('chainunreadable'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1037,7 +1042,7 @@ test('FAIL CLOSED: chain unreadable (network error) → 502, no book row', async
   assert.equal(result.ok, false);
   assert.equal(result.status, 502);
   assert.equal(result.error, 'verify_failed');
-  assert.match(result.message, /failed to fetch/i);
+  assert.match(result.message, /Payment verification failed/);
   assert.equal(ledger.entries.length, 0, 'no row when chain is unreadable');
 });
 
@@ -1089,6 +1094,7 @@ test('ledger nullifier persists: duplicate ref rejected across fresh ledger load
   const registry = new AgentRegistry();
   const ledger = new UsageSettledLedger();
   const identity = registry.allocate({ taskId: 'persist-test' });
+  registry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
 
   const body = {
     payment_required: {
@@ -1097,7 +1103,7 @@ test('ledger nullifier persists: duplicate ref rejected across fresh ledger load
       payTo: '0xPersistTreasury',
     },
     payment_response: {
-      tx: '0xpersisttx',
+      tx: evmTx('persisttx'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1113,7 +1119,7 @@ test('ledger nullifier persists: duplicate ref rejected across fresh ledger load
 
   // Simulate "restart" by checking ledger still has the entry
   // (in production with persist=true, this would survive process restart)
-  const existing = ledger.findByRef('base:0xpersisttx');
+  const existing = ledger.findByRef(`base:${evmTx('persisttx')}`);
   assert.ok(existing, 'ledger should retain entry for nullification');
 
   // Second ingest with same tx is rejected
@@ -1236,13 +1242,14 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   const hooks = httpApp.locals.__test;
   assert.ok(hooks?.usageSettled && hooks?.agentRegistry, 'test hooks on app.locals');
   const identity = hooks.agentRegistry.allocate({ taskId: 'foreign-ingest-smoke' });
+  hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
 
   const seeded = await ingestForeignX402({
     foreign_invoice: {
       amount: '5000',
       payer: WALLET_A,
       payTo: '0xExternalPayBox',
-      tx: '0xsmokeverifytx',
+      tx: evmTx('smokeverifytx'),
       hub: 'external.shop',
       model: '/v1/run',
     },
@@ -1266,7 +1273,7 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   assert.equal(receipt.task_id, seeded.body.task_id);
   assert.equal(receipt.foreign_x402, true);
   assert.equal(receipt.evidence, 'foreign_ingest');
-  assert.equal(receipt.payment.ref, 'base:0xsmokeverifytx');
+  assert.equal(receipt.payment.ref, `base:${evmTx('smokeverifytx')}`);
   assert.equal(receipt.verify_url, `${base}/receipt/${seeded.body.task_id}`);
   assert.match(receipt.issuer_signature?.jws || '', /^[^.]+\.[^.]+\.[^.]+$/);
 });
@@ -1350,7 +1357,7 @@ test('ingest reports $0.002 stamp and does not debit prepaid budget', async () =
       payTo: '0xShopTreasury',
     },
     payment_response: {
-      tx: '0xstamptest123',
+      tx: evmTx('stamptest123'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1389,7 +1396,7 @@ test('a small prepaid budget does not block the stamp and is not mutated', async
       payTo: '0xShopTreasury',
     },
     payment_response: {
-      tx: '0xinsufficient123',
+      tx: evmTx('insufficient123'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1418,7 +1425,7 @@ test('ingest without budget set (unlimited) reports the stamp and leaves budget 
       payTo: '0xShopTreasury',
     },
     payment_response: {
-      tx: '0xunlimited123',
+      tx: evmTx('unlimited123'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1447,7 +1454,7 @@ test('ensureStamp 402 writes nothing and does not touch budget', async () => {
       payTo: '0xShopTreasury',
     },
     payment_response: {
-      tx: '0xstamp402',
+      tx: evmTx('stamp402'),
       payer: WALLET_A,
       network: 'base',
     },
@@ -1606,6 +1613,7 @@ test('Nano ingest rejects when the two RPCs disagree', async () => {
 test('POST book/ingest without a stamp payment is 402 for $0.002', async () => {
   const hooks = httpApp.locals.__test;
   const identity = hooks.agentRegistry.allocate({ taskId: 'stamp-402' });
+  hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
   hooks.agentRegistry.setBudget(identity.agent_id, '9000');
   const beforeRows = hooks.usageSettled.entries.length;
   const res = await fetch(`${base}/v1/agents/${identity.agent_id}/book/ingest`, {
@@ -1618,7 +1626,7 @@ test('POST book/ingest without a stamp payment is 402 for $0.002', async () => {
         amount: '5000',
         payTo: '0xShopTreasury',
       },
-      payment_response: { tx: '0xhttpstamp', payer: WALLET_A, network: 'base' },
+      payment_response: { tx: evmTx('httpstamp'), payer: WALLET_A, network: 'base' },
     }),
   });
   const body = await res.json();
@@ -1634,6 +1642,7 @@ test('POST book/ingest without a stamp payment is 402 for $0.002', async () => {
 test('pilot waiver key stamps free up to the cap, then 402; default is off', async () => {
   const hooks = httpApp.locals.__test;
   const identity = hooks.agentRegistry.allocate({ taskId: 'stamp-waiver' });
+  hooks.agentRegistry.bindWallet(identity.agent_id, { agentWallet: WALLET_A });
   hooks.agentRegistry.setBudget(identity.agent_id, '9000');
   const prevKeys = process.env.STAMP_WAIVER_KEYS;
   const prevCap = process.env.STAMP_WAIVER_CAP;
@@ -1658,17 +1667,17 @@ test('pilot waiver key stamps free up to the cap, then 402; default is off', asy
       }),
     });
 
-    const denied = await post('0xwaiver-off', 'someone-else');
+    const denied = await post(evmTx('waiver-off'), 'someone-else');
     assert.equal(denied.status, 402);
 
-    const first = await post('0xwaiver-one', 'partner-pilot-key');
+    const first = await post(evmTx('waiver-one'), 'partner-pilot-key');
     const firstBody = await first.json();
     assert.equal(first.status, 201, JSON.stringify(firstBody));
     assert.equal(firstBody.stamp_waived, true);
     assert.equal(firstBody.stamp_fee, '2000');
     assert.equal(hooks.agentRegistry.get(identity.agent_id).budget, '9000');
 
-    const second = await post('0xwaiver-two', 'partner-pilot-key');
+    const second = await post(evmTx('waiver-two'), 'partner-pilot-key');
     assert.equal(second.status, 402);
   } finally {
     if (prevKeys == null) delete process.env.STAMP_WAIVER_KEYS;
@@ -1764,7 +1773,7 @@ test('public ingest ignores a caller-supplied entry fingerprint', async () => {
       payTo: '0xGrokBotTreasury',
     },
     payment_response: {
-      tx: '0xfingerprintignored',
+      tx: evmTx('fingerprintignored'),
       payer: WALLET_A,
       network: 'base',
     },

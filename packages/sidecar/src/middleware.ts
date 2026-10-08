@@ -176,6 +176,8 @@ export function createSidecarFetch(config: SidecarMiddlewareConfig = {}): typeof
         payTo: paymentInfo?.payTo,
         signingSecret,
         xfuelBaseUrl,
+        // A header is an assertion until verify/settle or an on-chain read.
+        verified: false,
       };
 
       const receipt = buildSidecarReceipt(receiptParams);
@@ -257,6 +259,7 @@ export function wrapFetchWithSidecar(
         payTo: paymentInfo?.payTo,
         signingSecret,
         xfuelBaseUrl,
+        verified: false,
       });
 
       if (onReceipt) {

@@ -315,7 +315,7 @@ test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)'
     const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': nonce }, body: {} };
     const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
     assert.equal(decision.kind, 'failed');
-    assert.equal(decision.reason, 'mock_rejected');
+    assert.equal(decision.reason, 'verify_failed');
   } finally {
     await close();
   }

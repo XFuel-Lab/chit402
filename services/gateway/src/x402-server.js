@@ -23,6 +23,9 @@ import { getHubCatalog, resolveCatalogModel, requestShape } from './hub-catalog.
 import { getAddress } from 'ethers';
 import { isSolanaNetwork, payerFromPaymentHeader, paymentHeaderNetwork } from './x402-facilitator.js';
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
+import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
+import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -358,6 +361,8 @@ export async function runX402Handshake(req, {
   evmOnly = false,
   expectedPayer = null,
   payTo = null,
+  strictTaskId = false,
+  store = null,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
@@ -393,6 +398,7 @@ export async function runX402Handshake(req, {
         ...bindParse.bind,
       };
     }
+    const activeStore = store || getActiveChallengeStore() || challengeStore;
     const { body: challengeBody } = buildPaymentChallenge(
       {
         taskId,
@@ -410,22 +416,25 @@ export async function runX402Handshake(req, {
           network: cfg.solana.network,
         },
       },
-      { store: challengeStore },
+      { store: activeStore },
     );
-    if (bindParse.requested && bindParse.ok && challengeBody?.accepts?.[0]?.extra?.nonce) {
-      const stored = issuanceBindForChallenge(bindParse.bind, {
-        challengeNonce: challengeBody.accepts[0].extra.nonce,
-        settlementContract: challengeBody.accepts[0].asset,
-      });
-      if (!stored.ok) {
-        return { kind: 'failed', reason: stored.reason };
-      }
-      const nonce = challengeBody.accepts[0].extra.nonce;
-      const rec = challengeStore.get(nonce);
-      if (rec) {
+    const qHash = quoteBodyHash(priceBody);
+    for (const entry of challengeBody?.accepts || []) {
+      const issuedNonce = entry?.extra?.nonce;
+      if (!issuedNonce) continue;
+      const rec = activeStore.get(issuedNonce);
+      if (!rec) continue;
+      rec.quoteBodyHash = qHash;
+      rec.routeQuote = charge;
+      if (bindParse.requested && bindParse.ok && entry === challengeBody.accepts[0]) {
+        const stored = issuanceBindForChallenge(bindParse.bind, {
+          challengeNonce: issuedNonce,
+          settlementContract: entry.asset,
+        });
+        if (!stored.ok) return { kind: 'failed', reason: stored.reason };
         rec.issuance_bind = { required: true, ...stored.bind };
-        challengeStore.put(nonce, rec);
       }
+      activeStore.put(issuedNonce, rec);
     }
     return { kind: 'challenge', body: challengeBody };
   }
@@ -452,15 +461,45 @@ export async function runX402Handshake(req, {
   // Verify (binding) then settle (marks nonce spent).
   // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
+  if (bindingEnforced(cfg)) {
+    return settleBoundPayment({
+      req,
+      taskId,
+      cfg,
+      priceBody,
+      amount,
+      baseUrl,
+      resource,
+      l1Anchor,
+      quoteOpts,
+      expectedPayer,
+      payTo,
+      strictTaskId,
+      store,
+      paymentHeader,
+      clientVersion,
+      nonce,
+      resolveQuote: () => priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
+    });
+  }
+  noteUnboundUse('runX402Handshake', { taskId });
   // Pass the client x402 version so the facilitator client sends the right protocol.
-  const bound = { ...gwOpts, nonce, x402Version: clientVersion };
+  const bound = {
+    ...gwOpts,
+    store: store || getActiveChallengeStore() || challengeStore,
+    nonce,
+    x402Version: clientVersion,
+    allowUnbound: true,
+    solanaFacilitatorUrl: cfg.solana?.facilitatorUrl || null,
+    cfg,
+  };
 
   const v = await verifyPayment(paymentHeader, bound);
   if (!v.valid) return { kind: 'failed', reason: v.reason || 'verify_failed' };
 
   // Read the challenge BEFORE settling — settle marks the nonce spent and drops the record.
   // Verify is idempotent and does not.
-  const challenge = nonce ? challengeStore.get(nonce) : null;
+  const challenge = nonce ? bound.store.get(nonce) : null;
   let boundAmount;
   try {
     boundAmount = challenge?.amount
