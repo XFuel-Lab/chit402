@@ -5,10 +5,24 @@
  */
 import { createHash } from 'node:crypto';
 import { keccak256 } from 'ethers';
+import { inclusionRoot } from './anchor-witness.js';
 
 export interface PreimageLeaf {
   preimage_utf8?: string;
   preimage_hex?: string;
+}
+
+export interface AuditSibling {
+  hash?: string;
+  /** Ignored. Index and tree size choose the side. */
+  position?: string;
+}
+
+export interface AuditPath {
+  index?: number;
+  tree_size?: number;
+  siblings?: AuditSibling[];
+  root?: string;
 }
 
 export interface PreimageEntry {
@@ -19,7 +33,11 @@ export interface PreimageEntry {
   preimage_hex?: string;
   hash?: string;
   merkle?: string;
+  /** Old public shape: every leaf body in the prefix. Still accepted. */
   leaves?: PreimageLeaf[];
+  /** This receipt's leaf body. Other leaves are not on this object. */
+  leaf?: PreimageLeaf & { index?: number; task_id?: string; kind?: string };
+  audit_path?: AuditPath;
   url?: string;
 }
 
@@ -91,8 +109,41 @@ function merkleRoot(leaves: PreimageLeaf[]): string | null {
   return nodes[0].toString('hex');
 }
 
+function hasAuditPath(entry: PreimageEntry): boolean {
+  return !!entry.audit_path && !!entry.leaf && Array.isArray(entry.audit_path.siblings);
+}
+
+/**
+ * Recompute the prefix root from this leaf and the sibling hashes.
+ * A full `leaves` array is the pre-redaction shape and is not read here.
+ */
+function auditRoot(entry: PreimageEntry): string | null {
+  const path = entry.audit_path;
+  const leaf = entry.leaf;
+  if (!path || !leaf || !Array.isArray(path.siblings)) return null;
+  const index = Number(path.index);
+  const treeSize = Number(path.tree_size);
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(treeSize)) return null;
+  if (leaf.index != null && Number(leaf.index) !== index) return null;
+  const input = leafInput(leaf);
+  if (!input) return null;
+  const got = inclusionRoot(
+    sha256(input),
+    index,
+    treeSize,
+    path.siblings.map((step) => ({ hash: String(step?.hash || '') })),
+  );
+  if (!got) return null;
+  if (path.root != null && path.root !== '') {
+    const claimed = String(path.root).replace(/^0x/, '').toLowerCase();
+    if (claimed !== got) return null;
+  }
+  return got;
+}
+
 function digestHex(entry: PreimageEntry): string | null {
-  if (entry.merkle === 'rfc6962' && Array.isArray(entry.leaves)) {
+  if (hasAuditPath(entry)) return auditRoot(entry);
+  if (entry.merkle === 'rfc6962' && Array.isArray(entry.leaves) && entry.leaves.length > 0) {
     return merkleRoot(entry.leaves);
   }
   const bytes = bytesOf(entry);
@@ -201,7 +252,7 @@ export async function verifyPublishedPreimages(
       continue;
     }
     if (entry.recomputable === false) continue;
-    if (!bytesOf(entry) && !(entry.leaves && entry.leaves.length) && entry.url && fetchImpl) {
+    if (!bytesOf(entry) && !(entry.leaves && entry.leaves.length) && !hasAuditPath(entry) && entry.url && fetchImpl) {
       try {
         const remote = await loadRemote(entry, fetchImpl, trustedHosts);
         if (remote) entry = remote;

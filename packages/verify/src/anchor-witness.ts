@@ -164,26 +164,28 @@ function half(n: number): number {
  * SHA-256(0x01 || left || right). Consistency proofs and the empty root
  * are not this function.
  */
-export function verifyMerkleInclusion(
+/**
+ * RFC 9162 fold. Returns the recomputed root, or null when the proof is the
+ * wrong length for `(index, treeSize)` or a sibling is not 32 bytes.
+ * `position` on a step is ignored.
+ */
+export function inclusionRoot(
   leaf: Buffer,
   index: number,
   treeSize: number,
-  rootHex: string,
   proof: InclusionStep[],
-): boolean {
-  if (!Array.isArray(proof)) return false;
+): string | null {
+  if (!Array.isArray(proof)) return null;
   const leafIndex = Number(index);
   const size = Number(treeSize);
-  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return false;
-  if (leafIndex < 0 || leafIndex >= size) return false;
-  const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(root)) return false;
+  if (!Number.isSafeInteger(leafIndex) || !Number.isSafeInteger(size)) return null;
+  if (leafIndex < 0 || leafIndex >= size) return null;
   let fn = leafIndex;
   let sn = size - 1;
   let hash: Buffer = Buffer.from(leaf);
   for (const step of proof) {
-    if (sn === 0) return false;
-    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
+    if (sn === 0) return null;
+    if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return null;
     const sib = Buffer.from(step.hash, 'hex');
     if ((fn % 2) === 1 || fn === sn) {
       hash = nodeHash(sib, hash);
@@ -199,7 +201,20 @@ export function verifyMerkleInclusion(
     fn = half(fn);
     sn = half(sn);
   }
-  return sn === 0 && hash.toString('hex') === root;
+  if (sn !== 0) return null;
+  return hash.toString('hex');
+}
+
+export function verifyMerkleInclusion(
+  leaf: Buffer,
+  index: number,
+  treeSize: number,
+  rootHex: string,
+  proof: InclusionStep[],
+): boolean {
+  const root = String(rootHex || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return false;
+  return inclusionRoot(leaf, index, treeSize, proof) === root;
 }
 
 export interface ParsedAnchorMemo {

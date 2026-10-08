@@ -5,6 +5,9 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ## Unreleased
 
+### Security
+- **Public tree preimage is an inclusion audit path.** `verifyPublishedPreimages` recomputes `tree_head_hash` from this receipt's leaf body plus `audit_path` (`index`, `tree_size`, sibling hashes, root). Index and tree size choose the side. A `position` label is ignored. A tampered sibling, a swapped index, a wrong `tree_size`, or a forged leaf body fails. A saved response that still publishes the ordered `leaves` array still verifies. `BUILD_DIGEST.txt` moved because `src/preimage.ts` and `src/anchor-witness.ts` changed. The pinned epoch genesis digests did not. `@xfuel/verify` stays at 0.3.1. Not published.
+
 ### Added
 - **Dated carry-forward.** A receipt leaf included under an earlier signed epoch head and under the current signed epoch head is `VERIFIED_CARRIED_FORWARD`. `issued_at` and `issued_epoch` are the earlier head's signed claims. `logged_at`, `logged_epoch`, and `leaf_index` are the current head's signed claims and the RFC 9162 inclusion proof. Unsigned receipt fields are not those dates. A receipt in the current epoch is unchanged. A missing signature, a bad proof, a leaf mismatch, a current head time before the earlier head, an epoch id outside the pinned anchor list, or the same leaf at two indexes fails closed with the existing error code. `@xfuel/verify` stays at 0.3.1.
 - **Unlogged rows.** A payload version 2 epoch record carries `unlogged` (`count`, `hash`, `rows`). `verifyEpochRecord` checks that hash. `xfuel-verify` reports `unlogged_reason` when inclusion is absent and the signed list names the task. Payload version 1 records stay valid and have no list. `@xfuel/verify` stays at 0.3.1.

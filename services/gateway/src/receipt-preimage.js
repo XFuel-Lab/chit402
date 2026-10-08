@@ -28,7 +28,7 @@ export const NOT_RECOMPUTABLE_REASONS = Object.freeze({
   coverage: 'coverage.universe_hash and coverage.enumerated_hash commit to possession-gated book rows (task_id|evidence|amount|payment_ref|collected_at, then SHA-256 of the ordered lines). Those rows are not a public preimage. A book holder recomputes them from the export.',
   hmac: 'hmac_attestation.value is HMAC-SHA256 over the canonical payload array with the gateway secret. The secret is not public, so a stranger cannot recompute the tag. The public signature is issuer_signature.jws.',
   delegation: 'delegation_hash is the EIP-712 digest of the session authorization. The typed-data bytes are not on the public receipt.',
-  tree: 'tree_head_hash is the Merkle root of the log prefix. A prefix leaf whose original bytes are not retained cannot be republished, so the root is not publicly recomputable from this receipt.',
+  tree: 'tree_head_hash is the Merkle root of the log prefix that ends at this receipt. The public preimage is this receipt\'s own leaf plus the sibling hashes for that prefix. When this leaf\'s bytes are not retained, the root is not publicly recomputable from this receipt.',
   binding: 'binding.expected_commitment does not match the public payment fields, so the packed preimage is not published.',
   jobSpec: 'job_spec_hash was supplied by the client. The spec bytes were not retained, so the hash is not publicly recomputable.',
   content: 'A client content hash covers bytes the client did not give us to publish.',
@@ -197,21 +197,48 @@ function coverageEmptyField(receipt) {
   return null;
 }
 
-function treeField(prefix) {
-  if (!prefix?.ok || !Array.isArray(prefix.leaves) || !prefix.leaves.length) return null;
+/**
+ * Public tree preimage. One leaf body (this receipt) and the sibling hashes
+ * that recompute the prefix root. A `leaves` array is the old bundle of every
+ * earlier body. That array is not a public field, even when a caller still
+ * has it in memory.
+ */
+function treeField(audit) {
+  if (!audit?.ok || audit.leaves || !audit.leaf || !Array.isArray(audit.siblings)) return null;
+  const leaf = audit.leaf;
+  if (typeof leaf.preimage_utf8 !== 'string' || leaf.preimage_utf8 === '') return null;
+  const index = Number(audit.leaf_index);
+  const treeSize = Number(audit.tree_size);
+  if (!Number.isSafeInteger(index) || !Number.isSafeInteger(treeSize)) return null;
+  if (index < 0 || treeSize <= index) return null;
+  if (leaf.index != null && Number(leaf.index) !== index) return null;
+  const siblings = [];
+  for (const step of audit.siblings) {
+    const hash = String(step?.hash || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(hash)) return null;
+    siblings.push({ hash });
+  }
+  const root = String(audit.root || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(root)) return null;
   return fieldEntry({
     field: 'tree_head_hash',
     alg: 'sha256',
     encoding: 'binary',
     merkle: 'rfc6962',
-    rule: 'Leaf hash is sha256(0x00 || utf8(preimage_utf8)). Node hash is sha256(0x01 || left || right). A trailing odd node is promoted. The root is the prefix that ends at this receipt.',
-    leaves: prefix.leaves.map((leaf) => ({
-      index: leaf.index,
-      kind: leaf.kind,
-      task_id: leaf.task_id,
+    rule: 'Leaf hash is sha256(0x00 || utf8(leaf.preimage_utf8)) for this receipt only. Node hash is sha256(0x01 || left || right). A trailing odd node is promoted. audit_path.index and audit_path.tree_size choose left or right (RFC 9162). A position label is not an input. Sibling entries are hashes, not other leaves. The root is the prefix that ends at this receipt.',
+    leaf: {
+      index,
+      kind: leaf.kind || null,
+      task_id: leaf.task_id || null,
       preimage_utf8: leaf.preimage_utf8,
-    })),
-    hash: prefix.root,
+    },
+    audit_path: {
+      index,
+      tree_size: treeSize,
+      siblings,
+      root,
+    },
+    hash: root,
   });
 }
 
@@ -320,11 +347,17 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
   }
 
   const treeHash = receipt.tree_head_hash || null;
-  if (treeHash && prefix?.ok && prefix.root === String(treeHash).replace(/^0x/, '').toLowerCase()) {
+  const prefixRoot = prefix?.root == null ? '' : String(prefix.root).replace(/^0x/, '').toLowerCase();
+  const treeNorm = treeHash ? String(treeHash).replace(/^0x/, '').toLowerCase() : '';
+  if (treeHash && prefix?.ok && prefixRoot === treeNorm) {
     const tree = treeField(prefix);
     if (tree) fields.tree_head_hash = tree;
+    else not.push({ field: 'tree_head_hash', hash: treeHash, reason: NOT_RECOMPUTABLE_REASONS.tree });
   } else if (treeHash) {
     not.push({ field: 'tree_head_hash', hash: treeHash, reason: NOT_RECOMPUTABLE_REASONS.tree });
+  }
+  if (fields.tree_head_hash && Object.prototype.hasOwnProperty.call(fields.tree_head_hash, 'leaves')) {
+    delete fields.tree_head_hash.leaves;
   }
 
   const spec = jobSpecField(receipt);

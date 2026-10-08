@@ -94,23 +94,40 @@ test('binding preimage is the abi.encodePacked bytes of the commitment', () => {
 test('inclusion leaf and tree prefix preimages recompute the published hashes', () => {
   const tree = resetReceiptMerkleTree();
   const rowHash = 'bf'.repeat(32);
-  tree.appendReceipt('task-leaf', rowHash);
+  tree.appendReceipt('task-other', 'aa'.repeat(32), { publish: false });
+  tree.appendReceipt('task-leaf', rowHash, { publish: false });
   const inclusion = tree.inclusion('task-leaf');
-  const prefix = tree.prefixLeafPreimages('task-leaf');
-  assert.equal(prefix.ok, true);
+  const audit = tree.publicPrefixAudit('task-leaf');
+  assert.equal(audit.ok, true);
+  assert.equal(audit.leaf.task_id, 'task-leaf');
+  assert.equal(Object.prototype.hasOwnProperty.call(audit, 'leaves'), false);
   const leaf = inclusionLeafPreimage('task-leaf', rowHash);
   assert.equal(leaf.hash, inclusion.leaf);
   const receipt = {
     schema: 'xfuel.receipt.v4',
     task_id: 'task-leaf',
-    tree_head_hash: prefix.root,
+    tree_head_hash: audit.root,
     inclusion: { task_id: 'task-leaf', leaf: inclusion.leaf },
     book_chain: { row_hash: rowHash, task_id: 'task-leaf' },
   };
-  const published = withPublicPreimages(receipt, { prefix });
+  const published = withPublicPreimages(receipt, { prefix: audit });
+  const treeField = published.preimages.fields.tree_head_hash;
   assert.equal(published.preimages.fields['inclusion.leaf'].preimage_hex, leaf.preimage_hex);
-  assert.equal(published.preimages.fields.tree_head_hash.hash, prefix.root);
-  assert.ok(published.preimages.fields.tree_head_hash.leaves.length >= 2);
+  assert.equal(treeField.hash, audit.root);
+  assert.equal(treeField.leaf.task_id, 'task-leaf');
+  assert.equal(treeField.audit_path.index, audit.leaf_index);
+  assert.equal(treeField.audit_path.tree_size, audit.tree_size);
+  assert.equal(Object.prototype.hasOwnProperty.call(treeField, 'leaves'), false);
+  assert.equal(JSON.stringify(published).includes('task-other'), false);
+
+  const bundled = tree.prefixLeafPreimages('task-leaf');
+  const withheld = withPublicPreimages(receipt, { prefix: bundled });
+  assert.equal(withheld.preimages.fields.tree_head_hash, undefined);
+  assert.equal(JSON.stringify(withheld).includes('task-other'), false);
+  assert.match(
+    withheld.preimages.not_recomputable.find((row) => row.field === 'tree_head_hash').reason,
+    /sibling hashes/,
+  );
 });
 
 test('coverage of book rows is not a public preimage; the empty set is', () => {
