@@ -19,10 +19,11 @@
  * book_ref is a random 128-bit id. The sequential book id stays in the
  * server map and is not a v11 field.
  *
- * amount_gross is the quoted price. amount_settled is settled_amount: the
- * amount transferred by the bound payment (>= the quoted price). The gateway
- * binds settled_amount to the payer's signed authorization value, not the
- * server quote.
+ * amount_gross is the quoted price. amount_settled is the amount transferred
+ * by the bound payment and is an integer greater than or equal to the quote.
+ * Issuance reads amount_settled only from that bound payment value. It does
+ * not copy the quote, and it does not read intent.amount. A missing or
+ * short settled amount is payment_unbound and is not signed.
  */
 
 import crypto from 'crypto';
@@ -131,16 +132,37 @@ export function minuteIssuedAt(when = new Date()) {
 }
 
 /**
- * Stable opaque id for an internal book key. The key itself is never returned.
- * @param {string|number} internalId
+ * Stable opaque id for one agent book. The agent id is never returned.
+ * A persisted ref (stored on the task next to the owner view) wins, including
+ * after this process map is cleared.
+ * @param {string|number} agentId
+ * @param {string|null} [persisted]
  */
-export function bookRefForInternal(internalId) {
-  const key = String(internalId);
+export function bookRefForAgent(agentId, persisted = null) {
+  if (agentId == null || agentId === '') {
+    const err = new Error('v11 book_ref is per agent book');
+    err.code = 'book_unbound';
+    throw err;
+  }
+  const key = String(agentId);
+  if (typeof persisted === 'string' && /^[0-9a-f]{32}$/.test(persisted)) {
+    bookRefs.set(key, persisted);
+    return persisted;
+  }
   const existing = bookRefs.get(key);
   if (existing) return existing;
   const ref = crypto.randomBytes(16).toString('hex');
   bookRefs.set(key, ref);
   return ref;
+}
+
+/**
+ * @param {string|number} internalId
+ * @deprecated Use bookRefForAgent. Kept for refusal openings that already
+ * hold a book ref they were given.
+ */
+export function bookRefForInternal(internalId) {
+  return bookRefForAgent(internalId);
 }
 
 export function resetBookRefs() {
@@ -167,6 +189,58 @@ export function assertExactFields(claims, fields) {
   }
 }
 
+const EVM_ADDR = /^0x[0-9a-fA-F]{40}$/;
+const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+
+function unbound(reason) {
+  const err = new Error(`v11 payment unbound: ${reason}`);
+  err.code = 'payment_unbound';
+  err.reason = reason;
+  return err;
+}
+
+function atomicInteger(value) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function solanaAccount(value) {
+  return typeof value === 'string' && value.length >= 32 && value.length <= 44 && BASE58.test(value);
+}
+
+function solanaTx(value) {
+  return typeof value === 'string' && value.length >= 64 && value.length <= 128 && BASE58.test(value);
+}
+
+/**
+ * Chain, transaction, payee, payer, and amounts the bound payment must carry.
+ * amount_gross is the quote (integer > 0). amount_settled is the transfer
+ * (integer >= gross). Placeholders (null, unknown, 0) are payment_unbound.
+ * @param {object} claims
+ */
+export function assertV11PaymentBinding(claims) {
+  const chain = claims?.chain;
+  if (chain !== 'base' && chain !== 'solana') throw unbound('chain');
+  if (chain === 'base') {
+    if (!EVM_TX.test(String(claims.payment_tx || ''))) throw unbound('payment_tx');
+    if (!EVM_ADDR.test(String(claims.pay_to || ''))) throw unbound('pay_to');
+    if (!EVM_ADDR.test(String(claims.payer || ''))) throw unbound('payer');
+  } else {
+    if (!solanaTx(claims.payment_tx)) throw unbound('payment_tx');
+    if (!solanaAccount(claims.pay_to)) throw unbound('pay_to');
+    if (!solanaAccount(claims.payer)) throw unbound('payer');
+  }
+  const gross = atomicInteger(claims.amount_gross);
+  const settled = atomicInteger(claims.amount_settled);
+  if (gross == null || gross <= 0n) throw unbound('amount_gross');
+  if (settled == null || settled < gross) throw unbound('amount_settled');
+}
+
 export function assertV11Allowlist(claims) {
   assertExactFields(claims, V11_SIGNED_FIELDS);
   if (claims.v !== 11) throw new Error('v11 field v must be 11');
@@ -180,6 +254,7 @@ export function assertV11Allowlist(claims) {
   if (!Array.isArray(claims.covers) || claims.covers.length !== 1 || claims.covers[0] !== 'payment') {
     throw new Error('v11 covers must be ["payment"]');
   }
+  assertV11PaymentBinding(claims);
 }
 
 export function assertV11RefusalAllowlist(claims) {
@@ -231,11 +306,6 @@ function txOf(ref) {
   const i = text.indexOf(':');
   if (i < 0) return null;
   return text.slice(i + 1) || null;
-}
-
-function amountString(value) {
-  if (value == null || value === '') return null;
-  return String(value);
 }
 
 function productOf(view) {
@@ -308,14 +378,38 @@ export function refusalOpening(opening) {
   };
 }
 
+function integerString(value) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  return /^\d+$/.test(text) ? text : null;
+}
+
+/**
+ * Quote only. Never the bound transfer, and never intent.amount.
+ * @param {object} payment
+ */
+function quotedAmountOf(payment) {
+  return integerString(payment?.quoted_amount);
+}
+
+/**
+ * Bound payment value only. Never the quote and never intent.amount.
+ * @param {object} payment
+ */
+function settledAmountOf(payment) {
+  return integerString(payment?.bound_settled);
+}
+
 /**
  * @param {object} view fat draft
- * @param {{ kid: string, salt: Buffer|string, outputBytes: Buffer, receiptId: string, requestDigest: string, issuedAt?: string }} ctx
+ * @param {{ kid: string, salt: Buffer|string, outputBytes: Buffer, receiptId: string, requestDigest: string, issuedAt?: string, agentId?: string|number|null, bookRef?: string|null }} ctx
  */
 export function buildV11SignedClaims(view, ctx) {
   const payment = view?.payment || {};
   const ref = payment.ref ?? view?.intent?.paymentRef ?? null;
-  const internalBook = view?.meta?.agentId ?? view?.meta?.agent_id ?? view?.claim_id ?? view?.task_id ?? ctx.receiptId;
+  const task = view?._v11Task || null;
+  const agentId = ctx.agentId ?? task?.meta?.agentId ?? task?.meta?.agent_id ?? view?.meta?.agentId ?? null;
+  const persisted = ctx.bookRef ?? task?.meta?.v11BookRef ?? null;
   const claims = {
     v: 11,
     receipt_id: ctx.receiptId,
@@ -325,17 +419,11 @@ export function buildV11SignedClaims(view, ctx) {
     asset: payment.asset ?? view?.meta?.paymentAsset ?? 'USDC',
     chain: chainOf(ref),
     pay_to: payment.payee ?? view?.meta?.payTo ?? null,
-    amount_gross: amountString(payment.gross_amount ?? view?.intent?.amount ?? null),
-    // settled_amount: the amount transferred by the bound payment (>= the quoted price).
-    // Bound to the payer's signed authorization value, not the server quote.
-    amount_settled: amountString(
-      Object.prototype.hasOwnProperty.call(payment, 'settled_amount')
-        ? payment.settled_amount
-        : (payment.gross_amount ?? view?.intent?.amount ?? null),
-    ),
+    amount_gross: quotedAmountOf(payment),
+    amount_settled: settledAmountOf(payment),
     payment_tx: txOf(ref),
     payer: view?.caller_binding?.payer_wallet ?? view?.meta?.payerWallet ?? null,
-    book_ref: bookRefForInternal(internalBook),
+    book_ref: bookRefForAgent(agentId, persisted),
     seq: seqOf(view),
     request_digest: ctx.requestDigest,
     output_commitment: v11Commit(ctx.salt, V11_LABEL_OUTPUT, ctx.outputBytes || Buffer.alloc(0)),
@@ -346,6 +434,7 @@ export function buildV11SignedClaims(view, ctx) {
     covers: ['payment'],
   };
   assertV11Allowlist(claims);
+  if (task?.meta && typeof task.meta === 'object') task.meta.v11BookRef = claims.book_ref;
   return claims;
 }
 
@@ -354,13 +443,38 @@ export function buildV11SignedClaims(view, ctx) {
  */
 export function publicV11Receipt(parts) {
   assertV11Allowlist(parts.claims);
+  const claims = {};
+  for (const key of V11_SIGNED_FIELDS) claims[key] = parts.claims[key];
+  const signature = {
+    alg: 'ES256',
+    kid: parts.kid,
+    jws: parts.jws,
+  };
+  Object.defineProperty(signature, 'payload_version', {
+    value: 11,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  if (typeof parts.canonicalPreimage === 'string') {
+    Object.defineProperty(signature, 'canonical_preimage', {
+      value: parts.canonicalPreimage,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+    if (parts.payloadHash) {
+      Object.defineProperty(signature, 'payload_hash', {
+        value: parts.payloadHash,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+    }
+  }
   const doc = {
-    ...parts.claims,
-    issuer_signature: {
-      alg: 'ES256',
-      kid: parts.kid,
-      jws: parts.jws,
-    },
+    ...claims,
+    issuer_signature: signature,
     verify_url: parts.verifyUrl || null,
   };
   assertNoDisallowedPublic(doc);

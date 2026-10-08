@@ -61,14 +61,14 @@ test('matching request_digest vector', () => {
 });
 
 test('a tampered body changes request_digest', () => {
-  const tampered = requestDigest({ ...REQUEST, body: `${BODY} ` });
+  const tampered = requestDigest({ ...REQUEST, body: `${BODY} `, salt: SALT });
   assert.notEqual(tampered, DIGEST);
   assert.equal(tampered, 'e555aad716602779ec85d9899c47da6a58eba729355a2cf11da7758902e7890c');
 });
 
 test('the same idempotency key with a different payload fails closed', () => {
   resetIdempotencyStore();
-  const first = { ...REQUEST };
+  const first = { ...REQUEST, salt: SALT };
   const digest = requestDigest(first);
   assert.equal(claimIdempotency('idem-1', digest, requestSalt(first)).replay, false);
   const replay = {
@@ -82,7 +82,7 @@ test('the same idempotency key with a different payload fails closed', () => {
   assert.equal(requestSalt(replay), SALT);
   assert.equal(claimIdempotency('idem-1', digest, requestSalt(replay)).replay, true);
   assert.throws(
-    () => claimIdempotency('idem-1', requestDigest({ ...REQUEST, body: `${BODY} ` })),
+    () => claimIdempotency('idem-1', requestDigest({ ...REQUEST, body: `${BODY} `, salt: SALT })),
     (err) => err.code === 'idempotency_conflict' && /different request/.test(err.message),
   );
 });
@@ -268,8 +268,8 @@ test('replaying a refusal against a different request does not match', () => {
   resetIdempotencyStore();
   const stored = { request_digest: DIGEST };
   claimIdempotency('idem-replay', DIGEST);
-  const other = { ...REQUEST, idempotency_key: 'idem-replay', body: '{"model":"other"}' };
-  assert.equal(refusalMatchesRequest(stored, REQUEST), true);
+  const other = { ...REQUEST, idempotency_key: 'idem-replay', body: '{"model":"other"}', salt: SALT };
+  assert.equal(refusalMatchesRequest(stored, { ...REQUEST, salt: SALT }), true);
   assert.equal(refusalMatchesRequest(stored, other), false);
   assert.throws(
     () => claimIdempotency('idem-replay', requestDigest(other)),
@@ -353,6 +353,8 @@ test('a paid settle signs request_digest without publishing an unsalted body has
       taskId: 'xfuel-paid-bind',
       payment: {
         amount: '2000',
+        quotedAmount: '2000',
+        settledAmount: '2000',
         ref: `base:0x${'ab'.repeat(32)}`,
         payer: `0x${'11'.repeat(20)}`,
         payTo: `0x${'22'.repeat(20)}`,

@@ -80,7 +80,12 @@ export function saltReceiptId(holder) {
  */
 export function bindSaltReceipt(holder, receiptId) {
   if (!holder || typeof holder !== 'object' || !receiptId) return;
-  holder[SALT_ID] = String(receiptId);
+  Object.defineProperty(holder, SALT_ID, {
+    value: String(receiptId),
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
 }
 
 function newReceiptId() {
@@ -338,7 +343,8 @@ export function clientRequestForRefusal(req, path) {
   const idem = headers['idempotency-key'] || headers['x-idempotency-key'] || body.idempotency_key || null;
   const nonce = headers['x-xfuel-nonce'] || (body.nonce != null && body.nonce !== '' ? body.nonce : null);
   const intent = headers['x-xfuel-intent'] || body.intent_id || body.intent || null;
-  const payer = body.payer || req?.payer || headers['x-payer'] || null;
+  const sessionPayer = req?.session?.payer_wallet || req?.boundSession?.payer_wallet || null;
+  const payer = sessionPayer || null;
   return {
     method: req?.method || 'POST',
     path: path && String(path).startsWith('/') ? String(path) : '/v1/chat/completions',

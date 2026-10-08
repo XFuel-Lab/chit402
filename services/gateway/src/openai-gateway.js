@@ -636,6 +636,8 @@ async function meterV1Request(req, res, {
         payment: {
           ref: decision.paymentRef,
           amount: decision.settledAmount,
+          quotedAmount: decision.quotedAmount ?? null,
+          settledAmount: decision.settledAmount,
           payer: decision.payerWallet,
           payTo: decision.payTo,
           asset: decision.asset,
@@ -1463,6 +1465,10 @@ function registerTaskAndProve({
       requestedModel: requestedModel || null,
       apiKeyHash: apiKeyHash || null,
       payerWallet: payment?.payer || session?.payer_wallet || null,
+      quotedAmount: payment?.quotedAmount != null ? String(payment.quotedAmount) : null,
+      boundSettledAmount: payment?.settledAmount != null
+        ? String(payment.settledAmount)
+        : (payment?.amount != null ? String(payment.amount) : null),
       payTo: payment?.payTo || null,
       paymentAsset: payment?.asset || null,
       issuanceCommitment: payment?.issuance_commitment || null,
@@ -1928,7 +1934,10 @@ export function registerPaidV1Shell({
   req = null, resourcePath = '/v1/chat/completions',
 }) {
   const request = req ? clientRequestForRefusal(req, resourcePath) : null;
-  if (request && payment?.payer && !request.payer) request.payer = payment.payer;
+  if (request) {
+    delete request.payer;
+    if (payment?.payer) request.payer = String(payment.payer);
+  }
   return registerTaskAndProve({
     taskId,
     model: model || 'xfuel/auto',

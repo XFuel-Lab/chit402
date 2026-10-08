@@ -26,7 +26,6 @@ const {
   notBeforeForKid,
   PRODUCTION_KEY_NOT_BEFORE,
   PRODUCTION_ISSUER_KID,
-  CUSTODY_STATEMENT,
 } = await import('../src/issuer-history.js');
 const { getIssuerKid, getJwks } = await import('../src/issuer-key.js');
 
@@ -222,7 +221,7 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
       status: 'revoked',
       revoked_at: '2026-09-01T00:00:00.000Z',
       reason: 'test rotation',
-      custody: CUSTODY_STATEMENT,
+      custody: 'rotated',
     }],
   });
   assert.equal(verifyIssuerHistory(revoked).valid, true);

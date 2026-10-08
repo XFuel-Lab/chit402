@@ -907,7 +907,7 @@ function clientRequestBinding(view) {
   const request_digest = requestDigest(request);
   if (request.idempotency_key) {
     claimIdempotency(request.idempotency_key, request_digest, {
-      principal: request.payer || view?.caller_binding?.payer_wallet || '',
+      principal: view?.caller_binding?.payer_wallet || '',
       receiptId: saltReceiptId(request),
     });
   }
@@ -1534,13 +1534,16 @@ function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
   }
   const kid = getIssuerKid();
   const issuedAt = iat != null ? minuteIssuedAt(new Date(Number(iat) * 1000)) : undefined;
+  const task = receipt._v11Task || null;
   const claims = buildV11SignedClaims(receipt, {
     kid,
     salt: Buffer.from(saltHex, 'hex'),
-    outputBytes: outputBytesOf(receipt._v11Task || receipt),
+    outputBytes: outputBytesOf(task || receipt),
     receiptId,
     requestDigest: digest,
     issuedAt,
+    agentId: task?.meta?.agentId ?? task?.meta?.agent_id ?? null,
+    bookRef: task?.meta?.v11BookRef ?? null,
   });
   const payloadUtf8 = jcsRfc8785(claims);
   const jwksUri = buildJwksUri(baseUrl);
@@ -2181,6 +2184,12 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const reportedRail = paymentRail === 'reported';
   const inheritedTask = isInheritedSettlementTask(task);
   const chargedAmount = task.intent?.amount || '0';
+  const quotedAmount = task.meta?.quotedAmount != null
+    ? String(task.meta.quotedAmount)
+    : (task.intent?.quotedAmount != null ? String(task.intent.quotedAmount) : null);
+  const boundSettled = task.meta?.boundSettledAmount != null
+    ? String(task.meta.boundSettledAmount)
+    : (task.intent?.boundSettledAmount != null ? String(task.intent.boundSettledAmount) : null);
   const onChainSettlement = !inheritedTask && !reportedRail && paymentRail === 'usdc' && !!paymentRef;
   const accounting = (inheritedTask || reportedRail || paymentRail === 'unmetered')
     ? null
@@ -2257,6 +2266,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
           payee: reportedRail ? null : (paymentRef ? payeeOf(task, { payTo }) : null),
           gross_amount: chargedAmount,
           settled_amount: onChainSettlement ? String(chargedAmount) : null,
+          quoted_amount: quotedAmount,
+          bound_settled: boundSettled,
           accounting,
           tier2_proof: pricing?.tier2_proof && pricing.tier2_proof !== '0' ? String(pricing.tier2_proof) : null,
           floor_applied: pricing?.floor_applied ?? (accounting
@@ -2374,8 +2385,20 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
     }
   }
   if (!issuer_signature?.jws) {
-    issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
-    rememberIssuerSignature(issuer_signature);
+    try {
+      issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+      rememberIssuerSignature(issuer_signature);
+    } catch (err) {
+      if (err?.code !== 'payment_unbound') throw err;
+      return {
+        schema: draft.schema,
+        task_id: draft.task_id,
+        status: draft.status,
+        proof_outcome: 'pending',
+        verify_url: draft.verify_url,
+        issuer_signature: null,
+      };
+    }
   }
   const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })
@@ -2496,12 +2519,14 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   const decodedV11 = v11Claims || (decodeReceiptClaims({ issuer_signature })?.v === 11
     ? decodeReceiptClaims({ issuer_signature })
     : null);
-  if (decodedV11 && issuerRootActive()) {
+  if (decodedV11) {
     return publicV11Receipt({
       claims: decodedV11,
       jws: issuer_signature.jws,
       kid: issuer_signature.kid,
       verifyUrl: draft.verify_url,
+      canonicalPreimage: issuer_signature.canonical_preimage || null,
+      payloadHash: issuer_signature.payload_hash || null,
     });
   }
   return envelope;
@@ -3346,6 +3371,7 @@ function privacyVendorBlindCheck(view, pol) {
  * @param {{ policy?: object }} [opts]
  */
 export function buildAuditorExport(receipt, { policy = null } = {}) {
+  if (isV11Document(receipt)) return receipt;
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }

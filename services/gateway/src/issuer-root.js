@@ -9,9 +9,8 @@
  * when enabled). Signing never calls an RPC.
  *
  * ISSUER_PRIVATE_KEY is a base64 PEM in the gateway environment variable.
- * Production sets it from the host .env file. The loader reads only
- * process.env. The process does not call a cloud KMS or Secrets Manager.
- * The Safe that writes the registry is not this key.
+ * Production sets it from the host environment. The loader reads only
+ * process.env. The Safe that writes the registry is not this key.
  */
 import fs from 'fs';
 import net from 'net';

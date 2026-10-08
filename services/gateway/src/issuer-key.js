@@ -7,9 +7,8 @@
  *
  * Key format: ES256 (ECDSA with P-256/secp256r1 and SHA-256)
  *   - Private key: PEM format, base64-encoded in the gateway environment
- *     variable ISSUER_PRIVATE_KEY. Production sets it from the host .env file.
- *     The loader reads only process.env. The process does not call a cloud KMS
- *     or Secrets Manager. There is no second key loader.
+ *     variable ISSUER_PRIVATE_KEY. Production sets it from the host environment.
+ *     The loader reads only process.env. There is no second key loader.
  *   - Public key: JWK format in /.well-known/jwks.json
  *   - Key ID (kid): SHA-256 thumbprint of the JWK (RFC 7638)
  *
@@ -36,11 +35,22 @@ function issuerKeyMaterial() {
 }
 
 /**
+ * Production is every NODE_ENV other than test and development. Unset is production.
+ * @param {string|undefined|null} [nodeEnv]
+ */
+export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {
+  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
+  return env !== 'test' && env !== 'development';
+}
+
+/**
  * Production never mints a temporary key. An empty env value counts as missing.
  * ISSUER_ROOT_ENABLED and the skip acknowledgement do not override this.
+ * ALLOW_EPHEMERAL_ISSUER_KEY=true is the local opt-in.
  */
 function assertProductionIssuerKeyPresent(envKey) {
-  if (process.env.NODE_ENV === 'production' && !envKey) {
+  if (String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true') return;
+  if (isProductionIssuerEnv() && !envKey) {
     const err = new Error('production refuses to boot when ISSUER_PRIVATE_KEY is missing or empty');
     err.code = 'issuer_key_missing';
     throw err;
@@ -57,8 +67,9 @@ function assertIssuerKeyType(privateKey) {
 }
 
 function assertIssuerKid(kid) {
-  const configured = String(process.env.ISSUER_KID || '').trim()
-    || (process.env.NODE_ENV === 'production' ? PRODUCTION_ISSUER_KID : '');
+  const explicit = String(process.env.ISSUER_KID || '').trim();
+  const ephemeral = String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true';
+  const configured = explicit || (isProductionIssuerEnv() && !ephemeral ? PRODUCTION_ISSUER_KID : '');
   if (configured && kid !== configured) {
     const err = new Error('issuer kid does not match the configured kid');
     err.code = 'issuer_kid_mismatch';

@@ -5,10 +5,9 @@
  * binding. Holder mode adds `--salt` and `--open`. A malformed salt is
  * rejected and never lowercased or stripped.
  *
- * amount_gross is the quoted price. amount_settled is settled_amount: the
- * amount transferred by the bound payment (>= the quoted price). Issuance
- * binds settled_amount to the payer's signed authorization value, not the
- * server quote.
+ * amount_gross is the quoted price (integer > 0). amount_settled is the
+ * amount transferred by the bound payment (integer >= amount_gross). A
+ * missing, non-integer, or short settled amount is payment_unbound.
  *
  * verifyReceiptUpToV10 refuses v >= 11 before that path runs.
  */
@@ -197,10 +196,7 @@ export async function verifyV11Receipt(
       if (typeof payload[key] !== 'string' || !HEX64.test(payload[key] as string)) errors.push('commitment_malformed');
     }
     if (typeof payload.book_ref !== 'string' || !/^[0-9a-f]{32}$/.test(payload.book_ref)) errors.push('commitment_malformed');
-    if (typeof payload.payer !== 'string' || !payload.payer) errors.push('payment_unbound');
-    if (typeof payload.pay_to !== 'string' || !payload.pay_to) errors.push('payment_unbound');
-    if (typeof payload.amount_gross !== 'string' || !payload.amount_gross) errors.push('payment_unbound');
-    if (typeof payload.payment_tx !== 'string' || !payload.payment_tx) errors.push('payment_unbound');
+    errors.push(...paymentBindingErrors(payload));
   } else {
     for (const key of ['request_digest', 'refusal_commitment']) {
       if (typeof payload[key] !== 'string' || !HEX64.test(payload[key] as string)) errors.push('commitment_malformed');
@@ -225,6 +221,49 @@ export async function verifyV11Receipt(
   });
   const signed = issuer.valid ? issuer : { ...issuer, payload: (issuer.payload || payload) as ReceiptVerification['issuer_signature']['payload'] };
   return shell(receipt, unique, signed, lane);
+}
+
+const EVM_ADDR = /^0x[0-9a-fA-F]{40}$/;
+const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+
+function atomicInteger(value: unknown): bigint | null {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function solanaAccount(value: unknown): boolean {
+  return typeof value === 'string' && value.length >= 32 && value.length <= 44 && BASE58.test(value);
+}
+
+function solanaTx(value: unknown): boolean {
+  return typeof value === 'string' && value.length >= 64 && value.length <= 128 && BASE58.test(value);
+}
+
+/** payment_unbound plus a sub-reason. Chain, tx, payee, payer, and amounts. */
+export function paymentBindingErrors(payload: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  const chain = payload.chain;
+  if (chain !== 'base' && chain !== 'solana') errors.push('payment_unbound:chain');
+  else if (chain === 'base') {
+    if (typeof payload.payment_tx !== 'string' || !EVM_TX.test(payload.payment_tx)) errors.push('payment_unbound:payment_tx');
+    if (typeof payload.pay_to !== 'string' || !EVM_ADDR.test(payload.pay_to)) errors.push('payment_unbound:pay_to');
+    if (typeof payload.payer !== 'string' || !EVM_ADDR.test(payload.payer)) errors.push('payment_unbound:payer');
+  } else {
+    if (!solanaTx(payload.payment_tx)) errors.push('payment_unbound:payment_tx');
+    if (!solanaAccount(payload.pay_to)) errors.push('payment_unbound:pay_to');
+    if (!solanaAccount(payload.payer)) errors.push('payment_unbound:payer');
+  }
+  const gross = atomicInteger(payload.amount_gross);
+  const settled = atomicInteger(payload.amount_settled);
+  if (gross == null || gross <= 0n) errors.push('payment_unbound:amount_gross');
+  else if (settled == null || settled < gross) errors.push('payment_unbound:amount_settled');
+  if (errors.length) errors.unshift('payment_unbound');
+  return errors;
 }
 
 function openHolder(

@@ -44,7 +44,7 @@ const {
   verifyHistorySnapshotClaims,
   verifyIssuerHistory,
 } = await import('../src/issuer-history.js');
-const { verifyJwsWithJwks, getJwks, getIssuerPublicKeyJwk, initIssuerKey, signJws, _resetIssuerKey } = await import('../src/issuer-key.js');
+const { verifyJwsWithJwks, getJwks, getIssuerPublicKeyJwk, initIssuerKey, signJws, _resetIssuerKey, computeJwkThumbprint } = await import('../src/issuer-key.js');
 const {
   assertIssuerRootStartup,
   assertIssuanceOpen,
@@ -136,6 +136,8 @@ function paidTask(taskId) {
       payTo: '0x2222222222222222222222222222222222222222',
       provider: 'theta-edgecloud',
       agentId: 4,
+      quotedAmount: '2000',
+      boundSettledAmount: '2000',
     },
     result: {
       provider: 'theta-edgecloud',
@@ -189,9 +191,10 @@ function normalizeRefusal(preimage) {
 }
 
 function useStableKey() {
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   process.env.ISSUER_PRIVATE_KEY = Buffer.from(pem).toString('base64');
+  process.env.ISSUER_KID = computeJwkThumbprint(publicKey.export({ format: 'jwk' }));
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
   _resetIssuerKey();
   resetIssuerHistoryStore();
@@ -313,6 +316,7 @@ test('flag off: receipt, refusal, and history bytes match the current golden', (
   const prev = snapshotEnv();
   try {
     for (const key of ROOT_ENV) delete process.env[key];
+    process.env.NODE_ENV = 'test';
     process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
     _resetIssuerKey();
     resetIssuerHistoryStore();
@@ -347,6 +351,7 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
   const prev = snapshotEnv();
   try {
     for (const key of ROOT_ENV) delete process.env[key];
+    process.env.NODE_ENV = 'test';
     useStableKey();
     const issued = [];
     const first = buildReceipt(paidTask('xfuel-cutover-a'), { signingSecret: 's', agentId: 4 });
@@ -565,6 +570,7 @@ test('enabled without a stable issuer key refuses to start', async () => {
   const prev = snapshotEnv();
   try {
     for (const key of ROOT_ENV) delete process.env[key];
+    process.env.NODE_ENV = 'test';
     process.env.ISSUER_ROOT_ENABLED = 'true';
     process.env.ISSUER_ROOT_REGISTRY = '0x1111111111111111111111111111111111111111';
     process.env.ISSUER_ROOT_SEQ = '1';
@@ -730,6 +736,7 @@ test('v11 seals controls as RFC 8785; a flag-off receipt keeps chit402-jcs-v1', 
   const taskId = 'xfuel-\t\n\u0001\u{1F600}';
   try {
     for (const key of ROOT_ENV) delete process.env[key];
+    process.env.NODE_ENV = 'test';
     _resetIssuerKey();
     resetIssuerHistoryStore();
     const off = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });

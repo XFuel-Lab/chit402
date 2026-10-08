@@ -1669,6 +1669,7 @@ export function createApp() {
       let paymentRail = config.x402?.defaultRail || 'usdc';
       let paymentRef = null;
       let settledAmount = null;
+      let quotedAmount = null;
       let payerWallet = null;
       let payTo = null;
       let paymentAsset = null;
@@ -1741,6 +1742,7 @@ export function createApp() {
                   paymentRail = 'usdc';
                   paymentRef = hs.paymentRef;
                   settledAmount = hs.settledAmount;
+                  quotedAmount = hs.quotedAmount || null;
                   payerWallet = hs.payerWallet || null;
                   payTo = hs.payTo || null;
                   paymentAsset = hs.asset || null;
@@ -1770,6 +1772,7 @@ export function createApp() {
               paymentRail = 'usdc';
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
+              quotedAmount = decision.quotedAmount || null;
               payerWallet = decision.payerWallet || null;
               settledResponseRef = decision.paymentRef || null;
               settledResponsePayer = decision.payerWallet || null;
@@ -1969,6 +1972,8 @@ export function createApp() {
         apiKeyHash: apiKeyHashFromReq(req),
         // Payer wallet from x402 settlement (for caller_binding entitlement proof)
         payerWallet: boundSession?.payer_wallet || payerWallet,
+        quotedAmount: quotedAmount || null,
+        boundSettledAmount: settledAmount || null,
         payTo: payTo || null,
         paymentAsset: paymentAsset || null,
         session: boundSession,

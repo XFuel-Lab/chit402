@@ -2,7 +2,7 @@
 
 Off unless `ISSUER_ROOT_ENABLED=true`. With the flag unset, payment receipts stay payload v10, refusals stay `chit402.refusal.v1` at payload version 2, and `GET /.well-known/issuer-history.json` is unchanged. `GET /freeze/:universeId` and `GET /receipt/:id/legacy-proof` return 404.
 
-The issuer private key is the base64 PEM in the gateway environment variable `ISSUER_PRIVATE_KEY`. Production sets that variable from the host `.env` file. The loader reads only `process.env`. The process does not call a cloud KMS or Secrets Manager. There is no second key loader. The Safe that writes `ChitIssuerRoot` is not this key.
+The issuer private key is the base64 PEM in the gateway environment variable `ISSUER_PRIVATE_KEY`. Production sets that variable from the host environment. The loader reads only `process.env`. There is no second key loader. The Safe that writes `ChitIssuerRoot` is not this key.
 
 Restart the process after changing these variables. The key check and the finalized-commit check run at startup, not on a later request.
 
@@ -30,7 +30,9 @@ Restart the process after changing these variables. The key check and the finali
 
 Signing never reads the chain. `strict` asks two independent RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. The same two RPCs must agree on every `KeyRetired` log up to that block. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error and does not sign v11 receipts, on Base Sepolia or on mainnet. It still refuses an unset `ISSUER_PRIVATE_KEY`. It also does not learn retirements, because it did not read the registry. Topics and log decoding come from `services/gateway/abi/ChitIssuerRoot.json`, the contract artifact, not from a hand-written event signature.
 
-If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs. Production (`NODE_ENV=production`) refuses to boot when that variable is missing or empty, including a blank line loaded from an env file, and the issuer-root flag does not override that. The loaded key must be ES256 (P-256), and its kid must match `ISSUER_KID` or, when that is unset in production, the published issuer kid.
+If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs when `NODE_ENV` is `test` or `development`. Production is every other `NODE_ENV`, including unset. Production refuses to boot when `ISSUER_PRIVATE_KEY` is missing or empty, including a blank line loaded from an env file. `ALLOW_EPHEMERAL_ISSUER_KEY=true` is the local opt-in. The issuer-root flag and `ISSUER_ROOT_ALLOW_SKIP` do not override the missing-key rule. The loaded key must be ES256 (P-256), and its kid must match `ISSUER_KID` or, when that is unset in production, the published issuer kid.
+
+The v11 salt store follows the same production rule. Production refuses v11 issuance unless the active SaltStore has `kind === 'encrypted'` and `durable === true`. An in-memory ciphertext map is not durable. `SALT_STORE_ALLOW_EPHEMERAL=true` is the local opt-in.
 
 ## What v11 adds
 
@@ -100,7 +102,7 @@ A refusal v2 without `request_digest`, or without the preimage, is `REQUEST_UNBO
 
 ### Payment amounts
 
-On a v11 payment receipt, `amount_gross` is the quoted price. `amount_settled` is `settled_amount`: the amount transferred by the bound payment (>= the quoted price). The gateway binds `settled_amount` to the payer's signed authorization value, not the server quote.
+On a v11 payment receipt, `amount_gross` is the quoted price. `amount_settled` is the amount transferred by the bound payment, and it is an integer greater than or equal to the quote. The gateway reads `amount_settled` from that bound payment value (`settledAmount` on the handshake, which is the payer's signed authorization when the payment-binding guard supplies it). It does not copy the quote into `amount_settled`, and it does not read `intent.amount`. A receipt is not signed when the bound amount is missing or below the quote.
 
 ### `policy`
 

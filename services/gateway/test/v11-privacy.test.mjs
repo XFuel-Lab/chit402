@@ -13,12 +13,14 @@ import pino from 'pino';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 
-const { buildReceipt, decodeReceiptClaims, renderReceiptHtml, storedReceiptJson, stampCoveringTreeHead } = await import('../src/receipt.js');
+const { buildReceipt, buildAuditorExport, decodeReceiptClaims, renderReceiptHtml, storedReceiptJson, stampCoveringTreeHead } = await import('../src/receipt.js');
 const { issueRefusalReceipt, verifyRefusalReceipt } = await import('../src/refusal-receipt.js');
 const { getReceiptMerkleTree, resetReceiptMerkleTree } = await import('../src/receipt-merkle.js');
 const {
   applyRequestSaltHeader,
+  bindSaltReceipt,
   bodyCommitmentHex,
+  clientRequestForRefusal,
   requestDigest,
   requestSalt,
   resetIdempotencyStore,
@@ -51,10 +53,13 @@ const {
   assertExactFields,
 } = await import('../src/v11-seal.js');
 const { assertIssuanceOpen, assertIssuerRootStartup, _resetIssuerRootStartupState } = await import('../src/issuer-root.js');
-const { _resetIssuerKey, getIssuerPublicKeyJwk } = await import('../src/issuer-key.js');
+const { _resetIssuerKey, computeJwkThumbprint, getIssuerPublicKeyJwk, initIssuerKey } = await import('../src/issuer-key.js');
 const { resetIssuerHistoryStore } = await import('../src/issuer-history.js');
 const { buildLegacyReceiptSet } = await import('../src/legacy-receipt-merkle.js');
 const { jcsRfc8785 } = await import('../src/offer-receipt.js');
+const { writeCanonicalPreimage } = await import('../src/canonical-preimage.js');
+const { buildReceiptOgSvg } = await import('../src/receipt-og.js');
+const { buildForeignReceipt } = await import('../src/foreign-x402-ingest.js');
 const { LOG_REDACT } = await import('../src/logger.js');
 const { PersistentTaskStore } = await import('../src/task-store.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
@@ -64,7 +69,7 @@ const ROOT_ENV = [
   'ISSUER_ROOT_ENABLED', 'ISSUER_ROOT_CHAIN_ID', 'ISSUER_ROOT_REGISTRY', 'ISSUER_ROOT_SEQ',
   'ISSUER_ROOT_HASH', 'ISSUER_ROOT_STARTUP_CHECK', 'ISSUER_ROOT_RPC_URL', 'ISSUER_ROOT_RPC_URL_2',
   'ISSUER_ROOT_LEGACY_SET', 'ISSUER_PRIVATE_KEY', 'ISSUER_KEY_NOT_BEFORE', 'ISSUER_ROOT_CUTOVER',
-  'ISSUER_ROOT_ALLOW_SKIP', 'NODE_ENV',
+  'ISSUER_ROOT_ALLOW_SKIP', 'NODE_ENV', 'SALT_STORE_ALLOW_EPHEMERAL', 'ISSUER_KID', 'ALLOW_EPHEMERAL_ISSUER_KEY',
 ];
 
 function snapshotEnv() {
@@ -86,8 +91,9 @@ function restoreEnv(prev) {
 }
 
 function useStableKey() {
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
   process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+  process.env.ISSUER_KID = computeJwkThumbprint(publicKey.export({ format: 'jwk' }));
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
   _resetIssuerKey();
   resetIssuerHistoryStore();
@@ -135,7 +141,13 @@ async function arm() {
   await assertIssuerRootStartup({ fetchImpl: chainFetch(), log() {} });
 }
 
-function paidTask(taskId, { output = 'ok', agentId = 4, payer = '0x1111111111111111111111111111111111111111', body = '{"model":"xfuel/auto"}' } = {}) {
+function paidTask(taskId, { output = 'ok', agentId = 4, payer = '0x1111111111111111111111111111111111111111', body = '{"model":"xfuel/auto"}', quoted = '2000', settled = '2000', chain = 'base' } = {}) {
+  const tx = chain === 'solana'
+    ? '5'.repeat(87)
+    : `0x${'ab'.repeat(32)}`;
+  const payTo = chain === 'solana'
+    ? 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww'
+    : '0x2222222222222222222222222222222222222222';
   return {
     taskId,
     status: 'completed',
@@ -144,16 +156,18 @@ function paidTask(taskId, { output = 'ok', agentId = 4, payer = '0x1111111111111
     intent: {
       type: 'inference_request',
       paymentRail: 'usdc',
-      paymentRef: `base:0x${'ab'.repeat(32)}`,
-      amount: '2000',
+      paymentRef: `${chain}:${tx}`,
+      amount: '9999',
       modelId: 'theta/qwen3',
       prompt: 'super-secret-prompt-text',
     },
     meta: {
       payerWallet: payer,
-      payTo: '0x2222222222222222222222222222222222222222',
+      payTo,
       provider: 'theta-edgecloud',
       agentId,
+      quotedAmount: quoted,
+      boundSettledAmount: settled,
     },
     result: { provider: 'theta-edgecloud', model: 'theta/qwen3', content: output },
     request: {
@@ -194,6 +208,11 @@ test('SaltStore records are A256GCM ciphertext with no plaintext salt', () => {
   assert.equal(encRecord.alg, 'A256GCM');
   assert.equal(Object.hasOwn(encRecord, 'salt'), false);
   assert.equal(encrypted.get('rcpt-1').toString('hex'), 'cd'.repeat(32));
+  const saltHex = 'cd'.repeat(32);
+  assert.equal(encrypted.receiptIdForSalt(saltHex), 'rcpt-1');
+  const indexKey = crypto.createHmac('sha256', wrap).update(Buffer.from(saltHex, 'hex')).digest('hex');
+  assert.equal(encrypted._bySalt.has(saltHex), false);
+  assert.equal(encrypted._bySalt.get(indexKey), 'rcpt-1');
   assert.throws(() => openSaltRecord({ ...encRecord, receipt_id: 'other' }, wrap));
   assert.equal(saltAad('rcpt-1').toString('utf8'), 'v11/saltrcpt-1');
 });
@@ -221,7 +240,11 @@ test('production boot with the memory store refuses v11 issuance', async () => {
     assert.equal(called, 0);
     assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
     setSaltStore(new EncryptedSaltStore(crypto.randomBytes(32)));
+    assert.equal(getSaltStore().durable, false);
+    assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
+    setSaltStore(new EncryptedSaltStore(crypto.randomBytes(32), undefined, { durable: true }));
     assert.equal(getSaltStore().kind, 'encrypted');
+    assert.equal(getSaltStore().durable, true);
     assert.doesNotThrow(() => {
       try { assertIssuanceOpen(); } catch (err) {
         if (err.code === 'salt_store_refused') throw err;
@@ -229,6 +252,10 @@ test('production boot with the memory store refuses v11 issuance', async () => {
     });
     setSaltStore(new MemorySaltStore());
     delete process.env.NODE_ENV;
+    assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
+    process.env.NODE_ENV = 'staging';
+    assert.throws(() => assertIssuanceOpen(), (err) => err.code === 'salt_store_refused');
+    process.env.SALT_STORE_ALLOW_EPHEMERAL = 'true';
     assert.doesNotThrow(() => {
       try { assertIssuanceOpen(); } catch (err) {
         if (err.code === 'salt_store_refused') throw err;
@@ -251,6 +278,9 @@ test('v11 public receipt hides output, route, economics, and book ids', async ()
     assert.equal(claims.issued_at, '2026-09-26T17:27Z');
     assert.match(claims.output_commitment, /^[0-9a-f]{64}$/);
     assert.equal(claims.book_ref.length, 32);
+    assert.equal(claims.amount_gross, '2000');
+    assert.equal(claims.amount_settled, '2000');
+    assert.equal(claims.amount_settled === '9999', false);
     const published = JSON.stringify(receipt);
     assert.equal(published.includes('"4"'), false);
     assert.equal(published.includes('theta'), false);
@@ -269,8 +299,10 @@ test('v11 public receipt hides output, route, economics, and book ids', async ()
     assert.notEqual(v11Commit(salt, V11_LABEL_OUTPUT, sameBytes), v11Commit(salt, V11_LABEL_BODY, sameBytes));
     const other = buildReceipt(paidTask('xfuel-v11-open-2', { output: 'ok', agentId: 4 }), { signingSecret: 's', agentId: 4 });
     assert.notEqual(other.output_commitment, receipt.output_commitment);
-    assert.notEqual(other.book_ref, receipt.book_ref);
-    const nums = [Number.parseInt(receipt.book_ref, 16), Number.parseInt(other.book_ref, 16)];
+    assert.equal(other.book_ref, receipt.book_ref);
+    const stranger = buildReceipt(paidTask('xfuel-v11-open-3', { output: 'ok', agentId: 9 }), { signingSecret: 's', agentId: 9 });
+    assert.notEqual(stranger.book_ref, receipt.book_ref);
+    const nums = [Number.parseInt(receipt.book_ref, 16), Number.parseInt(stranger.book_ref, 16)];
     assert.notEqual(Math.abs(nums[0] - nums[1]), 1);
 
     const guesses = ['', 'ok', 'pong', 'hello', '0'];
@@ -334,7 +366,7 @@ test('idempotency does not hand one principal the other salt', async () => {
     const changedDigest = requestDigest(changed);
     assert.notEqual(changedDigest, receiptA.request_digest);
     assert.throws(
-      () => claimIdempotency('shared-key', changedDigest, { principal: a.request.payer }),
+      () => claimIdempotency('shared-key', changedDigest, { principal: receiptA.payer }),
       (err) => err.code === 'idempotency_conflict',
     );
   } finally {
@@ -432,4 +464,214 @@ test('body commitment uses the v11/body subkey', () => {
   assert.equal(bodyCommitmentHex(salt, body), v11Commit(salt, V11_LABEL_BODY, Buffer.from(body)));
   assert.notEqual(bodyCommitmentHex(salt, body), crypto.createHmac('sha256', Buffer.from(salt, 'hex')).update(body).digest('hex'));
   assert.equal(outputBytesOf({ result: { content: 'ok' } }).toString(), 'ok');
+});
+
+function publicKeys(doc) {
+  return Object.keys(doc).sort();
+}
+
+const PUBLIC_V11 = [...V11_SIGNED_FIELDS, 'issuer_signature', 'verify_url'].sort();
+
+function capturePreimage(receipt) {
+  let body = null;
+  const res = {
+    status() { return this; },
+    set() { return this; },
+    type() { return this; },
+    json(obj) { body = obj; return this; },
+    send(buf) { body = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf); return this; },
+  };
+  writeCanonicalPreimage(res, receipt, {});
+  return body;
+}
+
+test('amount_settled is the bound transfer and a short or missing value is not signed', async () => {
+  const prev = snapshotEnv();
+  try {
+    await arm();
+    const over = buildReceipt(paidTask('xfuel-v11-over', { quoted: '2000', settled: '2001' }), { signingSecret: 's', agentId: 4 });
+    const overClaims = decodeReceiptClaims(over);
+    assert.equal(overClaims.amount_gross, '2000');
+    assert.equal(overClaims.amount_settled, '2001');
+    const missing = buildReceipt(paidTask('xfuel-v11-missing', { settled: null }), { signingSecret: 's', agentId: 4 });
+    assert.equal(missing.issuer_signature, null);
+    assert.equal(missing.proof_outcome, 'pending');
+    assert.equal(Object.hasOwn(missing, 'usage'), false);
+    const short = buildReceipt(paidTask('xfuel-v11-short', { quoted: '2000', settled: '1999' }), { signingSecret: 's', agentId: 4 });
+    assert.equal(short.issuer_signature, null);
+    const unbound = paidTask('xfuel-v11-placeholder', { quoted: '2000', settled: '2000' });
+    unbound.intent.paymentRef = 'base:unknown';
+    const placeholder = buildReceipt(unbound, { signingSecret: 's', agentId: 4 });
+    assert.equal(placeholder.issuer_signature, null);
+    const solanaPayer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
+    const solana = buildReceipt(paidTask('xfuel-v11-sol', { chain: 'solana', payer: solanaPayer }), { signingSecret: 's', agentId: 4 });
+    assert.equal(decodeReceiptClaims(solana).chain, 'solana');
+    assert.equal(decodeReceiptClaims(solana).amount_settled, '2000');
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('flag off still serves the stored v11 document on every public view', async () => {
+  const prev = snapshotEnv();
+  try {
+    await arm();
+    const task = paidTask('xfuel-v11-flag-off', { output: 'secret-output' });
+    task.usage = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
+    task.meta.pricing = { floor_applied: true, basis: 'test' };
+    const first = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    task.issuerSignature = first.issuer_signature;
+    process.env.ISSUER_ROOT_ENABLED = 'false';
+    const json = storedReceiptJson(buildReceipt(task, { signingSecret: 's', agentId: 4 }));
+    assert.deepEqual(publicKeys(json), PUBLIC_V11);
+    const text = JSON.stringify(json);
+    assert.equal(text.includes('usage'), false);
+    assert.equal(text.includes('fulfillment'), false);
+    assert.equal(text.includes('payment_meta'), false);
+    assert.equal(text.includes('prompt_tokens'), false);
+    assert.equal(text.includes('floor_applied'), false);
+    const auditor = buildAuditorExport(json);
+    assert.deepEqual(publicKeys(auditor), PUBLIC_V11);
+    const html = renderReceiptHtml(json);
+    assert.equal(html.includes('usage'), false);
+    assert.equal(html.includes('prompt_tokens'), false);
+    assert.equal(html.includes('floor_applied'), false);
+    const og = buildReceiptOgSvg(json);
+    assert.equal(og.includes('prompt_tokens'), false);
+    assert.equal(og.includes('theta'), false);
+    const preimage = capturePreimage(json);
+    const preimageDoc = JSON.parse(preimage);
+    assert.deepEqual(Object.keys(preimageDoc).sort(), [...V11_SIGNED_FIELDS].sort());
+    assert.equal(JSON.stringify(preimageDoc).includes('usage'), false);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('T4 T8 T12 public surfaces hide the salt and reject injected fields', async () => {
+  const prev = snapshotEnv();
+  try {
+    await arm();
+    const task = paidTask('xfuel-v11-surface', { output: 'ok' });
+    task.meta.internal_breakdown = { provider_cogs_amount: '1' };
+    task.meta.cap = '9';
+    task.meta.spent = '1';
+    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const salt = headersFrom(receipt, task.request)['x-chit-request-salt'];
+    const surfaces = [
+      JSON.stringify(receipt),
+      JSON.stringify(storedReceiptJson(receipt)),
+      renderReceiptHtml(receipt),
+      buildReceiptOgSvg(receipt),
+      JSON.stringify(buildAuditorExport(receipt)),
+      capturePreimage(receipt),
+    ];
+    for (const surface of surfaces) {
+      assert.equal(surface.includes(salt), false);
+      assert.equal(surface.includes('prompt_tokens'), false);
+      assert.equal(surface.includes('internal_breakdown'), false);
+      assert.equal(surface.includes('ISSUER_PRIVATE_KEY'), false);
+    }
+    assert.deepEqual(publicKeys(receipt), PUBLIC_V11);
+    const again = JSON.stringify(buildReceipt({ ...task, issuerSignature: receipt.issuer_signature }, { signingSecret: 's', agentId: 4 }));
+    assert.equal(again, JSON.stringify(receipt));
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('T5 a spoofed X-Payer is not the principal', () => {
+  const spoof = '0xspoofspoofspoofspoofspoofspoofspoofspoof';
+  const settled = '0x1111111111111111111111111111111111111111';
+  const req = {
+    method: 'POST',
+    headers: { 'x-payer': spoof, 'idempotency-key': 'k' },
+    body: { payer: spoof },
+    rawBody: Buffer.from('{}'),
+    payer: spoof,
+  };
+  const request = clientRequestForRefusal(req, '/v1/chat/completions');
+  assert.equal(request.payer, undefined);
+  delete request.payer;
+  request.payer = settled;
+  assert.equal(request.payer, settled);
+  assert.equal(JSON.stringify(request).includes(spoof), false);
+});
+
+test('T16-T19 owner view keeps the book ref and opens with the salt', async () => {
+  const prev = snapshotEnv();
+  try {
+    await arm();
+    const task = paidTask('xfuel-v11-owner', { output: 'ok', agentId: 4 });
+    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const salt = headersFrom(receipt, task.request)['x-chit-request-salt'];
+    assert.equal(v11Commit(salt, V11_LABEL_OUTPUT, Buffer.from('ok')), receipt.output_commitment);
+    assert.notEqual(v11Commit(salt, V11_LABEL_ACCOUNTING, Buffer.from('ok')), receipt.output_commitment);
+    assert.equal(JSON.stringify(receipt).includes(salt), false);
+    const persisted = task.meta.v11BookRef;
+    assert.equal(persisted, receipt.book_ref);
+    resetBookRefs();
+    task.issuerSignature = receipt.issuer_signature;
+    const rebuilt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    assert.equal(rebuilt.book_ref, persisted);
+    assert.equal(rebuilt.issuer_signature.jws, receipt.issuer_signature.jws);
+    const otherAgent = paidTask('xfuel-v11-owner-b', { agentId: 8 });
+    const other = buildReceipt(otherAgent, { signingSecret: 's', agentId: 8 });
+    assert.notEqual(other.book_ref, persisted);
+    const holder = {};
+    bindSaltReceipt(holder, 'rcpt');
+    assert.equal(Object.keys(holder).length, 0);
+    const symbol = Object.getOwnPropertySymbols(holder)[0];
+    assert.equal(Object.getOwnPropertyDescriptor(holder, symbol).enumerable, false);
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('foreign ingest refuses to sign while v11 issuance is on', async () => {
+  const prev = snapshotEnv();
+  try {
+    await arm();
+    assert.throws(() => buildForeignReceipt({}), (err) => err.code === 'v11_foreign_unsupported');
+  } finally {
+    restoreEnv(prev);
+  }
+});
+
+test('production issuer key rejects a missing, wrong-type, or mismatched key', () => {
+  const prev = snapshotEnv();
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.ISSUER_PRIVATE_KEY;
+    delete process.env.ALLOW_EPHEMERAL_ISSUER_KEY;
+    process.env.ISSUER_ROOT_ALLOW_SKIP = 'I_UNDERSTAND';
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
+
+    process.env.NODE_ENV = 'production';
+    process.env.ISSUER_PRIVATE_KEY = '   \n';
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
+
+    const { privateKey: wrong } = crypto.generateKeyPairSync('ec', { namedCurve: 'secp256k1' });
+    process.env.ISSUER_PRIVATE_KEY = Buffer.from(wrong.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_type');
+
+    const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+    process.env.ISSUER_KID = 'not-the-thumbprint';
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_kid_mismatch');
+
+    delete process.env.NODE_ENV;
+    delete process.env.ISSUER_PRIVATE_KEY;
+    delete process.env.ISSUER_KID;
+    process.env.ALLOW_EPHEMERAL_ISSUER_KEY = 'true';
+    _resetIssuerKey();
+    const minted = initIssuerKey();
+    assert.equal(minted.publicKeyJwk.crv, 'P-256');
+  } finally {
+    restoreEnv(prev);
+  }
 });

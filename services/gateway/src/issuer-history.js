@@ -54,8 +54,6 @@ export const PRODUCTION_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
 
 export const PRODUCTION_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
-export const CUSTODY_STATEMENT = 'The ES256 private key is the base64 PEM in the gateway process environment variable ISSUER_PRIVATE_KEY. The process does not call a cloud KMS. When that variable is unset, the process generates an ephemeral key for local runs; production sets the variable. This sentence names where the key is held. It is not the key.';
-
 function sha256Hex(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }

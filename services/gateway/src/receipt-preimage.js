@@ -471,6 +471,7 @@ export function buildPublicPreimages(receipt, { baseUrl = '', taskId = null, pre
  */
 export function withPublicPreimages(receipt, opts = {}) {
   if (!receipt || typeof receipt !== 'object') return receipt;
+  if (receipt.v === 11) return receipt;
   if (receipt.schema && receipt.schema !== 'xfuel.receipt.v4' && receipt.schema !== 'chit402.refusal.v1' && receipt.schema !== 'chit402.refusal.v2' && !receipt.book_chain && !receipt.book_row) {
     return receipt;
   }

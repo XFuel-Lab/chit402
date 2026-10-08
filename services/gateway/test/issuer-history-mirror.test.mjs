@@ -96,6 +96,8 @@ function paidTask(taskId) {
       payTo: '0x2222222222222222222222222222222222222222',
       provider: 'theta-edgecloud',
       agentId: 4,
+      quotedAmount: '2000',
+      boundSettledAmount: '2000',
     },
     result: { provider: 'theta-edgecloud', model: 'theta/qwen3', output: 'private' },
   };

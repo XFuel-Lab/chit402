@@ -196,6 +196,8 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
         payTo: '0x2222222222222222222222222222222222222222',
         provider: 'theta-edgecloud',
         agentId: 4,
+        quotedAmount: '2000',
+        boundSettledAmount: '2000',
       },
       result: { provider: 'theta-edgecloud', model: 'theta/qwen3', output: 'private' },
     }, { signingSecret: 's', agentId: 4 });
@@ -223,6 +225,8 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
         payTo: '0x2222222222222222222222222222222222222222',
         provider: 'theta-edgecloud',
         agentId: 4,
+        quotedAmount: '2000',
+        boundSettledAmount: '2000',
       },
       result: { provider: 'theta-edgecloud', model: 'theta/qwen3' },
     }, { signingSecret: 's', agentId: 4 }), (err) => err.code === 'issuer_root_cutover_pause');

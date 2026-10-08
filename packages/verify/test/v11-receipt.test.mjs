@@ -70,11 +70,23 @@ function baseClaims(salt) {
   };
 }
 
-test('an old verifier rejects v11 and the new verifier accepts a stranger receipt', async () => {
+test('deploy gate: publish the v11 verifier before the gateway issues v11', async () => {
   const salt = '0123456789abcdef'.repeat(4);
   const { privateKey, jwk } = jwkAndKey();
   const claims = baseClaims(salt);
   const receipt = receiptFor(privateKey, jwk, claims);
+  // A verifier published before v11 checks the ES256 signature and can report
+  // it verified. It does not return unsupported_version. That CLI exits 3.
+  // Ship this package first, then the gateway. verifyReceiptUpToV10 in this
+  // tree is the v10 entry, not that older library.
+  const header = receipt.issuer_signature.jws.split('.').slice(0, 2).join('.');
+  const sig = Buffer.from(receipt.issuer_signature.jws.split('.')[2], 'base64url');
+  const { createPublicKey, verify } = await import('node:crypto');
+  const signatureOnly = verify('sha256', Buffer.from(header), {
+    key: createPublicKey({ key: jwk, format: 'jwk' }),
+    dsaEncoding: 'ieee-p1363',
+  }, sig);
+  assert.equal(signatureOnly, true);
   const old = await verifyReceiptUpToV10(receipt, { jwks: { keys: [jwk] }, trustedKids: [] });
   assert.equal(old.overall, 'failed');
   assert.equal(old.errors.includes('unsupported_version'), true);
@@ -122,4 +134,30 @@ test('malformed salts and a wrong salt fail with distinct reasons', async () => 
   const denied = spawnSync(process.execPath, [cli, badFile, '--jwks-file', jwks, '--no-trusted-kid', '--json'], { encoding: 'utf8' });
   assert.notEqual(denied.status, 0);
   assert.match(`${denied.stdout}\n${denied.stderr}`, /v11_disallowed_field/);
+});
+
+test('settled below the quote and a swapped commitment are payment_unbound or commitment_mismatch', async () => {
+  const salt = 'ab'.repeat(32);
+  const { privateKey, jwk } = jwkAndKey();
+  const short = baseClaims(salt);
+  short.amount_settled = '1999';
+  const shortReceipt = receiptFor(privateKey, jwk, short);
+  const shortResult = await verifyReceipt(shortReceipt, { jwks: { keys: [jwk] }, trustedKids: [] });
+  assert.equal(shortResult.overall, 'failed');
+  assert.equal(shortResult.errors.includes('payment_unbound'), true);
+  assert.equal(shortResult.errors.includes('payment_unbound:amount_settled'), true);
+
+  const swapped = baseClaims(salt);
+  const output = swapped.output_commitment;
+  swapped.output_commitment = swapped.accounting_commitment;
+  swapped.accounting_commitment = output;
+  const swappedReceipt = receiptFor(privateKey, jwk, swapped);
+  const opened = await verifyReceipt(swappedReceipt, {
+    jwks: { keys: [jwk] },
+    trustedKids: [],
+    salt,
+    open: { output: Buffer.from('ok') },
+  });
+  assert.equal(opened.overall, 'failed');
+  assert.equal(opened.errors.includes('commitment_mismatch'), true);
 });

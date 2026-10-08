@@ -24,7 +24,7 @@ import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
-import { assertIssuanceOpen, bindIssuerRoot, ISSUER_ROOT_PAYLOAD_VERSION } from './issuer-root.js';
+import { assertIssuanceOpen, bindIssuerRoot, issuerRootActive, ISSUER_ROOT_PAYLOAD_VERSION } from './issuer-root.js';
 import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { fromCaip2Network } from './x402-facilitator.js';
@@ -726,6 +726,11 @@ export function buildForeignReceipt({
   fingerprint = null,
   agentId = null,
 }) {
+  if (issuerRootActive()) {
+    const err = new Error('foreign x402 ingest cannot sign a v11 receipt');
+    err.code = 'v11_foreign_unsupported';
+    throw err;
+  }
   const route = extractRouteFromResource(paymentRequired.resource);
   const amount = String(paymentRequired.amount);
   const network = bookNetwork(paymentResponse.network || paymentRequired.network || 'base');
@@ -880,6 +885,15 @@ export async function ingestForeignX402(body = {}, {
   rpcUrls = null,
   fingerprint = null,
 } = {}) {
+  if (issuerRootActive()) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'v11_foreign_unsupported',
+      message: 'Foreign x402 ingest cannot sign a receipt while v11 issuance is on',
+    };
+  }
+
   // Demo keys never write to the book
   if (isDemo) {
     return {

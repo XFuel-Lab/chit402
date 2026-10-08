@@ -23,8 +23,11 @@
  * requires a caller-supplied 32-byte wrap key. Both keep ciphertext in a
  * Map. Neither writes the Map to disk, a backup, or a database.
  *
- * Production (`NODE_ENV=production`) with `ISSUER_ROOT_ENABLED` refuses
- * v11 issuance unless the active store's kind is `encrypted`.
+ * Production is every NODE_ENV other than `test` and `development`.
+ * Unset NODE_ENV is production. Production with `ISSUER_ROOT_ENABLED`
+ * refuses v11 issuance unless the active store's kind is `encrypted` and
+ * `durable` is true. `SALT_STORE_ALLOW_EPHEMERAL=true` is the local opt-in
+ * that allows a non-durable store.
  *
  * TTL defaults to the idempotency window (24h). `get` of an expired row
  * deletes it and returns null. Salts are never derived from a server key.
@@ -108,14 +111,19 @@ class MapSaltStore {
    * @param {Buffer} wrapKey
    * @param {string} wrapKid
    */
-  constructor(kind, wrapKey, wrapKid) {
+  constructor(kind, wrapKey, wrapKid, durable = false) {
     this.kind = kind;
+    this.durable = durable === true;
     this._key = wrapKey;
     this._kid = wrapKid;
     /** @type {Map<string, { record: object, expiresAt: number }>} */
     this._rows = new Map();
-    /** Process-local index so idempotency can name a receipt without storing the salt. */
+    /** HMAC(wrapKey, salt) → receipt id. The salt is not the map key. */
     this._bySalt = new Map();
+  }
+
+  saltIndex(bytes) {
+    return crypto.createHmac('sha256', this._key).update(bytes).digest('hex');
   }
 
   /**
@@ -129,7 +137,7 @@ class MapSaltStore {
     const prev = this._rows.get(id);
     if (prev) {
       try {
-        const old = openSaltRecord(prev.record, this._key).toString('hex');
+        const old = this.saltIndex(openSaltRecord(prev.record, this._key));
         if (this._bySalt.get(old) === id) this._bySalt.delete(old);
       } catch {
         // replaced row was not readable; drop it
@@ -138,7 +146,7 @@ class MapSaltStore {
     const record = sealSaltRecord(id, bytes, this._key, this._kid);
     const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : IDEMPOTENCY_WINDOW_MS;
     this._rows.set(id, { record, expiresAt: Date.now() + ttl });
-    this._bySalt.set(bytes.toString('hex'), id);
+    this._bySalt.set(this.saltIndex(bytes), id);
     return record;
   }
 
@@ -181,7 +189,9 @@ class MapSaltStore {
    * @returns {string|null}
    */
   receiptIdForSalt(saltHex) {
-    const id = this._bySalt.get(String(saltHex || '').trim());
+    const hex = String(saltHex || '').trim();
+    if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+    const id = this._bySalt.get(this.saltIndex(Buffer.from(hex, 'hex')));
     if (!id) return null;
     if (!this.get(id)) return null;
     return id;
@@ -195,8 +205,8 @@ class MapSaltStore {
     const row = this._rows.get(id);
     if (row) {
       try {
-        const hex = openSaltRecord(row.record, this._key).toString('hex');
-        if (this._bySalt.get(hex) === id) this._bySalt.delete(hex);
+        const index = this.saltIndex(openSaltRecord(row.record, this._key));
+        if (this._bySalt.get(index) === id) this._bySalt.delete(index);
       } catch {
         // already unreadable
       }
@@ -226,11 +236,18 @@ export class MemorySaltStore extends MapSaltStore {
  * @param {string} [wrapKid]
  */
 export class EncryptedSaltStore extends MapSaltStore {
-  constructor(wrapKey, wrapKid) {
+  /**
+   * @param {Buffer|string} wrapKey
+   * @param {string} [wrapKid]
+   * @param {{ durable?: boolean }} [opts] durable is true only for a store that
+   *   survives process restart. An in-memory ciphertext map is not durable.
+   */
+  constructor(wrapKey, wrapKid, opts = {}) {
     const key = Buffer.isBuffer(wrapKey) ? wrapKey : Buffer.from(String(wrapKey || ''), 'hex');
     if (key.length !== SALT_LEN) throw new Error('encrypted SaltStore wrap key must be 32 bytes');
     const kid = wrapKid || `enc-${crypto.createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
-    super('encrypted', key, kid);
+    const durable = !!(opts && typeof opts === 'object' && opts.durable === true);
+    super('encrypted', key, kid, durable);
   }
 }
 
@@ -258,16 +275,27 @@ export function resetSaltStore() {
 }
 
 /**
- * Pure check. Production + issuer root + a store that is not `encrypted`
- * refuses v11 issuance. Memory is allowed in tests and local or dev.
- * @param {{ nodeEnv?: string, issuerRootEnabled?: boolean, store?: { kind?: string } }} [opts]
+ * Production is anything other than explicit test or development.
+ * Unset NODE_ENV is production.
+ * @param {string|undefined|null} nodeEnv
  */
-export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store } = {}) {
+export function isProductionEnv(nodeEnv = process.env.NODE_ENV) {
+  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
+  return env !== 'test' && env !== 'development';
+}
+
+/**
+ * Pure check. Production + issuer root refuses v11 issuance unless the store
+ * is encrypted and durable. `allowEphemeral` (SALT_STORE_ALLOW_EPHEMERAL)
+ * is the local opt-in.
+ * @param {{ nodeEnv?: string, issuerRootEnabled?: boolean, store?: { kind?: string, durable?: boolean }, allowEphemeral?: boolean }} [opts]
+ */
+export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store, allowEphemeral } = {}) {
   if (!issuerRootEnabled) return { ok: true, reason: null };
-  const env = nodeEnv == null || nodeEnv === '' ? 'development' : String(nodeEnv);
-  if (env !== 'production') return { ok: true, reason: null };
-  const kind = store?.kind || getSaltStore().kind;
-  if (kind === 'encrypted') return { ok: true, reason: null };
+  const ephemeral = allowEphemeral === true;
+  if (!isProductionEnv(nodeEnv) || ephemeral) return { ok: true, reason: null };
+  const active = store || getSaltStore();
+  if (active?.kind === 'encrypted' && active?.durable === true) return { ok: true, reason: null };
   return { ok: false, reason: SALT_STORE_PROD_REASON };
 }
 
@@ -278,9 +306,10 @@ export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store }
  */
 export function assertSaltStoreForIssuance(env = process.env) {
   const decision = saltStoreAllowsV11Issuance({
-    nodeEnv: env.NODE_ENV || 'development',
+    nodeEnv: env.NODE_ENV,
     issuerRootEnabled: true,
     store: getSaltStore(),
+    allowEphemeral: String(env.SALT_STORE_ALLOW_EPHEMERAL || '').trim() === 'true',
   });
   if (decision.ok) return;
   const err = new Error(decision.reason);
