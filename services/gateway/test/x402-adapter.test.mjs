@@ -14,7 +14,14 @@ import {
   BAZAAR_EXTENSION_KEY,
   isSolanaNetwork,
   isEvmNetwork,
+  encodeX402PaymentResponseHeader,
 } from '../src/x402-adapter.js';
+import {
+  buildAgoreanReviewsReadBlock,
+  buildAgoreanReviewsWriteBlock,
+  withAgoreanReviews,
+  txHashFromPaymentRef,
+} from '../src/agorean-reviews.js';
 import {
   SOLANA_NETWORKS,
   PAYAI_FACILITATOR_URL,
@@ -103,6 +110,118 @@ test('buildPaymentChallenge: includes bazaar extension by default', () => {
   const bazaar = body.extensions[BAZAAR_EXTENSION_KEY];
   assert.ok(bazaar.info.input.type, 'info.input.type is present');
   assert.ok(bazaar.info.output.type, 'info.output.type is present');
+});
+
+// The x402 reviews extension proposal (x402-foundation/x402#3656), verbatim.
+const providersSchema = (linkKey) => ({
+  type: 'array',
+  minItems: 1,
+  maxItems: 8,
+  items: {
+    type: 'object',
+    properties: {
+      provider: { type: 'string', minLength: 1, maxLength: 128 },
+      [linkKey]: { type: 'string', format: 'uri', pattern: '^https://' },
+      description: { type: 'string', maxLength: 500 },
+    },
+    required: ['provider', linkKey],
+  },
+});
+const READ_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: { providers: providersSchema('read') },
+  required: ['providers'],
+};
+const WRITE_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  type: 'object',
+  properties: {
+    providers: providersSchema('write'),
+    userQuestion: { type: 'string', maxLength: 300 },
+  },
+  required: ['providers'],
+};
+const WRITE_DESCRIPTION = "You can review this purchase in one call: sign the message this link gives you with the wallet that paid, then send stars and a note. No account needed. Reviews backed by real payments are how agents tell good sellers from bad ones before paying, including you next time. Whether to leave one is your user's call, so you may want to offer it to them when you report this purchase.";
+const USER_QUESTION = 'Would you like to leave a review of this seller? Your agent can post it with this link: 1 to 5 stars and a note, signed by the wallet that paid, no money moved.';
+const TX = `0x${'AB'.repeat(32)}`;
+
+test('buildPaymentChallenge: declares Agorean reviews on the body and the header, in the spec shape', () => {
+  const build = () => buildPaymentChallenge({
+    taskId: `task-${Math.random()}`,
+    maxAmountRequired: '50000',
+    baseUrl: 'https://api.xfuel.app',
+    resource: 'https://api.xfuel.app/v1/chat/completions',
+  }, { store: null });
+
+  const { body, headers } = build();
+  const expected = {
+    info: {
+      providers: [{
+        provider: 'agorean.com',
+        read: 'https://agorean.com/reviews?resource=https%3A%2F%2Fapi.xfuel.app%2Fv1%2Fchat%2Fcompletions',
+        description: 'Reviews of this endpoint by agents who paid for it. Each one is backed by a payment checked on-chain.',
+      }],
+    },
+    schema: READ_SCHEMA,
+  };
+  assert.deepEqual(body.extensions.reviews, expected, 'body carries the reviews block');
+  const header = JSON.parse(Buffer.from(headers['PAYMENT-REQUIRED'], 'base64').toString('utf8'));
+  assert.deepEqual(header.extensions.reviews, expected, 'header carries the same block');
+  assert.deepEqual(build().body.extensions.reviews, expected, 'identical on every request');
+  assert.deepEqual(body.extensions.reviews, buildAgoreanReviewsReadBlock(body.resource.url));
+  assert.ok(body.extensions.bazaar, 'bazaar stays beside it');
+  assert.equal(
+    buildAgoreanReviewsReadBlock('https://api.xfuel.app/v1/chat/completions?x=1').info.providers[0].read,
+    expected.info.providers[0].read,
+    'the read link drops the query string',
+  );
+});
+
+test('Agorean write block: tx-hash link when the ref is a settlement tx, resource link otherwise', () => {
+  const resource = 'https://api.xfuel.app/task-request';
+  const byTx = buildAgoreanReviewsWriteBlock(`base:${TX}`, resource);
+  assert.deepEqual(byTx, {
+    info: {
+      providers: [{
+        provider: 'agorean.com',
+        write: `https://agorean.com/r/${TX.toLowerCase()}`,
+        description: WRITE_DESCRIPTION,
+      }],
+      userQuestion: USER_QUESTION,
+    },
+    schema: WRITE_SCHEMA,
+  });
+  assert.equal(buildAgoreanReviewsWriteBlock(TX, resource).info.providers[0].write,
+    `https://agorean.com/r/${TX.toLowerCase()}`, 'a bare tx hash works too');
+  assert.equal(buildAgoreanReviewsWriteBlock(`solana:${'5'.repeat(87)}`, `${resource}?a=b`).info.providers[0].write,
+    'https://agorean.com/r?resource=https%3A%2F%2Fapi.xfuel.app%2Ftask-request', 'not a tx hash: resource form');
+  assert.equal(txHashFromPaymentRef('base:0xabc'), null);
+  assert.equal(buildAgoreanReviewsWriteBlock(null, resource), null, 'unpaid: no block');
+  assert.equal(buildAgoreanReviewsWriteBlock(`base:${TX}`, null), null, 'no resource: no block');
+});
+
+test('withAgoreanReviews: puts the block under extensions.reviews, merges, never overwrites', () => {
+  const block = buildAgoreanReviewsWriteBlock(`base:${TX}`, 'https://api.xfuel.app/v1/responses');
+  const out = withAgoreanReviews({ id: 'x' }, block);
+  assert.deepEqual(out, { id: 'x', extensions: { reviews: block } });
+  assert.equal('review' in out, false, 'the old top-level review key is gone');
+  assert.deepEqual(withAgoreanReviews({ extensions: { other: 1 } }, block).extensions, { other: 1, reviews: block });
+  assert.deepEqual(withAgoreanReviews({ extensions: { reviews: 'theirs' } }, block).extensions, { reviews: 'theirs' });
+  const plain = { id: 'y' };
+  assert.equal(withAgoreanReviews(plain, null), plain, 'no block: body unchanged');
+});
+
+test('encodeX402PaymentResponseHeader: carries the reviews block under extensions on success only', () => {
+  const block = buildAgoreanReviewsWriteBlock(`base:${TX}`, 'https://api.xfuel.app/task-request');
+  const decode = (h) => JSON.parse(Buffer.from(h, 'base64').toString('utf8'));
+  const withBlock = decode(encodeX402PaymentResponseHeader({ ref: `base:${TX}`, payer: '0xp', reviews: block }));
+  assert.deepEqual(withBlock.extensions, { reviews: block });
+  assert.equal(withBlock.transaction, TX);
+  const failed = decode(encodeX402PaymentResponseHeader({ ref: `base:${TX}`, success: false, reviews: block }));
+  assert.equal(failed.extensions, undefined);
+  const without = decode(encodeX402PaymentResponseHeader({ ref: `base:${TX}`, payer: '0xp' }));
+  assert.equal(without.extensions, undefined, 'no block unless the route opts in');
 });
 
 test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', () => {
@@ -225,7 +344,8 @@ test('buildPaymentChallenge: can disable bazaar extension', () => {
     includeBazaar: false,
   });
 
-  assert.ok(!body.extensions, 'no extensions when includeBazaar=false');
+  assert.ok(!body.extensions?.bazaar, 'no bazaar extension when includeBazaar=false');
+  assert.ok(body.extensions?.reviews, 'the Agorean reviews block does not depend on bazaar');
 });
 
 test('buildPaymentChallenge requires taskId and amount', () => {

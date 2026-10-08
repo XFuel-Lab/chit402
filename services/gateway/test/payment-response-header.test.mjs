@@ -87,6 +87,7 @@ process.env.X402_SOLANA_FACILITATOR_URL = facilitator.url;
 
 const { createApp } = await import('../src/server.js');
 const { encodeX402PaymentResponseHeader } = await import('../src/x402-adapter.js');
+const { buildAgoreanReviewsWriteBlock } = await import('../src/agorean-reviews.js');
 const { toCaip2Network } = await import('../src/x402-facilitator.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -233,6 +234,16 @@ test('paid POST /v1/chat/completions on Base returns a 200 settlement header', a
   assert.equal(paid.xfuel.payment_meta.network, 'base');
   assert.equal(decodeReceiptClaims(paid.xfuel).payment.ref, `base:${EVM_TX}`);
   assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
+  // Agorean reviews: the 402 names where to read them; the paid reply and the
+  // PAYMENT-RESPONSE header carry the write link for this settlement tx.
+  assert.equal(body.extensions.reviews.info.providers[0].read,
+    `https://agorean.com/reviews?resource=${encodeURIComponent(body.resource.url)}`);
+  const expectedReviews = buildAgoreanReviewsWriteBlock(`base:${EVM_TX}`, body.resource.url);
+  assert.deepEqual(paid.extensions.reviews, expectedReviews);
+  assert.equal(paid.extensions.reviews.info.providers[0].write, `https://agorean.com/r/${EVM_TX.toLowerCase()}`);
+  assert.equal(paid.review, undefined, 'the old top-level review key is gone');
+  assert.deepEqual(decodePaymentResponseHeader(res.headers.get('payment-response')).extensions.reviews,
+    expectedReviews, 'PAYMENT-RESPONSE carries the same block');
 });
 
 test('paid POST /v1/chat/completions on Solana returns a 200 settlement header and solana route_meta', async () => {
@@ -263,6 +274,9 @@ test('paid POST /v1/chat/completions on Solana returns a 200 settlement header a
   const claims = decodeReceiptClaims(paid.xfuel);
   assert.equal(claims.payment.ref, `solana:${SOL_TX}`);
   assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
+  // A Solana signature is not a 0x tx hash, so the write link names the resource.
+  assert.equal(paid.extensions.reviews.info.providers[0].write,
+    `https://agorean.com/r?resource=${encodeURIComponent(body.resource.url)}`);
 
   const receiptRes = await fetch(`${base}/receipt/${paid.xfuel.task_id}?format=json`);
   assert.equal(receiptRes.status, 200);
@@ -314,6 +328,11 @@ test('paid POST /a2a-message and /v1/responses share the settlement header', asy
     network: 'eip155:8453',
     payer: EVM_PAYER,
   });
+  assert.equal(responsesPaid.extensions.reviews.info.providers[0].write,
+    `https://agorean.com/r/${EVM_TX.toLowerCase()}`);
+  assert.equal(responsesPaid.review, undefined, 'the old top-level review key is gone');
+  assert.deepEqual(decodePaymentResponseHeader(responses.headers.get('payment-response')).extensions.reviews,
+    responsesPaid.extensions.reviews);
 });
 
 test('an authorised unpaid 200 does not claim a settlement', async () => {
@@ -330,4 +349,6 @@ test('an authorised unpaid 200 does not claim a settlement', async () => {
   assert.equal(res.headers.get('payment-response'), null);
   assert.equal(res.headers.get('x-payment-response'), null);
   assert.equal(body.xfuel.payment_meta.collected, false);
+  assert.equal(body.extensions, undefined, 'no payment, no review link');
+  assert.equal(body.review, undefined, 'no payment, no old review key either');
 });
