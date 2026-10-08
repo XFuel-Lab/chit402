@@ -1,10 +1,12 @@
 /**
  * Stored canonical object for a receipt or refusal.
  *
- * The preimage is the exact UTF-8 JCS (RFC 8785) bytes of the public claims,
+ * The preimage is the exact UTF-8 canonical bytes of the public claims,
  * without `payload_hash`. SHA-256 of those bytes is `payload_hash`, and that
  * digest is inside the signed JWS. The bytes are kept at issuance and served
  * unchanged. A read path must not rebuild them from the receipt.
+ * Versions through v10 use chit402-jcs-v1. Payload v11 and refusal v2 use
+ * RFC 8785.
  *
  * Field set is the allowlist below. Wire order is JCS: object keys sorted by
  * UTF-16 code unit, no insignificant whitespace. The same canonicalization
@@ -17,11 +19,27 @@
 import crypto from 'crypto';
 import { jcsCanonicalize } from './offer-receipt.js';
 
-/** New payment receipts. v9 head binding still verifies. */
+/**
+ * New payment receipts while ISSUER_ROOT_ENABLED is off. v9 head binding
+ * still verifies. v11 is selected at sign time when the issuer root is on;
+ * this constant stays 10 so a disabled process keeps today's payload.
+ */
 export const CANONICAL_PAYLOAD_VERSION = 10;
 
 export const CANONICAL_HASH_ALG = 'sha256';
 export const CANONICAL_ENCODING = 'jcs-rfc8785';
+
+/**
+ * Signed into payload v11 (and issuer-root refusals). The envelope and
+ * response headers already name the algorithm; this is the copy inside the
+ * JWS. `jcs` names the canonicalizer that produced this payload: RFC 8785.
+ * There is no custom string_escaping sentence. entry_hash and the well-known
+ * issuer-history document stay on chit402-jcs-v1 and are not this field.
+ */
+export const V11_CANONICALIZATION = Object.freeze({
+  hash_alg: 'sha-256',
+  jcs: 'RFC8785',
+});
 
 /**
  * Keys allowed in a payment-receipt canonical object.
@@ -33,6 +51,7 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'agent_pubkey',
   'binding',
   'caller_binding',
+  'canonicalization',
   'claim_id',
   'delegation_hash',
   'dispute_window',
@@ -41,13 +60,18 @@ export const RECEIPT_CANONICAL_FIELDS = Object.freeze([
   'iss',
   'issuance_commitment',
   'issuer_history',
+  'issuer_history_mirror',
+  'issuer_history_snapshot',
+  'issuer_root',
   'kind',
   'openrouter',
   'output',
   'parent_receipt_id',
   'payload_version',
   'payment',
+  'policy',
   'provider_cogs',
+  'request_digest',
   'route',
   'session',
   'session_act',
@@ -70,12 +94,16 @@ export const REFUSAL_CANONICAL_FIELDS = Object.freeze([
   'book_id',
   'book_row',
   'cap_atomic',
+  'canonicalization',
   'chain_id',
   'charged',
   'hub',
   'intent_id',
   'issued_at',
   'issuer_history',
+  'issuer_history_mirror',
+  'issuer_history_snapshot',
+  'issuer_root',
   'kind',
   'model',
   'nonce',
@@ -83,6 +111,7 @@ export const REFUSAL_CANONICAL_FIELDS = Object.freeze([
   'period_start',
   'policy_key',
   'reason',
+  'request_digest',
   'refusal_code',
   'refusal_id',
   'schema',
@@ -171,13 +200,16 @@ export function lockCanonicalFields(claims, allowed) {
 }
 
 /**
- * JCS bytes and the SHA-256 that the JWS will carry as `payload_hash`.
+ * Canonical bytes and the SHA-256 that the JWS will carry as `payload_hash`.
+ * The default is chit402-jcs-v1, which v7–v10 and every flag-off seal use.
+ * Payload v11 and refusal v2 pass `jcsRfc8785`.
  * @param {object} claims claims without a trusted payload_hash
  * @param {readonly string[]} allowed
+ * @param {(value: unknown) => string} [canonicalize]
  */
-export function sealCanonicalObject(claims, allowed) {
+export function sealCanonicalObject(claims, allowed, canonicalize = jcsCanonicalize) {
   const body = lockCanonicalFields(claims, allowed);
-  const preimage = jcsCanonicalize(body);
+  const preimage = canonicalize(body);
   const payload_hash = sha256Hex(preimage);
   return {
     preimage,

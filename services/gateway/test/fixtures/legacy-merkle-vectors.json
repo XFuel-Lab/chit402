@@ -1,0 +1,143 @@
+{
+  "schema": "chit402.legacy_merkle_vectors.v1",
+  "leaf_rule": "sha256(0x00 || payload_hash bytes)",
+  "node_rule": "sha256(0x01 || left || right)",
+  "sort": "payload_hash bytes ascending",
+  "odd": "duplicate last node when a level has more than one node and an odd count",
+  "empty_root": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+  "universe_id": "b623c1816e895dd967c4e51f0e066dafda546195a909e9b51283be4b5109caf4",
+  "universe": {
+    "schema": "chit402.universe.v1",
+    "book_id": "chit402:global",
+    "window_id": "legacy_receipts_pre_v11",
+    "predicate_hash": "a45aaf907ba425c1474bc96187b73b5b5e42f6696b6e8dbc34d3acb047fd37d1"
+  },
+  "predicate": {
+    "schema": "chit402.universe_predicate.v1",
+    "name": "legacy_receipts_pre_v11",
+    "subject": "book receipt",
+    "include": "book row with a stored issuer signature, payload_version below 11, and no issuer_root claim in the JWS payload",
+    "exclude": "rows with no issuer signature; payload_version 11 or greater; any issuer_root claim",
+    "leaf": "stored payload_hash bytes",
+    "re_sign": false
+  },
+  "predicate_hash": "a45aaf907ba425c1474bc96187b73b5b5e42f6696b6e8dbc34d3acb047fd37d1",
+  "cases": [
+    {
+      "payload_hashes": [],
+      "sorted": [],
+      "root": "0x6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+      "enumerated_count": 0,
+      "proofs": []
+    },
+    {
+      "payload_hashes": [
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "sorted": [
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "root": "0x4635e1fa62a599a7880a8d14a56f720a1d40f6e5448ab5a5e39bedc8bd87fa8e",
+      "enumerated_count": 1,
+      "proofs": [
+        {
+          "index": 0,
+          "payload_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "proof": []
+        }
+      ]
+    },
+    {
+      "payload_hashes": [
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "sorted": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "root": "0xcc15b132263fd4fd2748c0e7cb9e1c4ad0afe70fcf9382ee644c4da8af0286a5",
+      "enumerated_count": 2,
+      "proofs": [
+        {
+          "index": 0,
+          "payload_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "proof": [
+            {
+              "hash": "bc6f27de60abf5319d16ff4c98fe3c42022c84f6a7a2b207c8df19b0ec3d8d58",
+              "position": "right"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "payload_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+          "proof": [
+            {
+              "hash": "4635e1fa62a599a7880a8d14a56f720a1d40f6e5448ab5a5e39bedc8bd87fa8e",
+              "position": "left"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "payload_hashes": [
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "sorted": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "root": "0x4118b0b8b03727613a79962aa22cb29474c01378848625423390a5b36e6735a0",
+      "enumerated_count": 3,
+      "proofs": [
+        {
+          "index": 0,
+          "payload_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "proof": [
+            {
+              "hash": "bc6f27de60abf5319d16ff4c98fe3c42022c84f6a7a2b207c8df19b0ec3d8d58",
+              "position": "right"
+            },
+            {
+              "hash": "bb1e66ff0929ba974fdae44f47ddb9eb25f6c1d5a4b40309c337812a59397982",
+              "position": "right"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "payload_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+          "proof": [
+            {
+              "hash": "4635e1fa62a599a7880a8d14a56f720a1d40f6e5448ab5a5e39bedc8bd87fa8e",
+              "position": "left"
+            },
+            {
+              "hash": "bb1e66ff0929ba974fdae44f47ddb9eb25f6c1d5a4b40309c337812a59397982",
+              "position": "right"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "payload_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+          "proof": [
+            {
+              "hash": "5e5caeafc27155c368b6f201107d6f8b270747ce636ac5174a56c6e12ef89ad1",
+              "position": "right"
+            },
+            {
+              "hash": "cc15b132263fd4fd2748c0e7cb9e1c4ad0afe70fcf9382ee644c4da8af0286a5",
+              "position": "left"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

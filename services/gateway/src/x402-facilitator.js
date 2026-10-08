@@ -1098,6 +1098,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       settled,
       txRef: data.transaction || data.txHash || null,
       payer: data.payer || null,
+      network: data.network || null,
       reason: data.errorReason,
       bazaarStatus: extensionResponses?.bazaar?.status || null,
     };
