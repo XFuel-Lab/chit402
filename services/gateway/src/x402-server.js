@@ -27,7 +27,6 @@ import {
   paymentHeaderNetwork,
   decodePaymentHeader,
   fromCaip2Network,
-  toPaymentPayload,
 } from './x402-facilitator.js';
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
 import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
@@ -344,27 +343,6 @@ function preSettleFail(reason) {
   return { kind: 'failed', reason, preSettle: true };
 }
 
-function integerAmount(raw) {
-  if (raw == null || raw === '') return null;
-  if (typeof raw === 'bigint') return raw >= 0n ? raw.toString() : null;
-  if (typeof raw === 'number') {
-    if (!Number.isFinite(raw) || !Number.isInteger(raw) || raw < 0) return null;
-    return String(raw);
-  }
-  const s = String(raw).trim();
-  if (/^\d+$/.test(s)) return s;
-  if (/^\d+\.0+$/.test(s)) return s.slice(0, s.indexOf('.'));
-  return null;
-}
-
-function amountAtLeast(value, floor) {
-  try {
-    return BigInt(value) >= BigInt(floor);
-  } catch {
-    return false;
-  }
-}
-
 function networksMatch(a, b) {
   if (a == null || a === '' || b == null || b === '') return false;
   return fromCaip2Network(a) === fromCaip2Network(b);
@@ -372,9 +350,11 @@ function networksMatch(a, b) {
 
 /** EVM addresses compare checksummed. Solana compares exact base58, never lowercased. */
 function payeesEqual(a, b, solana) {
-  if (a == null || b == null || a === '' || b === '') return false;
-  const left = String(a);
-  const right = String(b);
+  // A number or object in a payee field fails closed. It is not skipped and not stringified into a match.
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a === '' || b === '') return false;
+  const left = a;
+  const right = b;
   if (solana) return left === right;
   try {
     return getAddress(left) === getAddress(right);
@@ -388,17 +368,14 @@ function evmAssetAddress(raw) {
   try { return getAddress(raw); } catch { return null; }
 }
 
-function svmTransaction(decoded) {
-  const tx = decoded?.payload?.transaction || decoded?.transaction;
-  return typeof tx === 'string' && tx.length > 0 ? tx : null;
-}
-
 /** Every recipient the client named. One matching field must not hide another. */
 function declaredPayees(decoded) {
   if (!decoded) return [];
   const found = [];
+  // Any non-empty value counts, not only strings: a number or object in a
+  // payee field must fail the match, not be skipped.
   const push = (value) => {
-    if (typeof value === 'string' && value !== '') found.push(value);
+    if (value != null && value !== '') found.push(value);
   };
   push(decoded.payTo);
   push(decoded.accepted?.payTo);
@@ -424,30 +401,6 @@ function declaredEvmAsset(decoded) {
     if (addr) return addr;
   }
   return null;
-}
-
-/**
- * Amount a bound settle may put on the receipt.
- *
- * EVM: `authorization.value` from the payload `toPaymentPayload` sends to the
- * facilitator. An unsigned copy sitting next to the signed authorization is
- * ignored. Solana has no EIP-3009 value; the client `amount` label is not a
- * transfer, so the receipt uses the server quote. Dummy blobs return null and
- * the caller keeps the challenge amount.
- */
-function boundSettledAmount(header, x402Version, quote) {
-  const decoded = decodePaymentHeader(header);
-  if (!decoded) return null;
-  const version = x402Version === 2 ? 2 : 1;
-  if (version === 2 && svmTransaction(decoded)) return integerAmount(quote);
-  let sent;
-  try {
-    sent = toPaymentPayload(decoded, { x402Version: version });
-  } catch {
-    return null;
-  }
-  if (svmTransaction(sent) && !sent?.payload?.authorization) return integerAmount(quote);
-  return integerAmount(sent?.payload?.authorization?.value);
 }
 
 function expectedPayee(pinned, cfg, payTo) {

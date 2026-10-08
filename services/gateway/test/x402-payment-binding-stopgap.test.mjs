@@ -577,6 +577,109 @@ test('a forged accepted payee does not redirect the house settlement', async () 
   }
 });
 
+async function withSolanaMock(fn, { settleBody } = {}) {
+  const mock = await startMock(settleBody ? { settleBody } : {});
+  const previous = process.env.X402_SOLANA_FACILITATOR_URL;
+  process.env.X402_SOLANA_FACILITATOR_URL = mock.url;
+  try {
+    const cfg = cfgFor(mock.url, { facilitatorProvider: 'x402', facilitatorUrl: mock.url });
+    return await fn(mock, cfg);
+  } finally {
+    if (previous === undefined) delete process.env.X402_SOLANA_FACILITATOR_URL;
+    else process.env.X402_SOLANA_FACILITATOR_URL = previous;
+    await mock.close();
+  }
+}
+
+test('Solana settles at the challenge amount when it is above the quote', async () => {
+  // A second Solana settle in this process must not reuse the shared signature,
+  // or the receipt is the earlier transfer's confirmed amount.
+  const sig = '4'.repeat(87);
+  await withSolanaMock(async (mock, cfg) => {
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-sol-3000', amount: '3000' });
+    const sol = body.accepts.find((a) => String(a.network).startsWith('solana'));
+    const decision = await runX402Handshake({
+      headers: {
+        'payment-signature': solanaHeader({ amount: '3000', nonce: sol.extra.nonce }),
+        'payment-nonce': sol.extra.nonce,
+      },
+      body: {},
+    }, { taskId: 'stopgap-sol-3000', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'settled', decision.reason || decision.code);
+    assert.equal(decision.settledAmount, '3000');
+    assert.equal(decision.paymentRef, `solana:${sig}`);
+  }, {
+    settleBody: (parsed) => ({
+      success: true,
+      transaction: sig,
+      network: parsed.paymentRequirements?.network || 'solana',
+      payer: PAYER,
+    }),
+  });
+});
+
+test('an EVM authorization on a Solana challenge is refused before verify', async () => {
+  await withSolanaMock(async (mock, cfg) => {
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-sol-evm', amount: '2000' });
+    const sol = body.accepts.find((a) => String(a.network).startsWith('solana'));
+    const blob = JSON.parse(evmHeader({ amount: '999999999000', payTo: SOL_HOUSE }));
+    blob.accepted = JSON.parse(solanaHeader({ nonce: sol.extra.nonce })).accepted;
+    const decision = await runX402Handshake({
+      headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': sol.extra.nonce },
+      body: {},
+    }, { taskId: 'stopgap-sol-evm', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'failed');
+    assert.equal(decision.reason, 'challenge_mismatch');
+    assert.equal(mock.counts.verify, 0);
+  });
+});
+
+test('an SVM transaction field on a Base challenge cannot skip the signed-value floor', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-base-svm', amount: '2000' });
+    const nonce = body.accepts[0].extra.nonce;
+    const blob = JSON.parse(evmHeader({ amount: '1' }));
+    blob.accepted.amount = '2000';
+    blob.transaction = 'x';
+    const decision = await runX402Handshake({
+      headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': nonce },
+      body: {},
+    }, { taskId: 'stopgap-base-svm', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'failed');
+    assert.equal(decision.reason, 'challenge_mismatch');
+    assert.equal(mock.counts.verify, 0);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('a non-decimal or non-string signed field is refused, not skipped', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    for (const mutate of [
+      (b) => { b.payload.authorization.value = '0x1'; },
+      (b) => { b.payload.authorization.to = 8738; },
+    ]) {
+      const body = await issueChallenge(cfg, { taskId: 'stopgap-shape', amount: '2000' });
+      const nonce = body.accepts[0].extra.nonce;
+      const blob = JSON.parse(evmHeader({ amount: '2000' }));
+      mutate(blob);
+      const decision = await runX402Handshake({
+        headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': nonce },
+        body: {},
+      }, { taskId: 'stopgap-shape', cfg, amount: '2000' });
+      assert.equal(decision.kind, 'failed');
+      assert.equal(decision.reason, 'challenge_mismatch');
+    }
+    assert.equal(mock.counts.verify, 0);
+  } finally {
+    await mock.close();
+  }
+});
+
 test('X402_ALLOW_UNBOUND restores unbound settle and logs the use', async () => {
   const mock = await startMock();
   const orig = logger.error;

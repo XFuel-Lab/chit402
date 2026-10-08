@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import logger from './logger.js';
 import { verifyPayment, settlePayment, challengeStore as defaultStore } from './x402-adapter.js';
-import { decodePaymentHeader, isSolanaNetwork, toCaip2Network } from './x402-facilitator.js';
+import { decodePaymentHeader, isSolanaNetwork, toCaip2Network, toPaymentPayload } from './x402-facilitator.js';
 import {
   assertX402Boot,
   bindingEnforced,
@@ -86,12 +86,57 @@ function evmAssetAddress(raw) {
   return raw.toLowerCase();
 }
 
+function svmTransaction(decoded) {
+  const tx = decoded?.payload?.transaction || decoded?.transaction;
+  return typeof tx === 'string' && tx.length > 0 ? tx : null;
+}
+
+function integerAmount(raw) {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'bigint') return raw >= 0n ? raw.toString() : null;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || !Number.isInteger(raw) || raw < 0) return null;
+    return String(raw);
+  }
+  const s = String(raw).trim();
+  if (/^\d+$/.test(s)) return s;
+  if (/^\d+\.0+$/.test(s)) return s.slice(0, s.indexOf('.'));
+  return null;
+}
+
+/**
+ * Pre-settle amount guard. Keyed on the pinned challenge network, never the blob shape.
+ * One function for the handshake and any later issuer of the same settlement.
+ * @returns {{ amount: string|null } | { refuse: true }}
+ */
+export function boundSettledAmount(header, x402Version, live) {
+  const decoded = decodePaymentHeader(header);
+  if (!decoded) return { amount: null };
+  const svm = svmTransaction(decoded);
+  if (isSolanaNetwork(live.network)) {
+    if (!svm) return { refuse: true };
+    return { amount: integerAmount(live.amount) };
+  }
+  if (svm) return { refuse: true };
+  let sent;
+  try {
+    sent = toPaymentPayload(decoded, { x402Version: x402Version === 2 ? 2 : 1 });
+  } catch {
+    return { amount: null };
+  }
+  const auth = sent?.payload?.authorization;
+  if (!auth) return { amount: null };
+  const value = integerAmount(auth.value);
+  if (value == null) return { refuse: true };
+  return { amount: value };
+}
+
 /** Recipients inside the signed authorization. Accepts-field payees are not requirements. */
 function signedRecipients(decoded) {
   if (!decoded || typeof decoded !== 'object') return [];
   const found = [];
   const push = (value) => {
-    if (typeof value === 'string' && value !== '') found.push(value);
+    if (value != null && value !== '') found.push(value);
   };
   push(decoded.payload?.authorization?.to);
   const auth = decoded.authorization;
@@ -212,6 +257,20 @@ export async function settleBoundPayment({
     }
   } catch {
     return refused(req, 'challenge_mismatch', { preSettle: true });
+  }
+
+  const settledPick = boundSettledAmount(paymentHeader, clientVersion, challenge);
+  if (settledPick.refuse) {
+    return refused(req, 'challenge_mismatch', { preSettle: true });
+  }
+  if (settledPick.amount != null) {
+    try {
+      if (BigInt(settledPick.amount) < BigInt(String(routeQuote))) {
+        return refused(req, 'challenge_mismatch', { preSettle: true });
+      }
+    } catch {
+      return refused(req, 'challenge_mismatch', { preSettle: true });
+    }
   }
 
   const authEarly = readEvmAuthorization(paymentHeader);
@@ -371,7 +430,13 @@ export async function settleBoundPayment({
   try { chainAmount = BigInt(String(chain.amount)); } catch { chainAmount = 0n; }
   let quote;
   try { quote = BigInt(String(routeQuote)); } catch { quote = 0n; }
-  if (chainAmount < quote) {
+  // Solana receipts follow the challenge amount the facilitator enforces.
+  // A chain value that only covers the route quote is not that transfer.
+  let pinnedAmount = quote;
+  if (solana) {
+    try { pinnedAmount = BigInt(String(challenge.amount)); } catch { pinnedAmount = quote; }
+  }
+  if (chainAmount < quote || chainAmount < pinnedAmount) {
     pend('underpaid');
     return refused(req, 'settle_unconfirmed');
   }
