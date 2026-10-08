@@ -46,6 +46,9 @@ function startFacilitator() {
 const fac = await startFacilitator();
 process.env.X402_FACILITATOR_URL = fac.url;
 
+const { installEchoChainReader } = await import('../src/x402-chain.js');
+installEchoChainReader();
+
 const { createApp } = await import('../src/server.js');
 const { canonicalRegisterPayMessage } = await import('../src/agent-registry.js');
 

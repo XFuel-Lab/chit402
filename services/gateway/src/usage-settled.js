@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { paymentRefIndexKey } from './payment-ref.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
@@ -412,6 +413,7 @@ export class UsageSettledLedger {
     /** @type {object[]} */
     this.entries = [];
     this.byRef = new Map();
+    this.refCollisionCount = 0;
     this.byTask = new Map();
     /** refusal_id → ledger row. Public GET /refusal/:id. */
     this.byRefusal = new Map();
@@ -444,6 +446,8 @@ export class UsageSettledLedger {
   }
 
   _load() {
+    this._indexingLoad = true;
+    this.refCollisionCount = 0;
     try {
       const text = fs.readFileSync(this._file(), 'utf8');
       for (const line of text.split('\n')) {
@@ -451,10 +455,18 @@ export class UsageSettledLedger {
         const row = JSON.parse(line);
         this._index(row, { persist: false, notify: false });
       }
+      if (this.refCollisionCount > 0) {
+        logger.warn(
+          { count: this.refCollisionCount },
+          'usage-settled: normalized payment_ref collisions kept',
+        );
+      }
     } catch (err) {
       if (err.code !== 'ENOENT') {
         logger.warn({ err: err.message }, 'usage-settled: load failed');
       }
+    } finally {
+      this._indexingLoad = false;
     }
   }
 
@@ -579,9 +591,12 @@ export class UsageSettledLedger {
     this._stampSeq(row);
     this.entries.push(row);
     if (row.payment_ref) {
-      const key = String(row.payment_ref);
+      const raw = String(row.payment_ref);
+      const norm = paymentRefIndexKey(raw);
+      const key = norm || raw;
       const prior = this.byRef.get(key);
       if (prior && prior !== row) {
+        if (this._indexingLoad) this.refCollisionCount += 1;
         this._noteFork(row.agent_id, {
           kind: 'duplicate_payment_ref',
           payment_ref: key,
@@ -590,6 +605,7 @@ export class UsageSettledLedger {
       } else if (!prior) {
         this.byRef.set(key, row);
       }
+      if (raw !== key && !this.byRef.has(raw)) this.byRef.set(raw, row);
     }
     if (row.task_id) {
       const key = String(row.task_id);
@@ -629,7 +645,22 @@ export class UsageSettledLedger {
   }
 
   findByRef(paymentRef) {
-    return this.byRef.get(String(paymentRef)) || null;
+    const raw = String(paymentRef);
+    const direct = this.byRef.get(raw);
+    if (direct) return direct;
+    const norm = paymentRefIndexKey(raw);
+    return norm ? (this.byRef.get(norm) || null) : null;
+  }
+
+  /** Extra dedupe alias (tx + log index). Not a stored receipt field. */
+  aliasRef(alias, paymentRef) {
+    if (!alias) return false;
+    const row = this.findByRef(paymentRef);
+    if (!row) return false;
+    const prior = this.byRef.get(String(alias));
+    if (prior && prior !== row) return false;
+    this.byRef.set(String(alias), row);
+    return true;
   }
 
   /**
@@ -725,7 +756,7 @@ export class UsageSettledLedger {
 
     const taskId = String(receipt.task_id);
     const paymentRef = String(receipt.payment.ref);
-    if (this.byRef.has(paymentRef)) {
+    if (this.findByRef(paymentRef)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     if (this.byTask.has(taskId)) {
@@ -1144,7 +1175,7 @@ export class UsageSettledLedger {
     if (this.byTask.has(tid)) {
       return { ok: true, entry: this.byTask.get(tid), duplicate: true };
     }
-    if (this.byRef.has(ref)) {
+    if (this.findByRef(ref)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     const entry = {
@@ -1213,7 +1244,7 @@ export class UsageSettledLedger {
       return { ok: true, entry: this.byTask.get(tid), duplicate: true };
     }
     const ref = paymentRef != null && String(paymentRef).trim() ? String(paymentRef).trim() : null;
-    if (ref && this.byRef.has(ref)) {
+    if (ref && this.findByRef(ref)) {
       return { ok: false, reason: 'duplicate payment.ref', code: 'duplicate_ref' };
     }
     const entry = {

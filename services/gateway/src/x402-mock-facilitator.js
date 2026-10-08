@@ -1,5 +1,14 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { installEchoChainReader, clearChainReaderForTests } from './x402-chain-hook.js';
+
+const MOCK_TX = '0x' + 'ab'.repeat(32);
+const MOCK_PAYER = '0x' + '55'.repeat(20);
+
+function mintTxHash() {
+  return `0x${crypto.randomBytes(32).toString('hex')}`;
+}
 
 /**
  * Mock x402 facilitator for dev/CI.
@@ -30,10 +39,15 @@ import { pathToFileURL } from 'node:url';
 export function createMockFacilitator(config = {}) {
   const {
     valid = true,
-    txRef = '0xmockpaymenttxref0000000000000000000000000000000000000000000000',
     requireApiKey = false,
     amountMustMatch = false,
+    settleDelayMs = 0,
+    payer: payerOverride = null,
   } = config;
+  // An explicit txRef is one transfer (idempotent replay tests). Otherwise each
+  // settle is its own on-chain hash so a later challenge is not a replay.
+  const fixedTx = Object.prototype.hasOwnProperty.call(config, 'txRef') ? config.txRef : null;
+  const nextTx = () => (fixedTx || mintTxHash());
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -54,8 +68,8 @@ export function createMockFacilitator(config = {}) {
 
       // Standard x402 protocol (payload-bearing body) → x402-shaped responses.
       const isStandardX402 = !!parsed.paymentPayload;
-      const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
-      const network = parsed.paymentRequirements?.network || 'base-sepolia';
+      const payer = payerOverride || parsed.paymentPayload?.payload?.authorization?.from || MOCK_PAYER;
+      const network = parsed.paymentRequirements?.network || parsed.network || 'base-sepolia';
 
       if (url.endsWith('/verify')) {
         server.verifyCount = (server.verifyCount || 0) + 1;
@@ -67,21 +81,28 @@ export function createMockFacilitator(config = {}) {
         if (amountMustMatch && !(parsed.expected && parsed.expected.amount)) {
           return send(200, { valid: false, reason: 'amount_mismatch' });
         }
+        const preview = fixedTx || MOCK_TX;
         return send(200, valid
-          ? { valid: true, txRef }
+          ? { valid: true, txRef: preview }
           : { valid: false, reason: 'mock_rejected' });
       }
 
       if (url.endsWith('/settle')) {
-        server.settleCount = (server.settleCount || 0) + 1;
-        if (isStandardX402) {
+        const finish = () => {
+          server.settleCount = (server.settleCount || 0) + 1;
+          const txRef = nextTx();
+          if (isStandardX402) {
+            return send(200, valid
+              ? { success: true, transaction: txRef, network, payer }
+              : { success: false, errorReason: 'mock_settle_rejected' });
+          }
           return send(200, valid
-            ? { success: true, transaction: txRef, network, payer }
-            : { success: false, errorReason: 'mock_settle_rejected' });
-        }
-        return send(200, valid
-          ? { settled: true, txRef }
-          : { settled: false, reason: 'mock_settle_rejected' });
+            ? { settled: true, success: true, txRef, transaction: txRef, network, payer }
+            : { settled: false, success: false, reason: 'mock_settle_rejected' });
+        };
+        if (settleDelayMs > 0) setTimeout(finish, settleDelayMs);
+        else finish();
+        return;
       }
 
       return send(404, { error: 'not_found' });
@@ -103,10 +124,14 @@ export function startMockFacilitator(config = {}) {
   return new Promise((resolve) => {
     server.listen(config.port || 0, '127.0.0.1', () => {
       const { port } = server.address();
+      installEchoChainReader();
       resolve({
         server,
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(r)),
+        close: () => new Promise((r) => server.close(() => {
+          clearChainReaderForTests();
+          r();
+        })),
       });
     });
   });

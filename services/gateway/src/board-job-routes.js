@@ -3,6 +3,8 @@
  */
 
 import { STAMP_FEE_UNITS } from './pricing.js';
+import config from './config.js';
+import { isBindingRefusal, paymentErrorStatus, bindingEnforced, samePayee } from './x402-flags.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeInbound,
@@ -40,7 +42,11 @@ function sendResult(res, result) {
     });
   }
   return res.status(result?.status || 500).json(
-    result?.body || { error: result?.error || 'internal', message: result?.message || 'Board job failed' },
+    result?.body || {
+      error: result?.error || 'internal',
+      ...(result?.code ? { code: result.code } : {}),
+      message: result?.message || 'Board job failed',
+    },
   );
 }
 
@@ -100,13 +106,20 @@ export function registerBoardJobRoutes(app, deps) {
     if (decision.kind === 'challenge') {
       return { ok: false, status: 402, error: 'stamp_payment_required', message: STAMP_DUE, challenge: decision.body };
     }
-    if (decision.kind !== 'settled') {
-      return { ok: false, status: 402, error: 'stamp_payment_required', message: decision.reason || 'stamp payment failed' };
+    if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
+      const code = decision.code || decision.reason;
+      if (isBindingRefusal(code)) {
+        return { ok: false, status: paymentErrorStatus(code), error: code, code };
+      }
+      return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };
     }
     let paid = 0n;
     try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
-    if (paid < BigInt(STAMP_FEE_UNITS)) {
-      return { ok: false, status: 402, error: 'stamp_underpaid', message: `Stamp payment ${paid} is below ${STAMP_FEE_UNITS}` };
+    const house = config.x402?.payTo;
+    const solHouse = config.x402?.solana?.payTo;
+    const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
+    if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
+      return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
     }
     if (typeof setPaymentHeaders === 'function') {
       setPaymentHeaders(res, {
@@ -176,6 +189,7 @@ export function registerBoardJobRoutes(app, deps) {
       resource,
       body: {},
       evmOnly: true,
+      strictTaskId: true,
     });
     if (decision.kind === 'challenge') {
       return {
@@ -188,8 +202,20 @@ export function registerBoardJobRoutes(app, deps) {
         challenge: decision.body,
       };
     }
-    if (decision.kind !== 'settled') {
-      return { ok: false, status: 402, error: 'job_payment_required', message: decision.reason || 'job payment failed' };
+    if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
+      const code = decision.code || decision.reason;
+      if (isBindingRefusal(code)) {
+        return { ok: false, status: paymentErrorStatus(code), error: code, code };
+      }
+      return { ok: false, status: 402, error: 'job_payment_required', code: 'verify_failed' };
+    }
+    let legPaid = 0n;
+    try { legPaid = BigInt(String(decision.settledAmount)); } catch { legPaid = 0n; }
+    if (legPaid < BigInt(String(spec.amount)) || !samePayee(decision.payTo, spec.payTo)) {
+      return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
+    }
+    if (spec.expectedPayer && !samePayee(decision.payerWallet, spec.expectedPayer)) {
+      return { ok: false, status: 403, error: 'payer_mismatch', code: 'payer_mismatch' };
     }
     if (req.res && typeof setPaymentHeaders === 'function') {
       setPaymentHeaders(req.res, {

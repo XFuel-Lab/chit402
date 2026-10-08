@@ -856,9 +856,9 @@ export function buildX402Manifest(baseUrl = '') {
       payTo: x.payTo,
       maxTimeoutSeconds: 120,
       mimeType: 'application/json',
-      extra: { name, version },
+      extra: { name, version, challengeRequired: true },
       description:
-        'Minimum per settlement. The charged amount is metered per request — '
+        'Minimum per settlement. Fetch a live 402 first. The charged amount is metered per request — '
         + 'see `pricing` on this manifest and POST /task-quote for an exact figure.',
     },
   ];
@@ -874,9 +874,9 @@ export function buildX402Manifest(baseUrl = '') {
       payTo: x.solana.payTo,
       maxTimeoutSeconds: 120,
       mimeType: 'application/json',
-      extra: { feePayer: solUsdcInfo.feePayer || PAYAI_DEFAULT_FEE_PAYER },
+      extra: { feePayer: solUsdcInfo.feePayer || PAYAI_DEFAULT_FEE_PAYER, challengeRequired: true },
       description:
-        'Solana USDC payment via PayAI facilitator. Same cost-plus pricing as Base.',
+        'Solana USDC payment via PayAI facilitator. Fetch a live 402 first. Same cost-plus pricing as Base.',
     });
   }
 

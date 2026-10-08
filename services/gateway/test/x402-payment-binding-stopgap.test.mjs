@@ -9,9 +9,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { runX402Handshake } from '../src/x402-server.js';
 import logger from '../src/logger.js';
 import config from '../src/config.js';
+import { echoChainReader, installEchoChainReader, setChainReaderForTests } from '../src/x402-chain-hook.js';
+
+installEchoChainReader();
 
 const HOUSE = '0x1111111111111111111111111111111111111111';
 const ATTACKER = '0x2222222222222222222222222222222222222222';
@@ -46,6 +50,7 @@ function evmHeader({
   amount = '2000',
   payTo = HOUSE,
   asset = BASE_USDC,
+  authNonce = `0x${crypto.randomBytes(32).toString('hex')}`,
 } = {}) {
   const now = Math.floor(Date.now() / 1000);
   return JSON.stringify({
@@ -67,7 +72,7 @@ function evmHeader({
         value: amount,
         validAfter: '0',
         validBefore: String(now + 3600),
-        nonce: '0x' + '11'.repeat(32),
+        nonce: authNonce,
       },
     },
   });
@@ -122,7 +127,17 @@ function startMock({ delayMs = 0, settleBody = null } = {}) {
               payer: PAYER,
             });
           }
-          return send(200, { settled: true, txRef: TX });
+          const network = parsed.network || 'base';
+          const solana = String(network).startsWith('solana');
+          const txRef = solana ? SOL_TX : `0x${crypto.randomBytes(32).toString('hex')}`;
+          return send(200, {
+            settled: true,
+            success: true,
+            txRef,
+            transaction: txRef,
+            network,
+            payer: PAYER,
+          });
         }
         return send(404, { error: 'not_found' });
       };
@@ -259,7 +274,7 @@ test('price floor: a cheaper challenge cannot pay a higher quote', async () => {
         'x-payment-nonce': nonce,
       },
       body: {},
-    }, { taskId: 'stopgap-swap', cfg });
+    }, { taskId: 'stopgap-swap', cfg, amount: '500000' });
     assert.equal(decision.kind, 'failed');
     assert.equal(decision.reason, 'challenge_mismatch');
     assert.equal(mock.counts.verify, 0);
@@ -293,9 +308,14 @@ test('price floor: signed value one unit under the quote is refused', async () =
 
 test('overpay of quote+1 settles with settledAmount = quote+1', async () => {
   const mock = await startMock();
+  const quote = 2000;
+  setChainReaderForTests(async (args) => {
+    const out = await echoChainReader(args);
+    if (!out?.ok) return out;
+    return { ...out, amount: String(quote + 1) };
+  });
   try {
     const cfg = cfgFor(mock.url);
-    const quote = 2000;
     const body = await issueChallenge(cfg, { taskId: 'stopgap-overpay', amount: String(quote) });
     const nonce = body.accepts[0].extra.nonce;
     const decision = await runX402Handshake({
@@ -305,13 +325,14 @@ test('overpay of quote+1 settles with settledAmount = quote+1', async () => {
       },
       body: {},
     }, { taskId: 'stopgap-overpay', cfg, amount: String(quote) });
-    assert.equal(decision.kind, 'settled');
+    assert.equal(decision.kind, 'settled', decision.reason || decision.code);
     assert.equal(decision.quotedAmount, String(quote));
     assert.equal(decision.settledAmount, String(quote + 1));
     assert.notEqual(decision.settledAmount, decision.quotedAmount);
     assert.equal(decision.payTo, HOUSE);
-    assert.match(decision.paymentRef, new RegExp(`^base:${TX}$`));
+    assert.match(decision.paymentRef, /^base:0x[0-9a-f]{64}$/);
   } finally {
+    installEchoChainReader();
     await mock.close();
   }
 });
@@ -535,7 +556,7 @@ test('Base unsigned authorization copy cannot raise settledAmount', async () => 
   }
 });
 
-test('every client payee must match the house payee', async () => {
+test('a forged accepted payee does not redirect the house settlement', async () => {
   const mock = await startMock();
   try {
     const cfg = cfgFor(mock.url);
@@ -547,11 +568,113 @@ test('every client payee must match the house payee', async () => {
       headers: { 'x-payment': JSON.stringify(split), 'x-payment-nonce': nonce },
       body: {},
     }, { taskId: 'stopgap-payees', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'settled', decision.reason || decision.code);
+    assert.equal(decision.payTo, HOUSE);
+    assert.notEqual(decision.payTo, ATTACKER);
+    assert.match(decision.paymentRef, /^base:0x[0-9a-f]{64}$/);
+  } finally {
+    await mock.close();
+  }
+});
+
+async function withSolanaMock(fn, { settleBody } = {}) {
+  const mock = await startMock(settleBody ? { settleBody } : {});
+  const previous = process.env.X402_SOLANA_FACILITATOR_URL;
+  process.env.X402_SOLANA_FACILITATOR_URL = mock.url;
+  try {
+    const cfg = cfgFor(mock.url, { facilitatorProvider: 'x402', facilitatorUrl: mock.url });
+    return await fn(mock, cfg);
+  } finally {
+    if (previous === undefined) delete process.env.X402_SOLANA_FACILITATOR_URL;
+    else process.env.X402_SOLANA_FACILITATOR_URL = previous;
+    await mock.close();
+  }
+}
+
+test('Solana settles at the challenge amount when it is above the quote', async () => {
+  // A second Solana settle in this process must not reuse the shared signature,
+  // or the receipt is the earlier transfer's confirmed amount.
+  const sig = '4'.repeat(87);
+  await withSolanaMock(async (mock, cfg) => {
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-sol-3000', amount: '3000' });
+    const sol = body.accepts.find((a) => String(a.network).startsWith('solana'));
+    const decision = await runX402Handshake({
+      headers: {
+        'payment-signature': solanaHeader({ amount: '3000', nonce: sol.extra.nonce }),
+        'payment-nonce': sol.extra.nonce,
+      },
+      body: {},
+    }, { taskId: 'stopgap-sol-3000', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'settled', decision.reason || decision.code);
+    assert.equal(decision.settledAmount, '3000');
+    assert.equal(decision.paymentRef, `solana:${sig}`);
+  }, {
+    settleBody: (parsed) => ({
+      success: true,
+      transaction: sig,
+      network: parsed.paymentRequirements?.network || 'solana',
+      payer: PAYER,
+    }),
+  });
+});
+
+test('an EVM authorization on a Solana challenge is refused before verify', async () => {
+  await withSolanaMock(async (mock, cfg) => {
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-sol-evm', amount: '2000' });
+    const sol = body.accepts.find((a) => String(a.network).startsWith('solana'));
+    const blob = JSON.parse(evmHeader({ amount: '999999999000', payTo: SOL_HOUSE }));
+    blob.accepted = JSON.parse(solanaHeader({ nonce: sol.extra.nonce })).accepted;
+    const decision = await runX402Handshake({
+      headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': sol.extra.nonce },
+      body: {},
+    }, { taskId: 'stopgap-sol-evm', cfg, amount: '2000' });
     assert.equal(decision.kind, 'failed');
     assert.equal(decision.reason, 'challenge_mismatch');
-    assert.equal(decision.paymentRef, undefined);
     assert.equal(mock.counts.verify, 0);
-    assert.equal(mock.counts.settle, 0);
+  });
+});
+
+test('an SVM transaction field on a Base challenge cannot skip the signed-value floor', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    const body = await issueChallenge(cfg, { taskId: 'stopgap-base-svm', amount: '2000' });
+    const nonce = body.accepts[0].extra.nonce;
+    const blob = JSON.parse(evmHeader({ amount: '1' }));
+    blob.accepted.amount = '2000';
+    blob.transaction = 'x';
+    const decision = await runX402Handshake({
+      headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': nonce },
+      body: {},
+    }, { taskId: 'stopgap-base-svm', cfg, amount: '2000' });
+    assert.equal(decision.kind, 'failed');
+    assert.equal(decision.reason, 'challenge_mismatch');
+    assert.equal(mock.counts.verify, 0);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('a non-decimal or non-string signed field is refused, not skipped', async () => {
+  const mock = await startMock();
+  try {
+    const cfg = cfgFor(mock.url);
+    for (const mutate of [
+      (b) => { b.payload.authorization.value = '0x1'; },
+      (b) => { b.payload.authorization.to = 8738; },
+    ]) {
+      const body = await issueChallenge(cfg, { taskId: 'stopgap-shape', amount: '2000' });
+      const nonce = body.accepts[0].extra.nonce;
+      const blob = JSON.parse(evmHeader({ amount: '2000' }));
+      mutate(blob);
+      const decision = await runX402Handshake({
+        headers: { 'payment-signature': JSON.stringify(blob), 'payment-nonce': nonce },
+        body: {},
+      }, { taskId: 'stopgap-shape', cfg, amount: '2000' });
+      assert.equal(decision.kind, 'failed');
+      assert.equal(decision.reason, 'challenge_mismatch');
+    }
+    assert.equal(mock.counts.verify, 0);
   } finally {
     await mock.close();
   }

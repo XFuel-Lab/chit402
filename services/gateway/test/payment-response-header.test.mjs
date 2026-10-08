@@ -65,8 +65,17 @@ function startFacilitator() {
         }
         return send(404, { error: 'not_found' });
       }
-      if (url.endsWith('/verify')) return send(200, { valid: true, txRef: EVM_TX });
-      if (url.endsWith('/settle')) return send(200, { settled: true, txRef: EVM_TX });
+      if (url.endsWith('/verify')) return send(200, { valid: true, isValid: true, txRef: EVM_TX, payer: EVM_PAYER });
+      if (url.endsWith('/settle')) {
+        return send(200, {
+          settled: true,
+          success: true,
+          txRef: EVM_TX,
+          transaction: EVM_TX,
+          network: 'base',
+          payer: EVM_PAYER,
+        });
+      }
       return send(404, { error: 'not_found' });
     });
   });
@@ -84,6 +93,9 @@ function startFacilitator() {
 const facilitator = await startFacilitator();
 process.env.ZAN_X402_GATEWAY_URL = facilitator.url;
 process.env.X402_SOLANA_FACILITATOR_URL = facilitator.url;
+
+const { installEchoChainReader, clearChainReaderForTests } = await import('../src/x402-chain.js');
+installEchoChainReader();
 
 const { createApp } = await import('../src/server.js');
 const { encodeX402PaymentResponseHeader } = await import('../src/x402-adapter.js');

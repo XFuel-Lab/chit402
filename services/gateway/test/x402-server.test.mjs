@@ -108,7 +108,7 @@ test('handshake amount override prices the challenge, not the current body', asy
       headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
       body: { payment: { rail: 'usdc' } },
     }, { taskId: 'x402-rolling', cfg, amount: '20240' });
-    assert.equal(settled.kind, 'settled');
+    assert.equal(settled.kind, 'settled', settled.reason || settled.code);
     assert.equal(settled.settledAmount, '20240');
   } finally {
     await close();
@@ -315,7 +315,7 @@ test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)'
     const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': nonce }, body: {} };
     const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
     assert.equal(decision.kind, 'failed');
-    assert.equal(decision.reason, 'mock_rejected');
+    assert.equal(decision.reason, 'verify_failed');
   } finally {
     await close();
   }

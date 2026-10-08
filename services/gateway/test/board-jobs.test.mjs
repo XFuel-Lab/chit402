@@ -11,6 +11,7 @@ import { UsageSettledLedger, entryQualifiesForCap, BOOK_EVIDENCE, deriveEvidence
 import { bindBookVerifier } from '../src/agent-book.js';
 import { BoardJobStore, JOB_BUDGET_MAX, authorizeInbound, awardBoardBid, buildJobPayoutReceipt, challengeBoardJob, createBoardJob, deliverBoardJob, feeLegAmount, getAgentRecord, getBoardJob, ingestExternalCompletion, payBoardJob, placeBoardBid, revealBoardJob, sha256Prefixed } from '../src/board-jobs.js';
 import { registerBoardJobRoutes } from '../src/board-job-routes.js';
+import config from '../src/config.js';
 import { decodeReceiptClaims } from '../src/receipt.js';
 
 const WALLET = `0x${'ab'.repeat(20)}`;
@@ -339,6 +340,8 @@ test('buildJobPayoutReceipt does not invent a new signed schema', () => {
 });
 
 test('HTTP pay challenge names the winner wallet, then the treasury', async () => {
+  const prevPayTo = config.x402.payTo;
+  config.x402.payTo = TREASURY;
   const ctx = world();
   const { id } = await openJob(ctx);
   const bid = await placeBoardBid(id, { price: '1000000', pitch: 'ok' }, deps(ctx, ctx.bidder, { ensureStamp: stampOk().ensure }));
@@ -363,10 +366,11 @@ test('HTTP pay challenge names the winner wallet, then the treasury', async () =
       }
       return {
         kind: 'settled',
+        confirmed: true,
         paymentRef: `base:http${calls}`,
         settledAmount: spec.amount,
         payerWallet: WALLET,
-        payTo: spec.payTo,
+        payTo: spec.payTo || config.x402.payTo,
       };
     },
     setPaymentHeaders: () => {},
@@ -407,6 +411,7 @@ test('HTTP pay challenge names the winner wallet, then the treasury', async () =
     assert.equal(secondBody.legs.fee.pay_to, TREASURY);
     assert.equal(secondBody.accepts[0].payTo, TREASURY);
   } finally {
+    config.x402.payTo = prevPayTo;
     server.close();
   }
 });

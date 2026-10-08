@@ -3,6 +3,7 @@
  */
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -43,7 +44,7 @@ function createMockFacilitator() {
       const isStandardX402 = !!parsed.paymentPayload;
       const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
       const network = parsed.paymentRequirements?.network || 'base';
-      const txRef = `0xintentmock${String(settleCount).padStart(52, '0')}`;
+      const txRef = `0x${crypto.randomBytes(32).toString('hex')}`;
       if (req.url?.endsWith('/verify')) {
         if (isStandardX402) return send(200, { isValid: true, payer });
         return send(200, { valid: true, txRef });
@@ -51,7 +52,7 @@ function createMockFacilitator() {
       if (req.url?.endsWith('/settle')) {
         settleCount += 1;
         if (isStandardX402) return send(200, { success: true, transaction: txRef, network, payer });
-        return send(200, { settled: true, txRef });
+        return send(200, { settled: true, success: true, txRef, transaction: txRef, network, payer });
       }
       return send(404, { error: 'not_found' });
     });
@@ -70,6 +71,9 @@ function createMockFacilitator() {
 
 const { url: facUrl, close: closeFac, settleCount } = await createMockFacilitator();
 process.env.ZAN_X402_GATEWAY_URL = facUrl;
+
+const { installEchoChainReader } = await import('../src/x402-chain.js');
+installEchoChainReader();
 
 const { AgentRegistry } = await import('../src/agent-registry.js');
 const { UsageSettledLedger, recordCollectedSpend } = await import('../src/usage-settled.js');

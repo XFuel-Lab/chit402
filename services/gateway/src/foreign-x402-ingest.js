@@ -28,6 +28,9 @@ import { assertIssuanceOpen, bindIssuerRoot, issuerRootActive, ISSUER_ROOT_PAYLO
 import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { fromCaip2Network } from './x402-facilitator.js';
+import { normalizePaymentRef } from './payment-ref.js';
+import { payerBoundToAgent, verifyOwnerProof } from './owner-proof.js';
+import { sameEvmAddress } from './x402-flags.js';
 import {
   buildFulfillmentEnvelope,
   OutputCommitmentError,
@@ -192,9 +195,8 @@ export function buildOnChainVerify(provider = null) {
       return { valid: false, reason: 'payer, payTo, and amount are required' };
     }
 
-    // Solana networks need a Solana provider, which we don't have
     if (!isEvmNetwork(network)) {
-      throw new Error(`Solana transfer verification not yet supported (network: ${network})`);
+      throw new Error('Solana transfer verification not yet supported');
     }
 
     // "base:0x…" or "eip155:8453:0x…" — the hash is the 0x word, not the CAIP prefix.
@@ -214,8 +216,8 @@ export function buildOnChainVerify(provider = null) {
     let receipt;
     try {
       receipt = await p.getTransactionReceipt(txHash);
-    } catch (err) {
-      throw new Error(`failed to fetch tx receipt: ${err.message}`);
+    } catch {
+      throw new Error('failed to fetch tx receipt');
     }
 
     if (!receipt) {
@@ -231,49 +233,41 @@ export function buildOnChainVerify(provider = null) {
     const expectedTo = String(payTo).toLowerCase();
     const usdcLower = usdcAddress.toLowerCase();
 
-    let foundTransfer = false;
-    let transferredAmount = 0n;
-
+    const matches = [];
+    let logIndex = 0;
     for (const log of receipt.logs || []) {
-      // Must be from the USDC contract
+      const index = log.logIndex != null ? Number(log.logIndex) : logIndex;
+      logIndex += 1;
       if (log.address?.toLowerCase() !== usdcLower) continue;
-      // Must be a Transfer event
       if (log.topics?.[0] !== ERC20_TRANSFER_TOPIC) continue;
       if (log.topics.length < 3) continue;
-
-      // Decode indexed params: topics[1] = from, topics[2] = to
       const from = '0x' + log.topics[1].slice(26).toLowerCase();
       const to = '0x' + log.topics[2].slice(26).toLowerCase();
-
-      // Decode data: amount (uint256)
       const value = BigInt(log.data || '0');
-
-      // Check match
       if (from === expectedFrom && to === expectedTo) {
-        transferredAmount += value;
-        foundTransfer = true;
+        matches.push({ from, to, value, logIndex: index });
       }
     }
 
-    if (!foundTransfer) {
+    if (matches.length !== 1) {
       return {
         valid: false,
-        reason: `no USDC Transfer from ${payer} to ${payTo} found in tx`,
+        reason: matches.length === 0 ? 'no_matching_transfer' : 'ambiguous_transfers',
       };
     }
 
-    if (transferredAmount < expectedAmount) {
-      return {
-        valid: false,
-        reason: `transferred ${transferredAmount} < expected ${expectedAmount}`,
-      };
+    if (matches[0].value < expectedAmount) {
+      return { valid: false, reason: 'underpaid' };
     }
 
     return {
       valid: true,
       txHash,
       blockNumber: receipt.blockNumber,
-      verifiedAmount: transferredAmount.toString(),
+      verifiedAmount: matches[0].value.toString(),
+      payer: matches[0].from,
+      payTo: matches[0].to,
+      logIndex: matches[0].logIndex,
     };
   };
 }
@@ -1007,25 +1001,26 @@ export async function ingestForeignX402(body = {}, {
   // Build payment ref and determine rail. v2 CAIP-2 (`eip155:8453`) becomes `base`
   // so the ref stays `base:0x…` and on-chain verify can read the hash.
   const network = bookNetwork(paymentResponse.network || paymentRequired.network || 'base');
+  const norm = normalizePaymentRef(network, paymentResponse.tx);
+  if (!norm.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'invalid_payment_ref',
+      code: 'invalid_payment_ref',
+      message: 'invalid_payment_ref',
+    };
+  }
   const paymentRef = `${network}:${paymentResponse.tx}`;
   const rail = railFromNetwork(network);
 
-  // Replay protection: ledger.findByRef is the persistent source of truth.
-  // Per whitepaper: nullify tx via ledger ref + persist, not in-memory Set.
-  if (ledger && typeof ledger.findByRef === 'function') {
-    const existing = ledger.findByRef(paymentRef);
-    if (existing) {
-      return {
-        ok: false,
-        status: 409,
-        error: 'duplicate_ref',
-        message: 'This payment reference is already in the book',
-      };
-    }
-  }
+  // The stamp challenge is the unpaid probe. Verify and payer binding run
+  // after it, and nothing is written until the on-chain payer is this agent.
+  const stamp = await collectIngestStamp(ensureStamp);
+  if (!stamp.ok) return stamp;
 
-  // Verify the payment on-chain via facilitator — FAIL CLOSED.
-  // Per whitepaper §2: verify on-chain, do not settle. No row without verification.
+  // Verify the payment on-chain — FAIL CLOSED. Dedupe runs only after the
+  // on-chain payer is bound to this agent, so a stranger cannot squat the ref.
   if (!verify || typeof verify !== 'function') {
     return {
       ok: false,
@@ -1041,19 +1036,18 @@ export async function ingestForeignX402(body = {}, {
       paymentHeader: null,
       paymentRef,
       payer: paymentResponse.payer,
-      // upto without a settled amount: any matching Transfer qualifies.
-      // The recorded spend is verification.verifiedAmount, never the ceiling.
       amount: needsChainAmount ? '1' : paymentRequired.amount,
       payTo: paymentRequired.payTo,
       network,
     });
   } catch (err) {
-    logger.warn({ err: err.message, paymentRef }, 'foreign-x402: verification threw — rejecting (fail closed)');
+    logger.warn({ err: err.message }, 'foreign-x402: verification threw — rejecting (fail closed)');
     return {
       ok: false,
       status: 502,
       error: 'verify_failed',
-      message: `Payment verification failed: ${err.message}`,
+      code: 'verify_failed',
+      message: 'Payment verification failed',
     };
   }
 
@@ -1062,8 +1056,71 @@ export async function ingestForeignX402(body = {}, {
       ok: false,
       status: 400,
       error: 'payment_invalid',
-      message: verification?.reason || 'Payment verification did not confirm valid',
+      code: 'verify_failed',
+      message: 'Payment verification did not confirm',
     };
+  }
+
+  const onChainPayer = verification.payer || verification.from || null;
+  if (!onChainPayer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_not_bound',
+      code: 'payer_not_bound',
+      message: 'payer_not_bound',
+    };
+  }
+  if (paymentResponse.payer && !sameEvmAddress(paymentResponse.payer, onChainPayer) && paymentResponse.payer !== onChainPayer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'payer_mismatch',
+      code: 'payer_mismatch',
+      message: 'payer_mismatch',
+    };
+  }
+  if (!payerBoundToAgent(registry, id, onChainPayer)) {
+    const proof = body?.owner_proof || body?.ownerProof || null;
+    if (!proof) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'payer_not_bound',
+        code: 'payer_not_bound',
+        message: 'payer_not_bound',
+      };
+    }
+    const proved = await verifyOwnerProof({
+      agentId: id,
+      paymentRef: norm.key,
+      payer: onChainPayer,
+      proof,
+    });
+    if (!proved.ok) {
+      return {
+        ok: false,
+        status: 403,
+        error: proved.code,
+        code: proved.code,
+        message: proved.code,
+      };
+    }
+  }
+
+  const logKey = verification.logIndex != null ? `${norm.key}#${verification.logIndex}` : null;
+  if (ledger && typeof ledger.findByRef === 'function') {
+    const existing = ledger.findByRef(paymentRef)
+      || ledger.findByRef(norm.key)
+      || (logKey ? ledger.findByRef(logKey) : null);
+    if (existing) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'duplicate_ref',
+        message: 'This payment reference is already in the book',
+      };
+    }
   }
 
   if (needsChainAmount) {
@@ -1086,12 +1143,6 @@ export async function ingestForeignX402(body = {}, {
     }
     paymentRequired.amount = derived;
   }
-
-  // Stamp is $0.002 USDC paid by the submitter (x402 Base/Solana), or waived.
-  // It must not call registry.setBudget — the ingested amount is already spend,
-  // and debiting the cap as well reduced remaining twice.
-  const stamp = await collectIngestStamp(ensureStamp);
-  if (!stamp.ok) return stamp;
 
   // Generate synthetic task id
   const taskId = generateForeignTaskId();
@@ -1120,7 +1171,7 @@ export async function ingestForeignX402(body = {}, {
   }
 
   const appended = ledger.append(receipt, {
-    payer: paymentResponse.payer,
+    payer: onChainPayer,
     agentId: id,
     intentId: fulfillmentMeta.intentId || null,
     attemptIndex: fulfillmentMeta.attemptIndex ?? null,
@@ -1134,6 +1185,7 @@ export async function ingestForeignX402(body = {}, {
       message: appended.reason,
     };
   }
+  if (logKey && typeof ledger.aliasRef === 'function') ledger.aliasRef(logKey, paymentRef);
 
   if (stamp.waived && typeof commitStampWaiver === 'function') {
     try { commitStampWaiver(); } catch { /* cap file must not fail a written row */ }

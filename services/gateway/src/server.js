@@ -12,6 +12,8 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee } from './x402-flags.js';
+import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -1817,14 +1819,25 @@ export function createApp() {
                 taskId: handshakeTaskId,
                 amount: handshakeAmount,
                 baseUrl: handshakeBaseUrl,
+                strictTaskId: !!decision.pending,
               });
               if (hs.kind === 'challenge') {
                 return sendPaymentRequired(res, hs.body);
               }
               if (hs.kind === 'settled') {
+                if (bindingEnforced(config.x402) && hs.confirmed !== true) {
+                  return sendPublicInternal(res, new Error('unconfirmed settlement'), 'x402 settle', 'settle_unconfirmed', req);
+                }
                 settledResponseRef = hs.paymentRef || null;
                 settledResponsePayer = hs.payerWallet || null;
                 if (decision.pending) {
+                  const pendingOk = hs.taskId === decision.pending.taskId
+                    && BigInt(String(hs.settledAmount)) >= BigInt(String(decision.amount))
+                    && (hs.payTo === config.x402.payTo || hs.payTo === decision.payTo);
+                  if (!pendingOk) {
+                    markSettleFailed(payerId, 'challenge_mismatch');
+                    return res.status(402).json({ error: 'challenge_mismatch', code: 'challenge_mismatch' });
+                  }
                   const listener = getAIListener();
                   const owed = listener?.activeTasks?.get(decision.pending.taskId);
                   if (owed) {
@@ -1856,16 +1869,21 @@ export function createApp() {
                   paymentAsset = hs.asset || null;
                 }
               } else {
-                if (decision.pending) markSettleFailed(payerId, hs.reason);
+                if (decision.pending) markSettleFailed(payerId, hs.code || hs.reason);
                 if (hs.reason === 'gateway_not_configured') {
-                  return res.status(503).json({ error: 'x402_unavailable', reason: hs.reason });
+                  return res.status(503).json({ error: 'x402_unavailable', code: 'gateway_not_configured' });
+                }
+                if (isBindingRefusal(hs.code || hs.reason)) {
+                  const code = hs.code || hs.reason;
+                  if (hs.retryAfter) res.setHeader('Retry-After', String(hs.retryAfter));
+                  return res.status(paymentErrorStatus(code)).json({ error: code, code });
                 }
                 if (config.x402.fallbackToTfuel) {
                   logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
                   paymentRail = 'tfuel';
                   rollingMeta = null;
                 } else {
-                  return res.status(402).json({ error: 'payment_required', reason: hs.reason });
+                  return res.status(402).json({ error: 'verify_failed', code: 'verify_failed' });
                 }
               }
             }
@@ -1877,6 +1895,9 @@ export function createApp() {
               return sendPaymentRequired(res, decision.body);
             }
             if (decision.kind === 'settled') {
+              if (bindingEnforced(config.x402) && decision.confirmed !== true) {
+                return sendPublicInternal(res, new Error('unconfirmed settlement'), 'x402 settle', 'settle_unconfirmed', req);
+              }
               paymentRail = 'usdc';
               paymentRef = decision.paymentRef;
               settledAmount = decision.settledAmount || null;
@@ -1888,13 +1909,18 @@ export function createApp() {
               paymentAsset = decision.asset || null;
             } else {
               if (decision.reason === 'gateway_not_configured') {
-                return res.status(503).json({ error: 'x402_unavailable', reason: decision.reason });
+                return res.status(503).json({ error: 'x402_unavailable', code: 'gateway_not_configured' });
+              }
+              if (isBindingRefusal(decision.code || decision.reason)) {
+                const code = decision.code || decision.reason;
+                if (decision.retryAfter) res.setHeader('Retry-After', String(decision.retryAfter));
+                return res.status(paymentErrorStatus(code)).json({ error: code, code });
               }
               if (config.x402.fallbackToTfuel) {
                 logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
                 paymentRail = 'tfuel';
               } else {
-                return res.status(402).json({ error: 'payment_required', reason: decision.reason });
+                return res.status(402).json({ error: 'verify_failed', code: 'verify_failed' });
               }
             }
           }
@@ -4343,23 +4369,38 @@ export function createApp() {
           };
         }
         if (decision.preSettle) {
-          const mismatch = decision.reason === 'payer_mismatch';
-          return {
-            ok: false,
-            status: mismatch ? 403 : 402,
-            error: mismatch ? 'payer_mismatch' : 'stamp_payment_required',
-            message: mismatch
-              ? 'The payment authorization must be from agentWallet. Nothing was settled.'
-              : 'Register stamp is $0.002 USDC on Base only. Nothing was settled.',
-          };
-        }
-        if (decision.kind !== 'settled') {
+          const code = decision.code || decision.reason;
+          if (isBindingRefusal(code)) {
+            return {
+              ok: false,
+              status: paymentErrorStatus(code),
+              error: code,
+              code,
+              message: 'Register stamp is $0.002 USDC on Base only. Nothing was settled.',
+            };
+          }
           return {
             ok: false,
             status: 402,
             error: 'stamp_payment_required',
-            message: decision.reason || 'stamp payment failed',
+            message: 'Register stamp is $0.002 USDC on Base only. Nothing was settled.',
           };
+        }
+        if (decision.kind !== 'settled' || decision.confirmed !== true) {
+          const code = isBindingRefusal(decision.code || decision.reason)
+            ? (decision.code || decision.reason)
+            : 'settle_failed';
+          return {
+            ok: false,
+            status: paymentErrorStatus(code),
+            error: code,
+            code,
+          };
+        }
+        let paid = 0n;
+        try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
+        if (paid < BigInt(STAMP_FEE_UNITS) || !samePayee(decision.payTo, config.x402.payTo)) {
+          return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
         }
         if (typeof setX402PaymentResponseHeaders === 'function') {
           setX402PaymentResponseHeaders(res, {
@@ -4396,9 +4437,18 @@ export function createApp() {
           return res.status(402).json({
             ...result.challenge,
             error: result.error,
+            code: result.code || result.error,
             message: result.message,
             stamp_fee: String(STAMP_FEE_UNITS),
             stamp_fee_usd: '0.002',
+          });
+        }
+        const closed = result.code || result.error;
+        if (isBindingRefusal(closed)) {
+          return res.status(result.status).json({
+            error: closed,
+            code: closed,
+            ...(result.message ? { message: result.message } : {}),
           });
         }
         return res.status(result.status).json({
@@ -4540,22 +4590,28 @@ export function createApp() {
             challenge: decision.body,
           };
         }
-        if (decision.kind !== 'settled') {
+        if (decision.kind !== 'settled' || decision.confirmed !== true) {
+          const code = isBindingRefusal(decision.code || decision.reason)
+            ? (decision.code || decision.reason)
+            : 'settle_failed';
           return {
             ok: false,
-            status: 402,
-            error: 'stamp_payment_required',
-            message: decision.reason || 'stamp payment failed',
+            status: paymentErrorStatus(code),
+            error: code,
+            code,
           };
         }
         let paid = 0n;
         try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
-        if (paid < BigInt(STAMP_FEE_UNITS)) {
+        const house = config.x402.payTo;
+        const solHouse = config.x402.solana?.payTo;
+        const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
+        if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
           return {
             ok: false,
             status: 402,
             error: 'stamp_underpaid',
-            message: `Stamp payment ${paid} is below ${STAMP_FEE_UNITS}`,
+            code: 'stamp_underpaid',
           };
         }
         setX402PaymentResponseHeaders(res, {
@@ -4600,10 +4656,14 @@ export function createApp() {
           return res.status(402).json({
             ...result.challenge,
             error: result.error,
-            message: result.message,
+            code: result.code || result.error,
             stamp_fee: String(STAMP_FEE_UNITS),
             stamp_fee_usd: '0.002',
           });
+        }
+        const closed = result.code || result.error;
+        if (isBindingRefusal(closed)) {
+          return res.status(result.status).json({ error: closed, code: closed });
         }
         return res.status(result.status).json({
           error: result.error,
@@ -5447,6 +5507,30 @@ async function _generateA2AProof(msg) {
  */
 export async function startServer() {
   const port = parseInt(process.env.M2M_API_PORT) || 3002;
+  try {
+    assertX402Boot(config.x402);
+  } catch (err) {
+    logger.error({ err: err.message }, 'x402 boot refused');
+    throw err;
+  }
+  if (config.x402?.enabled) {
+    // MF4: only an exact test/development NODE_ENV may run without the durable store.
+    const { storePath, required } = challengeStorePlan({
+      nodeEnv: process.env.NODE_ENV,
+      configured: config.x402.challengeStorePath,
+    });
+    if (required && !storePath) {
+      markChallengeStoreFailed();
+      logger.error('x402 challenge store path missing; x402 will refuse');
+    } else if (storePath) {
+      try {
+        openDurableChallengeStore(storePath);
+      } catch (err) {
+        markChallengeStoreFailed();
+        logger.error({ err: err.message }, 'x402 challenge store failed to load');
+      }
+    }
+  }
   // The durable receipt log is part of serving. Unit tests call createApp
   // without this, so they do not have to carry the production pin.
   if (process.env.RECEIPT_LOG_BOOT == null || process.env.RECEIPT_LOG_BOOT === '') {

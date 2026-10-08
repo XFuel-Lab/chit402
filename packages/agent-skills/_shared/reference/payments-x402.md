@@ -113,7 +113,9 @@ No 402 handshake — the existing amount-in-wei M2M flow settles on Theta (361/3
 Each 402 challenge carries a `nonce` bound to `{ amount, asset, network, payTo,
 resource }` with a TTL (`X402_CHALLENGE_TTL_MS`). Verify enforces expiry + amount
 binding; settle marks the nonce spent (replay protection — analogous to ZK
-nullifiers).
+nullifiers). Settlement requirements come from that server-issued challenge.
+
+On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. Do not sign a new authorization for an in-flight challenge. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate SDK change.
 
 ## Proof binding (Phase 2, flag-gated)
 

@@ -433,14 +433,15 @@ export function catalogResourceUrl(resource) {
  * @param {string} [opts.feePayer] - Override feePayer for Solana (from challenge or PayAI /supported)
  */
 export function toPaymentRequirements({
-  network, amount, payTo, resource, taskId, maxTimeoutSeconds, description, outputSchema,
+  network, amount, payTo, asset: assetOverride, resource, taskId, maxTimeoutSeconds, description, outputSchema,
   x402Version = 1,
   feePayer: feePayerOverride,
-  memo,  // SVM: client's memo for Memo ix matching (optional per spec, but required if tx has Memo ix)
+  memo,  // SVM: challenge memo. The client cannot substitute one.
 } = {}) {
   const shortNet = fromCaip2Network(network);
   const usdcInfo = usdcFor(shortNet);
-  const { asset, name, version, feePayer: defaultFeePayer } = usdcInfo;
+  const { asset: knownAsset, name, version, feePayer: defaultFeePayer } = usdcInfo;
+  const asset = assetOverride || knownAsset;
   // For v2 (CDP-native), use CAIP-2 network to match what the payer signed.
   // For v1 (XFuel SDK / ZAN), use short form for backward compatibility.
   const wireNetwork = x402Version === 2 ? toCaip2Network(network) : shortNet;
@@ -820,8 +821,8 @@ function authorizationDiagnostics(paymentPayload) {
 
   return {
     authPresent: true,
-    from: auth.from,
-    to: auth.to,
+    from: walletTail(auth.from),
+    to: walletTail(auth.to),
     value: auth.value,
     validAfter: auth.validAfter,
     validBefore: auth.validBefore,
@@ -876,37 +877,42 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
  * @param {1|2} [x402Version=1] - Protocol version; v2 preserves CAIP-2 network
  */
 function requirementsFrom(challenge, decoded, x402Version = 1) {
-  // CDP-native v2: read from decoded.accepted; v1: read from top-level
-  const accepted = decoded?.accepted || {};
-  const network = challenge?.network || accepted.network || decoded?.network;
-  const amount = challenge?.amount ?? accepted.amount ?? decoded?.amount;
-  const payTo = challenge?.payTo ?? accepted.payTo ?? decoded?.payTo;
-  // Solana: forward feePayer from challenge (stored from 402 issue) or incoming blob.
-  const feePayer = challenge?.feePayer ?? accepted.extra?.feePayer;
-  // Solana: forward memo from client blob for Path 1 static Memo ix validation.
-  // Per x402 SVM spec: "If extra.memo is present, facilitator MUST require exactly one
-  // Memo ix matching it." Dropping memo forces Path 2 (simulation) on some facilitators.
-  const memo = accepted.extra?.memo;
+  // Requirements are the server-issued challenge. The client blob supplies the
+  // signed payload only. Memo, when the challenge carries one, must match.
+  const clientMemo = decoded?.accepted?.extra?.memo;
+  if (challenge?.memo != null && clientMemo != null && String(clientMemo) !== String(challenge.memo)) {
+    const err = new Error('challenge_mismatch');
+    err.code = 'challenge_mismatch';
+    throw err;
+  }
+  const unbound = !challenge && process.env.X402_ALLOW_UNBOUND === 'true';
+  const accepted = unbound ? (decoded?.accepted || {}) : {};
+  const network = challenge?.network || (unbound ? (accepted.network || decoded?.network) : null);
+  const amount = challenge?.amount ?? (unbound ? (accepted.amount ?? decoded?.amount) : null);
+  const payTo = challenge?.payTo ?? (unbound ? (accepted.payTo ?? decoded?.payTo) : null);
+  const feePayer = challenge?.feePayer || null;
+  const memo = challenge?.memo;
 
   return toPaymentRequirements({
     network,
     amount,
     payTo,
+    asset: challenge?.asset,
     resource: challenge?.resource,
     taskId: challenge?.taskId,
     description: challenge?.description,
     outputSchema: challenge?.outputSchema,
     x402Version,
-    feePayer,  // Solana-only; ignored by EVM path (uses name/version from usdcFor)
-    memo,      // Solana-only; enables Path 1 static Memo validation
+    feePayer,
+    memo,
   });
 }
 
-function payloadOpts(challenge, decoded, paymentRequirements, x402Version) {
+function payloadOpts(challenge, _decoded, paymentRequirements, x402Version) {
   return {
     network: paymentRequirements.network,
-    resource: challenge?.resource || decoded?.resource,
-    extensions: challenge?.extensions || decoded?.extensions,
+    resource: challenge?.resource,
+    extensions: challenge?.extensions,
     x402Version: x402Version ?? 1,
   };
 }
@@ -921,13 +927,27 @@ function payloadOpts(challenge, decoded, paymentRequirements, x402Version) {
  * @param {1|2} [opts.x402Version=1] - Protocol version (1 for X-PAYMENT, 2 for PAYMENT-SIGNATURE)
  * @returns {Promise<{valid:boolean, payer?:string, reason?:string}>}
  */
+function walletTail(addr) {
+  const s = String(addr || '');
+  if (s.length < 12) return '';
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
 export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { valid: false, reason: 'payment_header_undecodable' };
+  if (!challenge && process.env.X402_ALLOW_UNBOUND !== 'true') {
+    return { valid: false, reason: 'challenge_required' };
+  }
   // Use the client's protocol version — v2 for CDP-native clients like Bankr.
   const wireVersion = x402Version === 2 ? 2 : 1;
   // For v2, paymentRequirements.network must be CAIP-2 format to match what the payer signed.
-  const paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
+  let paymentRequirements;
+  try {
+    paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
+  } catch (err) {
+    return { valid: false, reason: err.code || 'verify_failed' };
+  }
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
@@ -958,31 +978,17 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
           status,
           elapsedMs,
           network: paymentRequirements.network,
-          payTo: paymentRequirements.payTo,
+          payTo: walletTail(paymentRequirements.payTo),
           amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
-          invalidMessage: cdpInvalidMessage,
-          errKeys: Object.keys(data || {}),
-          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
-          // Bankr float-string debugging: authorization field details (no secrets)
+          invalidMessage: cdpInvalidMessage ? String(cdpInvalidMessage).slice(0, 80) : undefined,
           authorization: authDiag,
         },
         'x402 facilitator verify HTTP error',
       );
-      // Surface the actual CDP invalidReason and invalidMessage when available.
-      // Before: always returned generic `facilitator_http_400`.
-      // After: returns `facilitator_http_400:invalid_exact_evm_payload_signature:recovery_code_171_not_in_27_34`
-      // when CDP provides both invalidReason and invalidMessage.
-      let reason = `facilitator_http_${status}`;
-      if (cdpReason) {
-        reason += `:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`;
-      }
-      const msgSlug = slugifyInvalidMessage(cdpInvalidMessage);
-      if (msgSlug) {
-        reason += `:${msgSlug}`;
-      }
-      return { valid: false, reason };
+      // Upstream text stays in the log. The client sees a closed code.
+      return { valid: false, reason: 'verify_failed' };
     }
     logBazaarResponses('/verify', extensionResponses, paymentPayload);
     if (!data.isValid) {
@@ -997,7 +1003,11 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
         'x402 facilitator verify rejected',
       );
     }
-    return { valid: !!data.isValid, payer: data.payer || null, reason: data.invalidReason };
+    return {
+      valid: !!data.isValid,
+      payer: data.payer || null,
+      reason: data.isValid ? null : 'verify_failed',
+    };
   } catch (err) {
     // Log gateway host (not secrets), elapsedMs, and network for debugging.
     // Per 2026-08-23 bugfix: previous catch only logged err.message.
@@ -1032,10 +1042,18 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
 export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { settled: false, reason: 'payment_header_undecodable' };
+  if (!challenge && process.env.X402_ALLOW_UNBOUND !== 'true') {
+    return { settled: false, reason: 'challenge_required' };
+  }
   // Use the client's protocol version — v2 for CDP-native clients like Bankr.
   const wireVersion = x402Version === 2 ? 2 : 1;
   // For v2, paymentRequirements.network must be CAIP-2 format to match what the payer signed.
-  const paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
+  let paymentRequirements;
+  try {
+    paymentRequirements = requirementsFrom(challenge, decoded, wireVersion);
+  } catch (err) {
+    return { settled: false, reason: err.code || 'settle_failed' };
+  }
   let paymentPayload;
   try {
     paymentPayload = toPaymentPayload(decoded, payloadOpts(challenge, decoded, paymentRequirements, wireVersion));
@@ -1066,40 +1084,27 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
           status,
           elapsedMs,
           network: paymentRequirements.network,
-          payTo: paymentRequirements.payTo,
+          payTo: walletTail(paymentRequirements.payTo),
           amount: paymentRequirements.amount || paymentRequirements.maxAmountRequired,
           correlationId: data.correlationId,
           invalidReason: cdpReason,
-          invalidMessage: cdpInvalidMessage,
-          errKeys: Object.keys(data || {}),
-          rawSnippet: typeof data._raw === 'string' ? data._raw.slice(0, 240) : JSON.stringify(data).slice(0, 240),
-          // Bankr float-string debugging: authorization field details (no secrets)
+          invalidMessage: cdpInvalidMessage ? String(cdpInvalidMessage).slice(0, 80) : undefined,
           authorization: authDiag,
         },
         'x402 facilitator settle HTTP error',
       );
-      // Surface the actual CDP invalidReason and invalidMessage when available.
-      // Before: always returned generic `facilitator_http_400`.
-      // After: returns `facilitator_http_400:invalid_exact_evm_payload_signature:recovery_code_171_not_in_27_34`
-      // when CDP provides both invalidReason and invalidMessage.
-      let reason = `facilitator_http_${status}`;
-      if (cdpReason) {
-        reason += `:${String(cdpReason).replace(/\s+/g, '_').slice(0, 50)}`;
-      }
-      const msgSlug = slugifyInvalidMessage(cdpInvalidMessage);
-      if (msgSlug) {
-        reason += `:${msgSlug}`;
-      }
-      return { settled: false, reason };
+      return { settled: false, reason: 'settle_failed' };
     }
     logBazaarResponses('/settle', extensionResponses, paymentPayload);
     const settled = !!data.success;
     return {
       settled,
+      success: settled,
       txRef: data.transaction || data.txHash || null,
+      transaction: data.transaction || data.txHash || null,
       payer: data.payer || null,
       network: data.network || null,
-      reason: data.errorReason,
+      reason: settled ? null : 'settle_failed',
       bazaarStatus: extensionResponses?.bazaar?.status || null,
     };
   } catch (err) {
