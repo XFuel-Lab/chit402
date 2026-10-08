@@ -96,7 +96,9 @@ const ROOT_ENV = [
   'ISSUER_ROOT_FREEZE_FILE',
   'ISSUER_ROOT_LEGACY_SET',
   'ISSUER_PRIVATE_KEY',
+  'ISSUER_KID',
   'ISSUER_KEY_NOT_BEFORE',
+  'NODE_ENV',
 ];
 
 function snapshotEnv() {
@@ -536,6 +538,25 @@ test('startup reads two RPCs at one finalized block and signing does not call th
     assert.equal(skipCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
+    restoreEnv(prev);
+  }
+});
+
+test('an empty issuer key in production refuses to boot and signs nothing', () => {
+  const prev = snapshotEnv();
+  try {
+    for (const key of ROOT_ENV) delete process.env[key];
+    process.env.NODE_ENV = 'production';
+    process.env.ISSUER_PRIVATE_KEY = '';
+    process.env.ISSUER_ROOT_ENABLED = 'false';
+    process.env.ISSUER_ROOT_ALLOW_SKIP = 'I_UNDERSTAND';
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
+    assert.throws(
+      () => buildReceipt(paidTask('xfuel-empty-issuer-key'), { signingSecret: 's', agentId: 4 }),
+      (err) => err.code === 'issuer_key_missing',
+    );
+  } finally {
     restoreEnv(prev);
   }
 });

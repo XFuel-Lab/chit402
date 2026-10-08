@@ -5428,7 +5428,8 @@ export async function startServer() {
   }
 
   // Initialize the issuer ECDSA key for receipt signing.
-  // If ISSUER_PRIVATE_KEY is not set, an ephemeral key is generated (dev/test).
+  // Production refuses a missing or empty ISSUER_PRIVATE_KEY. Local and test
+  // runs still generate an ephemeral key when the variable is unset.
   const { kid } = initIssuerKey();
   logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 

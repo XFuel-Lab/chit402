@@ -30,7 +30,7 @@ Restart the process after changing these variables. The key check and the finali
 
 Signing never reads the chain. `strict` asks two independent RPCs for `eth_chainId`, `eth_getBlockByNumber("finalized")`, and `eth_getLogs` at that same block number. The finalized block number, the block hash, and the single `RootCommitted` log must agree, and `rootHash` must equal `ISSUER_ROOT_HASH`. The same two RPCs must agree on every `KeyRetired` log up to that block. A miss, a mismatch, a disagreement, or an unreachable RPC refuses to start. `skip` does not call the RPC, and only when `ISSUER_ROOT_ALLOW_SKIP=I_UNDERSTAND`. That path logs an error and does not sign v11 receipts, on Base Sepolia or on mainnet. It still refuses an unset `ISSUER_PRIVATE_KEY`. It also does not learn retirements, because it did not read the registry. Topics and log decoding come from `services/gateway/abi/ChitIssuerRoot.json`, the contract artifact, not from a hand-written event signature.
 
-If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs.
+If the flag is on and `ISSUER_PRIVATE_KEY` is unset, the process refuses to start. It does not generate an ephemeral key. With the flag off, an unset key still generates an ephemeral key for local runs. Production (`NODE_ENV=production`) refuses to boot when that variable is missing or empty, including a blank line loaded from an env file, and the issuer-root flag does not override that. The loaded key must be ES256 (P-256), and its kid must match `ISSUER_KID` or, when that is unset in production, the published issuer kid.
 
 ## What v11 adds
 
