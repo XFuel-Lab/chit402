@@ -88,9 +88,10 @@ test('alias completion discloses headers, chit, and receipt.substituted', async 
   assert.equal(receiptRes.status, 200);
   const receipt = await receiptRes.json();
   const view = mergeReceiptView(receipt);
-  assert.equal(receipt.route_meta.requested_model, 'gpt-4o-mini');
-  assert.equal(receipt.route_meta.substituted, true);
-  assert.equal(view.route.substituted, true);
+  assert.equal(receipt.route_meta.requested_model, undefined);
+  assert.equal(receipt.route_meta.substituted, undefined);
+  assert.equal(view.route.substituted, undefined);
+  assert.equal(view.route.requested_model, undefined);
   assert.equal(view.route.model, SERVED_OSS);
 });
 

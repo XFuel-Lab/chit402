@@ -371,10 +371,12 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
   assert.ok(!html.includes('class="taskid">xfuel-'), 'xfuel- prefix should not appear in display');
 });
 
-test('renderReceiptNotFound: escapes the task id', () => {
+test('renderReceiptNotFound does not echo the requested id', () => {
   const html = renderReceiptNotFound('<b>x</b>');
   assert.ok(!html.includes('<b>x</b>'));
-  assert.ok(html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(!html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.ok(!html.includes('<b>'));
+  assert.match(html, /Receipt not found/);
 });
 
 test('buildReceipt: rolling first call is pending, not a legacy rail, and carries usage', () => {
@@ -414,7 +416,9 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
   const html = renderReceiptHtml(r);
   assert.ok(!html.includes('legacy rail'));
   assert.match(html, /bill pending/);
-  assert.match(html, /Tokens.*20|20.*\(12.*8\)/i, 'Tokens shown compactly');
+  assert.equal(html.includes('12→8'), false);
+  assert.equal(html.includes('prompt_tokens'), false);
+  assert.equal(r.usage.prompt_tokens, 12);
   assert.match(html, /\$0\.000017/);
   assert.match(html, /not on this call/);
   assert.match(html, /ES256.*signed|verify.*JWKS/i);
@@ -713,12 +717,18 @@ test('renderReceiptHtml: JWKS link is absolute when receipt has base URL', () =>
   assert.match(html, /href="https:\/\/api\.chit402\.com\/\.well-known\/jwks\.json"/, 'Absolute JWKS URL');
 });
 
-test('renderReceiptHtml: tokens shown compactly (total with breakdown)', () => {
+test('renderReceiptHtml: token counts stay off the public page', () => {
   const task = usdcTask();
-  task.usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 };
-  const html = renderReceiptHtml(buildReceipt(task));
-  assert.match(html, /150/, 'Total tokens shown');
-  assert.match(html, /100.*50|prompt.*completion/i, 'Token breakdown shown');
+  task.usage = { prompt_tokens: 4242, completion_tokens: 4343, total_tokens: 8585 };
+  const built = buildReceipt(task);
+  assert.equal(built.usage.prompt_tokens, 4242);
+  assert.equal(built.usage.completion_tokens, 4343);
+  const html = renderReceiptHtml(built);
+  assert.equal(html.includes('4242'), false);
+  assert.equal(html.includes('4343'), false);
+  assert.equal(html.includes('8585'), false);
+  assert.equal(html.includes('prompt_tokens'), false);
+  assert.equal(built.usage.total_tokens, 8585);
 });
 
 test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compact JWS', () => {

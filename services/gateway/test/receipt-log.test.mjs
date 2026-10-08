@@ -40,6 +40,10 @@ const {
   epochRecordClaims,
   epochRecordWithUnlogged,
   attestedUnloggedEntry,
+  unloggedIdCommitment,
+  unloggedSection,
+  verifyUnloggedSection,
+  publicEpochRecord,
   genesisBytes,
   epochLeafHash,
   rebuildEpoch1FromRows,
@@ -2367,7 +2371,7 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   const v2 = epochRecordWithUnlogged(v1, plan.unlogged);
   assert.equal(v1.payload_version, 1);
   assert.equal(v1.unlogged, undefined);
-  assert.equal(v2.payload_version, 2);
+  assert.equal(v2.payload_version, 3);
   assert.equal(JSON.stringify(v2.epochs), JSON.stringify(v1.epochs));
   assert.equal(JSON.stringify(v2.orphans), JSON.stringify(v1.orphans));
   const stale = epochRecordClaims();
@@ -2387,7 +2391,10 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   assert.equal(v2.epochs[0].final_size, 4);
   assert.equal(v2.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
   assert.equal(v2.unlogged.count, plan.unlogged.length);
-  assert.equal(v2.unlogged.hash.length, 64);
+  assert.equal(v2.unlogged.commitment, unloggedIdCommitment(plan.unlogged).commitment);
+  assert.equal(v2.unlogged.rows, undefined);
+  assert.equal(JSON.stringify(v2).includes('openai-old'), false);
+  assert.equal(JSON.stringify(v2).includes('fork-149-a'), false);
   const epoch1Before = tree.closedEpochs[0].root;
   const openingBefore = Buffer.from(tree.leaves[0]).toString('hex');
   assert.equal(openingBefore, EPOCH2_OPENING_ROOT);
@@ -2398,15 +2405,23 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   assert.equal(tree.epoch, 2);
   assert.equal(tree.leaves.length, 3);
   assert.equal(tree.heads.length, 0);
-  const listed = attestedUnloggedEntry({ ...v2, payload_version: 2 }, 'openai-next');
+  const legacy = {
+    ...v1,
+    payload_version: 2,
+    unlogged: unloggedSection(plan.unlogged),
+  };
+  const listed = attestedUnloggedEntry(legacy, 'openai-next');
   assert.equal(listed.reason, 'depends_on_refused');
+  assert.equal(verifyUnloggedSection(legacy.unlogged).ok, true);
+  assert.equal(attestedUnloggedEntry(v2, 'openai-next'), null);
   assert.equal(attestedUnloggedEntry(v1, 'openai-next'), null);
+  assert.equal(publicEpochRecord(legacy), null);
+  assert.equal(publicEpochRecord(v2), v2);
 });
 
-test('inclusion of an unlogged id returns the signed reason', async () => {
-  const claims = epochRecordWithUnlogged(epochRecordClaims(), [
-    { task_id: 'openai-old', agent_id: 4, reason: 'missing_row_hash' },
-  ]);
+test('inclusion of an unlogged id is a generic 404 and the epoch commits without ids', async () => {
+  const rows = [{ task_id: 'openai-old', agent_id: 4, reason: 'missing_row_hash' }];
+  const claims = epochRecordWithUnlogged(epochRecordClaims(), rows);
   const { jws, kid } = signJws(claims, { typ: 'chit402-tree-epoch+jwt' });
   const record = { ...claims, issuer_signature: { jws, kid } };
   const prevBoot = process.env.RECEIPT_LOG_BOOT;
@@ -2435,8 +2450,10 @@ test('inclusion of an unlogged id returns the signed reason', async () => {
     });
     assert.equal(inclusion.status, 404);
     assert.equal(inclusion.json.error, 'not_in_tree');
-    assert.equal(inclusion.json.reason, 'missing_row_hash');
-    assert.equal(inclusion.json.agent_id, 4);
+    assert.equal(inclusion.json.reason, undefined);
+    assert.equal(inclusion.json.agent_id, undefined);
+    assert.equal(inclusion.json.task_id, undefined);
+    assert.equal(JSON.stringify(inclusion.json).includes('openai-old'), false);
     const epoch = await new Promise((resolve, reject) => {
       http.get(`http://127.0.0.1:${port}/v1/receipts/tree/epoch`, (res) => {
         const chunks = [];
@@ -2444,11 +2461,16 @@ test('inclusion of an unlogged id returns the signed reason', async () => {
         res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
       }).on('error', reject);
     });
-    assert.equal(epoch.payload_version, 2);
+    assert.equal(epoch.payload_version, 3);
     assert.equal(epoch.epochs[0].final_root, EPOCH1_FINAL_ROOT);
     assert.equal(epoch.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
-    assert.equal(epoch.unlogged.rows[0].reason, 'missing_row_hash');
+    assert.equal(epoch.unlogged.rows, undefined);
+    assert.equal(epoch.unlogged.commitment, unloggedIdCommitment(rows).commitment);
+    assert.equal(epoch.unlogged.count, 1);
+    assert.equal(JSON.stringify(epoch).includes('openai-old'), false);
+    assert.equal(JSON.stringify(epoch).includes('"agent_id"'), false);
     assert.equal(JSON.stringify(epoch.orphans), JSON.stringify(epochRecordClaims().orphans));
+    assert.equal(epoch.issuer_signature.jws, jws);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
     if (prevBoot == null) delete process.env.RECEIPT_LOG_BOOT;
