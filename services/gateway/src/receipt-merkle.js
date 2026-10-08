@@ -1193,11 +1193,46 @@ export class ReceiptMerkleTree {
   }
 
   /**
+   * Leaf index in the epoch that holds this task. Does not validate heads
+   * and does not throw. Book listing, lineage, and export use this so a
+   * rejected head cannot 500 the row. Null when the task is not in the log.
+   */
+  leafIndexOf(taskId) {
+    if (taskId == null || taskId === '') return null;
+    const epoch = this._locate(taskId);
+    if (!epoch?.byTask || typeof epoch.byTask.get !== 'function') return null;
+    const index = epoch.byTask.get(String(taskId));
+    return Number.isSafeInteger(index) && index >= 0 ? index : null;
+  }
+
+  /**
+   * Heads a receipt lane may bind against. `frontierRejected` means the
+   * newest anchored head (or the closed-epoch pin) is `head_rejected` or
+   * `head_mismatch`. Heads are empty in that case: a lane must not treat
+   * the leaf as verified-included. An intact frontier returns the open
+   * journal, the same list inclusion used to hand the lane. Does not throw.
+   */
+  laneHeadsFor(taskId) {
+    const openHeads = Array.isArray(this.heads) ? this.heads : [];
+    const epoch = this._locate(taskId);
+    if (!epoch) return { frontierRejected: false, heads: openHeads };
+    try {
+      if (epoch.status === 'closed') this._closedPinnedFrontier(epoch);
+      this._newestAnchoredHead(epoch);
+    } catch {
+      return { frontierRejected: true, heads: [] };
+    }
+    return { frontierRejected: false, heads: openHeads };
+  }
+
+  /**
    * Public inclusion. Default head is the newest anchored signed head.
    * `treeSize` selects one signed head. A leaf past that head is
    * `pending_anchor` when the head is the anchored frontier, and a 4xx
    * otherwise. With no anchored head yet, the proof stays on the live tree
-   * and is not reported as anchored.
+   * and is not reported as anchored. This path stays strict: a rejected
+   * or mismatched head throws. Callers that only need the index use
+   * `leafIndexOf`.
    */
   inclusion(taskId, options = {}) {
     const requested = options.treeSize == null || options.treeSize === '' ? null : Number(options.treeSize);
@@ -3088,7 +3123,17 @@ function carryInclusion(leaf, leafHex, inclusion, head) {
 
 export function publicLogWitness(tree, taskId) {
   if (!tree || taskId == null) return {};
-  const inclusion = typeof tree.inclusion === 'function' ? tree.inclusion(taskId) : null;
+  let inclusion = null;
+  if (typeof tree.inclusion === 'function') {
+    try {
+      inclusion = tree.inclusion(taskId);
+    } catch (err) {
+      // The inclusion route stays a 400. A receipt read must not treat that
+      // refusal as an included leaf, and must not throw it into the page.
+      if (err?.code === 'head_rejected' || err?.code === 'head_mismatch') return {};
+      throw err;
+    }
+  }
   const carry = typeof tree.carryForwardFor === 'function' ? tree.carryForwardFor(taskId) : null;
   const out = {};
   if (inclusion) out.inclusion = inclusion;

@@ -16,6 +16,7 @@ const {
   renderInclusionSection,
   resetReceiptMerkleTree,
   getReceiptMerkleTree,
+  publicLogWitness,
 } = await import('../src/receipt-merkle.js');
 
 function receiptFor(intent) {
@@ -385,4 +386,182 @@ test('the receipt page reports a failed receipt instead of PENDING', async () =>
   assert.match(html, />FAILED</);
   assert.equal(html.includes('>PENDING<'), false);
   assert.match(html, /not verified/);
+});
+
+function csvColumn(csv, taskId, name) {
+  const lines = String(csv).split('\n').filter((line) => line && !line.startsWith('#'));
+  const header = lines[0].split(',');
+  const row = lines.find((line) => line.split(',')[0] === taskId);
+  assert.ok(row, `export row for ${taskId}`);
+  const cell = row.split(',')[header.indexOf(name)];
+  assert.notEqual(cell, undefined, name);
+  return cell;
+}
+
+async function bookAround(taskId) {
+  const { UsageSettledLedger, recordCollectedSpend } = await import('../src/usage-settled.js');
+  const { AgentRegistry } = await import('../src/agent-registry.js');
+  const {
+    readAgentBook,
+    queryLineage,
+    exportAgentBook,
+    bindBookVerifier,
+  } = await import('../src/agent-book.js');
+  const ledger = new UsageSettledLedger();
+  const registry = new AgentRegistry();
+  const recorded = recordCollectedSpend({
+    schema: 'xfuel.receipt.v4',
+    task_id: taskId,
+    status: 'completed',
+    payment: { rail: 'usdc', ref: `base:0x${taskId}`, collected: true, gross_amount: '2000' },
+    route: { model: 'xfuel/auto', hub: 'mock' },
+  }, { ledger, registry });
+  assert.equal(recorded.ok, true, recorded.reason);
+  const verify = bindBookVerifier(registry);
+  const claim = { session: recorded.session };
+  const deps = { ledger, registry, verify, baseUrl: 'https://api.chit402.com' };
+  return {
+    recorded,
+    surfaces() {
+      const listed = readAgentBook(recorded.agent_id, claim, deps);
+      const lineage = queryLineage(recorded.agent_id, taskId, claim, deps);
+      const json = exportAgentBook(recorded.agent_id, { ...claim, format: 'json' }, deps);
+      const csv = exportAgentBook(recorded.agent_id, { ...claim, format: 'csv' }, deps);
+      const html = exportAgentBook(recorded.agent_id, { ...claim, format: 'html' }, deps);
+      return { listed, lineage, json, csv, html };
+    },
+  };
+}
+
+function assertLaneUnknown(surfaces, taskId) {
+  assert.equal(surfaces.listed.status, 200);
+  assert.equal(surfaces.lineage.status, 200);
+  assert.equal(surfaces.json.status, 200);
+  assert.equal(surfaces.csv.status, 200);
+  assert.equal(surfaces.html.status, 200);
+  const listed = surfaces.listed.body.entries.find((row) => row.task_id === taskId);
+  assert.ok(listed);
+  assert.equal(listed.receipt_lane.anchor_changed_since_binding, null);
+  assert.equal(listed.receipt_lane.anchor_at_binding, null);
+  assert.equal(listed.receipt_lane.anchor_current, null);
+  assert.equal(surfaces.lineage.body.self.receipt_lane.anchor_changed_since_binding, null);
+  assert.equal(surfaces.lineage.body.root.receipt_lane.anchor_changed_since_binding, null);
+  const exported = surfaces.json.body.rows.find((row) => row.task_id === taskId);
+  assert.equal(exported.receipt_lane.anchor_changed_since_binding, null);
+  assert.equal(exported.receipt_lane.anchor_at_binding, null);
+  assert.equal(csvColumn(surfaces.csv.body, taskId, 'anchor_changed_since_binding'), '');
+  assert.equal(typeof surfaces.html.body, 'string');
+  assert.equal(surfaces.html.body.includes(taskId), true);
+}
+
+test('a rejected or mismatched head does not break book listing, lineage, or export', async () => {
+  await withAnchorKey(async () => {
+    const { createApp } = await import('../src/server.js');
+    resetReceiptMerkleTree();
+    const tree = getReceiptMerkleTree();
+    tree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-head-'));
+    const taskId = 'leaf-lane-reject';
+    tree.appendReceipt(taskId, 'rr', { publish: false });
+    const head = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
+    assert.equal(tree.heads[tree.heads.length - 1], head);
+    const savedIndex = tree.inclusion(taskId).leaf_index;
+    assert.equal(tree.leafIndexOf(taskId), savedIndex);
+    const book = await bookAround(taskId);
+    const healthy = book.surfaces();
+    assert.equal(healthy.listed.status, 200);
+    const healthyRow = healthy.listed.body.entries.find((row) => row.task_id === taskId);
+    assert.equal(healthyRow.receipt_lane.anchor_changed_since_binding, false);
+    assert.ok(healthyRow.receipt_lane.anchor_at_binding);
+
+    const stored = tree.heads[tree.heads.length - 1];
+    const savedJws = stored.issuer_signature.jws;
+    stored.issuer_signature = { ...stored.issuer_signature, jws: `${savedJws.slice(0, -4)}AAAA` };
+    assert.throws(() => tree.inclusion(taskId), (err) => err.code === 'head_rejected');
+    assert.equal(tree.leafIndexOf(taskId), savedIndex);
+
+    const app = createApp();
+    const server = await new Promise((resolve) => {
+      const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+    });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const rejected = await fetch(`${base}/v1/receipts/${taskId}/inclusion`);
+      const rejectedBody = await rejected.json();
+      assert.equal(rejected.status, 400);
+      assert.equal(rejectedBody.error, 'head_rejected');
+      assert.equal(rejectedBody.status, undefined);
+      assert.equal(rejectedBody.proof, undefined);
+      assertLaneUnknown(book.surfaces(), taskId);
+
+      stored.issuer_signature = { ...stored.issuer_signature, jws: savedJws };
+      tree.appendReceipt('leaf-lane-later', 'rl', { publish: false });
+      await anchorAt(tree, '2026-10-08T18:00:00.000Z');
+      const first = tree.heads[0];
+      const newestStored = tree.heads[tree.heads.length - 1];
+      assert.notEqual(newestStored, first);
+      const newestJws = newestStored.issuer_signature.jws;
+      newestStored.issuer_signature = {
+        ...newestStored.issuer_signature,
+        jws: `${newestJws.slice(0, -4)}AAAA`,
+      };
+      assert.equal(first.issuer_signature.jws, savedJws);
+      assert.throws(() => tree.inclusion(taskId), (err) => err.code === 'head_rejected');
+      assert.equal(tree.leafIndexOf(taskId), savedIndex);
+      const coveredByOlder = book.surfaces();
+      assertLaneUnknown(coveredByOlder, taskId);
+      const witness = publicLogWitness(tree, taskId);
+      assert.equal(witness.inclusion, undefined);
+      assert.equal(witness.carry_forward, undefined);
+
+      resetReceiptMerkleTree();
+      const mismatchTree = getReceiptMerkleTree();
+      mismatchTree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-mismatch-'));
+      const mismatchId = 'leaf-lane-mismatch';
+      mismatchTree.appendReceipt(mismatchId, 'rm', { publish: false });
+      const mismatchHead = await anchorAt(mismatchTree, '2026-10-08T05:32:00.000Z');
+      const mismatchIndex = mismatchTree.leafIndexOf(mismatchId);
+      mismatchHead.root = 'cd'.repeat(32);
+      assert.throws(() => mismatchTree.inclusion(mismatchId), (err) => err.code === 'head_mismatch');
+      assert.equal(mismatchTree.leafIndexOf(mismatchId), mismatchIndex);
+      const mismatchHttp = await fetch(`${base}/v1/receipts/${mismatchId}/inclusion`);
+      const mismatchBody = await mismatchHttp.json();
+      assert.equal(mismatchHttp.status, 400);
+      assert.equal(mismatchBody.error, 'head_mismatch');
+      const mismatchBook = await bookAround(mismatchId);
+      assertLaneUnknown(mismatchBook.surfaces(), mismatchId);
+      assert.equal(publicLogWitness(mismatchTree, mismatchId).inclusion, undefined);
+
+      resetReceiptMerkleTree();
+      const closedTree = getReceiptMerkleTree();
+      closedTree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-closed-'));
+      const closedId = 'leaf-lane-closed';
+      closedTree.appendReceipt(closedId, 'rc', { publish: false });
+      const pinned = await anchorAt(closedTree, '2026-10-08T12:00:00.000Z');
+      const closedIndex = closedTree.leafIndexOf(closedId);
+      const epochNo = closedTree.epoch;
+      parkClosed(closedTree, [pinned]);
+      closedTree.signedClosedEpochHead = (n) => (
+        Number(n) === epochNo
+          ? {
+            ...pinned,
+            issuer_signature: {
+              ...pinned.issuer_signature,
+              jws: `${pinned.issuer_signature.jws.slice(0, -4)}AAAA`,
+            },
+          }
+          : null
+      );
+      assert.throws(() => closedTree.inclusion(closedId), (err) => err.code === 'head_rejected');
+      assert.equal(closedTree.leafIndexOf(closedId), closedIndex);
+      const closedHttp = await fetch(`${base}/v1/receipts/${closedId}/inclusion`);
+      const closedBody = await closedHttp.json();
+      assert.equal(closedHttp.status, 400);
+      assert.equal(closedBody.error, 'head_rejected');
+      const closedBook = await bookAround(closedId);
+      assertLaneUnknown(closedBook.surfaces(), closedId);
+      assert.equal(publicLogWitness(closedTree, closedId).inclusion, undefined);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
 });
