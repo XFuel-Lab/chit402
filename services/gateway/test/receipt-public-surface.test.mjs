@@ -261,6 +261,7 @@ test('the listed public 500 handlers do not interpolate err.message', () => {
     'GET issuer-history error',
     'GET anchor-wallets error',
     'GET /.well-known/agent-card.json error',
+    'inclusion error',
   ]) {
     const at = src.indexOf(label);
     assert.ok(at > 0, label);
@@ -278,6 +279,38 @@ test('consistency rejects a leading zero the way a tree size does', async () => 
     assert.deepEqual(JSON.parse(res.text), { error: 'bad_tree_size' });
     assert.equal(res.text.includes('01'), false, q);
   }
+  for (const q of ['tree_size=01', 'tree_size=+1', 'tree_size=1e2', 'tree_size=0', 'tree_size=02']) {
+    const res = await fetchText(`/v1/receipts/${A}/inclusion?${q}`);
+    assert.equal(res.status, 400, `${q} ${res.status} ${res.text}`);
+    assert.equal(JSON.parse(res.text).error, 'bad_tree_size');
+    assert.equal(res.text.includes(A), false, q);
+    assert.equal(res.text.includes('01'), false, q);
+    assertNoForeign(res.text, q);
+  }
+});
+
+test('an inclusion failure does not return err.message or another agent', async () => {
+  const tree = getReceiptMerkleTree();
+  const original = tree.inclusion.bind(tree);
+  const secret = 'ENOENT /var/lib/chit-secret-inclusion-path';
+  tree.inclusion = () => {
+    throw new Error(secret);
+  };
+  try {
+    const res = await fetchText(`/v1/receipts/${A}/inclusion`);
+    assert.equal(res.status, 500, res.text);
+    assert.equal(res.text.includes(secret), false);
+    assert.equal(res.text.includes('ENOENT'), false);
+    assert.equal(res.text.includes(A), false);
+    assert.deepEqual(JSON.parse(res.text), { error: 'internal', code: 'inclusion_failed' });
+    assertNoForeign(res.text, 'inclusion 500');
+  } finally {
+    tree.inclusion = original;
+  }
+  const missing = await fetchText('/v1/receipts/xfuel-not-a-leaf/inclusion');
+  assert.equal(missing.status, 404);
+  assert.deepEqual(JSON.parse(missing.text), { error: 'not_in_tree' });
+  assertNoForeign(missing.text, 'unlogged inclusion');
 });
 
 test('negotiated receipt responses are private and preimages do not publish the other leaf', async () => {

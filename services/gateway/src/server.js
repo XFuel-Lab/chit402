@@ -2970,9 +2970,37 @@ export function createApp() {
   app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     const tree = getReceiptMerkleTree();
-    const found = tree.inclusion(req.params.task_id);
-    if (found) return res.json(found);
-    return res.status(404).json({ error: 'not_in_tree' });
+    // Same raw spelling as consistency. Express may turn `01` or `+1` into 1.
+    // Absent or empty means "newest anchored head". A duplicate key fails closed.
+    const spelled = rawQueryValue(req, 'tree_size');
+    let treeSize = null;
+    if (spelled === null) {
+      return res.status(400).json({
+        error: 'bad_tree_size',
+        message: 'tree_size must be a positive integer',
+      });
+    }
+    if (spelled !== undefined && spelled !== '') {
+      treeSize = canonicalPositiveInteger(spelled);
+      if (treeSize == null) {
+        return res.status(400).json({
+          error: 'bad_tree_size',
+          message: 'tree_size must be a positive integer',
+        });
+      }
+    }
+    try {
+      const found = tree.inclusion(req.params.task_id, treeSize == null ? {} : { treeSize });
+      if (found) return res.json(found);
+      // A miss names no other row. The epoch commitment is the public attestation.
+      return res.status(404).json({ error: 'not_in_tree' });
+    } catch (err) {
+      const code = err?.code;
+      if (code === 'bad_tree_size' || code === 'no_signed_head' || code === 'head_mismatch' || code === 'head_rejected' || code === 'leaf_not_in_head') {
+        return res.status(400).json({ error: code });
+      }
+      return sendPublicInternal(res, err, 'inclusion error', 'inclusion_failed');
+    }
   });
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {

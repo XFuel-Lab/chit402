@@ -2653,6 +2653,8 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
         };
       } else if (msg.method === 'getGenesisHash') {
         result = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+      } else if (msg.method === 'getSignaturesForAddress') {
+        result = [{ signature: head.anchors.solana.signature, err: null }];
       }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
@@ -2664,6 +2666,8 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const inclusionPath = path.join(work, 'inclusion.json');
   const headPath = path.join(work, 'head.json');
   const jwksPath = path.join(work, 'jwks.json');
+  // Log mode fails a receipt that has no issuer signature, even when the anchor matches.
+  // verify_url stays outside the signature so the epoch fetch is not a signed claim.
   const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
