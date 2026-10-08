@@ -327,6 +327,33 @@ test('a partial pin claim is completed by the supplied pin', () => {
   });
   assert.equal(wrongCommit.ok, false);
   assert.equal(wrongCommit.code, ISSUER_PIN_MISMATCH);
+
+  const wrongHash = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, sha256: 'ab'.repeat(32) } },
+    pinBytes: bytes,
+    ref,
+    required: true,
+  });
+  assert.equal(wrongHash.ok, false);
+  assert.equal(wrongHash.code, ISSUER_PIN_MISMATCH);
+
+  const bothCommits = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
+    head: { ...kid, issuer_key_pin: { era: 1, commit: ref.commit } },
+    pinBytes: bytes,
+    required: true,
+  });
+  assert.equal(bothCommits.ok, false);
+  assert.equal(bothCommits.code, ISSUER_PIN_HASH_MISMATCH);
+
+  const bothHashes = assessIssuerPin({
+    receipt: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
+    head: { ...kid, issuer_key_pin: { era: 1, sha256: ref.sha256 } },
+    pinBytes: bytes,
+    required: true,
+  });
+  assert.equal(bothHashes.ok, false);
+  assert.equal(bothHashes.code, ISSUER_PIN_MUTABLE_REF);
 });
 
 test('a receipt key that is not the pin is ISSUER_PIN_MISMATCH', () => {
