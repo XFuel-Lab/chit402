@@ -322,6 +322,7 @@ app.post('/v1/board/jobs', async (req, res) => {
 
   app.get('/v1/agents/:agent_id/record', (req, res) => {
     try {
+      if (typeof deps.gateAgentRecord === 'function') return deps.gateAgentRecord(req, res);
       if (!requireJobs(res)) return;
       const actor = actorOf(req);
       return sendResult(res, getAgentRecord(req.params.agent_id, req.query || {}, jobDeps(req, actor.ok ? actor.identity : null)));

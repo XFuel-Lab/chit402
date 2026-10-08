@@ -407,6 +407,18 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
   let server;
   let base;
 
+  async function publicHolder(taskId) {
+    const res = await fetch(`${base}/receipt/${taskId}?format=json`);
+    assert.equal(res.status, 200);
+    const shell = await res.json();
+    assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+    const task = getAIListener().activeTasks.get(taskId);
+    return buildReceipt(task, {
+      signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+      persistSignature: false,
+    });
+  }
+
   before(async () => {
     _resetSessionActStore();
     resetHubCatalogCache();
@@ -465,7 +477,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     const parent = usdcTask({ taskId: 'xfuel-http-parent-act' });
     listener.activeTasks.set(parent.taskId, parent);
 
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(parent.taskId);
     const genesisJws = genesis.issuer_signature.jws;
     assert.equal(decodeReceiptClaims(genesis).delegation_hash, null);
 
@@ -519,7 +531,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(body.receipt.proof.outcome, 'not_applicable');
     assert.equal(body.receipt.proof.has_proof, false);
 
-    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const parentAgain = await publicHolder(parent.taskId);
     assert.equal(parentAgain.issuer_signature.jws, genesisJws, 'genesis JWS must not be re-signed');
     const parentClaims = decodeReceiptClaims(parentAgain);
     assert.equal(parentClaims.payment.ref, parent.intent.paymentRef);
@@ -538,7 +550,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
       },
     });
     listener.activeTasks.set(parent.taskId, parent);
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(parent.taskId);
     assert.equal(decodeReceiptClaims(genesis).provider_cogs.actual, '2000');
     assert.equal(decodeReceiptClaims(genesis).payment.gross_amount, '100000');
 
@@ -594,7 +606,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
       meta: { payerWallet: OTHER.address },
     });
     listener.activeTasks.set(strangerParent.taskId, strangerParent);
-    const genesis = await (await fetch(`${base}/receipt/${strangerParent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(strangerParent.taskId);
     const genesisJws = genesis.issuer_signature.jws;
 
     const { json: ch } = await challengeFor(session, { resource: strangerParent.taskId, action: 'handoff' });
@@ -618,7 +630,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(actRes.status, 403);
     assert.equal((await actRes.json()).reason, 'payer_mismatch');
 
-    const parentAgain = await (await fetch(`${base}/receipt/${strangerParent.taskId}?format=json`)).json();
+    const parentAgain = await publicHolder(strangerParent.taskId);
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);
     assert.equal(listener.activeTasks.has('xfuel-http-stranger-parent'), true);
   });
@@ -632,7 +644,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
       meta: { payerWallet: solanaPayer, chain: 'solana' },
     });
     listener.activeTasks.set(parent.taskId, parent);
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(parent.taskId);
     const genesisJws = genesis.issuer_signature.jws;
 
     const { json: ch } = await challengeFor(session, { resource: parent.taskId, action: 'handoff' });
@@ -658,7 +670,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(body.status, 'session_handoff');
     assert.equal(body.parent_receipt_id, parent.taskId);
     assert.ok(body.task_id.startsWith('xfuel-'));
-    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const parentAgain = await publicHolder(parent.taskId);
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);
   });
 
@@ -775,7 +787,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     const listener = getAIListener();
     const parent = usdcTask({ taskId: 'xfuel-http-legacy-handoff' });
     listener.activeTasks.set(parent.taskId, parent);
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(parent.taskId);
     const genesisJws = genesis.issuer_signature.jws;
 
     const { json: ch } = await challengeFor(session, { resource: parent.taskId });
@@ -801,7 +813,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     const body = await res.json();
     assert.equal(body.parent_receipt_id, parent.taskId);
     assert.ok(body.task_id.startsWith('xfuel-'));
-    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const parentAgain = await publicHolder(parent.taskId);
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);
   });
 
@@ -904,7 +916,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
       },
     });
     listener.activeTasks.set(parent.taskId, parent);
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesis = await publicHolder(parent.taskId);
     const genesisJws = genesis.issuer_signature.jws;
     assert.equal(decodeReceiptClaims(genesis).provider_cogs.actual, '2000');
 
@@ -956,7 +968,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     assert.equal(body.receipt.proof.outcome, 'not_applicable');
     assert.equal(body.receipt.proof.has_proof, false);
 
-    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const parentAgain = await publicHolder(parent.taskId);
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);
   });
 

@@ -3001,7 +3001,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
 }
 
 /** Minimal standalone HTML for an unknown/expired task id. */
-export function renderReceiptNotFound(taskId) {
+export function renderReceiptNotFound(_taskId) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3023,9 +3023,7 @@ export function renderReceiptNotFound(taskId) {
   <div class="wrap">
     <div class="brand">Chit402</div>
     <h1>Receipt not found</h1>
-    <p class="muted">No task with id <code>${esc(taskId)}</code> is known to this node.
-    Settled receipts are persisted and remain resolvable; check the id, or the
-    receipt may have passed its retention window.</p>
+    <p class="muted">That receipt is not available on this node.</p>
   </div>
 </body>
 </html>`;

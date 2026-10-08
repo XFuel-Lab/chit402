@@ -38,6 +38,13 @@ import {
 } from './anchor-witness.js';
 import { type EpochRecord } from './epoch.js';
 import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import {
+  compareShellToJws,
+  decodeJwsPayload,
+  INCLUDED_SHELL_LINE,
+  isReceiptShell,
+  openV11Commitment,
+} from './shell.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
@@ -231,6 +238,11 @@ function parseArgs(args: string[]): {
   noPreimage: boolean;
   version: boolean;
   anchorWalletsFile: string | null;
+  acceptShell: boolean;
+  jwsFile: string | null;
+  salt: string | null;
+  openCommitments: boolean;
+  url: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -264,6 +276,11 @@ function parseArgs(args: string[]): {
     noPreimage: false,
     version: false,
     anchorWalletsFile: null as string | null,
+    acceptShell: false,
+    jwsFile: null as string | null,
+    salt: null as string | null,
+    openCommitments: false,
+    url: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -322,6 +339,16 @@ function parseArgs(args: string[]): {
       result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
+    } else if (arg === '--accept-shell') {
+      result.acceptShell = true;
+    } else if (arg === '--jws' && args[i + 1]) {
+      result.jwsFile = args[++i];
+    } else if (arg === '--salt' && args[i + 1]) {
+      result.salt = args[++i];
+    } else if (arg === '--open') {
+      result.openCommitments = true;
+    } else if (arg === '--url' && args[i + 1]) {
+      result.url = args[++i];
     } else if (arg === '--json') {
       result.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -882,6 +909,18 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
+
+  if (args.url && !args.jwsFile) {
+    try {
+      const response = await fetch(args.url);
+      await response.arrayBuffer();
+    } catch {
+      // A failed fetch is still not a pass.
+    }
+    console.log('owner_proof_required');
+    console.log('  Overall: OWNER_PROOF_REQUIRED');
+    return 1;
+  }
   let offlineWitness: ReturnType<typeof readOfflineWitness> | null = null;
   if (!anchorMode) {
     try {
@@ -905,6 +944,56 @@ async function main(): Promise<number> {
   } catch (err) {
     console.error(`Error reading receipt: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
+  }
+
+  if (isReceiptShell(receipt) || args.acceptShell || args.jwsFile) {
+    if (!isReceiptShell(receipt)) {
+      console.error('Invalid shell: schema is not chit402.receipt_shell.v1');
+      return 3;
+    }
+    if (!args.jwsFile) {
+      console.log(INCLUDED_SHELL_LINE);
+      console.log('  Overall: INCLUDED_SHELL');
+      return args.acceptShell ? 0 : 1;
+    }
+    let holder: Record<string, unknown>;
+    try {
+      holder = JSON.parse(readFileSync(args.jwsFile, 'utf8')) as Record<string, unknown>;
+    } catch (err) {
+      console.error(`Error reading JWS: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+    const compared = compareShellToJws(receipt as unknown as Record<string, unknown>, holder);
+    if (!compared.ok) {
+      console.log('shell_jws_mismatch');
+      if (compared.field) console.log(`  Field:         ${compared.field}`);
+      console.log('  Overall: FAILED');
+      return 1;
+    }
+    const issuer = (holder.issuer_signature && typeof holder.issuer_signature === 'object')
+      ? holder.issuer_signature as { jws?: string; issuer_jwk?: Es256Jwk }
+      : {};
+    const jws = issuer.jws;
+    const checked = jws && issuer.issuer_jwk ? verifyIssuerJws(jws, issuer.issuer_jwk) : { valid: false, reason: 'missing_jwk' };
+    if (!checked.valid) {
+      console.log('  Overall: FAILED');
+      if (checked.reason) console.log(`  Reason:        ${checked.reason}`);
+      return 1;
+    }
+    if (args.salt || args.openCommitments) {
+      const opened = openV11Commitment({
+        payload: decodeJwsPayload(jws),
+        saltHex: args.salt || '',
+        body: Buffer.alloc(0),
+      });
+      if (!opened.ok) {
+        console.log(opened.reason || 'commitment_mismatch');
+        console.log('  Overall: FAILED');
+        return 1;
+      }
+    }
+    console.log('  Overall: VERIFIED');
+    return 0;
   }
 
   if (!receipt.task_id) {

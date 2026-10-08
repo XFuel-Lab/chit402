@@ -362,17 +362,19 @@ describe('End-to-End Verification', () => {
     const { xfuel } = await chatRes.json();
     const taskId = xfuel.task_id;
 
-    // 2. Fetch the receipt JSON
+    // 2. The public page is an unsigned shell. The holder JWS is the chat receipt.
     const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
     assert.equal(receiptRes.status, 200);
-    const receipt = await receiptRes.json();
+    const shell = await receiptRes.json();
+    assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+    assert.equal(shell.issuer_signature, undefined);
 
     // 3. Fetch the JWKS
     const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
     const jwks = await jwksRes.json();
 
-    // 4. Verify the signature
-    const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
+    // 4. Verify the signature the caller was given
+    const result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
     assert.equal(result.checked, true, 'should check the signature');
     assert.equal(result.valid, true, 'signature should be valid');
   });
@@ -389,14 +391,9 @@ describe('End-to-End Verification', () => {
       }),
     });
     const { xfuel } = await chatRes.json();
-    const taskId = xfuel.task_id;
 
-    // 2. Fetch the receipt JSON
-    const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
-    const receipt = await receiptRes.json();
-
-    // 3. Tamper with task_id (which is a signed claim)
-    receipt.task_id = 'tampered-task-id';
+    // 2. Tamper with task_id on the holder receipt (a signed claim)
+    const receipt = { ...xfuel, task_id: 'tampered-task-id' };
 
     // 4. Fetch the JWKS
     const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
@@ -658,8 +655,9 @@ describe('JSON Suffix Content Negotiation', () => {
     assert.ok(contentType.includes('application/json'), 'should return JSON content type');
 
     const receipt = await receiptRes.json();
-    assert.ok(receipt.issuer_signature, 'JSON response should have issuer_signature');
-    assert.ok(receipt.issuer_signature.jws, 'issuer_signature should have jws');
+    assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
+    assert.equal(receipt.issuer_signature, undefined);
+    assert.ok(xfuel.issuer_signature.jws, 'the chat receipt still carries the holder JWS');
   });
 
   test('Accept: application/json returns JSON', async () => {
@@ -684,7 +682,8 @@ describe('JSON Suffix Content Negotiation', () => {
     assert.ok(contentType.includes('application/json'), 'should return JSON content type');
 
     const receipt = await receiptRes.json();
-    assert.ok(receipt.issuer_signature.jws, 'JSON response should have JWS');
+    assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
+    assert.equal(receipt.unsigned, true);
   });
 
   test('default Accept returns HTML', async () => {
@@ -730,17 +729,19 @@ describe('Agent E2E JWS Verification Flow', () => {
       headers: { 'Accept': 'application/json' },
     });
     assert.equal(receiptRes.status, 200);
-    const receipt = await receiptRes.json();
+    const shell = await receiptRes.json();
+    assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+    assert.equal(shell.issuer_signature, undefined);
 
-    const jws = receipt.issuer_signature.jws;
-    assert.ok(jws, 'receipt should have JWS');
+    const jws = xfuel.issuer_signature.jws;
+    assert.ok(jws, 'the holder receipt should have JWS');
 
     const jwksRes = await fetch(`${base}/.well-known/jwks.json`);
     const jwks = await jwksRes.json();
 
     const verifyResult = verifyJwsWithJwks(jws, jwks);
     assert.equal(verifyResult.valid, true, 'JWS should verify against JWKS');
-    assert.equal(verifyResult.payload.task_id, receipt.task_id);
+    assert.equal(verifyResult.payload.task_id, xfuel.task_id);
   });
 });
 

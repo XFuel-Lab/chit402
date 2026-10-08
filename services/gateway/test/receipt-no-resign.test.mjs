@@ -98,24 +98,28 @@ after(async () => {
 
 test('GET /receipt and /preimage keep a stale-head v9 JWS byte-identical', async () => {
   const pre = await fetch(`${base}/receipt/${TASK_ID}/preimage`);
-  assert.equal(pre.status, 404);
-  const missing = await pre.json();
-  assert.equal(missing.error, 'preimage_unavailable');
+  assert.equal(pre.status, 200);
+  const shellPreimage = await pre.text();
+  assert.equal(shellPreimage.includes(STALE_HEAD), false);
+  assert.equal(shellPreimage.includes('issuer_signature'), false);
 
   const res = await fetch(`${base}/receipt/${TASK_ID}?format=json`);
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.issuer_signature.jws, originalJws);
-  assert.equal(body.issuer_signature.payload_version, 9);
-  const claims = decodeReceiptClaims(body);
+  assert.equal(body.schema, 'chit402.receipt_shell.v1');
+  assert.equal(body.payload_version, 9);
+  assert.equal(body.issuer_signature, undefined);
+  const storedNow = getAIListener().activeTasks.get(TASK_ID);
+  const claims = decodeReceiptClaims({ issuer_signature: storedNow.issuerSignature });
   assert.equal(claims.payload_version, 9);
   assert.equal(claims.tree_head_hash, STALE_HEAD);
   assert.equal(claims.issuer_history, undefined);
   assert.equal(claims.payload_hash, undefined);
-  assert.equal(body.issuer_signature.canonical_preimage, undefined);
+  assert.equal(storedNow.issuerSignature.canonical_preimage, undefined);
 
   const again = await fetch(`${base}/receipt/${TASK_ID}/preimage`);
-  assert.equal(again.status, 404);
+  assert.equal(again.status, 200);
+  assert.equal((await again.text()).includes(STALE_HEAD), false);
   const stored = getAIListener().activeTasks.get(TASK_ID);
   assert.equal(stored.issuerSignature.jws, originalJws);
   assert.equal(stored.issuerSignature.payload_version, 9);

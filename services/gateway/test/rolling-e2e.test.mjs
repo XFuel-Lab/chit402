@@ -35,10 +35,10 @@ const { url: facUrl, close: closeFac } = await startMockFacilitator();
 process.env.ZAN_X402_GATEWAY_URL = facUrl;
 
 const { createApp } = await import('../src/server.js');
-const { initAIListener } = await import('../src/ai-listener.js');
+const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
+const { buildReceipt, storedReceiptJson, mergeReceiptView } = await import('../src/receipt.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { quoteFromCogs, quoteUsage } = await import('../src/pricing.js');
-const { mergeReceiptView } = await import('../src/receipt.js');
 
 const SERVED_TEXT = 'PONG from the stubbed provider';
 const USAGE = { prompt_tokens: 10_000, completion_tokens: 1_000, total_tokens: 11_000 };
@@ -122,9 +122,15 @@ async function waitComplete(taskId) {
       headers: m2mAuthHeaders,
     })).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) {
-      receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
+      const shell = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
         headers: m2mAuthHeaders,
       })).json();
+      if (shell.schema !== 'chit402.receipt_shell.v1') continue;
+      const task = getAIListener().activeTasks.get(taskId);
+      receipt = storedReceiptJson(buildReceipt(task, {
+        signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+        persistSignature: false,
+      }));
       if (receipt.provider_cogs?.actual || mergeReceiptView(receipt).payment?.platform_fee != null) break;
     }
   }
@@ -177,9 +183,16 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   const secondDone = await waitComplete(paid.task_id);
   assert.equal(secondDone.status.status, 'completed');
 
-  const owed = await (await realFetch(`${base}/receipt/${first.task_id}?format=json`, {
+  const owedShell = await (await realFetch(`${base}/receipt/${first.task_id}?format=json`, {
     headers: m2mAuthHeaders,
   })).json();
+  assert.equal(owedShell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(owedShell.issuer_signature, undefined);
+  const owedTask = getAIListener().activeTasks.get(first.task_id);
+  const owed = storedReceiptJson(buildReceipt(owedTask, {
+    signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+    persistSignature: false,
+  }));
   const owedView = mergeReceiptView(owed);
   assert.ok(owedView.payment.ref, 'settlement attaches to the owed task, not the new one');
   assert.equal(owedView.payment.gross_amount, expected);

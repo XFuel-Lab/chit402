@@ -1,6 +1,5 @@
 /**
- * Public /health copy that visitors check against the site.
- * server stays xfuel-m2m-api: no in-repo weekday hosts smoke matches it.
+ * Public /health is status, the last anchored root and tx, and free tier available.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,17 +29,13 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test('GET /health lists Solana, drops post-TGE buckets, and does not advertise a free demo key', async () => {
+test('GET /health keeps only status, the last anchor, and free tier available', async () => {
   const res = await fetch(`${base}/health`);
   assert.equal(res.status, 200);
   const body = await res.json();
-  assert.equal(body.server, 'xfuel-m2m-api');
-  assert.ok(body.chains.includes('base'));
-  assert.ok(body.chains.includes('solana'));
-  const split = body.fee_config.revenue_split;
-  assert.equal(split.post_tge, undefined);
-  const dumped = JSON.stringify(split);
-  assert.doesNotMatch(dumped, /Buyback|veXF/);
-  assert.match(body.demo.note, /do not grant free completions/);
-  assert.doesNotMatch(body.demo.note, /Public demo key is rate-limited/);
+  assert.ok(body.status === 'ok' || body.status === 'degraded');
+  assert.equal(body.free_tier, 'available');
+  assert.ok('last_anchored_root' in body);
+  assert.ok('last_anchored_tx' in body);
+  assert.deepEqual(Object.keys(body).sort(), ['free_tier', 'last_anchored_root', 'last_anchored_tx', 'status']);
 });

@@ -87,11 +87,10 @@ test('alias completion discloses headers, chit, and receipt.substituted', async 
   const receiptRes = await fetch(`${base}/receipt/${body.xfuel.task_id}?format=json`);
   assert.equal(receiptRes.status, 200);
   const receipt = await receiptRes.json();
-  const view = mergeReceiptView(receipt);
-  assert.equal(receipt.route_meta.requested_model, 'gpt-4o-mini');
-  assert.equal(receipt.route_meta.substituted, true);
-  assert.equal(view.route.substituted, true);
-  assert.equal(view.route.model, SERVED_OSS);
+  assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
+  const raw = JSON.stringify(receipt);
+  assert.equal(raw.includes('gpt-4o-mini'), false);
+  assert.equal(raw.includes(SERVED_OSS), false);
 });
 
 test('an exact id and xfuel/auto are not substitutions', async () => {

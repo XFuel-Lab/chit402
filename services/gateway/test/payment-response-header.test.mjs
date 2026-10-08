@@ -267,10 +267,10 @@ test('paid POST /v1/chat/completions on Solana returns a 200 settlement header a
   const receiptRes = await fetch(`${base}/receipt/${paid.xfuel.task_id}?format=json`);
   assert.equal(receiptRes.status, 200);
   const receipt = await receiptRes.json();
-  assert.equal(receipt.route_meta.chain_id, 'solana');
-  assert.equal(receipt.payment_meta.network, 'solana');
-  assert.equal(receipt.issuer_signature.jws, paid.xfuel.issuer_signature.jws);
-  assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
+  assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
+  assert.equal(receipt.chain, 'solana');
+  assert.equal(receipt.payment_tx, SOL_TX);
+  assert.equal(receipt.issuer_signature, undefined);
 });
 
 test('paid POST /a2a-message and /v1/responses share the settlement header', async () => {

@@ -34,10 +34,10 @@ delete process.env.THETA_EDGE_URL;
 delete process.env.THETA_EDGECLOUD_API_KEY;
 
 const { createApp } = await import('../src/server.js');
-const { initAIListener } = await import('../src/ai-listener.js');
+const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { priceUSDCResolved, resolvePricingModel } = await import('../src/x402-server.js');
-const { mergeReceiptView } = await import('../src/receipt.js');
+const { mergeReceiptView, buildReceipt, storedReceiptJson } = await import('../src/receipt.js');
 
 const SERVED_TEXT = 'PONG from the stubbed provider';
 const realFetch = globalThis.fetch;
@@ -137,10 +137,17 @@ async function run(body = {}) {
     })).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) break;
   }
-  const receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
+  const shell = await (await realFetch(`${base}/receipt/${taskId}?format=json`, {
     headers: m2mAuthHeaders,
   })).json();
-  return { taskId, status, receipt };
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(shell.issuer_signature, undefined);
+  const task = getAIListener().activeTasks.get(taskId);
+  const receipt = storedReceiptJson(buildReceipt(task, {
+    signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+    persistSignature: false,
+  }));
+  return { taskId, status, receipt, shell };
 }
 
 before(async () => {

@@ -266,11 +266,10 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(JSON.stringify(verifyBody).includes(PROMPT), false);
   const html = await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base));
   const page = await html.text();
-  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
-  assert.match(page, /Chit did not verify this payload with OpenRouter/);
+  assert.match(page, /Unsigned shell/);
   assert.equal(page.includes('Attested by'), false);
   assert.equal(page.includes('OpenRouter report'), false);
-  assert.match(page, /REPORTED/);
+  assert.equal(page.includes('REPORTED'), false);
   assert.equal(page.includes(PROMPT), false);
   assert.equal(page.includes(COMPLETION), false);
   assert.equal(page.includes('Foreign ingest'), false);
@@ -609,8 +608,8 @@ test('a matching generation is verified with OpenRouter and counted in the publi
   assert.equal(receipt.attestation_note, "Chit checked this generation against OpenRouter's own record. Chit did not settle the payment.");
   assert.equal(JSON.stringify(rows).includes(OR_KEY), false);
   const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
-  assert.match(page, /Verified with OpenRouter/);
-  assert.match(page, /Chit checked this generation against OpenRouter/);
+  assert.match(page, /Unsigned shell/);
+  assert.equal(page.includes('Verified with OpenRouter'), false);
   assert.equal(page.includes(OR_KEY), false);
 
   const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
@@ -645,8 +644,8 @@ test('a generation that disagrees with OpenRouter is a mismatch and is not count
   assert.ok(receipt.verification.fields.includes('native_tokens_prompt'));
   assert.equal(receipt.verification.fields.includes('model'), false);
   const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
-  assert.match(page, /mismatch/);
-  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
+  assert.match(page, /Unsigned shell/);
+  assert.equal(page.includes('mismatch'), false);
   assert.equal(page.includes('Verified with OpenRouter'), false);
   const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
   assert.equal(summary.generations, 0);
@@ -699,7 +698,7 @@ test('with no OpenRouter key the receipt stays unverified and no lookup runs', a
   assert.equal(receipt.verification.status, 'unverified');
   assert.equal(receipt.verification.reason, 'no_openrouter_key');
   const page = await (await fetch(receipt.verify_url.replace(/^https?:\/\/[^/]+/, base))).text();
-  assert.match(page, /Reported via OpenRouter Broadcast \(unverified\)/);
+  assert.match(page, /Unsigned shell/);
   assert.equal(page.includes('Verified with OpenRouter'), false);
   const summary = await (await fetch(`${base}/v1/openrouter/books/${created.json.book_id}/summary`)).json();
   assert.equal(summary.generations, 0);

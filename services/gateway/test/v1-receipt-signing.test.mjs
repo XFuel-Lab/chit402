@@ -21,7 +21,7 @@ process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 
 const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
-const { canonicalSignedPayload, verifyReceiptEcdsaWithJwks, mergeReceiptView } = await import('../src/receipt.js');
+const { canonicalSignedPayload, verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { getJwks } = await import('../src/issuer-key.js');
 
@@ -106,30 +106,19 @@ test('tampering with the attested model breaks the HMAC signature', async () => 
   assert.notEqual(expectedHmacSignature(tampered), xfuel.hmac_attestation?.value);
 });
 
-test('the same task verifies identically on /v1 and /receipt/:task_id', async () => {
+test('the public receipt is an unsigned shell and the holder JWS stays on /v1', async () => {
   const { xfuel } = await (await chat()).json();
   const fetched = await (await fetch(`${base}/receipt/${xfuel.task_id}?format=json`)).json();
   const jwks = getJwks();
 
-  // Both signatures should verify against the same JWKS
   const v1Result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
-  const fetchedResult = verifyReceiptEcdsaWithJwks(fetched, jwks);
-  
   assert.equal(v1Result.valid, true, '/v1 receipt should verify');
-  assert.equal(fetchedResult.valid, true, '/receipt/:task_id should verify');
-  
-  // The signed claims should be identical (except iat which is generated at build time)
-  assert.equal(v1Result.payload.task_id, fetchedResult.payload.task_id);
-  assert.equal(v1Result.payload.payment.rail, fetchedResult.payload.payment.rail);
-  assert.equal(v1Result.payload.route.model, fetchedResult.payload.route.model);
-  assert.equal(v1Result.payload.route.provider, fetchedResult.payload.route.provider);
-  
-  // The unsigned receipt fields should match (xfuel merges JWS claims for display)
-  const fetchedView = mergeReceiptView(fetched);
-  assert.equal(fetchedView.route.model, xfuel.route.model);
-  assert.equal(fetchedView.route.provider, xfuel.route.provider);
-  assert.equal(fetchedView.payment.rail, xfuel.payment.rail);
-  assert.equal(fetchedView.output?.hash, xfuel.output?.hash);
+  assert.equal(fetched.schema, 'chit402.receipt_shell.v1');
+  assert.equal(fetched.unsigned, true);
+  assert.equal(fetched.issuer_signature, undefined);
+  assert.equal(fetched.receipt_id, xfuel.task_id);
+  assert.equal(fetched.amount_gross, xfuel.payment?.gross_amount ?? null);
+  assert.equal(JSON.stringify(fetched).includes(xfuel.route.model), false);
 });
 
 test('the /v1 receipt keeps the fields OpenAI-surface clients already read', async () => {

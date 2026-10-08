@@ -1263,12 +1263,11 @@ test('smoke fixture: ingest row verify_url resolves on GET /receipt', async () =
   const receiptBody = await receiptRes.json();
   assert.equal(receiptRes.status, 200, JSON.stringify(receiptBody));
   const receipt = receiptBody;
+  assert.equal(receipt.schema, 'chit402.receipt_shell.v1');
   assert.equal(receipt.task_id, seeded.body.task_id);
-  assert.equal(receipt.foreign_x402, true);
-  assert.equal(receipt.evidence, 'foreign_ingest');
-  assert.equal(receipt.payment.ref, 'base:0xsmokeverifytx');
-  assert.equal(receipt.verify_url, `${base}/receipt/${seeded.body.task_id}`);
-  assert.match(receipt.issuer_signature?.jws || '', /^[^.]+\.[^.]+\.[^.]+$/);
+  assert.equal(receipt.payment_tx, '0xsmokeverifytx');
+  assert.equal(receipt.issuer_signature, undefined);
+  assert.equal(JSON.stringify(receipt).toLowerCase().includes(WALLET_A.toLowerCase()), false);
 });
 
 test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves the issuer JWS', async () => {
@@ -1326,13 +1325,14 @@ test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves 
   });
   const published = await publishedRes.json();
   assert.equal(publishedRes.status, 200, JSON.stringify(published));
+  assert.equal(published.schema, 'chit402.receipt_shell.v1');
   assert.equal(published.task_id, built.task_id);
-  assert.equal(published.payment.ref, `base:${tx}`);
-  assert.equal(published.caller_binding.payer_wallet, payer);
-  assert.match(published.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
+  assert.equal(published.payment_tx, tx);
+  assert.equal(published.issuer_signature, undefined);
+  assert.equal(JSON.stringify(published).toLowerCase().includes(payer.toLowerCase()), false);
   const { verifyReceiptEcdsa } = await import('../src/receipt.js');
   const { getJwks } = await import('../src/issuer-key.js');
-  const checked = verifyReceiptEcdsa(published, getJwks().keys[0]);
+  const checked = verifyReceiptEcdsa(built, getJwks().keys[0]);
   assert.equal(checked.valid, true, checked.reason);
   assert.equal(checked.payload.claim_id, '7');
 });
