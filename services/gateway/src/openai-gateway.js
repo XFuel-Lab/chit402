@@ -46,6 +46,7 @@ import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
 import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { buildAgoreanReviewsWriteBlock, withAgoreanReviews } from './agorean-reviews.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -1714,7 +1715,11 @@ function paidResourceUrl(baseUrl, resourcePath) {
   return `${String(baseUrl).replace(/\/$/, '')}${absPath}`;
 }
 
-function setReceiptHeaders(res, receipt, resourceUrl = null) {
+/**
+ * `reviews` is the Agorean after-payment block (agorean-reviews.js), or null.
+ * When set, it also rides in PAYMENT-RESPONSE under extensions.reviews.
+ */
+function setReceiptHeaders(res, receipt, resourceUrl = null, { reviews = null } = {}) {
   const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
   if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
@@ -1739,6 +1744,7 @@ function setReceiptHeaders(res, receipt, resourceUrl = null) {
       network: view.payment.network,
       payer: view.caller_binding?.payer_wallet || null,
       resourceUrl,
+      reviews,
     });
   }
 }
@@ -2705,14 +2711,17 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
 
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
+    const chatResourceUrl = paidResourceUrl(baseUrl, resourcePath);
+    // Agorean review link, only when this call was paid over x402.
+    const reviews = buildAgoreanReviewsWriteBlock(metering.payment?.ref, chatResourceUrl);
+    setReceiptHeaders(res, receipt, chatResourceUrl, { reviews });
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
       return streamCompletion(res, { id, created, model: catalogModel, content, receipt });
     }
 
-    return res.json({
+    return res.json(withAgoreanReviews({
       id,
       object: 'chat.completion',
       created,
@@ -2731,7 +2740,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, reviews));
   }
 
   // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
@@ -3168,13 +3177,16 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
 
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
+    const responsesResourceUrl = paidResourceUrl(baseUrl, '/v1/responses');
+    // Agorean review link, only when this call was paid over x402.
+    const reviews = buildAgoreanReviewsWriteBlock(metering.payment?.ref, responsesResourceUrl);
+    setReceiptHeaders(res, receipt, responsesResourceUrl, { reviews });
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     // Build Responses-shaped output
     const { output, output_text } = toResponsesOutput(content, toolCalls);
 
-    return res.json({
+    return res.json(withAgoreanReviews({
       id,
       object: 'response',
       created_at: created,
@@ -3185,7 +3197,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, reviews));
   });
 
   // ── POST /v1/images/generations ────────────────────────────────────────────

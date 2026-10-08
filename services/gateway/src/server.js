@@ -12,6 +12,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { buildAgoreanReviewsWriteBlock, withAgoreanReviews } from './agorean-reviews.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -2015,10 +2016,13 @@ export function createApp() {
         ? `${String(taskBaseUrl).replace(/\/$/, '')}/task-request`
         : null;
 
+      // Agorean review link, only when this response settled an x402 payment.
+      const reviews = buildAgoreanReviewsWriteBlock(settledResponseRef, taskResourceUrl);
       setX402PaymentResponseHeaders(res, {
         ref: settledResponseRef,
         payer: settledResponsePayer,
         resourceUrl: taskResourceUrl,
+        reviews,
       });
 
       // Stored feeAmount/netAmount still feed the TFUEL prover path. The JSON
@@ -2034,7 +2038,7 @@ export function createApp() {
         feeBps: appliedBps,
       });
 
-      return res.status(202).json({
+      return res.status(202).json(withAgoreanReviews({
         task_id:       effectiveTaskId,
         status:        'accepted',
         message_type,
@@ -2056,7 +2060,7 @@ export function createApp() {
           proof:   `/prove-result?task_id=${effectiveTaskId}`,
           receipt: verifyUrl,   // public, no-auth, shareable
         },
-      });
+      }, reviews));
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /task-request error');
       return res.status(500).json({ error: 'internal', message: err.message });

@@ -102,6 +102,7 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { resetRollingSettlement } = await import('../src/rolling-settlement.js');
+const { buildAgoreanReviewsWriteBlock } = await import('../src/agorean-reviews.js');
 
 const SERVED_TEXT = 'PONG from the stubbed provider';
 const USAGE = { prompt_tokens: 10_000, completion_tokens: 1_000, total_tokens: 11_000 };
@@ -238,13 +239,20 @@ test('unauth + PAYMENT-SIGNATURE → handshake runs and settles (CDP Bankr case)
   assert.equal(settleHeader, paidRes.headers.get('x-payment-response'));
   assert.match(settleHeader, /^[A-Za-z0-9+/]*={0,2}$/);
   const settle = JSON.parse(Buffer.from(settleHeader, 'base64').toString('utf8'));
+  // The mock ref is not a 0x + 64-hex tx hash, so the review link names the resource.
+  const reviews = buildAgoreanReviewsWriteBlock(`base:${txRef}`, `${base}/task-request`);
+  assert.equal(reviews.info.providers[0].write,
+    `https://agorean.com/r?resource=${encodeURIComponent(`${base}/task-request`)}`);
   assert.deepEqual(settle, {
     success: true,
     transaction: txRef,
     network: 'eip155:8453',
     payer: null,
+    extensions: { reviews },
   });
   assert.equal(paid.payment_ref, `base:${txRef}`);
+  assert.deepEqual(paid.extensions, { reviews }, 'the paid reply carries the same block');
+  assert.equal(paid.review, undefined, 'the old top-level review key is gone');
 
   const { status } = await waitComplete(paid.task_id);
   assert.ok(['completed', 'fee_collected'].includes(status.status), `task must complete after paid settlement, got ${status.status}`);
@@ -284,6 +292,7 @@ test('keyed + no payment + no pending → still fronted (rolling settlement)', a
   assert.equal(res.status, 202, `keyed caller without payment should be fronted, got ${JSON.stringify(body)}`);
   assert.ok(body.task_id, 'keyed call returns a task_id');
   assert.equal(body.rolling?.this_call_billed_on, 'next_request', 'first keyed call is fronted');
+  assert.equal(body.extensions, undefined, 'fronted, nothing settled: no review link');
 
   const { status } = await waitComplete(body.task_id);
   assert.ok(['completed', 'fee_collected'].includes(status.status), `task must complete, got ${status.status}`);

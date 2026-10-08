@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import logger from './logger.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
+import { buildAgoreanReviewsReadBlock } from './agorean-reviews.js';
 import {
   verifyViaFacilitator,
   settleViaFacilitator,
@@ -433,14 +434,16 @@ export function encodePaymentRequiredHeader(body) {
  * the same identifier the 402 `accepts[]` entry used. `ref` stays the gateway
  * payment ref `<short-network>:<tx>` — this helper does not rewrite it.
  *
- * @param {{ ref?: string|null, network?: string|null, payer?: string|null, success?: boolean, resourceUrl?: string|null }} settle
+ * @param {{ ref?: string|null, network?: string|null, payer?: string|null, success?: boolean, resourceUrl?: string|null, reviews?: Object|null }} settle
  *   `resourceUrl` is the absolute paid resource. When set on a successful settle,
  *   the header also carries extensions["offer-receipt"].info.receipt (JWS).
+ *   `reviews` (the Agorean after-payment block, from agorean-reviews.js) goes
+ *   under extensions.reviews on a successful settle; callers opt in per route.
  *   success, transaction, network, and payer are unchanged.
  * @returns {string|null} standard base64, or null when nothing was collected
  */
 export function encodeX402PaymentResponseHeader({
-  ref, network = null, payer = null, success = true, resourceUrl = null,
+  ref, network = null, payer = null, success = true, resourceUrl = null, reviews = null,
 } = {}) {
   if (!ref || typeof ref !== 'string') return null;
   const idx = ref.indexOf(':');
@@ -462,7 +465,11 @@ export function encodeX402PaymentResponseHeader({
       transaction: body.transaction,
     })
     : null;
-  if (receiptExt) body.extensions = { [OFFER_RECEIPT_KEY]: receiptExt };
+  const extensions = {
+    ...(receiptExt ? { [OFFER_RECEIPT_KEY]: receiptExt } : {}),
+    ...(body.success && reviews ? { reviews } : {}),
+  };
+  if (Object.keys(extensions).length) body.extensions = extensions;
   return Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
 }
 
@@ -687,9 +694,12 @@ export function buildPaymentChallenge(p, opts = {}) {
   // not a fresh signature the client was not shown as the catalog extension.
   // validUntil is unix seconds; accepts[].extra.expiresAt stays milliseconds.
   const offerReceipt = buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
+  // Agorean reviews ride beside offer-receipt: on the body and the header,
+  // never in the stored challenge, so settle still echoes bazaar alone.
   const bodyExtensions = {
     ...(extensions || {}),
     ...(offerReceipt ? { [OFFER_RECEIPT_KEY]: offerReceipt } : {}),
+    reviews: buildAgoreanReviewsReadBlock(resourceUrl),
   };
   if (Object.keys(bodyExtensions).length) body.extensions = bodyExtensions;
 

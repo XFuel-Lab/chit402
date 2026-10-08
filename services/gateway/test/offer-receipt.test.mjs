@@ -166,6 +166,7 @@ test('buildPaymentChallenge keeps bazaar and adds one offer per accepts[] entry'
   const stored = store.get(body.accepts[0].extra.nonce);
   assert.ok(stored.extensions[BAZAAR_EXTENSION_KEY]);
   assert.equal(stored.extensions[OFFER_RECEIPT_KEY], undefined);
+  assert.equal(stored.extensions.reviews, undefined, 'the reviews block is never stored');
 });
 
 test('relative resource URL does not throw and still omits extensions when bazaar is off', () => {
@@ -175,7 +176,9 @@ test('relative resource URL does not throw and still omits extensions when bazaa
     includeBazaar: false,
   });
   assert.equal(body.resource.url, '/task-request');
-  assert.equal(body.extensions, undefined);
+  assert.equal(body.extensions.bazaar, undefined);
+  assert.equal(body.extensions['offer-receipt'], undefined);
+  assert.ok(body.extensions.reviews, 'only the fixed Agorean reviews block remains');
 });
 
 test('receipt JWS verifies and the legacy settle fields stay put', async () => {
