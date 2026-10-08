@@ -52,7 +52,7 @@
       "output_commitment": {
         "status": "committed",
         "hash": "0x8a484a9a811223716dbc21659ad63ecf28cb01f0199e927e75aad88d13d38097",
-        "kind": "keccak256",
+        "kind": "sha256",
         "omission_rule": null
       }
     },
@@ -70,7 +70,7 @@
       "output_commitment": {
         "status": "committed",
         "hash": "0x8a484a9a811223716dbc21659ad63ecf28cb01f0199e927e75aad88d13d38097",
-        "kind": "keccak256",
+        "kind": "sha256",
         "omission_rule": null
       }
     }
