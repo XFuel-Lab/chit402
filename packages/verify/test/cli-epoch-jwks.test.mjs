@@ -63,11 +63,15 @@ function epochClaims() {
   };
 }
 
-function signEpoch(claims, privateKey, kid) {
-  const header = { alg: 'ES256', typ: 'chit402-tree-epoch+jwt', kid };
+function signCompact(claims, privateKey, kid, typ) {
+  const header = { alg: 'ES256', typ, kid };
   const signingInput = `${b64url(header)}.${b64url(claims)}`;
   const signature = sign('sha256', Buffer.from(signingInput), { key: privateKey, dsaEncoding: 'ieee-p1363' });
   return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+function signEpoch(claims, privateKey, kid) {
+  return signCompact(claims, privateKey, kid, 'chit402-tree-epoch+jwt');
 }
 
 function fixture() {
@@ -82,10 +86,19 @@ function fixture() {
   const leaf = sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(`${taskId}|${rowHash}`)]));
   const sibling = sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from('genesis')]));
   const root = nodeHash(sibling, leaf).toString('hex');
-  const receipt = {
+  const receiptClaims = {
     task_id: taskId,
     row_hash: rowHash,
     verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' },
+  };
+  const receipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signCompact(receiptClaims, privateKey, kid, 'chit402-receipt+jwt'),
+      kid,
+      issuer_jwk: publicJwk,
+    },
   };
   const inclusion = {
     task_id: taskId,
@@ -105,8 +118,14 @@ function fixture() {
     tree_size: 2,
     anchors: {
       base: { status: 'pending', tx: null, calldata: `0x${root}`, chain_id: 8453 },
-      solana: { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: null },
+      solana: { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: null, fee_payer: null },
     },
+  };
+  const headClaims = JSON.parse(JSON.stringify(head));
+  head.issuer_signature = {
+    jws: signCompact(headClaims, privateKey, kid, 'chit402-tree-head+jwt'),
+    kid,
+    issuer_jwk: publicJwk,
   };
   const record = {
     schema: 'chit402.tree_epoch.v1',
@@ -135,6 +154,7 @@ function runCli(fx, args, env) {
     '--epoch-record', join(dir, 'epoch.json'),
     '--rpc', 'http://127.0.0.1:9',
     '--no-issuer-history',
+    '--no-preimage',
     '--json',
     ...args,
   ], {

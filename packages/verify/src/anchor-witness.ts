@@ -7,8 +7,21 @@
  * the payment.
  */
 import { createHash } from 'node:crypto';
+import {
+  compileAnchorWallets,
+  headOmitsPinnedSigner,
+  LEGACY_HEAD_UNPINNED_SIGNER,
+  sameBaseAddress,
+  verifyAnchorWalletDocument,
+  verifyTreeHeadTrust,
+  walletListed,
+  type AnchorWalletList,
+} from './anchor-trust.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { unloggedReasonForTask, verifyEpochLink, verifyEpochRecord, type EpochRecord } from './epoch.js';
+import type { IssuerHistoryDocument } from './issuer-history.js';
+import type { Es256Jwk } from './jws.js';
+import { boundRowHash } from './row-hash.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
@@ -28,9 +41,11 @@ export const SOLANA_GENESIS: Record<string, string> = {
 export const BASE_MAINNET_CHAIN_ID = 8453;
 
 export const ANCHOR_PROVES = [
-  'This receipt leaf is inside the issuer append-only tree of the stated size, under the stated root.',
-  'The Solana transaction memo contains that root, and the RPC genesis hash is the cluster named on the head.',
-  'The Base transaction calldata is that same root, on chain id 8453.',
+  'This receipt leaf is inside the tree of the stated size, under the stated root.',
+  'The tree head carries a valid ES256 issuer signature. The kid is trusted by the production pin, issuer history, or JWKS, and the signed root, size, epoch, and anchors match the head.',
+  'The Solana transaction memo contains that root, its fee payer is the signed fee payer, and the RPC genesis hash is the cluster named on the head.',
+  'The Base transaction calldata is that same root, on chain id 8453, and its sender is the signed anchor wallet.',
+  'Those wallets are on the issuer anchor-wallet list: the package pin, or a signed well-known or issuer-history list.',
 ];
 
 export const ANCHOR_DOES_NOT_PROVE = [
@@ -38,6 +53,7 @@ export const ANCHOR_DOES_NOT_PROVE = [
   'It does not prove a receipt appended after this tree size is inside the root.',
   'It does not prove the issuer included only honest rows. It proves this leaf hashes into the published root.',
   'It does not prove the RPC itself is honest. It checks the transaction and genesis hash that RPC returned.',
+  'It does not read the on-chain issuer-root registry or the DNS anchor. Those sources are reserved and are not consulted.',
 ];
 
 export interface InclusionStep {
@@ -71,15 +87,30 @@ export interface AnchorHead {
   anchor_tx?: string | null;
   anchor?: { tx?: string | null; calldata?: string | null; chain_id?: number | null } | null;
   anchors?: {
-    base?: { tx?: string | null; calldata?: string | null; chain_id?: number | null; status?: string } | null;
+    base?: {
+      tx?: string | null;
+      calldata?: string | null;
+      chain_id?: number | null;
+      status?: string;
+      from?: string | null;
+    } | null;
     solana?: {
       signature?: string | null;
       slot?: number | null;
       cluster?: string | null;
       memo?: string | null;
       status?: string | null;
+      fee_payer?: string | null;
     } | null;
   } | null;
+  issuer_signature?: {
+    jws?: string;
+    kid?: string;
+    issuer_jwk?: Es256Jwk;
+  };
+  schema?: string;
+  payload_version?: number;
+  published_at?: string | null;
 }
 
 interface SolanaIx {
@@ -95,13 +126,19 @@ export interface SolanaAnchorTx {
     logMessages?: string[];
     innerInstructions?: Array<{ instructions?: SolanaIx[] }>;
   } | null;
-  transaction?: { message?: { instructions?: SolanaIx[] } };
+  transaction?: {
+    message?: {
+      instructions?: SolanaIx[];
+      accountKeys?: Array<{ pubkey?: string; signer?: boolean } | string>;
+    };
+  };
 }
 
 export interface BaseAnchorTx {
   hash?: string;
   input?: string;
   chainId?: number;
+  from?: string;
 }
 
 export interface AnchorWitnessResult {
@@ -121,6 +158,7 @@ export interface AnchorWitnessResult {
     slot: number | null;
     cluster: string | null;
     memo: string | null;
+    fee_payer: string | null;
     reason?: string;
   };
   base: {
@@ -128,7 +166,22 @@ export interface AnchorWitnessResult {
     valid: boolean;
     tx: string | null;
     chain_id: number | null;
+    from: string | null;
     reason?: string;
+  };
+  head_signature: {
+    checked: boolean;
+    valid: boolean;
+    kid: string | null;
+    trust: string | null;
+    reason?: string;
+    message?: string;
+  };
+  anchor_wallets: {
+    base_from: string | null;
+    solana_fee_payer: string | null;
+    sources: AnchorWalletList['sources'];
+    not_consulted: AnchorWalletList['not_consulted'];
   };
   proves: string[];
   does_not_prove: string[];
@@ -158,11 +211,12 @@ function half(n: number): number {
 
 /**
  * RFC 9162 §2.1.3.2 inclusion. `index` and `treeSize` choose left or right
- * at each step. `position` on a proof node is not trusted. A proof whose
- * length is not the length that pair requires is rejected, as is
- * `index >= treeSize`. Leaf and node bytes stay SHA-256(0x00 || leaf) and
- * SHA-256(0x01 || left || right). Consistency proofs and the empty root
- * are not this function.
+ * at each step. A `position` label is not the source of that side. When a
+ * label is present it must name the side the index already chose, so a
+ * swapped label fails. An omitted label does not. A proof whose length is
+ * not the length that pair requires is rejected, as is `index >= treeSize`.
+ * Leaf and node bytes stay SHA-256(0x00 || leaf) and SHA-256(0x01 || left ||
+ * right). Consistency proofs and the empty root are not this function.
  */
 export function verifyMerkleInclusion(
   leaf: Buffer,
@@ -185,7 +239,11 @@ export function verifyMerkleInclusion(
     if (sn === 0) return false;
     if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    if ((fn % 2) === 1 || fn === sn) {
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (typeof step.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
+      return false;
+    }
+    if (siblingOnLeft) {
       hash = nodeHash(sib, hash);
       if ((fn % 2) === 0) {
         while ((fn % 2) === 0 && fn !== 0) {
@@ -301,21 +359,36 @@ export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
 }
 
 export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string): Promise<BaseAnchorTx | null> {
-  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { hash?: string; input?: string } | null;
+  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { hash?: string; input?: string; from?: string } | null;
   const chainHex = await defaultRpc(rpcUrl, 'eth_chainId', []) as string | null;
   if (!tx) return null;
   return {
     hash: tx.hash,
     input: tx.input,
+    from: tx.from,
     chainId: chainHex ? Number(chainHex) : undefined,
   };
 }
 
-function rowHashFrom(receipt: AnchorReceipt, inclusion: AnchorInclusion): { rowHash: string; source: 'receipt' | 'inclusion' } | null {
-  if (typeof receipt.row_hash === 'string') return { rowHash: receipt.row_hash, source: 'receipt' };
-  if (typeof receipt.book_chain?.row_hash === 'string') return { rowHash: receipt.book_chain.row_hash, source: 'receipt' };
-  if (typeof inclusion.row_hash === 'string') return { rowHash: inclusion.row_hash, source: 'inclusion' };
-  return null;
+/** Fee payer is the first account. A parsed key that is explicitly not a signer does not count. */
+export function solanaFeePayer(tx: SolanaAnchorTx | null | undefined): string | null {
+  const keys = tx?.transaction?.message?.accountKeys || [];
+  if (!keys.length) return null;
+  const first = keys[0];
+  if (typeof first === 'string') return first;
+  if (first?.signer === false) return null;
+  return first?.pubkey || null;
+}
+
+function rowHashFrom(
+  receipt: AnchorReceipt,
+  inclusion: AnchorInclusion,
+): { rowHash: string; source: 'receipt' | 'inclusion' } | { reason: 'row_hash_mismatch' } | null {
+  const bound = boundRowHash(receipt, inclusion);
+  if (!bound.ok) return { reason: 'row_hash_mismatch' };
+  if (bound.row == null || bound.row === '') return null;
+  const fromReceipt = typeof receipt.row_hash === 'string' || typeof receipt.book_chain?.row_hash === 'string';
+  return { rowHash: bound.row, source: fromReceipt ? 'receipt' : 'inclusion' };
 }
 
 function solanaSignature(head: AnchorHead): string | null {
@@ -341,6 +414,17 @@ export interface VerifyAnchoredRootInput {
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
   epochRecord?: EpochRecord | null;
   verifyEpochSignature?: (jws: string) => boolean;
+  jwks?: { keys: Es256Jwk[] };
+  trustedKids?: readonly string[];
+  issuerHistory?: IssuerHistoryDocument | null;
+  strictIssuerHistory?: boolean;
+  /** Parsed `chit402.anchor_wallets.v1`. Verified here. A bad document fails closed. */
+  anchorWalletDocument?: {
+    schema?: string;
+    base?: unknown;
+    solana?: unknown;
+    issuer_signature?: { jws?: string; issuer_jwk?: Es256Jwk };
+  } | null;
 }
 
 /**
@@ -373,17 +457,15 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   } else {
     const row = rowHashFrom(input.receipt, input.inclusion);
     let leaf: Buffer | null = null;
-    if (row) {
+    if (row && 'reason' in row) {
+      inclusionReason = row.reason;
+    } else if (row) {
       leaf = leafHash(Buffer.from(`${taskId}|${row.rowHash}`));
       leafSource = row.source;
       if (input.inclusion.leaf && input.inclusion.leaf.toLowerCase() !== leaf.toString('hex')) {
         inclusionReason = 'leaf_mismatch';
         leaf = null;
       }
-    } else if (input.inclusion.leaf && /^[0-9a-fA-F]{64}$/.test(input.inclusion.leaf)) {
-      leaf = Buffer.from(input.inclusion.leaf, 'hex');
-      leafSource = 'inclusion';
-      doesNotProve.push('The leaf was taken from the inclusion object. The receipt had no row_hash, so this check did not recompute the leaf from the receipt bytes.');
     } else {
       inclusionReason = 'no_leaf';
     }
@@ -427,6 +509,33 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
   if (epochReason) errors.push(epochReason);
 
+  const headTrust = verifyTreeHeadTrust(input.head, {
+    jwks: input.jwks,
+    trustedKids: input.trustedKids,
+    issuerHistory: input.issuerHistory ?? null,
+    strictIssuerHistory: input.strictIssuerHistory === true,
+  });
+  if (!headTrust.ok && headTrust.reason) errors.push(headTrust.reason);
+  const legacyHead = headTrust.ok && headOmitsPinnedSigner(headTrust.payload);
+  if (legacyHead) errors.push(LEGACY_HEAD_UNPINNED_SIGNER);
+
+  let publishedWallets: { base: string[]; solana: string[] } | null = null;
+  if (input.anchorWalletDocument) {
+    const listed = verifyAnchorWalletDocument(input.anchorWalletDocument, {
+      jwks: input.jwks,
+      trustedKids: input.trustedKids,
+    });
+    if (!listed.ok) errors.push(listed.reason);
+    else publishedWallets = { base: listed.base, solana: listed.solana };
+  }
+  const walletList = compileAnchorWallets({
+    jwks: input.jwks,
+    trustedKids: input.trustedKids,
+    issuerHistory: headTrust.ok ? (input.issuerHistory ?? null) : null,
+    published: publishedWallets,
+  });
+  const anchorWalletsInvalid = errors.includes('anchor_wallets_invalid');
+
   const solanaRpc = input.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL;
   const baseRpc = input.baseRpcUrl || BASE_RPC_URL;
   const signature = root && inclusionValid ? solanaSignature(input.head) : null;
@@ -439,6 +548,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     slot: input.head?.anchors?.solana?.slot ?? null,
     cluster: input.head?.anchors?.solana?.cluster ?? null,
     memo: input.head?.anchors?.solana?.memo ?? null,
+    fee_payer: input.head?.anchors?.solana?.fee_payer ?? null,
     reason: undefined as string | undefined,
   };
   const base = {
@@ -446,16 +556,41 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     valid: false,
     tx: input.head?.anchors?.base?.tx || input.head?.anchor?.tx || input.head?.anchor_tx || null,
     chain_id: input.head?.anchors?.base?.chain_id ?? input.head?.anchor?.chain_id ?? null,
+    from: input.head?.anchors?.base?.from ?? null,
     reason: undefined as string | undefined,
   };
+
+  const signedFrom = input.head?.anchors?.base?.from || null;
+  const signedPayer = input.head?.anchors?.solana?.fee_payer || null;
+  let walletFailed = anchorWalletsInvalid;
+  if (signedFrom && !walletListed(walletList.base, signedFrom, 'base')) {
+    walletFailed = true;
+    errors.push('anchor_sender_unlisted');
+  }
+  if (signedPayer && !walletListed(walletList.solana, signedPayer, 'solana')) {
+    walletFailed = true;
+    errors.push('fee_payer_unlisted');
+  }
 
   if (!inclusionValid) {
     solana.reason = 'inclusion_failed';
     base.reason = 'inclusion_failed';
+  } else if (!headTrust.ok || walletFailed) {
+    const reason = !headTrust.ok
+      ? (headTrust.reason || 'head_signature_invalid')
+      : (errors.find((code) => code.startsWith('anchor_') || code.startsWith('fee_payer')) || 'anchor_wallets_invalid');
+    solana.reason = solana.fee_payer && errors.includes('fee_payer_unlisted') ? 'fee_payer_unlisted' : reason;
+    base.reason = base.from && errors.includes('anchor_sender_unlisted') ? 'anchor_sender_unlisted' : reason;
+  } else if (legacyHead) {
+    solana.reason = LEGACY_HEAD_UNPINNED_SIGNER;
+    base.reason = LEGACY_HEAD_UNPINNED_SIGNER;
   } else {
     if (!signature) {
       solana.reason = 'pending';
       errors.push('solana_pending');
+    } else if (!signedPayer) {
+      solana.reason = 'fee_payer_missing';
+      errors.push('fee_payer_missing');
     } else {
       solana.checked = true;
       try {
@@ -486,6 +621,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
           if (!solana.reason && headSlot != null && tx.slot != null && Number(tx.slot) !== Number(headSlot)) {
             solana.reason = 'slot_mismatch';
           }
+          const payer = solanaFeePayer(tx);
+          if (!solana.reason && payer !== signedPayer) {
+            solana.reason = 'fee_payer_mismatch';
+          }
           if (!solana.reason) {
             solana.valid = true;
             solana.memo = matched[0];
@@ -501,6 +640,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     if (!txHash) {
       base.reason = 'pending';
       errors.push('base_pending');
+    } else if (!signedFrom) {
+      base.reason = 'anchor_sender_missing';
+      errors.push('anchor_sender_missing');
     } else {
       base.checked = true;
       try {
@@ -515,6 +657,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
         } else {
           const inputData = String(tx.input || '').toLowerCase().replace(/^0x/, '');
           if (inputData !== root) base.reason = 'calldata_mismatch';
+          else if (!tx.from || !sameBaseAddress(tx.from, signedFrom)) base.reason = 'sender_mismatch';
           else {
             base.valid = true;
             base.tx = tx.hash || txHash;
@@ -529,7 +672,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
 
   let overall: AnchorWitnessResult['overall'];
-  if (!inclusionValid || epochReason || (solana.checked && !solana.valid) || (base.checked && !base.valid)) overall = 'failed';
+  const anchorSideFailed = (solana.reason && solana.reason !== 'pending')
+    || (base.reason && base.reason !== 'pending');
+  if (!inclusionValid || epochReason || !headTrust.ok || walletFailed || legacyHead || anchorSideFailed) overall = 'failed';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
@@ -551,6 +696,20 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     },
     solana,
     base,
+    head_signature: {
+      checked: Boolean(input.head?.issuer_signature?.jws) || !headTrust.ok,
+      valid: headTrust.ok,
+      kid: headTrust.kid,
+      trust: headTrust.trust,
+      reason: headTrust.reason || undefined,
+      message: headTrust.message || undefined,
+    },
+    anchor_wallets: {
+      base_from: signedFrom,
+      solana_fee_payer: signedPayer,
+      sources: walletList.sources,
+      not_consulted: walletList.not_consulted,
+    },
     proves: ANCHOR_PROVES,
     does_not_prove: doesNotProve,
     errors,

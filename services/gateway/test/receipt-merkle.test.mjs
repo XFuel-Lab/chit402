@@ -134,6 +134,28 @@ test('the same task is not appended twice', () => {
   assert.equal(tree.leaves.length, size);
 });
 
+test('inclusion follows index and size, and a swapped position label fails', () => {
+  const leaf = Buffer.from('395c0548278d35c42450b9ad0e39cb83c0c64a935037d23fafde9aebe0a21985', 'hex');
+  const root = '1e3c8ad7ba0910dcee9194902681cf3bfc5445c59b2068230514b15b4e4fa28e';
+  const proof = [
+    { hash: 'f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286', position: 'left' },
+    { hash: 'c16df840b08607431c9cd2bbb54a36346392b3dd510a38f470c3382797fb14db', position: 'right' },
+  ];
+  assert.equal(verifyInclusion(leaf, 1, 3, root, proof), true);
+  const flipped = proof.map((step) => ({
+    hash: step.hash,
+    position: step.position === 'left' ? 'right' : 'left',
+  }));
+  assert.equal(verifyInclusion(leaf, 1, 3, root, flipped), false);
+  const claims = [[0, 3], [2, 3], [1, 1000], [999, 1000], [0, 1], [500, 999]];
+  for (const [index, size] of claims) {
+    assert.equal(verifyInclusion(leaf, index, size, root, proof), false, `${index},${size}`);
+  }
+  assert.equal(verifyInclusion(leaf, 3, 3, root, proof), false);
+  assert.equal(verifyInclusion(leaf, 1, 3, root, proof.slice(0, 1)), false);
+  assert.equal(verifyInclusion(leaf, 1, 3, root, proof.concat([{ hash: 'ab'.repeat(32), position: 'left' }])), false);
+});
+
 test('a receipt only in the current epoch has no carry-forward result', async () => {
   const tree = new ReceiptMerkleTree();
   tree.appendReceipt('solo', 'hh');

@@ -16,6 +16,7 @@
  *   3 = input error
  */
 
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import {
   verifyReceipt,
@@ -23,6 +24,7 @@ import {
   isRefusalDocument,
   loadIssuerJwks,
   DEFAULT_TRUSTED_ISSUER_KIDS,
+  DEFAULT_TRUSTED_JWKS_HOSTS,
   type XFuelReceipt,
   type Jwks,
   type RefusalDocument,
@@ -38,8 +40,9 @@ import { type EpochRecord } from './epoch.js';
 import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
-import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
+import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
+import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
 
 const HELP = `
@@ -70,14 +73,24 @@ Options:
   --check-payer       Query Base or Solana RPC. Base confirms payer, payee, asset, amount
   --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
   --rpc <url>         Base RPC URL (default: https://mainnet.base.org)
+  --version           Print @xfuel/verify version and exit
   --rpc               With a receipt, an inclusion proof, and a tree head: check the
                       leaf, then the Solana memo and the Base calldata for that root.
+                      The tree head must carry a valid ES256 issuer signature, and
+                      the anchor wallets must match the signed head.
                       A v2 head also needs the signed epoch record.
+                      A tree-head file with --rpc enters this mode.
+                      The same files without --rpc check the head signature and the
+                      index/size-bound inclusion offline. They do not call chain RPC.
   --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
   --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
                       origin plus /v1/receipts/tree/epoch
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
   --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
+  --anchor-wallets-file <path>
+                      Signed chit402.anchor_wallets.v1 document. Wallets in a
+                      verified document are added to the package pin. A head
+                      that names any other wallet fails.
   --carry-old-head <file>
   --carry-old-inclusion <file>
   --carry-head <file>
@@ -112,8 +125,11 @@ Trust:
   issuer_jwk whose RFC 7638 thumbprint equals a pinned trusted kid. The
   embedded key alone is not a trust root. Untrusted keys report "key untrusted".
 
-  Amount, payer, payee, and tx are read from verified signed claims. A mismatch
-  with the unsigned outer payment / caller_binding copy is a failure.
+  Amount, payer, payee, and tx are read from verified signed claims. Every
+  signed field is compared with the outer receipt at the same path. A mismatch
+  fails. Outer fields the signature does not cover are printed as UNVERIFIED.
+  The outer document schema is not a copy of the JWS schema. Log mode (a
+  receipt, an inclusion proof, and a tree head) runs these receipt checks too.
 
 Network behavior:
   JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
@@ -134,11 +150,19 @@ Anchored root:
   xfuel-verify receipt.json inclusion.json head.json --rpc
   xfuel-verify receipt.json --inclusion inclusion.json --head head.json --rpc https://mainnet.base.org
 
-  Checks the Merkle inclusion, fetches the Solana transaction and requires the
-  SPL Memo to contain the root, and checks the Base calldata the same way.
-  Prints what this proves and what it does not prove. Exit 0 when both chains
-  match, 2 when the leaf is included but an anchor is still pending, 1 when a
-  check fails.
+  Also runs the single-receipt checks (issuer signature and signed-versus-outer
+  comparison). Those must pass before Overall can be VERIFIED. Then it checks
+  the tree head's ES256 issuer signature (production pin, issuer
+  history, or JWKS, same rules as a receipt). The signed root, size, epoch,
+  and anchors must match the head. Then it checks Merkle inclusion, requires
+  the Solana memo and fee payer, and requires the Base calldata and sender.
+  The sender and fee payer must be on the issuer anchor-wallet list (the
+  package pin, plus a verified /.well-known/anchor-wallets.json or
+  issuer-history anchor_wallets list). The on-chain issuer-root registry and
+  the DNS anchor are not read. Prints what this proves and what it does not
+  prove. Exit 0 when the receipt checks pass and both chains match, 2 when the
+  leaf is included but an anchor is still pending and the receipt checks did
+  not fail, 1 when a check fails.
 
 Receipt lane (unsigned, beside book_seq):
   settled_by is observed_transfer when the USDC transfer was checked on Base
@@ -199,6 +223,8 @@ function parseArgs(args: string[]): {
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
   noPreimage: boolean;
+  version: boolean;
+  anchorWalletsFile: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -230,11 +256,15 @@ function parseArgs(args: string[]): {
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
     noPreimage: false,
+    version: false,
+    anchorWalletsFile: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--help' || arg === '-h') {
+    if (arg === '--version' || arg === '-V') {
+      result.version = true;
+    } else if (arg === '--help' || arg === '-h') {
       result.help = true;
     } else if (arg === '--check-nullifier') {
       result.checkNullifier = true;
@@ -282,6 +312,8 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--anchor-wallets-file' && args[i + 1]) {
+      result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
     } else if (arg === '--json') {
@@ -360,6 +392,9 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('  Anchored receipt root');
   console.log('  ─────────────────────────────────────────────────');
   console.log(`  Root:          ${result.root || '—'}`);
+  console.log(`  Head signature:${result.head_signature.valid ? ' ✓ YES' : ' ✗ NO'}${result.head_signature.trust ? ` (${result.head_signature.trust})` : ''}`);
+  if (result.head_signature.kid) console.log(`  Head kid:      ${result.head_signature.kid}`);
+  if (result.head_signature.message) console.log(`  Head reason:   ${result.head_signature.message}`);
   const unlogged = result.inclusion.unlogged_reason ? ` unlogged:${result.inclusion.unlogged_reason}` : '';
   console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}${unlogged}`);
   console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
@@ -367,9 +402,11 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
   if (result.solana.slot != null) console.log(`  Slot:          ${result.solana.slot}`);
   if (result.solana.cluster) console.log(`  Cluster:       ${result.solana.cluster}`);
+  if (result.solana.fee_payer) console.log(`  Fee payer:     ${result.solana.fee_payer}`);
   if (result.solana.memo) console.log(`  Memo:          ${result.solana.memo}`);
   if (result.solana.reason && !result.solana.valid) console.log(`  Solana reason: ${result.solana.reason}`);
   console.log(`  Base:          ${result.base.checked ? mark(result.base.valid) : (result.base.reason || 'not checked')}`);
+  if (result.base.from) console.log(`  Base from:     ${result.base.from}`);
   if (result.base.tx) console.log(`  Base tx:       ${result.base.tx}`);
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
@@ -384,6 +421,9 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('');
   console.log(`  Overall: ${result.overall.toUpperCase()}`);
   if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
+  if (result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER)) {
+    console.log(`  ${HEAD_TRUST_MESSAGES[LEGACY_HEAD_UNPINNED_SIGNER]}`);
+  }
   console.log('');
 }
 
@@ -447,16 +487,121 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
   return false;
 }
 
+function packageVersion(): string {
+  const require = createRequire(__filename);
+  const pkg = require('../package.json') as { version?: string };
+  return pkg.version || '0.0.0';
+}
+
+function looksLikeTreeHead(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const doc = value as { schema?: unknown; status?: unknown; anchors?: unknown; root?: unknown; task_id?: unknown };
+  if (doc.status === 'not_yet_published') return true;
+  if (typeof doc.schema === 'string' && doc.schema.startsWith('chit402.tree_head.')) return true;
+  return Boolean(doc.anchors && doc.root && !doc.task_id);
+}
+
+function readOfflineWitness(args: ReturnType<typeof parseArgs>): {
+  head: AnchorHead | null;
+  inclusion: AnchorInclusion | null;
+} {
+  let head: AnchorHead | null = null;
+  let inclusion: AnchorInclusion | null = null;
+  for (const file of args.positionals.slice(1)) {
+    let doc: unknown;
+    try {
+      doc = readJson(file);
+    } catch (err) {
+      throw new Error(`Error reading ${file}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const row = doc as { proof?: unknown; leaf_index?: unknown };
+    if (looksLikeTreeHead(doc)) head = doc as AnchorHead;
+    else if (doc && typeof doc === 'object' && (Array.isArray(row.proof) || row.leaf_index != null)) {
+      inclusion = doc as AnchorInclusion;
+    }
+  }
+  return { head, inclusion };
+}
+
+function fileLooksLikeHead(file: string | null): boolean {
+  if (!file) return false;
+  try {
+    return looksLikeTreeHead(readJson(file));
+  } catch {
+    return false;
+  }
+}
+
+function historyHostAllowed(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (parsed.protocol === 'http:' && parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return false;
+    if (parsed.protocol === 'https:') {
+      return DEFAULT_TRUSTED_JWKS_HOSTS.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadAnchorIssuerHistory(
+  args: ReturnType<typeof parseArgs>,
+  receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
+): Promise<IssuerHistoryDocument | null> {
+  if (args.issuerHistoryFile) {
+    return JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
+  }
+  if (args.noIssuerHistory) return null;
+  const url = historyUrlFromReceipt(receipt);
+  if (!url || !historyHostAllowed(url)) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return null;
+    return await res.json() as IssuerHistoryDocument;
+  } catch {
+    return null;
+  }
+}
+
+async function loadAnchorWalletDocument(
+  args: ReturnType<typeof parseArgs>,
+  receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
+): Promise<Record<string, unknown> | null> {
+  if (args.anchorWalletsFile) {
+    return JSON.parse(readFileSync(args.anchorWalletsFile, 'utf8')) as Record<string, unknown>;
+  }
+  if (args.noIssuerHistory) return null;
+  const historyUrl = historyUrlFromReceipt(receipt);
+  const epochOrigin = (() => {
+    if (!args.epochUrl) return null;
+    try { return new URL(args.epochUrl).origin; } catch { return null; }
+  })();
+  const origin = epochOrigin || (historyUrl ? new URL(historyUrl).origin : null);
+  if (!origin) return null;
+  const url = `${origin}/.well-known/anchor-wallets.json`;
+  if (!historyHostAllowed(url)) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    return await res.json() as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const receiptPath = args.file;
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
   const headPath = args.headFile || (args.inclusionFile ? null : args.positionals[2]) || null;
+  const headCandidates = [args.headFile, headPath, ...args.positionals];
+  if (headCandidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
+    console.error('Tree head is not_yet_published.');
+    return 3;
+  }
   if (!receiptPath || !inclusionPath || !headPath) {
-    const candidates = [args.headFile, headPath, ...args.positionals];
-    if (candidates.some((file) => file && headStatus(file) === 'not_yet_published')) {
-      console.error('Tree head is not_yet_published.');
-      return 3;
-    }
     console.error('Anchor check needs a receipt, an inclusion proof, and a tree head.');
     console.error('  xfuel-verify receipt.json inclusion.json head.json --rpc');
     return 3;
@@ -472,6 +617,32 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     console.error(`Error reading anchor inputs: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
   }
+  let fileJwks: Jwks | undefined;
+  if (args.jwksFile) {
+    try {
+      fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+    } catch (err) {
+      console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+  const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
+    jwks: fileJwks,
+    jwksUri: args.jwksUrl || undefined,
+    fetchJwks: args.fetchJwks,
+  });
+  const trustedKids = args.noTrustedKid
+    ? []
+    : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+  let issuerHistory: IssuerHistoryDocument | null = null;
+  let anchorWalletDocument: Record<string, unknown> | null = null;
+  try {
+    issuerHistory = await loadAnchorIssuerHistory(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
+    anchorWalletDocument = await loadAnchorWalletDocument(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
+  } catch (err) {
+    console.error(`Error reading issuer trust files: ${err instanceof Error ? err.message : String(err)}`);
+    return 3;
+  }
   let epochRecord: EpochRecord | null = null;
   let verifyEpochSignature: ((jws: string) => boolean) | undefined;
   if (headNeedsEpochRecord(head)) {
@@ -481,23 +652,6 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       epochRecord = null;
     }
     if (epochRecord?.issuer_signature?.jws) {
-      let fileJwks: Jwks | undefined;
-      if (args.jwksFile) {
-        try {
-          fileJwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
-        } catch (err) {
-          console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
-          return 3;
-        }
-      }
-      const loaded = await loadIssuerJwks(receipt as { verification?: { jwks_uri?: string }; issuer_signature?: { jws?: string } }, {
-        jwks: fileJwks,
-        jwksUri: args.jwksUrl || undefined,
-        fetchJwks: args.fetchJwks,
-      });
-      const trustedKids = args.noTrustedKid
-        ? []
-        : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
       verifyEpochSignature = (jws) => epochSignatureOk(epochRecord as EpochRecord, jws, loaded.jwks, trustedKids);
     }
   }
@@ -509,18 +663,101 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     epochRecord,
     verifyEpochSignature,
+    jwks: loaded.jwks,
+    trustedKids,
+    issuerHistory,
+    strictIssuerHistory: args.strictIssuerHistory,
+    anchorWalletDocument: anchorWalletDocument as {
+      schema?: string;
+      base?: unknown;
+      solana?: unknown;
+      issuer_signature?: { jws?: string };
+    } | null,
   });
-  const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, { head });
-  const lane = verified.receipt_lane;
-  if (args.json) {
-    console.log(JSON.stringify({ ...result, receipt_lane: lane }, null, 2));
-  } else {
-    printAnchor(result, false, args.quiet);
-    if (!args.quiet) printLane(lane);
+  let canonicalPreimage: string | null = null;
+  if (args.canonicalPreimageFile) {
+    canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
   }
-  if (result.overall === 'verified') return 0;
-  if (result.overall === 'partial') return 2;
+  const historyBytes = args.issuerHistoryFile ? readFileSync(args.issuerHistoryFile, 'utf8') : null;
+  const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, {
+    jwks: loaded.jwks,
+    jwksUri: args.jwksUrl || undefined,
+    fetchJwks: args.fetchJwks,
+    trustedKids,
+    checkNullifier: args.checkNullifier,
+    checkPayer: args.checkPayer,
+    rpcUrl: args.rpcUrl || undefined,
+    solanaRpcUrl: args.solanaRpcUrl || undefined,
+    requirePreimages: !args.noPreimage,
+    issuerHistory: args.issuerHistoryFile ? issuerHistory : null,
+    issuerHistoryBytes: historyBytes,
+    fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
+    strictIssuerHistory: args.strictIssuerHistory,
+    skipIssuerHistory: args.noIssuerHistory,
+    canonicalPreimage,
+    head,
+  });
+  // Inclusion was already checked above. Passing it again re-derives the leaf
+  // from book_chain.row_hash only, which rejects a receipt that stores row_hash
+  // at the top level. Log mode still requires the receipt itself. A missing or
+  // stripped issuer signature, a partial check, or a signed-versus-outer
+  // mismatch fails the combined result. An inclusion match is not VERIFIED.
+  const issuerSig = (receipt as { issuer_signature?: { jws?: string; value?: string } }).issuer_signature;
+  const signaturePresent = Boolean(issuerSig?.jws || issuerSig?.value);
+  const receiptVerified = signaturePresent
+    && verified.issuer_signature.valid === true
+    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward')
+    && verified.claim_mismatches.length === 0;
+  const receiptFailed = !receiptVerified;
+  const receiptErrors = [...verified.errors];
+  if (!signaturePresent) {
+    receiptErrors.push(verified.issuer_signature.reason || 'receipt_signature_missing');
+  } else if (verified.overall === 'partial') {
+    receiptErrors.push(verified.issuer_signature.reason || 'receipt_check_partial');
+  }
+  const errors = receiptFailed
+    ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
+    : result.errors;
+  const combined = {
+    ...result,
+    errors,
+    overall: receiptFailed ? 'failed' as const : result.overall,
+    receipt_lane: verified.receipt_lane,
+    receipt_check: {
+      overall: verified.overall,
+      verified_scope: verified.verified_scope,
+      claim_mismatches: verified.claim_mismatches,
+      unsigned_fields: verified.unsigned_fields,
+      errors: verified.errors,
+    },
+  };
+  if (args.json) {
+    console.log(JSON.stringify(combined, null, 2));
+  } else {
+    printAnchor(combined, false, args.quiet);
+    if (!args.quiet || receiptFailed) {
+      console.log(`  Receipt checks: ${verified.overall.toUpperCase()} (signed claims only)`);
+      if (verified.claim_mismatches.length > 0) {
+        for (const mismatch of verified.claim_mismatches) {
+          console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
+        }
+      }
+      printUnsigned(verified.unsigned_fields);
+      console.log('');
+    }
+    if (!args.quiet) printLane(verified.receipt_lane);
+  }
+  if (combined.overall === 'verified') return 0;
+  if (combined.overall === 'partial') return 2;
   return 1;
+}
+
+function printUnsigned(fields: string[]): void {
+  console.log('  Scope:         signed claims only. Unsigned fields are UNVERIFIED.');
+  if (fields.length === 0) return;
+  console.log(`  Unsigned fields (${fields.length})`);
+  console.log('  ─────────────────────────────────────────────────');
+  for (const field of fields) console.log(`  UNVERIFIED     ${field}`);
 }
 
 async function runRefusal(
@@ -558,7 +795,7 @@ async function runRefusal(
     issuer_history: result.issuer_history,
   } as Record<string, unknown>) : null;
   const history = args.skipIssuerHistory
-    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null }
+    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null, document: null, loaded: false }
     : await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
       document: args.issuerHistory,
       documentBytes: args.issuerHistoryBytes,
@@ -611,14 +848,31 @@ async function runRefusal(
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
-  const anchorMode = args.anchorFlag
+  if (args.version) {
+    console.log(`@xfuel/verify ${packageVersion()}`);
+    return 0;
+  }
+  let anchorMode = args.anchorFlag
     || Boolean(args.inclusionFile || args.headFile)
     || (args.positionals.length >= 3 && args.sawRpc);
+  if (!anchorMode && args.sawRpc && args.positionals.some((file) => fileLooksLikeHead(file))) {
+    anchorMode = true;
+  }
 
   if (args.help) {
     console.log(HELP);
     return 0;
   }
+  let offlineWitness: ReturnType<typeof readOfflineWitness> | null = null;
+  if (!anchorMode) {
+    try {
+      offlineWitness = readOfflineWitness(args);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 3;
+    }
+  }
+
   if (anchorMode) return runAnchor(args);
 
   if (!args.file) {
@@ -742,6 +996,8 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    head: offlineWitness?.head ?? undefined,
+    inclusion: offlineWitness?.inclusion ?? undefined,
     carry,
   });
 
@@ -811,6 +1067,8 @@ async function main(): Promise<number> {
         console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
       }
     }
+    console.log('');
+    printUnsigned(result.unsigned_fields);
     console.log('');
     console.log(`  Nullifier`);
     console.log(`  ─────────────────────────────────────────────────`);

@@ -21,6 +21,7 @@ import {
   describeSolanaAnchor,
   parseAnchorMemo,
   solanaAnchorCluster,
+  solanaAnchorFeePayer,
   solanaAnchorMemo,
   ZERO_ROOT,
 } from './solana-receipt-anchor.js';
@@ -118,9 +119,12 @@ export function inclusionProof(leaves, index) {
 
 /**
  * RFC 9162 §2.1.3.2. Index and tree size pick left or right. A `position`
- * label is not trusted. The proof must be exactly as long as that pair
+ * label is not the source of that side. When a label is present it must
+ * name the side the index already chose, so a swapped label fails. An
+ * omitted label does not. The proof must be exactly as long as that pair
  * requires, and index >= size is rejected. Leaf and node hashing are
- * unchanged. Lockstep with `verifyMerkleInclusion` in `@xfuel/verify`.
+ * unchanged. Consistency proofs and the empty root are not this function.
+ * Lockstep with `verifyMerkleInclusion` in `@xfuel/verify`.
  */
 export function verifyInclusion(leaf, index, treeSize, rootHex, proof) {
   if (!Array.isArray(proof)) return false;
@@ -137,7 +141,11 @@ export function verifyInclusion(leaf, index, treeSize, rootHex, proof) {
     if (sn === 0) return false;
     if (!step || !/^[0-9a-fA-F]{64}$/.test(step.hash)) return false;
     const sib = Buffer.from(step.hash, 'hex');
-    if ((fn % 2) === 1 || fn === sn) {
+    const siblingOnLeft = (fn % 2) === 1 || fn === sn;
+    if (typeof step.position === 'string' && step.position !== '' && step.position !== (siblingOnLeft ? 'left' : 'right')) {
+      return false;
+    }
+    if (siblingOnLeft) {
       hash = nodeHash(sib, hash);
       if ((fn % 2) === 0) {
         while ((fn % 2) === 0 && fn !== 0) {
@@ -565,6 +573,7 @@ export function signPinnedClosedHead({
     slot: solana.slot ?? null,
     cluster: 'mainnet-beta',
     memo: historical ? EPOCH1_FINAL_SOLANA_MEMO : null,
+    fee_payer: solana.fee_payer || null,
     reason: null,
   };
   const claims = {
@@ -579,6 +588,9 @@ export function signPinnedClosedHead({
     anchor_status: PIN_ANCHORED,
     anchor_tx: base.tx,
     anchor_from: base.from || null,
+    // Epoch 1 uses the observed Base block time. Any other closed head has
+    // no observed publish time, so this stays null. The verifier does not
+    // treat that null as issued_at_missing. A revoked kid still fails closed.
     published_at: historical ? EPOCH1_FINAL_PUBLISHED_AT : null,
     clock_tolerance_s: clockToleranceClaim(),
     anchors: { base: baseSide, solana: solanaSide },
@@ -1142,7 +1154,7 @@ export class ReceiptMerkleTree {
           && parsed.bundle_index_hash === indexHash
         ));
       if (sameMemo) {
-        solana = { ...priorSolana };
+        solana = { ...priorSolana, fee_payer: priorSolana.fee_payer || solanaFeePayerOrNull() };
       } else {
         // This UTC day already has a memo. Do not send another.
         let memo = null;
@@ -1168,6 +1180,7 @@ export class ReceiptMerkleTree {
           slot: null,
           cluster,
           memo,
+          fee_payer: priorSolana.fee_payer || solanaFeePayerOrNull(),
           reason: 'day_already_anchored',
           prior_signature: priorSolana.signature,
         };
@@ -2483,6 +2496,15 @@ export function resetReceiptMerkleTree() {
   return _tree;
 }
 
+function solanaFeePayerOrNull() {
+  try {
+    return solanaAnchorFeePayer() || null;
+  } catch (err) {
+    if (err?.code === 'anchor_fee_payer_mismatch') throw err;
+    return null;
+  }
+}
+
 /**
  * Open the durable log and install it as the process tree.
  * Throws ReceiptLogRefused. A fresh genesis is minted only when the operator
@@ -2490,6 +2512,9 @@ export function resetReceiptMerkleTree() {
  */
 export function bootReceiptLog(dir, opts = {}) {
   resolveAnchorSender();
+  // A fee-payer env that disagrees with the Solana key refuses boot.
+  // A missing or unparsable key stays pending until publish, as before.
+  solanaFeePayerOrNull();
   const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
   const tree = new ReceiptMerkleTree();
   tree.durable = true;

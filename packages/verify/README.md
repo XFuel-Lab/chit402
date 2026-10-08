@@ -70,7 +70,8 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Output hash | No | Hash is on the receipt |
 | On-chain settlement | Yes | Query Base RPC for tx |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
-| Anchored receipt root | Yes, with `--rpc` | Inclusion proof, then Solana memo and Base calldata for that root |
+| Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
+| Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
 | Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
 
@@ -86,7 +87,7 @@ counts only when the verifying key is trusted:
    production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
    `--trusted-kid`, or disable with `--no-trusted-kid`.
 
-The epoch record checked by `xfuel-verify receipt.json inclusion.json head.json --rpc` uses those same sources. An embedded epoch key still has to match the trusted-kid pin.
+The epoch record and the tree head use those same sources, with or without `--rpc`. `xfuel-verify receipt.json inclusion.json head.json` checks the head signature and the inclusion proof offline. `--rpc` adds the chain checks. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list (the package pin, or a verified `/.well-known/anchor-wallets.json`). The chain sender and fee payer must be those wallets. `--version` prints the package version.
 
 `issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
 arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
@@ -122,13 +123,20 @@ const result = await verifyReceipt(receipt);
 console.log(result.issuer_signature.valid);      // true only for a trusted key
 console.log(result.issuer_signature.key_trusted);
 console.log(result.amount_usdc);                 // from verified claims, not the outer copy
-console.log(result.claim_mismatches);            // outer payment / caller_binding vs JWS
+console.log(result.claim_mismatches);            // any signed path whose outer copy disagrees
+console.log(result.unsigned_fields);             // outer paths the signature does not cover
+console.log(result.verified_scope);              // 'signed_claims'
 ```
 
 Amount, payer, payee, asset, and tx are read from the verified JWS claims.
-If the unsigned outer `payment` or `caller_binding` disagrees, verification
-fails. `--check-payer` on Base confirms payer, payee, asset, and amount in the
-USDC `Transfer` log.
+Every signed path is compared with the outer receipt. A mismatch fails.
+Paths the signature does not cover are `unsigned_fields` and are printed as
+`UNVERIFIED`. Overall does not verify them. The outer document `schema` is
+not a copy of the JWS `schema`. `--check-payer` on Base confirms payer, payee,
+asset, and amount in the USDC `Transfer` log.
+
+`xfuel-verify receipt.json inclusion.json head.json` also runs those receipt
+checks. A matching inclusion proof does not make a tampered receipt VERIFIED.
 
 A paid USDC receipt whose signed `binding.expected_commitment` is null is
 reported as “No payment-binding commitment”, not as an unmetered or TFUEL receipt.

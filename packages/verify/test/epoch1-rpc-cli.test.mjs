@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -24,6 +24,10 @@ const {
   EPOCH2_OPENING_ROOT,
 } = await import('../dist/epoch.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
+const {
+  PINNED_BASE_ANCHOR_WALLET,
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+} = await import('../dist/anchor-trust.js');
 
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
 const BASE_TX = '0x1d8d7ea255170c8d4b87bef9382e13555dded2072fd877ce35f995f1ab54ee09';
@@ -68,11 +72,15 @@ function epochClaims() {
   };
 }
 
-function signEpoch(claims, privateKey, kid) {
-  const header = { alg: 'ES256', typ: 'chit402-tree-epoch+jwt', kid };
+function signCompact(claims, privateKey, kid, typ) {
+  const header = { alg: 'ES256', typ, kid };
   const signingInput = `${b64url(header)}.${b64url(claims)}`;
   const signature = sign('sha256', Buffer.from(signingInput), { key: privateKey, dsaEncoding: 'ieee-p1363' });
   return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+function signEpoch(claims, privateKey, kid) {
+  return signCompact(claims, privateKey, kid, 'chit402-tree-epoch+jwt');
 }
 
 function productionFixture() {
@@ -81,9 +89,18 @@ function productionFixture() {
   const kid = jwkThumbprint(exported);
   const publicJwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, kid, alg: 'ES256', use: 'sig' };
   const claims = epochClaims();
-  const receipt = {
+  const receiptClaims = {
     task_id: TASK_ID,
     book_chain: { row_hash: ROW_HASH },
+  };
+  const receipt = {
+    ...receiptClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signCompact(receiptClaims, privateKey, kid, 'chit402-receipt+jwt'),
+      kid,
+      issuer_jwk: publicJwk,
+    },
   };
   const leaf = createHash('sha256')
     .update(Buffer.concat([Buffer.from([0x00]), Buffer.from(`${TASK_ID}|${ROW_HASH}`)]))
@@ -116,15 +133,30 @@ function productionFixture() {
     root: EPOCH1_FINAL_ROOT,
     tree_size: 4,
     anchors: {
-      base: { status: 'anchored', tx: BASE_TX, calldata: `0x${EPOCH1_FINAL_ROOT}`, chain_id: 8453 },
+      base: {
+        status: 'anchored',
+        tx: BASE_TX,
+        calldata: `0x${EPOCH1_FINAL_ROOT}`,
+        chain_id: 8453,
+        from: PINNED_BASE_ANCHOR_WALLET,
+      },
       solana: {
         status: 'anchored',
         signature: SOLANA_SIG,
         slot: 452921175,
         cluster: 'mainnet-beta',
         memo: SOLANA_MEMO,
+        fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER,
       },
     },
+  };
+  const headJws = signCompact(head, privateKey, kid, 'chit402-tree-head+jwt');
+  head.issuer_signature = {
+    alg: 'ES256',
+    typ: 'chit402-tree-head+jwt',
+    jws: headJws,
+    kid,
+    issuer_jwk: publicJwk,
   };
   const record = {
     ...claims,
@@ -162,13 +194,14 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
       if (msg.method === 'getGenesisHash') result = MAINNET_GENESIS;
       else if (msg.method === 'eth_chainId') result = '0x2105';
       else if (msg.method === 'eth_getTransactionByHash') {
-        result = { hash: BASE_TX, input: `0x${EPOCH1_FINAL_ROOT}` };
+        result = { hash: BASE_TX, input: `0x${EPOCH1_FINAL_ROOT}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: 452921175,
           meta: { err: null },
           transaction: {
             message: {
+              accountKeys: [{ pubkey: PINNED_SOLANA_ANCHOR_FEE_PAYER, signer: true, writable: true }],
               instructions: [{
                 program: 'spl-memo',
                 programId: 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
@@ -203,6 +236,7 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.kid,
       '--no-issuer-history',
+      '--no-preimage',
     ]);
     const text = `${run.stdout || ''}\n${run.stderr || ''}`;
     assert.equal(run.status, 0, text);
@@ -238,6 +272,23 @@ test('an unpublished head is reported as not_yet_published', () => {
     assert.match(run.stderr, /not_yet_published/);
     assert.equal(text.includes('Anchor check needs a receipt, an inclusion proof, and a tree head.'), false);
   }
+  const rpcUrl = 'https://mainnet.base.org';
+  for (const args of [[headPath, '--rpc', rpcUrl], ['--rpc', rpcUrl, headPath]]) {
+    const run = spawnSync(process.execPath, [cli, ...args, '--solana-rpc', rpcUrl], { encoding: 'utf8' });
+    const text = `${run.stdout || ''}\n${run.stderr || ''}`;
+    assert.equal(run.status, 3, text);
+    assert.match(run.stderr, /not_yet_published/);
+    assert.equal(text.includes('missing task_id'), false);
+  }
+});
+
+test('--version prints the package version', () => {
+  const cli = join(pkgDir, 'dist', 'cli.js');
+  const run = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^@xfuel\/verify \d+\.\d+\.\d+\s*$/);
+  const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
+  assert.equal(run.stdout.trim(), `@xfuel/verify ${pkg.version}`);
 });
 
 test('a not_in_tree inclusion file is not reported as bad_root', () => {
@@ -263,4 +314,43 @@ test('a not_in_tree inclusion file is not reported as bad_root', () => {
   assert.equal(run.status, 1, text);
   assert.match(run.stdout, /not_in_tree/);
   assert.equal(text.includes('bad_root'), false);
+});
+
+test('an unpublished head with a receipt and inclusion is not_yet_published', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chit-unpublished-full-'));
+  const head = {
+    schema: 'chit402.tree_head.v2',
+    status: 'not_yet_published',
+    published: false,
+    epoch: 2,
+    prev_epoch_root: EPOCH1_FINAL_ROOT,
+    prev_epoch_size: 4,
+    tree_size: 1,
+    root: EPOCH2_OPENING_ROOT,
+  };
+  writeFileSync(join(dir, 'receipt.json'), JSON.stringify({ task_id: TASK_ID, book_chain: { row_hash: ROW_HASH } }));
+  writeFileSync(join(dir, 'inclusion.json'), JSON.stringify({
+    task_id: TASK_ID,
+    leaf_index: 1,
+    tree_size: 4,
+    root: EPOCH1_FINAL_ROOT,
+    proof: [],
+  }));
+  writeFileSync(join(dir, 'head.json'), JSON.stringify(head));
+  const cli = join(pkgDir, 'dist', 'cli.js');
+  const run = spawnSync(process.execPath, [
+    cli,
+    join(dir, 'receipt.json'),
+    join(dir, 'inclusion.json'),
+    join(dir, 'head.json'),
+    '--rpc', 'https://mainnet.base.org',
+    '--solana-rpc', 'https://api.mainnet-beta.solana.com',
+    '--epoch-url', 'https://api.chit402.com/v1/receipts/tree/epoch',
+    '--no-issuer-history',
+  ], { encoding: 'utf8' });
+  const text = `${run.stdout || ''}\n${run.stderr || ''}`;
+  assert.equal(run.status, 3, text);
+  assert.match(run.stderr, /not_yet_published/);
+  assert.equal(text.includes('root_mismatch'), false);
+  assert.equal(text.includes('missing task_id'), false);
 });

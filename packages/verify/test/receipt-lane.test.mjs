@@ -19,6 +19,7 @@ const {
   buildReceiptLane,
   deriveSettledBy,
   receiptLaneDecision,
+  receiptLaneFromVerification,
 } = await import('../dist/index.js');
 
 const ROOT_A = 'a'.repeat(64);
@@ -204,6 +205,25 @@ test('binding 209 is expired and unmarked, so unverifiable_from_registry', () =>
   assert.equal(lane.local_check.amount_atomic, '100000');
   assert.equal(lane.ordering, 'seq + settled_by + (anchor_changed AND not settled)');
   assert.equal(lane.boundary, 'complete over registry marks, blind to payments the registry never joined');
+});
+
+test('a verified foreign payout is observed_transfer, not an issuer receipt', () => {
+  const shared = {
+    receipt: { book_seq: 15 },
+    issuerValid: true,
+    claims: {
+      payment: { ref: 'base:0xabc', rail: 'usdc', collected: true },
+      settlement: null,
+    },
+  };
+  const issuer = receiptLaneFromVerification(shared);
+  assert.equal(issuer.settled_by, 'receipt');
+  const foreign = receiptLaneFromVerification({
+    ...shared,
+    claims: { ...shared.claims, schema: 'chit402.foreign_payout.v1' },
+  });
+  assert.equal(foreign.settled_by, 'observed_transfer');
+  assert.equal(foreign.settled, true);
 });
 
 test('binding 468 is expired and settled_by observed_transfer, so settled', () => {

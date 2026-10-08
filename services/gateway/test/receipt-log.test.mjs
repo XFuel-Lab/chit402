@@ -2600,6 +2600,8 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   });
   assert.equal(head.schema, 'chit402.tree_head.v2');
   assert.equal(head.epoch, 2);
+  assert.ok(head.anchors.base.from);
+  assert.ok(head.anchors.solana.fee_payer);
   const { createApp } = await import('../src/server.js');
   const app = createApp();
   const gateway = await new Promise((resolve) => {
@@ -2613,14 +2615,15 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
       const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       let result = null;
       if (msg.method === 'eth_chainId') result = '0x2105';
-      else if (msg.method === 'eth_getTransactionByHash') {
-        result = { hash: baseTx, input: `0x${head.root}` };
+      else       if (msg.method === 'eth_getTransactionByHash') {
+        result = { hash: baseTx, input: `0x${head.root}`, from: head.anchors.base.from };
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: head.anchors.solana.slot,
           meta: { err: null },
           transaction: {
             message: {
+              accountKeys: [{ pubkey: head.anchors.solana.fee_payer, signer: true, writable: true }],
               instructions: [{ program: 'spl-memo', parsed: head.anchors.solana.memo }],
             },
           },
@@ -2638,14 +2641,35 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const inclusionPath = path.join(work, 'inclusion.json');
   const headPath = path.join(work, 'head.json');
   const jwksPath = path.join(work, 'jwks.json');
-  fs.writeFileSync(receiptPath, JSON.stringify({
+  const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
-    verify_url: `http://127.0.0.1:${gatewayPort}/receipt/cli-row`,
+  };
+  const receiptSig = signJws(receiptClaims, { typ: 'chit402-receipt+jwt' });
+  const verifyUrl = `http://127.0.0.1:${gatewayPort}/receipt/cli-row`;
+  fs.writeFileSync(receiptPath, JSON.stringify({
+    ...receiptClaims,
+    verify_url: verifyUrl,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-receipt+jwt',
+      jws: receiptSig.jws,
+      kid: receiptSig.kid,
+      issuer_jwk: jwk,
+    },
+  }));
+  const unsignedPath = path.join(work, 'receipt-unsigned.json');
+  fs.writeFileSync(unsignedPath, JSON.stringify({
+    ...receiptClaims,
+    verify_url: verifyUrl,
   }));
   fs.writeFileSync(inclusionPath, JSON.stringify(tree.inclusion('cli-row')));
   fs.writeFileSync(headPath, JSON.stringify(head));
   fs.writeFileSync(jwksPath, JSON.stringify({ keys: [jwk] }));
+  const { currentAnchorWallets, resetAnchorWalletCache } = await import('../src/anchor-wallets.js');
+  resetAnchorWalletCache();
+  const walletsPath = path.join(work, 'wallets.json');
+  fs.writeFileSync(walletsPath, JSON.stringify(currentAnchorWallets()));
   const verifyRoot = path.resolve(gatewayRoot, '../../packages/verify');
   const built = spawnSync(path.join(verifyRoot, 'node_modules/.bin/tsc'), [], { cwd: verifyRoot, encoding: 'utf8' });
   assert.equal(built.status, 0, built.stdout + built.stderr);
@@ -2656,10 +2680,21 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     '--solana-rpc', `http://127.0.0.1:${rpcPort}`,
     '--jwks-file', jwksPath,
     '--trusted-kid', signed.kid,
+    '--anchor-wallets-file', walletsPath,
     '--no-issuer-history',
+    '--no-preimage',
     '--json',
   ];
   try {
+    const unsigned = await runCli([cli, unsignedPath, ...args.slice(2)]);
+    assert.equal(unsigned.status, 1, unsigned.stdout + unsigned.stderr);
+    const unsignedBody = JSON.parse(unsigned.stdout);
+    assert.equal(unsignedBody.overall, 'failed');
+    assert.equal(unsignedBody.receipt_check.overall, 'partial');
+    assert.ok(
+      unsignedBody.errors.includes('No issuer signature present on receipt'),
+      unsignedBody.errors.join(','),
+    );
     const ok = await runCli(args);
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     const forgedClaims = epochRecordClaims({ epoch1Root: 'ab'.repeat(32) });
@@ -2718,9 +2753,15 @@ test('epoch 1 inclusion names the pin anchors and the closed head is signed', as
   assert.equal(historical.anchors.solana.cluster, 'mainnet-beta');
   assert.equal(historical.anchors.solana.memo, EPOCH1_FINAL_SOLANA_MEMO);
   assert.equal(historical.anchors.solana.slot, 452921175);
+  assert.equal(historical.anchors.base.from, '0x1844D1F5FE42aff1Cce6F776514Fd40374079582');
+  assert.equal(historical.anchor_from, '0x1844D1F5FE42aff1Cce6F776514Fd40374079582');
+  assert.equal(historical.anchors.solana.fee_payer, 'BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD');
   assert.equal(verifyTreeHead(historical).valid, true);
-  assert.equal(epochRecordClaims().epochs[0].final_root, EPOCH1_FINAL_ROOT);
-  assert.equal(epochRecordClaims().epochs[1].opening_root, EPOCH2_OPENING_ROOT);
+  const epochClaims = epochRecordClaims();
+  assert.equal(JSON.stringify(epochClaims.epochs).includes('fee_payer'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(epochClaims, 'fee_payer'), false);
+  assert.equal(epochClaims.epochs[0].final_root, EPOCH1_FINAL_ROOT);
+  assert.equal(epochClaims.epochs[1].opening_root, EPOCH2_OPENING_ROOT);
 
   const rows = [
     { task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af', row_hash: 'row-1' },

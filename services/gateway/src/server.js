@@ -85,6 +85,7 @@ import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { configureIssuerHistoryStore, writeIssuerHistory } from './issuer-history.js';
+import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { coverageForLedger } from './export-coverage.js';
@@ -3735,6 +3736,17 @@ export function createApp() {
       return writeIssuerHistory(res, req.query);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET issuer-history error');
+      return res.status(500).json({ error: 'internal', message: err.message });
+    }
+  });
+
+  // Anchor wallets the verifier accepts besides the package pin.
+  // issuer_root and dns are reserved for the Base registry and _issuer.chit402.com.
+  app.get('/.well-known/anchor-wallets.json', (req, res) => {
+    try {
+      return writeAnchorWallets(res);
+    } catch (err) {
+      logger.error({ err, reqId: req.id }, 'GET anchor-wallets error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
   });
