@@ -220,6 +220,108 @@ test('GET /inclusion rejects a tree_size past the live tree', async () => {
   });
 });
 
+function parkClosed(tree, heads) {
+  const closed = {
+    epoch: tree.epoch,
+    status: 'closed',
+    leaves: tree.leaves.map((row) => Buffer.from(row)),
+    byTask: new Map(tree.byTask),
+    heads,
+    meta: tree.meta.map((row) => ({ ...row })),
+    prevEpochRoot: tree.prevEpochRoot,
+    prevEpochSize: tree.prevEpochSize,
+  };
+  tree.closedEpochs.push(closed);
+  tree.epoch += 1;
+  tree.leaves = [];
+  tree.meta = [];
+  tree.byTask = new Map();
+  tree.heads = [];
+  tree.prevEpochRoot = null;
+  tree.prevEpochSize = 0;
+  return closed;
+}
+
+test('a closed epoch verifies against its pinned final head and rejects a different or newer head', async () => {
+  await withAnchorKey(async () => {
+    const tree = new ReceiptMerkleTree();
+    tree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-closed-'));
+    tree.appendReceipt('leaf-a', 'ra', { publish: false });
+    tree.appendReceipt('leaf-b', 'rb', { publish: false });
+    tree.appendReceipt('leaf-c', 'rc', { publish: false });
+    const daily = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
+    assert.equal(daily.tree_size, 4);
+    tree.appendReceipt('leaf-d', 'rd', { publish: false });
+    const pinned = await anchorAt(tree, '2026-10-08T12:00:00.000Z');
+    assert.equal(pinned.tree_size, 5);
+    assert.equal(headAnchorFacts(pinned).anchored, true);
+
+    const epochNo = tree.epoch;
+    parkClosed(tree, [daily]);
+    tree.signedClosedEpochHead = (n) => (Number(n) === epochNo ? pinned : null);
+
+    const late = tree.inclusion('leaf-d');
+    assert.equal(late.status, 'anchored');
+    assert.notEqual(late.status, 'pending_anchor');
+    assert.equal(late.tree_size, pinned.tree_size);
+    assert.equal(late.root, pinned.root);
+    assert.equal(late.head.root, pinned.root);
+    const lateLeaf = tree.closedEpochs[0].leaves[late.leaf_index];
+    assert.equal(verifyInclusion(lateLeaf, late.leaf_index, late.tree_size, late.root, late.proof), true);
+
+    const early = tree.inclusion('leaf-a');
+    assert.equal(early.status, 'anchored');
+    assert.equal(early.tree_size, pinned.tree_size);
+    assert.equal(verifyInclusion(
+      tree.closedEpochs[0].leaves[early.leaf_index],
+      early.leaf_index,
+      early.tree_size,
+      early.root,
+      early.proof,
+    ), true);
+
+    tree.signedClosedEpochHead = () => ({ ...pinned, root: 'cd'.repeat(32) });
+    assert.throws(
+      () => tree.inclusion('leaf-d'),
+      (err) => err.code === 'head_mismatch' || err.code === 'head_rejected',
+    );
+    assert.throws(
+      () => tree.inclusion('leaf-d', { treeSize: daily.tree_size }),
+      (err) => err.code === 'head_mismatch' || err.code === 'head_rejected',
+    );
+
+    const newerTree = new ReceiptMerkleTree();
+    newerTree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-newer-'));
+    newerTree.appendReceipt('leaf-a', 'ra', { publish: false });
+    newerTree.appendReceipt('leaf-b', 'rb', { publish: false });
+    newerTree.appendReceipt('leaf-c', 'rc', { publish: false });
+    const older = await anchorAt(newerTree, '2026-10-08T05:32:00.000Z');
+    newerTree.appendReceipt('leaf-d', 'rd', { publish: false });
+    const finalHead = await anchorAt(newerTree, '2026-10-08T12:00:00.000Z');
+    newerTree.appendReceipt('leaf-e', 're', { publish: false });
+    const newer = await anchorAt(newerTree, '2026-10-09T12:00:00.000Z');
+    assert.equal(newer.tree_size, finalHead.tree_size + 1);
+    const newerEpoch = newerTree.epoch;
+    parkClosed(newerTree, [older, newer]);
+    newerTree.signedClosedEpochHead = (n) => (Number(n) === newerEpoch ? finalHead : null);
+    assert.throws(
+      () => newerTree.inclusion('leaf-e'),
+      (err) => err.code === 'head_rejected',
+    );
+    assert.throws(
+      () => newerTree.inclusion('leaf-d', { treeSize: newer.tree_size }),
+      (err) => err.code === 'head_rejected',
+    );
+
+    const foreign = { ...finalHead, root: 'ab'.repeat(32) };
+    newerTree.closedEpochs[0].heads = [older, foreign];
+    assert.throws(
+      () => newerTree.inclusion('leaf-d'),
+      (err) => err.code === 'head_mismatch',
+    );
+  });
+});
+
 test('a pending leaf renders PENDING ahead of a carry-forward line', () => {
   const html = renderInclusionSection(
     {

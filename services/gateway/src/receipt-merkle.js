@@ -1001,20 +1001,68 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * Newest signed head whose root is on chain. The latest anchored head in
-   * publication order wins. An anchored head that fails its signature, or
-   * whose root is not the prefix of that size, is refused rather than
-   * replaced with an older head.
+   * Pinned final head for a closed epoch, or null when this epoch has none.
+   * The pin is the full-tree anchor. A smaller daily journal anchor is not it.
+   */
+  _pinnedClosedHead(epoch) {
+    if (!epoch || epoch.status !== 'closed' || typeof this.signedClosedEpochHead !== 'function') return null;
+    const signed = this.signedClosedEpochHead(epoch.epoch);
+    if (!signed || !headAnchorFacts(signed).anchored) return null;
+    return signed;
+  }
+
+  /**
+   * A closed epoch may keep earlier prefix anchors. A head newer than the
+   * pin, or a head that names a different root at the pin's size, is refused.
+   */
+  _rejectForeignClosedHead(epoch, pinned) {
+    const pinSize = Number(pinned.tree_size);
+    const pinRoot = normalizeRoot(pinned.root);
+    for (const head of epoch.heads || []) {
+      if (!head) continue;
+      const size = Number(head.tree_size);
+      const root = normalizeRoot(head.root);
+      if (Number.isSafeInteger(size) && size === pinSize && root === pinRoot) continue;
+      const anchored = headAnchorFacts(head).anchored;
+      const signed = Boolean(head.issuer_signature?.jws);
+      if (!anchored && !signed) continue;
+      if (!Number.isSafeInteger(size) || size > pinSize) {
+        throw inclusionError('head_rejected', 'closed epoch has a head newer than the pinned final head');
+      }
+      if (size === pinSize && root !== pinRoot) {
+        throw inclusionError('head_mismatch', 'closed epoch head does not match the pinned final head');
+      }
+      if (anchored && size >= 1 && size < pinSize && size <= epoch.leaves.length) {
+        const prefix = hex(rootOf(epoch.leaves.slice(0, size)));
+        if (root !== prefix) {
+          throw inclusionError('head_mismatch', 'closed epoch journal head root does not match the pinned tree');
+        }
+      }
+    }
+  }
+
+  /** Accepted pinned final head, or null when the closed epoch has no pin. */
+  _closedPinnedFrontier(epoch) {
+    const pinned = this._pinnedClosedHead(epoch);
+    if (!pinned) return null;
+    const accepted = this._acceptAnchoredHead(epoch, pinned);
+    this._rejectForeignClosedHead(epoch, accepted);
+    return accepted;
+  }
+
+  /**
+   * Newest signed head whose root is on chain. On a closed epoch the pinned
+   * final head wins over an earlier journal anchor. An anchored head that
+   * fails its signature, or whose root is not the prefix of that size, is
+   * refused rather than replaced with an older head.
    */
   _newestAnchoredHead(epoch) {
+    const pinned = this._closedPinnedFrontier(epoch);
+    if (pinned) return pinned;
     const heads = epoch.heads || [];
     for (let i = heads.length - 1; i >= 0; i -= 1) {
       if (!headAnchorFacts(heads[i]).anchored) continue;
       return this._acceptAnchoredHead(epoch, heads[i]);
-    }
-    if (epoch.status === 'closed' && typeof this.signedClosedEpochHead === 'function') {
-      const signed = this.signedClosedEpochHead(epoch.epoch);
-      if (signed && headAnchorFacts(signed).anchored) return this._acceptAnchoredHead(epoch, signed);
     }
     return null;
   }
@@ -1101,6 +1149,9 @@ export class ReceiptMerkleTree {
     const requested = options.treeSize == null || options.treeSize === '' ? null : Number(options.treeSize);
     const located = this._locate(taskId);
     const epoch = located || this._openEpoch();
+    // Fail closed before a proof or pending_anchor can hide a leaf that the
+    // pinned final head already covers, or serve a head the pin rejects.
+    if (epoch.status === 'closed') this._closedPinnedFrontier(epoch);
     if (requested != null) {
       const head = this._requireSignedHead(epoch, requested);
       if (!located) return null;
