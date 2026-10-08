@@ -201,7 +201,8 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
   assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
   assert.match(liveSpecimen, /chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96/, 'Live receipt specimen id locked');
-  assert.match(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card shows hub');
+  assert.match(receiptCard, /owner view/, 'Live receipt card points hub and model at the owner view');
+  assert.doesNotMatch(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card does not publish the hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
   assert.match(chitHome, /Audit a Base wallet/);

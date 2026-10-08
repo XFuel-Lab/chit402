@@ -152,7 +152,8 @@ process.env.OPENAI_GATEWAY_ALLOW_FALLBACK = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 
 const { createApp } = await import('../src/server.js');
-const { initAIListener } = await import('../src/ai-listener.js');
+const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
+const { buildReceipt, storedReceiptJson } = await import('../src/receipt.js');
 const { resetFloatManagerForTests } = await import('../src/provider-float.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const {
@@ -305,8 +306,15 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(paidBody.xfuel.provider_cogs.openrouter_generation, undefined);
   await openRouterReconcileSettled();
   const receiptRes = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}?format=json`);
-  const receipt = await receiptRes.json();
-  assert.equal(receiptRes.status, 200, JSON.stringify(receipt));
+  const shell = await receiptRes.json();
+  assert.equal(receiptRes.status, 200, JSON.stringify(shell));
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(JSON.stringify(shell).includes('gen-http-1'), false);
+  const stored = getAIListener().activeTasks.get(paidBody.xfuel.task_id);
+  const receipt = storedReceiptJson(buildReceipt(stored, {
+    signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+    persistSignature: false,
+  }));
   assert.equal(receipt.provider_cogs.actual, '5');
   assert.equal(receipt.provider_cogs.openrouter_generation.id, 'gen-http-1');
   assert.equal(receipt.provider_cogs.openrouter_generation.total_cost, '0.0000042');
@@ -523,7 +531,14 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
 
   await openRouterReconcileSettled();
   const receiptRes = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}?format=json`);
-  const receipt = await receiptRes.json();
+  const shell = await receiptRes.json();
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(JSON.stringify(shell).includes('paid-by-caller-to-OpenRouter'), false);
+  const stored = getAIListener().activeTasks.get(paidBody.xfuel.task_id);
+  const receipt = storedReceiptJson(buildReceipt(stored, {
+    signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+    persistSignature: false,
+  }));
   assert.equal(receipt.provider_cogs.label, 'paid-by-caller-to-OpenRouter');
   assert.equal(receipt.provider_cogs.actual ?? null, null);
   assert.equal(receipt.provider_cogs.reported_cost_usd, '0.00000083');
@@ -551,9 +566,11 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(storedClaims.openrouter.reported_cost_usd, '0.00000083');
   const page = await fetch(`${base}/receipt/${paidBody.xfuel.task_id}`);
   const html = await page.text();
-  assert.match(html, /\$0\.00000083/);
+  assert.match(html, /Unsigned shell/);
+  assert.equal(html.includes('0.00000083'), false);
   assert.equal(html.includes('8.3e-7'), false);
-  assert.match(html, /gen-http-1/);
+  assert.equal(html.includes('gen-http-1'), false);
+  assert.equal(html.includes('paid-by-caller-to-OpenRouter'), false);
   const generationHit = upstreamHits.find((h) => h.url.includes('/generation'));
   assert.equal(generationHit.authorization, `Bearer ${callerKey}`);
   assert.match(generationHit.url, /[?&]id=gen-http-1(?:&|$)/);

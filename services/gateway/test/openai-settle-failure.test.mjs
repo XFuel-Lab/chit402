@@ -95,13 +95,9 @@ test('settle then hub failure returns receipt, not 500', async () => {
   const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(receiptRes.status, 200);
   const publicReceipt = await receiptRes.json();
-  const publicView = mergeReceiptView(publicReceipt);
-  assert.equal(publicReceipt.schema, 'xfuel.receipt.v4');
-  assert.equal(publicReceipt.status, 'failed');
-  assert.equal(publicView.payment.collected, false);
-  assert.equal(publicReceipt.refund.refund_status, 'owed');
-  assert.equal(publicView.payment.ref, body.xfuel.payment.ref);
-  assert.equal(publicReceipt.refund.payment_ref, body.xfuel.payment.ref);
+  assert.equal(publicReceipt.schema, 'chit402.receipt_shell.v1');
+  assert.equal(publicReceipt.task_id, body.xfuel.task_id);
+  assert.equal(publicReceipt.issuer_signature, undefined);
 });
 
 test('settle then hub failure does not use payment processing failed', async () => {

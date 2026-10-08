@@ -60,14 +60,18 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
 
   const earlyRes = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(earlyRes.status, 200);
-  const early = await earlyRes.json();
+  const earlyShell = await earlyRes.json();
+  assert.equal(earlyShell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(earlyShell.issuer_signature, undefined);
+  const early = buildReceipt(task, { baseUrl: base, persistSignature: false });
   const earlyClaims = decodeReceiptClaims(early);
   assert.equal(earlyClaims.payment.ref, paymentRef);
   assert.equal(earlyClaims.claim_id, null);
   assert.equal(verifyIssuerForHtml(early).reason, 'claim_id_missing');
   assert.equal(task.issuerSignature?.jws, early.issuer_signature.jws);
 
-  const stillEarly = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
+  await fetch(`${base}/receipt/${taskId}?format=json`);
+  const stillEarly = buildReceipt(task, { baseUrl: base, persistSignature: false });
   assert.equal(stillEarly.issuer_signature.jws, early.issuer_signature.jws, 'no seat yet: genesis JWS stays');
 
   const { usageSettled, agentRegistry } = app.locals.__test;
@@ -96,7 +100,9 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
   assert.equal(verifyIssuerForHtml(booked).verified, true, verifyIssuerForHtml(booked).reason);
   assert.equal(task.issuerSignature.jws, booked.issuer_signature.jws);
 
-  const again = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
+  const againShell = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
+  assert.equal(againShell.schema, 'chit402.receipt_shell.v1');
+  const again = buildReceipt(task, { baseUrl: base, agentId: settled.agent_id, persistSignature: false });
   const againClaims = decodeReceiptClaims(again);
   assert.equal(againClaims.claim_id, String(settled.agent_id));
   assert.equal(verifyIssuerForHtml(again).verified, true, verifyIssuerForHtml(again).reason);

@@ -570,14 +570,21 @@ describe('HTTP session status + revoke + child handoff', () => {
     });
     listener.activeTasks.set(task.taskId, task);
 
-    const receipt = await (await fetch(`${base}/receipt/${task.taskId}?format=json`)).json();
+    const shell = await (await fetch(`${base}/receipt/${task.taskId}?format=json`)).json();
+    assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+    assert.equal(shell.issuer_signature, undefined);
+    const receipt = buildReceipt(getAIListener().activeTasks.get(task.taskId), {
+      signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+      persistSignature: false,
+    });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.agent_pubkey, AGENT.address);
     assert.equal(claims.delegation_hash, accepted.session.delegation_hash);
     assert.match(mergeReceiptView(receipt).session.agent_pubkey, /^0x/i);
 
     const html = await (await fetch(`${base}/receipt/${task.taskId}`)).text();
-    assert.match(html, /agent_pubkey delegation/);
+    assert.match(html, /Unsigned shell/);
+    assert.equal(html.includes(AGENT.address), false);
 
     const revokeTd = buildRevokeTypedData({
       agentPubkey: AGENT.address,
@@ -604,7 +611,10 @@ describe('HTTP session status + revoke + child handoff', () => {
     const listed = await (await fetch(`${base}/.well-known/revocations`)).json();
     assert.ok(listed.revocations.some((r) => r.delegation_hash.toLowerCase() === accepted.session.delegation_hash.toLowerCase()));
 
-    const after = await (await fetch(`${base}/receipt/${task.taskId}?format=json`)).json();
+    const after = buildReceipt(getAIListener().activeTasks.get(task.taskId), {
+      signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+      persistSignature: false,
+    });
     assert.equal(after.issuer_signature.jws, receipt.issuer_signature.jws);
   });
 
@@ -617,7 +627,12 @@ describe('HTTP session status + revoke + child handoff', () => {
     });
     listener.activeTasks.set(parent.taskId, parent);
 
-    const genesis = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const genesisShell = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    assert.equal(genesisShell.schema, 'chit402.receipt_shell.v1');
+    const genesis = buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
+      signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+      persistSignature: false,
+    });
     const genesisJws = genesis.issuer_signature.jws;
     assert.equal(decodeReceiptClaims(genesis).delegation_hash, null);
 
@@ -635,7 +650,10 @@ describe('HTTP session status + revoke + child handoff', () => {
     assert.equal(body.receipt.parent_receipt_id, parent.taskId);
     assert.equal(decodeReceiptClaims(body.receipt).agent_pubkey, AGENT.address);
 
-    const parentAgain = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
+    const parentAgain = buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
+      signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+      persistSignature: false,
+    });
     assert.equal(parentAgain.issuer_signature.jws, genesisJws);
   });
 

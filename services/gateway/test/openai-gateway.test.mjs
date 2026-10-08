@@ -314,8 +314,8 @@ test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', as
   const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
   assert.equal(receiptHtml.status, 200);
   const html = await receiptHtml.text();
-  assert.match(html, /<title>Chit receipt · UNMETERED · chit-[0-9a-f]{8}…<\/title>/);
-  assert.match(html, /property="og:title" content="Chit receipt · UNMETERED · chit-[0-9a-f]{8}…"/);
+  assert.match(html, /<title>Chit402 · xfuel-[0-9a-f-]+<\/title>/);
+  assert.match(html, /property="og:title" content="Chit402 · xfuel-[0-9a-f-]+"/);
   assert.match(html, new RegExp(`property="og:image" content="${base}/receipt/${body.xfuel.task_id}/og\\.png"`));
   assert.match(html, new RegExp(`name="twitter:image" content="${base}/receipt/${body.xfuel.task_id}/og\\.png"`));
   assert.ok(!html.includes('www.chit402.com/og-image.png'));
@@ -347,12 +347,12 @@ test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
   const res = await fetch(`${base}/receipt/${legacyId}`);
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.match(html, /<title>0\.002 USDC · openai-11111111[^<]+…<\/title>/);
-  assert.match(html, /property="og:title" content="0\.002 USDC · openai-11111111[^"]+…"/);
+  assert.match(html, /<title>Chit402 · openai-11111111[^<]+<\/title>/);
+  assert.match(html, /property="og:title" content="Chit402 · openai-11111111[^"]+"/);
   assert.match(html, new RegExp(`property="og:image" content="${base}/receipt/${legacyId}/og\\.png"`));
   assert.ok(!html.includes('www.chit402.com/og-image.png'));
   // openai-* prefix is NOT stripped (only xfuel- is)
-  assert.match(html, new RegExp(`class="taskid">${legacyId}<`));
+  assert.match(html, new RegExp(`<p>${legacyId}</p>`));
 
   const json = await fetch(`${base}/receipt/${legacyId}?format=json`);
   assert.equal(json.status, 200);

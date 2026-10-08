@@ -189,19 +189,12 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   const receiptRes = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(receiptRes.status, 200);
   const publicReceipt = await receiptRes.json();
-  const publicView = mergeReceiptView(publicReceipt);
-  assert.equal(publicReceipt.status, 'failed');
-  assert.equal(publicReceipt.proof_outcome, 'invalid');
-  assert.equal(publicView.route.model, 'akash/openai/gpt-oss-120b');
-  assert.equal(publicView.route.requested, undefined);
-  assert.equal(publicView.route.requested_model, undefined);
-  assert.equal(publicReceipt.route_meta.requested_model, undefined);
-  assert.equal(publicReceipt.route_meta.substituted, undefined);
-  assert.equal(publicView.route.substituted, undefined);
-  assert.equal(publicReceipt.refund.refund_status, 'owed');
-  assert.equal(publicView.payment.collected, false);
-  assert.equal(publicReceipt.refund.payer, body.xfuel.refund.payer);
-  assert.equal(publicReceipt.refund.amount, body.xfuel.refund.amount);
+  assert.equal(publicReceipt.schema, 'chit402.receipt_shell.v1');
+  assert.equal(publicReceipt.issuer_signature, undefined);
+  const published = JSON.stringify(publicReceipt);
+  assert.equal(published.includes('gpt-4o-mini'), false);
+  assert.equal(published.includes('gpt-oss-120b'), false);
+  assert.equal(publicReceipt.pay_to, null);
 
   const statusRes = await fetch(`${base}/task-status?task_id=${encodeURIComponent(taskId)}`);
   assert.equal(statusRes.status, 200);

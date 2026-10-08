@@ -28,6 +28,7 @@ process.env.ZAN_X402_GATEWAY_URL = facUrl;
 
 const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
+const { buildAuditorExport, renderAuditorHtml } = await import('../src/receipt.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 
 let server;
@@ -93,16 +94,15 @@ test('first paid call is settled; a repeat of the same payment is a replay', asy
   assert.equal(xfuel.usage_settled.idempotent_replay, false);
 
   const taskId = xfuel.task_id;
-  const auditor = await fetch(`${base}/receipt/${taskId}?format=auditor`);
-  assert.equal(auditor.status, 200);
-  const exp = await auditor.json();
+  const shell = await (await fetch(`${base}/receipt/${taskId}?format=auditor`)).json();
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  const exp = buildAuditorExport(xfuel);
   assert.equal(exp.checks.fee_bps_within_cap, true);
   assert.equal(exp.checks.rail_allowed, true);
   assert.equal(exp.checks.binding_ok, 'no_policy');
   assert.equal(exp.in_policy, true);
 
-  const html = await fetch(`${base}/receipt/${taskId}?format=auditor&view=html`);
-  const page = await html.text();
+  const page = renderAuditorHtml(exp);
   assert.match(page, /in policy/);
   assert.doesNotMatch(page, /policy check failed/);
 

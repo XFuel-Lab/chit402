@@ -23,6 +23,15 @@ export {
   createSignerPayer,
 } from './x402.js';
 export {
+  EIP712_DOMAIN_NAME,
+  OWNER_STATEMENT,
+  SOLANA_PREFIX,
+  typedDataFor,
+  signChallenge,
+  type OwnerChallenge,
+  type OwnerScope,
+} from './owner-view.js';
+export {
   canonicalReceiptPayload,
   verifyReceiptSignature,
   verifyReceiptEcdsa,
@@ -641,6 +650,8 @@ export class XFuelClient {
   private readonly retryBaseMs: number;
   /** Resolved API base URL (used to build client-side receipt/verify links). */
   readonly baseUrl: string;
+  private ownerToken: string | null = null;
+  private readonly salts = new Map<string, string>();
 
   constructor(options: XFuelClientOptions = {}) {
     const {
@@ -1004,11 +1015,54 @@ export class XFuelClient {
     tool_choice?: TaskRequestParams['tool_choice'];
     proof_tier?: string;
   }): Promise<ChatCompletionResponse> {
-    const { data } = await this.http.post<ChatCompletionResponse>(
+    const response = await this.http.post<ChatCompletionResponse>(
       '/v1/chat/completions',
       body,
     );
+    const saltHeader = response.headers?.['x-chit-request-salt'];
+    const taskId = (response.data as { xfuel?: { task_id?: string } } | undefined)?.xfuel?.task_id;
+    if (typeof saltHeader === 'string' && saltHeader && taskId) {
+      this.salts.set(String(taskId), saltHeader);
+    }
+    return response.data;
+  }
+
+  /** Local salt captured from `X-Chit-Request-Salt` on a paying call. Never logged. */
+  localSalt(receiptId: string): string | null {
+    return this.salts.get(receiptId) ?? null;
+  }
+
+  async getOwnerChallenge(scope: import('./owner-view.js').OwnerScope) {
+    const { data } = await this.http.post('/v1/receipts/owner/challenge', { scope });
     return data;
+  }
+
+  async openOwnerSession(body: {
+    challenge: import('./owner-view.js').OwnerChallenge;
+    signature: string;
+    signer: string;
+    kind: 'evm' | 'solana' | 'agent' | 'erc1271' | 'erc6492';
+  }) {
+    const { data } = await this.http.post('/v1/receipts/owner/session', body);
+    if (data && typeof data.token === 'string') this.ownerToken = data.token;
+    return data;
+  }
+
+  async getPrivateReceipt(receiptId: string) {
+    const { verifyOwnerJws } = await import('./owner-view.js');
+    const response = await this.http.get(`/v1/receipts/${encodeURIComponent(receiptId)}/owner`, {
+      headers: this.ownerToken ? { Authorization: `Bearer ${this.ownerToken}` } : {},
+    });
+    const data = response.data as { jws?: string; salt?: string | null; private_fields?: unknown };
+    if (typeof data?.salt === 'string' && data.salt) this.salts.set(receiptId, data.salt);
+    const verified = await verifyOwnerJws(data?.jws, async (path: string) => {
+      const jwks = await this.http.get(path);
+      return jwks.data;
+    });
+    if (!verified.ok) {
+      throw new XFuelApiError('owner receipt failed verification', 0, verified.reason || 'invalid_jws');
+    }
+    return { jws: data.jws, salt: data.salt ?? this.salts.get(receiptId) ?? null, private_fields: data.private_fields ?? null };
   }
 
   // ── Polling helper ─────────────────────────────────────────────────────

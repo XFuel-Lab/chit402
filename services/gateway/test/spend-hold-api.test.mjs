@@ -163,9 +163,10 @@ test('release returns capacity and settle signs once', async () => {
     const got = await fetch(`${base}/receipt/${taskId}?format=json`);
     assert.equal(got.status, 200);
     const stored = await got.json();
-    assert.equal(stored.issuer_signature.jws, first.json.receipt.issuer_signature.jws);
-    assert.equal(stored.verify_url, first.json.verify_url);
-    const html = renderReceiptHtml(stored);
+    assert.equal(stored.schema, 'chit402.receipt_shell.v1');
+    assert.equal(stored.issuer_signature, undefined);
+    assert.equal(JSON.stringify(stored).includes(PAYER), false);
+    const html = renderReceiptHtml(first.json.receipt);
     assert.match(html, /ES256 signed receipt/);
     assert.match(html, new RegExp(PAYER));
     assert.match(html, /issuer_signature|JWKS/);

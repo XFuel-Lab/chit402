@@ -1,8 +1,27 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// Settle signs with the gateway issuer. CI leaves NODE_ENV unset, so that
+// path is production and refuses to mint an ephemeral key. Install a test
+// P-256 key and its thumbprint before the gateway modules load. Do not set
+// ALLOW_EPHEMERAL_ISSUER_KEY: a missing key must still fail closed.
+function installTestIssuerKey() {
+  if (String(process.env.ISSUER_PRIVATE_KEY || '').trim()) return;
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  process.env.ISSUER_PRIVATE_KEY = Buffer.from(
+    privateKey.export({ type: 'pkcs8', format: 'pem' }),
+  ).toString('base64');
+  if (String(process.env.ISSUER_KID || '').trim()) return;
+  const jwk = publicKey.export({ format: 'jwk' });
+  const canonical = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
+  process.env.ISSUER_KID = crypto.createHash('sha256').update(canonical).digest('base64url');
+}
+
+installTestIssuerKey();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const gatewaySrc = path.resolve(here, '../../../services/gateway/src');

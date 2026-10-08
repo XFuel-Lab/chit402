@@ -2170,6 +2170,18 @@ export {
   type IssuerHistoryPin,
 } from './issuer-history.js';
 
+export {
+  isReceiptShell,
+  shellFromHolder,
+  compareShellToJws,
+  holderDocumentFromOwnerView,
+  shellHolderVerdict,
+  openV11Commitment,
+  decodeJwsPayload as decodeShellJwsPayload,
+  SHELL_SCHEMA,
+  INCLUDED_SHELL_LINE,
+} from './shell.js';
+
 export default {
   verifyBinding,
   verifyIssuerSignature,

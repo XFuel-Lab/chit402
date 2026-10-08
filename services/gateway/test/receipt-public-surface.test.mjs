@@ -241,7 +241,7 @@ test('error bodies are fixed and do not echo the request', async () => {
   }
   const proto = await fetchText(`/receipt/${A}/preimage/__proto__`);
   assert.notEqual(proto.text.trim(), '{}');
-  assert.deepEqual(JSON.parse(proto.text), { error: 'preimage_unavailable' });
+  assert.deepEqual(JSON.parse(proto.text), { error: 'not_found' });
 });
 
 test('a thrown refusal error does not return err.message', async () => {
@@ -369,23 +369,19 @@ test('negotiated receipt responses are private and preimages do not publish the 
   }
 
   const field = await fetchText(`/receipt/${A}/preimage/tree_head_hash`);
-  assert.equal(field.status, 200, field.text.slice(0, 160));
+  assert.equal(field.status, 404, field.text.slice(0, 160));
+  assert.deepEqual(JSON.parse(field.text), { error: 'not_found' });
   assert.match(field.headers.get('cache-control') || '', /private/);
   assert.match(field.headers.get('cache-control') || '', /no-store/);
   assertNoForeign(field.text, 'field preimage');
-  const parsed = JSON.parse(field.text);
-  assert.equal(parsed.leaves, undefined);
-  const foreignLeaf = leafHash(`${B}|${ROW_B}`);
-  const stripped = field.text.replace(/"hash":"[0-9a-f]{64}"/g, '"hash":""');
-  assert.equal(stripped.includes(foreignLeaf), false, 'foreign leaf hash outside a sibling hash');
 
   const canonical = await fetchText(`/receipt/${A}/preimage`);
   assertNoForeign(canonical.text, 'canonical preimage');
-  if (canonical.status === 200) {
-    assert.match(canonical.headers.get('cache-control') || '', /public/);
-  } else {
-    assert.match(canonical.headers.get('cache-control') || '', /no-store/);
-  }
+  assert.equal(canonical.status, 200, canonical.text.slice(0, 160));
+  assert.match(canonical.headers.get('cache-control') || '', /private/);
+  assert.match(canonical.headers.get('cache-control') || '', /no-store/);
+  const shellDoc = JSON.parse(canonical.text);
+  assert.equal(shellDoc.schema, 'chit402.receipt_shell.v1');
 
   const card = await fetchText(`/receipt/${A}/og.png`);
   assert.equal(card.status, 200, card.text.slice(0, 80));
@@ -453,7 +449,7 @@ test('a disclosing epoch record serves the last signed v1 or 404', async () => {
   }
 });
 
-test('a pre-leaf canonical preimage is not publicly cacheable', async () => {
+test('a public shell preimage is not publicly cacheable', async () => {
   const pre = await fetchText(`/receipt/${PRE}/preimage`);
   assert.equal(pre.status, 200, pre.text.slice(0, 180));
   assert.match(pre.headers.get('cache-control') || '', /private/);
@@ -464,8 +460,9 @@ test('a pre-leaf canonical preimage is not publicly cacheable', async () => {
   assert.match(meta.headers.get('cache-control') || '', /no-store/);
   const leafed = await fetchText(`/receipt/${A}/preimage`);
   assert.equal(leafed.status, 200, leafed.text.slice(0, 160));
-  assert.match(leafed.headers.get('cache-control') || '', /public/);
-  assert.match(leafed.headers.get('cache-control') || '', /max-age=300/);
+  assert.match(leafed.headers.get('cache-control') || '', /private/);
+  assert.match(leafed.headers.get('cache-control') || '', /no-store/);
+  assert.equal((leafed.headers.get('cache-control') || '').includes('max-age=300'), false);
 });
 
 test('public receipt views drop unsigned token, route, stamp, and float fields', async () => {
@@ -494,23 +491,20 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   const json = await fetchText(`/receipt/${A}?format=json`);
   assert.equal(json.status, 200, json.text.slice(0, 160));
   const doc = JSON.parse(json.text);
-  assert.equal(doc.usage?.prompt_tokens, undefined);
-  assert.equal(doc.usage?.completion_tokens, undefined);
-  assert.equal(doc.usage?.total_tokens, undefined);
-  assert.equal(doc.route.resolved, undefined);
-  assert.equal(doc.route.requested, undefined);
-  assert.equal(doc.route.requested_model, undefined);
-  assert.equal(doc.route.substituted, undefined);
-  assert.equal(doc.route_meta.requested_model, undefined);
-  assert.equal(doc.route.model.includes('Llama'), true);
-  assert.equal(doc.provider_cogs.below_low_water, undefined);
-  assert.equal(doc.provider_cogs.actual, '12');
+  assert.equal(doc.schema, 'chit402.receipt_shell.v1');
+  assert.equal(doc.unsigned, true);
+  assert.equal(doc.issuer_signature, undefined);
+  assert.equal(doc.usage, undefined);
+  assert.equal(doc.route, undefined);
+  assert.equal(doc.provider_cogs, undefined);
+  assert.equal(json.text.includes('Llama'), false);
   assert.equal(json.text.includes('xfuel/auto'), false);
   assert.equal(json.text.includes('4242'), false);
   assert.equal(json.text.includes('4343'), false);
   assert.equal(json.text.includes('below_low_water'), false);
   const again = await fetchText(`/receipt/${A}?format=json`);
-  assert.equal(JSON.parse(again.text).issuer_signature.jws, doc.issuer_signature.jws);
+  assert.equal(JSON.parse(again.text).schema, doc.schema);
+  assert.equal(JSON.parse(again.text).task_id, doc.task_id);
 
   const html = await fetchText(`/receipt/${A}`);
   assert.equal(html.status, 200);

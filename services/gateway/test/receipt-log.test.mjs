@@ -238,11 +238,11 @@ test('an empty directory with the fresh-genesis flag boots and logs loudly', asy
       assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
       const health = await fetch(`${base}/health`);
       const healthBody = await health.json();
-      assert.equal(healthBody.receipt_log.consecutive_failures, 0);
-      assert.equal(healthBody.receipt_log.last_bundle_ok_at, null);
-      assert.equal(healthBody.receipt_log.blocked_intents, 0);
-      assert.equal(healthBody.receipt_log.pending_intents, 0);
-      assert.equal(healthBody.receipt_log.last_error, null);
+      assert.equal(healthBody.status, 'ok');
+      assert.equal(healthBody.free_tier, 'available');
+      assert.equal(healthBody.last_anchored_root, null);
+      assert.equal(healthBody.last_anchored_tx, null);
+      assert.equal(healthBody.receipt_log, undefined);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
@@ -1048,13 +1048,16 @@ test('health reports blocked and pending anchor intents', async () => {
   try {
     const health = await fetch(`http://127.0.0.1:${server.address().port}/health`);
     const body = await health.json();
-    assert.equal(body.receipt_log.blocked_intents, 1);
-    assert.equal(body.receipt_log.pending_intents, 1);
-    assert.ok(body.receipt_log.oldest_blocked_age_s >= 3600);
-    assert.equal(body.receipt_log.last_anchored_root, anchoredRoot);
-    assert.equal(body.receipt_log.last_anchored_tx, `0x${'22'.repeat(32)}`);
-    assert.equal(body.receipt_log.last_error, 'rpc_error');
-    assert.equal(body.receipt_log.stuck_pending_age_s, null);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.free_tier, 'available');
+    assert.equal(body.last_anchored_root, anchoredRoot);
+    assert.equal(body.last_anchored_tx, `0x${'22'.repeat(32)}`);
+    assert.equal(body.receipt_log, undefined);
+    const log = (await import('../src/receipt-merkle.js')).getReceiptMerkleTree().bundleStatus();
+    assert.equal(log.blocked_intents, 1);
+    assert.equal(log.pending_intents, 1);
+    assert.ok(log.oldest_blocked_age_s >= 3600);
+    assert.equal(log.last_error, 'rpc_error');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     if (prevDir == null) delete process.env.RECEIPT_LOG_DIR;
@@ -1358,7 +1361,9 @@ test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', asyn
     try {
       const health = await fetch(`http://127.0.0.1:${server.address().port}/health`);
       const body = await health.json();
-      assert.equal(body.receipt_log.last_error, 'anchor_chain_mismatch');
+      assert.equal(body.status, 'degraded');
+      assert.equal(body.free_tier, 'available');
+      assert.equal(body.receipt_log, undefined);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

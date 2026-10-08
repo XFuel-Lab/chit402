@@ -37,6 +37,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { ceilingErrorBody, parseAtomic } from './spend-hold.js';
+import { toPublicShell } from './receipt-shell.js';
 import {
   buildVerifyUrl,
   canonicalSignedClaims,
@@ -412,10 +413,10 @@ export function createSpendHoldService({
         const taskId = decodeURIComponent(pathname.slice('/receipt/'.length)).replace(/\.json$/, '');
         const found = lookup(taskId);
         if (!found) {
-          json(res, 404, { error: { code: 'not_found', message: 'receipt not found' } });
+          json(res, 404, { error: 'not_found' });
           return;
         }
-        json(res, 200, found);
+        json(res, 200, toPublicShell(found));
         return;
       }
 

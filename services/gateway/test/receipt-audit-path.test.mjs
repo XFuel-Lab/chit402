@@ -17,7 +17,9 @@ delete process.env.SOLANA_RPC_URL;
 
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
-const { getReceiptMerkleTree, resetReceiptMerkleTree } = await import('../src/receipt-merkle.js');
+const { getReceiptMerkleTree, resetReceiptMerkleTree, publicLogWitness } = await import('../src/receipt-merkle.js');
+const { buildReceipt } = await import('../src/receipt.js');
+const { withPublicPreimages } = await import('../src/receipt-preimage.js');
 const logger = (await import('../src/logger.js')).default;
 
 const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
@@ -151,18 +153,26 @@ test('a public receipt at index > 0 shows only its own leaf across tree sizes', 
     assert.match(json.headers.get('cache-control') || '', /no-store/);
     assertNoForeign(json.text, row.taskId, `json ${row.taskId}`);
     const doc = JSON.parse(json.text);
-    const field = doc.preimages?.fields?.tree_head_hash;
-    assert.ok(field, `missing audit field for ${row.taskId}`);
-    assert.equal(field.leaf.task_id, row.taskId);
-    assert.equal(field.leaf.preimage_utf8, row.body);
-    assert.equal(field.audit_path.index, row.index);
-    assert.equal(field.audit_path.tree_size, row.index + 1);
-    assert.equal(field.audit_path.root, field.hash);
-    assert.ok(Array.isArray(field.audit_path.siblings));
-    for (const step of field.audit_path.siblings) {
+    assert.equal(doc.schema, 'chit402.receipt_shell.v1');
+    assert.equal(doc.task_id, row.taskId);
+    assert.equal(doc.issuer_signature, undefined);
+    const audit = getReceiptMerkleTree().publicPrefixAudit(row.taskId, (id) => {
+      const hit = planted.find((item) => item.taskId === id);
+      if (!hit) return null;
+      const split = hit.body.indexOf('|');
+      return split === -1 ? null : hit.body.slice(split + 1);
+    });
+    assert.equal(audit.ok, true, `${row.taskId} ${audit.reason}`);
+    assert.equal(audit.leaf.task_id, row.taskId);
+    assert.equal(audit.leaf.preimage_utf8, row.body);
+    assert.equal(audit.leaf_index, row.index);
+    assert.equal(audit.tree_size, row.index + 1);
+    assert.ok(Array.isArray(audit.siblings));
+    for (const step of audit.siblings) {
       assert.deepEqual(Object.keys(step), ['hash']);
       assert.match(step.hash, /^[0-9a-f]{64}$/);
     }
+    assertNoForeign(JSON.stringify(audit), row.taskId, `audit ${row.taskId}`);
     const html = await fetchText(`/receipt/${row.taskId}`);
     assert.equal(html.status, 200);
     assert.match(html.type, /html/);
@@ -222,7 +232,25 @@ test('query params, Accept, format, and the verify page cannot restore other lea
 test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does not', async () => {
   const res = await fetchText(`/receipt/${SPECIMEN}?format=json`);
   assert.equal(res.status, 200);
-  const receipt = JSON.parse(res.text);
+  const shell = JSON.parse(res.text);
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(shell.issuer_signature, undefined);
+  const task = getAIListener().activeTasks.get(SPECIMEN);
+  const tree = getReceiptMerkleTree();
+  const ledgerRow = httpApp.locals.__test.usageSettled.findByTask(SPECIMEN);
+  const built = buildReceipt(task, { persistSignature: false, agentId: 187, baseUrl: base });
+  const prefix = tree.publicPrefixAudit(SPECIMEN, (id) => {
+    const row = httpApp.locals.__test.usageSettled.findByTask(id);
+    return row?.row_hash ?? null;
+  });
+  const receipt = withPublicPreimages(
+    {
+      ...built,
+      ...(ledgerRow?.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
+      ...publicLogWitness(tree, SPECIMEN),
+    },
+    { baseUrl: base, prefix },
+  );
   const kid = receipt.issuer_signature.kid;
   const checked = await verifyReceipt(receipt, {
     trustedKids: [kid],

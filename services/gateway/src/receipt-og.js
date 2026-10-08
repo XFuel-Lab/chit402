@@ -23,9 +23,7 @@ export function buildReceiptOgSvg(receipt) {
   const view = mergeReceiptView(redactPublicReceipt(receipt));
   const meta = buildReceiptOgMeta(receipt, view);
   const displayId = displayTaskIdForShare(receipt.task_id || view.task_id);
-  const proof = view.proof?.outcome === 'valid' ? 'Proven' : 'Signed';
-  const routeModel = view.route?.model ? String(view.route.model) : '';
-  const modelLine = routeModel.length > 48 ? `${routeModel.slice(0, 45)}…` : routeModel;
+  const proof = 'Shell';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${OG_WIDTH}" height="${OG_HEIGHT}" viewBox="0 0 ${OG_WIDTH} ${OG_HEIGHT}">
@@ -41,8 +39,8 @@ export function buildReceiptOgSvg(receipt) {
   <text x="88" y="210" fill="#e6e9ef" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="700">${escSvg(meta.title)}</text>
   <text x="88" y="280" fill="#8b95a7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="26">${escSvg(displayId)}</text>
   <text x="88" y="350" fill="#aab2c0" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="30">${escSvg(meta.description)}</text>
-  <text x="88" y="420" fill="#6b7488" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="24">${escSvg(proof)} receipt${modelLine ? ` · ${escSvg(modelLine)}` : ''}</text>
-  <text x="88" y="520" fill="#5b6370" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20">verify_url · no auth</text>
+  <text x="88" y="420" fill="#6b7488" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="24">${escSvg(proof)}</text>
+  <text x="88" y="520" fill="#5b6370" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20">unsigned shell</text>
 </svg>`;
 }
 

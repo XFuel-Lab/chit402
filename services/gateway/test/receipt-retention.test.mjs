@@ -114,10 +114,12 @@ test('GET /receipt/:id serves a pre-v9 receipt older than retention', async () =
     const res = await fetch(`${base}/receipt/${id}?format=json`);
     assert.equal(res.status, 200, id);
     const body = await res.json();
+    assert.equal(body.schema, 'chit402.receipt_shell.v1');
     assert.equal(body.task_id, STORED_ID);
-    assert.equal(body.issuer_signature.payload_version, 7);
-    assert.equal(body.payment.ref, PAYMENT_REF);
-    const claims = decodeReceiptClaims(body);
+    assert.equal(body.payload_version, 7);
+    assert.equal(body.payment_tx, TX);
+    const stored = getAIListener().activeTasks.get(id) || getAIListener().activeTasks.get(STORED_ID);
+    const claims = decodeReceiptClaims({ issuer_signature: stored.issuerSignature });
     assert.equal(claims.payload_version, 7);
     assert.equal(Object.prototype.hasOwnProperty.call(claims, 'tree_head_hash'), false);
   }
@@ -134,7 +136,8 @@ test('GET /receipt/by-tx redirects to the retained pre-v9 receipt', async () => 
   const followed = await fetch(location);
   assert.equal(followed.status, 200);
   const body = await followed.json();
+  assert.equal(body.schema, 'chit402.receipt_shell.v1');
   assert.equal(body.task_id, STORED_ID);
-  assert.equal(body.issuer_signature.payload_version, 7);
-  assert.equal(body.payment.ref, PAYMENT_REF);
+  assert.equal(body.payload_version, 7);
+  assert.equal(body.payment_tx, TX);
 });

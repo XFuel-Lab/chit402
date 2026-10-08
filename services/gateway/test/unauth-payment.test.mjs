@@ -102,7 +102,8 @@ process.env.ZAN_X402_GATEWAY_URL = facUrl;
 const { installEchoChainReader, clearChainReaderForTests } = await import('../src/x402-chain.js');
 installEchoChainReader();
 const { createApp } = await import('../src/server.js');
-const { initAIListener } = await import('../src/ai-listener.js');
+const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
+const { buildReceipt, storedReceiptJson } = await import('../src/receipt.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { resetRollingSettlement } = await import('../src/rolling-settlement.js');
 
@@ -182,7 +183,13 @@ async function waitComplete(taskId) {
       headers: { 'x-api-key': 'keyed-caller-1' },
     })).json();
     if (['completed', 'failed', 'fee_collected'].includes(status.status)) {
-      receipt = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
+      const shell = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
+      if (shell.schema !== 'chit402.receipt_shell.v1') continue;
+      const task = getAIListener().activeTasks.get(taskId);
+      receipt = storedReceiptJson(buildReceipt(task, {
+        signingSecret: process.env.RECEIPT_SIGNING_SECRET,
+        persistSignature: false,
+      }));
       if (receipt.provider_cogs?.actual || receipt.payment?.platform_fee != null) break;
     }
   }

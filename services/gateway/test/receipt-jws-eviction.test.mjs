@@ -102,7 +102,17 @@ function jwsParts(jws) {
 async function getReceipt(taskId) {
   const res = await fetch(`${base}/receipt/${taskId}?format=json`);
   assert.equal(res.status, 200, taskId);
-  return res.json();
+  const shell = await res.json();
+  assert.equal(shell.schema, 'chit402.receipt_shell.v1');
+  assert.equal(shell.issuer_signature, undefined);
+  const store = getAIListener().activeTasks;
+  const storedId = taskId.startsWith('chit-') ? `xfuel-${taskId.slice(5)}` : taskId;
+  const onDisk = JSON.parse(fs.readFileSync(store._fileFor(storedId), 'utf8'));
+  return buildReceipt(onDisk, {
+    baseUrl: BASE_URL,
+    persistSignature: false,
+    agentId: onDisk.meta?.agentId ?? onDisk.meta?.agent_id ?? null,
+  });
 }
 
 before(async () => {

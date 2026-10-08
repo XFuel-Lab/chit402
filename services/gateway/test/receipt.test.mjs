@@ -373,8 +373,8 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
 
 test('renderReceiptNotFound does not echo the requested id', () => {
   const html = renderReceiptNotFound('<b>x</b>');
-  assert.ok(!html.includes('<b>x</b>'));
-  assert.ok(!html.includes('&lt;b&gt;x&lt;/b&gt;'));
+  assert.equal(html.includes('<b>x</b>'), false);
+  assert.equal(html.includes('&lt;b&gt;x&lt;/b&gt;'), false);
   assert.ok(!html.includes('<b>'));
   assert.match(html, /Receipt not found/);
 });

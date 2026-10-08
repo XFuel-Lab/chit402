@@ -35,7 +35,7 @@ import {
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
-import { buildReceipt, buildAuditorExport, renderReceiptHtml, renderAuditorHtml, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson, stampCoveringTreeHead, redactPublicReceipt } from './receipt.js';
+import { buildReceipt, renderReceiptNotFound, buildVerifyUrl, baseUrlFromReq, normalizeTaskIdForLookup, proofOutcomeOf, verifyReceiptMultiKey, verifyOriginHandoff, verifyDestAck, issueSessionHandoffReceipt, mergeReceiptView, decodeReceiptClaims, storedReceiptJson, stampCoveringTreeHead, redactPublicReceipt } from './receipt.js';
 import {
   configureOpenRouterBroadcast,
   findOpenRouterPublicReceipt,
@@ -110,13 +110,24 @@ import { BookDisputeStore, CLAIM_TYPES, OUTCOME_TYPES, fileAndAdjudicate } from 
 import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
 import { BookA2aJobStore, handleA2aJobAction } from './book-a2a-escrow.js';
 import { BoardPostStore } from './board-posts.js';
-import { BoardJobStore } from './board-jobs.js';
+import { BoardJobStore, getAgentRecord } from './board-jobs.js';
+import { houseAgentIdsFromEnv } from './board-posts.js';
 import { registerBoardRoutes } from './board-routes.js';
 import { registerBoardJobRoutes } from './board-job-routes.js';
 import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
 import { peekStampWaiver, commitStampWaiver, configureStampWaiverPersistence } from './stamp-waiver.js';
 import { aawpReaders } from './agent-wallet.js';
-import { computeUsageStats, renderStatsHtml } from './telemetry.js';
+import { computeUsageStats } from './telemetry.js';
+import { bootSaltStore, assertV11IssuanceAllowed, setSaltStore } from './salt-store.js';
+import { openOwnerStore, resolveOwnerStorePath } from './owner-store.js';
+import {
+  toPublicShell,
+  renderReceiptShellHtml,
+  renderReceiptShellMissing,
+  shellPreimageBytes,
+} from './receipt-shell.js';
+import { createOwnerView, sendGenericNotFound } from './owner-view.js';
+import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
 import {
   computeDoorMetrics,
   computePublicDoorAggregate,
@@ -366,8 +377,8 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
 - Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
-- Receipt hash preimages: GET /receipt/:id/preimage is the stored canonical object (SHA-256 is payload_hash). GET /receipt/:id/preimage/:field stays the per-field convenience. output.hash stays private.
-- Live receipt: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96
+- Receipt hash preimages: GET /receipt/:id/preimage is the unsigned public shell (JCS). The holder signature is on the owner view. output.hash stays private.
+- Live receipt shell: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96 — public page is the shell. Full verify needs the payer wallet or the agent key.
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
@@ -396,9 +407,8 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
 - GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
-- GET  /health            : status, demo limits, floats. Token buckets with null
-  addresses are post-TGE, not live.
-- GET  /stats             : public-safe usage.
+- GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
+- GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
 ## Book (possession-gated spend ledger)
 
@@ -938,7 +948,13 @@ function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
  * Called from `startServer()` or directly in tests.
  */
 export function createApp() {
+  const saltStore = bootSaltStore(process.env, process.env.ISSUER_PRIVATE_KEY);
+  setSaltStore(saltStore);
+  assertV11IssuanceAllowed(saltStore, process.env);
+  const ownerStore = openOwnerStore(resolveOwnerStorePath(process.env));
+
   const app = express();
+  app.locals.ownerStore = ownerStore;
 
   // Cost-plus and the Tier-2 thresholds are only solvent together; each looks
   // reasonable alone. Logged at error level rather than thrown — a pricing
@@ -2866,6 +2882,35 @@ export function createApp() {
     return redactPublicReceipt(withPublicPreimages(receipt, { baseUrl, prefix }));
   }
 
+  function shellFor(receipt, taskId) {
+    let inclusion = null;
+    let signedHead = null;
+    const id = taskId || receipt?.task_id;
+    try {
+      const tree = getReceiptMerkleTree();
+      if (id && typeof tree.inclusion === 'function') inclusion = tree.inclusion(id);
+      if (typeof tree.latestSignedHead === 'function') signedHead = tree.latestSignedHead();
+    } catch {
+      inclusion = null;
+    }
+    return toPublicShell(receipt, { inclusion, signedHead });
+  }
+
+  function sendPublicShell(res, receipt, { wantsJson, taskId, pageUrl }) {
+    const shell = shellFor(receipt, taskId);
+    res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
+    if (wantsJson) return res.json(shell);
+    return res.type('html').send(renderReceiptShellHtml(shell, { pageUrl }));
+  }
+
+  function sendPublicMissing(res, wantsJson) {
+    res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
+    if (wantsJson) return res.status(404).json({ error: 'not_found' });
+    return res.status(404).type('html').send(renderReceiptShellMissing());
+  }
+
   function sendPreimage(res, preimages, field, raw) {
     res.set('Cache-Control', 'private, no-store');
     const entry = preimageField(preimages, field);
@@ -2930,7 +2975,7 @@ export function createApp() {
       const fmt = String(req.query.format || '').toLowerCase();
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 
-      if (!taskId) return sendPublicNotFound(res, !wantsJson);
+      if (!taskId) return sendPublicMissing(res, wantsJson);
 
       // Redirect to canonical verify_url so the URL shape is consistent.
       // GET /receipt/:id rebuilds a foreign row from its snapshot, including the issuer JWS.
@@ -2976,7 +3021,7 @@ export function createApp() {
       }
 
       const png = await renderReceiptOgPng(redactPublicReceipt(receipt));
-      // Own-data: title, this receipt's id, model, and proof label only.
+      // Own-data: title, this receipt's id, and the shell label only.
       // Not deterministic: proof and collection status change after issuance,
       // so a public immutable cache would pin a stale card. private, no-store.
       res.set('Cache-Control', 'private, no-store');
@@ -3164,37 +3209,21 @@ export function createApp() {
         }
       };
 
-      if (openRouterReceipt) {
-        if (rejectsTx(openRouterReceipt, null)) return sendPublicNotFound(res, !wantsJson);
-        const covered = withBookCoverage(openRouterReceipt);
-        if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(covered, { policy: null });
-          if (String(req.query.view || '') === 'html') {
-            return res.type('html').send(renderAuditorHtml(exportDoc));
-          }
-          return res.json(exportDoc);
-        }
-        const published = publishReceipt(covered, req);
-        if (wantsJson) return res.json(published);
-        return res.type('html').send(renderReceiptHtml(published));
-      }
+      const publishShell = (receipt, task) => {
+        if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
+        const pageUrl = `${baseUrl}/receipt/${rawTaskId}`;
+        return sendPublicShell(res, receipt, {
+          wantsJson,
+          taskId: receipt?.task_id || taskId,
+          pageUrl,
+        });
+      };
+
+      if (openRouterReceipt) return publishShell(withBookCoverage(openRouterReceipt), null);
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
-      if (foreignReceipt) {
-        if (rejectsTx(foreignReceipt, null)) return sendPublicNotFound(res, !wantsJson);
-        const covered = withBookCoverage(foreignReceipt);
-        if (wantsAuditor) {
-          const exportDoc = buildAuditorExport(covered, { policy: null });
-          if (String(req.query.view || '') === 'html') {
-            return res.type('html').send(renderAuditorHtml(exportDoc));
-          }
-          return res.json(exportDoc);
-        }
-        const published = publishReceipt(covered, req);
-        if (wantsJson) return res.json(published);
-        return res.type('html').send(renderReceiptHtml(published));
-      }
+      if (foreignReceipt) return publishShell(withBookCoverage(foreignReceipt), null);
 
       const aiListener = getAIListener();
       // ?tx= may confirm this id. It must not select a different receipt.
@@ -3202,12 +3231,8 @@ export function createApp() {
 
       if (!task) {
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
-        if (spendReceipt && !rejectsTx(spendReceipt, null)) {
-          const published = publishReceipt(spendReceipt, req);
-          if (wantsJson) return res.json(published);
-          return res.type('html').send(renderReceiptHtml(published));
-        }
-        return sendPublicNotFound(res, !wantsJson);
+        if (spendReceipt) return publishShell(spendReceipt, null);
+        return sendPublicMissing(res, wantsJson);
       }
 
       const receipt = buildReceipt(task, {
@@ -3220,24 +3245,9 @@ export function createApp() {
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
       });
-      if (rejectsTx(receipt, task)) return sendPublicNotFound(res, !wantsJson);
+      if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
 
-      if (wantsAuditor) {
-        let policy = null;
-        if (process.env.AUDITOR_POLICY_JSON) {
-          try { policy = JSON.parse(process.env.AUDITOR_POLICY_JSON); } catch { /* use default */ }
-        }
-        const exportDoc = buildAuditorExport(receipt, { policy });
-        if (String(req.query.view || '') === 'html') {
-          return res.type('html').send(renderAuditorHtml(exportDoc));
-        }
-        return res.json(exportDoc);
-      }
-
-      const covered = withBookCoverage(receipt);
-      const published = publishReceipt(wantsJson ? storedReceiptJson(covered) : covered, req);
-      if (wantsJson) return res.json(published);
-      return res.type('html').send(renderReceiptHtml(published));
+      return publishShell(withBookCoverage(receipt), task);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
       return res.status(500).json({ error: 'internal', message: 'internal error' });
@@ -3298,8 +3308,18 @@ export function createApp() {
     try {
       res.set('Cache-Control', 'private, no-store');
       const receipt = loadPreimageReceipt(req);
-      if (!receipt) return sendPublicNotFound(res, false);
-      return writeCanonicalPreimage(res, receipt, req.query);
+      if (!receipt) return sendPublicMissing(res, false);
+      const tx = txQueryValue(req);
+      if (tx === null || (tx && !receiptOwnsTx(tx, { receipt, ledgerRow: null }))) {
+        return sendPublicMissing(res, false);
+      }
+      const shell = shellFor(receipt, receipt.task_id);
+      const bytes = shellPreimageBytes(shell);
+      res.set('Cache-Control', 'private, no-store');
+      if (String(req.query.raw || '') === '1') {
+        return res.type('application/octet-stream').send(bytes);
+      }
+      return res.type('application/json').send(bytes);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt preimage error');
       return res.status(500).json({ error: 'internal', message: 'internal error' });
@@ -3307,15 +3327,8 @@ export function createApp() {
   });
 
   app.get('/receipt/:taskId/preimage/:field', rateLimit, (req, res) => {
-    try {
-      res.set('Cache-Control', 'private, no-store');
-      const published = loadPreimageReceipt(req);
-      if (!published) return sendPublicNotFound(res, false);
-      return sendPreimage(res, published?.preimages, req.params.field, req.query.raw);
-    } catch (err) {
-      logger.error({ err, reqId: req.id }, 'GET /receipt preimage field error');
-      return res.status(500).json({ error: 'internal', message: 'internal error' });
-    }
+    res.set('Cache-Control', 'private, no-store');
+    return res.status(404).json({ error: 'not_found' });
   });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -4110,37 +4123,36 @@ export function createApp() {
   // GET /health — Server health and aggregate metrics
   // ═══════════════════════════════════════════════════════════════════════
 
-  app.get('/health', async (_req, res) => {
+  function snapshotTasks() {
     try {
-      let aiStatus = null;
-      try {
-        const ai = getAIListener();
-        aiStatus = ai.getStatus();
-      } catch { /* not initialised */ }
+      const store = getAIListener().activeTasks;
+      return typeof store.allSnapshots === 'function'
+        ? store.allSnapshots()
+        : [...store.values()];
+    } catch {
+      return [];
+    }
+  }
 
-      // Not awaited: the result lands in time for a later call. See prove-gate.js.
-      refreshProverProbe(getSP1Prover());
-
-      return res.json({
-        status:      'ok',
-        // Field name stays. No in-repo weekday public-hosts smoke matches it
-        // (workflows, tests, scripts, docs). External monitors may still.
-        server:      'xfuel-m2m-api',
-        version:     '1.0.0',
-        timestamp:   new Date().toISOString(),
-        uptime_s:    Math.floor(process.uptime()),
+  function collectHouseMetrics() {
+    let aiStatus = null;
+    try { aiStatus = getAIListener().getStatus(); } catch { /* not initialised */ }
+    refreshProverProbe(getSP1Prover());
+    const tasks = snapshotTasks();
+    const now = Date.now();
+    const stats = computeUsageStats(tasks, { now });
+    const door = computePublicDoorAggregate(tasks, { now });
+    return {
+      health: {
+        status: 'ok',
+        server: 'xfuel-m2m-api',
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        uptime_s: Math.floor(process.uptime()),
         a2a_messages_total: _a2aMessages.size,
         webhooks_registered: getWebhookRegistry().list().length,
         ai_listener: aiStatus,
-        // Whether Tier-2 proofs are actually being produced right now. The prover
-        // is scaled to zero when idle to control cost, and that has to be legible
-        // to a partner without asking us. The probe runs in the background and
-        // this reports its last result, so a dead prover never slows /health.
         proofs: proofAvailability(!!getSP1Prover(), { tier2: tier2Gate() }),
-        // Tier-1 is the whole product, and it degrades *silently*: with no signing
-        // secret the receipt still renders and still looks authoritative, it just
-        // carries no signature. Report it so a missed env var is visible from
-        // outside instead of being discovered by a partner trying to verify.
         receipts: {
           tier1_signed: !!config.receipts?.signingSecret,
           ...(config.receipts?.signingSecret ? {} : {
@@ -4148,39 +4160,43 @@ export function createApp() {
           }),
         },
         receipt_log: getReceiptMerkleTree().bundleStatus(),
-        // What the unmetered surface is costing us today. Receipts are free by
-        // policy (ADR 0006); the compute behind them is not, and that subsidy was
-        // previously neither capped nor measured anywhere.
         free_tier: freeTierStatus(),
-        // Which models are actually serving. Theta's worker counts come free with
-        // the catalogue poll; AkashML publishes nothing, so its half is observed
-        // traffic plus the opt-in prober.
         provider_health: healthSnapshot(),
-        // Money we have served COGS for and not yet collected. Under rolling
-        // settlement (ADR 0008) every charge lands one call late, so a climbing
-        // figure here means settlement is failing, not that traffic is growing.
         rolling_settlement: rollingStatus(),
         fee_config: {
-          default_bps:    AI_TASK_FEE_BPS,
-          min_bps:        MIN_FEE_BPS,
-          max_bps:        MAX_FEE_BPS,
+          default_bps: AI_TASK_FEE_BPS,
+          min_bps: MIN_FEE_BPS,
+          max_bps: MAX_FEE_BPS,
           min_task_amount: MIN_TASK_AMOUNT,
-          a2a_relay_bps:  10,
-          revenue_split:  healthRevenueSplit(),
+          a2a_relay_bps: 10,
+          revenue_split: healthRevenueSplit(),
         },
-        // ADR 0005 fingerprint — prepaid float COGS (buyer rail remains USDC).
         provider_floats: getFloatManager({
           floatsJson: config.providerFloats?.json,
           cogsBps: config.providerFloats?.cogsBps,
           defaultProvider: config.providerFloats?.defaultProvider,
           enforce: config.providerFloats?.enforce,
-        }).publicSummary(), // ADR 0005 fingerprint
+        }).publicSummary(),
         chains: advertisedChains(),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
           ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo keys do not grant free completions. Pay with x402 USDC, or use a partner X-API-Key.' }
           : { enabled: false },
-      });
+      },
+      stats,
+      door,
+    };
+  }
+
+  app.get('/health', async (_req, res) => {
+    try {
+      const log = getReceiptMerkleTree().bundleStatus();
+      const degraded = (log?.consecutive_failures > 0) || !!log?.last_error;
+      return res.json(publicHealthBody({
+        degraded,
+        lastAnchoredRoot: log?.last_anchored_root ?? null,
+        lastAnchoredTx: log?.last_anchored_tx ?? null,
+      }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
       return res.status(503).json({ error: 'internal', code: 'health_failed' });
@@ -4195,31 +4211,37 @@ export function createApp() {
   // Short in-memory cache bounds disk IO. Public, rate-limited. See telemetry.js.
   // ═══════════════════════════════════════════════════════════════════════
 
-  let _statsCache = { at: 0, data: null };
+  let _statsCache = { at: 0, count: 0 };
   const STATS_TTL_MS = 15_000;
+
+  function publicReceiptCount() {
+    const now = Date.now();
+    if (!_statsCache.at || now - _statsCache.at > STATS_TTL_MS) {
+      let count = 0;
+      try {
+        const store = getAIListener().activeTasks;
+        const tasks = typeof store.allSnapshots === 'function'
+          ? store.allSnapshots()
+          : [...store.values()];
+        count = [...tasks].length;
+      } catch (err) {
+        if (String(err?.message || '').includes('not initialized')) count = 0;
+        else throw err;
+      }
+      _statsCache = { at: now, count };
+    }
+    return _statsCache.count;
+  }
 
   app.get('/stats', rateLimit, (req, res) => {
     try {
       const wantsJson =
         req.query.format === 'json' ||
         (req.headers.accept || '').includes('application/json');
-
-      const now = Date.now();
-      if (!_statsCache.data || now - _statsCache.at > STATS_TTL_MS) {
-        let tasks = [];
-        try {
-          const store = getAIListener().activeTasks;
-          tasks = typeof store.allSnapshots === 'function'
-            ? store.allSnapshots()
-            : [...store.values()];
-        } catch { /* listener not initialised — report zeros */ }
-        const stats = computeUsageStats(tasks, { now });
-        stats.door = computePublicDoorAggregate(tasks, { now });
-        _statsCache = { at: now, data: stats };
-      }
-
-      if (wantsJson) return res.json(_statsCache.data);
-      return res.type('html').send(renderStatsHtml(_statsCache.data));
+      const count = publicReceiptCount();
+      res.set('Cache-Control', 'private, no-store');
+      if (wantsJson) return res.json(publicStatsBody(count));
+      return res.type('html').send(renderPublicStatsHtml(count));
     } catch (err) {
       return sendPublicInternal(res, err, 'GET /stats error', 'stats_failed', req);
     }
@@ -4228,23 +4250,10 @@ export function createApp() {
   // GET /stats/door — public-safe door traffic aggregates (Activity page + sparklines).
   // Same door filter as private /v1/internal/door-metrics, but counts only.
   // No wallets, txs, task ids, status/network splits. Rate-limited, no auth.
-  let _doorPublicCache = { at: 0, data: null };
-  const DOOR_PUBLIC_TTL_MS = 15_000;
-
   app.get('/stats/door', rateLimit, (req, res) => {
     try {
-      const now = Date.now();
-      if (!_doorPublicCache.data || now - _doorPublicCache.at > DOOR_PUBLIC_TTL_MS) {
-        let tasks = [];
-        try {
-          const store = getAIListener().activeTasks;
-          tasks = typeof store.allSnapshots === 'function'
-            ? store.allSnapshots()
-            : [...store.values()];
-        } catch { /* listener not initialised — report zeros */ }
-        _doorPublicCache = { at: now, data: computePublicDoorAggregate(tasks, { now }) };
-      }
-      return res.json(_doorPublicCache.data);
+      res.set('Cache-Control', 'private, no-store');
+      return res.json(publicStatsBody(publicReceiptCount()));
     } catch (err) {
       return sendPublicInternal(res, err, 'GET /stats/door error', 'stats_door_failed', req);
     }
@@ -5336,6 +5345,68 @@ export function createApp() {
     commitStampWaiver,
   });
 
+  function loadFullReceipt(rawId) {
+    const baseUrl = config.service.publicBaseUrl || '';
+    const taskId = normalizeTaskIdForLookup(String(rawId || ''));
+    const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawId);
+    const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, ledgerRow })
+      || findOpenRouterPublicReceipt(rawId, { baseUrl, ledgerRow });
+    const foreignReceipt = !openRouterReceipt && ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
+      ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl })
+      : null;
+    if (openRouterReceipt || foreignReceipt) {
+      return { receipt: openRouterReceipt || foreignReceipt, ledgerRow, taskId };
+    }
+    let task = null;
+    try { task = _findTask(getAIListener(), taskId); } catch { task = null; }
+    if (!task) {
+      const spend = spendHoldService?.lookup?.(taskId) || spendHoldService?.lookup?.(rawId);
+      if (spend) return { receipt: spend, ledgerRow, taskId };
+      return null;
+    }
+    const receipt = buildReceipt(task, {
+      baseUrl,
+      signingSecret: config.receipts?.signingSecret,
+      coSignerSecret: config.receipts?.coSignerSecret,
+      viPolicy: config.verifiedInference,
+      agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
+      persistSignature: true,
+    });
+    return { receipt, ledgerRow, taskId };
+  }
+
+  function listOwnedReceipts() {
+    const rows = [];
+    let tasks = [];
+    try {
+      const store = getAIListener().activeTasks;
+      tasks = typeof store.values === 'function' ? [...store.values()] : [];
+    } catch { tasks = []; }
+    for (const task of tasks) {
+      if (!task?.taskId) continue;
+      const loaded = loadFullReceipt(task.taskId);
+      if (loaded) rows.push(loaded);
+    }
+    return rows;
+  }
+
+  const ownerView = createOwnerView({
+    store: ownerStore,
+    saltStore,
+    registry: agentRegistry,
+    loadReceipt: loadFullReceipt,
+    listReceipts: listOwnedReceipts,
+    houseMetrics: collectHouseMetrics,
+    houseAgentId: process.env.HOUSE_AGENT_ID || null,
+    housePayers: process.env.HOUSE_PAYER_WALLETS || '',
+    nonceTtlMs: process.env.OWNER_VIEW_NONCE_TTL_MS,
+    sessionTtlMs: process.env.OWNER_VIEW_SESSION_TTL_MS,
+    challengeMax: process.env.OWNER_VIEW_CHALLENGE_MAX,
+    fetchMax: process.env.OWNER_VIEW_FETCH_MAX,
+    notFoundBudgetMs: process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS,
+  });
+  ownerView.mount(app);
+
   registerBoardJobRoutes(app, {
     jobs: boardJobs,
     posts: boardPosts,
@@ -5360,6 +5431,27 @@ export function createApp() {
       } catch {
         // Listener is not up in some tests. The receipt is still returned on the job.
       }
+    },
+    gateAgentRecord(req, res) {
+      const started = Date.now();
+      const id = Number(req.params.agent_id);
+      const identity = Number.isInteger(id) && id > 0 ? agentRegistry.get(id) : null;
+      const session = ownerView.sessionFromReq(req);
+      const owns = !!(identity && session?.kind === 'agent' && Number(session.agentId) === id);
+      if (!owns) return sendGenericNotFound(res, started, 12);
+      const result = getAgentRecord(id, {}, {
+        registry: agentRegistry,
+        jobs: boardJobs,
+        ledger: usageSettled,
+        houseAgentIds: houseAgentIdsFromEnv(),
+        actor: { agent_id: id },
+      });
+      if (!result?.ok) return sendGenericNotFound(res, started, 12);
+      res.removeHeader('Access-Control-Allow-Origin');
+      res.removeHeader('Access-Control-Allow-Credentials');
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Vary', 'Authorization');
+      return res.status(200).json(result.body);
     },
   });
 
@@ -5386,7 +5478,7 @@ export function createApp() {
     res.status(500).json({ error: 'internal', message: 'Internal server error' });
   });
 
-  app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs };
+  app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs, ownerView, saltStore };
 
   return app;
 }

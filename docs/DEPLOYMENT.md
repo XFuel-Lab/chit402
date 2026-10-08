@@ -43,6 +43,16 @@ npx hardhat run deploy/base-verifier.cjs --network base
 
 Live mainnet verifier: `0x9373499645292715a2275A78eD65B14215C41c06` (8453).
 
+## Receipt shell rollout
+
+Public `GET /receipt/:id` is an unsigned shell. The holder JWS stays on the owner view. Ship in this order:
+
+1. Publish the `@xfuel/verify` candidate **0.3.4** (not published yet) and confirm with `npm view @xfuel/verify version`. npm **0.3.3** already rejects an untrusted issuer key on a full receipt. 0.3.4 is the candidate that also refuses VERIFIED when a shell's tree head is unsigned or missing, and that builds the shell from signed JWS claims only.
+2. Before `ISSUER_ROOT_ENABLED=true`, set `RECEIPT_SALT_DIR` and exactly one wrap-key source: `RECEIPT_SALT_WRAP_KEYS`, `RECEIPT_SALT_WRAP_KEY_FILE`, or `SALT_WRAP_KEY`. The wrap key file lives outside the salt data directory. The wrap key is not the issuer key.
+3. Put `OWNER_VIEW_DB` on a persistent volume so owner-view nonces survive a restart.
+4. Deploy the gateway that returns the shell on the public verify URL and keeps the JWS on the owner view.
+5. Update partner docs after those are live.
+
 ## Gateway
 
 ```bash

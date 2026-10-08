@@ -48,8 +48,8 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
 - GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
-- GET  /health            : status, demo limits, floats.
-- GET  /stats             : public-safe usage.
+- GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
+- GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
 ## Book (possession-gated spend ledger)
 

@@ -38,6 +38,15 @@ import {
 } from './anchor-witness.js';
 import { type EpochRecord } from './epoch.js';
 import { jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import {
+  compareShellToJws,
+  decodeJwsPayload,
+  holderDocumentFromOwnerView,
+  INCLUDED_SHELL_LINE,
+  isReceiptShell,
+  openV11Commitment,
+  shellHolderVerdict,
+} from './shell.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
@@ -208,6 +217,13 @@ Examples:
 
   # Pipe from curl
   curl -s https://api.chit402.com/receipt/task-123?format=json | xfuel-verify -
+
+  # Public shell. INCLUDED_SHELL is not VERIFIED.
+  xfuel-verify shell.json
+
+  # Owner view. VERIFIED needs a trusted issuer key, an inclusion proof,
+  # and a signed payment. The key inside the holder is not enough.
+  xfuel-verify shell.json --jws owner-view.json --inclusion inclusion.json --head head.json
 `;
 
 function parseArgs(args: string[]): {
@@ -251,8 +267,11 @@ function parseArgs(args: string[]): {
   issuerControlFile: string | null;
   version: boolean;
   anchorWalletsFile: string | null;
+  acceptShell: boolean;
+  jwsFile: string | null;
   salt: string | null;
   open: string[];
+  url: string | null;
 } {
   const result = {
     file: null as string | null,
@@ -295,8 +314,11 @@ function parseArgs(args: string[]): {
     issuerControlFile: null as string | null,
     version: false,
     anchorWalletsFile: null as string | null,
+    acceptShell: false,
+    jwsFile: null as string | null,
     salt: null as string | null,
     open: [] as string[],
+    url: null as string | null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -359,6 +381,12 @@ function parseArgs(args: string[]): {
       result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
+    } else if (arg === '--accept-shell') {
+      result.acceptShell = true;
+    } else if (arg === '--jws' && args[i + 1]) {
+      result.jwsFile = args[++i];
+    } else if (arg === '--url' && args[i + 1]) {
+      result.url = args[++i];
     } else if (arg === '--issuer-pin' && args[i + 1]) {
       result.issuerPinFile = args[++i];
     } else if (arg === '--issuer-pin-commit' && args[i + 1]) {
@@ -978,6 +1006,18 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
+
+  if (args.url && !args.jwsFile) {
+    try {
+      const response = await fetch(args.url);
+      await response.arrayBuffer();
+    } catch {
+      // A failed fetch is still not a pass.
+    }
+    console.log('owner_proof_required');
+    console.log('  Overall: OWNER_PROOF_REQUIRED');
+    return 1;
+  }
   let offlineWitness: ReturnType<typeof readOfflineWitness> | null = null;
   if (!anchorMode) {
     try {
@@ -988,7 +1028,9 @@ async function main(): Promise<number> {
     }
   }
 
-  if (anchorMode) return runAnchor(args);
+  // A shell plus a holder is not anchor mode. Inclusion is checked with the
+  // holder. Anchor mode would verify the unsigned shell and skip the key.
+  if (anchorMode && !args.jwsFile && !args.acceptShell) return runAnchor(args);
 
   if (!args.file) {
     console.log(HELP);
@@ -1001,6 +1043,131 @@ async function main(): Promise<number> {
   } catch (err) {
     console.error(`Error reading receipt: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
+  }
+
+  if (isReceiptShell(receipt) || args.acceptShell || args.jwsFile) {
+    if (!isReceiptShell(receipt)) {
+      console.error('Invalid shell: schema is not chit402.receipt_shell.v1');
+      return 3;
+    }
+    if (!args.jwsFile) {
+      console.log(INCLUDED_SHELL_LINE);
+      console.log('  Overall: INCLUDED_SHELL');
+      return args.acceptShell ? 0 : 1;
+    }
+    let holder: Record<string, unknown>;
+    try {
+      const text = readFileSync(args.jwsFile, 'utf8');
+      let parsed: Record<string, unknown> | string = text;
+      try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        parsed = text;
+      }
+      holder = holderDocumentFromOwnerView(parsed);
+    } catch (err) {
+      console.error(`Error reading JWS: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+    const shellDoc = receipt as unknown as Record<string, unknown>;
+    const compared = compareShellToJws(shellDoc, holder);
+    if (!compared.ok) {
+      console.log('shell_jws_mismatch');
+      if (compared.field) console.log(`  Field:         ${compared.field}`);
+      console.log('  Overall: FAILED');
+      return 1;
+    }
+    let jwks: Jwks | undefined;
+    if (args.jwksFile) {
+      try {
+        jwks = JSON.parse(readFileSync(args.jwksFile, 'utf8')) as Jwks;
+      } catch (err) {
+        console.error(`Error reading JWKS file: ${err instanceof Error ? err.message : String(err)}`);
+        return 3;
+      }
+    }
+    let inclusion = offlineWitness?.inclusion ?? null;
+    let head = offlineWitness?.head ?? null;
+    try {
+      if (args.inclusionFile) inclusion = readJson(args.inclusionFile) as AnchorInclusion;
+      if (args.headFile) head = readJson(args.headFile) as AnchorHead;
+    } catch (err) {
+      console.error(`Error reading inclusion: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+    const trustedKids = args.noTrustedKid
+      ? []
+      : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+    const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
+      jwks,
+      jwksUri: args.jwksUrl || undefined,
+      fetchJwks: args.fetchJwks,
+      trustedKids,
+      checkPayer: args.checkPayer,
+      rpcUrl: args.rpcUrl || undefined,
+      solanaRpcUrl: args.solanaRpcUrl || undefined,
+      requirePreimages: false,
+      skipIssuerHistory: args.noIssuerHistory || !args.issuerHistoryFile,
+      issuerHistory: null,
+      fetchIssuerHistory: false,
+      salt: args.salt,
+      head: head ?? undefined,
+      inclusion: inclusion ?? undefined,
+    });
+    const inclusionErrors = result.errors.filter((err) => /inclusion|leaf|row_hash|bad_root|tree_size|tree_head|no_leaf/.test(err));
+    const shellLeaf = (shellDoc.inclusion && typeof shellDoc.inclusion === 'object')
+      ? (shellDoc.inclusion as { leaf_hash?: unknown }).leaf_hash
+      : null;
+    const provedLeaf = inclusion && typeof (inclusion as { leaf?: unknown }).leaf === 'string'
+      ? (inclusion as { leaf: string }).leaf
+      : null;
+    // A head the user wrote by hand ({root, tree_size}) is not a log. The
+    // inclusion only counts against a head that carries an issuer JWS;
+    // verifyReceipt() checks that JWS against the same trust set.
+    const headSig = head && typeof head === 'object'
+      ? (head as { issuer_signature?: { jws?: unknown } }).issuer_signature
+      : null;
+    const headSigned = !!headSig && typeof headSig.jws === 'string' && headSig.jws.split('.').length === 3;
+    const verdict = shellHolderVerdict({
+      signatureValid: result.issuer_signature.valid === true,
+      keyTrusted: result.issuer_signature.key_trusted === true,
+      signatureReason: result.issuer_signature.reason || (result.issuer_signature.key_trusted ? null : 'key untrusted'),
+      inclusionSupplied: inclusion != null,
+      inclusionOk: inclusion != null && inclusionErrors.length === 0,
+      inclusionReason: inclusion == null ? 'inclusion_missing' : (inclusionErrors[0] || null),
+      headSigned,
+      paymentRef: result.tx,
+      bindingExpected: !!result.binding.expected,
+      bindingMatches: result.binding.matches === true,
+      shellLeaf: shellLeaf == null ? null : String(shellLeaf),
+      provedLeaf,
+    });
+    if (!verdict.verified || (result.overall !== 'verified' && result.overall !== 'verified_carried_forward')) {
+      const reason = verdict.reason || result.errors[0] || 'failed';
+      console.log(reason);
+      console.log('  Overall: FAILED');
+      return 1;
+    }
+    if (args.checkPayer && !result.payer.valid) {
+      console.log(result.payer.reason || 'payment_unchecked');
+      console.log('  Overall: FAILED');
+      return 1;
+    }
+    const issuer = holder.issuer_signature as { jws?: string } | undefined;
+    if (args.salt) {
+      const opened = openV11Commitment({
+        payload: decodeJwsPayload(issuer?.jws),
+        saltHex: args.salt || '',
+        body: Buffer.alloc(0),
+      });
+      if (!opened.ok) {
+        console.log(opened.reason || 'commitment_mismatch');
+        console.log('  Overall: FAILED');
+        return 1;
+      }
+    }
+    console.log('  Overall: VERIFIED');
+    return 0;
   }
 
   const v11 = (receipt as XFuelReceipt & { v?: number }).v === 11 || (receipt.issuer_signature?.jws

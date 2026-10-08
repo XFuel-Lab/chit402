@@ -1,8 +1,6 @@
 import type { CSSProperties } from 'react';
 import {
   LIVE_RECEIPT_AMOUNT_DISPLAY,
-  LIVE_RECEIPT_HUB,
-  LIVE_RECEIPT_MODEL,
   LIVE_RECEIPT_TASK_ID,
   LIVE_RECEIPT_VERIFY_URL,
 } from '../lib/liveReceiptSpecimen';
@@ -21,17 +19,9 @@ export default function LiveReceiptCard({ compact = false }: LiveReceiptCardProp
         <span className="badge badge-secondary">USDC · Base</span>
       </div>
       <p className="live-receipt-card-lede">
-        A real door receipt — hub, model, amount, and a public verify page (not a screenshot).
+        A real door receipt. The public page is an unsigned shell. Hub and model stay on the owner view.
       </p>
       <dl className="live-receipt-rows">
-        <div className="live-receipt-row">
-          <dt>Hub</dt>
-          <dd>{LIVE_RECEIPT_HUB}</dd>
-        </div>
-        <div className="live-receipt-row">
-          <dt>Model</dt>
-          <dd className="live-receipt-mono">{LIVE_RECEIPT_MODEL}</dd>
-        </div>
         <div className="live-receipt-row">
           <dt>Amount</dt>
           <dd className="live-receipt-mono">{LIVE_RECEIPT_AMOUNT_DISPLAY}</dd>
