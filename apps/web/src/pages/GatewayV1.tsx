@@ -80,16 +80,18 @@ export default function GatewayV1() {
           <h2>Which models can I pass today?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             <code>GET /v1/models</code> is the drop-in model id list (install path, not the product).
-            Wire hubs Theta and Akash sit behind the door; <code>xfuel/auto</code> picks one for fulfillment.
-            We do not proxy to third-party SaaS providers on that list.
+            It lists Theta EdgeCloud, Akash, <code>xfuel/auto</code>, and <code>openrouter/…</code> ids
+            (including <code>openrouter/fireworks/…</code>). OpenRouter on this host is bring-your-own-key:
+            send <code>X-OpenRouter-Key</code>. Chit does not resell that inference. <code>xfuel/auto</code>{' '}
+            picks a live model. The receipt names the hub that served the call.
           </p>
         </section>
 
         <section className="docs-section">
           <h2>What do I get back besides tokens?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            An HMAC-signed receipt naming the hub, the model, and the amount. The receipt attests
-            settlement and output hash. After paid calls, the book is available at{' '}
+            An issuer-signed receipt (ES256) naming the hub, the model, and the amount. The signature
+            does not prove USDC moved — confirm the transfer separately. After paid calls, the book is available at{' '}
             <code>GET|POST /v1/agents/:agent_id/book</code>—possession-gated spend log of hub,
             model, and amount.
           </p>

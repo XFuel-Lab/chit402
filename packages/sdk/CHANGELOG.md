@@ -3,6 +3,11 @@
 All notable changes to the Chit402 SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased — default host
+
+### Changed
+- `DEFAULT_BASE_URL` is `https://api.chit402.com`. Republish `xfuel-sdk` (and the `chit402-sdk` alias) for npm installs to pick this up.
+
 ## Unreleased — receipt payload v8
 
 ### Changed

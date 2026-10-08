@@ -264,7 +264,7 @@ export function renderStatsHtml(stats) {
   const usdcDollars = (Number(usdc.fee_amount) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
   const ns = stats.north_star || { paid_tasks_7d: 0, usdc_paid_tasks_7d: 0, usdc_fees_7d: '0' };
   const feeBasis = stats.payments.fee_basis || { excluded_tasks: 0, note: '' };
-  const usdcFees7dDollars = (Number(ns.usdc_fees_7d) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const usdcFees7dDollars = (Number(ns.usdc_fees_7d) / 1e6).toLocaleString(undefined, { maximumFractionDigits: 6 });
 
   return `<!doctype html>
 <html lang="en">

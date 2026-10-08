@@ -49,7 +49,7 @@ The pin is `services/gateway/receipt-log-pin.json`. It names epoch 1 at root `dd
 
 Each pin anchor has a `tx`. Boot loads a Base transaction with `eth_getTransactionByHash` and a Solana transaction with `getTransaction`. The calldata or the memo must contain that root. Anchors with `in_journal` true (epoch 1 final `dd20e39a…` and the epoch 2 opening `f2043ee9…`, on both chains) must already be journal heads. Orphans, and the epoch 1 size-2 head `ecf9a330…`, are checked on chain and are not required as journal heads. The restored journal stores the size-4 head, not a separate size-2 head. If `tx` is null, or the RPC returns nothing, boot refuses. There is no Otterscan query and no block scan.
 
-`ff950e72…` is Base-only. Its pin entry sets `solana` to `absent`. The anchor memo wallet `BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD` has no memo for that root. Epoch 1's Oct 3 Solana memo is present.
+`ff950e72…` is on the orphan list. It is Base nonce 0, the Sep 30 genesis, a self-transfer whose calldata is that root. Its pin entry sets `solana` to `absent`. The anchor memo wallet `BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD` has no memo for that root. Epoch 1's Oct 3 Solana memo is present. `20d88791…` and `d7f6c548…` are on Base and on Solana. The version 2 epoch record says so. A version 1 record from before that correction does not, and it still boots.
 
 `GET /v1/receipts/tree/head` still does not sign a head or send a transaction. It is only reached when boot succeeded.
 
@@ -101,8 +101,9 @@ The Oct 5 Solana memo for that opening root used a prev of 64 zero bytes. That m
 
 The signed epoch record (`chit402.tree_epoch.v1`) also lists orphaned roots that are on Base and are not a prefix of epoch 1:
 
-- `20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9`, the same genesis-only root anchored five times from Sep 30 through Oct 1.
-- `d7f6c548`, a populated tree anchored Oct 1 around 8:01 AM ET and lost on the next restart. The full root was not recovered. The record keeps `root: null`, `root_prefix: d7f6c548`, and `unrecoverable: true`. It does not invent the rest and it is not skipped.
+- `ff950e7204762565751e1c7a6bfbdb167c15452f26259a97f63a2c90b2f61ec3`, the Sep 30 genesis. Base nonce 0. No Solana memo. `chain` is `base` and `solana` is `absent`.
+- `20d887917a4c32a49434e4b8f8db864cbf26a8e3a0daa6f5f89ab097282413f9`, the same genesis-only root anchored five times from Sep 30 through Oct 1, on Base (nonces 1, 2, 4, 5, and 6) and on Solana. `chain` is `base_and_solana`.
+- `d7f6c548`, a populated tree anchored Oct 1 around 8:01 AM ET on Base (nonce 3) and on Solana, then lost on the next restart. The full root is that transaction calldata. The record keeps `root: null`, `root_prefix: d7f6c548`, and `unrecoverable: true`. It does not invent the rest and it is not skipped. `chain` is `base_and_solana`.
 - `f2043ee9…`, the Oct 5 genesis-only anchor, which is also the opening leaf of epoch 2.
 
 Existing receipt `tree_head_hash` values are not re-signed. Epoch 1 inclusion still uses the prefix root that was signed into those receipts.
@@ -122,7 +123,9 @@ node scripts/rebuild-receipt-epoch1.mjs \
   --out .data/receipt-log
 ```
 
-The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it.
+The script reads `usage-settled.jsonl` in file order, skips rows before `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, and takes that row plus the next two rows that have a `task_id`. Leaf 0 is the pinned genesis bytes. If `.data/receipt-log/journal.jsonl` already exists, the script refuses to overwrite it. The path is exact: `.data/receipt-log.` (trailing period) is a different directory, and boot will not see that journal.
+
+Run the script from `services/gateway` so it loads `.env` the same way the server does. It refuses, and does not sign, when `ISSUER_PRIVATE_KEY` is unset. An ephemeral key is not used: boot would reject that epoch record (`epoch_signature` / `no_matching_key`). On success it prints `epoch record kid:` and `epoch record signed: true` only after that signature verifies against the same key. A directory from a run that did not print a kid was signed with a throwaway key. Move it aside and run the script again. Do not copy it into place. The book file is not modified.
 
 Then backfill every later book row that is not already a leaf. Dry-run is the default. `--apply` writes the leaves and does not publish or broadcast.
 
@@ -136,7 +139,17 @@ node scripts/backfill-receipt-log.mjs \
   --apply
 ```
 
-The dry-run prints `would append <task_id>` for each row that would be written. It also lists every refusal as `refuse <task_id or agent id>: <reason>` and exits non-zero. It refuses a book whose `analyzeSeq` result is `FORKED`, a gap, a duplicate seq, and any leaf whose `row_hash` is empty or missing. Those are the same rows the epoch 1 rebuild refuses. `--apply` prints `appended <task_id>` and does not run when a refusal was listed. Rows before epoch 1's last receipt leaf stay out of the tree.
+If `--dir` has no `journal.jsonl`, the script exits with `REFUSED: no journal at <absolute directory>`. That is a missing file, not `epoch1_has_no_receipt_leaf`.
+
+Boot does not read the book. A journal that is only epoch 1 and the epoch 2 opening is enough to start, and that is the journal already on the server after the rebuild that loaded `.env`. Backfill does not require another rebuild. Rows that are not leaves yet do not refuse boot, and loading the book does not append them.
+
+The dry-run prints `would append <task_id>` and `would list as unlogged <task_id> <reason>`, then the two counts. `--apply` writes those leaves and a payload version 2 epoch record. It does not publish or broadcast, and it does not write `usage-settled.jsonl`. It does not invent a `row_hash`.
+
+Rows with a stored append-time `row_hash` on a chain that is not forked are appended to epoch 2, after the opening leaf, in book order. A forked agent's rows are listed `forked` and skipped (every row of that agent that is not already a leaf). A row with an empty `row_hash` is listed `missing_row_hash`. A later row whose chain runs through one of those, or that starts at seq greater than 1, or whose `prev_hash` is not a known row, is listed `depends_on_refused`. One of those does not abort the rest of the file. A book line with no `task_id` is not a leaf. When that line has a stored `row_hash`, the hash stays in the chain and the next receipt can append. An empty hash on that line is a break, and the next receipt is `depends_on_refused`. A row with no `agent_id` still refuses the run. Rows before epoch 1's last receipt leaf stay out of the tree unless the agent is forked, in which case those not-yet-leaf rows are listed and still not appended.
+
+Being appended now does not prove the row was in the October anchor. The leaf is in epoch 2, after `f2043ee9`. The October anchor is epoch 1 at `dd20e39a`, size 4.
+
+The version 2 record adds `unlogged`: `count`, `hash` (SHA-256 of the canonical JSON array), and `rows` of `task_id`, `agent_id`, and `reason`. `epochs` stay the version 1 bytes, including epoch 1 `dd20e39a` size 4 and the epoch 2 opening `f2043ee9`. The orphan list in that signature is the corrected one: `ff950e72…` is included, and `20d88791…` and `d7f6c548…` are `base_and_solana`. A version 1 record's orphan list is left as it was signed. The version 1 line stays in `journal.jsonl` as history. It is not deleted and it is not re-signed. Boot serves the latest record. `epoch-record.json` is that latest record. A version 1 record still verifies and still has no `unlogged` section. `GET /v1/receipts/tree/epoch` returns the record, including the list. `GET /v1/receipts/:task_id/inclusion` for an id on that list is `not_in_tree` plus the signed `reason`. The list is an issuer attestation that the row is outside the tree. It is not proof of payment.
 
 ## S3 bundles
 
@@ -240,10 +253,12 @@ Do this before `systemctl restart xfuel-api` on the build that contains this log
 6. Leave `RECEIPT_LOG_STRICT` unset and leave `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` unset. The committed pin already names the Base and Solana transactions. Boot still refuses a null `tx`. The pin is checked against the recomputed journal, not only against an empty directory. `ff950e72…` has no Solana transaction.
 7. Restart `xfuel-api` only after the rebuild and the backfill `--apply` have written the journal. An empty `.data/receipt-log` now refuses to start (`pin_unmet`) instead of serving a fresh log. If you restarted too early, stop the service, run the two scripts, then start.
 8. `GET /v1/receipts/tree/head` may say `not_yet_published` until the next book append publishes the day's head. That GET must not create a Base or Solana transaction. The recomputed epoch 2 root is still in that response as `root`. `receipt_log.consecutive_failures` on `/health` is what the smoke check should alert on.
-9. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list.
+9. `GET /v1/receipts/tree/epoch` returns the signed record, including the orphan list and, after backfill `--apply`, the `unlogged` list.
 
 ## Principal notice (draft)
 
 Receipt log notice (Oct 6). On Oct 5 at about 7:18 AM ET the public receipt log restarted from memory. A new root, f2043ee9, was anchored at 7:22 AM ET without a link to the Oct 3 root dd20e39a (4 leaves, Base and Solana). Signed receipts were not changed. They still verify, and none were re-signed.
 
-This release stores the log on disk and refuses to start if that copy is missing, does not match the pinned epochs, or does not contain the known Base and Solana anchor transactions. A public read no longer publishes a head. Epoch 1 is the four-leaf log that ends at dd20e39a. Epoch 2 starts at f2043ee9 and records the link back to epoch 1, including the leaf count 4. The epoch record is signed. Earlier Base anchors from Sep 30 and Oct 1, including the lost populated root whose prefix is d7f6c548, are listed as orphans. That lost root is marked unrecoverable and its full bytes are not invented. Inclusion proofs for epoch 1 stay valid against dd20e39a once that epoch is rebuilt on the server from the book. Book rows after that epoch are appended by an operator script before the process starts. The script refuses a forked book and a leaf with no row hash. A new log is not opened unless an operator sets an explicit flag for that purpose.
+This release stores the log on disk and refuses to start if that copy is missing, does not match the pinned epochs, or does not contain the known Base and Solana anchor transactions. A public read no longer publishes a head. Epoch 1 is the four-leaf log that ends at dd20e39a. Epoch 2 starts at f2043ee9 and records the link back to epoch 1, including the leaf count 4. The epoch record is signed. Earlier anchors are listed as orphans: ff950e72 (Base nonce 0, Sep 30, no Solana memo), 20d88791 (Base and Solana, five times), and the lost populated root whose prefix is d7f6c548 (Base and Solana). That lost root is marked unrecoverable and its full bytes are not invented. Inclusion proofs for epoch 1 stay valid against dd20e39a once that epoch is rebuilt on the server from the book.
+
+Book rows after that epoch are appended only when they already have the row hash stored at append time and the agent's chain is not forked. A forked agent's rows, a row with no row hash, and a row whose chain depends on one of those are named on the signed epoch record as unlogged, with a reason. They are not given a leaf. The list is the issuer saying those rows are outside the tree. It is not proof that a payment happened, and it is not proof that it did not. A leaf appended now sits in epoch 2, after f2043ee9. That does not prove the row was in the October anchor. The October anchor is still epoch 1 at dd20e39a, four leaves. Signed receipts were not re-signed. A new log is not opened unless an operator sets an explicit flag for that purpose.

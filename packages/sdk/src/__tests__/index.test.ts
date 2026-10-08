@@ -202,7 +202,7 @@ describe('XFuelClient', () => {
       new XFuelClient();
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          baseURL: 'https://api.xfuel.app',
+          baseURL: 'https://api.chit402.com',
           headers: expect.not.objectContaining({ 'X-API-Key': expect.anything() }),
         }),
       );

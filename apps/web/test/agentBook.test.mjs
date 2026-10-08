@@ -204,6 +204,44 @@ test('evidenceLabel and evidenceBadgeTone map known statuses', () => {
   assert.ok(evidenceHint(BOOK_EVIDENCE.INFLOW_CLAIMED).includes('bucket'));
 });
 
+test('specimen payable rows match the cap, spent, and remaining constants', () => {
+  const summary = computeBookSummary([
+    {
+      task_id: 'live',
+      evidence: 'collected',
+      collected: true,
+      route: { hub: 'akash-network', model: 'llama' },
+      payment: { rail: 'usdc', amount: '2000', ref: 'base:abc' },
+    },
+    {
+      task_id: 'blocked',
+      evidence: 'policy_blocked',
+      route: { hub: 'openrouter', model: 'anthropic/claude-sonnet-4' },
+      payment: { rail: 'usdc', amount: null, ref: '—' },
+    },
+    {
+      task_id: 'inflow',
+      evidence: 'inflow_claimed',
+      route: { hub: 'foreign-x402', model: 'gpt-4.1-mini' },
+      payment: { rail: 'usdc', amount: '1250000', ref: 'patron grant' },
+    },
+  ]);
+  assert.equal(summary.spend_atomic, '1252000');
+  assert.equal(summary.payments, 2);
+  assert.equal(summary.receipts, 3);
+  const cap = 50_000_000n;
+  const remaining = cap - BigInt(summary.spend_atomic);
+  assert.equal(remaining.toString(), '48748000');
+  const mix = computeModelMix([
+    { route: { hub: 'akash-network', model: 'llama' }, payment: { amount: '2000' } },
+    { route: { hub: 'openrouter', model: 'anthropic/claude-sonnet-4' }, payment: { amount: null } },
+    { route: { hub: 'foreign-x402', model: 'gpt-4.1-mini' }, payment: { amount: '1250000' } },
+  ]).filter((item) => item.amount > 0n);
+  assert.equal(mix.length, 2);
+  const pct = mix.reduce((sum, item) => sum + item.pct, 0);
+  assert.ok(Math.abs(pct - 100) < 0.05, `mix percents add to ${pct}`);
+});
+
 test('replayParentTaskId resolves canonical task', () => {
   assert.equal(replayParentTaskId({ task_id: 'a', replay_of: 'parent-1' }), 'parent-1');
   assert.equal(

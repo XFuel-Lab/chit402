@@ -14,7 +14,7 @@ Privacy add (when Private Spend v0 is live): Spend without briefing the frontier
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. Chit402 is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.01). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — HMAC by default, on-chain SP1 settlement proof on demand.
+AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. Chit402 is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.002, routing cost + 1%). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — ES256 issuer signature, on-chain SP1 settlement proof on demand. The issuer signature does not prove USDC moved. HMAC is a separate host field.
 
 Private Spend (product mode, see [PRIVATE_SPEND_THESIS.md](./PRIVATE_SPEND_THESIS.md)): buyer pays Chit; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
@@ -53,8 +53,8 @@ space shows spend and declines to show provenance.
 ## Guardrails
 
 Say: Chit402 is the book; this agent spent Y on this job; you hold hub, model, and amount; not a smart
-router; not a model shop; $0.01 USDC on Base and Solana; possession-gated book; register fail-closed;
-signed receipt is table stakes; money and proofs on Base; proof on demand; budgets instead of API keys.  
+router; not a model shop; $0.002 standard receipt, routing cost + 1%, USDC on Base and Solana; possession-gated book; register fail-closed;
+signed receipt is table stakes (ES256); money on Base and Solana, proofs on Base; proof on demand; budgets instead of API keys.  
 Do not say: best available provider; smart router; crypto control plane as the lead; swap one
 baseURL as the hero; Theta-centric / DePIN hub as identity; **DePIN / Chit is cheaper** (it is not the price
 floor, and a saving claim needs a named baseline and must be allowed to print negative); TFUEL as

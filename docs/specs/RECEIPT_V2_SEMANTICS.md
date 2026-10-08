@@ -207,7 +207,7 @@ The gateway currently emits `xfuel.receipt.v3`. The v2 spec is a **documentation
 
 ## 7. Verification Without Chit
 
-The goal: **anyone can verify a receipt without calling `api.xfuel.app`**.
+The goal: **anyone can verify a receipt without calling `api.chit402.com`**.
 
 | Check | Requires XFuel API? | Alternative |
 |-------|---------------------|-------------|

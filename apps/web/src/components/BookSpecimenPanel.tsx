@@ -22,12 +22,15 @@ const MODEL_COLORS = ['#00d4ff', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#1
 export default function BookSpecimenPanel() {
   const apiHost = getApiHost();
 
-  const spentDisplay = formatUsdc(BOOK_SPECIMEN_STATS.spent);
-  const capDisplay = formatUsdc(BOOK_SPECIMEN_STATS.cap);
-  const remainingDisplay = formatUsdc(BOOK_SPECIMEN_STATS.remaining);
-  const burnRate = computeBurnRate(BOOK_SPECIMEN_ENTRIES, 24);
-  const modelMix = computeModelMix(BOOK_SPECIMEN_ENTRIES);
   const specimenSummary = computeBookSummary(BOOK_SPECIMEN_ENTRIES);
+  const spentAtomic = specimenSummary.spend_atomic;
+  const capAtomic = BOOK_SPECIMEN_STATS.cap;
+  const remainingAtomic = (BigInt(capAtomic) - BigInt(spentAtomic)).toString();
+  const spentDisplay = formatUsdc(spentAtomic);
+  const capDisplay = formatUsdc(capAtomic);
+  const remainingDisplay = formatUsdc(remainingAtomic);
+  const burnRate = computeBurnRate(BOOK_SPECIMEN_ENTRIES, 24);
+  const modelMix = computeModelMix(BOOK_SPECIMEN_ENTRIES).filter((item) => item.amount > 0n);
 
   return (
     <section className="card book-specimen-panel" aria-label="Specimen principal book">
@@ -46,17 +49,17 @@ export default function BookSpecimenPanel() {
 
       <div className="book-budget-strip">
         <div className="card book-stat-card">
-          <div className="stat-label">Budget Y (cap)</div>
+          <div className="stat-label">Cap</div>
           <div className="book-stat-value">${capDisplay}</div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-            {BOOK_SPECIMEN_STATS.window}
+            Specimen ceiling, not a live budget
           </div>
         </div>
         <div className="card book-stat-card">
           <div className="stat-label">Spent</div>
           <div className="book-stat-value">${spentDisplay}</div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-            {BOOK_SPECIMEN_STATS.rowCount} specimen rows
+            Same USDC as Spend · {specimenSummary.payments} money rows
           </div>
         </div>
         <div className="card book-stat-card">
@@ -165,6 +168,10 @@ export default function BookSpecimenPanel() {
         </table>
       </div>
 
+      <p className="book-specimen-foot">
+        Spend, Payments, Spent, and the model mix count the collected row and the inflow row.
+        The policy-blocked row has no USDC, so it stays in the table and out of those totals.
+      </p>
       <p className="book-specimen-foot">
         After a collected USDC call,{' '}
         <Link to="/register">register</Link> to receive <code>agent_id</code> + possession{' '}

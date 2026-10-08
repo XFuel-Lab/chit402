@@ -60,12 +60,12 @@ export const ChainId = {
 export type ChainId = (typeof ChainId)[keyof typeof ChainId];
 
 /**
- * Default endpoint the SDK talks to when no `baseUrl` is given: XFuel's hosted
- * public API (`https://api.xfuel.app`; also served at `https://api.chit402.com`).
+ * Default endpoint the SDK talks to when no `baseUrl` is given: the hosted
+ * public API at `https://api.chit402.com`.
  * The old demo hostname `api-testnet.xfuel.app` was retired — DNS is not provisioned;
  * do not point clients at it. Use your own deployment (or `http://localhost:3002`) locally.
  */
-export const DEFAULT_BASE_URL = 'https://api.xfuel.app';
+export const DEFAULT_BASE_URL = 'https://api.chit402.com';
 
 /**
  * @deprecated Public demo keys no longer grant free completions on the hosted

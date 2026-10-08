@@ -43,7 +43,8 @@ export default function AgentShop() {
             {productName} is the till for an agent shop. POST to{' '}
             <a href={apiV1}>{apiV1}/chat/completions</a>, pay the HTTP 402 in USDC
             on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO.
-            Show the client the book, not a screenshot. HMAC-signed receipts are table stakes.
+            Show the client the book, not a screenshot. Issuer-signed receipts (ES256) are table stakes.
+            The signature does not prove USDC moved.
             Book is possession-gated <code>GET|POST /v1/agents/:agent_id/book</code>.
           </p>
         </header>
@@ -81,7 +82,8 @@ export default function AgentShop() {
           <h2>Which model ids can the till stamp?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             <code>GET /v1/models</code> lists drop-in ids for the <code>/v1</code> door — not a GPU shop.
-            Wire hubs Theta and Akash; <code>xfuel/auto</code> picks one for fulfillment. The receipt names hub, model, and amount.
+            Theta, Akash, <code>xfuel/auto</code>, and <code>openrouter/…</code> (bring-your-own-key via{' '}
+            <code>X-OpenRouter-Key</code>; Chit does not resell that inference). The receipt names hub, model, and amount.
           </p>
         </section>
 
@@ -90,8 +92,8 @@ export default function AgentShop() {
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
             A billing CSV is a report you export from your provider dashboard. The book is a
             possession-gated API endpoint that returns hub, model, and amount for every call your
-            agent made. The receipt is HMAC-signed. The book is held by the payer, not emailed by
-            the vendor.
+            agent made. The receipt is issuer-signed (ES256). Confirm the USDC transfer separately.
+            The book is held by the payer, not emailed by the vendor.
           </p>
         </section>
 

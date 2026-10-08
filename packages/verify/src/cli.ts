@@ -41,6 +41,7 @@ import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
+import type { CarryHead, CarryInclusion } from './carry-forward.js';
 
 const HELP = `
 xfuel-verify — Offline verification for Chit402 receipts
@@ -78,6 +79,17 @@ Options:
                       origin plus /v1/receipts/tree/epoch
   --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
   --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
+  --carry-old-head <file>
+  --carry-old-inclusion <file>
+  --carry-head <file>
+  --carry-inclusion <file>
+                      Earlier signed head, its inclusion proof, the current
+                      signed head, and the current inclusion proof. Repeat
+                      --carry-inclusion for each current index of the leaf.
+                      The issued time and epoch are the earlier head's signed
+                      claims. The logged time, epoch, and leaf index are the
+                      current head's signed claims. A receipt in the current
+                      epoch does not use these flags.
   --json              Output JSON instead of human-readable
   --quiet             Only output errors
   --strict-issuer-history
@@ -184,6 +196,10 @@ function parseArgs(args: string[]): {
   headFile: string | null;
   epochRecordFile: string | null;
   epochUrl: string | null;
+  carryOldHeadFile: string | null;
+  carryOldInclusionFile: string | null;
+  carryHeadFile: string | null;
+  carryInclusionFiles: string[];
   positionals: string[];
   json: boolean;
   quiet: boolean;
@@ -220,6 +236,10 @@ function parseArgs(args: string[]): {
     headFile: null as string | null,
     epochRecordFile: null as string | null,
     epochUrl: null as string | null,
+    carryOldHeadFile: null as string | null,
+    carryOldInclusionFile: null as string | null,
+    carryHeadFile: null as string | null,
+    carryInclusionFiles: [] as string[],
     positionals: [] as string[],
     json: false,
     quiet: false,
@@ -272,6 +292,14 @@ function parseArgs(args: string[]): {
       result.epochRecordFile = args[++i];
     } else if (arg === '--epoch-url' && args[i + 1]) {
       result.epochUrl = args[++i];
+    } else if (arg === '--carry-old-head' && args[i + 1]) {
+      result.carryOldHeadFile = args[++i];
+    } else if (arg === '--carry-old-inclusion' && args[i + 1]) {
+      result.carryOldInclusionFile = args[++i];
+    } else if (arg === '--carry-head' && args[i + 1]) {
+      result.carryHeadFile = args[++i];
+    } else if (arg === '--carry-inclusion' && args[i + 1]) {
+      result.carryInclusionFiles.push(args[++i]);
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
     } else if (arg === '--strict-issuer-history') {
@@ -378,7 +406,8 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   console.log('  Anchored receipt root');
   console.log('  ─────────────────────────────────────────────────');
   console.log(`  Root:          ${result.root || '—'}`);
-  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}`);
+  const unlogged = result.inclusion.unlogged_reason ? ` unlogged:${result.inclusion.unlogged_reason}` : '';
+  console.log(`  Inclusion:     ${mark(result.inclusion.valid)}${result.inclusion.reason ? ` (${result.inclusion.reason})` : ''}${unlogged}`);
   console.log(`  Leaf source:   ${result.inclusion.leaf_source}`);
   console.log(`  Solana:        ${result.solana.checked ? mark(result.solana.valid) : (result.solana.reason || 'not checked')}`);
   if (result.solana.signature) console.log(`  Signature:     ${result.solana.signature}`);
@@ -459,6 +488,9 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
     const payload = verified.payload;
     if (JSON.stringify(payload.epochs ?? null) !== JSON.stringify(record.epochs ?? null)) return false;
     if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(record.orphans ?? [])) return false;
+    const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
+    const recordUnlogged = record.unlogged === undefined ? null : record.unlogged;
+    if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) return false;
     return true;
   }
   return false;
@@ -757,6 +789,30 @@ async function main(): Promise<number> {
     }
   }
 
+  const carryAsked = args.carryOldHeadFile || args.carryOldInclusionFile
+    || args.carryHeadFile || args.carryInclusionFiles.length > 0;
+  let carry: {
+    oldHead: CarryHead;
+    oldInclusion: CarryInclusion;
+    currentHead: CarryHead;
+    currentInclusions: CarryInclusion[];
+  } | null = null;
+  if (carryAsked) {
+    try {
+      carry = {
+        oldHead: args.carryOldHeadFile ? readJson(args.carryOldHeadFile) as CarryHead : {},
+        oldInclusion: args.carryOldInclusionFile ? readJson(args.carryOldInclusionFile) as CarryInclusion : { error: 'not_in_tree' },
+        currentHead: args.carryHeadFile ? readJson(args.carryHeadFile) as CarryHead : {},
+        currentInclusions: args.carryInclusionFiles.length > 0
+          ? args.carryInclusionFiles.map((file) => readJson(file) as CarryInclusion)
+          : [{ error: 'not_in_tree' }],
+      };
+    } catch (err) {
+      console.error(`Error reading carry-forward files: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
+    }
+  }
+
   const result = await verifyReceipt(receipt, {
     jwks,
     jwksUri: args.jwksUrl || undefined,
@@ -773,6 +829,7 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    carry,
   });
 
   if (args.json) {
@@ -864,6 +921,18 @@ async function main(): Promise<number> {
     } else if (result.issuer_history.warning) {
       console.log(`  Issuer history: ${result.issuer_history.warning}`);
     }
+    if (result.carry_forward?.status === 'VERIFIED_CARRIED_FORWARD') {
+      const carried = result.carry_forward;
+      console.log(`  Log`);
+      console.log(`  ─────────────────────────────────────────────────`);
+      console.log(`  Status:        ${carried.status}`);
+      console.log(`  Issued at:     ${carried.issued_at}`);
+      console.log(`  Issued epoch:  ${carried.issued_epoch}`);
+      console.log(`  Logged at:     ${carried.logged_at}`);
+      console.log(`  Logged epoch:  ${carried.logged_epoch}`);
+      console.log(`  Leaf index:    ${carried.leaf_index}`);
+      console.log('');
+    }
     console.log(`  Overall: ${result.overall.toUpperCase()}`);
     if (result.errors.length > 0) {
       console.log(`  Errors:  ${result.errors.join(', ')}`);
@@ -873,6 +942,7 @@ async function main(): Promise<number> {
 
   switch (result.overall) {
     case 'verified':
+    case 'verified_carried_forward':
       return 0;
     case 'failed':
       return 1;

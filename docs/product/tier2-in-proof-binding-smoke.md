@@ -61,6 +61,6 @@ curl -sS "$CHIT402_BASE_URL/task-status?task_id=<task_id>" \
 ```
 
 Public Tier-1 receipt (signed, no SP1 artifact yet):  
-https://api.chit402.com/receipt/chit-1e57cdd7-4fde-4525-bea3-5ffd1d1d909e?format=json
+https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96?format=json
 
 SDK end-to-end: `packages/sdk/examples/pay-prove-verify.ts` with `X402_PROOF_BINDING=true`.

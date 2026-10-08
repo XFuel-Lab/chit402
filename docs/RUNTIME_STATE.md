@@ -4,11 +4,12 @@ As-deployed source of truth. When in-repo config disagrees with this file, this 
 
 Last updated: 2026-09-25
 
-> **Live as of 2026-08-20.** Public hosts are `https://api.chit402.com` and `https://api.xfuel.app`
-> (same Lightsail box). The old demo name `api-testnet.xfuel.app` is retired — DNS intentionally
-> not provisioned; do not use it. Site `/v1` explainer + catch-all shipped. npm defaults catch up in
-> `xfuel-sdk@0.5.5` / `xfuel-mcp@0.3.1`. Re-verify:
-> `node scripts/dev/_verify_deploy.mjs https://api.xfuel.app`.
+> **Live as of 2026-08-20.** Canonical public API is `https://api.chit402.com`.
+> `api.xfuel.app` still resolves to the same Lightsail box; do not publish it as the default.
+> The old demo name `api-testnet.xfuel.app` is retired — DNS intentionally
+> not provisioned; do not use it. Site `/v1` explainer + catch-all shipped. Republish
+> `xfuel-sdk` and `xfuel-mcp` so npm defaults match this host. Re-verify:
+> `node scripts/dev/_verify_deploy.mjs https://api.chit402.com`.
 > Theta EdgeCloud is unset (`THETA_EDGE_URL` missing); AkashML is the live inference path. **SP1
 > prover is running.**
 
@@ -69,7 +70,7 @@ Demo gateway:
 - Host: Lightsail `13.36.215.199` (A record for `api.chit402.com` and `api.xfuel.app`)
 - App: **systemd `xfuel-api`** → `/home/ubuntu/xfuel-protocol/services/gateway` → `node src/server.js` (port 3002)
 - Install / recover: [deploy/lightsail/README.md](../deploy/lightsail/README.md)
-- Public: https://api.chit402.com and https://api.xfuel.app (same box). Retired demo hostname `api-testnet.xfuel.app` — NXDOMAIN; not an alias.
+- Public: https://api.chit402.com. `api.xfuel.app` still answers on the same box. Retired demo hostname `api-testnet.xfuel.app` — NXDOMAIN.
 - **Do not** use `/opt/xfuel-protocol/backend/theta-bridge` or PM2 `xfuel-m2m` (legacy)
 - Health fingerprint: `fee_config.revenue_split.model === "usdc-base-splits-v2"` (not the legacy `30% BBB` string)
 
@@ -86,7 +87,7 @@ x402:
 | Signed receipt | Real |
 | SP1 settlement proof | Real (via AWS prover URL) |
 | USDC / x402 Base Sepolia | Real (optional / rollback) |
-| USDC / x402 Base mainnet | **Real** (public `api.xfuel.app`, 2026-08-06; was named `api-testnet`) |
+| USDC / x402 Base mainnet | **Real** (public `api.chit402.com`, 2026-08-06; was named `api-testnet`) |
 | Payment binding in-proof | Code live (guest v5.1); prod `in_proof` pending ops taps below |
 | zkLLM Verified Inference | Active build |
 | `services/zkgpt-prover` mock | Dev-only — never demo as a proof |
