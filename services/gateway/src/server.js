@@ -85,6 +85,7 @@ import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { configureIssuerHistoryStore, currentIssuerHistory, writeIssuerHistory } from './issuer-history.js';
+import { captureRawRequestBody, clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
 import { assertIssuerHistoryMirrorBoot, issuerHistoryMirrorClaim, writeIssuerHistoryMirror } from './issuer-history-mirror.js';
 import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-policy.js';
@@ -1102,8 +1103,20 @@ export function createApp() {
         policyCode: check.code || 'approval_ttl_expired',
         reason: check.reason || 'SessionAct approval expired',
         anchor: peekRefusalAnchor(),
+        request: clientRequestForRefusal(req, req.path || req.originalUrl || '/v1/sessions'),
       });
       if (recorded?.ok) refusalEntry = recorded.entry;
+      else if (isRequestBindingError({ code: recorded?.code })) {
+        return {
+          ...check,
+          allowed: false,
+          code: recorded.code,
+          reason: recorded.reason,
+          agent_id: identity.agent_id,
+          task_id: taskId,
+          refusal_entry: null,
+        };
+      }
     }
     return {
       ...check,
@@ -1413,7 +1426,7 @@ export function createApp() {
     next();
   });
 
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '1mb', verify: captureRawRequestBody }));
 
   // JSON body-parse errors → clean 4xx (otherwise they hit the 500 handler).
   // Malformed JSON = 400; oversized body (> 1mb limit above) = 413.
@@ -3352,6 +3365,16 @@ export function createApp() {
           delegationHash: hash,
         });
         if (!approvalGate.allowed) {
+          if (isRequestBindingError({ code: approvalGate.code })) {
+            const status = approvalGate.code === 'idempotency_conflict' ? 409 : 400;
+            return res.status(status).json({
+              error: {
+                message: approvalGate.reason,
+                type: approvalGate.code,
+                code: approvalGate.code,
+              },
+            });
+          }
           return res.status(403).json(withRefusal({
             error: 'policy_blocked',
             type: 'policy_blocked',
@@ -3527,6 +3550,16 @@ export function createApp() {
       const actionHint = action || req.body?.action;
       const approvalGate = gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
       if (!approvalGate.allowed) {
+        if (isRequestBindingError({ code: approvalGate.code })) {
+          const status = approvalGate.code === 'idempotency_conflict' ? 409 : 400;
+          return res.status(status).json({
+            error: {
+              message: approvalGate.reason,
+              type: approvalGate.code,
+              code: approvalGate.code,
+            },
+          });
+        }
         return res.status(403).json(withRefusal({
           error: 'policy_blocked',
           type: 'policy_blocked',
