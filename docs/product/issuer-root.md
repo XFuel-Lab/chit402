@@ -89,7 +89,7 @@ The unsigned preimage is `request_preimage` on the document and `preimages.field
 Vector. The principal-only salt is `0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`. It is not part of the preimage. The body is `{"model":"xfuel/auto","messages":[{"role":"user","content":"hello"}]}`.
 
 ```
-{"body_commitment":"0da674bf4dba4c32e5a87018e032f29157126d2b7aef18daa072e82637bbc7b1","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}
+{"body_commitment":"e0999743fe405e9e30642542e9bb27a015b05425e6f7e9ac9f782b3109a88f59","idempotency_key":"idem-1","method":"POST","nonce":null,"path":"/v1/chat/completions"}
 ```
 
 `request_digest` is `78a29ef11d09b407b58fe01fdc22a98108bea8bf34ed6dc3830878744a2356bf`. The unsalted SHA-256 of that body is `93dda1aa54d9bb86b7c2cdfaad61fd78e5b81656484a8941eee498adc9a54e54`, and it does not appear in the preimage. Already-signed documents that published `body_sha256` stay as signed. `@xfuel/verify` hashes the supplied preimage text and does not rebuild it, so those documents still verify.
