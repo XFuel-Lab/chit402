@@ -17,13 +17,26 @@ export function publicStatsBody(count) {
   return { receipts: receiptVolumeBucket(count) };
 }
 
-export function publicHealthBody({ degraded = false, lastAnchoredRoot = null, lastAnchoredTx = null } = {}) {
-  return {
+export function publicHealthBody({
+  degraded = false,
+  lastAnchoredRoot = null,
+  lastAnchoredTx = null,
+  quarantinedHeads = null,
+} = {}) {
+  const body = {
     status: degraded ? 'degraded' : 'ok',
     last_anchored_root: lastAnchoredRoot ?? null,
     last_anchored_tx: lastAnchoredTx ?? null,
     free_tier: 'available',
   };
+  // Absent when nothing is quarantined, so a clean boot keeps the public shape.
+  if (quarantinedHeads && Number(quarantinedHeads.count) > 0) {
+    body.quarantined_heads = {
+      count: Number(quarantinedHeads.count),
+      heads: Array.isArray(quarantinedHeads.heads) ? quarantinedHeads.heads : [],
+    };
+  }
+  return body;
 }
 
 function esc(value) {
