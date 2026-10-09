@@ -297,7 +297,28 @@ test('a tampered entry fingerprint fails only that step on a foreign-ingest payo
   assert.equal(result.verdict, 'FAIL');
 });
 
-describe('verifier fixture, not a public specimen', () => {
+test('the public unsigned receipt shell fails closed with a clear reason, not a verify_url mismatch', async () => {
+  const fetchImpl = async () => new Response(JSON.stringify({
+    schema: 'chit402.receipt_shell.v1',
+    unsigned: true,
+    receipt_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96',
+    verify_url: null,
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const result = await verifyLink(load(positivePath), { fetchImpl, rpcUrl: 'https://rpc.test/base' });
+  assert.equal(result.steps.fetch_receipt.status, 'FAIL');
+  assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/);
+  for (const name of ['issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+    assert.equal(result.steps[name].status, 'FAIL', name);
+  }
+  assert.equal(result.verdict, 'FAIL');
+});
+
+// Live network: fetches api.chit402.com, the 1F916 proof API and Base RPC. Since #519
+// (deployed 2026-10-08) the public receipt route serves an unsigned shell, so these can
+// no longer pass against prod and they made Web Tests red on every push to main.
+// The same PASS/tampered logic runs hermetically above (foreign-ingest harness).
+// Run by hand with CHIT_LIVE_TESTS=1 once a public signed path exists again.
+describe('verifier fixture, not a public specimen (live network)', { skip: process.env.CHIT_LIVE_TESTS !== '1' && 'set CHIT_LIVE_TESTS=1 to run against prod' }, () => {
   test('fixture passes every step', { timeout: 60000 }, async () => {
     const result = await verifyLink(load(positivePath));
     assert.equal(formatReport(result).includes('VERDICT PASS'), true, formatReport(result));

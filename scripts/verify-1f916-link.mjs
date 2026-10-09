@@ -251,7 +251,13 @@ export async function verifyLink(specimen, opts = {}) {
     try {
       receipt = await getJson(url, fetchImpl);
       const verifyUrl = String(receipt?.verify_url || '');
-      if (!verifyUrl.endsWith(`/receipt/${specimen.chit_receipt_id}`)) {
+      if (receipt?.schema === 'chit402.receipt_shell.v1' || receipt?.unsigned === true) {
+        // Since #519 the public route returns an unsigned shell. The issuer JWS,
+        // book chain and payment ref are owner-view only, so this tool cannot
+        // check them from the public URL. Fail closed with a reason that says so.
+        steps.fetch_receipt = fail('public_receipt_is_unsigned_shell (issuer JWS is owner-view only)');
+        receipt = null;
+      } else if (!verifyUrl.endsWith(`/receipt/${specimen.chit_receipt_id}`)) {
         steps.fetch_receipt = fail('verify_url does not end with chit_receipt_id');
       } else {
         steps.fetch_receipt = pass(url);

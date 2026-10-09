@@ -5,6 +5,7 @@ import {
   renderReceiptHtml,
   renderReceiptNotFound,
   explorerUrlForRef,
+  repairExplorerUrl,
   buildVerifyUrl,
   baseUrlFromReq,
   normalizeTaskIdForLookup,
@@ -63,6 +64,38 @@ function usdcTask(over = {}) {
     ...over,
   };
 }
+
+test('explorerUrlForRef: solana devnet puts the cluster after the full signature', () => {
+  const sig = '3'.repeat(44) + 'aBcDeFgHiJkLmNoPqRsTuVwXyZ' + '9'.repeat(18);
+  assert.equal(sig.length, 88);
+  const devnet = explorerUrlForRef(`solana-devnet:${sig}`);
+  assert.equal(devnet, `https://solscan.io/tx/${sig}?cluster=devnet`);
+  const u = new URL(devnet);
+  assert.equal(u.pathname, `/tx/${sig}`);
+  assert.equal(u.searchParams.get('cluster'), 'devnet');
+  const mainnet = explorerUrlForRef(`solana:${sig}`);
+  assert.equal(mainnet, `https://solscan.io/tx/${sig}`);
+  assert.equal(new URL(mainnet).search, '');
+  assert.equal(new URL(mainnet).pathname, `/tx/${sig}`);
+  const tx = '0x' + 'cd'.repeat(32);
+  assert.equal(explorerUrlForRef(`base:${tx}`), `https://basescan.org/tx/${tx}`);
+  assert.equal(explorerUrlForRef(`base-sepolia:${tx}`), `https://sepolia.basescan.org/tx/${tx}`);
+  assert.equal(explorerUrlForRef(`solana-devnet:${tx}`), null);
+  assert.equal(explorerUrlForRef('solana-devnet:'), null);
+});
+
+test('repairExplorerUrl rebuilds a stored devnet link that swallowed the signature', () => {
+  const sig = '4'.repeat(88);
+  const ref = `solana-devnet:${sig}`;
+  assert.equal(
+    repairExplorerUrl(`https://solscan.io/tx/?cluster=devnet${sig}`, ref),
+    `https://solscan.io/tx/${sig}?cluster=devnet`,
+  );
+  const good = `https://basescan.org/tx/0x${'ab'.repeat(32)}`;
+  assert.equal(repairExplorerUrl(good, `base:0x${'ab'.repeat(32)}`), good);
+  assert.equal(repairExplorerUrl(null, ref), null);
+  assert.equal(repairExplorerUrl(undefined, ref), undefined);
+});
 
 test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
   const tx = '0x' + 'ab'.repeat(32);
@@ -306,7 +339,7 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.match(html, /Proven/);
   assert.match(html, /og:title/);
   assert.match(html, /property="og:title" content="1\.00 USDC · task-abc123"/);
-  assert.match(html, /property="og:description" content="Base USDC · collected"/);
+  assert.match(html, /property="og:description" content="Base Sepolia USDC · collected"/);
   assert.match(html, /property="og:image" content="\/receipt\/[^"]+\/og\.png"/);
   assert.match(html, /property="og:image:width" content="1200"/);
   assert.match(html, /property="og:image:height" content="630"/);
@@ -894,6 +927,23 @@ test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting th
   const rebuilt = buildReceipt(task, { payerWallet: payer, persistSignature: true });
   assert.equal(rebuilt.issuer_signature.jws, r.issuer_signature.jws, 'existing receipt JWS is kept');
   assert.equal(rebuilt.route_meta.chain_id, 'solana');
+});
+
+test('buildReceipt: Solana devnet receipt explorer_url keeps the full signature, and a stale stored link is repaired in the view', () => {
+  const sig = '6'.repeat(88);
+  const paymentRef = `solana-devnet:${sig}`;
+  const task = usdcTask({
+    intent: { ...usdcTask().intent, paymentRef, chainId: 'base' },
+    meta: { ...usdcTask().meta, chain: 'base' },
+  });
+  const r = buildReceipt(task);
+  const want = `https://solscan.io/tx/${sig}?cluster=devnet`;
+  assert.equal(r.payment_meta.network, 'solana-devnet');
+  assert.equal(r.payment_meta.explorer_url, want);
+  assert.equal(mergeReceiptView(r).payment.explorer_url, want);
+  const stale = { ...r, payment_meta: { ...r.payment_meta, explorer_url: `https://solscan.io/tx/?cluster=devnet${sig}` } };
+  assert.equal(mergeReceiptView(stale).payment.explorer_url, want);
+  assert.equal(decodeReceiptClaims(r).payment.ref, paymentRef, 'signed ref unchanged');
 });
 
 test('buildReceipt: Base payment ref wins over a different routing chain', () => {

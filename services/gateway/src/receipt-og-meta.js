@@ -80,8 +80,10 @@ function networkFromPaymentRef(paymentRef) {
 
 function settlementNetworkLabel(paymentRef) {
   const network = networkFromPaymentRef(paymentRef);
-  if (network === 'solana' || network === 'solana-devnet') return 'Solana';
-  if (network === 'base' || network === 'base-sepolia') return 'Base';
+  if (network === 'solana') return 'Solana';
+  if (network === 'solana-devnet') return 'Solana Devnet';
+  if (network === 'base') return 'Base';
+  if (network === 'base-sepolia') return 'Base Sepolia';
   if (network) return String(network);
   return 'Base';
 }

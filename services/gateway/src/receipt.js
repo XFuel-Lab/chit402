@@ -345,7 +345,7 @@ export function mergeReceiptView(receipt) {
       platform_fee_bps: claims.payment?.platform_fee_bps ?? null,
       asset: claims.payment?.asset ?? null,
       payee: claims.payment?.payee ?? null,
-      explorer_url: paymentMeta.explorer_url ?? explorerUrlForRef(claims.payment?.ref),
+      explorer_url: repairExplorerUrl(paymentMeta.explorer_url, claims.payment?.ref) ?? explorerUrlForRef(claims.payment?.ref),
       tier2_proof: paymentMeta.tier2_proof ?? null,
       floor_applied: paymentMeta.floor_applied ?? null,
       basis: paymentMeta.basis ?? null,
@@ -448,8 +448,16 @@ const EXPLORERS = {
   'base-sepolia': 'https://sepolia.basescan.org/tx/',
   base: 'https://basescan.org/tx/',
   solana: 'https://solscan.io/tx/',
-  'solana-devnet': 'https://solscan.io/tx/?cluster=devnet',
+  'solana-devnet': 'https://solscan.io/tx/',
   nano: 'https://nanexplorer.com/nano/block/',
+};
+
+/**
+ * Query suffix appended AFTER the tx id. The cluster must follow the signature:
+ * `https://solscan.io/tx/<sig>?cluster=devnet`. Mainnet takes no cluster.
+ */
+const EXPLORER_SUFFIX = {
+  'solana-devnet': '?cluster=devnet',
 };
 
 /** Base58 alphabet (no 0, O, I, l) — Solana pubkeys/signatures. */
@@ -570,13 +578,27 @@ export function explorerUrlForRef(paymentRef) {
   }
   if (network === 'solana' || network === 'solana-devnet') {
     if (!isValidSolanaAddress(tx) && !isValidSolanaSignature(tx)) return null;
-    return base + tx;
+    return base + tx + (EXPLORER_SUFFIX[network] || '');
   }
   if (network === 'nano') {
     if (!/^[0-9a-fA-F]{64}$/.test(tx)) return null;
     return base + tx.toUpperCase();
   }
   return null;
+}
+
+/**
+ * Stored payment_meta.explorer_url from before the devnet fix reads
+ * `https://solscan.io/tx/?cluster=devnet<sig>` (signature swallowed by the query).
+ * explorer_url is unsigned presentation; rebuild it from payment.ref when it has that shape.
+ * @param {unknown} stored
+ * @param {unknown} paymentRef
+ * @returns {string|null|undefined}
+ */
+export function repairExplorerUrl(stored, paymentRef) {
+  if (typeof stored !== 'string') return stored;
+  if (stored.startsWith('https://solscan.io/tx/?')) return explorerUrlForRef(paymentRef);
+  return stored;
 }
 
 /**
