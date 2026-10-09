@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdtempSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -643,6 +643,49 @@ test('T11 the upgrade survives reboot and fails closed without the tracker', asy
   });
 });
 
+const ROLLBACK_COMMIT = '484c5b7e6657aed4a56a78f2a3b4b5c1ff0271b2';
+
+function gitResult(args) {
+  return spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+}
+
+/** Actions checkout is depth 1, so the rollback commit is not in the clone. */
+function ensureRollbackCommit() {
+  if (gitResult(['cat-file', '-e', `${ROLLBACK_COMMIT}^{commit}`]).status === 0) return;
+  const fetched = gitResult(['fetch', '--depth=1', 'origin', ROLLBACK_COMMIT]);
+  if (gitResult(['cat-file', '-e', `${ROLLBACK_COMMIT}^{commit}`]).status !== 0) {
+    throw new Error(`commit ${ROLLBACK_COMMIT} is not in this clone\n${fetched.stderr || fetched.stdout || ''}`);
+  }
+}
+
+function extractRollback(pathspec, dest) {
+  ensureRollbackCommit();
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['archive', ROLLBACK_COMMIT, pathspec], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const extract = spawn('tar', ['-x', '-C', dest], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let gitErr = '';
+    let tarErr = '';
+    let gitCode = null;
+    let tarCode = null;
+    const finish = () => {
+      if (gitCode === null || tarCode === null) return;
+      if (gitCode !== 0) reject(new Error(`git archive ${gitCode}: ${gitErr}`));
+      else if (tarCode !== 0) reject(new Error(`tar ${tarCode}: ${tarErr}`));
+      else resolve();
+    };
+    child.stderr.on('data', (chunk) => { gitErr += chunk; });
+    extract.stderr.on('data', (chunk) => { tarErr += chunk; });
+    child.stdout.pipe(extract.stdin);
+    child.on('error', reject);
+    extract.on('error', reject);
+    child.on('exit', (code) => { gitCode = code ?? 1; finish(); });
+    extract.on('exit', (code) => { tarCode = code ?? 1; finish(); });
+  });
+}
+
 test('T12 a log with block_ts still boots on 484c5b7e', async () => {
   await withAnchorKey(async () => {
     const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -697,17 +740,10 @@ test('T12 a log with block_ts still boots on 484c5b7e', async () => {
     }
     const oldRoot = tmp('chit-t12-old-');
     fs.mkdirSync(oldRoot, { recursive: true });
-    await new Promise((resolve, reject) => {
-      const child = spawn('git', ['archive', '484c5b7e6657aed4a56a78f2a3b4b5c1ff0271b2', 'services/gateway/src'], {
-        cwd: repoRoot,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      const extract = spawn('tar', ['-x', '-C', oldRoot], { stdio: ['pipe', 'inherit', 'inherit'] });
-      child.stdout.pipe(extract.stdin);
-      child.on('error', reject);
-      extract.on('error', reject);
-      extract.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tar ${code}`))));
-    });
+    await extractRollback('services/gateway/src', oldRoot);
+    if (!fs.existsSync(path.join(oldRoot, 'services', 'gateway', 'src', 'receipt-merkle.js'))) {
+      throw new Error('484c5b7e archive did not contain services/gateway/src');
+    }
     const pkgDir = path.join(oldRoot, 'services', 'gateway');
     fs.symlinkSync(path.join(repoRoot, 'services', 'gateway', 'node_modules'), path.join(pkgDir, 'node_modules'));
     const runner = path.join(oldRoot, 't12-run.mjs');

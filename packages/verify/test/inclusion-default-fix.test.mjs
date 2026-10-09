@@ -6,10 +6,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { execSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
@@ -356,20 +356,91 @@ test('T22 inclusion.head is trusted only through a pinned key or JWKS', async ()
   assert.equal(suppliedWins.errors.includes('inclusion_failed'), false, suppliedWins.errors.join(','));
 });
 
-function build035() {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-verify-035-'));
-  execSync(`git archive ${COMMIT_035} packages/verify | tar -x -C ${JSON.stringify(dir)}`, {
-    cwd: repoRoot,
-    stdio: 'pipe',
+function gitAt(args) {
+  return spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8' });
+}
+
+/** Actions checkout is depth 1, so 484c5b7e is absent until this fetch. */
+function ensureRollbackCommit() {
+  if (gitAt(['cat-file', '-e', `${COMMIT_035}^{commit}`]).status === 0) return;
+  const fetched = gitAt(['fetch', '--depth=1', 'origin', COMMIT_035]);
+  if (gitAt(['cat-file', '-e', `${COMMIT_035}^{commit}`]).status !== 0) {
+    throw new Error(`commit ${COMMIT_035} is not in this clone\n${fetched.stderr || fetched.stdout || ''}`);
+  }
+}
+
+function npmCliPath() {
+  const fromEnv = process.env.npm_execpath;
+  if (fromEnv && fromEnv.endsWith('.js') && existsSync(fromEnv)) return fromEnv;
+  const execDir = dirname(process.execPath);
+  const candidates = [
+    join(execDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(execDir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(execDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(execDir, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+function npmExec(args, cwd) {
+  const cli = npmCliPath();
+  if (!cli) throw new Error('npm-cli.js was not found; refusing to spawn npm through cmd.exe');
+  const result = spawnSync(process.execPath, [cli, ...args], {
+    cwd,
+    encoding: 'utf8',
+    shell: false,
+    env: process.env,
   });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`npm ${args.join(' ')} exited ${result.status}\n${result.stderr || ''}\n${result.stdout || ''}`);
+  }
+}
+
+function extractRollback(dest) {
+  ensureRollbackCommit();
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['archive', COMMIT_035, 'packages/verify'], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const extract = spawn('tar', ['-x', '-C', dest], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let gitErr = '';
+    let tarErr = '';
+    let gitCode = null;
+    let tarCode = null;
+    const finish = () => {
+      if (gitCode === null || tarCode === null) return;
+      if (gitCode !== 0) reject(new Error(`git archive ${gitCode}: ${gitErr}`));
+      else if (tarCode !== 0) reject(new Error(`tar ${tarCode}: ${tarErr}`));
+      else resolve();
+    };
+    child.stderr.on('data', (chunk) => { gitErr += chunk; });
+    extract.stderr.on('data', (chunk) => { tarErr += chunk; });
+    child.stdout.pipe(extract.stdin);
+    child.on('error', reject);
+    extract.on('error', reject);
+    child.on('exit', (code) => { gitCode = code ?? 1; finish(); });
+    extract.on('exit', (code) => { tarCode = code ?? 1; finish(); });
+  });
+}
+
+async function build035() {
+  const dir = mkdtempSync(join(tmpdir(), 'chit-verify-035-'));
+  await extractRollback(dir);
   const packed = join(dir, 'packages', 'verify');
-  execSync('npm ci --ignore-scripts', { cwd: packed, stdio: 'pipe' });
-  execSync('npm run build', { cwd: packed, stdio: 'pipe' });
-  return join(packed, 'dist', 'cli.js');
+  if (!existsSync(join(packed, 'package.json'))) {
+    throw new Error('484c5b7e archive did not contain packages/verify');
+  }
+  npmExec(['ci', '--ignore-scripts'], packed);
+  npmExec(['run', 'build'], packed);
+  const cli = join(packed, 'dist', 'cli.js');
+  if (!existsSync(cli)) throw new Error('0.3.5 build did not write dist/cli.js');
+  return cli;
 }
 
 test('T23 only a matching inclusion and head can verify', async () => {
-  const cli035 = build035();
+  const cli035 = await build035();
   const cli036 = join(pkgDir, 'dist', 'cli.js');
   const dir = mkdtempSync(join(tmpdir(), 'chit-t23-'));
   const receiptPath = join(dir, 'receipt.json');
