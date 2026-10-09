@@ -191,7 +191,13 @@ jobs:
 
       - name: Install and test www with no network
         working-directory: apps/web
-        run: npm install --no-audit --no-fund && unshare -rn npm test
+        run: |
+          npm install --no-audit --no-fund
+          # ubuntu-latest blocks unprivileged user namespaces until this sysctl is cleared.
+          if ! unshare -rn true; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare -rn npm test
 
   solana-audit-bundle:
     name: Solana audit bundle secret scan
