@@ -5,8 +5,15 @@
  *   node scripts/verify-1f916-link.mjs <specimen.json>
  *   node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
  *
- * Prints PASS or FAIL for each step, then VERDICT. Exit 0 only when every
- * step passes. Node built-ins only.
+ * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
+ * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
+ * fails closed with public_receipt_is_unsigned_shell. No flag, environment
+ * variable, or fetch fixture turns that shell into PASS or VERIFIED.
+ * Node built-ins only.
+ *
+ * Hermetic runs: set CHIT_VERIFY_FETCH_FIXTURE to a JSON file
+ * `{ "responses": { "<url>": <body> } }`. The longest matching URL prefix
+ * is returned and a miss throws, so the process does not open a socket.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -144,6 +151,43 @@ function receiptUrl(id) {
 }
 
 /**
+ * Public GET /receipt/:id is an unsigned shell. Fail closed on the schema or
+ * on unsigned:true, including when a caller stuffed a jws field onto it.
+ * @param {unknown} receipt
+ */
+function isPublicReceiptShell(receipt) {
+  if (!receipt || typeof receipt !== 'object') return false;
+  if (receipt.schema === 'chit402.receipt_shell.v1') return true;
+  if (receipt.unsigned === true) return true;
+  return false;
+}
+
+/**
+ * Test hook for a hermetic CLI. Unset in production runs.
+ * @returns {typeof fetch|null}
+ */
+function fetchFromFixtureEnv() {
+  const file = process.env.CHIT_VERIFY_FETCH_FIXTURE;
+  if (!file) return null;
+  const fixture = JSON.parse(readFileSync(file, 'utf8'));
+  const responses = fixture && fixture.responses && typeof fixture.responses === 'object'
+    ? fixture.responses
+    : {};
+  const keys = Object.keys(responses).sort((a, b) => b.length - a.length);
+  return async (url) => {
+    const target = String(url);
+    const key = keys.find((candidate) => target === candidate || target.startsWith(candidate));
+    if (!key) throw new Error(`fixture_miss:${target}`);
+    const body = responses[key];
+    return {
+      ok: true,
+      status: 200,
+      json: async () => body,
+    };
+  };
+}
+
+/**
  * @param {object} specimen
  */
 function pendingSpecimen(specimen) {
@@ -251,10 +295,12 @@ export async function verifyLink(specimen, opts = {}) {
     try {
       receipt = await getJson(url, fetchImpl);
       const verifyUrl = String(receipt?.verify_url || '');
-      if (receipt?.schema === 'chit402.receipt_shell.v1' || receipt?.unsigned === true) {
+      if (isPublicReceiptShell(receipt)) {
         // Since #519 the public route returns an unsigned shell. The issuer JWS,
         // book chain and payment ref are owner-view only, so this tool cannot
-        // check them from the public URL. Fail closed with a reason that says so.
+        // check them from the public URL. Fail closed. A fake jws field, unsigned:false
+        // on the shell schema, or any caller option still fails. Nothing here
+        // prints PASS or VERIFIED for the receipt.
         steps.fetch_receipt = fail('public_receipt_is_unsigned_shell (issuer JWS is owner-view only)');
         receipt = null;
       } else if (!verifyUrl.endsWith(`/receipt/${specimen.chit_receipt_id}`)) {
@@ -540,7 +586,8 @@ async function main() {
     console.log('VERDICT FAIL');
     process.exit(1);
   }
-  const result = await verifyLink(specimen);
+  const fetchImpl = fetchFromFixtureEnv();
+  const result = await verifyLink(specimen, fetchImpl ? { fetchImpl } : {});
   console.log(formatReport(result));
   process.exit(result.verdict === 'PASS' ? 0 : 1);
 }

@@ -13,7 +13,7 @@
 import crypto from 'crypto';
 import { clampBookLimit, BOOK_MAX_LIMIT, deriveEvidence, BOOK_EVIDENCE, entryQualifiesForTotals } from './usage-settled.js';
 import { DEFAULT_FLOOR_UNITS } from './pricing.js';
-import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
+import { buildVerifyUrl, explorerUrlForRef, safeExplorerUrl } from './receipt.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import {
   selectBookWindow,
@@ -87,6 +87,7 @@ function rowOf(entry) {
   const isRecordedBySettle = evidence === BOOK_EVIDENCE.RECORDED_BY_SETTLE;
   const isInflow = evidence === BOOK_EVIDENCE.INFLOW_CLAIMED;
   const hideAmount = isUnverified || isArrivalUnverified;
+  const explorerUrl = safeExplorerUrl(entry.explorer_url, entry.payment_ref);
   const row = {
     task_id: entry.task_id,
     ...(entry.seq != null ? { seq: entry.seq } : {}),
@@ -107,7 +108,7 @@ function rowOf(entry) {
       ...(entry.amount_raw ? { amount_raw: entry.amount_raw } : {}),
       ...(entry.block_hash ? { block_hash: entry.block_hash } : {}),
       ...(entry.usd_estimate ? { usd_estimate: entry.usd_estimate } : {}),
-      ...(entry.explorer_url ? { explorer_url: entry.explorer_url } : {}),
+      ...(explorerUrl ? { explorer_url: explorerUrl } : {}),
     },
     collected_at: entry.collected_at || entry.recorded_at || null,
   };
@@ -864,7 +865,12 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
  * @param {object} pack — from buildBookAuditPack
  */
 export function renderBookAuditHtml(pack) {
-  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   const rows = (pack.rows || []).map((r) => `
     <tr>
       <td>${esc(r.evidence)}</td>

@@ -55,6 +55,8 @@ jobs:
               - 'services/gateway/**'
             web:
               - 'apps/web/**'
+              - 'scripts/verify-1f916-link.mjs'
+              - 'scripts/fixtures/1f916*'
             theta-inference:
               - 'packages/circuit-runtime/theta-inference/**'
             skills:

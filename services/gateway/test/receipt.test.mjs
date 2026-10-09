@@ -93,8 +93,10 @@ test('repairExplorerUrl rebuilds a stored devnet link that swallowed the signatu
   );
   const good = `https://basescan.org/tx/0x${'ab'.repeat(32)}`;
   assert.equal(repairExplorerUrl(good, `base:0x${'ab'.repeat(32)}`), good);
-  assert.equal(repairExplorerUrl(null, ref), null);
-  assert.equal(repairExplorerUrl(undefined, ref), undefined);
+  const want = `https://solscan.io/tx/${sig}?cluster=devnet`;
+  assert.equal(repairExplorerUrl(null, ref), want);
+  assert.equal(repairExplorerUrl(undefined, ref), want);
+  assert.equal(repairExplorerUrl({ href: 'javascript:alert(1)' }, 'solana-devnet:not-a-sig'), null);
 });
 
 test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
