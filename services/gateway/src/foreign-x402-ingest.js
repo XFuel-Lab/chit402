@@ -21,7 +21,7 @@ import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
-import { buildVerifyUrl, canonicalSignedClaims, explorerUrlForRef, networkFromPaymentRef } from './receipt.js';
+import { buildVerifyUrl, canonicalSignedClaims, networkFromPaymentRef, safeExplorerUrl } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
 import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
 import { assertIssuanceOpen, bindIssuerRoot, issuerRootActive, ISSUER_ROOT_PAYLOAD_VERSION } from './issuer-root.js';
@@ -675,18 +675,19 @@ export function buildPublicForeignIngestReceipt(snapshot, { baseUrl = '', reqHos
   const payment = snapshot.payment || {};
   const ref = payment.ref || null;
   const network = payment.network || networkFromPaymentRef(ref);
+  const explorer = safeExplorerUrl(payment.explorer_url, ref);
   return {
     ...snapshot,
     verify_url: verifyUrl,
     links: {
       self: verifyUrl,
-      explorer: payment.explorer_url || explorerUrlForRef(ref),
+      explorer,
     },
     payment: {
       ...payment,
       network,
       chain: payment.chain || (network === 'nano' ? 'nano' : undefined),
-      explorer_url: payment.explorer_url || explorerUrlForRef(ref),
+      explorer_url: explorer,
     },
     attestation_note:
       'Foreign ingest: Chit402 verified and recorded this payment — we did not execute the inference hop.',
