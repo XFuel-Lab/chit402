@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const core = await import('../src/lib/spendAuditCore.mjs');
 const sol = await import('../src/lib/solanaAddress.mjs');
 const { runPublicSpendAudit, lookupReceipt } = await import('../src/lib/spendAuditFetch.mjs');
-const { handleSolanaAudit, resetSolanaAuditState, solanaAuditEndpoint } = await import('../../../api/solana-audit/handler.mjs');
+const { handleSolanaAudit, resetSolanaAuditState, solanaAuditEndpoint } = await import('../../../api/solana-audit/_handler.mjs');
 
 const {
   parseAuditQuery,
@@ -765,6 +765,23 @@ describe('solana audit proxy', { concurrency: 1 }, () => {
         }),
     });
     assert.equal(kept.result.headers['cache-control'], 'public, s-maxage=604800, immutable');
+
+    resetSolanaAuditState();
+    const noTime = await proxy('tx', `sig=${SOLANA_CANARY_SIGNATURE}`, {
+      script: async (method) => (method === 'getGenesisHash'
+        ? { result: SOLANA_MAINNET_GENESIS }
+        : {
+          result: {
+            slot: 1,
+            blockTime: null,
+            meta: { err: null, innerInstructions: [] },
+            transaction: { message: { accountKeys: [], instructions: [] } },
+          },
+        }),
+    });
+    assert.equal(noTime.result.status, 200);
+    assert.equal(noTime.result.body.tx.blockTime, null);
+    assert.equal(noTime.result.headers['cache-control'], 'no-store');
     const head = await proxy('head');
     assert.equal(head.result.headers['cache-control'], 'no-store');
     const extra = await proxy('account', `address=${WALLET}&foo=1`);
@@ -1831,4 +1848,45 @@ test('lookupReceipt follows only a safe shell redirect', async () => {
   const refused = await lookupReceipt('https://api.chit402.com', '0x' + 'ab'.repeat(32), fetchImpl, undefined, 'base');
   assert.equal(refused.status, 'unavailable');
   assert.equal(calls.length, 1);
+});
+
+// Part B (pr528-partB-0949b27e) B1: browsers hide manual redirects.
+test('B1 lookupReceipt follows by-tx in browser semantics and checks where it landed', async () => {
+  const { lookupReceipt } = await import('../src/lib/spendAuditFetch.mjs');
+  const id = 'xfuel-7c4a2c20-57b6-4009-9cef-061efff24c6a';
+  const sig = '2WaXaTT2LkpMAuryrGqPYsK48V8RDcbnt1ksGMsfwj8Pxpx2G1Z52PEZgjTHZK4YZDdTcv36P2o9toSVVke4iWBy';
+  const shell = {
+    schema: 'chit402.receipt_shell.v1', receipt_id: id, chain: 'solana', payment_tx: sig,
+    pay_to: 'ALLdmmAsbUnhHS7x2556449syP5Wz73Gng4gzzLHqsC7', asset: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', amount_gross: '2000',
+  };
+  const seen = [];
+  const followed = (landed) => async (url, init) => {
+    seen.push(init?.redirect);
+    if (init?.redirect === 'manual') return { type: 'opaqueredirect', status: 0, ok: false, headers: new Headers(), json: async () => ({}) };
+    return { type: 'cors', status: 200, ok: true, redirected: true, url: landed, headers: new Headers({ 'content-type': 'application/json' }), json: async () => shell };
+  };
+  const good = await lookupReceipt('https://api.chit402.com', sig, followed(`https://api.chit402.com/receipt/${id}?format=json`), undefined, 'solana');
+  assert.equal(good.status, 'found');
+  assert.equal(good.receipt_id, id);
+  assert.deepEqual([...new Set(seen)], ['follow']);
+  for (const landed of [`https://evil.example/receipt/${id}?format=json`, `https://api.chit402.com/receipt/${id}`, `https://api.chit402.com/receipt/javascript:alert(1)?format=json`]) {
+    const bad = await lookupReceipt('https://api.chit402.com', sig, followed(landed), undefined, 'solana');
+    assert.equal(bad.status, 'unavailable', landed);
+  }
+  const opaque = await lookupReceipt('https://api.chit402.com', sig, async () => ({ type: 'opaqueredirect', status: 0, ok: false, headers: new Headers() }), undefined, 'solana');
+  assert.equal(opaque.status, 'unavailable');
+});
+
+test('B2 the SPA catch-all rewrite excludes /api so dynamic functions are reachable', () => {
+  for (const file of [join(repo, 'vercel.json'), join(here, '../vercel.json')]) {
+    const rewrites = JSON.parse(readFileSync(file, 'utf8')).rewrites || [];
+    const spa = rewrites.filter((r) => r.destination === '/index.html');
+    assert.equal(spa.length, 1, file);
+    const re = new RegExp(`^${spa[0].source}$`);
+    assert.equal(re.test('/api/solana-audit/head'), false, file);
+    assert.equal(re.test('/api/nope'), false, file);
+    assert.equal(re.test('/api'), false, file);
+    assert.equal(re.test('/audit/anything'), true, file);
+    assert.equal(re.test('/apiary'), true, file);
+  }
 });

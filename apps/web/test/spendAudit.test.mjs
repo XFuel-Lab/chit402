@@ -325,6 +325,8 @@ test('a dead Base RPC fails closed with no report total', async () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.error, 'source_unavailable');
+  assert.equal(result.message, 'upstream_unavailable');
+  assert.equal(String(result.message).includes('offline'), false);
   assert.equal(result.report, undefined);
 });
 

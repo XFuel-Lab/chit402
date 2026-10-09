@@ -453,7 +453,9 @@ export async function handleSolanaAudit(request, options = {}) {
     }]);
     if (got.error) return finish(fail(got.error === 'upstream_rate_limited' ? 429 : 502, got.error));
     const tx = projectTransaction(got.result);
-    if (!tx) return finish(jsonResult(200, { v: 1, tx: null }, 'no-store'));
+    if (!tx || tx.blockTime == null) {
+      return finish(jsonResult(200, tx ? { v: 1, tx } : { v: 1, tx: null }, 'no-store'));
+    }
     return finish(jsonResult(200, { v: 1, tx }, 'public, s-maxage=604800, immutable'));
   }
 

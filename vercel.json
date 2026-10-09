@@ -124,6 +124,6 @@
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
     { "source": "/docs/cloudflare-x402", "destination": "/docs/cloudflare-x402/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api(?:/|$)).*)", "destination": "/index.html" }
   ]
 }

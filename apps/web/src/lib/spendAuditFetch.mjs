@@ -209,6 +209,18 @@ function blockTimeIso(block) {
  * USDC Transfer logs where `from` is the wallet, newest window first.
  * A failed chunk is recorded. It does not become an empty range.
  */
+function baseRangeCode(err) {
+  if (isLogRangeLimitError(err)) return 'range_limit';
+  const message = String(err?.message || err || '');
+  if (message === 'rpc_log_call_cap') return 'log_call_cap';
+  if (isRateLimitMessage(message) || err?.status === 429) return 'upstream_rate_limited';
+  if (/rpc_unreadable|rpc_logs_unreadable/.test(message)) return 'upstream_bad_response';
+  const code = message.split(':')[0];
+  if (FAILED_RANGE_CODES.has(code)) return code;
+  if (FAILED_RANGE_CODES.has(message)) return message;
+  return 'upstream_unavailable';
+}
+
 export async function scanBaseUsdcOut(address, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const rpcUrl = options.rpcUrl || BASE_RPC_URL;
@@ -329,16 +341,6 @@ export async function scanBaseUsdcOut(address, options = {}) {
     }
   }
 
-function baseRangeCode(err) {
-  if (isLogRangeLimitError(err)) return 'range_limit';
-  const message = String(err?.message || err || '');
-  if (message === 'rpc_log_call_cap') return 'log_call_cap';
-  if (isRateLimitMessage(message) || err?.status === 429) return 'upstream_rate_limited';
-  if (/rpc_unreadable|rpc_logs_unreadable/.test(message)) return 'upstream_bad_response';
-  if (FAILED_RANGE_CODES.has(message)) return message;
-  return 'upstream_unavailable';
-}
-
   if (queue.length > 0) {
     const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker());
     await Promise.all(workers);
@@ -355,41 +357,43 @@ function baseRangeCode(err) {
   };
 }
 
-function shellRedirect(location) {
-  return typeof location === 'string'
-    && /^https:\/\/api\.chit402\.com\/receipt\/(?:xfuel|chit|foreign-x402)-[A-Za-z0-9-]{8,80}\?format=json$/.test(location)
-    && receiptPageHref(location.split('/receipt/')[1]?.split('?')[0] || '') != null;
+function shellLocationOk(apiHost, location) {
+  const root = `${String(apiHost).replace(/\/$/, '')}/receipt/`;
+  if (typeof location !== 'string' || !location.startsWith(root)) return false;
+  const match = location.slice(root.length).match(/^((?:xfuel|chit|foreign-x402)-[A-Za-z0-9-]{8,80})\?format=json$/);
+  return !!(match && receiptPageHref(match[1]));
 }
 
+/**
+ * by-tx answers 302 to /receipt/<id>?format=json. Browsers hide a manual
+ * redirect (opaqueredirect, status 0, no Location), so let fetch follow it and
+ * check where it landed. A 3xx that reaches us (Node, test mocks) is followed
+ * here under the same check.
+ */
 export async function lookupReceipt(apiHost, txHash, fetchImpl, signal, chain = 'base') {
   const ref = chain === 'solana' ? `solana:${txHash}` : `base:${txHash}`;
   const url = `${apiHost.replace(/\/$/, '')}/receipt/by-tx?tx=${encodeURIComponent(ref)}&format=json`;
+  const init = { headers: { accept: 'application/json' }, cache: 'no-store', redirect: 'follow', signal };
   let res;
   try {
-    res = await fetchImpl(url, {
-      headers: { accept: 'application/json' },
-      cache: 'no-store',
-      redirect: 'manual',
-      signal,
-    });
+    res = await fetchImpl(url, init);
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     return { status: 'unavailable' };
   }
+  if (res.type === 'opaqueredirect' || res.status === 0) return { status: 'unavailable' };
   if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
     const location = res.headers?.get?.('location');
-    if (!shellRedirect(location)) return { status: 'unavailable' };
+    if (!shellLocationOk(apiHost, location)) return { status: 'unavailable' };
     try {
-      res = await fetchImpl(location, {
-        headers: { accept: 'application/json' },
-        cache: 'no-store',
-        redirect: 'manual',
-        signal,
-      });
+      res = await fetchImpl(location, init);
     } catch (err) {
       if (err?.name === 'AbortError') throw err;
       return { status: 'unavailable' };
     }
+    if (res.status >= 300 && res.status < 400) return { status: 'unavailable' };
+  } else if (res.redirected === true && !shellLocationOk(apiHost, res.url)) {
+    return { status: 'unavailable' };
   }
   if (res.status === 404) return { status: 'missing' };
   if (!res.ok) return { status: 'unavailable' };
@@ -921,7 +925,7 @@ export async function runPublicSpendAudit(raw, options = {}) {
     return {
       ok: false,
       error: 'source_unavailable',
-      message: err?.message || 'Base RPC did not answer',
+      message: baseRangeCode(err),
     };
   }
 }

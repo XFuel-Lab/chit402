@@ -89,10 +89,14 @@ export default function Audit() {
       if (cancelled) return;
       if (!result.ok) {
         setPhase('error');
-        setError(result.message
-          || (result.error === 'invalid' || result.error === 'empty'
-            ? 'Paste a Base wallet (0x and 40 hex digits), a Solana address, or a numeric agent id.'
-            : 'The Base RPC did not answer. No spend total is shown.'));
+        if (result.error === 'invalid' || result.error === 'empty') {
+          setError(result.message
+            || 'Paste a Base wallet (0x and 40 hex digits), a Solana address, or a numeric agent id.');
+        } else if (kind === 'solana') {
+          setError('The Solana audit proxy did not answer. No spend total is shown.');
+        } else {
+          setError('The Base RPC did not answer. No spend total is shown.');
+        }
         return;
       }
       setReport(result.report);

@@ -85,6 +85,6 @@
     { "source": "/docs/private-spend", "destination": "/docs/private-spend/index.html" },
     { "source": "/docs/receipt-check", "destination": "/docs/receipt-check/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api(?:/|$)).*)", "destination": "/index.html" }
   ]
 }

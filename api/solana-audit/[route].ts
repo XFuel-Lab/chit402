@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { handleSolanaAudit, sendSolanaAudit } from './handler.mjs';
+import { handleSolanaAudit, sendSolanaAudit } from './_handler.mjs';
 
 export const maxDuration = 15;
 

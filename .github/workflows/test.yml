@@ -55,14 +55,11 @@ jobs:
               - 'services/gateway/**'
             web:
               - 'apps/web/**'
-<<<<<<< HEAD
               - 'api/**'
               - 'scripts/check-solana-audit-bundle.mjs'
-              - '.github/workflows/test.yml'
-=======
               - 'scripts/verify-1f916-link.mjs'
               - 'scripts/fixtures/1f916*'
->>>>>>> origin/main
+              - '.github/workflows/test.yml'
             theta-inference:
               - 'packages/circuit-runtime/theta-inference/**'
             skills:
