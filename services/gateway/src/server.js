@@ -126,6 +126,7 @@ import {
   renderReceiptShellHtml,
   renderReceiptShellMissing,
   shellPreimageBytes,
+  RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { createOwnerView, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
@@ -2898,19 +2899,23 @@ export function createApp() {
     return toPublicShell(receipt, { inclusion, signedHead });
   }
 
-  function sendPublicShell(res, receipt, { wantsJson, taskId, pageUrl }) {
+  function sendPublicShell(res, receipt, { wantsJson, taskId }) {
     const shell = shellFor(receipt, taskId);
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
     if (wantsJson) return res.json(withVerifierAdvisory(shell));
-    return res.type('html').send(renderReceiptShellHtml(shell, { pageUrl }));
+    res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
+    return res.type('html').send(renderReceiptShellHtml(shell, {
+      publicBaseUrl: config.service.publicBaseUrl || '',
+    }));
   }
 
   function sendPublicMissing(res, wantsJson) {
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     if (wantsJson) return res.status(404).json({ error: 'not_found' });
+    res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
     return res.status(404).type('html').send(renderReceiptShellMissing());
   }
 
@@ -3137,7 +3142,11 @@ export function createApp() {
       }
     }
     try {
-      const found = tree.inclusion(req.params.task_id, treeSize == null ? {} : { treeSize });
+      // Exact lowercase chit- only. CHIT-, Chit-, and short ids stay unmatched.
+      const found = tree.inclusion(
+        normalizeTaskIdForLookup(req.params.task_id),
+        treeSize == null ? {} : { treeSize },
+      );
       if (found) return res.json(found);
       // A miss names no other row. The epoch commitment is the public attestation.
       return res.status(404).json({ error: 'not_in_tree' });
@@ -3148,6 +3157,15 @@ export function createApp() {
       }
       return sendPublicInternal(res, err, 'inclusion error', 'inclusion_failed');
     }
+  });
+
+  // One trailing slash is the same page. The id is not taken from this path.
+  app.use((req, _res, next) => {
+    if (req.method === 'GET' && /^\/receipt\/[^/]+\/$/.test(req.path)) {
+      const q = req.url.indexOf('?');
+      req.url = req.path.slice(0, -1) + (q === -1 ? '' : req.url.slice(q));
+    }
+    next();
   });
 
   app.get('/receipt/:taskId', rateLimit, (req, res) => {
@@ -3214,11 +3232,9 @@ export function createApp() {
 
       const publishShell = (receipt, task) => {
         if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
-        const pageUrl = `${baseUrl}/receipt/${rawTaskId}`;
         return sendPublicShell(res, receipt, {
           wantsJson,
           taskId: receipt?.task_id || taskId,
-          pageUrl,
         });
       };
 
