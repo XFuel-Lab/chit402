@@ -6,6 +6,7 @@ import {
   buildReceiptOgImageUrl,
   formatUsdcShareAmount,
   shortReceiptIdForShare,
+  receiptOgRailLabel,
 } from '../src/receipt-og-meta.js';
 import { buildReceiptOgSvg, renderReceiptOgPng } from '../src/receipt-og.js';
 
@@ -100,4 +101,14 @@ test('buildReceiptOgSvg embeds receipt title', () => {
   const svg = buildReceiptOgSvg(bankrStyleReceipt());
   assert.match(svg, /0\.002 USDC/);
   assert.match(svg, /chit-1ebc5616/);
+});
+
+test('OG rail label names the cluster: devnet and sepolia are not shown as mainnet', () => {
+  const sig = '7'.repeat(88);
+  const tx = '0x' + 'ef'.repeat(32);
+  const label = (ref, asset) => receiptOgRailLabel({ payment: { rail: 'usdc', ref, asset } });
+  assert.match(label(`solana:${sig}`, 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), /^Solana /);
+  assert.match(label(`solana-devnet:${sig}`, 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr'), /^Solana Devnet /);
+  assert.match(label(`base:${tx}`, '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'), /^Base /);
+  assert.match(label(`base-sepolia:${tx}`, '0x036CbD53842c5426634e7929541eC2318f3dCF7e'), /^Base Sepolia /);
 });

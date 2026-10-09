@@ -284,6 +284,10 @@ test('T11 tx links only for real base and solana refs', () => {
   assert.match(baseHtml, /rel="noopener noreferrer"/);
   const solHtml = page('solana', SOL_SIG);
   assert.match(solHtml, new RegExp(`href="https://solscan\\.io/tx/${SOL_SIG}"`));
+  const devHtml = page('solana-devnet', SOL_SIG);
+  assert.match(devHtml, new RegExp(`href="https://solscan\\.io/tx/${SOL_SIG}\\?cluster=devnet"`));
+  assert.equal(devHtml.includes('/tx/?cluster'), false);
+  assert.equal(devHtml.includes('Solana Devnet'), true);
   for (const [chain, tx] of [
     ['base', 'javascript:alert(1)'],
     ['base', '"><img'],

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { verifyMessage, getAddress, keccak256, toUtf8Bytes } from 'ethers';
+import { decodeBase58, encodeBase58, isSolanaSignature } from './payment-ref.js';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
 import { resolveModelCommitment } from './model-commitment.js';
 import { selectTier } from './tier-policy.js';
@@ -257,11 +258,12 @@ export function mergeReceiptView(receipt) {
   if (receipt?.payment) {
     // OpenAI /v1 surface adds payment presentation fields. Signed session fields
     // always come from the JWS — never trust a mirrored outer session block.
-    if (receipt.session?.agent_pubkey || receipt.agent_pubkey) return receipt;
-    const claims = decodeReceiptClaims(receipt);
-    if (!claims?.session && !claims?.agent_pubkey && !claims?.parent_receipt_id) return receipt;
+    const sealed = sealReceiptExplorer(receipt);
+    if (sealed.session?.agent_pubkey || sealed.agent_pubkey) return sealed;
+    const claims = decodeReceiptClaims(sealed);
+    if (!claims?.session && !claims?.agent_pubkey && !claims?.parent_receipt_id) return sealed;
     return {
-      ...receipt,
+      ...sealed,
       session: claims.session ?? receipt.session ?? null,
       agent_pubkey: claims.agent_pubkey ?? claims.session?.agent_pubkey ?? receipt.agent_pubkey ?? null,
       delegation_hash: claims.delegation_hash ?? claims.session?.delegation_hash ?? null,
@@ -293,7 +295,7 @@ export function mergeReceiptView(receipt) {
         gross_amount: '0',
         settled_amount: null,
         accounting: null,
-        explorer_url: paymentMeta.explorer_url ?? null,
+        explorer_url: safeExplorerUrl(paymentMeta.explorer_url, null),
         tier2_proof: paymentMeta.tier2_proof ?? null,
         floor_applied: paymentMeta.floor_applied ?? null,
         basis: paymentMeta.basis ?? null,
@@ -345,7 +347,7 @@ export function mergeReceiptView(receipt) {
       platform_fee_bps: claims.payment?.platform_fee_bps ?? null,
       asset: claims.payment?.asset ?? null,
       payee: claims.payment?.payee ?? null,
-      explorer_url: paymentMeta.explorer_url ?? explorerUrlForRef(claims.payment?.ref),
+      explorer_url: safeExplorerUrl(paymentMeta.explorer_url, claims.payment?.ref),
       tier2_proof: paymentMeta.tier2_proof ?? null,
       floor_applied: paymentMeta.floor_applied ?? null,
       basis: paymentMeta.basis ?? null,
@@ -448,8 +450,16 @@ const EXPLORERS = {
   'base-sepolia': 'https://sepolia.basescan.org/tx/',
   base: 'https://basescan.org/tx/',
   solana: 'https://solscan.io/tx/',
-  'solana-devnet': 'https://solscan.io/tx/?cluster=devnet',
+  'solana-devnet': 'https://solscan.io/tx/',
   nano: 'https://nanexplorer.com/nano/block/',
+};
+
+/**
+ * Query suffix appended AFTER the tx id. The cluster must follow the signature:
+ * `https://solscan.io/tx/<sig>?cluster=devnet`. Mainnet takes no cluster.
+ */
+const EXPLORER_SUFFIX = {
+  'solana-devnet': '?cluster=devnet',
 };
 
 /** Base58 alphabet (no 0, O, I, l) — Solana pubkeys/signatures. */
@@ -555,6 +565,38 @@ export function networkFromPaymentRef(paymentRef) {
   return idx > 0 ? paymentRef.slice(0, idx) : null;
 }
 
+const EXPLORER_HOSTS = new Set([
+  'basescan.org',
+  'sepolia.basescan.org',
+  'solscan.io',
+  'nanexplorer.com',
+]);
+
+/** Unsigned stored URLs may only use these characters. Blocks quotes, whitespace, and schemes. */
+const SAFE_EXPLORER_CHARS = /^[A-Za-z0-9/?=&._:-]+$/;
+
+function explorerBase(network) {
+  if (typeof network !== 'string' || !Object.hasOwn(EXPLORERS, network)) return null;
+  return EXPLORERS[network];
+}
+
+function explorerSuffix(network) {
+  if (typeof network !== 'string' || !Object.hasOwn(EXPLORER_SUFFIX, network)) return '';
+  return EXPLORER_SUFFIX[network];
+}
+
+/**
+ * Solana tx link: ASCII base58, 64–88 chars, decodes to exactly 64 bytes, and
+ * re-encodes to the same string. A 32-byte address never passes.
+ * @param {unknown} tx
+ * @returns {boolean}
+ */
+function isStrictSolanaSignature(tx) {
+  if (!isSolanaSignature(tx)) return false;
+  const raw = decodeBase58(tx);
+  return !!raw && raw.length === 64 && encodeBase58(raw) === tx;
+}
+
 /** Build an explorer URL from a `payment_ref` like "base-sepolia:0xabc…", or null. */
 export function explorerUrlForRef(paymentRef) {
   if (!paymentRef || typeof paymentRef !== 'string') return null;
@@ -562,21 +604,97 @@ export function explorerUrlForRef(paymentRef) {
   if (idx < 0) return null;
   const network = paymentRef.slice(0, idx);
   const tx = paymentRef.slice(idx + 1);
-  const base = EXPLORERS[network];
+  const base = explorerBase(network);
   if (!base || !tx) return null;
   if (network === 'base' || network === 'base-sepolia') {
-    if (!/^0x[0-9a-fA-F]{6,}$/.test(tx)) return null;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(tx)) return null;
     return base + tx;
   }
   if (network === 'solana' || network === 'solana-devnet') {
-    if (!isValidSolanaAddress(tx) && !isValidSolanaSignature(tx)) return null;
-    return base + tx;
+    if (!isStrictSolanaSignature(tx)) return null;
+    return base + tx + explorerSuffix(network);
   }
   if (network === 'nano') {
     if (!/^[0-9a-fA-F]{64}$/.test(tx)) return null;
     return base + tx.toUpperCase();
   }
   return null;
+}
+
+/**
+ * A stored explorer URL is presentation only. Accept it when the signed ref
+ * does not already determine the link, and only if it is https on an
+ * allowlisted host. The pre-fix devnet shape (`/tx/?cluster=devnet<sig>`) is
+ * not a link — the signature has to sit in the path.
+ * @param {unknown} stored
+ * @returns {boolean}
+ */
+function storedExplorerUrlAllowed(stored) {
+  if (typeof stored !== 'string' || stored.length === 0) return false;
+  if (!SAFE_EXPLORER_CHARS.test(stored)) return false;
+  let url;
+  try {
+    url = new URL(stored);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  if (url.username || url.password) return false;
+  const host = url.hostname.toLowerCase();
+  if (!EXPLORER_HOSTS.has(host)) return false;
+  if (host === 'solscan.io') {
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length !== 2 || parts[0] !== 'tx') return false;
+    if (!isStrictSolanaSignature(parts[1])) return false;
+    if (url.search !== '' && url.search !== '?cluster=devnet') return false;
+    if (url.hash) return false;
+  }
+  return true;
+}
+
+/**
+ * View link. The signed `payment.ref` wins. Stored `payment_meta.explorer_url`
+ * is a fallback only when it passes `storedExplorerUrlAllowed`.
+ * @param {unknown} stored
+ * @param {unknown} paymentRef
+ * @returns {string|null}
+ */
+export function safeExplorerUrl(stored, paymentRef) {
+  const derived = explorerUrlForRef(paymentRef);
+  if (derived) return derived;
+  if (storedExplorerUrlAllowed(stored)) return stored;
+  return null;
+}
+
+/**
+ * Same rule as `safeExplorerUrl`. Kept so callers of the devnet repair
+ * keep one name: a swallowed signature is rebuilt from the signed ref,
+ * and a hostile stored string is not passed through.
+ * @param {unknown} stored
+ * @param {unknown} paymentRef
+ * @returns {string|null}
+ */
+export function repairExplorerUrl(stored, paymentRef) {
+  return safeExplorerUrl(stored, paymentRef);
+}
+
+/**
+ * Copy a receipt whose payment block is already present and replace every
+ * explorer field from the signed ref (or a safe stored fallback).
+ * @param {object} receipt
+ */
+function sealReceiptExplorer(receipt) {
+  if (!receipt?.payment || typeof receipt.payment !== 'object') return receipt;
+  const ref = receipt.payment.ref;
+  const payment = {
+    ...receipt.payment,
+    explorer_url: safeExplorerUrl(receipt.payment.explorer_url, ref),
+  };
+  let links = receipt.links;
+  if (links && typeof links === 'object' && Object.prototype.hasOwnProperty.call(links, 'explorer')) {
+    links = { ...links, explorer: safeExplorerUrl(links.explorer, ref) };
+  }
+  return { ...receipt, payment, links };
 }
 
 /**
@@ -1025,7 +1143,7 @@ function publicPaymentBlock(payment) {
     gross_amount: payment.gross_amount ?? null,
     asset: payment.asset ?? null,
     payee: payment.payee ?? null,
-    explorer_url: payment.explorer_url ?? null,
+    explorer_url: safeExplorerUrl(payment.explorer_url, payment.ref),
     tier2_proof: payment.tier2_proof ?? null,
     floor_applied: payment.floor_applied ?? null,
     basis: payment.basis ?? null,
@@ -2123,17 +2241,6 @@ function isValidSolanaAddress(value) {
   return true;
 }
 
-/** Solana tx signatures are longer base58 strings (typically 87–88 chars). */
-function isValidSolanaSignature(value) {
-  if (!value || typeof value !== 'string') return false;
-  if (value.startsWith('0x')) return false;
-  if (value.length < 64 || value.length > 128) return false;
-  for (const ch of value) {
-    if (!BASE58_ALPHABET.includes(ch)) return false;
-  }
-  return true;
-}
-
 /**
  * Check if a value is a symbolic/internal label that must NOT appear in public receipts.
  * These are internal identifiers, vendor names, or gateway labels — never verifiable identities.
@@ -2699,7 +2806,10 @@ function badge(outcome, bindingMatches) {
 
 function settlementNetworkLabel(paymentRef) {
   const network = networkFromPaymentRef(paymentRef);
-  if (network === 'solana' || network === 'solana-devnet') return 'Solana';
+  if (network === 'solana') return 'Solana';
+  if (network === 'solana-devnet') return 'Solana Devnet';
+  if (network === 'base') return 'Base';
+  if (network === 'base-sepolia') return 'Base Sepolia';
   return 'Base';
 }
 
@@ -2808,7 +2918,8 @@ function foreignIngestPaymentSection(receipt, view) {
   const usd = formatUsdEstimateLabel(p.usd_estimate);
   const sender = p.payer || null;
   const recipient = p.payTo || p.payee || null;
-  const explorer = p.explorer_url || receipt.links?.explorer || null;
+  const explorer = safeExplorerUrl(p.explorer_url, p.ref)
+    || safeExplorerUrl(receipt.links?.explorer, p.ref);
   const feeLabel = stamp.fee_usd != null && stamp.fee_usd !== ''
     ? `$${stamp.fee_usd}`
     : formatUsdc(stamp.fee_units);
@@ -2973,9 +3084,10 @@ export function renderReceiptHtml(receipt) {
   const ogImage = og.imageUrl || buildReceiptOgImageUrl(receipt) || CHIT402_OG_IMAGE_URL;
   const pageUrl = receipt.links?.self || receipt.verify_url || null;
 
+  const explorerHref = safeExplorerUrl(p.explorer_url, p.ref);
   const refHtml = p.ref
-    ? (p.explorer_url
-        ? `<a href="${esc(p.explorer_url)}" target="_blank" rel="noopener">${esc(shortHash(p.ref, 16, 8))} ↗</a>`
+    ? (explorerHref
+        ? `<a href="${esc(explorerHref)}" target="_blank" rel="noopener">${esc(shortHash(p.ref, 16, 8))} ↗</a>`
         : `<code>${esc(shortHash(p.ref, 16, 8))}</code>`)
     : (p.collects_on === 'next_request'
         ? '<span class="badge pending">pending — next request</span>'
@@ -3479,7 +3591,7 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
       receipt_floor_amount: breakdown?.receipt_floor_amount ?? null,
       provider_cogs_amount: breakdown?.provider_cogs_amount ?? null,
       payment_ref: view.payment?.ref || null,
-      explorer_url: view.payment?.explorer_url || null,
+      explorer_url: safeExplorerUrl(view.payment?.explorer_url, view.payment?.ref),
     },
     route_summary: {
       message_type: view.route?.message_type || null,

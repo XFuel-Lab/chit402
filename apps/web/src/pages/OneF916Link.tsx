@@ -239,10 +239,14 @@ export default function OneF916Link() {
           </ol>
           <p>
             <code>npx -p @xfuel/verify xfuel-verify</code> runs the signature and the chain check on a receipt file.
-            It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> prints PASS or
-            FAIL for the receipt fetch, the signature, the book chain, the Base transfer, and
-            the entry fingerprint. The receipt JSON still omits <code>agent_record_entry</code>;
-            the specimen file carries it.
+            It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt
+            fetch, the issuer signature, the book chain, the Base transfer, and the entry fingerprint.
+            These specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public
+            receipt is an unsigned shell and the issuer signature is owner-view only. Expected
+            result: FAIL <code>public_receipt_is_unsigned_shell</code>. The entry-fingerprint line
+            can still say the book entry matches. That line is not VERIFIED. The verifier never
+            prints VERDICT PASS for a public shell. The receipt JSON still omits{' '}
+            <code>agent_record_entry</code>; the specimen file carries it.
           </p>
           <pre className="docs-code">
             <code>{verifyCli}</code>
@@ -279,10 +283,11 @@ export default function OneF916Link() {
             <li>
               The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
               The house stamp command is <code>{STAMP_SCRIPT}</code>. The stamp&apos;s issuer JWS
-              binds the tx, chain, payer, payee, amount, and the entry fingerprint. The verifier
-              checks that JWS against the Chit JWKS, then <code>book_chain</code>, the Base
-              transfer, and the 1F916 entry hash. <code>chit_verify_url</code> may be the receipt
-              path alone or the same path with <code>?format=json</code>.
+              binds the tx, chain, payer, payee, amount, and the entry fingerprint. That signature
+              is owner-view only. These specimens can&apos;t be publicly verified right now: a
+              stranger running the verifier against the public receipt gets FAIL{' '}
+              <code>public_receipt_is_unsigned_shell</code>, not a pass. <code>chit_verify_url</code>{' '}
+              may be the receipt path alone or the same path with <code>?format=json</code>.
             </li>
           </ul>
           <pre className="docs-code">
