@@ -28,12 +28,16 @@ export const SAMPLE_BASE_ADDRESS: string;
 
 export type AuditQuery =
   | { kind: 'empty' }
-  | { kind: 'invalid' }
+  | { kind: 'invalid'; reason?: string }
   | { kind: 'base'; address: string }
   | { kind: 'solana'; address: string }
   | { kind: 'agent'; agentId: string };
 
 export function parseAuditQuery(raw: string): AuditQuery;
+export function auditQueryChip(raw: string): string;
+export function auditQueryMessage(query: AuditQuery): string;
+export function shouldRunAuditFetch(input: { kind?: string; query?: string; armed?: string | null }): boolean;
+export const SPONSORED_FEE_CAPTION: string;
 export function addressTopic(address: string): string | null;
 export function counterpartyLabel(address: string): string | null;
 
@@ -59,8 +63,9 @@ export function decodeUsdcTransferLog(log: {
 export function selectorOf(txInput: string | null | undefined): string | null;
 export function settlementMethodOf(txInput: string | null | undefined): 'eip3009' | 'erc20_transfer' | 'erc20_transfer_from' | null;
 export function classifySpend(input: {
-  receipt?: { status?: string; task_id?: string; schema?: string; rail?: string } | null;
+  receipt?: { status?: string; task_id?: string; schema?: string; rail?: string; matched?: boolean } | null;
   txInput?: string | null;
+  settlementMethod?: string | null;
 }): 'x402' | 'other' | 'undetected';
 
 export function findAnomalies(rows: Array<{

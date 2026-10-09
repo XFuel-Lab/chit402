@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { bookRowHash, formatReport, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
+import { offlineVerifyFetch } from './verify-1f916-offline-fetch.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const positivePath = join(root, 'scripts/fixtures/1f916-link-verifier-fixture.json');
@@ -299,7 +300,7 @@ test('a tampered entry fingerprint fails only that step on a foreign-ingest payo
 
 describe('verifier fixture, not a public specimen', () => {
   test('fixture passes every step', { timeout: 60000 }, async () => {
-    const result = await verifyLink(load(positivePath));
+    const result = await verifyLink(load(positivePath), { fetchImpl: offlineVerifyFetch });
     assert.equal(formatReport(result).includes('VERDICT PASS'), true, formatReport(result));
     for (const name of ['fetch_receipt', 'issuer_signature', 'receipt_chain', 'on_chain_tx', 'entry_fingerprint']) {
       assert.equal(result.steps[name].status, 'PASS', `${name}: ${result.steps[name].detail}`);
@@ -309,7 +310,7 @@ describe('verifier fixture, not a public specimen', () => {
   });
 
   test('tampered fingerprint fails only the fingerprint step', { timeout: 60000 }, async () => {
-    const result = await verifyLink(load(tamperedPath));
+    const result = await verifyLink(load(tamperedPath), { fetchImpl: offlineVerifyFetch });
     for (const name of ['fetch_receipt', 'issuer_signature', 'receipt_chain', 'on_chain_tx']) {
       assert.equal(result.steps[name].status, 'PASS', `${name}: ${result.steps[name].detail}`);
     }
@@ -321,12 +322,13 @@ describe('verifier fixture, not a public specimen', () => {
 
   test('CLI prints PASS for the fixture and FAIL for the tampered fixture', { timeout: 90000 }, () => {
     const script = join(root, 'scripts/verify-1f916-link.mjs');
-    const ok = spawnSync(process.execPath, [script, positivePath], { encoding: 'utf8' });
+    const preload = join(root, 'apps/web/test/verify-1f916-offline-preload.mjs');
+    const ok = spawnSync(process.execPath, ['--import', preload, script, positivePath], { encoding: 'utf8' });
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     assert.match(ok.stdout, /PASS entry_fingerprint/);
     assert.match(ok.stdout, /VERDICT PASS/);
 
-    const bad = spawnSync(process.execPath, [script, tamperedPath], { encoding: 'utf8' });
+    const bad = spawnSync(process.execPath, ['--import', preload, script, tamperedPath], { encoding: 'utf8' });
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);
     assert.match(bad.stdout, /PASS on_chain_tx/);
     assert.match(bad.stdout, /FAIL entry_fingerprint\s+fingerprint_mismatch/);

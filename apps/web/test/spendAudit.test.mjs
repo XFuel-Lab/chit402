@@ -23,6 +23,8 @@ const {
   CHIT_FEE_SINK,
 } = await import('../src/lib/spendAuditCore.mjs');
 
+const { parseSolanaAddress } = await import('../src/lib/solanaAddress.mjs');
+
 const { runPublicSpendAudit } = await import('../src/lib/spendAuditFetch.mjs');
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -58,7 +60,10 @@ test('parseAuditQuery accepts a Base address, agent id, and Solana address', () 
   assert.deepEqual(parseAuditQuery(`  base:${PAYER.toUpperCase()}  `), { kind: 'base', address: PAYER });
   assert.equal(parseAuditQuery(`eip155:8453:${PAYER}`).kind, 'base');
   assert.deepEqual(parseAuditQuery('0042'), { kind: 'agent', agentId: '42' });
-  assert.equal(parseAuditQuery('1'.repeat(44)).kind, 'solana');
+  assert.equal(parseAuditQuery('1'.repeat(44)).kind, 'invalid');
+  const solana44 = '21cesz3zArQM2QLY5QV2sBRhVj1tR1tY3rSj1fRcgZk2';
+  assert.equal(parseSolanaAddress(solana44).ok, true);
+  assert.equal(parseAuditQuery(solana44).kind, 'solana');
   assert.equal(parseAuditQuery('').kind, 'empty');
   assert.equal(parseAuditQuery('not a wallet').kind, 'invalid');
   assert.equal(parseAuditQuery('0x1234').kind, 'invalid');
@@ -74,16 +79,14 @@ test('decodeUsdcTransferLog reads amount, payee, and timestamp', () => {
   assert.equal(decodeUsdcTransferLog({ topics: [] }), null);
 });
 
-test('classifySpend labels x402 only from a receipt or EIP-3009', () => {
+test('classifySpend labels x402 only from a matched shell or EIP-3009', () => {
   assert.equal(classifySpend({
-    receipt: { status: 'found', task_id: 'foreign-x402-abc', schema: 'chit402.foreign_payout.v1', rail: 'usdc' },
+    receipt: { matched: true, rail: 'usdc' },
     txInput: null,
   }), 'x402');
   assert.equal(classifySpend({
-    receipt: { status: 'found', task_id: 'xfuel-1', schema: 'xfuel.receipt.v4', rail: 'usdc' },
-  }), 'x402');
-  assert.equal(classifySpend({
-    receipt: { status: 'found', task_id: 'openrouter-1', rail: 'reported' },
+    receipt: { matched: true, rail: 'reported' },
+    txInput: null,
   }), 'other');
   assert.equal(classifySpend({
     receipt: null,
@@ -93,7 +96,7 @@ test('classifySpend labels x402 only from a receipt or EIP-3009', () => {
     receipt: null,
     txInput: `${ERC20_TRANSFER_SELECTOR}${'00'.repeat(20)}`,
   }), 'other');
-  assert.equal(classifySpend({ receipt: { status: 'missing' }, txInput: null }), 'undetected');
+  assert.equal(classifySpend({ receipt: null, txInput: null }), 'undetected');
 });
 
 test('a complete empty window is zero, and a failed window withholds the total', () => {
@@ -142,13 +145,13 @@ test('counterparties, receipt match, spike, and near-duplicate stay on chain amo
   const receipts = new Map([
     [TX, {
       status: 'found',
+      receipt_id: 'foreign-x402-muq262x0-1467b076fc62',
       task_id: 'foreign-x402-muq262x0-1467b076fc62',
-      verify_url: 'https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62',
-      schema: 'chit402.foreign_payout.v1',
-      rail: 'usdc',
-      payer: PAYER,
-      hub: null,
-      model: null,
+      chain: 'base',
+      payment_tx: TX,
+      pay_to: PAYEE,
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      amount_gross: '1000000',
     }],
     [`0x${'11'.repeat(32)}`, { status: 'missing' }],
   ]);
@@ -189,7 +192,7 @@ test('counterparties, receipt match, spike, and near-duplicate stay on chain amo
   assert.equal(json.headline.usdc_out_atomic, '1006000');
 });
 
-test('a receipt whose payer does not match is not counted as this wallet\'s receipt', () => {
+test('a receipt whose amount does not match this row is not counted as receipted', () => {
   const report = buildSpendAuditReport({
     query: { kind: 'base', address: PAYER },
     chain: {
@@ -201,13 +204,15 @@ test('a receipt whose payer does not match is not counted as this wallet\'s rece
     },
     receipts: new Map([[TX, {
       status: 'found',
-      task_id: 'xfuel-other',
-      rail: 'usdc',
-      payer: `0x${'ab'.repeat(20)}`,
-      verify_url: 'https://api.chit402.com/receipt/xfuel-other',
+      receipt_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af',
+      chain: 'base',
+      payment_tx: TX,
+      pay_to: PAYEE,
+      asset: BASE_USDC,
+      amount_gross: '1',
     }]]),
   });
-  assert.equal(report.transfers[0].receipt_status, 'payer_mismatch');
+  assert.equal(report.transfers[0].receipt_status, 'receipt_mismatch');
   assert.equal(report.receipt_match.receipted_atomic, '0');
   assert.equal(report.receipt_match.unreceipted_atomic, '0');
   assert.equal(report.receipt_match.mismatch_count, 1);
@@ -215,10 +220,11 @@ test('a receipt whose payer does not match is not counted as this wallet\'s rece
 });
 
 test('Solana and a possession-gated agent id do not invent a total', () => {
-  const solana = buildSpendAuditReport({ query: { kind: 'solana', address: '1'.repeat(44) } });
-  assert.equal(solana.headline.status, 'deferred');
+  const solana = buildSpendAuditReport({
+    query: { kind: 'solana', address: '21cesz3zArQM2QLY5QV2sBRhVj1tR1tY3rSj1fRcgZk2' },
+  });
+  assert.equal(solana.headline.status, 'incomplete');
   assert.equal(solana.headline.usdc_out_atomic, null);
-  assert.equal(solana.totals, null);
   assert.equal(solana.transfers.length, 0);
 
   const book = buildSpendAuditReport({
@@ -435,17 +441,21 @@ test('shrinkLogRange follows a stated cap, otherwise halves, and stops at the fl
   assert.equal(statedLogRangeLimit(new Error('rpc_http_413')), null);
 });
 
-test('Solana USDC is not scanned stays on the report', () => {
-  const solana = buildSpendAuditReport({ query: { kind: 'solana', address: '1'.repeat(44) } });
-  assert.match(solana.headline.label, /Solana USDC is not scanned/);
+test('Base reports say they cover Base only', () => {
+  const solana = buildSpendAuditReport({
+    query: { kind: 'solana', address: '21cesz3zArQM2QLY5QV2sBRhVj1tR1tY3rSj1fRcgZk2' },
+  });
   assert.equal(solana.headline.usdc_out_atomic, null);
+  assert.doesNotMatch(solana.headline.label, /Solana USDC is not scanned/);
+  assert.ok(!solana.coverage.notes.some((note) => note.includes('Solana USDC is not scanned')));
 
   const base = buildSpendAuditReport({
     query: { kind: 'base', address: PAYER },
     chain: { logs: [], failedRanges: [], scanComplete: true, fromBlock: 1, toBlock: 2 },
   });
-  assert.ok(base.coverage.notes.some((note) => note.includes('Solana USDC is not scanned')));
-  assert.match(base.coverage.solana, /Solana USDC is not scanned/);
+  assert.ok(base.coverage.notes.some((note) => note.includes('This report covers Base only. Paste a Solana address for Solana USDC.')));
+  assert.match(base.coverage.solana, /This report covers Base only/);
+  assert.doesNotMatch(base.coverage.solana, /Solana USDC is not scanned/);
 });
 
 test('the default chunk is 500 blocks and a wider filter is reduced after HTTP 413', async () => {

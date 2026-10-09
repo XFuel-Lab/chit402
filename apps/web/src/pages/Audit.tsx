@@ -4,6 +4,10 @@ import SeoHead from '../components/SeoHead';
 import { formatUsdc } from '../lib/agentBook';
 import {
   SAMPLE_BASE_ADDRESS,
+  SPONSORED_FEE_CAPTION,
+  auditQueryChip,
+  parseAuditQuery,
+  shouldRunAuditFetch,
   reportToCsv,
   reportToJson,
   runPublicSpendAudit,
@@ -36,26 +40,46 @@ function fileStamp(report: PublicSpendAuditReport): string {
   return `chit402-audit-${tail}-${day}`;
 }
 
+function safeHref(url: string | null | undefined): string | null {
+  if (!url || !url.startsWith('https://')) return null;
+  if (url.startsWith('https://api.chit402.com/receipt/')) return url;
+  if (url.startsWith('https://solscan.io/tx/')) return url;
+  if (url.startsWith('https://basescan.org/tx/')) return url;
+  return null;
+}
+
 export default function Audit() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryKey = (searchParams.get('address') || searchParams.get('agent') || '').trim();
+  const initialKind = parseAuditQuery(queryKey).kind;
   const [draft, setDraft] = useState(queryKey);
   const [tick, setTick] = useState(0);
-  const [phase, setPhase] = useState<Phase>(queryKey ? 'loading' : 'idle');
+  const [armed, setArmed] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>(queryKey && initialKind !== 'solana' ? 'loading' : 'idle');
   const [progress, setProgress] = useState('Reading Base…');
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<PublicSpendAuditReport | null>(null);
+  const chip = auditQueryChip(draft);
 
   useEffect(() => {
     const query = queryKey;
-    if (!query) return undefined;
+    const kind = parseAuditQuery(query).kind;
+    if (!shouldRunAuditFetch({ kind, query, armed })) {
+      if (query && kind === 'solana') {
+        setDraft(query);
+        setPhase('idle');
+        setError(null);
+        setReport(null);
+      }
+      return undefined;
+    }
     const controller = new AbortController();
     let cancelled = false;
     setDraft(query);
     setPhase('loading');
     setError(null);
     setReport(null);
-    setProgress('Reading Base…');
+    setProgress(kind === 'solana' ? 'Reading Solana…' : 'Reading Base…');
     runPublicSpendAudit(query, {
       signal: controller.signal,
       onProgress: (message) => {
@@ -65,9 +89,10 @@ export default function Audit() {
       if (cancelled) return;
       if (!result.ok) {
         setPhase('error');
-        setError(result.error === 'invalid' || result.error === 'empty'
-          ? 'Paste a Base wallet (0x and 40 hex digits), a Solana address, or a numeric agent id.'
-          : 'The Base RPC did not answer. No spend total is shown.');
+        setError(result.message
+          || (result.error === 'invalid' || result.error === 'empty'
+            ? 'Paste a Base wallet (0x and 40 hex digits), a Solana address, or a numeric agent id.'
+            : 'The Base RPC did not answer. No spend total is shown.'));
         return;
       }
       setReport(result.report);
@@ -75,13 +100,15 @@ export default function Audit() {
     }).catch((err: unknown) => {
       if (cancelled || (err instanceof DOMException && err.name === 'AbortError')) return;
       setPhase('error');
-      setError('The Base RPC did not answer. No spend total is shown.');
+      setError(kind === 'solana'
+        ? 'The Solana audit proxy did not answer. No spend total is shown.'
+        : 'The Base RPC did not answer. No spend total is shown.');
     });
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [queryKey, tick]);
+  }, [queryKey, tick, armed]);
 
   const headlineAmount = useMemo(() => {
     const atomic = report?.headline.usdc_out_atomic;
@@ -92,6 +119,7 @@ export default function Audit() {
   const submit = (value: string) => {
     const next = value.trim();
     if (!next) return;
+    setArmed(next);
     if (next === queryKey) {
       setTick((n) => n + 1);
       return;
@@ -103,16 +131,17 @@ export default function Audit() {
   return (
     <div className="page docs-page">
       <SeoHead
-        title="Spend audit — Base USDC out | Chit402"
-        description="Paste a Base wallet. See USDC sent, by counterparty, and which transfers have a public Chit receipt. No signup. Incomplete scans show no total."
+        title="Spend audit — Base and Solana USDC out | Chit402"
+        description="Paste a Base or Solana wallet. See USDC sent, by counterparty, and which transfers have a public Chit receipt. No signup. Incomplete scans show no total."
       />
       <div className="container" style={{ maxWidth: 980 }}>
         <header className="page-header" style={{ maxWidth: '40rem' }}>
           <span className="docs-kicker">Audit</span>
           <h1>Spend audit</h1>
           <p>
-            Paste a Base wallet. This page reads USDC sent from that address and checks each
-            transfer against the public Chit receipt. No signup. The possession book stays private.
+            Paste a Base or Solana wallet. This page reads USDC sent from that address in the last
+            seven days and checks each transfer against the public Chit receipt. No signup. The
+            possession book stays private.
           </p>
         </header>
 
@@ -135,13 +164,14 @@ export default function Audit() {
               value={draft}
               autoComplete="off"
               spellCheck={false}
-              placeholder="0x… or agent id"
+              placeholder="0x…, Solana address, or agent id"
               onChange={(event) => setDraft(event.target.value)}
             />
             <button className="btn btn-primary" type="submit" disabled={phase === 'loading'}>
               {phase === 'loading' ? 'Reading…' : 'Run audit'}
             </button>
           </div>
+          <p data-audit-chip="true" style={{ color: '#8a8a9a', margin: '0.75rem 0 0', fontSize: '0.9rem' }}>{chip}</p>
           <p style={{ color: '#8a8a9a', marginTop: '0.75rem', fontSize: '0.9rem' }}>
             <button
               type="button"
@@ -238,7 +268,13 @@ function ReportView({
             </p>
           )}
           <div className="grid grid-3" style={{ gap: '1rem', marginBottom: '1.25rem' }}>
-            <ClassCard title="x402" atomic={totals.by_class.x402} hint="Receipt or EIP-3009 authorization" />
+            <ClassCard
+              title="x402"
+              atomic={totals.by_class.x402}
+              hint={report.query.kind === 'solana'
+                ? 'Matching public Chit receipt'
+                : 'Receipt or EIP-3009 authorization'}
+            />
             <ClassCard title="Other" atomic={totals.by_class.other} hint="Plain transfer, no public receipt" />
             <ClassCard title="Undetected" atomic={totals.by_class.undetected} hint="Not counted as x402 or other" />
           </div>
@@ -265,7 +301,7 @@ function ReportView({
                   <> {report.receipt_match.not_checked_count} not checked.</>
                 )}
                 {report.receipt_match.mismatch_count > 0 && (
-                  <> {report.receipt_match.mismatch_count} receipt{report.receipt_match.mismatch_count === 1 ? '' : 's'} named a different payer.</>
+                  <> {report.receipt_match.mismatch_count} receipt{report.receipt_match.mismatch_count === 1 ? '' : 's'} did not match this transfer.</>
                 )}
               </p>
             </section>
@@ -287,9 +323,9 @@ function ReportView({
                   </thead>
                   <tbody>
                     {totals.by_counterparty.map((row) => (
-                      <tr key={row.pay_to}>
+                      <tr key={row.pay_to || 'pay_to unknown'}>
                         <td data-label="Pay to">
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{shortAddr(row.pay_to)}</div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{row.pay_to ? shortAddr(row.pay_to) : 'pay_to unknown'}</div>
                           {row.label && <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>{row.label}</div>}
                         </td>
                         <td data-label="Transfers">{row.count}</td>
@@ -342,19 +378,30 @@ function ReportView({
                       <tr key={`${row.tx_hash}:${row.log_index}`}>
                         <td data-label="When">{row.block_time ? row.block_time.replace('T', ' ').slice(0, 16) : '—'}</td>
                         <td data-label="Pay to">
-                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{shortAddr(row.pay_to)}</div>
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}>{row.pay_to ? shortAddr(row.pay_to) : 'pay_to unknown'}</div>
                           {row.pay_to_label && <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>{row.pay_to_label}</div>}
                         </td>
                         <td data-label="USDC">{row.amount_usdc}</td>
-                        <td data-label="Class">{row.spend_class}</td>
+                        <td data-label="Class">
+                          {row.spend_class}
+                          {row.settlement_method === 'spl_transfer_checked_sponsored' && (
+                            <div style={{ color: '#8a8a9a', fontSize: '0.8rem' }}>{SPONSORED_FEE_CAPTION}</div>
+                          )}
+                        </td>
                         <td data-label="Receipt">
-                          {row.verify_url ? (
-                            <a href={row.verify_url} target="_blank" rel="noreferrer">Receipt</a>
+                          {safeHref(row.verify_url) ? (
+                            <a href={safeHref(row.verify_url) || undefined} target="_blank" rel="noreferrer">Receipt</a>
                           ) : (
                             <span>{row.receipt_status}</span>
                           )}
-                          {' · '}
-                          <a href={row.explorer_url} target="_blank" rel="noreferrer">Base</a>
+                          {safeHref(row.explorer_url) && (
+                            <>
+                              {' · '}
+                              <a href={safeHref(row.explorer_url) || undefined} target="_blank" rel="noreferrer">
+                                {row.explorer_url?.startsWith('https://solscan.io/') ? 'Solscan' : 'Base'}
+                              </a>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))}

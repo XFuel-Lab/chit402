@@ -85,7 +85,7 @@ export default function ChitHome() {
               </div>
               <p style={styles.checkYourself}>
                 Check it yourself:{' '}
-                <Link to="/audit" style={styles.checkLink}>Audit a Base wallet</Link>
+                <Link to="/audit" style={styles.checkLink}>Audit a wallet</Link>
                 {' · '}
                 <a href="https://api.chit402.com/v1/receipts/tree/head" style={styles.checkLink}>
                   Today&apos;s receipt root, published on Base and Solana

@@ -54,6 +54,14 @@
     {
       "source": "/og-image.png",
       "headers": [{ "key": "Content-Type", "value": "image/png" }]
+    },
+    {
+      "source": "/audit",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
     }
   ],
   "rewrites": [

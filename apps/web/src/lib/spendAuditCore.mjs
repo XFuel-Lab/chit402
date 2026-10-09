@@ -8,6 +8,18 @@
  */
 
 import { formatUsdc } from './agentBookCore.mjs';
+import {
+  SOLANA_CANARY_ACCOUNT,
+  SOLANA_CANARY_AMOUNT,
+  SOLANA_CANARY_PAYEE,
+  SOLANA_CHAIN_ID,
+  SOLANA_USDC_MINT,
+  TOKEN_PROGRAM_ID,
+  baseExplorerHref,
+  parseSolanaAddress,
+  receiptPageHref,
+  solanaExplorerHref,
+} from './solanaAddress.mjs';
 
 /** Public Base mainnet RPC. Same default as packages/verify base-payer. */
 export const BASE_RPC_URL = 'https://mainnet.base.org';
@@ -80,16 +92,57 @@ export const PUBLIC_AUDIT_SCHEMA = 'chit402.public_spend_audit.v1';
 /** 1F916 specimen 1 funder. Public in docs/integrations/1f916-link-v0.md. */
 export const SAMPLE_BASE_ADDRESS = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
 
-const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
-
 const BOOK_NOTE =
   'The possession book is not read. GET /receipt/by-tx is the only public Chit match. HTTP 404 means no public receipt for that transaction. It does not mean the book is empty.';
 
 const CAPS_NOTE =
   'Spend caps live on the possession book (GET /v1/agents/:agent_id/book/policy). This page does not read them.';
 
-const SOLANA_NOTE =
-  'Solana USDC is not scanned. Paste a Base address (0x and 40 hex digits).';
+const BASE_ONLY_NOTE =
+  'This report covers Base only. Paste a Solana address for Solana USDC.';
+
+export const SOL_WINDOW_SECONDS = 604800;
+export const SOL_MAX_TOKEN_ACCOUNTS = 20;
+export const SOL_SIG_PAGE_LIMIT = 1000;
+export const SOL_MAX_SIG_PAGES_PER_SOURCE = 5;
+export const SOL_MAX_SIG_PAGES = 30;
+export const MAX_SOL_TX_READS = 250;
+export const SOL_SCAN_DEADLINE_MS = 90_000;
+
+export const FAILED_RANGE_CODES = new Set([
+  'missing_chain',
+  'rpc_http_413',
+  'rpc_logs_failed',
+  'rpc_log_call_cap',
+  'range_limit',
+  'log_call_cap',
+  'upstream_unavailable',
+  'upstream_rate_limited',
+  'upstream_bad_response',
+  'tx_unavailable',
+  'sig_page_cap',
+  'history_unproven',
+  'unexplained_out',
+  'head_unreadable',
+  'deadline',
+  'not_configured',
+  'wrong_cluster',
+  'upstream_too_large',
+  'invalid_param',
+  'not_found',
+]);
+
+export function sanitizeFailedRangeError(error) {
+  const code = String(error || '');
+  return FAILED_RANGE_CODES.has(code) ? code : 'upstream_bad_response';
+}
+
+export function sanitizeFailedRanges(ranges) {
+  return (ranges || []).map((range) => ({
+    ...range,
+    error: sanitizeFailedRangeError(range?.error),
+  }));
+}
 
 /**
  * Inclusive [start, end] ranges covering [fromBlock, toBlock].
@@ -179,13 +232,17 @@ export function counterpartyLabel(address) {
  * @param {string} raw
  * @returns {{ kind: 'empty' } | { kind: 'invalid' } | { kind: 'base', address: string } | { kind: 'solana', address: string } | { kind: 'agent', agentId: string }}
  */
+function trimAsciiEnds(raw) {
+  return String(raw ?? '').replace(/^[ \t\r\n\f\v]+/, '').replace(/[ \t\r\n\f\v]+$/, '');
+}
+
 export function parseAuditQuery(raw) {
-  const input = String(raw ?? '').trim();
+  const input = trimAsciiEnds(raw);
   if (!input) return { kind: 'empty' };
 
   let body = input;
-  if (/^base:/i.test(body)) body = body.slice('base:'.length).trim();
-  else if (/^eip155:8453:/i.test(body)) body = body.slice('eip155:8453:'.length).trim();
+  if (/^base:/i.test(body)) body = trimAsciiEnds(body.slice('base:'.length));
+  else if (/^eip155:8453:/i.test(body)) body = trimAsciiEnds(body.slice('eip155:8453:'.length));
 
   if (/^0x[0-9a-fA-F]{40}$/i.test(body)) {
     return { kind: 'base', address: body.toLowerCase() };
@@ -193,10 +250,42 @@ export function parseAuditQuery(raw) {
   if (/^\d{1,12}$/.test(input)) {
     return { kind: 'agent', agentId: String(Number(input)) };
   }
-  if (SOLANA_ADDRESS.test(input)) {
-    return { kind: 'solana', address: input };
+  const solana = parseSolanaAddress(input);
+  if (solana.ok) return { kind: 'solana', address: solana.address };
+  if (solana.reason === 'signature') return { kind: 'invalid', reason: 'solana_signature' };
+  if (solana.reason === 'devnet') return { kind: 'invalid', reason: 'devnet' };
+  if (solana.reason === 'not_wallet') return { kind: 'invalid', reason: 'not_wallet' };
+  return { kind: 'invalid', reason: 'unrecognized' };
+}
+
+export function auditQueryChip(raw) {
+  const query = parseAuditQuery(raw);
+  if (query.kind === 'base') return 'Base wallet';
+  if (query.kind === 'solana') return 'Solana wallet';
+  if (query.kind === 'agent') return 'Agent id';
+  if (query.reason === 'solana_signature') return 'Solana signature: paste the wallet';
+  if (query.reason === 'devnet') return 'Solana devnet is not scanned.';
+  if (query.reason === 'not_wallet') return 'Not a wallet.';
+  return 'Not recognized';
+}
+
+export function auditQueryMessage(query) {
+  if (query?.reason === 'solana_signature') {
+    return 'That looks like a Solana transaction signature. Paste the wallet address.';
   }
-  return { kind: 'invalid' };
+  if (query?.reason === 'devnet') return 'Solana devnet is not scanned.';
+  if (query?.reason === 'not_wallet') return 'Not a wallet.';
+  return 'Paste a Base wallet (0x and 40 hex digits), a Solana address, or a numeric agent id.';
+}
+
+/**
+ * Solana scans wait for a click. Base and agent ids still run from the URL.
+ * @param {{ kind?: string, query?: string, armed?: string | null }} input
+ */
+export function shouldRunAuditFetch({ kind, query, armed }) {
+  if (!query) return false;
+  if (kind === 'solana' && armed !== query) return false;
+  return true;
 }
 
 function hexToInt(hex) {
@@ -266,14 +355,19 @@ export function settlementMethodOf(txInput) {
  * authorization the Base x402 exact scheme submits. A plain transfer with
  * no receipt is other. Anything we could not read is undetected.
  */
-export function classifySpend({ receipt, txInput }) {
-  if (receipt && (receipt.status === 'found' || receipt.status === 'mismatch')) {
-    const task = String(receipt.task_id || '');
-    const schema = String(receipt.schema || '');
+/**
+ * A matched shell is x402, unless the rail is reported, unmetered, or nano.
+ * A mismatch or an unavailable lookup does not force undetected: the caller
+ * passes receipt=null and the tx-input heuristic still runs.
+ */
+export function classifySpend({ receipt, txInput, settlementMethod = null }) {
+  if (receipt && receipt.matched === true) {
     const rail = String(receipt.rail || '').toLowerCase();
-    if (task.startsWith('foreign-x402') || schema.includes('foreign')) return 'x402';
     if (rail === 'reported' || rail === 'unmetered' || rail === 'nano') return 'other';
-    if (rail === 'usdc' || rail === 'x402' || rail.startsWith('solana')) return 'x402';
+    return 'x402';
+  }
+  if (settlementMethod === 'spl_transfer') return 'other';
+  if (settlementMethod === 'spl_transfer_checked' || settlementMethod === 'spl_transfer_checked_sponsored') {
     return 'undetected';
   }
   const method = settlementMethodOf(txInput);
@@ -282,21 +376,90 @@ export function classifySpend({ receipt, txInput }) {
   return 'undetected';
 }
 
-function payerMatches(receipt, address) {
-  const payer = receipt?.payer;
-  if (payer == null || payer === '') return true;
-  return String(payer).toLowerCase() === String(address).toLowerCase();
+export function parseReceiptShell(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { status: 'unavailable' };
+  if (body.schema !== 'chit402.receipt_shell.v1') return { status: 'unavailable' };
+  const receiptId = body.receipt_id;
+  if (typeof receiptId !== 'string' || !receiptPageHref(receiptId)) return { status: 'unavailable' };
+  const chain = body.chain;
+  const paymentTx = body.payment_tx;
+  const payTo = body.pay_to;
+  const asset = body.asset;
+  const amount = body.amount_gross;
+  if (typeof chain !== 'string' || !chain) return { status: 'unavailable' };
+  if (typeof paymentTx !== 'string' || !paymentTx) return { status: 'unavailable' };
+  if (typeof payTo !== 'string' || !payTo) return { status: 'unavailable' };
+  if (typeof asset !== 'string' || !asset) return { status: 'unavailable' };
+  if (typeof amount !== 'string' || !/^[0-9]+$/.test(amount)) return { status: 'unavailable' };
+  return {
+    status: 'found',
+    receipt_id: receiptId,
+    task_id: receiptId,
+    chain,
+    payment_tx: paymentTx,
+    pay_to: payTo,
+    asset,
+    amount_gross: amount,
+    matched: false,
+  };
 }
 
-function receiptStatusOf(lookup, address) {
-  if (!lookup || lookup.status === 'not_checked') return 'not_checked';
-  if (lookup.status === 'missing') return 'unreceipted';
-  if (lookup.status === 'unavailable') return 'unavailable';
-  if (lookup.status === 'found' || lookup.status === 'mismatch') {
-    if (!payerMatches(lookup, address)) return 'payer_mismatch';
-    return 'receipted';
+function sameAmount(left, right) {
+  try {
+    return BigInt(left) === BigInt(right);
+  } catch {
+    return false;
   }
-  return 'unavailable';
+}
+
+function rowQualifies(row, shell, chain) {
+  if (!shell || shell.status !== 'found') return false;
+  if (shell.chain !== chain) return false;
+  if (chain === 'base') {
+    if (String(shell.payment_tx).toLowerCase() !== String(row.tx_hash).toLowerCase()) return false;
+    if (String(shell.asset).toLowerCase() !== BASE_USDC) return false;
+    if (String(shell.pay_to).toLowerCase() !== String(row.pay_to || '').toLowerCase()) return false;
+  } else if (chain === 'solana') {
+    if (shell.payment_tx !== row.tx_hash) return false;
+    if (shell.asset !== SOLANA_USDC_MINT && shell.asset !== 'USDC') return false;
+    const payee = shell.pay_to === row.pay_to || shell.pay_to === row.pay_to_token_account;
+    if (!payee) return false;
+  } else {
+    return false;
+  }
+  return sameAmount(shell.amount_gross, row.amount_atomic);
+}
+
+function bindReceiptStatuses(rows, receipts, chain) {
+  const groups = new Map();
+  for (const row of rows) {
+    const list = groups.get(row.tx_hash) || [];
+    list.push(row);
+    groups.set(row.tx_hash, list);
+  }
+  const status = new Map();
+  for (const [tx, group] of groups) {
+    const lookup = receipts.get(tx) || { status: 'not_checked' };
+    if (!lookup || lookup.status === 'not_checked') {
+      for (const row of group) status.set(row, 'not_checked');
+      continue;
+    }
+    if (lookup.status === 'missing') {
+      for (const row of group) status.set(row, 'unreceipted');
+      continue;
+    }
+    if (lookup.status !== 'found') {
+      for (const row of group) status.set(row, 'unavailable');
+      continue;
+    }
+    const qualifiers = group.filter((row) => rowQualifies(row, lookup, chain));
+    if (qualifiers.length === 1) {
+      for (const row of group) status.set(row, row === qualifiers[0] ? 'receipted' : 'receipt_mismatch');
+    } else {
+      for (const row of group) status.set(row, 'receipt_mismatch');
+    }
+  }
+  return status;
 }
 
 function isNear(a, b) {
@@ -327,7 +490,7 @@ export function findAnomalies(rows) {
       if (amount >= threshold && amount > median) {
         anomalies.push({
           kind: 'spike',
-          summary: `${formatUsdc(row.amount_atomic)} USDC to ${row.pay_to} is at least 5× the median transfer in this window.`,
+          summary: `${formatUsdc(row.amount_atomic)} USDC to ${row.pay_to || 'pay_to unknown'} is at least 5× the median transfer in this window.`,
           amount_atomic: row.amount_atomic,
           pay_to: row.pay_to,
           tx_hashes: [row.tx_hash],
@@ -349,7 +512,7 @@ export function findAnomalies(rows) {
       seen.add(key);
       anomalies.push({
         kind: 'near_duplicate',
-        summary: `Two ${formatUsdc(a.amount_atomic)} USDC transfers to ${a.pay_to} within 90 seconds (or 25 blocks when timestamps are missing).`,
+        summary: `Two ${formatUsdc(a.amount_atomic)} USDC transfers to ${a.pay_to || 'pay_to unknown'} within 90 seconds (or 25 blocks when timestamps are missing).`,
         amount_atomic: a.amount_atomic,
         pay_to: a.pay_to,
         tx_hashes: [a.tx_hash, b.tx_hash],
@@ -387,7 +550,7 @@ function coverageShell(extra) {
     receipts_not_checked: 0,
     book: BOOK_NOTE,
     caps: CAPS_NOTE,
-    solana: SOLANA_NOTE,
+    solana: BASE_ONLY_NOTE,
     notes: [],
     ...extra,
   };
@@ -400,7 +563,7 @@ function baseNotes({ sawFeeSink, zeroCount, notChecked, truncated, failed }) {
     BOOK_NOTE,
     'x402 means a public Chit receipt for that transaction, or the transaction calls USDC transferWithAuthorization (0xe3ee160e), the Base x402 exact path. A plain ERC-20 transfer with no receipt is other. Undetected is neither.',
     CAPS_NOTE,
-    SOLANA_NOTE,
+    BASE_ONLY_NOTE,
   ];
   if (sawFeeSink) {
     notes.push(
@@ -435,26 +598,7 @@ export function buildSpendAuditReport(input) {
   const caps = { status: 'not_read', note: CAPS_NOTE };
 
   if (query.kind === 'solana') {
-    return {
-      schema: PUBLIC_AUDIT_SCHEMA,
-      generated_at: generatedAt,
-      query: { kind: 'solana', address: query.address },
-      headline: {
-        status: 'deferred',
-        usdc_out_atomic: null,
-        label: SOLANA_NOTE,
-      },
-      coverage: coverageShell({
-        scan_complete: false,
-        notes: [SOLANA_NOTE],
-      }),
-      totals: null,
-      receipt_match: null,
-      anomalies: [],
-      transfers: [],
-      caps,
-      book: null,
-    };
+    return buildSolanaAuditReport({ ...input, query, generatedAt, caps });
   }
 
   if (query.kind === 'agent') {
@@ -523,13 +667,14 @@ export function buildSpendAuditReport(input) {
 
   const receipts = input.receipts || new Map();
   const txInputs = input.txInputs || new Map();
+  const receiptStatus = bindReceiptStatuses(included, receipts, 'base');
 
   const transfers = included.map((row) => {
     const lookup = receipts.get(row.tx_hash) || { status: 'not_checked' };
     const txInput = txInputs.has(row.tx_hash) ? txInputs.get(row.tx_hash) : null;
-    const receiptStatus = receiptStatusOf(lookup, query.address);
+    const status = receiptStatus.get(row) || 'unavailable';
     const spendClass = classifySpend({
-      receipt: lookup.status === 'found' || lookup.status === 'mismatch' ? lookup : null,
+      receipt: status === 'receipted' ? { ...lookup, matched: true } : null,
       txInput,
     });
     const amount = BigInt(row.amount_atomic);
@@ -539,17 +684,16 @@ export function buildSpendAuditReport(input) {
       log_index: row.log_index,
       block_time: row.block_time,
       pay_to: row.pay_to,
+      pay_to_token_account: null,
       pay_to_label: counterpartyLabel(row.pay_to),
       amount_atomic: row.amount_atomic,
       amount_usdc: formatUsdc(row.amount_atomic),
       spend_class: spendClass,
       settlement_method: settlementMethodOf(txInput),
-      receipt_status: receiptStatus,
-      task_id: receiptStatus === 'receipted' ? (lookup.task_id || null) : (lookup.task_id || null),
-      verify_url: receiptStatus === 'receipted' ? (lookup.verify_url || null) : null,
-      hub: lookup.hub || null,
-      model: lookup.model || null,
-      explorer_url: `https://basescan.org/tx/${row.tx_hash}`,
+      receipt_status: status,
+      task_id: status === 'receipted' ? (lookup.receipt_id || lookup.task_id || null) : null,
+      verify_url: status === 'receipted' ? receiptPageHref(lookup.receipt_id || lookup.task_id) : null,
+      explorer_url: baseExplorerHref(row.tx_hash),
       counts_toward_total: amount > 0n,
     };
   });
@@ -577,7 +721,7 @@ export function buildSpendAuditReport(input) {
   const unreceipted = sumAtomic(positive, (row) => row.receipt_status === 'unreceipted');
   const unavailableCount = transfers.filter((row) => row.receipt_status === 'unavailable').length;
   const notCheckedCount = transfers.filter((row) => row.receipt_status === 'not_checked').length;
-  const mismatchCount = transfers.filter((row) => row.receipt_status === 'payer_mismatch').length;
+  const mismatchCount = transfers.filter((row) => row.receipt_status === 'receipt_mismatch').length;
   const zeroCount = transfers.filter((row) => !row.counts_toward_total).length;
   const sawFeeSink = transfers.some((row) => row.pay_to === CHIT_FEE_SINK);
 
@@ -626,7 +770,7 @@ export function buildSpendAuditReport(input) {
       to_time: chain.toTime ?? null,
       scan_complete: scanComplete,
       truncated,
-      failed_ranges: failedRanges,
+      failed_ranges: sanitizeFailedRanges(failedRanges),
       receipts_checked: transfers.length - notCheckedCount,
       receipts_not_checked: notCheckedCount,
       notes,
@@ -678,7 +822,7 @@ export function reportToCsv(report) {
     `# ${report.headline?.label || ''}`,
   ];
   for (const note of report.coverage?.notes || []) lines.push(`# ${note}`);
-  lines.push('tx_hash,block_number,block_time,pay_to,pay_to_label,amount_atomic,amount_usdc,spend_class,settlement_method,receipt_status,task_id,verify_url,hub,model,explorer_url');
+  lines.push('tx_hash,block_number,block_time,pay_to,pay_to_label,amount_atomic,amount_usdc,spend_class,settlement_method,receipt_status,task_id,verify_url,explorer_url,pay_to_token_account');
   for (const row of report.transfers || []) {
     lines.push([
       row.tx_hash,
@@ -693,10 +837,369 @@ export function reportToCsv(report) {
       row.receipt_status,
       row.task_id,
       row.verify_url,
-      row.hub,
-      row.model,
       row.explorer_url,
+      row.pay_to_token_account,
     ].map(csvCell).join(','));
   }
   return `${lines.join('\n')}\n`;
+}
+
+/** Shown in the UI for a sponsored transferChecked. The fee payer is never exported. */
+export const SPONSORED_FEE_CAPTION = 'Network fee paid by another account';
+
+export const SOLANA_PROXY_LABEL = 'chit402 Solana audit proxy (Helius)';
+
+function accountKeysOf(tx) {
+  const raw = tx?.accountKeys || tx?.transaction?.message?.accountKeys || [];
+  const keys = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const key = raw[index];
+    if (typeof key === 'string') keys.push({ pubkey: key, signer: index === 0 });
+    else if (key && typeof key.pubkey === 'string') keys.push({ pubkey: key.pubkey, signer: key.signer === true });
+  }
+  return keys;
+}
+
+function balancesOf(tx, side) {
+  const raw = side === 'pre'
+    ? (tx?.preTokenBalances || tx?.meta?.preTokenBalances || [])
+    : (tx?.postTokenBalances || tx?.meta?.postTokenBalances || []);
+  return raw.map((bal) => {
+    const amount = bal?.amount ?? bal?.uiTokenAmount?.amount;
+    const decimals = bal?.decimals ?? bal?.uiTokenAmount?.decimals;
+    return {
+      accountIndex: bal?.accountIndex,
+      mint: bal?.mint,
+      owner: bal?.owner,
+      programId: bal?.programId,
+      amount: typeof amount === 'string' ? amount : null,
+      decimals: typeof decimals === 'number' ? decimals : null,
+    };
+  });
+}
+
+function instructionList(tx) {
+  const out = [];
+  const outer = tx?.instructions || tx?.transaction?.message?.instructions || [];
+  outer.forEach((ix, index) => out.push({ ix, logIndex: String(index) }));
+  const inner = tx?.innerInstructions || tx?.meta?.innerInstructions || [];
+  for (const group of inner) {
+    (group?.instructions || []).forEach((ix, j) => {
+      out.push({ ix, logIndex: `${group.index}.${j}` });
+    });
+  }
+  return out;
+}
+
+function balanceForPubkey(pubkey, keys, balances) {
+  const index = keys.findIndex((key) => key.pubkey === pubkey);
+  if (index < 0) return null;
+  return balances.find((bal) => bal.accountIndex === index) || null;
+}
+
+function readSplTransfer(ix, keys, pre, post) {
+  if (!ix || ix.programId !== TOKEN_PROGRAM_ID) return null;
+  const parsed = ix.parsed;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const type = parsed.type;
+  if (type !== 'transfer' && type !== 'transferChecked') return null;
+  const info = parsed.info || {};
+  const source = info.source;
+  const destination = info.destination;
+  if (typeof source !== 'string' || typeof destination !== 'string') return null;
+  let amountStr = null;
+  if (type === 'transferChecked') {
+    if (info.mint !== SOLANA_USDC_MINT) return null;
+    const tokenAmount = info.tokenAmount || {};
+    if (tokenAmount.decimals !== 6 && info.decimals !== 6) return null;
+    amountStr = typeof tokenAmount.amount === 'string' ? tokenAmount.amount : null;
+  } else {
+    amountStr = typeof info.amount === 'string' ? info.amount : null;
+    const src = balanceForPubkey(source, keys, pre) || balanceForPubkey(source, keys, post);
+    if (!src || src.mint !== SOLANA_USDC_MINT || src.programId !== TOKEN_PROGRAM_ID) return null;
+  }
+  if (typeof amountStr !== 'string' || !/^[0-9]+$/.test(amountStr)) return null;
+  return {
+    type,
+    source,
+    destination,
+    amount: BigInt(amountStr),
+    authority: typeof info.authority === 'string' ? info.authority : null,
+  };
+}
+
+function accountIsSource(pubkey, ctx, keys, pre, post) {
+  if (ctx.mode === 'token_account') return pubkey === ctx.account;
+  if (ctx.tokenAccounts?.has(pubkey)) return true;
+  const bal = balanceForPubkey(pubkey, keys, post) || balanceForPubkey(pubkey, keys, pre);
+  return !!(bal && bal.owner === ctx.wallet && bal.mint === SOLANA_USDC_MINT && bal.programId === TOKEN_PROGRAM_ID);
+}
+
+function settlementFor(transfer, keys) {
+  if (transfer.type === 'transfer') return 'spl_transfer';
+  const feePayer = keys[0]?.pubkey || null;
+  if (feePayer && transfer.authority && feePayer !== transfer.authority) {
+    return 'spl_transfer_checked_sponsored';
+  }
+  return 'spl_transfer_checked';
+}
+
+function txIsFailed(tx) {
+  if (tx?.err === true) return true;
+  if (tx?.meta && tx.meta.err != null) return true;
+  return false;
+}
+
+function txMetaMissing(tx) {
+  if (tx?.err === true || tx?.err === false) return false;
+  return tx?.meta == null && tx?.preTokenBalances == null && tx?.instructions == null && tx?.accountKeys == null;
+}
+
+/**
+ * USDC out of the scanned wallet or token account. Pure.
+ * `program: "spl-token"` is ignored; Token-2022 uses that label too.
+ * @returns {{ rows: object[], incoming: bigint, unexplained: boolean, failedTx?: boolean, error?: string }}
+ */
+export function decodeSolanaUsdcTransfers(tx, ctx) {
+  if (!tx || typeof tx !== 'object') return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
+  if (txMetaMissing(tx)) return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
+  if (tx.blockTime == null) return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
+  if (txIsFailed(tx)) return { rows: [], incoming: 0n, unexplained: false, failedTx: true };
+
+  const keys = accountKeysOf(tx);
+  const pre = balancesOf(tx, 'pre');
+  const post = balancesOf(tx, 'post');
+  const rows = [];
+  let incoming = 0n;
+  for (const { ix, logIndex } of instructionList(tx)) {
+    const transfer = readSplTransfer(ix, keys, pre, post);
+    if (!transfer) continue;
+    const sourceOurs = accountIsSource(transfer.source, ctx, keys, pre, post);
+    const destOurs = accountIsSource(transfer.destination, ctx, keys, pre, post);
+    if (sourceOurs) {
+      const destBal = balanceForPubkey(transfer.destination, keys, post);
+      rows.push({
+        tx_hash: ctx.signature,
+        log_index: logIndex,
+        block_number: tx.slot ?? null,
+        block_time: new Date(tx.blockTime * 1000).toISOString(),
+        pay_to: destBal?.owner || null,
+        pay_to_token_account: transfer.destination,
+        amount_atomic: transfer.amount.toString(),
+        settlement_method: settlementFor(transfer, keys),
+      });
+    } else if (destOurs) {
+      incoming += transfer.amount;
+    }
+  }
+
+  const preSum = sumRelevant(pre, keys, ctx);
+  const postSum = sumRelevant(post, keys, ctx);
+  const parsedOut = rows.reduce((acc, row) => acc + BigInt(row.amount_atomic), 0n);
+  const expectedOut = incoming - (postSum.total - preSum.total);
+  const unexplained = preSum.unreadable || postSum.unreadable || parsedOut !== expectedOut;
+  return { rows, incoming, unexplained };
+}
+
+function sumRelevant(balances, keys, ctx) {
+  let total = 0n;
+  let unreadable = false;
+  for (const bal of balances) {
+    const pubkey = keys[bal.accountIndex]?.pubkey;
+    if (!pubkey) continue;
+    const counts = ctx.mode === 'token_account'
+      ? pubkey === ctx.account
+      : bal.owner === ctx.wallet;
+    if (!counts || bal.mint !== SOLANA_USDC_MINT || bal.programId !== TOKEN_PROGRAM_ID) continue;
+    if (typeof bal.amount !== 'string' || !/^[0-9]+$/.test(bal.amount)) {
+      unreadable = true;
+      continue;
+    }
+    total += BigInt(bal.amount);
+  }
+  return { total, unreadable };
+}
+
+export function solanaCanaryContentOk(tx) {
+  if (!tx || typeof tx !== 'object' || tx.blockTime == null || txIsFailed(tx)) return false;
+  const keys = accountKeysOf(tx);
+  const pre = balancesOf(tx, 'pre');
+  const post = balancesOf(tx, 'post');
+  for (const { ix } of instructionList(tx)) {
+    const transfer = readSplTransfer(ix, keys, pre, post);
+    if (!transfer || transfer.type !== 'transferChecked') continue;
+    if (transfer.amount !== BigInt(SOLANA_CANARY_AMOUNT)) continue;
+    const owner = balanceForPubkey(transfer.destination, keys, post)?.owner || null;
+    if (transfer.destination === SOLANA_CANARY_ACCOUNT && owner === SOLANA_CANARY_PAYEE) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function solanaNotes(scan) {
+  const notes = [
+    `USDC out only, on Solana mainnet (mint ${SOLANA_USDC_MINT}). Incoming transfers are not spend.`,
+    'Window is the last 7 days by block time, finalized only.',
+    'x402 means a public Chit receipt whose chain, transaction, asset, payee, and amount match this transfer.',
+    'Solana devnet and other tokens are not scanned.',
+    'Reads go through Chit402\'s Solana proxy to Helius; the address is sent to that provider, as Base addresses are sent to mainnet.base.org.',
+    'Delegate transfers from closed token accounts are not visible.',
+    BOOK_NOTE,
+    CAPS_NOTE,
+  ];
+  if (scan?.tokenAccountNote) notes.unshift(scan.tokenAccountNote);
+  if (scan?.truncated) {
+    notes.push('The scan is truncated. The total is withheld.');
+  }
+  if ((scan?.failedRanges || []).length > 0) {
+    notes.push('One or more Solana reads failed. The total is withheld. Missing reads are not zero.');
+  }
+  return notes;
+}
+
+function buildSolanaAuditReport({ query, generatedAt, caps, solana, receipts }) {
+  const scan = solana || {
+    rows: [],
+    failedRanges: [{ error: 'head_unreadable' }],
+    scanComplete: false,
+    truncated: false,
+    signaturesSeen: 0,
+    signaturesRead: 0,
+    tokenAccounts: [],
+    windowSeconds: SOL_WINDOW_SECONDS,
+    fromTime: null,
+    toTime: null,
+  };
+  const failedRanges = sanitizeFailedRanges(scan.failedRanges || []);
+  const truncated = scan.truncated === true;
+  const scanComplete = scan.scanComplete === true && failedRanges.length === 0 && !truncated;
+  const decoded = scan.rows || [];
+  const rowCap = decoded.length > MAX_INCLUDED_TRANSFERS;
+  const included = rowCap ? decoded.slice(0, MAX_INCLUDED_TRANSFERS) : decoded;
+  const truncatedReport = truncated || rowCap;
+  const receiptMap = receipts || new Map();
+  const receiptStatus = bindReceiptStatuses(included, receiptMap, 'solana');
+  const transfers = included.map((row) => {
+    const lookup = receiptMap.get(row.tx_hash) || { status: 'not_checked' };
+    const status = receiptStatus.get(row) || 'unavailable';
+    const amount = BigInt(row.amount_atomic);
+    const payTo = row.pay_to || null;
+    return {
+      tx_hash: row.tx_hash,
+      block_number: row.block_number,
+      log_index: row.log_index,
+      block_time: row.block_time,
+      pay_to: payTo,
+      pay_to_token_account: row.pay_to_token_account || null,
+      pay_to_label: payTo ? counterpartyLabel(payTo) : null,
+      amount_atomic: row.amount_atomic,
+      amount_usdc: formatUsdc(row.amount_atomic),
+      spend_class: classifySpend({
+        receipt: status === 'receipted' ? { ...lookup, matched: true } : null,
+        txInput: null,
+        settlementMethod: row.settlement_method || null,
+      }),
+      settlement_method: row.settlement_method || null,
+      receipt_status: status,
+      task_id: status === 'receipted' ? (lookup.receipt_id || null) : null,
+      verify_url: status === 'receipted' ? receiptPageHref(lookup.receipt_id) : null,
+      explorer_url: solanaExplorerHref(row.tx_hash),
+      counts_toward_total: amount > 0n,
+    };
+  });
+  const positive = transfers.filter((row) => row.counts_toward_total);
+  const observed = sumAtomic(positive);
+  const byCounterpartyMap = new Map();
+  for (const row of positive) {
+    const key = row.pay_to || 'pay_to unknown';
+    const prev = byCounterpartyMap.get(key) || {
+      pay_to: row.pay_to,
+      label: row.pay_to ? row.pay_to_label : 'pay_to unknown',
+      amount: 0n,
+      count: 0,
+    };
+    prev.amount += BigInt(row.amount_atomic);
+    prev.count += 1;
+    byCounterpartyMap.set(key, prev);
+  }
+  const byCounterparty = [...byCounterpartyMap.values()]
+    .map((row) => ({
+      pay_to: row.pay_to,
+      label: row.label,
+      usdc_out_atomic: row.amount.toString(),
+      count: row.count,
+    }))
+    .sort((a, b) => (BigInt(a.usdc_out_atomic) > BigInt(b.usdc_out_atomic) ? -1 : 1));
+  const classSum = (name) => sumAtomic(positive, (row) => row.spend_class === name).toString();
+  const receipted = sumAtomic(positive, (row) => row.receipt_status === 'receipted');
+  const unreceipted = sumAtomic(positive, (row) => row.receipt_status === 'unreceipted');
+  const totalReady = scanComplete && !truncatedReport;
+  let headlineStatus = 'incomplete';
+  let headlineLabel = 'The scan is incomplete. No wallet total is shown. Missing reads are not zero.';
+  if (totalReady && positive.length === 0) {
+    headlineStatus = 'empty';
+    headlineLabel = 'No Solana USDC transfers from this address in the scanned window. The total for that window is 0. Older spend is outside this report.';
+  } else if (totalReady) {
+    headlineStatus = 'complete';
+    headlineLabel = 'USDC sent from this address on Solana, in the scanned window.';
+  } else if (truncatedReport) {
+    headlineLabel = 'The scan is truncated. The wallet total is withheld.';
+  }
+  return {
+    schema: PUBLIC_AUDIT_SCHEMA,
+    generated_at: generatedAt,
+    query: { kind: 'solana', address: query.address },
+    headline: {
+      status: headlineStatus,
+      usdc_out_atomic: totalReady ? observed.toString() : null,
+      label: headlineLabel,
+    },
+    coverage: coverageShell({
+      chain: SOLANA_CHAIN_ID,
+      asset: SOLANA_USDC_MINT,
+      rpc: SOLANA_PROXY_LABEL,
+      window_blocks: null,
+      block_unit: 'slot',
+      window_seconds: scan.windowSeconds ?? SOL_WINDOW_SECONDS,
+      from_block: null,
+      to_block: scan.headSlot ?? null,
+      from_time: scan.fromTime ?? null,
+      to_time: scan.toTime ?? null,
+      scan_complete: scanComplete,
+      truncated: truncatedReport,
+      failed_ranges: failedRanges,
+      receipts_checked: transfers.length - transfers.filter((row) => row.receipt_status === 'not_checked').length,
+      receipts_not_checked: transfers.filter((row) => row.receipt_status === 'not_checked').length,
+      solana: 'Delegate transfers from closed token accounts are not visible.',
+      token_accounts: scan.tokenAccounts || [],
+      signatures_seen: scan.signaturesSeen ?? 0,
+      signatures_read: scan.signaturesRead ?? 0,
+      notes: solanaNotes({ ...scan, truncated: truncatedReport, failedRanges }),
+    }),
+    totals: {
+      usdc_out_atomic: totalReady ? observed.toString() : null,
+      observed_out_atomic: observed.toString(),
+      observed_count: positive.length,
+      zero_value_count: transfers.filter((row) => !row.counts_toward_total).length,
+      by_counterparty: byCounterparty,
+      by_class: {
+        x402: classSum('x402'),
+        other: classSum('other'),
+        undetected: classSum('undetected'),
+      },
+    },
+    receipt_match: {
+      receipted_atomic: receipted.toString(),
+      unreceipted_atomic: unreceipted.toString(),
+      unavailable_count: transfers.filter((row) => row.receipt_status === 'unavailable').length,
+      not_checked_count: transfers.filter((row) => row.receipt_status === 'not_checked').length,
+      mismatch_count: transfers.filter((row) => row.receipt_status === 'receipt_mismatch').length,
+      note: BOOK_NOTE,
+    },
+    anomalies: findAnomalies(transfers),
+    transfers,
+    caps,
+    book: { status: 'not_read', http_status: null, note: BOOK_NOTE },
+  };
 }

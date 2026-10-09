@@ -15,17 +15,38 @@ import {
   BASE_RPC_URL,
   BASE_USDC,
   ERC20_TRANSFER_TOPIC,
+  FAILED_RANGE_CODES,
   MAX_RECEIPT_LOOKUPS,
+  MAX_SOL_TX_READS,
   MAX_TX_READS,
+  SOL_MAX_SIG_PAGES,
+  SOL_MAX_SIG_PAGES_PER_SOURCE,
+  SOL_MAX_TOKEN_ACCOUNTS,
+  SOL_SCAN_DEADLINE_MS,
+  SOL_SIG_PAGE_LIMIT,
+  SOL_WINDOW_SECONDS,
   addressTopic,
+  auditQueryMessage,
   buildSpendAuditReport,
+  decodeSolanaUsdcTransfers,
   decodeUsdcTransferLog,
   isLogRangeLimitError,
   parseAuditQuery,
+  parseReceiptShell,
   planLogRanges,
   shrinkLogRange,
+  solanaCanaryContentOk,
   statedLogRangeLimit,
 } from './spendAuditCore.mjs';
+import {
+  SOLANA_CANARY_ACCOUNT,
+  SOLANA_CANARY_BEFORE,
+  SOLANA_CANARY_SIGNATURE,
+  SOLANA_USDC_MINT,
+  SYSTEM_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  receiptPageHref,
+} from './solanaAddress.mjs';
 
 export class AuditSourceError extends Error {
   constructor(message, code = 'source_unavailable') {
@@ -235,7 +256,7 @@ export async function scanBaseUsdcOut(address, options = {}) {
     failedRanges.push({
       from_block: item.start,
       to_block: item.end,
-      error: error || 'rpc_logs_failed',
+      error: baseRangeCode(error),
     });
     pending -= 1;
     finished += 1;
@@ -286,7 +307,7 @@ export async function scanBaseUsdcOut(address, options = {}) {
             statedLimit: statedLogRangeLimit(err),
           });
           if (!pieces || logCalls >= maxLogCalls) {
-            recordFailure(item, err?.message || 'rpc_logs_failed');
+            recordFailure(item, err);
           } else {
             pending += pieces.length - 1;
             for (const [start, end] of pieces) queue.push({ start, end, outerAttempts: 0 });
@@ -302,11 +323,21 @@ export async function scanBaseUsdcOut(address, options = {}) {
           queue.push({ start: item.start, end: item.end, outerAttempts: item.outerAttempts + 1 });
           wakeWaiters();
         } else {
-          recordFailure(item, err?.message || 'rpc_logs_failed');
+          recordFailure(item, err);
         }
       }
     }
   }
+
+function baseRangeCode(err) {
+  if (isLogRangeLimitError(err)) return 'range_limit';
+  const message = String(err?.message || err || '');
+  if (message === 'rpc_log_call_cap') return 'log_call_cap';
+  if (isRateLimitMessage(message) || err?.status === 429) return 'upstream_rate_limited';
+  if (/rpc_unreadable|rpc_logs_unreadable/.test(message)) return 'upstream_bad_response';
+  if (FAILED_RANGE_CODES.has(message)) return message;
+  return 'upstream_unavailable';
+}
 
   if (queue.length > 0) {
     const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker());
@@ -324,44 +355,51 @@ export async function scanBaseUsdcOut(address, options = {}) {
   };
 }
 
-export async function lookupReceipt(apiHost, txHash, fetchImpl, signal) {
-  const url = `${apiHost.replace(/\/$/, '')}/receipt/by-tx?tx=${encodeURIComponent(`base:${txHash}`)}&format=json`;
+function shellRedirect(location) {
+  return typeof location === 'string'
+    && /^https:\/\/api\.chit402\.com\/receipt\/(?:xfuel|chit|foreign-x402)-[A-Za-z0-9-]{8,80}\?format=json$/.test(location)
+    && receiptPageHref(location.split('/receipt/')[1]?.split('?')[0] || '') != null;
+}
+
+export async function lookupReceipt(apiHost, txHash, fetchImpl, signal, chain = 'base') {
+  const ref = chain === 'solana' ? `solana:${txHash}` : `base:${txHash}`;
+  const url = `${apiHost.replace(/\/$/, '')}/receipt/by-tx?tx=${encodeURIComponent(ref)}&format=json`;
   let res;
   try {
     res = await fetchImpl(url, {
       headers: { accept: 'application/json' },
       cache: 'no-store',
-      redirect: 'follow',
+      redirect: 'manual',
       signal,
     });
   } catch (err) {
     if (err?.name === 'AbortError') throw err;
     return { status: 'unavailable' };
   }
+  if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
+    const location = res.headers?.get?.('location');
+    if (!shellRedirect(location)) return { status: 'unavailable' };
+    try {
+      res = await fetchImpl(location, {
+        headers: { accept: 'application/json' },
+        cache: 'no-store',
+        redirect: 'manual',
+        signal,
+      });
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      return { status: 'unavailable' };
+    }
+  }
   if (res.status === 404) return { status: 'missing' };
-  if (!res.ok) return { status: 'unavailable', httpStatus: res.status };
+  if (!res.ok) return { status: 'unavailable' };
   let body;
   try {
     body = await res.json();
   } catch {
-    return { status: 'unavailable', reason: 'unreadable' };
+    return { status: 'unavailable' };
   }
-  if (!body || typeof body !== 'object' || !body.task_id) {
-    return { status: 'unavailable', reason: 'unreadable' };
-  }
-  const payment = body.payment || {};
-  const route = body.route || {};
-  return {
-    status: 'found',
-    task_id: String(body.task_id),
-    verify_url: body.verify_url || null,
-    schema: body.schema || null,
-    rail: payment.rail || null,
-    payer: body.caller_binding?.payer_wallet || null,
-    gross_amount: payment.gross_amount || payment.amount || null,
-    hub: route.hub || route.provider || null,
-    model: route.model || null,
-  };
+  return parseReceiptShell(body);
 }
 
 async function readTxInput(rpcUrl, txHash, fetchImpl, signal) {
@@ -395,6 +433,383 @@ export async function probeAgentBook(apiHost, agentId, fetchImpl, signal) {
   return { status: 'unexpected_public', httpStatus: res.status };
 }
 
+function proxyRangeCode(err) {
+  const message = String(err?.message || '');
+  if (FAILED_RANGE_CODES.has(message)) return message;
+  if (err?.status === 429 || isRateLimitMessage(message)) return 'upstream_rate_limited';
+  return 'upstream_unavailable';
+}
+
+function proxyUrl(base, path) {
+  const root = base ? String(base).replace(/\/$/, '') : '';
+  return `${root}${path}`;
+}
+
+async function proxyGetOnce(url, fetchImpl, signal, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const onAbort = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timer);
+      const abort = new Error('Aborted');
+      abort.name = 'AbortError';
+      throw abort;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    const type = String(res.headers?.get?.('content-type') || '');
+    if (res.status === 429) {
+      const err = new AuditSourceError('upstream_rate_limited');
+      err.status = 429;
+      err.retryAfterMs = parseRetryAfter(res.headers?.get?.('retry-after'));
+      throw err;
+    }
+    if (!type.includes('application/json')) throw new AuditSourceError('upstream_bad_response');
+    let body;
+    try {
+      body = await res.json();
+    } catch {
+      throw new AuditSourceError('upstream_bad_response');
+    }
+    if (!body || body.v !== 1) throw new AuditSourceError('upstream_bad_response');
+    if (!res.ok || body.error) {
+      const code = FAILED_RANGE_CODES.has(body.error) ? body.error : 'upstream_bad_response';
+      const err = new AuditSourceError(code);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function proxyGet(url, options, cache) {
+  if (cache.has(url)) return cache.get(url);
+  const now = options.now || Date.now;
+  if (now() >= options.deadlineAt) throw new AuditSourceError('deadline');
+  const sleep = options.sleep || defaultSleep;
+  const pace = options.pacer;
+  let last;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (now() >= options.deadlineAt) throw new AuditSourceError('deadline');
+    try {
+      if (pace) await pace.pace();
+      const body = await proxyGetOnce(url, options.fetchImpl, options.signal, options.timeoutMs ?? 10_000);
+      cache.set(url, body);
+      return body;
+    } catch (err) {
+      if (options.signal?.aborted || (err?.name === 'AbortError' && options.signal?.aborted)) throw err;
+      if (err?.name === 'AbortError' && !options.signal?.aborted) {
+        last = new AuditSourceError('upstream_unavailable');
+      } else {
+        last = err;
+      }
+      if (['deadline', 'not_configured', 'wrong_cluster', 'head_unreadable', 'invalid_param', 'not_found', 'upstream_too_large'].includes(err?.message)) {
+        throw err;
+      }
+      if (attempt === 3) throw last;
+      const delay = retryDelayMs(attempt, err);
+      if (pace?.hold && (err?.status === 429 || isRateLimitMessage(err?.message))) pace.hold(delay);
+      await sleep(delay);
+    }
+  }
+  throw last;
+}
+
+export async function scanSolanaUsdcOut(address, options = {}) {
+  const fetchImpl = options.fetchImpl || fetch;
+  const now = options.now || Date.now;
+  const sleep = options.sleep || defaultSleep;
+  const onProgress = options.onProgress || (() => {});
+  const windowSeconds = options.windowSeconds ?? SOL_WINDOW_SECONDS;
+  const deadlineAt = now() + (options.deadlineMs ?? SOL_SCAN_DEADLINE_MS);
+  const cache = new Map();
+  const pacer = createRequestPacer(options.minGapMs ?? 120, sleep);
+  const callOptions = {
+    fetchImpl,
+    signal: options.signal,
+    sleep,
+    pacer,
+    now,
+    deadlineAt,
+    timeoutMs: options.timeoutMs ?? 10_000,
+  };
+  const failedRanges = [];
+  const base = options.proxyBase || '';
+
+  async function get(path) {
+    return proxyGet(proxyUrl(base, path), callOptions, cache);
+  }
+
+  onProgress('Reading Solana…');
+  let head;
+  try {
+    head = await get('/api/solana-audit/head');
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    failedRanges.push({ error: proxyRangeCode(err) });
+    return solanaScanShell({ failedRanges, windowSeconds });
+  }
+  if (typeof head?.blockTime !== 'number' || typeof head?.slot !== 'number') {
+    failedRanges.push({ error: 'head_unreadable' });
+    return solanaScanShell({ failedRanges, windowSeconds });
+  }
+  const windowStart = head.blockTime - windowSeconds;
+
+  onProgress('Finding USDC accounts…');
+  let account;
+  try {
+    account = await get(`/api/solana-audit/account?address=${encodeURIComponent(address)}`);
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    failedRanges.push({ error: proxyRangeCode(err) });
+    return solanaScanShell({ failedRanges, windowSeconds, head });
+  }
+
+  let mode = 'wallet';
+  let wallet = address;
+  let tokenAccountNote = null;
+  const tokenAccounts = [];
+  if (!account?.exists || account.owner === SYSTEM_PROGRAM_ID) {
+    let listed;
+    try {
+      listed = await get(`/api/solana-audit/token-accounts?owner=${encodeURIComponent(address)}`);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      failedRanges.push({ error: proxyRangeCode(err) });
+      return solanaScanShell({ failedRanges, windowSeconds, head });
+    }
+    const accounts = Array.isArray(listed?.accounts) ? listed.accounts : [];
+    if (accounts.length > SOL_MAX_TOKEN_ACCOUNTS) {
+      return solanaScanShell({
+        failedRanges,
+        windowSeconds,
+        head,
+        truncated: true,
+        tokenAccounts: accounts.slice(0, SOL_MAX_TOKEN_ACCOUNTS).map((item) => item.address).filter(Boolean),
+      });
+    }
+    for (const item of accounts) {
+      if (item?.mint === SOLANA_USDC_MINT && typeof item.address === 'string') tokenAccounts.push(item.address);
+    }
+  } else if (account.owner === TOKEN_PROGRAM_ID && account.mint === SOLANA_USDC_MINT) {
+    mode = 'token_account';
+    wallet = typeof account.token_owner === 'string' ? account.token_owner : null;
+    tokenAccounts.push(address);
+    tokenAccountNote = `This is a USDC token account; its owner is ${wallet || 'unknown'}.`;
+  } else {
+    const err = new AuditSourceError('invalid_solana_wallet', 'invalid');
+    throw err;
+  }
+
+  let canary = 'missing';
+  try {
+    const canaryPage = await get(`/api/solana-audit/signatures?address=${encodeURIComponent(SOLANA_CANARY_ACCOUNT)}&limit=1&before=${encodeURIComponent(SOLANA_CANARY_BEFORE)}`);
+    const first = canaryPage?.signatures?.[0];
+    if (first?.signature === SOLANA_CANARY_SIGNATURE) {
+      const canaryTx = await get(`/api/solana-audit/tx?sig=${encodeURIComponent(SOLANA_CANARY_SIGNATURE)}`);
+      canary = canaryTx?.tx && solanaCanaryContentOk(canaryTx.tx) ? 'ok' : 'mismatch';
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') throw err;
+    canary = 'missing';
+    failedRanges.push({ error: proxyRangeCode(err) });
+  }
+  if (canary === 'mismatch') failedRanges.push({ error: 'history_unproven' });
+
+  const sources = mode === 'token_account' ? [address] : [address, ...tokenAccounts];
+  const collected = [];
+  let totalPages = 0;
+  let sourceIncomplete = false;
+  for (const source of sources) {
+    let before = null;
+    let pages = 0;
+    let sawOlder = false;
+    let short = false;
+    while (pages < SOL_MAX_SIG_PAGES_PER_SOURCE && totalPages < SOL_MAX_SIG_PAGES) {
+      if (now() >= deadlineAt) {
+        failedRanges.push({ error: 'deadline' });
+        sourceIncomplete = true;
+        break;
+      }
+      pages += 1;
+      totalPages += 1;
+      const params = new URLSearchParams({ address: source, limit: String(SOL_SIG_PAGE_LIMIT) });
+      if (before) params.set('before', before);
+      let page;
+      try {
+        page = await get(`/api/solana-audit/signatures?${params.toString()}`);
+      } catch (err) {
+        if (err?.name === 'AbortError') throw err;
+        failedRanges.push({ error: proxyRangeCode(err) });
+        sourceIncomplete = true;
+        break;
+      }
+      const list = Array.isArray(page?.signatures) ? page.signatures : null;
+      if (!list) {
+        failedRanges.push({ error: 'upstream_bad_response' });
+        sourceIncomplete = true;
+        break;
+      }
+      short = list.length < SOL_SIG_PAGE_LIMIT;
+      let halted = false;
+      for (const item of list) {
+        if (item?.blockTime == null) {
+          failedRanges.push({ error: 'tx_unavailable' });
+          sourceIncomplete = true;
+          halted = true;
+          break;
+        }
+        if (item.blockTime < windowStart) {
+          sawOlder = true;
+          halted = true;
+          break;
+        }
+        if (item.failed === true) continue;
+        if (typeof item.signature !== 'string') {
+          failedRanges.push({ error: 'upstream_bad_response' });
+          sourceIncomplete = true;
+          halted = true;
+          break;
+        }
+        collected.push(item);
+      }
+      if (halted || sourceIncomplete) break;
+      if (short) break;
+      before = list[list.length - 1]?.signature || null;
+      if (!before) {
+        sourceIncomplete = true;
+        break;
+      }
+    }
+    if (sourceIncomplete) break;
+    if (!sawOlder && (pages >= SOL_MAX_SIG_PAGES_PER_SOURCE || totalPages >= SOL_MAX_SIG_PAGES) && !short) {
+      failedRanges.push({ error: 'sig_page_cap' });
+      sourceIncomplete = true;
+      break;
+    }
+    if (short && !sawOlder && canary !== 'ok') {
+      failedRanges.push({ error: 'history_unproven' });
+      sourceIncomplete = true;
+      break;
+    }
+  }
+
+  const seen = new Set();
+  const merged = [];
+  collected.forEach((item, order) => {
+    if (seen.has(item.signature)) return;
+    seen.add(item.signature);
+    merged.push({ ...item, order });
+  });
+  merged.sort((a, b) => (b.slot - a.slot) || (a.order - b.order));
+  const truncated = merged.length > MAX_SOL_TX_READS;
+  const toRead = merged.slice(0, MAX_SOL_TX_READS);
+  const decodedByIndex = new Array(toRead.length);
+  let readCount = 0;
+  const tokenSet = new Set(tokenAccounts);
+  await mapPool(toRead, options.concurrency ?? 3, async (item, index) => {
+    if (now() >= deadlineAt) {
+      failedRanges.push({ error: 'deadline' });
+      decodedByIndex[index] = [];
+      return;
+    }
+    onProgress(`Reading Solana transfers ${index + 1}/${toRead.length}`);
+    let body;
+    try {
+      body = await get(`/api/solana-audit/tx?sig=${encodeURIComponent(item.signature)}`);
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      failedRanges.push({ error: proxyRangeCode(err) });
+      decodedByIndex[index] = [];
+      return;
+    }
+    readCount += 1;
+    if (!body?.tx) {
+      failedRanges.push({ error: 'tx_unavailable' });
+      decodedByIndex[index] = [];
+      return;
+    }
+    const decoded = decodeSolanaUsdcTransfers(body.tx, {
+      mode,
+      account: address,
+      wallet,
+      tokenAccounts: tokenSet,
+      signature: item.signature,
+    });
+    if (decoded.error) {
+      failedRanges.push({ error: decoded.error });
+      decodedByIndex[index] = [];
+      return;
+    }
+    if (decoded.unexplained) failedRanges.push({ error: 'unexplained_out' });
+    decodedByIndex[index] = decoded.rows;
+  });
+  const rows = decodedByIndex.flatMap((part) => part || []);
+
+  const uniqueFailed = [];
+  const seenErr = new Set();
+  for (const range of failedRanges) {
+    const key = range.error;
+    if (seenErr.has(key)) continue;
+    seenErr.add(key);
+    uniqueFailed.push(range);
+  }
+
+  return solanaScanShell({
+    failedRanges: uniqueFailed,
+    windowSeconds,
+    head,
+    truncated: truncated || sourceIncomplete && uniqueFailed.some((range) => range.error === 'sig_page_cap'),
+    tokenAccounts,
+    tokenAccountNote,
+    signaturesSeen: merged.length,
+    signaturesRead: readCount,
+    rows,
+    scanComplete: uniqueFailed.length === 0 && !truncated,
+  });
+}
+
+function solanaScanShell({
+  failedRanges = [],
+  windowSeconds,
+  head = null,
+  truncated = false,
+  tokenAccounts = [],
+  tokenAccountNote = null,
+  signaturesSeen = 0,
+  signaturesRead = 0,
+  rows = [],
+  scanComplete = false,
+} = {}) {
+  const fromTime = head ? new Date((head.blockTime - windowSeconds) * 1000).toISOString() : null;
+  const toTime = head ? new Date(head.blockTime * 1000).toISOString() : null;
+  return {
+    rows,
+    failedRanges,
+    scanComplete: scanComplete && failedRanges.length === 0 && !truncated,
+    truncated,
+    fromTime,
+    toTime,
+    headSlot: head?.slot ?? null,
+    windowSeconds,
+    tokenAccounts,
+    tokenAccountNote,
+    signaturesSeen,
+    signaturesRead,
+  };
+}
+
 /**
  * @param {string} raw
  * @param {object} [options]
@@ -408,10 +823,47 @@ export async function runPublicSpendAudit(raw, options = {}) {
   const query = parseAuditQuery(raw);
 
   if (query.kind === 'empty') return { ok: false, error: 'empty' };
-  if (query.kind === 'invalid') return { ok: false, error: 'invalid' };
+  if (query.kind === 'invalid') return { ok: false, error: 'invalid', message: auditQueryMessage(query) };
 
   if (query.kind === 'solana') {
-    return { ok: true, report: buildSpendAuditReport({ query }) };
+    try {
+      const solana = await scanSolanaUsdcOut(query.address, {
+        fetchImpl,
+        signal,
+        onProgress,
+        sleep: options.sleep,
+        now: options.now,
+        proxyBase: options.proxyBase,
+        windowSeconds: options.windowSeconds,
+        deadlineMs: options.deadlineMs,
+        minGapMs: options.minGapMs,
+        concurrency: options.concurrency,
+        timeoutMs: options.timeoutMs,
+      });
+      const sigs = [];
+      const seen = new Set();
+      for (const row of solana.rows) {
+        if (seen.has(row.tx_hash)) continue;
+        seen.add(row.tx_hash);
+        sigs.push(row.tx_hash);
+      }
+      const toCheck = sigs.slice(0, MAX_RECEIPT_LOOKUPS);
+      if (toCheck.length) onProgress('Matching public Chit receipts…');
+      const lookups = await mapPool(toCheck, 4, (sig) => lookupReceipt(apiHost, sig, fetchImpl, signal, 'solana'));
+      const receipts = new Map();
+      toCheck.forEach((sig, index) => receipts.set(sig, lookups[index]));
+      return { ok: true, report: buildSpendAuditReport({ query, solana, receipts }) };
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      if (err?.code === 'invalid' || err?.message === 'invalid_solana_wallet') {
+        return { ok: false, error: 'invalid', message: 'Not a wallet.' };
+      }
+      return {
+        ok: false,
+        error: 'source_unavailable',
+        message: 'The Solana audit proxy did not answer. No spend total is shown.',
+      };
+    }
   }
 
   if (query.kind === 'agent') {

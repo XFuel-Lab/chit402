@@ -55,6 +55,9 @@ jobs:
               - 'services/gateway/**'
             web:
               - 'apps/web/**'
+              - 'api/**'
+              - 'scripts/check-solana-audit-bundle.mjs'
+              - '.github/workflows/test.yml'
             theta-inference:
               - 'packages/circuit-runtime/theta-inference/**'
             skills:
@@ -173,6 +176,28 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.web == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install and test www with no network
+        working-directory: apps/web
+        run: npm install --no-audit --no-fund && unshare -rn npm test
+
+  solana-audit-bundle:
+    name: Solana audit bundle secret scan
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.web == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -180,9 +205,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install and test www
+      - name: Build the web app with a dummy Helius key
         working-directory: apps/web
-        run: npm install --no-audit --no-fund && npm test
+        env:
+          HELIUS_API_KEY: SECRETDUMMYHELIUSKEY01
+        run: npm install --no-audit --no-fund && npm run build
+
+      - name: Grep built JS and source maps
+        run: node scripts/check-solana-audit-bundle.mjs
 
   # ════════════════════════════════════════════════════════════
   # TEMPORARY COMPATIBILITY ALIASES (remove after branch protection update)
