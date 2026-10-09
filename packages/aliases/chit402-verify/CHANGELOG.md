@@ -5,6 +5,12 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `@xfuel/verify` and forwards CLI arguments to `xfuel-verify`.
 
+## 0.3.4 — Match @xfuel/verify 0.3.4
+
+### Changed
+- Depends on `@xfuel/verify` `^0.3.4`.
+- `bin["chit402-verify"]` is `cli.js`. npm publish was rewriting `./cli.js` and warning that the script name was invalid.
+
 ## 0.3.0 — Match @xfuel/verify 0.3.0
 
 ### Changed
