@@ -2675,6 +2675,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const receiptClaims = {
     task_id: 'cli-row',
     row_hash: 'cli-hash',
+    payload_version: 6,
   };
   const receiptSig = signJws(receiptClaims, { typ: 'chit402-receipt+jwt' });
   const verifyUrl = `http://127.0.0.1:${gatewayPort}/receipt/cli-row`;

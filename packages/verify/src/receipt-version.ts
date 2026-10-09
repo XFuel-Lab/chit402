@@ -236,6 +236,9 @@ export function classifyReceiptDocument(receipt: unknown): ReceiptVersionDecisio
   if (!isPlainObject(receipt)) return fail(UNSUPPORTED_VERSION);
   const signature = receipt.issuer_signature;
   const jws = isPlainObject(signature) ? signature.jws : undefined;
+  // A jws that is present but not a string is a malformed JWS, not an
+  // unsigned receipt. Later code would call .split() on it and throw.
+  if (jws != null && typeof jws !== 'string') return fail(INVALID_JWS);
   if (typeof jws !== 'string' || jws.length === 0) {
     return { ok: true, family: 'unsigned' };
   }

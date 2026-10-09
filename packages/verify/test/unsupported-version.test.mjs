@@ -639,6 +639,10 @@ test('T-NOTHROW non-object and undecodable payloads return failed', async () => 
     [`${header}.${Buffer.from('123').toString('base64url')}.sig`, 'unsupported_version'],
     [`${header}.%%%.sig`, 'invalid_jws'],
     ['not-a-jws', 'invalid_jws'],
+    [123, 'invalid_jws'],
+    [true, 'invalid_jws'],
+    [{}, 'invalid_jws'],
+    [['a.b.c'], 'invalid_jws'],
   ];
   for (const [jws, reason] of cases) {
     const receipt = { task_id: 'task-outer', issuer_signature: { jws, kid } };
