@@ -2128,8 +2128,10 @@ export class ReceiptMerkleTree {
     return RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
   }
 
-  async _boundedLookup(intent, lookup, request) {
-    const ms = this._rpcTimeoutMs();
+  async _boundedLookup(intent, lookup, request, capMs = null) {
+    const budget = this._rpcTimeoutMs();
+    const cap = Number(capMs);
+    const ms = Number.isFinite(cap) && cap >= 0 ? Math.min(budget, cap) : budget;
     const signal = AbortSignal.timeout(ms);
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -2624,10 +2626,11 @@ export class ReceiptMerkleTree {
       await new Promise((resolve) => setTimeout(resolve, ms));
     };
     for (let attempt = 1; attempt <= polls; attempt += 1) {
-      if (clock() - started >= deadline) break;
+      const elapsed = clock() - started;
+      if (elapsed >= deadline) break;
       let found = null;
       try {
-        found = await this._boundedLookup(intent, lookup, request);
+        found = await this._boundedLookup(intent, lookup, request, deadline - elapsed);
       } catch {
         return this._broadcastAnchor(intent, root, 'unconfirmed');
       }
