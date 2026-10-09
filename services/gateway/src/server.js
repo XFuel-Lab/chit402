@@ -2896,11 +2896,14 @@ export function createApp() {
     } catch {
       inclusion = null;
     }
-    return toPublicShell(receipt, { inclusion, signedHead });
+    return {
+      shell: toPublicShell(receipt, { inclusion, signedHead }),
+      inclusion,
+    };
   }
 
   function sendPublicShell(res, receipt, { wantsJson, taskId }) {
-    const shell = shellFor(receipt, taskId);
+    const { shell, inclusion } = shellFor(receipt, taskId);
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
@@ -2908,6 +2911,7 @@ export function createApp() {
     res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
     return res.type('html').send(renderReceiptShellHtml(shell, {
       publicBaseUrl: config.service.publicBaseUrl || '',
+      inclusion,
     }));
   }
 
@@ -3040,11 +3044,35 @@ export function createApp() {
     }
   });
 
-  app.get('/v1/receipts/tree/head', async (_req, res) => {
+  app.get('/v1/receipts/tree/head', async (req, res) => {
     try {
+      const spelled = rawQueryValue(req, 'tree_size');
+      if (spelled === null) {
+        return res.status(400).json({ error: 'bad_tree_size' });
+      }
       const tree = getReceiptMerkleTree();
-      const head = tree.latestSignedHead();
       const receiptLog = tree.bundleStatus();
+      if (spelled !== undefined && spelled !== '') {
+        res.set('Cache-Control', 'private, no-store');
+        const treeSize = canonicalPositiveInteger(spelled);
+        if (treeSize == null) return res.status(400).json({ error: 'bad_tree_size' });
+        try {
+          const head = tree.signedHeadAt(treeSize);
+          const facts = tree.headChainFacts(head);
+          return res.json({
+            ...head,
+            receipt_log: receiptLog,
+            anchor_confirmed_by: facts.confirmed_by || null,
+          });
+        } catch (err) {
+          const code = err?.code;
+          if (code === 'bad_tree_size' || code === 'no_signed_head' || code === 'head_mismatch' || code === 'head_rejected') {
+            return res.status(400).json({ error: code });
+          }
+          throw err;
+        }
+      }
+      const head = tree.latestSignedHead();
       if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
       return res.json({ ...head, receipt_log: receiptLog });
     } catch (err) {
@@ -3332,7 +3360,7 @@ export function createApp() {
       if (tx === null || (tx && !receiptOwnsTx(tx, { receipt, ledgerRow: null }))) {
         return sendPublicMissing(res, false);
       }
-      const shell = shellFor(receipt, receipt.task_id);
+      const { shell } = shellFor(receipt, receipt.task_id);
       const bytes = shellPreimageBytes(shell);
       res.set('Cache-Control', 'private, no-store');
       if (String(req.query.raw || '') === '1') {

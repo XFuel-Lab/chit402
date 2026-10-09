@@ -180,16 +180,17 @@ export function calldataRoot(input) {
   return data.slice(2).toLowerCase();
 }
 
-async function rpc(rpcUrl, method, params, request) {
-  const call = request || defaultRpc;
-  return call(rpcUrl, method, params);
+async function rpc(rpcUrl, method, params, request, signal) {
+  if (typeof request === 'function') return request(rpcUrl, method, params, signal);
+  return defaultRpc(rpcUrl, method, params, signal);
 }
 
-async function defaultRpc(rpcUrl, method, params) {
+async function defaultRpc(rpcUrl, method, params, signal) {
   const res = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal,
   });
   if (!res.ok) throw new Error(`base_http_${res.status}`);
   const json = await res.json();
@@ -351,6 +352,7 @@ export async function lookupBaseTxByNonceOrHash({
   from,
   to,
   request,
+  signal,
 } = {}) {
   const want = normalizeRoot(root);
   let sender = '';
@@ -375,7 +377,7 @@ export async function lookupBaseTxByNonceOrHash({
     const got = calldataRoot(tx.input || tx.data);
     let receipt;
     try {
-      receipt = await rpc(url, 'eth_getTransactionReceipt', [hash], request);
+      receipt = await rpc(url, 'eth_getTransactionReceipt', [hash], request, signal);
     } catch {
       return { pending: true, blocked: true, reason: 'rpc_error', tx: hash };
     }
@@ -417,34 +419,34 @@ export async function lookupBaseTxByNonceOrHash({
   if (txHash) {
     let tx;
     try {
-      tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request);
+      tx = await rpc(url, 'eth_getTransactionByHash', [txHash], request, signal);
     } catch {
       return { pending: true, blocked: true, reason: 'rpc_error' };
     }
     if (tx) return classify(tx, tx.hash || txHash);
-    return classifyMissingHash({ url, nonce, sender, txHash, request });
+    return classifyMissingHash({ url, nonce, sender, txHash, request, signal });
   }
 
   if (nonce != null) {
     const nonceHex = `0x${Number(nonce).toString(16)}`;
     try {
-      const probed = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request);
+      const probed = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request, signal);
       if (probed) return classify(probed, probed.hash);
     } catch {
       // Optional. A normal RPC has no ots method.
     }
-    return classifyMissingHash({ url, nonce, sender, txHash: null, request });
+    return classifyMissingHash({ url, nonce, sender, txHash: null, request, signal });
   }
   return { pending: true, blocked: true, reason: 'no_tx_hash' };
 }
 
-async function classifyMissingHash({ url, nonce, sender, txHash, request }) {
+async function classifyMissingHash({ url, nonce, sender, txHash, request, signal }) {
   if (nonce == null || !sender) {
     return { pending: true, blocked: true, reason: 'nonce_unknown', tx: txHash };
   }
   let countRaw;
   try {
-    countRaw = await rpc(url, 'eth_getTransactionCount', [sender, 'latest'], request);
+    countRaw = await rpc(url, 'eth_getTransactionCount', [sender, 'latest'], request, signal);
   } catch {
     return { pending: true, blocked: true, reason: 'rpc_error', tx: txHash };
   }

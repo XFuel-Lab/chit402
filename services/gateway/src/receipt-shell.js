@@ -286,7 +286,26 @@ function anchor(href, label, { external = false } = {}) {
   return `<a href="${esc(href)}"${rel}>${esc(label)}</a>`;
 }
 
-export function renderReceiptShellHtml(shell, { publicBaseUrl = '' } = {}) {
+/**
+ * Inclusion and head links for one rendered proof. Both name the same size.
+ * A closed epoch uses its pinned head route. Paths stay relative.
+ */
+export function shellProofLinks(storedId, inclusion) {
+  const id = storedId ? encodeURIComponent(String(storedId)) : '';
+  const size = Number(inclusion?.tree_size);
+  const sized = Number.isSafeInteger(size) && size >= 1;
+  const inclusionHref = id
+    ? (sized
+      ? `/v1/receipts/${id}/inclusion?tree_size=${size}`
+      : `/v1/receipts/${id}/inclusion`)
+    : null;
+  const headHref = (typeof inclusion?.head_url === 'string' && inclusion.head_url.startsWith('/v1/receipts/tree/'))
+    ? inclusion.head_url
+    : '/v1/receipts/tree/head';
+  return { inclusion: inclusionHref, head: headHref };
+}
+
+export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = null } = {}) {
   const card = takePublicCard(shell);
   const storedId = card.receipt_id == null ? '' : String(card.receipt_id);
   const displayId = displayTaskIdForShare(storedId);
@@ -359,10 +378,11 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '' } = {}) {
   }
 
   const links = [anchor('?format=json', 'JSON')];
-  if (card.leaf_hash != null && storedId) {
-    links.push(anchor(`/v1/receipts/${encodeURIComponent(storedId)}/inclusion`, 'Inclusion proof'));
+  const pair = shellProofLinks(storedId, inclusion);
+  if (card.leaf_hash != null && storedId && pair.inclusion) {
+    links.push(anchor(pair.inclusion, 'Inclusion proof'));
   }
-  links.push(anchor('/v1/receipts/tree/head', 'Tree head'));
+  links.push(anchor(pair.head, 'Tree head'));
   links.push(anchor('/.well-known/jwks.json', 'Issuer keys'));
   links.push(anchor('https://www.chit402.com/trust', 'Trust', { external: true }));
 

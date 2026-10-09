@@ -16,7 +16,14 @@ import crypto from 'crypto';
 import logger from './logger.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
-import { clockToleranceClaim, gatePublishedAnchor, gatePublishedSolana } from './receipt-anchor-clock.js';
+import {
+  clockToleranceClaim,
+  fetchBaseBlockTimestamp,
+  gatePublishedAnchor,
+  gatePublishedSolana,
+  toleranceSeconds,
+  toUnixSeconds,
+} from './receipt-anchor-clock.js';
 import {
   describeSolanaAnchor,
   parseAnchorMemo,
@@ -536,22 +543,154 @@ export function headAnchorFacts(head) {
   };
 }
 
+/** How many receipt lookups follow a broadcast before the head stays `broadcast`. */
+export const RECEIPT_ANCHOR_CONFIRM_POLLS_DEFAULT = 6;
+/** Gap between those lookups. The deadline below includes this wait and RPC time. */
+export const RECEIPT_ANCHOR_CONFIRM_INTERVAL_MS_DEFAULT = 2_000;
+/** Wall-clock cap for the confirm poll, including each lookup. */
+export const RECEIPT_ANCHOR_CONFIRM_DEADLINE_MS = 30_000;
+/** Per-lookup RPC abort. A hung fetch must not hold the publish lock. */
+export const RECEIPT_ANCHOR_RPC_TIMEOUT_MS = 5_000;
+const BASE_ANCHOR_CHAIN_ID = 8453;
+
+export function receiptAnchorConfirmPolls(env = process.env) {
+  const raw = Number(env.RECEIPT_ANCHOR_CONFIRM_POLLS);
+  if (!Number.isFinite(raw) || raw < 1) return RECEIPT_ANCHOR_CONFIRM_POLLS_DEFAULT;
+  return Math.floor(raw);
+}
+
+export function receiptAnchorConfirmIntervalMs(env = process.env) {
+  const raw = Number(env.RECEIPT_ANCHOR_CONFIRM_INTERVAL_MS);
+  if (!Number.isFinite(raw) || raw < 0) return RECEIPT_ANCHOR_CONFIRM_INTERVAL_MS_DEFAULT;
+  return raw;
+}
+
+function sameHex(left, right) {
+  const a = String(left || '').toLowerCase();
+  const b = String(right || '').toLowerCase();
+  return Boolean(a) && a === b;
+}
+
+function signedBaseAnchor(head) {
+  return head?.anchors?.base || head?.anchor || null;
+}
+
+/**
+ * Last journaled base intent for this root. Later lines replace earlier ones.
+ * Pure: it does not fold a different nonce back to life.
+ */
+export function latestBaseIntentForRoot(intents, root) {
+  const want = normalizeRoot(root);
+  if (!want) return null;
+  let found = null;
+  for (const row of intents || []) {
+    if (!row || typeof row !== 'object') continue;
+    if (row.op && row.op !== 'anchor_intent') continue;
+    if (row.chain && row.chain !== 'base') continue;
+    if (normalizeRoot(row.root) !== want) continue;
+    found = row;
+  }
+  return found;
+}
+
+function trackerEntryFor(anchorState, root) {
+  const base = anchorState?.base;
+  if (!base || typeof base !== 'object') return null;
+  return base[root] || base[`0x${root}`] || null;
+}
+
+function noncesAgree(...values) {
+  const present = [];
+  for (const value of values) {
+    if (value == null || value === '') continue;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return false;
+    present.push(n);
+  }
+  if (present.length < 2) return true;
+  return present.every((n) => n === present[0]);
+}
+
+/**
+ * Effective chain facts for one stored head.
+ * A head whose own signed claims say anchored is used as signed.
+ * A broadcast head is upgraded only when the journal intent, the tracker
+ * entry, the signed Base tx, and the block time all agree. The result is a
+ * new object. `head` is not mutated. This reads memory only: no RPC, no write.
+ */
+export function headChainFacts(head, anchorState = null, intents = null) {
+  const signed = headAnchorFacts(head);
+  if (signed.anchored) return { ...signed, confirmed_by: 'signed_head' };
+  const refused = { ...signed, confirmed_by: null };
+  const root = normalizeRoot(head?.root);
+  if (!root) return refused;
+  const intent = latestBaseIntentForRoot(intents, root);
+  const tracker = trackerEntryFor(anchorState, root);
+  if (!intent || intent.status !== 'anchored' || !intent.tx) return refused;
+  if (!tracker || tracker.status !== 'anchored' || tracker.receipt_confirmed !== true || !tracker.tx) {
+    return refused;
+  }
+  if (!sameHex(intent.tx, tracker.tx)) return refused;
+  const base = signedBaseAnchor(head);
+  if (!base?.tx || !sameHex(base.tx, tracker.tx)) return refused;
+  if (!sameHex(tracker.from, base.from)) return refused;
+  if (Number(tracker.chain_id) !== BASE_ANCHOR_CHAIN_ID) return refused;
+  if (base.chain_id != null && Number(base.chain_id) !== BASE_ANCHOR_CHAIN_ID) return refused;
+  if (!noncesAgree(intent.nonce, tracker.nonce, base.nonce)) return refused;
+  if (!intent.day || intent.day !== dayOf(head?.published_at)) return refused;
+  const blockTs = toUnixSeconds(tracker.block_ts ?? null);
+  if (blockTs == null) return refused;
+  if (intent.block_ts != null && toUnixSeconds(intent.block_ts) !== blockTs) return refused;
+  const published = toUnixSeconds(head?.published_at);
+  if (published == null) return refused;
+  const tolerance = toleranceSeconds('base', head?.clock_tolerance_s);
+  if (Math.abs(blockTs - published) > tolerance) return refused;
+  return {
+    anchored: true,
+    anchor_tx: tracker.tx,
+    solana_signature: signed.solana_signature,
+    anchor_chain: 'base',
+    signature: signed.signature,
+    confirmed_by: 'anchor_state',
+  };
+}
+
+/**
+ * Page and inclusion `head_url`. Closed epochs use the pinned head route.
+ * The open epoch names the size, so a later broadcast head is not paired
+ * with an older proof. Relative path only: no host.
+ */
+export function inclusionHeadUrl(epoch, treeSize) {
+  const n = Number(treeSize);
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  if (epoch?.status === 'closed') return `/v1/receipts/tree/epoch/${Number(epoch.epoch)}/head`;
+  return `/v1/receipts/tree/head?tree_size=${n}`;
+}
+
+function receiptReverted(found) {
+  if (!found) return false;
+  const status = found.receiptStatus ?? found.receipt_status;
+  return status === '0x0' || status === 0 || status === '0x00' || status === false;
+}
+
 function inclusionError(code, message) {
   const err = new Error(message);
   err.code = code;
   return err;
 }
 
-function namedSignedHead(head) {
-  const facts = headAnchorFacts(head);
+function namedSignedHead(head, facts = null) {
+  const signed = headAnchorFacts(head);
+  const effective = facts || signed;
   return {
     tree_size: Number(head.tree_size),
     root: normalizeRoot(head.root),
-    signature: facts.signature,
-    anchor_tx: facts.anchor_tx,
-    anchor_chain: facts.anchor_chain,
-    solana_signature: facts.solana_signature,
-    anchored: facts.anchored,
+    signature: head?.issuer_signature || signed.signature || null,
+    anchor_tx: effective.anchor_tx,
+    anchor_chain: effective.anchor_chain,
+    solana_signature: effective.solana_signature,
+    anchored: effective.anchored,
+    anchored_signed: signed.anchored,
   };
 }
 
@@ -1114,16 +1253,25 @@ export class ReceiptMerkleTree {
    * final head wins over an earlier journal anchor. An anchored head that
    * fails its signature, or whose root is not the prefix of that size, is
    * refused rather than replaced with an older head.
+   * Effective anchor facts include a tracker-confirmed broadcast head.
+   * Publish triggers stay on the signed claims.
    */
   _newestAnchoredHead(epoch) {
     const pinned = this._closedPinnedFrontier(epoch);
     if (pinned) return pinned;
     const heads = epoch.heads || [];
     for (let i = heads.length - 1; i >= 0; i -= 1) {
-      if (!headAnchorFacts(heads[i]).anchored) continue;
+      if (!this.headChainFacts(heads[i]).anchored) continue;
       return this._acceptAnchoredHead(epoch, heads[i]);
     }
     return null;
+  }
+
+  /**
+   * In-memory chain facts. Does not mutate the head, the journal, or the tracker.
+   */
+  headChainFacts(head) {
+    return headChainFacts(head, this.anchorState, this.anchorIntents);
   }
 
   _acceptAnchoredHead(epoch, head) {
@@ -1198,6 +1346,15 @@ export class ReceiptMerkleTree {
   }
 
   /**
+   * Signed head of exactly `treeSize` on the open epoch.
+   * Quarantined heads are not in `epoch.heads`, so a size that only a
+   * raced head claimed is `no_signed_head`.
+   */
+  signedHeadAt(treeSize) {
+    return this._requireSignedHead(this._openEpoch(), Number(treeSize));
+  }
+
+  /**
    * Leaf index in the epoch that holds this task. Does not validate heads
    * and does not throw. Book listing, lineage, and export use this so a
    * rejected head cannot 500 the row. Null when the task is not in the log.
@@ -1262,8 +1419,10 @@ export class ReceiptMerkleTree {
     if (index == null) return null;
     const size = Number(head.tree_size);
     const live = epoch.leaves.length;
-    const facts = headAnchorFacts(head);
-    const named = namedSignedHead(head);
+    const facts = this.headChainFacts(head);
+    const named = namedSignedHead(head, facts);
+    const confirmedBy = facts.anchored ? (facts.confirmed_by || null) : null;
+    const headUrl = inclusionHeadUrl(epoch, size);
     if (index >= size) {
       const frontier = facts.anchored ? this._newestAnchoredHead(epoch) : null;
       const onFrontier = frontier
@@ -1291,8 +1450,10 @@ export class ReceiptMerkleTree {
         anchor_tx: facts.anchor_tx,
         anchor_chain: facts.anchor_chain,
         solana_signature: facts.solana_signature,
+        anchor_confirmed_by: confirmedBy,
         anchors: head.anchors || null,
         head: named,
+        head_url: headUrl,
         verified_at: new Date().toISOString(),
       };
     }
@@ -1320,12 +1481,19 @@ export class ReceiptMerkleTree {
       anchor_tx: facts.anchored ? facts.anchor_tx : null,
       anchor_chain: facts.anchored ? facts.anchor_chain : null,
       solana_signature: facts.anchored ? facts.solana_signature : null,
+      anchor_confirmed_by: confirmedBy,
       anchors: head.anchors || null,
       head: named,
+      head_url: headUrl,
       verified_at: new Date().toISOString(),
     };
   }
 
+  /**
+   * Live-tree inclusion when nothing is effectively anchored.
+   * Signed claims only. The tracker upgrade is not applied here.
+   * The default path calls `_newestAnchoredHead` first, and that does.
+   */
   _inclusionIn(epoch, taskId) {
     const index = epoch.byTask.get(String(taskId));
     if (index == null) return null;
@@ -1351,7 +1519,9 @@ export class ReceiptMerkleTree {
       anchor_status: baseTx ? 'anchored' : 'pending',
       anchor_tx: baseTx,
       solana_signature: solanaSig,
+      anchor_confirmed_by: baseTx ? 'signed_head' : null,
       anchors: head ? (head.anchors || null) : null,
+      head_url: inclusionHeadUrl(epoch, epoch.leaves.length),
       verified_at: new Date().toISOString(),
     };
   }
@@ -1389,7 +1559,16 @@ export class ReceiptMerkleTree {
 
   async publishHead(opts = {}) {
     const prev = this._publishChain || Promise.resolve();
-    const run = prev.then(() => this._publishHeadUnlocked(opts));
+    const run = prev.then(async () => {
+      this._publishActive = true;
+      try {
+        return await this._publishHeadUnlocked(opts);
+      } finally {
+        this._publishActive = false;
+        this._publishQueued = false;
+      }
+    });
+    this._publishQueued = true;
     this._publishChain = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -1407,12 +1586,19 @@ export class ReceiptMerkleTree {
     nonce = null,
     lookup = null,
     request = null,
+    sleep = null,
+    nowMs = null,
+    recheckDaily = false,
   } = {}) {
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) return null;
       this.ensureGenesis();
     }
     const publishedAt = (now ? new Date(now) : new Date()).toISOString();
+    if (recheckDaily) {
+      const dueHead = this.heads[this.heads.length - 1] || null;
+      if (!dailyAnchorDue(dueHead, new Date(publishedAt))) return dueHead;
+    }
     this._anchorNow = publishedAt;
     const day = dayOf(publishedAt);
     // Snapshot size with the root. appendReceipt is not behind the publish
@@ -1510,9 +1696,9 @@ export class ReceiptMerkleTree {
         anchor = (looked && this._commitAnchored(reserved.intent || { root, from: reserved.from, to: reserved.from, tx: reserved.anchoredTx }, looked))
           || this._anchorResult({ status: 'unconfirmed', root, tx: reserved.anchoredTx, reason: 'receipt_unconfirmed', from: reserved.from });
       } else if (reserved?.raw) {
-        anchor = await this._resumeSignedIntent(reserved, { send, lookup, request, root, day, now: publishedAt });
+        anchor = await this._resumeSignedIntent(reserved, { send, lookup, request, root, day, now: publishedAt, sleep, nowMs });
       } else if (reserved?.needsSign) {
-        anchor = await this._signAndBroadcastIntent(reserved, { send, lookup, request, root, day, now: publishedAt });
+        anchor = await this._signAndBroadcastIntent(reserved, { send, lookup, request, root, day, now: publishedAt, sleep, nowMs });
       } else {
         anchor = await describeAnchor(root, { send: send || null });
       }
@@ -1706,6 +1892,7 @@ export class ReceiptMerkleTree {
         superseded_by: row.superseded_by || prev?.superseded_by || null,
         max_fee: row.max_fee || prev?.max_fee || null,
         max_priority: row.max_priority || prev?.max_priority || null,
+        block_ts: row.block_ts ?? prev?.block_ts ?? null,
       });
     }
     return [...latest.values()];
@@ -1787,10 +1974,12 @@ export class ReceiptMerkleTree {
 
   _markIntent(intent, status, extra = {}) {
     if (!intent) return intent;
+    const nextBlockTs = extra.block_ts ?? intent.block_ts ?? null;
     const same = intent.status === status
       && extra.reason == null
       && extra.attempts == null
-      && extra.superseded_by == null;
+      && extra.superseded_by == null
+      && (extra.block_ts == null || extra.block_ts === intent.block_ts);
     if (same) return intent;
     const record = {
       v: 1,
@@ -1812,6 +2001,7 @@ export class ReceiptMerkleTree {
       max_priority: extra.max_priority ?? intent.max_priority ?? null,
       epoch: intent.epoch ?? this.epoch,
     };
+    if (nextBlockTs != null) record.block_ts = nextBlockTs;
     if (this.dir) appendJournal(this.dir, record);
     this.anchorIntents.push(record);
     return record;
@@ -1857,18 +2047,24 @@ export class ReceiptMerkleTree {
     this.lastAnchorError = null;
     this.stuckPendingAt = null;
     const root = confirmed.root;
-    if (!this.anchorState.base[root]) {
-      this.anchorState.base[root] = {
-        status: confirmed.status,
-        tx: confirmed.tx,
-        calldata: anchorCalldata(root),
-        from: confirmed.from,
-        chain_id: 8453,
-        nonce: intent?.nonce ?? null,
-        receipt_confirmed: true,
-      };
-    }
-    this._markIntent(intent, 'anchored', { tx: confirmed.tx, from: confirmed.from });
+    const prev = this.anchorState.base[root] || {};
+    const observed = toUnixSeconds(found?.block_ts ?? found?.blockTimestamp ?? null);
+    const blockTs = observed ?? (prev.block_ts != null ? toUnixSeconds(prev.block_ts) : null);
+    this.anchorState.base[root] = {
+      status: confirmed.status,
+      tx: confirmed.tx,
+      calldata: prev.calldata || anchorCalldata(root),
+      from: confirmed.from,
+      chain_id: 8453,
+      nonce: intent?.nonce ?? prev.nonce ?? found?.nonce ?? null,
+      receipt_confirmed: true,
+      ...(blockTs != null ? { block_ts: blockTs } : {}),
+    };
+    this._markIntent(intent, 'anchored', {
+      tx: confirmed.tx,
+      from: confirmed.from,
+      ...(blockTs != null ? { block_ts: blockTs } : {}),
+    });
     return this._anchorResult({
       status: confirmed.status,
       root,
@@ -1886,21 +2082,77 @@ export class ReceiptMerkleTree {
    * instead of confirming the same transaction forever.
    */
   _reopenAnchored(root, tx, reason) {
-    if (root && this.anchorState?.base?.[root]) delete this.anchorState.base[root];
+    const key = normalizeRoot(root) || root;
+    if (key && this.anchorState?.base?.[key]) delete this.anchorState.base[key];
+    if (root && root !== key && this.anchorState?.base?.[root]) delete this.anchorState.base[root];
     const status = reason === 'anchor_clock_drift' ? 'replaced' : 'broadcast';
     for (const row of this._latestBaseIntents()) {
       if (row.status !== 'anchored') continue;
-      if (row.root !== root && row.tx !== tx) continue;
+      if (normalizeRoot(row.root) !== key && row.tx !== tx) continue;
       this._markIntent(row, status, { reason, tx: row.tx, at: row.at });
     }
+    if (this.dir) writeAnchorState(this.dir, this.anchorState);
   }
 
   async _gateConfirmedAnchor(anchor, publishedAt, { blockTimestamp, readBlockTs, root }) {
     const gated = await gatePublishedAnchor(anchor, publishedAt, { blockTimestamp, readBlockTs });
     if (anchor?.status === 'anchored' && gated?.status !== 'anchored') {
       this._reopenAnchored(root, anchor.tx, gated?.reason || 'unconfirmed');
+    } else if (gated?.status === 'anchored' && gated.block_ts != null) {
+      this._stampBlockTs(root, gated.tx || anchor?.tx, gated.block_ts);
     }
     return gated;
+  }
+
+  _stampBlockTs(root, tx, blockTs) {
+    const seconds = toUnixSeconds(blockTs);
+    const key = normalizeRoot(root);
+    if (seconds == null || !key) return;
+    const entry = this.anchorState?.base?.[key];
+    if (entry && entry.receipt_confirmed === true && (!tx || sameHex(entry.tx, tx))) {
+      if (entry.block_ts !== seconds) {
+        this.anchorState.base[key] = { ...entry, block_ts: seconds };
+      }
+    }
+    const intent = latestBaseIntentForRoot(this.anchorIntents, key);
+    if (intent?.status === 'anchored' && (intent.block_ts == null || toUnixSeconds(intent.block_ts) !== seconds)) {
+      this._markIntent(intent, 'anchored', { tx: intent.tx, from: intent.from, block_ts: seconds });
+    }
+  }
+
+  _rpcTimeoutMs() {
+    const raw = Number(this.anchorRpcTimeoutMs);
+    if (Number.isFinite(raw) && raw >= 0) return raw;
+    return RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
+  }
+
+  async _boundedLookup(intent, lookup, request) {
+    const ms = this._rpcTimeoutMs();
+    const signal = AbortSignal.timeout(ms);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = new Error('rpc_timeout');
+        err.code = 'rpc_timeout';
+        reject(err);
+      }, ms);
+    });
+    try {
+      const run = typeof lookup === 'function'
+        ? Promise.resolve().then(() => lookup(intent, { signal }))
+        : lookupBaseTxByNonceOrHash({
+          txHash: intent?.tx,
+          root: intent?.root,
+          nonce: intent?.nonce,
+          from: intent?.from,
+          to: intent?.to,
+          request,
+          signal,
+        });
+      return await Promise.race([run, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   _intentIsUnresolved(row) {
@@ -1974,15 +2226,7 @@ export class ReceiptMerkleTree {
   }
 
   async _lookupIntent(intent, lookup, request) {
-    if (typeof lookup === 'function') return lookup(intent);
-    return lookupBaseTxByNonceOrHash({
-      txHash: intent?.tx,
-      root: intent?.root,
-      nonce: intent?.nonce,
-      from: intent?.from,
-      to: intent?.to,
-      request,
-    });
+    return this._boundedLookup(intent, lookup, request);
   }
 
   _confirmed(found, intent) {
@@ -2292,7 +2536,7 @@ export class ReceiptMerkleTree {
     };
   }
 
-  async _signAndBroadcastIntent(reserved, { send, lookup, request, root, day }) {
+  async _signAndBroadcastIntent(reserved, { send, lookup, request, root, day, sleep = null, nowMs = null }) {
     const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
     if (!key) return this._anchorResult({ status: 'pending', root, reason: 'no_key' });
     try {
@@ -2338,7 +2582,6 @@ export class ReceiptMerkleTree {
       }
       if (classifyAnchorSendError(err) === 'known') {
         known = true;
-        this._markIntent(signedIntent, 'broadcast', { raw: signed.raw, tx: signed.hash, reason: 'already_known' });
       } else {
         const failed = this._noteSendFailure(signedIntent, err);
         return this._anchorResult({
@@ -2350,34 +2593,85 @@ export class ReceiptMerkleTree {
         });
       }
     }
-    if (known) {
-      // Receipt lookup below decides anchored. already known is only broadcast.
-    }
-    let confirmed = null;
-    try {
-      confirmed = await this._lookupIntent(signedIntent, lookup, request);
-    } catch (err) {
-      const failed = this._noteSendFailure(signedIntent, err);
-      return this._anchorResult({ status: 'blocked', root, tx: signed.hash, from: signed.from, reason: failed.reason });
-    }
-    const how = this._confirmed(confirmed, signedIntent);
-    if (how) return this._anchoredFromConfirmation(signedIntent, confirmed, how);
-    this._markIntent(signedIntent, 'broadcast', {
+    // Journal the raw before any receipt lookup so a restart mid-poll can reconcile it.
+    const broadcastIntent = this._markIntent(signedIntent, 'broadcast', {
       raw: signed.raw,
       tx: signed.hash,
       from: signed.from,
       to: signed.to,
+      reason: known ? 'already_known' : null,
     });
+    return this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
+  }
+
+  /**
+   * Receipt lookups after a broadcast. A mined receipt is committed.
+   * A mempool hit keeps waiting and does not mark the nonce stuck.
+   * Replaced, reverted, or a different root stops at once.
+   * The wall clock includes each lookup. Past the deadline the head stays broadcast.
+   */
+  async _pollBaseConfirmation(intent, { lookup, request, root, sleep, nowMs } = {}) {
+    const polls = receiptAnchorConfirmPolls();
+    const interval = receiptAnchorConfirmIntervalMs();
+    const deadline = RECEIPT_ANCHOR_CONFIRM_DEADLINE_MS;
+    const clock = typeof nowMs === 'function' ? nowMs : () => Date.now();
+    const started = clock();
+    const snooze = async (ms) => {
+      if (typeof sleep === 'function') return sleep(ms);
+      if (typeof this.anchorSleep === 'function') return this.anchorSleep(ms);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    };
+    for (let attempt = 1; attempt <= polls; attempt += 1) {
+      if (clock() - started >= deadline) break;
+      let found = null;
+      try {
+        found = await this._boundedLookup(intent, lookup, request);
+      } catch {
+        return this._broadcastAnchor(intent, root, 'unconfirmed');
+      }
+      if (found?.replaced || receiptReverted(found)) {
+        this._markIntent(intent, 'replaced', {
+          tx: found?.tx || intent.tx || null,
+          reason: found?.reason || 'receipt_failed',
+        });
+        return this._broadcastAnchor(intent, root, found?.reason || 'replaced');
+      }
+      if (found?.root && normalizeRoot(found.root) !== normalizeRoot(intent.root)) {
+        this._markIntent(intent, 'replaced', {
+          tx: found?.tx || intent.tx || null,
+          reason: 'calldata_replaced',
+        });
+        return this._broadcastAnchor(intent, root, 'calldata_replaced');
+      }
+      const how = this._confirmed(found, intent);
+      if (how === 'mined') {
+        const committed = this._commitAnchored(intent, found);
+        if (committed) return committed;
+        this._markIntent(intent, 'replaced', {
+          tx: found?.tx || intent.tx || null,
+          reason: 'confirm_rejected',
+        });
+        return this._broadcastAnchor(intent, root, 'confirm_rejected');
+      }
+      if (attempt >= polls) break;
+      const remaining = deadline - (clock() - started);
+      if (remaining <= 0) break;
+      await snooze(Math.min(interval, remaining));
+    }
+    return this._broadcastAnchor(intent, root, 'unconfirmed');
+  }
+
+  _broadcastAnchor(intent, root, reason) {
     return this._anchorResult({
       status: 'broadcast',
       root,
-      tx: signed.hash,
-      from: signed.from,
-      reason: 'unconfirmed',
+      tx: intent?.tx || null,
+      from: intent?.from || null,
+      reason,
     });
   }
 
-  async _resumeSignedIntent(reserved, { send, lookup, request, root, day }) {
+  async _resumeSignedIntent(reserved, { send, lookup, request, root, day, sleep = null, nowMs = null }) {
     const intent = reserved.intent;
     const calldata = anchorCalldata(root);
     const pending = (reason) => ({
@@ -2391,16 +2685,7 @@ export class ReceiptMerkleTree {
     });
     let found;
     try {
-      found = typeof lookup === 'function'
-        ? await lookup(intent)
-        : await lookupBaseTxByNonceOrHash({
-          txHash: intent.tx,
-          root: intent.root,
-          nonce: intent.nonce,
-          from: intent.from,
-          to: intent.to,
-          request,
-        });
+      found = await this._lookupIntent(intent, lookup, request);
     } catch (err) {
       this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
       return pending('rpc_error');
@@ -2423,16 +2708,14 @@ export class ReceiptMerkleTree {
         this._markIntent(intent, 'blocked', { reason, attempts: (Number(intent.attempts) || 0) + 1 });
         return this._anchorResult({ status: 'blocked', root, tx: intent.tx, from: intent.from, reason });
       }
-      let after = null;
-      try {
-        after = await this._lookupIntent(intent, lookup, request);
-      } catch {
-        after = null;
-      }
-      const mined = after && this._commitAnchored(intent, after);
-      if (mined) return mined;
-      this._markIntent(intent, 'broadcast', { raw: intent.raw, tx: intent.tx, from: intent.from, to: intent.to, reason: 'unconfirmed' });
-      return this._anchorResult({ status: 'broadcast', root, tx: intent.tx, from: intent.from, reason: 'unconfirmed' });
+      const broadcastIntent = this._markIntent(intent, 'broadcast', {
+        raw: intent.raw,
+        tx: intent.tx,
+        from: intent.from,
+        to: intent.to,
+        reason: 'unconfirmed',
+      });
+      return this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
     }
     if (!intent.raw) {
       this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
@@ -2453,7 +2736,7 @@ export class ReceiptMerkleTree {
    * free. An RPC error on a signed raw stays blocked and is retried. The
    * same raw is rebroadcast only when the nonce is still unused.
    */
-  async reconcileAnchorIntents({ lookup, rebroadcast } = {}) {
+  async reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs } = {}) {
     this._supersedeLowerFeeAtNonce();
     for (const intent of this._latestBaseIntents()) {
       if (intent.status === 'replaced' || intent.status === 'abandoned_unsigned' || intent.status === 'superseded') continue;
@@ -2461,10 +2744,12 @@ export class ReceiptMerkleTree {
         this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
         continue;
       }
-      if (typeof lookup !== 'function') continue;
+      if (typeof lookup !== 'function' && typeof readBlockTs !== 'function') continue;
       let found;
       try {
-        found = await lookup(intent);
+        found = typeof lookup === 'function'
+          ? await this._boundedLookup(intent, lookup, null)
+          : null;
       } catch (err) {
         this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
         continue;
@@ -2492,7 +2777,39 @@ export class ReceiptMerkleTree {
         continue;
       }
     }
+    if (typeof readBlockTs === 'function') await this._backfillBlockTimestamps({ readBlockTs });
     if (this.dir) this._writeSnapshot();
+  }
+
+  /**
+   * Fill `block_ts` on an already confirmed tracker row. Does not create
+   * `receipt_confirmed`. A missing time leaves the head un-upgraded.
+   */
+  async _backfillBlockTimestamps({ readBlockTs } = {}) {
+    if (typeof readBlockTs !== 'function') return;
+    for (const intent of this._latestBaseIntents()) {
+      if (intent.status !== 'anchored' || !intent.tx) continue;
+      const root = normalizeRoot(intent.root);
+      if (!root) continue;
+      const entry = this.anchorState?.base?.[root];
+      if (!entry || entry.receipt_confirmed !== true || !sameHex(entry.tx, intent.tx)) continue;
+      if (toUnixSeconds(entry.block_ts) != null && toUnixSeconds(intent.block_ts) != null) continue;
+      let blockTs = toUnixSeconds(entry.block_ts ?? intent.block_ts);
+      if (blockTs == null) {
+        try {
+          blockTs = toUnixSeconds(await readBlockTs(intent));
+        } catch {
+          blockTs = null;
+        }
+      }
+      if (blockTs == null) continue;
+      if (toUnixSeconds(entry.block_ts) == null) {
+        this.anchorState.base[root] = { ...this.anchorState.base[root], block_ts: blockTs };
+      }
+      if (toUnixSeconds(intent.block_ts) == null) {
+        this._markIntent(intent, 'anchored', { tx: intent.tx, from: intent.from, block_ts: blockTs });
+      }
+    }
   }
 
   bundleStatus(now = new Date()) {
@@ -2657,7 +2974,19 @@ export class ReceiptMerkleTree {
   _maybePublishDaily() {
     const last = this.heads[this.heads.length - 1];
     if (!dailyAnchorDue(last)) return null;
-    return this.publishHead({ force: true }).catch(() => {});
+    if (this._dailyFollowUp) return this._dailyFollowUp;
+    if (this._publishActive || this._publishQueued) {
+      const waitFor = this._publishChain || Promise.resolve();
+      this._dailyFollowUp = waitFor.then(() => {
+        this._dailyFollowUp = null;
+        return this._maybePublishDaily();
+      }, () => {
+        this._dailyFollowUp = null;
+        return this._maybePublishDaily();
+      });
+      return this._dailyFollowUp;
+    }
+    return this.publishHead({ force: true, recheckDaily: true }).catch(() => {});
   }
 
   latestHead() {
@@ -2667,6 +2996,7 @@ export class ReceiptMerkleTree {
   /**
    * Stored head for this root, or the closed-epoch head signed on read.
    * Epoch 1 has no journal head; `signedClosedEpochHead` is that signature.
+   * Signed claims only. A tracker-confirmed broadcast head is not substituted.
    */
   _coveringHead(epoch, rootHex) {
     const stored = epochHeadCovering(epoch.heads, epoch.leaves, rootHex);
@@ -2998,7 +3328,18 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
     : (baseRpcUrl()
       ? async (raw) => { await broadcastBaseRaw(raw); }
       : null);
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast });
+  const readBlockTs = Object.prototype.hasOwnProperty.call(opts, 'readBlockTs')
+    ? opts.readBlockTs
+    : (chainRpc && !opts.lookup
+      ? async (intent) => {
+        try {
+          return await fetchBaseBlockTimestamp(intent?.tx, chainRpc, { attempts: 1 });
+        } catch {
+          return null;
+        }
+      }
+      : null);
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
   if (allow) return tree;
   await assertLatestBaseAnchor(tree, opts);
