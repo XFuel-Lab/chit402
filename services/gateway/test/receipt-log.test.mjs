@@ -1410,6 +1410,7 @@ test('already known on the first send is not anchored, and a dropped tx is retri
       force: true,
       now: '2026-10-06T12:00:00.000Z',
       nonce: 4,
+      sleep: async () => {},
       lookup: async (intent) => ({ rebroadcast: true, tx: intent.tx, nonce: intent.nonce }),
       send: async (args) => {
         raw = args.raw;
@@ -1425,6 +1426,7 @@ test('already known on the first send is not anchored, and a dropped tx is retri
       force: true,
       now: '2026-10-06T12:30:00.000Z',
       nonce: 4,
+      sleep: async () => {},
       lookup: async (intent) => ({ rebroadcast: true, tx: intent.tx, nonce: intent.nonce }),
       send: async (args) => {
         retried = args.raw;
@@ -1443,6 +1445,7 @@ test('already known on the first send is not anchored, and a dropped tx is retri
       force: true,
       now: '2026-10-06T12:00:00.000Z',
       nonce: 4,
+      sleep: async () => {},
       lookup: async () => ({ rebroadcast: true }),
       send: async () => { throw new Error('nonce too low'); },
     });
@@ -1578,10 +1581,15 @@ test('a mined receipt outside the clock bound is replaced and the next publish a
     assert.equal(head.anchor.tx, null);
     assert.match(head.anchor.rejected_tx, /^0x[0-9a-f]{64}$/);
     assert.equal(tree.anchorState.base[root], undefined);
-    assert.equal(anchorIntentRows(dir).some((row) => (
+    const rows = anchorIntentRows(dir);
+    assert.equal(rows.some((row) => (
       row.nonce === 4 && row.status === 'replaced' && row.reason === 'anchor_clock_drift'
     )), true);
-    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'broadcast'), false);
+    // The confirm poll journals broadcast before the receipt is read. Clock
+    // drift then appends replaced. The latest row for that nonce is replaced.
+    const latest = rows.filter((row) => row.nonce === 4).at(-1);
+    assert.equal(latest.status, 'replaced');
+    assert.equal(latest.reason, 'anchor_clock_drift');
     const nonces = [];
     const again = await tree.publishHead({
       force: true,
@@ -1669,6 +1677,7 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
       force: true,
       now: '2026-10-06T12:00:00.000Z',
       nonce: 4,
+      sleep: async () => {},
       lookup: async (intent) => ({
         visible: true,
         tx: intent.tx,
@@ -1682,9 +1691,12 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
         return args.hash;
       },
     });
+    // A mempool hit during the confirm poll stays broadcast. It does not
+    // mark the nonce stuck. The next publish still sees the visible tx.
     const health = tree.bundleStatus(new Date('2026-10-06T12:01:00.000Z'));
-    assert.equal(health.last_error, 'prior_nonce_pending');
-    assert.equal(health.stuck_pending_age_s, 60);
+    assert.notEqual(health.last_error, 'prior_nonce_pending');
+    assert.equal(health.stuck_pending_age_s, null);
+    assert.equal(tree.heads.at(-1).anchor_status, 'broadcast');
     const first = anchorIntentRows(dir).find((row) => row.raw);
     tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const root2 = hex(rootOf(tree.leaves));
@@ -1872,7 +1884,12 @@ test('every anchored transition goes through confirmAnchor', async () => {
   const merkle = fs.readFileSync(path.join(srcDir, 'receipt-merkle.js'), 'utf8');
   const confirmBody = merkle.slice(merkle.indexOf('export function confirmAnchor'), merkle.indexOf('export function dailyAnchorDue'));
   assert.match(confirmBody, /status: 'anchored'/);
-  assert.equal(markLines.length, 1, markLines.join('\n'));
+  const transitions = markLines.filter((line) => !line.includes('block_ts'));
+  const stamps = markLines.filter((line) => line.includes('block_ts'));
+  assert.equal(transitions.length, 1, markLines.join('\n'));
+  assert.equal(stamps.length, 2, markLines.join('\n'));
+  assert.match(merkle.slice(merkle.indexOf('_stampBlockTs('), merkle.indexOf('_rpcTimeoutMs(')), /status === 'anchored'/);
+  assert.match(merkle.slice(merkle.indexOf('_backfillBlockTimestamps('), merkle.indexOf('bundleStatus(')), /status !== 'anchored'/);
   const commitBody = merkle.slice(merkle.indexOf('  _commitAnchored('), merkle.indexOf('  _reopenAnchored('));
   assert.match(commitBody, /confirmAnchor\(/);
   assert.match(commitBody, /_markIntent\(intent, 'anchored'/);

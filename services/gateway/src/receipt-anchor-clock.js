@@ -162,11 +162,15 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function jsonRpc(url, method, params) {
+/** Per-call abort for block-time reads. They run inside the publish lock and at boot. */
+export const ANCHOR_CLOCK_RPC_TIMEOUT_MS = 5_000;
+
+export async function jsonRpc(url, method, params, { timeoutMs = ANCHOR_CLOCK_RPC_TIMEOUT_MS } = {}) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();

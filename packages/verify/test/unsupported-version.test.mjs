@@ -237,7 +237,7 @@ test('supported versions are exported and printed', () => {
   assert.match(help.stdout, /11 only with a signed issuer_root/);
   const version = runCli(['--version'], 8000);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /@xfuel\/verify 0\.3\.5/);
+  assert.match(version.stdout, /@xfuel\/verify 0\.3\.6/);
   assert.match(version.stdout, /v: 11/);
 });
 

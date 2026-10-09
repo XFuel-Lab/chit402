@@ -473,7 +473,7 @@ test('T6 full chit id is on the page and xfuel stays in the footer and inclusion
   assert.match(res.text, new RegExp(`<title>Chit402 receipt · ${SHORT}</title>`));
   assert.match(res.text, new RegExp(`property="og:title" content\\s*=\\s*"Chit402 receipt · ${SHORT}"`));
   assert.match(res.text, new RegExp(`Signed id ${STORED} — use this exact string for JSON, log and verifier checks`));
-  assert.match(res.text, new RegExp(`href="/v1/receipts/${STORED}/inclusion"`));
+  assert.match(res.text, new RegExp(`href="/v1/receipts/${STORED}/inclusion(?:\\?tree_size=\\d+)?"`));
   const hidden = res.text
     .replaceAll(`Signed id ${STORED}`, '')
     .replaceAll(`/v1/receipts/${STORED}/inclusion`, '');

@@ -515,10 +515,12 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
   console.log('');
-  console.log('  What this proves');
-  console.log('  ─────────────────────────────────────────────────');
-  for (const line of result.proves) console.log(`  ${line}`);
-  console.log('');
+  if (result.overall !== 'failed') {
+    console.log('  What this proves');
+    console.log('  ─────────────────────────────────────────────────');
+    for (const line of result.proves) console.log(`  ${line}`);
+    console.log('');
+  }
   console.log('  What this does not prove');
   console.log('  ─────────────────────────────────────────────────');
   for (const line of result.does_not_prove) console.log(`  ${line}`);
@@ -1020,10 +1022,12 @@ async function runRefusal(
     if (result.kid) console.log(`  Kid:           ${result.kid}`);
     if (!result.valid && result.reason) console.log(`  Reason:        ${result.reason}`);
     console.log('');
-    console.log('  What this proves');
-    console.log('  ─────────────────────────────────────────────────');
-    for (const line of result.proves) console.log(`  ${line}`);
-    console.log('');
+    if (!failed) {
+      console.log('  What this proves');
+      console.log('  ─────────────────────────────────────────────────');
+      for (const line of result.proves) console.log(`  ${line}`);
+      console.log('');
+    }
     console.log('  What this does not prove');
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);

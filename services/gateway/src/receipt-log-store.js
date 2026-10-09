@@ -548,13 +548,42 @@ function foldAnchorRecord(state, row) {
   }
 }
 
+function sameAnchorTx(left, right) {
+  const a = String(left || '').toLowerCase();
+  const b = String(right || '').toLowerCase();
+  return Boolean(a) && a === b;
+}
+
+/**
+ * Journal wins on the same key. A file row that already recorded
+ * `receipt_confirmed` for that same tx keeps the flag and `block_ts`.
+ * A different tx stays with the journal, which fails the upgrade closed.
+ */
+function mergeBaseRow(file, folded) {
+  if (!folded) return file || null;
+  if (!file || file.receipt_confirmed !== true) return folded;
+  if (folded.tx && file.tx && !sameAnchorTx(file.tx, folded.tx)) return folded;
+  return {
+    ...file,
+    ...folded,
+    status: file.status === 'anchored' ? 'anchored' : (folded.status || file.status),
+    tx: folded.tx || file.tx,
+    from: folded.from || file.from || null,
+    nonce: folded.nonce ?? file.nonce ?? null,
+    chain_id: folded.chain_id ?? file.chain_id ?? null,
+    receipt_confirmed: true,
+    block_ts: folded.block_ts ?? file.block_ts ?? null,
+  };
+}
+
 function mergeAnchor(folded, fileState) {
   const out = emptyAnchorState();
   out.solana = { ...(fileState?.solana || {}), ...folded.solana };
-  out.base = { ...(fileState?.base || {}), ...folded.base };
-  // Journal wins on the same key so a restarted process sees the anchored signature.
+  out.base = { ...(fileState?.base || {}) };
   for (const [key, row] of Object.entries(folded.solana)) out.solana[key] = row;
-  for (const [key, row] of Object.entries(folded.base)) out.base[key] = row;
+  for (const [key, row] of Object.entries(folded.base || {})) {
+    out.base[key] = mergeBaseRow(fileState?.base?.[key], row);
+  }
   return out;
 }
 
