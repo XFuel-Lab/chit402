@@ -3,6 +3,13 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.6 — Inclusion size is checked before the head
+
+### Security
+- **A size mismatch is `tree_size_mismatch`, including a null proof.** `verifyReceipt` compares the head size with the inclusion size before `suppliedHeadCovers`. A null proof no longer hides that mismatch behind `tree_head_mismatch` or `inclusion_failed`, and it is not VERIFIED. A null proof whose size matches the head stays `inclusion_failed` and is not an inclusion. Pending-anchor CLI output is unchanged: the anchor check does not pass the inclusion into `verifyReceipt` a second time. Not published.
+- **`inclusion.head` is a head only when its JWS verifies under JWKS or a pinned kid.** The named summary is not a tree-head document. The verified payload is the head. A key carried in that summary is ignored unless the kid is pinned. An untrusted summary is not a head. A caller-supplied head wins.
+- **A failed anchor or refusal does not print the affirmative “What this proves” block.** `PARTIAL` and `PENDING` still print it. Not published.
+
 ## 0.3.5 — Unsupported receipt versions fail closed
 
 ### Security

@@ -94,7 +94,7 @@ import {
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
-import { verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
+import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 
 export {
   computePaymentCommitment,
@@ -1427,6 +1427,11 @@ export interface VerifyReceiptOptions {
     tree_size?: number | null;
     row_hash?: string | null;
     proof?: InclusionStep[] | null;
+    /**
+     * Named head summary from an inclusion response. Used only when `head`
+     * is omitted and the summary JWS verifies under JWKS or a pinned kid.
+     */
+    head?: unknown;
   } | null;
   /**
    * Fail when a recomputable hash has no preimage. A present `preimages`
@@ -1506,12 +1511,12 @@ function offlineInclusionBound(
 ): { ok: true } | { ok: false; reason: string } {
   const index = inclusion.leaf_index;
   const size = inclusion.tree_size ?? head?.tree_size;
-  if (index == null || size == null || !Array.isArray(inclusion.proof)) {
-    return { ok: false, reason: 'inclusion_failed' };
-  }
   if (head?.tree_size != null && inclusion.tree_size != null
     && Number(head.tree_size) !== Number(inclusion.tree_size)) {
     return { ok: false, reason: 'tree_size_mismatch' };
+  }
+  if (index == null || size == null || !Array.isArray(inclusion.proof)) {
+    return { ok: false, reason: 'inclusion_failed' };
   }
   const root = normalizeBoundRoot(head?.root) || normalizeBoundRoot(
     (inclusion as { root?: string | null }).root,
@@ -1659,9 +1664,22 @@ export async function verifyReceipt(
   // A published head may differ from the signed prefix. That is not a failure.
   // An inclusion proof, when one is supplied, must be for this receipt's leaf
   // (`task_id|row_hash`), not an arbitrary hash already in the tree.
+  // A head inside the inclusion is a summary. It counts only when its JWS
+  // verifies under JWKS or a pinned kid. A key carried beside that JWS is
+  // not a trust root. A caller-supplied head wins.
+  const witnessHead = (options.head
+    ?? headTrustedFromInclusion(options.inclusion, { jwks, trustedKids })
+    ?? null) as (ReceiptTreeHead & TreeHeadDocument) | null;
   let headMismatch = false;
-  if (signedBinding?.tree_head_hash && options.head?.root && options.inclusion) {
-    if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, options.head, options.inclusion)) {
+  let sizeMismatch = false;
+  if (witnessHead && options.inclusion
+    && witnessHead.tree_size != null
+    && options.inclusion.tree_size != null
+    && Number(witnessHead.tree_size) !== Number(options.inclusion.tree_size)) {
+    sizeMismatch = true;
+    errors.push('tree_size_mismatch');
+  } else if (signedBinding?.tree_head_hash && witnessHead?.root && options.inclusion) {
+    if (!suppliedHeadCovers(receipt, signedBinding.tree_head_hash, witnessHead, options.inclusion)) {
       headMismatch = true;
       errors.push('tree_head_mismatch');
     }
@@ -1718,7 +1736,7 @@ export async function verifyReceipt(
   // compares. A missing signature is head_signature_missing. The history
   // body loaded above is the one this check trusts. Chain RPC is not used.
   let headTrustFailed = false;
-  const suppliedHead = options.head as TreeHeadDocument | null | undefined;
+  const suppliedHead = witnessHead;
   if (offlineHeadNeedsSignature(suppliedHead)) {
     const trust = verifyTreeHeadTrust(suppliedHead, {
       jwks,
@@ -1735,8 +1753,8 @@ export async function verifyReceipt(
     }
   }
   let inclusionFailed = false;
-  if (options.inclusion && (options.inclusion.proof || options.inclusion.leaf_index != null)) {
-    const bound = offlineInclusionBound(receipt, options.head ?? null, options.inclusion);
+  if (!sizeMismatch && options.inclusion && (options.inclusion.proof || options.inclusion.leaf_index != null)) {
+    const bound = offlineInclusionBound(receipt, witnessHead, options.inclusion);
     if (!bound.ok) {
       inclusionFailed = true;
       errors.push(bound.reason);
@@ -1907,7 +1925,7 @@ export async function verifyReceipt(
   let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
-  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
+  if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || sizeMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
@@ -2175,6 +2193,7 @@ export {
   LEGACY_HEAD_UNPINNED_SIGNER,
   HEAD_TRUST_MESSAGES,
   headOmitsPinnedSigner,
+  headTrustedFromInclusion,
   verifyTreeHeadTrust,
   verifyAnchorWalletDocument,
   compileAnchorWallets,

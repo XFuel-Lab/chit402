@@ -357,6 +357,60 @@ export function verifyTreeHeadTrust(
 }
 
 /**
+ * Named inclusion head. The gateway summary is `{ root, tree_size, signature }`
+ * and is not a tree-head document, so `headClaimsMatch` cannot run on it.
+ * Trust the JWS under JWKS or a pinned kid first, then use the verified
+ * payload as the head. A key carried on the summary is ignored unless that
+ * key is pinned. The summary root and size, when present, must match the payload.
+ * Returns null when the JWS is missing or untrusted: the caller must not
+ * treat the summary as a head.
+ */
+export function headTrustedFromInclusion(
+  inclusion: { head?: unknown } | null | undefined,
+  {
+    jwks,
+    trustedKids,
+  }: {
+    jwks?: JwksLike;
+    trustedKids?: readonly string[];
+  } = {},
+): TreeHeadDocument | null {
+  const summary = inclusion?.head;
+  if (!summary || typeof summary !== 'object') return null;
+  const row = summary as {
+    root?: unknown;
+    tree_size?: unknown;
+    issuer_signature?: { jws?: unknown; kid?: unknown; issuer_jwk?: Es256Jwk };
+    signature?: { jws?: unknown; kid?: unknown; issuer_jwk?: Es256Jwk };
+  };
+  const sig = typeof row.issuer_signature?.jws === 'string' ? row.issuer_signature : row.signature;
+  const jws = typeof sig?.jws === 'string' ? sig.jws : '';
+  if (jws.split('.').length !== 3) return null;
+  const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  const embedded = sig?.issuer_jwk;
+  const pinnedJwk = embedded && isPinnedTrustedJwk(embedded, pins) ? embedded : undefined;
+  const trusted = trustCompactJws(jws, pinnedJwk, jwks, pins);
+  if (!trusted.ok || !trusted.payload) return null;
+  const payload = trusted.payload;
+  const summaryRoot = normalizeRoot(row.root);
+  const payloadRoot = normalizeRoot(payload.root);
+  if (summaryRoot && payloadRoot !== summaryRoot) return null;
+  if (row.tree_size != null && payload.tree_size != null
+    && Number(row.tree_size) !== Number(payload.tree_size)) return null;
+  const kid = trusted.kid || (typeof sig?.kid === 'string' ? sig.kid : null);
+  const document: TreeHeadDocument = {
+    ...(payload as TreeHeadDocument),
+    issuer_signature: {
+      jws,
+      ...(kid ? { kid } : {}),
+      ...(pinnedJwk ? { issuer_jwk: pinnedJwk } : {}),
+    },
+  };
+  if (payloadRoot) document.root = payloadRoot;
+  return document;
+}
+
+/**
  * A signed published_at is checked with the receipt window rules.
  * v1 heads omit the field, and a closed head with no observed chain time
  * signs null. That is not issued_at_missing. An active kid with an open
