@@ -2048,15 +2048,17 @@ export class ReceiptMerkleTree {
     this.stuckPendingAt = null;
     const root = confirmed.root;
     const prev = this.anchorState.base[root] || {};
+    // A prior row's block time belongs to that row's tx only.
+    const prevSameTx = Boolean(prev.tx) && sameHex(prev.tx, confirmed.tx);
     const observed = toUnixSeconds(found?.block_ts ?? found?.blockTimestamp ?? null);
-    const blockTs = observed ?? (prev.block_ts != null ? toUnixSeconds(prev.block_ts) : null);
+    const blockTs = observed ?? (prevSameTx && prev.block_ts != null ? toUnixSeconds(prev.block_ts) : null);
     this.anchorState.base[root] = {
       status: confirmed.status,
       tx: confirmed.tx,
       calldata: prev.calldata || anchorCalldata(root),
       from: confirmed.from,
       chain_id: 8453,
-      nonce: intent?.nonce ?? prev.nonce ?? found?.nonce ?? null,
+      nonce: intent?.nonce ?? (prevSameTx ? prev.nonce : null) ?? found?.nonce ?? null,
       receipt_confirmed: true,
       ...(blockTs != null ? { block_ts: blockTs } : {}),
     };
