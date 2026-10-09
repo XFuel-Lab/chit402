@@ -2128,10 +2128,12 @@ export class ReceiptMerkleTree {
     return RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
   }
 
-  async _boundedLookup(intent, lookup, request, capMs = null) {
+  async _boundedLookup(intent, lookup, request, capMs) {
     const budget = this._rpcTimeoutMs();
-    const cap = Number(capMs);
-    const ms = Number.isFinite(cap) && cap >= 0 ? Math.min(budget, cap) : budget;
+    // No cap (null/undefined) means the full per-call budget. Number(null) is 0,
+    // so test for absence before converting. A cap is a whole number of ms >= 1.
+    const cap = capMs == null ? NaN : Math.ceil(Number(capMs));
+    const ms = Number.isFinite(cap) ? Math.max(1, Math.min(budget, cap)) : budget;
     const signal = AbortSignal.timeout(ms);
     let timer;
     const timeout = new Promise((_, reject) => {
