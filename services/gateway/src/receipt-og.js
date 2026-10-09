@@ -4,6 +4,7 @@
 import { mergeReceiptView, redactPublicReceipt } from './receipt.js';
 import {
   buildReceiptOgMeta,
+  capText,
   displayTaskIdForShare,
 } from './receipt-og-meta.js';
 
@@ -23,7 +24,11 @@ export function buildReceiptOgSvg(receipt) {
   const view = mergeReceiptView(redactPublicReceipt(receipt));
   const meta = buildReceiptOgMeta(receipt, view);
   const displayId = displayTaskIdForShare(receipt.task_id || view.task_id);
-  const proof = 'Shell';
+  // Caps keep a hostile or huge field from growing the SVG. Ellipsis counts.
+  const title = capText(meta.title, 28);
+  const idLine = capText(displayId, 60);
+  const description = capText(meta.description, 56);
+  const proof = capText('Shell', 28);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${OG_WIDTH}" height="${OG_HEIGHT}" viewBox="0 0 ${OG_WIDTH} ${OG_HEIGHT}">
@@ -36,9 +41,9 @@ export function buildReceiptOgSvg(receipt) {
   <rect width="100%" height="100%" fill="url(#bg)"/>
   <rect x="48" y="48" width="1104" height="534" rx="24" fill="#131824" stroke="#222a3a" stroke-width="2"/>
   <text x="88" y="130" fill="#6ea8fe" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="28" font-weight="700">Chit402</text>
-  <text x="88" y="210" fill="#e6e9ef" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="700">${escSvg(meta.title)}</text>
-  <text x="88" y="280" fill="#8b95a7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="26">${escSvg(displayId)}</text>
-  <text x="88" y="350" fill="#aab2c0" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="30">${escSvg(meta.description)}</text>
+  <text x="88" y="210" fill="#e6e9ef" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="700">${escSvg(title)}</text>
+  <text x="88" y="280" fill="#8b95a7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="26">${escSvg(idLine)}</text>
+  <text x="88" y="350" fill="#aab2c0" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="30">${escSvg(description)}</text>
   <text x="88" y="420" fill="#6b7488" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="24">${escSvg(proof)}</text>
   <text x="88" y="520" fill="#5b6370" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="20">unsigned shell</text>
 </svg>`;

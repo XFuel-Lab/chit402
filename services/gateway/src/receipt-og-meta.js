@@ -2,6 +2,47 @@
  * Per-receipt Open Graph title/description/image URLs (no receipt.js import — avoids cycles).
  */
 
+/** Known USDC contracts. Dollar labels are allowed only for the contract on that chain. */
+export const KNOWN_USDC_BY_CHAIN = {
+  base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  solana: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  'solana-devnet': 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr',
+};
+
+/** True when `asset` is the USDC contract for `chain`. Solana mints are case-sensitive. */
+export function isKnownUsdcAsset(chain, asset) {
+  const expected = KNOWN_USDC_BY_CHAIN[chain];
+  if (!expected || asset == null || asset === '') return false;
+  const raw = String(asset);
+  if (chain === 'solana' || chain === 'solana-devnet') return raw === expected;
+  return raw.toLowerCase() === expected.toLowerCase();
+}
+
+/** 6+4 short form. Does not change case. */
+export function shortForm(value, head = 6, tail = 4) {
+  const s = String(value ?? '');
+  if (s.length <= head + tail + 1) return s;
+  return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
+/** Cap a single line. The ellipsis counts toward `max`. */
+export function capText(value, max) {
+  const s = String(value ?? '');
+  if (!Number.isFinite(max) || max < 1) return '';
+  if (s.length <= max) return s;
+  if (max === 1) return '…';
+  return `${s.slice(0, max - 1)}…`;
+}
+
+function ogAssetLabel(asset, paymentRef) {
+  const network = networkFromPaymentRef(paymentRef);
+  if (isKnownUsdcAsset(network, asset)) return 'USDC';
+  const raw = asset == null || asset === '' ? 'USDC' : String(asset);
+  if (raw.toUpperCase() === 'USDC') return 'USDC';
+  return shortForm(raw);
+}
+
 /** Display task id with chit- prefix for share copy. */
 export function displayTaskIdForShare(taskId) {
   if (!taskId || typeof taskId !== 'string') return '';
@@ -49,7 +90,7 @@ export function receiptOgRailLabel(view) {
   const p = view?.payment;
   if (!p) return null;
   if (p.rail === 'unmetered') return 'UNMETERED';
-  const asset = (p.asset || 'USDC').toUpperCase();
+  const asset = ogAssetLabel(p.asset, p.ref);
   if (p.rail === 'usdc' || String(p.rail).startsWith('solana')) {
     return `${settlementNetworkLabel(p.ref)} ${asset}`;
   }

@@ -9,6 +9,7 @@ const { createApp } = await import('../src/server.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { openAiErrorShape } = await import('../src/openai-gateway.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
+const { displayTaskIdForShare, shortReceiptIdForShare } = await import('../src/receipt-og-meta.js');
 
 // Spin the real Express app on an ephemeral port and exercise the
 // OpenAI-compatible routes over HTTP. No provider keys are set, so
@@ -314,10 +315,12 @@ test('POST /v1/chat/completions returns an OpenAI completion + Chit receipt', as
   const receiptHtml = await fetch(`${base}/receipt/${body.xfuel.task_id}`);
   assert.equal(receiptHtml.status, 200);
   const html = await receiptHtml.text();
-  assert.match(html, /<title>Chit402 · xfuel-[0-9a-f-]+<\/title>/);
-  assert.match(html, /property="og:title" content="Chit402 · xfuel-[0-9a-f-]+"/);
-  assert.match(html, new RegExp(`property="og:image" content="${base}/receipt/${body.xfuel.task_id}/og\\.png"`));
-  assert.match(html, new RegExp(`name="twitter:image" content="${base}/receipt/${body.xfuel.task_id}/og\\.png"`));
+  const displayId = displayTaskIdForShare(body.xfuel.task_id);
+  const shortId = shortReceiptIdForShare(body.xfuel.task_id);
+  assert.ok(html.includes(`<title>Chit402 receipt · ${shortId}</title>`));
+  assert.ok(html.includes(`property="og:title" content = "Chit402 receipt · ${shortId}"`));
+  assert.ok(html.includes(`property="og:image" content = "/receipt/${displayId}/og.png"`));
+  assert.ok(html.includes(`name="twitter:image" content = "/receipt/${displayId}/og.png"`));
   assert.ok(!html.includes('www.chit402.com/og-image.png'));
   assert.doesNotMatch(html, /openai/i);
 });
@@ -347,12 +350,13 @@ test('GET /receipt/openai-* still 200 for pre-cutover task ids', async () => {
   const res = await fetch(`${base}/receipt/${legacyId}`);
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.match(html, /<title>Chit402 · openai-11111111[^<]+<\/title>/);
-  assert.match(html, /property="og:title" content="Chit402 · openai-11111111[^"]+"/);
-  assert.match(html, new RegExp(`property="og:image" content="${base}/receipt/${legacyId}/og\\.png"`));
+  const legacyShort = shortReceiptIdForShare(legacyId);
+  assert.ok(html.includes(`<title>Chit402 receipt · ${legacyShort}</title>`));
+  assert.ok(html.includes(`property="og:title" content = "Chit402 receipt · ${legacyShort}"`));
+  assert.ok(html.includes(`property="og:image" content = "/receipt/${legacyId}/og.png"`));
   assert.ok(!html.includes('www.chit402.com/og-image.png'));
-  // openai-* prefix is NOT stripped (only xfuel- is)
-  assert.match(html, new RegExp(`<p>${legacyId}</p>`));
+  // openai-* prefix is NOT stripped (only xfuel- is). The full id stays on the page.
+  assert.ok(html.includes(legacyId));
 
   const json = await fetch(`${base}/receipt/${legacyId}?format=json`);
   assert.equal(json.status, 200);
