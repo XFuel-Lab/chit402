@@ -3,12 +3,16 @@
  *
  * The journal is the source of truth. Each record is one JSON line, fsynced.
  * The checkpoint and anchor state are atomic snapshots of that journal.
- * A bad read, a root that does not match the stored head, or a missing
+ * A bad read, a head whose root matches no prefix of the log, or a missing
  * journal while an anchor snapshot exists refuses the boot. There is no
- * silent empty tree.
+ * silent empty tree. A stored head whose root is the root of a smaller
+ * prefix (the publish/append race) is quarantined in memory. The journal
+ * line stays. That head is not served.
  */
 import fs from 'fs';
 import path from 'path';
+import logger from './logger.js';
+import { getJwks, verifyJwsWithJwks } from './issuer-key.js';
 import {
   EPOCH1_FINAL_ROOT,
   EPOCH2_GENESIS_DIGEST,
@@ -125,6 +129,7 @@ function newEpochBucket(epoch, prevEpochRoot, prevEpochSize) {
     meta: [],
     byTask: new Map(),
     heads: [],
+    quarantinedHeads: [],
   };
 }
 
@@ -141,6 +146,7 @@ function finishEpoch(bucket) {
     leaves: bucket.leaves,
     meta: bucket.meta,
     heads: bucket.heads,
+    quarantinedHeads: bucket.quarantinedHeads || [],
   };
 }
 
@@ -171,24 +177,82 @@ function pushLeaf(bucket, row) {
   if (row.task_id) bucket.byTask.set(String(row.task_id), index);
 }
 
-function assertHeadMatches(bucket, head) {
-  if (!head || head.root == null || head.tree_size == null) return;
+function prefixRootHex(leaves, size) {
+  if (size === 0) return hexOf(epochRootOf([]));
+  return hexOf(epochRootOf(leaves.slice(0, size)));
+}
+
+/**
+ * A present JWS must verify, and the signed root and size must be the head's.
+ * Unsigned historical heads have no JWS and are not this case.
+ */
+function storedHeadSignature(head) {
+  const jws = head?.issuer_signature?.jws;
+  if (typeof jws !== 'string' || jws.length === 0) return { present: false, valid: false };
+  const result = verifyJwsWithJwks(jws, getJwks());
+  if (!result.valid) return { present: true, valid: false, reason: result.reason || 'signature_invalid' };
+  const payload = result.payload || {};
+  if (String(payload.root) !== String(head.root) || Number(payload.tree_size) !== Number(head.tree_size)) {
+    return { present: true, valid: false, reason: 'head_mismatch' };
+  }
+  return { present: true, valid: true };
+}
+
+function refuseTamperedHead(reason) {
+  throw new ReceiptLogRefused(
+    'head_signature',
+    `stored head signature refused (${reason || 'invalid'})`,
+  );
+}
+
+/**
+ * Keep a head whose root is the prefix of `tree_size`. Quarantine a signed
+ * head whose root is a smaller prefix of that same log (publish/append race).
+ * A root that matches no prefix still refuses. A tampered signature refuses.
+ * @returns {{ quarantine: boolean, prefixSize?: number }}
+ */
+function classifyStoredHead(bucket, head) {
+  if (!head || head.root == null || head.tree_size == null) return { quarantine: false };
   const size = Number(head.tree_size);
   if (!Number.isInteger(size) || size < 0 || size > bucket.leaves.length) {
     throw new ReceiptLogRefused('head_size', `stored head tree_size ${head.tree_size} is outside the log`);
   }
-  const root = size === 0 ? hexOf(epochRootOf([])) : hexOf(epochRootOf(bucket.leaves.slice(0, size)));
-  if (root !== String(head.root).replace(/^0x/, '')) {
+  const stored = String(head.root).replace(/^0x/, '');
+  const claimed = prefixRootHex(bucket.leaves, size);
+  const signature = storedHeadSignature(head);
+  if (stored === claimed) {
+    if (signature.present && !signature.valid) refuseTamperedHead(signature.reason);
+    return { quarantine: false };
+  }
+  let prefixSize = null;
+  for (let k = size - 1; k >= 0; k -= 1) {
+    if (prefixRootHex(bucket.leaves, k) === stored) {
+      prefixSize = k;
+      break;
+    }
+  }
+  if (prefixSize == null) {
     throw new ReceiptLogRefused(
       'root_mismatch',
-      `recomputed root ${root} does not match stored head ${head.root} at size ${size}`,
+      `recomputed root ${claimed} does not match stored head ${head.root} at size ${size}`,
     );
   }
+  // The race head is issuer-signed. An unsigned or tampered mismatch is not it.
+  if (!signature.present) {
+    throw new ReceiptLogRefused(
+      'root_mismatch',
+      `recomputed root ${claimed} does not match stored head ${head.root} at size ${size}`,
+    );
+  }
+  if (!signature.valid) refuseTamperedHead(signature.reason);
+  return { quarantine: true, prefixSize };
 }
 
 /**
- * Replay the journal. Throws ReceiptLogRefused on a bad file or a root that
- * does not match a stored head. An empty directory is `{ empty: true }`.
+ * Replay the journal. Throws ReceiptLogRefused on a bad file, a tampered
+ * head signature, or a root that matches no prefix. A raced head (root of a
+ * smaller prefix) is returned on the epoch as `quarantinedHeads` and is not
+ * placed in `heads`. An empty directory is `{ empty: true }`.
  */
 export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) {
   const journalPath = path.join(dir, JOURNAL_NAME);
@@ -279,8 +343,22 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
       if (!row.head || typeof row.head !== 'object') {
         throw new ReceiptLogRefused('bad_head', 'journal head record is empty');
       }
-      current.heads.push(row.head);
-      assertHeadMatches(current, row.head);
+      const verdict = classifyStoredHead(current, row.head);
+      if (verdict.quarantine) {
+        const record = {
+          epoch: current.epoch,
+          tree_size: Number(row.head.tree_size),
+          prefix_size: verdict.prefixSize,
+          root: String(row.head.root).replace(/^0x/, ''),
+        };
+        current.quarantinedHeads.push(record);
+        logger.error(
+          record,
+          'RECEIPT LOG QUARANTINE: raced head root matches a smaller prefix; excluded from inclusion and head serving',
+        );
+      } else {
+        current.heads.push(row.head);
+      }
       foldAnchor(foldedAnchors, row.head);
     } else if (row.op === 'epoch_close') {
       if (!current) throw new ReceiptLogRefused('epoch_close', 'journal closed an epoch that was not open');

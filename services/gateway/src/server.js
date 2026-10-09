@@ -4201,11 +4201,13 @@ export function createApp() {
   app.get('/health', async (_req, res) => {
     try {
       const log = getReceiptMerkleTree().bundleStatus();
-      const degraded = (log?.consecutive_failures > 0) || !!log?.last_error;
+      const quarantinedCount = Number(log?.quarantined_heads?.count) || 0;
+      const degraded = (log?.consecutive_failures > 0) || !!log?.last_error || quarantinedCount > 0;
       return res.json(publicHealthBody({
         degraded,
         lastAnchoredRoot: log?.last_anchored_root ?? null,
         lastAnchoredTx: log?.last_anchored_tx ?? null,
+        quarantinedHeads: quarantinedCount > 0 ? log.quarantined_heads : null,
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
