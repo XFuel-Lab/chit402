@@ -14,6 +14,8 @@
  * Hermetic runs: set CHIT_VERIFY_FETCH_FIXTURE to a JSON file
  * `{ "responses": { "<url>": <body> } }`. The longest matching URL prefix
  * is returned and a miss throws, so the process does not open a socket.
+ * Fixture mode prints a FIXTURE MODE banner and never prints VERDICT PASS:
+ * the fixture can carry its own JWKS, so any key would pass.
  *
  * Steps:
  *   fetch_receipt       GET the receipt JSON
@@ -161,6 +163,9 @@ function isPublicReceiptShell(receipt) {
   if (receipt.unsigned === true) return true;
   return false;
 }
+
+const FIXTURE_BANNER = 'FIXTURE MODE: CHIT_VERIFY_FETCH_FIXTURE is set. Every response, including the JWKS and the Base RPC, came from a local file. This is a test run, not a verification.';
+const FIXTURE_VERDICT = 'VERDICT FIXTURE_PASS (test run, not a verification)';
 
 /**
  * Test hook for a hermetic CLI. Unset in production runs.
@@ -588,7 +593,15 @@ async function main() {
   }
   const fetchImpl = fetchFromFixtureEnv();
   const result = await verifyLink(specimen, fetchImpl ? { fetchImpl } : {});
-  console.log(formatReport(result));
+  if (fetchImpl) {
+    // Every response, including the JWKS and the Base RPC, came from a local file.
+    // Any key can sign that receipt, so this run proves nothing about Chit402.
+    console.log(FIXTURE_BANNER);
+    console.error(FIXTURE_BANNER);
+    console.log(formatReport(result).replace(/^VERDICT PASS$/m, FIXTURE_VERDICT));
+  } else {
+    console.log(formatReport(result));
+  }
   process.exit(result.verdict === 'PASS' ? 0 : 1);
 }
 

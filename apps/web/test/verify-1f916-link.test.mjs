@@ -443,7 +443,7 @@ test('T10 a shell fails closed with unsigned flipped, schema stripped, or a fake
   }
 });
 
-test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a signed fixture still can', () => {
+test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a signed fixture prints only FIXTURE_PASS', () => {
   const script = join(root, 'scripts/verify-1f916-link.mjs');
   const shellFixture = join(root, 'scripts/fixtures/1f916-link-1-public-shell.json');
   const shell = spawnSync(process.execPath, [script, specimen1Path, '--verdict=PASS'], {
@@ -461,6 +461,7 @@ test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a sign
   assert.equal(shellOut.includes('VERIFIED'), false, shellOut);
   assert.equal(shellOut.includes('VERDICT PASS'), false, shellOut);
   assert.match(shellOut, /VERDICT FAIL/);
+  assert.match(shellOut, /^FIXTURE MODE: /m);
 
   const { responses, specimen } = foreignPayoutHarness();
   const dir = mkdtempSync(join(tmpdir(), 'chit-verify-'));
@@ -479,7 +480,12 @@ test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a sign
     });
     const okOut = `${ok.stdout || ''}${ok.stderr || ''}`;
     assert.equal(ok.status, 0, okOut);
-    assert.match(okOut, /VERDICT PASS/);
+    // The harness signs with a key it just generated. Fixture mode must say so
+    // and must never print a bare VERDICT PASS that reads as a verification.
+    assert.match(ok.stdout, /^FIXTURE MODE: /m);
+    assert.match(ok.stderr, /^FIXTURE MODE: /m);
+    assert.match(okOut, /VERDICT FIXTURE_PASS \(test run, not a verification\)/);
+    assert.equal(/^VERDICT PASS$/m.test(okOut), false, okOut);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
