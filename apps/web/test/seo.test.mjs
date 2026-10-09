@@ -205,7 +205,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.doesNotMatch(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card does not publish the hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
   assert.match(chitHome, /Open the book/, 'ChitHome primary CTA opens book');
-  assert.match(chitHome, /Audit a Base wallet/);
+  assert.match(chitHome, /Audit a wallet/);
   assert.match(chitHome, /published on Base and Solana/);
   assert.match(chitHome, /receipts\/tree\/head/);
   assert.match(chitHome, /Pin our issuer key/);

@@ -30,6 +30,7 @@ export function lookupReceipt(
   txHash: string,
   fetchImpl?: typeof fetch,
   signal?: AbortSignal,
+  chain?: 'base' | 'solana',
 ): Promise<Record<string, unknown>>;
 
 export function probeAgentBook(

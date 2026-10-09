@@ -4,11 +4,33 @@ import {
 } from './spendAuditFetch.mjs';
 import {
   SAMPLE_BASE_ADDRESS,
+  SPONSORED_FEE_CAPTION as sponsoredFeeCaption,
+  auditQueryChip as auditQueryChipJs,
+  parseAuditQuery as parseAuditQueryJs,
+  shouldRunAuditFetch as shouldRunAuditFetchJs,
   reportToCsv as reportToCsvJs,
   reportToJson as reportToJsonJs,
 } from './spendAuditCore.mjs';
 
 export { SAMPLE_BASE_ADDRESS };
+export const SPONSORED_FEE_CAPTION = sponsoredFeeCaption as string;
+
+export function parseAuditQuery(raw: string): {
+  kind: string;
+  address?: string;
+  agentId?: string;
+  reason?: string;
+} {
+  return parseAuditQueryJs(raw);
+}
+
+export function auditQueryChip(raw: string): string {
+  return auditQueryChipJs(raw);
+}
+
+export function shouldRunAuditFetch(input: { kind?: string; query?: string; armed?: string | null }): boolean {
+  return shouldRunAuditFetchJs(input);
+}
 
 export type AuditQueryKind = 'base' | 'solana' | 'agent';
 
@@ -19,25 +41,24 @@ export type ReceiptMatchStatus =
   | 'unreceipted'
   | 'unavailable'
   | 'not_checked'
-  | 'payer_mismatch';
+  | 'receipt_mismatch';
 
 export interface AuditTransfer {
   tx_hash: string;
-  block_number: number;
-  log_index: number;
+  block_number: number | null;
+  log_index: number | string;
   block_time: string | null;
-  pay_to: string;
+  pay_to: string | null;
+  pay_to_token_account?: string | null;
   pay_to_label: string | null;
   amount_atomic: string;
   amount_usdc: string;
   spend_class: SpendClass;
-  settlement_method: 'eip3009' | 'erc20_transfer' | 'erc20_transfer_from' | null;
+  settlement_method: 'eip3009' | 'erc20_transfer' | 'erc20_transfer_from' | 'spl_transfer' | 'spl_transfer_checked' | 'spl_transfer_checked_sponsored' | null;
   receipt_status: ReceiptMatchStatus;
   task_id: string | null;
   verify_url: string | null;
-  hub: string | null;
-  model: string | null;
-  explorer_url: string;
+  explorer_url: string | null;
   counts_toward_total: boolean;
 }
 
@@ -77,13 +98,18 @@ export interface PublicSpendAuditReport {
     caps: string;
     solana: string;
     notes: string[];
+    block_unit?: string;
+    window_seconds?: number;
+    token_accounts?: string[];
+    signatures_seen?: number;
+    signatures_read?: number;
   };
   totals: {
     usdc_out_atomic: string | null;
     observed_out_atomic: string;
     observed_count: number;
     zero_value_count: number;
-    by_counterparty: Array<{ pay_to: string; label: string | null; usdc_out_atomic: string; count: number }>;
+    by_counterparty: Array<{ pay_to: string | null; label: string | null; usdc_out_atomic: string; count: number }>;
     by_class: { x402: string; other: string; undetected: string };
   } | null;
   receipt_match: {

@@ -2,6 +2,11 @@
   "buildCommand": "cd apps/web && npm install && tsc -b && npx vite build && node scripts/prerender-titles.mjs",
   "outputDirectory": "apps/web/dist",
   "installCommand": "npm install --legacy-peer-deps",
+  "functions": {
+    "api/solana-audit/[route].ts": {
+      "maxDuration": 15
+    }
+  },
   "env": {
     "VITE_MAINTENANCE": "false"
   },
@@ -82,6 +87,22 @@
         { "key": "Content-Type", "value": "application/json; charset=utf-8" },
         { "key": "Access-Control-Allow-Origin", "value": "*" }
       ]
+    },
+    {
+      "source": "/audit",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    },
+    {
+      "source": "/api/solana-audit/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
     }
   ],
   "rewrites": [
@@ -103,6 +124,6 @@
     { "source": "/docs/eliza", "destination": "/docs/eliza/index.html" },
     { "source": "/docs/cloudflare-x402", "destination": "/docs/cloudflare-x402/index.html" },
     { "source": "/v1", "destination": "/v1/index.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api(?:/|$)).*)", "destination": "/index.html" }
   ]
 }

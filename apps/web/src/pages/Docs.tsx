@@ -29,7 +29,7 @@ const startHere: DocLink[] = [
   },
   {
     title: 'Spend audit',
-    description: 'Paste a Base wallet. USDC out by counterparty, public receipt match, no signup. Incomplete scans show no total.',
+    description: 'Paste a Base or Solana wallet. USDC out by counterparty, public receipt match, no signup. Incomplete scans show no total.',
     href: '/audit',
     meta: 'public',
     internal: true,
