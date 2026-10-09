@@ -13,6 +13,7 @@ import http from 'node:http';
 
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_DIR = join(mkdtempSync(join(tmpdir(), 'chit-receipt-shell-')), 'tasks');
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 delete process.env.SOLANA_ANCHOR_SECRET_KEY;
 delete process.env.SOLANA_RPC_URL;
