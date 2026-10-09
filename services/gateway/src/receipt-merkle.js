@@ -754,6 +754,7 @@ export class ReceiptMerkleTree {
     this.meta = [];
     this.byTask = new Map();
     this.heads = [];
+    this.quarantinedHeads = [];
     this.dir = null;
     this.durable = false;
     this.allowFreshGenesis = false;
@@ -1414,11 +1415,14 @@ export class ReceiptMerkleTree {
     const publishedAt = (now ? new Date(now) : new Date()).toISOString();
     this._anchorNow = publishedAt;
     const day = dayOf(publishedAt);
-    const root = hex(rootOf(this.leaves));
+    // Snapshot size with the root. appendReceipt is not behind the publish
+    // lock, so a leaf can land while the anchor send/lookup awaits.
+    const treeSize = this.leaves.length;
+    const root = hex(rootOf(this.leaves.slice(0, treeSize)));
     const prevRoot = anchorPrevRoot(this.heads, root);
     const indexHash = this.currentBundleIndexHash();
     const last = this.heads[this.heads.length - 1] || null;
-    if (!force && last && last.root === root && last.tree_size === this.leaves.length && !anchorNeedsRetry(last)) {
+    if (!force && last && last.root === root && last.tree_size === treeSize && !anchorNeedsRetry(last)) {
       return last;
     }
 
@@ -1593,7 +1597,7 @@ export class ReceiptMerkleTree {
       prev_epoch_size: this.prevEpochSize,
       prev_root: prevRoot,
       bundle_index_hash: indexHash,
-      tree_size: this.leaves.length,
+      tree_size: treeSize,
       root,
       anchor_status: anchor.status,
       anchor_tx: anchor.tx,
@@ -2545,6 +2549,14 @@ export class ReceiptMerkleTree {
       last_anchored_root: lastAnchoredRoot,
       last_anchored_tx: lastAnchoredTx,
       last_error: lastError,
+      quarantined_heads: {
+        count: (this.quarantinedHeads || []).length,
+        heads: (this.quarantinedHeads || []).map((row) => ({
+          epoch: row.epoch,
+          tree_size: row.tree_size,
+          prefix_size: row.prefix_size,
+        })),
+      },
       stuck_pending_age_s: (() => {
         let stuckAt = null;
         for (const row of latest) {
@@ -2759,6 +2771,12 @@ export class ReceiptMerkleTree {
     this.meta = live.meta;
     this.byTask = live.byTask;
     this.heads = live.heads;
+    this.quarantinedHeads = epochs.flatMap((row) => row.quarantinedHeads || []);
+    for (const row of this.quarantinedHeads) {
+      this.bootWarnings.push(
+        `RECEIPT LOG QUARANTINE: epoch ${row.epoch} tree_size ${row.tree_size} is the size-${row.prefix_size} prefix and is not served`,
+      );
+    }
     this.anchorState = loaded.anchorState || this.anchorState;
     this.epochRecord = loaded.epochRecord || null;
     this.epochRecordV1 = loaded.epochRecordV1 || null;
