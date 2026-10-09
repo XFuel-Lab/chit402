@@ -3,6 +3,17 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.3.5 — Unsupported receipt versions fail closed
+
+### Security
+- **Versions the gateway never issued are `unsupported_version`, exit 1, before any RPC.** One exact-type allowlist reads the signed payload only. Privacy receipts must carry `v` as the JSON number 11 and must not carry `payload_version`. Legacy receipts must carry `payload_version` as an integer 1 through 10, or 11 only when `issuer_root` is present and an object. `Number()` is not used. JSON `11.0` and `1.1e1` are the number 11; the string `"11"` is not. `BUILD_DIGEST.txt` moved because `src/receipt-version.ts` and the verifier entry points changed. The pinned epoch genesis digests did not. Ship this as 0.3.5. Do not fold it into 0.3.4. Not published.
+- **Every path that can say VERIFIED uses that gate.** Library `verifyReceipt`, `verifyReceiptUpToV10`, `verifyV11Receipt`, the CLI, `--json`, shell `--jws`, owner view, `--accept-shell --jws`, log and anchor mode, carry-forward `reconcileSettledTransfer`, and refusals. No flag skips it. The library returns `failed` and does not throw.
+- **The version is the signed version.** An outer `v` or `issuer_signature.payload_version` that differs in value or type is `version_mismatch`. `reconcileSettledTransfer` does not fall back to an outer version when a JWS is present. A version on the JWS header is ignored. `hmac_attestation.payload_version` stays the HMAC field-list version and is not compared to the JWS version.
+- **Unversioned September 4–5 receipts** are accepted as inferred only when every outer version slot is 4 or 5 and the claims have no v6+ field. `--json` sets `version_source` to `inferred`.
+- **Bare `--accept-shell` on a version outside the allowlist exits 1** and does not print `INCLUDED_SHELL`. The #519 row for a supported shell is unchanged (OV519-ACCEPT).
+- **Refusals use the same exact-type rule.** `payload_version` must be the integer 1, 2, or 3. The string `"2"` and `true` are `unsupported_version`.
+- **Gateway self-checks use the same exact rule** and responses carry an unsigned `verifier_min` hint (`0.3.5`). The hint is not a trust input. Do not enable `ISSUER_ROOT` or emit v11 from production paths until this package is published.
+
 ## 0.3.4 — Shell holder trust
 
 ### Security

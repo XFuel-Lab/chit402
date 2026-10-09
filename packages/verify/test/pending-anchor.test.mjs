@@ -69,8 +69,8 @@ function sealHead(head, key) {
 
 function signedReceipt(key, taskId, rowHash) {
   const claims = rowHash
-    ? { task_id: taskId, book_chain: { row_hash: rowHash } }
-    : { task_id: taskId };
+    ? { task_id: taskId, book_chain: { row_hash: rowHash }, payload_version: 6 }
+    : { task_id: taskId, payload_version: 6 };
   return seal(claims, key, 'chit402-receipt+jwt');
 }
 

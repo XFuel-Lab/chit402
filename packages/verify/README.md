@@ -194,6 +194,23 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | 2 | Partial (binding ok, nullifier not checked) |
 | 3 | Input error |
 
+`unsupported_version` uses exit 1. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+
+## Receipt versions
+
+The signed JWS payload is the version. It is an exact JSON number. Strings, booleans, arrays, null, and non-integers are `unsupported_version`. `11.0` and `1.1e1` are the number 11.
+
+| Signed field | Accepted |
+|---|---|
+| `v` | `11`, and the claims must not contain `payload_version` |
+| `payload_version` | integers `1` through `10`, and `11` only when `issuer_root` is signed |
+| refusal `payload_version` | integers `1`, `2`, `3` |
+| neither field | outer version `4` or `5`, and no field introduced at v6 or later (`version_source: inferred`) |
+
+An outer `v` or `issuer_signature.payload_version` that differs in value or type is `version_mismatch`. A `v` or `payload_version` in the JWS protected header is ignored.
+
+Receipts issued after 2026-10-08 require `@xfuel/verify` >= 0.3.5. Older versions may print VERIFIED for formats they do not understand. `--help` and `--version` print this list.
+
 ## API Reference
 
 ### `verifyBinding(receipt)`

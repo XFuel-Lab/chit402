@@ -194,6 +194,7 @@ ${ogImage ? `<meta property="og:title" content="${title}" />
   <p>${amount} ${esc(shell?.asset || '')} · ${chain}</p>
   <p>Leaf ${leaf}</p>
   <p>Unsigned shell. The signature requires the owner view.</p>
+  <p>Receipts issued after 2026-10-08 require @xfuel/verify &gt;= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.</p>
 </body>
 </html>`;
 }

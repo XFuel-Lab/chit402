@@ -92,6 +92,7 @@ function productionFixture() {
   const receiptClaims = {
     task_id: TASK_ID,
     book_chain: { row_hash: ROW_HASH },
+    payload_version: 6,
   };
   const receipt = {
     ...receiptClaims,
@@ -289,9 +290,10 @@ test('--version prints the package version', () => {
   const cli = join(pkgDir, 'dist', 'cli.js');
   const run = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^@xfuel\/verify \d+\.\d+\.\d+\s*$/);
+  assert.match(run.stdout, /^@xfuel\/verify \d+\.\d+\.\d+\n/);
   const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
-  assert.equal(run.stdout.trim(), `@xfuel/verify ${pkg.version}`);
+  assert.equal(run.stdout.split('\n')[0], `@xfuel/verify ${pkg.version}`);
+  assert.match(run.stdout, /payload_version: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/);
 });
 
 test('a not_in_tree inclusion file is not reported as bad_root', () => {

@@ -61,7 +61,8 @@ import {
   type ReceiptPayerClaims,
   type PayerRail,
 } from './payer.js';
-import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl } from './v11-receipt.js';
+import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
+import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -396,6 +397,10 @@ export interface ReceiptVerification {
   carry_forward?: CarryForwardView | null;
   overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   errors: string[];
+  /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
+  receipt_version?: number | null;
+  /** `inferred` is the Sep 4–5 unversioned rule. Otherwise the JWS payload. */
+  version_source?: 'signed' | 'inferred' | null;
 }
 
 /**
@@ -562,7 +567,7 @@ function trustedPaymentForReconcile(
   if (!verification.valid || verification.key_trusted === false) {
     return {
       ok: false,
-      version: outerVersion,
+      version: 0,
       reason: verification.reason || KEY_UNTRUSTED,
     };
   }
@@ -572,12 +577,17 @@ function trustedPaymentForReconcile(
     ? claims.payment as NonNullable<XFuelReceipt['payment']>
     : null;
   if (!claimPayment) {
-    return { ok: false, version: outerVersion, reason: 'no_signed_amount' };
+    return { ok: false, version: 0, reason: 'no_signed_amount' };
   }
-  const version = typeof claims?.payload_version === 'number'
-    ? claims.payload_version
-    : outerVersion;
-  return { ok: true, version: Number(version), payment: claimPayment };
+  // The signed payload is the version. The outer copy is not a fallback.
+  const signed = classifySignedClaims(
+    claims && typeof claims === 'object' ? claims as Record<string, unknown> : null,
+    null,
+  );
+  if (!signed.ok || signed.family !== 'legacy') {
+    return { ok: false, version: 0, reason: 'unsupported_version' };
+  }
+  return { ok: true, version: signed.version, payment: claimPayment };
 }
 
 /**
@@ -1570,12 +1580,22 @@ export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
-  const preDecoded = receipt?.issuer_signature?.jws
-    ? decodeJwsPayload(receipt.issuer_signature.jws)
-    : null;
-  if (preDecoded?.v === 11) {
-    return verifyV11Receipt(receipt, options);
+  let gate: ReturnType<typeof classifyReceiptDocument>;
+  try {
+    gate = classifyReceiptDocument(receipt);
+  } catch {
+    return rejectReceiptVersion(receipt, ['unsupported_version'], 'unsupported_version');
   }
+  if (!gate.ok) {
+    return rejectReceiptVersion(receipt, gate.errors, gate.reason);
+  }
+  if (gate.family === 'v11') {
+    const v11 = await verifyV11Receipt(receipt, options);
+    return Object.assign(v11, { receipt_version: 11, version_source: 'signed' as const });
+  }
+  const versionStamp = gate.family === 'legacy'
+    ? { receipt_version: gate.version, version_source: gate.version_source }
+    : {};
   const errors: string[] = [];
   const trustedKids = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const trustedHosts = options.trustedJwksHosts ?? DEFAULT_TRUSTED_JWKS_HOSTS;
@@ -1993,6 +2013,7 @@ export async function verifyReceipt(
     issuer_history,
     warnings,
     ...(carry_forward ? { carry_forward } : {}),
+    ...versionStamp,
     overall,
     errors,
   };
@@ -2163,6 +2184,23 @@ export {
   verifyCanonicalPreimageBytes,
   CANONICAL_PAYLOAD_VERSION,
 } from './canonical-preimage.js';
+
+export {
+  SUPPORTED_RECEIPT_VERSIONS,
+  LEGACY_PAYLOAD_VERSIONS,
+  REFUSAL_EXACT_VERSIONS,
+  VERIFIER_MIN,
+  UNSUPPORTED_VERSION,
+  VERSION_MISMATCH,
+  classifyReceiptDocument,
+  classifySignedClaims,
+  classifyShellDocument,
+  signedClaimsOnAllowlist,
+  formatSupportedReceiptVersions,
+  readSignedClaims,
+  refusalPayloadVersion,
+  isJsonInteger,
+} from './receipt-version.js';
 
 export {
   readIssuerHistoryPin,

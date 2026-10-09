@@ -380,9 +380,12 @@ export function verifyRefusalReceipt(doc, jwks = null) {
   if (!isRefusalSchema(payload.schema) || (doc.schema != null && doc.schema !== payload.schema)) {
     return { checked: true, valid: false, reason: 'schema_mismatch', payload };
   }
-  const version = Number(payload.payload_version);
-  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version) || Number(doc.payload_version) !== version) {
-    return { checked: true, valid: false, reason: 'payload_version_mismatch', payload };
+  const version = payload.payload_version;
+  const versionOk = typeof version === 'number'
+    && Number.isInteger(version)
+    && REFUSAL_PAYLOAD_VERSIONS.includes(version);
+  if (!versionOk || (doc.payload_version != null && doc.payload_version !== version)) {
+    return { checked: true, valid: false, reason: versionOk ? 'payload_version_mismatch' : 'unsupported_version', payload };
   }
   if (version >= 2) {
     const pin = payload.issuer_history;
@@ -525,7 +528,8 @@ export function renderRefusalHtml(doc) {
   <ul>${proves}</ul>
   <h2>What this does not prove</h2>
   <ul>${limits}</ul>
-  <p class="muted">Verify the ES256 JWS against <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>. <code>xfuel-verify</code> accepts this schema.</p>
+  <p class="muted">Verify the ES256 JWS against <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>. <code>xfuel-verify</code> accepts this schema. payload_version must be the JSON integer 1, 2, or 3.</p>
+  <p class="muted">Receipts issued after 2026-10-08 require @xfuel/verify &gt;= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.</p>
 </body>
 </html>`;
 }

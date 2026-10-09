@@ -105,6 +105,7 @@ function fixture() {
     task_id: taskId,
     book_chain: { row_hash: rowHash },
     payment: { gross_amount: '10000' },
+    payload_version: 6,
   };
   const receipt = seal(claims, key, 'chit402-receipt+jwt');
   const inclusion = {
