@@ -186,10 +186,44 @@ function prefixRootHex(leaves, size) {
  * A present JWS must verify, and the signed root and size must be the head's.
  * Unsigned historical heads have no JWS and are not this case.
  */
+const TREE_HEAD_JWT_TYP = 'chit402-tree-head+jwt';
+const ROTATED_KEY_REASONS = new Set(['no_matching_key', 'empty_jwks']);
+
+/**
+ * Keys a stored raced head may be signed by: the live key plus earlier keys
+ * the operator lists in ISSUER_HISTORY_EXTRA (revoked keys excluded), so an
+ * issuer key rotation does not turn an old quarantined head into a refusal.
+ */
+function storedHeadJwks() {
+  const keys = [...(getJwks()?.keys || [])];
+  const raw = process.env.ISSUER_HISTORY_EXTRA;
+  if (raw && String(raw).trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+      for (const entry of Array.isArray(list) ? list : []) {
+        if (!entry || typeof entry.kid !== 'string' || !entry.jwk || entry.status === 'revoked') continue;
+        if (keys.some((k) => k.kid === entry.kid)) continue;
+        keys.push({ ...entry.jwk, kid: entry.kid, alg: entry.jwk.alg || 'ES256' });
+      }
+    } catch {
+      // Unparsable history extra: live key only.
+    }
+  }
+  return { keys };
+}
+
 function storedHeadSignature(head) {
   const jws = head?.issuer_signature?.jws;
   if (typeof jws !== 'string' || jws.length === 0) return { present: false, valid: false };
-  const result = verifyJwsWithJwks(jws, getJwks());
+  let header = null;
+  try {
+    header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8'));
+  } catch {
+    return { present: true, valid: false, reason: 'header_parse_error' };
+  }
+  if (header?.typ !== TREE_HEAD_JWT_TYP) return { present: true, valid: false, reason: 'wrong_typ' };
+  const result = verifyJwsWithJwks(jws, storedHeadJwks());
   if (!result.valid) return { present: true, valid: false, reason: result.reason || 'signature_invalid' };
   const payload = result.payload || {};
   if (String(payload.root) !== String(head.root) || Number(payload.tree_size) !== Number(head.tree_size)) {
@@ -221,11 +255,15 @@ function classifyStoredHead(bucket, head) {
   const claimed = prefixRootHex(bucket.leaves, size);
   const signature = storedHeadSignature(head);
   if (stored === claimed) {
-    if (signature.present && !signature.valid) refuseTamperedHead(signature.reason);
+    // A known key with a bad signature is tampering. A kid no longer in the
+    // key set (issuer key rotation) loads as on main; verifiers still check it.
+    if (signature.present && !signature.valid && !ROTATED_KEY_REASONS.has(signature.reason)) {
+      refuseTamperedHead(signature.reason);
+    }
     return { quarantine: false };
   }
   let prefixSize = null;
-  for (let k = size - 1; k >= 0; k -= 1) {
+  for (let k = size - 1; k >= 1; k -= 1) {
     if (prefixRootHex(bucket.leaves, k) === stored) {
       prefixSize = k;
       break;
