@@ -28,6 +28,7 @@
 
 import crypto from 'crypto';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { isJsonInteger } from './receipt-version-allowlist.js';
 
 export const V11_LABEL_OUTPUT = 'v11/output';
 export const V11_LABEL_ACCOUNTING = 'v11/accounting';
@@ -532,9 +533,9 @@ function v11PayloadVersion(doc) {
   if (!jws || typeof jws !== 'string') return null;
   try {
     const payload = JSON.parse(Buffer.from(jws.split('.')[1], 'base64url').toString('utf8'));
-    if (payload?.v === 11) return 11;
-    const n = Number(payload?.payload_version);
-    return Number.isFinite(n) ? n : null;
+    if (payload && typeof payload.v === 'number' && payload.v === 11) return 11;
+    if (isJsonInteger(payload?.payload_version) && payload.payload_version === 11) return 11;
+    return null;
   } catch {
     return null;
   }
@@ -557,6 +558,7 @@ export function renderV11ReceiptHtml(receipt) {
     + `<h1>Chit402 receipt</h1>`
     + `<p>Receipt ${id}</p>`
     + `<p>Issued ${when}</p>`
+    + `<p>Receipts issued after 2026-10-08 require @xfuel/verify &gt;= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.</p>`
     + (verify ? `<p><a href="${verify}">Verify</a></p>` : '')
     + `</body></html>`;
 }

@@ -91,6 +91,7 @@ import { applyRequestSaltHeader, captureRawRequestBody, clientRequestForRefusal,
 import { assertIssuerHistoryMirrorBoot, issuerHistoryMirrorClaim, writeIssuerHistoryMirror } from './issuer-history-mirror.js';
 import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-policy.js';
+import { VERIFIER_MIN, VERIFIER_MIN_HEADER, receiptPolicyAdvisory, withVerifierAdvisory } from './verifier-min.js';
 import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
@@ -1548,7 +1549,7 @@ export function createApp() {
     // v1 x402: X-PAYMENT, X-PAYMENT-NONCE; v2 x402: PAYMENT-SIGNATURE, PAYMENT-NONCE
     res.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted, X-Chit-Request-Salt');
+    res.header('Access-Control-Expose-Headers', 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted, X-Chit-Request-Salt, X-Chit-Verifier-Min');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
@@ -2833,7 +2834,8 @@ export function createApp() {
       if (!row?.refusal) return sendPublicRefusalNotFound(res, !wantsJson);
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const doc = presentRefusal(row.refusal, baseUrl);
-      if (wantsJson) return res.json(doc);
+      res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
+      if (wantsJson) return res.json(withVerifierAdvisory(doc));
       return res.type('html').send(renderRefusalHtml(doc));
     } catch (err) {
       return sendPublicInternal(res, err, 'GET /refusal/:refusalId error', 'refusal_failed');
@@ -2900,7 +2902,8 @@ export function createApp() {
     const shell = shellFor(receipt, taskId);
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
-    if (wantsJson) return res.json(shell);
+    res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
+    if (wantsJson) return res.json(withVerifierAdvisory(shell));
     return res.type('html').send(renderReceiptShellHtml(shell, { pageUrl }));
   }
 
@@ -4025,6 +4028,13 @@ export function createApp() {
 
   // Announced receipt-policy versions. The signed policy on a v11 receipt
   // governs that receipt even after a later row is appended here.
+  // Unsigned advisory. Not the signed policy on a receipt, and not a trust input.
+  app.get('/.well-known/receipt-policy', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300');
+    res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
+    return res.json(receiptPolicyAdvisory());
+  });
+
   app.get('/.well-known/receipt-policy-history.json', (req, res) => {
     try {
       return writeReceiptPolicyHistory(res);

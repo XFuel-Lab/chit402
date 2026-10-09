@@ -59,6 +59,8 @@ import {
 } from './issuer-history.js';
 import { issuerHistoryMirrorClaim } from './issuer-history-mirror.js';
 import { signedReceiptPolicy, verifyReceiptPolicyClaim } from './receipt-policy.js';
+import { isIssuerRootClaims } from './receipt-version-allowlist.js';
+import { VERIFIER_MIN_NOTE } from './verifier-min.js';
 import { bindRequestSalt, claimIdempotency, rebindRequestSalt, requestDigest, requestDigestCanonical, requestSalt, saltReceiptId, saltRecoverable } from './request-binding.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { getSaltStore } from './salt-store.js';
@@ -1761,7 +1763,7 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
     }
-    if (Number(result.payload.payload_version) >= 11) {
+    if (isIssuerRootClaims(result.payload)) {
       const policy = verifyReceiptPolicyClaim(result.payload.policy);
       if (!policy.ok) {
         return { checked: true, valid: false, reason: policy.reason, payload: result.payload };
@@ -1833,7 +1835,7 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
     }
-    if (Number(jwsResult.payload.payload_version) >= 11) {
+    if (isIssuerRootClaims(jwsResult.payload)) {
       const policy = verifyReceiptPolicyClaim(jwsResult.payload.policy);
       if (!policy.ok) {
         return { checked: true, valid: false, reason: policy.reason, payload: jwsResult.payload };
@@ -3306,6 +3308,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       <a href="${esc(receipt.links?.proof || '')}">proof</a> ·
       <a href="${esc(receipt.links?.status || '')}">status</a><br />
       ES256 signed receipt · payload v${esc(receipt.issuer_signature?.payload_version || RECEIPT_PAYLOAD_VERSION)} · verify against the published <a href="${esc(jwksUrl || '/.well-known/jwks.json')}">JWKS</a> or a pinned issuer kid<br />
+      ${esc(VERIFIER_MIN_NOTE)}<br />
       Chit402
     </footer>
   </div>

@@ -52,6 +52,11 @@ import { verifyPublishedPreimages } from './preimage.js';
 import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 import { readOpenFile } from './v11-receipt.js';
+import {
+  classifyReceiptDocument,
+  classifyShellDocument,
+  formatSupportedReceiptVersions,
+} from './receipt-version.js';
 import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
 import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
@@ -204,6 +209,9 @@ Receipt lane (unsigned, beside book_seq):
   set, is a Base USDC payee and amount a stranger can check. It does not
   claim the row was paid. Design by Turbo on 1F916 (post 6579, comments
   88201, 88403, and 88596).
+
+Supported receipt versions:
+  ${formatSupportedReceiptVersions().split('\n').join('\n  ')}
 
 Examples:
   # Skip the issuer-history fetch. A v10 receipt otherwise needs that network call.
@@ -692,6 +700,27 @@ async function loadAnchorWalletDocument(
   }
 }
 
+function emitVersionFailure(
+  args: { json: boolean },
+  errors: string[],
+): number {
+  const reason = errors[0] || 'unsupported_version';
+  if (args.json) {
+    console.log(JSON.stringify({
+      overall: 'failed',
+      errors,
+      issuer_signature: { valid: false, checked: true, key_trusted: false, reason },
+      amount_usdc: null,
+      tx: null,
+      payer: { checked: false, valid: false },
+    }, null, 2));
+  } else {
+    console.log(reason);
+    console.log('  Overall: FAILED');
+  }
+  return 1;
+}
+
 async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const receiptPath = args.file;
   const inclusionPath = args.inclusionFile || args.positionals[1] || null;
@@ -716,6 +745,20 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   } catch (err) {
     console.error(`Error reading anchor inputs: ${err instanceof Error ? err.message : String(err)}`);
     return 3;
+  }
+  const anchorGate = classifyReceiptDocument(receipt);
+  if (!anchorGate.ok) {
+    if (args.json) {
+      console.log(JSON.stringify({
+        overall: 'failed',
+        errors: anchorGate.errors,
+        receipt_check: { overall: 'failed', errors: anchorGate.errors },
+      }, null, 2));
+    } else {
+      console.log(anchorGate.errors[0]);
+      console.log('  Overall: FAILED');
+    }
+    return 1;
   }
   let fileJwks: Jwks | undefined;
   if (args.jwksFile) {
@@ -920,10 +963,15 @@ async function runRefusal(
   },
 ): Promise<number> {
   const trustedKids = args.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  const refusalGate = classifyReceiptDocument(doc);
+  if (!refusalGate.ok) return emitVersionFailure(args, refusalGate.errors);
   const result = verifyRefusal(doc, {
     jwks: args.jwks,
     trustedKids,
   });
+  if (!result.valid && (result.errors[0] === 'unsupported_version' || result.reason === 'unsupported_version' || result.reason === 'payload_version_mismatch')) {
+    return emitVersionFailure(args, result.errors.length ? result.errors : [result.reason || 'unsupported_version']);
+  }
   const preimages = await verifyPublishedPreimages(doc as unknown as Record<string, unknown>, {
     requirePreimages: args.requirePreimages,
   });
@@ -993,6 +1041,7 @@ async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
   if (args.version) {
     console.log(`@xfuel/verify ${packageVersion()}`);
+    console.log(formatSupportedReceiptVersions());
     return 0;
   }
   let anchorMode = args.anchorFlag
@@ -1051,6 +1100,8 @@ async function main(): Promise<number> {
       return 3;
     }
     if (!args.jwsFile) {
+      const shellGate = classifyShellDocument(receipt);
+      if (!shellGate.ok) return emitVersionFailure(args, shellGate.errors);
       console.log(INCLUDED_SHELL_LINE);
       console.log('  Overall: INCLUDED_SHELL');
       return args.acceptShell ? 0 : 1;
@@ -1070,6 +1121,8 @@ async function main(): Promise<number> {
       return 3;
     }
     const shellDoc = receipt as unknown as Record<string, unknown>;
+    const holderGate = classifyReceiptDocument(holder);
+    if (!holderGate.ok) return emitVersionFailure(args, holderGate.errors);
     const compared = compareShellToJws(shellDoc, holder);
     if (!compared.ok) {
       console.log('shell_jws_mismatch');
@@ -1168,6 +1221,11 @@ async function main(): Promise<number> {
     }
     console.log('  Overall: VERIFIED');
     return 0;
+  }
+
+  if (typeof receipt.issuer_signature?.jws === 'string') {
+    const receiptGate = classifyReceiptDocument(receipt);
+    if (!receiptGate.ok) return emitVersionFailure(args, receiptGate.errors);
   }
 
   const v11 = (receipt as XFuelReceipt & { v?: number }).v === 11 || (receipt.issuer_signature?.jws

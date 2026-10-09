@@ -14,6 +14,7 @@ import {
   type Es256Jwk,
 } from './jws.js';
 import { verifyRequestDigest, type RequestBindingStatus } from './request-binding.js';
+import { refusalPayloadVersion } from './receipt-version.js';
 
 export const REFUSAL_SCHEMA = 'chit402.refusal.v1';
 export const REFUSAL_SCHEMA_V2 = 'chit402.refusal.v2';
@@ -234,7 +235,10 @@ export function verifyRefusal(
   if (!trusted) return failed(KEY_UNTRUSTED, { kid: kid || null });
 
   const signed = payload as unknown as RefusalDocument & { request_digest?: unknown };
-  const boundRefusal = signed.schema === REFUSAL_SCHEMA_V2 || Number(signed.payload_version) === 3;
+  const versionCheck = refusalPayloadVersion(payload);
+  if (!versionCheck.ok) return failed('unsupported_version', { kid });
+  const version = versionCheck.version;
+  const boundRefusal = signed.schema === REFUSAL_SCHEMA_V2 || version === 3;
   if (boundRefusal) {
     const digest = signed.request_digest;
     const preimage = requestPreimageOf(doc);
@@ -250,11 +254,7 @@ export function verifyRefusal(
   // The outer schema is unsigned. A present value that disagrees with the
   // signed schema fails. An omitted outer schema still follows the JWS.
   if (doc.schema != null && doc.schema !== signed.schema) return failed('schema_mismatch', { kid });
-  const version = Number(signed.payload_version);
-  if (!REFUSAL_PAYLOAD_VERSIONS.includes(version as 1 | 2 | 3)) {
-    return failed('payload_version_mismatch', { kid });
-  }
-  if (doc.payload_version != null && Number(doc.payload_version) !== version) {
+  if (doc.payload_version != null && doc.payload_version !== version) {
     return failed('payload_version_mismatch', { kid });
   }
   if (version >= 2) {

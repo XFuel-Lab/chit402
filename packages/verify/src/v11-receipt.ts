@@ -9,12 +9,14 @@
  * amount transferred by the bound payment (integer >= amount_gross). A
  * missing, non-integer, or short settled amount is payment_unbound.
  *
- * verifyReceiptUpToV10 refuses v >= 11 before that path runs.
+ * verifyReceiptUpToV10 refuses anything outside the legacy 1–10 allowlist
+ * before that path runs.
  */
 import { createHash, createHmac, hkdfSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { ReceiptVerification, VerifyReceiptOptions, XFuelReceipt } from './index.js';
 import { decodeJwsPayload } from './payer.js';
+import { classifyReceiptDocument } from './receipt-version.js';
 
 export const V11_SIGNED_FIELDS = [
   'v',
@@ -166,10 +168,39 @@ function payloadOf(receipt: XFuelReceipt): Record<string, unknown> | null {
   return decodeJwsPayload(receipt.issuer_signature.jws);
 }
 
+/** Failed receipt. amount, payer, and tx stay null. Does not throw. */
+export async function rejectReceiptVersion(
+  receipt: XFuelReceipt | null | undefined,
+  errors: string[],
+  reason: string,
+): Promise<ReceiptVerification> {
+  const { receiptLaneFromVerification } = await import('./index.js');
+  const doc = (receipt && typeof receipt === 'object' ? receipt : {}) as XFuelReceipt;
+  const lane = receiptLaneFromVerification({
+    receipt: doc as never,
+    claims: null,
+    issuerValid: false,
+    payer: { checked: false, valid: false },
+    head: null,
+  });
+  return shell(doc, errors, {
+    checked: true,
+    valid: false,
+    key_trusted: false,
+    reason,
+  }, lane);
+}
+
 export async function verifyV11Receipt(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
+  const gate = classifyReceiptDocument(receipt);
+  if (!gate.ok || gate.family !== 'v11') {
+    const errors = gate.ok ? ['unsupported_version'] : gate.errors;
+    const reason = gate.ok ? 'unsupported_version' : gate.reason;
+    return rejectReceiptVersion(receipt, errors, reason);
+  }
   const errors: string[] = [];
   const { verifyIssuerSignatureWithJwks: verifySig, loadIssuerJwks, receiptLaneFromVerification } = await import('./index.js');
   const loaded = await loadIssuerJwks(receipt, {
@@ -301,23 +332,13 @@ export async function verifyReceiptUpToV10(
   options: VerifyReceiptOptions,
   full: (receipt: XFuelReceipt, options: VerifyReceiptOptions) => Promise<ReceiptVerification>,
 ): Promise<ReceiptVerification> {
-  const decoded = receipt?.issuer_signature?.jws ? decodeJwsPayload(receipt.issuer_signature.jws) : null;
-  const version = Number(decoded?.v ?? decoded?.payload_version);
-  if (Number.isFinite(version) && version >= 11) {
-    const { receiptLaneFromVerification } = await import('./index.js');
-    const lane = receiptLaneFromVerification({
-      receipt: receipt as never,
-      claims: null,
-      issuerValid: false,
-      payer: { checked: false, valid: false },
-      head: null,
-    });
-    return shell(receipt, ['unsupported_version'], {
-      checked: true,
-      valid: false,
-      key_trusted: false,
-      reason: 'unsupported_version',
-    }, lane);
+  const gate = classifyReceiptDocument(receipt);
+  const legacy = gate.ok && gate.family === 'legacy' && gate.version >= 1 && gate.version <= 10;
+  const unsigned = gate.ok && gate.family === 'unsigned';
+  if (!legacy && !unsigned) {
+    const errors = gate.ok ? ['unsupported_version'] : gate.errors;
+    const reason = gate.ok ? 'unsupported_version' : gate.reason;
+    return rejectReceiptVersion(receipt, errors, reason);
   }
   return full(receipt, options);
 }

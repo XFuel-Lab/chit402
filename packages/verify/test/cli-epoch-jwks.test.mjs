@@ -90,6 +90,7 @@ function fixture() {
     task_id: taskId,
     row_hash: rowHash,
     verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json' },
+    payload_version: 6,
   };
   const receipt = {
     ...receiptClaims,

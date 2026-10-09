@@ -26,7 +26,7 @@ A second record of the same task id returns the original document and the origin
 | Field | Meaning |
 |-------|---------|
 | `schema` | `chit402.refusal.v1` |
-| `payload_version` | `2` on a new refusal. `1` still verifies. Version 2 also signs `issuer_history` and `payload_hash` |
+| `payload_version` | JSON integer `2` on a new refusal. Integers `1` and `3` still verify. A string, a boolean, a float, or any other number is `unsupported_version`. Version 2 also signs `issuer_history` and `payload_hash` |
 | `refusal_code` | Stable code (`daily_cap_exceeded`, `kill_switch`, `budget_exhausted`, …) |
 | `nonce` | Unique to this document |
 | `issued_at` | When the row was recorded |
