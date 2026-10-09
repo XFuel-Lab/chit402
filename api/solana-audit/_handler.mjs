@@ -337,15 +337,28 @@ function projectTransaction(result) {
   };
 }
 
-function routeNameOf(request) {
-  if (typeof request.route === 'string' && request.route) return request.route;
+function routeFromPath(url) {
   try {
-    const path = new URL(request.url, 'https://chit402.com').pathname;
+    const path = new URL(String(url || ''), 'https://chit402.com').pathname;
     const match = path.match(/\/api\/solana-audit\/([^/]+)\/?$/);
     return match ? decodeURIComponent(match[1]) : '';
   } catch {
     return '';
   }
+}
+
+function routeNameOf(request) {
+  const fromPath = routeFromPath(request?.url);
+  if (fromPath) return fromPath;
+  if (typeof request?.route === 'string' && request.route) return request.route;
+  return '';
+}
+
+// Vercel's dynamic api/solana-audit/[route] appends ?route=<segment> to req.url.
+// Drop that key only when it repeats the path segment. A different route= is a
+// client parameter and stays in the query so the allowlist rejects it.
+function dropVercelRouteParam(route, query) {
+  if (query.get('route') === route) query.delete('route');
 }
 
 /**
@@ -381,6 +394,7 @@ export async function handleSolanaAudit(request, options = {}) {
 
   const query = readQuery(request?.url || '');
   if (!query) return finish(fail(400, 'invalid_param'));
+  dropVercelRouteParam(route, query);
 
   const parsed = validateRoute(route, query);
   if (!parsed) return finish(fail(400, 'invalid_param'));

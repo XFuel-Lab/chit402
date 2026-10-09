@@ -449,7 +449,7 @@ async function proxy(route, query = '', extra = {}) {
     method: extra.method || 'GET',
     url: `https://www.chit402.com/api/solana-audit/${route}${query ? `?${query}` : ''}`,
     headers: extra.headers || {},
-    route,
+    route: extra.claimedRoute || route,
   }, {
     env: extra.env === undefined ? ENV : extra.env,
     fetchImpl: extra.fetchImpl || fetchImpl,
@@ -815,6 +815,52 @@ describe('solana audit proxy', { concurrency: 1 }, () => {
       assert.equal(sigs.result.status, 400);
       assert.equal(sigs.calls.length, 0);
     }
+  });
+
+  test('X22 a Vercel-injected route query passes validation on each audit route', async () => {
+    const cases = [
+      { route: 'head', query: 'route=head', method: 'getSlot' },
+      { route: 'account', query: `route=account&address=${WALLET}`, method: 'getAccountInfo' },
+      { route: 'token-accounts', query: `owner=${WALLET}&route=token-accounts`, method: 'getTokenAccountsByOwner' },
+      { route: 'signatures', query: `address=${WALLET}&route=signatures&limit=20`, method: 'getSignaturesForAddress' },
+      { route: 'tx', query: `sig=${SOLANA_CANARY_SIGNATURE}&route=tx`, method: 'getTransaction' },
+    ];
+    for (const item of cases) {
+      resetSolanaAuditState();
+      const hit = await proxy(item.route, item.query);
+      assert.equal(hit.result.status, 200, item.route);
+      assert.equal(hit.result.body.error, undefined, item.route);
+      assert.equal(hit.calls.some((call) => call.body.method === item.method), true, item.route);
+    }
+  });
+
+  test('X23 a route query that differs from the path is rejected', async () => {
+    const smuggled = [
+      { path: 'head', query: `route=tx&sig=${SOLANA_CANARY_SIGNATURE}`, claimed: 'tx' },
+      { path: 'account', query: `address=${WALLET}&route=signatures`, claimed: 'signatures' },
+      { path: 'token-accounts', query: `owner=${WALLET}&route=head`, claimed: 'head' },
+      { path: 'signatures', query: `address=${WALLET}&route=account`, claimed: 'account' },
+      { path: 'tx', query: `sig=${SOLANA_CANARY_SIGNATURE}&route=head`, claimed: 'head' },
+    ];
+    for (const item of smuggled) {
+      resetSolanaAuditState();
+      const hit = await proxy(item.path, item.query, { claimedRoute: item.claimed });
+      assert.equal(hit.result.status, 400, item.query);
+      assert.equal(hit.result.body.error, 'invalid_param');
+      assert.equal(hit.calls.length, 0, item.query);
+    }
+
+    resetSolanaAuditState();
+    const echoed = await proxy('head', 'route=head&extra=1');
+    assert.equal(echoed.result.status, 400);
+    assert.equal(echoed.result.body.error, 'invalid_param');
+    assert.equal(echoed.calls.length, 0);
+
+    resetSolanaAuditState();
+    const dup = await proxy('account', `address=${WALLET}&route=account&route=tx`);
+    assert.equal(dup.result.status, 400);
+    assert.equal(dup.result.body.error, 'invalid_param');
+    assert.equal(dup.calls.length, 0);
   });
 });
 
