@@ -11,6 +11,10 @@ The package re-exports `@xfuel/verify` and forwards CLI arguments to `xfuel-veri
 - Depends on `@xfuel/verify` `^0.3.5`.
 - `bin["chit402-verify"]` stays `cli.js` (npm 11 requirement).
 
+### Fixed
+- `package.json` declares `"type": "module"`. Without it, `cli.js` and `index.js` (ES module syntax) fail with `SyntaxError: Cannot use import statement outside a module` on Node 18 and Node 20 before 20.19, although `engines` says `>=18`.
+- `cli.js` no longer exits 0 when the verifier is killed by a signal (crash, heap-OOM abort); it exits 128 + the signal number. SIGINT/SIGTERM/SIGHUP/SIGQUIT sent to the wrapper are forwarded to the verifier so it is not left running.
+
 ## 0.3.4 — Match @xfuel/verify 0.3.4
 
 ### Changed

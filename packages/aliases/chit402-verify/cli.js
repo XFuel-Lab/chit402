@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
+import { constants as osConstants } from 'node:os';
 
 const require = createRequire(import.meta.url);
 // Resolve via the package exports map. Deep imports of dist/cli.js throw
@@ -17,8 +18,22 @@ const child = spawn(process.execPath, [verifyCliPath, ...process.argv.slice(2)],
   env: process.env,
 });
 
-child.on('exit', (code) => {
-  process.exit(code ?? 0);
+// Forward termination signals so killing the wrapper (CI timeout, supervisor) also stops the verifier.
+const FORWARDED = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'];
+for (const sig of FORWARDED) {
+  process.on(sig, () => {
+    try { child.kill(sig); } catch { /* child already gone */ }
+  });
+}
+
+// Mirror the verifier's result exactly. A verifier killed by a signal (crash, heap-OOM abort,
+// timeout) must never look like success: exit 128 + signal number, as a shell would report it.
+child.on('exit', (code, signal) => {
+  if (signal) {
+    const n = osConstants.signals[signal];
+    process.exit(typeof n === 'number' ? 128 + n : 1);
+  }
+  process.exit(typeof code === 'number' ? code : 1);
 });
 
 child.on('error', (err) => {

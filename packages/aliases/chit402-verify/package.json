@@ -2,6 +2,7 @@
   "name": "chit402-verify",
   "version": "0.3.5",
   "description": "Chit402 receipt verification — verify payment binding and output commitment offline.",
+  "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",
   "bin": {
