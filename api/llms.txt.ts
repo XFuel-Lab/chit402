@@ -20,7 +20,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 ## Proof objects
 
-- Live receipt: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96
+- Live receipt: https://api.chit402.com/receipt/xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944
 - Thread: https://x.com/chit402/status/2096153417588588555
 
 ## Start here (chat completions / responses)
