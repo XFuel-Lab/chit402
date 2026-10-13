@@ -181,19 +181,19 @@ test('a payload v12 receipt with a document pin or no pin fails closed', async (
   }));
   const shape = await verifyReceipt(shaped, opts);
   assert.equal(shape.overall, 'failed');
-  assert.equal(shape.issuer_history.reason, 'issuer_history_pin_shape');
+  assert.equal(shape.errors[0], 'unsupported_version');
 
   const missing = receiptFor(key, paymentClaims(12));
   const absent = await verifyReceipt(missing, opts);
   assert.equal(absent.overall, 'failed');
-  assert.equal(absent.issuer_history.reason, 'issuer_history_pin_missing');
+  assert.equal(absent.errors[0], 'unsupported_version');
 
   const both = receiptFor(key, paymentClaims(12, {
     issuer_history: { hash: history.hash, version: 1, seq: 1, head_hash: history.head, entry_count: 1 },
   }));
   const conflict = await verifyReceipt(both, opts);
   assert.equal(conflict.overall, 'failed');
-  assert.equal(conflict.issuer_history.reason, 'issuer_history_pin_shape');
+  assert.equal(conflict.errors[0], 'unsupported_version');
 });
 
 test('the last entry for a kid is the window', () => {

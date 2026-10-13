@@ -278,7 +278,7 @@ test('a history pin is head_hash plus entry_count, not the whole document', asyn
     issuerHistory: historyDoc({ entry_count: 2, entries: [{ entry_hash: HEAD }, { entry_hash: 'cd'.repeat(32) }] }),
   });
   assert.equal(mismatch.overall, 'failed');
-  assert.match(mismatch.errors.join('; '), /issuer_history_pin_mismatch/);
+  assert.match(mismatch.errors.join('; '), /entry_hash_mismatch/);
   const extendedNote = await verifyReceipt(receipt, {
     ...opts,
     intent,
@@ -299,7 +299,7 @@ test('a history pin is head_hash plus entry_count, not the whole document', asyn
     issuerHistory: signedHistory([forkFirst, forkNext]),
   });
   assert.equal(fork.overall, 'failed');
-  assert.match(fork.errors.join('; '), /issuer_history_pin_mismatch/);
+  assert.match(fork.errors.join('; '), /issuer_history_not_extension/);
 
   const closed = historyEntry({ not_after: '2026-02-01T00:00:00.000Z' });
   const closedReceipt = receiptFor(intent, {

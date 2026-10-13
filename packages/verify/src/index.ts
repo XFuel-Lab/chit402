@@ -62,8 +62,8 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
-import { checkReceiptIntent, matchV12HistorySnapshot, readV12HistoryPin } from './intent.js';
+import { classifyReceiptDocument, classifySignedClaims, HISTORY_HEAD_PAYLOAD_VERSION } from './receipt-version.js';
+import { checkReceiptIntent } from './intent.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -1705,55 +1705,27 @@ export async function verifyReceipt(
   const pinConflict = issuerHistoryPinConflict(historyClaims);
   const payloadVersion = Number(verifiedClaims?.payload_version);
   const v12Receipt = gate.ok && gate.family === 'v12';
-  // Payload v10 signs the whole-document pin. A v12 receipt uses its own
-  // head pin and does not take the document-hash check. A missing v10 pin
-  // fails even when the caller did not pass a history file.
+  // Payload v10 signs the whole-document pin. A v12 receipt, and only that
+  // shape, pins the chain head through the same history check. A missing
+  // v10 pin fails even when the caller did not pass a history file.
   const pinRequired = !v12Receipt
     && !options.skipIssuerHistory
     && Number.isFinite(payloadVersion)
     && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
-  const pinShape = options.skipIssuerHistory || v12Receipt
+  const pinShape = options.skipIssuerHistory
     ? null
-    : (pinRequired ? 'document' as const : null);
-  const historyAsked = !v12Receipt && (pinRequired || (!options.skipIssuerHistory && !!(
+    : v12Receipt
+      ? 'head' as const
+      : (pinRequired ? 'document' as const : null);
+  const historyAsked = (v12Receipt && !options.skipIssuerHistory) || pinRequired || (!options.skipIssuerHistory && !!(
     options.issuerHistory
     || options.issuerHistoryBytes
     || options.fetchIssuerHistory
     || options.strictIssuerHistory
     || options.issuerHistoryUrl
     || historyPin
-  )));
-  const v12Pin = v12Receipt ? readV12HistoryPin(verifiedClaims) : null;
-  let v12HistoryDoc: unknown = options.issuerHistory ?? null;
-  if (v12Receipt && v12HistoryDoc == null && options.issuerHistoryBytes) {
-    try { v12HistoryDoc = JSON.parse(options.issuerHistoryBytes); } catch { v12HistoryDoc = {}; }
-  }
-  // v12 never passes without the pinned history unless the caller skipped it,
-  // and a skip is reported as a failure here (no silent downgrade to VERIFIED).
-  const v12HistoryMatch = v12Pin
-    ? (v12HistoryDoc != null
-      ? matchV12HistorySnapshot(v12Pin, v12HistoryDoc, {
-        jwks,
-        trustedKids,
-        kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-        issuedAt,
-      })
-      : { ok: false, reason: options.skipIssuerHistory ? 'issuer_history_skipped' : 'issuer_history_unreachable' })
-    : null;
-  const issuer_history = v12Receipt
-    ? {
-      checked: true,
-      ok: !!v12Pin && (v12HistoryMatch == null || v12HistoryMatch.ok),
-      unreachable: v12HistoryMatch?.reason === 'issuer_history_unreachable',
-      warning: null,
-      reason: !v12Pin
-        ? 'issuer_history_pin_missing'
-        : (v12HistoryMatch && !v12HistoryMatch.ok ? v12HistoryMatch.reason : null),
-      kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-      document: null,
-      loaded: options.issuerHistory != null,
-    }
-    : historyAsked
+  ));
+  const issuer_history = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
       documentBytes: options.issuerHistoryBytes ?? null,
@@ -1767,7 +1739,7 @@ export async function verifyReceipt(
       issuedAt,
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
       pin: pinConflict ? null : historyPin,
-      requirePin: pinRequired,
+      requirePin: v12Receipt || pinRequired,
       pinShape,
       pinConflict,
     })
@@ -2318,7 +2290,6 @@ export {
   isV12ClaimShape,
   checkReceiptIntent,
   readV12HistoryPin,
-  matchV12HistoryPin,
   intentCanonicalJson,
 } from './intent.js';
 

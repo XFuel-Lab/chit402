@@ -11,11 +11,6 @@
  */
 import { createHash } from 'node:crypto';
 import { verifyIssuerJws, type Es256Jwk } from './jws.js';
-import {
-  issuerKeyWindow,
-  verifyIssuerHistoryDocument,
-  type IssuerHistoryDocument,
-} from './issuer-history.js';
 
 export const V12_PAYLOAD_VERSION = 12;
 export const INTENT_SCHEMA = 'chit402.intent.v1';
@@ -216,60 +211,6 @@ function intentBlockShape(value: unknown): boolean {
   if (typeof value.comparator_pin !== 'string' || !HEX64.test(value.comparator_pin)) return false;
   if (!isJsonInteger(value.use_index) || value.use_index < 1) return false;
   return true;
-}
-
-/**
- * A later history snapshot may extend the pinned prefix. The entry at
- * index entry_count must be the pinned head. The document head is the
- * last entry, which can be past that prefix. A shorter snapshot, a
- * rewritten prefix, or a head that is not the last entry is a mismatch.
- */
-export function matchV12HistoryPin(
-  pin: V12HistoryPin,
-  doc: unknown,
-): IntentCheck {
-  if (!isPlain(doc) || !Array.isArray(doc.entries)) {
-    return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  }
-  if (doc.entries.length < pin.entry_count) {
-    return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  }
-  const pinned = doc.entries[pin.entry_count - 1] as { entry_hash?: unknown } | undefined;
-  const pinnedHash = pinned && typeof pinned.entry_hash === 'string' ? pinned.entry_hash : null;
-  if (pinnedHash !== pin.head_hash) return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  const last = doc.entries[doc.entries.length - 1] as { entry_hash?: unknown } | undefined;
-  const lastHash = last && typeof last.entry_hash === 'string' ? last.entry_hash : null;
-  if (!lastHash) return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  if (doc.head_hash != null && doc.head_hash !== lastHash) {
-    return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  }
-  return { ok: true, reason: null };
-}
-
-/**
- * Prefix match, then the history JWS and the receipt kid's window at iat.
- * An unsigned snapshot does not verify.
- */
-export function matchV12HistorySnapshot(
-  pin: V12HistoryPin,
-  doc: unknown,
-  ctx: {
-    jwks?: { keys?: Es256Jwk[] } | null;
-    trustedKids?: readonly string[];
-    kid?: string | null;
-    issuedAt?: unknown;
-  } = {},
-): IntentCheck {
-  const structural = matchV12HistoryPin(pin, doc);
-  if (!structural.ok) return structural;
-  const signed = verifyIssuerHistoryDocument(doc as IssuerHistoryDocument, {
-    jwks: ctx.jwks?.keys ? { keys: ctx.jwks.keys } : undefined,
-    trustedKids: ctx.trustedKids,
-  });
-  if (!signed.valid) return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  const window = issuerKeyWindow(doc as IssuerHistoryDocument, ctx.kid || '', ctx.issuedAt);
-  if (!window.ok) return { ok: false, reason: window.reason || 'issuer_history_pin_mismatch' };
-  return { ok: true, reason: null };
 }
 
 function parseTime(value: unknown): number | null {
