@@ -19,6 +19,7 @@
  * signature, merchant name, and raw external token are not in those bytes.
  * The external token is stored as external_ref_hash.
  */
+import logger from './logger.js';
 import crypto from 'node:crypto';
 import { signJws, getIssuerKid, isProductionIssuerEnv } from './issuer-key.js';
 import { currentIssuerHistory } from './issuer-history.js';
@@ -322,11 +323,21 @@ async function confirmIntentPayment(claims, input, deps = {}) {
     if (code === 'payment_replayed') return hidden(409, 'payment_replayed');
     return hidden(402, 'intent_violation');
   }
+  const release = () => { if (typeof decision.releaseClaim === 'function') decision.releaseClaim(); };
+  // A transfer #520 already booked (idempotent replay) backs another receipt.
+  // It never backs a v12 intent receipt.
+  if (decision.replay === true) {
+    release();
+    return hidden(409, 'payment_replayed');
+  }
   const amount = atomic(decision.settledAmount);
   const payer = party(decision.payerWallet);
   const payee = party(decision.payTo);
   const paymentRef = typeof decision.paymentRef === 'string' ? decision.paymentRef : '';
-  if (!amount || !payer || !payee || !paymentRef) return hidden(402, 'intent_violation');
+  if (!amount || !payer || !payee || !paymentRef) {
+    release();
+    return hidden(402, 'intent_violation');
+  }
   if (payer !== claims.payer || payee !== claims.payee) {
     if (typeof decision.releaseClaim === 'function') decision.releaseClaim();
     return hidden(409, 'intent_mismatch');
@@ -397,7 +408,14 @@ export async function settleIntent(store, input, env = process.env, deps = {}) {
     payment.releaseClaim();
     return hidden(409, settled.reason || 'intent_violation');
   }
-  try { payment.bookSpent(); } catch { /* the sqlite payment row already consumed the tx */ }
+  try {
+    payment.bookSpent();
+  } catch (err) {
+    // The receipt is committed but #520 did not record the tx as spent, so a
+    // normal paid route could accept it again. Surface it; do not swallow.
+    logger.error({ intentId: parsed.uuid, paymentRef: payment.paymentRef, err: err?.message }, 'intent settle: #520 book after commit failed');
+    return hidden(500, 'payment_book_failed');
+  }
   return {
     ok: true,
     status: 200,

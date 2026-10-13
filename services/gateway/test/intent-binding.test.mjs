@@ -500,3 +500,85 @@ test('settle uses the #520 confirmed transfer, not the request amount', async ()
     local.close();
   }
 });
+
+test('a #520 replay does not mint, and a failed book is surfaced', async () => {
+  const local = openIntentStore(path.join(dir, 'replay.sqlite'));
+  const issued = issueIntent(local, {
+    payer: PAYER, payee: PAYEE, max_amount: '5000', expiry: '2026-12-01T00:00:00.000Z', use_count: 2,
+  });
+  let released = 0;
+  const replay = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    amount: '5000',
+    payment_header: 'h',
+    nonce: 'n-replay',
+  }, process.env, {
+    cfg: { network: 'base' },
+    async settleBoundPayment() {
+      return {
+        kind: 'settled',
+        confirmed: true,
+        replay: true,
+        settledAmount: '2500',
+        payerWallet: PAYER,
+        payTo: PAYEE,
+        paymentRef: `base:0x${'e1'.repeat(32)}`,
+        bookSpent() { throw new Error('should not book a replay'); },
+        releaseClaim() { released += 1; },
+      };
+    },
+  });
+  assert.equal(replay.ok, false);
+  assert.equal(replay.status, 409);
+  assert.equal(replay.error, 'payment_replayed');
+  assert.equal(released, 1);
+  assert.equal(local.receiptsFor(issued.body.intent_id).length, 0);
+
+  let missingReleased = 0;
+  const missing = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    payment_header: 'h',
+    nonce: 'n-missing',
+  }, process.env, {
+    cfg: { network: 'base' },
+    async settleBoundPayment() {
+      return {
+        kind: 'settled',
+        confirmed: true,
+        settledAmount: '',
+        payerWallet: PAYER,
+        payTo: PAYEE,
+        paymentRef: '',
+        bookSpent() {},
+        releaseClaim() { missingReleased += 1; },
+      };
+    },
+  });
+  assert.equal(missing.error, 'intent_violation');
+  assert.equal(missingReleased, 1);
+  assert.equal(local.receiptsFor(issued.body.intent_id).length, 0);
+
+  const booked = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    payment_header: 'h',
+    nonce: 'n-book',
+  }, process.env, {
+    cfg: { network: 'base' },
+    async settleBoundPayment() {
+      return {
+        kind: 'settled',
+        confirmed: true,
+        settledAmount: '2500',
+        payerWallet: PAYER,
+        payTo: PAYEE,
+        paymentRef: `base:0x${'e2'.repeat(32)}`,
+        bookSpent() { throw new Error('store down'); },
+        releaseClaim() {},
+      };
+    },
+  });
+  assert.equal(booked.status, 500);
+  assert.equal(booked.error, 'payment_book_failed');
+  assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
+  local.close();
+});
