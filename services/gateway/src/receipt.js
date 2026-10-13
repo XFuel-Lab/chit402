@@ -1119,7 +1119,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
-    issuer_history: currentHistoryPin(),
+    issuer_history: currentHistoryPin(activeReceiptPayloadVersion()),
     ...(issuerRootActive() ? {
       canonicalization: V11_CANONICALIZATION,
       issuer_history_snapshot: issuerHistorySnapshotClaim(),

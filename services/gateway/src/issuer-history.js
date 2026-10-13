@@ -447,15 +447,25 @@ export function currentIssuerHistory() {
   return record;
 }
 
+/** Payment payload that pins head_hash + entry_count instead of the document hash. */
+export const HISTORY_HEAD_PAYLOAD_VERSION = 12;
+
 /**
  * Pin written into a new receipt or refusal JWS.
- * @returns {{ hash: string, version: number, seq: number }}
+ * v12 pins the entry-chain head. v10 pins the whole-document hash.
+ * v11 and refusal v2 pin the entries snapshot hash.
+ * @param {number|null} [payloadVersion]
+ * @returns {{ hash: string, version: number, seq: number }|{ head_hash: string, entry_count: number }}
  */
-export function currentHistoryPin() {
+export function currentHistoryPin(payloadVersion = null) {
   const record = currentIssuerHistory();
-  // Flag-off receipts pin the well-known document hash (chit402-jcs-v1).
-  // v11 and refusal v2 pin the entries snapshot hash, the same value
-  // snapshot_hash commits to.
+  if (Number(payloadVersion) >= HISTORY_HEAD_PAYLOAD_VERSION) {
+    const doc = JSON.parse(record.body);
+    return {
+      head_hash: doc.head_hash,
+      entry_count: Array.isArray(doc.entries) ? doc.entries.length : 0,
+    };
+  }
   const hash = issuerRootActive() ? record.entries_snapshot_hash : record.hash;
   return { hash, version: record.version, seq: record.seq };
 }

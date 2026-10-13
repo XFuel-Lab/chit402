@@ -62,7 +62,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, HISTORY_HEAD_PAYLOAD_VERSION } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -89,6 +89,7 @@ import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
+  issuerHistoryPinConflict,
   readIssuerHistoryPin,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
@@ -1689,13 +1690,21 @@ export async function verifyReceipt(
     ?? decoded?.iat
     ?? receipt.created_at
     ?? null;
-  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
+  const historyClaims = verifiedClaims as Record<string, unknown> | null;
+  const historyPin = readIssuerHistoryPin(historyClaims);
+  const pinConflict = issuerHistoryPinConflict(historyClaims);
   const payloadVersion = Number(verifiedClaims?.payload_version);
-  // Payload v10 signs the history pin. A missing pin fails even when the
-  // caller did not pass a history file or ask for a fetch.
+  // Payload v10 signs the whole-document pin. v12 signs the chain head.
+  // A missing pin fails even when the caller did not pass a history file.
+  const headEra = payloadVersion === HISTORY_HEAD_PAYLOAD_VERSION;
   const pinRequired = !options.skipIssuerHistory
     && Number.isFinite(payloadVersion)
     && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const pinShape = options.skipIssuerHistory
+    ? null
+    : headEra
+      ? 'head' as const
+      : (pinRequired ? 'document' as const : null);
   const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
     options.issuerHistory
     || options.issuerHistoryBytes
@@ -1717,8 +1726,10 @@ export async function verifyReceipt(
       trustedHosts,
       issuedAt,
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-      pin: historyPin,
+      pin: pinConflict ? null : historyPin,
       requirePin: pinRequired,
+      pinShape,
+      pinConflict,
     })
     : {
       checked: false,
