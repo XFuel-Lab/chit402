@@ -249,7 +249,9 @@ function runCli(args) {
 
 test('payload v12 --no-issuer-history is VERIFIED_NO_KEY_WINDOW and exits non-zero', async () => {
   const key = issuerKey();
-  const receipt = receiptFor(key, paymentClaims(12));
+  const receipt = receiptFor(key, paymentClaims(12, {
+    issuer_history: { head_hash: 'ab'.repeat(32), entry_count: 1 },
+  }));
   const opts = { jwks: { keys: [key.publicJwk] }, trustedKids: [key.kid], skipIssuerHistory: true };
   const skipped = await verifyReceipt(receipt, opts);
   assert.equal(skipped.overall, 'verified_no_key_window', skipped.errors.join('; '));
