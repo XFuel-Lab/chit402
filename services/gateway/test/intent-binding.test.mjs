@@ -579,6 +579,20 @@ test('a #520 replay does not mint, and a failed book is surfaced', async () => {
   });
   assert.equal(booked.status, 500);
   assert.equal(booked.error, 'payment_book_failed');
+  assert.equal(local.receiptsFor(issued.body.intent_id).length, 0);
+  assert.equal(local.getGrant(issued.body.intent_id).usesRemaining, 2);
+
+  const after = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    payment_header: 'h',
+    nonce: 'n-after',
+  }, process.env, paymentDeps({
+    amount: '2500',
+    tx: `base:0x${'e3'.repeat(32)}`,
+  }));
+  assert.equal(after.ok, true, JSON.stringify(after));
+  assert.equal(after.body.use_index, 1);
   assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
+  assert.equal(local.getGrant(issued.body.intent_id).usesRemaining, 1);
   local.close();
 });

@@ -386,6 +386,16 @@ export async function settleIntent(store, input, env = process.env, deps = {}) {
     return hidden(500, 'internal');
   }
 
+  try {
+    payment.bookSpent();
+  } catch (err) {
+    // Book before the receipt commit. A failed book leaves no receipt and
+    // does not take a use.
+    logger.error({ intentId: parsed.uuid, paymentRef: payment.paymentRef, err: err?.message }, 'intent settle: #520 book failed before commit');
+    payment.releaseClaim();
+    return hidden(500, 'payment_book_failed');
+  }
+
   let settled;
   try {
     settled = store.consumeAndRecord(parsed.uuid, (useIndex) => buildV12Receipt({
@@ -401,20 +411,10 @@ export async function settleIntent(store, input, env = process.env, deps = {}) {
       kid: getIssuerKid(),
     }), { tx: payment.paymentRef, amount: payment.amount });
   } catch {
-    payment.releaseClaim();
     return hidden(500, 'internal');
   }
   if (!settled.ok) {
-    payment.releaseClaim();
     return hidden(409, settled.reason || 'intent_violation');
-  }
-  try {
-    payment.bookSpent();
-  } catch (err) {
-    // The receipt is committed but #520 did not record the tx as spent, so a
-    // normal paid route could accept it again. Surface it; do not swallow.
-    logger.error({ intentId: parsed.uuid, paymentRef: payment.paymentRef, err: err?.message }, 'intent settle: #520 book after commit failed');
-    return hidden(500, 'payment_book_failed');
   }
   return {
     ok: true,
