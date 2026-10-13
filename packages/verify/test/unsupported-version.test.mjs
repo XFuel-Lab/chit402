@@ -320,8 +320,9 @@ test('T-VMISSING-V11SHAPE v11 fields with no version are unsupported_version', a
   await assertPaths(receiptFor(v11ish(undefined)), 'unsupported_version');
 });
 
-test('T-PV12 T-PV13 T-PV99 T-PV2P53 pinned legacy versions above 10 are unsupported_version', async () => {
-  for (const version of [12, 13, 99, 2 ** 53]) {
+test('T-PV13 T-PV99 T-PV2P53 pinned legacy versions above 12 are unsupported_version', async () => {
+  assert.equal(signedClaimsOnAllowlist(legacyClaims(12)), true);
+  for (const version of [13, 99, 2 ** 53]) {
     const claims = withHead(legacyClaims(version));
     await assertPaths(receiptFor(claims), 'unsupported_version', { history: true });
   }
@@ -536,7 +537,7 @@ test('T-REFUSAL refusal versions use the exact-type rule', async () => {
 test('T-FLAGS no flag reaches RPC or turns an unknown version into a pass', async () => {
   const samples = [
     receiptFor(v11ish(12), { outerV: 12 }),
-    receiptFor(withHead(legacyClaims(12))),
+    receiptFor(withHead(legacyClaims(13))),
   ];
   for (const receipt of samples) {
     let fetches = 0;
@@ -590,7 +591,7 @@ test('T-ACCEPT-BARE unknown shell versions do not exit 0', () => {
   const shellPath = writeJson('bare-shell.json', {
     schema: 'chit402.receipt_shell.v1',
     receipt_id: 'shell-12',
-    payload_version: 12,
+    payload_version: 13,
   });
   const proc = runCli([shellPath, '--accept-shell']);
   assert.notEqual(proc.status, 0);
@@ -606,6 +607,14 @@ test('T-ACCEPT-BARE unknown shell versions do not exit 0', () => {
   const ok = runCli([supported, '--accept-shell']);
   assert.equal(ok.status, 0, ok.text);
   assert.match(ok.stdout, /INCLUDED_SHELL/);
+  const headPin = writeJson('bare-shell-12.json', {
+    schema: 'chit402.receipt_shell.v1',
+    receipt_id: 'shell-12-head',
+    payload_version: 12,
+  });
+  const headOk = runCli([headPin, '--accept-shell']);
+  assert.equal(headOk.status, 0, headOk.text);
+  assert.match(headOk.stdout, /INCLUDED_SHELL/);
 });
 
 test('T-UPTO10 verifyReceiptUpToV10 rejects junk and v11', async () => {

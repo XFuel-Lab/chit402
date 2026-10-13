@@ -62,7 +62,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, HISTORY_HEAD_PAYLOAD_VERSION } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -89,6 +89,7 @@ import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import {
   checkReceiptIssuerHistory,
+  issuerHistoryPinConflict,
   readIssuerHistoryPin,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
@@ -395,7 +396,7 @@ export interface ReceiptVerification {
    * Absent for a receipt in the current epoch.
    */
   carry_forward?: CarryForwardView | null;
-  overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
+  overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward' | 'verified_no_key_window';
   errors: string[];
   /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
   receipt_version?: number | null;
@@ -1451,6 +1452,11 @@ export interface VerifyReceiptOptions {
   /** `--no-issuer-history`. A signed pin is not checked. */
   skipIssuerHistory?: boolean;
   /**
+   * Set with the downgrade flag. A receipt that would be `verified` is
+   * `verified_no_key_window` instead. Exit stays 0 unless the CLI `--strict`.
+   */
+  labelSkippedKeyWindow?: boolean;
+  /**
    * Earlier-epoch head and current-epoch head for a leaf that was carried
    * into the current log. Omitted for a receipt that is only in the current
    * epoch. Dates are read from the signed heads, not from this object.
@@ -1689,13 +1695,21 @@ export async function verifyReceipt(
     ?? decoded?.iat
     ?? receipt.created_at
     ?? null;
-  const historyPin = readIssuerHistoryPin(verifiedClaims as Record<string, unknown> | null);
+  const historyClaims = verifiedClaims as Record<string, unknown> | null;
+  const historyPin = readIssuerHistoryPin(historyClaims);
+  const pinConflict = issuerHistoryPinConflict(historyClaims);
   const payloadVersion = Number(verifiedClaims?.payload_version);
-  // Payload v10 signs the history pin. A missing pin fails even when the
-  // caller did not pass a history file or ask for a fetch.
+  // Payload v10 signs the whole-document pin. v12 signs the chain head.
+  // A missing pin fails even when the caller did not pass a history file.
+  const headEra = payloadVersion === HISTORY_HEAD_PAYLOAD_VERSION;
   const pinRequired = !options.skipIssuerHistory
     && Number.isFinite(payloadVersion)
     && payloadVersion >= CANONICAL_PAYLOAD_VERSION;
+  const pinShape = options.skipIssuerHistory
+    ? null
+    : headEra
+      ? 'head' as const
+      : (pinRequired ? 'document' as const : null);
   const historyAsked = pinRequired || (!options.skipIssuerHistory && !!(
     options.issuerHistory
     || options.issuerHistoryBytes
@@ -1717,8 +1731,10 @@ export async function verifyReceipt(
       trustedHosts,
       issuedAt,
       kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
-      pin: historyPin,
+      pin: pinConflict ? null : historyPin,
       requirePin: pinRequired,
+      pinShape,
+      pinConflict,
     })
     : {
       checked: false,
@@ -1922,7 +1938,7 @@ export async function verifyReceipt(
   );
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
-  let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
+  let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward' | 'verified_no_key_window';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
   if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || sizeMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
@@ -1986,6 +2002,11 @@ export async function verifyReceipt(
         leaf_index: verdict.leaf_index,
       };
     }
+  }
+
+  if (options.labelSkippedKeyWindow && options.skipIssuerHistory && overall === 'verified') {
+    overall = 'verified_no_key_window';
+    if (!issuer_history.warning) issuer_history.warning = 'key window skipped';
   }
 
   const signedPayment = asRecord(verifiedClaims?.payment);

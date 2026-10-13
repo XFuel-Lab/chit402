@@ -41,6 +41,9 @@ import { assertSigningKeyNotGuardian, currentGuardianSetHash } from './issuer-gu
 export const ISSUER_HISTORY_SCHEMA = 'chit402.issuer_history.v1';
 export const ISSUER_HISTORY_VERSION = 1;
 export const ISSUER_HISTORY_JWT_TYP = 'chit402-issuer-history+jwt';
+/** Payment payload that pins head_hash + entry_count instead of the document hash. */
+export const HISTORY_HEAD_PAYLOAD_VERSION = 12;
+const ISSUER_HISTORY_QUERY_KEYS = new Set(['version', 'hash']);
 
 /**
  * First deployment of the ES256 receipt JWS path
@@ -207,19 +210,24 @@ function withGuardianFacts(entry) {
   return next;
 }
 
-export function buildIssuerHistory({ entries = null, version = null, seq = null } = {}) {
+export function buildIssuerHistory({ entries = null, version = null, seq = null, sealedEntries = null } = {}) {
   assertSigningKeyNotGuardian();
   assertSigningKeyNotRetired();
-  const extras = entries || readExtraEntries();
   const current = getIssuerPublicKeyJwk();
-  const prior = [];
-  let currentOverride = null;
-  for (const extra of extras) {
-    if (extra.kid === current.kid) currentOverride = extra;
-    else prior.push(extra);
+  let chained;
+  if (Array.isArray(sealedEntries) && sealedEntries.length) {
+    chained = sealedEntries;
+  } else {
+    const extras = entries || readExtraEntries();
+    const prior = [];
+    let currentOverride = null;
+    for (const extra of extras) {
+      if (extra.kid === current.kid) currentOverride = extra;
+      else prior.push(extra);
+    }
+    const tail = withGuardianFacts(liveEntry(currentOverride || {}));
+    chained = chainEntries([...prior.map(withGuardianFacts), tail]);
   }
-  const tail = withGuardianFacts(liveEntry(currentOverride || {}));
-  const chained = chainEntries([...prior.map(withGuardianFacts), tail]);
   const head = chained[chained.length - 1];
   const claims = {
     schema: ISSUER_HISTORY_SCHEMA,
@@ -301,7 +309,14 @@ export function verifyIssuerHistory(doc, jwks = null) {
   if (payload.seq != null && Number(payload.seq) !== Number(doc.seq)) {
     return { valid: false, reason: 'seq_mismatch' };
   }
-  return { valid: true, payload, kid: result.kid || sig.kid };
+  if (inheritedKeyWindow(doc.entries)) {
+    return { valid: false, reason: 'inherited_key_window' };
+  }
+  const signerKid = result.kid || sig.kid || null;
+  if (signedOnlyByIntroducedKey(doc.entries, signerKid)) {
+    return { valid: false, reason: 'introduced_key_signature' };
+  }
+  return { valid: true, payload, kid: signerKid };
 }
 
 function parseTime(value) {
@@ -337,6 +352,61 @@ export function issuerKeyWindow(doc, kid, issuedAt) {
     if (issued >= revoked) return { ok: false, reason: 'kid_revoked_before_issuance', kid };
   }
   return { ok: true, kid, status: entry.status, not_after: entry.not_after ?? null };
+}
+
+/**
+ * A later key must not start at or before an earlier key's not_before.
+ * Copying the previous window would let receipts from the old key verify
+ * under the new one. The same kid may appear again; that is not a new key.
+ * @param {object[]} entries
+ */
+function inheritedKeyWindow(entries) {
+  const seen = new Set();
+  let maxPrior = null;
+  for (const entry of entries || []) {
+    const start = parseTime(entry?.not_before);
+    if (!seen.has(entry?.kid)) {
+      if (seen.size > 0 && start != null && maxPrior != null && start <= maxPrior) return true;
+      seen.add(entry?.kid);
+    }
+    if (start != null && (maxPrior == null || start > maxPrior)) maxPrior = start;
+  }
+  return false;
+}
+
+/**
+ * The signing key's first entry must be the genesis entry. A key that first
+ * appears later is a key this document introduces, and it must not be the
+ * only signature. Rotation that has the previous key sign the new entry is
+ * a different path and is not built here.
+ * @param {object[]} entries
+ * @param {string|null} signerKid
+ */
+function signedOnlyByIntroducedKey(entries, signerKid) {
+  if (!signerKid || !Array.isArray(entries) || entries.length < 2) return false;
+  const first = entries.findIndex((entry) => entry.kid === signerKid);
+  return first > 0;
+}
+
+/**
+ * True when every sealed entry_hash is an unchanged prefix of next.
+ * A longer chain is an extension. An equal chain is the same entries.
+ * @param {object[]} prev
+ * @param {object[]} next
+ */
+export function entriesExtend(prev, next) {
+  if (!Array.isArray(prev) || !Array.isArray(next)) return false;
+  if (next.length < prev.length) return false;
+  for (let i = 0; i < prev.length; i += 1) {
+    if (prev[i]?.entry_hash !== next[i]?.entry_hash) return false;
+  }
+  return true;
+}
+
+function issuerHistoryRewriteError() {
+  const err = new Error('sealed issuer-history entries are append-only');
+  err.code = 'issuer_history_rewrite';
+  return err;
 }
 
 function historySha256(text) {
@@ -424,14 +494,30 @@ function persistHistoryRecord(record) {
  * bytes. A different chain appends the next version.
  * @returns {{ version: number, seq: number, hash: string, fingerprint: string, head_hash: string, body: string }}
  */
+function sealedEntriesOf(record) {
+  if (!record?.body) return [];
+  try {
+    const entries = JSON.parse(record.body).entries;
+    return Array.isArray(entries) ? entries : [];
+  } catch {
+    return [];
+  }
+}
+
 export function currentIssuerHistory() {
   const preview = buildIssuerHistory();
   const fingerprint = sealFingerprint(preview);
   const latest = historyStore.versions[historyStore.versions.length - 1] || null;
   if (latest && latest.fingerprint === fingerprint) return latest;
+  if (latest && !entriesExtend(sealedEntriesOf(latest), preview.entries)) {
+    throw issuerHistoryRewriteError();
+  }
   const version = (latest?.version || 0) + 1;
   const seq = version;
   const doc = buildIssuerHistory({ version, seq });
+  if (latest && !entriesExtend(sealedEntriesOf(latest), doc.entries)) {
+    throw issuerHistoryRewriteError();
+  }
   const body = jcsCanonicalize(doc);
   const record = {
     version,
@@ -448,14 +534,70 @@ export function currentIssuerHistory() {
 }
 
 /**
+ * Append entries after the sealed prefix and store the next snapshot.
+ * A chain that does not extend, a new key that reuses an older not_before,
+ * or a document signed by the key it introduces is refused.
+ * @param {object[]} rawEntries
+ */
+export function sealExtendingIssuerHistory(rawEntries) {
+  if (!Array.isArray(rawEntries) || rawEntries.length === 0) {
+    const err = new Error('issuer history extension needs a new entry');
+    err.code = 'issuer_history_extension';
+    throw err;
+  }
+  const latest = currentIssuerHistory();
+  const prefix = sealedEntriesOf(latest);
+  let prev = prefix.length ? prefix[prefix.length - 1].entry_hash : null;
+  const added = [];
+  for (const raw of rawEntries) {
+    const body = issuerHistoryEntryBody({ ...raw, prev_hash: prev });
+    const entry_hash = issuerHistoryEntryHash(body);
+    added.push({ ...body, entry_hash });
+    prev = entry_hash;
+  }
+  const chained = [...prefix, ...added];
+  if (!entriesExtend(prefix, chained) || chained.length === prefix.length) {
+    throw issuerHistoryRewriteError();
+  }
+  const version = latest.version + 1;
+  const doc = buildIssuerHistory({ version, seq: version, sealedEntries: chained });
+  const verified = verifyIssuerHistory(doc);
+  if (!verified.valid) {
+    const err = new Error(`issuer history extension refused: ${verified.reason}`);
+    err.code = verified.reason || 'issuer_history_invalid';
+    throw err;
+  }
+  const body = jcsCanonicalize(doc);
+  const record = {
+    version,
+    seq: version,
+    hash: historySha256(body),
+    entries_snapshot_hash: historyEntriesSnapshotHash(doc.entries),
+    fingerprint: sealFingerprint(doc),
+    head_hash: doc.head_hash,
+    body,
+  };
+  historyStore.versions.push(record);
+  persistHistoryRecord(record);
+  return record;
+}
+
+/**
  * Pin written into a new receipt or refusal JWS.
  * @returns {{ hash: string, version: number, seq: number }}
  */
-export function currentHistoryPin() {
+export function currentHistoryPin(payloadVersion = null) {
   const record = currentIssuerHistory();
-  // Flag-off receipts pin the well-known document hash (chit402-jcs-v1).
-  // v11 and refusal v2 pin the entries snapshot hash, the same value
-  // snapshot_hash commits to.
+  // v12 pins the entry-chain head. A later snapshot verifies when its
+  // entries extend that head. v10 still pins the whole-document hash.
+  // v11 and refusal v2 pin the entries snapshot hash.
+  if (Number(payloadVersion) >= HISTORY_HEAD_PAYLOAD_VERSION) {
+    const doc = JSON.parse(record.body);
+    return {
+      head_hash: doc.head_hash,
+      entry_count: Array.isArray(doc.entries) ? doc.entries.length : 0,
+    };
+  }
   const hash = issuerRootActive() ? record.entries_snapshot_hash : record.hash;
   return { hash, version: record.version, seq: record.seq };
 }
@@ -613,7 +755,13 @@ export function issuerHistoryRecord({ version = null, hash = null } = {}) {
   const wantsVersion = version != null && version !== '';
   const wantsHash = hash != null && hash !== '';
   if (!wantsVersion && !wantsHash) return currentIssuerHistory();
-  currentIssuerHistory();
+  // A live chain that would rewrite a sealed entry must not hide the bytes
+  // already stored. Old versions stay fetchable.
+  try {
+    currentIssuerHistory();
+  } catch (err) {
+    if (err?.code !== 'issuer_history_rewrite') throw err;
+  }
   if (wantsVersion) {
     const n = Number(version);
     if (!Number.isInteger(n) || n < 1) return null;
@@ -629,6 +777,15 @@ export function issuerHistoryRecord({ version = null, hash = null } = {}) {
  * @param {{ version?: unknown, hash?: unknown }} [query]
  */
 export function writeIssuerHistory(res, query = {}) {
+  const keys = query && typeof query === 'object' ? Object.keys(query) : [];
+  for (const key of keys) {
+    if (!ISSUER_HISTORY_QUERY_KEYS.has(key)) {
+      return res.status(400).json({
+        error: 'bad_query',
+        message: 'issuer-history accepts only version and hash. seq and other parameters are rejected.',
+      });
+    }
+  }
   const record = issuerHistoryRecord(query);
   if (!record) {
     return res.status(404).json({

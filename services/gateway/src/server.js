@@ -511,7 +511,9 @@ inside the JWS. tree_head_hash is the log prefix that ends at this receipt, so
 that root proves inclusion. A later head verifies when its inclusion proof
 covers the leaf. v8 receipts omit the pair and still verify. Payload version 10
 also signs issuer_history (hash, version, seq of the history snapshot) and
-payload_hash (SHA-256 of the stored JCS canonical object). Verifiers read the pair
+payload_hash (SHA-256 of the stored JCS canonical object). Payload version 12,
+when a verifier accepts it, pins issuer_history as head_hash and entry_count.
+This gateway still issues payload version 10. Verifiers read the pair
 from the verified claims. An unsigned outer copy that disagrees fails.
 Lanes without a payment JWS (foreign ingest, Nano, board stamp, ingest stamp)
 sign book_id and payment_ref together on book_chain payload version 4. The
@@ -4065,7 +4067,8 @@ export function createApp() {
   });
 
   // Append-only issuer key history. Signed by the current issuer key.
-  // ?version=N and ?hash= serve a sealed snapshot. The body is stored bytes.
+  // ?version=N and ?hash= serve a sealed snapshot forever. ?seq= and any
+  // other query parameter are 400. The body is stored bytes.
   app.get('/.well-known/issuer-history.json', (req, res) => {
     try {
       return writeIssuerHistory(res, req.query);

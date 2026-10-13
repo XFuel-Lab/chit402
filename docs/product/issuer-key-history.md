@@ -8,7 +8,9 @@ The document is schema `chit402.issuer_history.v1`. The current issuer key signs
 
 A published document is sealed once. The response body is those stored JCS bytes. SHA-256 of the body is the snapshot hash. `X-Chit-Hash-Alg` is `sha256`. `X-Chit-History-Version` and `X-Chit-History-Seq` are the snapshot number (they match).
 
-`GET /.well-known/issuer-history.json` is the snapshot in effect now. `GET /.well-known/issuer-history.json?version=N` and `?hash=<sha256>` return an older snapshot. Old bytes are not rewritten when a key is appended or `not_after` is set. Sealed snapshots are appended to `issuer-history-versions.jsonl` next to the book ledger when the gateway persists tasks. A restart serves those bytes again. A new receipt pins `{ hash, version, seq }` inside the JWS (`issuer_history`). `xfuel-verify` fetches that version, checks the hash, and reads `not_after` from the pinned entry. A later snapshot's `not_after` does not replace the one the receipt pinned.
+Sealed entries are append-only. A later snapshot may add entries. It must not change a sealed `entry_hash`. A rebuild that would rewrite the sealed prefix is refused (`issuer_history_rewrite`) and is not published. Every sealed snapshot stays at `?version=N` and `?hash=<sha256>`, including version 1. `?seq=` and any other query parameter are `400` `bad_query`.
+
+`GET /.well-known/issuer-history.json` is the snapshot in effect now. `GET /.well-known/issuer-history.json?version=N` and `?hash=<sha256>` return an older snapshot. Old bytes are not rewritten when a key is appended. Sealed snapshots are appended to `issuer-history-versions.jsonl` next to the book ledger when the gateway persists tasks. A restart serves those bytes again. A payload version 10 receipt pins `{ hash, version, seq }` inside the JWS (`issuer_history`). `hash` is SHA-256 of that snapshot's stored bytes. `xfuel-verify` fetches that version and requires the same bytes. A payload version 12 receipt pins `{ head_hash, entry_count }`. A later snapshot verifies when `entries[entry_count - 1].entry_hash` is that `head_hash`. The gateway still issues payload version 10.
 
 ## Entry
 
@@ -38,7 +40,9 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 `xfuel-verify` reads the receipt's `kid` and `iat`. It fails if `iat` is outside `not_before` / `not_after`, or if `status` is `revoked` and `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies.
 
-If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. `--no-issuer-history` skips the window.
+If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. That file is the offline check. `--no-issuer-history` skips the kid window and prints `VERIFIED_NO_KEY_WINDOW`, never `VERIFIED`. Exit code is 0 unless `--strict`, which exits 1. Skipping the window is not offline verification.
+
+A new key whose `not_before` is at or before an earlier key's `not_before` is `inherited_key_window`. A history signed only by a key that first appears after the genesis entry is `introduced_key_signature`. A one-entry history signed by that key is the genesis case and verifies. Production refuses to boot when `ISSUER_PRIVATE_KEY` is missing or empty. `ALLOW_EPHEMERAL_ISSUER_KEY`, `ISSUER_ROOT_ENABLED`, and `ISSUER_ROOT_ALLOW_SKIP` do not override that. Unset `NODE_ENV` is production.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json

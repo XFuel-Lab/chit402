@@ -45,12 +45,14 @@ export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {
 
 /**
  * Production never mints a temporary key. An empty env value counts as missing.
- * ISSUER_ROOT_ENABLED and the skip acknowledgement do not override this.
- * ALLOW_EPHEMERAL_ISSUER_KEY=true is the local opt-in.
+ * Unset NODE_ENV is production. ISSUER_ROOT_ENABLED, ISSUER_ROOT_ALLOW_SKIP,
+ * and ALLOW_EPHEMERAL_ISSUER_KEY do not override this. The ephemeral opt-in
+ * applies only when NODE_ENV is test or development, which already mint a
+ * key when ISSUER_PRIVATE_KEY is unset.
  */
 function assertProductionIssuerKeyPresent(envKey) {
-  if (String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true') return;
-  if (isProductionIssuerEnv() && !envKey) {
+  if (!isProductionIssuerEnv()) return;
+  if (!envKey) {
     const err = new Error('production refuses to boot when ISSUER_PRIVATE_KEY is missing or empty');
     err.code = 'issuer_key_missing';
     throw err;
@@ -68,8 +70,8 @@ function assertIssuerKeyType(privateKey) {
 
 function assertIssuerKid(kid) {
   const explicit = String(process.env.ISSUER_KID || '').trim();
-  const ephemeral = String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true';
-  const configured = explicit || (isProductionIssuerEnv() && !ephemeral ? PRODUCTION_ISSUER_KID : '');
+  // Production always asserts a kid. The ephemeral flag does not skip it.
+  const configured = explicit || (isProductionIssuerEnv() ? PRODUCTION_ISSUER_KID : '');
   if (configured && kid !== configured) {
     const err = new Error('issuer kid does not match the configured kid');
     err.code = 'issuer_kid_mismatch';

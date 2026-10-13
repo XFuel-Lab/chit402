@@ -33,14 +33,16 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 ```bash
 # Local binding verification.
 # Issuer history is fetched unless you pass --issuer-history-file or --no-issuer-history.
-# A payload v10 receipt fails offline (exit 1) when that fetch cannot run.
+# A payload v10 receipt fails (exit 1) when that fetch cannot run.
+# A receipt does not verify offline without the pinned history snapshot.
 npx xfuel-verify receipt.json
 
-# Explicit offline. --no-issuer-history skips the kid window.
+# Skips the kid window. Overall is VERIFIED_NO_KEY_WINDOW, never VERIFIED.
+# This is not offline verification. Pass --strict to exit 1.
 npx xfuel-verify receipt.json --no-issuer-history
 
 # Hash the canonical object (must match signed payload_hash) and read not_after
-# from a pinned issuer-history snapshot. Both flags are offline.
+# from a pinned issuer-history snapshot. The snapshot file is the offline check.
 npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
 
 # A signed refusal (schema chit402.refusal.v1) is not a payment.
@@ -73,7 +75,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
 | Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
+| Issuer history | Yes, unless `--issuer-history-file` supplies the snapshot. `--no-issuer-history` skips the window and is not a pass | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. A payload v12 pin is the chain head and accepts a later snapshot that extends it. Skipping the window prints `VERIFIED_NO_KEY_WINDOW` |
 
 ## Issuer Signature Verification (ES256)
 
@@ -96,7 +98,7 @@ arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`)
 including when `--jwks-file` points at the real JWKS.
 
 ```bash
-# Explicit offline. The default command fetches issuer history.
+# Skips the kid window. Overall is VERIFIED_NO_KEY_WINDOW. Not offline verification.
 npx xfuel-verify receipt.json --no-issuer-history
 
 # Recompute a published canonical preimage and check the kid window.

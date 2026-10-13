@@ -1080,6 +1080,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
   });
   const requestBinding = clientRequestBinding(view);
   const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
+  const payloadVersion = activeReceiptPayloadVersion();
   return {
     task_id: view.task_id,
     iss: 'chit402',
@@ -1131,7 +1132,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
-    issuer_history: currentHistoryPin(),
+    issuer_history: currentHistoryPin(payloadVersion),
     ...(issuerRootActive() ? {
       canonicalization: V11_CANONICALIZATION,
       issuer_history_snapshot: issuerHistorySnapshotClaim(),
@@ -1140,7 +1141,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
       ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
       ...(requestBinding ? { request_digest: requestBinding.request_digest } : {}),
     } : {}),
-    payload_version: activeReceiptPayloadVersion(),
+    payload_version: payloadVersion,
     ...(openRouterSignedClaim(view) ? { openrouter: openRouterSignedClaim(view) } : {}),
   };
 }

@@ -126,7 +126,10 @@ Options:
                       Read issuer history JSON instead of fetching it
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
-  --no-issuer-history Do not check the kid's not_before / not_after window
+  --no-issuer-history Do not check the kid's not_before / not_after window.
+                      Overall is VERIFIED_NO_KEY_WINDOW, never VERIFIED.
+                      This is not offline verification. A pinned snapshot is.
+  --strict            With --no-issuer-history, exit 1 on VERIFIED_NO_KEY_WINDOW
   --no-preimage       Do not require published hash preimages
 
 Exit codes:
@@ -151,8 +154,10 @@ Network behavior:
   JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
   Issuer history is fetched by default when the receipt names a history URL
   and neither --issuer-history-file nor --no-issuer-history is set. A payload
-  v10 receipt fails (exit 1) when that fetch cannot run. Offline mode is
-  --issuer-history-file <snapshot>, or --no-issuer-history to skip the window.
+  v10 receipt fails (exit 1) when that fetch cannot run. Offline verification
+  uses --issuer-history-file <snapshot> (the pinned history). --no-issuer-history
+  skips the kid window and prints VERIFIED_NO_KEY_WINDOW. It is not offline
+  verification.
   Other network uses:
   - --fetch-jwks or --jwks-url
   - --check-nullifier (Base RPC)
@@ -214,7 +219,9 @@ Supported receipt versions:
   ${formatSupportedReceiptVersions().split('\n').join('\n  ')}
 
 Examples:
-  # Skip the issuer-history fetch. A v10 receipt otherwise needs that network call.
+  # Skip the kid window. Overall is VERIFIED_NO_KEY_WINDOW, not VERIFIED.
+  # That is not offline verification. Save the pinned snapshot and pass
+  # --issuer-history-file. --strict makes the skipped window exit 1.
   xfuel-verify my-receipt.json --no-issuer-history
 
   # Verify issuer signature with JWKS file
@@ -263,6 +270,7 @@ function parseArgs(args: string[]): {
   issuerHistoryFile: string | null;
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
+  strict: boolean;
   noPreimage: boolean;
   issuerPinFile: string | null;
   issuerPinCommit: string | null;
@@ -310,6 +318,7 @@ function parseArgs(args: string[]): {
     issuerHistoryFile: null as string | null,
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
+    strict: false,
     noPreimage: false,
     issuerPinFile: null as string | null,
     issuerPinCommit: null as string | null,
@@ -385,6 +394,8 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--strict') {
+      result.strict = true;
     } else if (arg === '--anchor-wallets-file' && args[i + 1]) {
       result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
@@ -878,6 +889,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
+    labelSkippedKeyWindow: args.noIssuerHistory,
     canonicalPreimage,
     head,
   });
@@ -890,7 +902,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const signaturePresent = Boolean(issuerSig?.jws || issuerSig?.value);
   const receiptVerified = signaturePresent
     && verified.issuer_signature.valid === true
-    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward')
+    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward' || verified.overall === 'verified_no_key_window')
     && verified.claim_mismatches.length === 0;
   const receiptFailed = !receiptVerified;
   const receiptErrors = [...verified.errors];
@@ -902,10 +914,15 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const errors = receiptFailed
     ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
+  const anchorOverall = receiptFailed
+    ? 'failed' as const
+    : (args.noIssuerHistory && result.overall === 'verified')
+      ? 'verified_no_key_window' as const
+      : result.overall;
   const combined = {
     ...result,
     errors,
-    overall: receiptFailed ? 'failed' as const : result.overall,
+    overall: anchorOverall,
     receipt_lane: verified.receipt_lane,
     receipt_check: {
       overall: result.overall === 'pending' && !receiptFailed ? 'pending' as const : verified.overall,
@@ -936,6 +953,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     if (!args.quiet) printLane(verified.receipt_lane);
   }
   if (combined.overall === 'verified') return 0;
+  if (combined.overall === 'verified_no_key_window') return args.strict ? 1 : 0;
   if (combined.overall === 'partial' || combined.overall === 'pending') return 2;
   return 1;
 }
@@ -961,6 +979,7 @@ async function runRefusal(
     fetchIssuerHistory: boolean;
     strictIssuerHistory: boolean;
     skipIssuerHistory: boolean;
+    strict: boolean;
     canonicalPreimage: string | null;
   },
 ): Promise<number> {
@@ -1032,13 +1051,19 @@ async function runRefusal(
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);
     console.log('');
-    console.log(`  Overall: ${failed ? 'FAILED' : 'VERIFIED'}`);
+    const refusalOverall = !failed && args.skipIssuerHistory ? 'VERIFIED_NO_KEY_WINDOW' : (failed ? 'FAILED' : 'VERIFIED');
+    console.log(`  Overall: ${refusalOverall}`);
     if (!preimages.ok) console.log(`  Preimages:     ${preimages.errors.join('; ')}`);
     if (history.warning) console.log(`  Issuer history: ${history.warning}`);
     if (historyFailed && history.reason) console.log(`  Issuer history: ${history.reason}`);
     console.log('');
   }
+  if (!failed && args.skipIssuerHistory) return argsStrict(args) ? 1 : 0;
   return failed ? 1 : 0;
+}
+
+function argsStrict(args: { strictIssuerHistory?: boolean; strict?: boolean }): boolean {
+  return args.strict === true;
 }
 
 async function main(): Promise<number> {
@@ -1165,6 +1190,7 @@ async function main(): Promise<number> {
       solanaRpcUrl: args.solanaRpcUrl || undefined,
       requirePreimages: false,
       skipIssuerHistory: args.noIssuerHistory || !args.issuerHistoryFile,
+      labelSkippedKeyWindow: args.noIssuerHistory,
       issuerHistory: null,
       fetchIssuerHistory: false,
       salt: args.salt,
@@ -1199,7 +1225,10 @@ async function main(): Promise<number> {
       shellLeaf: shellLeaf == null ? null : String(shellLeaf),
       provedLeaf,
     });
-    if (!verdict.verified || (result.overall !== 'verified' && result.overall !== 'verified_carried_forward')) {
+    const receiptOk = result.overall === 'verified'
+      || result.overall === 'verified_carried_forward'
+      || result.overall === 'verified_no_key_window';
+    if (!verdict.verified || !receiptOk) {
       const reason = verdict.reason || result.errors[0] || 'failed';
       console.log(reason);
       console.log('  Overall: FAILED');
@@ -1223,8 +1252,11 @@ async function main(): Promise<number> {
         return 1;
       }
     }
-    console.log('  Overall: VERIFIED');
-    return 0;
+    const overall = result.overall === 'verified_no_key_window'
+      ? 'VERIFIED_NO_KEY_WINDOW'
+      : 'VERIFIED';
+    console.log(`  Overall: ${overall}`);
+    return result.overall === 'verified_no_key_window' && args.strict ? 1 : 0;
   }
 
   if (typeof receipt.issuer_signature?.jws === 'string') {
@@ -1286,6 +1318,7 @@ async function main(): Promise<number> {
       fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
       strictIssuerHistory: args.strictIssuerHistory,
       skipIssuerHistory: args.noIssuerHistory,
+      strict: args.strict,
       canonicalPreimage,
     });
   }
@@ -1365,6 +1398,7 @@ async function main(): Promise<number> {
     fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
+    labelSkippedKeyWindow: args.noIssuerHistory,
     canonicalPreimage,
     salt: args.salt,
     open,
@@ -1487,6 +1521,8 @@ async function main(): Promise<number> {
     case 'verified':
     case 'verified_carried_forward':
       return 0;
+    case 'verified_no_key_window':
+      return args.strict ? 1 : 0;
     case 'failed':
       return 1;
     case 'partial':
