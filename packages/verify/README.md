@@ -39,6 +39,10 @@ npx xfuel-verify receipt.json
 # Explicit offline. --no-issuer-history skips the kid window.
 npx xfuel-verify receipt.json --no-issuer-history
 
+# Payload v12 prints VERIFIED_NO_KEY_WINDOW and exits 1.
+# --accept-no-key-window opts into exit 0. The label stays.
+npx xfuel-verify v12-receipt.json --no-issuer-history --accept-no-key-window
+
 # Hash the canonical object (must match signed payload_hash) and read not_after
 # from a pinned issuer-history snapshot. Both flags are offline.
 npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
@@ -73,7 +77,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
 | Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
+| Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the last entry for that kid. A payload v10 pin must match the snapshot hash. A payload v12 pin is the chain head and accepts a later snapshot that extends it. Skipping the window on v12 prints `VERIFIED_NO_KEY_WINDOW` and exits 1 unless `--accept-no-key-window`. Offline v10 fails if the fetch cannot run |
 
 ## Issuer Signature Verification (ES256)
 

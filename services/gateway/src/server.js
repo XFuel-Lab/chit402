@@ -140,6 +140,7 @@ import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
 import { getJwks, initIssuerKey } from './issuer-key.js';
+import { registerIntentRoutes } from './intent-api.js';
 import {
   assertIssuerRootStartup,
   freezeDocumentFor,
@@ -2786,6 +2787,9 @@ export function createApp() {
       return sendPublicInternal(res, err, 'GET /task-status error', 'task_status_failed', req);
     }
   });
+
+  // Intent record. v12 settle stays off unless RECEIPT_V12_MINT=true outside production.
+  registerIntentRoutes(app, { rateLimit });
 
   // GET /freeze/:universeId — signed freeze document. 404 when the flag is off.
   app.get('/freeze/:universeId', rateLimit, (req, res) => {

@@ -279,6 +279,7 @@ export function verifyIssuerHistory(doc, jwks = null) {
     }
     prev = entry.entry_hash;
   }
+  if (kidStatusRegression(doc.entries)) return { valid: false, reason: 'kid_status_regression' };
   const head = doc.entries[doc.entries.length - 1].entry_hash;
   if (doc.head_hash !== head) return { valid: false, reason: 'head_hash_mismatch' };
   const sig = doc.issuer_signature;
@@ -314,29 +315,73 @@ function parseTime(value) {
 }
 
 /**
- * The receipt's issued time must fall inside the kid's window, and the kid
- * must not have been revoked before issuance.
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, and a
+ * retired kid cannot become active again.
+ * @param {object[]} entries
+ */
+function kidStatusRegression(entries) {
+  const prior = new Map();
+  for (const entry of entries || []) {
+    const prev = prior.get(entry?.kid);
+    if (prev === 'revoked') return true;
+    if (prev === 'retired' && entry?.status === 'active') return true;
+    prior.set(entry?.kid, entry?.status);
+  }
+  return false;
+}
+
+/**
+ * The receipt's issued time must fall inside the kid's window. The earliest
+ * revoked_at and the earliest not_after across every entry for that kid
+ * stay in force. A later active row does not clear them.
  * @param {object} doc verified or unverified history
  * @param {string} kid
  * @param {number|string} issuedAt unix seconds or ISO
  */
 export function issuerKeyWindow(doc, kid, issuedAt) {
-  const entry = (doc?.entries || []).find((row) => row.kid === kid);
-  if (!entry) return { ok: false, reason: 'kid_not_in_history', kid };
+  const matches = (doc?.entries || []).filter((row) => row && row.kid === kid);
+  if (!matches.length) return { ok: false, reason: 'kid_not_in_history', kid };
+  const last = matches[matches.length - 1];
+  let notAfter = null;
+  let notAfterMs = null;
+  for (const row of matches) {
+    if (row.not_after == null || row.not_after === '') continue;
+    const parsed = parseTime(row.not_after);
+    if (parsed == null) return { ok: false, reason: 'not_after_invalid', kid };
+    if (notAfterMs == null || parsed < notAfterMs) {
+      notAfterMs = parsed;
+      notAfter = row.not_after;
+    }
+  }
+  let revoked = false;
+  let revokedAt = null;
+  let revokedMs = null;
+  for (const row of matches) {
+    const stamp = row.revoked_at;
+    const hasStamp = stamp != null && stamp !== '';
+    if (row.status === 'revoked' || hasStamp) revoked = true;
+    if (!hasStamp) continue;
+    const parsed = parseTime(stamp);
+    if (parsed == null) return { ok: false, reason: 'revoked_at_missing', kid };
+    if (revokedMs == null || parsed < revokedMs) {
+      revokedMs = parsed;
+      revokedAt = stamp;
+    }
+  }
+  if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing', kid };
   const issued = parseTime(issuedAt);
   if (issued == null) return { ok: false, reason: 'issued_at_missing', kid };
-  const notBefore = parseTime(entry.not_before);
+  const notBefore = parseTime(last.not_before);
   if (notBefore == null) return { ok: false, reason: 'not_before_missing', kid };
   if (issued < notBefore) return { ok: false, reason: 'issued_before_not_before', kid };
-  const notAfter = parseTime(entry.not_after);
-  if (entry.not_after != null && notAfter == null) return { ok: false, reason: 'not_after_invalid', kid };
-  if (notAfter != null && issued > notAfter) return { ok: false, reason: 'issued_after_not_after', kid };
-  if (entry.status === 'revoked') {
-    const revoked = parseTime(entry.revoked_at);
-    if (revoked == null) return { ok: false, reason: 'revoked_at_missing', kid };
-    if (issued >= revoked) return { ok: false, reason: 'kid_revoked_before_issuance', kid };
-  }
-  return { ok: true, kid, status: entry.status, not_after: entry.not_after ?? null };
+  if (notAfterMs != null && issued > notAfterMs) return { ok: false, reason: 'issued_after_not_after', kid };
+  if (revoked && issued >= revokedMs) return { ok: false, reason: 'kid_revoked_before_issuance', kid };
+  return {
+    ok: true,
+    kid,
+    status: revoked ? 'revoked' : last.status,
+    not_after: notAfter,
+  };
 }
 
 function historySha256(text) {
@@ -447,15 +492,25 @@ export function currentIssuerHistory() {
   return record;
 }
 
+/** Payment payload that pins head_hash + entry_count instead of the document hash. */
+export const HISTORY_HEAD_PAYLOAD_VERSION = 12;
+
 /**
  * Pin written into a new receipt or refusal JWS.
- * @returns {{ hash: string, version: number, seq: number }}
+ * v12 pins the entry-chain head. v10 pins the whole-document hash.
+ * v11 and refusal v2 pin the entries snapshot hash.
+ * @param {number|null} [payloadVersion]
+ * @returns {{ hash: string, version: number, seq: number }|{ head_hash: string, entry_count: number }}
  */
-export function currentHistoryPin() {
+export function currentHistoryPin(payloadVersion = null) {
   const record = currentIssuerHistory();
-  // Flag-off receipts pin the well-known document hash (chit402-jcs-v1).
-  // v11 and refusal v2 pin the entries snapshot hash, the same value
-  // snapshot_hash commits to.
+  if (Number(payloadVersion) >= HISTORY_HEAD_PAYLOAD_VERSION) {
+    const doc = JSON.parse(record.body);
+    return {
+      head_hash: doc.head_hash,
+      entry_count: Array.isArray(doc.entries) ? doc.entries.length : 0,
+    };
+  }
   const hash = issuerRootActive() ? record.entries_snapshot_hash : record.hash;
   return { hash, version: record.version, seq: record.seq };
 }

@@ -33,11 +33,21 @@ export interface IssuerHistoryEntry {
   entry_hash?: string;
 }
 
-export interface IssuerHistoryPin {
+export interface IssuerHistoryDocumentPin {
+  kind: 'document';
   hash: string;
   version: number;
   seq: number;
 }
+
+export interface IssuerHistoryHeadPin {
+  kind: 'head';
+  head_hash: string;
+  entry_count: number;
+}
+
+/** v10 pins the whole document. v12 pins the entry-chain head. */
+export type IssuerHistoryPin = IssuerHistoryDocumentPin | IssuerHistoryHeadPin;
 
 export interface IssuerHistoryDocument {
   schema?: string;
@@ -119,6 +129,7 @@ export function verifyIssuerHistoryDocument(
     if (!['active', 'retired', 'revoked'].includes(entry.status)) return { valid: false, reason: 'bad_status' };
     prev = entry.entry_hash || null;
   }
+  if (kidStatusRegression(doc.entries)) return { valid: false, reason: 'kid_status_regression' };
   const head = doc.entries[doc.entries.length - 1].entry_hash;
   if (doc.head_hash !== head) return { valid: false, reason: 'head_hash_mismatch' };
   const jws = doc.issuer_signature?.jws;
@@ -157,6 +168,21 @@ export function verifyIssuerHistoryDocument(
   return { valid: false, reason: 'signature_invalid' };
 }
 
+/**
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, and a
+ * retired kid cannot become active again.
+ */
+function kidStatusRegression(entries: IssuerHistoryEntry[]): boolean {
+  const prior = new Map<string, string>();
+  for (const entry of entries) {
+    const prev = prior.get(entry.kid);
+    if (prev === 'revoked') return true;
+    if (prev === 'retired' && entry.status === 'active') return true;
+    prior.set(entry.kid, entry.status);
+  }
+  return false;
+}
+
 export function issuerEntryWindow(
   entry: {
     not_before?: string | null;
@@ -188,33 +214,97 @@ export function issuerKeyWindow(
   kid: string,
   issuedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  const entry = (doc.entries || []).find((row) => row.kid === kid);
-  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
-  return issuerEntryWindow(entry, issuedAt);
+  // The end of the window is sticky. The earliest revoked_at and the earliest
+  // not_after across every entry for this kid still apply after a later row.
+  const matches = (doc.entries || []).filter((row) => row.kid === kid);
+  if (!matches.length) return { ok: false, reason: 'kid_not_in_history' };
+  const last = matches[matches.length - 1];
+  let notAfter: string | null = null;
+  let notAfterMs: number | null = null;
+  for (const row of matches) {
+    if (row.not_after == null || row.not_after === '') continue;
+    const parsed = parseTime(row.not_after);
+    if (parsed == null) return { ok: false, reason: 'not_after_invalid' };
+    if (notAfterMs == null || parsed < notAfterMs) {
+      notAfterMs = parsed;
+      notAfter = row.not_after;
+    }
+  }
+  let revoked = false;
+  let revokedAt: string | null = null;
+  let revokedMs: number | null = null;
+  for (const row of matches) {
+    const stamp = row.revoked_at;
+    const hasStamp = stamp != null && stamp !== '';
+    if (row.status === 'revoked' || hasStamp) revoked = true;
+    if (!hasStamp) continue;
+    const parsed = parseTime(stamp);
+    if (parsed == null) return { ok: false, reason: 'revoked_at_missing' };
+    if (revokedMs == null || parsed < revokedMs) {
+      revokedMs = parsed;
+      revokedAt = stamp;
+    }
+  }
+  if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing' };
+  return issuerEntryWindow({
+    not_before: last.not_before,
+    not_after: notAfter,
+    status: revoked ? 'revoked' : last.status,
+    revoked_at: revoked ? revokedAt : null,
+  }, issuedAt);
 }
 
 export function issuerHistoryDocumentHash(doc: unknown): string {
   return sha256Hex(jcsCanonicalize(doc));
 }
 
-/** Pin from verified JWS claims. An unsigned outer copy is not a pin. */
-export function readIssuerHistoryPin(claims: Record<string, unknown> | null | undefined): IssuerHistoryPin | null {
-  const pin = claims?.issuer_history;
-  if (!pin || typeof pin !== 'object') return null;
-  const row = pin as { hash?: unknown; version?: unknown; seq?: unknown };
+function readDocumentPin(row: Record<string, unknown>): IssuerHistoryDocumentPin | null {
   if (typeof row.hash !== 'string' || !/^[0-9a-f]{64}$/.test(row.hash)) return null;
   const version = Number(row.version);
   const seq = Number(row.seq);
   if (!Number.isInteger(version) || version < 1) return null;
   if (!Number.isInteger(seq) || seq < 1) return null;
-  return { hash: row.hash, version, seq };
+  return { kind: 'document', hash: row.hash, version, seq };
+}
+
+function readHeadPin(row: Record<string, unknown>): IssuerHistoryHeadPin | null {
+  if (typeof row.head_hash !== 'string' || !/^[0-9a-f]{64}$/.test(row.head_hash)) return null;
+  const entryCount = Number(row.entry_count);
+  if (!Number.isInteger(entryCount) || entryCount < 1) return null;
+  return { kind: 'head', head_hash: row.head_hash, entry_count: entryCount };
+}
+
+/** Both shapes at once is not a pin. The caller fails closed. */
+export function issuerHistoryPinConflict(claims: Record<string, unknown> | null | undefined): boolean {
+  const pin = claims?.issuer_history;
+  if (!pin || typeof pin !== 'object' || Array.isArray(pin)) return false;
+  const row = pin as Record<string, unknown>;
+  return readDocumentPin(row) != null && readHeadPin(row) != null;
+}
+
+/** Pin from verified JWS claims. An unsigned outer copy is not a pin. */
+export function readIssuerHistoryPin(claims: Record<string, unknown> | null | undefined): IssuerHistoryPin | null {
+  const pin = claims?.issuer_history;
+  if (!pin || typeof pin !== 'object' || Array.isArray(pin)) return null;
+  const row = pin as Record<string, unknown>;
+  const document = readDocumentPin(row);
+  const head = readHeadPin(row);
+  if (document && head) return null;
+  return head || document;
 }
 
 function historyUrlWithPin(url: string, pin: IssuerHistoryPin | null): string {
-  if (!pin) return url;
+  if (!pin || pin.kind !== 'document') return url;
   const parsed = new URL(url);
   parsed.searchParams.set('version', String(pin.version));
   return parsed.toString();
+}
+
+/** The pinned head is entry_hash of entries[entry_count - 1]. A longer chain still matches. */
+export function historyExtendsPinnedHead(doc: IssuerHistoryDocument, pin: IssuerHistoryHeadPin): boolean {
+  const entries = doc.entries || [];
+  if (entries.length < pin.entry_count) return false;
+  return entries[pin.entry_count - 1]?.entry_hash === pin.head_hash;
 }
 
 function historyPinMatches(
@@ -222,6 +312,7 @@ function historyPinMatches(
   raw: string | null,
   pin: IssuerHistoryPin,
 ): boolean {
+  if (pin.kind === 'head') return historyExtendsPinnedHead(doc, pin);
   if (raw != null && sha256Hex(raw) !== pin.hash) return false;
   if (issuerHistoryDocumentHash(doc) !== pin.hash) return false;
   if (Number(doc.version) !== pin.version) return false;
@@ -261,7 +352,8 @@ async function loadIssuerHistoryBody({
 }> {
   let doc = document;
   let raw = documentBytes;
-  if (doc || !(fetchHistory || historyUrl || strict || (pin && pin.hash))) {
+  const pinned = pin?.kind === 'document' ? pin.hash : pin?.kind === 'head' ? pin.head_hash : '';
+  if (doc || !(fetchHistory || historyUrl || strict || pinned)) {
     return { doc: doc ?? null, raw, unreachable: false, warning: null };
   }
   const baseUrl = historyUrl || historyUrlFromReceipt(receipt);
@@ -324,6 +416,8 @@ export async function checkReceiptIssuerHistory(
     kid = null,
     pin = null,
     requirePin = false,
+    pinShape = null,
+    pinConflict = false,
     documentBytes = null,
   }: {
     document?: IssuerHistoryDocument | null;
@@ -340,10 +434,22 @@ export async function checkReceiptIssuerHistory(
     pin?: IssuerHistoryPin | null;
     /** Payload versions that sign a pin fail when the pin is absent. */
     requirePin?: boolean;
+    /**
+     * v10 requires the whole-document pin. v12 requires the chain-head pin.
+     * A present pin of the other shape fails closed.
+     */
+    pinShape?: 'document' | 'head' | null;
+    /** Both document hash and chain head were signed. Not a pin. */
+    pinConflict?: boolean;
     /** Exact response or file bytes. SHA-256 of these must equal the pin. */
     documentBytes?: string | null;
   } = {},
 ): Promise<IssuerHistoryCheck> {
+  // Direct callers pass the signed claim `{ hash, version, seq }`. The
+  // receipt path tags `kind`. Both are a pin.
+  if (pin && pin.kind !== 'document' && pin.kind !== 'head') {
+    pin = readIssuerHistoryPin({ issuer_history: pin as unknown as Record<string, unknown> });
+  }
   const base: IssuerHistoryCheck = {
     checked: false,
     ok: true,
@@ -354,8 +460,27 @@ export async function checkReceiptIssuerHistory(
     document: null,
     loaded: false,
   };
-  const pinned = !!(pin && pin.hash);
-  const failClosed = strict || pinned || requirePin;
+  const pinned = pin?.kind === 'document' || pin?.kind === 'head';
+  const failClosed = strict || pinned || requirePin || pinShape != null;
+  if (pinConflict && (pinShape != null || requirePin)) {
+    return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_shape' };
+  }
+  if (pinShape === 'head' && pin?.kind !== 'head') {
+    return {
+      ...base,
+      checked: true,
+      ok: false,
+      reason: pin?.kind === 'document' ? 'issuer_history_pin_shape' : 'issuer_history_pin_missing',
+    };
+  }
+  if (pinShape === 'document' && requirePin && pin?.kind !== 'document') {
+    return {
+      ...base,
+      checked: true,
+      ok: false,
+      reason: pin?.kind === 'head' ? 'issuer_history_pin_shape' : 'issuer_history_pin_missing',
+    };
+  }
   if (requirePin && !pinned) {
     return { ...base, checked: true, ok: false, reason: 'issuer_history_pin_missing' };
   }
@@ -425,6 +550,7 @@ function rawPinReason(
   raw: string | null,
   pin: IssuerHistoryPin,
 ): string {
+  if (pin.kind === 'head') return 'issuer_history_not_extension';
   if (raw != null && sha256Hex(raw) !== pin.hash) return 'issuer_history_pin_mismatch';
   if (issuerHistoryDocumentHash(doc) !== pin.hash) return 'issuer_history_pin_mismatch';
   if (Number(doc.version) !== pin.version) return 'issuer_history_version_mismatch';

@@ -11,7 +11,7 @@ on:
     # cursor/verify-head-issuer-bind-ce2e was the #492 stack. The filter matches
     # those bases so Verify package (Windows) runs.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e]
+    branches: [main, develop, v12-integration, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e]
 
 jobs:
   public-identifiers:
