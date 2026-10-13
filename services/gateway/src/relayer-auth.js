@@ -28,7 +28,14 @@ export class RelayerNonceStore {
     this.file = file || null;
     /** @type {Map<string, number>} nonce → expiry epoch ms */
     this.used = new Map();
-    if (this.file) this._load();
+    if (this.file) {
+      try {
+        fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      } catch (err) {
+        throw persistFailed(err, 'relayer nonce store unwritable');
+      }
+      this._load();
+    }
   }
 
   _load() {
@@ -40,7 +47,12 @@ export class RelayerNonceStore {
       throw persistFailed(err, 'relayer nonce store unreadable');
     }
     if (!text.trim()) return;
-    const parsed = JSON.parse(text);
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      throw persistFailed(err, 'relayer nonce store unreadable');
+    }
     for (const [nonce, exp] of Object.entries(parsed.used || {})) {
       if (typeof nonce === 'string' && Number.isFinite(exp)) this.used.set(nonce, exp);
     }

@@ -10,8 +10,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Wallet } from 'ethers';
 import { PersistentTaskStore } from '../src/task-store.js';
-import { UsageSettledLedger } from '../src/usage-settled.js';
+import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from '../src/usage-settled.js';
 import {
+  RelayerNonceStore,
   relayerSignedMessage,
   resetRelayerNonceStore,
   verifyRelayerAuth,
@@ -112,6 +113,46 @@ test('N8 a relayer signature verifies once and only for its audience', async () 
     nonce: 'nonce-4',
   }), false);
   assert.equal(verifyRelayerAuth({ ...args, nonce: '', signature }), false);
+});
+
+test('Doctor 537-M1: the log leaf is appended before the covering head is stamped', () => {
+  const order = [];
+  setBookRowWrittenHook(() => order.push('leaf'));
+  setReceiptBoundHook(() => order.push('stamp'));
+  try {
+    const ledger = new UsageSettledLedger({ persist: false });
+    const r = ledger.append({
+      task_id: 'doctor-537-m1',
+      payment: { rail: 'usdc', ref: `base:0x${'ef'.repeat(32)}`, collected: true, gross_amount: '5000' },
+    }, { agentId: 1 });
+    assert.equal(r.ok, true);
+    assert.deepEqual(order, ['leaf', 'stamp']);
+  } finally {
+    setBookRowWrittenHook(null);
+    setReceiptBoundHook(null);
+  }
+});
+
+test('a used relayer nonce stays used after the store is reopened from disk', async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'relayer-nonces.json');
+  const wallet = Wallet.createRandom();
+  const addresses = new Set([wallet.address.toLowerCase()]);
+  const fields = {
+    audience: 'https://api.chit402.com',
+    method: 'POST',
+    path: '/task-request',
+    bodySha: 'ab'.repeat(32),
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    nonce: 'nonce-restart',
+  };
+  const signature = await wallet.signMessage(relayerSignedMessage(fields));
+  const args = { ...fields, signature, addresses };
+  const first = new RelayerNonceStore({ file });
+  assert.equal(verifyRelayerAuth({ ...args, store: first }), true);
+  const reopened = new RelayerNonceStore({ file });
+  assert.equal(verifyRelayerAuth({ ...args, store: reopened }), false);
+  assert.equal(fs.existsSync(file), true);
 });
 
 test('F7 TFUEL is not a buyer rail on Base or Solana mainnet', () => {

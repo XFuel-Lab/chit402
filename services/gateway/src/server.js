@@ -84,7 +84,7 @@ import {
   assertAnchorFeeCaps,
 } from './receipt-merkle.js';
 import { publicEpochRecord } from './receipt-log-epoch.js';
-import { relayerAudience, verifyRelayerAuth } from './relayer-auth.js';
+import { RelayerNonceStore, relayerAudience, resetRelayerNonceStore, verifyRelayerAuth } from './relayer-auth.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
@@ -988,6 +988,13 @@ export function createApp() {
 
   const agentsDir = process.env.AGENTS_DIR
     || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'agents') : null);
+  // Used relayer nonces have to outlive a restart inside the 300s window.
+  // The file sits on the data dir, beside the task-store parent.
+  if (config.taskStore?.persist && config.taskStore?.dir) {
+    resetRelayerNonceStore(new RelayerNonceStore({
+      file: path.join(config.taskStore.dir, '..', 'relayer-nonces.json'),
+    }));
+  }
   const agentRegistry = new AgentRegistry({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,

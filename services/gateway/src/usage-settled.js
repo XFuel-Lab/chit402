@@ -879,17 +879,19 @@ export class UsageSettledLedger {
         ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
-    // Index first so the covering prefix can be signed into the snapshot.
-    // A failed write removes the row. The request does not succeed in memory.
-    this._index(entry, { persist: false, notify: false });
+    // Index and append the log leaf first so the covering prefix that is
+    // signed into the snapshot includes this receipt. A failed write removes
+    // the ledger row and the request fails. The log is append-only, so the
+    // leaf stays; it is logged as an orphan for ops.
+    this._index(entry, { persist: false, notify: true });
     try {
       emitReceiptBound(receipt, entry);
       this._persistRow(entry);
     } catch (err) {
       this._forget(entry);
+      logger.error({ taskId: entry.task_id, reason: 'persist_failed_after_leaf' }, 'usage-settled: row not durable; log leaf is orphaned');
       throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: append failed');
     }
-    emitBookRowWritten(entry);
     return { ok: true, entry };
   }
 
