@@ -129,6 +129,7 @@ export function verifyIssuerHistoryDocument(
     if (!['active', 'retired', 'revoked'].includes(entry.status)) return { valid: false, reason: 'bad_status' };
     prev = entry.entry_hash || null;
   }
+  if (kidStatusRegression(doc.entries)) return { valid: false, reason: 'kid_status_regression' };
   const head = doc.entries[doc.entries.length - 1].entry_hash;
   if (doc.head_hash !== head) return { valid: false, reason: 'head_hash_mismatch' };
   const jws = doc.issuer_signature?.jws;
@@ -167,6 +168,21 @@ export function verifyIssuerHistoryDocument(
   return { valid: false, reason: 'signature_invalid' };
 }
 
+/**
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, and a
+ * retired kid cannot become active again.
+ */
+function kidStatusRegression(entries: IssuerHistoryEntry[]): boolean {
+  const prior = new Map<string, string>();
+  for (const entry of entries) {
+    const prev = prior.get(entry.kid);
+    if (prev === 'revoked') return true;
+    if (prev === 'retired' && entry.status === 'active') return true;
+    prior.set(entry.kid, entry.status);
+  }
+  return false;
+}
+
 export function issuerEntryWindow(
   entry: {
     not_before?: string | null;
@@ -198,11 +214,44 @@ export function issuerKeyWindow(
   kid: string,
   issuedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  // The last entry for this kid is the window. An appended retire or revoke
-  // replaces the earlier row. The first row would keep a revoked key active.
-  const entry = [...(doc.entries || [])].reverse().find((row) => row.kid === kid);
-  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
-  return issuerEntryWindow(entry, issuedAt);
+  // The end of the window is sticky. The earliest revoked_at and the earliest
+  // not_after across every entry for this kid still apply after a later row.
+  const matches = (doc.entries || []).filter((row) => row.kid === kid);
+  if (!matches.length) return { ok: false, reason: 'kid_not_in_history' };
+  const last = matches[matches.length - 1];
+  let notAfter: string | null = null;
+  let notAfterMs: number | null = null;
+  for (const row of matches) {
+    if (row.not_after == null || row.not_after === '') continue;
+    const parsed = parseTime(row.not_after);
+    if (parsed == null) return { ok: false, reason: 'not_after_invalid' };
+    if (notAfterMs == null || parsed < notAfterMs) {
+      notAfterMs = parsed;
+      notAfter = row.not_after;
+    }
+  }
+  let revoked = false;
+  let revokedAt: string | null = null;
+  let revokedMs: number | null = null;
+  for (const row of matches) {
+    const stamp = row.revoked_at;
+    const hasStamp = stamp != null && stamp !== '';
+    if (row.status === 'revoked' || hasStamp) revoked = true;
+    if (!hasStamp) continue;
+    const parsed = parseTime(stamp);
+    if (parsed == null) return { ok: false, reason: 'revoked_at_missing' };
+    if (revokedMs == null || parsed < revokedMs) {
+      revokedMs = parsed;
+      revokedAt = stamp;
+    }
+  }
+  if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing' };
+  return issuerEntryWindow({
+    not_before: last.not_before,
+    not_after: notAfter,
+    status: revoked ? 'revoked' : last.status,
+    revoked_at: revoked ? revokedAt : null,
+  }, issuedAt);
 }
 
 export function issuerHistoryDocumentHash(doc: unknown): string {

@@ -14,6 +14,8 @@ const {
   currentHistoryPin,
   HISTORY_HEAD_PAYLOAD_VERSION,
   issuerKeyWindow,
+  issuerHistoryEntryHash,
+  verifyIssuerHistory,
   resetIssuerHistoryStore,
 } = await import('../src/issuer-history.js');
 const { RECEIPT_PAYLOAD_VERSION, activeReceiptPayloadVersion } = await import('../src/receipt.js');
@@ -68,4 +70,51 @@ test('the last issuer-history entry for a kid is the window', () => {
   assert.equal(late.reason, 'kid_revoked_before_issuance');
   const early = issuerKeyWindow({ entries: revokedEntries }, kid, '2026-03-01T00:00:00.000Z');
   assert.equal(early.ok, true, early.reason);
+});
+
+test('a later active entry does not clear a revocation or a retire', () => {
+  const kid = 'kid-sticky';
+  const jwk = { kty: 'EC', crv: 'P-256', x: 'aa', y: 'bb', kid };
+  function row(prev, fields) {
+    const body = {
+      kid,
+      jwk,
+      alg: 'ES256',
+      not_before: '2026-01-01T00:00:00.000Z',
+      not_after: fields.not_after ?? null,
+      status: fields.status,
+      revoked_at: fields.revoked_at ?? null,
+      reason: null,
+      custody: 'test custody',
+      prev_hash: prev,
+    };
+    return { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  }
+  const active = row(null, { status: 'active' });
+  const revoked = row(active.entry_hash, { status: 'revoked', revoked_at: '2026-06-01T00:00:00.000Z' });
+  const again = row(revoked.entry_hash, { status: 'active' });
+  const entries = [active, revoked, again];
+  const late = issuerKeyWindow({ entries }, kid, '2026-09-01T00:00:00.000Z');
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'kid_revoked_before_issuance');
+  const early = issuerKeyWindow({ entries }, kid, '2026-03-01T00:00:00.000Z');
+  assert.equal(early.ok, true, early.reason);
+  const rejected = verifyIssuerHistory({
+    schema: 'chit402.issuer_history.v1',
+    entries,
+    head_hash: again.entry_hash,
+  });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.reason, 'kid_status_regression');
+
+  const retired = row(active.entry_hash, { status: 'retired', not_after: '2026-06-01T00:00:00.000Z' });
+  const reactivated = row(retired.entry_hash, { status: 'active', not_after: '2027-01-01T00:00:00.000Z' });
+  const afterRetire = issuerKeyWindow({ entries: [active, retired, reactivated] }, kid, '2026-09-01T00:00:00.000Z');
+  assert.equal(afterRetire.ok, false);
+  assert.equal(afterRetire.reason, 'issued_after_not_after');
+  assert.equal(verifyIssuerHistory({
+    schema: 'chit402.issuer_history.v1',
+    entries: [active, retired, reactivated],
+    head_hash: reactivated.entry_hash,
+  }).reason, 'kid_status_regression');
 });
