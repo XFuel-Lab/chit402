@@ -6,11 +6,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 
 const {
+  configureIssuerHistoryStore,
   currentIssuerHistory,
   issuerHistoryRecord,
   resetIssuerHistoryStore,
@@ -27,6 +31,7 @@ const {
   getIssuerKid,
   computeJwkThumbprint,
   signJws,
+  _resetIssuerKey,
 } = await import('../src/issuer-key.js');
 const { RECEIPT_PAYLOAD_VERSION, activeReceiptPayloadVersion } = await import('../src/receipt.js');
 
@@ -213,5 +218,86 @@ test('payload version 12 pins the chain head and issuance stays at 10', () => wi
   } finally {
     if (previousRoot == null) delete process.env.ISSUER_ROOT_ENABLED;
     else process.env.ISSUER_ROOT_ENABLED = previousRoot;
+  }
+}));
+
+function pemEnv(privateKey) {
+  return Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+}
+
+function swapProcessKey(privateKey) {
+  const previousKey = process.env.ISSUER_PRIVATE_KEY;
+  const previousKid = process.env.ISSUER_KID;
+  process.env.ISSUER_PRIVATE_KEY = pemEnv(privateKey);
+  delete process.env.ISSUER_KID;
+  _resetIssuerKey();
+  return () => {
+    if (previousKey == null) delete process.env.ISSUER_PRIVATE_KEY;
+    else process.env.ISSUER_PRIVATE_KEY = previousKey;
+    if (previousKid == null) delete process.env.ISSUER_KID;
+    else process.env.ISSUER_KID = previousKid;
+    _resetIssuerKey();
+  };
+}
+
+test('an in-memory log reseals when the process key changes', () => withHistory(() => {
+  const v1 = currentIssuerHistory();
+  const kidA = JSON.parse(v1.body).entries.at(-1).kid;
+  const next = freshKey();
+  const restore = swapProcessKey(next.privateKey);
+  try {
+    const resealed = currentIssuerHistory();
+    assert.equal(resealed.version, 1);
+    const doc = JSON.parse(resealed.body);
+    assert.equal(doc.entries.at(-1).kid, next.publicJwk.kid);
+    assert.notEqual(doc.entries.at(-1).kid, kidA);
+    assert.equal(issuerHistoryRecord({ version: 1 }).body, resealed.body);
+    assert.equal(issuerHistoryRecord({ hash: v1.hash }), null);
+  } finally {
+    restore();
+  }
+}));
+
+test('a persisted log refuses a different process key and still serves version 1', () => withHistory(() => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
+  const previousEnv = process.env.NODE_ENV;
+  let restore = () => {};
+  try {
+    configureIssuerHistoryStore({ dir, persist: true });
+    const v1 = currentIssuerHistory();
+    const next = freshKey();
+    restore = swapProcessKey(next.privateKey);
+    process.env.NODE_ENV = 'production';
+    process.env.ISSUER_KID = next.publicJwk.kid;
+    _resetIssuerKey();
+    assert.throws(() => currentIssuerHistory(), (err) => err.code === 'issuer_history_rewrite');
+    assert.equal(issuerHistoryRecord({ version: 1 }).body, v1.body);
+  } finally {
+    if (previousEnv == null) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+    restore();
+    configureIssuerHistoryStore({ dir: null, persist: false });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}));
+
+test('a test process does not append a non-extending line when its key changes', () => withHistory(() => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
+  let restore = () => {};
+  try {
+    configureIssuerHistoryStore({ dir, persist: true });
+    const v1 = currentIssuerHistory();
+    const next = freshKey();
+    restore = swapProcessKey(next.privateKey);
+    const resealed = currentIssuerHistory();
+    assert.equal(resealed.version, 1);
+    assert.equal(JSON.parse(resealed.body).entries.at(-1).kid, next.publicJwk.kid);
+    const lines = readFileSync(join(dir, 'issuer-history-versions.jsonl'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).body, v1.body);
+  } finally {
+    restore();
+    configureIssuerHistoryStore({ dir: null, persist: false });
+    rmSync(dir, { recursive: true, force: true });
   }
 }));

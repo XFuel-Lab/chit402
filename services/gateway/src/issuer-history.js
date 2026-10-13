@@ -25,7 +25,7 @@ import fs from 'fs';
 import path from 'path';
 import { jcsCanonicalize, jcsRfc8785 } from './offer-receipt.js';
 import { V11_CANONICALIZATION } from './canonical-preimage.js';
-import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, signJws, verifyJwsWithJwks } from './issuer-key.js';
+import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv, signJws, verifyJwsWithJwks } from './issuer-key.js';
 import {
   assertSigningKeyNotRetired,
   bindIssuerRoot,
@@ -434,6 +434,9 @@ function sealFingerprint(preview) {
 const historyStore = {
   dir: null,
   persist: false,
+  // A test process that minted a new key must not append a non-extending
+  // line onto a file sealed by the previous key.
+  suppressPersist: false,
   versions: [],
 };
 
@@ -471,6 +474,7 @@ function loadHistoryStore() {
 export function configureIssuerHistoryStore({ dir = null, persist = false } = {}) {
   historyStore.dir = persist && dir ? String(dir) : null;
   historyStore.persist = !!historyStore.dir;
+  historyStore.suppressPersist = false;
   historyStore.versions = [];
   if (historyStore.persist) {
     fs.mkdirSync(historyStore.dir, { recursive: true });
@@ -481,11 +485,12 @@ export function configureIssuerHistoryStore({ dir = null, persist = false } = {}
 /** Test helper. Does not delete a configured directory's file. */
 export function resetIssuerHistoryStore() {
   historyStore.versions = [];
+  historyStore.suppressPersist = false;
 }
 
 function persistHistoryRecord(record) {
   const file = historyFile();
-  if (!historyStore.persist || !file) return;
+  if (!historyStore.persist || historyStore.suppressPersist || !file) return;
   fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
 }
 
@@ -504,11 +509,37 @@ function sealedEntriesOf(record) {
   }
 }
 
+function tailKid(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return null;
+  return entries[entries.length - 1]?.kid || null;
+}
+
+/**
+ * A test or development process mints a new key that is not in the sealed
+ * chain. Those snapshots cannot be extended by the new key. Drop them from
+ * memory and do not append a non-extending line to the file. Production
+ * keeps the file and the caller throws. A same-kid edit still throws.
+ * @param {{ body?: string }|null} latest
+ * @param {object[]} previewEntries
+ */
+function dropUnrelatedProcessKey(latest, previewEntries) {
+  if (!latest || isProductionIssuerEnv()) return false;
+  const sealed = sealedEntriesOf(latest);
+  if (entriesExtend(sealed, previewEntries)) return false;
+  const liveTail = tailKid(previewEntries);
+  if (!liveTail) return false;
+  if (sealed.some((entry) => entry?.kid === liveTail)) return false;
+  historyStore.versions = [];
+  historyStore.suppressPersist = true;
+  return true;
+}
+
 export function currentIssuerHistory() {
   const preview = buildIssuerHistory();
   const fingerprint = sealFingerprint(preview);
-  const latest = historyStore.versions[historyStore.versions.length - 1] || null;
+  let latest = historyStore.versions[historyStore.versions.length - 1] || null;
   if (latest && latest.fingerprint === fingerprint) return latest;
+  if (dropUnrelatedProcessKey(latest, preview.entries)) latest = null;
   if (latest && !entriesExtend(sealedEntriesOf(latest), preview.entries)) {
     throw issuerHistoryRewriteError();
   }
