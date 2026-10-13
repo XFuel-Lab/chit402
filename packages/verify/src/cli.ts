@@ -126,6 +126,8 @@ Options:
                       Read issuer history JSON instead of fetching it
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
+  --intent <path>     Signed chit402.intent.v1 JSON. A v12 receipt that
+                      carries an intent block is checked against this file.
   --no-issuer-history Do not check the kid's not_before / not_after window.
                       On payload v12 the result is VERIFIED_NO_KEY_WINDOW
                       and the exit is 1 unless --accept-no-key-window.
@@ -273,6 +275,7 @@ function parseArgs(args: string[]): {
   strictIssuerHistory: boolean;
   issuerHistoryFile: string | null;
   canonicalPreimageFile: string | null;
+  intentFile: string | null;
   noIssuerHistory: boolean;
   acceptNoKeyWindow: boolean;
   noPreimage: boolean;
@@ -321,6 +324,7 @@ function parseArgs(args: string[]): {
     strictIssuerHistory: false,
     issuerHistoryFile: null as string | null,
     canonicalPreimageFile: null as string | null,
+    intentFile: null as string | null,
     noIssuerHistory: false,
     acceptNoKeyWindow: false,
     noPreimage: false,
@@ -396,6 +400,8 @@ function parseArgs(args: string[]): {
       result.open.push(args[++i]);
     } else if (arg === '--canonical-preimage' && args[i + 1]) {
       result.canonicalPreimageFile = args[++i];
+    } else if (arg === '--intent' && args[i + 1]) {
+      result.intentFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
     } else if (arg === '--accept-no-key-window') {
@@ -457,6 +463,21 @@ function formatAmount(units: string | null): string {
   if (!Number.isFinite(n)) return units;
   const usd = n / 1e6;
   return `$${usd.toFixed(usd >= 0.01 ? 2 : 6)} (${units} units)`;
+}
+
+function readIntentFile(file: string | null):
+  | { ok: true; intent: Record<string, unknown> | null }
+  | { ok: false; message: string } {
+  if (!file) return { ok: true, intent: null };
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, message: 'Error reading intent: expected an object' };
+    }
+    return { ok: true, intent: parsed as Record<string, unknown> };
+  } catch (err) {
+    return { ok: false, message: `Error reading intent: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 function readJson(file: string): unknown {
@@ -884,6 +905,11 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
   }
   const historyBytes = args.issuerHistoryFile ? readFileSync(args.issuerHistoryFile, 'utf8') : null;
+  const intentRead = readIntentFile(args.intentFile);
+  if (!intentRead.ok) {
+    console.error(intentRead.message);
+    return 3;
+  }
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, {
     jwks: loaded.jwks,
     jwksUri: args.jwksUrl || undefined,
@@ -900,6 +926,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    intent: intentRead.intent,
     head,
   });
   // Inclusion was already checked above. Passing it again re-derives the leaf
@@ -1185,6 +1212,11 @@ async function main(): Promise<number> {
     const trustedKids = args.noTrustedKid
       ? []
       : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+    const intentRead = readIntentFile(args.intentFile);
+    if (!intentRead.ok) {
+      console.error(intentRead.message);
+      return 3;
+    }
     const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
       jwks,
       jwksUri: args.jwksUrl || undefined,
@@ -1198,6 +1230,7 @@ async function main(): Promise<number> {
       issuerHistory: null,
       fetchIssuerHistory: false,
       salt: args.salt,
+      intent: intentRead.intent,
       head: head ?? undefined,
       inclusion: inclusion ?? undefined,
     });
@@ -1388,6 +1421,11 @@ async function main(): Promise<number> {
     }
   }
 
+  const intentRead = readIntentFile(args.intentFile);
+  if (!intentRead.ok) {
+    console.error(intentRead.message);
+    return 3;
+  }
   const result = await verifyReceipt(receipt, {
     jwks,
     jwksUri: args.jwksUrl || undefined,
@@ -1404,6 +1442,7 @@ async function main(): Promise<number> {
     strictIssuerHistory: args.strictIssuerHistory,
     skipIssuerHistory: args.noIssuerHistory,
     canonicalPreimage,
+    intent: intentRead.intent,
     salt: args.salt,
     open,
     head: offlineWitness?.head ?? undefined,

@@ -3,6 +3,11 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased — v12 intent block
+
+### Security
+- **Optional v12 intent.** A receipt is payload version 12 only when `issuer_history` is `{ head_hash, entry_count }`. `cap_row_hash` is not a field. An `intent` block, when present, binds `intent_id`, `intent_hash`, `spec_digest`, `comparator_pin`, and `use_index`. The verifier checks the spend against the signed `chit402.intent.v1` document. Spend above the max, after expiry, or past the use count is `intent_violation` and exit 1. A different payer or payee is `intent_mismatch`. The comparator and the projection spec are selected by the SHA-256 of their frozen documents, not by a version label. A payload version of 12 without that pin stays `unsupported_version`, which is what 0.3.5 and 0.3.6 return for every 12. Not published. v12 minting stays flag-off.
+
 ## 0.3.6 — Inclusion size is checked before the head
 
 ### Security

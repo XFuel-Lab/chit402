@@ -9,6 +9,7 @@
  * It is not a copy of the JWS payload version. chit-1ebc5616 is signed
  * payload_version 6 with HMAC 8. That pair still verifies.
  */
+import { isV12ClaimShape } from './intent.js';
 
 export const LEGACY_PAYLOAD_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 export const ISSUER_ROOT_PAYLOAD_VERSION = 11;
@@ -69,6 +70,7 @@ export type VersionReason = typeof UNSUPPORTED_VERSION | typeof VERSION_MISMATCH
 export type ReceiptVersionDecision =
   | { ok: true; family: 'unsigned' }
   | { ok: true; family: 'v11'; version: 11; version_source: 'signed' }
+  | { ok: true; family: 'v12'; version: 12; version_source: 'signed' }
   | { ok: true; family: 'legacy'; version: number; version_source: 'signed' | 'inferred' }
   | { ok: false; reason: VersionReason; errors: string[] };
 
@@ -218,10 +220,11 @@ export function classifySignedClaims(
       && typeof claims.issuer_root === 'object';
     const legacy = isJsonInteger(version) && (LEGACY_PAYLOAD_VERSIONS as readonly number[]).includes(version);
     const root = isJsonInteger(version) && version === ISSUER_ROOT_PAYLOAD_VERSION && issuerRoot;
-    const headPin = isJsonInteger(version) && version === HISTORY_HEAD_PAYLOAD_VERSION;
-    if (!legacy && !root && !headPin) return fail(UNSUPPORTED_VERSION);
+    const v12 = isV12ClaimShape(claims);
+    if (!legacy && !root && !v12) return fail(UNSUPPORTED_VERSION);
     if (outerDoc && !versionsAgree(version, outerVersion)) return fail(VERSION_MISMATCH);
     if (outerDoc && topV.present) return fail(VERSION_MISMATCH);
+    if (v12) return { ok: true, family: 'v12', version: 12, version_source: 'signed' };
     return { ok: true, family: 'legacy', version: version as number, version_source: 'signed' };
   }
 
@@ -275,9 +278,9 @@ export function classifyShellDocument(shell: unknown): { ok: true } | { ok: fals
   const version = shell.payload_version;
   if (!isJsonInteger(version)) return fail(UNSUPPORTED_VERSION);
   if ((LEGACY_PAYLOAD_VERSIONS as readonly number[]).includes(version)) return { ok: true };
-  if (version === HISTORY_HEAD_PAYLOAD_VERSION) return { ok: true };
   const root = version === 11 && shell.issuer_root != null && typeof shell.issuer_root === 'object';
   if (root) return { ok: true };
+  if (isV12ClaimShape(shell)) return { ok: true };
   return fail(UNSUPPORTED_VERSION);
 }
 
@@ -285,7 +288,8 @@ export function formatSupportedReceiptVersions(): string {
   return [
     'Supported receipt versions (signed payload, exact JSON numbers):',
     `  v: ${SUPPORTED_RECEIPT_VERSIONS.v.join(', ')}`,
-    `  payload_version: ${LEGACY_PAYLOAD_VERSIONS.join(', ')}, ${HISTORY_HEAD_PAYLOAD_VERSION} (issuer_history head pin), and 11 only with a signed issuer_root`,
+    `  payload_version: ${LEGACY_PAYLOAD_VERSIONS.join(', ')}, and 11 only with a signed issuer_root`,
+    '  payload_version 12: issuer_history is { head_hash, entry_count }, optional intent block, no cap_row_hash',
     `  refusal payload_version: ${REFUSAL_EXACT_VERSIONS.join(', ')}`,
     '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred)',
     'Unknown versions fail closed: unsupported_version, exit 1.',
