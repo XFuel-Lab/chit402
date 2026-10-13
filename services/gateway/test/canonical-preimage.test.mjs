@@ -208,7 +208,10 @@ test('issuer history keeps old versions and refuses to rewrite a sealed entry', 
       reason: 'rotated',
       custody: 'test custody sentence',
     }]);
-    assert.throws(() => currentIssuerHistory(), (err) => err.code === 'issuer_history_rewrite');
+    const kept = currentIssuerHistory();
+    assert.equal(kept.body, v1.body);
+    const again = buildReceipt(paidTask({ taskId: 'xfuel-pin-v1-again' }), { agentId: 4 });
+    assert.equal(decodeReceiptClaims(again).issuer_history.hash, v1.hash);
     assert.equal(issuerHistoryRecord({ version: v1.version }).body, v1.body);
     assert.equal(issuerHistoryRecord({ hash: v1.hash }).hash, v1.hash);
     const stillPinned = issuerKeyWindow(JSON.parse(issuerHistoryRecord({ version: 1 }).body), kid, claims.iat);

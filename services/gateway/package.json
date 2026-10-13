@@ -17,7 +17,8 @@
     "benchmark:compare": "node ../../scripts/compare-benchmarks.cjs bench/edgecloud-cuda.summary.json bench/powerzebra.summary.json --out bench/comparison.md",
     "benchmark:mock:cuda": "node scripts/mock-prover-server.js --port 8091 --prove-ms 520 --jitter 40",
     "benchmark:mock:zan": "node scripts/mock-prover-server.js --port 8092 --prove-ms 105 --jitter 12",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "retire-issuer-key": "node scripts/retire-issuer-key.mjs"
   },
   "keywords": [
     "xfuel",

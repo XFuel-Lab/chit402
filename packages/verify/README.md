@@ -75,7 +75,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
 | Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | Yes, unless `--issuer-history-file` supplies the snapshot. `--no-issuer-history` skips the window and is not a pass | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. A payload v12 pin is the chain head and accepts a later snapshot that extends it. Skipping the window prints `VERIFIED_NO_KEY_WINDOW` |
+| Issuer history | Yes, unless `--issuer-history-file` supplies the snapshot. `--no-issuer-history` skips the window and is not a pass | `iat` is inside the last entry's `not_before` / `not_after` for that kid. A payload v10 pin must match the snapshot hash. Skipping the window prints `VERIFIED_NO_KEY_WINDOW` |
 
 ## Issuer Signature Verification (ES256)
 

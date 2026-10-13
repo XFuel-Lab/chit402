@@ -1,7 +1,6 @@
 /**
  * Issuer-history attacks. A sealed chain is a prefix. Skipping the kid
- * window is not VERIFIED. Payload v10 pins the document. Payload v12 pins
- * the chain head. The gateway still issues payload version 10.
+ * window is not VERIFIED. Payload v10 pins the document hash.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,12 +15,13 @@ const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const {
   issuerHistoryEntryHash,
+  issuerKeyWindow,
   verifyIssuerHistoryDocument,
   checkReceiptIssuerHistory,
   readIssuerHistoryPin,
   issuerHistoryDocumentHash,
 } = await import('../dist/issuer-history.js');
-const { verifyReceipt, verifyReceiptUpToV10 } = await import('../dist/index.js');
+const { verifyReceipt } = await import('../dist/index.js');
 
 const PRODUCTION_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 const payer = `0x${'11'.repeat(20)}`;
@@ -157,7 +157,6 @@ test('history version 1 still matches a payload v10 document pin', async () => {
     issuedAt: '2026-09-26T17:27:32Z',
     pin,
     requirePin: true,
-    pinShape: 'document',
     trustedKids: [PRODUCTION_KID],
   });
   assert.equal(checked.ok, true, checked.reason);
@@ -177,7 +176,6 @@ test('history version 1 still matches a payload v10 document pin', async () => {
     issuedAt: '2026-09-26T17:27:32Z',
     pin,
     requirePin: true,
-    pinShape: 'document',
     trustedKids: [PRODUCTION_KID],
   });
   assert.equal(moved.ok, false);
@@ -185,7 +183,7 @@ test('history version 1 still matches a payload v10 document pin', async () => {
   assert.equal(edited.includes('unused'), false);
 });
 
-test('an edited genesis entry and a non-extending snapshot are rejected', async () => {
+test('an edited genesis entry is rejected', () => {
   const key = issuerKey();
   const genesis = entryFor(key, { notBefore: '2026-09-04T08:52:05Z' });
   const pinned = historyOf([genesis], key);
@@ -197,73 +195,6 @@ test('an edited genesis entry and a non-extending snapshot are rejected', async 
   const broken = verifyIssuerHistoryDocument(forged, { trustedKids: [key.kid] });
   assert.equal(broken.valid, false);
   assert.equal(broken.reason, 'entry_hash_mismatch');
-
-  const replaced = entryFor(key, { notBefore: '2026-09-04T08:52:05Z', custody: 'rewritten genesis' });
-  const other = historyOf([replaced], key);
-  const receipt = receiptFor(key, paymentClaims(12, {
-    issuer_history: { head_hash: pinned.head, entry_count: 1 },
-  }));
-  const extended = await verifyReceipt(receipt, {
-    jwks: { keys: [key.publicJwk] },
-    trustedKids: [key.kid],
-    issuerHistory: other.doc,
-    issuerHistoryBytes: other.bytes,
-  });
-  assert.equal(extended.overall, 'failed');
-  assert.equal(extended.issuer_history.reason, 'issuer_history_not_extension');
-});
-
-test('a payload v12 head pin accepts a later snapshot that extends it', async () => {
-  const first = issuerKey();
-  const second = issuerKey();
-  const genesis = entryFor(first, { notBefore: '2026-09-04T08:52:05Z' });
-  const v1 = historyOf([genesis], first);
-  const added = entryFor(second, { notBefore: '2026-11-01T00:00:00Z', prev: genesis.entry_hash });
-  const v2 = historyOf([genesis, added], first);
-  const receipt = receiptFor(first, paymentClaims(12, {
-    issuer_history: { head_hash: v1.head, entry_count: 1 },
-  }));
-  const opts = { jwks: { keys: [first.publicJwk] }, trustedKids: [first.kid] };
-  const exact = await verifyReceipt(receipt, { ...opts, issuerHistory: v1.doc, issuerHistoryBytes: v1.bytes });
-  assert.equal(exact.overall, 'verified', exact.errors.join('; '));
-  assert.equal(exact.issuer_history.ok, true, exact.issuer_history.reason);
-  const later = await verifyReceipt(receipt, { ...opts, issuerHistory: v2.doc, issuerHistoryBytes: v2.bytes });
-  assert.equal(later.overall, 'verified', later.errors.join('; '));
-  assert.equal(later.issuer_history.ok, true, later.issuer_history.reason);
-
-  const capped = await verifyReceiptUpToV10(receipt, opts);
-  assert.equal(capped.overall, 'failed');
-  assert.equal(capped.errors[0], 'unsupported_version');
-});
-
-test('a payload v12 receipt with a document pin or no pin fails closed', async () => {
-  const key = issuerKey();
-  const genesis = entryFor(key, { notBefore: '2026-09-04T08:52:05Z' });
-  const history = historyOf([genesis], key);
-  const opts = {
-    jwks: { keys: [key.publicJwk] },
-    trustedKids: [key.kid],
-    issuerHistory: history.doc,
-    issuerHistoryBytes: history.bytes,
-  };
-  const shaped = receiptFor(key, paymentClaims(12, {
-    issuer_history: { hash: history.hash, version: 1, seq: 1 },
-  }));
-  const shape = await verifyReceipt(shaped, opts);
-  assert.equal(shape.overall, 'failed');
-  assert.equal(shape.issuer_history.reason, 'issuer_history_pin_shape');
-
-  const missing = receiptFor(key, paymentClaims(12));
-  const absent = await verifyReceipt(missing, opts);
-  assert.equal(absent.overall, 'failed');
-  assert.equal(absent.issuer_history.reason, 'issuer_history_pin_missing');
-
-  const both = receiptFor(key, paymentClaims(12, {
-    issuer_history: { hash: history.hash, version: 1, seq: 1, head_hash: history.head, entry_count: 1 },
-  }));
-  const conflict = await verifyReceipt(both, opts);
-  assert.equal(conflict.overall, 'failed');
-  assert.equal(conflict.issuer_history.reason, 'issuer_history_pin_shape');
 });
 
 test('a payload v10 receipt verifies only against the exact history file', async () => {
@@ -312,6 +243,42 @@ test('a history signed only by the key it introduces is rejected, and genesis is
   assert.equal(allowed.valid, true, allowed.reason);
 });
 
+test('the last entry for a kid is the window', () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-01-01T00:00:00Z' });
+  const retiredBody = {
+    kid: key.kid,
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-05-01T00:00:00Z',
+    not_after: '2026-06-01T00:00:00Z',
+    status: 'retired',
+    revoked_at: null,
+    reason: 'rotated',
+    custody: 'test custody',
+    prev_hash: first.entry_hash,
+  };
+  const retired = { ...retiredBody, entry_hash: issuerHistoryEntryHash(retiredBody) };
+  const retiredWindow = issuerKeyWindow({ entries: [first, retired] }, key.kid, '2026-07-01T00:00:00Z');
+  assert.equal(retiredWindow.ok, false);
+  assert.equal(retiredWindow.reason, 'issued_after_not_after');
+
+  const revokedBody = {
+    ...retiredBody,
+    status: 'revoked',
+    not_after: null,
+    revoked_at: '2026-06-01T00:00:00Z',
+    not_before: '2026-06-01T00:00:00Z',
+    reason: 'compromised',
+  };
+  const revoked = { ...revokedBody, entry_hash: issuerHistoryEntryHash(revokedBody) };
+  const late = issuerKeyWindow({ entries: [first, revoked] }, key.kid, '2026-09-01T00:00:00Z');
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'kid_revoked_before_issuance');
+  const early = issuerKeyWindow({ entries: [first, revoked] }, key.kid, '2026-03-01T00:00:00Z');
+  assert.equal(early.ok, true, early.reason);
+});
+
 test('--no-issuer-history never prints bare VERIFIED', async () => {
   const key = issuerKey();
   const receipt = receiptFor(key, paymentClaims(8));
@@ -328,7 +295,7 @@ test('--no-issuer-history never prints bare VERIFIED', async () => {
     trustedKids: [key.kid],
     skipIssuerHistory: true,
   });
-  assert.equal(unlabeled.overall, 'verified', unlabeled.errors.join('; '));
+  assert.equal(unlabeled.overall, 'verified_no_key_window', unlabeled.errors.join('; '));
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-history-downgrade-'));
   const receiptPath = join(dir, 'receipt.json');

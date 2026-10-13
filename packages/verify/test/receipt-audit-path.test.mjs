@@ -306,7 +306,7 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
     skipIssuerHistory: true,
     requirePreimages: true,
   });
-  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-'));

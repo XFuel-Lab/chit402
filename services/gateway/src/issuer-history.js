@@ -41,8 +41,6 @@ import { assertSigningKeyNotGuardian, currentGuardianSetHash } from './issuer-gu
 export const ISSUER_HISTORY_SCHEMA = 'chit402.issuer_history.v1';
 export const ISSUER_HISTORY_VERSION = 1;
 export const ISSUER_HISTORY_JWT_TYP = 'chit402-issuer-history+jwt';
-/** Payment payload that pins head_hash + entry_count instead of the document hash. */
-export const HISTORY_HEAD_PAYLOAD_VERSION = 12;
 const ISSUER_HISTORY_QUERY_KEYS = new Set(['version', 'hash']);
 
 /**
@@ -336,7 +334,8 @@ function parseTime(value) {
  * @param {number|string} issuedAt unix seconds or ISO
  */
 export function issuerKeyWindow(doc, kid, issuedAt) {
-  const entry = (doc?.entries || []).find((row) => row.kid === kid);
+  // Append-only: a later entry for the same kid (retire/revoke) supersedes the first.
+  const entry = [...(doc?.entries || [])].reverse().find((row) => row.kid === kid);
   if (!entry) return { ok: false, reason: 'kid_not_in_history', kid };
   const issued = parseTime(issuedAt);
   if (issued == null) return { ok: false, reason: 'issued_at_missing', kid };
@@ -438,15 +437,232 @@ const historyStore = {
   // line onto a file sealed by the previous key.
   suppressPersist: false,
   versions: [],
+  highWater: null,
+  ignoredRewrite: false,
+  notes: [],
 };
 
 function historyFile() {
   return historyStore.dir ? path.join(historyStore.dir, 'issuer-history-versions.jsonl') : null;
 }
 
+const HIGH_WATER_NAME = 'issuer-history-high-water.json';
+const NOTES_NAME = 'issuer-history-notes.jsonl';
+const ANCHOR_STATE_NAME = 'anchor-state.json';
+
+function notesFile() {
+  return historyStore.dir ? path.join(historyStore.dir, NOTES_NAME) : null;
+}
+
+function testRotationAllowed() {
+  return String(process.env.ISSUER_HISTORY_TEST_ROTATION || '').trim() === 'true';
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function markFromValue(value) {
+  if (!value || typeof value !== 'object') return null;
+  const version = Number(value.version);
+  const head = value.head_hash;
+  if (!Number.isInteger(version) || version < 1) return null;
+  if (typeof head !== 'string' || !/^[0-9a-f]{64}$/.test(head)) return null;
+  return { version, head_hash: head };
+}
+
+function strongerMark(left, right) {
+  if (!left) return right;
+  if (!right) return left;
+  if (left.version !== right.version) return left.version > right.version ? left : right;
+  if (left.head_hash !== right.head_hash) {
+    const err = new Error('issuer-history high-water marks disagree');
+    err.code = 'issuer_history_truncated';
+    throw err;
+  }
+  return left;
+}
+
+function markFiles() {
+  const files = [];
+  if (historyStore.dir) files.push(path.join(historyStore.dir, HIGH_WATER_NAME));
+  const logDir = process.env.RECEIPT_LOG_DIR;
+  if (logDir) files.push(path.join(logDir, ANCHOR_STATE_NAME));
+  return files;
+}
+
+function readMarkAt(file) {
+  if (!file || !fs.existsSync(file)) return null;
+  const parsed = readJsonFile(file);
+  if (!parsed) return null;
+  if (file.endsWith(ANCHOR_STATE_NAME)) return markFromValue(parsed.issuer_history);
+  return markFromValue(parsed);
+}
+
+function refreshHighWater() {
+  let mark = null;
+  for (const file of markFiles()) mark = strongerMark(mark, readMarkAt(file));
+  historyStore.highWater = mark;
+  return mark;
+}
+
+function writeHighWater(mark) {
+  const prev = historyStore.highWater;
+  if (prev && prev.version > mark.version) return;
+  if (prev && prev.version === mark.version && prev.head_hash !== mark.head_hash) {
+    const err = new Error('issuer-history high-water mark already records this version');
+    err.code = 'issuer_history_truncated';
+    throw err;
+  }
+  historyStore.highWater = mark;
+  if (!historyStore.persist || historyStore.suppressPersist || !historyStore.dir) return;
+  const body = {
+    schema: 'chit402.issuer_history_high_water.v1',
+    version: mark.version,
+    head_hash: mark.head_hash,
+  };
+  fs.writeFileSync(path.join(historyStore.dir, HIGH_WATER_NAME), `${JSON.stringify(body)}\n`);
+  const logDir = process.env.RECEIPT_LOG_DIR;
+  if (!logDir) return;
+  fs.mkdirSync(logDir, { recursive: true });
+  const anchorPath = path.join(logDir, ANCHOR_STATE_NAME);
+  const state = fs.existsSync(anchorPath)
+    ? (readJsonFile(anchorPath) || { schema: 'chit402.receipt_anchor_state.v1', solana: {}, base: {} })
+    : { schema: 'chit402.receipt_anchor_state.v1', solana: {}, base: {} };
+  state.issuer_history = { version: mark.version, head_hash: mark.head_hash };
+  if (!state.schema) state.schema = 'chit402.receipt_anchor_state.v1';
+  if (!state.solana) state.solana = {};
+  if (!state.base) state.base = {};
+  fs.writeFileSync(anchorPath, `${JSON.stringify(state)}\n`);
+}
+
+function raiseHighWater(record) {
+  if (!record?.version || !record.head_hash) return;
+  const mark = { version: Number(record.version), head_hash: record.head_hash };
+  const prev = historyStore.highWater;
+  if (prev && prev.version > mark.version) {
+    const err = new Error('issuer-history file is shorter than the anchored high-water mark');
+    err.code = 'issuer_history_truncated';
+    throw err;
+  }
+  if (prev && prev.version === mark.version && prev.head_hash !== mark.head_hash) {
+    const err = new Error('issuer-history high-water mark already records this version');
+    err.code = 'issuer_history_truncated';
+    throw err;
+  }
+  if (!prev || prev.version < mark.version) writeHighWater(mark);
+}
+
+function assertHighWater(versions) {
+  const mark = refreshHighWater();
+  if (!mark) return;
+  const latest = versions[versions.length - 1] || null;
+  const maxVersion = latest ? Number(latest.version) : 0;
+  if (maxVersion < mark.version) {
+    const err = new Error('issuer-history file is shorter than the anchored high-water mark');
+    err.code = 'issuer_history_truncated';
+    throw err;
+  }
+  const row = versions.find((item) => Number(item.version) === mark.version);
+  if (row && row.head_hash !== mark.head_hash) throw issuerHistoryRewriteError();
+}
+
+function recordGrandfatherNote(spec) {
+  const entry = {
+    schema: 'chit402.issuer_history_note.v1',
+    kind: 'grandfathered_rewrite',
+    from_head: spec.from,
+    to_head: spec.to,
+    note: spec.note,
+  };
+  const key = `${entry.from_head}>${entry.to_head}`;
+  if (historyStore.notes.some((row) => `${row.from_head}>${row.to_head}` === key)) return entry;
+  historyStore.notes.push(entry);
+  const file = notesFile();
+  if (historyStore.persist && file) fs.appendFileSync(file, `${JSON.stringify(entry)}\n`);
+  return entry;
+}
+
+function loadNotes() {
+  historyStore.notes = [];
+  const file = notesFile();
+  if (!file || !fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line);
+      if (row && row.kind === 'grandfathered_rewrite') historyStore.notes.push(row);
+    } catch {
+      /* a torn last line is ignored */
+    }
+  }
+}
+
+export function issuerHistoryNotes() {
+  return historyStore.notes.slice();
+}
+
+/**
+ * The one recorded rewrite (prod 2026-10, v1 genesis custody field dropped in v2).
+ * Both versions stay served. The note is appended beside the log. Any other
+ * non-extending pair on disk fails closed.
+ */
+const GRANDFATHERED_REWRITES = [
+  {
+    from: '3d8259fb043f8ac80c924ea89d508f0a898f70bd0335658ef47370d5757e27a6',
+    to: '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e',
+    note: 'Prod 2026-10: issuer-history v2 dropped the custody field from the v1 genesis entry (head 3d8259fb rewritten to 349d7bb4). Both versions stay served. This is the only grandfathered rewrite.',
+  },
+];
+
+function grandfatherNote(prev, next) {
+  const from = prev?.head_hash;
+  const to = next?.head_hash;
+  return GRANDFATHERED_REWRITES.find((row) => row.from === from && row.to === to) || null;
+}
+
+function assertLoadedVersionsExtend(versions) {
+  for (let i = 1; i < versions.length; i += 1) {
+    const prev = versions[i - 1];
+    const next = versions[i];
+    if (Number(next.version) !== Number(prev.version) + 1) {
+      const err = new Error('issuer-history versions on disk are not consecutive');
+      err.code = 'issuer_history_rewrite';
+      throw err;
+    }
+    const note = grandfatherNote(prev, next);
+    if (entriesExtend(sealedEntriesOf(prev), sealedEntriesOf(next))) continue;
+    if (note) {
+      recordGrandfatherNote(note);
+      continue;
+    }
+    throw issuerHistoryRewriteError();
+  }
+}
+
 function loadHistoryStore() {
   const file = historyFile();
-  if (!file || !fs.existsSync(file)) return;
+  loadNotes();
+  refreshHighWater();
+  if (!file || !fs.existsSync(file)) {
+    assertHighWater(historyStore.versions);
+    return;
+  }
+  try {
+    loadHistoryRows(file);
+    assertLoadedVersionsExtend(historyStore.versions);
+    assertHighWater(historyStore.versions);
+  } catch (err) {
+    historyStore.versions = [];
+    throw err;
+  }
+}
+
+function loadHistoryRows(file) {
   const text = fs.readFileSync(file, 'utf8');
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
@@ -476,6 +692,9 @@ export function configureIssuerHistoryStore({ dir = null, persist = false } = {}
   historyStore.persist = !!historyStore.dir;
   historyStore.suppressPersist = false;
   historyStore.versions = [];
+  historyStore.highWater = null;
+  historyStore.ignoredRewrite = false;
+  historyStore.notes = [];
   if (historyStore.persist) {
     fs.mkdirSync(historyStore.dir, { recursive: true });
     loadHistoryStore();
@@ -486,6 +705,9 @@ export function configureIssuerHistoryStore({ dir = null, persist = false } = {}
 export function resetIssuerHistoryStore() {
   historyStore.versions = [];
   historyStore.suppressPersist = false;
+  historyStore.ignoredRewrite = false;
+  historyStore.notes = [];
+  if (!historyStore.persist) historyStore.highWater = null;
 }
 
 function persistHistoryRecord(record) {
@@ -515,15 +737,14 @@ function tailKid(entries) {
 }
 
 /**
- * A test or development process mints a new key that is not in the sealed
- * chain. Those snapshots cannot be extended by the new key. Drop them from
- * memory and do not append a non-extending line to the file. Production
- * keeps the file and the caller throws. A same-kid edit still throws.
+ * A test process mints a new key that is not in the sealed chain only when
+ * ISSUER_HISTORY_TEST_ROTATION=true. Production never drops. A development
+ * process pointed at a prod directory does not drop unless that flag is set.
  * @param {{ body?: string }|null} latest
  * @param {object[]} previewEntries
  */
 function dropUnrelatedProcessKey(latest, previewEntries) {
-  if (!latest || isProductionIssuerEnv()) return false;
+  if (!latest || isProductionIssuerEnv() || !testRotationAllowed()) return false;
   const sealed = sealedEntriesOf(latest);
   if (entriesExtend(sealed, previewEntries)) return false;
   const liveTail = tailKid(previewEntries);
@@ -531,6 +752,7 @@ function dropUnrelatedProcessKey(latest, previewEntries) {
   if (sealed.some((entry) => entry?.kid === liveTail)) return false;
   historyStore.versions = [];
   historyStore.suppressPersist = true;
+  historyStore.highWater = null;
   return true;
 }
 
@@ -539,8 +761,22 @@ export function currentIssuerHistory() {
   const fingerprint = sealFingerprint(preview);
   let latest = historyStore.versions[historyStore.versions.length - 1] || null;
   if (latest && latest.fingerprint === fingerprint) return latest;
-  if (dropUnrelatedProcessKey(latest, preview.entries)) latest = null;
+  if (latest && dropUnrelatedProcessKey(latest, preview.entries)) latest = null;
+  if (latest && entriesExtend(preview.entries, sealedEntriesOf(latest))
+    && !entriesExtend(sealedEntriesOf(latest), preview.entries)) {
+    // The sealed chain already extends the live prefix (a retire or revoke
+    // append). Signing keeps those bytes. It does not mint a shorter version.
+    return latest;
+  }
   if (latest && !entriesExtend(sealedEntriesOf(latest), preview.entries)) {
+    const sealed = sealedEntriesOf(latest);
+    const liveTail = tailKid(preview.entries);
+    if (liveTail && sealed.some((entry) => entry?.kid === liveTail)) {
+      // An in-place edit of the live entry (ISSUER_HISTORY_EXTRA, not_before)
+      // must not replace sealed bytes and must not stop signing.
+      historyStore.ignoredRewrite = true;
+      return latest;
+    }
     throw issuerHistoryRewriteError();
   }
   const version = (latest?.version || 0) + 1;
@@ -561,6 +797,7 @@ export function currentIssuerHistory() {
   };
   historyStore.versions.push(record);
   persistHistoryRecord(record);
+  raiseHighWater(record);
   return record;
 }
 
@@ -610,25 +847,81 @@ export function sealExtendingIssuerHistory(rawEntries) {
   };
   historyStore.versions.push(record);
   persistHistoryRecord(record);
+  raiseHighWater(record);
   return record;
 }
 
 /**
+ * Append a retire or revoke entry for the live signing key.
+ * The previous key signs the new snapshot. An in-place edit is not used.
+ * @param {{ status?: string, not_before: string, not_after?: string|null, revoked_at?: string|null, reason?: string|null, custody?: string|null, kid?: string|null }} spec
+ */
+export function retireOrRevokeIssuerKey(spec = {}) {
+  const status = spec.status === 'revoked' ? 'revoked' : 'retired';
+  const latest = currentIssuerHistory();
+  const doc = JSON.parse(latest.body);
+  const kid = spec.kid || getIssuerKid();
+  const prior = [...(doc.entries || [])].reverse().find((entry) => entry.kid === kid);
+  if (!prior) {
+    const err = new Error('issuer key is not in the sealed history');
+    err.code = 'kid_not_in_history';
+    throw err;
+  }
+  if (status === 'revoked' && !spec.revoked_at) {
+    const err = new Error('revoked_at is required to revoke an issuer key');
+    err.code = 'revoked_at_missing';
+    throw err;
+  }
+  if (!spec.not_before) {
+    const err = new Error('not_before is required to retire or revoke an issuer key');
+    err.code = 'not_before_missing';
+    throw err;
+  }
+  return sealExtendingIssuerHistory([{
+    kid,
+    jwk: prior.jwk,
+    alg: prior.alg || 'ES256',
+    not_before: spec.not_before,
+    not_after: spec.not_after ?? null,
+    status,
+    revoked_at: status === 'revoked' ? spec.revoked_at : null,
+    reason: spec.reason ?? null,
+    custody: spec.custody || prior.custody || 'operator retire',
+  }]);
+}
+
+/**
+ * Boot check. A revoked or retired signing key refuses to serve.
+ * A stale in-place edit does not. Call after the history store is loaded
+ * and before listen.
+ */
+export function assertIssuerHistoryBoot() {
+  const record = currentIssuerHistory();
+  const doc = JSON.parse(record.body);
+  const kid = getIssuerKid();
+  const entry = [...(doc.entries || [])].reverse().find((row) => row.kid === kid);
+  if (!entry) {
+    const err = new Error('signing key is not in issuer history');
+    err.code = 'kid_not_in_history';
+    throw err;
+  }
+  if (entry.status === 'revoked' || entry.status === 'retired') {
+    const err = new Error(`signing key is ${entry.status}; refusing to serve`);
+    err.code = 'issuer_key_not_active';
+    throw err;
+  }
+  return { ok: true, kid, status: entry.status, ignoredRewrite: historyStore.ignoredRewrite === true };
+}
+
+/**
  * Pin written into a new receipt or refusal JWS.
+ * Payload version 10 pins the whole-document hash. v11 and refusal v2 pin
+ * the entries snapshot hash. The chain-head pin is not issued on this line.
+ * @param {number|null} [_payloadVersion]
  * @returns {{ hash: string, version: number, seq: number }}
  */
-export function currentHistoryPin(payloadVersion = null) {
+export function currentHistoryPin(_payloadVersion = null) {
   const record = currentIssuerHistory();
-  // v12 pins the entry-chain head. A later snapshot verifies when its
-  // entries extend that head. v10 still pins the whole-document hash.
-  // v11 and refusal v2 pin the entries snapshot hash.
-  if (Number(payloadVersion) >= HISTORY_HEAD_PAYLOAD_VERSION) {
-    const doc = JSON.parse(record.body);
-    return {
-      head_hash: doc.head_hash,
-      entry_count: Array.isArray(doc.entries) ? doc.entries.length : 0,
-    };
-  }
   const hash = issuerRootActive() ? record.entries_snapshot_hash : record.hash;
   return { hash, version: record.version, seq: record.seq };
 }

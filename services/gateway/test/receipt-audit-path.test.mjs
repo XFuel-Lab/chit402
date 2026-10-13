@@ -258,7 +258,7 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
-  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-http-'));

@@ -584,6 +584,8 @@ function mergeAnchor(folded, fileState) {
   for (const [key, row] of Object.entries(folded.base || {})) {
     out.base[key] = mergeBaseRow(fileState?.base?.[key], row);
   }
+  // The issuer-history high-water mark lives on this file and is not a journal row.
+  if (fileState?.issuer_history) out.issuer_history = fileState.issuer_history;
   return out;
 }
 
@@ -606,7 +608,19 @@ export function writeCheckpoint(dir, epochs) {
 }
 
 export function writeAnchorState(dir, state) {
-  atomicWrite(path.join(dir, ANCHOR_STATE_NAME), `${JSON.stringify(state)}\n`);
+  const next = state && typeof state === 'object' ? { ...state } : emptyAnchorState();
+  if (!next.issuer_history) {
+    const anchorPath = path.join(dir, ANCHOR_STATE_NAME);
+    if (fs.existsSync(anchorPath)) {
+      try {
+        const existing = readJson(anchorPath);
+        if (existing?.issuer_history) next.issuer_history = existing.issuer_history;
+      } catch {
+        /* a later read of a corrupt anchor file still fails closed */
+      }
+    }
+  }
+  atomicWrite(path.join(dir, ANCHOR_STATE_NAME), `${JSON.stringify(next)}\n`);
 }
 
 export function writeEpochRecordFile(dir, record) {

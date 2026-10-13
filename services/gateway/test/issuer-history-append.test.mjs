@@ -1,14 +1,16 @@
 /**
  * Sealed issuer-history entries are append-only. Old versions stay
- * fetchable. Unknown query parameters are rejected. Payload v12's pin
- * shape is available; issuance stays at payload version 10.
+ * fetchable. Unknown query parameters are rejected. Issuance stays at
+ * payload version 10.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -20,12 +22,16 @@ const {
   resetIssuerHistoryStore,
   writeIssuerHistory,
   sealExtendingIssuerHistory,
+  retireOrRevokeIssuerKey,
+  assertIssuerHistoryBoot,
+  issuerHistoryNotes,
   currentHistoryPin,
   verifyIssuerHistory,
   issuerHistoryEntryHash,
+  issuerKeyWindow,
   buildIssuerHistory,
-  HISTORY_HEAD_PAYLOAD_VERSION,
 } = await import('../src/issuer-history.js');
+const { writeAnchorState } = await import('../src/receipt-log-store.js');
 const {
   getIssuerPublicKeyJwk,
   getIssuerKid,
@@ -198,17 +204,12 @@ test('issuer-history rejects seq and unknown query parameters', () => withHistor
   assert.equal(latest.body, v1.body);
 }));
 
-test('payload version 12 pins the chain head and issuance stays at 10', () => withHistory(() => {
+test('issuance stays at payload version 10 and pins the document hash', () => withHistory(() => {
   const record = currentIssuerHistory();
-  const doc = JSON.parse(record.body);
-  const head = currentHistoryPin(HISTORY_HEAD_PAYLOAD_VERSION);
-  assert.equal(HISTORY_HEAD_PAYLOAD_VERSION, 12);
-  assert.deepEqual(Object.keys(head).sort(), ['entry_count', 'head_hash']);
-  assert.equal(head.head_hash, doc.head_hash);
-  assert.equal(head.entry_count, doc.entries.length);
   const issued = currentHistoryPin(10);
   assert.equal(typeof issued.hash, 'string');
   assert.equal(issued.version, record.version);
+  assert.equal(issued.hash, record.hash);
   assert.equal(Object.hasOwn(issued, 'head_hash'), false);
   assert.equal(RECEIPT_PAYLOAD_VERSION, 10);
   const previousRoot = process.env.ISSUER_ROOT_ENABLED;
@@ -241,6 +242,8 @@ function swapProcessKey(privateKey) {
 }
 
 test('an in-memory log reseals when the process key changes', () => withHistory(() => {
+  const previousFlag = process.env.ISSUER_HISTORY_TEST_ROTATION;
+  process.env.ISSUER_HISTORY_TEST_ROTATION = 'true';
   const v1 = currentIssuerHistory();
   const kidA = JSON.parse(v1.body).entries.at(-1).kid;
   const next = freshKey();
@@ -255,6 +258,8 @@ test('an in-memory log reseals when the process key changes', () => withHistory(
     assert.equal(issuerHistoryRecord({ hash: v1.hash }), null);
   } finally {
     restore();
+    if (previousFlag == null) delete process.env.ISSUER_HISTORY_TEST_ROTATION;
+    else process.env.ISSUER_HISTORY_TEST_ROTATION = previousFlag;
   }
 }));
 
@@ -283,6 +288,8 @@ test('a persisted log refuses a different process key and still serves version 1
 
 test('a test process does not append a non-extending line when its key changes', () => withHistory(() => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
+  const previousFlag = process.env.ISSUER_HISTORY_TEST_ROTATION;
+  process.env.ISSUER_HISTORY_TEST_ROTATION = 'true';
   let restore = () => {};
   try {
     configureIssuerHistoryStore({ dir, persist: true });
@@ -295,6 +302,174 @@ test('a test process does not append a non-extending line when its key changes',
     const lines = readFileSync(join(dir, 'issuer-history-versions.jsonl'), 'utf8').trim().split('\n');
     assert.equal(lines.length, 1);
     assert.equal(JSON.parse(lines[0]).body, v1.body);
+  } finally {
+    restore();
+    if (previousFlag == null) delete process.env.ISSUER_HISTORY_TEST_ROTATION;
+    else process.env.ISSUER_HISTORY_TEST_ROTATION = previousFlag;
+    configureIssuerHistoryStore({ dir: null, persist: false });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}));
+
+test('a retire or revoke appends and the last entry is the window', () => withHistory(() => {
+  const kid = getIssuerKid();
+  const retired = retireOrRevokeIssuerKey({
+    status: 'retired',
+    not_before: '2021-01-01T00:00:00.000Z',
+    not_after: '2021-06-01T00:00:00.000Z',
+    reason: 'rotated',
+  });
+  const retiredDoc = JSON.parse(retired.body);
+  assert.equal(retiredDoc.entries.length, 2);
+  assert.equal(retiredDoc.entries[1].status, 'retired');
+  const afterEnd = issuerKeyWindow(retiredDoc, kid, '2021-07-01T00:00:00.000Z');
+  assert.equal(afterEnd.ok, false);
+  assert.equal(afterEnd.reason, 'issued_after_not_after');
+  assert.throws(() => assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
+
+  resetIssuerHistoryStore();
+  const revoked = retireOrRevokeIssuerKey({
+    status: 'revoked',
+    not_before: '2021-01-01T00:00:00.000Z',
+    revoked_at: '2021-06-01T00:00:00.000Z',
+    reason: 'compromised',
+  });
+  const revokedDoc = JSON.parse(revoked.body);
+  const late = issuerKeyWindow(revokedDoc, kid, '2021-09-01T00:00:00.000Z');
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'kid_revoked_before_issuance');
+  const early = issuerKeyWindow(revokedDoc, kid, '2021-01-01T00:00:00.000Z');
+  assert.equal(early.ok, true, early.reason);
+}));
+
+test('truncating the history file cannot reissue a version', () => withHistory(() => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
+  const logDir = mkdtempSync(join(tmpdir(), 'issuer-log-'));
+  const previousLog = process.env.RECEIPT_LOG_DIR;
+  process.env.RECEIPT_LOG_DIR = logDir;
+  try {
+    configureIssuerHistoryStore({ dir, persist: true });
+    currentIssuerHistory();
+    const newbie = freshKey();
+    const v2 = sealExtendingIssuerHistory([{
+      kid: newbie.publicJwk.kid,
+      jwk: newbie.publicJwk,
+      alg: 'ES256',
+      not_before: '2021-06-01T00:00:00.000Z',
+      status: 'active',
+      custody: 'second key',
+    }]);
+    const file = join(dir, 'issuer-history-versions.jsonl');
+    const lines = readFileSync(file, 'utf8').trim().split('\n');
+    writeFileSync(file, `${lines[0]}\n`);
+    assert.throws(
+      () => configureIssuerHistoryStore({ dir, persist: true }),
+      (err) => err.code === 'issuer_history_truncated',
+    );
+    const anchor = JSON.parse(readFileSync(join(logDir, 'anchor-state.json'), 'utf8'));
+    assert.equal(anchor.issuer_history.version, v2.version);
+    assert.equal(anchor.issuer_history.head_hash, v2.head_hash);
+    const side = JSON.parse(readFileSync(join(dir, 'issuer-history-high-water.json'), 'utf8'));
+    assert.equal(side.version, v2.version);
+    assert.equal(side.head_hash, v2.head_hash);
+    writeAnchorState(logDir, { schema: 'chit402.receipt_anchor_state.v1', solana: { kept: true }, base: {} });
+    const kept = JSON.parse(readFileSync(join(logDir, 'anchor-state.json'), 'utf8'));
+    assert.equal(kept.issuer_history.version, v2.version);
+    assert.equal(kept.issuer_history.head_hash, v2.head_hash);
+    assert.equal(kept.solana.kept, true);
+  } finally {
+    if (previousLog == null) delete process.env.RECEIPT_LOG_DIR;
+    else process.env.RECEIPT_LOG_DIR = previousLog;
+    configureIssuerHistoryStore({ dir: null, persist: false });
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(logDir, { recursive: true, force: true });
+  }
+}));
+
+test('the prod v1 to v2 rewrite is grandfathered and recorded', () => withHistory(() => {
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
+  const from = '3d8259fb043f8ac80c924ea89d508f0a898f70bd0335658ef47370d5757e27a6';
+  const to = '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e';
+  function line(version, head, entry) {
+    const body = JSON.stringify({ entries: [{ kid: 'k', entry_hash: entry }], head_hash: head, version, seq: version });
+    return JSON.stringify({ version, seq: version, hash: 'ab'.repeat(32), head_hash: head, fingerprint: entry, body });
+  }
+  writeFileSync(join(dir, 'issuer-history-versions.jsonl'), `${line(1, from, 'aa'.repeat(32))}\n${line(2, to, 'bb'.repeat(32))}\n`);
+  try {
+    configureIssuerHistoryStore({ dir, persist: true });
+    const notes = issuerHistoryNotes();
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].kind, 'grandfathered_rewrite');
+    assert.equal(notes[0].from_head, from);
+    assert.equal(notes[0].to_head, to);
+    assert.match(notes[0].note, /3d8259fb/);
+    const stored = readFileSync(join(dir, 'issuer-history-notes.jsonl'), 'utf8');
+    assert.match(stored, /grandfathered_rewrite/);
+  } finally {
+    configureIssuerHistoryStore({ dir: null, persist: false });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}));
+
+test('the retire script is offline, two-person, and appends', () => withHistory(() => {
+  const script = fileURLToPath(new URL('../scripts/retire-issuer-key.mjs', import.meta.url));
+  const dir = mkdtempSync(join(tmpdir(), 'issuer-retire-'));
+  const agents = join(dir, 'agents');
+  const key = freshKey();
+  const restore = swapProcessKey(key.privateKey);
+  const baseEnv = {
+    ...process.env,
+    NODE_ENV: 'test',
+    TASK_STORE_PERSIST: 'true',
+    TASK_STORE_DIR: join(dir, 'tasks'),
+    AGENTS_DIR: agents,
+    ISSUER_KEY_NOT_BEFORE: '2020-01-01T00:00:00.000Z',
+    ISSUER_HISTORY_TEST_ROTATION: 'true',
+  };
+  delete baseEnv.ISSUER_HISTORY_EXTRA;
+  delete baseEnv.ISSUER_KID;
+  const run = (args, env = {}) => spawnSync(process.execPath, [script, ...args], {
+    env: { ...baseEnv, ...env },
+    encoding: 'utf8',
+  });
+  try {
+    const refused = run([
+      '--status', 'revoked',
+      '--not-before', '2021-01-01T00:00:00.000Z',
+      '--revoked-at', '2021-06-01T00:00:00.000Z',
+    ]);
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /ISSUER_HISTORY_OPERATOR/);
+
+    const samePerson = run(
+      ['--status', 'retired', '--not-before', '2021-01-01T00:00:00.000Z', '--confirm', 'YES'],
+      { ISSUER_HISTORY_OPERATOR: 'alice', ISSUER_HISTORY_APPROVER: 'alice' },
+    );
+    assert.notEqual(samePerson.status, 0);
+
+    const noConfirm = run(
+      ['--status', 'retired', '--not-before', '2021-01-01T00:00:00.000Z'],
+      { ISSUER_HISTORY_OPERATOR: 'alice', ISSUER_HISTORY_APPROVER: 'bob' },
+    );
+    assert.notEqual(noConfirm.status, 0);
+    assert.match(noConfirm.stderr, /--confirm YES/);
+
+    const retired = run([
+      '--status', 'retired',
+      '--not-before', '2021-01-01T00:00:00.000Z',
+      '--not-after', '2021-06-01T00:00:00.000Z',
+      '--reason', 'rotated',
+      '--confirm', 'YES',
+    ], { ISSUER_HISTORY_OPERATOR: 'alice', ISSUER_HISTORY_APPROVER: 'bob' });
+    assert.equal(retired.status, 0, `${retired.stderr}\n${retired.stdout}`);
+    const printed = JSON.parse(retired.stdout);
+    assert.equal(printed.status, 'retired');
+    assert.equal(printed.entry_count, 2);
+    assert.equal(printed.operator, 'alice');
+    const lines = readFileSync(join(agents, 'issuer-history-versions.jsonl'), 'utf8').trim().split('\n');
+    assert.equal(lines.length, 2);
+    configureIssuerHistoryStore({ dir: agents, persist: true });
+    assert.throws(() => assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
   } finally {
     restore();
     configureIssuerHistoryStore({ dir: null, persist: false });

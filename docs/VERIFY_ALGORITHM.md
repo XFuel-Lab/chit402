@@ -176,9 +176,7 @@ Version **10** keeps the version 9 head binding and adds two claims:
 | `issuer_history` | `{ hash, version, seq }` of the issuer-history snapshot in effect at issuance. `hash` is SHA-256 of that snapshot's stored JCS bytes. Fetch it at `/.well-known/issuer-history.json?version=N` |
 | `payload_hash` | SHA-256 of the stored canonical object. The object is the public claims without `payload_hash`, JCS (RFC 8785), UTF-8, no trailing newline |
 
-`GET /receipt/:id/preimage` returns those stored bytes. `X-Chit-Hash-Alg` is `sha256`. SHA-256 of the body equals `payload_hash`. The object is not rebuilt on read. Version 9 receipts omit both claims and still verify. A version 10 receipt fails closed when the pinned snapshot is missing or its hash does not match, and when `iat` is outside `not_before` / `not_after` on the pinned entry. The version 10 pin is an exact match of that document. A later history file does not satisfy it.
-
-Payload version **12** (accepted by the verifier, not issued by the gateway) pins `issuer_history` as `{ head_hash, entry_count }` instead of a hash of the whole document. `head_hash` is `entry_hash` of `entries[entry_count - 1]`. A later snapshot verifies when its entry chain extends that head. A snapshot that does not extend it is `issuer_history_not_extension`. A version 10 `{ hash, version, seq }` pin on a version 12 receipt is `issuer_history_pin_shape`. `verifyReceiptUpToV10` still rejects payload version 12.
+`GET /receipt/:id/preimage` returns those stored bytes. `X-Chit-Hash-Alg` is `sha256`. SHA-256 of the body equals `payload_hash`. The object is not rebuilt on read. Version 9 receipts omit both claims and still verify. A version 10 receipt fails closed when the pinned snapshot is missing or its hash does not match, and when `iat` is outside `not_before` / `not_after` on the last history entry for that kid. The version 10 pin is an exact match of that document. A later history file does not satisfy it.
 
 A settlement claim closes once. The book seat (`claim_id` equal to the agent
 id) is shared by every receipt in that book. Closing a different `claim_id`,
