@@ -363,10 +363,35 @@ async function confirmIntentPayment(claims, input, deps = {}) {
  * @param {NodeJS.ProcessEnv} [env]
  * @param {{ settleBoundPayment?: Function, cfg?: object, store?: object }} [deps]
  */
+// One settle per intent at a time. The exhausted check, #520 booking and the
+// use commit run under this lock, so the loser of the last use is refused
+// before settleBoundPayment and never books a transfer without a receipt.
+// We run a single instance today. A multi-instance deploy also needs the use
+// reserved in the store before booking.
+const settleLocks = new Map();
+async function withIntentLock(key, fn) {
+  const prev = settleLocks.get(key) || Promise.resolve();
+  let release;
+  const mine = new Promise((resolve) => { release = resolve; });
+  const tail = prev.then(() => mine);
+  settleLocks.set(key, tail);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (settleLocks.get(key) === tail) settleLocks.delete(key);
+  }
+}
+
 export async function settleIntent(store, input, env = process.env, deps = {}) {
   if (!v12MintEnabled(env)) return hidden(403, 'v12_mint_disabled');
   const parsed = parseV12Uuid(input?.intent_id ?? input?.intentId);
   if (!parsed) return hidden(404, 'not_found');
+  return withIntentLock(parsed.uuid, () => settleIntentLocked(store, input, env, deps, parsed));
+}
+
+async function settleIntentLocked(store, input, env, deps, parsed) {
   const grant = store.getGrant(parsed.uuid);
   if (!grant) return hidden(404, 'not_found');
   const claims = decodeIntent(grant.record);

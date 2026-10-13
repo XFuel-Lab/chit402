@@ -626,7 +626,7 @@ test('an exhausted intent is refused before the transfer is booked', async () =>
   local.close();
 });
 
-test('the loser of the last use logs the booked transfer', async () => {
+test('the loser of the last use is refused before booking', async () => {
   const local = openIntentStore(path.join(dir, 'last-use.sqlite'));
   const issued = issueIntent(local, {
     payer: PAYER, payee: PAYEE, max_amount: '5000', expiry: '2026-12-01T00:00:00.000Z', use_count: 1,
@@ -634,8 +634,6 @@ test('the loser of the last use logs the booked transfer', async () => {
   const txA = `base:0x${'a4'.repeat(32)}`;
   const txB = `base:0x${'b5'.repeat(32)}`;
   let entered = 0;
-  let openGate;
-  const bothEntered = new Promise((resolve) => { openGate = resolve; });
   const booked = [];
   const lines = [];
   const original = logger.error.bind(logger);
@@ -647,8 +645,7 @@ test('the loser of the last use logs the booked transfer', async () => {
     cfg: { network: 'base' },
     async settleBoundPayment() {
       entered += 1;
-      if (entered === 2) openGate();
-      await bothEntered;
+      await new Promise((r) => setTimeout(r, 20));
       return {
         kind: 'settled',
         confirmed: true,
@@ -675,11 +672,12 @@ test('the loser of the last use logs the booked transfer', async () => {
     assert.equal(wins.length, 1, JSON.stringify([a, b]));
     assert.equal(losses[0].status, 409);
     assert.equal(losses[0].error, 'intent_violation');
-    assert.deepEqual(booked.sort(), [txA, txB].sort());
+    assert.equal(entered, 1);
+    assert.equal(booked.length, 1);
     assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
     const winnerRef = wins[0].body.receipt.payment.ref;
-    const loserRef = winnerRef === txA ? txB : txA;
-    assert.equal(lines.some((line) => line?.reason === 'booked_unreceipted' && line?.paymentRef === loserRef), true, JSON.stringify(lines));
+    assert.deepEqual(booked, [winnerRef]);
+    assert.equal(lines.some((line) => line?.reason === 'booked_unreceipted'), false, JSON.stringify(lines));
   } finally {
     logger.error = original;
     local.close();
