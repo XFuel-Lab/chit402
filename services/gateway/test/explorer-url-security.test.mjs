@@ -300,3 +300,18 @@ test('T13 audit HTML escapes a quote in explorer_url', () => {
   assert.equal(html.includes('onclick="alert'), false);
   assert.equal(html.includes(`tx/${SIG88}"`), false);
 });
+
+test('R6 a stored explorer fallback must match the derived URL shape', () => {
+  const tx = `0x${'ab'.repeat(32)}`;
+  const nano = 'ab'.repeat(32);
+  assert.equal(safeExplorerUrl(`https://basescan.org/address/${tx}`, null), null);
+  assert.equal(safeExplorerUrl(`https://basescan.org/tx/${tx.slice(0, 20)}`, null), null);
+  assert.equal(safeExplorerUrl(`https://basescan.org/tx/${tx}?foo=1`, null), null);
+  assert.equal(safeExplorerUrl('https://nanexplorer.com/junk', null), null);
+  assert.equal(safeExplorerUrl(`https://solscan.io/account/${SIG88}`, null), null);
+  assert.equal(safeExplorerUrl(`https://basescan.org/tx/${tx}`, null), `https://basescan.org/tx/${tx}`);
+  assert.equal(safeExplorerUrl(`https://sepolia.basescan.org/tx/${tx}`, null), `https://sepolia.basescan.org/tx/${tx}`);
+  assert.equal(safeExplorerUrl(`https://nanexplorer.com/nano/block/${nano}`, null), `https://nanexplorer.com/nano/block/${nano}`);
+  assert.equal(safeExplorerUrl(`https://solscan.io/tx/${SIG88}`, null), `https://solscan.io/tx/${SIG88}`);
+  assert.equal(safeExplorerUrl(`https://solscan.io/tx/${SIG88}?cluster=devnet`, null), `https://solscan.io/tx/${SIG88}?cluster=devnet`);
+});

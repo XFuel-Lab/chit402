@@ -15,6 +15,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { findLink, findSecret } from './board-posts.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
@@ -111,9 +112,7 @@ export class BoardJobStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'board-jobs: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-jobs: mkdir failed');
       }
     }
   }
@@ -149,7 +148,7 @@ export class BoardJobStore {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'board-jobs: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-jobs: save failed');
     }
   }
 

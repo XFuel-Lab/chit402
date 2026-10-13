@@ -15,6 +15,11 @@ import {
   facilitatorTimeout,
   isSolanaNetwork,
   isEvmNetwork,
+  facilitatorNetwork,
+  toCaip2Network,
+  fromCaip2Network,
+  assertFacilitatorUrl,
+  FACILITATOR_MAX_BODY_BYTES,
 } from '../src/x402-facilitator.js';
 import { buildBazaarExtension } from '../src/x402-adapter.js';
 import { runX402Handshake } from '../src/x402-server.js';
@@ -2913,5 +2918,79 @@ test('verifyViaFacilitator forwards memo to facilitator in both payload and requ
     assert.equal(receivedRequirements.extra.memo, 'challengeNonce123', 'requirements.extra.memo forwarded');
   } finally {
     await new Promise((r) => server.close(r));
+  }
+});
+
+test('prototype network keys are unknown-network', () => {
+  for (const key of ['__proto__', 'constructor', 'toString']) {
+    assert.equal(facilitatorNetwork(key), 'unknown-network', key);
+    assert.equal(toCaip2Network(key), 'unknown-network', key);
+    assert.equal(fromCaip2Network(key), 'unknown-network', key);
+    assert.equal(isSolanaNetwork(key), false, key);
+  }
+  assert.equal(facilitatorNetwork('base'), 'base');
+  assert.equal(toCaip2Network('ethereum'), 'ethereum');
+  assert.equal(fromCaip2Network('nano'), 'nano');
+});
+
+test('facilitator HTTP rejects cleartext, does not follow redirects, and caps the body', async () => {
+  assert.throws(
+    () => assertFacilitatorUrl('http://evil.example/verify'),
+    (err) => err.code === 'facilitator_http_rejected',
+  );
+  assert.throws(
+    () => assertFacilitatorUrl('https://user:pass@facilitator.example/verify'),
+    (err) => err.code === 'facilitator_http_rejected',
+  );
+  const loop = assertFacilitatorUrl('http://127.0.0.1:9/x');
+  assert.equal(loop.protocol, 'http:');
+
+  const header = makePaymentHeader();
+  const challenge = { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury' };
+  const rejected = await verifyViaFacilitator(header, { gateway: 'http://evil.example/verify', challenge });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.reason, 'facilitator_http_rejected');
+
+  let followed = 0;
+  const target = http.createServer((req, res) => {
+    followed += 1;
+    res.end('landed');
+  });
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  const redirector = http.createServer((req, res) => {
+    const port = target.address().port;
+    res.writeHead(302, { location: `http://127.0.0.1:${port}/landed` });
+    res.end();
+  });
+  await new Promise((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+  try {
+    const redirected = await verifyViaFacilitator(header, {
+      gateway: `http://127.0.0.1:${redirector.address().port}`,
+      challenge,
+    });
+    assert.equal(followed, 0);
+    assert.equal(redirected.valid, false);
+  } finally {
+    await new Promise((resolve) => redirector.close(resolve));
+    await new Promise((resolve) => target.close(resolve));
+  }
+
+  const big = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': String(FACILITATOR_MAX_BODY_BYTES + 1),
+    });
+    res.end('{}');
+  });
+  await new Promise((resolve) => big.listen(0, '127.0.0.1', resolve));
+  try {
+    const oversized = await verifyViaFacilitator(header, {
+      gateway: `http://127.0.0.1:${big.address().port}`,
+      challenge,
+    });
+    assert.equal(oversized.valid, false);
+    assert.equal(oversized.reason, 'facilitator_http_body');
+  } finally {
+    await new Promise((resolve) => big.close(resolve));
   }
 });

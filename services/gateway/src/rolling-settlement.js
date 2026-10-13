@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { quoteFromCogs } from './pricing.js';
 
 /**
@@ -62,9 +63,9 @@ export function configureRollingLedger({ dir = null, persist = false } = {}) {
     try {
       fs.mkdirSync(persistDir, { recursive: true });
     } catch (err) {
-      logger.warn({ err: err.message, dir: persistDir }, 'rolling-settlement: mkdir failed; persistence disabled');
       persistEnabled = false;
       persistDir = null;
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'rolling-settlement: mkdir failed');
     }
   }
 }
@@ -81,7 +82,7 @@ function persistPayer(id, rec) {
     fs.writeFileSync(tmp, JSON.stringify(rec));
     fs.renameSync(tmp, target);
   } catch (err) {
-    logger.warn({ err: err.message, payer: id }, 'rolling-settlement: persist failed');
+    throw err?.code === 'persist_failed' ? err : persistFailed(err, 'rolling-settlement: persist failed');
   }
 }
 
@@ -198,6 +199,7 @@ export function recordPending(payerId, {
     );
     if (BigInt(rec.pending.amount) >= BigInt(billed.amount)) return rec.pending;
   }
+  const previousPending = rec.pending;
   rec.pending = {
     amount: String(billed.amount),
     taskId,
@@ -215,7 +217,12 @@ export function recordPending(payerId, {
     at: Date.now(),
     attempts: 0,
   };
-  persistPayer(payerId, rec);
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending = previousPending;
+    throw err;
+  }
   return rec.pending;
 }
 
@@ -225,9 +232,16 @@ export function markSettled(payerId) {
   if (!rec) return null;
   ledger.set(payerId, rec);
   const cleared = rec.pending;
+  const previousSettled = rec.settled || 0;
   rec.pending = null;
-  rec.settled = (rec.settled || 0) + 1;
-  persistPayer(payerId, rec);
+  rec.settled = previousSettled + 1;
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending = cleared;
+    rec.settled = previousSettled;
+    throw err;
+  }
   return cleared;
 }
 
@@ -239,8 +253,14 @@ export function markSettleFailed(payerId, reason = null) {
   const rec = ledger.get(payerId) || loadPayer(payerId);
   if (!rec?.pending) return null;
   ledger.set(payerId, rec);
+  const previousAttempts = rec.pending.attempts;
   rec.pending.attempts += 1;
-  persistPayer(payerId, rec);
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending.attempts = previousAttempts;
+    throw err;
+  }
   logger.warn(
     { payer: payerId, amount: rec.pending.amount, attempts: rec.pending.attempts, reason },
     'rolling-settlement: settlement failed; debt retained for the next request',

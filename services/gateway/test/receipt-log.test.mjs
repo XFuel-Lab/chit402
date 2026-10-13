@@ -17,6 +17,7 @@ const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
 const {
   ReceiptMerkleTree,
   bootReceiptLog,
+  baseAnchorSigner,
   getReceiptMerkleTree,
   resetReceiptMerkleTree,
   rootOf,
@@ -57,7 +58,7 @@ const {
 } = await import('../src/receipt-log-s3.js');
 const { analyzeSeq } = await import('../src/book-seq.js');
 const { UsageSettledLedger } = await import('../src/usage-settled.js');
-const { signJws, getIssuerPublicKeyJwk } = await import('../src/issuer-key.js');
+const { signJws, getIssuerPublicKeyJwk, _resetIssuerKey, computeJwkThumbprint } = await import('../src/issuer-key.js');
 const { base58Encode } = await import('../src/solana-receipt-anchor.js');
 const { assertLatestBaseAnchor, planReceiptBackfill } = await import('../src/receipt-log-anchor.js');
 
@@ -2937,5 +2938,242 @@ test('epoch 1 inclusion names the pin anchors and the closed head is signed', as
     if (prevPin == null) delete process.env.RECEIPT_LOG_PIN_FILE;
     else process.env.RECEIPT_LOG_PIN_FILE = prevPin;
     resetReceiptMerkleTree();
+  }
+});
+
+function restoreEnv(name, previous) {
+  if (previous == null) delete process.env[name];
+  else process.env[name] = previous;
+}
+
+function throwawayIssuer() {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  return {
+    key: Buffer.from(pem).toString('base64'),
+    kid: computeJwkThumbprint(jwk),
+  };
+}
+
+test('production refuses to sign when anchor caps are unset or not numeric', async () => {
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevNode = process.env.NODE_ENV;
+  const prevFee = process.env.ANCHOR_MAX_FEE_WEI;
+  const prevPri = process.env.ANCHOR_MAX_PRIORITY_WEI;
+  const prevIssuer = process.env.ISSUER_PRIVATE_KEY;
+  const prevKid = process.env.ISSUER_KID;
+  const issuer = throwawayIssuer();
+  process.env.ISSUER_PRIVATE_KEY = issuer.key;
+  process.env.ISSUER_KID = issuer.kid;
+  _resetIssuerKey();
+  const originalSign = baseAnchorSigner.sign;
+  let signs = 0;
+  baseAnchorSigner.sign = async (args) => {
+    signs += 1;
+    return originalSign(args);
+  };
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  try {
+    for (const nodeEnv of ['production', 'Production', 'PRODUCTION']) {
+      process.env.NODE_ENV = nodeEnv;
+      assert.throws(
+        () => bootReceiptLog(tmp()),
+        (err) => err instanceof ReceiptLogRefused && err.code === 'anchor_fee_cap_config',
+      );
+      for (const caps of [
+        [undefined, undefined],
+        ['nope', '2000000000'],
+        ['20000000000', '2gwei'],
+        ['20 gwei', '2000000000'],
+      ]) {
+        if (caps[0] == null) delete process.env.ANCHOR_MAX_FEE_WEI;
+        else process.env.ANCHOR_MAX_FEE_WEI = caps[0];
+        if (caps[1] == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+        else process.env.ANCHOR_MAX_PRIORITY_WEI = caps[1];
+        const tree = new ReceiptMerkleTree();
+        tree.dir = tmp();
+        tree.appendReceipt('row-1', 'hash-1', { publish: false });
+        const before = signs;
+        const head = await tree.publishHead({
+          force: true,
+          now: '2026-10-06T12:00:00.000Z',
+          nonce: 4,
+          sleep: async () => {},
+          send: async () => { throw new Error('should_not_send'); },
+        });
+        assert.equal(signs, before, nodeEnv);
+        assert.equal(head.anchor_status, 'pending');
+        assert.equal(head.anchor.reason, 'anchor_fee_cap_config');
+      }
+    }
+  } finally {
+    baseAnchorSigner.sign = originalSign;
+    restoreEnv('RECEIPT_ANCHOR_PRIVATE_KEY', prevKey);
+    restoreEnv('NODE_ENV', prevNode);
+    restoreEnv('ANCHOR_MAX_FEE_WEI', prevFee);
+    restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
+    restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
+    restoreEnv('ISSUER_KID', prevKid);
+    _resetIssuerKey();
+  }
+});
+
+test('unset production caps refuse replacement and a priority-only cap refuses speed-up', async () => {
+  const dir = tmp();
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  const prevNode = process.env.NODE_ENV;
+  const prevFee = process.env.ANCHOR_MAX_FEE_WEI;
+  const prevPri = process.env.ANCHOR_MAX_PRIORITY_WEI;
+  const prevIssuer = process.env.ISSUER_PRIVATE_KEY;
+  const prevKid = process.env.ISSUER_KID;
+  const issuer = throwawayIssuer();
+  process.env.ISSUER_PRIVATE_KEY = issuer.key;
+  process.env.ISSUER_KID = issuer.kid;
+  _resetIssuerKey();
+  const originalSign = baseAnchorSigner.sign;
+  let signs = 0;
+  baseAnchorSigner.sign = async (args) => {
+    signs += 1;
+    return originalSign(args);
+  };
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+  process.env.NODE_ENV = 'Production';
+  process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
+  process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  let phase = 'first';
+  const lookup = async (intent) => {
+    if (phase === 'first') {
+      return {
+        visible: true,
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      };
+    }
+    return { rebroadcast: true, missing: true };
+  };
+  const send = async (args) => {
+    if (phase !== 'first') throw new Error('replacement transaction underpriced');
+    return args.hash;
+  };
+  try {
+    await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      sleep: async () => {},
+      lookup,
+      send,
+    });
+    assert.equal(signs, 1);
+    delete process.env.ANCHOR_MAX_FEE_WEI;
+    delete process.env.ANCHOR_MAX_PRIORITY_WEI;
+    phase = 'replace';
+    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const replaced = await tree.publishHead({
+      force: true,
+      now: '2026-10-06T12:01:00.000Z',
+      nonce: 4,
+      sleep: async () => {},
+      lookup,
+      send,
+    });
+    assert.equal(signs, 1);
+    assert.equal(replaced.anchor_status, 'blocked');
+    assert.equal(replaced.anchor.reason, 'anchor_fee_cap_config');
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded'), false);
+
+    const speedDir = tmp();
+    const speed = new ReceiptMerkleTree();
+    speed.dir = speedDir;
+    speed.appendReceipt('row-1', 'hash-1', { publish: false });
+    process.env.NODE_ENV = 'PRODUCTION';
+    process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
+    process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
+    const visible = async (intent) => ({
+      visible: true,
+      tx: intent.tx,
+      root: intent.root,
+      from: intent.from,
+      to: intent.to,
+      nonce: intent.nonce,
+    });
+    await speed.publishHead({
+      force: true,
+      now: '2026-10-06T12:00:00.000Z',
+      nonce: 4,
+      sleep: async () => {},
+      lookup: visible,
+      send: async (args) => args.hash,
+    });
+    assert.equal(signs, 2);
+    process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
+    process.env.ANCHOR_MAX_PRIORITY_WEI = '100000000';
+    speed.appendReceipt('row-2', 'hash-2', { publish: false });
+    const sped = await speed.publishHead({
+      force: true,
+      now: '2026-10-06T12:11:00.000Z',
+      nonce: 4,
+      sleep: async () => {},
+      lookup: visible,
+      send: async () => { throw new Error('should_not_send'); },
+    });
+    assert.equal(signs, 2);
+    assert.equal(sped.anchor_status, 'blocked');
+    assert.equal(sped.anchor.reason, 'anchor_fee_cap');
+    assert.equal(anchorIntentRows(speedDir).some((row) => row.status === 'superseded'), false);
+    assert.equal(anchorIntentRows(speedDir).some((row) => row.nonce === 5), false);
+  } finally {
+    baseAnchorSigner.sign = originalSign;
+    restoreEnv('RECEIPT_ANCHOR_PRIVATE_KEY', prevKey);
+    restoreEnv('NODE_ENV', prevNode);
+    restoreEnv('ANCHOR_MAX_FEE_WEI', prevFee);
+    restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
+    restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
+    restoreEnv('ISSUER_KID', prevKid);
+    _resetIssuerKey();
+  }
+});
+
+test('an RPC timeout at boot reconcile keeps an anchored intent and sends no new tx', async () => {
+  const dir = tmp();
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.anchorRpcTimeoutMs = 30;
+  const tx = `0x${'cd'.repeat(32)}`;
+  const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
+  const root = 'ab'.repeat(32);
+  tree.anchorIntents.push({
+    chain: 'base',
+    root,
+    day: '2026-10-06',
+    nonce: 4,
+    status: 'anchored',
+    raw: '0xraw',
+    tx,
+    from,
+    to: from,
+    at: '2026-10-06T12:00:00.000Z',
+  });
+  let rebroadcasts = 0;
+  await tree.reconcileAnchorIntents({
+    lookup: () => new Promise(() => {}),
+    rebroadcast: async () => { rebroadcasts += 1; },
+  });
+  assert.equal(rebroadcasts, 0);
+  const kept = tree.anchorIntents.filter((row) => row.tx === tx);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].status, 'anchored');
+  assert.equal(kept[0].tx, tx);
+  assert.equal(tree.anchorIntents.some((row) => row.status === 'blocked'), false);
+  const journal = path.join(dir, 'journal.jsonl');
+  if (fs.existsSync(journal)) {
+    assert.equal(anchorIntentRows(dir).some((row) => row.status === 'blocked'), false);
   }
 });

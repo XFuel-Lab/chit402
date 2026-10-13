@@ -18,6 +18,7 @@ import {
   isAddress,
 } from 'ethers';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 
 export const USDC_ATOMIC_DECIMALS = 6;
 export const USDC_ATOMIC_UNIT = 'atomic_usdc';
@@ -773,9 +774,7 @@ export class SessionDelegationStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'session-delegation: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'session-delegation: mkdir failed');
       }
     }
   }
@@ -811,7 +810,7 @@ export class SessionDelegationStore {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'session-delegation: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'session-delegation: save failed');
     }
   }
 
@@ -822,8 +821,15 @@ export class SessionDelegationStore {
       ...session,
       recorded_at: session.recorded_at || Math.floor(Date.now() / 1000),
     };
+    const previous = this.sessions.get(key);
     this.sessions.set(key, row);
-    this._save();
+    try {
+      this._save();
+    } catch (err) {
+      if (previous === undefined) this.sessions.delete(key);
+      else this.sessions.set(key, previous);
+      throw err;
+    }
     return row;
   }
 
@@ -858,8 +864,15 @@ export class SessionDelegationStore {
       revoked_at: revocation.revoked_at || Math.floor(Date.now() / 1000),
       proof: revocation.proof || null,
     };
+    const previous = this.revocations.get(key);
     this.revocations.set(key, row);
-    this._save();
+    try {
+      this._save();
+    } catch (err) {
+      if (previous === undefined) this.revocations.delete(key);
+      else this.revocations.set(key, previous);
+      throw err;
+    }
     return row;
   }
 

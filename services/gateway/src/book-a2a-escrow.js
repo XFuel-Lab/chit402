@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import {
   ESCROW_ACTIONS,
   ESCROW_STATUS,
@@ -83,9 +84,7 @@ export class BookA2aJobStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'book-a2a-escrow: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-a2a-escrow: mkdir failed');
       }
     }
   }
@@ -118,7 +117,7 @@ export class BookA2aJobStore {
       fs.writeFileSync(tmp, JSON.stringify({ jobs: [...this.jobs.values()] }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'book-a2a-escrow: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-a2a-escrow: save failed');
     }
   }
 

@@ -22,6 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { normalizeSessionActAction } from './session-act.js';
 
 export const POLICY_TYPES = {
@@ -59,9 +60,7 @@ export class BookPolicyStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'book-policy: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-policy: mkdir failed');
       }
     }
   }
@@ -95,7 +94,7 @@ export class BookPolicyStore {
       fs.writeFileSync(tmp, JSON.stringify({ policies }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'book-policy: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-policy: save failed');
     }
   }
 

@@ -15,6 +15,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 
@@ -228,9 +229,7 @@ export class BoardPostStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'board-posts: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-posts: mkdir failed');
       }
     }
   }
@@ -276,7 +275,7 @@ export class BoardPostStore {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'board-posts: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-posts: save failed');
     }
   }
 

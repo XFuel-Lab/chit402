@@ -1875,6 +1875,7 @@ function withBookSpend(receipt, {
     bindRequestSalt(next, receipt);
     return next;
   } catch (err) {
+    if (err?.code === 'persist_failed') throw err;
     logger.warn({ err: err.message, taskId: receipt.task_id }, 'openai-gateway: UsageSettled append threw');
     return receipt;
   }
@@ -1922,6 +1923,7 @@ function writeSettleBookRow({
     }
     return recorded;
   } catch (err) {
+    if (err?.code === 'persist_failed') throw err;
     logger.warn({ err: err.message, taskId }, 'openai-gateway: settle-time UsageSettled append threw');
     return null;
   }

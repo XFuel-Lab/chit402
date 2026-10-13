@@ -66,12 +66,15 @@ quietly — the service starts, serves traffic, and is wrong:
 | `ALLOW_MOCK_INFERENCE` | Leave unset in production. `true` lets a paid task be answered by a mock |
 | `PROVIDER_FLOATS_JSON` | Optional, but a float id must exist per provider you route to or that provider's COGS never burns. Ids are `theta-edgecloud` and `akash-network` |
 | `FREE_TIER_DAILY_COGS_USD` | A per-caller daily ceiling. `0` restores uncapped serving. Visible at `GET /health` → `free_tier` |
+| `ANCHOR_MAX_FEE_WEI` | Required when `NODE_ENV` is production (any casing). Integer wei cap on `maxFeePerGas` for the first sign, replacement, and speed-up. Deploy default `20000000000` (20 gwei). Unset or non-numeric refuses to sign |
+| `ANCHOR_MAX_PRIORITY_WEI` | Same rule for `maxPriorityFeePerGas`. Deploy default `2000000000` (2 gwei) |
+| `M2M_RELAYER_AUDIENCE` | Required when relayer addresses are set. Signatures bind this audience and a single-use nonce |
 
 Check names without printing values, from the gateway directory:
 
 ```bash
 cd "$XFUEL_REPO/services/gateway"
-for v in RECEIPT_SIGNING_SECRET AKASHML_API_KEY ALLOW_MOCK_INFERENCE PROVIDER_FLOATS_JSON FREE_TIER_DAILY_COGS_USD; do
+for v in RECEIPT_SIGNING_SECRET AKASHML_API_KEY ALLOW_MOCK_INFERENCE PROVIDER_FLOATS_JSON FREE_TIER_DAILY_COGS_USD ANCHOR_MAX_FEE_WEI ANCHOR_MAX_PRIORITY_WEI M2M_RELAYER_AUDIENCE; do
   grep -q "^$v=" .env && echo "SET      $v" || echo "MISSING  $v"
 done
 ```
