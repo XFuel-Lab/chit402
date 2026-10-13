@@ -374,6 +374,9 @@ export async function settleIntent(store, input, env = process.env, deps = {}) {
 
   const issued = new Date().toISOString();
   if (Date.parse(issued) > Date.parse(claims.expiry)) return hidden(409, 'intent_violation');
+  // Refuse an exhausted intent before #520 books the transfer. Booking runs
+  // before the commit, so a late refusal would keep the payment with no receipt.
+  if (!(Number(grant.usesRemaining) > 0)) return hidden(409, 'intent_violation');
 
   const payment = await confirmIntentPayment(claims, input, deps);
   if (!payment.ok) return payment;
@@ -410,10 +413,13 @@ export async function settleIntent(store, input, env = process.env, deps = {}) {
       pin,
       kid: getIssuerKid(),
     }), { tx: payment.paymentRef, amount: payment.amount });
-  } catch {
+  } catch (err) {
+    logger.error({ intentId: parsed.uuid, paymentRef: payment.paymentRef, reason: 'booked_unreceipted', err: err?.message }, 'intent settle: #520 booked the transfer but the receipt did not commit');
     return hidden(500, 'internal');
   }
   if (!settled.ok) {
+    // The transfer is booked spent in #520 and no receipt exists. Ops refunds or reissues.
+    logger.error({ intentId: parsed.uuid, paymentRef: payment.paymentRef, reason: 'booked_unreceipted', code: settled.reason || 'intent_violation' }, 'intent settle: #520 booked the transfer but the receipt did not commit');
     return hidden(409, settled.reason || 'intent_violation');
   }
   return {

@@ -46,6 +46,7 @@ const {
 } = await import('../src/intent-record.js');
 const { openIntentStore } = await import('../src/intent-store.js');
 const { registerIntentRoutes } = await import('../src/intent-api.js');
+const { default: logger } = await import('../src/logger.js');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'intent-b2-'));
 const store = openIntentStore(path.join(dir, 'intent.sqlite'));
@@ -595,4 +596,92 @@ test('a #520 replay does not mint, and a failed book is surfaced', async () => {
   assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
   assert.equal(local.getGrant(issued.body.intent_id).usesRemaining, 1);
   local.close();
+});
+
+test('an exhausted intent is refused before the transfer is booked', async () => {
+  const local = openIntentStore(path.join(dir, 'exhausted.sqlite'));
+  const issued = issueIntent(local, {
+    payer: PAYER, payee: PAYEE, max_amount: '5000', expiry: '2026-12-01T00:00:00.000Z', use_count: 1,
+  });
+  const first = paymentDeps({ amount: '2500', tx: `base:0x${'f1'.repeat(32)}` });
+  const ok = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    payment_header: 'h',
+    nonce: 'n-first',
+  }, process.env, first);
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(first.calls.length, 1);
+
+  const second = paymentDeps({ amount: '2500', tx: `base:0x${'f2'.repeat(32)}` });
+  const again = await settleIntent(local, {
+    intent_id: issued.body.intent_id,
+    payment_header: 'h',
+    nonce: 'n-again',
+  }, process.env, second);
+  assert.equal(again.status, 409);
+  assert.equal(again.error, 'intent_violation');
+  assert.equal(second.calls.length, 0);
+  assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
+  assert.equal(local.getGrant(issued.body.intent_id).usesRemaining, 0);
+  local.close();
+});
+
+test('the loser of the last use logs the booked transfer', async () => {
+  const local = openIntentStore(path.join(dir, 'last-use.sqlite'));
+  const issued = issueIntent(local, {
+    payer: PAYER, payee: PAYEE, max_amount: '5000', expiry: '2026-12-01T00:00:00.000Z', use_count: 1,
+  });
+  const txA = `base:0x${'a4'.repeat(32)}`;
+  const txB = `base:0x${'b5'.repeat(32)}`;
+  let entered = 0;
+  let openGate;
+  const bothEntered = new Promise((resolve) => { openGate = resolve; });
+  const booked = [];
+  const lines = [];
+  const original = logger.error.bind(logger);
+  logger.error = (obj, msg) => {
+    lines.push(obj);
+    return original(obj, msg);
+  };
+  const deps = (tx) => ({
+    cfg: { network: 'base' },
+    async settleBoundPayment() {
+      entered += 1;
+      if (entered === 2) openGate();
+      await bothEntered;
+      return {
+        kind: 'settled',
+        confirmed: true,
+        settledAmount: '2500',
+        payerWallet: PAYER,
+        payTo: PAYEE,
+        paymentRef: tx,
+        bookSpent() { booked.push(tx); },
+        releaseClaim() {},
+      };
+    },
+  });
+  try {
+    const [a, b] = await Promise.all([
+      settleIntent(local, {
+        intent_id: issued.body.intent_id, payment_header: 'h', nonce: 'n-a',
+      }, process.env, deps(txA)),
+      settleIntent(local, {
+        intent_id: issued.body.intent_id, payment_header: 'h', nonce: 'n-b',
+      }, process.env, deps(txB)),
+    ]);
+    const wins = [a, b].filter((row) => row.ok);
+    const losses = [a, b].filter((row) => !row.ok);
+    assert.equal(wins.length, 1, JSON.stringify([a, b]));
+    assert.equal(losses[0].status, 409);
+    assert.equal(losses[0].error, 'intent_violation');
+    assert.deepEqual(booked.sort(), [txA, txB].sort());
+    assert.equal(local.receiptsFor(issued.body.intent_id).length, 1);
+    const winnerRef = wins[0].body.receipt.payment.ref;
+    const loserRef = winnerRef === txA ? txB : txA;
+    assert.equal(lines.some((line) => line?.reason === 'booked_unreceipted' && line?.paymentRef === loserRef), true, JSON.stringify(lines));
+  } finally {
+    logger.error = original;
+    local.close();
+  }
 });
