@@ -5,11 +5,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const {
   issuerHistoryEntryHash,
   issuerHistoryDocumentHash,
+  issuerKeyWindow,
 } = await import('../dist/issuer-history.js');
 const { verifyReceipt, verifyReceiptUpToV10 } = await import('../dist/index.js');
 
@@ -187,4 +193,92 @@ test('a payload v12 receipt with a document pin or no pin fails closed', async (
   const conflict = await verifyReceipt(both, opts);
   assert.equal(conflict.overall, 'failed');
   assert.equal(conflict.issuer_history.reason, 'issuer_history_pin_shape');
+});
+
+test('the last entry for a kid is the window', () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-01-01T00:00:00Z' });
+  const retiredBody = {
+    kid: key.kid,
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-05-01T00:00:00Z',
+    not_after: '2026-06-01T00:00:00Z',
+    status: 'retired',
+    revoked_at: null,
+    reason: 'rotated',
+    custody: 'test custody',
+    prev_hash: first.entry_hash,
+  };
+  const retired = { ...retiredBody, entry_hash: issuerHistoryEntryHash(retiredBody) };
+  const retiredWindow = issuerKeyWindow({ entries: [first, retired] }, key.kid, '2026-07-01T00:00:00Z');
+  assert.equal(retiredWindow.ok, false);
+  assert.equal(retiredWindow.reason, 'issued_after_not_after');
+
+  const revokedBody = {
+    ...retiredBody,
+    status: 'revoked',
+    not_after: null,
+    revoked_at: '2026-06-01T00:00:00Z',
+    not_before: '2026-01-01T00:00:00Z',
+    reason: 'compromised',
+  };
+  const revoked = { ...revokedBody, entry_hash: issuerHistoryEntryHash(revokedBody) };
+  const late = issuerKeyWindow({ entries: [first, revoked] }, key.kid, '2026-09-01T00:00:00Z');
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'kid_revoked_before_issuance');
+  const early = issuerKeyWindow({ entries: [first, revoked] }, key.kid, '2026-03-01T00:00:00Z');
+  assert.equal(early.ok, true, early.reason);
+});
+
+function bareVerified(text) {
+  return text.split('\n').some((line) => line.trim() === 'Overall: VERIFIED');
+}
+
+function runCli(args) {
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const proc = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15000 });
+  return {
+    status: proc.status,
+    stdout: proc.stdout || '',
+    stderr: proc.stderr || '',
+    text: `${proc.stdout || ''}\n${proc.stderr || ''}`,
+  };
+}
+
+test('payload v12 --no-issuer-history is VERIFIED_NO_KEY_WINDOW and exits non-zero', async () => {
+  const key = issuerKey();
+  const receipt = receiptFor(key, paymentClaims(12));
+  const opts = { jwks: { keys: [key.publicJwk] }, trustedKids: [key.kid], skipIssuerHistory: true };
+  const skipped = await verifyReceipt(receipt, opts);
+  assert.equal(skipped.overall, 'verified_no_key_window', skipped.errors.join('; '));
+  assert.equal(skipped.issuer_history.warning, 'key window skipped');
+
+  const older = await verifyReceipt(receiptFor(key, paymentClaims(10)), opts);
+  assert.equal(older.overall, 'verified', older.errors.join('; '));
+
+  const dir = mkdtempSync(join(tmpdir(), 'chit-v12-skip-'));
+  const receiptPath = join(dir, 'receipt.json');
+  const jwksPath = join(dir, 'jwks.json');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  writeFileSync(jwksPath, JSON.stringify({ keys: [key.publicJwk] }));
+  const base = [
+    receiptPath,
+    '--jwks-file', jwksPath,
+    '--trusted-kid', key.kid,
+    '--no-issuer-history',
+    '--no-preimage',
+  ];
+  const text = runCli(base);
+  assert.equal(text.status, 1, text.text);
+  assert.equal(bareVerified(text.stdout), false, text.stdout);
+  assert.match(text.stdout, /Overall: VERIFIED_NO_KEY_WINDOW/);
+  const opted = runCli([...base, '--accept-no-key-window']);
+  assert.equal(opted.status, 0, opted.text);
+  assert.equal(bareVerified(opted.stdout), false, opted.stdout);
+  assert.match(opted.stdout, /Overall: VERIFIED_NO_KEY_WINDOW/);
+  const json = runCli([...base, '--json']);
+  assert.equal(json.status, 1, json.text);
+  assert.equal(JSON.parse(json.stdout).overall, 'verified_no_key_window');
+  assert.equal(bareVerified(json.stdout), false);
 });

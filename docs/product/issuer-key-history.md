@@ -36,9 +36,9 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 ## Check
 
-`xfuel-verify` reads the receipt's `kid` and `iat`. It fails if `iat` is outside `not_before` / `not_after`, or if `status` is `revoked` and `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies.
+`xfuel-verify` reads the receipt's `kid` and `iat`. The last history entry for that kid is the window. It fails if `iat` is outside `not_before` / `not_after`, or if `status` is `revoked` and `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. An earlier entry does not keep a revoked key active.
 
-If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. `--no-issuer-history` skips the window.
+If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. `--no-issuer-history` skips the window. On a payload v12 receipt that skip is `VERIFIED_NO_KEY_WINDOW` and the CLI exits 1 unless `--accept-no-key-window`.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json

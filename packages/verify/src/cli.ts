@@ -126,12 +126,18 @@ Options:
                       Read issuer history JSON instead of fetching it
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
-  --no-issuer-history Do not check the kid's not_before / not_after window
+  --no-issuer-history Do not check the kid's not_before / not_after window.
+                      On payload v12 the result is VERIFIED_NO_KEY_WINDOW
+                      and the exit is 1 unless --accept-no-key-window.
+  --accept-no-key-window
+                      Opt in to exit 0 when a payload v12 receipt skipped
+                      the key window. The label stays VERIFIED_NO_KEY_WINDOW.
   --no-preimage       Do not require published hash preimages
 
 Exit codes:
   0 = verified
-  1 = verification failed
+  1 = verification failed, or payload v12 VERIFIED_NO_KEY_WINDOW
+      without --accept-no-key-window
   2 = partial verification
   3 = input error
 
@@ -153,6 +159,8 @@ Network behavior:
   and neither --issuer-history-file nor --no-issuer-history is set. A payload
   v10 receipt fails (exit 1) when that fetch cannot run. Offline mode is
   --issuer-history-file <snapshot>, or --no-issuer-history to skip the window.
+  On payload v12 that skip prints VERIFIED_NO_KEY_WINDOW and exits 1 unless
+  --accept-no-key-window. It does not print Overall: VERIFIED.
   Other network uses:
   - --fetch-jwks or --jwks-url
   - --check-nullifier (Base RPC)
@@ -217,6 +225,9 @@ Examples:
   # Skip the issuer-history fetch. A v10 receipt otherwise needs that network call.
   xfuel-verify my-receipt.json --no-issuer-history
 
+  # Payload v12 with the window skipped. Exit 1 unless the last flag is set.
+  xfuel-verify v12-receipt.json --no-issuer-history --accept-no-key-window
+
   # Verify issuer signature with JWKS file
   xfuel-verify my-receipt.json --jwks-file issuer-jwks.json
 
@@ -263,6 +274,7 @@ function parseArgs(args: string[]): {
   issuerHistoryFile: string | null;
   canonicalPreimageFile: string | null;
   noIssuerHistory: boolean;
+  acceptNoKeyWindow: boolean;
   noPreimage: boolean;
   issuerPinFile: string | null;
   issuerPinCommit: string | null;
@@ -310,6 +322,7 @@ function parseArgs(args: string[]): {
     issuerHistoryFile: null as string | null,
     canonicalPreimageFile: null as string | null,
     noIssuerHistory: false,
+    acceptNoKeyWindow: false,
     noPreimage: false,
     issuerPinFile: null as string | null,
     issuerPinCommit: null as string | null,
@@ -385,6 +398,8 @@ function parseArgs(args: string[]): {
       result.canonicalPreimageFile = args[++i];
     } else if (arg === '--no-issuer-history') {
       result.noIssuerHistory = true;
+    } else if (arg === '--accept-no-key-window') {
+      result.acceptNoKeyWindow = true;
     } else if (arg === '--anchor-wallets-file' && args[i + 1]) {
       result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
@@ -478,7 +493,13 @@ function printLane(lane: ReceiptLane): void {
   console.log('');
 }
 
-function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean): void {
+function printAnchor(
+  result: Omit<AnchorWitnessResult, 'overall'> & {
+    overall: AnchorWitnessResult['overall'] | 'verified_no_key_window';
+  },
+  json: boolean,
+  quiet: boolean,
+): void {
   if (json) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -888,9 +909,14 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   // mismatch fails the combined result. An inclusion match is not VERIFIED.
   const issuerSig = (receipt as { issuer_signature?: { jws?: string; value?: string } }).issuer_signature;
   const signaturePresent = Boolean(issuerSig?.jws || issuerSig?.value);
+  const windowSkipped = verified.overall === 'verified_no_key_window';
   const receiptVerified = signaturePresent
     && verified.issuer_signature.valid === true
-    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward')
+    && (
+      verified.overall === 'verified'
+      || verified.overall === 'verified_carried_forward'
+      || windowSkipped
+    )
     && verified.claim_mismatches.length === 0;
   const receiptFailed = !receiptVerified;
   const receiptErrors = [...verified.errors];
@@ -902,10 +928,13 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const errors = receiptFailed
     ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
+  const anchorOverall = receiptFailed ? 'failed' as const : result.overall;
   const combined = {
     ...result,
     errors,
-    overall: receiptFailed ? 'failed' as const : result.overall,
+    overall: !receiptFailed && windowSkipped && anchorOverall === 'verified'
+      ? 'verified_no_key_window' as const
+      : anchorOverall,
     receipt_lane: verified.receipt_lane,
     receipt_check: {
       overall: result.overall === 'pending' && !receiptFailed ? 'pending' as const : verified.overall,
@@ -935,6 +964,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     }
     if (!args.quiet) printLane(verified.receipt_lane);
   }
+  if (combined.overall === 'verified_no_key_window') return args.acceptNoKeyWindow ? 0 : 1;
   if (combined.overall === 'verified') return 0;
   if (combined.overall === 'partial' || combined.overall === 'pending') return 2;
   return 1;
@@ -1199,7 +1229,11 @@ async function main(): Promise<number> {
       shellLeaf: shellLeaf == null ? null : String(shellLeaf),
       provedLeaf,
     });
-    if (!verdict.verified || (result.overall !== 'verified' && result.overall !== 'verified_carried_forward')) {
+    const windowSkipped = result.overall === 'verified_no_key_window';
+    const receiptOk = result.overall === 'verified'
+      || result.overall === 'verified_carried_forward'
+      || windowSkipped;
+    if (!verdict.verified || !receiptOk) {
       const reason = verdict.reason || result.errors[0] || 'failed';
       console.log(reason);
       console.log('  Overall: FAILED');
@@ -1222,6 +1256,10 @@ async function main(): Promise<number> {
         console.log('  Overall: FAILED');
         return 1;
       }
+    }
+    if (windowSkipped) {
+      console.log('  Overall: VERIFIED_NO_KEY_WINDOW');
+      return args.acceptNoKeyWindow ? 0 : 1;
     }
     console.log('  Overall: VERIFIED');
     return 0;
@@ -1375,7 +1413,7 @@ async function main(): Promise<number> {
 
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));
-  } else if (!args.quiet || result.overall === 'failed') {
+  } else if (!args.quiet || result.overall === 'failed' || result.overall === 'verified_no_key_window') {
     console.log('');
     console.log(`  Chit402 Receipt Verification`);
     console.log(`  ─────────────────────────────────────────────────`);
@@ -1487,6 +1525,8 @@ async function main(): Promise<number> {
     case 'verified':
     case 'verified_carried_forward':
       return 0;
+    case 'verified_no_key_window':
+      return args.acceptNoKeyWindow ? 0 : 1;
     case 'failed':
       return 1;
     case 'partial':

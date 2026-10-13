@@ -198,7 +198,9 @@ export function issuerKeyWindow(
   kid: string,
   issuedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  const entry = (doc.entries || []).find((row) => row.kid === kid);
+  // The last entry for this kid is the window. An appended retire or revoke
+  // replaces the earlier row. The first row would keep a revoked key active.
+  const entry = [...(doc.entries || [])].reverse().find((row) => row.kid === kid);
   if (!entry) return { ok: false, reason: 'kid_not_in_history' };
   return issuerEntryWindow(entry, issuedAt);
 }

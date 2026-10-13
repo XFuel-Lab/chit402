@@ -315,13 +315,14 @@ function parseTime(value) {
 
 /**
  * The receipt's issued time must fall inside the kid's window, and the kid
- * must not have been revoked before issuance.
+ * must not have been revoked before issuance. The last entry for that kid
+ * is the window, so an appended retire or revoke is not ignored.
  * @param {object} doc verified or unverified history
  * @param {string} kid
  * @param {number|string} issuedAt unix seconds or ISO
  */
 export function issuerKeyWindow(doc, kid, issuedAt) {
-  const entry = (doc?.entries || []).find((row) => row.kid === kid);
+  const entry = [...(doc?.entries || [])].reverse().find((row) => row.kid === kid);
   if (!entry) return { ok: false, reason: 'kid_not_in_history', kid };
   const issued = parseTime(issuedAt);
   if (issued == null) return { ok: false, reason: 'issued_at_missing', kid };
