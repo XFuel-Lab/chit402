@@ -12,6 +12,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
@@ -41,9 +42,7 @@ export class AgentRegistry {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'agent-registry: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: mkdir failed');
       }
     }
   }
@@ -79,7 +78,7 @@ export class AgentRegistry {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'agent-registry: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: save failed');
     }
   }
 
@@ -184,7 +183,13 @@ export class AgentRegistry {
       updated_at: new Date().toISOString(),
     };
     this.byId.set(agentId, row);
-    this._save();
+    try {
+      this._save();
+    } catch (err) {
+      this.byId.delete(agentId);
+      this.nextId = agentId;
+      throw err;
+    }
     return row;
   }
 

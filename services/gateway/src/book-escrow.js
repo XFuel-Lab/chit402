@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { CLAIM_TYPES, fileAndAdjudicate, OUTCOME_TYPES } from './book-dispute.js';
 
 export const ESCROW_ACTIONS = {
@@ -72,9 +73,7 @@ export class BookEscrowStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'book-escrow: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-escrow: mkdir failed');
       }
     }
   }
@@ -105,7 +104,7 @@ export class BookEscrowStore {
       fs.writeFileSync(tmp, JSON.stringify({ escrows: [...this.escrows.values()] }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'book-escrow: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-escrow: save failed');
     }
   }
 

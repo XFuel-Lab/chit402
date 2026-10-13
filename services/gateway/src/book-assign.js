@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 
 export const GRANT_TYPES = {
   READ: 'read',
@@ -43,9 +44,7 @@ export class BookAssignmentStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'book-assign: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-assign: mkdir failed');
       }
     }
   }
@@ -79,7 +78,7 @@ export class BookAssignmentStore {
       fs.writeFileSync(tmp, JSON.stringify({ assignments }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'book-assign: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-assign: save failed');
     }
   }
 

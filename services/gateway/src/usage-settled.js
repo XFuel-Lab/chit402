@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { paymentRefIndexKey } from './payment-ref.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
 import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
@@ -432,12 +433,10 @@ export class UsageSettledLedger {
     if (this.persist) {
       try {
         fs.mkdirSync(this.dir, { recursive: true });
-        this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'usage-settled: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: mkdir failed');
       }
+      this._load();
     }
   }
 
@@ -620,8 +619,52 @@ export class UsageSettledLedger {
       }
     }
     if (row.refusal?.refusal_id) this.byRefusal.set(String(row.refusal.refusal_id), row);
+    if (persist && this.persist) {
+      try {
+        this._persistRow(row);
+      } catch (err) {
+        this._forget(row);
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: append failed');
+      }
+    }
     if (notify) emitBookRowWritten(row);
-    if (persist && this.persist) this._persistRow(row);
+  }
+
+  /**
+   * Drop a row that was indexed and then failed to hit disk. The request
+   * must not observe it, and the book tip must match the last durable row.
+   * @param {object} row
+   */
+  _forget(row) {
+    const idx = this.entries.lastIndexOf(row);
+    if (idx >= 0) this.entries.splice(idx, 1);
+    if (row?.payment_ref) {
+      const raw = String(row.payment_ref);
+      const norm = paymentRefIndexKey(raw);
+      const key = norm || raw;
+      if (this.byRef.get(key) === row) this.byRef.delete(key);
+      if (raw !== key && this.byRef.get(raw) === row) this.byRef.delete(raw);
+    }
+    if (row?.task_id && this.byTask.get(String(row.task_id)) === row) {
+      this.byTask.delete(String(row.task_id));
+    }
+    if (row?.refusal?.refusal_id && this.byRefusal.get(String(row.refusal.refusal_id)) === row) {
+      this.byRefusal.delete(String(row.refusal.refusal_id));
+    }
+    const id = Number(row?.agent_id);
+    if (Number.isInteger(id) && id >= 1 && Number(row.seq) === this._tipSeq.get(id)) {
+      const prevTip = Number(row.seq) - 1;
+      if (prevTip >= 1) {
+        this._tipSeq.set(id, prevTip);
+        this._nextSeq.set(id, Number(row.seq));
+        if (row.prev_hash) this._lastRowHash.set(id, row.prev_hash);
+        else this._lastRowHash.delete(id);
+      } else {
+        this._tipSeq.delete(id);
+        this._nextSeq.set(id, 1);
+        this._lastRowHash.delete(id);
+      }
+    }
   }
 
   _persistRow(row) {
@@ -640,7 +683,7 @@ export class UsageSettledLedger {
       const request_digest = row?.refusal?.request_digest || row?.request_digest || null;
       fs.appendFileSync(this._file(), `${JSON.stringify(scrubLedgerRow(row, { body_commitment, request_digest }))}\n`);
     } catch (err) {
-      logger.warn({ err: err.message }, 'usage-settled: append failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: append failed');
     }
   }
 
@@ -836,11 +879,19 @@ export class UsageSettledLedger {
         ...(receipt.verification ? { verification: receipt.verification } : {}),
       };
     }
-    // Append the leaf before persisting so the covering prefix can be signed
-    // into the snapshot that is written.
+    // Index and append the log leaf first so the covering prefix that is
+    // signed into the snapshot includes this receipt. A failed write removes
+    // the ledger row and the request fails. The log is append-only, so the
+    // leaf stays; it is logged as an orphan for ops.
     this._index(entry, { persist: false, notify: true });
-    emitReceiptBound(receipt, entry);
-    this._persistRow(entry);
+    try {
+      emitReceiptBound(receipt, entry);
+      this._persistRow(entry);
+    } catch (err) {
+      this._forget(entry);
+      logger.error({ taskId: entry.task_id, reason: 'persist_failed_after_leaf' }, 'usage-settled: row not durable; log leaf is orphaned');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: append failed');
+    }
     return { ok: true, entry };
   }
 

@@ -12,7 +12,7 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
-import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee } from './x402-flags.js';
+import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
@@ -81,8 +81,10 @@ import {
   receiptLogBootRequested,
   finishReceiptLogBoot,
   publicLogWitness,
+  assertAnchorFeeCaps,
 } from './receipt-merkle.js';
 import { publicEpochRecord } from './receipt-log-epoch.js';
+import { RelayerNonceStore, relayerAudience, resetRelayerNonceStore, verifyRelayerAuth } from './relayer-auth.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
@@ -709,12 +711,14 @@ const AUTHORISED_KEYS = new Set(
 /**
  * Verify an ECDSA signature from a relayer wallet.
  *
- * The client signs a message consisting of:
- *   keccak256(method + path + body_sha256 + timestamp)
+ * The client signs:
+ *   audience \n method \n path \n body_sha256 \n timestamp \n nonce
  *
  * Header layout:
  *   X-Signature: <0x-hex-sig>
  *   X-Sig-Timestamp: <unix-epoch-seconds>
+ *   X-Sig-Nonce: <single-use nonce>
+ *   M2M_RELAYER_AUDIENCE must be set. A missing audience fails closed.
  *
  * The recovered address is checked against env `M2M_RELAYER_ADDRESSES`
  * (comma-separated, checksummed).
@@ -756,25 +760,25 @@ const DEMO_RATE_PER_MIN = parseInt(process.env.M2M_DEMO_RATE_PER_MIN, 10) || 15;
 const DEMO_RATE_PER_DAY = parseInt(process.env.M2M_DEMO_RATE_PER_DAY, 10) || 150;
 
 function verifyRelayerSignature(req) {
+  const audience = relayerAudience();
+  if (!audience) return false;
+  const bodySha = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(req.body || ''))
+    .digest('hex');
   try {
-    const sig       = req.headers['x-signature'];
-    const timestamp = req.headers['x-sig-timestamp'];
-    if (!sig || !timestamp) return false;
-
-    // Reject stale signatures (> 5 min)
-    const age = Math.abs(Date.now() / 1000 - Number(timestamp));
-    if (age > 300) return false;
-
-    const bodySha = crypto
-      .createHash('sha256')
-      .update(JSON.stringify(req.body || ''))
-      .digest('hex');
-
-    const message = `${req.method}${req.path}${bodySha}${timestamp}`;
-    const recovered = ethers.verifyMessage(message, sig).toLowerCase();
-
-    return RELAYER_ADDRESSES.has(recovered);
-  } catch {
+    return verifyRelayerAuth({
+      signature: req.headers['x-signature'],
+      timestamp: req.headers['x-sig-timestamp'],
+      nonce: req.headers['x-sig-nonce'],
+      method: req.method,
+      path: req.path,
+      bodySha,
+      addresses: RELAYER_ADDRESSES,
+      audience,
+    });
+  } catch (err) {
+    if (err?.code === 'persist_failed') throw err;
     return false;
   }
 }
@@ -984,6 +988,13 @@ export function createApp() {
 
   const agentsDir = process.env.AGENTS_DIR
     || (config.taskStore?.dir ? path.join(config.taskStore.dir, '..', 'agents') : null);
+  // Used relayer nonces have to outlive a restart inside the 300s window.
+  // The file sits on the data dir, beside the task-store parent.
+  if (config.taskStore?.persist && config.taskStore?.dir) {
+    resetRelayerNonceStore(new RelayerNonceStore({
+      file: path.join(config.taskStore.dir, '..', 'relayer-nonces.json'),
+    }));
+  }
   const agentRegistry = new AgentRegistry({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
@@ -1896,7 +1907,7 @@ export function createApp() {
                   if (hs.retryAfter) res.setHeader('Retry-After', String(hs.retryAfter));
                   return res.status(paymentErrorStatus(code)).json({ error: code, code });
                 }
-                if (config.x402.fallbackToTfuel) {
+                if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                   logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
                   paymentRail = 'tfuel';
                   rollingMeta = null;
@@ -1934,7 +1945,7 @@ export function createApp() {
                 if (decision.retryAfter) res.setHeader('Retry-After', String(decision.retryAfter));
                 return res.status(paymentErrorStatus(code)).json({ error: code, code });
               }
-              if (config.x402.fallbackToTfuel) {
+              if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                 logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
                 paymentRail = 'tfuel';
               } else {
@@ -1943,6 +1954,10 @@ export function createApp() {
             }
           }
         } else if (rail === 'tfuel') {
+          if (!tfuelBuyerRailAllowed(config.x402.network)) {
+            logger.warn({ reqId: req.id, network: config.x402.network }, 'explicit TFUEL rail refused on mainnet');
+            return res.status(402).json({ error: 'verify_failed', code: 'verify_failed' });
+          }
           paymentRail = 'tfuel';
         }
       }
@@ -5654,6 +5669,7 @@ async function _generateA2AProof(msg) {
  * M2M_API_PORT (default 3002, separate from the bridge health port 3001).
  */
 export async function startServer() {
+  assertAnchorFeeCaps();
   const port = parseInt(process.env.M2M_API_PORT) || 3002;
   try {
     assertX402Boot(config.x402);

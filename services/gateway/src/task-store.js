@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { scrubTaskForDisk } from './v11-seal.js';
 
 /**
@@ -81,8 +82,7 @@ export class PersistentTaskStore extends Map {
       try {
         fs.mkdirSync(this.dir, { recursive: true });
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'task-store: mkdir failed; persistence disabled');
-        this.persist = false;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'task-store: mkdir failed');
       }
     }
     if (this.persist) {
@@ -156,7 +156,7 @@ export class PersistentTaskStore extends Map {
       fs.writeFileSync(tmp, safeStringify(scrubTaskForDisk(task)));
       fs.renameSync(tmp, target); // atomic replace
     } catch (err) {
-      logger.warn({ err: err.message, taskId: task.taskId }, 'task-store: snapshot write failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'task-store: snapshot write failed');
     }
   }
 
@@ -173,8 +173,15 @@ export class PersistentTaskStore extends Map {
   set(taskId, task) {
     this._pinnedReads.delete(taskId);
     this._attachSignaturePersist(task);
+    const previous = super.get(taskId);
     super.set(taskId, task);
-    this._writeSnapshot(task);
+    try {
+      this._writeSnapshot(task);
+    } catch (err) {
+      if (previous === undefined) super.delete(taskId);
+      else super.set(taskId, previous);
+      throw err;
+    }
     this._indexPaymentRef(task);
     return this;
   }

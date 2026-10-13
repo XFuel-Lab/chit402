@@ -305,6 +305,16 @@ export async function signBaseAnchorRaw({ privateKey, nonce, calldata, fees = nu
   };
 }
 
+/**
+ * First sign, replacement, and speed-up all go through this object.
+ * Tests replace `sign` to prove a quote over the cap never reaches the signer.
+ */
+export const baseAnchorSigner = {
+  sign(args) {
+    return signBaseAnchorRaw(args);
+  },
+};
+
 /** How long to wait before another send after `attempts` transient failures. */
 export function anchorBackoffMs(attempts) {
   const n = Math.max(0, Math.min(Number(attempts) || 0, 6));
@@ -828,14 +838,71 @@ export function anchorStuckMs(env = process.env) {
   return Number.isFinite(raw) && raw >= 0 ? raw : ANCHOR_STUCK_MS;
 }
 
-export function anchorMaxFeeWei(env = process.env) {
-  const raw = env.ANCHOR_MAX_FEE_WEI;
-  if (raw == null || raw === '') return null;
+function parseAnchorWei(raw) {
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (!/^[0-9]+$/.test(text)) return null;
   try {
-    return BigInt(raw);
+    return BigInt(text);
   } catch {
     return null;
   }
+}
+
+/** Any casing of production. Unset, test, and development are not production. */
+export function anchorFeeCapsRequired(env = process.env) {
+  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+}
+
+/** Max `maxFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
+export function anchorMaxFeeWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_FEE_WEI);
+}
+
+/** Max `maxPriorityFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
+export function anchorMaxPriorityWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_PRIORITY_WEI);
+}
+
+/**
+ * Production must name both caps as integer wei strings. There is no flag
+ * that skips this. The check is case-insensitive on NODE_ENV. Dev and test
+ * may leave the caps unset, and unset then means no cap.
+ * @throws {ReceiptLogRefused}
+ */
+export function assertAnchorFeeCaps(env = process.env) {
+  if (!anchorFeeCapsRequired(env)) return;
+  for (const name of ['ANCHOR_MAX_FEE_WEI', 'ANCHOR_MAX_PRIORITY_WEI']) {
+    const raw = env[name];
+    if (parseAnchorWei(raw) == null) {
+      throw new ReceiptLogRefused(
+        'anchor_fee_cap_config',
+        `${name} is unset or not numeric. Production refuses to sign without a numeric wei cap.`,
+      );
+    }
+  }
+}
+
+function anchorQuoteOverCap(fees, env = process.env) {
+  const maxFee = anchorMaxFeeWei(env);
+  const maxPriority = anchorMaxPriorityWei(env);
+  if (maxFee != null && BigInt(fees.maxFeePerGas) > maxFee) return true;
+  if (maxPriority != null && BigInt(fees.maxPriorityFeePerGas) > maxPriority) return true;
+  return false;
+}
+
+function noteAnchorFeeCap(tree, quoted) {
+  tree.lastAnchorError = 'anchor_fee_cap';
+  logger.error(
+    {
+      reason: 'anchor_fee_cap',
+      max_fee: quoted.maxFeePerGas.toString(),
+      max_priority: quoted.maxPriorityFeePerGas.toString(),
+      cap_fee: anchorMaxFeeWei()?.toString() ?? null,
+      cap_priority: anchorMaxPriorityWei()?.toString() ?? null,
+    },
+    'anchor fee cap: quote exceeds ANCHOR_MAX_FEE_WEI or ANCHOR_MAX_PRIORITY_WEI. Refusing to sign or broadcast.',
+  );
 }
 
 /**
@@ -2290,24 +2357,6 @@ export class ReceiptMerkleTree {
     const at = Date.parse(intent.at || '');
     const nowMs = now instanceof Date ? now.getTime() : Date.parse(now || '');
     if (!Number.isFinite(at) || !Number.isFinite(nowMs) || nowMs - at < anchorStuckMs()) return null;
-    let fees;
-    try {
-      fees = intent.max_fee
-        ? {
-          gasLimit: FIXED_ANCHOR_FEES.gasLimit,
-          maxFeePerGas: BigInt(intent.max_fee),
-          maxPriorityFeePerGas: BigInt(intent.max_priority || intent.max_fee),
-        }
-        : await feesFromSignedRaw(intent.raw, FIXED_ANCHOR_FEES);
-    } catch {
-      fees = FIXED_ANCHOR_FEES;
-    }
-    const bumped = bumpAnchorFees(fees);
-    const cap = anchorMaxFeeWei();
-    if (cap != null && bumped.maxFeePerGas > cap) {
-      this.lastAnchorError = 'anchor_fee_cap';
-      return this._blockedPublish(root, intent, 'anchor_fee_cap');
-    }
     return this._replaceAtNonce(intent, { root, day, send, lookup, request });
   }
 
@@ -2341,13 +2390,42 @@ export class ReceiptMerkleTree {
         maxPriorityFeePerGas: BigInt(old.max_priority || old.max_fee),
       }
       : await feesFromSignedRaw(old.raw, FIXED_ANCHOR_FEES);
+    const bumped = bumpAnchorFees(previous);
+    try {
+      assertAnchorFeeCaps();
+    } catch (err) {
+      this.lastAnchorError = err.code || 'anchor_fee_cap_config';
+      return {
+        hold: true,
+        anchor: this._anchorResult({
+          status: 'blocked',
+          root,
+          tx: old.tx,
+          from: old.from,
+          reason: 'anchor_fee_cap_config',
+        }),
+      };
+    }
+    if (anchorQuoteOverCap(bumped)) {
+      noteAnchorFeeCap(this, bumped);
+      return {
+        hold: true,
+        anchor: this._anchorResult({
+          status: 'blocked',
+          root,
+          tx: old.tx,
+          from: old.from,
+          reason: 'anchor_fee_cap',
+        }),
+      };
+    }
     let signed;
     try {
-      signed = await signBaseAnchorRaw({
+      signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: old.nonce,
         calldata: anchorCalldata(root),
-        fees: bumpAnchorFees(previous),
+        fees: bumped,
       });
     } catch (err) {
       const failed = this._noteSendFailure(old, err);
@@ -2546,18 +2624,34 @@ export class ReceiptMerkleTree {
     const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
     if (!key) return this._anchorResult({ status: 'pending', root, reason: 'no_key' });
     try {
+      assertAnchorFeeCaps();
+    } catch (err) {
+      this.lastAnchorError = err.code || 'anchor_fee_cap_config';
+      return this._anchorResult({ status: 'pending', root, reason: 'anchor_fee_cap_config' });
+    }
+    try {
       await this._gateAnchorChain(request);
     } catch (err) {
       return this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch' });
     }
     let signed;
     try {
-      const fees = typeof send === 'function' ? null : await baseAnchorFees(request);
-      signed = await signBaseAnchorRaw({
+      // An injected send without an RPC transport keeps the fixed schedule.
+      // A request transport is the RPC quote, including production where
+      // send is absent. The cap applies to whichever quote we would sign.
+      const dynamic = typeof send === 'function' && typeof request !== 'function'
+        ? null
+        : await baseAnchorFees(request);
+      const quoted = dynamic || FIXED_ANCHOR_FEES;
+      if (anchorQuoteOverCap(quoted)) {
+        noteAnchorFeeCap(this, quoted);
+        return this._anchorResult({ status: 'pending', root, reason: 'anchor_fee_cap' });
+      }
+      signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: reserved.nonce,
         calldata: anchorCalldata(root),
-        fees,
+        fees: quoted,
       });
     } catch (err) {
       if (err?.code === 'anchor_chain_mismatch') {
@@ -2740,8 +2834,10 @@ export class ReceiptMerkleTree {
    * A signed raw transaction is fsynced before broadcast. Recovery looks up
    * that hash. A match is adopted. Anything else mined is replaced. An
    * unsigned intent was never broadcast: it is abandoned and the nonce is
-   * free. An RPC error on a signed raw stays blocked and is retried. The
-   * same raw is rebroadcast only when the nonce is still unused.
+   * free. An RPC error on a signed raw that is not yet anchored stays
+   * blocked and is retried. An RPC error on an already anchored row keeps
+   * `anchored`: it is not marked blocked and it is not broadcast again.
+   * The same raw is rebroadcast only when the nonce is still unused.
    */
   async reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs } = {}) {
     this._supersedeLowerFeeAtNonce();
@@ -2758,6 +2854,7 @@ export class ReceiptMerkleTree {
           ? await this._boundedLookup(intent, lookup, null)
           : null;
       } catch (err) {
+        if (intent.status === 'anchored') continue;
         this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
         continue;
       }
@@ -3244,6 +3341,7 @@ function solanaFeePayerOrNull() {
  * flag is set and the directory has no journal.
  */
 export function bootReceiptLog(dir, opts = {}) {
+  assertAnchorFeeCaps();
   resolveAnchorSender();
   // A fee-payer env that disagrees with the Solana key refuses boot.
   // A missing or unparsable key stays pending until publish, as before.

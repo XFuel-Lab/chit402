@@ -642,14 +642,26 @@ function storedExplorerUrlAllowed(stored) {
   if (url.username || url.password) return false;
   const host = url.hostname.toLowerCase();
   if (!EXPLORER_HOSTS.has(host)) return false;
+  if (url.port) return false;
+  if (url.hash) return false;
+  const parts = url.pathname.split('/').filter(Boolean);
   if (host === 'solscan.io') {
-    const parts = url.pathname.split('/').filter(Boolean);
     if (parts.length !== 2 || parts[0] !== 'tx') return false;
     if (!isStrictSolanaSignature(parts[1])) return false;
     if (url.search !== '' && url.search !== '?cluster=devnet') return false;
-    if (url.hash) return false;
+    return true;
   }
-  return true;
+  if (host === 'basescan.org' || host === 'sepolia.basescan.org') {
+    if (url.search) return false;
+    if (parts.length !== 2 || parts[0] !== 'tx') return false;
+    return /^0x[0-9a-fA-F]{64}$/.test(parts[1]);
+  }
+  if (host === 'nanexplorer.com') {
+    if (url.search) return false;
+    if (parts.length !== 3 || parts[0] !== 'nano' || parts[1] !== 'block') return false;
+    return /^[0-9a-fA-F]{64}$/.test(parts[2]);
+  }
+  return false;
 }
 
 /**

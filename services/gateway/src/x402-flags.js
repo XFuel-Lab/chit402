@@ -62,6 +62,16 @@ export function isMainnetNetwork(network) {
 }
 
 /**
+ * TFUEL is not a buyer rail on Base or Solana mainnet. The opt-in fallback
+ * and an explicit tfuel rail stay available on known testnets.
+ * @param {string|null|undefined} network
+ */
+export function tfuelBuyerRailAllowed(network) {
+  if (!network) return false;
+  return !isMainnetNetwork(network);
+}
+
+/**
  * Production boot refuses the rollback flag on a mainnet network.
  * Testnet may boot with the flag; every unbound use logs at error level.
  */
