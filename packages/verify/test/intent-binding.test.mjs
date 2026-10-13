@@ -150,7 +150,7 @@ test('frozen pins are content addresses, not version labels', async () => {
   assert.equal(comparatorPin(), sha256(intentCanonicalJson(SPEND_COMPARATOR)));
   assert.equal(Object.prototype.hasOwnProperty.call(SPEND_COMPARATOR, 'version'), false);
   assert.equal(INTENT_PROJECTION_SPEC.absent.includes('cap_row_hash'), true);
-  const gateway = await import('../../../services/gateway/src/intent-record.js');
+  const gateway = await import('../../../services/gateway/src/intent-pins.js');
   assert.equal(gateway.specDigest(), specDigest());
   assert.equal(gateway.comparatorPin(), comparatorPin());
   assert.equal(gateway.intentHash({ a: 1, b: 'x' }), sha256(intentCanonicalJson({ a: 1, b: 'x' })));
@@ -203,7 +203,8 @@ test('spend, expiry, and use count are intent_violation and exit 1', async () =>
     const result = await verifyReceipt(receipt, { ...opts, intent });
     assert.equal(result.overall, 'failed', result.errors.join('; '));
     assert.equal(result.errors.includes('intent_violation'), true, result.errors.join('; '));
-    const receiptPath = path.join(dir, `bad-${row.receipt.intentUse || row.claims.expiry || 'amount'}.json`);
+    const label = String(row.receipt.intentUse || row.claims.expiry || 'amount').replace(/[^A-Za-z0-9._-]+/g, '-');
+    const receiptPath = path.join(dir, `bad-${label}.json`);
     const intentPath = path.join(dir, `bad-intent-${path.basename(receiptPath)}`);
     fs.writeFileSync(receiptPath, JSON.stringify(receipt));
     fs.writeFileSync(intentPath, JSON.stringify(intent));

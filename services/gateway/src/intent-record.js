@@ -20,35 +20,28 @@
  * The external token is stored as external_ref_hash.
  */
 import crypto from 'node:crypto';
-import { jcsRfc8785 } from './offer-receipt.js';
 import { signJws, getIssuerKid, isProductionIssuerEnv } from './issuer-key.js';
 import { currentIssuerHistory } from './issuer-history.js';
 import { clockToleranceClaim } from './receipt-anchor-clock.js';
+import {
+  SPEND_COMPARATOR,
+  INTENT_PROJECTION_SPEC,
+  jcsRfc8785,
+  comparatorPin,
+  specDigest,
+  intentHash,
+} from './intent-pins.js';
+
+export {
+  SPEND_COMPARATOR,
+  INTENT_PROJECTION_SPEC,
+  comparatorPin,
+  specDigest,
+  intentHash,
+};
 
 export const INTENT_SCHEMA = 'chit402.intent.v1';
 export const V12_PAYLOAD_VERSION = 12;
-
-export const SPEND_COMPARATOR = Object.freeze({
-  schema: 'chit402.comparator.v1',
-  relation: 'spend_lte_max',
-  expiry: 'issued_at_lte_expiry',
-  uses: 'use_index_lte_use_count',
-  subject: 'payer_and_payee_exact',
-  amount: 'canonical_integer_atomic',
-});
-
-export const INTENT_PROJECTION_SPEC = Object.freeze({
-  schema: 'chit402.projection_spec.v1',
-  receipt_fields: Object.freeze([
-    'comparator_pin',
-    'intent_hash',
-    'intent_id',
-    'spec_digest',
-    'use_index',
-  ]),
-  history_pin: Object.freeze(['entry_count', 'head_hash']),
-  absent: Object.freeze(['cap_row_hash']),
-});
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PREFIXED = /^(chit|xfuel)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
@@ -92,24 +85,8 @@ export function v12MintEnabled(env = process.env) {
   return String(env.RECEIPT_V12_MINT || '').trim() === 'true';
 }
 
-export function comparatorPin() {
-  return sha256(jcsRfc8785(SPEND_COMPARATOR));
-}
-
-export function specDigest() {
-  return sha256(jcsRfc8785(INTENT_PROJECTION_SPEC));
-}
-
 function sha256(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-}
-
-/**
- * Hash of the signed intent object only. Unsigned wrappers are not included.
- * @param {object} claims
- */
-export function intentHash(claims) {
-  return sha256(jcsRfc8785(claims));
 }
 
 export function hashExternalRef(token) {
