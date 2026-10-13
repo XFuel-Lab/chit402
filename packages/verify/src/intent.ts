@@ -11,6 +11,11 @@
  */
 import { createHash } from 'node:crypto';
 import { verifyIssuerJws, type Es256Jwk } from './jws.js';
+import {
+  issuerKeyWindow,
+  verifyIssuerHistoryDocument,
+  type IssuerHistoryDocument,
+} from './issuer-history.js';
 
 export const V12_PAYLOAD_VERSION = 12;
 export const INTENT_SCHEMA = 'chit402.intent.v1';
@@ -101,12 +106,23 @@ function sha256Utf8(text: string): string {
 }
 
 function rfc8785String(str: string): string {
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = str.charCodeAt(i + 1);
+      if (!(n >= 0xdc00 && n <= 0xdfff)) throw new Error('Cannot canonicalize a lone surrogate');
+      i += 1;
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      throw new Error('Cannot canonicalize a lone surrogate');
+    }
+  }
   return JSON.stringify(str);
 }
 
 /** RFC 8785 for the intent alphabet. Undefined members are omitted. */
 export function intentCanonicalJson(value: unknown): string {
-  if (value === null || value === undefined) return 'null';
+  if (value === undefined) throw new Error('Cannot canonicalize undefined');
+  if (value === null) return 'null';
   const type = typeof value;
   if (type === 'boolean') return value ? 'true' : 'false';
   if (type === 'number') {
@@ -115,7 +131,10 @@ export function intentCanonicalJson(value: unknown): string {
     return JSON.stringify(value);
   }
   if (type === 'string') return rfc8785String(value as string);
-  if (Array.isArray(value)) return `[${value.map((item) => intentCanonicalJson(item)).join(',')}]`;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) if (!(i in value)) throw new Error('Cannot canonicalize a sparse array');
+    return `[${value.map((item) => intentCanonicalJson(item)).join(',')}]`;
+  }
   if (type === 'object') {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -199,6 +218,12 @@ function intentBlockShape(value: unknown): boolean {
   return true;
 }
 
+/**
+ * A later history snapshot may extend the pinned prefix. The entry at
+ * index entry_count must be the pinned head. The document head is the
+ * last entry, which can be past that prefix. A shorter snapshot, a
+ * rewritten prefix, or a head that is not the last entry is a mismatch.
+ */
 export function matchV12HistoryPin(
   pin: V12HistoryPin,
   doc: unknown,
@@ -206,15 +231,44 @@ export function matchV12HistoryPin(
   if (!isPlain(doc) || !Array.isArray(doc.entries)) {
     return { ok: false, reason: 'issuer_history_pin_mismatch' };
   }
-  if (doc.entries.length !== pin.entry_count) {
+  if (doc.entries.length < pin.entry_count) {
     return { ok: false, reason: 'issuer_history_pin_mismatch' };
   }
+  const pinned = doc.entries[pin.entry_count - 1] as { entry_hash?: unknown } | undefined;
+  const pinnedHash = pinned && typeof pinned.entry_hash === 'string' ? pinned.entry_hash : null;
+  if (pinnedHash !== pin.head_hash) return { ok: false, reason: 'issuer_history_pin_mismatch' };
   const last = doc.entries[doc.entries.length - 1] as { entry_hash?: unknown } | undefined;
-  const head = last && typeof last.entry_hash === 'string' ? last.entry_hash : null;
-  if (head !== pin.head_hash) return { ok: false, reason: 'issuer_history_pin_mismatch' };
-  if (doc.head_hash != null && doc.head_hash !== pin.head_hash) {
+  const lastHash = last && typeof last.entry_hash === 'string' ? last.entry_hash : null;
+  if (!lastHash) return { ok: false, reason: 'issuer_history_pin_mismatch' };
+  if (doc.head_hash != null && doc.head_hash !== lastHash) {
     return { ok: false, reason: 'issuer_history_pin_mismatch' };
   }
+  return { ok: true, reason: null };
+}
+
+/**
+ * Prefix match, then the history JWS and the receipt kid's window at iat.
+ * An unsigned snapshot does not verify.
+ */
+export function matchV12HistorySnapshot(
+  pin: V12HistoryPin,
+  doc: unknown,
+  ctx: {
+    jwks?: { keys?: Es256Jwk[] } | null;
+    trustedKids?: readonly string[];
+    kid?: string | null;
+    issuedAt?: unknown;
+  } = {},
+): IntentCheck {
+  const structural = matchV12HistoryPin(pin, doc);
+  if (!structural.ok) return structural;
+  const signed = verifyIssuerHistoryDocument(doc as IssuerHistoryDocument, {
+    jwks: ctx.jwks?.keys ? { keys: ctx.jwks.keys } : undefined,
+    trustedKids: ctx.trustedKids,
+  });
+  if (!signed.valid) return { ok: false, reason: 'issuer_history_pin_mismatch' };
+  const window = issuerKeyWindow(doc as IssuerHistoryDocument, ctx.kid || '', ctx.issuedAt);
+  if (!window.ok) return { ok: false, reason: window.reason || 'issuer_history_pin_mismatch' };
   return { ok: true, reason: null };
 }
 
@@ -241,13 +295,9 @@ function party(value: unknown): string | null {
 }
 
 function jwkForKid(jwks: { keys?: Es256Jwk[] } | null | undefined, kid: string | null): Es256Jwk | null {
+  if (!kid) return null;
   const keys = jwks?.keys || [];
-  if (kid) {
-    const match = keys.find((key) => key && key.kid === kid);
-    if (match) return match;
-  }
-  if (keys.length === 1) return keys[0];
-  return null;
+  return keys.find((key) => key && key.kid === kid) || null;
 }
 
 function signedIntentMembers(payload: Record<string, unknown>): Record<string, unknown> | null {

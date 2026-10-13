@@ -383,7 +383,6 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - Receipt hash preimages: GET /receipt/:id/preimage is the unsigned public shell (JCS). The holder signature is on the owner view. output.hash stays private.
 - Live receipt shell: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96 — public page is the shell. Full verify needs the payer wallet or the agent key.
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
-- Pre-action intent (schema chit402.intent.v1): POST /intent, POST /intent/:id/settle, GET /intent/:id. A settle receipt is payload version 12 and carries intent_id, intent_hash, the projection spec digest, and the comparator pin. v12 minting stays off unless RECEIPT_V12_MINT=true outside production. GET with no settled receipt is a generic 404.
 - Thread: https://x.com/chit402/status/2096153417588588555
 - Chit in 15 lines: https://www.chit402.com/docs/chit-in-15-lines
 

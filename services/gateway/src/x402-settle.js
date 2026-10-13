@@ -182,6 +182,7 @@ export async function settleBoundPayment({
   nonce,
   store = null,
   resolveQuote = null,
+  deferBook = false,
 }) {
   try {
     assertX402Boot(cfg);
@@ -414,6 +415,8 @@ export async function settleBoundPayment({
         taskId,
         replay: true,
         settlementEvidence: prior.evidence || null,
+        bookSpent() {},
+        releaseClaim() {},
       };
     }
     return refused(req, 'payment_replayed');
@@ -465,26 +468,38 @@ export async function settleBoundPayment({
     return refused(req, 'payer_mismatch');
   }
 
-  active.markSpent(nonce, {
-    txRef: norm.key,
-    amount: chain.amount,
-    payer: chain.payer,
-    payTo: chain.payTo,
-    blockNumber: chain.blockNumber || null,
-    logIndex: chain.logIndex ?? null,
-    slot: chain.slot ?? null,
-  });
-  active.markTxSpent(norm.key, {
-    amount: String(chain.amount),
-    payer: chain.payer,
-    payTo: chain.payTo,
-    evidence: {
-      blockNumber: chain.blockNumber ?? null,
+  let booked = false;
+  const bookSpent = () => {
+    if (booked) return;
+    booked = true;
+    active.markSpent(nonce, {
+      txRef: norm.key,
+      amount: chain.amount,
+      payer: chain.payer,
+      payTo: chain.payTo,
+      blockNumber: chain.blockNumber || null,
       logIndex: chain.logIndex ?? null,
       slot: chain.slot ?? null,
-    },
-  });
-  if (authKey) active.markAuthSpent(authKey, norm.key);
+    });
+    active.markTxSpent(norm.key, {
+      amount: String(chain.amount),
+      payer: chain.payer,
+      payTo: chain.payTo,
+      evidence: {
+        blockNumber: chain.blockNumber ?? null,
+        logIndex: chain.logIndex ?? null,
+        slot: chain.slot ?? null,
+      },
+    });
+    if (authKey) active.markAuthSpent(authKey, norm.key);
+  };
+  const releaseClaim = () => {
+    if (booked) return;
+    try { active.release(nonce, owner); } catch { /* already released */ }
+  };
+  // deferBook keeps the #520 marks for the caller so they can land in the
+  // same sqlite transaction as the intent use. The default still books here.
+  if (!deferBook) bookSpent();
 
   let issuance_commitment = null;
   let dispute_window = null;
@@ -523,6 +538,8 @@ export async function settleBoundPayment({
       logIndex: chain.logIndex ?? null,
       slot: chain.slot ?? null,
     },
+    bookSpent,
+    releaseClaim,
   };
 }
 

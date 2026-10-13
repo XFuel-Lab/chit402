@@ -23,6 +23,7 @@ import crypto from 'node:crypto';
 import { signJws, getIssuerKid, isProductionIssuerEnv } from './issuer-key.js';
 import { currentIssuerHistory } from './issuer-history.js';
 import { clockToleranceClaim } from './receipt-anchor-clock.js';
+import { settleBoundPayment as settleBoundPaymentDefault } from './x402-settle.js';
 import {
   SPEND_COMPARATOR,
   INTENT_PROJECTION_SPEC,
@@ -80,7 +81,19 @@ export function parseV12Uuid(value) {
   return { uuid: match[2], prefix: /** @type {'chit'|'xfuel'} */ (match[1]) };
 }
 
+// Hard-off until the v12 release: an env flip cannot enable minting without a deploy.
+export const V12_MINT_COMPILED = false;
+
+// POST /intent signs with the issuer key. This constant is the only switch.
+// NODE_ENV and RECEIPT_V12_MINT cannot turn the route on.
+export const INTENT_ISSUE_COMPILED = false;
+
+export function intentIssueEnabled() {
+  return INTENT_ISSUE_COMPILED === true;
+}
+
 export function v12MintEnabled(env = process.env) {
+  if (!V12_MINT_COMPILED && String(env.NODE_ENV || '').trim() !== 'test') return false;
   if (isProductionIssuerEnv(env.NODE_ENV)) return false;
   return String(env.RECEIPT_V12_MINT || '').trim() === 'true';
 }
@@ -278,11 +291,68 @@ function decodeIntent(record) {
 }
 
 /**
+ * Confirm a #520 payment. The request body does not supply the amount,
+ * the payer, or the payee. Those come from the confirmed transfer.
+ * @param {object} claims
+ * @param {object} input
+ * @param {{ settleBoundPayment?: Function, cfg?: object, store?: object }} [deps]
+ */
+async function confirmIntentPayment(claims, input, deps = {}) {
+  const header = typeof input?.payment_header === 'string'
+    ? input.payment_header
+    : (typeof input?.paymentHeader === 'string' ? input.paymentHeader : '');
+  const nonce = typeof input?.nonce === 'string' ? input.nonce : '';
+  if (!header || !nonce) return hidden(402, 'challenge_required');
+  if (!deps.cfg) return hidden(503, 'gateway_not_configured');
+  const run = deps.settleBoundPayment || settleBoundPaymentDefault;
+  const decision = await run({
+    taskId: claims.intent_id,
+    cfg: deps.cfg,
+    amount: null,
+    expectedPayer: claims.payer,
+    payTo: claims.payee,
+    paymentHeader: header,
+    nonce,
+    store: deps.store || null,
+    deferBook: true,
+  });
+  if (!decision || decision.kind !== 'settled' || decision.confirmed !== true) {
+    const code = decision?.code || decision?.reason || 'settle_unconfirmed';
+    if (code === 'payer_mismatch' || code === 'challenge_mismatch') return hidden(409, 'intent_mismatch');
+    if (code === 'payment_replayed') return hidden(409, 'payment_replayed');
+    return hidden(402, 'intent_violation');
+  }
+  const amount = atomic(decision.settledAmount);
+  const payer = party(decision.payerWallet);
+  const payee = party(decision.payTo);
+  const paymentRef = typeof decision.paymentRef === 'string' ? decision.paymentRef : '';
+  if (!amount || !payer || !payee || !paymentRef) return hidden(402, 'intent_violation');
+  if (payer !== claims.payer || payee !== claims.payee) {
+    if (typeof decision.releaseClaim === 'function') decision.releaseClaim();
+    return hidden(409, 'intent_mismatch');
+  }
+  if (BigInt(amount) > BigInt(claims.max_amount)) {
+    if (typeof decision.releaseClaim === 'function') decision.releaseClaim();
+    return hidden(409, 'intent_violation');
+  }
+  return {
+    ok: true,
+    amount,
+    payer,
+    payee,
+    paymentRef,
+    bookSpent: typeof decision.bookSpent === 'function' ? decision.bookSpent : () => {},
+    releaseClaim: typeof decision.releaseClaim === 'function' ? decision.releaseClaim : () => {},
+  };
+}
+
+/**
  * @param {ReturnType<import('./intent-store.js').openIntentStore>} store
  * @param {object} input
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {{ settleBoundPayment?: Function, cfg?: object, store?: object }} [deps]
  */
-export function settleIntent(store, input, env = process.env) {
+export async function settleIntent(store, input, env = process.env, deps = {}) {
   if (!v12MintEnabled(env)) return hidden(403, 'v12_mint_disabled');
   const parsed = parseV12Uuid(input?.intent_id ?? input?.intentId);
   if (!parsed) return hidden(404, 'not_found');
@@ -291,22 +361,17 @@ export function settleIntent(store, input, env = process.env) {
   const claims = decodeIntent(grant.record);
   if (!claims || claims.intent_id !== parsed.uuid) return hidden(409, 'intent_mismatch');
 
-  const payer = party(input.payer);
-  const payee = party(input.payee);
-  const amount = atomic(input.amount);
-  if (!payer || !payee || payer !== claims.payer || payee !== claims.payee) {
-    return hidden(409, 'intent_mismatch');
-  }
-  if (!amount) return hidden(409, 'intent_violation');
-  if (BigInt(amount) > BigInt(claims.max_amount)) return hidden(409, 'intent_violation');
-  const nowMs = typeof input.now_ms === 'number' ? input.now_ms : Date.now();
-  const issued = new Date(nowMs).toISOString();
+  const issued = new Date().toISOString();
   if (Date.parse(issued) > Date.parse(claims.expiry)) return hidden(409, 'intent_violation');
+
+  const payment = await confirmIntentPayment(claims, input, deps);
+  if (!payment.ok) return payment;
 
   let pin;
   try {
-    pin = input.history_pin || v12HistoryPin();
+    pin = v12HistoryPin();
   } catch {
+    payment.releaseClaim();
     return hidden(500, 'internal');
   }
 
@@ -315,18 +380,24 @@ export function settleIntent(store, input, env = process.env) {
     settled = store.consumeAndRecord(parsed.uuid, (useIndex) => buildV12Receipt({
       claims,
       intentHash: grant.record.intent_hash,
-      amount,
-      payer,
-      payee,
+      amount: payment.amount,
+      payer: payment.payer,
+      payee: payment.payee,
+      paymentRef: payment.paymentRef,
       issued,
       useIndex,
       pin,
       kid: getIssuerKid(),
-    }));
+    }), { tx: payment.paymentRef, amount: payment.amount });
   } catch {
+    payment.releaseClaim();
     return hidden(500, 'internal');
   }
-  if (!settled.ok) return hidden(409, 'intent_violation');
+  if (!settled.ok) {
+    payment.releaseClaim();
+    return hidden(409, settled.reason || 'intent_violation');
+  }
+  try { payment.bookSpent(); } catch { /* the sqlite payment row already consumed the tx */ }
   return {
     ok: true,
     status: 200,
@@ -349,6 +420,7 @@ export function buildV12Receipt({
   amount,
   payer,
   payee,
+  paymentRef,
   issued,
   useIndex,
   pin,
@@ -365,6 +437,7 @@ export function buildV12Receipt({
       asset: claims.asset,
       gross_amount: amount,
       payee,
+      ref: paymentRef,
     },
     caller_binding: { payer_wallet: payer },
     tree_head_hash: null,

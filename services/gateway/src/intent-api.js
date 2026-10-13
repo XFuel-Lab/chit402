@@ -1,17 +1,19 @@
 /**
  * Intent routes.
  *
- * POST /intent issues chit402.intent.v1.
- * POST /intent/:id/settle mints one v12 receipt per use. Minting is off
- * unless RECEIPT_V12_MINT=true outside production.
+ * POST /intent is compiled off (INTENT_ISSUE_COMPILED). It is not in llms.txt.
+ * POST /intent/:id/settle mints one v12 receipt per use only when the test
+ * mint gate is on, and only for a #520-confirmed payment.
  * GET /intent/:id is public. An intent with no receipt is the same generic
  * 404 as an unknown id. The body does not echo the path.
  */
 import {
+  intentIssueEnabled,
   issueIntent,
   parseV12Uuid,
   publicIntentShell,
   settleIntent,
+  v12MintEnabled,
 } from './intent-record.js';
 import { openIntentStore, resolveIntentStorePath } from './intent-store.js';
 
@@ -31,9 +33,9 @@ function sendJson(res, status, body) {
 
 /**
  * @param {import('express').Express} app
- * @param {{ rateLimit?: Function, store?: ReturnType<typeof openIntentStore> }} [opts]
+ * @param {{ rateLimit?: Function, store?: ReturnType<typeof openIntentStore>, payment?: object }} [opts]
  */
-export function registerIntentRoutes(app, { rateLimit = (_req, _res, next) => next(), store = null } = {}) {
+export function registerIntentRoutes(app, { rateLimit = (_req, _res, next) => next(), store = null, payment = null } = {}) {
   let grants = store;
   const db = () => {
     if (!grants) grants = openIntentStore(resolveIntentStorePath());
@@ -41,6 +43,8 @@ export function registerIntentRoutes(app, { rateLimit = (_req, _res, next) => ne
   };
 
   app.post('/intent', rateLimit, (req, res) => {
+    // INTENT_ISSUE_COMPILED is false, so this does not sign in prod or in tests.
+    if (!intentIssueEnabled() || !v12MintEnabled()) return sendHidden(res);
     try {
       const result = issueIntent(db(), req.body || {});
       if (!result.ok && result.error === 'not_found') return sendHidden(res);
@@ -51,11 +55,18 @@ export function registerIntentRoutes(app, { rateLimit = (_req, _res, next) => ne
     }
   });
 
-  app.post('/intent/:id/settle', rateLimit, (req, res) => {
+  app.post('/intent/:id/settle', rateLimit, async (req, res) => {
     try {
+      if (!v12MintEnabled()) return sendHidden(res);
       const body = req.body && typeof req.body === 'object' ? req.body : {};
-      const result = settleIntent(db(), { ...body, intent_id: req.params.id });
-      if (!result.ok && (result.status === 404 || result.error === 'not_found')) return sendHidden(res);
+      const result = await settleIntent(db(), {
+        intent_id: req.params.id,
+        payment_header: typeof body.payment_header === 'string' ? body.payment_header : null,
+        nonce: typeof body.nonce === 'string' ? body.nonce : null,
+      }, process.env, payment || {});
+      if (!result.ok && (result.status === 404 || result.status === 403 || result.error === 'not_found' || result.error === 'v12_mint_disabled')) {
+        return sendHidden(res);
+      }
       if (!result.ok) return sendJson(res, result.status, { error: result.error });
       return sendJson(res, result.status, result.body);
     } catch {

@@ -24,6 +24,7 @@ const {
   INTENT_PROJECTION_SPEC,
   SPEND_COMPARATOR,
 } = await import('../dist/index.js');
+const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const exported = publicKey.export({ format: 'jwk' });
@@ -38,10 +39,11 @@ const PAYER = '0x1111111111111111111111111111111111111111';
 const PAYEE = '0x2222222222222222222222222222222222222222';
 const OTHER = '0x3333333333333333333333333333333333333333';
 const UUID = '6f1e2d3c-4b5a-6978-8a7b-6c5d4e3f2a1b';
-const HEAD = 'ab'.repeat(32);
 
-function signText(payloadText, typ = 'chit402-receipt+jwt') {
-  const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ, kid })).toString('base64url');
+function signText(payloadText, typ = 'chit402-receipt+jwt', headerKid = kid) {
+  const headerBody = { alg: 'ES256', typ };
+  if (headerKid) headerBody.kid = headerKid;
+  const header = Buffer.from(JSON.stringify(headerBody)).toString('base64url');
   const body = Buffer.from(payloadText).toString('base64url');
   const input = `${header}.${body}`;
   const sig = sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' });
@@ -119,14 +121,51 @@ function receiptFor(intent, overrides = {}) {
   };
 }
 
-function historyDoc(extra = {}) {
+function historyEntry(overrides = {}) {
+  const entry = {
+    kid,
+    jwk,
+    alg: 'ES256',
+    not_before: '2026-01-01T00:00:00.000Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test key',
+    prev_hash: null,
+    ...overrides,
+  };
+  entry.entry_hash = issuerHistoryEntryHash(entry);
+  return entry;
+}
+
+function signedHistory(entries, extra = {}) {
+  const head = entries[entries.length - 1].entry_hash;
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    entry_count: entries.length,
+    head_hash: head,
+  };
   return {
     schema: 'chit402.issuer_history.v1',
-    head_hash: HEAD,
-    entry_count: 1,
-    entries: [{ entry_hash: HEAD, kid }],
+    version: 1,
+    seq: entries.length,
+    entries,
+    head_hash: head,
+    issuer_signature: {
+      alg: 'ES256',
+      kid,
+      jws: signText(JSON.stringify(claims), 'chit402-issuer-history+jwt'),
+    },
     ...extra,
   };
+}
+
+const FIRST = historyEntry();
+const HEAD = FIRST.entry_hash;
+
+function historyDoc(extra = {}) {
+  return signedHistory([FIRST], extra);
 }
 
 const opts = { jwks, trustedKids: [kid] };
@@ -169,7 +208,7 @@ test('a bound spend within the intent verifies', async () => {
 test('v12 without an intent block still verifies and a junk 12 does not', async () => {
   const intent = intentDocument(intentClaims());
   const bare = receiptFor(intent, { intent: null });
-  const ok = await verifyReceipt(bare, opts);
+  const ok = await verifyReceipt(bare, { ...opts, issuerHistory: historyDoc() });
   assert.equal(ok.overall, 'verified', ok.errors.join('; '));
   const junk = receiptFor(intent);
   const payload = JSON.parse(Buffer.from(junk.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
@@ -246,6 +285,33 @@ test('a history pin is head_hash plus entry_count, not the whole document', asyn
     issuerHistory: historyDoc({ whole_document_hash: 'ff'.repeat(32) }),
   });
   assert.equal(extendedNote.overall, 'verified', extendedNote.errors.join('; '));
+
+  const next = historyEntry({ prev_hash: FIRST.entry_hash, reason: 'append' });
+  const extended = signedHistory([FIRST, next]);
+  const prefix = await verifyReceipt(receipt, { ...opts, intent, issuerHistory: extended });
+  assert.equal(prefix.overall, 'verified', prefix.errors.join('; '));
+
+  const forkFirst = historyEntry({ reason: 'fork' });
+  const forkNext = historyEntry({ prev_hash: forkFirst.entry_hash, reason: 'fork-append' });
+  const fork = await verifyReceipt(receipt, {
+    ...opts,
+    intent,
+    issuerHistory: signedHistory([forkFirst, forkNext]),
+  });
+  assert.equal(fork.overall, 'failed');
+  assert.match(fork.errors.join('; '), /issuer_history_pin_mismatch/);
+
+  const closed = historyEntry({ not_after: '2026-02-01T00:00:00.000Z' });
+  const closedReceipt = receiptFor(intent, {
+    issuer_history: { head_hash: closed.entry_hash, entry_count: 1 },
+  });
+  const window = await verifyReceipt(closedReceipt, {
+    ...opts,
+    intent,
+    issuerHistory: signedHistory([closed]),
+  });
+  assert.equal(window.overall, 'failed');
+  assert.match(window.errors.join('; '), /issued_after_not_after/);
 });
 
 test('an unpinned comparator or spec digest fails closed', async () => {
@@ -268,6 +334,25 @@ test('intent_hash covers signed bytes only', async () => {
   const intent = intentDocument(claims);
   const receipt = receiptFor(intent);
   const result = await verifyReceipt(receipt, { ...opts, intent });
+  assert.equal(result.overall, 'failed');
+  assert.equal(result.errors.includes('intent_mismatch'), true, result.errors.join('; '));
+});
+
+test('an intent JWS with no kid does not fall back to the only JWKS key', async () => {
+  const claims = intentClaims();
+  const text = intentCanonicalJson(claims);
+  const jws = signText(text, 'chit402-intent+jwt', null);
+  const hash = sha256(text);
+  const intent = {
+    schema: 'chit402.intent.v1',
+    intent_id: claims.intent_id,
+    intent_hash: hash,
+    hash,
+    issuer_signature: { alg: 'ES256', kid, jws },
+    claims,
+  };
+  const receipt = receiptFor(intent);
+  const result = await verifyReceipt(receipt, { ...opts, intent, issuerHistory: historyDoc() });
   assert.equal(result.overall, 'failed');
   assert.equal(result.errors.includes('intent_mismatch'), true, result.errors.join('; '));
 });

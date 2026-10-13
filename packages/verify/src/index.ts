@@ -63,7 +63,7 @@ import {
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
 import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
-import { checkReceiptIntent, matchV12HistoryPin, readV12HistoryPin } from './intent.js';
+import { checkReceiptIntent, matchV12HistorySnapshot, readV12HistoryPin } from './intent.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -1724,14 +1724,27 @@ export async function verifyReceipt(
     || historyPin
   )));
   const v12Pin = v12Receipt ? readV12HistoryPin(verifiedClaims) : null;
-  const v12HistoryMatch = v12Pin && options.issuerHistory
-    ? matchV12HistoryPin(v12Pin, options.issuerHistory)
+  let v12HistoryDoc: unknown = options.issuerHistory ?? null;
+  if (v12Receipt && v12HistoryDoc == null && options.issuerHistoryBytes) {
+    try { v12HistoryDoc = JSON.parse(options.issuerHistoryBytes); } catch { v12HistoryDoc = {}; }
+  }
+  // v12 never passes without the pinned history unless the caller skipped it,
+  // and a skip is reported as a failure here (no silent downgrade to VERIFIED).
+  const v12HistoryMatch = v12Pin
+    ? (v12HistoryDoc != null
+      ? matchV12HistorySnapshot(v12Pin, v12HistoryDoc, {
+        jwks,
+        trustedKids,
+        kid: issuer_signature.kid ?? receipt.issuer_signature?.kid ?? null,
+        issuedAt,
+      })
+      : { ok: false, reason: options.skipIssuerHistory ? 'issuer_history_skipped' : 'issuer_history_unreachable' })
     : null;
   const issuer_history = v12Receipt
     ? {
       checked: true,
       ok: !!v12Pin && (v12HistoryMatch == null || v12HistoryMatch.ok),
-      unreachable: false,
+      unreachable: v12HistoryMatch?.reason === 'issuer_history_unreachable',
       warning: null,
       reason: !v12Pin
         ? 'issuer_history_pin_missing'
@@ -1940,7 +1953,11 @@ export async function verifyReceipt(
     errors.push(`issuer history: ${issuer_history.reason}`);
   }
 
-  const intentCheck = v12Receipt && issuer_signature.valid
+  const legacyIntent = !v12Receipt && verifiedClaims != null
+    && Object.prototype.hasOwnProperty.call(verifiedClaims as Record<string, unknown>, 'intent');
+  const intentCheck = legacyIntent
+    ? { ok: false, reason: 'intent_on_legacy_version' }
+    : v12Receipt && issuer_signature.valid
     ? checkReceiptIntent(
       verifiedClaims as Record<string, unknown> | null,
       options.intent ?? null,

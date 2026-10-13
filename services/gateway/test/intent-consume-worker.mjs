@@ -3,11 +3,25 @@ import { settleIntent } from '../src/intent-record.js';
 import { openIntentStore } from '../src/intent-store.js';
 
 const store = openIntentStore(workerData.file);
-const result = settleIntent(store, {
+const result = await settleIntent(store, {
   intent_id: workerData.intentId,
-  payer: workerData.payer,
-  payee: workerData.payee,
-  amount: workerData.amount,
+  amount: '1',
+  payment_header: 'h',
+  nonce: 'n',
+}, process.env, {
+  cfg: { network: 'base' },
+  async settleBoundPayment() {
+    return {
+      kind: 'settled',
+      confirmed: true,
+      settledAmount: workerData.chainAmount,
+      payerWallet: workerData.payer,
+      payTo: workerData.payee,
+      paymentRef: workerData.tx,
+      bookSpent() {},
+      releaseClaim() {},
+    };
+  },
 });
 parentPort.postMessage({
   ok: result.ok === true,

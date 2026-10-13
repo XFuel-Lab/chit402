@@ -55,7 +55,8 @@ function rfc8785String(str) {
 }
 
 function rfc8785Value(value) {
-  if (value === null || value === undefined) return 'null';
+  if (value === undefined) throw new Error('Cannot canonicalize undefined');
+  if (value === null) return 'null';
   const type = typeof value;
   if (type === 'boolean') return value ? 'true' : 'false';
   if (type === 'number') {
@@ -64,7 +65,12 @@ function rfc8785Value(value) {
     return JSON.stringify(value);
   }
   if (type === 'string') return rfc8785String(value);
-  if (Array.isArray(value)) return `[${value.map(rfc8785Value).join(',')}]`;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (!(i in value)) throw new Error('Cannot canonicalize a sparse array');
+    }
+    return `[${value.map(rfc8785Value).join(',')}]`;
+  }
   if (type === 'object') {
     const keys = Object.keys(value).sort(utf16Compare);
     const pairs = [];

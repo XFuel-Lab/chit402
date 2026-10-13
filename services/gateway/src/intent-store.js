@@ -63,7 +63,7 @@ export function openIntentStore(file = resolveIntentStorePath()) {
       CREATE TABLE IF NOT EXISTS intent_grants (
         intent_id TEXT PRIMARY KEY,
         use_count INTEGER NOT NULL,
-        uses_remaining INTEGER NOT NULL,
+        uses_remaining INTEGER NOT NULL CHECK (uses_remaining >= 0),
         record_json TEXT NOT NULL,
         created_at INTEGER NOT NULL
       )
@@ -74,8 +74,22 @@ export function openIntentStore(file = resolveIntentStorePath()) {
         intent_id TEXT NOT NULL,
         use_index INTEGER NOT NULL,
         receipt_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (intent_id, use_index)
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS intent_payments (
+        payment_tx TEXT PRIMARY KEY,
+        intent_id TEXT NOT NULL,
+        use_index INTEGER NOT NULL,
+        amount TEXT NOT NULL,
         created_at INTEGER NOT NULL
       )
+    `);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS intent_receipts_intent_use
+      ON intent_receipts (intent_id, use_index)
     `);
     db.exec(`
       CREATE TABLE IF NOT EXISTS intent_store_probe (
@@ -104,11 +118,16 @@ export function openIntentStore(file = resolveIntentStorePath()) {
     `INSERT INTO intent_receipts (receipt_id, intent_id, use_index, receipt_json, created_at)
      VALUES (?, ?, ?, ?, ?)`,
   );
+  const insertPayment = db.prepare(
+    `INSERT INTO intent_payments (payment_tx, intent_id, use_index, amount, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
 
-  const consumeTx = db.transaction((intentId, build) => {
+  const consumeTx = db.transaction((intentId, build, paymentTx, amount) => {
     const row = updateUse.get(intentId);
     if (!row) return null;
     const useIndex = Number(row.use_count) - Number(row.uses_remaining);
+    insertPayment.run(String(paymentTx), intentId, useIndex, String(amount), Date.now());
     const receipt = build(useIndex);
     const receiptId = receipt?.task_id;
     if (typeof receiptId !== 'string' || receiptId.length === 0) {
@@ -163,17 +182,28 @@ export function openIntentStore(file = resolveIntentStorePath()) {
       }
     },
     /**
-     * Take one use and store the receipt, or take nothing.
-     * `build` runs inside the write transaction. A throw rolls the use back.
+     * Take one use, record the verified payment, and store the receipt.
+     * The payment row and the receipt row commit together. A throw, including
+     * UNIQUE(intent_id, use_index) or a repeated payment_tx, rolls the use back.
      * @param {string} intentId
      * @param {(useIndex: number) => object} build
+     * @param {{ tx: string, amount: string }} payment
      */
-    consumeAndRecord(intentId, build) {
+    consumeAndRecord(intentId, build, payment) {
+      const tx = payment && typeof payment.tx === 'string' ? payment.tx : '';
+      if (!tx) return { ok: false, reason: 'intent_violation' };
       try {
-        const taken = consumeTx.immediate(intentId, build);
+        const taken = consumeTx.immediate(intentId, build, tx, payment.amount);
         if (!taken) return { ok: false, reason: 'intent_violation' };
         return { ok: true, useIndex: taken.useIndex, receipt: taken.receipt };
       } catch (err) {
+        const msg = String(err?.message || '');
+        if (msg.includes('UNIQUE') || msg.includes('constraint')) {
+          return {
+            ok: false,
+            reason: msg.includes('intent_payments') ? 'payment_replayed' : 'intent_violation',
+          };
+        }
         throw failWrite(err);
       }
     },
