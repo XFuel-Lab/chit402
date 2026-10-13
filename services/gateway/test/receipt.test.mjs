@@ -1209,7 +1209,8 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
 test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof object', () => {
   const sender = '0x1111111111111111111111111111111111111111';
   const recipient = '0x2222222222222222222222222222222222222222';
-  const explorer = 'https://basescan.org/tx/0xabc';
+  const tx = `0x${'ab'.repeat(32)}`;
+  const explorer = `https://basescan.org/tx/${tx}`;
   const html = renderReceiptHtml({
     schema: 'xfuel.receipt.v3',
     task_id: 'foreign-x402-usdc-1',
@@ -1221,7 +1222,7 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
       rail: 'usdc',
       network: 'base',
       asset: 'USDC',
-      ref: 'base:0xabc',
+      ref: `base:${tx}`,
       collected: true,
       gross_amount: '5000',
       fee_amount: '0',
@@ -1239,8 +1240,8 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
   assert.match(html, /\$0\.005/);
   assert.match(html, new RegExp(sender));
   assert.match(html, new RegExp(recipient));
-  assert.match(html, /base:0xabc/);
-  assert.match(html, new RegExp(`href="${explorer}"`));
+  assert.match(html, new RegExp(`base:${tx}`));
+  assert.match(html, new RegExp(`href="${explorer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   assert.match(html, /\$0\.002/);
   assert.match(html, /paid/);
   assert.doesNotMatch(html, /waived/);
