@@ -17,8 +17,10 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configureIssuerHistoryStore, retireOrRevokeIssuerKey } from '../src/issuer-history.js';
-import { initIssuerKey } from '../src/issuer-key.js';
+
+process.env.DOTENV_CONFIG_QUIET = 'true';
+const { configureIssuerHistoryStore, retireOrRevokeIssuerKey } = await import('../src/issuer-history.js');
+const { initIssuerKey } = await import('../src/issuer-key.js');
 
 function arg(name) {
   const index = process.argv.indexOf(name);

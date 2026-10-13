@@ -268,7 +268,7 @@ test('the last entry for a kid is the window', () => {
     status: 'revoked',
     not_after: null,
     revoked_at: '2026-06-01T00:00:00Z',
-    not_before: '2026-06-01T00:00:00Z',
+    not_before: '2026-01-01T00:00:00Z',
     reason: 'compromised',
   };
   const revoked = { ...revokedBody, entry_hash: issuerHistoryEntryHash(revokedBody) };
