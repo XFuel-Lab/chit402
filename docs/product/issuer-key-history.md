@@ -42,7 +42,7 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 ## Check
 
-`xfuel-verify` reads the receipt's `kid` and `iat`. The window is the last history entry for that kid, so an appended retire or revoke replaces the earlier window. It fails if `iat` is outside `not_before` / `not_after`, or if `status` is `revoked` and `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies.
+`xfuel-verify` reads the receipt's `kid` and `iat`. The earliest `revoked_at` and the earliest `not_after` across every entry for that kid stay in force. A later active row does not clear them. It fails if `iat` is outside `not_before` / `not_after`, or if a `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. A history that moves a kid from `revoked` to any later status, or from `retired` to `active`, is `kid_status_regression`.
 
 If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. That file is the offline check. `--no-issuer-history` skips the kid window and prints `VERIFIED_NO_KEY_WINDOW`, never `VERIFIED`. Exit code is 0 unless `--strict`, which exits 1. Skipping the window is not offline verification.
 
@@ -76,6 +76,6 @@ npm run retire-issuer-key -- \
   --confirm YES
 ```
 
-`--status retired` takes `--not-after` instead of `--revoked-at`. The append is written to the same history file the gateway serves (`AGENTS_DIR`, or the agents directory beside `TASK_STORE_DIR`). Boot calls the history check after the store loads and before listen. A signing key whose latest history entry is `retired` or `revoked` refuses to serve (`issuer_key_not_active`). A stale in-place edit does not.
+`--status retired` takes `--not-after` instead of `--revoked-at`. The append is written to the same history file the gateway serves (`AGENTS_DIR`, or the agents directory beside `TASK_STORE_DIR`). Boot calls the history check after the store loads and before listen. A signing key that has any `retired` or `revoked` entry refuses to serve (`issuer_key_not_active`). The script refuses an append that would move a revoked key, or turn a retired key active again (`kid_status_regression`). A stale in-place edit does not.
 
 Page: https://www.chit402.com/docs/receipt-check

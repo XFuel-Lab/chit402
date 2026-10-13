@@ -342,6 +342,97 @@ test('a retire or revoke appends and the last entry is the window', () => withHi
   assert.equal(early.ok, true, early.reason);
 }));
 
+test('a later active entry does not clear a revocation and retire refuses it', () => withHistory(() => {
+  const kid = getIssuerKid();
+  const revoked = retireOrRevokeIssuerKey({
+    status: 'revoked',
+    not_before: '2020-01-01T00:00:00.000Z',
+    revoked_at: '2026-06-01T00:00:00.000Z',
+    reason: 'compromised',
+  });
+  const revokedDoc = JSON.parse(revoked.body);
+  const prior = revokedDoc.entries.find((entry) => entry.kid === kid);
+  const reactivated = [...revokedDoc.entries, {
+    kid,
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+  }];
+  const late = issuerKeyWindow({ entries: reactivated }, kid, '2026-09-01T00:00:00.000Z');
+  assert.equal(late.ok, false);
+  assert.equal(late.reason, 'kid_revoked_before_issuance');
+  const early = issuerKeyWindow({ entries: reactivated }, kid, '2026-03-01T00:00:00.000Z');
+  assert.equal(early.ok, true, early.reason);
+  assert.throws(() => sealExtendingIssuerHistory([{
+    kid,
+    jwk: prior.jwk,
+    alg: 'ES256',
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: 'unrevoke',
+    custody: 'no',
+  }]), (err) => err.code === 'kid_status_regression');
+  assert.throws(() => retireOrRevokeIssuerKey({
+    status: 'retired',
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: '2026-12-01T00:00:00.000Z',
+    reason: 'again',
+  }), (err) => err.code === 'kid_status_regression');
+}));
+
+test('retired then active is refused and not_after stays', () => withHistory(() => {
+  const kid = getIssuerKid();
+  const retired = retireOrRevokeIssuerKey({
+    status: 'retired',
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: '2026-06-01T00:00:00.000Z',
+    reason: 'rotated',
+  });
+  const doc = JSON.parse(retired.body);
+  const prior = doc.entries.find((entry) => entry.kid === kid);
+  const extended = issuerKeyWindow({
+    entries: [...doc.entries, {
+      kid,
+      not_before: '2020-01-01T00:00:00.000Z',
+      not_after: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      revoked_at: null,
+    }],
+  }, kid, '2026-09-01T00:00:00.000Z');
+  assert.equal(extended.ok, false);
+  assert.equal(extended.reason, 'issued_after_not_after');
+  assert.throws(() => sealExtendingIssuerHistory([{
+    kid,
+    jwk: prior.jwk,
+    alg: 'ES256',
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: 'reactivate',
+    custody: 'no',
+  }]), (err) => err.code === 'kid_status_regression');
+
+  resetIssuerHistoryStore();
+  retireOrRevokeIssuerKey({
+    status: 'retired',
+    not_before: '2020-01-01T00:00:00.000Z',
+    not_after: '2026-06-01T00:00:00.000Z',
+    reason: 'rotated',
+  });
+  const tightened = retireOrRevokeIssuerKey({
+    status: 'revoked',
+    not_before: '2020-01-01T00:00:00.000Z',
+    revoked_at: '2026-06-01T00:00:00.000Z',
+    reason: 'compromised',
+  });
+  assert.equal(JSON.parse(tightened.body).entries.at(-1).status, 'revoked');
+  assert.equal(verifyIssuerHistory(JSON.parse(tightened.body)).valid, true);
+}));
+
 test('truncating the history file cannot reissue a version', () => withHistory(() => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
   const logDir = mkdtempSync(join(tmpdir(), 'issuer-log-'));
