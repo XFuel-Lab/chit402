@@ -1,5 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Config reads these at import time — set before server.js loads (ESM hoists static imports).
 process.env.HUB_CATALOG_OFFLINE = 'true';
@@ -198,6 +201,22 @@ test('GET /xfuel-icon.svg is a real SVG, not HTML', async () => {
   assert.match(body, /<svg[\s>]/);
   assert.match(body, /xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
   assert.doesNotMatch(body, /<!DOCTYPE html>/i);
+});
+
+test('GET /chit402-icon.svg is the black/white/blue receipt mark', async () => {
+  const res = await fetch(`${base}/chit402-icon.svg`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /image\/svg\+xml/);
+  const body = await res.text();
+  const legacy = await fetch(`${base}/xfuel-icon.svg`);
+  assert.equal(await legacy.text(), body, 'legacy icon route serves the same mark');
+  const iconPath = join(dirname(fileURLToPath(import.meta.url)), '../../../apps/web/public/chit402-icon.svg');
+  assert.equal(body, readFileSync(iconPath, 'utf8'), 'gateway SVG matches the web icon');
+  assert.match(body, /#0095b8/);
+  assert.match(body, /#202026/);
+  assert.match(body, /#ffffff/);
+  assert.match(body, /#dfe3ea/);
+  assert.doesNotMatch(body, /#00d4ff/);
 });
 
 test('GET /v1/models lists live hub catalog in OpenAI shape', async () => {

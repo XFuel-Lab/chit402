@@ -637,3 +637,43 @@ test('middleware transformHtml produces Chit402 crawler output for homepage', ()
   assert.match(simulated, /og:title" content="Chit402/, 'transformed og:title starts with Chit402');
   assert.match(simulated, /twitter:title" content="Chit402/, 'transformed twitter:title starts with Chit402');
 });
+
+test('chit402 listing assets are the black/white/blue receipt, rasterized as PNG', () => {
+  const png = (rel) => readFileSync(join(root, rel));
+  const assets = {
+    'public/chit402-icon.png': png('public/chit402-icon.png'),
+    'public/chit402-mark.png': png('public/chit402-mark.png'),
+    'public/og-image.png': png('public/og-image.png'),
+    'public/apple-touch-icon.png': png('public/apple-touch-icon.png'),
+  };
+  for (const [name, buf] of Object.entries(assets)) {
+    assert.equal(buf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${name} is a PNG`);
+    assert.notEqual(buf.subarray(0, 2).toString('hex'), 'ffd8', `${name} is not a JPEG`);
+  }
+  const iconPng = assets['public/chit402-icon.png'];
+  const markPng = assets['public/chit402-mark.png'];
+  assert.equal(iconPng.readUInt32BE(16), 1024, 'app icon is rasterized at 1024');
+  assert.equal(iconPng.readUInt32BE(20), 1024, 'app icon is square');
+  assert.equal(markPng.readUInt32BE(16), 512, 'nav mark is rasterized at 512');
+  assert.equal(markPng.readUInt32BE(20), 512, 'nav mark is square');
+  assert.equal(assets['public/og-image.png'].readUInt32BE(16), 1200);
+  assert.equal(assets['public/og-image.png'].readUInt32BE(20), 630);
+  assert.equal(assets['public/apple-touch-icon.png'].readUInt32BE(16), 180);
+  assert.equal(assets['public/apple-touch-icon.png'].readUInt32BE(20), 180);
+
+  const ico = readFileSync(join(root, 'public/favicon.ico'));
+  assert.equal(ico.readUInt16LE(0), 0, 'favicon.ico is an ICO, not a PNG payload');
+  assert.equal(ico.readUInt16LE(2), 1, 'favicon.ico type is icon');
+  assert.ok(ico.readUInt16LE(4) >= 2, 'favicon.ico contains more than one size');
+
+  const svg = readFileSync(join(root, 'public/chit402-icon.svg'), 'utf8');
+  assert.match(svg, /#0095b8/, '402 is brand blue');
+  assert.match(svg, /#ffffff/, 'receipt paper is white');
+  assert.match(svg, /#dfe3ea/, 'folded corner is the cool gray');
+  assert.match(svg, /#202026/, 'frame is near-black');
+  assert.match(svg, /#16161c/, 'rules are near-black');
+  assert.match(svg, /#5a5f6b/, 'rules include the dark gray');
+  assert.doesNotMatch(svg, /#00d4ff/, 'icon SVG no longer uses the cyan wordmark');
+
+  assert.match(html, /rel="apple-touch-icon" href="\/apple-touch-icon\.png"/);
+});
