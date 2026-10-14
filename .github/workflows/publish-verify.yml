@@ -1,6 +1,8 @@
 name: Publish verifier
 
 # The owner approves the release by running this workflow. It does not run on push.
+# Trusted publishing uses the id-token. Node 22 runners ship npm 10.x, which
+# cannot exchange that token and fail the registry PUT with E404.
 on:
   workflow_dispatch:
 
@@ -27,10 +29,32 @@ jobs:
         working-directory: packages/verify
         run: npm ci --no-audit --no-fund && npm test
 
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g 'npm@^11.5.1'
+          npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if(!(a>11||(a===11&&(b>5||(b===5&&c>=1))))){console.error("npm "+process.argv[1]+" is below 11.5.1"); process.exit(1)}' "$(npm --version)"
+
       - name: Publish chit402-verify
         working-directory: packages/verify
-        run: npm publish --provenance --access public
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          # Ignore the setup-node userconfig. An empty token must not hide a version that is already public.
+          if env -u NPM_CONFIG_USERCONFIG npm view "${name}@${version}" version --prefer-online >/dev/null 2>&1; then
+            echo "${name}@${version} is already published; skipping"
+            exit 0
+          fi
+          npm publish --provenance --access public
 
       - name: Publish @xfuel/verify alias
         working-directory: packages/aliases/chit402-verify
-        run: npm publish --provenance --access public
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          # Ignore the setup-node userconfig. An empty token must not hide a version that is already public.
+          if env -u NPM_CONFIG_USERCONFIG npm view "${name}@${version}" version --prefer-online >/dev/null 2>&1; then
+            echo "${name}@${version} is already published; skipping"
+            exit 0
+          fi
+          npm publish --provenance --access public
