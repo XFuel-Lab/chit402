@@ -314,8 +314,8 @@ export function formatSupportedReceiptVersions(): string {
     `  payload_version: ${LEGACY_PAYLOAD_VERSIONS.join(', ')}, and 11 only with a signed issuer_root`,
     `  refusal payload_version: ${REFUSAL_EXACT_VERSIONS.join(', ')}`,
     '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred)',
-    'Unknown versions fail closed: unsupported_version, exit 1.',
-    `Receipts issued after 2026-10-08 require @xfuel/verify >= ${VERIFIER_MIN}.`,
+    'Unknown versions fail closed: unsupported_version, exit 2.',
+    `Receipts issued after 2026-10-08 require chit402-verify >= ${VERIFIER_MIN}.`,
     'Older verifiers may print VERIFIED for formats they do not understand.',
   ].join('\n');
 }

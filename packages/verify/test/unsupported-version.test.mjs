@@ -251,6 +251,10 @@ test('supported versions are exported and printed', () => {
   assert.equal(version.status, 0);
   assert.match(version.stdout, /chit402-verify 0\.4\.0/);
   assert.match(version.stdout, /v: 11/);
+  assert.match(version.stdout, /unsupported_version, exit 2/);
+  assert.match(version.stdout, /require chit402-verify >= 0\.3\.5/);
+  assert.doesNotMatch(version.stdout, /@xfuel\/verify/);
+  assert.doesNotMatch(version.stdout, /unsupported_version, exit 1/);
 });
 
 test('T-V12 signed v 12 is unsupported_version on every path', async () => {
