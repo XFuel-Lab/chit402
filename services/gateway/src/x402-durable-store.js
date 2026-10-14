@@ -90,6 +90,7 @@ export class DurableChallengeStore {
   get(nonce) { return this._with((s) => s.get(nonce)); }
   patch(nonce, fields) { return this._with((s) => s.patch(nonce, fields)); }
   isSpent(nonce) { return this._with((s) => s.isSpent(nonce)); }
+  replayRecord(nonce) { return this._with((s) => s.replayRecord(nonce)); }
   markSpent(nonce, meta) { return this._with((s) => s.markSpent(nonce, meta)); }
   claim(nonce, owner, leaseMs) { return this._with((s) => s.claim(nonce, owner, leaseMs)); }
   release(nonce, owner) { return this._with((s) => s.release(nonce, owner)); }

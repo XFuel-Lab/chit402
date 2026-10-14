@@ -343,29 +343,31 @@ test('single claim: one challenge cannot mint two receipts', async () => {
     const cfg = cfgFor(mock.url);
     const body = await issueChallenge(cfg, { taskId: 'stopgap-claim', amount: '2000' });
     const nonce = body.accepts[0].extra.nonce;
+    const header = evmHeader({ amount: '2000' });
     const pay = () => runX402Handshake({
       headers: {
-        'x-payment': evmHeader({ amount: '2000' }),
+        'x-payment': header,
         'x-payment-nonce': nonce,
       },
       body: {},
     }, { taskId: 'stopgap-claim', cfg, amount: '2000' });
 
     const results = await Promise.all(Array.from({ length: 10 }, () => pay()));
-    const settled = results.filter((r) => r.kind === 'settled');
-    const inflight = results.filter((r) => r.reason === 'payment_in_flight');
-    assert.equal(settled.length, 1);
-    assert.equal(inflight.length, 9);
+    const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
+    const replays = results.filter((r) => r.code === 'payment_replayed');
+    assert.equal(fresh.length, 1);
+    assert.equal(replays.length, 9);
     assert.equal(mock.counts.settle, 1);
     assert.equal(mock.counts.verify, 1);
-    for (const refused of inflight) {
-      assert.equal(refused.paymentRef, undefined);
-      assert.equal(refused.preSettle, true);
+    for (const replayed of replays) {
+      assert.notEqual(replayed.kind, 'settled');
+      assert.equal(replayed.paymentRef, undefined);
     }
 
     const replay = await pay();
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
     assert.equal(mock.counts.settle, 1);
   } finally {
     await mock.close();

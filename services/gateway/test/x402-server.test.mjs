@@ -165,8 +165,8 @@ test('extractPaymentNonce: v1 explicit header, v2 explicit header, json blob, ba
   assert.equal(extractPaymentNonce({ headers: {} }), null);
 });
 
-test('full 402 loop against mock facilitator: challenge ? settle ? replay-rejected', async () => {
-  const { url, close } = await startMockFacilitator();
+test('full 402 loop against mock facilitator: challenge, settle, then replay is refused', async () => {
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url);
 
@@ -194,10 +194,12 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
     assert.match(settled.paymentRef, /^base:0x/);
     assert.equal(settled.settledAmount, '50000', 'settled gross comes from the bound challenge');
 
-    // Step 3: replay the same nonce ? rejected (spent)
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
@@ -206,7 +208,7 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
 test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
   // This is the Bankr case: CDP-native client sends PAYMENT-SIGNATURE, not X-PAYMENT.
   // The challenge still returns x402Version: 2, and the paid retry must succeed.
-  const { url, close } = await startMockFacilitator();
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url);
 
@@ -230,10 +232,12 @@ test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native 
     assert.match(settled.paymentRef, /^base:0x/);
     assert.equal(settled.settledAmount, '50000');
 
-    // Step 3: replay the same nonce → rejected (spent)
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }

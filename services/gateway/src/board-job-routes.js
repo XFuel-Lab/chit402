@@ -3,6 +3,7 @@
  */
 
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import config from './config.js';
 import { isBindingRefusal, paymentErrorStatus, bindingEnforced, samePayee } from './x402-flags.js';
 import { claimFromRequest } from './agent-book.js';
@@ -179,7 +180,8 @@ export function registerBoardJobRoutes(app, deps) {
       },
     };
     const baseUrl = baseUrlFor(req);
-    const resource = `${String(baseUrl || '').replace(/\/$/, '')}${req.path || ''}`;
+    const legPath = spec.route || `${req.path || ''}/${spec.leg}`;
+    const resource = `${String(baseUrl || '').replace(/\/$/, '')}${legPath.startsWith('/') ? legPath : `/${legPath}`}`;
     const decision = await runX402Handshake(shadow, {
       taskId: `board-job-${spec.leg}-${req.params?.id || 'pay'}`,
       amount: String(spec.amount),
@@ -209,9 +211,9 @@ export function registerBoardJobRoutes(app, deps) {
       }
       return { ok: false, status: 402, error: 'job_payment_required', code: 'verify_failed' };
     }
-    let legPaid = 0n;
-    try { legPaid = BigInt(String(decision.settledAmount)); } catch { legPaid = 0n; }
-    if (legPaid < BigInt(String(spec.amount)) || !samePayee(decision.payTo, spec.payTo)) {
+    if (!sameQuotedPrice(decision.quotedAmount, spec.amount)
+      || !chainCoversPrice(decision.settledAmount, spec.amount)
+      || !samePayee(decision.payTo, spec.payTo)) {
       return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
     }
     if (spec.expectedPayer && !samePayee(decision.payerWallet, spec.expectedPayer)) {
@@ -228,9 +230,12 @@ export function registerBoardJobRoutes(app, deps) {
       ok: true,
       settlement: {
         paymentRef: decision.paymentRef,
-        amount: String(decision.settledAmount),
+        amount: String(decision.quotedAmount),
+        quotedAmount: String(decision.quotedAmount),
+        settledAmount: String(decision.settledAmount),
         payer: decision.payerWallet || null,
         payTo: decision.payTo || spec.payTo,
+        route: spec.route || decision.route || null,
       },
     };
   }

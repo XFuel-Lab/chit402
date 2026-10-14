@@ -17,6 +17,7 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import { findLink, findSecret } from './board-posts.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
 import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
@@ -589,17 +590,30 @@ export function deliverBoardJob(jobId, body = {}, deps = {}) {
   return { ok: true, status: 200, body: { job: toPublicJob(job) } };
 }
 
-function legSettlement(raw, expectedAmount) {
+/**
+ * A board leg is paid only when the on-chain amount covers the price that leg
+ * was quoted at. `amount` may be the quote. `settledAmount` is the transfer.
+ * When both are present, the quote does not stand in for the transfer.
+ */
+export function legSettlement(raw, expectedAmount, expectedRoute = null) {
   const ref = raw?.paymentRef || raw?.payment_ref || null;
   if (!ref || !/^(base|solana):.+/.test(String(ref))) return null;
-  let paid = 0n;
-  try { paid = BigInt(String(raw.amount ?? raw.settledAmount ?? '0')); } catch { return null; }
-  if (paid < BigInt(expectedAmount)) return null;
+  const quotedRaw = raw?.quotedAmount != null ? raw.quotedAmount : raw?.amount;
+  const chainRaw = raw?.settledAmount != null ? raw.settledAmount : raw?.amount;
+  if (!sameQuotedPrice(quotedRaw, expectedAmount)) return null;
+  if (!chainCoversPrice(chainRaw, expectedAmount)) return null;
+  if (expectedRoute) {
+    const got = canonicalPaidRoute(raw?.route);
+    if (!got || got !== canonicalPaidRoute(expectedRoute)) return null;
+  }
+  const chain = atomicUnits(chainRaw);
   return {
     payment_ref: String(ref),
-    amount: String(expectedAmount),
+    amount: chain.toString(),
+    quoted_amount: atomicUnits(expectedAmount).toString(),
     payer: raw.payer || raw.payerWallet || null,
     payee: raw.payee || raw.payTo || null,
+    route: raw?.route ? canonicalPaidRoute(raw.route) : null,
   };
 }
 
@@ -747,6 +761,8 @@ export async function payBoardJob(jobId, deps = {}) {
   const chitPayTo = deps.chitPayTo;
   if (!chitPayTo) return fail(503, 'fee_payee_unconfigured', 'Chit payTo is not configured for the fee leg');
   const price = bid.price_atomic;
+  const winnerRoute = `/v1/board/jobs/${job.id}/pay/winner`;
+  const feeRoute = `/v1/board/jobs/${job.id}/pay/fee`;
   const fee = feeLegAmount(price);
 
   if (!job.winner_leg) {
@@ -756,6 +772,7 @@ export async function payBoardJob(jobId, deps = {}) {
       amount: price,
       payTo: winnerWallet,
       expectedPayer: posterWallet,
+      route: winnerRoute,
     });
     if (!settled?.ok) {
       return {
@@ -769,22 +786,24 @@ export async function payBoardJob(jobId, deps = {}) {
         },
       };
     }
-    const leg = legSettlement(settled.settlement, price);
+    const leg = legSettlement(settled.settlement, price, winnerRoute);
     if (!leg) return fail(402, 'stamp_underpaid', 'Winner leg did not settle the bid price');
     if (leg.payer && leg.payer.toLowerCase() !== String(posterWallet).toLowerCase()) {
       return fail(402, 'payer_mismatch', 'The job payment must come from the poster wallet');
     }
     job.winner_leg = { ...leg, payee: winnerWallet };
     jobs.update(job);
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const legs = {
-      winner: { amount: String(price), pay_to: winnerWallet, settled: true },
-      fee: { amount: fee.toString(), pay_to: chitPayTo, settled: false },
+      winner: { amount: String(job.winner_leg.amount), pay_to: winnerWallet, settled: true },
+      fee: { amount: winnerFee.toString(), pay_to: chitPayTo, settled: false },
     };
     const feeChallenge = await deps.settleLeg({
       leg: 'fee',
-      amount: fee.toString(),
+      amount: winnerFee.toString(),
       payTo: chitPayTo,
       expectedPayer: posterWallet,
+      route: feeRoute,
       challengeOnly: true,
     });
     const challenge = {
@@ -809,14 +828,16 @@ export async function payBoardJob(jobId, deps = {}) {
   }
 
   if (!job.fee_leg) {
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const settled = await deps.settleLeg({
       leg: 'fee',
-      amount: fee.toString(),
+      amount: winnerFee.toString(),
       payTo: chitPayTo,
       expectedPayer: posterWallet,
+      route: feeRoute,
     });
     if (!settled?.ok) return settled;
-    const leg = legSettlement(settled.settlement, fee.toString());
+    const leg = legSettlement(settled.settlement, winnerFee.toString(), feeRoute);
     if (!leg) return fail(402, 'stamp_underpaid', 'Fee leg did not settle the stamp plus 1%');
     job.fee_leg = { ...leg, payee: chitPayTo };
     jobs.update(job);
@@ -847,7 +868,11 @@ export async function payBoardJob(jobId, deps = {}) {
     amount: price,
     winnerAgentId: job.winner_agent_id,
     winnerWallet,
-    fee: { amount: fee.toString(), payment_ref: job.fee_leg.payment_ref, pay_to: chitPayTo },
+    fee: {
+      amount: feeLegAmount(job.winner_leg.quoted_amount || price).toString(),
+      payment_ref: job.fee_leg.payment_ref,
+      pay_to: chitPayTo,
+    },
     jobId: job.id,
     source: 'board',
   });

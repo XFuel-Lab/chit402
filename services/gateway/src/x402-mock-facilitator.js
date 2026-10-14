@@ -10,6 +10,21 @@ function mintTxHash() {
   return `0x${crypto.randomBytes(32).toString('hex')}`;
 }
 
+/** Payer named by a base64 or JSON payment header. Opaque blobs stay on the fallback. */
+function payerFromPayment(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const json = raw.trim().startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8');
+    const body = JSON.parse(json);
+    const from = body?.payload?.authorization?.from
+      || body?.authorization?.message?.from
+      || null;
+    return typeof from === 'string' && /^0x[0-9a-fA-F]{40}$/.test(from) ? from : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Mock x402 facilitator for dev/CI.
  *
@@ -68,7 +83,10 @@ export function createMockFacilitator(config = {}) {
 
       // Standard x402 protocol (payload-bearing body) → x402-shaped responses.
       const isStandardX402 = !!parsed.paymentPayload;
-      const payer = payerOverride || parsed.paymentPayload?.payload?.authorization?.from || MOCK_PAYER;
+      const payer = payerOverride
+        || parsed.paymentPayload?.payload?.authorization?.from
+        || payerFromPayment(parsed.payment)
+        || MOCK_PAYER;
       const network = parsed.paymentRequirements?.network || parsed.network || 'base-sepolia';
 
       if (url.endsWith('/verify')) {

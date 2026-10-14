@@ -24,6 +24,14 @@ import {
   buildDisputeWindow,
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
+import { atomicUnits, canonicalPaidRoute } from './paid-route.js';
+import {
+  abortServedReceipt,
+  armServedReceipt,
+  REPLAY_WAIT_TIMEOUT,
+  replayBytesReady,
+  replayWaiterMs,
+} from './paid-response-replay.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -164,6 +172,97 @@ function declaredEvmAsset(decoded) {
 /**
  * @returns {Promise<object>} handshake decision
  */
+const inflightTx = new Set();
+const inflightAuth = new Set();
+/** In-process waiters for a challenge that is already settling. */
+const inflightByNonce = new Map();
+
+function idempotentReplay(decision) {
+  if (!decision || decision.kind !== 'settled') return null;
+  return {
+    ...decision,
+    kind: 'settled',
+    confirmed: true,
+    replay: true,
+    idempotentReplay: true,
+  };
+}
+
+/** Original confirmed settlement for a spent challenge. Refusals are not receipts. */
+function settlementReplay(rec, resourceHave) {
+  const settlement = rec?.settlement;
+  if (!settlement || typeof settlement !== 'object') return null;
+  if (settlement.replay === true || settlement.rejected) return null;
+  if (!settlement.txRef || settlement.amount == null || settlement.amount === '') return null;
+  return {
+    kind: 'settled',
+    confirmed: true,
+    paymentRef: settlement.txRef,
+    paymentHash: settlement.paymentHash || null,
+    route: resourceHave,
+    quotedAmount: String(rec.amount),
+    settledAmount: String(settlement.amount),
+    payerWallet: settlement.payer || null,
+    payTo: settlement.payTo || rec.payTo || null,
+    asset: rec.asset || 'USDC',
+    taskId: rec.taskId || null,
+    issuance_commitment: null,
+    dispute_window: null,
+    settlementEvidence: {
+      blockNumber: settlement.blockNumber || null,
+      logIndex: settlement.logIndex ?? null,
+      slot: settlement.slot ?? null,
+    },
+  };
+}
+
+/** SHA-256 of the raw payment header. The signature is inside that header. */
+function headerDigest(header) {
+  if (typeof header !== 'string' || header.length === 0) return null;
+  return crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+}
+
+function digestEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || left.length !== right.length || left.length === 0) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+/**
+ * Same route, same quoted price, and the same payment header bytes.
+ * A header that only copies the payer address is not this proof.
+ */
+function replayAllowed(decision, { resourceHave, issued, paymentHeader }) {
+  if (!decision || decision.kind !== 'settled' || decision.confirmed !== true || !decision.paymentRef) return false;
+  if (canonicalPaidRoute(decision.route) !== resourceHave) return false;
+  if (atomicUnits(decision.quotedAmount) !== issued) return false;
+  const got = headerDigest(paymentHeader);
+  if (!decision.paymentHash || !got || !digestEqual(decision.paymentHash, got)) return false;
+  return true;
+}
+
+/**
+ * Exact proof is not enough. The route must opt in, and this process must
+ * still hold the response (or be writing it). Anything else is payment_replayed.
+ * @returns {object|null} a decision to return, or null when this is not an exact replay
+ */
+function decideReplay(req, prior, { resourceHave, issued, paymentHeader, nonce, serveStoredResponse }) {
+  if (!replayAllowed(prior, { resourceHave, issued, paymentHeader })) return null;
+  if (serveStoredResponse === true && replayBytesReady(nonce)) {
+    return idempotentReplay(prior);
+  }
+  return refused(req, 'payment_replayed', { preSettle: true });
+}
+
+function awaitInflight(pending) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(REPLAY_WAIT_TIMEOUT), replayWaiterMs());
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function settleBoundPayment({
   req,
   taskId,
@@ -182,6 +281,7 @@ export async function settleBoundPayment({
   nonce,
   store = null,
   resolveQuote = null,
+  serveStoredResponse = false,
 }) {
   try {
     assertX402Boot(cfg);
@@ -197,11 +297,20 @@ export async function settleBoundPayment({
   const active = store || cfg.store || getActiveChallengeStore() || defaultStore;
 
   if (!nonce) return refused(req, 'challenge_required', { preSettle: true });
-  if (active.isSpent(nonce)) return refused(req, 'payment_replayed', { preSettle: true });
-  const challenge = active.get(nonce);
-  if (!challenge || challenge.state === 'unknown') {
-    return refused(req, challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required', { preSettle: true });
+  const spent = active.isSpent(nonce);
+  const challenge = spent
+    ? (typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null)
+    : active.get(nonce);
+  if (!challenge || (!spent && challenge.state === 'unknown')) {
+    return refused(
+      req,
+      spent ? 'payment_replayed' : (challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required'),
+      { preSettle: true },
+    );
   }
+  // A spent nonce that does not match this route and price is a replay refusal,
+  // not a fresh challenge mismatch.
+  const mismatch = () => refused(req, spent ? 'payment_replayed' : 'challenge_mismatch', { preSettle: true });
   if (!networkAllowed(challenge.network, cfg)) {
     return refused(req, 'network_not_accepted', { preSettle: true });
   }
@@ -213,13 +322,13 @@ export async function settleBoundPayment({
   const solana = isSolanaNetwork(challenge.network);
   const expectedPayTo = housePayee(cfg, challenge.network, payTo);
   if (!expectedPayTo || !samePayee(challenge.payTo, expectedPayTo, { solana })) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   const decoded = decodePaymentHeader(paymentHeader);
   if (!solana) {
     for (const recipient of signedRecipients(decoded)) {
       if (!samePayee(recipient, expectedPayTo, { solana: false })) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     }
     const declaredAsset = declaredEvmAsset(decoded);
@@ -231,45 +340,62 @@ export async function settleBoundPayment({
       return refused(req, 'network_not_accepted', { preSettle: true });
     }
   }
-  const resourceWant = expectedResourceOf({ resource, baseUrl });
-  const resourceHave = challenge.resource ? String(challenge.resource).replace(/\/$/, '') : '';
-  if (resourceHave && resourceWant && resourceHave !== resourceWant) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+  // NEW-3: the challenge is bound to this route, the price it was quoted at, and
+  // this payee. A missing route fails closed. A body-hash match does not keep a
+  // cheaper quote when this route's live price is higher. A lower live price
+  // still charges the quoted challenge amount.
+  const resourceWant = canonicalPaidRoute(expectedResourceOf({ resource, baseUrl }));
+  const resourceHave = canonicalPaidRoute(challenge.resource);
+  if (!resourceHave || !resourceWant || resourceHave !== resourceWant) {
+    return mismatch();
+  }
+  if (challenge.quoteRoute && canonicalPaidRoute(challenge.quoteRoute) !== resourceHave) {
+    return mismatch();
+  }
+  if (!challenge.payTo) {
+    return mismatch();
   }
   if (strictTaskId && challenge.taskId !== taskId) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
 
-  let routeQuote = challenge.amount;
-  if (amount != null) routeQuote = String(amount);
-  else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
-    routeQuote = String(challenge.amount);
+  const issued = atomicUnits(challenge.amount);
+  const lockedQuote = challenge.quotePrice != null ? atomicUnits(challenge.quotePrice) : issued;
+  const routeLocked = challenge.routeQuote != null ? atomicUnits(challenge.routeQuote) : issued;
+  if (issued == null || lockedQuote == null || routeLocked == null || issued !== lockedQuote || issued !== routeLocked) {
+    return mismatch();
+  }
+
+  let routePrice = null;
+  if (amount != null) {
+    routePrice = atomicUnits(amount);
   } else if (typeof resolveQuote === 'function') {
     try {
-      routeQuote = String(await resolveQuote());
+      routePrice = atomicUnits(await resolveQuote());
     } catch {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
+      return mismatch();
     }
+  } else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
+    routePrice = issued;
   }
-  try {
-    if (BigInt(String(challenge.amount)) < BigInt(String(routeQuote))) {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
-    }
-  } catch {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+  // The quoted challenge is the price. It may exceed today's route price.
+  // It cannot pay a route that now costs more.
+  if (routePrice == null || routePrice > issued) {
+    return mismatch();
   }
+  const routeQuote = issued.toString();
 
   const settledPick = boundSettledAmount(paymentHeader, clientVersion, challenge);
   if (settledPick.refuse) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   if (settledPick.amount != null) {
     try {
       if (BigInt(settledPick.amount) < BigInt(String(routeQuote))) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     } catch {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
+      return mismatch();
     }
   }
 
@@ -277,9 +403,20 @@ export async function settleBoundPayment({
   if (!solana && authEarly?.value) {
     try {
       if (BigInt(authEarly.value) < BigInt(String(routeQuote))) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     } catch { /* the chain read is the authority when the value is not an integer */ }
+  }
+  // Same challenge and the same payment header, before the auth-spent check:
+  // that authorization is the one that already settled. Default is 409. A route
+  // serves the stored response only when it opted in and the bytes are still here.
+  if (spent) {
+    const prior = settlementReplay(challenge, resourceHave);
+    const replay = decideReplay(req, prior, {
+      resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+    });
+    if (replay) return replay;
+    return refused(req, 'payment_replayed', { preSettle: true });
   }
   const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
     ? `${canonicalNetwork(challenge.network)}|${String(challenge.asset || '').toLowerCase()}|${String(authEarly.from).toLowerCase()}|${String(authEarly.nonce).toLowerCase()}`
@@ -299,12 +436,52 @@ export async function settleBoundPayment({
   const owner = `${taskId}:${nonce}`;
   const claim = active.claim(nonce, owner);
   if (!claim.ok) {
-    return refused(req, claim.reason, {
-      preSettle: true,
-      retryAfter: claim.reason === 'payment_in_flight' ? 2 : undefined,
-    });
+    if (claim.reason === 'payment_in_flight') {
+      const pending = inflightByNonce.get(String(nonce));
+      if (pending) {
+        const winner = await awaitInflight(pending);
+        if (winner === REPLAY_WAIT_TIMEOUT) {
+          return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
+        }
+        const replay = decideReplay(req, winner, {
+          resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+        });
+        if (replay) return replay;
+        if (winner?.kind === 'settled') return refused(req, 'payment_replayed', { preSettle: true });
+      }
+      return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
+    }
+    if (claim.reason === 'payment_replayed') {
+      const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
+      const prior = rec ? settlementReplay(rec, resourceHave) : null;
+      const replay = decideReplay(req, prior, {
+        resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+      });
+      if (replay) return replay;
+    }
+    return refused(req, claim.reason, { preSettle: true });
   }
 
+  // Registered before any await so a concurrent same-nonce caller can wait
+  // for this settlement instead of taking a second one.
+  let resolveWaiters = () => {};
+  const nonceKey = String(nonce);
+  const waiter = new Promise((resolve) => { resolveWaiters = resolve; });
+  inflightByNonce.set(nonceKey, waiter);
+  let outcome;
+  try {
+    outcome = await settleClaimed();
+    return outcome;
+  } catch (err) {
+    abortServedReceipt(nonceKey);
+    throw err;
+  } finally {
+    resolveWaiters(outcome);
+    if (inflightByNonce.get(nonceKey) === waiter) inflightByNonce.delete(nonceKey);
+  }
+
+  async function settleClaimed() {
+  if (serveStoredResponse === true) armServedReceipt(nonce);
   const gwOpts = {
     provider: (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
     gatewayUrl: (cfg.facilitatorProvider || 'zan') === 'zan' ? cfg.gatewayUrl : (cfg.facilitatorUrl || null),
@@ -389,33 +566,11 @@ export async function settleBoundPayment({
     pend('bad_tx');
     return refused(req, 'settle_unconfirmed');
   }
+  // PB4 / PB12: a booked transfer is not a second settlement. Facilitator
+  // success and a prior tx are not "settled". Only the chain confirmation
+  // below, for this challenge's route and quoted price, is.
   if (active.isTxSpent(norm.key)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
-    const prior = typeof active.txFactsOf === 'function' ? active.txFactsOf(norm.key) : null;
-    // MF2: a booked transfer only stands in for this challenge when it already
-    // covers this quote and paid this payee. A cheaper prior transfer never
-    // serves a larger quote. (Design PT8(c) wants payment_replayed outright;
-    // the idempotent-replay product tests on main still expect a 200 here.)
-    let covers = false;
-    try {
-      const paid = BigInt(String(prior?.amount));
-      covers = paid >= BigInt(String(routeQuote)) && paid >= BigInt(String(challenge.amount));
-    } catch { covers = false; }
-    if (covers && prior.payer && prior.payTo && samePayee(prior.payTo, expectedPayTo, { solana })) {
-      return {
-        kind: 'settled',
-        confirmed: true,
-        paymentRef: norm.key,
-        quotedAmount: String(challenge.amount),
-        settledAmount: String(prior.amount),
-        payerWallet: prior.payer,
-        payTo: prior.payTo,
-        asset: challenge.asset,
-        taskId,
-        replay: true,
-        settlementEvidence: prior.evidence || null,
-      };
-    }
     return refused(req, 'payment_replayed');
   }
   const authKey = !solana && auth?.from && auth?.nonce
@@ -426,6 +581,25 @@ export async function settleBoundPayment({
     return refused(req, 'payment_replayed');
   }
 
+  // One transfer, one settlement: reserve the tx (and the EIP-3009 auth) before
+  // the chain await, so concurrent challenges carrying the same transfer cannot
+  // all pass isTxSpent and all settle. Released on every exit; markTxSpent
+  // keeps it spent on success. Per-process: a multi-instance deploy needs the
+  // durable store to reserve atomically.
+  if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
+    active.markSpent(nonce, { txRef: norm.key, replay: true });
+    return refused(req, 'payment_replayed');
+  }
+  inflightTx.add(norm.key);
+  if (authKey) inflightAuth.add(authKey);
+  try {
+    return await confirmAndSettle();
+  } finally {
+    inflightTx.delete(norm.key);
+    if (authKey) inflightAuth.delete(authKey);
+  }
+
+  async function confirmAndSettle() {
   const chain = await confirmSettlement({
     challenge,
     facilitator: fields,
@@ -470,6 +644,9 @@ export async function settleBoundPayment({
     amount: chain.amount,
     payer: chain.payer,
     payTo: chain.payTo,
+    route: resourceHave,
+    quotedAmount: String(challenge.amount),
+    paymentHash: headerDigest(paymentHeader),
     blockNumber: chain.blockNumber || null,
     logIndex: chain.logIndex ?? null,
     slot: chain.slot ?? null,
@@ -478,6 +655,9 @@ export async function settleBoundPayment({
     amount: String(chain.amount),
     payer: chain.payer,
     payTo: chain.payTo,
+    nonce,
+    route: resourceHave,
+    quotedAmount: String(challenge.amount),
     evidence: {
       blockNumber: chain.blockNumber ?? null,
       logIndex: chain.logIndex ?? null,
@@ -510,6 +690,8 @@ export async function settleBoundPayment({
     kind: 'settled',
     confirmed: true,
     paymentRef: norm.key,
+    paymentHash: headerDigest(paymentHeader),
+    route: resourceHave,
     quotedAmount: String(challenge.amount),
     settledAmount: String(chain.amount),
     payerWallet: chain.payer,
@@ -524,6 +706,8 @@ export async function settleBoundPayment({
       slot: chain.slot ?? null,
     },
   };
+  }
+  }
 }
 
 function refused(req, reason, extra = {}) {

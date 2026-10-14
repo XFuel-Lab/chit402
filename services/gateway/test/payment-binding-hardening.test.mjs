@@ -478,9 +478,12 @@ test('PT8 a spent nonce or the same authorization cannot settle twice', async ()
     assert.equal(first.kind, 'settled');
     const again = await settle({ cfg, store, nonce, paymentHeader: header });
     assert.equal(again.code, 'payment_replayed');
+    assert.notEqual(again.kind, 'settled');
     const reopened = new DurableChallengeStore(file);
     const after = await settle({ cfg, store: reopened, nonce, paymentHeader: header });
     assert.equal(after.code, 'payment_replayed');
+    assert.notEqual(after.kind, 'settled');
+    assert.equal(after.paymentRef, undefined);
 
     const fresh = putChallenge(store, { nonce: `0x${'ef'.repeat(32)}` });
     const replayAuth = await settle({
@@ -503,22 +506,27 @@ test('PT9 one in-flight claim per challenge', async () => {
     const store = new ChallengeStore();
     const nonce = putChallenge(store);
     const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const header = evmHeader();
     const [a, b] = await Promise.all([
-      settle({ cfg, store, nonce }),
-      settle({ cfg, store, nonce }),
+      settle({ cfg, store, nonce, paymentHeader: header }),
+      settle({ cfg, store, nonce, paymentHeader: header }),
     ]);
-    const codes = [a.code, b.code].filter(Boolean);
-    assert.equal([a.kind, b.kind].filter((k) => k === 'settled').length, 1);
-    assert.ok(codes.includes('payment_in_flight'));
+    const fresh = [a, b].filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
+    const replays = [a, b].filter((r) => r.code === 'payment_replayed');
+    assert.equal(fresh.length, 1);
+    assert.equal(replays.length, 1);
+    assert.equal(replays[0].paymentRef, undefined);
     assert.equal(fac.hits.filter((h) => h.url.endsWith('/settle')).length, 1);
 
     const many = new ChallengeStore();
     const nonceN = putChallenge(many);
+    const headerN = evmHeader();
     const raced = await Promise.all(Array.from({ length: 10 }, () => settle({
-      cfg, store: many, nonce: nonceN,
+      cfg, store: many, nonce: nonceN, paymentHeader: headerN,
     })));
-    assert.equal(raced.filter((r) => r.kind === 'settled').length, 1);
-    assert.ok(raced.some((r) => r.code === 'payment_in_flight'));
+    assert.equal(raced.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true).length, 1);
+    assert.equal(raced.filter((r) => r.code === 'payment_replayed').length, 9);
+    assert.equal(fac.hits.filter((h) => h.url.endsWith('/settle')).length, 2);
   } finally {
     await fac.close();
   }
@@ -601,7 +609,25 @@ test('PT10 a challenge is bound to its resource and quote', async () => {
       paymentHeader: evmHeader(),
       resolveQuote: async () => '999999',
     });
-    assert.equal(priced.kind, 'settled', priced.code);
+    assert.equal(priced.code, 'challenge_mismatch');
+    assert.notEqual(priced.kind, 'settled');
+    assert.equal(fac.hits.length, 0);
+
+    const storeHeld = new ChallengeStore();
+    const nonceHeld = putChallenge(storeHeld, { amount: '2000', quoteBodyHash: quoteBodyHash(body) });
+    const held = await settleBoundPayment({
+      taskId: 'task-1',
+      cfg: baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) }),
+      store: storeHeld,
+      nonce: nonceHeld,
+      priceBody: body,
+      paymentHeader: evmHeader(),
+      resolveQuote: async () => '2000',
+    });
+    assert.equal(held.kind, 'settled', held.code);
+    assert.equal(held.confirmed, true);
+    assert.equal(held.quotedAmount, '2000');
+    assert.equal(held.route, '/task-request');
 
     const storeD = new ChallengeStore();
     const nonceD = putChallenge(storeD, { amount: '2000', quoteBodyHash: quoteBodyHash(body) });
