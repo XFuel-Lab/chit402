@@ -62,7 +62,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -395,7 +395,7 @@ export interface ReceiptVerification {
    * Absent for a receipt in the current epoch.
    */
   carry_forward?: CarryForwardView | null;
-  overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward' | 'verified_no_key_window';
+  overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   errors: string[];
   /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
   receipt_version?: number | null;
@@ -1448,12 +1448,13 @@ export interface VerifyReceiptOptions {
   issuerHistoryUrl?: string | null;
   /** Exact issuer-history response bytes. SHA-256 must match a signed pin. */
   issuerHistoryBytes?: string | null;
-  /** `--no-issuer-history`. A signed pin is not checked. */
-  skipIssuerHistory?: boolean;
   /**
-   * Set with the downgrade flag. A receipt that would be `verified` is
-   * `verified_no_key_window` instead. Exit stays 0 unless the CLI `--strict`.
+   * Library seam. The CLI does not set this: 0.4.0 always checks history.
+   * A skipped window is not a verified result. Callers that pass a document
+   * still run the window.
    */
+  skipIssuerHistory?: boolean;
+  /** Ignored. `VERIFIED_NO_KEY_WINDOW` is retired. */
   labelSkippedKeyWindow?: boolean;
   /**
    * Earlier-epoch head and current-epoch head for a leaf that was carried
@@ -1595,6 +1596,10 @@ export async function verifyReceipt(
     gate = classifyReceiptDocument(receipt);
   } catch {
     return rejectReceiptVersion(receipt, ['unsupported_version'], 'unsupported_version');
+  }
+  const identityErrors = legacyIdentityErrors(receipt);
+  if (identityErrors.length) {
+    return rejectReceiptVersion(receipt, identityErrors, identityErrors[0]);
   }
   if (!gate.ok) {
     return rejectReceiptVersion(receipt, gate.errors, gate.reason);
@@ -1927,7 +1932,7 @@ export async function verifyReceipt(
   );
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
-  let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward' | 'verified_no_key_window';
+  let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
   const historyFailed = issuer_history.checked && !issuer_history.ok;
   if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || sizeMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
@@ -1990,19 +1995,6 @@ export async function verifyReceipt(
         logged_epoch: verdict.logged_epoch,
         leaf_index: verdict.leaf_index,
       };
-    }
-  }
-
-  // A skip is an explicit flag or an unreachable history. A window that was
-  // fetched and failed stays `failed` (historyFailed above).
-  const historySkipped = !historyFailed && (
-    options.skipIssuerHistory === true || issuer_history.unreachable === true
-  );
-  if (historySkipped && overall === 'verified') {
-    overall = 'verified_no_key_window';
-    if (!issuer_history.warning) {
-      issuer_history.warning = options.skipIssuerHistory ? 'key window skipped' : 'issuer history unreachable';
-      warnings.push(issuer_history.warning);
     }
   }
 
@@ -2231,6 +2223,7 @@ export {
   VERSION_MISMATCH,
   classifyReceiptDocument,
   classifySignedClaims,
+  legacyIdentityErrors,
   classifyShellDocument,
   signedClaimsOnAllowlist,
   formatSupportedReceiptVersions,

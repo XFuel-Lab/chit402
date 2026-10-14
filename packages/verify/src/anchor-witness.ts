@@ -147,7 +147,7 @@ export interface BaseAnchorTx {
 }
 
 export interface AnchorWitnessResult {
-  overall: 'verified' | 'partial' | 'pending' | 'failed' | 'verified_no_key_window' | 'not_in_log';
+  overall: 'verified' | 'partial' | 'pending' | 'failed' | 'not_in_log';
   root: string | null;
   inclusion: {
     valid: boolean;

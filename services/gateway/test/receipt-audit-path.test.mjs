@@ -11,9 +11,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_PERSIST = 'false';
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 delete process.env.SOLANA_ANCHOR_SECRET_KEY;
 delete process.env.SOLANA_RPC_URL;
+// The specimen is issued 2026-09-26. The test key's window has to cover that instant.
+process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
 
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
@@ -23,6 +26,7 @@ const { withPublicPreimages } = await import('../src/receipt-preimage.js');
 const logger = (await import('../src/logger.js')).default;
 
 const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
+const { currentIssuerHistory } = await import('../src/issuer-history.js');
 const { verifyPublishedPreimages } = await import('../../../packages/verify/dist/preimage.js');
 const cliPath = fileURLToPath(new URL('../../../packages/verify/dist/cli.js', import.meta.url));
 
@@ -252,34 +256,38 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     { baseUrl: base, prefix },
   );
   const kid = receipt.issuer_signature.kid;
+  const historyRecord = currentIssuerHistory();
+  const historyBytes = historyRecord.body;
+  const history = JSON.parse(historyBytes);
+  assert.equal(history.entries.some((row) => row.kid === kid && row.not_before), true);
   const checked = await verifyReceipt(receipt, {
     trustedKids: [kid],
-    skipIssuerHistory: true,
+    issuerHistory: history,
+    issuerHistoryBytes: historyBytes,
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
-  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.issuer_history.checked, true);
+  assert.equal(checked.issuer_history.ok, true, checked.issuer_history.reason || checked.issuer_history.warning);
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-http-'));
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(receipt));
-  const cli = cliPath;
-  for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
-    const run = spawnSync(process.execPath, [
-      cli,
-      file,
-      '--json',
-      '--no-issuer-history',
-      '--trusted-kid',
-      kid,
-      ...extra,
-    ], { encoding: 'utf8' });
-    assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
-    const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.overall, 'verified_no_key_window', (parsed.errors || []).join('; '));
-    assert.equal(parsed.preimages.ok, true);
-  }
+  // 0.4 has no --issuer-history-file, --trusted-kid, or --rpc. The test key is
+  // not the pinned issuer, so the CLI does not report verified.
+  const run = spawnSync(process.execPath, [cliPath, file, '--json'], { encoding: 'utf8' });
+  assert.equal(run.status, 1, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.result, 'invalid');
+  assert.equal(parsed.reason, 'key untrusted');
+  assert.equal(parsed.exit_code, 1);
+  assert.notEqual(parsed.result, 'verified');
+  const human = spawnSync(process.execPath, [cliPath, file], { encoding: 'utf8' });
+  assert.equal(human.status, 1, human.stdout);
+  assert.match(human.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#key_untrusted/);
+  assert.doesNotMatch(human.stdout, /#key untrusted/);
 
   const field = receipt.preimages.fields.tree_head_hash;
   const cases = [

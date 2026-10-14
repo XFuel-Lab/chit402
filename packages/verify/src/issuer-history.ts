@@ -4,6 +4,8 @@
  * SHA-256(JCS(entry without entry_hash)).
  */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { jcsCanonicalize } from './jcs.js';
 import {
   verifyIssuerJws,
@@ -544,6 +546,163 @@ function rawPinReason(
   if (issuerHistoryDocumentHash(doc) !== pin.hash) return 'issuer_history_pin_mismatch';
   if (Number(doc.version) !== pin.version) return 'issuer_history_version_mismatch';
   return 'issuer_history_seq_mismatch';
+}
+
+/**
+ * The snapshot shipped in this package. A live body is accepted only when
+ * it prefix-extends this chain. Used alone, the verifier reports this date.
+ */
+/** Day the bundled v2 snapshot was sealed into this package. */
+export const BUNDLED_HISTORY_AS_OF = '2026-10-14';
+
+/**
+ * The one recorded rewrite. v1 genesis (custody field) may be followed by v2
+ * (that field dropped). The reverse is not an extension: an old file must
+ * not hide a later revoke.
+ */
+const GRANDFATHERED_HISTORY_REWRITES = [
+  {
+    from: '3d8259fb043f8ac80c924ea89d508f0a898f70bd0335658ef47370d5757e27a6',
+    to: '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e',
+  },
+] as const;
+
+export type IssuerHistorySource = 'file' | 'live' | 'bundled';
+
+export interface ResolvedIssuerHistory {
+  source: IssuerHistorySource;
+  document: IssuerHistoryDocument | null;
+  bytes: string | null;
+  asOf: string | null;
+  headHash: string | null;
+  entryCount: number;
+  /** A supplied file failed to parse or to verify. Do not fall back. */
+  invalid: boolean;
+  reason: string | null;
+}
+
+function grandfatheredRewrite(
+  base: IssuerHistoryDocument | null | undefined,
+  next: IssuerHistoryDocument | null | undefined,
+): boolean {
+  const from = base?.head_hash;
+  const to = next?.head_hash;
+  if (!from || !to) return false;
+  return GRANDFATHERED_HISTORY_REWRITES.some((row) => row.from === from && row.to === to);
+}
+
+/** Later entries may be appended. The bundled entry_hash prefix must be unchanged. */
+export function historyPrefixExtends(
+  base: IssuerHistoryDocument | null | undefined,
+  next: IssuerHistoryDocument | null | undefined,
+): boolean {
+  if (grandfatheredRewrite(base, next)) return true;
+  const left = base?.entries || [];
+  const right = next?.entries || [];
+  if (!left.length || right.length < left.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (!left[i]?.entry_hash || right[i]?.entry_hash !== left[i]?.entry_hash) return false;
+  }
+  return true;
+}
+
+export function loadBundledIssuerHistory(): { document: IssuerHistoryDocument; bytes: string } {
+  const require = createRequire(__filename);
+  const bytes = readFileSync(require.resolve('../issuer-history.snapshot.json'), 'utf8');
+  return { document: JSON.parse(bytes) as IssuerHistoryDocument, bytes };
+}
+
+function resolvedFrom(
+  source: IssuerHistorySource,
+  document: IssuerHistoryDocument | null,
+  bytes: string | null,
+  asOf: string | null,
+  invalid = false,
+  reason: string | null = null,
+): ResolvedIssuerHistory {
+  return {
+    source,
+    document,
+    bytes,
+    asOf,
+    headHash: document?.head_hash ?? null,
+    entryCount: document?.entries?.length ?? 0,
+    invalid,
+    reason,
+  };
+}
+
+/**
+ * File, else a live body that prefix-extends the bundled snapshot, else the
+ * bundled snapshot. A file that does not verify is invalid and is not replaced.
+ */
+export async function resolveIssuerHistory({
+  fileBytes = null,
+  receipt = {},
+  fetchImpl = globalThis.fetch,
+  jwks,
+  trustedKids,
+  timeoutMs = 800,
+}: {
+  fileBytes?: string | null;
+  receipt?: { verification?: { jwks_uri?: string }; verify_url?: string };
+  fetchImpl?: typeof fetch;
+  jwks?: HistoryJwks;
+  trustedKids?: readonly string[];
+  timeoutMs?: number;
+} = {}): Promise<ResolvedIssuerHistory> {
+  const bundled = loadBundledIssuerHistory();
+  if (fileBytes != null) {
+    let doc: IssuerHistoryDocument;
+    try {
+      doc = JSON.parse(fileBytes) as IssuerHistoryDocument;
+    } catch {
+      return resolvedFrom('file', null, fileBytes, null, true, 'issuer_history_unreadable');
+    }
+    const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+    if (!signed.valid) {
+      return resolvedFrom('file', doc, fileBytes, null, true, signed.reason || 'issuer_history_invalid');
+    }
+    // A supplied file must extend the bundled chain. An older or forked file
+    // could hide a later revocation (truncation rollback).
+    if (!historyPrefixExtends(bundled.document, doc)) {
+      return resolvedFrom('file', doc, fileBytes, null, true, 'issuer_history_not_extension');
+    }
+    return resolvedFrom('file', doc, fileBytes, null, false, null);
+  }
+
+  const liveUrl = historyUrlFromReceipt(receipt);
+  if (liveUrl) {
+    let hostOk = false;
+    try {
+      const parsed = new URL(liveUrl);
+      hostOk = parsed.protocol === 'https:'
+        && ['api.chit402.com'].some((host) => host === parsed.hostname.toLowerCase());
+    } catch {
+      hostOk = false;
+    }
+    if (hostOk) {
+      try {
+        const res = await fetchImpl(liveUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        if (res.ok) {
+          const bytes = await res.text();
+          const doc = JSON.parse(bytes) as IssuerHistoryDocument;
+          const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+          if (signed.valid && historyPrefixExtends(bundled.document, doc)) {
+            return resolvedFrom('live', doc, bytes, null, false, null);
+          }
+        }
+      } catch {
+        // A live miss falls through to the bundled snapshot.
+      }
+    }
+  }
+
+  const signedBundle = verifyIssuerHistoryDocument(bundled.document, { jwks, trustedKids });
+  if (!signedBundle.valid) {
+    return resolvedFrom('bundled', null, null, BUNDLED_HISTORY_AS_OF, false, 'kid_not_in_history');
+  }
+  return resolvedFrom('bundled', bundled.document, bundled.bytes, BUNDLED_HISTORY_AS_OF, false, null);
 }
 
 export function historyUrlFromReceipt(receipt: { verification?: { jwks_uri?: string }; verify_url?: string }): string | null {

@@ -912,11 +912,12 @@ test('anchor CLI reports a downgrade without a network fetch', () => {
   writeFileSync(inclusion, `${JSON.stringify({ error: 'not_in_tree', task_id: 'task-1', leaf_index: 0, tree_size: 1, root: 'ab'.repeat(32), proof: [] })}\n`);
   writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1, issuer_key_pin: { era: 1 } })}\n`);
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
-  const run = spawnSync(process.execPath, [cli, receipt, inclusion, head, '--rpc', '--json'], { encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [cli, receipt, '--json', '--rpc'], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stderr);
   const body = JSON.parse(run.stdout);
-  assert.equal(body.issuer_pin.code, ISSUER_PIN_DOWNGRADE);
-  assert.equal(body.overall, 'failed');
+  assert.equal(body.reason, 'removed_flag');
+  assert.match(body.message, /removed in 0\.4: --rpc is not a verifier flag/);
+  assert.notEqual(body.result, 'verified');
 });
 
 test('witness flags do not downgrade a receipt that does not claim a pin', () => {
@@ -945,12 +946,12 @@ test('witness flags do not downgrade a receipt that does not claim a pin', () =>
     ['--issuer-pin-sha256', 'ab'.repeat(32)],
   ];
   for (const extra of attacks) {
-    const run = spawnSync(process.execPath, [cli, receipt, inclusion, head, '--rpc', '--json', ...extra], { encoding: 'utf8' });
-    assert.equal(run.status, 1, `${extra[0]} ${run.stderr}`);
+    const run = spawnSync(process.execPath, [cli, receipt, '--json', ...extra], { encoding: 'utf8' });
+    assert.equal(run.status, 1, `${extra[0]} ${run.stderr}\n${run.stdout}`);
     const body = JSON.parse(run.stdout);
-    assert.equal(body.issuer_pin.checked, false, extra[0]);
-    assert.equal(body.issuer_pin.code, null, extra[0]);
-    assert.equal(body.errors.includes(ISSUER_PIN_DOWNGRADE), false, extra[0]);
+    assert.equal(body.reason, 'removed_flag', extra[0]);
+    assert.match(body.message, new RegExp(`removed in 0\\.4: ${extra[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is not a verifier flag`), extra[0]);
+    assert.notEqual(body.result, 'verified', extra[0]);
   }
 });
 
@@ -965,10 +966,12 @@ test('a witnesses file does not replace a claimed pin', () => {
   writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1, issuer_key_pin: { era: 1 } })}\n`);
   writeFileSync(witnesses, `${JSON.stringify({ kid: PUBLISHED_ISSUER_PIN_KID })}\n`);
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
-  const run = spawnSync(process.execPath, [cli, receipt, inclusion, head, '--rpc', '--json', '--issuer-witnesses', witnesses], { encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [cli, receipt, '--json', '--issuer-witnesses', witnesses], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stderr);
   const body = JSON.parse(run.stdout);
-  assert.equal(body.issuer_pin.code, ISSUER_PIN_DOWNGRADE);
+  assert.equal(body.reason, 'removed_flag');
+  assert.match(body.message, /removed in 0\.4: --issuer-witnesses is not a verifier flag/);
+  assert.notEqual(body.result, 'verified');
 });
 
 test('the CLI prior pin cannot install an attacker key', () => {
@@ -990,7 +993,7 @@ test('the CLI prior pin cannot install an attacker key', () => {
   writeFileSync(head, `${JSON.stringify({ root: 'ab'.repeat(32), tree_size: 1, schema: 'chit402.tree_head.v1', payload_version: 1 })}\n`);
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   const run = spawnSync(process.execPath, [
-    cli, receipt, inclusion, head, '--rpc', '--json',
+    cli, receipt, '--json',
     '--issuer-pin', pinFile,
     '--issuer-pin-commit', ref.commit,
     '--issuer-pin-sha256', ref.sha256,
@@ -998,7 +1001,9 @@ test('the CLI prior pin cannot install an attacker key', () => {
     '--issuer-prior-commit', ref.commit,
     '--issuer-prior-sha256', ref.sha256,
   ], { encoding: 'utf8' });
-  assert.equal(run.status, 1, run.stderr);
+  assert.equal(run.status, 1, `${run.stderr}\n${run.stdout}`);
   const body = JSON.parse(run.stdout);
-  assert.equal(body.issuer_pin.code, ISSUER_ROTATION_UNCONTROLLED);
+  assert.equal(body.reason, 'removed_flag');
+  assert.match(body.message, /removed in 0\.4: --issuer-pin is not a verifier flag/);
+  assert.notEqual(body.result, 'verified');
 });

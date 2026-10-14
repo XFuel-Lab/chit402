@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -93,6 +94,7 @@ function productionFixture() {
     task_id: TASK_ID,
     book_chain: { row_hash: ROW_HASH },
     payload_version: 6,
+    iat: '2026-06-01T00:00:00.000Z',
   };
   const receipt = {
     ...receiptClaims,
@@ -163,7 +165,7 @@ function productionFixture() {
     ...claims,
     issuer_signature: { jws: signEpoch(claims, privateKey, kid), kid, issuer_jwk: publicJwk },
   };
-  return { kid, publicJwk, receipt, inclusion, head, record };
+  return { kid, publicJwk, privateKey, receipt, inclusion, head, record };
 }
 
 function listen(server) {
@@ -226,6 +228,7 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
   writeFileSync(join(dir, 'epoch.json'), JSON.stringify(fx.record));
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.publicJwk] }));
+  const historyPath = await writeCoveringHistory(dir, fx);
   const cli = join(pkgDir, 'dist', 'cli.js');
   const url = `http://127.0.0.1:${port}`;
   try {
@@ -239,16 +242,12 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
       '--epoch-record', join(dir, 'epoch.json'),
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ]);
     const text = `${run.stdout || ''}\n${run.stderr || ''}`;
-    assert.equal(run.status, 0, text);
-    assert.match(run.stdout, /Inclusion:\s+✓ YES/);
-    assert.match(run.stdout, /Base:\s+✓ YES/);
-    assert.match(run.stdout, /Solana:\s+✓ YES/);
-    assert.match(run.stdout, /Overall: VERIFIED/);
-    assert.equal(text.includes('cluster_mismatch'), false);
+    assert.equal(run.status, 1, text);
+    assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
   }
@@ -272,16 +271,16 @@ test('an unpublished head is reported as not_yet_published', () => {
   for (const args of [[headPath, '--rpc'], ['--head', headPath, '--rpc']]) {
     const run = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
     const text = `${run.stdout || ''}\n${run.stderr || ''}`;
-    assert.equal(run.status, 3, text);
-    assert.match(run.stderr, /not_yet_published/);
+    assert.equal(run.status, 1, text);
+    assert.match(text, /removed in 0\.4:/);
     assert.equal(text.includes('Anchor check needs a receipt, an inclusion proof, and a tree head.'), false);
   }
   const rpcUrl = 'https://mainnet.base.org';
   for (const args of [[headPath, '--rpc', rpcUrl], ['--rpc', rpcUrl, headPath]]) {
     const run = spawnSync(process.execPath, [cli, ...args, '--solana-rpc', rpcUrl], { encoding: 'utf8' });
     const text = `${run.stdout || ''}\n${run.stderr || ''}`;
-    assert.equal(run.status, 3, text);
-    assert.match(run.stderr, /not_yet_published/);
+    assert.equal(run.status, 1, text);
+    assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
     assert.equal(text.includes('missing task_id'), false);
   }
 });
@@ -290,9 +289,9 @@ test('--version prints the package version', () => {
   const cli = join(pkgDir, 'dist', 'cli.js');
   const run = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^@xfuel\/verify \d+\.\d+\.\d+\n/);
+  assert.match(run.stdout, /^chit402-verify \d+\.\d+\.\d+\n/);
   const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
-  assert.equal(run.stdout.split('\n')[0], `@xfuel/verify ${pkg.version}`);
+  assert.equal(run.stdout.split('\n')[0], `chit402-verify ${pkg.version}`);
   assert.match(run.stdout, /payload_version: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/);
 });
 
@@ -313,11 +312,10 @@ test('a not_in_tree inclusion file is not reported as bad_root', () => {
     join(dir, 'inclusion.json'),
     join(dir, 'head.json'),
     '--rpc',
-    '--no-issuer-history',
   ], { encoding: 'utf8' });
   const text = `${run.stdout || ''}\n${run.stderr || ''}`;
   assert.equal(run.status, 1, text);
-  assert.match(run.stdout, /not_in_tree/);
+  assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
   assert.equal(text.includes('bad_root'), false);
 });
 
@@ -345,6 +343,12 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
   const dir = mkdtempSync(join(tmpdir(), 'chit-pre-log-'));
   const inclusionPath = join(dir, 'inclusion.json');
   const headPath = join(dir, 'head.json');
+  const issuerJwk = receipt.issuer_signature.issuer_jwk;
+  const historyPath = await writeCoveringHistory(dir, { privateKey, kid, publicJwk }, '2020-01-01T00:00:00.000Z', [{
+    kid: issuerJwk.kid,
+    publicJwk: issuerJwk,
+    notBefore: '2026-09-04T08:52:05.000Z',
+  }]);
   writeFileSync(inclusionPath, JSON.stringify({ error: 'not_in_tree', task_id: receipt.task_id }));
   writeFileSync(headPath, JSON.stringify({
     ...headClaims,
@@ -363,18 +367,18 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
     inclusionPath,
     '--head',
     headPath,
-    '--no-issuer-history',
     '--trusted-kid',
     'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q',
     '--trusted-kid',
     kid,
+    '--issuer-history',
+    historyPath,
     '--json',
   ], { encoding: 'utf8' });
   const text = `${run.stdout || ''}\n${run.stderr || ''}`;
   assert.equal(run.status, 1, text);
   const parsed = JSON.parse(run.stdout);
-  assert.equal(parsed.overall, 'not_in_log', JSON.stringify(parsed.errors));
-  assert.equal(parsed.inclusion.reason, 'not_in_tree');
+  assert.match(parsed.message, /removed in 0\.4: --inclusion is not a verifier flag/);
 });
 
 test('an unpublished head with a receipt and inclusion is not_yet_published', () => {
@@ -407,11 +411,10 @@ test('an unpublished head with a receipt and inclusion is not_yet_published', ()
     '--rpc', 'https://mainnet.base.org',
     '--solana-rpc', 'https://api.mainnet-beta.solana.com',
     '--epoch-url', 'https://api.chit402.com/v1/receipts/tree/epoch',
-    '--no-issuer-history',
   ], { encoding: 'utf8' });
   const text = `${run.stdout || ''}\n${run.stderr || ''}`;
-  assert.equal(run.status, 3, text);
-  assert.match(run.stderr, /not_yet_published/);
+  assert.equal(run.status, 1, text);
+  assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
   assert.equal(text.includes('root_mismatch'), false);
   assert.equal(text.includes('missing task_id'), false);
 });

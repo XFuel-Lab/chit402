@@ -353,42 +353,32 @@ test('a later active entry does not clear a revocation or a retire', () => {
   assert.equal(tightened.reason, 'no_signature');
 });
 
-test('--no-issuer-history never prints bare VERIFIED', async () => {
+test('removed history flags do not verify, and a missing kid is not VERIFIED', async () => {
   const key = issuerKey();
   const receipt = receiptFor(key, paymentClaims(8));
-  const labeled = await verifyReceipt(receipt, {
-    jwks: { keys: [key.publicJwk] },
-    trustedKids: [key.kid],
-    skipIssuerHistory: true,
-    labelSkippedKeyWindow: true,
-  });
-  assert.equal(labeled.overall, 'verified_no_key_window');
-  assert.equal(labeled.issuer_history.warning, 'key window skipped');
-  const unlabeled = await verifyReceipt(receipt, {
-    jwks: { keys: [key.publicJwk] },
-    trustedKids: [key.kid],
-    skipIssuerHistory: true,
-  });
-  assert.equal(unlabeled.overall, 'verified_no_key_window', unlabeled.errors.join('; '));
-
   const dir = mkdtempSync(join(tmpdir(), 'chit-history-downgrade-'));
   const receiptPath = join(dir, 'receipt.json');
   const jwksPath = join(dir, 'jwks.json');
   writeFileSync(receiptPath, JSON.stringify(receipt));
   writeFileSync(jwksPath, JSON.stringify({ keys: [key.publicJwk] }));
-  const base = [receiptPath, '--jwks-file', jwksPath, '--trusted-kid', key.kid, '--no-issuer-history'];
-  const text = runCli(base);
-  assert.equal(text.status, 0, text.text);
-  assert.equal(bareVerified(text.stdout), false, text.stdout);
-  assert.match(text.stdout, /Overall: VERIFIED_NO_KEY_WINDOW/);
-  const strict = runCli([...base, '--strict']);
-  assert.equal(strict.status, 1, strict.text);
-  assert.equal(bareVerified(strict.stdout), false, strict.stdout);
-  assert.match(strict.stdout, /Overall: VERIFIED_NO_KEY_WINDOW/);
-  const json = runCli([...base, '--json']);
-  assert.equal(json.status, 0, json.text);
+  for (const [flag, message] of [
+    ['--no-issuer-history', 'removed in 0.4: the history check is always on'],
+    ['--strict', 'removed in 0.4: a skipped key window is no longer a separate result'],
+    ['--jwks-file', 'removed in 0.4: --jwks-file is not a verifier flag'],
+    ['--trusted-kid', 'removed in 0.4: --trusted-kid is not a verifier flag'],
+  ]) {
+    const run = runCli([receiptPath, '--json', flag, jwksPath]);
+    assert.equal(run.status, 1, run.text);
+    const body = JSON.parse(run.stdout);
+    assert.equal(body.message, message);
+    assert.equal(bareVerified(run.stdout), false, run.stdout);
+    assert.doesNotMatch(run.text, /VERIFIED_NO_KEY_WINDOW/);
+  }
+  const json = runCli([receiptPath, '--json']);
+  assert.equal(json.status, 1, json.text);
   const parsed = JSON.parse(json.stdout);
-  assert.equal(parsed.overall, 'verified_no_key_window');
+  assert.equal(parsed.result, 'invalid');
+  assert.equal(parsed.reason, 'key untrusted');
   assert.equal(bareVerified(json.stdout), false);
 });
 
@@ -428,7 +418,7 @@ test('a later not_before cannot widen the window backwards', () => {
   assert.equal(keptWindow.ok, true, keptWindow.reason);
 });
 
-test('a fetched history failure exits 1 and a skip is verified_no_key_window', async () => {
+test('a history window failure exits 1 and a missing kid exits 2', async () => {
   const key = issuerKey();
   const first = entryFor(key, { notBefore: '2026-01-01T00:00:00Z' });
   function next(prev, fields) {
@@ -481,34 +471,39 @@ test('a fetched history failure exits 1 and a skip is verified_no_key_window', a
     return path;
   }
 
+  const opts = {
+    trustedKids: [key.kid],
+    jwks: { keys: [key.publicJwk] },
+    requirePreimages: false,
+  };
   for (const [name, packed, reason] of [
     ['revoked.json', revoked, 'kid_revoked_before_issuance'],
     ['closed.json', closed, 'issued_after_not_after'],
     ['regressed.json', regressed, 'kid_status_regression'],
   ]) {
-    const run = runCli([...trust, '--issuer-history-file', writeHistory(name, packed)]);
-    assert.equal(run.status, 1, `${name} ${run.text}`);
-    const body = JSON.parse(run.stdout);
-    assert.equal(body.overall, 'failed', name);
-    assert.equal(body.overall === 'verified_no_key_window', false);
-    assert.match(body.errors.join('\n'), new RegExp(reason), name);
+    writeHistory(name, packed);
+    const result = await verifyReceipt(receipt, {
+      ...opts,
+      issuerHistory: packed.doc,
+      issuerHistoryBytes: packed.bytes,
+    });
+    assert.notEqual(result.overall, 'verified', name);
+    assert.match(result.errors.join('\n'), new RegExp(reason), `${name} ${result.errors.join('; ')}`);
   }
-  // moved is a same-kid retire that keeps not_before; October iat is inside
-  // an open retired window, so this file is the reachable pass.
-  const open = runCli([...trust, '--issuer-history-file', writeHistory('open.json', moved)]);
-  assert.equal(open.status, 0, open.text);
-  assert.equal(JSON.parse(open.stdout).overall, 'verified');
-  assert.equal(JSON.parse(open.stdout).issuer_history.checked, true);
+  const openResult = await verifyReceipt(receipt, {
+    ...opts,
+    issuerHistory: moved.doc,
+    issuerHistoryBytes: moved.bytes,
+  });
+  assert.equal(openResult.issuer_history.checked, true);
+  assert.equal(openResult.issuer_history.ok, true, openResult.errors.join('; '));
 
-  const skipped = runCli([...trust, '--no-issuer-history', '--issuer-history-file', writeHistory('revoked.json', revoked)]);
-  assert.equal(skipped.status, 0, skipped.text);
-  assert.equal(JSON.parse(skipped.stdout).overall, 'verified_no_key_window');
-  assert.equal(bareVerified(skipped.stdout), false);
+  const removed = runCli([receiptPath, '--no-issuer-history']);
+  assert.equal(removed.status, 1, removed.text);
+  assert.match(removed.stderr, /removed in 0\.4: the history check is always on/);
+  assert.equal(bareVerified(removed.stdout), false);
 
-  const unreachable = runCli(trust);
-  assert.equal(unreachable.status, 0, unreachable.text);
-  const unreachableBody = JSON.parse(unreachable.stdout);
-  assert.equal(unreachableBody.overall, 'verified_no_key_window');
-  assert.equal(unreachableBody.issuer_history.unreachable, true);
-  assert.equal(bareVerified(unreachable.stdout), false);
+  const blocked = runCli(trust);
+  assert.equal(blocked.status, 1, blocked.text);
+  assert.match(blocked.stdout, /removed in 0\.4: --jwks-file is not a verifier flag/);
 });

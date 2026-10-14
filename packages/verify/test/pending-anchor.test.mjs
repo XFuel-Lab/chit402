@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -31,6 +32,7 @@ const {
   ANCHOR_WALLETS_SCHEMA,
 } = await import('../dist/anchor-trust.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
+const { verifyReceipt } = await import('../dist/index.js');
 
 function b64url(value) {
   const json = typeof value === 'string' ? value : JSON.stringify(value);
@@ -69,8 +71,8 @@ function sealHead(head, key) {
 
 function signedReceipt(key, taskId, rowHash) {
   const claims = rowHash
-    ? { task_id: taskId, book_chain: { row_hash: rowHash }, payload_version: 6 }
-    : { task_id: taskId, payload_version: 6 };
+    ? { task_id: taskId, book_chain: { row_hash: rowHash }, payload_version: 6, iat: '2026-06-01T00:00:00.000Z' }
+    : { task_id: taskId, payload_version: 6, iat: '2026-06-01T00:00:00.000Z' };
   return seal(claims, key, 'chit402-receipt+jwt');
 }
 
@@ -321,6 +323,7 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
   const cli = join(pkgDir, 'dist', 'cli.js');
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
+  const historyPath = await writeCoveringHistory(dir, fx.key);
   try {
     for (let index = 0; index < 4; index += 1) {
       const receipt = signedReceipt(fx.key, fx.ids[index], fx.rows[index]);
@@ -341,18 +344,12 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
       const run = await runCli([
         cli,
         join(dir, 'receipt.json'),
-        join(dir, 'inclusion.json'),
-        join(dir, 'head.json'),
         '--rpc', url,
-        '--solana-rpc', url,
-        '--jwks-file', join(dir, 'jwks.json'),
-        '--trusted-kid', fx.key.kid,
-        '--no-issuer-history',
-        '--no-preimage',
       ]);
       const text = `${run.stdout}\n${run.stderr}`;
-      assert.equal(run.status, 0, `${fx.ids[index]}\n${text}`);
-      assert.match(run.stdout, /Overall: VERIFIED/);
+      assert.equal(run.status, 1, `${fx.ids[index]}\n${text}`);
+      assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
+      assert.doesNotMatch(run.stdout, /^VERIFIED\n/m);
     }
 
     const pending = {
@@ -378,59 +375,24 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
     const late = await runCli([
       cli,
       join(dir, 'receipt.json'),
-      join(dir, 'inclusion.json'),
-      join(dir, 'head.json'),
       '--rpc', url,
-      '--solana-rpc', url,
-      '--jwks-file', join(dir, 'jwks.json'),
-      '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
     ]);
     const lateText = `${late.stdout}\n${late.stderr}`;
-    assert.equal(late.status, 2, lateText);
-    assert.match(late.stdout, /Overall: PENDING/);
-    assert.match(late.stdout, /pending_anchor/);
-    assert.equal(lateText.includes('VERIFIED'), false);
-    assert.equal(lateText.includes('UNVERIFIED'), false);
+    assert.equal(late.status, 1, lateText);
+    assert.match(lateText, /removed in 0\.4: --rpc is not a verifier flag/);
+    assert.doesNotMatch(late.stdout, /^VERIFIED\n/m);
 
     const jsonRun = await runCli([
       cli,
       join(dir, 'receipt.json'),
-      join(dir, 'inclusion.json'),
-      join(dir, 'head.json'),
       '--json',
       '--rpc', url,
-      '--solana-rpc', url,
-      '--jwks-file', join(dir, 'jwks.json'),
-      '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
     ]);
-    assert.equal(jsonRun.status, 2, `${jsonRun.stdout}\n${jsonRun.stderr}`);
+    assert.equal(jsonRun.status, 1, `${jsonRun.stdout}\n${jsonRun.stderr}`);
     const parsed = JSON.parse(jsonRun.stdout);
-    assert.equal(parsed.overall, 'pending');
-    assert.equal(parsed.receipt_check.overall, 'pending');
-
-    const stripped = signedReceipt(fx.key, 'd', 'rd');
-    delete stripped.issuer_signature;
-    writeFileSync(join(dir, 'receipt.json'), JSON.stringify(stripped));
-    const bare = await runCli([
-      cli,
-      join(dir, 'receipt.json'),
-      join(dir, 'inclusion.json'),
-      join(dir, 'head.json'),
-      '--rpc', url,
-      '--solana-rpc', url,
-      '--jwks-file', join(dir, 'jwks.json'),
-      '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
-    ]);
-    const bareText = `${bare.stdout}\n${bare.stderr}`;
-    assert.equal(bare.status, 1, bareText);
-    assert.match(bare.stdout, /Overall: FAILED/);
-    assert.equal(/(?<!UN)VERIFIED/.test(bareText), false);
+    assert.equal(parsed.reason, 'removed_flag');
+    assert.match(parsed.message, /removed in 0\.4: --rpc is not a verifier flag/);
+    assert.notEqual(parsed.result, 'verified');
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
   }
@@ -737,42 +699,35 @@ test('a pending leaf on a failed receipt is FAILED', async () => {
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(pending));
   const tampered = signedReceipt(fx.key, 'd', 'rd');
   tampered.book_chain.row_hash = 'tampered';
+  const mismatch = await verifyReceipt(tampered, {
+    trustedKids: [fx.key.kid],
+    skipIssuerHistory: true,
+    requirePreimages: false,
+  });
+  assert.equal(mismatch.overall, 'failed');
+  assert.match(mismatch.errors.join(' '), /row_hash|mismatch/);
+  const honest = signedReceipt(fx.key, 'd', 'rd');
+  const missingPreimage = await verifyReceipt(honest, {
+    trustedKids: [fx.key.kid],
+    skipIssuerHistory: true,
+    requirePreimages: true,
+  });
+  assert.equal(missingPreimage.overall, 'failed');
+  assert.match(missingPreimage.errors.join(' '), /preimage/);
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(tampered));
-  const args = [
-    cli,
-    join(dir, 'receipt.json'),
-    join(dir, 'inclusion.json'),
-    join(dir, 'head.json'),
-    '--rpc', url,
-    '--solana-rpc', url,
-    '--jwks-file', join(dir, 'jwks.json'),
-    '--trusted-kid', fx.key.kid,
-    '--no-issuer-history',
-  ];
   try {
-    const textRun = await runCli([...args, '--no-preimage']);
+    const textRun = await runCli([cli, join(dir, 'receipt.json'), '--rpc', url]);
     const text = `${textRun.stdout}\n${textRun.stderr}`;
     assert.equal(textRun.status, 1, text);
-    assert.match(textRun.stdout, /Overall: FAILED/);
-    assert.equal(/Overall:\s+PENDING/.test(text), false);
-    assert.equal(/Receipt checks:\s+PENDING/.test(text), false);
+    assert.match(text, /removed in 0\.4: --rpc is not a verifier flag/);
+    assert.doesNotMatch(textRun.stdout, /^VERIFIED\n/m);
 
-    const jsonRun = await runCli([...args, '--json', '--no-preimage']);
+    const jsonRun = await runCli([cli, join(dir, 'receipt.json'), '--json', '--no-preimage']);
     assert.equal(jsonRun.status, 1, `${jsonRun.stdout}\n${jsonRun.stderr}`);
     const parsed = JSON.parse(jsonRun.stdout);
-    assert.equal(parsed.overall, 'failed');
-    assert.notEqual(parsed.receipt_check.overall, 'pending');
-    assert.equal(parsed.receipt_check.overall, 'failed');
-
-    const honest = signedReceipt(fx.key, 'd', 'rd');
-    writeFileSync(join(dir, 'receipt.json'), JSON.stringify(honest));
-    const preimage = await runCli([...args, '--json']);
-    assert.equal(preimage.status, 1, `${preimage.stdout}\n${preimage.stderr}`);
-    const preimageBody = JSON.parse(preimage.stdout);
-    assert.equal(preimageBody.overall, 'failed');
-    assert.notEqual(preimageBody.receipt_check.overall, 'pending');
-    assert.equal(preimageBody.receipt_check.overall, 'failed');
-    assert.ok(preimageBody.receipt_check.errors.some((err) => String(err).includes('preimage')));
+    assert.equal(parsed.reason, 'removed_flag');
+    assert.match(parsed.message, /removed in 0\.4: --no-preimage is not a verifier flag/);
+    assert.notEqual(parsed.result, 'verified');
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
   }

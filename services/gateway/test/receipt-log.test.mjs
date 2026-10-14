@@ -2723,33 +2723,41 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   const verifyRoot = path.resolve(gatewayRoot, '../../packages/verify');
   const built = spawnSync(path.join(verifyRoot, 'node_modules/.bin/tsc'), [], { cwd: verifyRoot, encoding: 'utf8' });
   assert.equal(built.status, 0, built.stdout + built.stderr);
+  const { pathToFileURL } = await import('node:url');
+  const { verifyAnchoredRoot } = await import(pathToFileURL(path.join(verifyRoot, 'dist/anchor-witness.js')).href);
+  const { verifyReceipt } = await import(pathToFileURL(path.join(verifyRoot, 'dist/index.js')).href);
+  const { verifyIssuerJws } = await import(pathToFileURL(path.join(verifyRoot, 'dist/jws.js')).href);
   const cli = path.join(verifyRoot, 'dist/cli.js');
-  const args = [
-    cli, receiptPath, inclusionPath, headPath,
-    '--rpc', `http://127.0.0.1:${rpcPort}`,
-    '--solana-rpc', `http://127.0.0.1:${rpcPort}`,
-    '--jwks-file', jwksPath,
-    '--trusted-kid', signed.kid,
-    '--anchor-wallets-file', walletsPath,
-    '--no-issuer-history',
-    '--no-preimage',
-    '--json',
-  ];
+  const rpcUrl = `http://127.0.0.1:${rpcPort}`;
+  const receiptDoc = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+  const inclusionDoc = JSON.parse(fs.readFileSync(inclusionPath, 'utf8'));
+  const headDoc = JSON.parse(fs.readFileSync(headPath, 'utf8'));
+  const wallets = JSON.parse(fs.readFileSync(walletsPath, 'utf8'));
+  const verifyEpoch = (jws) => verifyIssuerJws(jws, jwk).valid === true;
   try {
-    const unsigned = await runCli([cli, unsignedPath, ...args.slice(2)]);
-    assert.equal(unsigned.status, 1, unsigned.stdout + unsigned.stderr);
-    const unsignedBody = JSON.parse(unsigned.stdout);
-    assert.equal(unsignedBody.overall, 'failed');
-    assert.equal(unsignedBody.receipt_check.overall, 'partial');
-    assert.ok(
-      unsignedBody.errors.includes('No issuer signature present on receipt'),
-      unsignedBody.errors.join(','),
-    );
-    const ok = await runCli(args);
-    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    const unsignedResult = await verifyReceipt(JSON.parse(fs.readFileSync(unsignedPath, 'utf8')), {
+      requirePreimages: false,
+      skipIssuerHistory: true,
+    });
+    assert.equal(unsignedResult.issuer_signature.reason, 'No issuer signature present on receipt');
+    assert.notEqual(unsignedResult.overall, 'verified');
+    const anchored = {
+      receipt: receiptDoc,
+      inclusion: inclusionDoc,
+      head: headDoc,
+      baseRpcUrl: rpcUrl,
+      solanaRpcUrl: rpcUrl,
+      checkNewestAnchor: false,
+      jwks: { keys: [jwk] },
+      trustedKids: [signed.kid],
+      anchorWalletDocument: wallets,
+      verifyEpochSignature: verifyEpoch,
+    };
+    const ok = await verifyAnchoredRoot({ ...anchored, epochRecord: record });
+    assert.equal(ok.overall, 'verified', (ok.errors || []).join('; '));
     const forgedClaims = epochRecordClaims({ epoch1Root: 'ab'.repeat(32) });
     const forgedSig = signJws(forgedClaims, { typ: 'chit402-tree-epoch+jwt' });
-    tree.epochRecord = {
+    const forgedRecord = {
       ...forgedClaims,
       issuer_signature: {
         alg: 'ES256',
@@ -2760,9 +2768,12 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
         issuer_jwk: jwk,
       },
     };
-    const forged = await runCli(args);
-    assert.notEqual(forged.status, 0);
-    assert.match(forged.stdout + forged.stderr, /epoch1_root|epoch_record_missing|epoch_signature/);
+    const forged = await verifyAnchoredRoot({ ...anchored, epochRecord: forgedRecord });
+    assert.notEqual(forged.overall, 'verified');
+    assert.match((forged.errors || []).join(' '), /epoch1_root|epoch_record_missing|epoch_signature/);
+    const flagged = await runCli([cli, receiptPath, '--json', '--rpc', rpcUrl]);
+    assert.equal(flagged.status, 1, flagged.stdout + flagged.stderr);
+    assert.match(flagged.stdout + flagged.stderr, /removed in 0\.4: --rpc/);
   } finally {
     await new Promise((resolve) => gateway.close(resolve));
     await new Promise((resolve) => rpc.close(resolve));
