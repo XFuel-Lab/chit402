@@ -130,6 +130,13 @@ import {
   shellPreimageBytes,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
+import { handlePublicRecordGet } from './public-record-http.js';
+import {
+  inputsFromTasks,
+  leafFromTree,
+  publicRecordJobFlagEnabled,
+  startPublicRecordJob,
+} from './public-record.js';
 import { createOwnerView, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
 import {
@@ -2960,6 +2967,12 @@ export function createApp() {
     return res.json(published);
   }
 
+  // GET /receipt/:taskId/public — stored chit402.public.v1 bytes.
+  // Serving is off unless PUBLIC_RECORD_SERVE=true. This handler does not sign.
+  app.get('/receipt/:taskId/public', rateLimit, (req, res) => {
+    handlePublicRecordGet(req, res);
+  });
+
   // GET /receipt/:taskId — PUBLIC, no-auth verifiable receipt.
   //   • HTML by default (clean, shareable page for a browser / link unfurl)
   //   • JSON via `?format=json`, `.json` suffix, or `Accept: application/json` (for agents)
@@ -5552,6 +5565,23 @@ export function createApp() {
   });
 
   app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs, ownerView, saltStore };
+
+  // Signs missing public records. Off unless PUBLIC_RECORD_JOB=true.
+  // The receipt GET above does not call this.
+  if (publicRecordJobFlagEnabled()) {
+    startPublicRecordJob({
+      list: () => {
+        let tasks = [];
+        try {
+          const listener = getAIListener();
+          tasks = listener?.activeTasks ? [...listener.activeTasks.values()] : [];
+        } catch {
+          tasks = [];
+        }
+        return inputsFromTasks(tasks, (receipt) => leafFromTree(getReceiptMerkleTree(), receipt));
+      },
+    });
+  }
 
   return app;
 }

@@ -2239,6 +2239,20 @@ export {
 } from './issuer-history.js';
 
 export {
+  verifyPublicRecord,
+  isPublicRecordAttempt,
+  fullReceiptSha256 as publicRecordFullReceiptSha256,
+  publicRecordJson,
+  PUBLIC_RECORD_SCHEMA,
+  PUBLIC_RECORD_TYP,
+  PUBLIC_RECORD_ALLOWLIST,
+  PUBLIC_NOT_CHECKED,
+  PUBLIC_VERIFIED_HEADLINE,
+  type PublicRecordResult,
+  type VerifyPublicRecordInput,
+} from './public-record.js';
+
+export {
   isReceiptShell,
   shellFromHolder,
   compareShellToJws,

@@ -3,6 +3,13 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased — public copy (`chit402.public.v1`)
+
+Not published. Do not `npm publish`. Serving stays off until ROTATION-TRUST ships. The flag alone does not serve a record.
+
+### Security
+- **A `chit402.public.v1` record verifies as `PUBLIC_VERIFIED`, exit 0, scope `public`.** The command stays `chit402-verify <id|url|file>` with `--issuer-history` and `--json` only. `--jwks-file`, `--inclusion`, and `--head` stay removed. Trust is the pinned kid plus verified issuer history. The record, the inclusion proof, and the signed head are fetched from that one receipt URL. `--json` lists `not_checked` (payer, agent, content, usage) and `leaf_binding`. The verdict is never a full-receipt `VERIFIED`. Payment is `not_checked` because `payment_tx` is not in the record. v10 and v11 are `issuer_asserted`. A null `leaf_hash` is `PUBLIC_SIGNED_NOT_IN_LOG`, exit 1. Inclusion counts only under a head with a verified issuer JWS. A missing or unverifiable head is `head_unavailable`, exit 2. An unknown schema or receipt version is `unsupported_version`, exit 2. A full receipt from that URL whose sha256 differs from `full_receipt_sha256` is `public_full_mismatch`, exit 1. The kid window uses `public_signed_at`. A kid outside the pin and verified history is `key untrusted`, not `signature_invalid`. `BUILD_DIGEST.txt` moved because `src/public-record.ts` and `src/cli.ts` changed. The pinned epoch genesis digests did not.
+
 ## 0.4.0 — Locked verifier verdict
 
 ### Breaking

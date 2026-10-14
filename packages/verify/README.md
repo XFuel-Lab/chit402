@@ -190,12 +190,14 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 
 | Code | Meaning |
 |------|---------|
-| 0 | Verified |
+| 0 | Verified, or `PUBLIC_VERIFIED` for a `chit402.public.v1` record |
 | 1 | Verification failed |
-| 2 | Partial (binding ok, nullifier not checked) |
+| 2 | Partial (binding ok, nullifier not checked). A public record whose schema or receipt version is unknown, or whose signed head is unavailable, also exits 2 |
 | 3 | Input error |
 
-`unsupported_version` uses exit 1. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+`unsupported_version` on a receipt uses exit 1. On a `chit402.public.v1` record, an unknown schema or receipt version uses exit 2. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+
+A public record is a derived statement, not the receipt. `PUBLIC_VERIFIED` exits 0 and `--json` sets `scope` to `"public"`. It does not print `VERIFIED`. `payment_tx` is not in the record, so payment is `not_checked`. There is no `--require-full` flag. See [public-record.md](../../docs/product/public-record.md).
 
 ## Receipt versions
 
