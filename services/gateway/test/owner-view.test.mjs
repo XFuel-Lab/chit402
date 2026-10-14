@@ -14,9 +14,11 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'owner-view-test-secret';
 process.env.OWNER_VIEW_DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chit-owner-view-')), 'owner-view.sqlite');
+process.env.AGENTS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'chit-owner-view-agents-'));
 process.env.OWNER_VIEW_FETCH_MAX = '8000';
 process.env.OWNER_VIEW_CHALLENGE_MAX = '800';
 process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS = '8';
+process.env.OWNER_VIEW_AUDIENCES = '127.0.0.1';
 
 const payerA = Wallet.createRandom();
 const payerB = Wallet.createRandom();
@@ -289,26 +291,32 @@ test('O1 replay, expiry, and one winner on concurrent use', async () => {
   }
 });
 
-test('O2 a challenge signed for another host is rejected', async () => {
+test('O2 a Host outside the allowlist is not the challenge audience', async () => {
   const foreign = await challenge({ payer: true }, 'staging.example');
-  assert.equal(foreign.res.status, 200);
-  assert.equal(foreign.body.challenge.audience, 'staging.example');
+  assert.equal(foreign.res.status, 401);
+  assert.equal(foreign.body?.challenge, undefined);
+  assert.equal(JSON.stringify(foreign.body).includes('staging.example'), false);
+
+  const allowed = await challenge({ payer: true }, '127.0.0.1:443');
+  assert.equal(allowed.res.status, 200);
+  assert.equal(allowed.body.challenge.audience, '127.0.0.1');
   const sig = await payerA.signTypedData(
-    foreign.body.typed_data.domain,
-    foreign.body.typed_data.types,
-    foreign.body.typed_data.message,
+    allowed.body.typed_data.domain,
+    allowed.body.typed_data.types,
+    allowed.body.typed_data.message,
   );
-  const res = await fetch(`${base}/v1/receipts/owner/session`, {
+  const spoofed = await httpJson({
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      challenge: foreign.body.challenge,
+    url: `${base}/v1/receipts/owner/session`,
+    headers: { host: 'staging.example' },
+    body: {
+      challenge: allowed.body.challenge,
       signature: sig,
       signer: payerA.address,
       kind: 'evm',
-    }),
+    },
   });
-  assert.equal(res.status, 401);
+  assert.equal(spoofed.status, 401);
 });
 
 test('O3 O4 O5 cross-agent, payer scope, and non-owners are the generic 404', async () => {

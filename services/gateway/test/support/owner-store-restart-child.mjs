@@ -12,6 +12,7 @@ process.env.HOUSE_PAYER_WALLETS = wallet.address;
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
 process.env.RECEIPT_SIGNING_SECRET = process.env.RECEIPT_SIGNING_SECRET || 'owner-store-restart';
+process.env.OWNER_VIEW_AUDIENCES = process.env.OWNER_VIEW_AUDIENCES || '127.0.0.1';
 
 const { createApp } = await import('../../src/server.js');
 const app = createApp();

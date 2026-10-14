@@ -131,7 +131,7 @@ import {
   shellPreimageBytes,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
-import { createOwnerView, sendGenericNotFound } from './owner-view.js';
+import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
 import {
   computeDoorMetrics,
@@ -5494,6 +5494,7 @@ export function createApp() {
     challengeMax: process.env.OWNER_VIEW_CHALLENGE_MAX,
     fetchMax: process.env.OWNER_VIEW_FETCH_MAX,
     notFoundBudgetMs: process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS,
+    audiences: resolveOwnerAudiences(process.env),
   });
   ownerView.mount(app);
 
@@ -5823,6 +5824,9 @@ export async function startServer() {
           'off, and /receipt output cannot be verified by the SDK. Set it before serving partners.',
         );
       }
+
+      const audienceWarning = ownerAudienceBootWarning(process.env);
+      if (audienceWarning) logger.warn(audienceWarning);
 
       resolve(server);
     });
