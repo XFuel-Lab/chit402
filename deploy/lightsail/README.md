@@ -108,7 +108,7 @@ Day-to-day:
 
 ```bash
 cd "$XFUEL_REPO" && git pull
-cd services/gateway && npm install --omit=dev
+cd services/gateway && npm ci --omit=dev
 sudo systemctl restart "$XFUEL_SYSTEMD_UNIT"
 sudo systemctl status "$XFUEL_SYSTEMD_UNIT" --no-pager
 ```
