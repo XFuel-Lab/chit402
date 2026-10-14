@@ -255,6 +255,10 @@ export function confirmEvmReceipt(receipt, {
 
   const min = BigInt(String(challenge.amount));
   if (matches[0].value < min) return { ok: false, code: 'settle_unconfirmed' };
+  // TODO(reorg): Base accepts a status-1 receipt with no confirmation depth.
+  // A reorg after this receipt is not caught. Require N confirmations, or a
+  // safe/finalized block at or above blockNumber, before treating this as
+  // final. Solana already requires finalized. Do not implement that here.
   return {
     ok: true,
     confirmed: true,

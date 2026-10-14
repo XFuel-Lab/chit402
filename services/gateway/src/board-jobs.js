@@ -793,7 +793,7 @@ export async function payBoardJob(jobId, deps = {}) {
     }
     job.winner_leg = { ...leg, payee: winnerWallet };
     jobs.update(job);
-    const winnerFee = feeLegAmount(job.winner_leg.amount);
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const legs = {
       winner: { amount: String(job.winner_leg.amount), pay_to: winnerWallet, settled: true },
       fee: { amount: winnerFee.toString(), pay_to: chitPayTo, settled: false },
@@ -828,7 +828,7 @@ export async function payBoardJob(jobId, deps = {}) {
   }
 
   if (!job.fee_leg) {
-    const winnerFee = feeLegAmount(job.winner_leg.amount);
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const settled = await deps.settleLeg({
       leg: 'fee',
       amount: winnerFee.toString(),
@@ -869,7 +869,7 @@ export async function payBoardJob(jobId, deps = {}) {
     winnerAgentId: job.winner_agent_id,
     winnerWallet,
     fee: {
-      amount: feeLegAmount(job.winner_leg.amount).toString(),
+      amount: feeLegAmount(job.winner_leg.quoted_amount || price).toString(),
       payment_ref: job.fee_leg.payment_ref,
       pay_to: chitPayTo,
     },

@@ -298,10 +298,14 @@ test('NEW-3 a challenge settles only its route, its quoted price, and its payee'
     });
     assert.equal(unlockedDecision.code, 'challenge_mismatch');
 
+    const paidNonce = `0x${'ee'.repeat(32)}`;
+    const paidTx = `0x${'cd'.repeat(32)}`;
+    const paidFac = await listenFacilitator({ tx: paidTx });
+    try {
     const paid = await settleBoundPayment({
       taskId: 'task-1',
       amount: '2000',
-      cfg: baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt({ value: 2001n })) }),
+      cfg: baseCfg(paidFac.url, { chainReader: chainFromReceipt(evmReceipt({ value: 2001n, nonce: paidNonce })) }),
       store,
       nonce: putChallenge(store, {
         resource: 'https://api.chit402.com/task-request/',
@@ -309,7 +313,7 @@ test('NEW-3 a challenge settles only its route, its quoted price, and its payee'
         quotePrice: '2000',
         routeQuote: '2000',
       }),
-      paymentHeader: evmHeader({ value: '2001', amount: '2001' }),
+      paymentHeader: evmHeader({ value: '2001', amount: '2001', nonce: paidNonce }),
       resource: '/task-request',
     });
     assert.equal(paid.kind, 'settled', paid.code);
@@ -317,6 +321,10 @@ test('NEW-3 a challenge settles only its route, its quoted price, and its payee'
     assert.equal(paid.route, '/task-request');
     assert.equal(paid.quotedAmount, '2000');
     assert.equal(paid.settledAmount, '2001');
+    assert.equal(paid.paymentRef, `base:${paidTx}`);
+    } finally {
+      await paidFac.close();
+    }
   } finally {
     await fac.close();
   }
@@ -481,8 +489,8 @@ test('PB7 fee and leg checks use the on-chain amount, not a larger quote', async
   assert.equal(paid.status, 402, paid.message);
   assert.equal(paid.error, 'fee_payment_required');
   const feeChallenge = seen.find((row) => row.leg === 'fee' && row.challengeOnly);
-  assert.equal(feeChallenge.amount, feeLegAmount(2_000_000n).toString());
-  assert.notEqual(feeChallenge.amount, feeLegAmount(1_000_000n).toString());
+  assert.equal(feeChallenge.amount, feeLegAmount(1_000_000n).toString());
+  assert.notEqual(feeChallenge.amount, feeLegAmount(2_000_000n).toString());
   assert.equal(feeChallenge.route, feeRoute);
   assert.equal(seen.find((row) => row.leg === 'winner' && !row.challengeOnly).route, winnerRoute);
 
@@ -544,4 +552,29 @@ test('PB13 a debt and a board leg clear only for their own quoted price and rout
     { quotedAmount: '10100', settledAmount: '10100', route: '/task-request', taskId: 'owed-1' },
   ), true);
   resetRollingSettlement();
+});
+
+test('PB4 concurrent challenges carrying one transfer settle once', async () => {
+  const fac = await listenFacilitator();
+  try {
+    const store = new ChallengeStore();
+    const slow = (receipt) => async (args) => {
+      await new Promise((r) => setTimeout(r, 30));
+      return chainFromReceipt(receipt)(args);
+    };
+    const run = (task) => settleBoundPayment({
+      taskId: task,
+      amount: '2000',
+      cfg: baseCfg(fac.url, { chainReader: slow(evmReceipt()) }),
+      store,
+      nonce: putChallenge(store, { taskId: task, amount: '2000', resource: '/task-request' }),
+      paymentHeader: evmHeader(),
+      resource: '/task-request',
+    });
+    const results = await Promise.all([run('race-a'), run('race-b'), run('race-c')]);
+    assert.equal(results.filter((r) => r.kind === 'settled').length, 1, JSON.stringify(results.map((r) => r.code || r.kind)));
+    assert.equal(results.filter((r) => r.code === 'payment_replayed').length, 2);
+  } finally {
+    await fac.close();
+  }
 });

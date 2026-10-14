@@ -165,6 +165,9 @@ function declaredEvmAsset(decoded) {
 /**
  * @returns {Promise<object>} handshake decision
  */
+const inflightTx = new Set();
+const inflightAuth = new Set();
+
 export async function settleBoundPayment({
   req,
   taskId,
@@ -422,6 +425,25 @@ export async function settleBoundPayment({
     return refused(req, 'payment_replayed');
   }
 
+  // One transfer, one settlement: reserve the tx (and the EIP-3009 auth) before
+  // the chain await, so concurrent challenges carrying the same transfer cannot
+  // all pass isTxSpent and all settle. Released on every exit; markTxSpent
+  // keeps it spent on success. Per-process: a multi-instance deploy needs the
+  // durable store to reserve atomically.
+  if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
+    active.markSpent(nonce, { txRef: norm.key, replay: true });
+    return refused(req, 'payment_replayed');
+  }
+  inflightTx.add(norm.key);
+  if (authKey) inflightAuth.add(authKey);
+  try {
+    return await confirmAndSettle();
+  } finally {
+    inflightTx.delete(norm.key);
+    if (authKey) inflightAuth.delete(authKey);
+  }
+
+  async function confirmAndSettle() {
   const chain = await confirmSettlement({
     challenge,
     facilitator: fields,
@@ -521,6 +543,7 @@ export async function settleBoundPayment({
       slot: chain.slot ?? null,
     },
   };
+  }
 }
 
 function refused(req, reason, extra = {}) {
