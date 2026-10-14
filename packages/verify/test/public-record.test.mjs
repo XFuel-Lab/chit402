@@ -1,14 +1,16 @@
 /**
- * chit402.public.v1.
- * PUBLIC_VERIFIED exits 0 with scope "public".
- * Unknown versions exit 2. A full receipt that does not match exits 1.
- * Pre-log records are not green. Inclusion requires a signed head.
- * No new CLI flag. --require-full is not implemented (Christopher).
+ * chit402.public.v1 on the 0.4.0 verifier.
+ * The CLI takes one receipt URL. Flags stay --issuer-history and --json.
+ * Trust is the pin plus verified history. Under the default pin a test key
+ * is `key untrusted`, not signature_invalid.
+ * Library checks use a history document that verifies under that test key's
+ * thumbprint. They do not pass a JWKS file, an inclusion file, or a head file.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,11 +19,12 @@ import { fileURLToPath } from 'node:url';
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
-const { verifyReceipt } = await import('../dist/index.js');
+const { jwkThumbprint } = await import('../dist/jws.js');
+const { verifyPublicRecord, verifyReceipt } = await import('../dist/index.js');
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const exported = publicKey.export({ format: 'jwk' });
-const kid = 'public-record-test-kid';
+const kid = jwkThumbprint({ kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y });
 const jwk = {
   kty: 'EC',
   crv: 'P-256',
@@ -31,10 +34,8 @@ const jwk = {
   alg: 'ES256',
   use: 'sig',
 };
-const jwks = { keys: [jwk] };
+const pins = [kid];
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'public-record-'));
-const jwksPath = path.join(dir, 'jwks.json');
-fs.writeFileSync(jwksPath, JSON.stringify(jwks));
 
 const PAYEE = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
 const ROW = 'ab'.repeat(32);
@@ -116,38 +117,6 @@ function publicPayload(taskId, version, { leaf = undefined, signedAt = '2026-10-
   };
 }
 
-function headFor(root) {
-  const claims = { schema: 'chit402.tree_head.v1', root, tree_size: 1 };
-  const jws = signJws(claims, 'chit402-tree-head+jwt');
-  return {
-    ...claims,
-    issuer_signature: { alg: 'ES256', jws, kid },
-  };
-}
-
-function inclusionFor(root) {
-  return {
-    schema: 'chit402.inclusion.v1',
-    leaf_index: 0,
-    tree_size: 1,
-    root,
-    proof: [],
-  };
-}
-
-function write(name, value) {
-  const file = path.join(dir, name);
-  fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
-  return file;
-}
-
-function run(args) {
-  const res = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
-  let json = null;
-  try { json = JSON.parse(res.stdout); } catch { json = null; }
-  return { status: res.status, stdout: res.stdout, stderr: res.stderr, json };
-}
-
 function historyDoc({ notBefore, status = 'active', revokedAt = null }) {
   const entry = {
     kid,
@@ -176,65 +145,96 @@ function historyDoc({ notBefore, status = 'active', revokedAt = null }) {
     version: 1,
     seq: 1,
   };
-  doc.issuer_signature = { jws: signJws(claims, 'chit402-issuer-history+jwt'), kid };
+  doc.issuer_signature = {
+    jws: signJws(claims, 'chit402-issuer-history+jwt'),
+    kid,
+    issuer_jwk: jwk,
+  };
   return doc;
+}
+
+const openHistory = historyDoc({ notBefore: '2020-01-01T00:00:00.000Z' });
+
+function headFor(root) {
+  const claims = { schema: 'chit402.tree_head.v1', root, tree_size: 1 };
+  const jws = signJws(claims, 'chit402-tree-head+jwt');
+  return {
+    ...claims,
+    issuer_signature: { alg: 'ES256', jws, kid, issuer_jwk: jwk },
+  };
+}
+
+function inclusionFor(root) {
+  return {
+    schema: 'chit402.inclusion.v1',
+    leaf_index: 0,
+    tree_size: 1,
+    root,
+    proof: [],
+  };
+}
+
+function verify(record, extra = {}) {
+  return verifyPublicRecord(record, { trustedKids: pins, history: openHistory, ...extra });
+}
+
+function run(args) {
+  const res = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+  let json = null;
+  try { json = JSON.parse(res.stdout); } catch { json = null; }
+  return { status: res.status, stdout: res.stdout, stderr: res.stderr, json };
+}
+
+function runAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      let json = null;
+      try { json = JSON.parse(stdout); } catch { json = null; }
+      resolve({ status, stdout, stderr, json });
+    });
+  });
+}
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
 }
 
 test('v10 and v11 public records are PUBLIC_VERIFIED, issuer_asserted, exit 0', () => {
   for (const version of [10, 11]) {
     const built = publicPayload(`xfuel-public-v${version}`, version);
     const record = signJws(built.payload);
-    const file = write(`v${version}.jws`, record);
-    const root = built.payload.leaf_hash;
-    const result = run([
-      file,
-      '--json',
-      '--jwks-file', jwksPath,
-      '--inclusion', write(`inclusion-v${version}.json`, inclusionFor(root)),
-      '--head', write(`head-v${version}.json`, headFor(root)),
-    ]);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.equal(result.json.verdict, 'PUBLIC_VERIFIED');
-    assert.equal(result.json.scope, 'public');
-    assert.equal(result.json.leaf_binding, 'issuer_asserted');
-    assert.deepEqual(result.json.not_checked, ['payer', 'agent', 'content', 'usage']);
-    assert.equal(result.json.checks.signature, 'ok');
-    assert.equal(result.json.checks.key, 'ok');
-    assert.equal(result.json.checks.inclusion, 'ok');
-    assert.equal(result.json.checks.payment, 'not_checked');
-    assert.notEqual(result.json.verdict, 'VERIFIED');
+    const result = verify(record, {
+      inclusion: inclusionFor(built.payload.leaf_hash),
+      head: headFor(built.payload.leaf_hash),
+    });
+    assert.equal(result.exitCode, 0, result.reason || '');
+    assert.equal(result.verdict, 'PUBLIC_VERIFIED');
+    assert.equal(result.scope, 'public');
+    assert.equal(result.leaf_binding, 'issuer_asserted');
+    assert.deepEqual(result.not_checked, ['payer', 'agent', 'content', 'usage']);
+    assert.equal(result.checks.signature, 'ok');
+    assert.equal(result.checks.key, 'ok');
+    assert.equal(result.checks.inclusion, 'ok');
+    assert.equal(result.checks.payment, 'not_checked');
+    assert.notEqual(result.verdict, 'VERIFIED');
   }
-});
-
-test('human output says payment was not checked and does not claim VERIFIED', () => {
-  const built = publicPayload('xfuel-public-human', 10);
-  const file = write('human.jws', signJws(built.payload));
-  const root = built.payload.leaf_hash;
-  const result = run([
-    file,
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-human.json', inclusionFor(root)),
-    '--head', write('head-human.json', headFor(root)),
-  ]);
-  assert.equal(result.status, 0, result.stdout);
-  assert.match(result.stdout, /PUBLIC_VERIFIED \(public copy\) — payer, agent and content not checked/);
-  assert.match(result.stdout, /Payment: not checked/);
-  assert.match(result.stdout, /Leaf binding: issuer_asserted/);
-  assert.match(result.stdout, /Overall: PUBLIC_VERIFIED/);
-  assert.doesNotMatch(result.stdout, /Overall: VERIFIED\b/);
-  assert.doesNotMatch(result.stdout, /"verdict": "VERIFIED"/);
 });
 
 test('a pre-log record is PUBLIC_SIGNED_NOT_IN_LOG and exits 1', () => {
   const built = publicPayload('xfuel-public-prelog', 10, { leaf: null });
-  const file = write('prelog.jws', signJws(built.payload));
-  const result = run([file, '--json', '--jwks-file', jwksPath]);
-  assert.equal(result.status, 1);
-  assert.equal(result.json.verdict, 'FAILED');
-  assert.equal(result.json.reason, 'PUBLIC_SIGNED_NOT_IN_LOG');
-  assert.equal(result.json.checks.inclusion, 'not_in_log');
-  assert.notEqual(result.json.verdict, 'PUBLIC_VERIFIED');
-  assert.notEqual(result.json.verdict, 'VERIFIED');
+  const result = verify(signJws(built.payload));
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.verdict, 'FAILED');
+  assert.equal(result.reason, 'PUBLIC_SIGNED_NOT_IN_LOG');
+  assert.equal(result.checks.inclusion, 'not_in_log');
 });
 
 test('an unknown public schema or receipt version exits 2', () => {
@@ -243,171 +243,190 @@ test('an unknown public schema or receipt version exits 2', () => {
   const v12 = signJws({ ...built.payload, payload_version: 12 });
   const stringVersion = signJws({ ...built.payload, payload_version: '10' });
   for (const [name, jws] of [['v2', v2], ['v12', v12], ['string', stringVersion]]) {
-    const result = run([write(`${name}.jws`, jws), '--json', '--jwks-file', jwksPath]);
-    assert.equal(result.status, 2, name);
-    assert.equal(result.json.reason, 'unsupported_version');
-    assert.equal(result.json.verdict, 'FAILED');
-    assert.equal(result.json.scope, 'public');
-    assert.notEqual(result.json.verdict, 'VERIFIED');
+    const result = verify(jws);
+    assert.equal(result.exitCode, 2, name);
+    assert.equal(result.reason, 'unsupported_version');
+    assert.equal(result.verdict, 'FAILED');
+    assert.equal(result.scope, 'public');
   }
 });
 
 test('a head without an issuer JWS is head_unavailable, exit 2', () => {
   const built = publicPayload('xfuel-public-head', 10);
-  const file = write('nohead.jws', signJws(built.payload));
-  const missing = run([file, '--json', '--jwks-file', jwksPath]);
-  assert.equal(missing.status, 2);
-  assert.equal(missing.json.reason, 'head_unavailable');
-  const unsigned = write('unsigned-head.json', {
-    schema: 'chit402.tree_head.v1',
-    root: built.payload.leaf_hash,
-    tree_size: 1,
+  const record = signJws(built.payload);
+  const missing = verify(record);
+  assert.equal(missing.exitCode, 2);
+  assert.equal(missing.reason, 'head_unavailable');
+  const unsigned = verify(record, {
+    inclusion: inclusionFor(built.payload.leaf_hash),
+    head: { schema: 'chit402.tree_head.v1', root: built.payload.leaf_hash, tree_size: 1 },
   });
-  const forged = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-forged.json', inclusionFor(built.payload.leaf_hash)),
-    '--head', unsigned,
-  ]);
-  assert.equal(forged.status, 2);
-  assert.equal(forged.json.reason, 'head_unavailable');
-  assert.notEqual(forged.json.verdict, 'PUBLIC_VERIFIED');
+  assert.equal(unsigned.exitCode, 2);
+  assert.equal(unsigned.reason, 'head_unavailable');
 });
 
 test('a leaf that is not under the signed head exits 1', () => {
   const built = publicPayload('xfuel-public-mismatch-leaf', 10);
-  const file = write('badleaf.jws', signJws(built.payload));
   const other = leafHash('xfuel-other', ROW);
-  const result = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-other.json', inclusionFor(other)),
-    '--head', write('head-other.json', headFor(other)),
-  ]);
-  assert.equal(result.status, 1);
-  assert.equal(result.json.reason, 'inclusion_mismatch');
-  assert.equal(result.json.verdict, 'FAILED');
+  const result = verify(signJws(built.payload), {
+    inclusion: inclusionFor(other),
+    head: headFor(other),
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.reason, 'inclusion_mismatch');
+  assert.equal(result.verdict, 'FAILED');
 });
 
-test('T7 a forged full receipt exits 1 and a public record never prints VERIFIED', () => {
+test('T7 a forged full receipt exits 1 and a public record never becomes VERIFIED', () => {
   const built = publicPayload('xfuel-public-t7', 10);
   const record = signJws(built.payload);
-  const file = write('t7.jws', record);
   const root = built.payload.leaf_hash;
-  const forged = write('forged-full.json', {
-    task_id: 'xfuel-public-t7',
-    issuer_signature: { jws: receiptJws('xfuel-public-t7', 10).replace(/.$/, 'A') },
-  });
-  const mismatch = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-t7.json', inclusionFor(root)),
-    '--head', write('head-t7.json', headFor(root)),
-    '--jws', forged,
-  ]);
-  assert.equal(mismatch.status, 1);
-  assert.equal(mismatch.json.reason, 'public_full_mismatch');
-  assert.equal(mismatch.json.verdict, 'FAILED');
-  assert.doesNotMatch(mismatch.stdout, /PUBLIC_VERIFIED/);
-  assert.doesNotMatch(mismatch.stdout, /"verdict": "VERIFIED"/);
+  const parts = {
+    inclusion: inclusionFor(root),
+    head: headFor(root),
+  };
+  const forged = verify(record, { ...parts, fullJws: built.full.replace(/.$/, 'A') });
+  assert.equal(forged.exitCode, 1);
+  assert.equal(forged.reason, 'public_full_mismatch');
+  assert.equal(forged.verdict, 'FAILED');
 
-  const alone = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-t7.json', inclusionFor(root)),
-    '--head', write('head-t7.json', headFor(root)),
-  ]);
-  assert.equal(alone.status, 0, alone.stdout + alone.stderr);
-  assert.equal(alone.json.verdict, 'PUBLIC_VERIFIED');
-  assert.doesNotMatch(alone.stdout, /"verdict": "VERIFIED"/);
+  const alone = verify(record, parts);
+  assert.equal(alone.exitCode, 0, alone.reason || '');
+  assert.equal(alone.verdict, 'PUBLIC_VERIFIED');
+
+  const matched = verify(record, { ...parts, fullJws: built.full });
+  assert.equal(matched.exitCode, 0, matched.reason || '');
+  assert.equal(matched.verdict, 'PUBLIC_VERIFIED');
+  assert.equal(matched.scope, 'public');
 
   const help = run(['--help']);
   assert.equal(help.status, 0);
   assert.doesNotMatch(help.stdout, /require-full/);
+  assert.doesNotMatch(help.stdout, /--jwks-file/);
+  assert.doesNotMatch(help.stdout, /--inclusion/);
+  assert.doesNotMatch(help.stdout, /--head/);
   const src = fs.readFileSync(path.join(pkgDir, 'src', 'cli.ts'), 'utf8');
   assert.doesNotMatch(src, /require-full|requireFull/);
-
-  const flagged = run([
-    write('t7-flag.jws', record),
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-t7.json', inclusionFor(root)),
-    '--head', write('head-t7.json', headFor(root)),
-    '--require-full',
-  ]);
-  assert.equal(flagged.status, 0, flagged.stdout + flagged.stderr);
-  assert.equal(flagged.json.verdict, 'PUBLIC_VERIFIED');
-  assert.notEqual(flagged.json.verdict, 'VERIFIED');
-});
-
-test('a matching full receipt stays PUBLIC_VERIFIED', () => {
-  const built = publicPayload('xfuel-public-match', 10);
-  const file = write('match.jws', signJws(built.payload));
-  const full = write('match-full.jws', built.full);
-  const root = built.payload.leaf_hash;
-  const result = run([
-    file,
-    full,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--inclusion', write('inclusion-match.json', inclusionFor(root)),
-    '--head', write('head-match.json', headFor(root)),
-  ]);
-  assert.equal(result.status, 0, result.stdout);
-  assert.equal(result.json.verdict, 'PUBLIC_VERIFIED');
-  assert.equal(result.json.scope, 'public');
+  assert.match(src, /peekPublicRecord/);
 });
 
 test('issuer history is judged at public_signed_at', () => {
   const built = publicPayload('xfuel-public-history', 10);
-  const file = write('history.jws', signJws(built.payload));
-  const root = built.payload.leaf_hash;
-  const open = write('history-open.json', historyDoc({ notBefore: '2026-10-01T00:00:00.000Z' }));
-  const ok = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--issuer-history-file', open,
-    '--inclusion', write('inclusion-history.json', inclusionFor(root)),
-    '--head', write('head-history.json', headFor(root)),
-  ]);
-  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
-  assert.equal(ok.json.leaf_binding, 'issuer_asserted');
+  const record = signJws(built.payload);
+  const parts = {
+    inclusion: inclusionFor(built.payload.leaf_hash),
+    head: headFor(built.payload.leaf_hash),
+  };
+  const ok = verify(record, parts);
+  assert.equal(ok.exitCode, 0, ok.reason || '');
+  assert.equal(ok.leaf_binding, 'issuer_asserted');
 
   const early = publicPayload('xfuel-public-early', 10, { signedAt: '2020-06-01T00:00:00.000Z' });
-  const earlyFile = write('early.jws', signJws(early.payload));
-  const earlyRoot = early.payload.leaf_hash;
-  const tooSoon = run([
-    earlyFile,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--issuer-history-file', open,
-    '--inclusion', write('inclusion-early.json', inclusionFor(earlyRoot)),
-    '--head', write('head-early.json', headFor(earlyRoot)),
-  ]);
-  assert.equal(tooSoon.status, 1);
-  assert.equal(tooSoon.json.reason, 'issued_before_not_before');
-  assert.notEqual(tooSoon.json.verdict, 'PUBLIC_VERIFIED');
+  const laterHistory = historyDoc({ notBefore: '2026-10-01T00:00:00.000Z' });
+  const tooSoon = verifyPublicRecord(signJws(early.payload), {
+    trustedKids: pins,
+    history: laterHistory,
+    inclusion: inclusionFor(early.payload.leaf_hash),
+    head: headFor(early.payload.leaf_hash),
+  });
+  assert.equal(tooSoon.exitCode, 1);
+  assert.equal(tooSoon.reason, 'issued_before_not_before');
 
-  const revoked = write('history-revoked.json', historyDoc({
-    notBefore: '2026-01-01T00:00:00.000Z',
+  const revoked = historyDoc({
+    notBefore: '2020-01-01T00:00:00.000Z',
     status: 'revoked',
     revokedAt: '2026-10-01T00:00:00.000Z',
-  }));
-  const dead = run([
-    file,
-    '--json',
-    '--jwks-file', jwksPath,
-    '--issuer-history-file', revoked,
-    '--inclusion', write('inclusion-revoked.json', inclusionFor(root)),
-    '--head', write('head-revoked.json', headFor(root)),
-  ]);
-  assert.equal(dead.status, 1);
-  assert.equal(dead.json.reason, 'kid_revoked_before_issuance');
+  });
+  const dead = verifyPublicRecord(record, { trustedKids: pins, history: revoked, ...parts });
+  assert.equal(dead.exitCode, 1);
+  assert.equal(dead.reason, 'kid_revoked_before_issuance');
+});
+
+test('the default pin reports key untrusted, not signature_invalid', () => {
+  const built = publicPayload('xfuel-public-pin', 10);
+  const record = signJws(built.payload);
+  const result = verifyPublicRecord(record, {
+    inclusion: inclusionFor(built.payload.leaf_hash),
+    head: headFor(built.payload.leaf_hash),
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.reason, 'key untrusted');
+  assert.notEqual(result.reason, 'signature_invalid');
+  assert.equal(result.checks.signature, 'not_checked');
+  assert.equal(result.checks.key, 'untrusted');
+});
+
+test('one receipt URL supplies the record, the inclusion, and the head', async () => {
+  const task = 'xfuel-public-url';
+  const built = publicPayload(task, 10);
+  const record = signJws(built.payload);
+  const root = built.payload.leaf_hash;
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    seen.push(url.pathname);
+    if (url.pathname === `/receipt/${task}/public`) {
+      res.writeHead(200, { 'content-type': 'application/jose' });
+      res.end(record);
+      return;
+    }
+    if (url.pathname === `/v1/receipts/${task}/inclusion`) {
+      const host = `http://127.0.0.1:${server.address().port}`;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        ...inclusionFor(root),
+        head_url: `${host}/v1/receipts/tree/head`,
+      }));
+      return;
+    }
+    if (url.pathname === '/v1/receipts/tree/head') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(headFor(root)));
+      return;
+    }
+    if (url.pathname === `/receipt/${task}`) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        task_id: task,
+        issuer_signature: { jws: built.full, kid },
+      }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end('{"error":"not_found"}');
+  });
+  const port = await listen(server);
+  try {
+    const receiptUrl = `http://127.0.0.1:${port}/receipt/${task}`;
+    const result = await runAsync([receiptUrl, '--json']);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(result.json.reason, 'key untrusted');
+    assert.equal(result.json.scope, 'public');
+    assert.equal(result.json.verdict, 'FAILED');
+    assert.equal(result.json.exit_code, 1);
+    assert.doesNotMatch(result.stdout, /signature_invalid/);
+    assert.doesNotMatch(result.stdout, /"verdict": "VERIFIED"/);
+    assert.deepEqual(seen, [
+      `/receipt/${task}`,
+      `/receipt/${task}/public`,
+      `/v1/receipts/${task}/inclusion`,
+      '/v1/receipts/tree/head',
+    ]);
+    assert.equal(seen.some((pathName) => pathName.includes('chit402.com')), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('removed flags stay removed', () => {
+  const file = path.join(dir, 'record.jws');
+  fs.writeFileSync(file, signJws(publicPayload('xfuel-public-flags', 10).payload));
+  for (const flag of ['--jwks-file', '--inclusion', '--head', '--require-full', '--jws']) {
+    const result = run([file, '--json', flag, file]);
+    assert.equal(result.status, 1, flag);
+    assert.equal(result.json.reason, 'removed_flag');
+    assert.match(result.stdout, /removed in 0\.4/);
+  }
 });
 
 test('the receipt verifier does not call a public record VERIFIED', async () => {
@@ -416,6 +435,6 @@ test('the receipt verifier does not call a public record VERIFIED', async () => 
   const result = await verifyReceipt({
     task_id: 'xfuel-public-not-receipt',
     issuer_signature: { jws, kid },
-  }, { jwks, trustedKids: [], skipIssuerHistory: true, fetchIssuerHistory: false });
+  }, { trustedKids: pins, skipIssuerHistory: true, fetchIssuerHistory: false });
   assert.notEqual(result.overall, 'verified');
 });

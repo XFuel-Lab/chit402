@@ -1,9 +1,9 @@
 /**
  * Read path for a stored public record.
  * This file does not sign, does not import the signer, and does not insert.
- * PUBLIC_RECORD_SERVE defaults off, so a stored record is still a 404.
- * The 404 body is the same for an unknown id, a private id, and a stored
- * record while serving is off.
+ * Serving stays off until ROTATION_TRUST_SHIPPED is true. The env flag
+ * alone is still a 404. The 404 body is the same for an unknown id, a
+ * private id, and a stored record while serving is off.
  */
 import { getPublicRecordBytes, publicRecordServeEnabled } from './public-record-store.js';
 
@@ -15,6 +15,15 @@ function sendNotFound(res) {
   res.set('Content-Type', 'application/json; charset=utf-8');
   res.set('X-Content-Type-Options', 'nosniff');
   res.send(NOT_FOUND_BODY);
+}
+
+/** The bytes a backfill file would be served as, once the gate is open. */
+export function sendStoredPublicRecord(res, bytes) {
+  res.status(200);
+  res.set('Cache-Control', 'public, immutable');
+  res.set('Content-Type', 'application/jose');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.send(bytes);
 }
 
 export function handlePublicRecordGet(req, res) {
@@ -29,11 +38,7 @@ export function handlePublicRecordGet(req, res) {
     sendNotFound(res);
     return;
   }
-  res.status(200);
-  res.set('Cache-Control', 'public, immutable');
-  res.set('Content-Type', 'application/jose');
-  res.set('X-Content-Type-Options', 'nosniff');
-  res.send(bytes);
+  sendStoredPublicRecord(res, bytes);
 }
 
 export { NOT_FOUND_BODY };

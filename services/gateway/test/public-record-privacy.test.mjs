@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -29,12 +29,15 @@ const {
   signPublicRecordOnce,
 } = await import('../src/public-record.js');
 const {
+  configurePublicRecordDir,
   getPublicRecordBytes,
   publicRecordCount,
   publicRecordServeEnabled,
+  reloadPublicRecords,
   resetPublicRecords,
+  ROTATION_TRUST_SHIPPED,
 } = await import('../src/public-record-store.js');
-const { handlePublicRecordGet, NOT_FOUND_BODY } = await import('../src/public-record-http.js');
+const { handlePublicRecordGet, NOT_FOUND_BODY, sendStoredPublicRecord } = await import('../src/public-record-http.js');
 const { signJws } = await import('../src/issuer-key.js');
 
 const PAYEE = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
@@ -200,8 +203,9 @@ test('T4 two receipts from one payer, agent, and book do not share a private id'
   assert.equal(JSON.stringify(right).includes(AGENT), false);
 });
 
-test('T5 the stored record is byte-identical and absent from the shell card', async () => {
+test('T5 the stored record is byte-identical and serving stays off', async () => {
   resetPublicRecords();
+  assert.equal(ROTATION_TRUST_SHIPPED, false);
   assert.equal(publicRecordServeEnabled(), false);
   const receipt = receiptFor('xfuel-cache-1');
   const signed = signOne(receipt);
@@ -212,38 +216,41 @@ test('T5 the stored record is byte-identical and absent from the shell card', as
   assert.match(html, /property="og:title"/);
   assert.equal(html.includes('payment_tx') === false || html.includes('Payment tx'), true);
 
+  reloadPublicRecords();
+  const stored = getPublicRecordBytes('xfuel-cache-1');
+  assert.equal(stored.toString('utf8'), signed.bytes.toString('utf8'));
+
   const app = express();
   app.get('/receipt/:taskId/public', (req, res) => handlePublicRecordGet(req, res));
+  app.get('/stored/:taskId', (req, res) => sendStoredPublicRecord(res, stored));
   const server = app.listen(0);
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/receipt/xfuel-cache-1/public`;
   try {
     process.env.PUBLIC_RECORD_SERVE = 'true';
-    const jsonAccept = await fetch(url, { headers: { Accept: 'application/json' } });
-    const htmlAccept = await fetch(url, { headers: { Accept: 'text/html' } });
-    const bodyA = Buffer.from(await jsonAccept.arrayBuffer());
-    const bodyB = Buffer.from(await htmlAccept.arrayBuffer());
-    assert.equal(jsonAccept.status, 200);
-    assert.equal(htmlAccept.status, 200);
-    assert.equal(jsonAccept.headers.get('cache-control'), 'public, immutable');
-    assert.equal(Buffer.compare(bodyA, bodyB), 0);
-    assert.equal(Buffer.compare(bodyA, signed.bytes), 0);
-    assert.equal(bodyA.includes(Buffer.from('og:')), false);
-    assert.equal(bodyA.includes(Buffer.from('twitter:')), false);
+    assert.equal(publicRecordServeEnabled(), false);
+    const flagged = await fetch(url, { headers: { Accept: 'application/json' } });
+    const flaggedBody = Buffer.from(await flagged.arrayBuffer());
+    assert.equal(flagged.status, 404);
+    assert.equal(Buffer.compare(flaggedBody, NOT_FOUND_BODY), 0);
+    assert.equal(flagged.headers.get('cache-control'), 'private, no-store');
+
+    const served = await fetch(`http://127.0.0.1:${port}/stored/xfuel-cache-1`);
+    const servedBody = Buffer.from(await served.arrayBuffer());
+    assert.equal(served.status, 200);
+    assert.equal(served.headers.get('cache-control'), 'public, immutable');
+    assert.equal(served.headers.get('content-type'), 'application/jose');
+    assert.equal(Buffer.compare(servedBody, signed.bytes), 0);
 
     delete process.env.PUBLIC_RECORD_SERVE;
-    const hidden = await fetch(url, { headers: { Accept: 'application/json' } });
-    const unknown = await fetch(`http://127.0.0.1:${port}/receipt/xfuel-no-such/public`, {
-      headers: { Accept: 'text/html' },
-    });
+    const hidden = await fetch(url, { headers: { Accept: 'text/html' } });
+    const unknown = await fetch(`http://127.0.0.1:${port}/receipt/xfuel-no-such/public`);
     const hiddenBody = Buffer.from(await hidden.arrayBuffer());
     const unknownBody = Buffer.from(await unknown.arrayBuffer());
     assert.equal(hidden.status, 404);
     assert.equal(unknown.status, 404);
     assert.equal(Buffer.compare(hiddenBody, unknownBody), 0);
     assert.equal(Buffer.compare(hiddenBody, NOT_FOUND_BODY), 0);
-    assert.equal(hiddenBody.includes(Buffer.from('xfuel-cache-1')), false);
-    assert.equal(hidden.headers.get('cache-control'), 'private, no-store');
   } finally {
     delete process.env.PUBLIC_RECORD_SERVE;
     await new Promise((resolve) => server.close(resolve));
@@ -356,7 +363,8 @@ test('the sign script dry-run does not write a record', () => {
     log_id: 'epoch:2',
   }]));
   const script = fileURLToPath(new URL('../scripts/sign-public-records.mjs', import.meta.url));
-  const res = spawnSync(process.execPath, [script, '--receipts', file], {
+  const out = join(folder, 'out');
+  const res = spawnSync(process.execPath, [script, '--receipts', file, '--out', out], {
     encoding: 'utf8',
     env: { ...process.env, NODE_ENV: 'test', ALLOW_EPHEMERAL_ISSUER_KEY: 'true' },
   });
@@ -365,4 +373,84 @@ test('the sign script dry-run does not write a record', () => {
   assert.equal(summary.would_sign, 1);
   assert.equal(summary.apply, false);
   assert.equal(res.stdout.includes('ISSUER_PRIVATE_KEY'), false);
+  assert.equal(existsSync(join(out, 'xfuel-script.jws')), false);
+});
+
+test('a restart serves the first backfill bytes and ignores the quote', () => {
+  resetPublicRecords();
+  const receipt = receiptFor('xfuel-durable', { amount: '2000' });
+  receipt.payment = {
+    asset: 'QUOTE',
+    network: 'solana',
+    payee: '0xquotequotequotequotequotequotequotequote',
+    gross_amount: '1',
+    settled_amount: '1',
+  };
+  receipt.payment_meta = { network: 'solana' };
+  receipt.created_at = '1999-01-01T00:00:00.000Z';
+  const first = signOne(receipt);
+  const payload = payloadOf(first.bytes);
+  assert.equal(payload.asset, 'USDC');
+  assert.equal(payload.chain, 'base');
+  assert.equal(payload.pay_to, PAYEE);
+  assert.equal(payload.amount_gross, '2000');
+  assert.equal(payload.amount_settled, '2000');
+  assert.equal(payload.issued_at, '2026-10-14T11:07:00.000Z');
+  assert.equal(JSON.stringify(payload).includes('QUOTE'), false);
+  assert.equal(JSON.stringify(payload).includes('1999'), false);
+
+  reloadPublicRecords();
+  const again = signPublicRecordOnce(receipt, {
+    leafHash: 'ff'.repeat(32),
+    logId: 'epoch:9',
+    signedAt: new Date('2027-01-01T00:00:00.000Z'),
+  });
+  assert.equal(again.created, false);
+  assert.equal(again.bytes.toString('utf8'), first.bytes.toString('utf8'));
+
+  const folder = mkdtempSync(join(tmpdir(), 'public-backfill-'));
+  const file = join(folder, 'receipts.json');
+  const backfill = receiptFor('xfuel-backfill');
+  writeFileSync(file, JSON.stringify([{
+    receipt: backfill,
+    leaf_hash: leafHash(backfill.task_id, '55'.repeat(32)),
+    log_id: 'epoch:2',
+  }]));
+  const script = fileURLToPath(new URL('../scripts/sign-public-records.mjs', import.meta.url));
+  const out = join(folder, 'records');
+  const applied = spawnSync(process.execPath, [script, '--receipts', file, '--apply', '--out', out], {
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'test', ALLOW_EPHEMERAL_ISSUER_KEY: 'true' },
+  });
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.equal(JSON.parse(applied.stdout).signed, 1);
+  const disk = readFileSync(join(out, 'xfuel-backfill.jws'));
+  configurePublicRecordDir(out);
+  assert.equal(getPublicRecordBytes('xfuel-backfill').toString('utf8'), disk.toString('utf8'));
+  const second = spawnSync(process.execPath, [script, '--receipts', file, '--apply', '--out', out], {
+    encoding: 'utf8',
+    env: { ...process.env, NODE_ENV: 'test', ALLOW_EPHEMERAL_ISSUER_KEY: 'true' },
+  });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(JSON.parse(second.stdout).signed, 0);
+  assert.equal(readFileSync(join(out, 'xfuel-backfill.jws')).toString('utf8'), disk.toString('utf8'));
+});
+
+test('a missing signed payment is not filled from the quote', () => {
+  resetPublicRecords();
+  const claims = {
+    payload_version: 10,
+    task_id: 'xfuel-no-pay',
+    iss: 'chit402',
+    iat: Math.floor(Date.parse('2026-10-14T11:07:33.000Z') / 1000),
+  };
+  const { jws, kid } = signJws(claims);
+  const receipt = {
+    task_id: 'xfuel-no-pay',
+    created_at: '2026-10-14T11:07:33.000Z',
+    issuer_signature: { jws, kid },
+    payment: { asset: 'USDC', network: 'base', payee: PAYEE, gross_amount: '9', settled_amount: '9' },
+  };
+  assert.throws(() => signOne(receipt), (err) => err.code === 'public_record_payment_missing');
+  assert.equal(getPublicRecordBytes('xfuel-no-pay'), null);
 });

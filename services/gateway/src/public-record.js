@@ -103,33 +103,30 @@ function minuteIso(value) {
   return date.toISOString();
 }
 
-function paymentOf(claims, receipt) {
-  const signed = claims?.payment && typeof claims.payment === 'object' ? claims.payment : {};
-  const outer = receipt?.payment && typeof receipt.payment === 'object' ? receipt.payment : {};
-  return { ...outer, ...signed };
+/** Signed payment object, or null. The outer quote is not a payment. */
+function signedPayment(claims) {
+  const payment = claims?.payment;
+  if (!payment || typeof payment !== 'object' || Array.isArray(payment)) return null;
+  return payment;
 }
 
-function chainOf(receipt, claims) {
-  const payment = paymentOf(claims, receipt);
-  const network = payment.network || receipt?.payment_meta?.network || null;
-  if (network) return String(network);
-  const ref = String(payment.ref || '');
-  const prefix = ref.split(':')[0];
-  if (prefix === 'base' || prefix === 'solana') return prefix;
-  return null;
+function signedText(value) {
+  if (value == null || value === '') return null;
+  return String(value);
 }
 
 export function receiptIdOf(receipt) {
   const claims = decodeJwsPayload(receipt?.issuer_signature?.jws) || {};
-  return receipt?.task_id || claims.task_id || receipt?.receipt_id || null;
+  const signed = typeof claims.task_id === 'string' && claims.task_id ? claims.task_id : null;
+  const outer = receipt?.task_id || receipt?.receipt_id || null;
+  if (signed && outer && signed !== outer) return null;
+  return signed;
 }
 
 export function receiptVersionOf(receipt) {
   const claims = decodeJwsPayload(receipt?.issuer_signature?.jws) || {};
   if (isJsonInteger(claims.v)) return claims.v;
   if (isJsonInteger(claims.payload_version)) return claims.payload_version;
-  const outer = receipt?.issuer_signature?.payload_version;
-  if (isJsonInteger(outer)) return outer;
   return null;
 }
 
@@ -187,23 +184,33 @@ export function buildPublicRecordPayload(receipt, {
     throw err;
   }
   const claims = decodeJwsPayload(jws) || {};
-  const payment = paymentOf(claims, receipt);
-  const gross = payment.gross_amount ?? null;
-  const settled = payment.settled_amount ?? null;
+  const payment = signedPayment(claims);
+  if (!payment) {
+    const err = new Error('public_record_payment_missing');
+    err.code = 'public_record_payment_missing';
+    throw err;
+  }
+  const outerId = receipt?.task_id || receipt?.receipt_id || null;
+  const signedId = typeof claims.task_id === 'string' && claims.task_id ? claims.task_id : null;
+  if (!signedId || (outerId && outerId !== signedId)) {
+    const err = new Error('public_record_id_mismatch');
+    err.code = 'public_record_id_mismatch';
+    throw err;
+  }
   const leaf = leafHash == null || leafHash === '' ? null : String(leafHash);
   const payload = {
     schema: PUBLIC_RECORD_SCHEMA,
-    receipt_id: receiptIdOf(receipt),
+    receipt_id: signedId,
     payload_version: receiptVersionOf(receipt),
     full_receipt_sha256: fullReceiptSha256(jws),
     leaf_hash: leaf,
     log_id: leaf ? (logId == null ? null : String(logId)) : null,
-    asset: payment.asset || receipt?.payment?.asset || 'USDC',
-    chain: chainOf(receipt, claims),
-    pay_to: payment.payee ?? receipt?.payment?.payee ?? null,
-    amount_gross: gross == null ? null : String(gross),
-    amount_settled: settled == null ? null : String(settled),
-    issued_at: minuteIso(claims.iat ?? receipt?.created_at ?? receipt?.issued_at ?? null),
+    asset: signedText(payment.asset),
+    chain: signedText(payment.network),
+    pay_to: signedText(payment.payee),
+    amount_gross: signedText(payment.gross_amount),
+    amount_settled: signedText(payment.settled_amount),
+    issued_at: minuteIso(claims.iat ?? null),
     public_signed_at: new Date(signedAt).toISOString(),
     kid: getIssuerKid(),
   };

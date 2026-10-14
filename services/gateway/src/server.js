@@ -2968,7 +2968,7 @@ export function createApp() {
   }
 
   // GET /receipt/:taskId/public — stored chit402.public.v1 bytes.
-  // Serving is off unless PUBLIC_RECORD_SERVE=true. This handler does not sign.
+  // The handler does not sign. Serving stays off until ROTATION_TRUST_SHIPPED.
   app.get('/receipt/:taskId/public', rateLimit, (req, res) => {
     handlePublicRecordGet(req, res);
   });

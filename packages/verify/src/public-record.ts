@@ -3,7 +3,12 @@
  *
  * PUBLIC_VERIFIED is not VERIFIED. The payer, the agent, the book, and the
  * content are not in the record. payment_tx is not in the record, so the
- * payment check is "not_checked" and a green result still says so.
+ * payment check is not_checked and a green result still says so.
+ *
+ * Trust is the pinned kid plus a history document that verifies under that
+ * pin. A caller-supplied JWKS is not a trust root. A kid outside that set
+ * is `key untrusted`, including when no key material is available to check
+ * the signature bytes.
  *
  * v10 and v11 bind leaf_hash by the issuer signature (issuer_asserted).
  * The leaf is accepted only when that hash sits under a head whose issuer
@@ -12,9 +17,11 @@
  */
 import { createHash } from 'node:crypto';
 import { verifyMerkleInclusion } from './anchor-witness.js';
+import { verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
   DEFAULT_TRUSTED_ISSUER_KIDS,
-  isPinnedTrustedJwk,
+  isEs256PublicJwk,
+  jwkThumbprint,
   verifyIssuerJws,
   type Es256Jwk,
 } from './jws.js';
@@ -95,13 +102,10 @@ export interface PublicRecordResult {
   headline: string | null;
 }
 
-interface JwksLike {
-  keys?: Es256Jwk[];
-}
-
 export interface VerifyPublicRecordInput {
-  jwks?: JwksLike | null;
+  /** Pin. The CLI passes the production pin and nothing else. */
   trustedKids?: readonly string[] | null;
+  /** Used only after verifyIssuerHistoryDocument accepts it under the pin. */
   history?: IssuerHistoryDocument | null;
   inclusion?: Record<string, unknown> | null;
   head?: Record<string, unknown> | null;
@@ -229,31 +233,12 @@ function payloadKeysRejected(payload: Record<string, unknown>): string | null {
   return null;
 }
 
-function candidateKeys(
-  kid: string,
-  jwks: JwksLike | null | undefined,
-  history: IssuerHistoryDocument | null | undefined,
-): Es256Jwk[] {
-  const found: Es256Jwk[] = [];
-  for (const key of jwks?.keys || []) {
-    if (!kid || key.kid === kid) found.push(key);
+function historyKey(doc: IssuerHistoryDocument, kid: string): Es256Jwk | null {
+  for (const entry of doc.entries || []) {
+    if (!entry?.jwk || !isEs256PublicJwk(entry.jwk)) continue;
+    if (entry.kid === kid || jwkThumbprint(entry.jwk) === kid) return entry.jwk;
   }
-  const entry = (history?.entries || []).find((row) => row.kid === kid);
-  if (entry?.jwk) found.push(entry.jwk);
-  return found;
-}
-
-function keyIsTrusted(
-  jwk: Es256Jwk,
-  kid: string,
-  jwks: JwksLike | null | undefined,
-  trustedKids: readonly string[],
-  historyTrusted: boolean,
-): boolean {
-  const inJwks = (jwks?.keys || []).some((key) => key.kid === kid && key.x === jwk.x && key.y === jwk.y);
-  if (inJwks) return true;
-  if (historyTrusted) return true;
-  return isPinnedTrustedJwk(jwk, trustedKids);
+  return null;
 }
 
 interface HeadOk {
@@ -264,36 +249,20 @@ interface HeadOk {
 
 function verifySignedHead(
   head: Record<string, unknown> | null | undefined,
-  trust: { jwks?: JwksLike | null; trustedKids: readonly string[]; history?: IssuerHistoryDocument | null },
+  trust: { trustedKids: readonly string[]; history: IssuerHistoryDocument | null },
 ): HeadOk | { ok: false } {
-  const sig = head?.issuer_signature;
-  const jws = sig && typeof sig === 'object' ? (sig as { jws?: unknown }).jws : null;
-  if (!head || typeof jws !== 'string' || jws.split('.').length !== 3) return { ok: false };
-  const header = readCompactHeader(jws);
-  if (!header || header.alg !== 'ES256' || typeof header.kid !== 'string') return { ok: false };
-  const historyTrusted = !!trust.history && verifyIssuerHistoryDocument(trust.history, {
-    jwks: trust.jwks?.keys ? { keys: trust.jwks.keys } : undefined,
+  if (!head) return { ok: false };
+  const trusted = verifyTreeHeadTrust(head as TreeHeadDocument, {
     trustedKids: trust.trustedKids,
-  }).valid;
-  const keys = candidateKeys(header.kid, trust.jwks, trust.history);
-  let payload: Record<string, unknown> | null = null;
-  for (const jwk of keys) {
-    if (!keyIsTrusted(jwk, header.kid, trust.jwks, trust.trustedKids, historyTrusted)) continue;
-    const verified = verifyIssuerJws(jws, jwk);
-    if (verified.valid && verified.payload) {
-      payload = verified.payload;
-      break;
-    }
-  }
-  if (!payload) return { ok: false };
-  const signedRoot = typeof payload.root === 'string' ? payload.root.replace(/^0x/, '').toLowerCase() : '';
-  if (!/^[0-9a-f]{64}$/.test(signedRoot)) return { ok: false };
-  if (!isJsonInteger(payload.tree_size) || payload.tree_size < 1) return { ok: false };
-  const outerRoot = typeof head.root === 'string' ? head.root.replace(/^0x/, '').toLowerCase() : signedRoot;
-  const outerSize = head.tree_size == null ? payload.tree_size : head.tree_size;
-  if (outerRoot !== signedRoot) return { ok: false };
-  if (!isJsonInteger(outerSize) || outerSize !== payload.tree_size) return { ok: false };
-  return { ok: true, root: signedRoot, treeSize: payload.tree_size };
+    issuerHistory: trust.history,
+  });
+  if (!trusted.ok || !trusted.payload) return { ok: false };
+  const root = typeof trusted.payload.root === 'string'
+    ? trusted.payload.root.replace(/^0x/, '').toLowerCase()
+    : '';
+  if (!/^[0-9a-f]{64}$/.test(root)) return { ok: false };
+  if (!isJsonInteger(trusted.payload.tree_size) || trusted.payload.tree_size < 1) return { ok: false };
+  return { ok: true, root, treeSize: trusted.payload.tree_size };
 }
 
 function inclusionAgrees(
@@ -324,6 +293,8 @@ function inclusionAgrees(
 /**
  * Verify one public record. The text is the compact JWS, or a JSON envelope
  * whose `jws` is that compact serialization. The envelope is not the record.
+ * Inclusion and head are the bodies fetched from the receipt URL. They are
+ * not a second trust input.
  */
 export function verifyPublicRecord(text: string, input: VerifyPublicRecordInput = {}): PublicRecordResult {
   const checks = baseChecks();
@@ -356,38 +327,37 @@ export function verifyPublicRecord(text: string, input: VerifyPublicRecordInput 
   }
 
   const trustedKids = input.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
-  let historyTrusted = false;
+  let history: IssuerHistoryDocument | null = null;
   if (input.history) {
-    const historyOk = verifyIssuerHistoryDocument(input.history, {
-      jwks: input.jwks?.keys ? { keys: input.jwks.keys } : undefined,
-      trustedKids,
-    });
+    const historyOk = verifyIssuerHistoryDocument(input.history, { trustedKids });
     if (!historyOk.valid) {
       checks.key = 'untrusted';
-      return failed(1, historyOk.reason || 'issuer_history_invalid', checks);
+      const reason = historyOk.reason === 'signature_invalid' ? 'key untrusted' : (historyOk.reason || 'key untrusted');
+      return failed(1, reason, checks);
     }
-    const window = issuerKeyWindow(input.history, kid, payload.public_signed_at);
-    if (!window.ok) {
-      checks.key = 'untrusted';
-      return failed(1, window.reason || 'kid_window', checks);
-    }
-    historyTrusted = true;
+    history = input.history;
   }
 
-  const keys = candidateKeys(kid, input.jwks, input.history);
-  let signatureOk = false;
-  let trusted = false;
-  for (const jwk of keys) {
-    const verified = verifyIssuerJws(jws, jwk);
-    if (!verified.valid) continue;
-    signatureOk = true;
-    if (keyIsTrusted(jwk, kid, input.jwks, trustedKids, historyTrusted)) trusted = true;
-    if (trusted) break;
+  const jwk = history ? historyKey(history, kid) : null;
+  if (!jwk) {
+    checks.key = 'untrusted';
+    checks.signature = 'not_checked';
+    return failed(1, 'key untrusted', checks);
   }
-  checks.signature = signatureOk ? 'ok' : 'failed';
-  checks.key = trusted ? 'ok' : 'untrusted';
-  if (!signatureOk) return failed(1, 'signature_invalid', checks);
-  if (!trusted) return failed(1, 'key untrusted', checks);
+  const window = issuerKeyWindow(history as IssuerHistoryDocument, kid, payload.public_signed_at);
+  if (!window.ok) {
+    checks.key = 'untrusted';
+    return failed(1, window.reason || 'key untrusted', checks);
+  }
+
+  const verified = verifyIssuerJws(jws, jwk);
+  if (!verified.valid) {
+    checks.signature = 'failed';
+    checks.key = 'ok';
+    return failed(1, verified.reason === 'key untrusted' ? 'key untrusted' : 'signature_invalid', checks);
+  }
+  checks.signature = 'ok';
+  checks.key = 'ok';
 
   if (input.fullJws != null) {
     const got = sha256Hex(input.fullJws);
@@ -406,11 +376,7 @@ export function verifyPublicRecord(text: string, input: VerifyPublicRecordInput 
     return failed(1, 'inclusion_mismatch', checks);
   }
 
-  const head = verifySignedHead(input.head, {
-    jwks: input.jwks,
-    trustedKids,
-    history: input.history,
-  });
+  const head = verifySignedHead(input.head, { trustedKids, history });
   if (!head.ok) return failed(2, 'head_unavailable', checks);
 
   if (!inclusionAgrees(leaf, input.inclusion, head)) {
@@ -419,26 +385,57 @@ export function verifyPublicRecord(text: string, input: VerifyPublicRecordInput 
   }
   checks.inclusion = 'ok';
 
-  const leafBinding = 'issuer_asserted' as const;
   return {
     exitCode: 0,
     verdict: 'PUBLIC_VERIFIED',
     reason: null,
     scope: 'public',
-    leaf_binding: leafBinding,
+    leaf_binding: 'issuer_asserted',
     checks,
     not_checked: PUBLIC_NOT_CHECKED,
     headline: PUBLIC_VERIFIED_HEADLINE,
   };
 }
 
-export function publicRecordJson(result: PublicRecordResult): Record<string, unknown> {
+function checkState(value: PublicRecordChecks['signature'] | PublicRecordChecks['key'] | PublicRecordChecks['inclusion']): 'pass' | 'fail' | 'could_not_check' {
+  if (value === 'ok') return 'pass';
+  if (value === 'not_checked') return 'could_not_check';
+  return 'fail';
+}
+
+/** 0.4.0 verdict object plus the public-copy fields. Payment stays not_checked and does not demote exit 0. */
+export function publicRecordJson(result: PublicRecordResult, version = '0.4.0'): Record<string, unknown> {
+  const exit = result.exitCode === 0 ? 0 : result.exitCode === 2 ? 2 : result.exitCode === 3 ? 1 : 1;
+  const outcome = result.exitCode === 0 ? 'verified' : result.exitCode === 2 ? 'could_not_check' : 'invalid';
+  const inclusion = checkState(result.checks.inclusion);
   return {
-    verdict: result.verdict,
-    scope: result.scope,
-    leaf_binding: result.leaf_binding,
+    result: outcome,
+    exit_code: exit,
     reason: result.reason,
-    checks: result.checks,
+    message: result.headline || result.reason,
+    next_step: null,
+    scope: 'public',
+    verdict: result.verdict,
+    leaf_binding: result.leaf_binding,
     not_checked: result.not_checked,
+    checks: {
+      signature: checkState(result.checks.signature),
+      key_window: checkState(result.checks.key),
+      payment_binding: 'could_not_check',
+      log_inclusion: inclusion,
+      anchor: result.exitCode === 0 ? 'pass' : result.exitCode === 2 ? 'could_not_check' : inclusion,
+      shape: result.reason === 'unsupported_version' || result.reason === 'public_field_rejected' ? 'fail' : 'pass',
+      key: result.checks.key,
+      inclusion: result.checks.inclusion,
+      payment: 'not_checked',
+    },
+    history: {
+      source: null,
+      head_hash: null,
+      entry_count: null,
+      as_of: null,
+    },
+    log: null,
+    verifier: { name: 'chit402-verify', version },
   };
 }

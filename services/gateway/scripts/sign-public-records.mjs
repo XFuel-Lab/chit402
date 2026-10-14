@@ -1,27 +1,30 @@
 /**
  * Background job: sign one chit402.public.v1 record per receipt.
  *
- * Dry-run is the default. --apply writes the compact JWS bytes.
- * A receipt that already has a record is left untouched.
- * Refusals are skipped. This script does not serve records and does not
- * rewrite receipt, leaf, head, or anchor bytes.
+ * Dry-run is the default. --apply writes the compact JWS bytes into the
+ * durable directory. The first file for an id wins. A later run does not
+ * re-sign it. Refusals are skipped. This script does not serve records
+ * and does not rewrite receipt, leaf, head, or anchor bytes.
  *
  *   node scripts/sign-public-records.mjs --receipts receipts.json
  *   node scripts/sign-public-records.mjs --receipts receipts.json --apply --out ./public-records
  *
  * Each input row is a receipt, or { receipt, leaf_hash, log_id }.
- * PUBLIC_RECORD_SERVE stays off until an operator turns it on.
+ * --out is the store the gateway reads (PUBLIC_RECORD_DIR). Serving stays
+ * off until ROTATION_TRUST_SHIPPED is true.
  * Do not print issuer key material.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const {
   isRefusalReceipt,
   receiptIdOf,
   signMissingPublicRecords,
 } = await import('../src/public-record.js');
-const { getPublicRecordBytes, resetPublicRecords } = await import('../src/public-record-store.js');
+const {
+  configurePublicRecordDir,
+  getPublicRecordBytes,
+} = await import('../src/public-record-store.js');
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -38,9 +41,11 @@ if (!receiptsPath) {
   process.exit(3);
 }
 
+if (outDir) configurePublicRecordDir(outDir);
+else if (process.env.PUBLIC_RECORD_DIR) configurePublicRecordDir(process.env.PUBLIC_RECORD_DIR);
+
 const parsed = JSON.parse(readFileSync(receiptsPath, 'utf8'));
 const rows = Array.isArray(parsed) ? parsed : [];
-resetPublicRecords();
 
 let refusals = 0;
 const items = [];
@@ -67,12 +72,4 @@ if (!apply) {
 }
 
 const signed = signMissingPublicRecords(items);
-if (outDir) {
-  mkdirSync(outDir, { recursive: true });
-  for (const id of signed) {
-    const bytes = getPublicRecordBytes(id);
-    if (!bytes) continue;
-    writeFileSync(join(outDir, `${id}.jws`), bytes);
-  }
-}
 console.log(JSON.stringify({ signed: signed.length, refusals, apply: true }));
