@@ -40,6 +40,19 @@ CDP_API_KEY_SECRET=...
 If `X402_FACILITATOR_URL` is unset and `X402_NETWORK=base`, the gateway defaults to  
 `https://api.cdp.coinbase.com/platform/v2/x402` and authenticates with a per-request EdDSA JWT. Full checklist: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
+## Challenge store
+
+Spent nonces live in one JSON file. Outside `NODE_ENV=test` and `NODE_ENV=development` the default path is `data/x402-challenges.json`. `X402_CHALLENGE_STORE` overrides it. Boot does not create the file. A missing file refuses x402, so a volume that disappeared cannot look like a fresh spent-set.
+
+On a new host, create the empty store once before the first start:
+
+```bash
+mkdir -p data
+printf '%s\n' '{"map":[],"spent":[],"authSpent":[],"txSpent":[],"txFacts":[],"pending":[]}' > data/x402-challenges.json
+```
+
+Create that file only on a host that has never settled. Do not write a new one over a path whose store was lost.
+
 ## Solana mainnet (PayAI facilitator, optional)
 
 ```
