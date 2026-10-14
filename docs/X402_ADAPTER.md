@@ -42,9 +42,9 @@ If `X402_FACILITATOR_URL` is unset and `X402_NETWORK=base`, the gateway defaults
 
 ## Challenge store
 
-Spent nonces live in one JSON file. Outside `NODE_ENV=test` and `NODE_ENV=development` the default path is `data/x402-challenges.json`. `X402_CHALLENGE_STORE` overrides it. Boot does not create the file. A missing file refuses x402, so a volume that disappeared cannot look like a fresh spent-set.
+Spent nonces live in one JSON file. This file is opened only when x402 is enabled (`X402_ENABLED=true`). Outside `NODE_ENV=test` and `NODE_ENV=development` the default path is `data/x402-challenges.json`, relative to the gateway process working directory (`services/gateway` when you start it from there). `X402_CHALLENGE_STORE` overrides it and is also resolved from that working directory. Boot does not create the file. A missing file refuses x402, so a volume that disappeared cannot look like a fresh spent-set.
 
-On a new host, create the empty store once before the first start:
+On a new host with x402 enabled, create the empty store once before the first start, from that same working directory:
 
 ```bash
 mkdir -p data
