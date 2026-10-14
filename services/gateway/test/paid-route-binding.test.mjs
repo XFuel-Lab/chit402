@@ -298,6 +298,7 @@ test('NEW-3 a challenge settles only its route, its quoted price, and its payee'
     });
     assert.equal(unlockedDecision.code, 'challenge_mismatch');
 
+    // aboveQuote already spent the default facilitator transfer and auth nonce.
     const paidNonce = `0x${'ee'.repeat(32)}`;
     const paidTx = `0x${'cd'.repeat(32)}`;
     const paidFac = await listenFacilitator({ tx: paidTx });
