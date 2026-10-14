@@ -1,13 +1,15 @@
-# @xfuel/verify
+# chit402-verify
 
 Offline verification for Chit402 receipts — verify payment binding and output commitment without calling the API.
 
-npm: `@xfuel/verify` · License: Apache-2.0 · Docs: https://chit402.com
+npm: `chit402-verify` · License: Apache-2.0 · Docs: https://chit402.com
+
+`@xfuel/verify` 0.4.0 is an alias pinned to exactly this version. The `xfuel-verify` command stays.
 
 ## Installation
 
 ```bash
-npm install @xfuel/verify
+npm install chit402-verify
 ```
 
 ## Usage
@@ -32,7 +34,7 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 
 ```bash
 # History is always checked. With no file, a live snapshot must prefix-extend
-# the copy shipped in this package, or that copy is used (as of 2026-09-04).
+# the copy shipped in this package, or that copy is used (as of 2026-10).
 npx xfuel-verify receipt.json
 
 # Offline history. --no-issuer-history, --strict, --accept-no-key-window,

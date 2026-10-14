@@ -43,7 +43,7 @@ export interface VerifyVerdict {
   };
   log: VerdictLog | null;
   verifier: {
-    name: '@xfuel/verify';
+    name: 'chit402-verify';
     version: string;
   };
 }
@@ -69,6 +69,7 @@ const WINDOW_FAIL = new Set([
   'head_hash_mismatch',
   'introduced_key_signature',
   'inherited_key_window',
+  'issuer_history_not_extension',
 ]);
 
 export function verdictCopy(reason: string | null, result: VerdictResult): { message: string; next_step: string | null } {
@@ -115,9 +116,20 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: null,
     };
   }
-  if (reason === 'version_mismatch' || reason === 'payload_version_mismatch' || reason === 'id_mismatch') {
+  if (
+    reason === 'version_mismatch'
+    || reason === 'payload_version_mismatch'
+    || reason === 'id_mismatch'
+    || reason === 'id_prefix_version_mismatch'
+  ) {
     return {
       message: 'The receipt id or version does not match the signature.',
+      next_step: null,
+    };
+  }
+  if (reason === 'intent_on_legacy_version') {
+    return {
+      message: 'A signed intent is not a payment on this receipt version.',
       next_step: null,
     };
   }
@@ -161,7 +173,7 @@ export interface VerdictInput {
   payerChecked?: boolean;
   payerValid?: boolean;
   errors?: string[];
-  /** `unclaimed` is pass: this run had no log to fetch and no proof file. */
+  /** `unclaimed` is could_not_check: 0.4 never passes a log or anchor it did not fetch. */
   logInclusion?: CheckState | 'unclaimed';
   anchor?: CheckState | 'unclaimed';
   logReason?: string | null;
@@ -169,7 +181,7 @@ export interface VerdictInput {
 }
 
 function claimed(state: CheckState | 'unclaimed' | undefined): CheckState {
-  if (!state || state === 'unclaimed') return 'pass';
+  if (!state || state === 'unclaimed') return 'could_not_check';
   return state;
 }
 
@@ -178,9 +190,12 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   const unsupported = errors.includes('unsupported_version');
   const versionMismatch = errors.includes('version_mismatch') || errors.includes('payload_version_mismatch');
   const idMismatch = errors.includes('id_mismatch') || errors.includes('task_id_mismatch') || errors.includes('receipt_id_mismatch');
+  const idPrefix = errors.includes('id_prefix_version_mismatch');
+  const intentLegacy = errors.includes('intent_on_legacy_version');
 
   let shape: CheckState = 'pass';
-  if (unsupported) shape = 'could_not_check';
+  if (idPrefix || intentLegacy) shape = 'fail';
+  else if (unsupported) shape = 'could_not_check';
   else if (versionMismatch || idMismatch) shape = 'fail';
 
   let signature: CheckState = 'could_not_check';
@@ -246,7 +261,7 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
       as_of: input.historyAsOf ?? null,
     },
     log: input.log ?? null,
-    verifier: { name: '@xfuel/verify', version: input.version },
+    verifier: { name: 'chit402-verify', version: input.version },
   };
 }
 
@@ -258,6 +273,8 @@ function failReason(
   payment: CheckState,
 ): string {
   if (failed.includes('shape')) {
+    if (errors.includes('id_prefix_version_mismatch')) return 'id_prefix_version_mismatch';
+    if (errors.includes('intent_on_legacy_version')) return 'intent_on_legacy_version';
     if (errors.includes('version_mismatch') || errors.includes('payload_version_mismatch')) return 'version_mismatch';
     return 'id_mismatch';
   }
@@ -280,17 +297,28 @@ function uncheckedReason(
 ): string {
   if (unchecked.includes('shape') || errors.includes('unsupported_version')) return 'unsupported_version';
   if (unchecked.includes('key_window')) return historyReason || 'kid_not_in_history';
-  if (unchecked.includes('log_inclusion') || unchecked.includes('anchor')) return logReason || 'log_unreachable';
   if (unchecked.includes('signature')) return 'signature_unchecked';
+  if (unchecked.includes('log_inclusion') || unchecked.includes('anchor')) return logReason || 'log_unreachable';
   return 'could_not_check';
 }
 
 export function overallLine(verdict: VerifyVerdict, legacyOverall?: string | null): string {
-  if (legacyOverall === 'verified_carried_forward' && verdict.result === 'verified') return 'VERIFIED_CARRIED_FORWARD';
   if (verdict.result === 'verified') return 'VERIFIED';
   if (verdict.reason === 'not_in_log') return 'NOT_IN_LOG';
   if (verdict.result === 'invalid') return 'INVALID';
   if (legacyOverall === 'pending' || verdict.reason === 'pending' || verdict.reason === 'pending_anchor') return 'PENDING';
   if (legacyOverall === 'partial') return 'PARTIAL';
   return 'COULD_NOT_CHECK';
+}
+
+/** Human lines. Exit 2 always includes the exact `NOT found invalid` line. */
+export function humanVerdictLines(verdict: VerifyVerdict): string[] {
+  const lines = [overallLine(verdict), verdict.message];
+  if (verdict.exit_code === 2) lines.push('NOT found invalid');
+  if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdict.reason}`);
+  if (verdict.history.source === 'bundled' && verdict.history.as_of) {
+    lines.push(`Issuer history: as of ${verdict.history.as_of}`);
+  }
+  if (verdict.next_step) lines.push(verdict.next_step);
+  return lines;
 }

@@ -13,7 +13,6 @@
  *   0 = VERIFIED (every check passed)
  *   1 = INVALID
  *   2 = COULD_NOT_CHECK
- *   3 = input error
  */
 
 import { createRequire } from 'node:module';
@@ -57,7 +56,9 @@ import {
   type IssuerHistoryDocument,
   type ResolvedIssuerHistory,
 } from './issuer-history.js';
-import { buildVerifyVerdict, overallLine, type CheckState, type VerifyVerdict } from './verdict.js';
+import { BASE_RPC_URL } from './base-payer.js';
+import { SOLANA_RPC_URL } from './solana-payer.js';
+import { buildVerifyVerdict, humanVerdictLines, overallLine, type CheckState, type VerifyVerdict } from './verdict.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 import { readOpenFile } from './v11-receipt.js';
 import {
@@ -70,182 +71,26 @@ import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
 
 const HELP = `
-xfuel-verify — Offline verification for Chit402 receipts
+chit402-verify — verify a Chit402 receipt
 
 Usage:
-  xfuel-verify <receipt.json>           Verify binding locally
-  xfuel-verify <refusal.json>           Verify a chit402.refusal.v1 document
-                                        (issuer refused; not a payment)
-  xfuel-verify <receipt.json> --jwks-file <jwks.json>
-                                        Verify issuer signature with a JWKS file
-  xfuel-verify <receipt.json> --fetch-jwks
-                                        Fetch JWKS from an allowlisted issuer jwks_uri
-  xfuel-verify <receipt.json> --check-payer
-                                        Confirm payer, payee, asset, and amount on-chain
-  xfuel-verify - < receipt.json         Read from stdin
-  xfuel-verify --help                   Show this help
-
-Options:
-  --jwks-file <path>  JWKS file. Keys are trusted and matched by kid (no network)
-  --jwks-url <url>    Fetch this https JWKS and trust it (explicit; any host)
-  --fetch-jwks        Fetch receipt verification.jwks_uri when the host is allowlisted
-                      (default allowlist: api.chit402.com)
-  --trusted-kid <kid> Replace the default offline pin with this RFC 7638 kid
-                      (repeatable). Default pin: ${DEFAULT_TRUSTED_ISSUER_KIDS[0]}
-  --no-trusted-kid    Do not use the default offline pin (JWKS only)
-  --check-nullifier   Query Base RPC for nullifier anchor (requires network)
-  --check-payer       Query Base or Solana RPC. Base confirms payer, payee, asset, amount
-  --solana-rpc <url>  Solana RPC URL (default: https://api.mainnet-beta.solana.com or SOLANA_RPC_URL)
-  --rpc <url>         Base RPC URL (default: https://mainnet.base.org)
-  --version           Print @xfuel/verify version and exit
-  --rpc               With a receipt, an inclusion proof, and a tree head: check the
-                      leaf, then the Solana memo and the Base calldata for that root.
-                      The tree head must carry a valid ES256 issuer signature, and
-                      the anchor wallets must match the signed head.
-                      A v2 head also needs the signed epoch record.
-                      A tree-head file with --rpc enters this mode.
-                      The same files without --rpc check the head signature and the
-                      index/size-bound inclusion offline. They do not call chain RPC.
-  --epoch-record <f>  Signed epoch record JSON. Skips the network fetch.
-  --epoch-url <url>   GET this epoch record. Default: the receipt verify_url
-                      origin plus /v1/receipts/tree/epoch
-  --inclusion <file>  Inclusion proof JSON (chit402.inclusion.v1)
-  --head <file>       Signed tree head JSON (chit402.tree_head.v1 or v2)
-  --anchor-wallets-file <path>
-                      Signed chit402.anchor_wallets.v1 document. Wallets in a
-                      verified document are added to the package pin. A head
-                      that names any other wallet fails.
-  --carry-old-head <file>
-  --carry-old-inclusion <file>
-  --carry-head <file>
-  --carry-inclusion <file>
-                      Earlier signed head, its inclusion proof, the current
-                      signed head, and the current inclusion proof. Repeat
-                      --carry-inclusion for each current index of the leaf.
-                      The issued time and epoch are the earlier head's signed
-                      claims. The logged time, epoch, and leaf index are the
-                      current head's signed claims. A receipt in the current
-                      epoch does not use these flags.
-  --json              Output the 0.4.0 verdict JSON
-  --quiet             Only output errors
-  --issuer-history <path>
-                      Read this issuer-history snapshot instead of fetching.
-                      The history check is always on.
-  --canonical-preimage <path>
-                      SHA-256 this file and match the signed payload_hash
-  --no-preimage       Do not require published hash preimages
+  chit402-verify <id|url|receipt.json>
+  chit402-verify - < receipt.json
+  chit402-verify <receipt.json> --issuer-history <history.json>
+  chit402-verify <receipt.json> --json
 
 Exit codes:
-  0 = VERIFIED. Every check passed.
-  1 = INVALID. Tamper, a bad signature, a revoked or out-of-window key,
-      kid_status_regression, a payment mismatch, NOT_IN_LOG, or an id or
-      version mismatch.
-  2 = COULD_NOT_CHECK. No history covers the key, the log or anchor could
-      not be fetched, or the receipt version needs a newer verifier.
-  3 = input error
+  0  VERIFIED           every check passed
+  1  INVALID            tamper, bad signature, revoked key, NOT_IN_LOG
+  2  COULD_NOT_CHECK    log or anchor was not checked
 
-Removed in 0.4.0 (each exits 1):
-  --strict, --no-issuer-history, --accept-no-key-window, --accept-shell
+Flags:
+  --issuer-history <file>   History that prefix-extends the bundled snapshot
+  --json                    Print the verdict JSON
+  --help
+  --version
 
-Trust:
-  A signature counts only when the verifying key is trusted. Trust is a JWKS
-  entry matched by kid (file, --jwks-url, or --fetch-jwks), or an embedded
-  issuer_jwk whose RFC 7638 thumbprint equals a pinned trusted kid. The
-  embedded key alone is not a trust root. Untrusted keys report "key untrusted".
-
-  Amount, payer, payee, and tx are read from verified signed claims. Every
-  signed field is compared with the outer receipt at the same path. A mismatch
-  fails. Outer fields the signature does not cover are printed as UNVERIFIED.
-  The outer document schema is not a copy of the JWS schema. Log mode (a
-  receipt, an inclusion proof, and a tree head) runs these receipt checks too.
-
-Network behavior:
-  Issuer history is checked for every supported receipt. The source is
-  --issuer-history, else a live snapshot that prefix-extends the copy
-  shipped in this package, else that shipped copy (reported as of its date).
-  A file that does not verify is INVALID and is not replaced by the shipped
-  copy. Log inclusion and the anchor are fetched fresh. They are not read
-  from a snapshot in this package.
-  JWKS and nullifiers are not fetched unless you pass a flag.
-  Other network uses:
-  - --fetch-jwks or --jwks-url
-  - --check-nullifier (Base RPC)
-  - --check-payer (Base or Solana RPC)
-  - --rpc with a receipt, an inclusion proof, and a tree head
-  - a v2 head, which fetches GET /v1/receipts/tree/epoch unless --epoch-record
-
-  Solana payer verify uses SOLANA_RPC_URL when set, else the public mainnet RPC.
-
-Anchored root:
-  xfuel-verify receipt.json inclusion.json head.json --rpc
-  xfuel-verify receipt.json --inclusion inclusion.json --head head.json --rpc https://mainnet.base.org
-
-  Also runs the single-receipt checks (issuer signature and signed-versus-outer
-  comparison). Those must pass before Overall can be VERIFIED. Then it checks
-  the tree head's ES256 issuer signature (production pin, issuer
-  history, or JWKS, same rules as a receipt). The signed root, size, epoch,
-  and anchors must match the head. Then it checks Merkle inclusion, requires
-  the Solana memo and fee payer, and requires the Base calldata and sender.
-  The sender and fee payer must be on the issuer anchor-wallet list (the
-  package pin, plus a verified /.well-known/anchor-wallets.json or
-  issuer-history anchor_wallets list). The on-chain issuer-root registry and
-  the DNS anchor are not read. Prints what this proves and what it does not
-  prove. Exit 0 when the receipt checks pass and both chains match, 2 when the
-  leaf is included but an anchor is still pending, or when the leaf is past
-  the anchored tree (PENDING, not a tamper failure), and the receipt checks
-  did not fail, 1 when a check fails. A pending leaf must sit at an index
-  at or past the anchored size, and PENDING applies only when the receipt
-  itself verifies. A failed signature, field, or preimage is a failure.
-  With --rpc, a claimed anchor must name a Solana fee payer that is on the
-  anchor-wallet list, and the head root must equal the newest memo that
-  payer actually paid. A memo from any other payer is ignored.
-
-  A receipt or head with issuer_key_pin is a pinned era. Pass the pin file
-  and its commit SHA plus SHA-256. The verifier does not fetch a branch.
-  --issuer-pin <file> --issuer-pin-commit <40-hex> --issuer-pin-sha256 <64-hex>
-  Optional with that pin: --issuer-pin-sig, --issuer-witnesses,
-  --issuer-prior-pin, --issuer-prior-commit, --issuer-prior-sha256, --issuer-control.
-  Those flags do not start the check on their own. A prior pin does not
-  replace the published specimen key. Sepolia only (eip155:84532).
-  See docs/product/issuer-key-pin.md.
-
-Receipt lane (unsigned, beside book_seq):
-  settled_by is observed_transfer when the USDC transfer was checked on Base
-  or Solana, and receipt when only the issuer asserts settlement. Unknown is
-  null. Ordering is seq + settled_by + (anchor_changed AND not settled).
-  Boundary: complete over registry marks, blind to payments the registry
-  never joined. freeze is true only when book_seq is set, settled_by is
-  receipt, the anchor changed after binding, and the row is not settled. An
-  anchor change alone does not freeze, and freeze does not change the
-  signature exit code. classification unverifiable_from_registry means the
-  binding is past expiry and settled_by, receipt_id, observed_tx_hash, and
-  observed_transfer_id are all null. That is not unpaid. local_check, when
-  set, is a Base USDC payee and amount a stranger can check. It does not
-  claim the row was paid. Design by Turbo on 1F916 (post 6579, comments
-  88201, 88403, and 88596).
-
-Supported receipt versions:
-  ${formatSupportedReceiptVersions().split('\n').join('\n  ')}
-
-Examples:
-  # History is always checked. A local snapshot:
-  xfuel-verify my-receipt.json --issuer-history issuer-history.json
-
-  # Verify issuer signature with JWKS file
-  xfuel-verify my-receipt.json --jwks-file issuer-jwks.json
-
-  # Full verification including on-chain nullifier
-  xfuel-verify my-receipt.json --jwks-file issuer-jwks.json --check-nullifier
-
-  # Pipe from curl
-  curl -s https://api.chit402.com/receipt/task-123?format=json | xfuel-verify -
-
-  # Public shell. INCLUDED_SHELL is not VERIFIED. --accept-shell is removed.
-  xfuel-verify shell.json
-
-  # Owner view. VERIFIED needs a trusted issuer key, an inclusion proof,
-  # and a signed payment. The key inside the holder is not enough.
-  xfuel-verify shell.json --jws owner-view.json --inclusion inclusion.json --head head.json
+${formatSupportedReceiptVersions()}
 `;
 
 function parseArgs(args: string[]): {
@@ -732,24 +577,86 @@ function fileLooksLikeHead(file: string | null): boolean {
   }
 }
 
+const LOG_FETCH_MS = 8000;
+
+function inclusionHeadUrl(
+  origin: string,
+  inclusion: { head_url?: string; tree_size?: number | null; anchored_tree_size?: number | null },
+): string | null {
+  if (typeof inclusion.head_url === 'string' && inclusion.head_url.length > 0) {
+    try {
+      return new URL(inclusion.head_url, origin).toString();
+    } catch {
+      return null;
+    }
+  }
+  const size = inclusion.anchored_tree_size ?? inclusion.tree_size;
+  if (size == null) return null;
+  return `${origin}/v1/receipts/tree/head?tree_size=${encodeURIComponent(String(size))}`;
+}
+
 async function freshPublicLog(receipt: { verify_url?: string; task_id?: string | null }): Promise<{
   logInclusion: CheckState;
   anchor: CheckState;
   logReason: string | null;
+  log: VerifyVerdict['log'];
 }> {
-  const missed = { logInclusion: 'could_not_check' as const, anchor: 'could_not_check' as const, logReason: 'log_unreachable' };
+  const missed = {
+    logInclusion: 'could_not_check' as const,
+    anchor: 'could_not_check' as const,
+    logReason: 'log_unreachable' as string | null,
+    log: null as VerifyVerdict['log'],
+  };
   try {
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return missed;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(task)}/inclusion`, {
-      signal: AbortSignal.timeout(800),
+    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+      signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
     if (res.status === 404) {
       const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
       if (body.error === 'not_in_tree' || body.reason === 'not_in_tree') {
-        return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log' };
+        return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
       }
+      return missed;
+    }
+    if (!res.ok) return missed;
+    const inclusion = await res.json() as AnchorInclusion & {
+      head_url?: string;
+      anchored_tree_size?: number;
+    };
+    const headUrl = inclusionHeadUrl(origin, inclusion);
+    if (!headUrl) return missed;
+    const headRes = await fetch(headUrl, { signal: AbortSignal.timeout(LOG_FETCH_MS) });
+    if (!headRes.ok) return missed;
+    const head = await headRes.json() as AnchorHead;
+    const result = await verifyAnchoredRoot({
+      receipt: receipt as AnchorReceipt,
+      inclusion,
+      head,
+      baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
+      solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
+      checkNewestAnchor: false,
+    });
+    if (result.overall === 'verified') {
+      return {
+        logInclusion: 'pass',
+        anchor: 'pass',
+        logReason: null,
+        log: {
+          leaf_index: inclusion.leaf_index ?? null,
+          tree_size: inclusion.tree_size ?? null,
+          root: result.root,
+          anchors: {
+            base: result.base.tx,
+            solana: result.solana.signature,
+          },
+        },
+      };
+    }
+    if (result.overall === 'not_in_log') {
+      return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
     }
     return missed;
   } catch {
@@ -1236,7 +1143,7 @@ async function runRefusal(
   return verdict.exit_code;
 }
 
-async function main(): Promise<number> {
+async function legacyMain(): Promise<number> {
   const removed = removedFlag(process.argv.slice(2));
   if (removed) {
     console.error(removed);
@@ -1783,9 +1690,276 @@ async function finish(code: number): Promise<void> {
   }
 }
 
+const RECEIPT_ID_RE = /^(chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function removedFlagMessage(argv: string[]): string | null {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') break;
+    if (!arg.startsWith('-') || arg === '-') continue;
+    if (REMOVED_040[arg]) return REMOVED_040[arg];
+    if (arg === '--issuer-history' || arg === '--issuer-history-file') {
+      const value = argv[i + 1];
+      if (!value || value.startsWith('-')) return 'removed in 0.4: --issuer-history needs a file';
+      i += 1;
+      continue;
+    }
+    if (arg === '--json' || arg === '--help' || arg === '-h' || arg === '--version' || arg === '-V') continue;
+    const name = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg;
+    return `removed in 0.4: ${name} is not a verifier flag`;
+  }
+  return null;
+}
+
+function parseLocked(argv: string[]): {
+  json: boolean;
+  help: boolean;
+  version: boolean;
+  issuerHistoryFile: string | null;
+  positionals: string[];
+} {
+  const parsed = {
+    json: false,
+    help: false,
+    version: false,
+    issuerHistoryFile: null as string | null,
+    positionals: [] as string[],
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--json') parsed.json = true;
+    else if (arg === '--help' || arg === '-h') parsed.help = true;
+    else if (arg === '--version' || arg === '-V') parsed.version = true;
+    else if ((arg === '--issuer-history' || arg === '--issuer-history-file') && argv[i + 1]) {
+      parsed.issuerHistoryFile = argv[++i];
+    } else if (!arg.startsWith('-') || arg === '-') {
+      parsed.positionals.push(arg);
+    }
+  }
+  return parsed;
+}
+
+function printLocked(verdict: VerifyVerdict, json: boolean): number {
+  if (json) {
+    console.log(JSON.stringify(verdict, null, 2));
+    return verdict.exit_code;
+  }
+  for (const line of humanVerdictLines(verdict)) console.log(line);
+  return verdict.exit_code;
+}
+
+function lockedError(json: boolean, status: 1 | 2, message: string, reason: string): number {
+  if (!json) {
+    console.error(message);
+    return status;
+  }
+  const failed = status === 1;
+  const verdict = buildVerifyVerdict({
+    version: packageVersion(),
+    errors: failed ? [reason] : [],
+    signatureChecked: failed,
+    signatureValid: failed ? false : null,
+    logInclusion: 'could_not_check',
+    anchor: 'could_not_check',
+    logReason: failed ? null : reason,
+  });
+  console.log(JSON.stringify({
+    ...verdict,
+    result: failed ? 'invalid' : 'could_not_check',
+    exit_code: status,
+    reason,
+    message,
+    next_step: failed ? null : verdict.next_step,
+  }, null, 2));
+  return status;
+}
+
+async function loadReceiptTarget(target: string): Promise<XFuelReceipt> {
+  if (target === '-') {
+    return JSON.parse(readFileSync(0, 'utf8')) as XFuelReceipt;
+  }
+  let url: string | null = null;
+  if (/^https?:\/\//i.test(target)) url = target;
+  else if (RECEIPT_ID_RE.test(target)) url = `https://api.chit402.com/receipt/${target}?format=json`;
+  if (url) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(LOG_FETCH_MS) });
+    if (!res.ok) {
+      const err = new Error(`fetch ${res.status}`);
+      (err as { code?: string }).code = 'FETCH';
+      throw err;
+    }
+    return await res.json() as XFuelReceipt;
+  }
+  return JSON.parse(readFileSync(target, 'utf8')) as XFuelReceipt;
+}
+
+function inputFailure(err: unknown, target: string): { status: 1 | 2; message: string } {
+  const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+  const message = err instanceof Error ? err.message : String(err);
+  if (code === 'FETCH' || /fetch \d+/.test(message)) {
+    return { status: 2, message: 'The receipt log or anchor could not be fetched.' };
+  }
+  if (code === 'ENOENT' || message.includes('ENOENT')) {
+    return { status: 1, message: `Error reading receipt: ${target}` };
+  }
+  return { status: 1, message: `Error reading receipt: ${message}` };
+}
+
+async function main(): Promise<number> {
+  const argv = process.argv.slice(2);
+  const jsonEarly = argv.includes('--json');
+  const removed = removedFlagMessage(argv);
+  if (removed) return lockedError(jsonEarly, 1, removed, 'removed_flag');
+
+  const args = parseLocked(argv);
+  if (args.version) {
+    console.log(`chit402-verify ${packageVersion()}`);
+    console.log(formatSupportedReceiptVersions());
+    return 0;
+  }
+  if (args.help) {
+    console.log(HELP);
+    return 0;
+  }
+  if (args.positionals.length === 0) {
+    console.log(HELP);
+    return 1;
+  }
+  if (args.positionals.length !== 1) {
+    return lockedError(args.json, 1, 'removed in 0.4: pass one receipt id, url, or file', 'removed_flag');
+  }
+
+  let receipt: XFuelReceipt;
+  try {
+    receipt = await loadReceiptTarget(args.positionals[0]);
+  } catch (err) {
+    const failure = inputFailure(err, args.positionals[0]);
+    const reason = failure.status === 2 ? 'log_unreachable' : 'unreadable';
+    return lockedError(args.json, failure.status, failure.message, reason);
+  }
+
+  const trustedKids = [...DEFAULT_TRUSTED_ISSUER_KIDS];
+  let fileBytes: string | null = null;
+  if (args.issuerHistoryFile) {
+    try {
+      fileBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
+    }
+  }
+
+  let resolved: ResolvedIssuerHistory;
+  try {
+    resolved = await resolveIssuerHistory({
+      fileBytes,
+      receipt,
+      trustedKids,
+      timeoutMs: LOG_FETCH_MS,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
+  }
+
+  if (isRefusalDocument(receipt as unknown)) {
+    const result = verifyRefusal(receipt as unknown as RefusalDocument, { trustedKids });
+    const verdict = buildVerifyVerdict({
+      version: packageVersion(),
+      receiptId: result.refusal_id || null,
+      displayId: result.refusal_id || null,
+      payloadVersion: result.payload_version ?? null,
+      historySource: resolved.source,
+      historyHead: resolved.headHash,
+      historyCount: resolved.entryCount,
+      historyAsOf: resolved.asOf,
+      signatureValid: result.valid,
+      signatureChecked: true,
+      historyChecked: !resolved.invalid && resolved.document != null,
+      historyOk: !resolved.invalid && resolved.document != null,
+      historyReason: resolved.reason,
+      historyMissing: resolved.document == null && !resolved.invalid,
+      errors: result.errors,
+      logInclusion: 'unclaimed',
+      anchor: 'unclaimed',
+    });
+    return printLocked(verdict, args.json);
+  }
+
+  const unsigned = typeof receipt.issuer_signature?.jws !== 'string' || receipt.issuer_signature.jws.length === 0;
+  if (unsigned || isReceiptShell(receipt)) {
+    const verdict = buildVerifyVerdict({
+      version: packageVersion(),
+      receiptId: receipt.task_id || null,
+      displayId: displayIdOf(receipt),
+      payloadVersion: null,
+      historySource: resolved.source,
+      historyHead: resolved.headHash,
+      historyCount: resolved.entryCount,
+      historyAsOf: resolved.asOf,
+      signatureChecked: false,
+      historyMissing: false,
+      errors: [],
+      logInclusion: 'unclaimed',
+      anchor: 'unclaimed',
+    });
+    return printLocked(verdict, args.json);
+  }
+
+  const result = await verifyReceipt(receipt, {
+    trustedKids,
+    requirePreimages: true,
+    ...historyOptions(resolved),
+  });
+
+  const unsupported = (result.errors || []).includes('unsupported_version');
+  let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
+  let anchorState: CheckState | 'unclaimed' = 'unclaimed';
+  let logReason: string | null = null;
+  let log: VerifyVerdict['log'] = null;
+  const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
+  const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url);
+  if (signatureOk && result.issuer_history.ok && logHostOk) {
+    const fresh = await freshPublicLog(receipt);
+    logInclusion = fresh.logInclusion;
+    anchorState = fresh.anchor;
+    logReason = fresh.logReason;
+    log = fresh.log;
+  }
+
+  const verdict = buildVerifyVerdict({
+    version: packageVersion(),
+    receiptId: result.receipt_id,
+    displayId: displayIdOf(receipt),
+    payloadVersion: result.receipt_version ?? null,
+    historySource: resolved.source,
+    historyHead: resolved.headHash,
+    historyCount: resolved.entryCount,
+    historyAsOf: resolved.asOf,
+    signatureValid: unsupported ? null : result.issuer_signature.valid === true,
+    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
+    historyChecked: unsupported ? false : (resolved.invalid || result.issuer_history.checked),
+    historyOk: unsupported ? false : (resolved.invalid ? false : result.issuer_history.ok),
+    historyReason: resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason,
+    historyMissing: unsupported ? true : (resolved.document == null && !resolved.invalid),
+    bindingExpected: !!result.binding.expected,
+    bindingMatches: result.binding.matches,
+    claimMismatches: result.claim_mismatches.length,
+    payerChecked: result.payer.checked,
+    payerValid: result.payer.valid,
+    errors: result.errors,
+    logInclusion,
+    anchor: anchorState,
+    logReason,
+    log,
+  });
+  return printLocked(verdict, args.json);
+}
+
+
 main()
   .then((code) => finish(code))
   .catch((err) => {
     console.error('Unexpected error:', err);
-    return finish(3);
+    return finish(1);
   });

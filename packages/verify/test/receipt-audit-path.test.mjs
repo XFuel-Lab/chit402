@@ -320,11 +320,11 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
   ];
   for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
     const run = spawnSync(process.execPath, [cli, path, ...args, ...extra], { encoding: 'utf8' });
-    assert.equal(run.status, 2, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
+    assert.equal(run.status, 1, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
     const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.result, 'could_not_check', (parsed.errors || []).join('; '));
-    assert.equal(parsed.reason, 'kid_not_in_history');
-    assert.equal(parsed.preimages.ok, true);
+    assert.equal(parsed.reason, 'removed_flag');
+    assert.match(parsed.message, /removed in 0\.4: --trusted-kid is not a verifier flag/);
+    assert.notEqual(parsed.result, 'verified');
   }
 
   const tampered = structuredClone(receipt);

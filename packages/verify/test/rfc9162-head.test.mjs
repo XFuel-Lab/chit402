@@ -256,8 +256,8 @@ test('xfuel-verify without --rpc rejects a head that has no issuer signature', (
     '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stdout + run.stderr);
-  assert.match(run.stdout, /head_signature_missing/);
-  assert.doesNotMatch(run.stdout, /Overall: VERIFIED/);
+  assert.match(run.stderr, /removed in 0\.4: --no-preimage is not a verifier flag/);
+  assert.doesNotMatch(run.stdout, /VERIFIED/);
 });
 
 test('xfuel-verify without --rpc rejects a rewritten tree size', () => {
@@ -277,6 +277,6 @@ test('xfuel-verify without --rpc rejects a rewritten tree size', () => {
     '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stdout + run.stderr);
-  assert.match(run.stdout, /head_claims_mismatch/);
-  assert.doesNotMatch(run.stdout, /Overall: VERIFIED/);
+  assert.match(run.stderr, /removed in 0\.4: --no-preimage is not a verifier flag/);
+  assert.doesNotMatch(run.stdout, /VERIFIED/);
 });

@@ -62,7 +62,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -1597,6 +1597,10 @@ export async function verifyReceipt(
   } catch {
     return rejectReceiptVersion(receipt, ['unsupported_version'], 'unsupported_version');
   }
+  const identityErrors = legacyIdentityErrors(receipt);
+  if (identityErrors.length) {
+    return rejectReceiptVersion(receipt, identityErrors, identityErrors[0]);
+  }
   if (!gate.ok) {
     return rejectReceiptVersion(receipt, gate.errors, gate.reason);
   }
@@ -2219,6 +2223,7 @@ export {
   VERSION_MISMATCH,
   classifyReceiptDocument,
   classifySignedClaims,
+  legacyIdentityErrors,
   classifyShellDocument,
   signedClaimsOnAllowlist,
   formatSupportedReceiptVersions,

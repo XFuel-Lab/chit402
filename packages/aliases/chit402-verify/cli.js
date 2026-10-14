@@ -2,16 +2,14 @@
 /**
  * chit402-verify CLI — Chit402 receipt verification
  *
- * This is the public-facing CLI. Internally it runs @xfuel/verify.
+ * @xfuel/verify is a thin alias. The verifier is chit402-verify.
  */
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 
 const require = createRequire(import.meta.url);
-// Resolve via the package exports map. Deep imports of dist/cli.js throw
-// ERR_PACKAGE_PATH_NOT_EXPORTED unless @xfuel/verify lists that subpath.
-const verifyCliPath = require.resolve('@xfuel/verify/dist/cli.js');
+const verifyCliPath = require.resolve('chit402-verify/dist/cli.js');
 
 const child = spawn(process.execPath, [verifyCliPath, ...process.argv.slice(2)], {
   stdio: 'inherit',

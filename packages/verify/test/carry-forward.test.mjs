@@ -430,43 +430,28 @@ test('a leaf hash that differs between epochs fails closed with tree_head_mismat
   assert.ok(result.errors.includes('tree_head_mismatch'));
 });
 
-test('CLI JSON and text report VERIFIED_CARRIED_FORWARD', () => {
+test('CLI carry-forward flags are removed in 0.4', () => {
   const fx = carryFixture();
   const dir = mkdtempSync(join(tmpdir(), 'chit-carry-'));
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(fx.receipt));
   writeFileSync(join(dir, 'old-head.json'), JSON.stringify(fx.old.head));
-  writeFileSync(join(dir, 'old-inclusion.json'), JSON.stringify(fx.old.inclusion));
-  writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.current.head));
-  writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(fx.current.inclusion));
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   const args = [
     cli,
     join(dir, 'receipt.json'),
     '--carry-old-head', join(dir, 'old-head.json'),
-    '--carry-old-inclusion', join(dir, 'old-inclusion.json'),
-    '--carry-head', join(dir, 'head.json'),
-    '--carry-inclusion', join(dir, 'inclusion.json'),
     '--trusted-kid', fx.keys.kid,
-    '--no-preimage',
   ];
   const jsonRun = spawnSync(process.execPath, [...args, '--json'], { encoding: 'utf8' });
-  assert.equal(jsonRun.status, 0, `${jsonRun.stdout}\n${jsonRun.stderr}`);
+  assert.equal(jsonRun.status, 1, `${jsonRun.stdout}\n${jsonRun.stderr}`);
   const parsed = JSON.parse(jsonRun.stdout);
-  assert.equal(parsed.overall, 'verified_carried_forward');
-  assert.equal(parsed.carry_forward.issued_at, ISSUED_AT);
-  assert.equal(parsed.carry_forward.issued_epoch, 1);
-  assert.equal(parsed.carry_forward.logged_at, LOGGED_AT);
-  assert.equal(parsed.carry_forward.logged_epoch, 2);
-  assert.equal(parsed.carry_forward.leaf_index, 1);
-  assert.equal(parsed.carry_forward.status, 'VERIFIED_CARRIED_FORWARD');
+  assert.equal(parsed.reason, 'removed_flag');
+  assert.match(parsed.message, /removed in 0\.4: --carry-old-head is not a verifier flag/);
+  assert.notEqual(parsed.result, 'verified');
 
   const textRun = spawnSync(process.execPath, args, { encoding: 'utf8' });
-  assert.equal(textRun.status, 0, `${textRun.stdout}\n${textRun.stderr}`);
-  assert.match(textRun.stdout, /VERIFIED_CARRIED_FORWARD/);
-  assert.ok(textRun.stdout.includes(ISSUED_AT));
-  assert.ok(textRun.stdout.includes('Issued epoch:  1'));
-  assert.ok(textRun.stdout.includes(LOGGED_AT));
-  assert.ok(textRun.stdout.includes('Logged epoch:  2'));
-  assert.ok(textRun.stdout.includes('Leaf index:    1'));
-  assert.equal(textRun.stdout.includes(BACKDATED), false);
+  assert.equal(textRun.status, 1, `${textRun.stdout}\n${textRun.stderr}`);
+  assert.match(textRun.stderr, /removed in 0\.4: --carry-old-head is not a verifier flag/);
+  assert.doesNotMatch(textRun.stdout, /VERIFIED_CARRIED_FORWARD/);
+  assert.doesNotMatch(textRun.stdout, /^VERIFIED\n/m);
 });

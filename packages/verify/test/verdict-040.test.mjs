@@ -119,11 +119,16 @@ test('the shipped snapshot is signed and chain-checked', () => {
   const loaded = loadBundledIssuerHistory();
   const onDisk = JSON.parse(readFileSync(snapshotPath, 'utf8'));
   assert.equal(loaded.document.head_hash, onDisk.head_hash);
-  assert.equal(BUNDLED_HISTORY_AS_OF, '2026-09-04');
+  assert.equal(BUNDLED_HISTORY_AS_OF, '2026-10');
+  assert.equal(loaded.document.version, 2);
+  assert.equal(loaded.document.head_hash, '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e');
   const signed = verifyIssuerHistoryDocument(loaded.document, { trustedKids: [PRODUCTION_KID] });
   assert.equal(signed.valid, true, signed.reason);
   assert.equal(loaded.document.entries[0].kid, PRODUCTION_KID);
   assert.equal(historyPrefixExtends(loaded.document, loaded.document), true);
+  const v1 = JSON.parse(readFileSync(new URL('./fixtures/issuer-history-v1-bundle.json', import.meta.url), 'utf8'));
+  assert.equal(historyPrefixExtends(v1, loaded.document), true);
+  assert.equal(historyPrefixExtends(loaded.document, v1), false);
   const broken = structuredClone(loaded.document);
   broken.entries[0].entry_hash = 'ab'.repeat(32);
   assert.equal(historyPrefixExtends(loaded.document, broken), false);
@@ -155,7 +160,7 @@ test('a live body must prefix-extend the bundled snapshot', async () => {
     fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify(moved) }),
   });
   assert.equal(fellBack.source, 'bundled');
-  assert.equal(fellBack.asOf, '2026-09-04');
+  assert.equal(fellBack.asOf, '2026-10');
   assert.equal(fellBack.headHash, bundled.document.head_hash);
 
   const offline = await resolveIssuerHistory({
@@ -164,7 +169,7 @@ test('a live body must prefix-extend the bundled snapshot', async () => {
     fetchImpl: async () => { throw new Error('no network'); },
   });
   assert.equal(offline.source, 'bundled');
-  assert.equal(offline.asOf, '2026-09-04');
+  assert.equal(offline.asOf, '2026-10');
 });
 
 test('a supplied history file that does not verify is invalid', async () => {
@@ -192,14 +197,24 @@ test('removed flags exit 1 with the 0.4 reason', () => {
   }
 });
 
-test('--json uses the 0.4 schema and a missing kid is exit 2', () => {
-  const key = issuerKey();
+test('a history file that does not extend the snapshot is invalid', async () => {
+  const v1 = readFileSync(new URL('./fixtures/issuer-history-v1-bundle.json', import.meta.url), 'utf8');
+  const rolled = await resolveIssuerHistory({
+    fileBytes: v1,
+    trustedKids: [PRODUCTION_KID],
+  });
+  assert.equal(rolled.invalid, true);
+  assert.equal(rolled.reason, 'issuer_history_not_extension');
+});
+
+test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
+  const house = JSON.parse(readFileSync(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url), 'utf8'));
+  delete house.verify_url;
+  if (house.verification) delete house.verification.jwks_uri;
   const dir = mkdtempSync(join(tmpdir(), 'chit-verdict-040-'));
   const receiptPath = join(dir, 'receipt.json');
-  const jwksPath = join(dir, 'jwks.json');
-  writeFileSync(receiptPath, JSON.stringify(receiptFor(key)));
-  writeFileSync(jwksPath, JSON.stringify({ keys: [key.publicJwk] }));
-  const run = runCli([receiptPath, '--json', '--jwks-file', jwksPath, '--trusted-kid', key.kid]);
+  writeFileSync(receiptPath, JSON.stringify(house));
+  const run = runCli([receiptPath, '--json']);
   assert.equal(run.status, 2, run.text);
   const body = JSON.parse(run.stdout);
   for (const keyName of [
@@ -213,32 +228,41 @@ test('--json uses the 0.4 schema and a missing kid is exit 2', () => {
   }
   assert.equal(body.result, 'could_not_check');
   assert.equal(body.exit_code, 2);
-  assert.equal(body.reason, 'kid_not_in_history');
-  assert.equal(body.message, 'No issuer history covers this key.');
-  assert.match(body.next_step, /--issuer-history/);
-  assert.equal(body.checks.key_window, 'could_not_check');
+  assert.equal(body.reason, 'log_unreachable');
+  assert.equal(body.checks.log_inclusion, 'could_not_check');
+  assert.equal(body.checks.anchor, 'could_not_check');
   assert.equal(body.checks.signature, 'pass');
+  assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.result === 'verified', false);
-  assert.equal(body.verifier.name, '@xfuel/verify');
+  assert.equal(body.verifier.name, 'chit402-verify');
   assert.equal(body.verifier.version, '0.4.0');
   assert.equal(body.history.source, 'bundled');
-  assert.equal(body.history.as_of, '2026-09-04');
+  assert.equal(body.history.as_of, '2026-10');
   assert.doesNotMatch(run.stdout, /verified_no_key_window/);
+  assert.doesNotMatch(run.stdout, /VERIFIED_CARRIED_FORWARD/);
 
+  const text = runCli([receiptPath]);
+  assert.equal(text.status, 2, text.text);
+  assert.match(text.stdout, /^COULD_NOT_CHECK\n/);
+  assert.match(text.stdout, /NOT found invalid/);
+  assert.match(text.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#log_unreachable/);
+  assert.match(text.stdout, /Issuer history: as of 2026-10/);
+  assert.doesNotMatch(text.stdout, /INCLUDED_SHELL/);
+
+  const v1 = readFileSync(new URL('./fixtures/issuer-history-v1-bundle.json', import.meta.url), 'utf8');
   const historyPath = join(dir, 'history.json');
-  writeFileSync(historyPath, JSON.stringify(historyFor(key)));
-  const covered = runCli([
-    receiptPath, '--json', '--jwks-file', jwksPath, '--trusted-kid', key.kid,
-    '--issuer-history', historyPath,
-  ]);
-  assert.equal(covered.status, 0, covered.text);
-  const ok = JSON.parse(covered.stdout);
-  assert.equal(ok.result, 'verified');
-  assert.equal(ok.exit_code, 0);
-  assert.equal(ok.message, 'Every check passed.');
-  assert.equal(ok.history.source, 'file');
-  assert.equal(ok.history.as_of, null);
-  for (const check of Object.values(ok.checks)) assert.equal(check, 'pass');
+  writeFileSync(historyPath, v1);
+  const rolled = runCli([receiptPath, '--json', '--issuer-history', historyPath]);
+  assert.equal(rolled.status, 1, rolled.text);
+  const bad = JSON.parse(rolled.stdout);
+  assert.equal(bad.result, 'invalid');
+  assert.equal(bad.reason, 'issuer_history_not_extension');
+
+  const bogus = runCli([receiptPath, '--json', '--jwks-file', historyPath]);
+  assert.equal(bogus.status, 1, bogus.text);
+  const flag = JSON.parse(bogus.stdout);
+  assert.equal(flag.exit_code, 1);
+  assert.match(flag.message, /removed in 0\.4: --jwks-file is not a verifier flag/);
 });
 
 test('verified is absent unless every check passed', () => {
@@ -278,4 +302,69 @@ test('verified is absent unless every check passed', () => {
   assert.equal(upgrade.exit_code, 2);
   assert.equal(upgrade.reason, 'unsupported_version');
   assert.equal(upgrade.next_step, 'Upgrade @xfuel/verify.');
+
+  const unclaimed = buildVerifyVerdict({
+    version: '0.4.0',
+    signatureValid: true,
+    signatureChecked: true,
+    historyChecked: true,
+    historyOk: true,
+    logInclusion: 'unclaimed',
+    anchor: 'unclaimed',
+  });
+  assert.equal(unclaimed.result, 'could_not_check');
+  assert.equal(unclaimed.exit_code, 2);
+  assert.equal(unclaimed.checks.log_inclusion, 'could_not_check');
+  assert.equal(unclaimed.checks.anchor, 'could_not_check');
+
+  const passed = buildVerifyVerdict({
+    version: '0.4.0',
+    signatureValid: true,
+    signatureChecked: true,
+    historyChecked: true,
+    historyOk: true,
+    logInclusion: 'pass',
+    anchor: 'pass',
+  });
+  assert.equal(passed.result, 'verified');
+  assert.equal(passed.exit_code, 0);
+  assert.equal(passed.verifier.name, 'chit402-verify');
+});
+
+test('chit- uuid on v10 and intent on a legacy payload are invalid', async () => {
+  const { verifyReceipt } = await import('../dist/index.js');
+  const key = issuerKey();
+  const chitId = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+  const chit = receiptFor(key);
+  chit.task_id = chitId;
+  const chitClaims = {
+    task_id: chitId,
+    iss: 'chit402',
+    iat: Math.floor(Date.parse('2026-10-01T00:00:00Z') / 1000),
+    payload_version: 8,
+    payment: chit.payment,
+    caller_binding: chit.caller_binding,
+    tree_head_hash: chit.tree_head_hash,
+    tolerance: chit.tolerance,
+  };
+  chit.issuer_signature.jws = signClaims(chitClaims, key, 'chit402-receipt+jwt');
+  const prefixed = await verifyReceipt(chit, { trustedKids: [key.kid], skipIssuerHistory: true });
+  assert.equal(prefixed.errors.includes('id_prefix_version_mismatch'), true, prefixed.errors.join('; '));
+
+  const intentClaims = { ...chitClaims, task_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96', intent: { amount: '1' } };
+  const intentReceipt = receiptFor(key);
+  intentReceipt.task_id = intentClaims.task_id;
+  intentReceipt.intent = intentClaims.intent;
+  intentReceipt.issuer_signature.jws = signClaims(intentClaims, key, 'chit402-receipt+jwt');
+  const intent = await verifyReceipt(intentReceipt, { trustedKids: [key.kid], skipIssuerHistory: true });
+  assert.equal(intent.errors.includes('intent_on_legacy_version'), true, intent.errors.join('; '));
+
+  const v12Claims = { ...chitClaims, task_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96', payload_version: 12 };
+  const v12 = receiptFor(key);
+  v12.task_id = v12Claims.task_id;
+  v12.issuer_signature.jws = signClaims(v12Claims, key, 'chit402-receipt+jwt');
+  v12.issuer_signature.payload_version = 12;
+  const later = await verifyReceipt(v12, { trustedKids: [key.kid], skipIssuerHistory: true });
+  assert.equal(later.errors.includes('id_prefix_version_mismatch'), true, later.errors.join('; '));
+  assert.equal(later.errors.includes('unsupported_version'), false);
 });

@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
@@ -270,11 +269,11 @@ test('T22 a size mismatch is tree_size_mismatch in the signed flow and offline',
     '--trusted-kid', key.kid,
     '--no-preimage',
   ]);
-  assert.notEqual(offline.status, 0, offline.stderr);
+  assert.equal(offline.status, 1, `${offline.stdout}\n${offline.stderr}`);
   const parsed = JSON.parse(offline.stdout);
-  assert.notEqual(parsed.overall, 'verified');
-  assert.ok(parsed.errors.includes('tree_size_mismatch'), parsed.errors.join(','));
-  assert.equal(parsed.errors.includes('tree_head_mismatch'), false, parsed.errors.join(','));
+  assert.equal(parsed.reason, 'removed_flag');
+  assert.match(parsed.message, /removed in 0\.4: --jwks-file is not a verifier flag/);
+  assert.notEqual(parsed.result, 'verified');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -449,7 +448,6 @@ test('T23 only a matching inclusion and head can verify', async () => {
   writeFileSync(receiptPath, JSON.stringify(signedV6()));
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify(jwks));
   const jwksPath = join(dir, 'jwks.json');
-  const historyPath = await writeCoveringHistory(dir, key);
 
   const rpc = http.createServer((req, res) => {
     const chunks = [];
@@ -509,86 +507,86 @@ test('T23 only a matching inclusion and head can verify', async () => {
   writeFileSync(headFiles.head4, JSON.stringify(head4));
   writeFileSync(headFiles.head11, JSON.stringify(head11));
 
-  const clis = { '0.3.5': cli035, '0.3.6': cli036 };
   const sizeCodes = /tree_size_mismatch|tree_head_mismatch|root_mismatch|head_size_mismatch/;
+  const inclusions = { default: incDefault, ts4: inc4, ts11: inc11 };
+  const heads = { '/tree/head': head11, head4, head11 };
   let runs = 0;
   try {
     for (const incName of ['default', 'ts4', 'ts11']) {
       for (const headName of ['/tree/head', 'head4', 'head11']) {
         const pair = (incName === 'ts4' ? 4 : 11) === (headName === 'head4' ? 4 : 11);
-        for (const version of ['0.3.5', '0.3.6']) {
-          for (const mode of ['offline', 'rpc']) {
-            runs += 1;
-            const args = [
-              clis[version],
-              receiptPath,
-              inclusionFiles[incName],
-              headFiles[headName],
-              '--json',
-              '--jwks-file', jwksPath,
-              '--trusted-kid', key.kid,
-                        '--no-preimage',
-            ];
-            if (mode === 'rpc') args.push('--rpc', url, '--solana-rpc', url);
-            const run = await runCli(args);
-            const label = `${version} ${mode} ${incName} x ${headName}`;
-            let parsed;
-            try {
-              parsed = JSON.parse(run.stdout);
-            } catch {
-              assert.fail(`${label} did not print JSON\n${run.stdout}\n${run.stderr}`);
-            }
-            const errors = [
-              ...(parsed.errors || []),
-              parsed.inclusion?.reason,
-              ...(parsed.receipt_check?.errors || []),
-            ].filter(Boolean).join(',');
-            if (pair) {
-              assert.equal(sizeCodes.test(errors), false, `${label} size/root: ${errors}`);
-              if (parsed.overall === 'verified') assert.equal(run.status, 0, label);
-            } else {
-              assert.notEqual(parsed.overall, 'verified', label);
-              assert.notEqual(run.status, 0, label);
-              assert.match(errors, sizeCodes, `${label} errors ${errors}`);
-            }
+        for (const mode of ['offline', 'rpc']) {
+          runs += 1;
+          const args = [
+            cli035,
+            receiptPath,
+            inclusionFiles[incName],
+            headFiles[headName],
+            '--json',
+            '--jwks-file', jwksPath,
+            '--trusted-kid', key.kid,
+            '--no-preimage',
+          ];
+          if (mode === 'rpc') args.push('--rpc', url, '--solana-rpc', url);
+          const run = await runCli(args);
+          const label = `0.3.5 ${mode} ${incName} x ${headName}`;
+          let parsed;
+          try {
+            parsed = JSON.parse(run.stdout);
+          } catch {
+            assert.fail(`${label} did not print JSON\n${run.stdout}\n${run.stderr}`);
           }
+          const errors = [
+            ...(parsed.errors || []),
+            parsed.inclusion?.reason,
+            ...(parsed.receipt_check?.errors || []),
+          ].filter(Boolean).join(',');
+          if (pair) {
+            assert.equal(sizeCodes.test(errors), false, `${label} size/root: ${errors}`);
+            if (parsed.overall === 'verified') assert.equal(run.status, 0, label);
+          } else {
+            assert.notEqual(parsed.overall, 'verified', label);
+            assert.notEqual(run.status, 0, label);
+            assert.match(errors, sizeCodes, `${label} errors ${errors}`);
+          }
+        }
+        runs += 1;
+        const result = await verifyReceipt(signedV6(), {
+          ...trust,
+          head: heads[headName],
+          inclusion: inclusions[incName],
+        });
+        const errors = (result.errors || []).join(',');
+        const label = `0.4.0 library ${incName} x ${headName}`;
+        if (pair) {
+          assert.equal(sizeCodes.test(errors), false, `${label} size/root: ${errors}`);
+        } else {
+          assert.notEqual(result.overall, 'verified', label);
+          assert.match(errors, sizeCodes, `${label} errors ${errors}`);
         }
       }
     }
-    assert.equal(runs, 36);
+    assert.equal(runs, 27);
 
-    const failedText = await runCli([
+    const rejected = await runCli([
       cli036,
       receiptPath,
-      inclusionFiles.ts4,
-      headFiles.head11,
-      '--rpc', url,
-      '--solana-rpc', url,
+      '--json',
       '--jwks-file', jwksPath,
       '--trusted-kid', key.kid,
-        '--no-preimage',
+      '--no-preimage',
     ]);
-    assert.notEqual(failedText.status, 0);
-    assert.match(failedText.stdout, /Overall: INVALID/);
-    assert.equal(failedText.stdout.includes('This receipt leaf is inside the tree'), false);
-    assert.equal(failedText.stdout.includes('What this proves'), false);
+    assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+    const rejectedBody = JSON.parse(rejected.stdout);
+    assert.match(rejectedBody.message, /removed in 0\.4: --jwks-file is not a verifier flag/);
+    assert.notEqual(rejectedBody.result, 'verified');
 
-    const proved = await runCli([
-      cli036,
-      receiptPath,
-      inclusionFiles.ts11,
-      headFiles.head11,
-      '--rpc', url,
-      '--solana-rpc', url,
-      '--jwks-file', jwksPath,
-      '--trusted-kid', key.kid,
-      '--issuer-history', historyPath,
-        '--no-preimage',
-    ]);
-    assert.equal(proved.status, 0, `${proved.stdout}\n${proved.stderr}`);
-    assert.match(proved.stdout, /Overall: VERIFIED/);
-    assert.match(proved.stdout, /What this proves/);
-    assert.match(proved.stdout, /This receipt leaf is inside the tree/);
+    const proved = await verifyReceipt(signedV6(), {
+      ...trust,
+      head: head11,
+      inclusion: inc11,
+    });
+    assert.equal(proved.overall, 'verified', (proved.errors || []).join(','));
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
     rmSync(dir, { recursive: true, force: true });

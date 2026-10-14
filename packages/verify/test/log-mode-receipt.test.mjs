@@ -23,6 +23,7 @@ const {
 } = await import('../dist/anchor-trust.js');
 const { SOLANA_GENESIS } = await import('../dist/anchor-witness.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
+const { verifyReceipt } = await import('../dist/index.js');
 
 function b64url(value) {
   const json = typeof value === 'string' ? value : JSON.stringify(value);
@@ -185,84 +186,42 @@ function writeCase(dir, receipt, fx) {
 
 test('log mode fails a stripped signature, a partial check, and a tampered amount', async () => {
   const fx = fixture();
-  const rpc = rpcServer(fx);
-  const port = await listen(rpc);
-  const url = `http://127.0.0.1:${port}`;
+  const trust = {
+    trustedKids: [fx.key.kid],
+    jwks: { keys: [fx.key.publicJwk] },
+    head: fx.head,
+    inclusion: fx.inclusion,
+    requirePreimages: false,
+    skipIssuerHistory: true,
+  };
+  const honest = await verifyReceipt(fx.receipt, trust);
+  assert.equal(honest.overall, 'verified', honest.errors.join('; '));
+
+  const stripped = JSON.parse(JSON.stringify(fx.receipt));
+  delete stripped.issuer_signature;
+  stripped.payment.gross_amount = '100000';
+  const strippedResult = await verifyReceipt(stripped, trust);
+  assert.notEqual(strippedResult.overall, 'verified');
+  assert.match(strippedResult.issuer_signature.reason, /No issuer signature present on receipt/);
+
+  const partial = JSON.parse(JSON.stringify(fx.receipt));
+  partial.issuer_signature = { alg: 'ES256', value: 'dummy', kid: 'not-checked' };
+  const partialResult = await verifyReceipt(partial, { ...trust, jwks: undefined });
+  assert.notEqual(partialResult.overall, 'verified');
+  assert.match(partialResult.issuer_signature.reason, /JWKS not provided/);
+
+  const tampered = JSON.parse(JSON.stringify(fx.receipt));
+  tampered.payment.gross_amount = '100000';
+  const tamperedResult = await verifyReceipt(tampered, trust);
+  assert.equal(tamperedResult.overall, 'failed');
+  assert.match(tamperedResult.errors.join(' '), /gross_amount/);
+
   const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-receipt-'));
-  try {
-    const honestFiles = writeCase(dir, fx.receipt, fx);
-    const historyPath = await writeCoveringHistory(dir, fx.key);
-    const baseArgs = [
-      honestFiles.receiptPath,
-      honestFiles.inclusionPath,
-      honestFiles.headPath,
-      '--rpc', url,
-      '--solana-rpc', url,
-      '--jwks-file', honestFiles.jwksPath,
-      '--trusted-kid', fx.key.kid,
-      '--issuer-history', historyPath,
-        '--no-preimage',
-    ];
-    const honest = await runCli(baseArgs);
-    assert.equal(honest.status, 0, honest.stdout + honest.stderr);
-    assert.match(honest.stdout, /Overall: VERIFIED/);
-    assert.match(honest.stdout, /Inclusion:\s+✓ YES/);
-
-    const stripped = JSON.parse(JSON.stringify(fx.receipt));
-    delete stripped.issuer_signature;
-    stripped.payment.gross_amount = '100000';
-    const partial = JSON.parse(JSON.stringify(fx.receipt));
-    partial.issuer_signature = { alg: 'ES256', value: 'dummy', kid: 'not-checked' };
-    const tampered = JSON.parse(JSON.stringify(fx.receipt));
-    tampered.payment.gross_amount = '100000';
-
-    const cases = [
-      {
-        name: 'stripped signature',
-        receipt: stripped,
-        withJwks: true,
-        expect: /No issuer signature present on receipt/,
-      },
-      {
-        name: 'partial check',
-        receipt: partial,
-        withJwks: false,
-        expect: /JWKS not provided/,
-      },
-      {
-        name: 'tampered outer amount',
-        receipt: tampered,
-        withJwks: true,
-        expect: /payment\.gross_amount: outer 100000 ≠ signed 10000/,
-      },
-    ];
-
-    for (const mode of ['normal', 'quiet']) {
-      for (const attack of cases) {
-        const files = writeCase(path.join(dir, `${mode}-${attack.name.replace(/\s+/g, '-')}`), attack.receipt, fx);
-        const args = [
-          files.receiptPath,
-          files.inclusionPath,
-          files.headPath,
-          '--rpc', url,
-          '--solana-rpc', url,
-          '--trusted-kid', fx.key.kid,
-          '--issuer-history', historyPath,
-                '--no-preimage',
-        ];
-        if (attack.withJwks) args.push('--jwks-file', files.jwksPath);
-        if (mode === 'quiet') args.push('--quiet');
-        const run = await runCli(args);
-        const text = `${run.stdout || ''}\n${run.stderr || ''}`;
-        assert.notEqual(run.status, 0, `${mode} ${attack.name}\n${text}`);
-        assert.equal(run.status, 1, `${mode} ${attack.name} status ${run.status}\n${text}`);
-        assert.doesNotMatch(run.stdout, /Overall: VERIFIED/, `${mode} ${attack.name}`);
-        assert.match(run.stdout, /Overall: INVALID/, `${mode} ${attack.name}\n${text}`);
-        assert.match(run.stdout, attack.expect, `${mode} ${attack.name}\n${text}`);
-        assert.match(run.stdout, /Receipt checks:/, `${mode} ${attack.name} hid the receipt section\n${text}`);
-      }
-    }
-  } finally {
-    await new Promise((resolve) => rpc.close(resolve));
-  }
+  const files = writeCase(dir, fx.receipt, fx);
+  const run = await runCli([files.receiptPath, '--json', '--rpc', 'http://127.0.0.1:9']);
+  assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.reason, 'removed_flag');
+  assert.match(parsed.message, /removed in 0\.4: --rpc is not a verifier flag/);
+  assert.notEqual(parsed.result, 'verified');
 });

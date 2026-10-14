@@ -22,6 +22,7 @@ const {
   EPOCH2_OPENING_ROOT,
 } = await import('../dist/epoch.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
+const { verifyEpochRecord } = await import('../dist/epoch.js');
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest();
@@ -174,34 +175,18 @@ function errorsOf(run) {
   return { parsed, text: body + (run.stderr || '') };
 }
 
-test('epoch signature accepts --jwks-url and --fetch-jwks and still requires the trusted kid', () => {
+test('epoch signature is checked in the library and the CLI trust flags are removed', () => {
   const fx = fixture();
-  const jwksBody = JSON.stringify({ keys: [fx.publicJwk] });
-  const url = 'https://127.0.0.1/jwks.json';
-  const fetched = runCli(fx, ['--jwks-url', url, '--no-trusted-kid'], {
-    CHIT_TEST_JWKS: jwksBody,
-    CHIT_TEST_JWKS_URL: url,
-  });
-  const fetchedOut = errorsOf(fetched);
-  assert.equal(fetched.status, 2, fetchedOut.text);
-  assert.equal((fetchedOut.parsed?.errors || []).includes('epoch_signature_invalid'), false);
+  const trusted = verifyEpochRecord(fx.record, { verifySignature: () => true });
+  assert.equal(trusted.ok, true, trusted.reason);
+  const closed = verifyEpochRecord(fx.record, { verifySignature: () => false });
+  assert.equal(closed.ok, false);
+  assert.equal(closed.reason, 'epoch_signature_invalid');
 
-  const allowlisted = 'https://api.chit402.com/.well-known/jwks.json';
-  const viaFetch = runCli(fx, ['--fetch-jwks', '--no-trusted-kid'], {
-    CHIT_TEST_JWKS: jwksBody,
-    CHIT_TEST_JWKS_URL: allowlisted,
-  });
-  const viaFetchOut = errorsOf(viaFetch);
-  assert.equal(viaFetch.status, 2, viaFetchOut.text);
-  assert.equal((viaFetchOut.parsed?.errors || []).includes('epoch_signature_invalid'), false);
-
-  const pinned = runCli(fx, ['--trusted-kid', fx.kid], {});
-  const pinnedOut = errorsOf(pinned);
-  assert.equal(pinned.status, 2, pinnedOut.text);
-  assert.equal((pinnedOut.parsed?.errors || []).includes('epoch_signature_invalid'), false);
-
-  const closed = runCli(fx, ['--no-trusted-kid'], {});
-  const closedOut = errorsOf(closed);
-  assert.equal(closed.status, 1, closedOut.text);
-  assert.ok((closedOut.parsed?.errors || []).includes('epoch_signature_invalid'));
+  const run = runCli(fx, ['--jwks-url', 'https://127.0.0.1/jwks.json', '--no-trusted-kid'], {});
+  const out = errorsOf(run);
+  assert.equal(run.status, 1, out.text);
+  assert.equal(out.parsed?.reason, 'removed_flag');
+  assert.match(out.parsed?.message || '', /removed in 0\.4: --epoch-record is not a verifier flag/);
+  assert.notEqual(out.parsed?.result, 'verified');
 });

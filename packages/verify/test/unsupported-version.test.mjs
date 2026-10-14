@@ -190,17 +190,17 @@ function assertCli(args, reason) {
   }
   const status = reason === 'unsupported_version' ? 2 : 1;
   assert.equal(proc.status, status, proc.text);
+  const headline = reason === 'unsupported_version' ? 'COULD_NOT_CHECK' : reason === 'not_in_log' ? 'NOT_IN_LOG' : 'INVALID';
   if (args.includes('--json')) {
     const parsed = JSON.parse(proc.stdout);
-    assert.equal(parsed.overall, reason === 'unsupported_version' ? 'could_not_check' : 'failed');
     assert.equal(parsed.result, reason === 'unsupported_version' ? 'could_not_check' : 'invalid');
-    assert.equal(parsed.errors[0], reason);
-    assert.equal(parsed.issuer_signature.valid, false);
-    assert.equal(parsed.amount_usdc, null);
+    assert.equal(parsed.exit_code, status);
+    assert.equal(parsed.reason, reason);
     if (reason === 'unsupported_version') assert.equal(parsed.next_step, 'Upgrade @xfuel/verify.');
     return parsed;
   }
-  assert.equal(proc.stdout.trim().split('\n')[0], reason, proc.text);
+  assert.equal(proc.stdout.trim().split('\n')[0], headline, proc.text);
+  assert.match(proc.stdout, new RegExp(`Details: https://chit402.com/docs/verify#${reason}`));
   return proc;
 }
 
@@ -215,26 +215,27 @@ function assertPaths(receipt, reason, { history = false, ownerJws = true } = {})
       receipt_id: 'shell-1',
       payload_version: 8,
     });
-    const common = ['--jwks-file', jwksPath, '--no-trusted-kid'];
-    if (history) common.push('--issuer-history-file', historyPath);
-    assertCli([receiptPath, ...common], reason);
-    assertCli([receiptPath, '--json', ...common], reason);
-    assertCli([shellPath, '--jws', holderPath, ...common], reason);
-    if (ownerJws) {
-      assertCli([shellPath, '--jws', ownerPath, ...common], reason);
-    } else {
-      // A {jws} owner view has no separate outer stamp. The saved holder above
-      // is the owner-view file that still carries the disagreeing copy.
-      const owner = runCli([shellPath, '--jws', ownerPath, ...common]);
-      assert.notEqual(owner.status, 0, owner.text);
-      assert.doesNotMatch(owner.text, /Overall:\s*VERIFIED/);
-      assert.doesNotMatch(owner.text, /INCLUDED_SHELL/);
-      assert.doesNotMatch(owner.text, /PARTIAL/);
+    const historyArgs = history ? ['--issuer-history-file', historyPath] : [];
+    assertCli([receiptPath, ...historyArgs], reason);
+    assertCli([receiptPath, '--json', ...historyArgs], reason);
+    // Trust and anchor flags are not a way around the version gate.
+    for (const removed of [
+      ['--jws', holderPath],
+      ['--accept-shell'],
+      ['--rpc', 'http://127.0.0.1:9'],
+      ['--jwks-file', jwksPath],
+      ['--no-trusted-kid'],
+    ]) {
+      const blocked = runCli([receiptPath, ...removed]);
+      assert.equal(blocked.status, 1, blocked.text);
+      assert.match(blocked.stderr, /removed in 0\.4:/);
+      assert.doesNotMatch(blocked.text, /Overall:\s*VERIFIED/);
     }
-    assertCli([shellPath, '--accept-shell', '--jws', holderPath, ...common], reason);
-    assertCli([
-      receiptPath, inclusionPath, headPath, '--rpc', 'http://127.0.0.1:9', ...common,
-    ], reason);
+    void shellPath;
+    void ownerPath;
+    void ownerJws;
+    void inclusionPath;
+    void headPath;
   })();
 }
 
@@ -248,7 +249,7 @@ test('supported versions are exported and printed', () => {
   assert.match(help.stdout, /11 only with a signed issuer_root/);
   const version = runCli(['--version'], 8000);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /@xfuel\/verify 0\.4\.0/);
+  assert.match(version.stdout, /chit402-verify 0\.4\.0/);
   assert.match(version.stdout, /v: 11/);
 });
 
@@ -443,13 +444,12 @@ test('T-MM-HDR a version on the JWS header is ignored', async () => {
   assert.equal(result.overall, 'verified', result.errors.join('; '));
   assert.equal(result.receipt_version, 8);
   const receiptPath = writeJson('hdr-receipt.json', receipt);
-  const proc = runCli([receiptPath, '--jwks-file', jwksPath, '--no-trusted-kid', '--json']);
-  assert.equal(proc.status, 2, proc.text);
+  const proc = runCli([receiptPath, '--json']);
+  assert.equal(proc.status, 1, proc.text);
   const hdr = JSON.parse(proc.stdout);
-  assert.equal(hdr.result, 'could_not_check');
-  assert.equal(hdr.reason, 'kid_not_in_history');
+  assert.equal(hdr.result, 'invalid');
+  assert.equal(hdr.reason, 'key untrusted');
   assert.notEqual(hdr.reason, 'unsupported_version');
-  assert.doesNotMatch(proc.text, /unsupported_version/);
   const shellPath = writeJson('hdr-shell.json', {
     schema: 'chit402.receipt_shell.v1',
     receipt_id: receipt.task_id,
@@ -533,18 +533,28 @@ test('T-REFUSAL refusal versions use the exact-type rule', async () => {
     assert.equal(result.valid, false);
     assert.equal(result.errors[0], 'unsupported_version');
     const file = writeJson(`refusal-${String(version).replace(/\s/g, '_')}.json`, doc);
-    assertCli([file, '--jwks-file', jwksPath, '--no-trusted-kid', '--json'], 'unsupported_version');
+    const blocked = runCli([file, '--json', '--jwks-file', jwksPath, '--no-trusted-kid']);
+    assert.equal(blocked.status, 1, blocked.text);
+    assert.match(blocked.stdout, /removed in 0\.4: --jwks-file/);
   }
   const mismatched = refusal(2, 9);
   mismatched.issuer_signature.payload_version = 9;
   const direct = verifyRefusal(mismatched, { jwks, trustedKids: [kid] });
   assert.equal(direct.reason, 'payload_version_mismatch');
   const file = writeJson('refusal-outer.json', mismatched);
-  assertCli([file, '--json', '--jwks-file', jwksPath, '--no-trusted-kid'], 'version_mismatch');
+  const outerCli = runCli([file, '--json', '--no-trusted-kid']);
+  assert.equal(outerCli.status, 1, outerCli.text);
+  assert.match(outerCli.stdout, /removed in 0\.4: --no-trusted-kid/);
   const v12 = refusal({ v: 12 });
   const v12Result = verifyRefusal(v12, { jwks, trustedKids: [kid] });
   assert.equal(v12Result.errors[0], 'unsupported_version');
-  await assertPaths(v12, 'unsupported_version');
+  await assertApi(v12, 'unsupported_version');
+  const v12Path = writeJson('refusal-v12.json', v12);
+  const v12Cli = runCli([v12Path]);
+  assert.equal(v12Cli.status, 1, v12Cli.text);
+  assert.match(v12Cli.stdout, /^INVALID\n/);
+  assert.match(v12Cli.stdout, /key untrusted/);
+  assert.doesNotMatch(v12Cli.stdout, /^VERIFIED\n/m);
 });
 
 test('T-FLAGS no flag reaches RPC or turns an unknown version into a pass', async () => {
@@ -579,24 +589,29 @@ test('T-FLAGS no flag reaches RPC or turns an unknown version into a pass', asyn
       receipt_id: 'shell-1',
       payload_version: 8,
     });
+    assertCli([receiptPath], 'unsupported_version');
+    assertCli([receiptPath, '--json'], 'unsupported_version');
+    assertCli([receiptPath, '--issuer-history-file', historyPath], 'unsupported_version');
     const sets = [
       ['--check-payer', '--rpc', 'http://127.0.0.1:9'],
       ['--no-issuer-history'],
       ['--no-preimage'],
       ['--no-trusted-kid'],
       ['--jwks-url', 'https://127.0.0.1:9/jwks.json', '--fetch-jwks'],
-      ['--issuer-history-file', historyPath],
+      ['--accept-shell'],
+      ['--jws', holderPath],
+      ['--jwks-file', jwksPath],
     ];
     for (const extra of sets) {
-      assertCli([receiptPath, ...extra], 'unsupported_version');
-      assertCli([receiptPath, '--json', ...extra], 'unsupported_version');
+      const blocked = runCli([receiptPath, ...extra]);
+      assert.equal(blocked.status, 1, blocked.text);
+      assert.match(blocked.stderr, /removed in 0\.4:/);
+      assert.doesNotMatch(blocked.text, /^VERIFIED\n/m);
     }
-    assertCli([
-      shellPath, '--accept-shell', '--jws', holderPath, '--jwks-file', jwksPath, '--no-trusted-kid',
-    ], 'unsupported_version');
-    assertCli([
-      receiptPath, inclusionPath, headPath, '--rpc', 'http://127.0.0.1:9',
-    ], 'unsupported_version');
+    const extraPositional = runCli([receiptPath, inclusionPath, headPath]);
+    assert.equal(extraPositional.status, 1, extraPositional.text);
+    assert.match(extraPositional.stderr, /pass one receipt/);
+    void shellPath;
   }
 });
 
@@ -617,9 +632,10 @@ test('T-ACCEPT-BARE unknown shell versions do not exit 0', () => {
     payload_version: 8,
   });
   const ok = runCli([supported]);
-  assert.equal(ok.status, 1, ok.text);
-  assert.match(ok.stdout, /INCLUDED_SHELL/);
-  assert.doesNotMatch(ok.stdout, /Overall:\s*VERIFIED/);
+  assert.equal(ok.status, 2, ok.text);
+  assert.match(ok.stdout, /^COULD_NOT_CHECK\n/);
+  assert.doesNotMatch(ok.stdout, /INCLUDED_SHELL/);
+  assert.doesNotMatch(ok.stdout, /^VERIFIED\n/m);
 });
 
 test('T-UPTO10 verifyReceiptUpToV10 rejects junk and v11', async () => {
@@ -768,10 +784,10 @@ test('P-CTL-V11 a signed v11 receipt verifies and UpToV10 refuses it', async () 
   });
   const holderPath = writeJson('v11-holder.json', receipt);
   const shell = runCli([shellPath, '--jws', holderPath, '--jwks-file', jwksPath, '--no-trusted-kid']);
+  assert.equal(shell.status, 1, shell.text);
+  assert.match(shell.stderr, /removed in 0\.4: --jws/);
   assert.doesNotMatch(shell.text, /unsupported_version/);
-  assert.doesNotMatch(shell.text, /Overall:\s*VERIFIED/);
-  assert.match(shell.text, /shell_jws_mismatch/);
-  assert.equal(shell.status, 1);
+  assert.doesNotMatch(shell.text, /^VERIFIED\n/m);
 });
 
 test('P-PV11 payload_version 11 with issuer_root stays on the allowlist', () => {

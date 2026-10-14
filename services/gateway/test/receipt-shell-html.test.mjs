@@ -677,7 +677,12 @@ test('T17 verifier accepts the public shell as INCLUDED_SHELL', () => {
   writeFileSync(file, JSON.stringify(shell));
   const cli = join(verifyDir, 'dist/cli.js');
   const run = spawnSync(process.execPath, [cli, file, '--accept-shell'], { encoding: 'utf8', timeout: 15000 });
-  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
-  assert.match(run.stdout, /INCLUDED_SHELL/);
-  assert.doesNotMatch(run.stdout, /Overall:\s*VERIFIED/);
+  assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
+  assert.match(run.stderr, /removed in 0\.4: a shell is not a verified payment/);
+  assert.doesNotMatch(`${run.stdout}\n${run.stderr}`, /INCLUDED_SHELL/);
+  const plain = spawnSync(process.execPath, [cli, file], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(plain.status, 2, `${plain.stdout}\n${plain.stderr}`);
+  assert.match(plain.stdout, /COULD_NOT_CHECK/);
+  assert.doesNotMatch(plain.stdout, /INCLUDED_SHELL/);
+  assert.doesNotMatch(plain.stdout, /^VERIFIED\n/);
 });

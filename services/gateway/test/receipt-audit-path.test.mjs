@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_PERSIST = 'false';
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 delete process.env.SOLANA_ANCHOR_SECRET_KEY;
 delete process.env.SOLANA_RPC_URL;
@@ -258,28 +259,25 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
-  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-http-'));
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(receipt));
   const cli = cliPath;
-  for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
-    const run = spawnSync(process.execPath, [
-      cli,
-      file,
-      '--json',
-      '--no-issuer-history',
-      '--trusted-kid',
-      kid,
-      ...extra,
-    ], { encoding: 'utf8' });
-    assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
-    const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.overall, 'verified_no_key_window', (parsed.errors || []).join('; '));
-    assert.equal(parsed.preimages.ok, true);
-  }
+  const run = spawnSync(process.execPath, [
+    cli,
+    file,
+    '--json',
+    '--no-issuer-history',
+    '--trusted-kid',
+    kid,
+  ], { encoding: 'utf8' });
+  assert.equal(run.status, 1, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.exit_code, 1);
+  assert.match(parsed.message, /removed in 0\.4:/);
 
   const field = receipt.preimages.fields.tree_head_hash;
   const cases = [

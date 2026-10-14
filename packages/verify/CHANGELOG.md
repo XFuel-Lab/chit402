@@ -5,13 +5,18 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ## 0.4.0 — Locked verifier verdict
 
+### Breaking
+- **Exit codes are 0, 1, and 2.** 0 is `VERIFIED` (every check passed). 1 is `INVALID` (tamper, a bad signature, a revoked or out-of-window key, `kid_status_regression`, a payment mismatch, `NOT_IN_LOG`, `id_prefix_version_mismatch`, `intent_on_legacy_version`). 2 is `COULD_NOT_CHECK` (no history covers the key, the log or anchor was not fetched or did not verify, `unsupported_version`). Exit 3 is removed. `VERIFIED_NO_KEY_WINDOW` is retired. A log check that did not run is not a pass.
+- **The command is `chit402-verify <id|url|file>`.** Flags are `--issuer-history <file>` and `--json`. `--help` and `--version` still exit 0. `--issuer-history-file` is an alias of `--issuer-history`. Every other flag, including `--jwks-file`, `--trusted-kid`, `--rpc`, `--jws`, `--accept-shell`, `--strict`, and `--no-issuer-history`, exits 1 with `removed in 0.4:`. `--json` on an error is the verdict JSON.
+- **`--issuer-history` must prefix-extend the bundled snapshot.** The one grandfathered rewrite is head `3d8259fb` to `349d7bb4` (v1 to v2). The reverse is not an extension.
+- **`chit402-verify` is the package.** `@xfuel/verify` 0.4.0 depends on exactly `"chit402-verify": "0.4.0"`. Both bins (`chit402-verify` and `xfuel-verify`) ship on the primary package. Publish uses `npm publish --provenance` from the `workflow_dispatch` job.
+
 ### Security
-- **Exit 0 is `VERIFIED` only when every check passed.** Exit 1 is `INVALID`: tamper, a bad signature, a revoked or out-of-window key, `kid_status_regression`, a payment mismatch, `NOT_IN_LOG`, or an id or version mismatch. Exit 2 is `COULD_NOT_CHECK`: no history covers the key, the log or anchor could not be fetched, or `unsupported_version` (the message says to upgrade `@xfuel/verify`). `VERIFIED_NO_KEY_WINDOW` is retired.
-- **Issuer history is always checked.** The source is `--issuer-history <file>`, else a live snapshot that prefix-extends the signed snapshot shipped in this package, else that snapshot alone, reported `as of 2026-09-04`. A file that does not verify is `INVALID` and is not replaced. Log inclusion and the anchor are fetched fresh. They are not a snapshot in the package.
-- **`--strict`, `--no-issuer-history`, `--accept-no-key-window`, and `--accept-shell` are removed.** Each exits 1 with `removed in 0.4:` and the reason. `--json` prints `result`, `exit_code`, `reason`, `message`, `next_step`, `receipt_id`, `display_id`, `payload_version`, `checks`, `history`, `log`, and `verifier`.
+- **Exit 0 is `VERIFIED` only when every check passed.** Exit 1 is `INVALID`. Exit 2 is `COULD_NOT_CHECK`, including a log or anchor this run did not fetch. A 200 inclusion proof is checked against the signed tree head and that head's Base and Solana anchors. Anything other than a verified anchor or `not_in_tree` is exit 2. `404` with `not_in_tree` stays `NOT_IN_LOG`.
+- **Issuer history is always checked.** The source is `--issuer-history <file>` when that file extends the bundled snapshot, else a live snapshot that prefix-extends it, else that snapshot alone, reported `as of 2026-10`. A file that does not verify, or that does not extend the snapshot, is `INVALID` and is not replaced.
 - **`not_before` still cannot move.** A later entry that changes `not_before` for the same kid is `kid_status_regression`. The window uses the latest `not_before`.
 - **A pre-log receipt is `NOT_IN_LOG`.** `chit-1ebc5616` and the other payments issued before the public log are not leaves. A log check exits 1. The payment row in the book is unchanged: the receipt is not re-signed, and the book does not drop or rewrite the payment.
-- **npm publish is held until after World's Fair judging.** This change does not publish, merge, or deploy.
+- **Publish is no longer held.** Christopher publishes. This change does not publish, merge, or deploy.
 
 ## 0.3.6 — Inclusion size is checked before the head
 
@@ -39,7 +44,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 ## Unreleased
 
 ### Security
-- **A receipt from before the public log is `NOT_IN_LOG`.** See 0.4.0. The payment row in the book is unchanged. npm publish is held until after World's Fair judging. Not published.
+- **A receipt from before the public log is `NOT_IN_LOG`.** See 0.4.0. The payment row in the book is unchanged. Publish is no longer held. Not published by this change.
 - **Revocation is sticky.** The earliest `revoked_at` and the earliest `not_after` for a kid stay in force after a later entry. A history that moves a kid from `revoked` to any later status, or from `retired` to `active`, is `kid_status_regression`. A receipt issued before `revoked_at` still verifies. Not published.
 - **`not_before` cannot move.** A later entry that changes `not_before` for the same kid is `kid_status_regression`. The window uses the latest `not_before`, so `[not_before 2026-03-01, retired not_before 2026-01-01]` does not accept `iat` 2026-02-01. Not published.
 - **History is always on in 0.4.0.** See the 0.4.0 entry. `--no-issuer-history` and `--strict` are removed. A loaded history that fails (`kid_revoked_before_issuance`, outside the window, `kid_status_regression`) is `INVALID`, exit 1. A version 10 pin stays an exact document hash, including history version 1. The earliest `revoked_at` and `not_after` for that kid stay in force. An edited genesis entry, a new key that copies an older `not_before`, and a history signed only by the key it introduces all fail. The gateway still issues payload version 10. Not published.
