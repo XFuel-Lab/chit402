@@ -1311,6 +1311,7 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         reqHost: typeof req?.get === 'function' ? req.get('host') : null,
         persistSignature: true,
+        readOnly: true,
       });
       const claims = decodeReceiptClaims(receipt);
       const view = mergeReceiptView(receipt);
@@ -3057,6 +3058,7 @@ export function createApp() {
           reqHost,
           agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
           persistSignature: true,
+          readOnly: true,
         });
       }
 
@@ -3316,9 +3318,10 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
-        // Ledger seat wins. A cached null claim_id is re-signed only when this id exists.
+        // Ledger seat wins on a write. A GET returns the stored JWS and does not re-sign it.
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
+        readOnly: true,
       });
       if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
 
@@ -3358,6 +3361,7 @@ export function createApp() {
         reqHost,
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
+        readOnly: true,
       });
       receipt = storedReceiptJson(receipt);
     }
@@ -5456,6 +5460,7 @@ export function createApp() {
       viPolicy: config.verifiedInference,
       agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
       persistSignature: true,
+      readOnly: true,
     });
     return { receipt, ledgerRow, taskId };
   }
