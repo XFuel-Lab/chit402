@@ -41,6 +41,7 @@ import {
   lateVerifyUrl,
   noteLateInlineIssued,
   openLateSubmission,
+  lateAdmissionCapped,
   resumeLateIssue,
 } from './late-issue.js';
 
@@ -518,6 +519,7 @@ export async function settleBoundPayment({
   };
 
   let lateRow = null;
+  let lateCapped = false;
   let preparedWindow = null;
   let seenTx = null;
   const release = () => {
@@ -542,6 +544,10 @@ export async function settleBoundPayment({
         } catch { /* store */ }
       }
       try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
+      return refused(req, publicReason);
+    }
+    if (lateCapped && !terminal && (why === 'http' || why === 'success_false')) {
+      try { active.release(nonce, owner); } catch { /* store */ }
       return refused(req, publicReason);
     }
     if (solana && !terminal && (why === 'http' || why === 'success_false')) {
@@ -643,7 +649,9 @@ export async function settleBoundPayment({
   const submittedAt = typeof cfg.now === 'function' ? cfg.now() : Date.now();
   // Solana late-issue is unsupported. Those failures follow main: transport
   // stays unknown, and an HTTP error or success:false is released.
-  if (!solana) {
+  // A payer with two open rows, or a full queue, stays on that same release.
+  if (!solana) lateCapped = lateAdmissionCapped(active, authEarly?.from);
+  if (!solana && !lateCapped) {
     const authKey = authKeyEarly || evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce);
     const prior = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
     const opened = prior && prior.auth_key && prior.auth_key === authKey

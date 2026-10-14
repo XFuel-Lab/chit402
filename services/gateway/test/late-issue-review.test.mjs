@@ -762,7 +762,9 @@ test('a failed inline-issue CAS does not return a settled receipt', async () => 
   }
 });
 
-function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scannedTo = null, authNonce = null } = {}) {
+function parkUnknown(store, n, {
+  validAfter = '1', issuedAt = Date.now(), scannedTo = null, authNonce = null, why = 'unresolved_submit',
+} = {}) {
   const pendingId = `pend${n}`;
   const put = store.putLate({
     pending_id: pendingId,
@@ -794,7 +796,7 @@ function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scanne
     jws: null,
     receipt_id: `late-${pendingId}`,
     served: false,
-    why: 'unresolved_submit',
+    why,
   });
   if (!put?.ok) throw new Error(put?.reason || 'putLate');
   return pendingId;
@@ -1022,13 +1024,37 @@ test('late-issue runs do not overlap', async () => {
     assert.equal(calls, 1);
     const second = await tickLateIssue(store, deps);
     assert.deepEqual(second, []);
+    const otherRpc = await rpcServer((method, params) => {
+      if (method === 'eth_getLogs') return [];
+      if (method === 'eth_getBlockByNumber') {
+        const ts = `0x${Math.floor(Date.now() / 1000).toString(16)}`;
+        if (params[0] === 'finalized') {
+          return { number: '0x3e8', timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+        }
+        return { number: params[0], timestamp: ts, hash: BLOCK };
+      }
+      return null;
+    });
+    try {
+      const otherStore = new ChallengeStore();
+      parkUnknown(otherStore, 42);
+      const other = await tickLateIssue(otherStore, { cfg: { lateIssue: true, baseRpcUrl: otherRpc.url } });
+      assert.equal(other.length, 1);
+      assert.equal(calls, 1);
+    } finally {
+      await otherRpc.close();
+    }
     startLateIssueResolver(store, deps);
     await new Promise((resolve) => setTimeout(resolve, 80));
     assert.equal(calls, 1);
     assert.equal(maxInflight, 1);
+    stopLateIssueResolver();
     finish();
     await first;
-    await new Promise((resolve) => setTimeout(resolve, 40));
+    for (let i = 0; i < 30 && inflight > 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(inflight, 0);
     assert.equal(maxInflight, 1);
   } finally {
     finish();
@@ -1084,6 +1110,62 @@ test('one tick stays inside the row and RPC budgets and the next tick continues 
     assert.equal(store.listLate().every((row) => row.scanned_to != null), true);
   } finally {
     await rpc.close();
+  }
+});
+
+test('a timeout row is visited ahead of ten thousand success:false rows', async () => {
+  const tip = 30_000_000;
+  const nonces = [];
+  let logs = 0;
+  const rpc = await rpcServer((method, params) => {
+    if (method === 'eth_getLogs') {
+      logs += 1;
+      nonces.push(String(params[0].topics[2]).toLowerCase());
+      return [];
+    }
+    if (method === 'eth_getBlockByNumber') {
+      const ts = `0x${(Math.floor(Date.now() / 1000) + 30).toString(16)}`;
+      if (params[0] === 'finalized') {
+        return { number: `0x${tip.toString(16)}`, timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+      }
+      return { number: params[0], timestamp: ts, hash: BLOCK };
+    }
+    return null;
+  });
+  try {
+    const store = new ChallengeStore();
+    const junk = 10_000;
+    for (let n = 1; n <= junk; n += 1) parkUnknown(store, n, { why: 'success_false' });
+    parkUnknown(store, junk + 1, { why: 'transport', authNonce: AUTH_NONCE });
+    await tickLateIssue(store, { cfg: { lateIssue: true, baseRpcUrl: rpc.url } });
+    assert.equal(nonces[0], ethers.zeroPadValue(AUTH_NONCE, 32).toLowerCase());
+    const rows = store.listLate();
+    assert.ok(rows.find((row) => row.why === 'transport').last_visited_at > 0);
+    const junkVisited = rows.filter((row) => row.why === 'success_false' && row.last_visited_at).length;
+    assert.ok(junkVisited <= LATE_TICK_ROW_BUDGET - 1);
+    assert.ok(logs <= LATE_TICK_ROW_BUDGET);
+    assert.ok(logs < junk);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('a third open row from the same payer is released', async () => {
+  const fac = await listen(({ res }) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ settled: false, success: false, reason: 'nope' }));
+  });
+  try {
+    const store = new ChallengeStore();
+    parkUnknown(store, 1);
+    parkUnknown(store, 2);
+    const nonce = putChallenge(store, { nonce: `0x${'ee'.repeat(32)}` });
+    const decision = await pay(store, baseCfg(fac.url), nonce, evmHeader());
+    assert.notEqual(decision.code, 'settle_pending');
+    assert.equal(store.listLate().length, 2);
+    assert.equal(store.get(nonce).state, 'issued');
+  } finally {
+    await fac.close();
   }
 });
 

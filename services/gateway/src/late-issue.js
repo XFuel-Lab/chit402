@@ -187,6 +187,19 @@ export function openLateSubmission(store, tuple) {
   }
 }
 
+export function lateAdmissionCapped(store, from) {
+  if (!store || typeof store.listLate !== 'function') return false;
+  const want = String(from || '').toLowerCase();
+  let payer = 0;
+  let total = 0;
+  for (const row of store.listLate()) {
+    if (TERMINAL.has(row.state)) continue;
+    total += 1;
+    if (want && String(row.auth?.from || '').toLowerCase() === want) payer += 1;
+  }
+  return payer >= 2 || total >= 64;
+}
+
 export function noteLateInlineIssued(store, id, facts = {}) {
   if (!id || typeof store?.casLate !== 'function') return null;
   return store.casLate(id, ['submitted', 'unknown', 'confirmed'], 'issued', {
@@ -929,13 +942,16 @@ function rpcMeter(limit) {
   };
 }
 
-const tickCursors = new WeakMap();
-let tickInFlight = false;
+const tickRuns = new WeakMap();
+
+function lateLane(row) {
+  return (row.tx_hint || row.why === 'transport' || row.why === 'http') ? 0 : 1;
+}
 
 export async function tickLateIssue(store, deps = {}) {
   if (!store || typeof store.listLate !== 'function') return [];
-  if (tickInFlight) return [];
-  tickInFlight = true;
+  if (tickRuns.get(store)) return [];
+  tickRuns.set(store, true);
   try {
     if (typeof store.pruneLate === 'function') {
       try { store.pruneLate(nowMs(deps, deps.cfg), LATE_HORIZON_MS); } catch { /* store */ }
@@ -944,23 +960,19 @@ export async function tickLateIssue(store, deps = {}) {
     if (!lateIssueEnabled(cfg) && !lateIssueShadow(cfg)) return [];
     const pending = store.listLate().filter((row) => !TERMINAL.has(row.state));
     if (pending.length === 0) return [];
+    pending.sort((a, b) => lateLane(a) - lateLane(b) || (a.last_visited_at || 0) - (b.last_visited_at || 0));
     const rowBudget = budgetOf(deps.rowBudget, LATE_TICK_ROW_BUDGET);
     const meter = rpcMeter(budgetOf(deps.rpcBudget, LATE_TICK_RPC_BUDGET));
-    let start = tickCursors.get(store) || 0;
-    if (start >= pending.length) start = 0;
-    const ordered = pending.slice(start).concat(pending.slice(0, start));
     const out = [];
-    let took = 0;
     const runDeps = { ...deps, rpcMeter: meter };
-    for (const row of ordered) {
-      if (took >= rowBudget || meter.left <= 0) break;
+    for (const row of pending) {
+      if (out.length >= rowBudget || meter.left <= 0) break;
+      try { store.casLate(row.pending_id, row.state, row.state, { last_visited_at: Date.now() }); } catch { /* store */ }
       out.push(await resolveLateRecord(store, row, runDeps));
-      took += 1;
     }
-    tickCursors.set(store, (start + took) % pending.length);
     return out;
   } finally {
-    tickInFlight = false;
+    tickRuns.set(store, false);
   }
 }
 
