@@ -15,6 +15,7 @@ import { setActiveChallengeStore } from '../src/x402-durable-store.js';
 import { paymentFailureBody } from '../src/x402-flags.js';
 import { toPublicShell } from '../src/receipt-shell.js';
 import { UsageSettledLedger } from '../src/usage-settled.js';
+import { getIssuerKid } from '../src/issuer-key.js';
 import {
   findLatePublicReceipt,
   LATE_HORIZON_MS,
@@ -615,5 +616,139 @@ test('an RPC reorg between the two finality reads does not sign', async () => {
   } finally {
     await fac.close();
     await rpc.close();
+  }
+});
+
+test('a log search at a 30M tip issues once and never asks for more than 2000 blocks', async () => {
+  const tip = 30_000_000;
+  const issueBlock = tip - 5000;
+  const logBlock = tip - 1000;
+  const ranges = [];
+  const rpc = await rpcServer((method, params) => {
+    if (method === 'eth_getLogs') {
+      const filter = params[0];
+      const from = BigInt(filter.fromBlock);
+      const to = BigInt(filter.toBlock);
+      if (to < from || (to - from + 1n) > 2000n) throw new Error('range');
+      ranges.push([from, to]);
+      if (ranges.length > 8) throw new Error('too many chunks');
+      const at = BigInt(logBlock);
+      if (from <= at && at <= to) {
+        return [{
+          address: USDC,
+          topics: [AUTH_USED, pad(PAYER), pad(AUTH_NONCE)],
+          transactionHash: TX,
+          blockNumber: `0x${at.toString(16)}`,
+          blockHash: BLOCK,
+        }];
+      }
+      return [];
+    }
+    if (method === 'eth_getTransactionReceipt') {
+      const receipt = receiptResult();
+      delete receipt._ts;
+      receipt.blockNumber = `0x${logBlock.toString(16)}`;
+      return receipt;
+    }
+    if (method === 'eth_getBlockByNumber') {
+      const tag = params[0];
+      const ts = `0x${(Math.floor(Date.now() / 1000) + 30).toString(16)}`;
+      if (tag === 'finalized') {
+        return { number: `0x${tip.toString(16)}`, timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+      }
+      return { number: tag, timestamp: ts, hash: BLOCK };
+    }
+    return null;
+  });
+  const fac = await listen(({ req }) => { req.socket.destroy(); });
+  let signs = 0;
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { issueBlock });
+    const cfg = baseCfg(fac.url, { chainReader: undefined, baseRpcUrl: rpc.url });
+    const header = evmHeader();
+    await pay(store, cfg, nonce, header);
+    assert.equal(store.listLate()[0].issue_block, issueBlock);
+    assert.equal(store.listLate()[0].tx_hint, null);
+    const deps = {
+      cfg: { lateIssue: true, baseRpcUrl: rpc.url },
+      signer: (claims) => {
+        signs += 1;
+        assert.equal(claims.kid, getIssuerKid());
+        return 'jws.chunked';
+      },
+      appendLog: () => {},
+    };
+    const issued = await resolveLateRecord(store, store.listLate()[0], deps);
+    assert.equal(issued.jws, 'jws.chunked');
+    assert.equal(signs, 1);
+    assert.ok(ranges.length >= 2);
+    assert.ok(ranges.length <= 8);
+    for (const [from, to] of ranges) {
+      assert.ok(to - from + 1n <= 2000n);
+      assert.ok(from > 0n);
+      assert.ok(from >= BigInt(issueBlock) - 64n);
+    }
+    const again = await resolveLateRecord(store, store.listLate()[0], deps);
+    assert.equal(again.jws, 'jws.chunked');
+    assert.equal(signs, 1);
+  } finally {
+    await fac.close();
+    await rpc.close();
+  }
+});
+
+test('a receipt that does not match the authorization is mismatch_hold', async () => {
+  const fac = await listen(({ res }) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      settled: false, success: false, transaction: TX, network: 'base', payer: PAYER,
+    }));
+  });
+  let signs = 0;
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store);
+    const cfg = baseCfg(fac.url, {
+      chainReader: async () => ({ ok: false, code: 'settle_unconfirmed' }),
+    });
+    const pending = await pay(store, cfg, nonce, evmHeader());
+    assert.equal(pending.code, 'settle_pending');
+    assert.equal(store.listLate()[0].tx_hint, TX);
+    const resolved = await resolveLateRecord(store, store.listLate()[0], {
+      cfg,
+      signer: () => { signs += 1; return 'jws.no'; },
+      appendLog: () => {},
+    });
+    assert.equal(signs, 0);
+    assert.equal(resolved.state, 'mismatch_hold');
+    assert.equal(store.listLate()[0].state, 'mismatch_hold');
+  } finally {
+    await fac.close();
+  }
+});
+
+test('a failed inline-issue CAS does not return a settled receipt', async () => {
+  const fac = await listen(({ res }) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      settled: true, success: true, transaction: TX, txRef: TX, network: 'base', payer: PAYER,
+    }));
+  });
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store);
+    const orig = store.casLate.bind(store);
+    store.casLate = (id, from, to, patch) => {
+      if (to === 'issued' && patch?.inline === true) return null;
+      return orig(id, from, to, patch);
+    };
+    const decision = await pay(store, baseCfg(fac.url, { chainReader: async () => match() }), nonce, evmHeader());
+    assert.notEqual(decision.kind, 'settled');
+    assert.equal(decision.code, 'settle_pending');
+    assert.equal(decision.receiptJws, undefined);
+    assert.notEqual(store.listLate()[0].state, 'issued');
+  } finally {
+    await fac.close();
   }
 });

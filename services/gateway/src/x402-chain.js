@@ -26,6 +26,12 @@ export {
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
+/** Public Base RPCs reject eth_getLogs ranges above this. */
+const LOG_CHUNK_BLOCKS = 2000n;
+/** Blocks before the issue block or the validAfter estimate. */
+const LOG_SEARCH_MARGIN = 64n;
+/** Base block time used only to turn validAfter into a start block. */
+const BASE_BLOCK_SECONDS = 2n;
 
 export const ERC6492_MAGIC = `0x${'64926492'.repeat(8)}`;
 
@@ -448,11 +454,55 @@ export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000) {
   return { finalized: got <= tipN, blockTimestamp: ts, blockHash: block.hash || null };
 }
 
+function hexBlock(n) {
+  return `0x${n.toString(16)}`;
+}
+
+function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}) {
+  const clamp = (start) => {
+    let n = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
+    if (n > tipNumber) n = tipNumber;
+    if (n < 0n) n = 0n;
+    return n;
+  };
+  if (issueBlock != null && issueBlock !== '') {
+    try {
+      const block = BigInt(issueBlock);
+      if (block >= 0n) return clamp(block);
+    } catch { /* use the time anchor */ }
+  }
+  let tipTs = null;
+  try { if (tipTimestamp != null) tipTs = BigInt(tipTimestamp); } catch { tipTs = null; }
+  const fromUnix = (sec) => {
+    if (tipTs == null || sec == null || sec === '') return null;
+    let unix;
+    try { unix = BigInt(sec); } catch { return null; }
+    if (unix <= 0n) return null;
+    const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
+    return clamp(tipNumber > delta ? tipNumber - delta : 0n);
+  };
+  const after = fromUnix(validAfter);
+  if (after != null) return after;
+  const ms = Number(issuedAtMs);
+  if (Number.isFinite(ms) && ms > 0) return fromUnix(Math.floor(ms / 1000));
+  return null;
+}
+
 /**
  * One AuthorizationUsed log for this authorizer and nonce, at or below the
- * finalized tip. Zero logs, many logs, or an RPC error stays unresolved.
+ * finalized tip. The scan starts at the challenge issue block, or at
+ * validAfter, minus a small margin. Each eth_getLogs call covers at most
+ * 2,000 blocks. Zero logs, many logs, or an RPC error stays unresolved.
  */
-export async function findAuthorizationTx(rpcUrl, { asset, from, nonce, timeoutMs = 8000 } = {}) {
+export async function findAuthorizationTx(rpcUrl, {
+  asset,
+  from,
+  nonce,
+  timeoutMs = 8000,
+  issueBlock = null,
+  validAfter = null,
+  issuedAtMs = null,
+} = {}) {
   if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
   let topic1;
   let topic2;
@@ -465,16 +515,25 @@ export async function findAuthorizationTx(rpcUrl, { asset, from, nonce, timeoutM
   }
   try {
     const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
-    const toBlock = tip?.number || 'finalized';
-    const logs = await rpcCall(rpcUrl, 'eth_getLogs', [{
-      address: asset,
-      topics: [AUTH_USED_TOPIC, topic1, topic2],
-      fromBlock: '0x0',
-      toBlock,
-    }], timeoutMs);
-    if (!Array.isArray(logs) || logs.length !== 1 || !logs[0]?.transactionHash) {
-      return { ok: false, pending: true };
+    if (!tip?.number) return { ok: false, pending: true };
+    const tipN = BigInt(tip.number);
+    const start = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
+    if (start == null) return { ok: false, pending: true };
+    const logs = [];
+    for (let cursor = start; cursor <= tipN;) {
+      const end = cursor + LOG_CHUNK_BLOCKS - 1n > tipN ? tipN : cursor + LOG_CHUNK_BLOCKS - 1n;
+      const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
+        address: asset,
+        topics: [AUTH_USED_TOPIC, topic1, topic2],
+        fromBlock: hexBlock(cursor),
+        toBlock: hexBlock(end),
+      }], timeoutMs);
+      if (Array.isArray(chunk)) logs.push(...chunk);
+      if (logs.length > 1) return { ok: false, pending: true };
+      if (end === tipN) break;
+      cursor = end + 1n;
     }
+    if (logs.length !== 1 || !logs[0]?.transactionHash) return { ok: false, pending: true };
     return {
       ok: true,
       tx: logs[0].transactionHash,

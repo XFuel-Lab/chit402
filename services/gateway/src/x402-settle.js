@@ -660,11 +660,7 @@ export async function settleBoundPayment({
         taskId,
         resource: resourceHave,
         submittedAt,
-        solana: false,
         paymentHeader,
-        messageHash: null,
-        payerAuthority: null,
-        feePayer: null,
       }));
     if (!opened.ok) {
       release();
@@ -843,7 +839,20 @@ export async function settleBoundPayment({
     dispute_window = preparedWindow;
   }
   if (lateRow) {
-    try { noteLateInlineIssued(active, lateRow.pending_id, { txRef: norm.key }); } catch { /* store */ }
+    let marked = null;
+    try {
+      marked = noteLateInlineIssued(active, lateRow.pending_id, { txRef: norm.key });
+    } catch {
+      marked = null;
+    }
+    if (!marked) {
+      const pendingId = lateRow.pending_id;
+      return refused(req, 'settle_pending', {
+        retryAfter: LATE_RETRY_AFTER_SEC,
+        pendingId,
+        verifyUrl: lateVerifyUrl(cfg, pendingId),
+      });
+    }
   }
 
   return {

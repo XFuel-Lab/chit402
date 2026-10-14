@@ -16,7 +16,6 @@ import { encodeBase58, decodeBase58 } from '../src/payment-ref.js';
 import { assertV11Allowlist, V11_SIGNED_FIELDS, v11Commit, V11_LABEL_OUTPUT } from '../src/v11-seal.js';
 import logger from '../src/logger.js';
 import {
-  casLateRefund,
   lateClaimSalt,
   listLateIssueOwnerView,
   resolveLateRecord,
@@ -534,58 +533,6 @@ test('LT9 a match that is not finalized is not signed', async () => {
   } finally {
     await fac.close();
     await rpc.close();
-  }
-});
-
-test('LT10 refund exclusion', async () => {
-  const fac = await listen(dropSettle);
-  try {
-    const store = new ChallengeStore();
-    const nonce = putChallenge(store);
-    const cfg = baseCfg(fac.url, { lateForcePaymentOnly: true, chainReader: reader() });
-    await pay(store, cfg, nonce, evmHeader());
-    const row = store.listLate()[0];
-    store.casLate(row.pending_id, 'unknown', 'confirmed', { confirmed_at: Date.now(), tx_hint: TX });
-    let signs = 0;
-    const blocked = await resolveLateRecord(store, store.getLate(row.pending_id), {
-      cfg,
-      hasRefund: () => true,
-      signer: () => { signs += 1; return 'jws.no'; },
-      appendLog: () => {},
-      forcePaymentOnly: true,
-    });
-    assert.equal(blocked.code, 'refund_conflict');
-    assert.equal(signs, 0);
-    assert.equal(store.listLateLedger().length, 0);
-
-    const storeB = new ChallengeStore();
-    const nonceB = putChallenge(storeB);
-    await pay(storeB, cfg, nonceB, evmHeader({ nonce: `0x${'41'.repeat(32)}` }));
-    const fresh = storeB.listLate()[0];
-    storeB.casLate(fresh.pending_id, 'unknown', 'confirmed', { confirmed_at: Date.now(), tx_hint: TX });
-    const [issued, refund] = await Promise.all([
-      resolveLateRecord(storeB, storeB.getLate(fresh.pending_id), {
-        cfg,
-        signer: () => { signs += 1; return 'jws.race'; },
-        appendLog: () => {},
-        forcePaymentOnly: true,
-      }),
-      Promise.resolve().then(() => casLateRefund(storeB, { nonce: nonceB })),
-    ]);
-    const state = storeB.listLate()[0].state;
-    assert.ok(state === 'issued' || state === 'refund_owed');
-    assert.notEqual(state === 'issued' && refund.ok === true, true);
-    assert.equal(storeB.listLateLedger().length, state === 'issued' ? 1 : 0);
-    if (state === 'issued') {
-      const after = casLateRefund(storeB, { nonce: nonceB });
-      assert.equal(after.ok, false);
-      assert.equal(after.reason, 'refund_conflict');
-      assert.equal(issued.jws, 'jws.race');
-    } else {
-      assert.equal(signs === 0 || issued.jws == null, true);
-    }
-  } finally {
-    await fac.close();
   }
 });
 

@@ -17,9 +17,7 @@ import { DurableChallengeStore, setActiveChallengeStore } from '../src/x402-dura
 import { clearChainReaderForTests } from '../src/x402-chain.js';
 import { assertV11Allowlist, V11_SIGNED_FIELDS } from '../src/v11-seal.js';
 import {
-  casLateRefund,
   listLateIssueOwnerView,
-  noteIneligibleLanding,
   resolveLateRecord,
 } from '../src/late-issue.js';
 
@@ -487,51 +485,6 @@ test('a used authorization is refused before verify and writes no second row', a
   } finally {
     await fac.close();
   }
-});
-
-test('refund and late-issue cannot both win', async () => {
-  const fac = await listen(({ req }) => { req.socket.destroy(); });
-  let signs = 0;
-  try {
-    const store = new ChallengeStore();
-    const nonce = putChallenge(store);
-    const cfg = baseCfg(fac.url, { lateForcePaymentOnly: true, chainReader: finalizedReader() });
-    await pay(store, cfg, nonce, evmHeader());
-    const row = store.listLate()[0];
-    store.casLate(row.pending_id, 'unknown', 'confirmed', { confirmed_at: Date.now(), why: 'confirmed' });
-    const refund = casLateRefund(store, { nonce });
-    assert.equal(refund.ok, true);
-    const resolved = await resolveLateRecord(store, store.getLate(row.pending_id), {
-      cfg,
-      signer: () => { signs += 1; return 'jws.refund'; },
-      appendLog: () => {},
-      forcePaymentOnly: true,
-    });
-    assert.equal(signs, 0);
-    assert.equal(resolved.state, 'refund_owed');
-    const late = casLateRefund(store, { nonce });
-    assert.equal(late.ok, false);
-    assert.equal(late.reason, 'refund_conflict');
-  } finally {
-    await fac.close();
-  }
-});
-
-test('an ineligible landing is an owner alert and is not issued', async () => {
-  const store = new ChallengeStore();
-  const noted = noteIneligibleLanding(store, { why: 'verify_failed', network: 'base', taskId: 'task-late' });
-  assert.equal(noted.ok, true);
-  let signs = 0;
-  const resolved = await resolveLateRecord(store, store.listLate()[0], {
-    cfg: { lateIssue: true, chainReader: finalizedReader() },
-    signer: () => { signs += 1; return 'jws.no'; },
-    forcePaymentOnly: true,
-  });
-  assert.equal(signs, 0);
-  assert.equal(resolved.state, 'ineligible_alert');
-  const view = listLateIssueOwnerView(store);
-  assert.equal(view.length, 1);
-  assert.match(view[0].note, /no auto-issue/);
 });
 
 test('the record is durable before the settle response returns', async () => {

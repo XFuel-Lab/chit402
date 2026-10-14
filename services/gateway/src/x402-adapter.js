@@ -543,7 +543,7 @@ export class ChallengeStore {
 
   /**
    * Insert one late-issue row. Refuses a second row for the same authorization
-   * identity or compiled-message hash. The raw header is not a field.
+   * identity. The raw header is not a field.
    */
   putLate(row) {
     if (!row || !row.pending_id) return { ok: false, reason: 'replay_store_unavailable' };
@@ -551,9 +551,6 @@ export class ChallengeStore {
       return { ok: false, reason: 'payment_replayed' };
     }
     if (row.auth_key && this.late.some((r) => r.auth_key === row.auth_key)) {
-      return { ok: false, reason: 'payment_replayed' };
-    }
-    if (row.message_hash && this.late.some((r) => r.message_hash === row.message_hash)) {
       return { ok: false, reason: 'payment_replayed' };
     }
     this.late.push(row);
@@ -569,11 +566,10 @@ export class ChallengeStore {
       if (query.pendingId && row.pending_id !== query.pendingId) return false;
       if (query.nonce && row.nonce !== query.nonce) return false;
       if (query.authKey && row.auth_key !== query.authKey) return false;
-      if (query.messageHash && row.message_hash !== query.messageHash) return false;
       if (query.txRef && row.tx_ref !== query.txRef) return false;
       if (query.idempotencyKey && row.idempotency_key !== query.idempotencyKey) return false;
       if (query.principal && row.principal !== query.principal) return false;
-      return !!(query.pendingId || query.nonce || query.authKey || query.messageHash || query.txRef || query.idempotencyKey);
+      return !!(query.pendingId || query.nonce || query.authKey || query.txRef || query.idempotencyKey);
     }) || null;
   }
 
@@ -632,8 +628,6 @@ export class ChallengeStore {
       'mismatch_hold',
       'expired_unresolved',
       'not_settled',
-      'refund_owed',
-      'ineligible_alert',
     ]);
     const cutoff = now - maxAge;
     const before = this.late.length;

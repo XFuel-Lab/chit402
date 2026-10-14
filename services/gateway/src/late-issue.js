@@ -1,10 +1,6 @@
 /**
- * Late-issue receipts. EVM only.
- *
- * Solana late-issue is unsupported. A Solana settle that reports failure
- * follows the main path: a transport error stays unknown, and an HTTP error
- * or success:false is released so the same challenge can settle again.
- * This module does not open a Solana row and does not sign one.
+ * Late-issue receipts. EVM only. Solana is unsupported: a Solana settle
+ * stays on the main path and this module does not open or sign a row.
  *
  * A Base settle whose request left the process keeps one row in the replay
  * store (the durable challenge store). States run
@@ -18,18 +14,16 @@ import crypto from 'node:crypto';
 import logger from './logger.js';
 import { confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
 import { samePayee, truncateWallet } from './x402-flags.js';
-import { canonicalNetwork, encodeBase58, normalizePaymentRef, sameNetwork } from './payment-ref.js';
+import { canonicalNetwork, normalizePaymentRef, sameNetwork } from './payment-ref.js';
 import { buildV11SignedClaims, minuteIssuedAt } from './v11-seal.js';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { signJws } from './issuer-key.js';
+import { getIssuerKid, signJws } from './issuer-key.js';
 import { bindSaltReceipt, requestDigest, requestSalt, saltReceiptId } from './request-binding.js';
 import { buildVerifyUrl } from './receipt.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 
 export const LATE_HORIZON_MS = 24 * 60 * 60 * 1000;
 export const LATE_SKEW_MS = 120_000;
-/** Solana: settle timeout 45s + blockhash lifetime ~90s + 60s. */
-export const SOLANA_LATE_WINDOW_MS = (45 + 90 + 60) * 1000;
 export const LATE_RETRY_AFTER_SEC = 5;
 
 const TERMINAL = new Set([
@@ -37,8 +31,6 @@ const TERMINAL = new Set([
   'mismatch_hold',
   'expired_unresolved',
   'not_settled',
-  'refund_owed',
-  'ineligible_alert',
 ]);
 
 export function lateIssueEnabled(cfg = {}) {
@@ -55,72 +47,6 @@ export function lateIssueShadow(cfg = {}) {
 export function evmAuthKey(network, asset, from, nonce) {
   if (!from || !nonce) return null;
   return `${canonicalNetwork(network)}|${String(asset || '').toLowerCase()}|${String(from).toLowerCase()}|${String(nonce).toLowerCase()}`;
-}
-
-function readShortvec(buf, offset) {
-  let len = 0;
-  let shift = 0;
-  let i = offset;
-  for (let n = 0; n < 3; n += 1) {
-    if (i >= buf.length) return null;
-    const b = buf[i];
-    i += 1;
-    len |= (b & 0x7f) << shift;
-    if ((b & 0x80) === 0) return { len, next: i };
-    shift += 7;
-  }
-  return null;
-}
-
-/**
- * Fee payer is account 0. The payer authority is the other required signer
- * when there is exactly one. Ambiguous messages do not guess.
- */
-export function solanaMessageAccounts(base64) {
-  if (typeof base64 !== 'string' || base64.length === 0) return null;
-  const buf = Buffer.from(base64, 'base64');
-  const count = readShortvec(buf, 0);
-  if (!count || count.len < 1 || count.len > 8) return null;
-  const start = count.next + (count.len * 64);
-  if (start <= 0 || start >= buf.length) return null;
-  const msg = buf.subarray(start);
-  if (msg.length < 4) return null;
-  const required = msg[0];
-  const keys = readShortvec(msg, 3);
-  if (!keys || required < 1 || required > keys.len) return null;
-  const end = keys.next + (keys.len * 32);
-  if (end > msg.length) return null;
-  const accounts = [];
-  for (let i = 0; i < keys.len; i += 1) {
-    const slice = msg.subarray(keys.next + (i * 32), keys.next + ((i + 1) * 32));
-    const text = encodeBase58(slice);
-    if (!text) return null;
-    accounts.push(text);
-  }
-  const feePayer = accounts[0];
-  const others = accounts.slice(0, required).filter((key) => key !== feePayer);
-  return {
-    feePayer,
-    authority: others.length === 1 ? others[0] : null,
-    accounts,
-  };
-}
-
-/** SHA-256 of the Solana compiled message (bytes after the signature block). */
-export function solanaMessageHash(base64) {
-  if (typeof base64 !== 'string' || base64.length === 0) return null;
-  const buf = Buffer.from(base64, 'base64');
-  if (buf.length < 65) return null;
-  const count = readShortvec(buf, 0);
-  if (!count || count.len < 1 || count.len > 8) return null;
-  const start = count.next + (count.len * 64);
-  if (start <= 0 || start >= buf.length) return null;
-  return crypto.createHash('sha256').update(buf.subarray(start)).digest('hex');
-}
-
-function solanaNetwork(network) {
-  const name = canonicalNetwork(network);
-  return name === 'solana' || name === 'solana-devnet' || String(network || '').toLowerCase().includes('solana');
 }
 
 function nowMs(deps, cfg) {
@@ -171,10 +97,6 @@ export function decideLateExpiry({
   const matched = !!(chain && chain.ok === true && chain.finalized === true);
   if (!matched) {
     if (pastHorizon) return 'expired_unresolved';
-    if (record.solana) {
-      if (chain?.blockhashExpired === true) return 'not_settled';
-      return 'unknown';
-    }
     const validBefore = Number(record.auth?.validBefore);
     const nowSec = Math.floor(now / 1000);
     if (Number.isFinite(validBefore) && validBefore > 0 && nowSec >= validBefore) {
@@ -189,11 +111,6 @@ export function decideLateExpiry({
   const earliest = Math.floor((submitted - skewMs) / 1000);
   if (ts < earliest) return 'mismatch_hold';
   const issuedSec = Math.floor(Number(record.challenge_issued_at) / 1000);
-  if (record.solana) {
-    const end = Math.floor((submitted + SOLANA_LATE_WINDOW_MS) / 1000);
-    if (Number.isFinite(issuedSec) && (ts < issuedSec || ts > end)) return 'mismatch_hold';
-    return 'issue';
-  }
   const validAfter = Number(record.auth?.validAfter ?? 0);
   const validBefore = Number(record.auth?.validBefore);
   if (!Number.isFinite(validBefore)) return 'unknown';
@@ -231,11 +148,7 @@ export function openLateSubmission(store, tuple) {
     expected_settled_amount: tuple.expectedSettledAmount,
     auth_key: tuple.authKey || null,
     auth: tuple.auth || null,
-    message_hash: tuple.messageHash || null,
-    payer_authority: tuple.payerAuthority || null,
-    memo: tuple.memo ?? null,
-    fee_payer: tuple.feePayer || null,
-    solana: tuple.solana === true,
+    issue_block: tuple.issueBlock != null ? tuple.issueBlock : null,
     request_digest: tuple.requestDigest || null,
     payment_hash: tuple.paymentHash || null,
     salt_ref: tuple.saltRef || null,
@@ -284,8 +197,6 @@ function ownerNote(row) {
   if (row.state === 'issued' && row.inline !== true && row.served !== true) {
     return 'payment confirmed late; not served.';
   }
-  if (row.state === 'ineligible_alert') return 'ineligible landing; no auto-issue';
-  if (row.why === 'refund_conflict') return 'refund_conflict';
   return row.why || row.state;
 }
 
@@ -302,40 +213,9 @@ export function listLateIssueOwnerView(store) {
     receipt_id: row.receipt_id || null,
     served: row.served === true,
     note: ownerNote(row),
-    payer: truncateWallet(row.auth?.from || row.payer_authority || ''),
+    payer: truncateWallet(row.auth?.from || ''),
     payee: truncateWallet(row.payee || ''),
   }));
-}
-
-export function noteIneligibleLanding(store, row = {}) {
-  if (!store || typeof store.putLate !== 'function') return { ok: false, reason: 'replay_store_unavailable' };
-  return store.putLate({
-    pending_id: crypto.randomBytes(16).toString('hex'),
-    state: 'ineligible_alert',
-    sent: false,
-    inline: false,
-    why: row.why || 'pre_settle',
-    nonce: row.nonce || null,
-    network: row.network || null,
-    submitted_at: typeof row.submittedAt === 'number' ? row.submittedAt : Date.now(),
-    task_id: row.taskId || null,
-    principal: row.principal || 'anon',
-    served: false,
-    jws: null,
-  });
-}
-
-/** confirmed → refund_owed, or a refusal when the row is already issuing or issued. */
-export function casLateRefund(store, query = {}) {
-  const row = store.findLate?.(query);
-  if (!row) return { ok: false, reason: 'not_found' };
-  if (row.state === 'issuing' || row.state === 'issued') {
-    return { ok: false, reason: 'refund_conflict' };
-  }
-  if (row.state !== 'confirmed') return { ok: false, reason: 'refund_conflict' };
-  const next = store.casLate(row.pending_id, 'confirmed', 'refund_owed', { why: 'refund_owed' });
-  if (!next) return { ok: false, reason: 'refund_conflict' };
-  return { ok: true, row: next };
 }
 
 function rebind(record, chain) {
@@ -343,7 +223,7 @@ function rebind(record, chain) {
   if (chain.finalized !== true) return 'unknown';
   if (chain.network && !sameNetwork(chain.network, record.network)) return 'mismatch_hold';
   const net = canonicalNetwork(chain.network || record.network);
-  if (net === 'base-sepolia' || net === 'solana-devnet') return 'mismatch_hold';
+  if (net === 'base-sepolia') return 'mismatch_hold';
   if (!chain.asset || !record.asset) return 'unknown';
   const want = String(record.asset);
   const got = String(chain.asset);
@@ -356,7 +236,7 @@ function rebind(record, chain) {
     return 'mismatch_hold';
   }
   if (!chain.payTo || !record.payee) return 'unknown';
-  if (!samePayee(chain.payTo, record.payee, { solana: record.solana })) return 'mismatch_hold';
+  if (!samePayee(chain.payTo, record.payee, { solana: false })) return 'mismatch_hold';
   if (chain.transferCount == null) return 'unknown';
   if (Number(chain.transferCount) !== 1) return 'mismatch_hold';
   let amount;
@@ -366,19 +246,6 @@ function rebind(record, chain) {
     quote = BigInt(String(record.route_quote));
   } catch {
     return 'unknown';
-  }
-  if (record.solana) {
-    let pinned;
-    try { pinned = BigInt(String(record.challenge_amount)); } catch { return 'unknown'; }
-    if (amount < pinned || amount < quote) return 'mismatch_hold';
-    if (!record.payer_authority || chain.payer !== record.payer_authority) return 'mismatch_hold';
-    if (!record.fee_payer || chain.feePayer !== record.fee_payer) return 'mismatch_hold';
-    if (chain.feePayer === chain.payer) return 'mismatch_hold';
-    if (record.message_hash && chain.messageHash && chain.messageHash !== record.message_hash) {
-      return 'mismatch_hold';
-    }
-    if (record.message_hash && !chain.messageHash) return 'unknown';
-    return 'confirmed';
   }
   let authValue;
   try { authValue = BigInt(String(record.auth?.value)); } catch { return 'unknown'; }
@@ -405,8 +272,6 @@ function chainChallenge(record) {
     asset: record.asset,
     amount: record.challenge_amount,
     payTo: record.payee,
-    memo: record.memo,
-    extra: { feePayer: record.fee_payer },
     nonce: record.nonce,
   };
 }
@@ -442,16 +307,12 @@ function sameChainIdentity(a, b) {
 }
 
 async function proveFinality(record, out, deps) {
-  if (!out?.ok) return pendingChain(out);
-  if (out.finalized === false) return { ...out, pending: true };
-  if (out.finalized === true && Number.isFinite(Number(out.blockTimestamp))) return out;
-  if (record.solana) {
-    const ts = Number(out.blockTimestamp ?? out.blockTime);
-    if (out.finalized === true || out.confirmationStatus === 'finalized') {
-      return Number.isFinite(ts) ? { ...out, finalized: true, blockTimestamp: ts } : pendingChain(out);
-    }
+  if (!out?.ok) {
+    if (out && out.pending !== true && out.ok === false) return { ...out, pending: false };
     return pendingChain(out);
   }
+  if (out.finalized === false) return { ...out, pending: true };
+  if (out.finalized === true && Number.isFinite(Number(out.blockTimestamp))) return out;
   const cfg = deps.cfg || {};
   const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
   if (!url || out.blockNumber == null) return pendingChain(out);
@@ -473,7 +334,7 @@ async function proveFinality(record, out, deps) {
       tx: out.tx || out.transaction || record.tx_hint,
     };
   } catch (err) {
-    logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from || record.payer_authority) }, 'late-issue finality read failed');
+    logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from) }, 'late-issue finality read failed');
     return pendingChain(out);
   }
 }
@@ -485,7 +346,6 @@ async function readSettlement(record, deps, reader) {
     delete cfg.chainReader2;
     delete cfg.lateSigner;
     delete cfg.lateAppendLog;
-    delete cfg.lateHasRefund;
     delete cfg.crashBeforeLedger;
     delete cfg.lateForcePaymentOnly;
     delete cfg.lateOutputBytes;
@@ -497,7 +357,7 @@ async function readSettlement(record, deps, reader) {
       facilitator: {
         transaction: record.tx_hint,
         txRef: record.tx_hint,
-        payer: record.auth?.from || record.payer_authority || null,
+        payer: record.auth?.from || null,
         network: record.network,
         success: true,
         settled: true,
@@ -509,7 +369,7 @@ async function readSettlement(record, deps, reader) {
       chainReader: reader || (process.env.NODE_ENV === 'test' ? cfg.chainReader : null) || null,
     });
   } catch (err) {
-    logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from || record.payer_authority) }, 'late-issue chain read failed');
+    logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from) }, 'late-issue chain read failed');
     return pendingChain(null);
   }
 }
@@ -520,7 +380,6 @@ function testHooks(cfg) {
   const out = {};
   if (typeof cfg.lateSigner === 'function') out.signer = cfg.lateSigner;
   if (typeof cfg.lateAppendLog === 'function') out.appendLog = cfg.lateAppendLog;
-  if (typeof cfg.lateHasRefund === 'function') out.hasRefund = cfg.lateHasRefund;
   if (cfg.crashBeforeLedger === true) out.crashBeforeLedger = true;
   if (typeof cfg.chainReader === 'function') out.chainReader = cfg.chainReader;
   if (typeof cfg.chainReader2 === 'function') out.chainReader2 = cfg.chainReader2;
@@ -553,7 +412,7 @@ export function lateVerifyUrl(cfg, pendingId) {
 }
 
 async function discoverHint(record, deps) {
-  if (record.solana || record.tx_hint) return record;
+  if (record.tx_hint) return record;
   if (readerOf(deps)) return record;
   const cfg = deps.cfg || {};
   const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
@@ -562,6 +421,9 @@ async function discoverHint(record, deps) {
     asset: record.asset,
     from: record.auth?.from,
     nonce: record.auth?.nonce,
+    issueBlock: record.issue_block,
+    validAfter: record.auth?.validAfter,
+    issuedAtMs: record.challenge_issued_at,
   });
   if (!found.ok || !found.tx) return record;
   return { ...record, tx_hint: found.tx };
@@ -569,7 +431,7 @@ async function discoverHint(record, deps) {
 
 async function readChain(record, deps) {
   const hinted = await discoverHint(record, deps);
-  if (!hinted.solana && !hinted.tx_hint && !readerOf(deps)) return pendingChain(null);
+  if (!hinted.tx_hint && !readerOf(deps)) return pendingChain(null);
   const cfg = deps.cfg || {};
   const primary = readerOf(deps);
   const secondary = typeof deps.chainReader2 === 'function'
@@ -630,19 +492,6 @@ async function reorgGuard(record, chain, deps) {
   }
 }
 
-function refundBlocked(record, deps) {
-  if (record.state === 'refund_owed' || record.why === 'refund_conflict') return true;
-  if (typeof deps.hasRefund === 'function') {
-    try {
-      if (deps.hasRefund(record) === true) return true;
-    } catch (err) {
-      logger.warn({ err: err.message }, 'late-issue refund lookup failed');
-      return true;
-    }
-  }
-  return false;
-}
-
 async function appendLeaf(record, digest, deps) {
   if (record.log_appended === true) return true;
   if (typeof deps.appendLog === 'function') {
@@ -676,10 +525,8 @@ export function lateClaimSalt(record) {
 }
 
 function claimsFor(record, chain, outputBytes, issuedAt) {
-  const network = canonicalNetwork(record.network);
-  const chainName = network === 'solana' || network === 'solana-devnet' ? 'solana' : 'base';
   const tx = chain.tx || chain.transaction || record.tx_hint;
-  const ref = `${chainName}:${tx}`;
+  const ref = `base:${tx}`;
   const digest = record.request_digest
     || crypto.createHash('sha256').update('').digest('hex');
   const view = {
@@ -696,7 +543,7 @@ function claimsFor(record, chain, outputBytes, issuedAt) {
     seq: null,
   };
   return buildV11SignedClaims(view, {
-    kid: 'late-issue',
+    kid: getIssuerKid(),
     salt: lateClaimSalt(record),
     outputBytes: outputBytes || Buffer.alloc(0),
     receiptId: record.receipt_id,
@@ -818,7 +665,7 @@ async function publishIssued(store, record, chain, deps, outputBytes) {
     if (typeof jws !== 'string' || jws.length === 0) throw new Error('empty signature');
   } catch (err) {
     if (err.code === 'injected_crash') throw err;
-    logger.warn({ err: err.message, payer: truncateWallet(current.auth?.from || current.payer_authority) }, 'late-issue signer failed');
+    logger.warn({ err: err.message, payer: truncateWallet(current.auth?.from) }, 'late-issue signer failed');
     store.casLate(id, 'issuing', 'confirmed', { lease_owner: null, lease_until: 0, jws: null });
     return { pending: true, pendingId: id, signerFailed: true };
   }
@@ -869,16 +716,13 @@ export async function resolveLateRecord(store, record, deps = {}) {
       return { pending: true, pendingId: id, state: 'submitted' };
     }
   }
-  if (row.solana && !TERMINAL.has(row.state)) {
-    return { pending: true, pendingId: id, state: row.state, unsupported: 'solana' };
-  }
   if (row.state === 'issuing') {
     const owner = deps.owner || `p${process.pid}`;
     const leaseLive = row.lease_until > now && row.lease_owner && row.lease_owner !== owner;
     if (row.jws) {
       return publishIssued(store, row, {
         amount: row.expected_settled_amount,
-        payer: row.auth?.from || row.payer_authority,
+        payer: row.auth?.from,
         payTo: row.payee,
         tx: row.tx_hint,
       }, deps, null);
@@ -922,7 +766,7 @@ export async function resolveLateRecord(store, record, deps = {}) {
       logger.warn({
         pending_id: id,
         decision: next,
-        payer: truncateWallet(row.auth?.from || row.payer_authority),
+        payer: truncateWallet(row.auth?.from),
       }, 'late-issue shadow');
     }
     if (next === 'mismatch_hold' || next === 'expired_unresolved' || next === 'not_settled') {
@@ -942,10 +786,6 @@ export async function resolveLateRecord(store, record, deps = {}) {
     }
     if (!enabled || shadow) {
       return { pending: true, pendingId: id, state: 'confirmed' };
-    }
-    if (refundBlocked(row, deps)) {
-      store.casLate(id, 'confirmed', 'confirmed', { why: 'refund_conflict' });
-      return { state: 'confirmed', pendingId: id, ownerOnly: true, code: 'refund_conflict' };
     }
     const guarded = await reorgGuard(row, chain, deps);
     if (!guarded) {
@@ -1019,8 +859,6 @@ export async function resumeLateIssue({ store, req, cfg, nonce, taskId, paymentH
   if (!row) return null;
   if (row.state === 'submitted' && row.sent !== true) return null;
   if (row.inline === true && row.state === 'issued') return null;
-  if (row.state === 'ineligible_alert') return null;
-  if (row.solana) return null;
   // Switch off, including shadow, leaves the retry on main's path.
   if (!lateIssueEnabled(cfg)) return null;
   const header = typeof paymentHeader === 'string' ? paymentHeader : (req?.headers?.['x-payment'] || null);
@@ -1098,18 +936,12 @@ export function lateTupleFrom({
   taskId,
   resource,
   submittedAt,
-  solana,
-  messageHash,
-  payerAuthority,
-  feePayer,
   paymentHeader,
 }) {
-  const svm = typeof decoded?.payload?.transaction === 'string'
-    ? decoded.payload.transaction
-    : (typeof decoded?.transaction === 'string' ? decoded.transaction : null);
-  const accounts = solana && svm ? solanaMessageAccounts(svm) : null;
+  const headerAuth = decoded?.payload?.authorization || decoded?.authorization || null;
   const { digest, saltRef } = digestOf(req);
   const issuedAt = Number(challenge?.issuedAt || challenge?.createdAt || submittedAt);
+  const issueBlock = challenge?.issueBlock ?? challenge?.blockNumber ?? null;
   return {
     facilitatorId: facilitatorIdOf(cfg),
     submittedAt,
@@ -1126,18 +958,14 @@ export function lateTupleFrom({
       to: auth.to || null,
       value: auth.value != null ? String(auth.value) : null,
       nonce: auth.nonce || null,
-      validAfter: auth.validAfter != null ? String(auth.validAfter) : (decoded?.payload?.authorization?.validAfter != null ? String(decoded.payload.authorization.validAfter) : '0'),
-      validBefore: auth.validBefore != null ? String(auth.validBefore) : (decoded?.payload?.authorization?.validBefore != null ? String(decoded.payload.authorization.validBefore) : null),
+      validAfter: auth.validAfter != null ? String(auth.validAfter) : (headerAuth?.validAfter != null ? String(headerAuth.validAfter) : '0'),
+      validBefore: auth.validBefore != null ? String(auth.validBefore) : (headerAuth?.validBefore != null ? String(headerAuth.validBefore) : null),
     } : null,
-    messageHash: messageHash || (svm ? solanaMessageHash(svm) : null),
-    payerAuthority: payerAuthority || accounts?.authority || null,
-    memo: challenge?.memo ?? null,
-    feePayer: feePayer || accounts?.feePayer || null,
-    solana: solana === true,
+    issueBlock,
     requestDigest: digest,
     paymentHash: paymentHeaderHash(paymentHeader),
     saltRef,
-    principal: principalOf(req, auth?.from || payerAuthority),
+    principal: principalOf(req, auth?.from),
     idempotencyKey: req?.headers?.['idempotency-key'] || null,
     taskId,
     route: {
