@@ -69,7 +69,7 @@ Solana payments are verified and settled via PayAI. Base remains the default net
 
 A retry must resend the exact payment header from the first attempt, including the signature. Do not rebuild or re-sign it.
 
-`/task-request`, `/v1/agents/register`, `/v1/agents/:agent_id/book/ingest`, and the board routes answer that resend with `409 payment_replayed` and do not run the handler again. `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` return the original response bytes (same `task_id` and receipt) while this process still holds them: in memory only, for 120 seconds, and only up to 256 KiB. The response and the model output are not written to disk. After a restart, or after that copy expires, the same header is `409 payment_replayed`. Any other header is `409 payment_replayed` and does not include the wallet or the transaction.
+`/task-request`, `/v1/agents/register`, `/v1/agents/:agent_id/book/ingest`, and the board routes answer that resend with `409 payment_replayed` and do not run the handler again. `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` return the original response bytes (same `task_id` and receipt) while this process still holds them: in memory only, for 120 seconds, and only up to 256 KiB. A stored copy can be dropped early under memory pressure, which gives `409`. The response and the model output are not written to disk. After a restart, or after that copy expires, the same header is `409 payment_replayed`. Any other header is `409 payment_replayed` and does not include the wallet or the transaction.
 
 If the first attempt is still writing the response, the resend waits up to 60 seconds, then `402 payment_in_flight` with `Retry-After`. Resend the same header.
 

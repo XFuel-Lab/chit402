@@ -12,6 +12,8 @@ import { challengeStore as defaultStore } from './x402-adapter.js';
 export const REPLAY_BYTES_TTL_MS = 120_000;
 /** Larger responses are not kept. The replay then fails closed. */
 export const REPLAY_BYTES_MAX = 256 * 1024;
+/** Process-wide bound. Oldest copies are dropped first; a dropped copy is 409. */
+export const REPLAY_BYTES_PROCESS_MAX = 64 * 1024 * 1024;
 /** How long a duplicate waits for the winner to finish writing the response. */
 export const REPLAY_WAITER_MS = 60_000;
 
@@ -20,11 +22,13 @@ export const REPLAY_WAIT_TIMEOUT = Object.freeze({ timeout: true });
 const defaults = {
   ttlMs: REPLAY_BYTES_TTL_MS,
   maxBytes: REPLAY_BYTES_MAX,
+  processMaxBytes: REPLAY_BYTES_PROCESS_MAX,
   waiterMs: REPLAY_WAITER_MS,
 };
 
 const memory = new Map();
 const waiters = new Map();
+let memoryBytes = 0;
 let limits = { ...defaults };
 let fulfillmentRuns = 0;
 
@@ -56,14 +60,34 @@ export function activeReplayStore() {
   return getActiveChallengeStore() || defaultStore;
 }
 
+function dropMemory(key) {
+  const row = memory.get(key);
+  if (!row) return;
+  memoryBytes -= row.size;
+  if (memoryBytes < 0) memoryBytes = 0;
+  memory.delete(key);
+}
+
+/** Expired copies are removed here, not only when that nonce is read again. */
+function sweepExpired(now = Date.now()) {
+  for (const [key, row] of memory) {
+    if (row.expiresAt <= now) dropMemory(key);
+  }
+}
+
 function liveMemory(key) {
   const row = memory.get(key);
   if (!row) return null;
   if (row.expiresAt <= Date.now()) {
-    memory.delete(key);
+    dropMemory(key);
     return null;
   }
   return row;
+}
+
+/** In-process retention. Tests use this to see eviction and waiter cleanup. */
+export function replayMemoryStats() {
+  return { entries: memory.size, bytes: memoryBytes, waiters: waiters.size };
 }
 
 /** True when this process can still serve the original bytes, or the winner is writing them. */
@@ -79,10 +103,20 @@ export function replayBytesReady(nonce) {
 export function armServedReceipt(nonce) {
   if (!nonce) return;
   const key = keyOf(nonce);
-  if (waiters.has(key) || memory.has(key)) return;
+  if (waiters.has(key) || liveMemory(key)) return;
   let resolve = () => {};
   const promise = new Promise((done) => { resolve = done; });
   waiters.set(key, { promise, resolve, done: false });
+}
+
+function finishWaiter(key, value) {
+  const waiter = waiters.get(key);
+  if (!waiter) return;
+  waiters.delete(key);
+  if (!waiter.done) {
+    waiter.done = true;
+    waiter.resolve(value);
+  }
 }
 
 function responseHash(bytes) {
@@ -108,40 +142,44 @@ export function commitServedReceipt(nonce, payload, store = activeReplayStore())
     responseHash: responseHash(bytes),
   };
   persistMeta(nonce, meta, store);
-  const kept = Buffer.byteLength(bytes, 'utf8') <= limits.maxBytes;
-  const stored = kept
-    ? {
-      bytes,
-      signature: payload.signature || null,
-      taskId: meta.taskId,
-      responseHash: meta.responseHash,
-      status: payload.status || 200,
-      headers: payload.headers || {},
-      expiresAt: Date.now() + limits.ttlMs,
+  sweepExpired();
+  const size = Buffer.byteLength(bytes, 'utf8');
+  const fitsOne = size <= limits.maxBytes && size <= limits.processMaxBytes;
+  let stored = null;
+  if (memory.has(key)) dropMemory(key);
+  if (fitsOne) {
+    while (memoryBytes + size > limits.processMaxBytes && memory.size > 0) {
+      dropMemory(memory.keys().next().value);
     }
-    : null;
-  if (stored) memory.set(key, stored);
-  else memory.delete(key);
-  const waiter = waiters.get(key);
-  if (waiter && !waiter.done) {
-    waiter.done = true;
-    waiter.resolve(stored);
+    if (memoryBytes + size <= limits.processMaxBytes) {
+      stored = {
+        bytes,
+        signature: payload.signature || null,
+        taskId: meta.taskId,
+        responseHash: meta.responseHash,
+        status: payload.status || 200,
+        headers: payload.headers || {},
+        expiresAt: Date.now() + limits.ttlMs,
+        size,
+        storedAt: Date.now(),
+      };
+      memory.set(key, stored);
+      memoryBytes += size;
+    }
   }
+  finishWaiter(key, stored);
   return stored;
 }
 
 export function abortServedReceipt(nonce) {
   if (!nonce) return;
-  const waiter = waiters.get(keyOf(nonce));
-  if (waiter && !waiter.done) {
-    waiter.done = true;
-    waiter.resolve(null);
-  }
+  finishWaiter(keyOf(nonce), null);
 }
 
 /** Drop the in-memory copies. The durable hash stays. A later replay fails closed. */
 export function clearReplayMemory() {
   memory.clear();
+  memoryBytes = 0;
   for (const waiter of waiters.values()) {
     if (!waiter.done) {
       waiter.done = true;

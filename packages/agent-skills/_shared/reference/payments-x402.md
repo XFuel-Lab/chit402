@@ -125,7 +125,7 @@ for a new attempt.
 
 `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` keep
 the original response in memory only, for 120 seconds, and only when it is at
-most 256 KiB. An exact resend inside that window returns those bytes: the same
+most 256 KiB. A stored copy can be dropped early under memory pressure, which gives `409`. An exact resend inside that window returns those bytes: the same
 `task_id`, the same receipt, and the same signature. The gateway does not run
 the handler again and does not settle a second time. It does not write the
 response or the model output to disk. After a restart, or after that copy

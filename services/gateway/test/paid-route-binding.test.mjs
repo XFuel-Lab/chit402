@@ -10,12 +10,15 @@ import { ethers } from 'ethers';
 
 import { ChallengeStore } from '../src/x402-adapter.js';
 import {
+  abortServedReceipt,
+  armServedReceipt,
   clearReplayMemory,
   commitServedReceipt,
+  replayMemoryStats,
   setReplayLimitsForTests,
   takeServedReceipt,
-  armServedReceipt,
 } from '../src/paid-response-replay.js';
+import { paymentErrorStatus } from '../src/x402-flags.js';
 import { quoteBodyHash, settleBoundPayment } from '../src/x402-settle.js';
 import { confirmEvmReceipt, readEvmAuthorization } from '../src/x402-chain.js';
 import {
@@ -825,6 +828,105 @@ test('replay bytes expire, and the waiter times out instead of waiting forever',
     const got = await takeServedReceipt('nonce-wait');
     assert.equal(got.timedOut, true);
     assert.ok(Date.now() - started < 1000);
+  } finally {
+    clearReplayMemory();
+    setReplayLimitsForTests(null);
+  }
+});
+
+test('the process cap evicts the oldest copy and that replay is 409', async () => {
+  const fac = await listenFacilitator();
+  try {
+    clearReplayMemory();
+    setReplayLimitsForTests({ processMaxBytes: 30 });
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { amount: '2000', resource: '/task-request' });
+    const header = evmHeader();
+    const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const first = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+      serveStoredResponse: true,
+    });
+    assert.equal(first.kind, 'settled', first.code);
+    const older = 'A'.repeat(20);
+    const newer = 'B'.repeat(20);
+    assert.ok(commitServedReceipt(nonce, { bytes: older, taskId: 'task-1' }, store));
+    assert.ok(commitServedReceipt('nonce-newer', { bytes: newer, taskId: 'task-2' }, store));
+    const stats = replayMemoryStats();
+    assert.equal(stats.entries, 1);
+    assert.equal(stats.bytes, 20);
+    assert.equal(await takeServedReceipt(nonce, store), null);
+    const kept = await takeServedReceipt('nonce-newer', store);
+    assert.equal(kept.bytes, newer);
+    const evicted = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+      serveStoredResponse: true,
+    });
+    assert.equal(evicted.code, 'payment_replayed');
+    assert.notEqual(evicted.kind, 'settled');
+    assert.equal(paymentErrorStatus(evicted.code), 409);
+    assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
+  } finally {
+    clearReplayMemory();
+    setReplayLimitsForTests(null);
+    await fac.close();
+  }
+});
+
+test('a commit sweeps expired copies that nobody has read again', async () => {
+  const store = {
+    rows: {},
+    patch(nonce, fields) { this.rows[nonce] = { ...(this.rows[nonce] || {}), ...fields }; },
+    replayRecord(nonce) { return this.rows[nonce] || {}; },
+  };
+  try {
+    clearReplayMemory();
+    setReplayLimitsForTests({ ttlMs: 1 });
+    commitServedReceipt('nonce-old', { bytes: 'expired-body', taskId: 'old' }, store);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    setReplayLimitsForTests({ ttlMs: 60_000 });
+    const kept = commitServedReceipt('nonce-new', { bytes: 'fresh-body', taskId: 'new' }, store);
+    assert.ok(kept);
+    const stats = replayMemoryStats();
+    assert.equal(stats.entries, 1);
+    assert.equal(stats.bytes, Buffer.byteLength('fresh-body', 'utf8'));
+    assert.equal(await takeServedReceipt('nonce-old', store), null);
+    assert.equal((await takeServedReceipt('nonce-new', store)).bytes, 'fresh-body');
+    assert.equal(store.replayRecord('nonce-old').servedReceipt.taskId, 'old');
+    assert.equal(store.replayRecord('nonce-old').servedReceipt.bytes, undefined);
+  } finally {
+    clearReplayMemory();
+    setReplayLimitsForTests(null);
+  }
+});
+
+test('commit and abort delete the waiter so the body is not retained', async () => {
+  const store = { patch() {}, replayRecord() { return {}; } };
+  try {
+    clearReplayMemory();
+    armServedReceipt('w1');
+    assert.equal(replayMemoryStats().waiters, 1);
+    const kept = commitServedReceipt('w1', { bytes: 'kept-body', taskId: 'w' }, store);
+    assert.equal(kept.bytes, 'kept-body');
+    assert.equal(replayMemoryStats().waiters, 0);
+    assert.equal(replayMemoryStats().entries, 1);
+    armServedReceipt('w2');
+    assert.equal(replayMemoryStats().waiters, 1);
+    abortServedReceipt('w2');
+    assert.equal(replayMemoryStats().waiters, 0);
+    assert.equal(await takeServedReceipt('w2', store), null);
   } finally {
     clearReplayMemory();
     setReplayLimitsForTests(null);
