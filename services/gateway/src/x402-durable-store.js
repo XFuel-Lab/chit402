@@ -44,9 +44,26 @@ function readLockPid(lockPath) {
  * A live holder keeps the lock. A dead pid is renamed aside before anyone
  * else creates a new lock, so a slow holder is never preempted.
  */
+// A holder that never wrote its pid (crash between open and write) is stale
+// once the lock is older than this. A live holder writes its pid immediately.
+const PIDLESS_LOCK_STALE_MS = 10000;
+
+function lockAgeMs(lockPath) {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 function reclaimDeadLock(lockPath) {
   const pid = readLockPid(lockPath);
-  if (pid == null || pidAlive(pid)) return false;
+  // withFileLock is synchronous, so this process never waits on its own lock:
+  // our pid in the file is a previous incarnation (systemd or container restart).
+  const stale = pid == null
+    ? lockAgeMs(lockPath) > PIDLESS_LOCK_STALE_MS
+    : (pid === process.pid || !pidAlive(pid));
+  if (!stale) return false;
   const grave = `${lockPath}.dead.${process.pid}.${Date.now()}`;
   try {
     fs.renameSync(lockPath, grave);
@@ -54,9 +71,9 @@ function reclaimDeadLock(lockPath) {
     return false;
   }
   try {
-    const moved = Number(fs.readFileSync(grave, 'utf8').trim());
+    const movedText = fs.readFileSync(grave, 'utf8').trim();
     fs.unlinkSync(grave);
-    return moved === pid;
+    return pid == null ? movedText === '' || !Number.isInteger(Number(movedText)) : Number(movedText) === pid;
   } catch {
     try { fs.unlinkSync(grave); } catch { /* gone */ }
     return false;
@@ -135,14 +152,24 @@ function writeState(file, state) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state));
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, JSON.stringify(state));
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, file);
+  try {
+    const dfd = fs.openSync(dir, 'r');
+    try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); }
+  } catch { /* directory fsync is best effort */ }
 }
 
 const EMPTY_STATE = { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] };
 
 export class DurableChallengeStore {
-  constructor(file, { ttlMs, lockWaitMs } = {}) {
+  constructor(file, { ttlMs, lockWaitMs, createIfMissing = true } = {}) {
     if (!file) throw new Error('challenge store path required');
     this.file = file;
     this.lockPath = `${file}.lock`;
@@ -151,7 +178,14 @@ export class DurableChallengeStore {
       ? Number(lockWaitMs)
       : 4000;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!fs.existsSync(file)) writeState(file, EMPTY_STATE);
+    if (!fs.existsSync(file)) {
+      // Boot refuses a missing file. A vanished volume must not look like a
+      // fresh spent-set. Direct construction may still create one.
+      if (!createIfMissing) {
+        throw unavailable('x402 challenge store missing; refusing a fresh spent-set', new Error(file));
+      }
+      writeState(file, EMPTY_STATE);
+    }
     // Fail closed if the file cannot be parsed. Do not replace it.
     readState(file);
   }
@@ -210,11 +244,13 @@ export function markChallengeStoreFailed() {
 
 /**
  * Open the durable store. A load failure refuses x402 rather than running unbound.
+ * Boot passes createIfMissing false: a missing file is not a fresh spent-set.
  * @param {string} file
+ * @param {{ createIfMissing?: boolean }} [opts]
  */
-export function openDurableChallengeStore(file) {
+export function openDurableChallengeStore(file, { createIfMissing = false } = {}) {
   try {
-    const store = new DurableChallengeStore(file);
+    const store = new DurableChallengeStore(file, { createIfMissing });
     setActiveChallengeStore(store);
     return store;
   } catch (err) {

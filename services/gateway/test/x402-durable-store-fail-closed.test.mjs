@@ -2,13 +2,19 @@
  * TG-DSTORE: a corrupt or empty challenge store fails closed.
  * It must not load as a fresh spent-set, and a live lock is not stolen.
  */
+import { spawn } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const { DurableChallengeStore } = await import('../src/x402-durable-store.js');
+const {
+  DurableChallengeStore,
+  openDurableChallengeStore,
+  challengeStoreFailed,
+  setActiveChallengeStore,
+} = await import('../src/x402-durable-store.js');
 
 const NONCE = `0x${'ab'.repeat(32)}`;
 
@@ -59,14 +65,49 @@ test('a live lock holder is not preempted', () => {
   try {
     const store = new DurableChallengeStore(file, { lockWaitMs: 40 });
     store.markSpent(NONCE);
-    fs.writeFileSync(`${file}.lock`, String(process.pid));
-    const started = Date.now();
-    assert.throws(() => store.isSpent(NONCE), (err) => err.code === 'x402_unavailable');
-    assert.ok(Date.now() - started < 2_000);
-    assert.equal(fs.readFileSync(`${file}.lock`, 'utf8').trim(), String(process.pid));
+    // A live holder is another process. Our own pid is a previous incarnation.
+    const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    try {
+      fs.writeFileSync(`${file}.lock`, String(holder.pid));
+      const started = Date.now();
+      assert.throws(() => store.isSpent(NONCE), (err) => err.code === 'x402_unavailable');
+      assert.ok(Date.now() - started < 2_000);
+      assert.equal(fs.readFileSync(`${file}.lock`, 'utf8').trim(), String(holder.pid));
+    } finally {
+      holder.kill();
+    }
     fs.unlinkSync(`${file}.lock`);
     assert.equal(store.isSpent(NONCE), true);
+    // A lock left by this pid's previous incarnation, or a pidless lock older
+    // than the stale window, is reclaimed instead of wedging every settle.
+    fs.writeFileSync(`${file}.lock`, String(process.pid));
+    assert.equal(store.isSpent(NONCE), true);
+    fs.writeFileSync(`${file}.lock`, '');
+    const old = new Date(Date.now() - 20_000);
+    fs.utimesSync(`${file}.lock`, old, old);
+    assert.equal(store.isSpent(NONCE), true);
+    // A pidless lock younger than the stale window still belongs to a live holder.
+    fs.writeFileSync(`${file}.lock`, '');
+    assert.throws(() => store.isSpent(NONCE), (err) => err.code === 'x402_unavailable');
+    assert.equal(fs.readFileSync(`${file}.lock`, 'utf8'), '');
+    fs.unlinkSync(`${file}.lock`);
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('boot does not create a fresh spent-set when the store file is missing', () => {
+  const { dir, file } = tempFile();
+  try {
+    assert.equal(fs.existsSync(file), false);
+    assert.throws(
+      () => openDurableChallengeStore(file),
+      (err) => err.code === 'x402_unavailable' && /fresh spent-set/.test(err.message),
+    );
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(challengeStoreFailed(), true);
+  } finally {
+    setActiveChallengeStore(null);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
