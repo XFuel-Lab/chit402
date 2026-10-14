@@ -201,6 +201,11 @@ function runAsync(args) {
   });
 }
 
+function flipLast(text) {
+  const last = text.at(-1);
+  return text.slice(0, -1) + (last === 'A' ? 'B' : 'A');
+}
+
 function listen(server) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve(server.address().port));
@@ -285,7 +290,9 @@ test('T7 a forged full receipt exits 1 and a public record never becomes VERIFIE
     inclusion: inclusionFor(root),
     head: headFor(root),
   };
-  const forged = verify(record, { ...parts, fullJws: built.full.replace(/.$/, 'A') });
+  const forgedJws = flipLast(built.full);
+  assert.notEqual(forgedJws, built.full);
+  const forged = verify(record, { ...parts, fullJws: forgedJws });
   assert.equal(forged.exitCode, 1);
   assert.equal(forged.reason, 'public_full_mismatch');
   assert.equal(forged.verdict, 'FAILED');
@@ -415,6 +422,32 @@ test('one receipt URL supplies the record, the inclusion, and the head', async (
     assert.equal(seen.some((pathName) => pathName.includes('chit402.com')), false);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('a public fetch does not follow a redirect', async () => {
+  const hit = { n: 0 };
+  const evil = http.createServer((req, res) => {
+    hit.n += 1;
+    res.writeHead(200, { 'content-type': 'application/jose' });
+    res.end('redirected');
+  });
+  const evilPort = await listen(evil);
+  const front = http.createServer((req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${evilPort}/stolen` });
+    res.end();
+  });
+  const port = await listen(front);
+  try {
+    const result = await runAsync([`http://127.0.0.1:${port}/receipt/xfuel-redirect/public`, '--json']);
+    assert.equal(hit.n, 0);
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.equal(result.json.reason, 'receipt_unavailable');
+    assert.doesNotMatch(result.stdout, /redirected/);
+    assert.notEqual(result.json.verdict, 'PUBLIC_VERIFIED');
+  } finally {
+    await new Promise((resolve) => front.close(resolve));
+    await new Promise((resolve) => evil.close(resolve));
   }
 });
 

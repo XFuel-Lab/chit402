@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -30,8 +30,11 @@ const {
 } = await import('../src/public-record.js');
 const {
   configurePublicRecordDir,
+  ensurePublicRecordDir,
   getPublicRecordBytes,
+  isCompactJws,
   publicRecordCount,
+  publicRecordDirectory,
   publicRecordServeEnabled,
   reloadPublicRecords,
   resetPublicRecords,
@@ -453,4 +456,74 @@ test('a missing signed payment is not filled from the quote', () => {
   };
   assert.throws(() => signOne(receipt), (err) => err.code === 'public_record_payment_missing');
   assert.equal(getPublicRecordBytes('xfuel-no-pay'), null);
+});
+
+test('an empty or non-JWS file is not loaded and does not block the real record', () => {
+  resetPublicRecords();
+  assert.equal(ROTATION_TRUST_SHIPPED, false);
+  const dir = publicRecordDirectory();
+  writeFileSync(join(dir, 'xfuel-empty.jws'), Buffer.alloc(0));
+  writeFileSync(join(dir, 'xfuel-junk.jws'), 'not a jws');
+  reloadPublicRecords();
+  assert.equal(isCompactJws(Buffer.alloc(0)), false);
+  assert.equal(getPublicRecordBytes('xfuel-empty'), null);
+  assert.equal(getPublicRecordBytes('xfuel-junk'), null);
+  assert.equal(publicRecordCount(), 0);
+
+  const receipt = receiptFor('xfuel-empty');
+  const signed = signOne(receipt);
+  assert.equal(signed.created, true);
+  assert.ok(signed.bytes.length > 2);
+  const onDisk = readFileSync(join(dir, 'xfuel-empty.jws'));
+  assert.equal(onDisk.length, signed.bytes.length);
+  assert.equal(onDisk.toString('utf8'), signed.bytes.toString('utf8'));
+  assert.equal(readdirSync(dir).some((name) => name.endsWith('.tmp')), false);
+
+  reloadPublicRecords();
+  assert.equal(getPublicRecordBytes('xfuel-empty').toString('utf8'), signed.bytes.toString('utf8'));
+  const again = signPublicRecordOnce(receipt, {
+    leafHash: 'ff'.repeat(32),
+    logId: 'epoch:9',
+    signedAt: new Date('2027-01-01T00:00:00.000Z'),
+  });
+  assert.equal(again.created, false);
+  assert.equal(again.bytes.toString('utf8'), signed.bytes.toString('utf8'));
+});
+
+test('a backfill file in PUBLIC_RECORD_DIR is visible without a restart', () => {
+  resetPublicRecords();
+  const previous = process.env.PUBLIC_RECORD_DIR;
+  const shared = mkdtempSync(join(tmpdir(), 'public-shared-'));
+  process.env.PUBLIC_RECORD_DIR = shared;
+  try {
+    assert.equal(ensurePublicRecordDir(), shared);
+    const receipt = receiptFor('xfuel-shared');
+    const file = join(shared, 'receipts.json');
+    writeFileSync(file, JSON.stringify([{
+      receipt,
+      leaf_hash: leafHash(receipt.task_id, '66'.repeat(32)),
+      log_id: 'epoch:2',
+    }]));
+    const script = fileURLToPath(new URL('../scripts/sign-public-records.mjs', import.meta.url));
+    const applied = spawnSync(process.execPath, [script, '--receipts', file, '--apply'], {
+      encoding: 'utf8',
+      env: { ...process.env, NODE_ENV: 'test', ALLOW_EPHEMERAL_ISSUER_KEY: 'true', PUBLIC_RECORD_DIR: shared },
+    });
+    assert.equal(applied.status, 0, applied.stderr);
+    const summary = JSON.parse(applied.stdout);
+    assert.equal(summary.signed, 1);
+    assert.equal(summary.dir, shared);
+    configurePublicRecordDir(shared);
+    const loaded = getPublicRecordBytes('xfuel-shared');
+    assert.ok(loaded && loaded.length > 0);
+    resetPublicRecords();
+    configurePublicRecordDir(shared);
+    const missed = 'xfuel-later';
+    writeFileSync(join(shared, `${missed}.jws`), loaded);
+    assert.equal(getPublicRecordBytes(missed).toString('utf8'), loaded.toString('utf8'));
+  } finally {
+    if (previous == null) delete process.env.PUBLIC_RECORD_DIR;
+    else process.env.PUBLIC_RECORD_DIR = previous;
+    resetPublicRecords();
+  }
 });

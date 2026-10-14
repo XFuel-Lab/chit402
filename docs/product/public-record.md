@@ -2,7 +2,7 @@
 
 A public record is a **derived statement**. It is not the receipt. Signing one does not change the receipt, the log leaf, the tree head, or an anchor.
 
-The record is a compact JWS, `typ: chit402.public+jws`, payload schema `chit402.public.v1`. It is signed once, with the same issuer key that signs receipts, into a directory of exact bytes. The first create wins. A restart reads those bytes and does not sign again. `GET /receipt/:id/public` only reads stored bytes. It never signs.
+The record is a compact JWS, `typ: chit402.public+jws`, payload schema `chit402.public.v1`. It is signed once, with the same issuer key that signs receipts. The bytes are fsynced to a temp file and linked into `PUBLIC_RECORD_DIR`. The first link wins. An empty or non-JWS file is not a record. A crash before the link leaves no `.jws`. The server and the backfill script share that variable. When it is unset, both use `services/gateway/.data/public-records`. A file linked into the folder is read on the next lookup. `GET /receipt/:id/public` only reads stored bytes. It never signs.
 
 Payment fields are copied from the signed receipt claims only. A missing claim is omitted or the record is not signed. The outer quote is not a fill-in. `payment_tx` is not in the record. The verifier cannot check the chain payment from the record. A green result says payment was not checked.
 

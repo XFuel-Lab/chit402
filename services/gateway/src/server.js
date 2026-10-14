@@ -131,6 +131,7 @@ import {
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { handlePublicRecordGet } from './public-record-http.js';
+import { ensurePublicRecordDir } from './public-record-store.js';
 import {
   inputsFromTasks,
   leafFromTree,
@@ -962,6 +963,7 @@ function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
  * Called from `startServer()` or directly in tests.
  */
 export function createApp() {
+  ensurePublicRecordDir();
   const saltStore = bootSaltStore(process.env, process.env.ISSUER_PRIVATE_KEY);
   setSaltStore(saltStore);
   assertV11IssuanceAllowed(saltStore, process.env);

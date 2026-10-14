@@ -10,7 +10,9 @@
  *   node scripts/sign-public-records.mjs --receipts receipts.json --apply --out ./public-records
  *
  * Each input row is a receipt, or { receipt, leaf_hash, log_id }.
- * --out is the store the gateway reads (PUBLIC_RECORD_DIR). Serving stays
+ * --out is copied into PUBLIC_RECORD_DIR for this process. The gateway
+ * reads that same variable (default: services/gateway/.data/public-records).
+ * A file linked into the folder is visible on the next read. Serving stays
  * off until ROTATION_TRUST_SHIPPED is true.
  * Do not print issuer key material.
  */
@@ -24,6 +26,7 @@ const {
 const {
   configurePublicRecordDir,
   getPublicRecordBytes,
+  publicRecordDirDefault,
 } = await import('../src/public-record-store.js');
 
 function arg(name) {
@@ -41,8 +44,9 @@ if (!receiptsPath) {
   process.exit(3);
 }
 
-if (outDir) configurePublicRecordDir(outDir);
-else if (process.env.PUBLIC_RECORD_DIR) configurePublicRecordDir(process.env.PUBLIC_RECORD_DIR);
+const chosen = outDir || String(process.env.PUBLIC_RECORD_DIR || '').trim() || publicRecordDirDefault();
+process.env.PUBLIC_RECORD_DIR = chosen;
+configurePublicRecordDir(chosen);
 
 const parsed = JSON.parse(readFileSync(receiptsPath, 'utf8'));
 const rows = Array.isArray(parsed) ? parsed : [];
@@ -67,9 +71,9 @@ if (!apply) {
     const id = receiptIdOf(item.receipt);
     return id && !getPublicRecordBytes(id);
   }).length;
-  console.log(JSON.stringify({ would_sign: pending, refusals, apply: false }));
+  console.log(JSON.stringify({ would_sign: pending, refusals, apply: false, dir: chosen }));
   process.exit(0);
 }
 
 const signed = signMissingPublicRecords(items);
-console.log(JSON.stringify({ signed: signed.length, refusals, apply: true }));
+console.log(JSON.stringify({ signed: signed.length, refusals, apply: true, dir: chosen }));

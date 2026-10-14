@@ -2023,14 +2023,20 @@ function taskIdFromReceiptDoc(doc: unknown): string | null {
 
 async function fetchBody(url: string): Promise<{ ok: boolean; text: string } | null> {
   try {
-    const res = await fetch(url, {
-      headers: { accept: 'application/jose, application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
+    const res = await publicFetch(url, 'application/jose, application/json');
     return { ok: res.ok, text: await res.text() };
   } catch {
     return null;
   }
+}
+
+/** Public fetches do not follow redirects. A hop to another host is not fetched. */
+function publicFetch(url: string, accept: string): Promise<Response> {
+  return fetch(url, {
+    headers: { accept },
+    redirect: 'error',
+    signal: AbortSignal.timeout(LOG_FETCH_MS),
+  });
 }
 
 /**
@@ -2092,19 +2098,16 @@ async function fetchPublicLog(origin: string, receiptId: string, wantFull: boole
   const base = `${origin}/receipt/${encodeURIComponent(receiptId)}`;
   if (!historyHostAllowed(base)) return out;
   try {
-    const incRes = await fetch(`${origin}/v1/receipts/${encodeURIComponent(receiptId)}/inclusion`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
+    const incRes = await publicFetch(
+      `${origin}/v1/receipts/${encodeURIComponent(receiptId)}/inclusion`,
+      'application/json',
+    );
     if (incRes.ok) {
       const inclusion = await incRes.json() as { head_url?: string; tree_size?: number | null; anchored_tree_size?: number | null };
       out.inclusion = inclusion as Record<string, unknown>;
       const headUrl = inclusionHeadUrl(origin, inclusion);
       if (headUrl && historyHostAllowed(headUrl)) {
-        const headRes = await fetch(headUrl, {
-          headers: { accept: 'application/json' },
-          signal: AbortSignal.timeout(LOG_FETCH_MS),
-        });
+        const headRes = await publicFetch(headUrl, 'application/json');
         if (headRes.ok) out.head = await headRes.json() as Record<string, unknown>;
       }
     }
@@ -2113,10 +2116,7 @@ async function fetchPublicLog(origin: string, receiptId: string, wantFull: boole
   }
   if (!wantFull) return out;
   try {
-    const rec = await fetch(`${base}?format=json`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
+    const rec = await publicFetch(`${base}?format=json`, 'application/json');
     if (rec.ok) out.fullJws = jwsFromReceiptDoc(await rec.json());
   } catch {
     // The full receipt is checked only when this URL returns one.
