@@ -17,7 +17,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - **Issuer history is always checked.** The source is `--issuer-history <file>` when that file extends the bundled snapshot, else a live snapshot that prefix-extends it, else that snapshot alone, reported `as of 2026-10-14`. A file that does not verify, or that does not extend the snapshot, is `INVALID` and is not replaced. Reason anchors live at `https://chit402.com/docs/verify#<reason>`.
 - **`not_before` still cannot move.** A later entry that changes `not_before` for the same kid is `kid_status_regression`. The window uses the latest `not_before`.
 - **A pre-log receipt is `NOT_IN_LOG`.** `chit-1ebc5616` and the other payments issued before the public log are not leaves. A log check exits 1. The payment row in the book is unchanged: the receipt is not re-signed, and the book does not drop or rewrite the payment.
-- **Publish is no longer held.** Christopher publishes. This change does not publish, merge, or deploy.
+- **Publish is no longer held.** The owner approves the release. This change does not publish, merge, or deploy.
 
 ## 0.3.6 — Inclusion size is checked before the head
 

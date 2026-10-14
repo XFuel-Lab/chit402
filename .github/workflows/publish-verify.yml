@@ -1,6 +1,6 @@
 name: Publish verifier
 
-# Christopher approves a release by running this workflow. It does not run on push.
+# The owner approves the release by running this workflow. It does not run on push.
 on:
   workflow_dispatch:
 
