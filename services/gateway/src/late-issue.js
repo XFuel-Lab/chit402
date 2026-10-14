@@ -25,6 +25,10 @@ import { getActiveChallengeStore } from './x402-durable-store.js';
 export const LATE_HORIZON_MS = 24 * 60 * 60 * 1000;
 export const LATE_SKEW_MS = 120_000;
 export const LATE_RETRY_AFTER_SEC = 5;
+/** One background run resolves at most this many open rows. */
+export const LATE_TICK_ROW_BUDGET = 8;
+/** One background run places at most this many RPC calls. */
+export const LATE_TICK_RPC_BUDGET = 16;
 
 const TERMINAL = new Set([
   'issued',
@@ -318,10 +322,10 @@ async function proveFinality(record, out, deps) {
   const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
   if (!url || out.blockNumber == null) return pendingChain(out);
   try {
-    const fin = await evmFinality(url, out.blockNumber);
+    const fin = await evmFinality(url, out.blockNumber, 8000, deps.rpcMeter || null);
     const url2 = cfg.baseRpcUrl2 || cfg.rpcUrl2 || null;
     if (url2) {
-      const other = await evmFinality(url2, out.blockNumber);
+      const other = await evmFinality(url2, out.blockNumber, 8000, deps.rpcMeter || null);
       if (!fin.finalized || !other.finalized || fin.blockTimestamp !== other.blockTimestamp) {
         return pendingChain(out);
       }
@@ -352,6 +356,7 @@ async function readSettlement(record, deps, reader) {
     delete cfg.lateOutputBytes;
   }
   if (reader) cfg.chainReader = reader;
+  if (deps.rpcMeter) cfg.rpcMeter = deps.rpcMeter;
   try {
     return await confirmSettlement({
       challenge: chainChallenge(record),
@@ -425,6 +430,7 @@ async function discoverHint(record, deps) {
     validAfter: record.auth?.validAfter,
     issuedAtMs: record.challenge_issued_at,
     scannedTo: record.scanned_to,
+    meter: deps.rpcMeter || null,
   });
   const scannedTo = found?.scannedTo ?? null;
   if (!found?.ok || !found.tx) return { record, scannedTo };
@@ -486,12 +492,12 @@ async function reorgGuard(record, chain, deps) {
   const tx = chain?.tx || chain?.transaction || record.tx_hint;
   if (!url || !tx) return false;
   try {
-    const receipt = await readEvmReceipt(url, tx);
+    const receipt = await readEvmReceipt(url, tx, deps.rpcMeter || null);
     if (!receipt || receipt.status !== 1 || !receipt.blockHash || receipt.blockNumber == null) return false;
-    const fin = await evmFinality(url, receipt.blockNumber);
+    const fin = await evmFinality(url, receipt.blockNumber, 8000, deps.rpcMeter || null);
     if (!fin.finalized || !fin.blockHash) return false;
     if (String(fin.blockHash).toLowerCase() !== String(receipt.blockHash).toLowerCase()) return false;
-    const again = await evmFinality(url, receipt.blockNumber);
+    const again = await evmFinality(url, receipt.blockNumber, 8000, deps.rpcMeter || null);
     if (!again.finalized || !again.blockHash) return false;
     if (String(again.blockHash).toLowerCase() !== String(fin.blockHash).toLowerCase()) return false;
     return true;
@@ -904,19 +910,58 @@ export async function resumeLateIssue({ store, req, cfg, nonce, taskId, paymentH
   return settlePending(row, cfg);
 }
 
+function budgetOf(value, fallback) {
+  const n = Number(value);
+  if (Number.isInteger(n) && n > 0) return n;
+  return fallback;
+}
+
+function rpcMeter(limit) {
+  return {
+    left: limit,
+    used: 0,
+    take() {
+      if (this.left <= 0) return false;
+      this.left -= 1;
+      this.used += 1;
+      return true;
+    },
+  };
+}
+
+const tickCursors = new WeakMap();
+let tickInFlight = false;
+
 export async function tickLateIssue(store, deps = {}) {
   if (!store || typeof store.listLate !== 'function') return [];
-  if (typeof store.pruneLate === 'function') {
-    try { store.pruneLate(nowMs(deps, deps.cfg), LATE_HORIZON_MS); } catch { /* store */ }
+  if (tickInFlight) return [];
+  tickInFlight = true;
+  try {
+    if (typeof store.pruneLate === 'function') {
+      try { store.pruneLate(nowMs(deps, deps.cfg), LATE_HORIZON_MS); } catch { /* store */ }
+    }
+    const cfg = deps.cfg || {};
+    if (!lateIssueEnabled(cfg) && !lateIssueShadow(cfg)) return [];
+    const pending = store.listLate().filter((row) => !TERMINAL.has(row.state));
+    if (pending.length === 0) return [];
+    const rowBudget = budgetOf(deps.rowBudget, LATE_TICK_ROW_BUDGET);
+    const meter = rpcMeter(budgetOf(deps.rpcBudget, LATE_TICK_RPC_BUDGET));
+    let start = tickCursors.get(store) || 0;
+    if (start >= pending.length) start = 0;
+    const ordered = pending.slice(start).concat(pending.slice(0, start));
+    const out = [];
+    let took = 0;
+    const runDeps = { ...deps, rpcMeter: meter };
+    for (const row of ordered) {
+      if (took >= rowBudget || meter.left <= 0) break;
+      out.push(await resolveLateRecord(store, row, runDeps));
+      took += 1;
+    }
+    tickCursors.set(store, (start + took) % pending.length);
+    return out;
+  } finally {
+    tickInFlight = false;
   }
-  const cfg = deps.cfg || {};
-  if (!lateIssueEnabled(cfg) && !lateIssueShadow(cfg)) return [];
-  const out = [];
-  for (const row of store.listLate()) {
-    if (TERMINAL.has(row.state)) continue;
-    out.push(await resolveLateRecord(store, row, deps));
-  }
-  return out;
 }
 
 let timer = null;

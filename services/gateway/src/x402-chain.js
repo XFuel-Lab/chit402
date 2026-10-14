@@ -433,11 +433,12 @@ function sleep(ms) {
  * A receipt block is final only when it is at or below the node's finalized tip.
  * A missing tip, a mismatched block, or an RPC error is not final.
  */
-export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000) {
+export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000, meter = null) {
   if (!rpcUrl || blockNumber == null) return { finalized: false, blockTimestamp: null };
   let want;
   try { want = BigInt(blockNumber); } catch { return { finalized: false, blockTimestamp: null }; }
   const hex = `0x${want.toString(16)}`;
+  if (!chargeMeter(meter, 2)) return { finalized: false, blockTimestamp: null };
   const [block, tip] = await Promise.all([
     rpcCall(rpcUrl, 'eth_getBlockByNumber', [hex, false], timeoutMs),
     rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs),
@@ -510,6 +511,13 @@ function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedA
   return start;
 }
 
+function chargeMeter(meter, n = 1) {
+  if (!meter) return true;
+  if (meter.left < n) return false;
+  for (let i = 0; i < n; i += 1) meter.take();
+  return true;
+}
+
 function decimalBlock(value) {
   if (value == null || value === '') return null;
   try {
@@ -525,7 +533,7 @@ function decimalBlock(value) {
  * Latest head block, cached for a couple of seconds. An RPC miss returns
  * null so challenge issuance still completes.
  */
-export async function readHeadBlock(rpcUrl, timeoutMs = 800) {
+export async function readHeadBlock(rpcUrl, timeoutMs = 250) {
   if (!rpcUrl) return null;
   const now = Date.now();
   if (headBlockCache.url === rpcUrl && headBlockCache.block != null && now - headBlockCache.at < HEAD_BLOCK_TTL_MS) {
@@ -549,7 +557,9 @@ export async function readHeadBlock(rpcUrl, timeoutMs = 800) {
  * covers at most 2,000 blocks, and one resolve covers at most two chunks.
  * scannedTo is the last block included, so the next resolve reads only
  * newer blocks. Zero logs stay pending. More than one log in the window
- * stays pending and does not advance the cursor.
+ * stays pending and does not advance the cursor. A null or non-array
+ * eth_getLogs result is an error and does not advance the cursor.
+ * `meter`, when set, stops the search once the run's RPC budget is spent.
  */
 export async function findAuthorizationTx(rpcUrl, {
   asset,
@@ -560,6 +570,7 @@ export async function findAuthorizationTx(rpcUrl, {
   validAfter = null,
   issuedAtMs = null,
   scannedTo = null,
+  meter = null,
 } = {}) {
   if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
   let topic1;
@@ -573,6 +584,7 @@ export async function findAuthorizationTx(rpcUrl, {
   }
   const cursorIn = decimalBlock(scannedTo);
   try {
+    if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
     const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
     if (!tip?.number) return { ok: false, pending: true };
     const tipN = BigInt(tip.number);
@@ -590,13 +602,18 @@ export async function findAuthorizationTx(rpcUrl, {
     let covered = start - 1n;
     for (let cursor = start; cursor <= windowEnd;) {
       const end = cursor + LOG_CHUNK_BLOCKS - 1n > windowEnd ? windowEnd : cursor + LOG_CHUNK_BLOCKS - 1n;
+      if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
       const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
         address: asset,
         topics: [AUTH_USED_TOPIC, topic1, topic2],
         fromBlock: hexBlock(cursor),
         toBlock: hexBlock(end),
       }], timeoutMs);
-      if (Array.isArray(chunk)) logs.push(...chunk);
+      if (!Array.isArray(chunk)) {
+        logger.warn('x402: authorization log search returned no list');
+        return { ok: false, pending: true };
+      }
+      logs.push(...chunk);
       covered = end;
       if (logs.length > 1) return { ok: false, pending: true };
       if (end === windowEnd) break;
@@ -619,8 +636,9 @@ export async function findAuthorizationTx(rpcUrl, {
   }
 }
 
-export async function readEvmReceipt(rpcUrl, txHash) {
+export async function readEvmReceipt(rpcUrl, txHash, meter = null) {
   if (!rpcUrl) return null;
+  if (!chargeMeter(meter, 1)) return null;
   const result = await rpcCall(rpcUrl, 'eth_getTransactionReceipt', [txHash]);
   if (!result) return null;
   return {
@@ -707,7 +725,7 @@ export async function confirmSettlement({
     const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
     if (!url) return { ok: false, code: 'settle_unconfirmed', pending: true };
     const txHash = facilitator.transaction || facilitator.txRef;
-    const receipt = await readEvmReceipt(url, txHash);
+    const receipt = await readEvmReceipt(url, txHash, cfg.rpcMeter || null);
     if (!receipt) return { ok: false, code: 'settle_unconfirmed', pending: true };
     const evmAuthorization = authorization || readEvmAuthorization(paymentHeader);
     return confirmEvmReceipt(receipt, {

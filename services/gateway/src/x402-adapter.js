@@ -855,11 +855,16 @@ export function buildPaymentChallenge(p, opts = {}) {
 
   const store = opts.store === undefined ? challengeStore : opts.store;
   let expiresAt = null;
+  let stampedBlock = null;
+  if (!isSolanaNetwork(network) && opts.issueBlock != null && opts.issueBlock !== '') {
+    const n = Number(opts.issueBlock);
+    if (Number.isSafeInteger(n) && n >= 0) stampedBlock = n;
+  }
   if (store) {
     // Persist bazaar fields so settleViaFacilitator can echo them on the
     // PaymentPayload even when the buyer SDK omits them. CDP will not catalog
     // a settle that lacks paymentPayload.resource.
-    const rec = store.put(nonce, {
+    const fields = {
       taskId: p.taskId,
       amount,
       asset: assetAddress,
@@ -871,7 +876,9 @@ export function buildPaymentChallenge(p, opts = {}) {
       extensions,
       outputSchema,
       issuance_bind: p.issuance_bind || null,
-    });
+    };
+    if (stampedBlock != null) fields.issueBlock = stampedBlock;
+    const rec = store.put(nonce, fields);
     expiresAt = rec.expiresAt;
   }
 

@@ -10,11 +10,12 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, stampChallengeIssueBlock } from './x402-server.js';
-import { setX402PaymentResponseHeaders, challengeStore } from './x402-adapter.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
+import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
+import { readHeadBlock } from './x402-chain.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -1704,6 +1705,7 @@ export function createApp() {
   async function publicTaskRequestChallenge(req) {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
+    const issueBlock = await readHeadBlock(x.baseRpcUrl || x.rpcUrl || null, 250);
     const { body, headers } = buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
       maxAmountRequired: String(x.usdcPriceDefault || '10000'),
@@ -1717,8 +1719,7 @@ export function createApp() {
         payTo: x.solana.payTo,
         network: x.solana.network,
       } : undefined,
-    });
-    await stampChallengeIssueBlock(challengeStore, body, x.baseRpcUrl || x.rpcUrl || null);
+    }, { issueBlock });
     return { body, headers };
   }
 

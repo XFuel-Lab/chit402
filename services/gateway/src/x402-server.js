@@ -457,28 +457,6 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
 }
 
 /**
- * Record the current head block on each EVM challenge nonce. A Solana
- * accept is left alone. An RPC miss leaves issue_block empty and the 402
- * still returns.
- */
-export async function stampChallengeIssueBlock(store, body, rpcUrl) {
-  if (!store || typeof store.get !== 'function' || typeof store.put !== 'function') return null;
-  if (!rpcUrl || !body?.accepts?.length) return null;
-  const evm = body.accepts.filter((entry) => entry?.extra?.nonce && !isSolanaNetwork(entry.network));
-  if (evm.length === 0) return null;
-  let block;
-  try { block = await readHeadBlock(rpcUrl); } catch { return null; }
-  if (block == null) return null;
-  for (const entry of evm) {
-    const nonce = entry.extra.nonce;
-    const rec = store.get(nonce);
-    if (!rec || rec.issueBlock != null) continue;
-    store.put(nonce, { ...rec, issueBlock: block });
-  }
-  return block;
-}
-
-/**
  * Run the x402 handshake for a task request. Returns a decision the caller acts on:
  *   { kind:'challenge', body }     → no X-PAYMENT present; reply 402 with this body
  *   { kind:'settled', paymentRef, quotedAmount, settledAmount }
@@ -570,6 +548,7 @@ export async function runX402Handshake(req, {
       };
     }
     const activeStore = store || getActiveChallengeStore() || challengeStore;
+    const issueBlock = await readHeadBlock(cfg.baseRpcUrl || cfg.rpcUrl || null, 250);
     const { body: challengeBody } = buildPaymentChallenge(
       {
         taskId,
@@ -587,7 +566,7 @@ export async function runX402Handshake(req, {
           network: cfg.solana.network,
         },
       },
-      { store: activeStore },
+      { store: activeStore, issueBlock },
     );
     const qHash = quoteBodyHash(priceBody);
     for (const entry of challengeBody?.accepts || []) {
@@ -609,7 +588,6 @@ export async function runX402Handshake(req, {
       }
       activeStore.put(issuedNonce, rec);
     }
-    await stampChallengeIssueBlock(activeStore, challengeBody, cfg.baseRpcUrl || cfg.rpcUrl || null);
     return { kind: 'challenge', body: challengeBody };
   }
 

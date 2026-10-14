@@ -11,7 +11,7 @@ import { ethers } from 'ethers';
 import { ChallengeStore } from '../src/x402-adapter.js';
 import { settleBoundPayment } from '../src/x402-settle.js';
 import { runX402Handshake } from '../src/x402-server.js';
-import { clearChainReaderForTests } from '../src/x402-chain.js';
+import { clearChainReaderForTests, readHeadBlock } from '../src/x402-chain.js';
 import { setActiveChallengeStore } from '../src/x402-durable-store.js';
 import { paymentFailureBody } from '../src/x402-flags.js';
 import { toPublicShell } from '../src/receipt-shell.js';
@@ -20,8 +20,11 @@ import { getIssuerKid } from '../src/issuer-key.js';
 import {
   findLatePublicReceipt,
   LATE_HORIZON_MS,
+  LATE_TICK_ROW_BUDGET,
+  LATE_TICK_RPC_BUDGET,
   listLateIssueOwnerView,
   resolveLateRecord,
+  startLateIssueResolver,
   stopLateIssueResolver,
   tickLateIssue,
 } from '../src/late-issue.js';
@@ -112,16 +115,18 @@ function rpcServer(handler) {
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => { raw += chunk; });
-    req.on('end', () => {
+    req.on('end', async () => {
       const body = JSON.parse(raw || '{}');
       seen.push(body.method);
       let result;
-      try { result = handler(body.method, body.params, seen); }
+      try { result = await handler(body.method, body.params, seen); }
       catch (err) {
+        if (res.writableEnded) return;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { message: err.message } }));
         return;
       }
+      if (res.writableEnded) return;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
     });
@@ -444,6 +449,9 @@ test('the resolver tick reads the configured RPC and boot passes that config', a
   }
   const serverSrc = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   assert.match(serverSrc, /startLateIssueResolver\(opened,\s*\{[\s\S]*cfg:\s*config\.x402/);
+  assert.match(serverSrc, /const issueBlock = await readHeadBlock\(/);
+  assert.match(serverSrc, /buildPaymentChallenge\(\{[\s\S]*?\}, \{ issueBlock \}\)/);
+  assert.doesNotMatch(serverSrc, /stampChallengeIssueBlock/);
 });
 
 test('an expired issuing lease with no signature is signed once', async () => {
@@ -754,7 +762,7 @@ test('a failed inline-issue CAS does not return a settled receipt', async () => 
   }
 });
 
-function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scannedTo = null } = {}) {
+function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scannedTo = null, authNonce = null } = {}) {
   const pendingId = `pend${n}`;
   const put = store.putLate({
     pending_id: pendingId,
@@ -769,11 +777,11 @@ function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scanne
     payee: HOUSE,
     challenge_amount: '2000',
     route_quote: '2000',
-    auth_key: `auth-${n}`,
+    auth_key: `auth-${n}-${pendingId}`,
     auth: {
       from: PAYER,
       value: '2000',
-      nonce: `0x${(n + 1).toString(16).padStart(64, 'ab')}`,
+      nonce: authNonce || `0x${(n + 1).toString(16).padStart(64, 'ab')}`,
       validAfter,
       validBefore: String(Math.floor(Date.now() / 1000) + 3600),
     },
@@ -899,6 +907,16 @@ test('a challenge records the head block at issue time', async () => {
   });
   try {
     const store = new ChallengeStore();
+    const puts = [];
+    const orig = store.put.bind(store);
+    store.put = (nonce, data) => {
+      puts.push({
+        nonce,
+        network: data?.network || null,
+        issueBlock: data?.issueBlock ?? null,
+      });
+      return orig(nonce, data);
+    };
     const decision = await runX402Handshake(
       { headers: {}, body: { prompt: 'hi' } },
       {
@@ -923,6 +941,9 @@ test('a challenge records the head block at issue time', async () => {
     assert.equal(decision.kind, 'challenge');
     const base = decision.body.accepts[0];
     const sol = decision.body.accepts[1];
+    assert.equal(puts[0].network, 'base');
+    assert.equal(puts[0].issueBlock, head);
+    assert.equal(puts.find((row) => row.network === 'solana').issueBlock, null);
     assert.equal(store.get(base.extra.nonce).issueBlock, head);
     assert.equal(store.get(sol.extra.nonce).issueBlock ?? null, null);
   } finally {
@@ -955,5 +976,187 @@ test('a challenge still issues when the head-block read fails', async () => {
     assert.equal(store.get(nonce).issueBlock ?? null, null);
   } finally {
     await rpc.close();
+  }
+});
+
+test('late-issue runs do not overlap', async () => {
+  let open = true;
+  let finish = () => {};
+  const gate = new Promise((resolve) => {
+    finish = () => {
+      if (!open) return;
+      open = false;
+      resolve();
+    };
+  });
+  let calls = 0;
+  let inflight = 0;
+  let maxInflight = 0;
+  const rpc = await rpcServer(async (method, params) => {
+    inflight += 1;
+    if (inflight > maxInflight) maxInflight = inflight;
+    calls += 1;
+    try {
+      if (calls === 1) await gate;
+      if (method === 'eth_getLogs') return [];
+      if (method === 'eth_getBlockByNumber') {
+        const ts = `0x${Math.floor(Date.now() / 1000).toString(16)}`;
+        if (params[0] === 'finalized') {
+          return { number: '0x3e8', timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+        }
+        return { number: params[0], timestamp: ts, hash: BLOCK };
+      }
+      return null;
+    } finally {
+      inflight -= 1;
+    }
+  });
+  try {
+    const store = new ChallengeStore();
+    parkUnknown(store, 41);
+    const deps = { cfg: { lateIssue: true, baseRpcUrl: rpc.url }, intervalMs: 15 };
+    const first = tickLateIssue(store, deps);
+    for (let i = 0; i < 40 && calls < 1; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(calls, 1);
+    const second = await tickLateIssue(store, deps);
+    assert.deepEqual(second, []);
+    startLateIssueResolver(store, deps);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(calls, 1);
+    assert.equal(maxInflight, 1);
+    finish();
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    assert.equal(maxInflight, 1);
+  } finally {
+    finish();
+    stopLateIssueResolver();
+    for (let i = 0; i < 30 && inflight > 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await rpc.close();
+  }
+});
+
+test('one tick stays inside the row and RPC budgets and the next tick continues round-robin', async () => {
+  const tip = 30_000_000;
+  const nonces = [];
+  let rpcCount = 0;
+  const rpc = await rpcServer((method, params) => {
+    rpcCount += 1;
+    if (method === 'eth_getLogs') {
+      nonces.push(String(params[0].topics[2]).toLowerCase());
+      return [];
+    }
+    if (method === 'eth_getBlockByNumber') {
+      const ts = `0x${(Math.floor(Date.now() / 1000) + 30).toString(16)}`;
+      if (params[0] === 'finalized') {
+        return { number: `0x${tip.toString(16)}`, timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+      }
+      return { number: params[0], timestamp: ts, hash: BLOCK };
+    }
+    return null;
+  });
+  try {
+    const total = LATE_TICK_ROW_BUDGET + 4;
+    const store = new ChallengeStore();
+    for (let n = 1; n <= total; n += 1) parkUnknown(store, n);
+    const deps = { cfg: { lateIssue: true, baseRpcUrl: rpc.url } };
+    await tickLateIssue(store, deps);
+    const firstRpc = rpcCount;
+    const firstNonces = nonces.slice();
+    assert.ok(firstRpc <= LATE_TICK_RPC_BUDGET);
+    assert.ok(firstNonces.length > 0);
+    assert.ok(firstNonces.length <= LATE_TICK_ROW_BUDGET);
+    assert.ok(firstNonces.length < total);
+    const nonceOf = (n) => ethers.zeroPadValue(
+      `0x${(n + 1).toString(16).padStart(64, 'ab')}`,
+      32,
+    ).toLowerCase();
+    assert.equal(firstNonces[0], nonceOf(1));
+    rpcCount = 0;
+    nonces.length = 0;
+    await tickLateIssue(store, deps);
+    assert.ok(rpcCount <= LATE_TICK_RPC_BUDGET);
+    assert.equal(nonces[0], nonceOf(firstNonces.length + 1));
+    assert.equal(store.listLate().every((row) => row.scanned_to != null), true);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('a null or non-array eth_getLogs result does not advance the cursor', async () => {
+  const tip = 30_000_000;
+  const logBlock = tip - 10;
+  for (const bad of [null, { unexpected: true }]) {
+    let logs = 0;
+    const rpc = await rpcServer((method, params) => {
+      if (method === 'eth_getLogs') {
+        logs += 1;
+        if (logs === 1) return bad;
+        const from = BigInt(params[0].fromBlock);
+        const to = BigInt(params[0].toBlock);
+        const at = BigInt(logBlock);
+        if (from <= at && at <= to) {
+          return [{
+            address: USDC,
+            topics: [AUTH_USED, pad(PAYER), pad(AUTH_NONCE)],
+            transactionHash: TX,
+            blockNumber: `0x${at.toString(16)}`,
+            blockHash: BLOCK,
+          }];
+        }
+        return [];
+      }
+      if (method === 'eth_getTransactionReceipt') {
+        const receipt = receiptResult();
+        delete receipt._ts;
+        receipt.blockNumber = `0x${logBlock.toString(16)}`;
+        return receipt;
+      }
+      if (method === 'eth_getBlockByNumber') {
+        const ts = `0x${(Math.floor(Date.now() / 1000) + 30).toString(16)}`;
+        if (params[0] === 'finalized') {
+          return { number: `0x${tip.toString(16)}`, timestamp: ts, hash: `0x${'11'.repeat(32)}` };
+        }
+        return { number: params[0], timestamp: ts, hash: BLOCK };
+      }
+      return null;
+    });
+    try {
+      const store = new ChallengeStore();
+      parkUnknown(store, 70 + logs, { authNonce: AUTH_NONCE });
+      const deps = {
+        cfg: { lateIssue: true, baseRpcUrl: rpc.url },
+        signer: () => 'jws.rescanned',
+        appendLog: () => {},
+      };
+      const missed = await resolveLateRecord(store, store.listLate()[0], deps);
+      assert.equal(missed.jws, undefined);
+      assert.equal(store.listLate()[0].scanned_to ?? null, null);
+      assert.equal(store.listLate()[0].tx_hint ?? null, null);
+      const found = await resolveLateRecord(store, store.listLate()[0], deps);
+      assert.equal(found.jws, 'jws.rescanned');
+      assert.equal(store.listLate()[0].tx_hint, TX);
+    } finally {
+      await rpc.close();
+    }
+  }
+});
+
+test('the head-block read gives up in about 250ms', async () => {
+  const server = http.createServer(() => {});
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const started = Date.now();
+    const block = await readHeadBlock(url);
+    const elapsed = Date.now() - started;
+    assert.equal(block, null);
+    assert.ok(elapsed < 500, `head block read took ${elapsed}ms`);
+  } finally {
+    await new Promise((done) => server.close(done));
   }
 });
