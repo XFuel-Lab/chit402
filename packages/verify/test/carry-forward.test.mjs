@@ -447,7 +447,6 @@ test('CLI JSON and text report VERIFIED_CARRIED_FORWARD', () => {
     '--carry-head', join(dir, 'head.json'),
     '--carry-inclusion', join(dir, 'inclusion.json'),
     '--trusted-kid', fx.keys.kid,
-    '--no-issuer-history',
     '--no-preimage',
   ];
   const jsonRun = spawnSync(process.execPath, [...args, '--json'], { encoding: 'utf8' });

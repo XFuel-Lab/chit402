@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
@@ -195,6 +196,7 @@ function signedV6() {
     task_id: 't1',
     book_chain: { row_hash: 'r1' },
     payload_version: 6,
+    iat: '2026-06-01T00:00:00.000Z',
   }, key, 'chit402-receipt+jwt');
 }
 
@@ -203,6 +205,7 @@ function signedV9(treeHeadHash) {
     task_id: 't1',
     book_chain: { row_hash: 'r1' },
     payload_version: 9,
+    iat: '2026-06-01T00:00:00.000Z',
     tree_head_hash: treeHeadHash,
     tolerance: { base: 300, solana: 150 },
   }, key, 'chit402-receipt+jwt');
@@ -265,7 +268,6 @@ test('T22 a size mismatch is tree_size_mismatch in the signed flow and offline',
     '--json',
     '--jwks-file', join(dir, 'jwks.json'),
     '--trusted-kid', key.kid,
-    '--no-issuer-history',
     '--no-preimage',
   ]);
   assert.notEqual(offline.status, 0, offline.stderr);
@@ -447,6 +449,7 @@ test('T23 only a matching inclusion and head can verify', async () => {
   writeFileSync(receiptPath, JSON.stringify(signedV6()));
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify(jwks));
   const jwksPath = join(dir, 'jwks.json');
+  const historyPath = await writeCoveringHistory(dir, key);
 
   const rpc = http.createServer((req, res) => {
     const chunks = [];
@@ -524,8 +527,7 @@ test('T23 only a matching inclusion and head can verify', async () => {
               '--json',
               '--jwks-file', jwksPath,
               '--trusted-kid', key.kid,
-              '--no-issuer-history',
-              '--no-preimage',
+                        '--no-preimage',
             ];
             if (mode === 'rpc') args.push('--rpc', url, '--solana-rpc', url);
             const run = await runCli(args);
@@ -564,11 +566,10 @@ test('T23 only a matching inclusion and head can verify', async () => {
       '--solana-rpc', url,
       '--jwks-file', jwksPath,
       '--trusted-kid', key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+        '--no-preimage',
     ]);
     assert.notEqual(failedText.status, 0);
-    assert.match(failedText.stdout, /Overall: FAILED/);
+    assert.match(failedText.stdout, /Overall: INVALID/);
     assert.equal(failedText.stdout.includes('This receipt leaf is inside the tree'), false);
     assert.equal(failedText.stdout.includes('What this proves'), false);
 
@@ -581,8 +582,8 @@ test('T23 only a matching inclusion and head can verify', async () => {
       '--solana-rpc', url,
       '--jwks-file', jwksPath,
       '--trusted-kid', key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ]);
     assert.equal(proved.status, 0, `${proved.stdout}\n${proved.stderr}`);
     assert.match(proved.stdout, /Overall: VERIFIED/);

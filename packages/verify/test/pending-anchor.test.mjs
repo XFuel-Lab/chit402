@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -69,8 +70,8 @@ function sealHead(head, key) {
 
 function signedReceipt(key, taskId, rowHash) {
   const claims = rowHash
-    ? { task_id: taskId, book_chain: { row_hash: rowHash }, payload_version: 6 }
-    : { task_id: taskId, payload_version: 6 };
+    ? { task_id: taskId, book_chain: { row_hash: rowHash }, payload_version: 6, iat: '2026-06-01T00:00:00.000Z' }
+    : { task_id: taskId, payload_version: 6, iat: '2026-06-01T00:00:00.000Z' };
   return seal(claims, key, 'chit402-receipt+jwt');
 }
 
@@ -321,6 +322,7 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
   const cli = join(pkgDir, 'dist', 'cli.js');
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
+  const historyPath = await writeCoveringHistory(dir, fx.key);
   try {
     for (let index = 0; index < 4; index += 1) {
       const receipt = signedReceipt(fx.key, fx.ids[index], fx.rows[index]);
@@ -347,8 +349,8 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
         '--solana-rpc', url,
         '--jwks-file', join(dir, 'jwks.json'),
         '--trusted-kid', fx.key.kid,
-        '--no-issuer-history',
-        '--no-preimage',
+        '--issuer-history', historyPath,
+            '--no-preimage',
       ]);
       const text = `${run.stdout}\n${run.stderr}`;
       assert.equal(run.status, 0, `${fx.ids[index]}\n${text}`);
@@ -384,8 +386,8 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
       '--solana-rpc', url,
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ]);
     const lateText = `${late.stdout}\n${late.stderr}`;
     assert.equal(late.status, 2, lateText);
@@ -404,8 +406,8 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
       '--solana-rpc', url,
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ]);
     assert.equal(jsonRun.status, 2, `${jsonRun.stdout}\n${jsonRun.stderr}`);
     const parsed = JSON.parse(jsonRun.stdout);
@@ -424,12 +426,12 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
       '--solana-rpc', url,
       '--jwks-file', join(dir, 'jwks.json'),
       '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ]);
     const bareText = `${bare.stdout}\n${bare.stderr}`;
     assert.equal(bare.status, 1, bareText);
-    assert.match(bare.stdout, /Overall: FAILED/);
+    assert.match(bare.stdout, /Overall: INVALID/);
     assert.equal(/(?<!UN)VERIFIED/.test(bareText), false);
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
@@ -747,13 +749,12 @@ test('a pending leaf on a failed receipt is FAILED', async () => {
     '--solana-rpc', url,
     '--jwks-file', join(dir, 'jwks.json'),
     '--trusted-kid', fx.key.kid,
-    '--no-issuer-history',
   ];
   try {
     const textRun = await runCli([...args, '--no-preimage']);
     const text = `${textRun.stdout}\n${textRun.stderr}`;
     assert.equal(textRun.status, 1, text);
-    assert.match(textRun.stdout, /Overall: FAILED/);
+    assert.match(textRun.stdout, /Overall: INVALID/);
     assert.equal(/Overall:\s+PENDING/.test(text), false);
     assert.equal(/Receipt checks:\s+PENDING/.test(text), false);
 

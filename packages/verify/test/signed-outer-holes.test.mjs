@@ -63,7 +63,7 @@ function runCli(args) {
 
 test('both public receipts verify unmodified', async () => {
   const houseResult = await verifyReceipt(house, houseOpts);
-  assert.equal(houseResult.overall, 'verified_no_key_window', houseResult.errors.join('; '));
+  assert.equal(houseResult.overall, 'verified', houseResult.errors.join('; '));
   assert.equal(houseResult.verified_scope, 'signed_claims');
   assert.equal(houseResult.issuer_signature.valid, true);
   assert.equal(houseResult.amount_usdc, '2000');
@@ -104,15 +104,16 @@ test('the CLI prints UNVERIFIED for unsigned fields and still verifies the house
     '--json',
     '--issuer-history-file', historyPath,
   ]);
-  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.status, 1, run.stderr);
   const parsed = JSON.parse(run.stdout);
-  assert.equal(parsed.overall, 'verified');
+  assert.equal(parsed.result, 'invalid');
+  assert.equal(parsed.reason, 'not_in_log');
   assert.equal(parsed.verified_scope, 'signed_claims');
   assert.ok(parsed.unsigned_fields.includes('payment.network'));
 
   const text = runCli([receiptPath, '--issuer-history-file', historyPath]);
-  assert.equal(text.status, 0, text.stderr);
-  assert.match(text.stdout, /Overall: VERIFIED/);
+  assert.equal(text.status, 1, text.stderr);
+  assert.match(text.stdout, /Overall: NOT_IN_LOG/);
   assert.match(text.stdout, /signed claims only/);
   assert.match(text.stdout, /UNVERIFIED\s+payment\.network/);
   assert.match(text.stdout, /UNVERIFIED\s+usage\.total_tokens/);
@@ -150,7 +151,7 @@ test('unsigned outer edits stay unverified and do not become the verified facts'
     if (child) receipt[headKey][child] = value;
     else receipt[headKey] = value;
     const result = await verifyReceipt(receipt, houseOpts);
-    assert.equal(result.overall, 'verified_no_key_window', `${pathName} ${result.errors.join('; ')}`);
+    assert.equal(result.overall, 'verified', `${pathName} ${result.errors.join('; ')}`);
     assert.ok(result.unsigned_fields.includes(pathName), pathName);
     assert.equal(result.amount_usdc, '2000', pathName);
     assert.equal(result.model, 'akash/meta-llama/Llama-3.3-70B-Instruct', pathName);
@@ -269,7 +270,6 @@ test('log mode fails a receipt whose amount was changed', () => {
     headPath,
     '--rpc',
     '--json',
-    '--no-issuer-history',
     '--no-preimage',
     '--epoch-url', 'http://127.0.0.1:9',
   ]);
@@ -285,7 +285,6 @@ test('log mode fails a receipt whose amount was changed', () => {
     inclusionPath,
     headPath,
     '--rpc',
-    '--no-issuer-history',
     '--no-preimage',
     '--epoch-url', 'http://127.0.0.1:9',
   ]);
@@ -300,7 +299,6 @@ test('log mode fails a receipt whose amount was changed', () => {
     headPath,
     '--rpc',
     '--quiet',
-    '--no-issuer-history',
     '--no-preimage',
     '--epoch-url', 'http://127.0.0.1:9',
   ]);

@@ -10,9 +10,9 @@
  *   cat receipt.json | xfuel-verify -
  *
  * Exit codes:
- *   0 = verified
- *   1 = verification failed
- *   2 = partial (binding ok, nullifier not checked or pending)
+ *   0 = VERIFIED (every check passed)
+ *   1 = INVALID
+ *   2 = COULD_NOT_CHECK
  *   3 = input error
  */
 
@@ -49,7 +49,15 @@ import {
 } from './shell.js';
 import { type ReceiptLane } from './receipt-lane.js';
 import { verifyPublishedPreimages } from './preimage.js';
-import { checkReceiptIssuerHistory, historyUrlFromReceipt, readIssuerHistoryPin, type IssuerHistoryDocument } from './issuer-history.js';
+import {
+  checkReceiptIssuerHistory,
+  historyUrlFromReceipt,
+  readIssuerHistoryPin,
+  resolveIssuerHistory,
+  type IssuerHistoryDocument,
+  type ResolvedIssuerHistory,
+} from './issuer-history.js';
+import { buildVerifyVerdict, overallLine, type CheckState, type VerifyVerdict } from './verdict.js';
 import { verifyCanonicalPreimageBytes } from './canonical-preimage.js';
 import { readOpenFile } from './v11-receipt.js';
 import {
@@ -118,25 +126,26 @@ Options:
                       claims. The logged time, epoch, and leaf index are the
                       current head's signed claims. A receipt in the current
                       epoch does not use these flags.
-  --json              Output JSON instead of human-readable
+  --json              Output the 0.4.0 verdict JSON
   --quiet             Only output errors
-  --strict-issuer-history
-                      Fail if the issuer key history cannot be fetched
-  --issuer-history-file <path>
-                      Read issuer history JSON instead of fetching it
+  --issuer-history <path>
+                      Read this issuer-history snapshot instead of fetching.
+                      The history check is always on.
   --canonical-preimage <path>
                       SHA-256 this file and match the signed payload_hash
-  --no-issuer-history Do not check the kid's not_before / not_after window.
-                      Overall is VERIFIED_NO_KEY_WINDOW, never VERIFIED.
-                      This is not offline verification. A pinned snapshot is.
-  --strict            With --no-issuer-history, exit 1 on VERIFIED_NO_KEY_WINDOW
   --no-preimage       Do not require published hash preimages
 
 Exit codes:
-  0 = verified
-  1 = verification failed
-  2 = partial verification
+  0 = VERIFIED. Every check passed.
+  1 = INVALID. Tamper, a bad signature, a revoked or out-of-window key,
+      kid_status_regression, a payment mismatch, NOT_IN_LOG, or an id or
+      version mismatch.
+  2 = COULD_NOT_CHECK. No history covers the key, the log or anchor could
+      not be fetched, or the receipt version needs a newer verifier.
   3 = input error
+
+Removed in 0.4.0 (each exits 1):
+  --strict, --no-issuer-history, --accept-no-key-window, --accept-shell
 
 Trust:
   A signature counts only when the verifying key is trusted. Trust is a JWKS
@@ -151,15 +160,13 @@ Trust:
   receipt, an inclusion proof, and a tree head) runs these receipt checks too.
 
 Network behavior:
-  JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
-  Issuer history is checked by default for every supported receipt when it
-  is reachable (a history URL on the receipt, or --issuer-history-file).
-  The check is skipped only for --no-issuer-history, or when that history
-  cannot be loaded. A skip is overall verified_no_key_window in --json,
-  never a bare verified. A payload v10 receipt fails (exit 1) when the
-  pinned snapshot cannot be loaded. A history that was loaded and failed
-  (revoked before iat, outside the window, kid_status_regression) exits 1
-  on every version. Offline verification uses --issuer-history-file.
+  Issuer history is checked for every supported receipt. The source is
+  --issuer-history, else a live snapshot that prefix-extends the copy
+  shipped in this package, else that shipped copy (reported as of its date).
+  A file that does not verify is INVALID and is not replaced by the shipped
+  copy. Log inclusion and the anchor are fetched fresh. They are not read
+  from a snapshot in this package.
+  JWKS and nullifiers are not fetched unless you pass a flag.
   Other network uses:
   - --fetch-jwks or --jwks-url
   - --check-nullifier (Base RPC)
@@ -221,10 +228,8 @@ Supported receipt versions:
   ${formatSupportedReceiptVersions().split('\n').join('\n  ')}
 
 Examples:
-  # Skip the kid window. Overall is VERIFIED_NO_KEY_WINDOW, not VERIFIED.
-  # That is not offline verification. Save the pinned snapshot and pass
-  # --issuer-history-file. --strict makes the skipped window exit 1.
-  xfuel-verify my-receipt.json --no-issuer-history
+  # History is always checked. A local snapshot:
+  xfuel-verify my-receipt.json --issuer-history issuer-history.json
 
   # Verify issuer signature with JWKS file
   xfuel-verify my-receipt.json --jwks-file issuer-jwks.json
@@ -235,7 +240,7 @@ Examples:
   # Pipe from curl
   curl -s https://api.chit402.com/receipt/task-123?format=json | xfuel-verify -
 
-  # Public shell. INCLUDED_SHELL is not VERIFIED.
+  # Public shell. INCLUDED_SHELL is not VERIFIED. --accept-shell is removed.
   xfuel-verify shell.json
 
   # Owner view. VERIFIED needs a trusted issuer key, an inclusion proof,
@@ -384,9 +389,7 @@ function parseArgs(args: string[]): {
       result.carryInclusionFiles.push(args[++i]);
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
-    } else if (arg === '--strict-issuer-history') {
-      result.strictIssuerHistory = true;
-    } else if (arg === '--issuer-history-file' && args[i + 1]) {
+    } else if ((arg === '--issuer-history' || arg === '--issuer-history-file') && args[i + 1]) {
       result.issuerHistoryFile = args[++i];
     } else if (arg === '--salt' && args[i + 1]) {
       result.salt = args[++i];
@@ -394,16 +397,10 @@ function parseArgs(args: string[]): {
       result.open.push(args[++i]);
     } else if (arg === '--canonical-preimage' && args[i + 1]) {
       result.canonicalPreimageFile = args[++i];
-    } else if (arg === '--no-issuer-history') {
-      result.noIssuerHistory = true;
-    } else if (arg === '--strict') {
-      result.strict = true;
     } else if (arg === '--anchor-wallets-file' && args[i + 1]) {
       result.anchorWalletsFile = args[++i];
     } else if (arg === '--no-preimage') {
       result.noPreimage = true;
-    } else if (arg === '--accept-shell') {
-      result.acceptShell = true;
     } else if (arg === '--jws' && args[i + 1]) {
       result.jwsFile = args[++i];
     } else if (arg === '--url' && args[i + 1]) {
@@ -491,7 +488,7 @@ function printLane(lane: ReceiptLane): void {
   console.log('');
 }
 
-function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean): void {
+function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean, overallLabel?: string): void {
   if (json) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -542,7 +539,7 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
     console.log(`  Anchored size: ${result.inclusion.anchored_tree_size ?? '—'}`);
     console.log(`  Live size:     ${result.inclusion.live_tree_size ?? '—'}`);
   }
-  console.log(`  Overall: ${result.overall.toUpperCase()}`);
+  console.log(`  Overall: ${overallLabel || result.overall.toUpperCase()}`);
   if (result.errors.length > 0) console.log(`  Errors:  ${result.errors.join(', ')}`);
   if (result.errors.includes(LEGACY_HEAD_UNPINNED_SIGNER)) {
     console.log(`  ${HEAD_TRUST_MESSAGES[LEGACY_HEAD_UNPINNED_SIGNER]}`);
@@ -616,6 +613,86 @@ function packageVersion(): string {
   return pkg.version || '0.0.0';
 }
 
+const REMOVED_040: Record<string, string> = {
+  '--strict': 'removed in 0.4: a skipped key window is no longer a separate result',
+  '--no-issuer-history': 'removed in 0.4: the history check is always on',
+  '--accept-no-key-window': 'removed in 0.4: VERIFIED_NO_KEY_WINDOW is retired',
+  '--accept-shell': 'removed in 0.4: a shell is not a verified payment',
+};
+
+function removedFlag(argv: string[]): string | null {
+  for (const arg of argv) {
+    if (REMOVED_040[arg]) return REMOVED_040[arg];
+  }
+  return null;
+}
+
+async function resolvedHistory(
+  args: { issuerHistoryFile: string | null },
+  receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
+  jwks: Jwks | undefined,
+  trustedKids: readonly string[],
+): Promise<ResolvedIssuerHistory> {
+  const fileBytes = args.issuerHistoryFile ? readFileSync(args.issuerHistoryFile, 'utf8') : null;
+  return resolveIssuerHistory({
+    fileBytes,
+    receipt,
+    jwks,
+    trustedKids,
+  });
+}
+
+function historyOptions(resolved: ResolvedIssuerHistory): {
+  issuerHistory: IssuerHistoryDocument | null;
+  issuerHistoryBytes: string | null;
+  fetchIssuerHistory: false;
+  skipIssuerHistory: false;
+  strictIssuerHistory: false;
+  labelSkippedKeyWindow: false;
+} {
+  return {
+    issuerHistory: resolved.document,
+    issuerHistoryBytes: resolved.bytes,
+    fetchIssuerHistory: false,
+    skipIssuerHistory: false,
+    strictIssuerHistory: false,
+    labelSkippedKeyWindow: false,
+  };
+}
+
+function printVerdict(
+  json: boolean,
+  verdict: VerifyVerdict,
+  legacy: Record<string, unknown> | null,
+  legacyOverall?: string | null,
+): number {
+  const line = overallLine(verdict, legacyOverall);
+  if (json) {
+    const overall = line === 'NOT_IN_LOG'
+      ? 'not_in_log'
+      : line === 'VERIFIED_CARRIED_FORWARD'
+        ? 'verified_carried_forward'
+        : line === 'PENDING'
+          ? 'pending'
+          : line === 'PARTIAL'
+            ? 'partial'
+            : line === 'VERIFIED'
+              ? 'verified'
+              : line === 'COULD_NOT_CHECK'
+                ? 'could_not_check'
+                : 'failed';
+    console.log(JSON.stringify({ ...(legacy || {}), ...verdict, overall }, null, 2));
+  } else {
+    console.log(`  Overall: ${line}`);
+    console.log(`  ${verdict.message}`);
+    if (verdict.history.source === 'bundled' && verdict.history.as_of) {
+      console.log(`  Issuer history: as of ${verdict.history.as_of}`);
+    }
+    if (verdict.next_step) console.log(`  Next: ${verdict.next_step}`);
+  }
+  return verdict.exit_code;
+}
+
 function looksLikeTreeHead(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const doc = value as { schema?: unknown; status?: unknown; anchors?: unknown; root?: unknown; task_id?: unknown };
@@ -655,6 +732,31 @@ function fileLooksLikeHead(file: string | null): boolean {
   }
 }
 
+async function freshPublicLog(receipt: { verify_url?: string; task_id?: string | null }): Promise<{
+  logInclusion: CheckState;
+  anchor: CheckState;
+  logReason: string | null;
+}> {
+  const missed = { logInclusion: 'could_not_check' as const, anchor: 'could_not_check' as const, logReason: 'log_unreachable' };
+  try {
+    const origin = new URL(String(receipt.verify_url)).origin;
+    const task = receipt.task_id;
+    if (!task) return missed;
+    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(task)}/inclusion`, {
+      signal: AbortSignal.timeout(800),
+    });
+    if (res.status === 404) {
+      const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
+      if (body.error === 'not_in_tree' || body.reason === 'not_in_tree') {
+        return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log' };
+      }
+    }
+    return missed;
+  } catch {
+    return missed;
+  }
+}
+
 function historyHostAllowed(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -672,20 +774,10 @@ function historyHostAllowed(url: string): boolean {
 async function loadAnchorIssuerHistory(
   args: ReturnType<typeof parseArgs>,
   receipt: { verification?: { jwks_uri?: string }; verify_url?: string },
-): Promise<IssuerHistoryDocument | null> {
-  if (args.issuerHistoryFile) {
-    return JSON.parse(readFileSync(args.issuerHistoryFile, 'utf8')) as IssuerHistoryDocument;
-  }
-  if (args.noIssuerHistory) return null;
-  const url = historyUrlFromReceipt(receipt);
-  if (!url || !historyHostAllowed(url)) return null;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-    if (!res.ok) return null;
-    return await res.json() as IssuerHistoryDocument;
-  } catch {
-    return null;
-  }
+  jwks: Jwks | undefined,
+  trustedKids: readonly string[],
+): Promise<ResolvedIssuerHistory> {
+  return resolvedHistory(args, receipt, jwks, trustedKids);
 }
 
 async function loadAnchorWalletDocument(
@@ -695,7 +787,6 @@ async function loadAnchorWalletDocument(
   if (args.anchorWalletsFile) {
     return JSON.parse(readFileSync(args.anchorWalletsFile, 'utf8')) as Record<string, unknown>;
   }
-  if (args.noIssuerHistory) return null;
   const historyUrl = historyUrlFromReceipt(receipt);
   const epochOrigin = (() => {
     if (!args.epochUrl) return null;
@@ -720,20 +811,24 @@ function emitVersionFailure(
   errors: string[],
 ): number {
   const reason = errors[0] || 'unsupported_version';
-  if (args.json) {
-    console.log(JSON.stringify({
-      overall: 'failed',
-      errors,
-      issuer_signature: { valid: false, checked: true, key_trusted: false, reason },
-      amount_usdc: null,
-      tx: null,
-      payer: { checked: false, valid: false },
-    }, null, 2));
-  } else {
-    console.log(reason);
-    console.log('  Overall: FAILED');
-  }
-  return 1;
+  const unsupported = reason === 'unsupported_version';
+  const verdict = buildVerifyVerdict({
+    version: packageVersion(),
+    errors,
+    signatureChecked: !unsupported,
+    signatureValid: unsupported ? null : false,
+    historyMissing: unsupported,
+    logInclusion: 'unclaimed',
+    anchor: 'unclaimed',
+  });
+  if (!args.json) console.log(reason);
+  return printVerdict(args.json, verdict, {
+    errors,
+    issuer_signature: { valid: false, checked: !unsupported, key_trusted: false, reason },
+    amount_usdc: null,
+    tx: null,
+    payer: { checked: false, valid: false },
+  }, unsupported ? 'could_not_check' : 'failed');
 }
 
 async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
@@ -762,19 +857,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     return 3;
   }
   const anchorGate = classifyReceiptDocument(receipt);
-  if (!anchorGate.ok) {
-    if (args.json) {
-      console.log(JSON.stringify({
-        overall: 'failed',
-        errors: anchorGate.errors,
-        receipt_check: { overall: 'failed', errors: anchorGate.errors },
-      }, null, 2));
-    } else {
-      console.log(anchorGate.errors[0]);
-      console.log('  Overall: FAILED');
-    }
-    return 1;
-  }
+  if (!anchorGate.ok) return emitVersionFailure(args, anchorGate.errors);
   let fileJwks: Jwks | undefined;
   if (args.jwksFile) {
     try {
@@ -792,10 +875,15 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const trustedKids = args.noTrustedKid
     ? []
     : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
-  let issuerHistory: IssuerHistoryDocument | null = null;
+  let resolved: ResolvedIssuerHistory;
   let anchorWalletDocument: Record<string, unknown> | null = null;
   try {
-    issuerHistory = await loadAnchorIssuerHistory(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
+    resolved = await loadAnchorIssuerHistory(
+      args,
+      receipt as { verification?: { jwks_uri?: string }; verify_url?: string },
+      loaded.jwks,
+      trustedKids,
+    );
     anchorWalletDocument = await loadAnchorWalletDocument(args, receipt as { verification?: { jwks_uri?: string }; verify_url?: string });
   } catch (err) {
     console.error(`Error reading issuer trust files: ${err instanceof Error ? err.message : String(err)}`);
@@ -862,8 +950,8 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     issuerPin,
     jwks: loaded.jwks,
     trustedKids,
-    issuerHistory,
-    strictIssuerHistory: args.strictIssuerHistory,
+    issuerHistory: resolved.document,
+    strictIssuerHistory: false,
     anchorWalletDocument: anchorWalletDocument as {
       schema?: string;
       base?: unknown;
@@ -875,7 +963,6 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   if (args.canonicalPreimageFile) {
     canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
   }
-  const historyBytes = args.issuerHistoryFile ? readFileSync(args.issuerHistoryFile, 'utf8') : null;
   const verified = await verifyReceipt(receipt as unknown as XFuelReceipt, {
     jwks: loaded.jwks,
     jwksUri: args.jwksUrl || undefined,
@@ -886,12 +973,7 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     rpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     requirePreimages: !args.noPreimage,
-    issuerHistory: args.issuerHistoryFile ? issuerHistory : null,
-    issuerHistoryBytes: historyBytes,
-    fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
-    strictIssuerHistory: args.strictIssuerHistory,
-    skipIssuerHistory: args.noIssuerHistory,
-    labelSkippedKeyWindow: args.noIssuerHistory,
+    ...historyOptions(resolved),
     canonicalPreimage,
     head,
   });
@@ -902,29 +984,32 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   // mismatch fails the combined result. An inclusion match is not VERIFIED.
   const issuerSig = (receipt as { issuer_signature?: { jws?: string; value?: string } }).issuer_signature;
   const signaturePresent = Boolean(issuerSig?.jws || issuerSig?.value);
+  const historyMiss = verified.issuer_history.reason === 'kid_not_in_history' || resolved.document == null;
+  const historyOnly = historyMiss
+    && verified.claim_mismatches.length === 0
+    && verified.errors.every((err) => /issuer history|kid_not_in_history/.test(err));
   const receiptVerified = signaturePresent
     && verified.issuer_signature.valid === true
-    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward' || verified.overall === 'verified_no_key_window')
+    && (verified.overall === 'verified' || verified.overall === 'verified_carried_forward' || historyOnly)
     && verified.claim_mismatches.length === 0;
   const receiptFailed = !receiptVerified;
   const receiptErrors = [...verified.errors];
   if (!signaturePresent) {
     receiptErrors.push(verified.issuer_signature.reason || 'receipt_signature_missing');
+  } else if (verified.issuer_signature.valid !== true && verified.issuer_signature.reason) {
+    receiptErrors.push(verified.issuer_signature.reason);
   } else if (verified.overall === 'partial') {
     receiptErrors.push(verified.issuer_signature.reason || 'receipt_check_partial');
   }
   const errors = receiptFailed
     ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
-  const windowSkipped = verified.overall === 'verified_no_key_window';
   const logMiss = result.overall === 'not_in_log';
   const anchorOverall = logMiss
     ? 'not_in_log' as const
     : receiptFailed
       ? 'failed' as const
-      : (windowSkipped && result.overall === 'verified')
-        ? 'verified_no_key_window' as const
-        : result.overall;
+      : result.overall;
   const combined = {
     ...result,
     errors,
@@ -938,30 +1023,101 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
       errors: verified.errors,
     },
   };
+  const logState = anchorLogState(result);
+  const verdict = buildVerifyVerdict({
+    version: packageVersion(),
+    receiptId: verified.receipt_id,
+    displayId: displayIdOf(receipt),
+    payloadVersion: verified.receipt_version ?? null,
+    historySource: resolved.source,
+    historyHead: resolved.headHash,
+    historyCount: resolved.entryCount,
+    historyAsOf: resolved.asOf,
+    signatureValid: signaturePresent && verified.issuer_signature.valid === true,
+    signatureChecked: true,
+    historyChecked: verified.issuer_history.checked,
+    historyOk: verified.issuer_history.ok,
+    historyReason: resolved.invalid ? (resolved.reason || verified.issuer_history.reason) : verified.issuer_history.reason,
+    historyMissing: resolved.document == null && !resolved.invalid,
+    bindingExpected: !!verified.binding.expected,
+    bindingMatches: verified.binding.matches,
+    claimMismatches: verified.claim_mismatches.length,
+    payerChecked: verified.payer.checked,
+    payerValid: verified.payer.valid,
+    errors: errors,
+    logInclusion: logState.logInclusion,
+    anchor: logState.anchor,
+    logReason: logState.logReason,
+    log: {
+      leaf_index: inclusion.leaf_index ?? null,
+      tree_size: inclusion.tree_size ?? null,
+      root: result.root,
+      anchors: {
+        base: result.base.tx,
+        solana: result.solana.signature,
+      },
+    },
+  });
   if (args.json) {
-    console.log(JSON.stringify(combined, null, 2));
-  } else {
-    printAnchor(combined, false, args.quiet);
-    if (!args.quiet || receiptFailed) {
-      const anchorPending = result.overall === 'pending';
-      const receiptLabel = anchorPending && !receiptFailed
-        ? 'PENDING'
-        : verified.overall.toUpperCase();
-      console.log(`  Receipt checks: ${receiptLabel} (signed claims only)`);
-      if (verified.claim_mismatches.length > 0) {
-        for (const mismatch of verified.claim_mismatches) {
-          console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
-        }
-      }
-      if (!(anchorPending && !receiptFailed)) printUnsigned(verified.unsigned_fields);
-      console.log('');
-    }
-    if (!args.quiet) printLane(verified.receipt_lane);
+    return printVerdict(true, verdict, combined as unknown as Record<string, unknown>, anchorOverall);
   }
-  if (combined.overall === 'verified') return 0;
-  if (combined.overall === 'verified_no_key_window') return args.strict ? 1 : 0;
-  if (combined.overall === 'partial' || combined.overall === 'pending') return 2;
-  return 1;
+  printAnchor(combined, false, args.quiet, overallLine(verdict, anchorOverall));
+  if (!args.quiet || receiptFailed || verdict.result !== 'verified') {
+    const anchorPending = result.overall === 'pending';
+    const receiptLabel = anchorPending && !receiptFailed
+      ? 'PENDING'
+      : overallLine(verdict, verified.overall);
+    console.log(`  Receipt checks: ${receiptLabel} (signed claims only)`);
+    if (verified.claim_mismatches.length > 0) {
+      for (const mismatch of verified.claim_mismatches) {
+        console.log(`  ${mismatch.field}: outer ${mismatch.outer} ≠ signed ${mismatch.signed}`);
+      }
+    }
+    if (!(anchorPending && !receiptFailed)) printUnsigned(verified.unsigned_fields);
+    console.log('');
+  }
+  if (!args.quiet) printLane(verified.receipt_lane);
+  console.log(`  ${verdict.message}`);
+  if (verdict.history.source === 'bundled' && verdict.history.as_of) {
+    console.log(`  Issuer history: as of ${verdict.history.as_of}`);
+  }
+  return verdict.exit_code;
+}
+
+function anchorLogState(result: AnchorWitnessResult): {
+  logInclusion: CheckState | 'unclaimed';
+  anchor: CheckState | 'unclaimed';
+  logReason: string | null;
+} {
+  if (result.overall === 'not_in_log') {
+    return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log' };
+  }
+  if (result.overall === 'pending' || result.overall === 'partial') {
+    return {
+      logInclusion: result.inclusion.valid ? 'pass' : 'could_not_check',
+      anchor: 'could_not_check',
+      logReason: result.overall === 'pending' ? 'pending_anchor' : (result.errors[0] || 'partial'),
+    };
+  }
+  if (result.inclusion && result.inclusion.valid === false) {
+    return {
+      logInclusion: 'fail',
+      anchor: 'fail',
+      logReason: result.errors[0] || result.inclusion.reason || 'log_inclusion',
+    };
+  }
+  if (result.overall === 'failed') {
+    return { logInclusion: 'pass', anchor: 'fail', logReason: result.errors[0] || 'anchor' };
+  }
+  if (result.overall === 'verified') return { logInclusion: 'pass', anchor: 'pass', logReason: null };
+  return { logInclusion: 'could_not_check', anchor: 'could_not_check', logReason: 'log_unreachable' };
+}
+
+function displayIdOf(receipt: { task_id?: string; display_id?: string; receipt_id?: string }): string | null {
+  if (typeof receipt.display_id === 'string' && receipt.display_id) return receipt.display_id;
+  const id = receipt.task_id || receipt.receipt_id || '';
+  const short = id.match(/^(chit-[0-9a-f]{8})/i);
+  return short ? short[1] : (id || null);
 }
 
 function printUnsigned(fields: string[]): void {
@@ -980,12 +1136,7 @@ async function runRefusal(
     json: boolean;
     quiet: boolean;
     requirePreimages: boolean;
-    issuerHistory: IssuerHistoryDocument | null;
-    issuerHistoryBytes: string | null;
-    fetchIssuerHistory: boolean;
-    strictIssuerHistory: boolean;
-    skipIssuerHistory: boolean;
-    strict: boolean;
+    resolved: ResolvedIssuerHistory;
     canonicalPreimage: string | null;
   },
 ): Promise<number> {
@@ -1012,27 +1163,43 @@ async function runRefusal(
   const pin = result.valid ? readIssuerHistoryPin({
     issuer_history: result.issuer_history,
   } as Record<string, unknown>) : null;
-  const history = args.skipIssuerHistory
-    ? { checked: false, ok: true, unreachable: false, warning: null, reason: null, kid: result.kid ?? null, document: null, loaded: false }
-    : await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
-      document: args.issuerHistory,
-      documentBytes: args.issuerHistoryBytes,
-      fetchHistory: args.fetchIssuerHistory,
-      strict: args.strictIssuerHistory,
-      jwks: args.jwks,
-      trustedKids,
-      issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
-      kid: result.kid ?? doc.issuer_signature?.kid ?? null,
-      pin,
-      requirePin: result.valid && Number(result.payload_version) >= 2,
-    });
-  const historyFailed = history.checked && !history.ok;
+  const history = await checkReceiptIssuerHistory(doc as unknown as { verification?: { jwks_uri?: string }; verify_url?: string; created_at?: unknown }, {
+    document: args.resolved.document,
+    documentBytes: args.resolved.bytes,
+    fetchHistory: false,
+    strict: false,
+    jwks: args.jwks,
+    trustedKids,
+    issuedAt: (doc as { issued_at?: string }).issued_at ?? null,
+    kid: result.kid ?? doc.issuer_signature?.kid ?? null,
+    pin,
+    requirePin: result.valid && Number(result.payload_version) >= 2 && args.resolved.document != null,
+  });
+  const historyFailed = history.checked && !history.ok && history.reason !== 'kid_not_in_history';
   const failed = !result.valid || !preimages.ok || historyFailed || canonicalFailed;
-  const historySkipped = !failed && (args.skipIssuerHistory || history.unreachable === true);
-  const overall = failed ? 'failed' : (historySkipped ? 'verified_no_key_window' : 'verified');
+  const verdict = buildVerifyVerdict({
+    version: packageVersion(),
+    receiptId: result.refusal_id || doc.refusal_id || null,
+    displayId: result.refusal_id || doc.refusal_id || null,
+    payloadVersion: result.payload_version ?? null,
+    historySource: args.resolved.source,
+    historyHead: args.resolved.headHash,
+    historyCount: args.resolved.entryCount,
+    historyAsOf: args.resolved.asOf,
+    signatureValid: result.valid,
+    signatureChecked: true,
+    historyChecked: history.checked,
+    historyOk: history.ok,
+    historyReason: history.reason || args.resolved.reason,
+    historyMissing: args.resolved.document == null,
+    errors: [...result.errors, ...preimages.errors],
+    logInclusion: 'unclaimed',
+    anchor: 'unclaimed',
+  });
+  const overall = verdict.result === 'verified' ? 'verified' : verdict.result === 'could_not_check' ? 'could_not_check' : 'failed';
   if (args.json) {
-    console.log(JSON.stringify({ ...result, preimages, issuer_history: history, overall }, null, 2));
-  } else if (!args.quiet || failed || historySkipped) {
+    return printVerdict(true, verdict, { ...result, preimages, issuer_history: history, overall }, overall);
+  } else if (!args.quiet || failed || verdict.result !== 'verified') {
     console.log('');
     console.log('  Chit402 Refusal Verification');
     console.log('  ─────────────────────────────────────────────────');
@@ -1059,22 +1226,22 @@ async function runRefusal(
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);
     console.log('');
-    const refusalOverall = historySkipped ? 'VERIFIED_NO_KEY_WINDOW' : (failed ? 'FAILED' : 'VERIFIED');
-    console.log(`  Overall: ${refusalOverall}`);
+    console.log(`  Overall: ${overallLine(verdict, overall)}`);
+    console.log(`  ${verdict.message}`);
     if (!preimages.ok) console.log(`  Preimages:     ${preimages.errors.join('; ')}`);
     if (history.warning) console.log(`  Issuer history: ${history.warning}`);
     if (historyFailed && history.reason) console.log(`  Issuer history: ${history.reason}`);
     console.log('');
   }
-  if (historySkipped) return argsStrict(args) ? 1 : 0;
-  return failed ? 1 : 0;
-}
-
-function argsStrict(args: { strictIssuerHistory?: boolean; strict?: boolean }): boolean {
-  return args.strict === true;
+  return verdict.exit_code;
 }
 
 async function main(): Promise<number> {
+  const removed = removedFlag(process.argv.slice(2));
+  if (removed) {
+    console.error(removed);
+    return 1;
+  }
   const args = parseArgs(process.argv.slice(2));
   if (args.version) {
     console.log(`@xfuel/verify ${packageVersion()}`);
@@ -1188,16 +1355,12 @@ async function main(): Promise<number> {
     const trustedKids = args.noTrustedKid
       ? []
       : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
-    let shellHistory: IssuerHistoryDocument | null = null;
-    let shellHistoryBytes: string | null = null;
-    if (args.issuerHistoryFile) {
-      try {
-        shellHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
-        shellHistory = JSON.parse(shellHistoryBytes) as IssuerHistoryDocument;
-      } catch (err) {
-        console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
-        return 3;
-      }
+    let shellResolved: ResolvedIssuerHistory;
+    try {
+      shellResolved = await resolvedHistory(args, holder as { verification?: { jwks_uri?: string }; verify_url?: string }, jwks, trustedKids);
+    } catch (err) {
+      console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+      return 3;
     }
     const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
       jwks,
@@ -1208,12 +1371,7 @@ async function main(): Promise<number> {
       rpcUrl: args.rpcUrl || undefined,
       solanaRpcUrl: args.solanaRpcUrl || undefined,
       requirePreimages: false,
-      skipIssuerHistory: args.noIssuerHistory,
-      labelSkippedKeyWindow: args.noIssuerHistory,
-      issuerHistory: shellHistory,
-      issuerHistoryBytes: shellHistoryBytes,
-      fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
-      strictIssuerHistory: args.strictIssuerHistory,
+      ...historyOptions(shellResolved),
       salt: args.salt,
       head: head ?? undefined,
       inclusion: inclusion ?? undefined,
@@ -1246,13 +1404,25 @@ async function main(): Promise<number> {
       shellLeaf: shellLeaf == null ? null : String(shellLeaf),
       provedLeaf,
     });
-    const receiptOk = result.overall === 'verified'
-      || result.overall === 'verified_carried_forward'
-      || result.overall === 'verified_no_key_window';
+    const coveringMiss = result.issuer_history.reason === 'kid_not_in_history' || shellResolved.document == null;
+    const receiptOk = result.issuer_signature.valid === true
+      && result.claim_mismatches.length === 0
+      && (result.overall === 'verified' || result.overall === 'verified_carried_forward' || coveringMiss);
     if (!verdict.verified || !receiptOk) {
       const reason = verdict.reason || result.errors[0] || 'failed';
       console.log(reason);
       console.log('  Overall: FAILED');
+      return 1;
+    }
+    if (coveringMiss || (result.issuer_history.checked && !result.issuer_history.ok)) {
+      if (coveringMiss) {
+        console.log('  Overall: COULD_NOT_CHECK');
+        console.log('  No issuer history covers this key.');
+        console.log('  Next: Pass --issuer-history with a snapshot that includes this kid.');
+        return 2;
+      }
+      console.log(result.issuer_history.reason || 'key_window');
+      console.log('  Overall: INVALID');
       return 1;
     }
     if (args.checkPayer && !result.payer.valid) {
@@ -1273,11 +1443,9 @@ async function main(): Promise<number> {
         return 1;
       }
     }
-    const overall = result.overall === 'verified_no_key_window'
-      ? 'VERIFIED_NO_KEY_WINDOW'
-      : 'VERIFIED';
-    console.log(`  Overall: ${overall}`);
-    return result.overall === 'verified_no_key_window' && args.strict ? 1 : 0;
+    console.log('  Overall: VERIFIED');
+    console.log('  Every check passed.');
+    return 0;
   }
 
   if (typeof receipt.issuer_signature?.jws === 'string') {
@@ -1317,13 +1485,15 @@ async function main(): Promise<number> {
     ? []
     : (args.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS);
 
+  let resolved: ResolvedIssuerHistory;
+  try {
+    resolved = await resolvedHistory(args, receipt, jwks, trustedKids);
+  } catch (err) {
+    console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+    return 3;
+  }
+
   if (isRefusalDocument(receipt as unknown)) {
-    let issuerHistory: IssuerHistoryDocument | null = null;
-    let issuerHistoryBytes: string | null = null;
-    if (args.issuerHistoryFile) {
-      issuerHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
-      issuerHistory = JSON.parse(issuerHistoryBytes) as IssuerHistoryDocument;
-    }
     let canonicalPreimage: string | null = null;
     if (args.canonicalPreimageFile) {
       canonicalPreimage = readFileSync(args.canonicalPreimageFile, 'utf8');
@@ -1334,26 +1504,9 @@ async function main(): Promise<number> {
       json: args.json,
       quiet: args.quiet,
       requirePreimages: !args.noPreimage,
-      issuerHistory,
-      issuerHistoryBytes,
-      fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
-      strictIssuerHistory: args.strictIssuerHistory,
-      skipIssuerHistory: args.noIssuerHistory,
-      strict: args.strict,
+      resolved,
       canonicalPreimage,
     });
-  }
-
-  let issuerHistory: IssuerHistoryDocument | null = null;
-  let issuerHistoryBytes: string | null = null;
-  if (args.issuerHistoryFile) {
-    try {
-      issuerHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
-      issuerHistory = JSON.parse(issuerHistoryBytes) as IssuerHistoryDocument;
-    } catch (err) {
-      console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
-      return 3;
-    }
   }
   let canonicalPreimage: string | null = null;
   if (args.canonicalPreimageFile) {
@@ -1414,12 +1567,7 @@ async function main(): Promise<number> {
     rpcUrl: args.rpcUrl || undefined,
     solanaRpcUrl: args.solanaRpcUrl || undefined,
     requirePreimages: !args.noPreimage,
-    issuerHistory,
-    issuerHistoryBytes,
-    fetchIssuerHistory: !args.noIssuerHistory && !issuerHistory,
-    strictIssuerHistory: args.strictIssuerHistory,
-    skipIssuerHistory: args.noIssuerHistory,
-    labelSkippedKeyWindow: args.noIssuerHistory,
+    ...historyOptions(resolved),
     canonicalPreimage,
     salt: args.salt,
     open,
@@ -1428,9 +1576,61 @@ async function main(): Promise<number> {
     carry,
   });
 
+  const hadLog = Boolean(offlineWitness?.inclusion || offlineWitness?.head);
+  let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
+  let anchorState: CheckState | 'unclaimed' = 'unclaimed';
+  let logReason: string | null = null;
+  const carried = result.overall === 'verified_carried_forward';
+  const headErrors = result.errors.filter((err) => /head_signature|head_claims|tree_head_mismatch|tree_size_mismatch|inclusion|not_in_tree|bad_root|no_leaf/.test(err));
+  if (hadLog || headErrors.length) {
+    if (headErrors.some((err) => err.includes('not_in_tree')) && headErrors.length === 1) {
+      logInclusion = 'fail';
+      anchorState = 'pass';
+      logReason = 'not_in_log';
+    } else if (headErrors.length) {
+      logInclusion = headErrors.some((err) => /inclusion|not_in_tree|bad_root|no_leaf/.test(err)) ? 'fail' : 'pass';
+      anchorState = 'fail';
+      logReason = headErrors[0];
+    } else {
+      logInclusion = 'pass';
+      anchorState = 'pass';
+    }
+  } else if (!carried && typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url)) {
+    const fresh = await freshPublicLog(receipt);
+    logInclusion = fresh.logInclusion;
+    anchorState = fresh.anchor;
+    logReason = fresh.logReason;
+  }
+  const receiptVerdict = buildVerifyVerdict({
+    version: packageVersion(),
+    receiptId: result.receipt_id,
+    displayId: displayIdOf(receipt),
+    payloadVersion: result.receipt_version ?? null,
+    historySource: resolved.source,
+    historyHead: resolved.headHash,
+    historyCount: resolved.entryCount,
+    historyAsOf: resolved.asOf,
+    signatureValid: result.issuer_signature.valid === true || carried,
+    signatureChecked: result.issuer_signature.checked || carried,
+    historyChecked: result.issuer_history.checked || carried,
+    historyOk: carried ? true : result.issuer_history.ok,
+    historyReason: carried ? null : (resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason),
+    historyMissing: carried ? false : (resolved.document == null && !resolved.invalid),
+    bindingExpected: !!result.binding.expected,
+    bindingMatches: result.binding.matches,
+    claimMismatches: result.claim_mismatches.length,
+    payerChecked: result.payer.checked,
+    payerValid: result.payer.valid,
+    errors: result.errors,
+    logInclusion,
+    anchor: anchorState,
+    logReason,
+    log: null,
+  });
+
   if (args.json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else if (!args.quiet || result.overall === 'failed') {
+    return printVerdict(true, receiptVerdict, result as unknown as Record<string, unknown>, result.overall);
+  } else if (!args.quiet || result.overall === 'failed' || receiptVerdict.result !== 'verified') {
     console.log('');
     console.log(`  Chit402 Receipt Verification`);
     console.log(`  ─────────────────────────────────────────────────`);
@@ -1531,26 +1731,19 @@ async function main(): Promise<number> {
       console.log(`  Leaf index:    ${carried.leaf_index}`);
       console.log('');
     }
-    console.log(`  Overall: ${result.overall.toUpperCase()}`);
+    console.log(`  Overall: ${overallLine(receiptVerdict, result.overall)}`);
+    console.log(`  ${receiptVerdict.message}`);
+    if (receiptVerdict.history.source === 'bundled' && receiptVerdict.history.as_of) {
+      console.log(`  Issuer history: as of ${receiptVerdict.history.as_of}`);
+    }
+    if (receiptVerdict.next_step) console.log(`  Next: ${receiptVerdict.next_step}`);
     if (result.errors.length > 0) {
       console.log(`  Errors:  ${result.errors.join(', ')}`);
     }
     console.log('');
   }
 
-  switch (result.overall) {
-    case 'verified':
-    case 'verified_carried_forward':
-      return 0;
-    case 'verified_no_key_window':
-      return args.strict ? 1 : 0;
-    case 'failed':
-      return 1;
-    case 'partial':
-      return 2;
-    default:
-      return 1;
-  }
+  return receiptVerdict.exit_code;
 }
 
 /**

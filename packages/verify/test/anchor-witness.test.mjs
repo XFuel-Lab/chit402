@@ -314,7 +314,6 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
     '--rpc',
     '--jwks-file', join(dir, 'jwks.json'),
     '--trusted-kid', fx.key.kid,
-    '--no-issuer-history',
     '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 2);

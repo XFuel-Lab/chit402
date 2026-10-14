@@ -253,7 +253,6 @@ test('xfuel-verify without --rpc rejects a head that has no issuer signature', (
     cli,
     receiptPath,
     headPath,
-    '--no-issuer-history',
     '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stdout + run.stderr);
@@ -275,7 +274,6 @@ test('xfuel-verify without --rpc rejects a rewritten tree size', () => {
     cli,
     receiptPath,
     headPath,
-    '--no-issuer-history',
     '--no-preimage',
   ], { encoding: 'utf8' });
   assert.equal(run.status, 1, run.stdout + run.stderr);

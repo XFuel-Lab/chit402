@@ -306,7 +306,7 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
     skipIssuerHistory: true,
     requirePreimages: true,
   });
-  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-'));
@@ -315,15 +315,15 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
   const args = [
     '--json',
-    '--no-issuer-history',
     '--trusted-kid',
     receipt.issuer_signature.kid,
   ];
   for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
     const run = spawnSync(process.execPath, [cli, path, ...args, ...extra], { encoding: 'utf8' });
-    assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
+    assert.equal(run.status, 2, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
     const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.overall, 'verified_no_key_window', (parsed.errors || []).join('; '));
+    assert.equal(parsed.result, 'could_not_check', (parsed.errors || []).join('; '));
+    assert.equal(parsed.reason, 'kid_not_in_history');
     assert.equal(parsed.preimages.ok, true);
   }
 

@@ -1,8 +1,8 @@
 /**
  * A public shell is inclusion, not a holder signature.
  * The live 1ebc5616 fixture is the holder document. Without --jws the
- * verdict is INCLUDED_SHELL and the process exits non-zero unless
- * --accept-shell. That line is never VERIFIED.
+ * verdict is INCLUDED_SHELL and the process exits non-zero.
+ * --accept-shell was removed in 0.4. That line is never VERIFIED.
  * Owner view reaches VERIFIED only with a trusted issuer key, a passing
  * inclusion proof, and a signed payment. A holder signed by any other key
  * is not VERIFIED.
@@ -108,26 +108,26 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
   assert.doesNotMatch(plain.stdout, /Overall:\s*VERIFIED/);
 
   const accepted = run([shellPath, '--accept-shell']);
-  assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout, /INCLUDED_SHELL/);
+  assert.equal(accepted.status, 1, accepted.stderr);
+  assert.match(accepted.stderr, /removed in 0\.4: a shell is not a verified payment/);
   assert.doesNotMatch(accepted.stdout, /Overall:\s*VERIFIED/);
 
   const held = run([
-    shellPath, '--jws', ownerPath, '--jwks-file', jwksPath, '--no-issuer-history',
+    shellPath, '--jws', ownerPath, '--jwks-file', jwksPath,
     '--inclusion', inclusionPath, '--head', headPath,
   ]);
   // The fixture head is {root, tree_size} with no signature: not a log.
   notVerified(held);
   assert.match(held.stdout, /head_signature_missing/);
 
-  const holderOnly = run([shellPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
+  const holderOnly = run([shellPath, '--jws', holderPath, '--inclusion', inclusionPath, '--head', headPath]);
   notVerified(holderOnly);
   assert.match(holderOnly.stdout, /head_signature_missing/);
 
   const tampered = { ...shell, amount_gross: '1' };
   const tamperedPath = join(dir, 'tampered.json');
   writeFileSync(tamperedPath, JSON.stringify(tampered));
-  const mismatch = run([tamperedPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
+  const mismatch = run([tamperedPath, '--jws', holderPath, '--inclusion', inclusionPath, '--head', headPath]);
   assert.equal(mismatch.status, 1);
   assert.match(mismatch.stdout, /shell_jws_mismatch/);
   assert.doesNotMatch(mismatch.stdout, /Overall:\s*VERIFIED/);
@@ -154,7 +154,7 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   writeFileSync(inclusionPath, JSON.stringify(inclusion));
   writeFileSync(headPath, JSON.stringify({ root: inclusion.root, tree_size: inclusion.tree_size }));
 
-  const attacked = run([shellPath, '--jws', forgedPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
+  const attacked = run([shellPath, '--jws', forgedPath, '--inclusion', inclusionPath, '--head', headPath]);
   notVerified(attacked);
   assert.match(attacked.stdout, /key untrusted/);
 
@@ -169,14 +169,14 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   const ownerShellPath = join(dir, 'real-shell.json');
   writeFileSync(ownerShellPath, JSON.stringify(ownerShell));
   const forgedOwner = run([
-    ownerShellPath, '--jws', ownerAttack, '--jwks-file', jwksPath, '--no-issuer-history',
+    ownerShellPath, '--jws', ownerAttack, '--jwks-file', jwksPath,
     '--inclusion', inclusionPath, '--head', headPath,
   ]);
   notVerified(forgedOwner);
 
   const realShell = join(dir, 'published-shell.json');
   writeFileSync(realShell, JSON.stringify(shellFromHolder(holder)));
-  const missing = run([realShell, '--jws', holderPath, '--no-issuer-history']);
+  const missing = run([realShell, '--jws', holderPath]);
   notVerified(missing);
   assert.match(missing.stdout, /inclusion_missing/);
 
@@ -186,7 +186,7 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   const badHeadPath = join(dir, 'bad-head.json');
   writeFileSync(badPath, JSON.stringify(bad));
   writeFileSync(badHeadPath, JSON.stringify({ root: badRoot, tree_size: bad.tree_size }));
-  const badRun = run([realShell, '--jws', holderPath, '--no-issuer-history', '--inclusion', badPath, '--head', badHeadPath]);
+  const badRun = run([realShell, '--jws', holderPath, '--inclusion', badPath, '--head', badHeadPath]);
   notVerified(badRun);
 
   const claimed = shellFromHolder(holder);
@@ -199,12 +199,13 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   writeFileSync(realInclusionPath, JSON.stringify(realInclusion));
   writeFileSync(realHeadPath, JSON.stringify({ root: realInclusion.root, tree_size: realInclusion.tree_size }));
   const claimedRun = run([
-    claimedPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', realInclusionPath, '--head', realHeadPath,
+    claimedPath, '--jws', holderPath, '--inclusion', realInclusionPath, '--head', realHeadPath,
   ]);
   notVerified(claimedRun);
   assert.match(claimedRun.stdout, /inclusion_mismatch/);
 
   const decorated = run([claimedPath, '--accept-shell']);
-  assert.match(decorated.stdout, /INCLUDED_SHELL/);
+  assert.equal(decorated.status, 1);
+  assert.match(decorated.stderr, /removed in 0\.4: a shell is not a verified payment/);
   assert.doesNotMatch(decorated.stdout, /Overall:\s*VERIFIED/);
 });

@@ -510,7 +510,6 @@ test('a tampered canonical preimage fails the receipt and the CLI', async () => 
     join(dir, 'receipt.json'),
     '--json',
     '--no-preimage',
-    '--no-issuer-history',
     '--trusted-kid',
     receipt.issuer_signature.kid,
   ], { encoding: 'utf8' });

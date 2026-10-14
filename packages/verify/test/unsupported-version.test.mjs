@@ -176,17 +176,28 @@ async function assertApi(receipt, reason) {
 
 function assertCli(args, reason) {
   const proc = runCli(args);
-  assert.equal(proc.status, 1, proc.text);
   assert.ok(proc.elapsed < 5000, `hung ${proc.elapsed}ms\n${proc.text}`);
   assert.doesNotMatch(proc.text, /Overall:\s*VERIFIED/);
+  assert.doesNotMatch(proc.text, /VERIFIED_NO_KEY_WINDOW/);
   assert.doesNotMatch(proc.text, /INCLUDED_SHELL/);
   assert.doesNotMatch(proc.text, /PARTIAL/);
+  const removed = ['--strict', '--no-issuer-history', '--accept-no-key-window', '--accept-shell']
+    .find((flag) => args.includes(flag));
+  if (removed) {
+    assert.equal(proc.status, 1, proc.text);
+    assert.match(proc.stderr, /removed in 0\.4:/);
+    return proc;
+  }
+  const status = reason === 'unsupported_version' ? 2 : 1;
+  assert.equal(proc.status, status, proc.text);
   if (args.includes('--json')) {
     const parsed = JSON.parse(proc.stdout);
-    assert.equal(parsed.overall, 'failed');
+    assert.equal(parsed.overall, reason === 'unsupported_version' ? 'could_not_check' : 'failed');
+    assert.equal(parsed.result, reason === 'unsupported_version' ? 'could_not_check' : 'invalid');
     assert.equal(parsed.errors[0], reason);
     assert.equal(parsed.issuer_signature.valid, false);
     assert.equal(parsed.amount_usdc, null);
+    if (reason === 'unsupported_version') assert.equal(parsed.next_step, 'Upgrade @xfuel/verify.');
     return parsed;
   }
   assert.equal(proc.stdout.trim().split('\n')[0], reason, proc.text);
@@ -237,7 +248,7 @@ test('supported versions are exported and printed', () => {
   assert.match(help.stdout, /11 only with a signed issuer_root/);
   const version = runCli(['--version'], 8000);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /@xfuel\/verify 0\.3\.6/);
+  assert.match(version.stdout, /@xfuel\/verify 0\.4\.0/);
   assert.match(version.stdout, /v: 11/);
 });
 
@@ -433,8 +444,11 @@ test('T-MM-HDR a version on the JWS header is ignored', async () => {
   assert.equal(result.receipt_version, 8);
   const receiptPath = writeJson('hdr-receipt.json', receipt);
   const proc = runCli([receiptPath, '--jwks-file', jwksPath, '--no-trusted-kid', '--json']);
-  assert.equal(proc.status, 0, proc.text);
-  assert.equal(JSON.parse(proc.stdout).overall, 'verified_no_key_window');
+  assert.equal(proc.status, 2, proc.text);
+  const hdr = JSON.parse(proc.stdout);
+  assert.equal(hdr.result, 'could_not_check');
+  assert.equal(hdr.reason, 'kid_not_in_history');
+  assert.notEqual(hdr.reason, 'unsupported_version');
   assert.doesNotMatch(proc.text, /unsupported_version/);
   const shellPath = writeJson('hdr-shell.json', {
     schema: 'chit402.receipt_shell.v1',
@@ -593,19 +607,19 @@ test('T-ACCEPT-BARE unknown shell versions do not exit 0', () => {
     payload_version: 12,
   });
   const proc = runCli([shellPath, '--accept-shell']);
-  assert.notEqual(proc.status, 0);
   assert.equal(proc.status, 1, proc.text);
+  assert.match(proc.stderr, /removed in 0\.4: a shell is not a verified payment/);
   assert.doesNotMatch(proc.text, /INCLUDED_SHELL/);
   assert.doesNotMatch(proc.text, /VERIFIED/);
-  assert.match(proc.stdout, /unsupported_version/);
   const supported = writeJson('bare-shell-8.json', {
     schema: 'chit402.receipt_shell.v1',
     receipt_id: 'shell-8',
     payload_version: 8,
   });
-  const ok = runCli([supported, '--accept-shell']);
-  assert.equal(ok.status, 0, ok.text);
+  const ok = runCli([supported]);
+  assert.equal(ok.status, 1, ok.text);
   assert.match(ok.stdout, /INCLUDED_SHELL/);
+  assert.doesNotMatch(ok.stdout, /Overall:\s*VERIFIED/);
 });
 
 test('T-UPTO10 verifyReceiptUpToV10 rejects junk and v11', async () => {
@@ -685,7 +699,7 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
     }
     const receipt = receiptFor(claims);
     const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid], skipIssuerHistory: true });
-    assert.equal(result.overall, 'verified_no_key_window', `pv ${version}: ${result.errors.join('; ')}`);
+    assert.equal(result.overall, 'verified', `pv ${version}: ${result.errors.join('; ')}`);
     assert.equal(result.receipt_version, version);
     assert.equal(result.version_source, 'signed');
     assert.equal(result.errors.includes('unsupported_version'), false);

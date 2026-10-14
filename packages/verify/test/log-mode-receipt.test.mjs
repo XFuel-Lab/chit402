@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -106,6 +107,7 @@ function fixture() {
     book_chain: { row_hash: rowHash },
     payment: { gross_amount: '10000' },
     payload_version: 6,
+    iat: '2026-06-01T00:00:00.000Z',
   };
   const receipt = seal(claims, key, 'chit402-receipt+jwt');
   const inclusion = {
@@ -178,7 +180,7 @@ function writeCase(dir, receipt, fx) {
   writeFileSync(inclusionPath, JSON.stringify(fx.inclusion));
   writeFileSync(headPath, JSON.stringify(fx.head));
   writeFileSync(jwksPath, JSON.stringify({ keys: [fx.key.publicJwk] }));
-  return { receiptPath, inclusionPath, headPath, jwksPath };
+  return { receiptPath, inclusionPath, headPath, jwksPath, dir };
 }
 
 test('log mode fails a stripped signature, a partial check, and a tampered amount', async () => {
@@ -189,6 +191,7 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
   const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-receipt-'));
   try {
     const honestFiles = writeCase(dir, fx.receipt, fx);
+    const historyPath = await writeCoveringHistory(dir, fx.key);
     const baseArgs = [
       honestFiles.receiptPath,
       honestFiles.inclusionPath,
@@ -197,8 +200,8 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
       '--solana-rpc', url,
       '--jwks-file', honestFiles.jwksPath,
       '--trusted-kid', fx.key.kid,
-      '--no-issuer-history',
-      '--no-preimage',
+      '--issuer-history', historyPath,
+        '--no-preimage',
     ];
     const honest = await runCli(baseArgs);
     assert.equal(honest.status, 0, honest.stdout + honest.stderr);
@@ -244,8 +247,8 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
           '--rpc', url,
           '--solana-rpc', url,
           '--trusted-kid', fx.key.kid,
-          '--no-issuer-history',
-          '--no-preimage',
+          '--issuer-history', historyPath,
+                '--no-preimage',
         ];
         if (attack.withJwks) args.push('--jwks-file', files.jwksPath);
         if (mode === 'quiet') args.push('--quiet');
@@ -254,7 +257,7 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
         assert.notEqual(run.status, 0, `${mode} ${attack.name}\n${text}`);
         assert.equal(run.status, 1, `${mode} ${attack.name} status ${run.status}\n${text}`);
         assert.doesNotMatch(run.stdout, /Overall: VERIFIED/, `${mode} ${attack.name}`);
-        assert.match(run.stdout, /Overall: FAILED/, `${mode} ${attack.name}\n${text}`);
+        assert.match(run.stdout, /Overall: INVALID/, `${mode} ${attack.name}\n${text}`);
         assert.match(run.stdout, attack.expect, `${mode} ${attack.name}\n${text}`);
         assert.match(run.stdout, /Receipt checks:/, `${mode} ${attack.name} hid the receipt section\n${text}`);
       }
