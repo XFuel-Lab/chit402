@@ -28,10 +28,15 @@ const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
 /** Public Base RPCs reject eth_getLogs ranges above this. */
 const LOG_CHUNK_BLOCKS = 2000n;
-/** Blocks before the issue block or the validAfter estimate. */
+/** One resolve scans at most this many chunks, then stops. */
+const LOG_CHUNK_CAP = 2n;
+/** Blocks before the later of the issue anchor and the validAfter anchor. */
 const LOG_SEARCH_MARGIN = 64n;
-/** Base block time used only to turn validAfter into a start block. */
+/** Base block time used only to turn a unix time into a block estimate. */
 const BASE_BLOCK_SECONDS = 2n;
+/** Head block stamped on a new challenge. A miss leaves issue_block empty. */
+const HEAD_BLOCK_TTL_MS = 2000;
+let headBlockCache = { url: null, block: null, at: 0 };
 
 export const ERC6492_MAGIC = `0x${'64926492'.repeat(8)}`;
 
@@ -458,41 +463,93 @@ function hexBlock(n) {
   return `0x${n.toString(16)}`;
 }
 
+function timeAnchor(tipNumber, tipTimestamp, unixSec) {
+  if (unixSec == null || unixSec === '' || tipTimestamp == null) return null;
+  let tipTs;
+  let unix;
+  try {
+    tipTs = BigInt(tipTimestamp);
+    unix = BigInt(unixSec);
+  } catch {
+    return null;
+  }
+  if (unix <= 0n || tipTs <= 0n) return null;
+  const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
+  return tipNumber > delta ? tipNumber - delta : 0n;
+}
+
+/**
+ * Later of the issue anchor and the validAfter anchor, minus 64 blocks.
+ * The issue anchor is the recorded issue block, or a time estimate from
+ * challenge issued-at when that block was not stored. validAfter alone
+ * never opens a scan from genesis.
+ */
 function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}) {
-  const clamp = (start) => {
-    let n = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
-    if (n > tipNumber) n = tipNumber;
-    if (n < 0n) n = 0n;
-    return n;
-  };
+  const anchors = [];
+  let issued = null;
   if (issueBlock != null && issueBlock !== '') {
     try {
       const block = BigInt(issueBlock);
-      if (block >= 0n) return clamp(block);
-    } catch { /* use the time anchor */ }
+      if (block >= 0n) issued = block;
+    } catch { /* fall through to the issued-at estimate */ }
   }
-  let tipTs = null;
-  try { if (tipTimestamp != null) tipTs = BigInt(tipTimestamp); } catch { tipTs = null; }
-  const fromUnix = (sec) => {
-    if (tipTs == null || sec == null || sec === '') return null;
-    let unix;
-    try { unix = BigInt(sec); } catch { return null; }
-    if (unix <= 0n) return null;
-    const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
-    return clamp(tipNumber > delta ? tipNumber - delta : 0n);
-  };
-  const after = fromUnix(validAfter);
-  if (after != null) return after;
-  const ms = Number(issuedAtMs);
-  if (Number.isFinite(ms) && ms > 0) return fromUnix(Math.floor(ms / 1000));
-  return null;
+  if (issued == null) {
+    const ms = Number(issuedAtMs);
+    if (Number.isFinite(ms) && ms > 0) {
+      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000));
+    }
+  }
+  if (issued != null) anchors.push(issued);
+  const after = timeAnchor(tipNumber, tipTimestamp, validAfter);
+  if (after != null) anchors.push(after);
+  if (anchors.length === 0) return null;
+  let start = anchors.reduce((hi, n) => (n > hi ? n : hi));
+  start = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
+  if (start > tipNumber) start = tipNumber;
+  if (start < 0n) start = 0n;
+  return start;
+}
+
+function decimalBlock(value) {
+  if (value == null || value === '') return null;
+  try {
+    const n = BigInt(value);
+    if (n < 0n) return null;
+    return n.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Latest head block, cached for a couple of seconds. An RPC miss returns
+ * null so challenge issuance still completes.
+ */
+export async function readHeadBlock(rpcUrl, timeoutMs = 800) {
+  if (!rpcUrl) return null;
+  const now = Date.now();
+  if (headBlockCache.url === rpcUrl && headBlockCache.block != null && now - headBlockCache.at < HEAD_BLOCK_TTL_MS) {
+    return headBlockCache.block;
+  }
+  try {
+    const result = await rpcCall(rpcUrl, 'eth_blockNumber', [], timeoutMs);
+    const block = Number(BigInt(result));
+    if (!Number.isSafeInteger(block) || block < 0) return null;
+    headBlockCache = { url: rpcUrl, block, at: now };
+    return block;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * One AuthorizationUsed log for this authorizer and nonce, at or below the
- * finalized tip. The scan starts at the challenge issue block, or at
- * validAfter, minus a small margin. Each eth_getLogs call covers at most
- * 2,000 blocks. Zero logs, many logs, or an RPC error stays unresolved.
+ * finalized tip. The scan starts at max(issue anchor, validAfter anchor)
+ * minus 64 blocks, and never before a saved scanned-to cursor. Each call
+ * covers at most 2,000 blocks, and one resolve covers at most two chunks.
+ * scannedTo is the last block included, so the next resolve reads only
+ * newer blocks. Zero logs stay pending. More than one log in the window
+ * stays pending and does not advance the cursor.
  */
 export async function findAuthorizationTx(rpcUrl, {
   asset,
@@ -502,6 +559,7 @@ export async function findAuthorizationTx(rpcUrl, {
   issueBlock = null,
   validAfter = null,
   issuedAtMs = null,
+  scannedTo = null,
 } = {}) {
   if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
   let topic1;
@@ -513,15 +571,25 @@ export async function findAuthorizationTx(rpcUrl, {
   } catch {
     return { ok: false, pending: true };
   }
+  const cursorIn = decimalBlock(scannedTo);
   try {
     const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
     if (!tip?.number) return { ok: false, pending: true };
     const tipN = BigInt(tip.number);
-    const start = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
-    if (start == null) return { ok: false, pending: true };
+    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
+    if (anchor == null) return { ok: false, pending: true };
+    let start = anchor;
+    if (cursorIn != null) {
+      const next = BigInt(cursorIn) + 1n;
+      if (next > start) start = next;
+    }
+    if (start > tipN) return { ok: false, pending: true, scannedTo: cursorIn };
+    const capEnd = start + (LOG_CHUNK_BLOCKS * LOG_CHUNK_CAP) - 1n;
+    const windowEnd = capEnd < tipN ? capEnd : tipN;
     const logs = [];
-    for (let cursor = start; cursor <= tipN;) {
-      const end = cursor + LOG_CHUNK_BLOCKS - 1n > tipN ? tipN : cursor + LOG_CHUNK_BLOCKS - 1n;
+    let covered = start - 1n;
+    for (let cursor = start; cursor <= windowEnd;) {
+      const end = cursor + LOG_CHUNK_BLOCKS - 1n > windowEnd ? windowEnd : cursor + LOG_CHUNK_BLOCKS - 1n;
       const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
         address: asset,
         topics: [AUTH_USED_TOPIC, topic1, topic2],
@@ -529,16 +597,21 @@ export async function findAuthorizationTx(rpcUrl, {
         toBlock: hexBlock(end),
       }], timeoutMs);
       if (Array.isArray(chunk)) logs.push(...chunk);
+      covered = end;
       if (logs.length > 1) return { ok: false, pending: true };
-      if (end === tipN) break;
+      if (end === windowEnd) break;
       cursor = end + 1n;
     }
-    if (logs.length !== 1 || !logs[0]?.transactionHash) return { ok: false, pending: true };
+    const scanned = covered >= start ? covered.toString() : cursorIn;
+    if (logs.length !== 1 || !logs[0]?.transactionHash) {
+      return { ok: false, pending: true, scannedTo: scanned };
+    }
     return {
       ok: true,
       tx: logs[0].transactionHash,
       blockNumber: logs[0].blockNumber ?? null,
       blockHash: logs[0].blockHash || null,
+      scannedTo: scanned,
     };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402: authorization log search failed');

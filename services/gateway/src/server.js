@@ -10,8 +10,8 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
-import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, stampChallengeIssueBlock } from './x402-server.js';
+import { setX402PaymentResponseHeaders, challengeStore } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
@@ -1701,7 +1701,7 @@ export function createApp() {
   }
 
   /** Public discovery 402 for CDP re-fetch / validate (no API key, never fulfills). */
-  function publicTaskRequestChallenge(req) {
+  async function publicTaskRequestChallenge(req) {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
     const { body, headers } = buildPaymentChallenge({
@@ -1718,6 +1718,7 @@ export function createApp() {
         network: x.solana.network,
       } : undefined,
     });
+    await stampChallengeIssueBlock(challengeStore, body, x.baseRpcUrl || x.rpcUrl || null);
     return { body, headers };
   }
 
@@ -1735,8 +1736,8 @@ export function createApp() {
   app.use('/v1/agents', rateLimit);
 
   // GET /task-request — public x402 discovery probe (CDP validate uses GET or POST)
-  app.get('/task-request', (req, res) => {
-    const { body, headers } = publicTaskRequestChallenge(req);
+  app.get('/task-request', async (req, res) => {
+    const { body, headers } = await publicTaskRequestChallenge(req);
     return sendPaymentRequired(res, body, headers);
   });
 
@@ -1754,7 +1755,7 @@ export function createApp() {
     const isAuth = isAuthorised(req);
     if (!isAuth && !paymentHeader) {
       // Unauthenticated + no payment header → discovery 402 (never free serve)
-      const { body, headers } = publicTaskRequestChallenge(req);
+      const { body, headers } = await publicTaskRequestChallenge(req);
       return sendPaymentRequired(res, body, headers);
     }
 

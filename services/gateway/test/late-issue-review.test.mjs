@@ -10,6 +10,7 @@ import { ethers } from 'ethers';
 
 import { ChallengeStore } from '../src/x402-adapter.js';
 import { settleBoundPayment } from '../src/x402-settle.js';
+import { runX402Handshake } from '../src/x402-server.js';
 import { clearChainReaderForTests } from '../src/x402-chain.js';
 import { setActiveChallengeStore } from '../src/x402-durable-store.js';
 import { paymentFailureBody } from '../src/x402-flags.js';
@@ -622,7 +623,8 @@ test('an RPC reorg between the two finality reads does not sign', async () => {
 test('a log search at a 30M tip issues once and never asks for more than 2000 blocks', async () => {
   const tip = 30_000_000;
   const issueBlock = tip - 5000;
-  const logBlock = tip - 1000;
+  // Inside the two-chunk cap that starts at issueBlock - 64.
+  const logBlock = tip - 2000;
   const ranges = [];
   const rpc = await rpcServer((method, params) => {
     if (method === 'eth_getLogs') {
@@ -682,8 +684,7 @@ test('a log search at a 30M tip issues once and never asks for more than 2000 bl
     const issued = await resolveLateRecord(store, store.listLate()[0], deps);
     assert.equal(issued.jws, 'jws.chunked');
     assert.equal(signs, 1);
-    assert.ok(ranges.length >= 2);
-    assert.ok(ranges.length <= 8);
+    assert.equal(ranges.length, 2);
     for (const [from, to] of ranges) {
       assert.ok(to - from + 1n <= 2000n);
       assert.ok(from > 0n);
@@ -750,5 +751,209 @@ test('a failed inline-issue CAS does not return a settled receipt', async () => 
     assert.notEqual(store.listLate()[0].state, 'issued');
   } finally {
     await fac.close();
+  }
+});
+
+function parkUnknown(store, n, { validAfter = '1', issuedAt = Date.now(), scannedTo = null } = {}) {
+  const pendingId = `pend${n}`;
+  const put = store.putLate({
+    pending_id: pendingId,
+    state: 'unknown',
+    sent: true,
+    inline: false,
+    facilitator_id: 'zan',
+    submitted_at: Date.now(),
+    nonce: `0x${n.toString(16).padStart(64, '0')}`,
+    network: 'base',
+    asset: USDC,
+    payee: HOUSE,
+    challenge_amount: '2000',
+    route_quote: '2000',
+    auth_key: `auth-${n}`,
+    auth: {
+      from: PAYER,
+      value: '2000',
+      nonce: `0x${(n + 1).toString(16).padStart(64, 'ab')}`,
+      validAfter,
+      validBefore: String(Math.floor(Date.now() / 1000) + 3600),
+    },
+    issue_block: null,
+    challenge_issued_at: issuedAt,
+    scanned_to: scannedTo,
+    book_ref: `book${n}`,
+    tx_hint: null,
+    tx_ref: null,
+    jws: null,
+    receipt_id: `late-${pendingId}`,
+    served: false,
+    why: 'unresolved_submit',
+  });
+  if (!put?.ok) throw new Error(put?.reason || 'putLate');
+  return pendingId;
+}
+
+function tipRpc(tipRef, ranges, { maxLogs = 2 } = {}) {
+  const baseTip = tipRef.tip;
+  const baseTs = Math.floor(Date.now() / 1000) + 30;
+  return (method, params) => {
+    if (method === 'eth_getLogs') {
+      const from = BigInt(params[0].fromBlock);
+      const to = BigInt(params[0].toBlock);
+      if (to < from || (to - from + 1n) > 2000n) throw new Error('range');
+      ranges.push([from, to]);
+      if (ranges.length > maxLogs) throw new Error('too many chunks');
+      if (from < BigInt(tipRef.tip - 10_000)) throw new Error('scan started too early');
+      return [];
+    }
+    if (method === 'eth_getBlockByNumber') {
+      const ts = baseTs + (tipRef.tip - baseTip) * 2;
+      const hexTs = `0x${ts.toString(16)}`;
+      const tag = params[0];
+      if (tag === 'finalized') {
+        return { number: `0x${tipRef.tip.toString(16)}`, timestamp: hexTs, hash: `0x${'11'.repeat(32)}` };
+      }
+      return { number: tag, timestamp: hexTs, hash: BLOCK };
+    }
+    return null;
+  };
+}
+
+test('validAfter=1 costs at most two getLogs', async () => {
+  const tipRef = { tip: 30_000_000 };
+  const ranges = [];
+  const rpc = await rpcServer(tipRpc(tipRef, ranges));
+  try {
+    const store = new ChallengeStore();
+    parkUnknown(store, 1);
+    await resolveLateRecord(store, store.listLate()[0], {
+      cfg: { lateIssue: true, baseRpcUrl: rpc.url },
+    });
+    assert.ok(ranges.length >= 1);
+    assert.ok(ranges.length <= 2);
+    assert.ok(ranges[0][0] > BigInt(tipRef.tip - 10_000));
+    assert.equal(store.listLate()[0].state, 'unknown');
+    assert.ok(store.listLate()[0].scanned_to != null);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('one background run keeps getLogs bounded across unknown rows', async () => {
+  const tipRef = { tip: 30_000_000 };
+  const ranges = [];
+  const n = 8;
+  const rpc = await rpcServer(tipRpc(tipRef, ranges, { maxLogs: n * 2 }));
+  try {
+    const store = new ChallengeStore();
+    for (let i = 0; i < n; i += 1) parkUnknown(store, i + 1);
+    await tickLateIssue(store, { cfg: { lateIssue: true, baseRpcUrl: rpc.url } });
+    assert.ok(ranges.length <= n * 2);
+    assert.ok(ranges.length >= n);
+    for (const [from, to] of ranges) {
+      assert.ok(from > BigInt(tipRef.tip - 10_000));
+      assert.ok(to - from + 1n <= 2000n);
+    }
+    assert.equal(store.listLate().every((row) => row.state === 'unknown'), true);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('a rescan after a saved scanned-to point only covers new blocks', async () => {
+  const tipRef = { tip: 30_000_000 };
+  const ranges = [];
+  const rpc = await rpcServer(tipRpc(tipRef, ranges, { maxLogs: 8 }));
+  try {
+    const store = new ChallengeStore();
+    parkUnknown(store, 1);
+    const deps = { cfg: { lateIssue: true, baseRpcUrl: rpc.url } };
+    await resolveLateRecord(store, store.listLate()[0], deps);
+    const saved = store.listLate()[0].scanned_to;
+    assert.ok(saved != null);
+    const savedN = BigInt(saved);
+    assert.ok(ranges.length <= 2);
+    assert.ok(ranges.every(([from]) => from > BigInt(tipRef.tip - 10_000)));
+    ranges.length = 0;
+    await resolveLateRecord(store, store.listLate()[0], deps);
+    assert.equal(ranges.length, 0);
+    assert.equal(String(store.listLate()[0].scanned_to), String(saved));
+    tipRef.tip += 2500;
+    await resolveLateRecord(store, store.listLate()[0], deps);
+    assert.ok(ranges.length >= 1);
+    assert.ok(ranges.length <= 2);
+    assert.equal(ranges[0][0], savedN + 1n);
+    for (const [from, to] of ranges) {
+      assert.ok(from > savedN);
+      assert.ok(to - from + 1n <= 2000n);
+    }
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('a challenge records the head block at issue time', async () => {
+  const head = 12_345_678;
+  const rpc = await rpcServer((method) => {
+    if (method === 'eth_blockNumber') return `0x${head.toString(16)}`;
+    return null;
+  });
+  try {
+    const store = new ChallengeStore();
+    const decision = await runX402Handshake(
+      { headers: {}, body: { prompt: 'hi' } },
+      {
+        taskId: 'task-issue-block',
+        amount: '2000',
+        store,
+        cfg: {
+          network: 'base',
+          payTo: HOUSE,
+          facilitatorProvider: 'zan',
+          gatewayUrl: 'http://127.0.0.1:9',
+          asset: USDC,
+          baseRpcUrl: rpc.url,
+          solana: {
+            enabled: true,
+            payTo: 'So11111111111111111111111111111111111111112',
+            network: 'solana',
+          },
+        },
+      },
+    );
+    assert.equal(decision.kind, 'challenge');
+    const base = decision.body.accepts[0];
+    const sol = decision.body.accepts[1];
+    assert.equal(store.get(base.extra.nonce).issueBlock, head);
+    assert.equal(store.get(sol.extra.nonce).issueBlock ?? null, null);
+  } finally {
+    await rpc.close();
+  }
+});
+
+test('a challenge still issues when the head-block read fails', async () => {
+  const rpc = await rpcServer(() => { throw new Error('down'); });
+  try {
+    const store = new ChallengeStore();
+    const decision = await runX402Handshake(
+      { headers: {}, body: { prompt: 'hi' } },
+      {
+        taskId: 'task-issue-block-down',
+        amount: '2000',
+        store,
+        cfg: {
+          network: 'base',
+          payTo: HOUSE,
+          facilitatorProvider: 'zan',
+          gatewayUrl: 'http://127.0.0.1:9',
+          asset: USDC,
+          baseRpcUrl: rpc.url,
+        },
+      },
+    );
+    assert.equal(decision.kind, 'challenge');
+    const nonce = decision.body.accepts[0].extra.nonce;
+    assert.equal(store.get(nonce).issueBlock ?? null, null);
+  } finally {
+    await rpc.close();
   }
 });

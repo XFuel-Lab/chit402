@@ -149,6 +149,7 @@ export function openLateSubmission(store, tuple) {
     auth_key: tuple.authKey || null,
     auth: tuple.auth || null,
     issue_block: tuple.issueBlock != null ? tuple.issueBlock : null,
+    scanned_to: null,
     request_digest: tuple.requestDigest || null,
     payment_hash: tuple.paymentHash || null,
     salt_ref: tuple.saltRef || null,
@@ -412,11 +413,10 @@ export function lateVerifyUrl(cfg, pendingId) {
 }
 
 async function discoverHint(record, deps) {
-  if (record.tx_hint) return record;
-  if (readerOf(deps)) return record;
+  if (record.tx_hint || readerOf(deps)) return { record, scannedTo: null };
   const cfg = deps.cfg || {};
   const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
-  if (!url) return record;
+  if (!url) return { record, scannedTo: null };
   const found = await findAuthorizationTx(url, {
     asset: record.asset,
     from: record.auth?.from,
@@ -424,14 +424,23 @@ async function discoverHint(record, deps) {
     issueBlock: record.issue_block,
     validAfter: record.auth?.validAfter,
     issuedAtMs: record.challenge_issued_at,
+    scannedTo: record.scanned_to,
   });
-  if (!found.ok || !found.tx) return record;
-  return { ...record, tx_hint: found.tx };
+  const scannedTo = found?.scannedTo ?? null;
+  if (!found?.ok || !found.tx) return { record, scannedTo };
+  return { record: { ...record, tx_hint: found.tx }, scannedTo };
 }
 
 async function readChain(record, deps) {
-  const hinted = await discoverHint(record, deps);
-  if (!hinted.tx_hint && !readerOf(deps)) return pendingChain(null);
+  const found = await discoverHint(record, deps);
+  const hinted = found.record;
+  const scannedTo = found.scannedTo;
+  const attach = (chain) => {
+    if (scannedTo == null || scannedTo === '') return chain;
+    if (!chain || typeof chain !== 'object') return { ok: false, pending: true, scannedTo };
+    return { ...chain, scannedTo };
+  };
+  if (!hinted.tx_hint && !readerOf(deps)) return attach(pendingChain(null));
   const cfg = deps.cfg || {};
   const primary = readerOf(deps);
   const secondary = typeof deps.chainReader2 === 'function'
@@ -441,10 +450,10 @@ async function readChain(record, deps) {
   const withTx = first?.tx || first?.transaction || hinted.tx_hint
     ? { ...first, tx: first?.tx || first?.transaction || hinted.tx_hint }
     : first;
-  if (!secondary) return withTx;
+  if (!secondary) return attach(withTx);
   const second = await proveFinality(hinted, await readSettlement(hinted, deps, secondary), deps);
-  if (!sameChainIdentity(withTx, second)) return pendingChain(null);
-  return withTx;
+  if (!sameChainIdentity(withTx, second)) return attach(pendingChain(null));
+  return attach(withTx);
 }
 
 /**
@@ -746,8 +755,13 @@ export async function resolveLateRecord(store, record, deps = {}) {
   const shadow = lateIssueShadow(cfg);
   if (row.state === 'unknown' || row.state === 'confirmed') {
     const chain = await readChain(row, deps);
-    if (chain?.tx && !row.tx_hint) {
-      store.casLate(id, [row.state], row.state, { tx_hint: chain.tx });
+    const scanPatch = {};
+    if (chain?.tx && !row.tx_hint) scanPatch.tx_hint = chain.tx;
+    if (chain?.scannedTo != null && chain.scannedTo !== '' && String(chain.scannedTo) !== String(row.scanned_to ?? '')) {
+      scanPatch.scanned_to = String(chain.scannedTo);
+    }
+    if (Object.keys(scanPatch).length > 0) {
+      store.casLate(id, [row.state], row.state, scanPatch);
       row = store.getLate(id);
     }
     const bound = rebind(row, chain);
