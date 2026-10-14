@@ -63,6 +63,16 @@ export function resolveOwnerAudiences(env = process.env) {
   return hosts;
 }
 
+/**
+ * Boot warning when no owner-view audience is configured. An empty allowlist
+ * refuses every owner session, so silence at boot looks like a healthy server.
+ * @returns {string|null}
+ */
+export function ownerAudienceBootWarning(env = process.env) {
+  if (resolveOwnerAudiences(env).length > 0) return null;
+  return 'owner-view audience allowlist is empty; owner sessions will refuse every host. Set OWNER_VIEW_AUDIENCES, PUBLIC_HOSTS, or PUBLIC_BASE_URL.';
+}
+
 const ERC1271_MAGIC = '0x1626ba7e';
 const ERC6492_MAGIC = '6492'.repeat(16);
 const ERC1271 = new ethers.Interface([

@@ -130,7 +130,7 @@ import {
   shellPreimageBytes,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
-import { createOwnerView, resolveOwnerAudiences, sendGenericNotFound } from './owner-view.js';
+import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
 import {
   computeDoorMetrics,
@@ -5798,6 +5798,9 @@ export async function startServer() {
           'off, and /receipt output cannot be verified by the SDK. Set it before serving partners.',
         );
       }
+
+      const audienceWarning = ownerAudienceBootWarning(process.env);
+      if (audienceWarning) logger.warn(audienceWarning);
 
       resolve(server);
     });
