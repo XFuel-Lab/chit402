@@ -1209,7 +1209,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
         },
         'x402 facilitator settle HTTP error',
       );
-      return { settled: false, reason: 'settle_failed' };
+      return { settled: false, reason: 'settle_failed', sent: true };
     }
     logBazaarResponses('/settle', extensionResponses, paymentPayload);
     const settled = !!data.success;
@@ -1222,6 +1222,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       network: data.network || null,
       reason: settled ? null : 'settle_failed',
       bazaarStatus: extensionResponses?.bazaar?.status || null,
+      sent: true,
     };
   } catch (err) {
     // Log gateway host (not secrets), elapsedMs, and network for debugging.
@@ -1240,8 +1241,8 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       'x402 facilitator settle failed',
     );
     if (typeof err?.code === 'string' && err.code.startsWith('facilitator_http_')) {
-      return { settled: false, reason: err.code };
+      return { settled: false, reason: err.code, sent: true };
     }
-    return { settled: false, reason: 'facilitator_error' };
+    return { settled: false, reason: 'facilitator_error', sent: true };
   }
 }

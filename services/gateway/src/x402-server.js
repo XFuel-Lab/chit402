@@ -33,6 +33,7 @@ import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 import { canonicalPaidRoute } from './paid-route.js';
+import { readHeadBlock } from './x402-chain.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -547,6 +548,7 @@ export async function runX402Handshake(req, {
       };
     }
     const activeStore = store || getActiveChallengeStore() || challengeStore;
+    const issueBlock = await readHeadBlock(cfg.baseRpcUrl || cfg.rpcUrl || null, 250);
     const { body: challengeBody } = buildPaymentChallenge(
       {
         taskId,
@@ -564,7 +566,7 @@ export async function runX402Handshake(req, {
           network: cfg.solana.network,
         },
       },
-      { store: activeStore },
+      { store: activeStore, issueBlock },
     );
     const qHash = quoteBodyHash(priceBody);
     for (const entry of challengeBody?.accepts || []) {

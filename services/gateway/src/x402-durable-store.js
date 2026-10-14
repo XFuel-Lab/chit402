@@ -166,7 +166,9 @@ function writeState(file, state) {
   } catch { /* directory fsync is best effort */ }
 }
 
-const EMPTY_STATE = { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] };
+const EMPTY_STATE = {
+  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [], late: [], lateLedger: [],
+};
 
 export class DurableChallengeStore {
   constructor(file, { ttlMs, lockWaitMs, createIfMissing = true } = {}) {
@@ -220,6 +222,17 @@ export class DurableChallengeStore {
   recordPending(row) { return this._with((s) => s.recordPending(row)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
+  markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }
+  revertSubmitted(nonce, owner) { return this._with((s) => s.revertSubmitted(nonce, owner)); }
+  putLate(row) { return this._with((s) => s.putLate(row)); }
+  getLate(id) { return this._with((s) => s.getLate(id)); }
+  findLate(query) { return this._with((s) => s.findLate(query)); }
+  casLate(id, from, to, patch) { return this._with((s) => s.casLate(id, from, to, patch)); }
+  abortLate(id) { return this._with((s) => s.abortLate(id)); }
+  listLate() { return this._with((s) => s.listLate()); }
+  appendLateLedger(row) { return this._with((s) => s.appendLateLedger(row)); }
+  listLateLedger() { return this._with((s) => s.listLateLedger()); }
+  pruneLate(now, maxAge) { return this._with((s) => s.pruneLate(now, maxAge)); }
 }
 
 let activeStore = null;

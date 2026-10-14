@@ -13,6 +13,7 @@ import {
   noteUnboundUse,
   recordRefusal,
   samePayee,
+  truncateWallet,
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
@@ -32,6 +33,17 @@ import {
   replayBytesReady,
   replayWaiterMs,
 } from './paid-response-replay.js';
+import {
+  LATE_RETRY_AFTER_SEC,
+  evmAuthKey,
+  lateIssueEnabled,
+  lateTupleFrom,
+  lateVerifyUrl,
+  noteLateInlineIssued,
+  openLateSubmission,
+  lateAdmissionCapped,
+  resumeLateIssue,
+} from './late-issue.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -297,6 +309,16 @@ export async function settleBoundPayment({
   const active = store || cfg.store || getActiveChallengeStore() || defaultStore;
 
   if (!nonce) return refused(req, 'challenge_required', { preSettle: true });
+  if (typeof active.findLate === 'function') {
+    const existing = active.findLate({ nonce });
+    const stillSubmitting = existing && existing.state === 'submitted' && existing.sent !== true;
+    if (!stillSubmitting) {
+      const resumed = await resumeLateIssue({
+        store: active, req, cfg, nonce, taskId, paymentHeader,
+      });
+      if (resumed) return resumed;
+    }
+  }
   const spent = active.isSpent(nonce);
   const challenge = spent
     ? (typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null)
@@ -496,8 +518,42 @@ export async function settleBoundPayment({
     deferSpent: true,
   };
 
-  const release = () => { try { active.release(nonce, owner); } catch { /* already spent */ } };
-  const pend = (why) => {
+  let lateRow = null;
+  let lateCapped = false;
+  let preparedWindow = null;
+  let seenTx = null;
+  const release = () => {
+    if (lateRow?.sent) return;
+    try { active.release(nonce, owner); } catch { /* already spent */ }
+  };
+  const hold = (why, publicReason, { terminal = false, txHint = null } = {}) => {
+    const hint = txHint || seenTx || null;
+    if (lateRow && hint) lateRow.tx_hint = hint;
+    // Switch off keeps main's S1: an HTTP error or success:false is released
+    // so the same challenge can settle again. Transport still stays unknown.
+    const s1Release = !solana && !lateIssueEnabled(cfg) && !terminal
+      && (why === 'http' || why === 'success_false');
+    if (s1Release) {
+      if (lateRow && typeof active.casLate === 'function') {
+        try {
+          active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], 'unknown', {
+            why,
+            sent: true,
+            tx_hint: hint || lateRow.tx_hint || null,
+          });
+        } catch { /* store */ }
+      }
+      try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
+      return refused(req, publicReason);
+    }
+    if (lateCapped && !terminal && (why === 'http' || why === 'success_false')) {
+      try { active.release(nonce, owner); } catch { /* store */ }
+      return refused(req, publicReason);
+    }
+    if (solana && !terminal && (why === 'http' || why === 'success_false')) {
+      release();
+      return refused(req, publicReason);
+    }
     try { active.markUnknown(nonce); } catch { /* store */ }
     try {
       active.recordPending({
@@ -508,7 +564,49 @@ export async function settleBoundPayment({
         payTo: expectedPayTo,
       });
     } catch { /* store */ }
+    if (lateRow && typeof active.casLate === 'function') {
+      const next = terminal ? 'mismatch_hold' : 'unknown';
+      try {
+        active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], next, {
+          why,
+          sent: true,
+          tx_hint: hint || lateRow.tx_hint || null,
+        });
+      } catch { /* store */ }
+    }
+    const pendingId = lateRow?.pending_id || null;
+    if (!solana && lateIssueEnabled(cfg) && !terminal) {
+      return refused(req, 'settle_pending', {
+        retryAfter: LATE_RETRY_AFTER_SEC,
+        pendingId,
+        verifyUrl: lateVerifyUrl(cfg, pendingId),
+      });
+    }
+    return refused(req, publicReason, { pendingId, verifyUrl: lateVerifyUrl(cfg, pendingId) });
   };
+
+  if (authKeyEarly && typeof active.findLate === 'function') {
+    const priorLate = active.findLate({ authKey: authKeyEarly });
+    if (priorLate && priorLate.nonce !== nonce) {
+      release();
+      return refused(req, 'payment_replayed', { preSettle: true });
+    }
+  }
+  if (!solana && authEarly && typeof cfg.authorizationState === 'function') {
+    let used = null;
+    try {
+      used = await cfg.authorizationState({
+        from: authEarly.from,
+        nonce: authEarly.nonce,
+        asset: challenge.asset,
+        network: challenge.network,
+      });
+    } catch { used = null; }
+    if (used === 'used') {
+      release();
+      return refused(req, 'payment_replayed', { preSettle: true });
+    }
+  }
 
   const verified = await verifyPayment(paymentHeader, gwOpts);
   if (!verified.valid) {
@@ -530,12 +628,89 @@ export async function settleBoundPayment({
     }
   }
 
-  const settled = await settlePayment(paymentHeader, gwOpts);
-  if (!settled.settled) {
-    const maybeSent = settled.reason === 'gateway_error' || settled.reason === 'facilitator_error';
-    if (maybeSent) pend('settle_failed');
-    else release();
-    return refused(req, clientPaymentCode(settled.reason || 'settle_failed'));
+  // Anchor before /settle so a collected transfer cannot die on a failed read.
+  if (bindCheck?.ok) {
+    try {
+      const anchor = await fetchBaseL1Anchor(l1Anchor);
+      preparedWindow = buildDisputeWindow({
+        chainId: anchor.chain_id,
+        anchorBlock: anchor.block_number,
+        anchorTimestamp: anchor.timestamp,
+        durationSec: cfg.issuanceDisputeWindowSec,
+        anchorSource: anchor.anchor_source || null,
+      });
+    } catch (err) {
+      logger.warn({ err: err.message, taskId }, 'x402: dispute window anchor failed');
+      release();
+      return fail('dispute_window_anchor_failed');
+    }
+  }
+
+  const submittedAt = typeof cfg.now === 'function' ? cfg.now() : Date.now();
+  // Solana late-issue is unsupported. Those failures follow main: transport
+  // stays unknown, and an HTTP error or success:false is released.
+  // A payer with two open rows, or a full queue, stays on that same release.
+  if (!solana) lateCapped = lateAdmissionCapped(active, authEarly?.from);
+  if (!solana && !lateCapped) {
+    const authKey = authKeyEarly || evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce);
+    const prior = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
+    const opened = prior && prior.auth_key && prior.auth_key === authKey
+      ? { ok: true, row: prior }
+      : openLateSubmission(active, lateTupleFrom({
+        req,
+        cfg,
+        challenge: { ...challenge, nonce },
+        decoded,
+        auth: authEarly,
+        authKey,
+        routeQuote,
+        expectedSettledAmount: settledPick.amount != null ? settledPick.amount : (authEarly?.value || null),
+        taskId,
+        resource: resourceHave,
+        submittedAt,
+        paymentHeader,
+      }));
+    if (!opened.ok) {
+      release();
+      if (opened.reason === 'replay_store_unavailable') return fail('replay_store_unavailable');
+      return refused(req, opened.reason || 'payment_replayed', { preSettle: true });
+    }
+    lateRow = opened.row;
+    try { active.markSubmitted(nonce); } catch { /* store */ }
+  }
+
+  let settled;
+  try {
+    settled = await settlePayment(paymentHeader, gwOpts);
+  } catch (err) {
+    logger.warn({ err: err.message, payer: truncateWallet(authEarly?.from) }, 'x402: settle threw after submit');
+    return hold('transport', 'settle_failed');
+  }
+  if (!settled?.sent) {
+    if (lateRow) {
+      try { active.abortLate(lateRow.pending_id); } catch { /* store */ }
+    }
+    try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
+    lateRow = null;
+    return refused(req, clientPaymentCode(settled?.reason || 'settle_failed'));
+  }
+  seenTx = settled.transaction || settled.txRef || null;
+  if (lateRow) {
+    lateRow.sent = true;
+    if (seenTx) lateRow.tx_hint = seenTx;
+    try {
+      active.casLate(lateRow.pending_id, 'submitted', 'submitted', {
+        sent: true,
+        tx_hint: seenTx || lateRow.tx_hint || null,
+      });
+    } catch { /* store */ }
+  }
+  if (!settled.settled || settled.success === false) {
+    const reason = String(settled.reason || '');
+    const why = (reason === 'gateway_error' || reason === 'facilitator_error')
+      ? 'transport'
+      : ((reason.startsWith('gateway_http_') || reason.startsWith('facilitator_http_')) ? 'http' : 'success_false');
+    return hold(why, clientPaymentCode(reason || 'settle_failed'));
   }
 
   const fields = {
@@ -546,25 +721,21 @@ export async function settleBoundPayment({
   };
   // ZAN mocks echo the short network. Accept it when it matches the challenge.
   if (settled.network && !sameNetwork(settled.network, challenge.network)) {
-    pend('facilitator_network');
-    return refused(req, 'network_not_accepted');
+    return hold('facilitator_network', 'network_not_accepted');
   }
   if (!fields.network) fields.network = challenge.network;
   if (!facilitatorFieldsOk(fields, challenge)) {
-    pend('facilitator_fields');
-    return refused(req, 'settle_unconfirmed');
+    return hold('missing_tx', 'settle_unconfirmed');
   }
 
   const auth = readEvmAuthorization(paymentHeader);
   if (!solana && auth?.from && fields.payer && !samePayee(auth.from, fields.payer)) {
-    pend('payer_field');
-    return refused(req, 'settle_unconfirmed');
+    return hold('payer_field', 'settle_unconfirmed');
   }
 
   const norm = normalizePaymentRef(challenge.network, fields.transaction);
   if (!norm.ok) {
-    pend('bad_tx');
-    return refused(req, 'settle_unconfirmed');
+    return hold('missing_tx', 'settle_unconfirmed');
   }
   // PB4 / PB12: a booked transfer is not a second settlement. Facilitator
   // success and a prior tx are not "settled". Only the chain confirmation
@@ -594,6 +765,9 @@ export async function settleBoundPayment({
   if (authKey) inflightAuth.add(authKey);
   try {
     return await confirmAndSettle();
+  } catch (err) {
+    logger.warn({ err: err.message, taskId }, 'x402: local failure after settle');
+    return hold('local_failure', 'settle_unconfirmed');
   } finally {
     inflightTx.delete(norm.key);
     if (authKey) inflightAuth.delete(authKey);
@@ -612,8 +786,9 @@ export async function settleBoundPayment({
     },
   });
   if (!chain.ok) {
-    pend(chain.pending ? 'awaiting_finality' : 'chain_mismatch');
-    return refused(req, 'settle_unconfirmed');
+    return hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
+      terminal: !chain.pending,
+    });
   }
   let chainAmount;
   try { chainAmount = BigInt(String(chain.amount)); } catch { chainAmount = 0n; }
@@ -626,12 +801,10 @@ export async function settleBoundPayment({
     try { pinnedAmount = BigInt(String(challenge.amount)); } catch { pinnedAmount = quote; }
   }
   if (chainAmount < quote || chainAmount < pinnedAmount) {
-    pend('underpaid');
-    return refused(req, 'settle_unconfirmed');
+    return hold('underpaid', 'settle_unconfirmed', { terminal: true });
   }
   if (!samePayee(chain.payTo, expectedPayTo, { solana })) {
-    pend('payee');
-    return refused(req, 'settle_unconfirmed');
+    return hold('payee', 'settle_unconfirmed', { terminal: true });
   }
   if (expectedPayer && !samePayee(chain.payer, expectedPayer, { solana })) {
     active.markSpent(nonce, { txRef: norm.key, payer: chain.payer, rejected: 'payer_mismatch' });
@@ -668,21 +841,25 @@ export async function settleBoundPayment({
 
   let issuance_commitment = null;
   let dispute_window = null;
-  if (bindCheck?.ok) {
+  if (bindCheck?.ok && preparedWindow) {
     issuance_commitment = buildIssuanceCommitmentPublic(bindCheck.bind, bindCheck.commitment);
     issuance_commitment.authorization = bindCheck.authorization;
+    dispute_window = preparedWindow;
+  }
+  if (lateRow) {
+    let marked = null;
     try {
-      const anchor = await fetchBaseL1Anchor(l1Anchor);
-      dispute_window = buildDisputeWindow({
-        chainId: anchor.chain_id,
-        anchorBlock: anchor.block_number,
-        anchorTimestamp: anchor.timestamp,
-        durationSec: cfg.issuanceDisputeWindowSec,
-        anchorSource: anchor.anchor_source || null,
+      marked = noteLateInlineIssued(active, lateRow.pending_id, { txRef: norm.key });
+    } catch {
+      marked = null;
+    }
+    if (!marked) {
+      const pendingId = lateRow.pending_id;
+      return refused(req, 'settle_pending', {
+        retryAfter: LATE_RETRY_AFTER_SEC,
+        pendingId,
+        verifyUrl: lateVerifyUrl(cfg, pendingId),
       });
-    } catch (err) {
-      logger.warn({ err: err.message, taskId }, 'x402: dispute window anchor failed');
-      return fail('dispute_window_anchor_failed');
     }
   }
 
@@ -711,7 +888,7 @@ export async function settleBoundPayment({
 }
 
 function refused(req, reason, extra = {}) {
-  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref'].includes(reason)
+  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref'].includes(reason)
     ? reason
     : clientPaymentCode(reason);
   recordRefusal(code, userAgentOf(req));
@@ -721,6 +898,8 @@ function refused(req, reason, extra = {}) {
     code,
     preSettle: extra.preSettle === true,
     retryAfter: extra.retryAfter,
+    pendingId: extra.pendingId || null,
+    verifyUrl: extra.verifyUrl || null,
   };
 }
 

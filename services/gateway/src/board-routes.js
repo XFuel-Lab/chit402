@@ -131,7 +131,14 @@ export function registerBoardRoutes(app, deps) {
     if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
       const code = decision.code || decision.reason;
       if (isBindingRefusal(code)) {
-        return { ok: false, status: paymentErrorStatus(code), error: code, code };
+        return {
+          ok: false,
+          status: paymentErrorStatus(code),
+          error: code,
+          code,
+          ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
+          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
+        };
       }
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };
     }

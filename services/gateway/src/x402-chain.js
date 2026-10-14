@@ -26,6 +26,17 @@ export {
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
+/** Public Base RPCs reject eth_getLogs ranges above this. */
+const LOG_CHUNK_BLOCKS = 2000n;
+/** One resolve scans at most this many chunks, then stops. */
+const LOG_CHUNK_CAP = 2n;
+/** Blocks before the later of the issue anchor and the validAfter anchor. */
+const LOG_SEARCH_MARGIN = 64n;
+/** Base block time used only to turn a unix time into a block estimate. */
+const BASE_BLOCK_SECONDS = 2n;
+/** Head block stamped on a new challenge. A miss leaves issue_block empty. */
+const HEAD_BLOCK_TTL_MS = 2000;
+let headBlockCache = { url: null, block: null, at: 0 };
 
 export const ERC6492_MAGIC = `0x${'64926492'.repeat(8)}`;
 
@@ -259,14 +270,24 @@ export function confirmEvmReceipt(receipt, {
   // A reorg after this receipt is not caught. Require N confirmations, or a
   // safe/finalized block at or above blockNumber, before treating this as
   // final. Solana already requires finalized. Do not implement that here.
+  const matchedLog = (receipt.logs || []).find((log) => {
+    const addr = String(log.address || '').toLowerCase();
+    return addr === asset && String(log.topics?.[0] || '').toLowerCase() === TRANSFER_TOPIC.toLowerCase();
+  });
   return {
     ok: true,
     confirmed: true,
     amount: matches[0].value.toString(),
     payer: ethers.getAddress(matches[0].from),
     payTo: ethers.getAddress(matches[0].to),
+    authorizer: ethers.getAddress(wantPayer),
+    asset: matchedLog?.address ? ethers.getAddress(matchedLog.address) : ethers.getAddress(challenge.asset),
+    transferCount: 1,
     logIndex: matches[0].logIndex,
     blockNumber: receipt.blockNumber != null ? Number(receipt.blockNumber) : null,
+    network: challenge.network || null,
+    blockHash: receipt.blockHash || null,
+    status: 1,
   };
 }
 
@@ -366,12 +387,19 @@ export function confirmSolanaTransaction(tx, {
   if (signature && tx.transaction?.signatures?.[0] && tx.transaction.signatures[0] !== signature) {
     return { ok: false, code: 'settle_unconfirmed' };
   }
+  const finalized = tx.confirmationStatus === 'finalized' || tx.finalized === true;
   return {
     ok: true,
     confirmed: true,
+    finalized,
     amount: amount.toString(),
     payer: authority,
     payTo: expectedPayTo,
+    asset: mint,
+    feePayer: feePayer || null,
+    transferCount: 1,
+    messageHash: typeof tx.messageHash === 'string' ? tx.messageHash : null,
+    blockTimestamp: tx.blockTime != null ? Number(tx.blockTime) : null,
     logIndex: null,
     slot: tx.slot != null ? Number(tx.slot) : null,
     blockNumber: null,
@@ -401,13 +429,222 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function readEvmReceipt(rpcUrl, txHash) {
+/**
+ * A receipt block is final only when it is at or below the node's finalized tip.
+ * A missing tip, a mismatched block, or an RPC error is not final.
+ */
+export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000, meter = null) {
+  if (!rpcUrl || blockNumber == null) return { finalized: false, blockTimestamp: null };
+  let want;
+  try { want = BigInt(blockNumber); } catch { return { finalized: false, blockTimestamp: null }; }
+  const hex = `0x${want.toString(16)}`;
+  if (!chargeMeter(meter, 2)) return { finalized: false, blockTimestamp: null };
+  const [block, tip] = await Promise.all([
+    rpcCall(rpcUrl, 'eth_getBlockByNumber', [hex, false], timeoutMs),
+    rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs),
+  ]);
+  if (!block?.number || !tip?.number || block.timestamp == null) {
+    return { finalized: false, blockTimestamp: null };
+  }
+  let got;
+  let tipN;
+  let ts;
+  try {
+    got = BigInt(block.number);
+    tipN = BigInt(tip.number);
+    ts = Number(BigInt(block.timestamp));
+  } catch {
+    return { finalized: false, blockTimestamp: null };
+  }
+  if (got !== want || !Number.isFinite(ts)) return { finalized: false, blockTimestamp: null, blockHash: null };
+  return { finalized: got <= tipN, blockTimestamp: ts, blockHash: block.hash || null };
+}
+
+function hexBlock(n) {
+  return `0x${n.toString(16)}`;
+}
+
+function timeAnchor(tipNumber, tipTimestamp, unixSec) {
+  if (unixSec == null || unixSec === '' || tipTimestamp == null) return null;
+  let tipTs;
+  let unix;
+  try {
+    tipTs = BigInt(tipTimestamp);
+    unix = BigInt(unixSec);
+  } catch {
+    return null;
+  }
+  if (unix <= 0n || tipTs <= 0n) return null;
+  const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
+  return tipNumber > delta ? tipNumber - delta : 0n;
+}
+
+/**
+ * Later of the issue anchor and the validAfter anchor, minus 64 blocks.
+ * The issue anchor is the recorded issue block, or a time estimate from
+ * challenge issued-at when that block was not stored. validAfter alone
+ * never opens a scan from genesis.
+ */
+function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}) {
+  const anchors = [];
+  let issued = null;
+  if (issueBlock != null && issueBlock !== '') {
+    try {
+      const block = BigInt(issueBlock);
+      if (block >= 0n) issued = block;
+    } catch { /* fall through to the issued-at estimate */ }
+  }
+  if (issued == null) {
+    const ms = Number(issuedAtMs);
+    if (Number.isFinite(ms) && ms > 0) {
+      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000));
+    }
+  }
+  if (issued != null) anchors.push(issued);
+  const after = timeAnchor(tipNumber, tipTimestamp, validAfter);
+  if (after != null) anchors.push(after);
+  if (anchors.length === 0) return null;
+  let start = anchors.reduce((hi, n) => (n > hi ? n : hi));
+  start = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
+  if (start > tipNumber) start = tipNumber;
+  if (start < 0n) start = 0n;
+  return start;
+}
+
+function chargeMeter(meter, n = 1) {
+  if (!meter) return true;
+  if (meter.left < n) return false;
+  for (let i = 0; i < n; i += 1) meter.take();
+  return true;
+}
+
+function decimalBlock(value) {
+  if (value == null || value === '') return null;
+  try {
+    const n = BigInt(value);
+    if (n < 0n) return null;
+    return n.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Latest head block, cached for a couple of seconds. An RPC miss returns
+ * null so challenge issuance still completes.
+ */
+export async function readHeadBlock(rpcUrl, timeoutMs = 250) {
   if (!rpcUrl) return null;
+  const now = Date.now();
+  if (headBlockCache.url === rpcUrl && headBlockCache.block != null && now - headBlockCache.at < HEAD_BLOCK_TTL_MS) {
+    return headBlockCache.block;
+  }
+  try {
+    const result = await rpcCall(rpcUrl, 'eth_blockNumber', [], timeoutMs);
+    const block = Number(BigInt(result));
+    if (!Number.isSafeInteger(block) || block < 0) return null;
+    headBlockCache = { url: rpcUrl, block, at: now };
+    return block;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One AuthorizationUsed log for this authorizer and nonce, at or below the
+ * finalized tip. The scan starts at max(issue anchor, validAfter anchor)
+ * minus 64 blocks, and never before a saved scanned-to cursor. Each call
+ * covers at most 2,000 blocks, and one resolve covers at most two chunks.
+ * scannedTo is the last block included, so the next resolve reads only
+ * newer blocks. Zero logs stay pending. More than one log in the window
+ * stays pending and does not advance the cursor. A null or non-array
+ * eth_getLogs result is an error and does not advance the cursor.
+ * `meter`, when set, stops the search once the run's RPC budget is spent.
+ */
+export async function findAuthorizationTx(rpcUrl, {
+  asset,
+  from,
+  nonce,
+  timeoutMs = 8000,
+  issueBlock = null,
+  validAfter = null,
+  issuedAtMs = null,
+  scannedTo = null,
+  meter = null,
+} = {}) {
+  if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
+  let topic1;
+  let topic2;
+  try {
+    topic1 = ethers.zeroPadValue(ethers.getAddress(from), 32);
+    const raw = String(nonce).startsWith('0x') ? String(nonce) : `0x${nonce}`;
+    topic2 = ethers.zeroPadValue(raw, 32);
+  } catch {
+    return { ok: false, pending: true };
+  }
+  const cursorIn = decimalBlock(scannedTo);
+  try {
+    if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
+    const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
+    if (!tip?.number) return { ok: false, pending: true };
+    const tipN = BigInt(tip.number);
+    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
+    if (anchor == null) return { ok: false, pending: true };
+    let start = anchor;
+    if (cursorIn != null) {
+      const next = BigInt(cursorIn) + 1n;
+      if (next > start) start = next;
+    }
+    if (start > tipN) return { ok: false, pending: true, scannedTo: cursorIn };
+    const capEnd = start + (LOG_CHUNK_BLOCKS * LOG_CHUNK_CAP) - 1n;
+    const windowEnd = capEnd < tipN ? capEnd : tipN;
+    const logs = [];
+    let covered = start - 1n;
+    for (let cursor = start; cursor <= windowEnd;) {
+      const end = cursor + LOG_CHUNK_BLOCKS - 1n > windowEnd ? windowEnd : cursor + LOG_CHUNK_BLOCKS - 1n;
+      if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
+      const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
+        address: asset,
+        topics: [AUTH_USED_TOPIC, topic1, topic2],
+        fromBlock: hexBlock(cursor),
+        toBlock: hexBlock(end),
+      }], timeoutMs);
+      if (!Array.isArray(chunk)) {
+        logger.warn('x402: authorization log search returned no list');
+        return { ok: false, pending: true };
+      }
+      logs.push(...chunk);
+      covered = end;
+      if (logs.length > 1) return { ok: false, pending: true };
+      if (end === windowEnd) break;
+      cursor = end + 1n;
+    }
+    const scanned = covered >= start ? covered.toString() : cursorIn;
+    if (logs.length !== 1 || !logs[0]?.transactionHash) {
+      return { ok: false, pending: true, scannedTo: scanned };
+    }
+    return {
+      ok: true,
+      tx: logs[0].transactionHash,
+      blockNumber: logs[0].blockNumber ?? null,
+      blockHash: logs[0].blockHash || null,
+      scannedTo: scanned,
+    };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'x402: authorization log search failed');
+    return { ok: false, pending: true };
+  }
+}
+
+export async function readEvmReceipt(rpcUrl, txHash, meter = null) {
+  if (!rpcUrl) return null;
+  if (!chargeMeter(meter, 1)) return null;
   const result = await rpcCall(rpcUrl, 'eth_getTransactionReceipt', [txHash]);
   if (!result) return null;
   return {
     status: result.status === '0x1' || result.status === 1 ? 1 : 0,
     blockNumber: result.blockNumber != null ? Number(BigInt(result.blockNumber)) : null,
+    blockHash: result.blockHash || null,
     contractAddress: result.contractAddress || null,
     logs: (result.logs || []).map((log) => ({
       address: log.address,
@@ -446,12 +683,21 @@ export async function confirmSettlement({
   expectedPayTo,
   cfg = {},
   chainReader = null,
+  authorization = null,
 } = {}) {
   const reader = chainReader || cfg.chainReader || getChainReaderForTests();
   if (reader) {
     try {
-      const out = await reader({ challenge, facilitator, paymentHeader, expectedPayTo, cfg });
-      if (!out?.ok || out.confirmed === false) return { ok: false, code: 'settle_unconfirmed', pending: !!out?.pending };
+      const out = await reader({ challenge, facilitator, paymentHeader, expectedPayTo, cfg, authorization });
+      if (!out?.ok || out.confirmed === false) {
+        return {
+          ok: false,
+          code: 'settle_unconfirmed',
+          pending: !!out?.pending,
+          nonceUnused: out?.nonceUnused === true,
+          blockhashExpired: out?.blockhashExpired === true,
+        };
+      }
       return out;
     } catch (err) {
       logger.warn({ err: err.message }, 'x402: injected chain reader failed');
@@ -479,13 +725,13 @@ export async function confirmSettlement({
     const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
     if (!url) return { ok: false, code: 'settle_unconfirmed', pending: true };
     const txHash = facilitator.transaction || facilitator.txRef;
-    const receipt = await readEvmReceipt(url, txHash);
+    const receipt = await readEvmReceipt(url, txHash, cfg.rpcMeter || null);
     if (!receipt) return { ok: false, code: 'settle_unconfirmed', pending: true };
-    const authorization = readEvmAuthorization(paymentHeader);
+    const evmAuthorization = authorization || readEvmAuthorization(paymentHeader);
     return confirmEvmReceipt(receipt, {
       challenge,
       expectedPayTo,
-      authorization,
+      authorization: evmAuthorization,
       facilitatorPayer: facilitator.payer,
     });
   } catch (err) {

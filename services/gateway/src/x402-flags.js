@@ -15,6 +15,9 @@ export const PAYMENT_ERROR_CODES = Object.freeze([
   'verify_failed',
   'settle_failed',
   'settle_unconfirmed',
+  'settle_pending',
+  'idempotency_conflict',
+  'replay_store_unavailable',
   'payer_mismatch',
   'payer_not_bound',
   'owner_proof_required',
@@ -111,17 +114,27 @@ export function clientPaymentCode(reason) {
 }
 
 export function paymentErrorStatus(code) {
-  if (code === 'gateway_not_configured' || code === 'x402_unavailable') return 503;
+  if (code === 'gateway_not_configured' || code === 'x402_unavailable' || code === 'replay_store_unavailable') return 503;
   if (code === 'payer_mismatch' || code === 'payer_not_bound' || code === 'owner_proof_required' || code === 'owner_proof_unavailable') {
     return 403;
   }
-  if (code === 'payment_replayed') return 409;
+  if (code === 'payment_replayed' || code === 'idempotency_conflict') return 409;
   return 402;
 }
 
 export function paymentErrorBody(code) {
   const c = CLOSED.has(code) ? code : clientPaymentCode(code);
   return { error: c, code: c };
+}
+
+/** Closed payment failure plus the late-issue handles. No challenge body. */
+export function paymentFailureBody(decision) {
+  const code = decision?.code || decision?.reason;
+  const body = paymentErrorBody(code);
+  if (decision?.pendingId) body.pending_id = decision.pendingId;
+  if (decision?.verifyUrl) body.verify_url = decision.verifyUrl;
+  if (typeof decision?.receiptJws === 'string' && decision.receiptJws) body.receipt_jws = decision.receiptJws;
+  return body;
 }
 
 /** Binding failures must not downgrade onto another rail. */

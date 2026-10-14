@@ -12,8 +12,10 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
-import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
-import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
+import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
+import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
+import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
+import { readHeadBlock } from './x402-chain.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -73,7 +75,7 @@ import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
-import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
+import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook, setLateIssueLedger, recordLateIssueReceipt } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
 import {
@@ -1005,6 +1007,7 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+  setLateIssueLedger(usageSettled);
   // Null unless the founder turns the flag on. Production keeps the settled-only check.
   const spendHolds = config.spendHold?.enabled
     ? new SpendHoldStore({
@@ -1700,9 +1703,10 @@ export function createApp() {
   }
 
   /** Public discovery 402 for CDP re-fetch / validate (no API key, never fulfills). */
-  function publicTaskRequestChallenge(req) {
+  async function publicTaskRequestChallenge(req) {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
+    const issueBlock = await readHeadBlock(x.baseRpcUrl || x.rpcUrl || null, 250);
     const { body, headers } = buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
       maxAmountRequired: String(x.usdcPriceDefault || '10000'),
@@ -1716,7 +1720,7 @@ export function createApp() {
         payTo: x.solana.payTo,
         network: x.solana.network,
       } : undefined,
-    });
+    }, { issueBlock });
     return { body, headers };
   }
 
@@ -1734,8 +1738,8 @@ export function createApp() {
   app.use('/v1/agents', rateLimit);
 
   // GET /task-request — public x402 discovery probe (CDP validate uses GET or POST)
-  app.get('/task-request', (req, res) => {
-    const { body, headers } = publicTaskRequestChallenge(req);
+  app.get('/task-request', async (req, res) => {
+    const { body, headers } = await publicTaskRequestChallenge(req);
     return sendPaymentRequired(res, body, headers);
   });
 
@@ -1753,7 +1757,7 @@ export function createApp() {
     const isAuth = isAuthorised(req);
     if (!isAuth && !paymentHeader) {
       // Unauthenticated + no payment header → discovery 402 (never free serve)
-      const { body, headers } = publicTaskRequestChallenge(req);
+      const { body, headers } = await publicTaskRequestChallenge(req);
       return sendPaymentRequired(res, body, headers);
     }
 
@@ -1914,7 +1918,7 @@ export function createApp() {
                 if (isBindingRefusal(hs.code || hs.reason)) {
                   const code = hs.code || hs.reason;
                   if (hs.retryAfter) res.setHeader('Retry-After', String(hs.retryAfter));
-                  return res.status(paymentErrorStatus(code)).json({ error: code, code });
+                  return res.status(paymentErrorStatus(code)).json(paymentFailureBody(hs));
                 }
                 if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                   logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -1957,7 +1961,7 @@ export function createApp() {
               if (isBindingRefusal(decision.code || decision.reason)) {
                 const code = decision.code || decision.reason;
                 if (decision.retryAfter) res.setHeader('Retry-After', String(decision.retryAfter));
-                return res.status(paymentErrorStatus(code)).json({ error: code, code });
+                return res.status(paymentErrorStatus(code)).json(paymentFailureBody(decision));
               }
               if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                 logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -3264,6 +3268,9 @@ export function createApp() {
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
       const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
         || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const lateSnapshot = ledgerRow?.source === 'late_issue' && ledgerRow.receipt_snapshot?.issuer_signature?.jws
+        ? ledgerRow.receipt_snapshot
+        : null;
       const withBookCoverage = (receipt) => {
         if (!receipt || !ledgerRow?.agent_id) return receipt;
         try {
@@ -3297,6 +3304,7 @@ export function createApp() {
       };
 
       if (openRouterReceipt) return publishShell(withBookCoverage(openRouterReceipt), null);
+      if (lateSnapshot) return publishShell(lateSnapshot, null);
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
@@ -3307,6 +3315,8 @@ export function createApp() {
       const task = _findTask(aiListener, taskId);
 
       if (!task) {
+        const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
+        if (latePublic) return publishShell(latePublic, null);
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) return publishShell(spendReceipt, null);
         return sendPublicMissing(res, wantsJson);
@@ -4265,6 +4275,7 @@ export function createApp() {
           enforce: config.providerFloats?.enforce,
         }).publicSummary(),
         chains: advertisedChains(),
+        late_issue: listLateIssueOwnerView(getActiveChallengeStore()),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
           ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo keys do not grant free completions. Pay with x402 USDC, or use a partner X-API-Key.' }
@@ -5709,7 +5720,17 @@ export async function startServer() {
     } else if (storePath) {
       try {
         // A missing file is not a fresh spent-set. Refuse x402 and say so.
-        openDurableChallengeStore(storePath, { createIfMissing: false });
+        const opened = openDurableChallengeStore(storePath, { createIfMissing: false });
+        startLateIssueResolver(opened, {
+          cfg: config.x402,
+          recordLedger: (receipt) => {
+            try {
+              recordLateIssueReceipt(receipt);
+            } catch (err) {
+              logger.warn({ err: err.message }, 'late-issue ledger write failed');
+            }
+          },
+        });
       } catch (err) {
         markChallengeStoreFailed();
         logger.error(

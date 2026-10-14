@@ -1559,6 +1559,33 @@ export class UsageSettledLedger {
     }
     return { has_gap: false };
   }
+
+  /**
+   * One indexed row for a late receipt. No book sequence: agent_id is unset.
+   * A second write of the same task or payment ref is a duplicate.
+   */
+  recordLateIssue(receipt) {
+    const taskId = receipt?.task_id || receipt?.receipt_id;
+    if (!taskId || !receipt?.issuer_signature?.jws) return { ok: false, reason: 'invalid' };
+    const paymentRef = receipt?.payment?.ref || null;
+    const existing = this.findByTask(taskId) || (paymentRef ? this.findByRef(paymentRef) : null);
+    if (existing) return { ok: true, duplicate: true, entry: existing };
+    const row = {
+      agent_id: null,
+      task_id: String(taskId),
+      source: 'late_issue',
+      recorded_by: 'late_issue',
+      collected: true,
+      event: 'late_issue',
+      receipt_snapshot: receipt,
+      payment_ref: paymentRef,
+      amount: receipt?.payment?.settled_amount || null,
+      payer: null,
+      at: new Date().toISOString(),
+    };
+    this._index(row);
+    return { ok: true, duplicate: false, entry: row };
+  }
 }
 
 /**
@@ -1862,6 +1889,17 @@ export function recordCollectedSpend(receipt, {
 }
 
 let _ledger = null;
+let _lateLedger = null;
+
+export function setLateIssueLedger(ledger) {
+  _lateLedger = ledger || null;
+}
+
+/** The app ledger when createApp registered one, otherwise the process ledger. */
+export function recordLateIssueReceipt(receipt) {
+  const ledger = _lateLedger || getUsageSettledLedger();
+  return ledger.recordLateIssue(receipt);
+}
 
 export function getUsageSettledLedger(opts) {
   if (!_ledger) _ledger = new UsageSettledLedger(opts);
