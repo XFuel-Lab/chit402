@@ -62,7 +62,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -1448,8 +1448,14 @@ export interface VerifyReceiptOptions {
   issuerHistoryUrl?: string | null;
   /** Exact issuer-history response bytes. SHA-256 must match a signed pin. */
   issuerHistoryBytes?: string | null;
-  /** `--no-issuer-history`. A signed pin is not checked. */
+  /**
+   * Library seam. The CLI does not set this: 0.4.0 always checks history.
+   * A skipped window is not a verified result. Callers that pass a document
+   * still run the window.
+   */
   skipIssuerHistory?: boolean;
+  /** Ignored. `VERIFIED_NO_KEY_WINDOW` is retired. */
+  labelSkippedKeyWindow?: boolean;
   /**
    * Earlier-epoch head and current-epoch head for a leaf that was carried
    * into the current log. Omitted for a receipt that is only in the current
@@ -1590,6 +1596,10 @@ export async function verifyReceipt(
     gate = classifyReceiptDocument(receipt);
   } catch {
     return rejectReceiptVersion(receipt, ['unsupported_version'], 'unsupported_version');
+  }
+  const identityErrors = legacyIdentityErrors(receipt);
+  if (identityErrors.length) {
+    return rejectReceiptVersion(receipt, identityErrors, identityErrors[0]);
   }
   if (!gate.ok) {
     return rejectReceiptVersion(receipt, gate.errors, gate.reason);
@@ -2213,6 +2223,7 @@ export {
   VERSION_MISMATCH,
   classifyReceiptDocument,
   classifySignedClaims,
+  legacyIdentityErrors,
   classifyShellDocument,
   signedClaimsOnAllowlist,
   formatSupportedReceiptVersions,

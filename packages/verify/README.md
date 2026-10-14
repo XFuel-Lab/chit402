@@ -1,13 +1,15 @@
-# @xfuel/verify
+# chit402-verify
 
 Offline verification for Chit402 receipts — verify payment binding and output commitment without calling the API.
 
-npm: `@xfuel/verify` · License: Apache-2.0 · Docs: https://chit402.com
+npm: `chit402-verify` · License: Apache-2.0 · Docs: https://chit402.com
+
+`@xfuel/verify` 0.4.0 is an alias pinned to exactly this version. The `xfuel-verify` command stays.
 
 ## Installation
 
 ```bash
-npm install @xfuel/verify
+npm install chit402-verify
 ```
 
 ## Usage
@@ -31,17 +33,16 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 ### CLI
 
 ```bash
-# Local binding verification.
-# Issuer history is fetched unless you pass --issuer-history-file or --no-issuer-history.
-# A payload v10 receipt fails offline (exit 1) when that fetch cannot run.
+# History is always checked. With no file, a live snapshot must prefix-extend
+# the copy shipped in this package, or that copy is used (as of 2026-10-14).
 npx xfuel-verify receipt.json
 
-# Explicit offline. --no-issuer-history skips the kid window.
-npx xfuel-verify receipt.json --no-issuer-history
+# Offline history. --no-issuer-history, --strict, --accept-no-key-window,
+# and --accept-shell are removed.
+npx xfuel-verify receipt.json --issuer-history issuer-history.json
 
-# Hash the canonical object (must match signed payload_hash) and read not_after
-# from a pinned issuer-history snapshot. Both flags are offline.
-npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+# Hash the canonical object (must match signed payload_hash).
+npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 
 # A signed refusal (schema chit402.refusal.v1) is not a payment.
 # The check proves the issuer refused, at the signed anchor, for that code.
@@ -73,7 +74,7 @@ npx xfuel-verify receipt.json inclusion.json head.json --rpc
 | Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
 | Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
 | Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | Yes, unless `--no-issuer-history` or `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match the snapshot hash. Offline v10 fails if the fetch cannot run |
+| Issuer history | Always. File, else a live prefix of the shipped snapshot, else the shipped snapshot | `iat` is inside the latest `not_before` and the earliest `not_after` for that kid. A changed `not_before` is `kid_status_regression` (exit 1). No covering key is exit 2 |
 
 ## Issuer Signature Verification (ES256)
 
@@ -96,8 +97,8 @@ arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`)
 including when `--jwks-file` points at the real JWKS.
 
 ```bash
-# Explicit offline. The default command fetches issuer history.
-npx xfuel-verify receipt.json --no-issuer-history
+# History is always on. A local snapshot:
+npx xfuel-verify receipt.json --issuer-history issuer-history.json
 
 # Recompute a published canonical preimage and check the kid window.
 # curl -f stops on HTTP errors. Most receipts have no /preimage (a 404).
@@ -105,9 +106,9 @@ npx xfuel-verify receipt.json --no-issuer-history
 curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
 curl -fsS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
 if curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json; then
-  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 else
-  npx xfuel-verify receipt.json --issuer-history-file issuer-history.json
+  npx xfuel-verify receipt.json --issuer-history issuer-history.json
 fi
 
 # Trust the published JWKS instead of (or in addition to) the pin

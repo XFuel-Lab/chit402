@@ -124,16 +124,13 @@ test('malformed salts and a wrong salt fail with distinct reasons', async () => 
     ['ff'.repeat(32), 'commitment_mismatch'],
   ];
   for (const [bad, reason] of cases) {
-    const run = spawnSync(process.execPath, [cli, file, '--jwks-file', jwks, '--no-trusted-kid', '--salt', bad, '--open', `output=${out}`, '--json'], { encoding: 'utf8' });
-    assert.notEqual(run.status, 0, reason);
-    assert.match(`${run.stdout}\n${run.stderr}`, new RegExp(reason));
+    const run = spawnSync(process.execPath, [cli, file, '--json', '--salt', bad, '--open', `output=${out}`], { encoding: 'utf8' });
+    assert.equal(run.status, 1, reason);
+    assert.match(run.stdout, /removed in 0\.4: --salt is not a verifier flag/);
   }
   const injected = receiptFor(privateKey, jwk, { ...baseClaims(salt), provider: 'leak' });
-  const badFile = path.join(dir, 'bad.json');
-  fs.writeFileSync(badFile, JSON.stringify(injected));
-  const denied = spawnSync(process.execPath, [cli, badFile, '--jwks-file', jwks, '--no-trusted-kid', '--json'], { encoding: 'utf8' });
-  assert.notEqual(denied.status, 0);
-  assert.match(`${denied.stdout}\n${denied.stderr}`, /v11_disallowed_field/);
+  const denied = await verifyReceipt(injected, { jwks: { keys: [jwk] }, trustedKids: [] });
+  assert.match(denied.errors.join(' '), /v11_disallowed_field/);
 });
 
 test('settled below the quote and a swapped commitment are payment_unbound or commitment_mismatch', async () => {

@@ -1,0 +1,36 @@
+name: Publish verifier
+
+# The owner approves the release by running this workflow. It does not run on push.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: Publish chit402-verify and the @xfuel/verify alias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+
+      - name: Versions match and the alias pin is exact
+        run: node scripts/check-verify-publish.mjs
+
+      - name: Test chit402-verify
+        working-directory: packages/verify
+        run: npm ci --no-audit --no-fund && npm test
+
+      - name: Publish chit402-verify
+        working-directory: packages/verify
+        run: npm publish --provenance --access public
+
+      - name: Publish @xfuel/verify alias
+        working-directory: packages/aliases/chit402-verify
+        run: npm publish --provenance --access public

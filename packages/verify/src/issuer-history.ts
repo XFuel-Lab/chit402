@@ -4,6 +4,8 @@
  * SHA-256(JCS(entry without entry_hash)).
  */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { jcsCanonicalize } from './jcs.js';
 import {
   verifyIssuerJws,
@@ -67,6 +69,17 @@ export interface IssuerHistoryCheck {
   loaded: boolean;
 }
 
+function jwsHeaderKid(jws: string): string | null {
+  const part = jws.split('.')[0];
+  if (!part) return null;
+  try {
+    const header = JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as { kid?: unknown };
+    return typeof header.kid === 'string' && header.kid ? header.kid : null;
+  } catch {
+    return null;
+  }
+}
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -119,6 +132,7 @@ export function verifyIssuerHistoryDocument(
     if (!['active', 'retired', 'revoked'].includes(entry.status)) return { valid: false, reason: 'bad_status' };
     prev = entry.entry_hash || null;
   }
+  if (kidStatusRegression(doc.entries)) return { valid: false, reason: 'kid_status_regression' };
   const head = doc.entries[doc.entries.length - 1].entry_hash;
   if (doc.head_hash !== head) return { valid: false, reason: 'head_hash_mismatch' };
   const jws = doc.issuer_signature?.jws;
@@ -152,9 +166,66 @@ export function verifyIssuerHistoryDocument(
     if (payload.seq != null && Number(payload.seq) !== Number(doc.seq)) {
       return { valid: false, reason: 'seq_mismatch' };
     }
+    if (inheritedKeyWindow(doc.entries)) return { valid: false, reason: 'inherited_key_window' };
+    const signerKid = jwsHeaderKid(jws) || headerKid;
+    if (signedOnlyByIntroducedKey(doc.entries, signerKid)) {
+      return { valid: false, reason: 'introduced_key_signature' };
+    }
     return { valid: true };
   }
   return { valid: false, reason: 'signature_invalid' };
+}
+
+/**
+ * A new kid must not start at or before an earlier kid's not_before.
+ * That copy would accept receipts from the old window under the new key.
+ */
+function inheritedKeyWindow(entries: IssuerHistoryEntry[]): boolean {
+  const seen = new Set<string>();
+  let maxPrior: number | null = null;
+  for (const entry of entries) {
+    const start = parseTime(entry?.not_before);
+    if (!seen.has(entry?.kid)) {
+      if (seen.size > 0 && start != null && maxPrior != null && start <= maxPrior) return true;
+      seen.add(entry.kid);
+    }
+    if (start != null && (maxPrior == null || start > maxPrior)) maxPrior = start;
+  }
+  return false;
+}
+
+/** Same instant is not a change. A missing stamp against a real one is. */
+function notBeforeMoved(previous: string | null | undefined, next: string | null | undefined): boolean {
+  const left = parseTime(previous);
+  const right = parseTime(next);
+  if (left == null || right == null) return String(previous ?? '') !== String(next ?? '');
+  return left !== right;
+}
+
+/**
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, a
+ * retired kid cannot become active again, and `not_before` cannot move.
+ * Moving it earlier would widen the window backwards.
+ */
+function kidStatusRegression(entries: IssuerHistoryEntry[]): boolean {
+  const prior = new Map<string, { status: string; notBefore: string | null | undefined }>();
+  for (const entry of entries) {
+    const prev = prior.get(entry.kid);
+    if (prev) {
+      if (prev.status === 'revoked') return true;
+      if (prev.status === 'retired' && entry.status === 'active') return true;
+      if (notBeforeMoved(prev.notBefore, entry.not_before)) return true;
+    }
+    prior.set(entry.kid, { status: entry.status, notBefore: entry.not_before });
+  }
+  return false;
+}
+
+/** The signer must already be the genesis key. A key introduced later cannot sign the document that adds it. */
+function signedOnlyByIntroducedKey(entries: IssuerHistoryEntry[], signerKid: string | null): boolean {
+  if (!signerKid || entries.length < 2) return false;
+  const first = entries.findIndex((entry) => entry.kid === signerKid);
+  return first > 0;
 }
 
 export function issuerEntryWindow(
@@ -188,9 +259,55 @@ export function issuerKeyWindow(
   kid: string,
   issuedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  const entry = (doc.entries || []).find((row) => row.kid === kid);
-  if (!entry) return { ok: false, reason: 'kid_not_in_history' };
-  return issuerEntryWindow(entry, issuedAt);
+  // The end of the window is sticky. The earliest revoked_at and the earliest
+  // not_after across every entry for this kid still apply after a later row.
+  // not_before uses the latest stamp, so a later row cannot widen it backwards.
+  const matches = (doc.entries || []).filter((row) => row.kid === kid);
+  if (!matches.length) return { ok: false, reason: 'kid_not_in_history' };
+  const last = matches[matches.length - 1];
+  let notBefore: string | null = null;
+  let notBeforeMs: number | null = null;
+  for (const row of matches) {
+    const parsed = parseTime(row.not_before);
+    if (parsed == null) return { ok: false, reason: 'not_before_missing' };
+    if (notBeforeMs == null || parsed > notBeforeMs) {
+      notBeforeMs = parsed;
+      notBefore = row.not_before;
+    }
+  }
+  let notAfter: string | null = null;
+  let notAfterMs: number | null = null;
+  for (const row of matches) {
+    if (row.not_after == null || row.not_after === '') continue;
+    const parsed = parseTime(row.not_after);
+    if (parsed == null) return { ok: false, reason: 'not_after_invalid' };
+    if (notAfterMs == null || parsed < notAfterMs) {
+      notAfterMs = parsed;
+      notAfter = row.not_after;
+    }
+  }
+  let revoked = false;
+  let revokedAt: string | null = null;
+  let revokedMs: number | null = null;
+  for (const row of matches) {
+    const stamp = row.revoked_at;
+    const hasStamp = stamp != null && stamp !== '';
+    if (row.status === 'revoked' || hasStamp) revoked = true;
+    if (!hasStamp) continue;
+    const parsed = parseTime(stamp);
+    if (parsed == null) return { ok: false, reason: 'revoked_at_missing' };
+    if (revokedMs == null || parsed < revokedMs) {
+      revokedMs = parsed;
+      revokedAt = stamp;
+    }
+  }
+  if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing' };
+  return issuerEntryWindow({
+    not_before: notBefore,
+    not_after: notAfter,
+    status: revoked ? 'revoked' : last.status,
+    revoked_at: revoked ? revokedAt : null,
+  }, issuedAt);
 }
 
 export function issuerHistoryDocumentHash(doc: unknown): string {
@@ -429,6 +546,163 @@ function rawPinReason(
   if (issuerHistoryDocumentHash(doc) !== pin.hash) return 'issuer_history_pin_mismatch';
   if (Number(doc.version) !== pin.version) return 'issuer_history_version_mismatch';
   return 'issuer_history_seq_mismatch';
+}
+
+/**
+ * The snapshot shipped in this package. A live body is accepted only when
+ * it prefix-extends this chain. Used alone, the verifier reports this date.
+ */
+/** Day the bundled v2 snapshot was sealed into this package. */
+export const BUNDLED_HISTORY_AS_OF = '2026-10-14';
+
+/**
+ * The one recorded rewrite. v1 genesis (custody field) may be followed by v2
+ * (that field dropped). The reverse is not an extension: an old file must
+ * not hide a later revoke.
+ */
+const GRANDFATHERED_HISTORY_REWRITES = [
+  {
+    from: '3d8259fb043f8ac80c924ea89d508f0a898f70bd0335658ef47370d5757e27a6',
+    to: '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e',
+  },
+] as const;
+
+export type IssuerHistorySource = 'file' | 'live' | 'bundled';
+
+export interface ResolvedIssuerHistory {
+  source: IssuerHistorySource;
+  document: IssuerHistoryDocument | null;
+  bytes: string | null;
+  asOf: string | null;
+  headHash: string | null;
+  entryCount: number;
+  /** A supplied file failed to parse or to verify. Do not fall back. */
+  invalid: boolean;
+  reason: string | null;
+}
+
+function grandfatheredRewrite(
+  base: IssuerHistoryDocument | null | undefined,
+  next: IssuerHistoryDocument | null | undefined,
+): boolean {
+  const from = base?.head_hash;
+  const to = next?.head_hash;
+  if (!from || !to) return false;
+  return GRANDFATHERED_HISTORY_REWRITES.some((row) => row.from === from && row.to === to);
+}
+
+/** Later entries may be appended. The bundled entry_hash prefix must be unchanged. */
+export function historyPrefixExtends(
+  base: IssuerHistoryDocument | null | undefined,
+  next: IssuerHistoryDocument | null | undefined,
+): boolean {
+  if (grandfatheredRewrite(base, next)) return true;
+  const left = base?.entries || [];
+  const right = next?.entries || [];
+  if (!left.length || right.length < left.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (!left[i]?.entry_hash || right[i]?.entry_hash !== left[i]?.entry_hash) return false;
+  }
+  return true;
+}
+
+export function loadBundledIssuerHistory(): { document: IssuerHistoryDocument; bytes: string } {
+  const require = createRequire(__filename);
+  const bytes = readFileSync(require.resolve('../issuer-history.snapshot.json'), 'utf8');
+  return { document: JSON.parse(bytes) as IssuerHistoryDocument, bytes };
+}
+
+function resolvedFrom(
+  source: IssuerHistorySource,
+  document: IssuerHistoryDocument | null,
+  bytes: string | null,
+  asOf: string | null,
+  invalid = false,
+  reason: string | null = null,
+): ResolvedIssuerHistory {
+  return {
+    source,
+    document,
+    bytes,
+    asOf,
+    headHash: document?.head_hash ?? null,
+    entryCount: document?.entries?.length ?? 0,
+    invalid,
+    reason,
+  };
+}
+
+/**
+ * File, else a live body that prefix-extends the bundled snapshot, else the
+ * bundled snapshot. A file that does not verify is invalid and is not replaced.
+ */
+export async function resolveIssuerHistory({
+  fileBytes = null,
+  receipt = {},
+  fetchImpl = globalThis.fetch,
+  jwks,
+  trustedKids,
+  timeoutMs = 800,
+}: {
+  fileBytes?: string | null;
+  receipt?: { verification?: { jwks_uri?: string }; verify_url?: string };
+  fetchImpl?: typeof fetch;
+  jwks?: HistoryJwks;
+  trustedKids?: readonly string[];
+  timeoutMs?: number;
+} = {}): Promise<ResolvedIssuerHistory> {
+  const bundled = loadBundledIssuerHistory();
+  if (fileBytes != null) {
+    let doc: IssuerHistoryDocument;
+    try {
+      doc = JSON.parse(fileBytes) as IssuerHistoryDocument;
+    } catch {
+      return resolvedFrom('file', null, fileBytes, null, true, 'issuer_history_unreadable');
+    }
+    const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+    if (!signed.valid) {
+      return resolvedFrom('file', doc, fileBytes, null, true, signed.reason || 'issuer_history_invalid');
+    }
+    // A supplied file must extend the bundled chain. An older or forked file
+    // could hide a later revocation (truncation rollback).
+    if (!historyPrefixExtends(bundled.document, doc)) {
+      return resolvedFrom('file', doc, fileBytes, null, true, 'issuer_history_not_extension');
+    }
+    return resolvedFrom('file', doc, fileBytes, null, false, null);
+  }
+
+  const liveUrl = historyUrlFromReceipt(receipt);
+  if (liveUrl) {
+    let hostOk = false;
+    try {
+      const parsed = new URL(liveUrl);
+      hostOk = parsed.protocol === 'https:'
+        && ['api.chit402.com'].some((host) => host === parsed.hostname.toLowerCase());
+    } catch {
+      hostOk = false;
+    }
+    if (hostOk) {
+      try {
+        const res = await fetchImpl(liveUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        if (res.ok) {
+          const bytes = await res.text();
+          const doc = JSON.parse(bytes) as IssuerHistoryDocument;
+          const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+          if (signed.valid && historyPrefixExtends(bundled.document, doc)) {
+            return resolvedFrom('live', doc, bytes, null, false, null);
+          }
+        }
+      } catch {
+        // A live miss falls through to the bundled snapshot.
+      }
+    }
+  }
+
+  const signedBundle = verifyIssuerHistoryDocument(bundled.document, { jwks, trustedKids });
+  if (!signedBundle.valid) {
+    return resolvedFrom('bundled', null, null, BUNDLED_HISTORY_AS_OF, false, 'kid_not_in_history');
+  }
+  return resolvedFrom('bundled', bundled.document, bundled.bytes, BUNDLED_HISTORY_AS_OF, false, null);
 }
 
 export function historyUrlFromReceipt(receipt: { verification?: { jwks_uri?: string }; verify_url?: string }): string | null {

@@ -178,7 +178,7 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
   }
 });
 
-test('issuer history keeps old versions and not_after comes from the pinned snapshot', () => {
+test('issuer history keeps old versions and refuses to rewrite a sealed entry', () => {
   const previousBefore = process.env.ISSUER_KEY_NOT_BEFORE;
   const previousExtra = process.env.ISSUER_HISTORY_EXTRA;
   process.env.ISSUER_KEY_NOT_BEFORE = '2020-01-01T00:00:00Z';
@@ -208,17 +208,15 @@ test('issuer history keeps old versions and not_after comes from the pinned snap
       reason: 'rotated',
       custody: 'test custody sentence',
     }]);
-    const v2 = currentIssuerHistory();
-    assert.equal(v2.version, v1.version + 1);
-    assert.notEqual(v2.hash, v1.hash);
+    const kept = currentIssuerHistory();
+    assert.equal(kept.body, v1.body);
+    const again = buildReceipt(paidTask({ taskId: 'xfuel-pin-v1-again' }), { agentId: 4 });
+    assert.equal(decodeReceiptClaims(again).issuer_history.hash, v1.hash);
     assert.equal(issuerHistoryRecord({ version: v1.version }).body, v1.body);
     assert.equal(issuerHistoryRecord({ hash: v1.hash }).hash, v1.hash);
-    const later = JSON.parse(v2.body);
-    const retired = issuerKeyWindow(later, kid, claims.iat);
-    assert.equal(retired.ok, false);
-    assert.equal(retired.reason, 'issued_after_not_after');
     const stillPinned = issuerKeyWindow(JSON.parse(issuerHistoryRecord({ version: 1 }).body), kid, claims.iat);
     assert.equal(stillPinned.ok, true, stillPinned.reason);
+    assert.equal(stillPinned.not_after, null);
   } finally {
     if (previousBefore == null) delete process.env.ISSUER_KEY_NOT_BEFORE;
     else process.env.ISSUER_KEY_NOT_BEFORE = previousBefore;

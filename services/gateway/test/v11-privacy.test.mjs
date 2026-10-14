@@ -763,6 +763,10 @@ test('production issuer key rejects a missing, wrong-type, or mismatched key', (
     delete process.env.ISSUER_KID;
     process.env.ALLOW_EPHEMERAL_ISSUER_KEY = 'true';
     _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
+
+    process.env.NODE_ENV = 'development';
+    _resetIssuerKey();
     const minted = initIssuerKey();
     assert.equal(minted.publicKeyJwk.crv, 'P-256');
   } finally {

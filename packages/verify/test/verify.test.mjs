@@ -1256,15 +1256,15 @@ describe('claim_id stranger rule', () => {
 });
 
 describe('package exports', () => {
-  test('dist/cli.js is an exported subpath so chit402-verify can resolve it', async (t) => {
+  test('dist/cli.js is an exported subpath so the alias can resolve chit402-verify', async (t) => {
     const { createRequire } = await import('node:module');
     const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
-    const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-verify-export-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'chit402-verify-export-'));
     try {
-      const scope = path.join(dir, 'node_modules', '@xfuel');
+      const scope = path.join(dir, 'node_modules');
       mkdirSync(scope, { recursive: true });
-      const link = path.join(scope, 'verify');
+      const link = path.join(scope, 'chit402-verify');
       if (!linkInstalledPackage(symlinkSync, link)) {
         // Windows without Developer Mode returns EPERM for a symlink. A directory
         // junction usually works. If that is denied too, skip so `npm test`
@@ -1275,9 +1275,9 @@ describe('package exports', () => {
       }
       writeFileSync(path.join(dir, 'probe.cjs'), '');
       const require = createRequire(path.join(dir, 'probe.cjs'));
-      const resolved = require.resolve('@xfuel/verify/dist/cli.js');
+      const resolved = require.resolve('chit402-verify/dist/cli.js');
       assert.match(resolved, /cli\.js$/);
-      const viaAlias = require.resolve('@xfuel/verify/cli');
+      const viaAlias = require.resolve('chit402-verify/cli');
       assert.equal(viaAlias, resolved);
     } finally {
       // rm does not follow the symlink or junction, so pkgDir stays intact.
@@ -1309,7 +1309,7 @@ function junctionDenialAction(code) {
 }
 
 /**
- * Point node_modules/@xfuel/verify at this package.
+ * Point node_modules/chit402-verify at this package.
  * Returns false only when Windows refuses both a symlink and a junction.
  */
 function linkInstalledPackage(symlinkSync, link) {

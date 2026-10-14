@@ -6,7 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import http from 'node:http';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -61,6 +62,18 @@ function runCli(args) {
   return run;
 }
 
+function runCliAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
 test('both public receipts verify unmodified', async () => {
   const houseResult = await verifyReceipt(house, houseOpts);
   assert.equal(houseResult.overall, 'verified', houseResult.errors.join('; '));
@@ -93,30 +106,87 @@ test('both public receipts verify unmodified', async () => {
   assert.ok(foreignResult.unsigned_fields.includes('payment.collected'));
 });
 
-test('the CLI prints UNVERIFIED for unsigned fields and still verifies the house receipt', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-honest-'));
-  const receiptPath = path.join(dir, 'receipt.json');
-  const historyPath = path.join(dir, 'history.json');
-  writeFileSync(receiptPath, JSON.stringify(house));
-  writeFileSync(historyPath, historyBytes);
-  const run = runCli([
-    receiptPath,
-    '--json',
-    '--issuer-history-file', historyPath,
-  ]);
-  assert.equal(run.status, 0, run.stderr);
-  const parsed = JSON.parse(run.stdout);
-  assert.equal(parsed.overall, 'verified');
-  assert.equal(parsed.verified_scope, 'signed_claims');
-  assert.ok(parsed.unsigned_fields.includes('payment.network'));
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
+}
 
-  const text = runCli([receiptPath, '--issuer-history-file', historyPath]);
-  assert.equal(text.status, 0, text.stderr);
-  assert.match(text.stdout, /Overall: VERIFIED/);
-  assert.match(text.stdout, /signed claims only/);
-  assert.match(text.stdout, /UNVERIFIED\s+payment\.network/);
-  assert.match(text.stdout, /UNVERIFIED\s+usage\.total_tokens/);
-  assert.doesNotMatch(text.stdout, /Network:\s+base/);
+test('NOT_IN_LOG needs a verified head, and a bad fetched proof exits 1', async () => {
+  const signedHead = JSON.parse(readFileSync(path.join(pkgDir, 'test', 'fixtures', 'pardal-head-honest.json'), 'utf8'));
+  let mode = 'unsigned-404';
+  const server = http.createServer((req, res) => {
+    const url = req.url || '';
+    if (url.includes('/inclusion')) {
+      if (mode === 'bad') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'anchored',
+          leaf_index: 0,
+          tree_size: 1,
+          root: 'ab'.repeat(32),
+          proof: [],
+          head_url: '/v1/receipts/tree/head?tree_size=1',
+        }));
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_in_tree' }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    if (mode === 'signed-head') res.end(JSON.stringify(signedHead));
+    else res.end(JSON.stringify({ schema: 'chit402.tree_head.v2', tree_size: 1, root: 'cd'.repeat(32) }));
+  });
+  const port = await listen(server);
+  try {
+    const dir = mkdtempSync(path.join(tmpdir(), 'chit-honest-'));
+    const missing = clone(house);
+    if (missing.verification) delete missing.verification.jwks_uri;
+    missing.verify_url = `http://127.0.0.1:${port}/receipt/${house.task_id}`;
+    const missingPath = path.join(dir, 'missing.json');
+    writeFileSync(missingPath, JSON.stringify(missing));
+    const unsigned = await runCliAsync([missingPath, '--json']);
+    assert.equal(unsigned.status, 2, unsigned.stderr + unsigned.stdout);
+    const unsignedBody = JSON.parse(unsigned.stdout);
+    assert.equal(unsignedBody.result, 'could_not_check');
+    assert.notEqual(unsignedBody.reason, 'not_in_log');
+    const unsignedText = await runCliAsync([missingPath]);
+    assert.equal(unsignedText.status, 2, unsignedText.stderr + unsignedText.stdout);
+    assert.match(unsignedText.stdout, /NOT found invalid/);
+
+    mode = 'signed-head';
+    const run = await runCliAsync([missingPath, '--json']);
+    assert.equal(run.status, 1, run.stderr + run.stdout);
+    const parsed = JSON.parse(run.stdout);
+    assert.equal(parsed.result, 'invalid');
+    assert.equal(parsed.reason, 'not_in_log');
+    assert.equal(parsed.checks.log_inclusion, 'fail');
+
+    const text = await runCliAsync([missingPath]);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stdout, /^NOT_IN_LOG\n/);
+    assert.match(text.stdout, /payment row in the book is unchanged/);
+    assert.doesNotMatch(text.stdout, /INCLUDED_SHELL/);
+    assert.doesNotMatch(text.stdout, /NOT found invalid/);
+
+    mode = 'bad';
+    const bad = clone(house);
+    if (bad.verification) delete bad.verification.jwks_uri;
+    bad.verify_url = `http://127.0.0.1:${port}/receipt/${house.task_id}`;
+    const badPath = path.join(dir, 'bad-proof.json');
+    writeFileSync(badPath, JSON.stringify(bad));
+    const failed = await runCliAsync([badPath, '--json']);
+    assert.equal(failed.status, 1, failed.stderr + failed.stdout);
+    const body = JSON.parse(failed.stdout);
+    assert.equal(body.result, 'invalid');
+    assert.notEqual(body.reason, 'log_unreachable');
+    const human = await runCliAsync([badPath]);
+    assert.equal(human.status, 1, human.stderr);
+    assert.doesNotMatch(human.stdout, /NOT found invalid/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test('signed fee_amount and protocol_fee_bps mismatches fail', async () => {
@@ -253,59 +323,19 @@ test('the public inclusion proof is bound to leaf index 1 of size 3', async () =
   }
 });
 
-test('log mode fails a receipt whose amount was changed', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-'));
+test('a tampered amount fails in the library and --rpc is not a verifier flag', async () => {
   const tampered = clone(foreign);
   tampered.payment.gross_amount = '100000';
+  const result = await verifyReceipt(tampered, foreignOpts);
+  assert.equal(result.overall, 'failed');
+  assert.ok(result.claim_mismatches.some((row) => row.field === 'payment.gross_amount' && row.outer === '100000' && row.signed === '10000'));
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-'));
   const receiptPath = path.join(dir, 'receipt.json');
-  const inclusionPath = path.join(dir, 'inclusion.json');
-  const headPath = path.join(dir, 'head.json');
   writeFileSync(receiptPath, JSON.stringify(tampered));
-  writeFileSync(inclusionPath, JSON.stringify(inclusion));
-  writeFileSync(headPath, JSON.stringify(head));
-  const run = runCli([
-    receiptPath,
-    inclusionPath,
-    headPath,
-    '--rpc',
-    '--json',
-    '--no-issuer-history',
-    '--no-preimage',
-    '--epoch-url', 'http://127.0.0.1:9',
-  ]);
-  assert.notEqual(run.status, 0, run.stdout.slice(0, 500));
+  const run = runCli([receiptPath, '--json', '--rpc']);
+  assert.equal(run.status, 1, run.stdout + run.stderr);
   const parsed = JSON.parse(run.stdout);
-  assert.notEqual(parsed.overall, 'verified');
-  assert.equal(parsed.receipt_check.overall, 'failed');
-  assert.ok(parsed.receipt_check.claim_mismatches.some((row) => row.field === 'payment.gross_amount' && row.outer === '100000' && row.signed === '10000'));
-  assert.match(parsed.receipt_check.errors.join(' '), /payment\.gross_amount/);
-
-  const text = runCli([
-    receiptPath,
-    inclusionPath,
-    headPath,
-    '--rpc',
-    '--no-issuer-history',
-    '--no-preimage',
-    '--epoch-url', 'http://127.0.0.1:9',
-  ]);
-  assert.notEqual(text.status, 0);
-  assert.doesNotMatch(text.stdout, /Overall: VERIFIED/);
-  assert.match(text.stdout, /payment\.gross_amount: outer 100000 ≠ signed 10000/);
-  assert.match(text.stdout, /UNVERIFIED/);
-
-  const quiet = runCli([
-    receiptPath,
-    inclusionPath,
-    headPath,
-    '--rpc',
-    '--quiet',
-    '--no-issuer-history',
-    '--no-preimage',
-    '--epoch-url', 'http://127.0.0.1:9',
-  ]);
-  assert.notEqual(quiet.status, 0, quiet.stdout + quiet.stderr);
-  assert.doesNotMatch(quiet.stdout, /Overall: VERIFIED/);
-  assert.match(quiet.stdout, /payment\.gross_amount: outer 100000 ≠ signed 10000/);
-  assert.match(quiet.stdout, /Receipt checks:/);
+  assert.equal(parsed.exit_code, 1);
+  assert.match(parsed.message, /removed in 0\.4: --rpc is not a verifier flag/);
 });

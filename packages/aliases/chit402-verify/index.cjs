@@ -3,6 +3,6 @@
  */
 'use strict';
 
-const verify = require('@xfuel/verify');
+const verify = require('chit402-verify');
 module.exports = verify;
 module.exports.default = verify.default;
