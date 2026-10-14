@@ -51,7 +51,7 @@ const shell = w('shell.json', shellFromHolder(holder));
 const holderF = w('holder.json', holder);
 const incF = w('inclusion.json', inclusion);
 const headF = w('head.json', signedHead);
-const base = ['--jwks-file', jwks, '--no-trusted-kid', '--inclusion', incF];
+const base = ['--jwks-file', jwks, '--no-trusted-kid', '--inclusion', incF, '--no-issuer-history'];
 
 test('a signed head plus inclusion is VERIFIED; an owner view with row_hash is VERIFIED', () => {
   const r = run([shell, '--jws', holderF, ...base, '--head', headF]);
@@ -59,7 +59,7 @@ test('a signed head plus inclusion is VERIFIED; an owner view with row_hash is V
   assert.match(r.stdout, /Overall: VERIFIED/);
   const ov = w('owner.json', { jws: holderJws, salt: null, private_fields: {}, row_hash: row });
   const incNoRow = w('inc-norow.json', { ...inclusion, row_hash: undefined });
-  const r2 = run([shell, '--jws', ov, '--jwks-file', jwks, '--no-trusted-kid', '--inclusion', incNoRow, '--head', headF]);
+  const r2 = run([shell, '--jws', ov, '--jwks-file', jwks, '--no-trusted-kid', '--no-issuer-history', '--inclusion', incNoRow, '--head', headF]);
   assert.equal(r2.status, 0, `${r2.stdout}\n${r2.stderr}`);
   assert.match(r2.stdout, /Overall: VERIFIED/);
 });

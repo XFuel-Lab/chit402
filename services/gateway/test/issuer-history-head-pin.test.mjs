@@ -37,6 +37,38 @@ test('payload version 12 pins the chain head and issuance stays at 10', () => {
   resetIssuerHistoryStore();
 });
 
+test('a later not_before does not widen the window backwards', () => {
+  const kid = 'kid-not-before';
+  const jwk = { kty: 'EC', crv: 'P-256', x: 'aa', y: 'bb', kid };
+  function row(prev, notBefore, status) {
+    const body = {
+      kid,
+      jwk,
+      alg: 'ES256',
+      not_before: notBefore,
+      not_after: null,
+      status,
+      revoked_at: null,
+      reason: null,
+      custody: 'test custody',
+      prev_hash: prev,
+    };
+    return { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  }
+  const first = row(null, '2026-03-01T00:00:00.000Z', 'active');
+  const widened = row(first.entry_hash, '2026-01-01T00:00:00.000Z', 'retired');
+  const window = issuerKeyWindow({ entries: [first, widened] }, kid, '2026-02-01T00:00:00.000Z');
+  assert.equal(window.ok, false);
+  assert.equal(window.reason, 'issued_before_not_before');
+  const rejected = verifyIssuerHistory({
+    schema: 'chit402.issuer_history.v1',
+    entries: [first, widened],
+    head_hash: widened.entry_hash,
+  });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.reason, 'kid_status_regression');
+});
+
 test('the last issuer-history entry for a kid is the window', () => {
   const kid = 'kid-window';
   const first = {

@@ -2002,16 +2002,15 @@ export async function verifyReceipt(
     }
   }
 
-  // Payload v12 with the key window skipped is not a bare verified result.
-  // Older payloads keep `verified`: their tests and offline skip stay exit 0.
-  if (
-    options.skipIssuerHistory
-    && overall === 'verified'
-    && payloadVersion === HISTORY_HEAD_PAYLOAD_VERSION
-  ) {
+  // A skip is an explicit flag or an unreachable history, on every payload
+  // version. A window that was fetched and failed stays `failed`.
+  const historySkipped = !historyFailed && (
+    options.skipIssuerHistory === true || issuer_history.unreachable === true
+  );
+  if (historySkipped && overall === 'verified') {
     overall = 'verified_no_key_window';
     if (!issuer_history.warning) {
-      issuer_history.warning = 'key window skipped';
+      issuer_history.warning = options.skipIssuerHistory ? 'key window skipped' : 'issuer history unreachable';
       warnings.push(issuer_history.warning);
     }
   }

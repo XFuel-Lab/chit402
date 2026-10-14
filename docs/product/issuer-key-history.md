@@ -36,7 +36,7 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 ## Check
 
-`xfuel-verify` reads the receipt's `kid` and `iat`. The earliest `revoked_at` and the earliest `not_after` across every entry for that kid stay in force. A later active row does not clear them. It fails if `iat` is outside `not_before` / `not_after`, or if a `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. A history that moves a kid from `revoked` to any later status, or from `retired` to `active`, is `kid_status_regression`.
+`xfuel-verify` reads the receipt's `kid` and `iat`. The earliest `revoked_at` and the earliest `not_after` across every entry for that kid stay in force. A later active row does not clear them. `not_before` is the latest stamp for that kid, so a later row cannot widen the window backwards. It fails if `iat` is outside `not_before` / `not_after`, or if a `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. A history that moves a kid from `revoked` to any later status, from `retired` to `active`, or to a different `not_before`, is `kid_status_regression`. History is checked by default when a snapshot is reachable. `--no-issuer-history`, or a history that cannot be loaded, is `verified_no_key_window` in `--json`. A loaded history that fails the window exits 1.
 
 If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. `--no-issuer-history` skips the window. On a payload v12 receipt that skip is `VERIFIED_NO_KEY_WINDOW` and the CLI exits 1 unless `--accept-no-key-window`.
 

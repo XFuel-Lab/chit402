@@ -168,17 +168,29 @@ export function verifyIssuerHistoryDocument(
   return { valid: false, reason: 'signature_invalid' };
 }
 
+/** Same instant is not a change. A missing stamp against a real one is. */
+function notBeforeMoved(previous: string | null | undefined, next: string | null | undefined): boolean {
+  const left = parseTime(previous);
+  const right = parseTime(next);
+  if (left == null || right == null) return String(previous ?? '') !== String(next ?? '');
+  return left !== right;
+}
+
 /**
- * Revocation sticks. A later entry cannot move a kid off `revoked`, and a
- * retired kid cannot become active again.
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, a
+ * retired kid cannot become active again, and `not_before` cannot move.
+ * Moving it earlier would widen the window backwards.
  */
 function kidStatusRegression(entries: IssuerHistoryEntry[]): boolean {
-  const prior = new Map<string, string>();
+  const prior = new Map<string, { status: string; notBefore: string | null | undefined }>();
   for (const entry of entries) {
     const prev = prior.get(entry.kid);
-    if (prev === 'revoked') return true;
-    if (prev === 'retired' && entry.status === 'active') return true;
-    prior.set(entry.kid, entry.status);
+    if (prev) {
+      if (prev.status === 'revoked') return true;
+      if (prev.status === 'retired' && entry.status === 'active') return true;
+      if (notBeforeMoved(prev.notBefore, entry.not_before)) return true;
+    }
+    prior.set(entry.kid, { status: entry.status, notBefore: entry.not_before });
   }
   return false;
 }
@@ -216,9 +228,20 @@ export function issuerKeyWindow(
 ): { ok: boolean; reason: string | null } {
   // The end of the window is sticky. The earliest revoked_at and the earliest
   // not_after across every entry for this kid still apply after a later row.
+  // not_before uses the latest stamp, so a later row cannot widen it backwards.
   const matches = (doc.entries || []).filter((row) => row.kid === kid);
   if (!matches.length) return { ok: false, reason: 'kid_not_in_history' };
   const last = matches[matches.length - 1];
+  let notBefore: string | null = null;
+  let notBeforeMs: number | null = null;
+  for (const row of matches) {
+    const parsed = parseTime(row.not_before);
+    if (parsed == null) return { ok: false, reason: 'not_before_missing' };
+    if (notBeforeMs == null || parsed > notBeforeMs) {
+      notBeforeMs = parsed;
+      notBefore = row.not_before;
+    }
+  }
   let notAfter: string | null = null;
   let notAfterMs: number | null = null;
   for (const row of matches) {
@@ -247,7 +270,7 @@ export function issuerKeyWindow(
   }
   if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing' };
   return issuerEntryWindow({
-    not_before: last.not_before,
+    not_before: notBefore,
     not_after: notAfter,
     status: revoked ? 'revoked' : last.status,
     revoked_at: revoked ? revokedAt : null,

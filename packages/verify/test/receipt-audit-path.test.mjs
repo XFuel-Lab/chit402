@@ -306,7 +306,7 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
     skipIssuerHistory: true,
     requirePreimages: true,
   });
-  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.overall, 'verified_no_key_window', checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-'));
@@ -323,7 +323,7 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
     const run = spawnSync(process.execPath, [cli, path, ...args, ...extra], { encoding: 'utf8' });
     assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
     const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.overall, 'verified', (parsed.errors || []).join('; '));
+    assert.equal(parsed.overall, 'verified_no_key_window', (parsed.errors || []).join('; '));
     assert.equal(parsed.preimages.ok, true);
   }
 

@@ -256,7 +256,7 @@ test('payload v12 --no-issuer-history is VERIFIED_NO_KEY_WINDOW and exits non-ze
   assert.equal(skipped.issuer_history.warning, 'key window skipped');
 
   const older = await verifyReceipt(receiptFor(key, paymentClaims(10)), opts);
-  assert.equal(older.overall, 'verified', older.errors.join('; '));
+  assert.equal(older.overall, 'verified_no_key_window', older.errors.join('; '));
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-v12-skip-'));
   const receiptPath = join(dir, 'receipt.json');
@@ -282,6 +282,124 @@ test('payload v12 --no-issuer-history is VERIFIED_NO_KEY_WINDOW and exits non-ze
   assert.equal(json.status, 1, json.text);
   assert.equal(JSON.parse(json.stdout).overall, 'verified_no_key_window');
   assert.equal(bareVerified(json.stdout), false);
+
+  const olderPath = join(dir, 'older.json');
+  writeFileSync(olderPath, JSON.stringify(receiptFor(key, paymentClaims(8))));
+  const olderCli = runCli([
+    olderPath, '--jwks-file', jwksPath, '--trusted-kid', key.kid, '--no-issuer-history', '--json',
+  ]);
+  assert.equal(olderCli.status, 0, olderCli.text);
+  assert.equal(JSON.parse(olderCli.stdout).overall, 'verified_no_key_window');
+});
+
+test('a later not_before cannot widen the window backwards', () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-03-01T00:00:00Z' });
+  const body = {
+    kid: key.kid,
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-01-01T00:00:00Z',
+    not_after: null,
+    status: 'retired',
+    revoked_at: null,
+    reason: null,
+    custody: 'test custody',
+    prev_hash: first.entry_hash,
+  };
+  const second = { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  const window = issuerKeyWindow({ entries: [first, second] }, key.kid, '2026-02-01T00:00:00Z');
+  assert.equal(window.ok, false);
+  assert.equal(window.reason, 'issued_before_not_before');
+  assert.equal(verifyIssuerHistoryDocument({
+    schema: 'chit402.issuer_history.v1',
+    entries: [first, second],
+    head_hash: second.entry_hash,
+  }).reason, 'kid_status_regression');
+});
+
+test('a fetched history failure exits 1 and a skip is verified_no_key_window', async () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-01-01T00:00:00Z' });
+  function next(prev, fields) {
+    const body = {
+      kid: key.kid,
+      jwk: key.publicJwk,
+      alg: 'ES256',
+      not_before: fields.not_before,
+      not_after: fields.not_after ?? null,
+      status: fields.status,
+      revoked_at: fields.revoked_at ?? null,
+      reason: null,
+      custody: 'test custody',
+      prev_hash: prev.entry_hash,
+    };
+    return { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  }
+  const receipt = receiptFor(key, paymentClaims(8));
+  const dir = mkdtempSync(join(tmpdir(), 'chit-history-check-'));
+  const receiptPath = join(dir, 'receipt.json');
+  const jwksPath = join(dir, 'jwks.json');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  writeFileSync(jwksPath, JSON.stringify({ keys: [key.publicJwk] }));
+  const trust = [receiptPath, '--jwks-file', jwksPath, '--trusted-kid', key.kid, '--json'];
+  const revoked = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'revoked',
+    revoked_at: '2026-06-01T00:00:00Z',
+  })], key);
+  const closed = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    not_after: '2026-06-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+  const march = entryFor(key, { notBefore: '2026-03-01T00:00:00Z' });
+  const regressed = historyOf([march, next(march, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+  const open = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+  function writeHistory(name, packed) {
+    const path = join(dir, name);
+    writeFileSync(path, packed.bytes);
+    return path;
+  }
+  for (const [name, packed, reason] of [
+    ['revoked.json', revoked, 'kid_revoked_before_issuance'],
+    ['closed.json', closed, 'issued_after_not_after'],
+    ['regressed.json', regressed, 'kid_status_regression'],
+  ]) {
+    const run = runCli([...trust, '--issuer-history-file', writeHistory(name, packed)]);
+    assert.equal(run.status, 1, `${name} ${run.text}`);
+    const body = JSON.parse(run.stdout);
+    assert.equal(body.overall, 'failed', name);
+    assert.match(body.errors.join('\n'), new RegExp(reason), name);
+  }
+  const passed = runCli([...trust, '--issuer-history-file', writeHistory('open.json', open)]);
+  assert.equal(passed.status, 0, passed.text);
+  assert.equal(JSON.parse(passed.stdout).overall, 'verified');
+  assert.equal(JSON.parse(passed.stdout).issuer_history.checked, true);
+  const skipped = runCli([...trust, '--no-issuer-history']);
+  assert.equal(skipped.status, 0, skipped.text);
+  assert.equal(JSON.parse(skipped.stdout).overall, 'verified_no_key_window');
+  const unreachable = runCli(trust);
+  assert.equal(unreachable.status, 0, unreachable.text);
+  const unreachableBody = JSON.parse(unreachable.stdout);
+  assert.equal(unreachableBody.overall, 'verified_no_key_window');
+  assert.equal(unreachableBody.issuer_history.unreachable, true);
+
+  const v12 = receiptFor(key, paymentClaims(12));
+  const v12Path = join(dir, 'v12.json');
+  writeFileSync(v12Path, JSON.stringify(v12));
+  const v12Fail = runCli([
+    v12Path, '--jwks-file', jwksPath, '--trusted-kid', key.kid, '--json', '--no-preimage',
+    '--issuer-history-file', writeHistory('revoked.json', revoked),
+  ]);
+  assert.equal(v12Fail.status, 1, v12Fail.text);
+  assert.equal(JSON.parse(v12Fail.stdout).overall, 'failed');
 });
 
 test('a later active entry does not clear a revocation or a retire', () => {

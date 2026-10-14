@@ -314,18 +314,30 @@ function parseTime(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** Same instant is not a change. A missing stamp against a real one is. */
+function notBeforeMoved(previous, next) {
+  const left = parseTime(previous);
+  const right = parseTime(next);
+  if (left == null || right == null) return String(previous ?? '') !== String(next ?? '');
+  return left !== right;
+}
+
 /**
- * Revocation sticks. A later entry cannot move a kid off `revoked`, and a
- * retired kid cannot become active again.
+ * Revocation sticks. A later entry cannot move a kid off `revoked`, a
+ * retired kid cannot become active again, and `not_before` cannot move.
+ * Moving it earlier would widen the window backwards.
  * @param {object[]} entries
  */
 function kidStatusRegression(entries) {
   const prior = new Map();
   for (const entry of entries || []) {
     const prev = prior.get(entry?.kid);
-    if (prev === 'revoked') return true;
-    if (prev === 'retired' && entry?.status === 'active') return true;
-    prior.set(entry?.kid, entry?.status);
+    if (prev) {
+      if (prev.status === 'revoked') return true;
+      if (prev.status === 'retired' && entry?.status === 'active') return true;
+      if (notBeforeMoved(prev.notBefore, entry?.not_before)) return true;
+    }
+    prior.set(entry?.kid, { status: entry?.status, notBefore: entry?.not_before });
   }
   return false;
 }
@@ -333,7 +345,8 @@ function kidStatusRegression(entries) {
 /**
  * The receipt's issued time must fall inside the kid's window. The earliest
  * revoked_at and the earliest not_after across every entry for that kid
- * stay in force. A later active row does not clear them.
+ * stay in force. not_before is the latest stamp, so a later row cannot
+ * widen the window backwards. A later active row does not clear a revoke.
  * @param {object} doc verified or unverified history
  * @param {string} kid
  * @param {number|string} issuedAt unix seconds or ISO
@@ -371,7 +384,16 @@ export function issuerKeyWindow(doc, kid, issuedAt) {
   if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing', kid };
   const issued = parseTime(issuedAt);
   if (issued == null) return { ok: false, reason: 'issued_at_missing', kid };
-  const notBefore = parseTime(last.not_before);
+  let notBefore = null;
+  let notBeforeMs = null;
+  for (const row of matches) {
+    const parsed = parseTime(row.not_before);
+    if (parsed == null) return { ok: false, reason: 'not_before_missing', kid };
+    if (notBeforeMs == null || parsed > notBeforeMs) {
+      notBeforeMs = parsed;
+      notBefore = parsed;
+    }
+  }
   if (notBefore == null) return { ok: false, reason: 'not_before_missing', kid };
   if (issued < notBefore) return { ok: false, reason: 'issued_before_not_before', kid };
   if (notAfterMs != null && issued > notAfterMs) return { ok: false, reason: 'issued_after_not_after', kid };

@@ -155,12 +155,14 @@ Trust:
 
 Network behavior:
   JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
-  Issuer history is fetched by default when the receipt names a history URL
-  and neither --issuer-history-file nor --no-issuer-history is set. A payload
-  v10 receipt fails (exit 1) when that fetch cannot run. Offline mode is
-  --issuer-history-file <snapshot>, or --no-issuer-history to skip the window.
-  On payload v12 that skip prints VERIFIED_NO_KEY_WINDOW and exits 1 unless
-  --accept-no-key-window. It does not print Overall: VERIFIED.
+  Issuer history is checked by default for every supported receipt when it
+  is reachable (a history URL on the receipt, or --issuer-history-file).
+  The check is skipped only for --no-issuer-history, or when that history
+  cannot be loaded. A skip is overall verified_no_key_window in --json.
+  A payload v10 receipt fails (exit 1) when the pinned snapshot cannot be
+  loaded. A history that was loaded and failed exits 1 on every version.
+  On payload v12 a skip exits 1 unless --accept-no-key-window. An older
+  skip stays exit 0. Offline mode is --issuer-history-file.
   Other network uses:
   - --fetch-jwks or --jwks-url
   - --check-nullifier (Base RPC)
@@ -495,7 +497,7 @@ function printLane(lane: ReceiptLane): void {
 
 function printAnchor(
   result: Omit<AnchorWitnessResult, 'overall'> & {
-    overall: AnchorWitnessResult['overall'] | 'verified_no_key_window';
+    overall: AnchorWitnessResult['overall'] | 'verified_no_key_window' | 'not_in_log';
   },
   json: boolean,
   quiet: boolean,
@@ -504,7 +506,7 @@ function printAnchor(
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  if (quiet && result.overall !== 'failed') return;
+  if (quiet && result.overall !== 'failed' && result.overall !== 'not_in_log') return;
   const mark = (ok: boolean) => (ok ? '✓ YES' : '✗ NO');
   console.log('');
   console.log('  Anchored receipt root');
@@ -536,7 +538,7 @@ function printAnchor(
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
   console.log('');
-  if (result.overall !== 'failed') {
+  if (result.overall !== 'failed' && result.overall !== 'not_in_log') {
     console.log('  What this proves');
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.proves) console.log(`  ${line}`);
@@ -928,11 +930,14 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const errors = receiptFailed
     ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
-  const anchorOverall = receiptFailed ? 'failed' as const : result.overall;
+  const logMiss = result.overall === 'not_in_log';
+  const anchorOverall = logMiss
+    ? 'not_in_log' as const
+    : receiptFailed ? 'failed' as const : result.overall;
   const combined = {
     ...result,
     errors,
-    overall: !receiptFailed && windowSkipped && anchorOverall === 'verified'
+    overall: !logMiss && !receiptFailed && windowSkipped && anchorOverall === 'verified'
       ? 'verified_no_key_window' as const
       : anchorOverall,
     receipt_lane: verified.receipt_lane,
@@ -964,10 +969,19 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
     }
     if (!args.quiet) printLane(verified.receipt_lane);
   }
-  if (combined.overall === 'verified_no_key_window') return args.acceptNoKeyWindow ? 0 : 1;
+  if (combined.overall === 'verified_no_key_window') return skippedWindowExit(args, verified.receipt_version);
   if (combined.overall === 'verified') return 0;
   if (combined.overall === 'partial' || combined.overall === 'pending') return 2;
   return 1;
+}
+
+/** Payload v12 skip stays exit 1 unless opted in. Older skips stay exit 0. */
+function skippedWindowExit(
+  args: { acceptNoKeyWindow?: boolean },
+  payloadVersion: number | null | undefined,
+): number {
+  if (payloadVersion != null && payloadVersion >= 12) return args.acceptNoKeyWindow ? 0 : 1;
+  return 0;
 }
 
 function printUnsigned(fields: string[]): void {
@@ -1033,9 +1047,11 @@ async function runRefusal(
     });
   const historyFailed = history.checked && !history.ok;
   const failed = !result.valid || !preimages.ok || historyFailed || canonicalFailed;
+  const historySkipped = !failed && (args.skipIssuerHistory || history.unreachable === true);
+  const overall = failed ? 'failed' : (historySkipped ? 'verified_no_key_window' : 'verified');
   if (args.json) {
-    console.log(JSON.stringify({ ...result, preimages, issuer_history: history }, null, 2));
-  } else if (!args.quiet || failed) {
+    console.log(JSON.stringify({ ...result, preimages, issuer_history: history, overall }, null, 2));
+  } else if (!args.quiet || failed || historySkipped) {
     console.log('');
     console.log('  Chit402 Refusal Verification');
     console.log('  ─────────────────────────────────────────────────');
@@ -1062,7 +1078,7 @@ async function runRefusal(
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);
     console.log('');
-    console.log(`  Overall: ${failed ? 'FAILED' : 'VERIFIED'}`);
+    console.log(`  Overall: ${historySkipped ? 'VERIFIED_NO_KEY_WINDOW' : (failed ? 'FAILED' : 'VERIFIED')}`);
     if (!preimages.ok) console.log(`  Preimages:     ${preimages.errors.join('; ')}`);
     if (history.warning) console.log(`  Issuer history: ${history.warning}`);
     if (historyFailed && history.reason) console.log(`  Issuer history: ${history.reason}`);
@@ -1185,6 +1201,17 @@ async function main(): Promise<number> {
     const trustedKids = args.noTrustedKid
       ? []
       : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+    let shellHistory: IssuerHistoryDocument | null = null;
+    let shellHistoryBytes: string | null = null;
+    if (args.issuerHistoryFile) {
+      try {
+        shellHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+        shellHistory = JSON.parse(shellHistoryBytes) as IssuerHistoryDocument;
+      } catch (err) {
+        console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+        return 3;
+      }
+    }
     const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
       jwks,
       jwksUri: args.jwksUrl || undefined,
@@ -1194,9 +1221,11 @@ async function main(): Promise<number> {
       rpcUrl: args.rpcUrl || undefined,
       solanaRpcUrl: args.solanaRpcUrl || undefined,
       requirePreimages: false,
-      skipIssuerHistory: args.noIssuerHistory || !args.issuerHistoryFile,
-      issuerHistory: null,
-      fetchIssuerHistory: false,
+      skipIssuerHistory: args.noIssuerHistory,
+      issuerHistory: shellHistory,
+      issuerHistoryBytes: shellHistoryBytes,
+      fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
+      strictIssuerHistory: args.strictIssuerHistory,
       salt: args.salt,
       head: head ?? undefined,
       inclusion: inclusion ?? undefined,
@@ -1259,7 +1288,7 @@ async function main(): Promise<number> {
     }
     if (windowSkipped) {
       console.log('  Overall: VERIFIED_NO_KEY_WINDOW');
-      return args.acceptNoKeyWindow ? 0 : 1;
+      return skippedWindowExit(args, result.receipt_version);
     }
     console.log('  Overall: VERIFIED');
     return 0;
@@ -1526,7 +1555,7 @@ async function main(): Promise<number> {
     case 'verified_carried_forward':
       return 0;
     case 'verified_no_key_window':
-      return args.acceptNoKeyWindow ? 0 : 1;
+      return skippedWindowExit(args, result.receipt_version);
     case 'failed':
       return 1;
     case 'partial':
