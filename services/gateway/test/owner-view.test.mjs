@@ -14,6 +14,7 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'owner-view-test-secret';
 process.env.OWNER_VIEW_DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chit-owner-view-')), 'owner-view.sqlite');
+process.env.AGENTS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'chit-owner-view-agents-'));
 process.env.OWNER_VIEW_FETCH_MAX = '8000';
 process.env.OWNER_VIEW_CHALLENGE_MAX = '800';
 process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS = '8';
