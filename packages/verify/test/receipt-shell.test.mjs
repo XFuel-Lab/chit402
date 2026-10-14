@@ -117,7 +117,8 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
   } else {
     assert.equal(plain.status, 2, plain.stdout + plain.stderr);
     assert.match(plain.stdout, /^COULD_NOT_CHECK\n/);
-    assert.match(plain.stdout, /NOT found invalid/);
+    assert.match(plain.stdout, /The receipt could not be checked\./);
+    assert.doesNotMatch(plain.stdout, /invalid/i);
     assert.match(plain.stdout, /signed_receipt_unavailable/);
   }
   notVerified(plain);

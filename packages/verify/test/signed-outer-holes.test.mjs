@@ -153,7 +153,8 @@ test('NOT_IN_LOG needs a verified head, and a bad fetched proof exits 1', async 
     assert.notEqual(unsignedBody.reason, 'not_in_log');
     const unsignedText = await runCliAsync([missingPath]);
     assert.equal(unsignedText.status, 2, unsignedText.stderr + unsignedText.stdout);
-    assert.match(unsignedText.stdout, /NOT found invalid/);
+    assert.match(unsignedText.stdout, /The receipt could not be checked\./);
+    assert.doesNotMatch(unsignedText.stdout, /invalid/i);
 
     mode = 'signed-head';
     const run = await runCliAsync([missingPath, '--json']);

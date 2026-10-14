@@ -1,7 +1,8 @@
 /**
- * @xfuel/verify 0.4.0 verdict.
+ * @xfuel/verify 0.4 verdict.
  * `verified` is only when every check passed. A failed check is `invalid`
- * even when another check could not be completed.
+ * even when another check could not be completed. Human lines for
+ * COULD_NOT_CHECK do not contain the words invalid or INVALID.
  */
 
 export type CheckState = 'pass' | 'fail' | 'could_not_check';
@@ -377,10 +378,18 @@ export function verdictDocAnchor(reason: string): string {
   return reason;
 }
 
-/** Human lines. Exit 2 always includes the exact `NOT found invalid` line. */
+/**
+ * Human lines. COULD_NOT_CHECK says the receipt could not be checked.
+ * The message line is `verdict.message`, the same string `--json` prints.
+ */
 export function humanVerdictLines(verdict: VerifyVerdict): string[] {
-  const lines = [overallLine(verdict), verdict.message];
-  if (verdict.exit_code === 2) lines.push('NOT found invalid');
+  const headline = overallLine(verdict);
+  const couldNotCheck = headline === 'COULD_NOT_CHECK';
+  const lines = [headline];
+  if (verdict.message) lines.push(verdict.message);
+  if (couldNotCheck && !/could not be checked/i.test(verdict.message)) {
+    lines.push('The receipt could not be checked.');
+  }
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
     lines.push(`Issuer history: as of ${verdict.history.as_of}`);
