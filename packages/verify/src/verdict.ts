@@ -378,27 +378,16 @@ export function verdictDocAnchor(reason: string): string {
   return reason;
 }
 
-/** Drop sentences that would make a COULD_NOT_CHECK line read as INVALID. */
-function withoutInvalidSentences(message: string): string {
-  return message
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0 && !/invalid/i.test(part))
-    .join(' ');
-}
-
 /**
- * Human lines. COULD_NOT_CHECK says the receipt could not be checked and
- * does not contain the words invalid or INVALID. `--json` still prints
- * `verdict.message` unchanged.
+ * Human lines. COULD_NOT_CHECK says the receipt could not be checked.
+ * The message line is `verdict.message`, the same string `--json` prints.
  */
 export function humanVerdictLines(verdict: VerifyVerdict): string[] {
   const headline = overallLine(verdict);
   const couldNotCheck = headline === 'COULD_NOT_CHECK';
-  const message = couldNotCheck ? withoutInvalidSentences(verdict.message) : verdict.message;
   const lines = [headline];
-  if (message) lines.push(message);
-  if (couldNotCheck && !/could not be checked/i.test(message)) {
+  if (verdict.message) lines.push(verdict.message);
+  if (couldNotCheck && !/could not be checked/i.test(verdict.message)) {
     lines.push('The receipt could not be checked.');
   }
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);

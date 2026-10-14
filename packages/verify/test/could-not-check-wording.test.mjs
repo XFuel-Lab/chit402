@@ -58,10 +58,7 @@ test('exit codes 0, 1, and 2 stay on the locked verdict', () => {
   });
   assert.equal(unchecked.exit_code, 2);
   assert.equal(unchecked.result, 'could_not_check');
-  const lines = humanVerdictLines({
-    ...unchecked,
-    message: `${unchecked.message} It was NOT found invalid.`,
-  });
+  const lines = humanVerdictLines(unchecked);
   assert.equal(lines[0], 'COULD_NOT_CHECK');
   assert.equal(lines.includes('The receipt could not be checked.'), true);
   assert.equal(lines.includes('The receipt could not be fetched.'), true);
@@ -69,7 +66,7 @@ test('exit codes 0, 1, and 2 stay on the locked verdict', () => {
   assert.equal(unchecked.message, 'The receipt could not be fetched.');
 });
 
-test('offline COULD_NOT_CHECK human text does not say invalid, and --json is unchanged', () => {
+test('offline COULD_NOT_CHECK human text and JSON message do not say invalid', () => {
   const target = 'http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
   const human = runCli([target]);
   assert.equal(human.status, 2, human.text);
@@ -89,7 +86,7 @@ test('offline COULD_NOT_CHECK human text does not say invalid, and --json is unc
     result: 'could_not_check',
     exit_code: 2,
     reason: 'receipt_unavailable',
-    message: 'The receipt could not be fetched. It was NOT found invalid.',
+    message: 'The receipt could not be fetched.',
     next_step: 'Fetch the receipt again, then re-run.',
     receipt_id: null,
     display_id: null,

@@ -9,7 +9,7 @@ The package re-exports `chit402-verify` and forwards CLI arguments to that verif
 
 ### Changed
 - Depends on exactly `chit402-verify` `0.4.1`.
-- Human `COULD_NOT_CHECK` text from that verifier says the receipt could not be checked and does not contain `invalid` or `INVALID`. `--json` and exit codes 0, 1, and 2 are unchanged. Not published. No deploy.
+- Human text and the JSON `message` for `COULD_NOT_CHECK` say the receipt could not be checked and do not contain `invalid` or `INVALID`. `result`, `reason`, `exit_code`, and the verdict keys are unchanged. Not published. No deploy.
 
 ## 0.3.5 — Match @xfuel/verify 0.3.5
 

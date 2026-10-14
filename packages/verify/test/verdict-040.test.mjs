@@ -479,7 +479,8 @@ test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit
   assert.equal(missed.exit_code, 2);
   assert.equal(missed.reason, 'receipt_unavailable');
   assert.notEqual(missed.reason, 'kid_not_in_history');
-  assert.match(missed.message, /NOT found invalid/);
+  assert.equal(missed.message, 'The receipt could not be fetched.');
+  assert.doesNotMatch(missed.message, /invalid/i);
   for (const name of ['signature', 'key_window', 'payment_binding', 'log_inclusion', 'anchor', 'shape']) {
     assert.equal(missed.checks[name], 'could_not_check', name);
   }

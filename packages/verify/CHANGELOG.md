@@ -6,7 +6,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 ## 0.4.1 — COULD_NOT_CHECK does not read as INVALID
 
 ### Fixed
-- **Human output for exit 2 no longer prints `NOT found invalid`.** That line read as `INVALID`. `COULD_NOT_CHECK` says the receipt could not be checked, and that text does not contain `invalid` or `INVALID`. `--json` verdict fields and exit codes 0, 1, and 2 are unchanged. A failed fetch is still exit 2, reason `receipt_unavailable`, and every check is `could_not_check`. The JSON `message` still records that the receipt was not found invalid. Flags stay `--issuer-history` and `--json`. `BUILD_DIGEST.txt` moved because `src/verdict.ts` and `src/cli.ts` changed. The pinned epoch genesis digests did not. `@xfuel/verify` 0.4.1 depends on exactly `"chit402-verify": "0.4.1"`. Not published. No deploy.
+- **Exit 2 no longer says the receipt was found invalid.** The fetch failure used to append `It was NOT found invalid.`, and human output added a stray `NOT found invalid` line. Both read as `INVALID`. Human text and the JSON `message` are the same: the receipt could not be fetched, and `COULD_NOT_CHECK` says the receipt could not be checked. That output does not contain `invalid` or `INVALID`. `result`, `reason`, `exit_code`, and the verdict keys are unchanged. A failed fetch is still exit 2, reason `receipt_unavailable`, and every check is `could_not_check`. Flags stay `--issuer-history` and `--json`. `BUILD_DIGEST.txt` moved because `src/verdict.ts` and `src/cli.ts` changed. The pinned epoch genesis digests did not. `@xfuel/verify` 0.4.1 depends on exactly `"chit402-verify": "0.4.1"`. Not published. No deploy.
 
 ## 0.4.0 — Locked verifier verdict
 
