@@ -14,6 +14,7 @@ process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 process.env.TASK_STORE_PERSIST = 'false';
 process.env.X402_ENABLED = 'false';
 process.env.ISSUER_ROOT_ENABLED = 'false';
+process.env.OWNER_VIEW_AUDIENCES = '127.0.0.1';
 
 const payer = Wallet.createRandom();
 const { createApp } = await import('../src/server.js');
