@@ -1993,10 +1993,17 @@ export async function verifyReceipt(
     }
   }
 
-  // Any skip of the key window is labeled, not only the CLI flag (library and shell paths too).
-  if (options.skipIssuerHistory && overall === 'verified') {
+  // A skip is an explicit flag or an unreachable history. A window that was
+  // fetched and failed stays `failed` (historyFailed above).
+  const historySkipped = !historyFailed && (
+    options.skipIssuerHistory === true || issuer_history.unreachable === true
+  );
+  if (historySkipped && overall === 'verified') {
     overall = 'verified_no_key_window';
-    if (!issuer_history.warning) issuer_history.warning = 'key window skipped';
+    if (!issuer_history.warning) {
+      issuer_history.warning = options.skipIssuerHistory ? 'key window skipped' : 'issuer history unreachable';
+      warnings.push(issuer_history.warning);
+    }
   }
 
   const signedPayment = asRecord(verifiedClaims?.payment);

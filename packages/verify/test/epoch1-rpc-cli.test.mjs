@@ -321,6 +321,62 @@ test('a not_in_tree inclusion file is not reported as bad_root', () => {
   assert.equal(text.includes('bad_root'), false);
 });
 
+test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment still verifies', async () => {
+  const { verifyReceipt } = await import('../dist/index.js');
+  const receiptPath = fileURLToPath(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url));
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  const payment = await verifyReceipt(receipt, {});
+  assert.equal(payment.overall, 'verified', payment.errors.join('; '));
+
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const exported = publicKey.export({ format: 'jwk' });
+  const kid = jwkThumbprint(exported);
+  const publicJwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, kid, alg: 'ES256', use: 'sig' };
+  const headClaims = {
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: EPOCH1_FINAL_ROOT,
+    tree_size: 4,
+    anchors: {
+      base: { from: PINNED_BASE_ANCHOR_WALLET, tx: `0x${'11'.repeat(32)}` },
+      solana: { fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER, signature: 'sig-pre-log' },
+    },
+  };
+  const dir = mkdtempSync(join(tmpdir(), 'chit-pre-log-'));
+  const inclusionPath = join(dir, 'inclusion.json');
+  const headPath = join(dir, 'head.json');
+  writeFileSync(inclusionPath, JSON.stringify({ error: 'not_in_tree', task_id: receipt.task_id }));
+  writeFileSync(headPath, JSON.stringify({
+    ...headClaims,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: signCompact(headClaims, privateKey, kid, 'chit402-tree-head+jwt'),
+      kid,
+      issuer_jwk: publicJwk,
+    },
+  }));
+  const cli = join(pkgDir, 'dist', 'cli.js');
+  const run = spawnSync(process.execPath, [
+    cli,
+    receiptPath,
+    '--inclusion',
+    inclusionPath,
+    '--head',
+    headPath,
+    '--no-issuer-history',
+    '--trusted-kid',
+    'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q',
+    '--trusted-kid',
+    kid,
+    '--json',
+  ], { encoding: 'utf8' });
+  const text = `${run.stdout || ''}\n${run.stderr || ''}`;
+  assert.equal(run.status, 1, text);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.overall, 'not_in_log', JSON.stringify(parsed.errors));
+  assert.equal(parsed.inclusion.reason, 'not_in_tree');
+});
+
 test('an unpublished head with a receipt and inclusion is not_yet_published', () => {
   const dir = mkdtempSync(join(tmpdir(), 'chit-unpublished-full-'));
   const head = {

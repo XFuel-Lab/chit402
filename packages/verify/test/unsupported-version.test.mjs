@@ -434,7 +434,7 @@ test('T-MM-HDR a version on the JWS header is ignored', async () => {
   const receiptPath = writeJson('hdr-receipt.json', receipt);
   const proc = runCli([receiptPath, '--jwks-file', jwksPath, '--no-trusted-kid', '--json']);
   assert.equal(proc.status, 0, proc.text);
-  assert.equal(JSON.parse(proc.stdout).overall, 'verified');
+  assert.equal(JSON.parse(proc.stdout).overall, 'verified_no_key_window');
   assert.doesNotMatch(proc.text, /unsupported_version/);
   const shellPath = writeJson('hdr-shell.json', {
     schema: 'chit402.receipt_shell.v1',

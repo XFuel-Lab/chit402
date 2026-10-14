@@ -10,7 +10,7 @@
  *   ISSUER_HISTORY_APPROVER=bob \
  *   node scripts/retire-issuer-key.mjs \
  *     --status revoked \
- *     --not-before 2026-10-13T00:00:00.000Z \
+ *     --not-before <the sealed entry's not_before> \
  *     --revoked-at 2026-10-13T00:00:00.000Z \
  *     --reason compromised \
  *     --confirm YES

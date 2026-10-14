@@ -315,7 +315,7 @@ test('a retire or revoke appends and the last entry is the window', () => withHi
   const kid = getIssuerKid();
   const retired = retireOrRevokeIssuerKey({
     status: 'retired',
-    not_before: '2021-01-01T00:00:00.000Z',
+    not_before: '2020-01-01T00:00:00.000Z',
     not_after: '2021-06-01T00:00:00.000Z',
     reason: 'rotated',
   });
@@ -330,7 +330,7 @@ test('a retire or revoke appends and the last entry is the window', () => withHi
   resetIssuerHistoryStore();
   const revoked = retireOrRevokeIssuerKey({
     status: 'revoked',
-    not_before: '2021-01-01T00:00:00.000Z',
+    not_before: '2020-01-01T00:00:00.000Z',
     revoked_at: '2021-06-01T00:00:00.000Z',
     reason: 'compromised',
   });
@@ -431,6 +431,34 @@ test('retired then active is refused and not_after stays', () => withHistory(() 
   });
   assert.equal(JSON.parse(tightened.body).entries.at(-1).status, 'revoked');
   assert.equal(verifyIssuerHistory(JSON.parse(tightened.body)).valid, true);
+}));
+
+test('a later not_before is refused and does not widen the window', () => withHistory(() => {
+  const kid = getIssuerKid();
+  assert.throws(() => retireOrRevokeIssuerKey({
+    status: 'retired',
+    not_before: '2026-01-01T00:00:00.000Z',
+    not_after: '2026-06-01T00:00:00.000Z',
+    reason: 'moved earlier',
+  }), (err) => err.code === 'kid_status_regression');
+  const first = {
+    kid,
+    not_before: '2026-03-01T00:00:00.000Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+  };
+  const widened = issuerKeyWindow({
+    entries: [first, {
+      kid,
+      not_before: '2026-01-01T00:00:00.000Z',
+      not_after: null,
+      status: 'retired',
+      revoked_at: null,
+    }],
+  }, kid, '2026-02-01T00:00:00.000Z');
+  assert.equal(widened.ok, false);
+  assert.equal(widened.reason, 'issued_before_not_before');
 }));
 
 test('truncating the history file cannot reissue a version', () => withHistory(() => {
@@ -545,9 +573,18 @@ test('the retire script is offline, two-person, and appends', () => withHistory(
     assert.notEqual(noConfirm.status, 0);
     assert.match(noConfirm.stderr, /--confirm YES/);
 
-    const retired = run([
+    const moved = run([
       '--status', 'retired',
       '--not-before', '2021-01-01T00:00:00.000Z',
+      '--not-after', '2021-06-01T00:00:00.000Z',
+      '--confirm', 'YES',
+    ], { ISSUER_HISTORY_OPERATOR: 'alice', ISSUER_HISTORY_APPROVER: 'bob' });
+    assert.notEqual(moved.status, 0);
+    assert.match(`${moved.stderr}\n${moved.stdout}`, /kid_status_regression/);
+
+    const retired = run([
+      '--status', 'retired',
+      '--not-before', '2020-01-01T00:00:00.000Z',
       '--not-after', '2021-06-01T00:00:00.000Z',
       '--reason', 'rotated',
       '--confirm', 'YES',

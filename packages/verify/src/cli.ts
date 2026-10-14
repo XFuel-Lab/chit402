@@ -152,12 +152,14 @@ Trust:
 
 Network behavior:
   JWKS, nullifiers, and anchors are not fetched unless you pass a flag.
-  Issuer history is fetched by default when the receipt names a history URL
-  and neither --issuer-history-file nor --no-issuer-history is set. A payload
-  v10 receipt fails (exit 1) when that fetch cannot run. Offline verification
-  uses --issuer-history-file <snapshot> (the pinned history). --no-issuer-history
-  skips the kid window and prints VERIFIED_NO_KEY_WINDOW. It is not offline
-  verification.
+  Issuer history is checked by default for every supported receipt when it
+  is reachable (a history URL on the receipt, or --issuer-history-file).
+  The check is skipped only for --no-issuer-history, or when that history
+  cannot be loaded. A skip is overall verified_no_key_window in --json,
+  never a bare verified. A payload v10 receipt fails (exit 1) when the
+  pinned snapshot cannot be loaded. A history that was loaded and failed
+  (revoked before iat, outside the window, kid_status_regression) exits 1
+  on every version. Offline verification uses --issuer-history-file.
   Other network uses:
   - --fetch-jwks or --jwks-url
   - --check-nullifier (Base RPC)
@@ -494,7 +496,7 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  if (quiet && result.overall !== 'failed') return;
+  if (quiet && result.overall !== 'failed' && result.overall !== 'not_in_log') return;
   const mark = (ok: boolean) => (ok ? '✓ YES' : '✗ NO');
   console.log('');
   console.log('  Anchored receipt root');
@@ -526,7 +528,7 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean)
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
   console.log('');
-  if (result.overall !== 'failed') {
+  if (result.overall !== 'failed' && result.overall !== 'not_in_log') {
     console.log('  What this proves');
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.proves) console.log(`  ${line}`);
@@ -914,11 +916,15 @@ async function runAnchor(args: ReturnType<typeof parseArgs>): Promise<number> {
   const errors = receiptFailed
     ? [...result.errors, ...receiptErrors.filter((err) => !result.errors.includes(err))]
     : result.errors;
-  const anchorOverall = receiptFailed
-    ? 'failed' as const
-    : (args.noIssuerHistory && result.overall === 'verified')
-      ? 'verified_no_key_window' as const
-      : result.overall;
+  const windowSkipped = verified.overall === 'verified_no_key_window';
+  const logMiss = result.overall === 'not_in_log';
+  const anchorOverall = logMiss
+    ? 'not_in_log' as const
+    : receiptFailed
+      ? 'failed' as const
+      : (windowSkipped && result.overall === 'verified')
+        ? 'verified_no_key_window' as const
+        : result.overall;
   const combined = {
     ...result,
     errors,
@@ -1022,9 +1028,11 @@ async function runRefusal(
     });
   const historyFailed = history.checked && !history.ok;
   const failed = !result.valid || !preimages.ok || historyFailed || canonicalFailed;
+  const historySkipped = !failed && (args.skipIssuerHistory || history.unreachable === true);
+  const overall = failed ? 'failed' : (historySkipped ? 'verified_no_key_window' : 'verified');
   if (args.json) {
-    console.log(JSON.stringify({ ...result, preimages, issuer_history: history }, null, 2));
-  } else if (!args.quiet || failed) {
+    console.log(JSON.stringify({ ...result, preimages, issuer_history: history, overall }, null, 2));
+  } else if (!args.quiet || failed || historySkipped) {
     console.log('');
     console.log('  Chit402 Refusal Verification');
     console.log('  ─────────────────────────────────────────────────');
@@ -1051,14 +1059,14 @@ async function runRefusal(
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.does_not_prove) console.log(`  ${line}`);
     console.log('');
-    const refusalOverall = !failed && args.skipIssuerHistory ? 'VERIFIED_NO_KEY_WINDOW' : (failed ? 'FAILED' : 'VERIFIED');
+    const refusalOverall = historySkipped ? 'VERIFIED_NO_KEY_WINDOW' : (failed ? 'FAILED' : 'VERIFIED');
     console.log(`  Overall: ${refusalOverall}`);
     if (!preimages.ok) console.log(`  Preimages:     ${preimages.errors.join('; ')}`);
     if (history.warning) console.log(`  Issuer history: ${history.warning}`);
     if (historyFailed && history.reason) console.log(`  Issuer history: ${history.reason}`);
     console.log('');
   }
-  if (!failed && args.skipIssuerHistory) return argsStrict(args) ? 1 : 0;
+  if (historySkipped) return argsStrict(args) ? 1 : 0;
   return failed ? 1 : 0;
 }
 
@@ -1180,6 +1188,17 @@ async function main(): Promise<number> {
     const trustedKids = args.noTrustedKid
       ? []
       : (args.trustedKids ?? [...DEFAULT_TRUSTED_ISSUER_KIDS]);
+    let shellHistory: IssuerHistoryDocument | null = null;
+    let shellHistoryBytes: string | null = null;
+    if (args.issuerHistoryFile) {
+      try {
+        shellHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+        shellHistory = JSON.parse(shellHistoryBytes) as IssuerHistoryDocument;
+      } catch (err) {
+        console.error(`Error reading issuer history: ${err instanceof Error ? err.message : String(err)}`);
+        return 3;
+      }
+    }
     const result = await verifyReceipt(holder as unknown as XFuelReceipt, {
       jwks,
       jwksUri: args.jwksUrl || undefined,
@@ -1189,10 +1208,12 @@ async function main(): Promise<number> {
       rpcUrl: args.rpcUrl || undefined,
       solanaRpcUrl: args.solanaRpcUrl || undefined,
       requirePreimages: false,
-      skipIssuerHistory: args.noIssuerHistory || !args.issuerHistoryFile,
+      skipIssuerHistory: args.noIssuerHistory,
       labelSkippedKeyWindow: args.noIssuerHistory,
-      issuerHistory: null,
-      fetchIssuerHistory: false,
+      issuerHistory: shellHistory,
+      issuerHistoryBytes: shellHistoryBytes,
+      fetchIssuerHistory: !args.noIssuerHistory && !args.issuerHistoryFile,
+      strictIssuerHistory: args.strictIssuerHistory,
       salt: args.salt,
       head: head ?? undefined,
       inclusion: inclusion ?? undefined,

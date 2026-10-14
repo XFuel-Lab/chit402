@@ -391,3 +391,124 @@ test('--no-issuer-history never prints bare VERIFIED', async () => {
   assert.equal(parsed.overall, 'verified_no_key_window');
   assert.equal(bareVerified(json.stdout), false);
 });
+
+test('a later not_before cannot widen the window backwards', () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-03-01T00:00:00Z' });
+  const widened = {
+    kid: key.kid,
+    jwk: key.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-01-01T00:00:00Z',
+    not_after: null,
+    status: 'retired',
+    revoked_at: null,
+    reason: null,
+    custody: 'test custody',
+    prev_hash: first.entry_hash,
+  };
+  const second = { ...widened, entry_hash: issuerHistoryEntryHash(widened) };
+  const entries = [first, second];
+  const window = issuerKeyWindow({ entries }, key.kid, '2026-02-01T00:00:00Z');
+  assert.equal(window.ok, false);
+  assert.equal(window.reason, 'issued_before_not_before');
+  const rejected = verifyIssuerHistoryDocument({
+    schema: 'chit402.issuer_history.v1',
+    entries,
+    head_hash: second.entry_hash,
+  });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.reason, 'kid_status_regression');
+  const sameStart = {
+    ...widened,
+    not_before: '2026-03-01T00:00:00Z',
+  };
+  const kept = { ...sameStart, entry_hash: issuerHistoryEntryHash(sameStart) };
+  const keptWindow = issuerKeyWindow({ entries: [first, kept] }, key.kid, '2026-04-01T00:00:00Z');
+  assert.equal(keptWindow.ok, true, keptWindow.reason);
+});
+
+test('a fetched history failure exits 1 and a skip is verified_no_key_window', async () => {
+  const key = issuerKey();
+  const first = entryFor(key, { notBefore: '2026-01-01T00:00:00Z' });
+  function next(prev, fields) {
+    const body = {
+      kid: key.kid,
+      jwk: key.publicJwk,
+      alg: 'ES256',
+      not_before: fields.not_before,
+      not_after: fields.not_after ?? null,
+      status: fields.status,
+      revoked_at: fields.revoked_at ?? null,
+      reason: null,
+      custody: 'test custody',
+      prev_hash: prev.entry_hash,
+    };
+    return { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  }
+  const receipt = receiptFor(key, paymentClaims(8));
+  const dir = mkdtempSync(join(tmpdir(), 'chit-history-check-'));
+  const receiptPath = join(dir, 'receipt.json');
+  const jwksPath = join(dir, 'jwks.json');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  writeFileSync(jwksPath, JSON.stringify({ keys: [key.publicJwk] }));
+  const trust = [receiptPath, '--jwks-file', jwksPath, '--trusted-kid', key.kid, '--json'];
+
+  const revoked = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'revoked',
+    revoked_at: '2026-06-01T00:00:00Z',
+  })], key);
+  const closed = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    not_after: '2026-06-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+  const moved = historyOf([first, next(first, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+  // first not_before is March in this chain so the retire moves it.
+  const march = entryFor(key, { notBefore: '2026-03-01T00:00:00Z' });
+  const regressed = historyOf([march, next(march, {
+    not_before: '2026-01-01T00:00:00Z',
+    status: 'retired',
+  })], key);
+
+  function writeHistory(name, packed) {
+    const path = join(dir, name);
+    writeFileSync(path, packed.bytes);
+    return path;
+  }
+
+  for (const [name, packed, reason] of [
+    ['revoked.json', revoked, 'kid_revoked_before_issuance'],
+    ['closed.json', closed, 'issued_after_not_after'],
+    ['regressed.json', regressed, 'kid_status_regression'],
+  ]) {
+    const run = runCli([...trust, '--issuer-history-file', writeHistory(name, packed)]);
+    assert.equal(run.status, 1, `${name} ${run.text}`);
+    const body = JSON.parse(run.stdout);
+    assert.equal(body.overall, 'failed', name);
+    assert.equal(body.overall === 'verified_no_key_window', false);
+    assert.match(body.errors.join('\n'), new RegExp(reason), name);
+  }
+  // moved is a same-kid retire that keeps not_before; October iat is inside
+  // an open retired window, so this file is the reachable pass.
+  const open = runCli([...trust, '--issuer-history-file', writeHistory('open.json', moved)]);
+  assert.equal(open.status, 0, open.text);
+  assert.equal(JSON.parse(open.stdout).overall, 'verified');
+  assert.equal(JSON.parse(open.stdout).issuer_history.checked, true);
+
+  const skipped = runCli([...trust, '--no-issuer-history', '--issuer-history-file', writeHistory('revoked.json', revoked)]);
+  assert.equal(skipped.status, 0, skipped.text);
+  assert.equal(JSON.parse(skipped.stdout).overall, 'verified_no_key_window');
+  assert.equal(bareVerified(skipped.stdout), false);
+
+  const unreachable = runCli(trust);
+  assert.equal(unreachable.status, 0, unreachable.text);
+  const unreachableBody = JSON.parse(unreachable.stdout);
+  assert.equal(unreachableBody.overall, 'verified_no_key_window');
+  assert.equal(unreachableBody.issuer_history.unreachable, true);
+  assert.equal(bareVerified(unreachable.stdout), false);
+});

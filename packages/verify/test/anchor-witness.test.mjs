@@ -379,6 +379,7 @@ test('an inclusion endpoint 404 body is not_in_tree', async () => {
     ...fetched,
   });
   assert.equal(result.inclusion.reason, 'not_in_tree');
+  assert.equal(result.overall, 'not_in_log');
   assert.equal(result.errors.includes('not_in_tree'), true);
   assert.equal(result.errors.includes('bad_root'), false);
   assert.deepEqual(fetched.calls, []);
