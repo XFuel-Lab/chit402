@@ -151,6 +151,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: null,
     };
   }
+  if (reason === 'key untrusted') {
+    return {
+      message: "Signed by a key that is not the issuer's.",
+      next_step: null,
+    };
+  }
   if (result === 'could_not_check') {
     return {
       message: 'A check could not be completed.',
@@ -229,11 +235,15 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   else if (input.historyChecked && historyReason && WINDOW_FAIL.has(historyReason)) keyWindow = 'fail';
   else if (input.historyChecked && input.historyOk === false) keyWindow = 'fail';
 
-  let payment: CheckState = 'pass';
+  // Pass only after the signature was checked and passed. An unchecked or
+  // failed signature did not check the payment, so it is not a pass.
+  let payment: CheckState = signature === 'pass' ? 'pass' : 'could_not_check';
   const preimageFailed = errors.some((err) => /preimage|payload_hash_mismatch|canonical preimage/.test(err));
-  if ((input.claimMismatches || 0) > 0 || (input.bindingExpected && input.bindingMatches === false) || preimageFailed) payment = 'fail';
-  else if (input.payerChecked && input.payerValid === false) payment = 'fail';
-  else if (input.bindingExpected && input.bindingMatches !== true && !unsupported) payment = 'could_not_check';
+  if (signature === 'pass') {
+    if ((input.claimMismatches || 0) > 0 || (input.bindingExpected && input.bindingMatches === false) || preimageFailed) payment = 'fail';
+    else if (input.payerChecked && input.payerValid === false) payment = 'fail';
+    else if (input.bindingExpected && input.bindingMatches !== true && !unsupported) payment = 'could_not_check';
+  }
 
   const logInclusion = claimed(input.logInclusion);
   const anchor = claimed(input.anchor);

@@ -25,7 +25,7 @@ jobs:
 
       - name: Test chit402-verify
         working-directory: packages/verify
-        run: npm install --no-audit --no-fund && npm test
+        run: npm ci --no-audit --no-fund && npm test
 
       - name: Publish chit402-verify
         working-directory: packages/verify

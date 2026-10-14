@@ -553,7 +553,9 @@ test('T-REFUSAL refusal versions use the exact-type rule', async () => {
   const v12Cli = runCli([v12Path]);
   assert.equal(v12Cli.status, 1, v12Cli.text);
   assert.match(v12Cli.stdout, /^INVALID\n/);
-  assert.match(v12Cli.stdout, /key untrusted/);
+  assert.match(v12Cli.stdout, /#key_untrusted/);
+  assert.match(v12Cli.stdout, /Signed by a key that is not the issuer's/);
+  assert.doesNotMatch(v12Cli.stdout, /key untrusted/);
   assert.doesNotMatch(v12Cli.stdout, /^VERIFIED\n/m);
 });
 

@@ -29,7 +29,7 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'issuer_history_seq_mismatch', text: 'The history seq does not match the pin. Exit 1.' },
   { id: 'issuer_history_not_extension', text: 'The --issuer-history file does not prefix-extend the bundled snapshot. Exit 1.' },
   { id: 'signature_invalid', text: 'The issuer signature does not verify. Exit 1.' },
-  { id: 'key_untrusted', text: 'The signing key is not a pinned issuer key. The check reason is "key untrusted". Exit 1.' },
+  { id: 'key_untrusted', text: "Signed by a key that is not the issuer's. The check reason is \"key untrusted\". Exit 1." },
   { id: 'key_window', text: 'The key window check failed. Exit 1.' },
   { id: 'version_mismatch', text: 'The receipt version does not match the signature. Exit 1.' },
   { id: 'id_mismatch', text: 'The receipt id does not match the signature. Exit 1.' },

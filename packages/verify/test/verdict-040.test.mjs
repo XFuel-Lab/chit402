@@ -315,6 +315,8 @@ test('verified is absent unless every check passed', () => {
   assert.equal(upgrade.exit_code, 2);
   assert.equal(upgrade.reason, 'unsupported_version');
   assert.equal(upgrade.next_step, 'Upgrade @xfuel/verify.');
+  assert.equal(upgrade.checks.signature, 'could_not_check');
+  assert.equal(upgrade.checks.payment_binding, 'could_not_check');
 
   const unclaimed = buildVerifyVerdict({
     version: '0.4.0',
@@ -341,7 +343,28 @@ test('verified is absent unless every check passed', () => {
   });
   assert.equal(passed.result, 'verified');
   assert.equal(passed.exit_code, 0);
+  assert.equal(passed.checks.payment_binding, 'pass');
   assert.equal(passed.verifier.name, 'chit402-verify');
+
+  const foreign = buildVerifyVerdict({
+    version: '0.4.0',
+    signatureValid: false,
+    signatureChecked: true,
+    errors: ['key untrusted'],
+    historyChecked: true,
+    historyOk: true,
+    bindingExpected: true,
+    bindingMatches: false,
+    claimMismatches: 1,
+    logInclusion: 'could_not_check',
+    anchor: 'could_not_check',
+  });
+  assert.equal(foreign.result, 'invalid');
+  assert.equal(foreign.exit_code, 1);
+  assert.equal(foreign.reason, 'key untrusted');
+  assert.equal(foreign.message, "Signed by a key that is not the issuer's.");
+  assert.equal(foreign.checks.signature, 'fail');
+  assert.equal(foreign.checks.payment_binding, 'could_not_check');
 });
 
 test('chit- uuid on v10 and intent on a legacy payload are invalid', async () => {
@@ -422,6 +445,8 @@ test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit
     const body = JSON.parse(run.stdout);
     assert.equal(body.reason, 'signed_receipt_unavailable');
     assert.equal(body.result, 'could_not_check');
+    assert.equal(body.checks.signature, 'could_not_check');
+    assert.equal(body.checks.payment_binding, 'could_not_check');
     assert.match(body.next_step, /owner view/);
     assert.doesNotMatch(body.next_step || '', /issuer-history/);
     assert.match(seen.join('\n'), /format=json/);
@@ -505,6 +530,8 @@ test('a null-inclusion shell is NOT_IN_LOG only beside a verified head', async (
     const body = JSON.parse(logged.stdout);
     assert.equal(body.reason, 'not_in_log');
     assert.equal(body.result, 'invalid');
+    assert.equal(body.checks.signature, 'could_not_check');
+    assert.equal(body.checks.payment_binding, 'could_not_check');
     assert.match(logged.stdout, /payment row in the book is unchanged/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
