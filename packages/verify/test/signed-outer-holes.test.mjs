@@ -63,7 +63,7 @@ function runCli(args) {
 
 test('both public receipts verify unmodified', async () => {
   const houseResult = await verifyReceipt(house, houseOpts);
-  assert.equal(houseResult.overall, 'verified', houseResult.errors.join('; '));
+  assert.equal(houseResult.overall, 'verified_no_key_window', houseResult.errors.join('; '));
   assert.equal(houseResult.verified_scope, 'signed_claims');
   assert.equal(houseResult.issuer_signature.valid, true);
   assert.equal(houseResult.amount_usdc, '2000');
@@ -150,7 +150,7 @@ test('unsigned outer edits stay unverified and do not become the verified facts'
     if (child) receipt[headKey][child] = value;
     else receipt[headKey] = value;
     const result = await verifyReceipt(receipt, houseOpts);
-    assert.equal(result.overall, 'verified', `${pathName} ${result.errors.join('; ')}`);
+    assert.equal(result.overall, 'verified_no_key_window', `${pathName} ${result.errors.join('; ')}`);
     assert.ok(result.unsigned_fields.includes(pathName), pathName);
     assert.equal(result.amount_usdc, '2000', pathName);
     assert.equal(result.model, 'akash/meta-llama/Llama-3.3-70B-Instruct', pathName);

@@ -147,7 +147,7 @@ export interface BaseAnchorTx {
 }
 
 export interface AnchorWitnessResult {
-  overall: 'verified' | 'partial' | 'pending' | 'failed';
+  overall: 'verified' | 'partial' | 'pending' | 'failed' | 'not_in_log';
   root: string | null;
   inclusion: {
     valid: boolean;
@@ -904,7 +904,23 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     && !pinFailed
     && headHasAnchor
     && !errors.includes('head_not_anchored');
-  if (pendingOk) overall = 'pending';
+  // A receipt that is not a leaf, and has no other anchor failure, is
+  // NOT_IN_LOG. Pre-log payments such as chit-1ebc5616 are this case.
+  // A pin downgrade or a bad head stays failed. The book row is not rewritten.
+  const chainAsideFromInclusion = (reason: string | undefined) => Boolean(
+    reason && reason !== 'pending' && reason !== 'pending_anchor' && reason !== 'inclusion_failed',
+  );
+  const otherAnchorFailure = Boolean(epochReason)
+    || !headTrust.ok
+    || walletFailed
+    || legacyHead
+    || chainAsideFromInclusion(solana.reason)
+    || chainAsideFromInclusion(base.reason)
+    || Boolean(staleReason)
+    || errors.includes('head_not_anchored')
+    || pinFailed;
+  if (inclusionReason === 'not_in_tree' && !otherAnchorFailure) overall = 'not_in_log';
+  else if (pendingOk) overall = 'pending';
   else if (
     !inclusionValid
     || epochReason

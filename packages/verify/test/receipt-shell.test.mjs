@@ -113,21 +113,21 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
   assert.doesNotMatch(accepted.stdout, /Overall:\s*VERIFIED/);
 
   const held = run([
-    shellPath, '--jws', ownerPath, '--jwks-file', jwksPath,
+    shellPath, '--jws', ownerPath, '--jwks-file', jwksPath, '--no-issuer-history',
     '--inclusion', inclusionPath, '--head', headPath,
   ]);
   // The fixture head is {root, tree_size} with no signature: not a log.
   notVerified(held);
   assert.match(held.stdout, /head_signature_missing/);
 
-  const holderOnly = run([shellPath, '--jws', holderPath, '--inclusion', inclusionPath, '--head', headPath]);
+  const holderOnly = run([shellPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
   notVerified(holderOnly);
   assert.match(holderOnly.stdout, /head_signature_missing/);
 
   const tampered = { ...shell, amount_gross: '1' };
   const tamperedPath = join(dir, 'tampered.json');
   writeFileSync(tamperedPath, JSON.stringify(tampered));
-  const mismatch = run([tamperedPath, '--jws', holderPath, '--inclusion', inclusionPath, '--head', headPath]);
+  const mismatch = run([tamperedPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
   assert.equal(mismatch.status, 1);
   assert.match(mismatch.stdout, /shell_jws_mismatch/);
   assert.doesNotMatch(mismatch.stdout, /Overall:\s*VERIFIED/);
@@ -154,7 +154,7 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   writeFileSync(inclusionPath, JSON.stringify(inclusion));
   writeFileSync(headPath, JSON.stringify({ root: inclusion.root, tree_size: inclusion.tree_size }));
 
-  const attacked = run([shellPath, '--jws', forgedPath, '--inclusion', inclusionPath, '--head', headPath]);
+  const attacked = run([shellPath, '--jws', forgedPath, '--no-issuer-history', '--inclusion', inclusionPath, '--head', headPath]);
   notVerified(attacked);
   assert.match(attacked.stdout, /key untrusted/);
 
@@ -169,14 +169,14 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   const ownerShellPath = join(dir, 'real-shell.json');
   writeFileSync(ownerShellPath, JSON.stringify(ownerShell));
   const forgedOwner = run([
-    ownerShellPath, '--jws', ownerAttack, '--jwks-file', jwksPath,
+    ownerShellPath, '--jws', ownerAttack, '--jwks-file', jwksPath, '--no-issuer-history',
     '--inclusion', inclusionPath, '--head', headPath,
   ]);
   notVerified(forgedOwner);
 
   const realShell = join(dir, 'published-shell.json');
   writeFileSync(realShell, JSON.stringify(shellFromHolder(holder)));
-  const missing = run([realShell, '--jws', holderPath]);
+  const missing = run([realShell, '--jws', holderPath, '--no-issuer-history']);
   notVerified(missing);
   assert.match(missing.stdout, /inclusion_missing/);
 
@@ -186,7 +186,7 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   const badHeadPath = join(dir, 'bad-head.json');
   writeFileSync(badPath, JSON.stringify(bad));
   writeFileSync(badHeadPath, JSON.stringify({ root: badRoot, tree_size: bad.tree_size }));
-  const badRun = run([realShell, '--jws', holderPath, '--inclusion', badPath, '--head', badHeadPath]);
+  const badRun = run([realShell, '--jws', holderPath, '--no-issuer-history', '--inclusion', badPath, '--head', badHeadPath]);
   notVerified(badRun);
 
   const claimed = shellFromHolder(holder);
@@ -199,7 +199,7 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   writeFileSync(realInclusionPath, JSON.stringify(realInclusion));
   writeFileSync(realHeadPath, JSON.stringify({ root: realInclusion.root, tree_size: realInclusion.tree_size }));
   const claimedRun = run([
-    claimedPath, '--jws', holderPath, '--inclusion', realInclusionPath, '--head', realHeadPath,
+    claimedPath, '--jws', holderPath, '--no-issuer-history', '--inclusion', realInclusionPath, '--head', realHeadPath,
   ]);
   notVerified(claimedRun);
   assert.match(claimedRun.stdout, /inclusion_mismatch/);

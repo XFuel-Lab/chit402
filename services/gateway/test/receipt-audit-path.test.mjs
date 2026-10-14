@@ -14,6 +14,9 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 delete process.env.SOLANA_ANCHOR_SECRET_KEY;
 delete process.env.SOLANA_RPC_URL;
+// The specimen is issued 2026-09-26. The test key's window has to cover that
+// instant or the history check fails closed.
+process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
 
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
@@ -23,6 +26,7 @@ const { withPublicPreimages } = await import('../src/receipt-preimage.js');
 const logger = (await import('../src/logger.js')).default;
 
 const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
+const { currentIssuerHistory } = await import('../src/issuer-history.js');
 const { verifyPublishedPreimages } = await import('../../../packages/verify/dist/preimage.js');
 const cliPath = fileURLToPath(new URL('../../../packages/verify/dist/cli.js', import.meta.url));
 
@@ -252,25 +256,35 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     { baseUrl: base, prefix },
   );
   const kid = receipt.issuer_signature.kid;
+  const historyRecord = currentIssuerHistory();
+  const historyBytes = historyRecord.body;
+  const history = JSON.parse(historyBytes);
+  assert.equal(history.entries.some((row) => row.kid === kid && row.not_before), true);
   const checked = await verifyReceipt(receipt, {
     trustedKids: [kid],
-    skipIssuerHistory: true,
+    issuerHistory: history,
+    issuerHistoryBytes: historyBytes,
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
   assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.issuer_history.checked, true);
+  assert.equal(checked.issuer_history.ok, true, checked.issuer_history.reason || checked.issuer_history.warning);
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-http-'));
   const file = join(dir, 'receipt.json');
+  const historyFile = join(dir, 'issuer-history.json');
   writeFileSync(file, JSON.stringify(receipt));
+  writeFileSync(historyFile, historyBytes);
   const cli = cliPath;
   for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
     const run = spawnSync(process.execPath, [
       cli,
       file,
       '--json',
-      '--no-issuer-history',
+      '--issuer-history-file',
+      historyFile,
       '--trusted-kid',
       kid,
       ...extra,
@@ -278,6 +292,7 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
     const parsed = JSON.parse(run.stdout);
     assert.equal(parsed.overall, 'verified', (parsed.errors || []).join('; '));
+    assert.equal(parsed.issuer_history?.ok, true, parsed.issuer_history?.reason || parsed.issuer_history?.warning);
     assert.equal(parsed.preimages.ok, true);
   }
 
