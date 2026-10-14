@@ -680,6 +680,15 @@ select.input {
   border-radius: 12px;
   background: #000;
 }
+.receipt-check-card-input {
+  border-color: #8a8a9a;
+}
+.receipt-check-input-title {
+  margin: 0 0 0.35rem;
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
 .receipt-check-overall {
   display: inline-block;
   margin-bottom: 0.75rem;

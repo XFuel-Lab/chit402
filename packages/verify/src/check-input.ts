@@ -74,10 +74,13 @@ export function displayIdOf(receipt: { task_id?: string; display_id?: string; re
   return short ? short[1] : (id || null);
 }
 
-export function historyHostAllowed(url: string): boolean {
+export function historyHostAllowed(url: string, opts: { loopback?: boolean } = {}): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    // Public box: https to a trusted host only. Loopback http is a CLI/dev convenience.
+    if (parsed.protocol === 'http:' && opts.loopback === false) return false;
+    if (parsed.username || parsed.password) return false;
     if (parsed.protocol === 'http:' && parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return false;
     if (parsed.protocol === 'https:') {
       return DEFAULT_TRUSTED_JWKS_HOSTS.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
@@ -90,7 +93,7 @@ export function historyHostAllowed(url: string): boolean {
 
 /** Public box may fetch a receipt URL only from a host the verifier already trusts. */
 export function receiptUrlAllowed(raw: string): boolean {
-  return historyHostAllowed(raw);
+  return historyHostAllowed(raw, { loopback: false });
 }
 
 export function classifyReceiptInput(raw: string): ReceiptInputKind {
@@ -318,6 +321,8 @@ async function loadReceiptTarget(target: string, publicInput: boolean): Promise<
       res = await fetch(url, {
         headers: { accept: 'application/json' },
         signal: AbortSignal.timeout(LOG_FETCH_MS),
+        // A trusted host must not bounce the public box to another host.
+        redirect: publicInput ? 'error' : 'follow',
       });
     } catch (err) {
       const wrapped = new Error(err instanceof Error ? err.message : String(err));
@@ -378,6 +383,7 @@ function shellInclusionAbsent(receipt: XFuelReceipt): boolean {
 function shellLogReceipt(
   receipt: XFuelReceipt,
   origin: string | null,
+  publicInput = false,
 ): { verify_url: string; task_id: string } | null {
   const task = receipt.task_id || (receipt as { receipt_id?: string | null }).receipt_id || null;
   if (!task || !RECEIPT_ID_RE.test(String(task))) return null;
@@ -387,7 +393,7 @@ function shellLogReceipt(
   }
   if (!host) host = 'https://api.chit402.com';
   const verifyUrl = `${host}/receipt/${encodeURIComponent(String(task))}`;
-  if (!historyHostAllowed(verifyUrl)) return null;
+  if (!historyHostAllowed(verifyUrl, { loopback: !publicInput })) return null;
   return { verify_url: verifyUrl, task_id: String(task) };
 }
 
@@ -488,6 +494,14 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // The bundled snapshot is a server file. Failing to read it does not
+    // mean the pasted receipt is invalid.
+    if (publicInput) {
+      return linesOutcome(buildVerifyVerdict({
+        version: packageVersion(),
+        absentReason: 'issuer_history_unavailable',
+      }));
+    }
     return {
       verdict: stderrVerdict('unreadable'),
       lines: [],
@@ -527,7 +541,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     let anchorState: CheckState | 'unclaimed' = 'unclaimed';
     let logReason: string | null = 'signed_receipt_unavailable';
     if (shellInclusionAbsent(receipt)) {
-      const logReceipt = shellLogReceipt(receipt, receiptOrigin);
+      const logReceipt = shellLogReceipt(receipt, receiptOrigin, publicInput);
       if (logReceipt && await publicShellAbsence(logReceipt, resolved.document)) {
         logInclusion = 'fail';
         anchorState = 'pass';
@@ -567,7 +581,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   let logReason: string | null = null;
   let log: VerifyVerdict['log'] = null;
   const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
-  const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url);
+  const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url, { loopback: !publicInput });
   if (signatureOk && result.issuer_history.ok && logHostOk) {
     const fresh = await freshPublicLog(receipt, resolved.document);
     logInclusion = fresh.logInclusion;

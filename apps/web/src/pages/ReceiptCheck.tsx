@@ -74,7 +74,15 @@ export default function ReceiptCheck() {
           </button>
         </form>
 
-        {view && (
+        {view && view.kind === 'input-error' && (
+          <section className="receipt-check-card receipt-check-card-input" aria-live="polite">
+            <p className="receipt-check-input-title">{view.lines[0]}</p>
+            {view.lines.slice(1).map((line, index) => (
+              <p key={`${index}:${line}`} className="receipt-check-line">{line}</p>
+            ))}
+          </section>
+        )}
+        {view && view.kind !== 'input-error' && (
           <section className="receipt-check-card" aria-live="polite">
             <p className={`receipt-check-overall receipt-check-overall-${view.overall.toLowerCase()}`}>
               {view.overall}

@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import express from 'express';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -190,6 +190,61 @@ test('anonymous counts do not keep the pasted input', async () => {
   }
   const fields = receiptCheckLogFields({ overall: 'INVALID', status: 200, input: MARKER, body: BAD_RECEIPT });
   assert.deepEqual(fields, { overall: 'INVALID', status: 200 });
+});
+
+test('a server-side issuer-history read error is COULD_NOT_CHECK', async () => {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  mountReceiptCheck(app, {
+    check: async () => ({
+      verdict: buildVerifyVerdict({
+        version: '0.4.1',
+        errors: ['unreadable'],
+        signatureChecked: true,
+        signatureValid: false,
+      }),
+      lines: [],
+      report: 'stderr',
+      message: 'Error reading issuer history: ENOENT: snapshot',
+      reason: 'unreadable',
+    }),
+  });
+  const { server: local, base: origin } = await listen(app);
+  try {
+    const { res, body } = await postCheck(BAD_RECEIPT, origin);
+    assert.equal(res.status, 200);
+    assert.equal(body.overall, 'COULD_NOT_CHECK');
+    assert.equal(body.verdict.result, 'could_not_check');
+    assert.equal(body.verdict.exit_code, 2);
+    assert.equal(body.verdict.reason, 'issuer_history_unavailable');
+    assert.equal(body.lines[0], 'COULD_NOT_CHECK');
+    assert.match(body.lines.join('\n'), /Issuer history could not be read\./);
+    assert.match(body.lines.join('\n'), /The receipt could not be checked\./);
+    assert.equal(/invalid/i.test(JSON.stringify({ overall: body.overall, lines: body.lines, message: body.verdict.message })), false);
+    assert.equal(JSON.stringify(body).includes('ENOENT'), false);
+    assert.equal(JSON.stringify(body).includes(MARKER), false);
+  } finally {
+    await new Promise((resolve) => local.close(resolve));
+  }
+});
+
+test('the live check returns COULD_NOT_CHECK when the issuer-history snapshot cannot be read', async () => {
+  const snapshot = fileURLToPath(new URL('../../../packages/verify/issuer-history.snapshot.json', import.meta.url));
+  const aside = `${snapshot}.aside-check`;
+  renameSync(snapshot, aside);
+  try {
+    const { res, body } = await postCheck(BAD_RECEIPT);
+    assert.equal(res.status, 200);
+    assert.equal(body.overall, 'COULD_NOT_CHECK');
+    assert.equal(body.verdict.result, 'could_not_check');
+    assert.equal(body.verdict.exit_code, 2);
+    assert.equal(body.verdict.reason, 'issuer_history_unavailable');
+    assert.match(body.lines.join('\n'), /Issuer history could not be read\./);
+    assert.equal(/invalid/i.test(body.lines.join('\n')), false);
+    assert.equal(JSON.stringify(body).includes('issuer-history.snapshot'), false);
+  } finally {
+    renameSync(aside, snapshot);
+  }
 });
 
 test('GET is not a paid door', async () => {

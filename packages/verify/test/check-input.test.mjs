@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -75,6 +75,26 @@ test('a disallowed receipt URL is not fetched', async () => {
     assert.match(outcome.lines.join('\n'), /The receipt could not be fetched\./);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('a public issuer-history read error is COULD_NOT_CHECK', async () => {
+  const snapshot = fileURLToPath(new URL('../issuer-history.snapshot.json', import.meta.url));
+  const aside = `${snapshot}.aside-check`;
+  renameSync(snapshot, aside);
+  try {
+    const outcome = await checkReceiptInput(PASTE, { publicInput: true });
+    assert.equal(outcome.report, 'lines');
+    assert.equal(outcome.verdict.result, 'could_not_check');
+    assert.equal(outcome.verdict.exit_code, 2);
+    assert.equal(outcome.verdict.reason, 'issuer_history_unavailable');
+    assert.equal(outcome.lines[0], 'COULD_NOT_CHECK');
+    assert.match(outcome.lines.join('\n'), /Issuer history could not be read\./);
+    assert.match(outcome.lines.join('\n'), /The receipt could not be checked\./);
+    assert.equal(/invalid/i.test(outcome.lines.join('\n')), false);
+    assert.equal(JSON.stringify(outcome).includes(aside), false);
+  } finally {
+    renameSync(aside, snapshot);
   }
 });
 

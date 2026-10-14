@@ -8,7 +8,7 @@
  */
 
 import logger from './logger.js';
-import { overallLine } from '../../../packages/verify/dist/verdict.js';
+import { buildVerifyVerdict, humanVerdictLines, overallLine } from '../../../packages/verify/dist/verdict.js';
 import {
   checkReceiptInput,
   classifyReceiptInput,
@@ -21,12 +21,27 @@ export const RECEIPT_CHECK_MAX_HITS = 30;
 
 const ENVELOPE_BYTES = 64;
 
-export function createReceiptCheckLimiter(windowMs, maxHits) {
+const LIMITER_MAX_KEYS = 50_000;
+
+export function createReceiptCheckLimiter(windowMs, maxHits, maxKeys = LIMITER_MAX_KEYS) {
   const buckets = new Map();
+  let lastSweep = 0;
+  function sweep(now) {
+    if (now - lastSweep < windowMs && buckets.size < maxKeys) return;
+    lastSweep = now;
+    const cutoff = now - windowMs;
+    for (const [k, hits] of buckets) {
+      if (!hits.length || hits[hits.length - 1] <= cutoff) buckets.delete(k);
+    }
+  }
   return {
+    get size() { return buckets.size; },
     windowMs,
     maxHits,
     allow(key, now = Date.now()) {
+      sweep(now);
+      // Still full after a sweep: fail closed for new keys rather than grow.
+      if (!buckets.has(key) && buckets.size >= maxKeys) return false;
       const cutoff = now - windowMs;
       const hits = (buckets.get(key) || []).filter((stamp) => stamp > cutoff);
       if (hits.length >= maxHits) {
@@ -151,7 +166,16 @@ export function mountReceiptCheck(app, options = {}) {
       let overall;
       let lines;
       let verdict = outcome.verdict;
-      if (outcome.report === 'stderr') {
+      const historyReadError = outcome.report === 'stderr'
+        && /^Error reading issuer history\b/.test(String(outcome.message || ''));
+      if (historyReadError) {
+        verdict = buildVerifyVerdict({
+          version: outcome.verdict?.verifier?.version || '0.4.1',
+          absentReason: 'issuer_history_unavailable',
+        });
+        overall = 'COULD_NOT_CHECK';
+        lines = humanVerdictLines(verdict);
+      } else if (outcome.report === 'stderr') {
         overall = 'INVALID';
         lines = ['INVALID', outcome.message || 'The receipt does not match what the issuer signed.'];
         verdict = {
