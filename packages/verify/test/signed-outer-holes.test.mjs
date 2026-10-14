@@ -112,29 +112,31 @@ function listen(server) {
   });
 }
 
-test('the CLI reports NOT_IN_LOG from a local inclusion 404 and exit 2 for a 200 that does not verify', async () => {
-  let mode = 'missing';
+test('NOT_IN_LOG needs a verified head, and a bad fetched proof exits 1', async () => {
+  const signedHead = JSON.parse(readFileSync(path.join(pkgDir, 'test', 'fixtures', 'pardal-head-honest.json'), 'utf8'));
+  let mode = 'unsigned-404';
   const server = http.createServer((req, res) => {
     const url = req.url || '';
     if (url.includes('/inclusion')) {
-      if (mode === 'missing') {
-        res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'not_in_tree' }));
+      if (mode === 'bad') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'anchored',
+          leaf_index: 0,
+          tree_size: 1,
+          root: 'ab'.repeat(32),
+          proof: [],
+          head_url: '/v1/receipts/tree/head?tree_size=1',
+        }));
         return;
       }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        status: 'anchored',
-        leaf_index: 0,
-        tree_size: 1,
-        root: 'ab'.repeat(32),
-        proof: [],
-        head_url: '/v1/receipts/tree/head?tree_size=1',
-      }));
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_in_tree' }));
       return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ schema: 'chit402.tree_head.v2', tree_size: 1, root: 'cd'.repeat(32) }));
+    if (mode === 'signed-head') res.end(JSON.stringify(signedHead));
+    else res.end(JSON.stringify({ schema: 'chit402.tree_head.v2', tree_size: 1, root: 'cd'.repeat(32) }));
   });
   const port = await listen(server);
   try {
@@ -144,6 +146,16 @@ test('the CLI reports NOT_IN_LOG from a local inclusion 404 and exit 2 for a 200
     missing.verify_url = `http://127.0.0.1:${port}/receipt/${house.task_id}`;
     const missingPath = path.join(dir, 'missing.json');
     writeFileSync(missingPath, JSON.stringify(missing));
+    const unsigned = await runCliAsync([missingPath, '--json']);
+    assert.equal(unsigned.status, 2, unsigned.stderr + unsigned.stdout);
+    const unsignedBody = JSON.parse(unsigned.stdout);
+    assert.equal(unsignedBody.result, 'could_not_check');
+    assert.notEqual(unsignedBody.reason, 'not_in_log');
+    const unsignedText = await runCliAsync([missingPath]);
+    assert.equal(unsignedText.status, 2, unsignedText.stderr + unsignedText.stdout);
+    assert.match(unsignedText.stdout, /NOT found invalid/);
+
+    mode = 'signed-head';
     const run = await runCliAsync([missingPath, '--json']);
     assert.equal(run.status, 1, run.stderr + run.stdout);
     const parsed = JSON.parse(run.stdout);
@@ -165,13 +177,13 @@ test('the CLI reports NOT_IN_LOG from a local inclusion 404 and exit 2 for a 200
     const badPath = path.join(dir, 'bad-proof.json');
     writeFileSync(badPath, JSON.stringify(bad));
     const failed = await runCliAsync([badPath, '--json']);
-    assert.equal(failed.status, 2, failed.stderr + failed.stdout);
+    assert.equal(failed.status, 1, failed.stderr + failed.stdout);
     const body = JSON.parse(failed.stdout);
-    assert.equal(body.result, 'could_not_check');
-    assert.equal(body.reason, 'log_unreachable');
+    assert.equal(body.result, 'invalid');
+    assert.notEqual(body.reason, 'log_unreachable');
     const human = await runCliAsync([badPath]);
-    assert.equal(human.status, 2, human.stderr);
-    assert.match(human.stdout, /NOT found invalid/);
+    assert.equal(human.status, 1, human.stderr);
+    assert.doesNotMatch(human.stdout, /NOT found invalid/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

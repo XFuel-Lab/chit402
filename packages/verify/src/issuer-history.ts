@@ -552,8 +552,8 @@ function rawPinReason(
  * The snapshot shipped in this package. A live body is accepted only when
  * it prefix-extends this chain. Used alone, the verifier reports this date.
  */
-/** Seal month of the bundled v2 snapshot (the 2026-10 grandfathered rewrite). */
-export const BUNDLED_HISTORY_AS_OF = '2026-10';
+/** Day the bundled v2 snapshot was sealed into this package. */
+export const BUNDLED_HISTORY_AS_OF = '2026-10-14';
 
 /**
  * The one recorded rewrite. v1 genesis (custody field) may be followed by v2

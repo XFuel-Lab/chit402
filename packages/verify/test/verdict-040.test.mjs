@@ -4,8 +4,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,13 +22,25 @@ const {
   verifyIssuerHistoryDocument,
   issuerHistoryEntryHash,
 } = await import('../dist/issuer-history.js');
-const { buildVerifyVerdict } = await import('../dist/verdict.js');
+const { buildVerifyVerdict, VERDICT_DOC_ANCHORS } = await import('../dist/verdict.js');
 
 const PRODUCTION_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
 function runCli(args) {
   const proc = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 8000 });
   return { ...proc, text: `${proc.stdout || ''}\n${proc.stderr || ''}` };
+}
+
+function runCliAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [cli, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout, stderr, text: `${stdout}\n${stderr}` }));
+  });
 }
 
 function issuerKey() {
@@ -119,7 +132,7 @@ test('the shipped snapshot is signed and chain-checked', () => {
   const loaded = loadBundledIssuerHistory();
   const onDisk = JSON.parse(readFileSync(snapshotPath, 'utf8'));
   assert.equal(loaded.document.head_hash, onDisk.head_hash);
-  assert.equal(BUNDLED_HISTORY_AS_OF, '2026-10');
+  assert.equal(BUNDLED_HISTORY_AS_OF, '2026-10-14');
   assert.equal(loaded.document.version, 2);
   assert.equal(loaded.document.head_hash, '349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e');
   const signed = verifyIssuerHistoryDocument(loaded.document, { trustedKids: [PRODUCTION_KID] });
@@ -160,7 +173,7 @@ test('a live body must prefix-extend the bundled snapshot', async () => {
     fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify(moved) }),
   });
   assert.equal(fellBack.source, 'bundled');
-  assert.equal(fellBack.asOf, '2026-10');
+  assert.equal(fellBack.asOf, '2026-10-14');
   assert.equal(fellBack.headHash, bundled.document.head_hash);
 
   const offline = await resolveIssuerHistory({
@@ -169,7 +182,7 @@ test('a live body must prefix-extend the bundled snapshot', async () => {
     fetchImpl: async () => { throw new Error('no network'); },
   });
   assert.equal(offline.source, 'bundled');
-  assert.equal(offline.asOf, '2026-10');
+  assert.equal(offline.asOf, '2026-10-14');
 });
 
 test('a supplied history file that does not verify is invalid', async () => {
@@ -237,7 +250,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   assert.equal(body.verifier.name, 'chit402-verify');
   assert.equal(body.verifier.version, '0.4.0');
   assert.equal(body.history.source, 'bundled');
-  assert.equal(body.history.as_of, '2026-10');
+  assert.equal(body.history.as_of, '2026-10-14');
   assert.doesNotMatch(run.stdout, /verified_no_key_window/);
   assert.doesNotMatch(run.stdout, /VERIFIED_CARRIED_FORWARD/);
 
@@ -246,7 +259,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   assert.match(text.stdout, /^COULD_NOT_CHECK\n/);
   assert.match(text.stdout, /NOT found invalid/);
   assert.match(text.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#log_unreachable/);
-  assert.match(text.stdout, /Issuer history: as of 2026-10/);
+  assert.match(text.stdout, /Issuer history: as of 2026-10-14/);
   assert.doesNotMatch(text.stdout, /INCLUDED_SHELL/);
 
   const v1 = readFileSync(new URL('./fixtures/issuer-history-v1-bundle.json', import.meta.url), 'utf8');
@@ -367,4 +380,131 @@ test('chit- uuid on v10 and intent on a legacy payload are invalid', async () =>
   const later = await verifyReceipt(v12, { trustedKids: [key.kid], skipIssuerHistory: true });
   assert.equal(later.errors.includes('id_prefix_version_mismatch'), true, later.errors.join('; '));
   assert.equal(later.errors.includes('unsupported_version'), false);
+});
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+  });
+}
+
+test('--issuer-history-file is not accepted', () => {
+  const run = runCli(['--issuer-history-file', 'history.json']);
+  assert.equal(run.status, 1, run.text);
+  assert.match(run.stderr, /removed in 0\.4: --issuer-history-file/);
+});
+
+test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit 2', async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(`${req.url} ${req.headers.accept || ''}`);
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const wantsJson = url.searchParams.get('format') === 'json' || String(req.headers.accept || '').includes('application/json');
+    if (!wantsJson) {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html><p>receipt</p></html>');
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      schema: 'chit402.receipt_shell.v1',
+      unsigned: true,
+      task_id: 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944',
+      receipt_id: 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944',
+      inclusion: { leaf_hash: 'ab'.repeat(32), proof: [], signed_head: { root: 'cd'.repeat(32), signature: 'sig' } },
+    }));
+  });
+  const port = await listen(server);
+  try {
+    const bare = `http://127.0.0.1:${port}/receipt/xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944`;
+    const run = await runCliAsync([bare, '--json']);
+    assert.equal(run.status, 2, run.text);
+    const body = JSON.parse(run.stdout);
+    assert.equal(body.reason, 'signed_receipt_unavailable');
+    assert.equal(body.result, 'could_not_check');
+    assert.match(body.next_step, /owner view/);
+    assert.doesNotMatch(body.next_step || '', /issuer-history/);
+    assert.match(seen.join('\n'), /format=json/);
+    assert.match(seen.join('\n'), /application\/json/);
+
+    const htmlOnly = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<html>no</html>');
+    });
+    const htmlPort = await listen(htmlOnly);
+    try {
+      const html = await runCliAsync([`http://127.0.0.1:${htmlPort}/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96`]);
+      assert.equal(html.status, 2, html.text);
+      assert.match(html.stdout, /^COULD_NOT_CHECK\n/);
+      assert.match(html.stdout, /NOT found invalid/);
+      assert.doesNotMatch(html.text, /Unexpected token/);
+    } finally {
+      await new Promise((resolve) => htmlOnly.close(resolve));
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+
+  const down = runCli(['http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96', '--json']);
+  assert.equal(down.status, 2, down.text);
+  const missed = JSON.parse(down.stdout);
+  assert.equal(missed.result, 'could_not_check');
+  assert.equal(missed.exit_code, 2);
+  assert.match(missed.message, /NOT found invalid/);
+  const human = runCli(['http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96']);
+  assert.equal(human.status, 2, human.text);
+  assert.match(human.stdout, /NOT found invalid/);
+});
+
+test('a null-inclusion shell is NOT_IN_LOG only beside a verified head', async () => {
+  const signedHead = JSON.parse(readFileSync(new URL('./fixtures/pardal-head-honest.json', import.meta.url), 'utf8'));
+  const task = 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+  let signed = false;
+  const server = http.createServer((req, res) => {
+    const url = req.url || '';
+    if (url.includes('/inclusion')) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not_in_tree' }));
+      return;
+    }
+    if (url.includes('/tree/head')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(signed ? signedHead : { schema: 'chit402.tree_head.v2', tree_size: 1, root: 'ab'.repeat(32) }));
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      schema: 'chit402.receipt_shell.v1',
+      unsigned: true,
+      task_id: task,
+      receipt_id: task,
+      inclusion: { leaf_hash: null, proof: null, signed_head: null },
+    }));
+  });
+  const port = await listen(server);
+  try {
+    const target = `http://127.0.0.1:${port}/receipt/${task}`;
+    const alone = await runCliAsync([target, '--json']);
+    assert.equal(alone.status, 2, alone.text);
+    const shell = JSON.parse(alone.stdout);
+    assert.equal(shell.reason, 'signed_receipt_unavailable');
+    assert.notEqual(shell.reason, 'kid_not_in_history');
+
+    signed = true;
+    const logged = await runCliAsync([target, '--json']);
+    assert.equal(logged.status, 1, logged.text);
+    const body = JSON.parse(logged.stdout);
+    assert.equal(body.reason, 'not_in_log');
+    assert.equal(body.result, 'invalid');
+    assert.match(logged.stdout, /payment row in the book is unchanged/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('docs/verify publishes an anchor for every verdict reason', () => {
+  const page = readFileSync(new URL('../../../apps/web/src/pages/VerifyDocs.tsx', import.meta.url), 'utf8');
+  for (const id of VERDICT_DOC_ANCHORS) {
+    assert.ok(page.includes(`id: '${id}'`) || page.includes(`id: "${id}"`), id);
+  }
 });

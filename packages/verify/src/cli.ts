@@ -67,7 +67,7 @@ import {
   formatSupportedReceiptVersions,
 } from './receipt-version.js';
 import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
-import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER } from './anchor-trust.js';
+import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER, verifyTreeHeadTrust } from './anchor-trust.js';
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
 
 const HELP = `
@@ -234,7 +234,7 @@ function parseArgs(args: string[]): {
       result.carryInclusionFiles.push(args[++i]);
     } else if (arg === '--solana-rpc' && args[i + 1]) {
       result.solanaRpcUrl = args[++i];
-    } else if ((arg === '--issuer-history' || arg === '--issuer-history-file') && args[i + 1]) {
+    } else if (arg === '--issuer-history' && args[i + 1]) {
       result.issuerHistoryFile = args[++i];
     } else if (arg === '--salt' && args[i + 1]) {
       result.salt = args[++i];
@@ -595,29 +595,115 @@ function inclusionHeadUrl(
   return `${origin}/v1/receipts/tree/head?tree_size=${encodeURIComponent(String(size))}`;
 }
 
-async function freshPublicLog(receipt: { verify_url?: string; task_id?: string | null }): Promise<{
+type FreshLog = {
   logInclusion: CheckState;
   anchor: CheckState;
   logReason: string | null;
   log: VerifyVerdict['log'];
-}> {
-  const missed = {
-    logInclusion: 'could_not_check' as const,
-    anchor: 'could_not_check' as const,
-    logReason: 'log_unreachable' as string | null,
-    log: null as VerifyVerdict['log'],
+};
+
+function missedLog(reason = 'log_unreachable'): FreshLog {
+  return {
+    logInclusion: 'could_not_check',
+    anchor: 'could_not_check',
+    logReason: reason,
+    log: null,
   };
+}
+
+/**
+ * A 404 `{ error: "not_in_tree" }` is unsigned. NOT_IN_LOG also needs the
+ * log's signed head, and that signature has to verify. A head with no
+ * signature leaves the check unfinished.
+ */
+async function absenceAgainstSignedHead(
+  origin: string,
+  history: IssuerHistoryDocument | null,
+): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
+  try {
+    const res = await fetch(`${origin}/v1/receipts/tree/head`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(LOG_FETCH_MS),
+    });
+    if (!res.ok) return { kind: 'unchecked' };
+    const head = await res.json() as AnchorHead;
+    const trust = verifyTreeHeadTrust(head, {
+      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+      issuerHistory: history,
+    });
+    if (trust.ok) return { kind: 'not_in_log' };
+    if (!trust.reason || trust.reason === 'head_signature_missing') return { kind: 'unchecked' };
+    return { kind: 'bad_head', reason: trust.reason };
+  } catch {
+    return { kind: 'unchecked' };
+  }
+}
+
+function hardLogReason(result: AnchorWitnessResult): string | null {
+  if (result.head_signature?.checked && result.head_signature.valid === false && result.head_signature.reason) {
+    return result.head_signature.reason;
+  }
+  const inclusionReason = result.inclusion?.reason;
+  if (
+    result.inclusion
+    && result.inclusion.valid === false
+    && inclusionReason
+    && inclusionReason !== 'pending_anchor'
+    && inclusionReason !== 'not_in_tree'
+  ) {
+    return inclusionReason;
+  }
+  const mismatch = (result.errors || []).find((err) => (
+    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf/.test(err)
+  ));
+  return mismatch ? mismatch.replace(/^(solana|base):/, '') : null;
+}
+
+/** Shell absence check. A 200 proof is not verified here: there is no signed receipt. */
+async function publicShellAbsence(
+  receipt: { verify_url?: string; task_id?: string | null },
+  history: IssuerHistoryDocument | null,
+): Promise<boolean> {
+  try {
+    const origin = new URL(String(receipt.verify_url)).origin;
+    const task = receipt.task_id;
+    if (!task) return false;
+    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(LOG_FETCH_MS),
+    });
+    if (res.status !== 404) return false;
+    const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
+    if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return false;
+    const absence = await absenceAgainstSignedHead(origin, history);
+    return absence.kind === 'not_in_log';
+  } catch {
+    return false;
+  }
+}
+
+async function freshPublicLog(
+  receipt: { verify_url?: string; task_id?: string | null },
+  history: IssuerHistoryDocument | null = null,
+): Promise<FreshLog> {
+  const missed = missedLog();
   try {
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return missed;
     const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+      headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
     if (res.status === 404) {
       const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
-      if (body.error === 'not_in_tree' || body.reason === 'not_in_tree') {
+      if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return missed;
+      const absence = await absenceAgainstSignedHead(origin, history);
+      if (absence.kind === 'not_in_log') {
         return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
+      }
+      if (absence.kind === 'bad_head') {
+        return { logInclusion: 'fail', anchor: 'fail', logReason: absence.reason, log: null };
       }
       return missed;
     }
@@ -628,7 +714,10 @@ async function freshPublicLog(receipt: { verify_url?: string; task_id?: string |
     };
     const headUrl = inclusionHeadUrl(origin, inclusion);
     if (!headUrl) return missed;
-    const headRes = await fetch(headUrl, { signal: AbortSignal.timeout(LOG_FETCH_MS) });
+    const headRes = await fetch(headUrl, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(LOG_FETCH_MS),
+    });
     if (!headRes.ok) return missed;
     const head = await headRes.json() as AnchorHead;
     const result = await verifyAnchoredRoot({
@@ -638,6 +727,8 @@ async function freshPublicLog(receipt: { verify_url?: string; task_id?: string |
       baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
       solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
       checkNewestAnchor: false,
+      issuerHistory: history,
+      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
     });
     if (result.overall === 'verified') {
       return {
@@ -657,6 +748,18 @@ async function freshPublicLog(receipt: { verify_url?: string; task_id?: string |
     }
     if (result.overall === 'not_in_log') {
       return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
+    }
+    if (result.overall === 'pending') return missedLog('pending_anchor');
+    const hard = hardLogReason(result);
+    if (result.overall === 'failed' && hard) {
+      const anchorFail = /head_|anchor|mismatch/.test(hard);
+      const inclusionFail = result.inclusion?.valid === false || /inclusion|leaf|root|no_leaf|bad_root/.test(hard);
+      return {
+        logInclusion: inclusionFail ? 'fail' : 'could_not_check',
+        anchor: anchorFail || !inclusionFail ? 'fail' : 'pass',
+        logReason: hard,
+        log: null,
+      };
     }
     return missed;
   } catch {
@@ -1503,7 +1606,7 @@ async function legacyMain(): Promise<number> {
       anchorState = 'pass';
     }
   } else if (!carried && typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url)) {
-    const fresh = await freshPublicLog(receipt);
+    const fresh = await freshPublicLog(receipt, resolved.document);
     logInclusion = fresh.logInclusion;
     anchorState = fresh.anchor;
     logReason = fresh.logReason;
@@ -1698,7 +1801,7 @@ function removedFlagMessage(argv: string[]): string | null {
     if (arg === '--') break;
     if (!arg.startsWith('-') || arg === '-') continue;
     if (REMOVED_040[arg]) return REMOVED_040[arg];
-    if (arg === '--issuer-history' || arg === '--issuer-history-file') {
+    if (arg === '--issuer-history') {
       const value = argv[i + 1];
       if (!value || value.startsWith('-')) return 'removed in 0.4: --issuer-history needs a file';
       i += 1;
@@ -1730,7 +1833,7 @@ function parseLocked(argv: string[]): {
     if (arg === '--json') parsed.json = true;
     else if (arg === '--help' || arg === '-h') parsed.help = true;
     else if (arg === '--version' || arg === '-V') parsed.version = true;
-    else if ((arg === '--issuer-history' || arg === '--issuer-history-file') && argv[i + 1]) {
+    else if (arg === '--issuer-history' && argv[i + 1]) {
       parsed.issuerHistoryFile = argv[++i];
     } else if (!arg.startsWith('-') || arg === '-') {
       parsed.positionals.push(arg);
@@ -1774,35 +1877,97 @@ function lockedError(json: boolean, status: 1 | 2, message: string, reason: stri
   return status;
 }
 
-async function loadReceiptTarget(target: string): Promise<XFuelReceipt> {
-  if (target === '-') {
-    return JSON.parse(readFileSync(0, 'utf8')) as XFuelReceipt;
-  }
-  let url: string | null = null;
-  if (/^https?:\/\//i.test(target)) url = target;
-  else if (RECEIPT_ID_RE.test(target)) url = `https://api.chit402.com/receipt/${target}?format=json`;
-  if (url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(LOG_FETCH_MS) });
-    if (!res.ok) {
-      const err = new Error(`fetch ${res.status}`);
-      (err as { code?: string }).code = 'FETCH';
-      throw err;
-    }
-    return await res.json() as XFuelReceipt;
-  }
-  return JSON.parse(readFileSync(target, 'utf8')) as XFuelReceipt;
+function receiptJsonUrl(raw: string): string {
+  const url = new URL(raw);
+  if (!url.pathname.endsWith('.json')) url.searchParams.set('format', 'json');
+  return url.toString();
 }
 
-function inputFailure(err: unknown, target: string): { status: 1 | 2; message: string } {
+type LoadedReceipt = {
+  receipt: XFuelReceipt;
+  /** Origin of a remote id or URL. Null for a file or stdin. */
+  origin: string | null;
+};
+
+async function loadReceiptTarget(target: string): Promise<LoadedReceipt> {
+  if (target === '-') {
+    return { receipt: JSON.parse(readFileSync(0, 'utf8')) as XFuelReceipt, origin: null };
+  }
+  let url: string | null = null;
+  if (/^https?:\/\//i.test(target)) url = receiptJsonUrl(target);
+  else if (RECEIPT_ID_RE.test(target)) url = `https://api.chit402.com/receipt/${target}?format=json`;
+  if (url) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(LOG_FETCH_MS),
+      });
+    } catch (err) {
+      const wrapped = new Error(err instanceof Error ? err.message : String(err));
+      (wrapped as { code?: string }).code = 'REMOTE';
+      throw wrapped;
+    }
+    if (!res.ok) {
+      const err = new Error(`fetch ${res.status}`);
+      (err as { code?: string }).code = 'REMOTE';
+      throw err;
+    }
+    const text = await res.text();
+    try {
+      return { receipt: JSON.parse(text) as XFuelReceipt, origin: new URL(url).origin };
+    } catch {
+      const err = new Error('receipt response was not JSON');
+      (err as { code?: string }).code = 'REMOTE';
+      throw err;
+    }
+  }
+  return { receipt: JSON.parse(readFileSync(target, 'utf8')) as XFuelReceipt, origin: null };
+}
+
+function inputFailure(err: unknown, target: string): { status: 1 | 2; message: string; reason: string } {
   const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
   const message = err instanceof Error ? err.message : String(err);
-  if (code === 'FETCH' || /fetch \d+/.test(message)) {
-    return { status: 2, message: 'The receipt log or anchor could not be fetched.' };
+  const remote = code === 'REMOTE' || code === 'FETCH' || /fetch failed|fetch \d+|timeout|aborted|network|ENOTFOUND|ECONNREFUSED|EAI_AGAIN/i.test(message);
+  if (remote) {
+    return { status: 2, message: 'The receipt could not be fetched.', reason: 'log_unreachable' };
   }
   if (code === 'ENOENT' || message.includes('ENOENT')) {
-    return { status: 1, message: `Error reading receipt: ${target}` };
+    return { status: 1, message: `Error reading receipt: ${target}`, reason: 'unreadable' };
   }
-  return { status: 1, message: `Error reading receipt: ${message}` };
+  return { status: 1, message: `Error reading receipt: ${message}`, reason: 'unreadable' };
+}
+
+function shellInclusionAbsent(receipt: XFuelReceipt): boolean {
+  const inclusion = (receipt as { inclusion?: unknown }).inclusion;
+  if (inclusion == null) return true;
+  if (typeof inclusion !== 'object') return false;
+  const row = inclusion as { error?: unknown; leaf_hash?: unknown; leaf?: unknown; proof?: unknown; signed_head?: unknown };
+  if (row.error === 'not_in_tree') return true;
+  const leaf = row.leaf_hash ?? row.leaf ?? null;
+  const head = row.signed_head;
+  const headAbsent = head == null || (
+    typeof head === 'object'
+    && (head as { root?: unknown }).root == null
+    && (head as { signature?: unknown }).signature == null
+  );
+  return leaf == null && row.proof == null && headAbsent;
+}
+
+function shellLogReceipt(
+  receipt: XFuelReceipt,
+  origin: string | null,
+): { verify_url: string; task_id: string } | null {
+  const task = receipt.task_id || (receipt as { receipt_id?: string | null }).receipt_id || null;
+  if (!task || !RECEIPT_ID_RE.test(String(task))) return null;
+  let host = origin;
+  if (!host && typeof receipt.verify_url === 'string') {
+    try { host = new URL(receipt.verify_url).origin; } catch { host = null; }
+  }
+  if (!host) host = 'https://api.chit402.com';
+  const verifyUrl = `${host}/receipt/${encodeURIComponent(String(task))}`;
+  if (!historyHostAllowed(verifyUrl)) return null;
+  return { verify_url: verifyUrl, task_id: String(task) };
 }
 
 async function main(): Promise<number> {
@@ -1830,12 +1995,28 @@ async function main(): Promise<number> {
   }
 
   let receipt: XFuelReceipt;
+  let receiptOrigin: string | null = null;
   try {
-    receipt = await loadReceiptTarget(args.positionals[0]);
+    const loaded = await loadReceiptTarget(args.positionals[0]);
+    receipt = loaded.receipt;
+    receiptOrigin = loaded.origin;
   } catch (err) {
     const failure = inputFailure(err, args.positionals[0]);
-    const reason = failure.status === 2 ? 'log_unreachable' : 'unreadable';
-    return lockedError(args.json, failure.status, failure.message, reason);
+    if (failure.status === 2) {
+      const verdict = buildVerifyVerdict({
+        version: packageVersion(),
+        signatureChecked: false,
+        logInclusion: 'could_not_check',
+        anchor: 'could_not_check',
+        logReason: failure.reason,
+      });
+      return printLocked({
+        ...verdict,
+        message: `${failure.message} It was NOT found invalid.`,
+        next_step: 'Fetch the receipt again, then re-run.',
+      }, args.json);
+    }
+    return lockedError(args.json, failure.status, failure.message, failure.reason);
   }
 
   const trustedKids = [...DEFAULT_TRUSTED_ISSUER_KIDS];
@@ -1888,6 +2069,18 @@ async function main(): Promise<number> {
 
   const unsigned = typeof receipt.issuer_signature?.jws !== 'string' || receipt.issuer_signature.jws.length === 0;
   if (unsigned || isReceiptShell(receipt)) {
+    let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
+    let anchorState: CheckState | 'unclaimed' = 'unclaimed';
+    let logReason: string | null = 'signed_receipt_unavailable';
+    if (shellInclusionAbsent(receipt)) {
+      const logReceipt = shellLogReceipt(receipt, receiptOrigin);
+      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document)) {
+        logInclusion = 'fail';
+        anchorState = 'pass';
+        logReason = 'not_in_log';
+      }
+    }
+    const notInLog = logReason === 'not_in_log';
     const verdict = buildVerifyVerdict({
       version: packageVersion(),
       receiptId: receipt.task_id || null,
@@ -1898,10 +2091,12 @@ async function main(): Promise<number> {
       historyCount: resolved.entryCount,
       historyAsOf: resolved.asOf,
       signatureChecked: false,
+      historyReason: notInLog ? null : 'signed_receipt_unavailable',
       historyMissing: false,
       errors: [],
-      logInclusion: 'unclaimed',
-      anchor: 'unclaimed',
+      logInclusion,
+      anchor: anchorState,
+      logReason: notInLog ? 'not_in_log' : null,
     });
     return printLocked(verdict, args.json);
   }
@@ -1920,7 +2115,7 @@ async function main(): Promise<number> {
   const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
   const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url);
   if (signatureOk && result.issuer_history.ok && logHostOk) {
-    const fresh = await freshPublicLog(receipt);
+    const fresh = await freshPublicLog(receipt, resolved.document);
     logInclusion = fresh.logInclusion;
     anchorState = fresh.anchor;
     logReason = fresh.logReason;

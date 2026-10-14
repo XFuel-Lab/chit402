@@ -92,6 +92,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: 'Pass --issuer-history with a snapshot that includes this kid.',
     };
   }
+  if (reason === 'signed_receipt_unavailable') {
+    return {
+      message: 'This document is the public shell. The signed receipt is on the owner view.',
+      next_step: 'Pass the signed receipt from the owner view.',
+    };
+  }
   if (reason === 'log_unreachable' || reason === 'anchor_unreachable') {
     return {
       message: 'The receipt log or anchor could not be fetched.',
@@ -322,3 +328,56 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
   if (verdict.next_step) lines.push(verdict.next_step);
   return lines;
 }
+
+/**
+ * Reason ids printed as `https://chit402.com/docs/verify#<reason>`.
+ * The public page must have one element id for each.
+ */
+export const VERDICT_DOC_ANCHORS = [
+  'not_in_log',
+  'signed_receipt_unavailable',
+  'unsupported_version',
+  'kid_not_in_history',
+  'log_unreachable',
+  'anchor_unreachable',
+  'pending_anchor',
+  'pending',
+  'kid_status_regression',
+  'kid_revoked_before_issuance',
+  'issued_before_not_before',
+  'issued_after_not_after',
+  'issued_at_missing',
+  'not_before_missing',
+  'not_after_invalid',
+  'revoked_at_missing',
+  'issuer_history_invalid',
+  'issuer_history_pin_mismatch',
+  'issuer_history_pin_missing',
+  'issuer_history_version_mismatch',
+  'issuer_history_seq_mismatch',
+  'issuer_history_not_extension',
+  'signature_invalid',
+  'key untrusted',
+  'key_window',
+  'version_mismatch',
+  'id_mismatch',
+  'id_prefix_version_mismatch',
+  'intent_on_legacy_version',
+  'payment_mismatch',
+  'log_inclusion',
+  'anchor',
+  'invalid',
+  'signature_unchecked',
+  'could_not_check',
+  'prev_hash_mismatch',
+  'entry_hash_mismatch',
+  'head_hash_mismatch',
+  'introduced_key_signature',
+  'inherited_key_window',
+  'head_signature_missing',
+  'head_signature_invalid',
+  'head_claims_mismatch',
+  'head_key_untrusted',
+  'inclusion_failed',
+  'root_mismatch',
+] as const;

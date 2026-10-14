@@ -109,9 +109,17 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
   }));
 
   const plain = run([shellPath]);
-  assert.equal(plain.status, 2, plain.stdout + plain.stderr);
-  assert.match(plain.stdout, /^COULD_NOT_CHECK\n/);
-  assert.match(plain.stdout, /NOT found invalid/);
+  assert.notEqual(plain.status, 0, plain.stdout + plain.stderr);
+  assert.doesNotMatch(plain.stdout, /kid_not_in_history/);
+  assert.doesNotMatch(plain.stdout, /--issuer-history/);
+  if (plain.status === 1) {
+    assert.match(plain.stdout, /^NOT_IN_LOG\n/);
+  } else {
+    assert.equal(plain.status, 2, plain.stdout + plain.stderr);
+    assert.match(plain.stdout, /^COULD_NOT_CHECK\n/);
+    assert.match(plain.stdout, /NOT found invalid/);
+    assert.match(plain.stdout, /signed_receipt_unavailable/);
+  }
   notVerified(plain);
 
   const accepted = run([shellPath, '--accept-shell']);

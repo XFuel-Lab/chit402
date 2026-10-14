@@ -34,7 +34,7 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 
 ```bash
 # History is always checked. With no file, a live snapshot must prefix-extend
-# the copy shipped in this package, or that copy is used (as of 2026-10).
+# the copy shipped in this package, or that copy is used (as of 2026-10-14).
 npx xfuel-verify receipt.json
 
 # Offline history. --no-issuer-history, --strict, --accept-no-key-window,
@@ -106,9 +106,9 @@ npx xfuel-verify receipt.json --issuer-history issuer-history.json
 curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
 curl -fsS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
 if curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json; then
-  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 else
-  npx xfuel-verify receipt.json --issuer-history-file issuer-history.json
+  npx xfuel-verify receipt.json --issuer-history issuer-history.json
 fi
 
 # Trust the published JWKS instead of (or in addition to) the pin

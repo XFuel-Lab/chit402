@@ -215,7 +215,7 @@ function assertPaths(receipt, reason, { history = false, ownerJws = true } = {})
       receipt_id: 'shell-1',
       payload_version: 8,
     });
-    const historyArgs = history ? ['--issuer-history-file', historyPath] : [];
+    const historyArgs = history ? ['--issuer-history', historyPath] : [];
     assertCli([receiptPath, ...historyArgs], reason);
     assertCli([receiptPath, '--json', ...historyArgs], reason);
     // Trust and anchor flags are not a way around the version gate.
@@ -591,7 +591,7 @@ test('T-FLAGS no flag reaches RPC or turns an unknown version into a pass', asyn
     });
     assertCli([receiptPath], 'unsupported_version');
     assertCli([receiptPath, '--json'], 'unsupported_version');
-    assertCli([receiptPath, '--issuer-history-file', historyPath], 'unsupported_version');
+    assertCli([receiptPath, '--issuer-history', historyPath], 'unsupported_version');
     const sets = [
       ['--check-payer', '--rpc', 'http://127.0.0.1:9'],
       ['--no-issuer-history'],

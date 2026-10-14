@@ -54,7 +54,7 @@ curl -sS -D - "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.
 # X-Chit-Hash-Alg: sha256
 # sha256(preimage.json) matches payload_hash in the receipt JWS
 curl -sS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 ```
 
 Use the `version` from the receipt's signed `issuer_history`, not always `1`. A receipt issued before payload version 10 has no stored canonical object: `/preimage` is 404, and `xfuel-verify` still checks the signature. A pinned receipt fails closed when that snapshot cannot be fetched. An unpinned receipt warns unless `--strict-issuer-history` is set. This works once the gateway serving `api.chit402.com` is running this build.
