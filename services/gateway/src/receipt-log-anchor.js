@@ -338,8 +338,9 @@ function chainIdIsBaseMainnet(chainId) {
 
 /**
  * Refuse unless BASE_RPC_URL is Base mainnet. No URL and no injected
- * request means there is no RPC to send to. A wrong or failed eth_chainId
- * throws anchor_chain_mismatch before any signed bytes are broadcast.
+ * request means there is no RPC to send to. A wrong chain id throws
+ * anchor_chain_mismatch. A timeout or transport failure throws
+ * anchor_rpc_unavailable. Either refusal happens before signed bytes go out.
  */
 export async function assertBaseChainId({ rpcUrl, request, timeoutMs = BASE_RPC_TIMEOUT_MS } = {}) {
   const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
@@ -353,7 +354,9 @@ export async function assertBaseChainId({ rpcUrl, request, timeoutMs = BASE_RPC_
       budget,
     );
   } catch (err) {
-    throw new ReceiptLogRefused('anchor_chain_mismatch', `eth_chainId failed: ${err.message}`);
+    // No answer is not a wrong answer. A timeout or transport failure is
+    // anchor_rpc_unavailable; only a returned non-Base chain id is a mismatch.
+    throw new ReceiptLogRefused('anchor_rpc_unavailable', `eth_chainId failed: ${err.message}`);
   }
   if (!chainIdIsBaseMainnet(chainId)) {
     throw new ReceiptLogRefused(

@@ -2327,7 +2327,7 @@ export class ReceiptMerkleTree {
     try {
       await assertBaseChainId({ request, timeoutMs: this._rpcTimeoutMs() });
     } catch (err) {
-      this.lastAnchorError = 'anchor_chain_mismatch';
+      this.lastAnchorError = err?.code === 'anchor_rpc_unavailable' ? 'anchor_rpc_unavailable' : 'anchor_chain_mismatch';
       throw err;
     }
   }
@@ -3428,6 +3428,14 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
     try {
       await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request, timeoutMs: opts.timeoutMs });
     } catch (err) {
+      if (err?.code === 'anchor_rpc_unavailable') {
+        // Do not crash-loop the whole gateway on a slow RPC (systemd gives up
+        // after 5 starts in 60 s). Every send re-runs _gateAnchorChain, so no
+        // signed bytes go out until the chain id answers and matches.
+        tree.lastAnchorError = 'anchor_rpc_unavailable';
+        logger.warn({ err: err.message }, 'Base RPC unavailable at boot; anchoring paused until eth_chainId answers');
+        return tree;
+      }
       tree.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
     }

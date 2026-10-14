@@ -5,6 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 process.env.NODE_ENV = 'test';
 process.env.RECEIPT_LOG_BOOT = '0';
@@ -53,23 +56,21 @@ test('boot eth_chainId aborts when the RPC never answers', { timeout: 10_000 }, 
   try {
     await assert.rejects(
       () => assertBaseChainId({ rpcUrl: srv.url, timeoutMs: 150 }),
-      (err) => err.code === 'anchor_chain_mismatch' && /timeout/i.test(err.message),
+      (err) => err.code === 'anchor_rpc_unavailable' && /timeout/i.test(err.message),
     );
     assert.ok(Date.now() - started < 2_000, `chain id took ${Date.now() - started} ms`);
 
     const tree = new ReceiptMerkleTree();
     tree.allowFreshGenesis = true;
     const bootStarted = Date.now();
-    await assert.rejects(
-      () => finishReceiptLogBoot(tree, {
-        allowFreshGenesis: true,
-        baseRpc: srv.url,
-        timeoutMs: 150,
-      }),
-      (err) => err.code === 'anchor_chain_mismatch',
-    );
+    // A silent RPC does not crash-loop boot: anchoring pauses, sends stay gated.
+    await finishReceiptLogBoot(tree, {
+      allowFreshGenesis: true,
+      baseRpc: srv.url,
+      timeoutMs: 150,
+    });
     assert.ok(Date.now() - bootStarted < 2_000, `boot took ${Date.now() - bootStarted} ms`);
-    assert.equal(tree.lastAnchorError, 'anchor_chain_mismatch');
+    assert.equal(tree.lastAnchorError, 'anchor_rpc_unavailable');
   } finally {
     await srv.close();
   }
@@ -83,7 +84,7 @@ test('boot eth_chainId aborts when the injected request ignores the signal', { t
       timeoutMs: 150,
       request: () => new Promise(() => {}),
     }),
-    (err) => err.code === 'anchor_chain_mismatch' && /rpc_timeout/.test(err.message),
+    (err) => err.code === 'anchor_rpc_unavailable' && /rpc_timeout/.test(err.message),
   );
   assert.ok(Date.now() - started < 2_000);
 });
@@ -137,5 +138,105 @@ test('a live Base RPC still returns the chain id and the send hash', async () =>
     if (prev == null) delete process.env.BASE_RPC_URL;
     else process.env.BASE_RPC_URL = prev;
     await srv.close();
+  }
+});
+
+test('a send that times out and then succeeds late is not sent twice', { timeout: 10_000 }, async () => {
+  const raws = [];
+  const late = [];
+  const sockets = new Set();
+  const server = http.createServer(async (req, res) => {
+    req.on('error', () => {});
+    res.on('error', () => {});
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    if (body.method === 'eth_sendRawTransaction') raws.push(body.params?.[0]);
+    // The client aborts first. The node still accepts the raw and answers after.
+    late.push(new Promise((resolve) => {
+      setTimeout(() => {
+        try {
+          if (!res.writableEnded && !res.destroyed) {
+            res.setHeader('content-type', 'application/json');
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id ?? 1,
+              result: `0x${'cd'.repeat(32)}`,
+            }));
+          }
+        } catch { /* the client already left */ }
+        resolve();
+      }, 400);
+    }));
+  });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('error', () => {});
+  });
+  const srv = await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({
+      url: `http://127.0.0.1:${server.address().port}`,
+    }));
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-late-send-'));
+  const prevRpc = process.env.BASE_RPC_URL;
+  const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+  process.env.BASE_RPC_URL = srv.url;
+  process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'11'.repeat(32)}`;
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  tree.anchorRpcTimeoutMs = 150;
+  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  let landed = null;
+  const request = async (_url, method) => {
+    if (method === 'eth_chainId') return '0x2105';
+    if (method === 'eth_getTransactionByHash') return landed;
+    if (method === 'eth_getTransactionReceipt') return null;
+    if (method === 'eth_getTransactionCount') return '0x0';
+    return null;
+  };
+  try {
+    const first = await tree.publishHead({
+      force: true,
+      nonce: 4,
+      now: '2026-10-06T12:00:00.000Z',
+      request,
+    });
+    assert.equal(raws.length, 1);
+    assert.equal(first.anchor_status, 'blocked');
+    assert.match(String(first.anchor?.reason || ''), /timeout|aborted/i);
+    await late[0];
+    const { keccak256, Transaction } = await import('ethers');
+    const raw = raws[0];
+    const parsed = Transaction.from(raw);
+    landed = {
+      hash: keccak256(raw),
+      from: parsed.from,
+      to: parsed.to,
+      nonce: Number(parsed.nonce),
+      input: parsed.data,
+    };
+    const again = await tree.publishHead({
+      force: true,
+      nonce: 99,
+      now: '2026-10-06T12:02:00.000Z',
+      request,
+    });
+    assert.equal(raws.length, 1);
+    assert.equal(new Set(raws).size, 1);
+    assert.equal(again.anchor_tx, landed.hash);
+    assert.equal(again.anchor_status, 'broadcast');
+    const signedRaws = tree.anchorIntents.map((row) => row.raw).filter(Boolean);
+    assert.equal(new Set(signedRaws).size, 1);
+    assert.equal(tree.anchorIntents.some((row) => row.status === 'superseded'), false);
+  } finally {
+    if (prevRpc == null) delete process.env.BASE_RPC_URL;
+    else process.env.BASE_RPC_URL = prevRpc;
+    if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
+    else process.env.RECEIPT_ANCHOR_PRIVATE_KEY = prevKey;
+    for (const socket of sockets) socket.destroy();
+    await new Promise((done) => server.close(done));
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
