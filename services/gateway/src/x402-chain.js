@@ -259,14 +259,22 @@ export function confirmEvmReceipt(receipt, {
   // A reorg after this receipt is not caught. Require N confirmations, or a
   // safe/finalized block at or above blockNumber, before treating this as
   // final. Solana already requires finalized. Do not implement that here.
+  const matchedLog = (receipt.logs || []).find((log) => {
+    const addr = String(log.address || '').toLowerCase();
+    return addr === asset && String(log.topics?.[0] || '').toLowerCase() === TRANSFER_TOPIC.toLowerCase();
+  });
   return {
     ok: true,
     confirmed: true,
     amount: matches[0].value.toString(),
     payer: ethers.getAddress(matches[0].from),
     payTo: ethers.getAddress(matches[0].to),
+    authorizer: ethers.getAddress(wantPayer),
+    asset: matchedLog?.address ? ethers.getAddress(matchedLog.address) : ethers.getAddress(challenge.asset),
+    transferCount: 1,
     logIndex: matches[0].logIndex,
     blockNumber: receipt.blockNumber != null ? Number(receipt.blockNumber) : null,
+    network: challenge.network || null,
   };
 }
 
@@ -366,12 +374,19 @@ export function confirmSolanaTransaction(tx, {
   if (signature && tx.transaction?.signatures?.[0] && tx.transaction.signatures[0] !== signature) {
     return { ok: false, code: 'settle_unconfirmed' };
   }
+  const finalized = tx.confirmationStatus === 'finalized' || tx.finalized === true;
   return {
     ok: true,
     confirmed: true,
+    finalized,
     amount: amount.toString(),
     payer: authority,
     payTo: expectedPayTo,
+    asset: mint,
+    feePayer: feePayer || null,
+    transferCount: 1,
+    messageHash: typeof tx.messageHash === 'string' ? tx.messageHash : null,
+    blockTimestamp: tx.blockTime != null ? Number(tx.blockTime) : null,
     logIndex: null,
     slot: tx.slot != null ? Number(tx.slot) : null,
     blockNumber: null,
@@ -399,6 +414,36 @@ async function rpcCall(url, method, params, timeoutMs = 8000) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * A receipt block is final only when it is at or below the node's finalized tip.
+ * A missing tip, a mismatched block, or an RPC error is not final.
+ */
+export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000) {
+  if (!rpcUrl || blockNumber == null) return { finalized: false, blockTimestamp: null };
+  let want;
+  try { want = BigInt(blockNumber); } catch { return { finalized: false, blockTimestamp: null }; }
+  const hex = `0x${want.toString(16)}`;
+  const [block, tip] = await Promise.all([
+    rpcCall(rpcUrl, 'eth_getBlockByNumber', [hex, false], timeoutMs),
+    rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs),
+  ]);
+  if (!block?.number || !tip?.number || block.timestamp == null) {
+    return { finalized: false, blockTimestamp: null };
+  }
+  let got;
+  let tipN;
+  let ts;
+  try {
+    got = BigInt(block.number);
+    tipN = BigInt(tip.number);
+    ts = Number(BigInt(block.timestamp));
+  } catch {
+    return { finalized: false, blockTimestamp: null };
+  }
+  if (got !== want || !Number.isFinite(ts)) return { finalized: false, blockTimestamp: null };
+  return { finalized: got <= tipN, blockTimestamp: ts };
 }
 
 export async function readEvmReceipt(rpcUrl, txHash) {
@@ -446,12 +491,21 @@ export async function confirmSettlement({
   expectedPayTo,
   cfg = {},
   chainReader = null,
+  authorization = null,
 } = {}) {
   const reader = chainReader || cfg.chainReader || getChainReaderForTests();
   if (reader) {
     try {
-      const out = await reader({ challenge, facilitator, paymentHeader, expectedPayTo, cfg });
-      if (!out?.ok || out.confirmed === false) return { ok: false, code: 'settle_unconfirmed', pending: !!out?.pending };
+      const out = await reader({ challenge, facilitator, paymentHeader, expectedPayTo, cfg, authorization });
+      if (!out?.ok || out.confirmed === false) {
+        return {
+          ok: false,
+          code: 'settle_unconfirmed',
+          pending: !!out?.pending,
+          nonceUnused: out?.nonceUnused === true,
+          blockhashExpired: out?.blockhashExpired === true,
+        };
+      }
       return out;
     } catch (err) {
       logger.warn({ err: err.message }, 'x402: injected chain reader failed');
@@ -481,11 +535,11 @@ export async function confirmSettlement({
     const txHash = facilitator.transaction || facilitator.txRef;
     const receipt = await readEvmReceipt(url, txHash);
     if (!receipt) return { ok: false, code: 'settle_unconfirmed', pending: true };
-    const authorization = readEvmAuthorization(paymentHeader);
+    const evmAuthorization = authorization || readEvmAuthorization(paymentHeader);
     return confirmEvmReceipt(receipt, {
       challenge,
       expectedPayTo,
-      authorization,
+      authorization: evmAuthorization,
       facilitatorPayer: facilitator.payer,
     });
   } catch (err) {

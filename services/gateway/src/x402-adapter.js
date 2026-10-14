@@ -345,6 +345,9 @@ export class ChallengeStore {
     this.txSpent = new Set(); // normalized payment ref
     this.txFacts = new Map(); // ref → confirmed amount, payer, payTo
     this.pending = []; // unsigned owner-only rows; never a receipt
+    // Late-issue rows. An array, persisted with the replay store. Not a Map.
+    this.late = [];
+    this.lateLedger = [];
   }
 
   put(nonce, data) {
@@ -380,12 +383,12 @@ export class ChallengeStore {
     if (!found) return null;
     const { key, rec } = found;
     if (rec.state === 'spent') return null;
-    if (rec.state === 'unknown') return rec;
+    if (rec.state === 'unknown' || rec.state === 'submitted') return rec;
     if (rec.state === 'claimed' && rec.lease_until && Date.now() > rec.lease_until) {
       rec.state = 'unknown';
       return rec;
     }
-    if (rec.state !== 'claimed' && Date.now() > rec.expiresAt) {
+    if (rec.state !== 'claimed' && rec.state !== 'submitted' && Date.now() > rec.expiresAt) {
       this.map.delete(key);
       return null;
     }
@@ -431,7 +434,9 @@ export class ChallengeStore {
     const found = this._find(nonce);
     if (!found) return { ok: false, reason: 'challenge_required' };
     const rec = found.rec;
-    if (rec.state === 'unknown') return { ok: false, reason: 'settle_unconfirmed' };
+    if (rec.state === 'unknown' || rec.state === 'submitted') {
+      return { ok: false, reason: 'settle_unconfirmed' };
+    }
     if (rec.state === 'spent') return { ok: false, reason: 'payment_replayed' };
     if (rec.state === 'claimed') {
       if (rec.lease_until && Date.now() > rec.lease_until) {
@@ -467,6 +472,23 @@ export class ChallengeStore {
     const found = this._find(nonce);
     if (!found) return;
     found.rec.state = 'unknown';
+  }
+
+  /** Claimed → submitted. Only the settle path, and only before the fetch. */
+  markSubmitted(nonce) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'claimed') return false;
+    found.rec.state = 'submitted';
+    return true;
+  }
+
+  /** A pre-fetch failure may undo submitted. A sent settle never calls this. */
+  revertSubmitted(nonce, owner) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'submitted') return false;
+    found.rec.state = 'claimed';
+    found.rec.lease_owner = owner || found.rec.lease_owner || 'local';
+    return this.release(nonce, owner);
   }
 
   isAuthSpent(key) {
@@ -513,6 +535,87 @@ export class ChallengeStore {
     return rec;
   }
 
+  /**
+   * Insert one late-issue row. Refuses a second row for the same authorization
+   * identity or compiled-message hash. The raw header is not a field.
+   */
+  putLate(row) {
+    if (!row || !row.pending_id) return { ok: false, reason: 'replay_store_unavailable' };
+    if (this.late.some((r) => r.pending_id === row.pending_id)) {
+      return { ok: false, reason: 'payment_replayed' };
+    }
+    if (row.auth_key && this.late.some((r) => r.auth_key === row.auth_key)) {
+      return { ok: false, reason: 'payment_replayed' };
+    }
+    if (row.message_hash && this.late.some((r) => r.message_hash === row.message_hash)) {
+      return { ok: false, reason: 'payment_replayed' };
+    }
+    this.late.push(row);
+    return { ok: true, row };
+  }
+
+  getLate(id) {
+    return this.late.find((r) => r.pending_id === id) || null;
+  }
+
+  findLate(query = {}) {
+    return this.late.find((row) => {
+      if (query.pendingId && row.pending_id !== query.pendingId) return false;
+      if (query.nonce && row.nonce !== query.nonce) return false;
+      if (query.authKey && row.auth_key !== query.authKey) return false;
+      if (query.messageHash && row.message_hash !== query.messageHash) return false;
+      if (query.txRef && row.tx_ref !== query.txRef) return false;
+      if (query.idempotencyKey && row.idempotency_key !== query.idempotencyKey) return false;
+      if (query.principal && row.principal !== query.principal) return false;
+      return !!(query.pendingId || query.nonce || query.authKey || query.messageHash || query.txRef || query.idempotencyKey);
+    }) || null;
+  }
+
+  /**
+   * Compare-and-set. `from` is one state or a list. A tx ref already on
+   * another row loses the CAS.
+   */
+  casLate(id, from, to, patch = {}) {
+    const rec = this.late.find((r) => r.pending_id === id);
+    if (!rec) return null;
+    const allowed = Array.isArray(from) ? from : [from];
+    if (!allowed.includes(rec.state)) return null;
+    if (patch.tx_ref) {
+      const clash = this.late.find((r) => r !== rec && r.tx_ref === patch.tx_ref);
+      if (clash) return null;
+    }
+    Object.assign(rec, patch, { state: to });
+    return rec;
+  }
+
+  abortLate(id) {
+    const idx = this.late.findIndex((r) => r.pending_id === id);
+    if (idx < 0) return false;
+    if (this.late[idx].sent === true) return false;
+    if (this.late[idx].state !== 'submitted') return false;
+    this.late.splice(idx, 1);
+    return true;
+  }
+
+  listLate() {
+    return this.late.slice();
+  }
+
+  /** One ledger row per auth key and per normalized tx ref. */
+  appendLateLedger(row) {
+    if (!row) return { ok: false, reason: 'invalid' };
+    const dup = this.lateLedger.find((r) =>
+      (row.auth_key && r.auth_key === row.auth_key)
+      || (row.tx_ref && r.tx_ref === row.tx_ref));
+    if (dup) return { ok: true, row: dup, duplicate: true };
+    this.lateLedger.push(row);
+    return { ok: true, row, duplicate: false };
+  }
+
+  listLateLedger() {
+    return this.lateLedger.slice();
+  }
+
   dumpState() {
     return {
       map: [...this.map.entries()],
@@ -521,6 +624,8 @@ export class ChallengeStore {
       txSpent: [...this.txSpent],
       txFacts: [...this.txFacts.entries()],
       pending: this.pending,
+      late: this.late,
+      lateLedger: this.lateLedger,
     };
   }
 
@@ -531,12 +636,14 @@ export class ChallengeStore {
     this.txSpent = new Set(raw?.txSpent || []);
     this.txFacts = new Map(raw?.txFacts || []);
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
+    this.late = Array.isArray(raw?.late) ? raw.late : [];
+    this.lateLedger = Array.isArray(raw?.lateLedger) ? raw.lateLedger : [];
   }
 
   _gc() {
     const now = Date.now();
     for (const [k, v] of this.map) {
-      if (v.state === 'spent' || v.state === 'unknown' || v.state === 'claimed') continue;
+      if (v.state === 'spent' || v.state === 'unknown' || v.state === 'claimed' || v.state === 'submitted') continue;
       if (now > v.expiresAt) this.map.delete(k);
     }
   }
@@ -1117,7 +1224,7 @@ export async function settlePayment(paymentHeader, opts = {}) {
       }),
       signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) return { settled: false, reason: `gateway_http_${res.status}` };
+    if (!res.ok) return { settled: false, reason: `gateway_http_${res.status}`, sent: true };
     const data = await res.json();
     const settled = !!(data.settled || data.success);
     const txRef = data.txRef || data.transaction || null;
@@ -1130,10 +1237,11 @@ export async function settlePayment(paymentHeader, opts = {}) {
       payer: data.payer || null,
       network: data.network || null,
       reason: data.reason,
+      sent: true,
     };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 settlePayment failed');
-    return { settled: false, reason: 'gateway_error' };
+    return { settled: false, reason: 'gateway_error', sent: true };
   }
 }
 

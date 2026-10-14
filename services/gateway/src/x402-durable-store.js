@@ -70,7 +70,11 @@ export class DurableChallengeStore {
     this.lockPath = `${file}.lock`;
     this.ttlMs = ttlMs;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!fs.existsSync(file)) writeState(file, { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] });
+    if (!fs.existsSync(file)) {
+      writeState(file, {
+        map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [], late: [], lateLedger: [],
+      });
+    }
     // Fail closed if the file cannot be parsed.
     readState(file);
   }
@@ -103,6 +107,16 @@ export class DurableChallengeStore {
   recordPending(row) { return this._with((s) => s.recordPending(row)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
+  markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }
+  revertSubmitted(nonce, owner) { return this._with((s) => s.revertSubmitted(nonce, owner)); }
+  putLate(row) { return this._with((s) => s.putLate(row)); }
+  getLate(id) { return this._with((s) => s.getLate(id)); }
+  findLate(query) { return this._with((s) => s.findLate(query)); }
+  casLate(id, from, to, patch) { return this._with((s) => s.casLate(id, from, to, patch)); }
+  abortLate(id) { return this._with((s) => s.abortLate(id)); }
+  listLate() { return this._with((s) => s.listLate()); }
+  appendLateLedger(row) { return this._with((s) => s.appendLateLedger(row)); }
+  listLateLedger() { return this._with((s) => s.listLateLedger()); }
 }
 
 let activeStore = null;

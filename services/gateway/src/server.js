@@ -12,8 +12,9 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
-import { isBindingRefusal, paymentErrorStatus, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
-import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan } from './x402-durable-store.js';
+import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
+import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
+import { listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -1913,7 +1914,7 @@ export function createApp() {
                 if (isBindingRefusal(hs.code || hs.reason)) {
                   const code = hs.code || hs.reason;
                   if (hs.retryAfter) res.setHeader('Retry-After', String(hs.retryAfter));
-                  return res.status(paymentErrorStatus(code)).json({ error: code, code });
+                  return res.status(paymentErrorStatus(code)).json(paymentFailureBody(hs));
                 }
                 if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                   logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -1956,7 +1957,7 @@ export function createApp() {
               if (isBindingRefusal(decision.code || decision.reason)) {
                 const code = decision.code || decision.reason;
                 if (decision.retryAfter) res.setHeader('Retry-After', String(decision.retryAfter));
-                return res.status(paymentErrorStatus(code)).json({ error: code, code });
+                return res.status(paymentErrorStatus(code)).json(paymentFailureBody(decision));
               }
               if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                 logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -4261,6 +4262,7 @@ export function createApp() {
           enforce: config.providerFloats?.enforce,
         }).publicSummary(),
         chains: advertisedChains(),
+        late_issue: listLateIssueOwnerView(getActiveChallengeStore()),
         message_types: Object.values(MESSAGE_TYPES),
         demo: DEMO_MODE
           ? { enabled: true, rate_per_min: DEMO_RATE_PER_MIN, rate_per_day: DEMO_RATE_PER_DAY, note: 'Public demo keys do not grant free completions. Pay with x402 USDC, or use a partner X-API-Key.' }
@@ -5702,7 +5704,8 @@ export async function startServer() {
       logger.error('x402 challenge store path missing; x402 will refuse');
     } else if (storePath) {
       try {
-        openDurableChallengeStore(storePath);
+        const opened = openDurableChallengeStore(storePath);
+        startLateIssueResolver(opened);
       } catch (err) {
         markChallengeStoreFailed();
         logger.error({ err: err.message }, 'x402 challenge store failed to load');

@@ -52,7 +52,7 @@ import {
   notePaidFulfillment,
   takeServedReceipt,
 } from './paid-response-replay.js';
-import { clientPaymentCode, paymentErrorStatus } from './x402-flags.js';
+import { clientPaymentCode, paymentErrorStatus, paymentFailureBody } from './x402-flags.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
@@ -667,11 +667,14 @@ async function meterV1Request(req, res, {
     const code = clientPaymentCode(decision.code || decision.reason);
     logger.warn({ reqId: req.id, code }, 'openai-gateway: x402 payment failed');
     if (decision.retryAfter) res.set('Retry-After', String(decision.retryAfter));
+    const failure = paymentFailureBody(decision);
     res.status(paymentErrorStatus(code)).json({
       error: {
         message: 'Payment could not be settled',
         type: 'payment_required',
         code,
+        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
+        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
       },
     });
     return { halted: true };
