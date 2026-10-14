@@ -386,13 +386,26 @@ async function baseAnchorFees(request) {
   };
 }
 
-async function broadcastBaseRaw(raw) {
-  const rpc = baseRpcUrl();
-  if (!rpc) throw new Error('no_rpc');
-  const { JsonRpcProvider } = await import('ethers');
-  const provider = new JsonRpcProvider(rpc);
-  const tx = await provider.broadcastTransaction(raw);
-  return tx.hash;
+async function broadcastBaseRaw(raw, { timeoutMs = RECEIPT_ANCHOR_RPC_TIMEOUT_MS } = {}) {
+  const rpcUrl = baseRpcUrl();
+  if (!rpcUrl) throw new Error('no_rpc');
+  const budget = Number.isFinite(Number(timeoutMs)) ? Math.max(1, Math.ceil(Number(timeoutMs))) : RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_sendRawTransaction',
+      params: [raw],
+    }),
+    signal: AbortSignal.timeout(budget),
+  });
+  if (!res.ok) throw new Error(`base_http_${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || 'base_rpc_error');
+  if (typeof json.result !== 'string' || !json.result) throw new Error('base_send_empty');
+  return json.result;
 }
 
 /**
@@ -2312,10 +2325,24 @@ export class ReceiptMerkleTree {
 
   async _gateAnchorChain(request) {
     try {
-      await assertBaseChainId({ request });
+      await assertBaseChainId({ request, timeoutMs: this._rpcTimeoutMs() });
     } catch (err) {
-      this.lastAnchorError = 'anchor_chain_mismatch';
+      this.lastAnchorError = err?.code === 'anchor_rpc_unavailable' ? 'anchor_rpc_unavailable' : 'anchor_chain_mismatch';
       throw err;
+    }
+    if (this._deferredBoot) {
+      // Boot skipped reconcile and the latest-anchor check on an RPC timeout.
+      // Run them before any signed bytes go out. A refusal keeps anchoring paused.
+      // Cleared first: reconcile may rebroadcast through this gate.
+      const deferred = this._deferredBoot;
+      this._deferredBoot = null;
+      try {
+        await finishReceiptLogBootChecks(this, { ...deferred, request: deferred.request || request }, deferred.baseRpc);
+      } catch (err) {
+        this._deferredBoot = deferred;
+        this.lastAnchorError = err?.code || 'anchor_boot_check_failed';
+        throw err;
+      }
     }
   }
 
@@ -2333,7 +2360,7 @@ export class ReceiptMerkleTree {
       });
       return;
     }
-    await broadcastBaseRaw(intent.raw);
+    await broadcastBaseRaw(intent.raw, { timeoutMs: this._rpcTimeoutMs() });
   }
 
   _anchoredFromConfirmation(intent, found, how) {
@@ -2632,7 +2659,7 @@ export class ReceiptMerkleTree {
     try {
       await this._gateAnchorChain(request);
     } catch (err) {
-      return this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch' });
+      return this._anchorResult({ status: 'blocked', root, reason: err?.code || 'anchor_chain_mismatch' });
     }
     let signed;
     try {
@@ -3413,12 +3440,29 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
   const chainRpc = opts.baseRpc || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
   if (chainRpc) {
     try {
-      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request });
+      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request, timeoutMs: opts.timeoutMs });
     } catch (err) {
+      if (err?.code === 'anchor_rpc_unavailable') {
+        // Do not crash-loop the whole gateway on a slow RPC (systemd gives up
+        // after 5 starts in 60 s). Every send re-runs _gateAnchorChain, so no
+        // signed bytes go out until the chain id answers and matches.
+        tree.lastAnchorError = 'anchor_rpc_unavailable';
+        logger.warn({ err: err.message }, 'Base RPC unavailable at boot; anchoring paused until eth_chainId answers');
+        // The offline epoch gate still runs now. Reconcile and the latest
+        // Base anchor check run before the first send, under the send gate.
+        const allowNow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
+        if (!allowNow) gateEpochRecord(tree);
+        tree._deferredBoot = { ...opts, baseRpc: chainRpc };
+        return tree;
+      }
       tree.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
     }
   }
+  return finishReceiptLogBootChecks(tree, opts, chainRpc);
+}
+
+async function finishReceiptLogBootChecks(tree, opts, chainRpc) {
   const lookup = opts.lookup || ((intent) => lookupBaseTxByNonceOrHash({
     rpcUrl: opts.baseRpc,
     txHash: intent?.tx,
@@ -3444,11 +3488,14 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
         }
       }
       : null);
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
+  // Integrity first: reconcile can rebroadcast stored signed raws, so it runs
+  // only after the journal is shown to hold the latest Base anchor.
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
-  if (allow) return tree;
-  await assertLatestBaseAnchor(tree, opts);
-  gateEpochRecord(tree);
+  if (!allow) {
+    await assertLatestBaseAnchor(tree, opts);
+    gateEpochRecord(tree);
+  }
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
   return tree;
 }
 

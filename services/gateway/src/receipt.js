@@ -2300,7 +2300,7 @@ export function usageOf(task) {
  *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
  *                          entitlement verification (who is entitled to this receipt).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false } = {}) {
+export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false, readOnly = false } = {}) {
   if (agentId != null && task && typeof task === 'object') {
     task.meta = task.meta || {};
     if (task.meta.agentId == null && task.meta.agent_id == null) {
@@ -2509,6 +2509,8 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   // this task is a rehydrated snapshot: flushAll only walks the hot map.
   const rememberIssuerSignature = (signature) => {
     if (!persistSignature || !task || typeof task !== 'object' || !signature?.jws) return;
+    // A read may seal the first JWS. It must not replace one that is already stored.
+    if (readOnly && (task.issuerSignature?.jws || task.issuer_signature?.jws)) return;
     task.issuerSignature = signature;
     if (typeof task.persistSignatureSnapshot === 'function') {
       task.persistSignatureSnapshot();
@@ -2516,6 +2518,11 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   };
 
   let issuer_signature = task.issuerSignature || task.issuer_signature || null;
+  // ES256 is non-deterministic. A read that signs again publishes a second
+  // valid signature, and a tree-head restamp changes the preimage under it.
+  // GET returns the stored bytes. The first seal still runs when nothing is stored.
+  const storedJws = typeof issuer_signature?.jws === 'string' ? issuer_signature.jws : '';
+  const keepStoredSignature = readOnly && storedJws.length > 0;
   const immutableStored = !!(issuer_signature?.jws && storedJwsImmutable({ issuer_signature, task_id: draft.task_id }));
   // Same idempotency key with a different request must not reuse this JWS.
   // A restart has no salt: do not recompute the digest and do not conflict.
@@ -2531,7 +2538,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       throw err;
     }
   }
-  if (issuer_signature?.jws) {
+  if (issuer_signature?.jws && !keepStoredSignature) {
     const cachedClaims = decodeReceiptClaims({ issuer_signature });
     if (cachedClaims?.v === 11) {
       if (cachedClaims.receipt_id && cachedClaims.receipt_id !== draft.task_id) issuer_signature = null;
@@ -2558,7 +2565,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       rememberIssuerSignature(issuer_signature);
     }
   }
-  if (!issuer_signature?.jws) {
+  if (!keepStoredSignature && !issuer_signature?.jws) {
     try {
       issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
       rememberIssuerSignature(issuer_signature);
@@ -2573,6 +2580,10 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
         issuer_signature: null,
       };
     }
+  }
+  if (keepStoredSignature) {
+    const kept = task.issuerSignature || task.issuer_signature || issuer_signature;
+    issuer_signature = { ...kept, jws: storedJws };
   }
   const hmacRaw = signingSecret
     ? signReceiptPayload(draft, signingSecret, { role: 'attestor' })

@@ -133,7 +133,7 @@ import {
   shellPreimageBytes,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
-import { createOwnerView, sendGenericNotFound } from './owner-view.js';
+import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
 import {
   computeDoorMetrics,
@@ -1314,6 +1314,7 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         reqHost: typeof req?.get === 'function' ? req.get('host') : null,
         persistSignature: true,
+        readOnly: true,
       });
       const claims = decodeReceiptClaims(receipt);
       const view = mergeReceiptView(receipt);
@@ -3061,6 +3062,7 @@ export function createApp() {
           reqHost,
           agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
           persistSignature: true,
+          readOnly: true,
         });
       }
 
@@ -3326,9 +3328,10 @@ export function createApp() {
         coSignerSecret: config.receipts?.coSignerSecret,
         viPolicy: config.verifiedInference,
         reqHost,
-        // Ledger seat wins. A cached null claim_id is re-signed only when this id exists.
+        // Ledger seat wins on a write. A GET returns the stored JWS and does not re-sign it.
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
+        readOnly: true,
       });
       if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
 
@@ -3368,6 +3371,7 @@ export function createApp() {
         reqHost,
         agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
         persistSignature: true,
+        readOnly: true,
       });
       receipt = storedReceiptJson(receipt);
     }
@@ -5467,6 +5471,7 @@ export function createApp() {
       viPolicy: config.verifiedInference,
       agentId: ledgerRow?.agent_id ?? task.meta?.agentId ?? task.meta?.agent_id ?? null,
       persistSignature: true,
+      readOnly: true,
     });
     return { receipt, ledgerRow, taskId };
   }
@@ -5500,6 +5505,7 @@ export function createApp() {
     challengeMax: process.env.OWNER_VIEW_CHALLENGE_MAX,
     fetchMax: process.env.OWNER_VIEW_FETCH_MAX,
     notFoundBudgetMs: process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS,
+    audiences: resolveOwnerAudiences(process.env),
   });
   ownerView.mount(app);
 
@@ -5713,7 +5719,8 @@ export async function startServer() {
       logger.error('x402 challenge store path missing; x402 will refuse');
     } else if (storePath) {
       try {
-        const opened = openDurableChallengeStore(storePath);
+        // A missing file is not a fresh spent-set. Refuse x402 and say so.
+        const opened = openDurableChallengeStore(storePath, { createIfMissing: false });
         startLateIssueResolver(opened, {
           cfg: config.x402,
           recordLedger: (receipt) => {
@@ -5726,7 +5733,10 @@ export async function startServer() {
         });
       } catch (err) {
         markChallengeStoreFailed();
-        logger.error({ err: err.message }, 'x402 challenge store failed to load');
+        logger.error(
+          { err: err.message, storePath },
+          'x402 challenge store failed to load; refusing a fresh spent-set',
+        );
       }
     }
   }
@@ -5835,6 +5845,9 @@ export async function startServer() {
           'off, and /receipt output cannot be verified by the SDK. Set it before serving partners.',
         );
       }
+
+      const audienceWarning = ownerAudienceBootWarning(process.env);
+      if (audienceWarning) logger.warn(audienceWarning);
 
       resolve(server);
     });

@@ -25,6 +25,54 @@ export const DEFAULT_NONCE_TTL_MS = 120_000;
 export const DEFAULT_SESSION_TTL_MS = 600_000;
 export const NOT_FOUND_BODY = '{"error":"not_found"}';
 
+/**
+ * Host or URL to a lowercase hostname. A port, scheme, or path is not part
+ * of the audience. `*` is not a wildcard.
+ */
+export function normalizeAudienceHost(value) {
+  let host = String(value || '').trim().toLowerCase();
+  if (!host) return '';
+  host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  host = host.split('/')[0].split('?')[0];
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']');
+    return end === -1 ? '' : host.slice(1, end);
+  }
+  const colon = host.lastIndexOf(':');
+  if (colon > -1 && /^\d+$/.test(host.slice(colon + 1))) host = host.slice(0, colon);
+  if (!host || host === '*') return '';
+  return host;
+}
+
+/**
+ * Configured owner-view audiences. The request Host header is not a source.
+ * OWNER_VIEW_AUDIENCES, PUBLIC_HOSTS, and the host of PUBLIC_BASE_URL.
+ */
+export function resolveOwnerAudiences(env = process.env) {
+  const raw = [env.OWNER_VIEW_AUDIENCES, env.PUBLIC_HOSTS, env.PUBLIC_BASE_URL]
+    .filter((item) => item != null && String(item).trim() !== '')
+    .join(',');
+  const hosts = [];
+  const seen = new Set();
+  for (const part of raw.split(',')) {
+    const host = normalizeAudienceHost(part);
+    if (!host || seen.has(host)) continue;
+    seen.add(host);
+    hosts.push(host);
+  }
+  return hosts;
+}
+
+/**
+ * Boot warning when no owner-view audience is configured. An empty allowlist
+ * refuses every owner session, so silence at boot looks like a healthy server.
+ * @returns {string|null}
+ */
+export function ownerAudienceBootWarning(env = process.env) {
+  if (resolveOwnerAudiences(env).length > 0) return null;
+  return 'owner-view audience allowlist is empty; owner sessions will refuse every host. Set OWNER_VIEW_AUDIENCES, PUBLIC_HOSTS, or PUBLIC_BASE_URL.';
+}
+
 const ERC1271_MAGIC = '0x1626ba7e';
 const ERC6492_MAGIC = '6492'.repeat(16);
 const ERC1271 = new ethers.Interface([
@@ -254,10 +302,17 @@ export function createOwnerView(deps) {
       .filter(Boolean),
   );
   let rpcProvider = deps.rpcProvider || null;
+  const audiences = new Set(
+    (Array.isArray(deps.audiences) ? deps.audiences : resolveOwnerAudiences(process.env))
+      .map(normalizeAudienceHost)
+      .filter(Boolean),
+  );
 
   function audienceOf(req) {
     const host = typeof req.get === 'function' ? req.get('host') : req.headers?.host;
-    return String(host || '').trim();
+    const normalized = normalizeAudienceHost(host);
+    if (!normalized || !audiences.has(normalized)) return '';
+    return normalized;
   }
 
   function issueChallenge(scopeInput, audience) {
