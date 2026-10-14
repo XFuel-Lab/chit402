@@ -60,15 +60,18 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function paidChat() {
-  const challenge = await fetch(`${base}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(chatBody),
-  });
-  assert.equal(challenge.status, 402);
-  const challengeBody = await challenge.json();
-  const nonce = challengeBody.accepts[0].extra.nonce;
+async function paidChat(reuseNonce = null) {
+  let nonce = reuseNonce;
+  if (!nonce) {
+    const challenge = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(chatBody),
+    });
+    assert.equal(challenge.status, 402);
+    const challengeBody = await challenge.json();
+    nonce = challengeBody.accepts[0].extra.nonce;
+  }
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
     headers: {
@@ -79,7 +82,7 @@ async function paidChat() {
     body: JSON.stringify(chatBody),
   });
   const body = await res.json();
-  return { status: res.status, body };
+  return { status: res.status, body, nonce };
 }
 
 test('first paid call is settled; a repeat of the same payment is a replay', async () => {
@@ -111,7 +114,7 @@ test('first paid call is settled; a repeat of the same payment is a replay', asy
   assert.ok(row);
   assert.equal(row.replay_events, undefined);
 
-  const second = await paidChat();
+  const second = await paidChat(first.nonce);
   assert.equal(second.status, 200, JSON.stringify(second.body?.error || second.body));
   assert.notEqual(second.body.xfuel.task_id, taskId);
   assert.equal(second.body.xfuel.settlement_status, 'idempotent_replay');

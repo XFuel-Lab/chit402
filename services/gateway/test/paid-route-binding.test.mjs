@@ -579,3 +579,85 @@ test('PB4 concurrent challenges carrying one transfer settle once', async () => 
     await fac.close();
   }
 });
+
+test('PB4 concurrent duplicates of one challenge settle once and replay the receipt', async () => {
+  const fac = await listenFacilitator();
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { taskId: 'race-same', amount: '2000', resource: '/task-request' });
+    const slow = (receipt) => async (args) => {
+      await new Promise((r) => setTimeout(r, 30));
+      return chainFromReceipt(receipt)(args);
+    };
+    const run = () => settleBoundPayment({
+      taskId: 'race-same',
+      amount: '2000',
+      cfg: baseCfg(fac.url, { chainReader: slow(evmReceipt()) }),
+      store,
+      nonce,
+      paymentHeader: evmHeader(),
+      resource: '/task-request',
+    });
+    const results = await Promise.all([run(), run(), run()]);
+    const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
+    const replays = results.filter((r) => r.idempotentReplay === true);
+    assert.equal(fresh.length, 1, JSON.stringify(results.map((r) => ({ kind: r.kind, code: r.code, replay: r.idempotentReplay }))));
+    assert.equal(replays.length, 2);
+    assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
+    for (const replay of replays) {
+      assert.equal(replay.kind, 'settled');
+      assert.equal(replay.confirmed, true);
+      assert.equal(replay.replay, true);
+      assert.equal(replay.paymentRef, fresh[0].paymentRef);
+      assert.equal(replay.quotedAmount, fresh[0].quotedAmount);
+      assert.equal(replay.settledAmount, fresh[0].settledAmount);
+      assert.equal(replay.payerWallet, fresh[0].payerWallet);
+    }
+  } finally {
+    await fac.close();
+  }
+});
+
+test('a spent challenge on another route or price is payment_replayed', async () => {
+  const fac = await listenFacilitator();
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { amount: '2000', resource: '/task-request' });
+    const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const first = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: evmHeader(),
+      resource: '/task-request',
+    });
+    assert.equal(first.kind, 'settled', first.code);
+    const otherRoute = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: evmHeader(),
+      resource: '/v1/chat/completions',
+    });
+    assert.equal(otherRoute.code, 'payment_replayed');
+    assert.notEqual(otherRoute.kind, 'settled');
+    const higher = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '500000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: evmHeader({ value: '500000', amount: '500000' }),
+      resource: '/task-request',
+    });
+    assert.equal(higher.code, 'payment_replayed');
+    assert.notEqual(higher.kind, 'settled');
+    assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
+  } finally {
+    await fac.close();
+  }
+});

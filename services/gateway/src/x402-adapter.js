@@ -401,6 +401,13 @@ export class ChallengeStore {
     return false;
   }
 
+  /** Spent challenge, including its settlement. `get` hides spent rows. */
+  replayRecord(nonce) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'spent') return null;
+    return found.rec;
+  }
+
   markSpent(nonce, meta = null) {
     if (!nonce) return;
     this.spent.add(nonce);

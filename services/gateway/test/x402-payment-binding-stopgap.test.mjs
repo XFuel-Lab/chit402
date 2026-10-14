@@ -352,20 +352,21 @@ test('single claim: one challenge cannot mint two receipts', async () => {
     }, { taskId: 'stopgap-claim', cfg, amount: '2000' });
 
     const results = await Promise.all(Array.from({ length: 10 }, () => pay()));
-    const settled = results.filter((r) => r.kind === 'settled');
-    const inflight = results.filter((r) => r.reason === 'payment_in_flight');
-    assert.equal(settled.length, 1);
-    assert.equal(inflight.length, 9);
+    const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
+    const replays = results.filter((r) => r.idempotentReplay === true);
+    assert.equal(fresh.length, 1);
+    assert.equal(replays.length, 9);
     assert.equal(mock.counts.settle, 1);
     assert.equal(mock.counts.verify, 1);
-    for (const refused of inflight) {
-      assert.equal(refused.paymentRef, undefined);
-      assert.equal(refused.preSettle, true);
+    for (const replayed of replays) {
+      assert.equal(replayed.paymentRef, fresh[0].paymentRef);
+      assert.equal(replayed.confirmed, true);
     }
 
     const replay = await pay();
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.kind, 'settled');
+    assert.equal(replay.idempotentReplay, true);
+    assert.equal(replay.paymentRef, fresh[0].paymentRef);
     assert.equal(mock.counts.settle, 1);
   } finally {
     await mock.close();

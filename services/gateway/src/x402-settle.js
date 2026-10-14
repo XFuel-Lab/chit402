@@ -167,6 +167,62 @@ function declaredEvmAsset(decoded) {
  */
 const inflightTx = new Set();
 const inflightAuth = new Set();
+/** In-process waiters for a challenge that is already settling. */
+const inflightByNonce = new Map();
+
+function idempotentReplay(decision) {
+  if (!decision || decision.kind !== 'settled') return null;
+  return {
+    ...decision,
+    kind: 'settled',
+    confirmed: true,
+    replay: true,
+    idempotentReplay: true,
+  };
+}
+
+/** Original confirmed settlement for a spent challenge. Refusals are not receipts. */
+function settlementReplay(rec, resourceHave) {
+  const settlement = rec?.settlement;
+  if (!settlement || typeof settlement !== 'object') return null;
+  if (settlement.replay === true || settlement.rejected) return null;
+  if (!settlement.txRef || settlement.amount == null || settlement.amount === '') return null;
+  return {
+    kind: 'settled',
+    confirmed: true,
+    paymentRef: settlement.txRef,
+    route: resourceHave,
+    quotedAmount: String(rec.amount),
+    settledAmount: String(settlement.amount),
+    payerWallet: settlement.payer || null,
+    payTo: settlement.payTo || rec.payTo || null,
+    asset: rec.asset || 'USDC',
+    taskId: rec.taskId || null,
+    issuance_commitment: null,
+    dispute_window: null,
+    settlementEvidence: {
+      blockNumber: settlement.blockNumber || null,
+      logIndex: settlement.logIndex ?? null,
+      slot: settlement.slot ?? null,
+    },
+  };
+}
+
+function payersAgree(left, right, solana) {
+  if (left == null || left === '' || right == null || right === '') return false;
+  return samePayee(left, right, { solana });
+}
+
+/** Same route, quoted price, and payer (when the header or caller names one). */
+function replayAllowed(decision, { resourceHave, issued, expectedPayer, paymentHeader, solana }) {
+  if (!decision || decision.kind !== 'settled' || decision.confirmed !== true || !decision.paymentRef) return false;
+  if (canonicalPaidRoute(decision.route) !== resourceHave) return false;
+  if (atomicUnits(decision.quotedAmount) !== issued) return false;
+  const auth = !solana ? readEvmAuthorization(paymentHeader) : null;
+  if (auth?.from && !payersAgree(auth.from, decision.payerWallet, false)) return false;
+  if (expectedPayer && !payersAgree(expectedPayer, decision.payerWallet, solana)) return false;
+  return true;
+}
 
 export async function settleBoundPayment({
   req,
@@ -201,11 +257,20 @@ export async function settleBoundPayment({
   const active = store || cfg.store || getActiveChallengeStore() || defaultStore;
 
   if (!nonce) return refused(req, 'challenge_required', { preSettle: true });
-  if (active.isSpent(nonce)) return refused(req, 'payment_replayed', { preSettle: true });
-  const challenge = active.get(nonce);
-  if (!challenge || challenge.state === 'unknown') {
-    return refused(req, challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required', { preSettle: true });
+  const spent = active.isSpent(nonce);
+  const challenge = spent
+    ? (typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null)
+    : active.get(nonce);
+  if (!challenge || (!spent && challenge.state === 'unknown')) {
+    return refused(
+      req,
+      spent ? 'payment_replayed' : (challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required'),
+      { preSettle: true },
+    );
   }
+  // A spent nonce that does not match this route and price is a replay refusal,
+  // not a fresh challenge mismatch.
+  const mismatch = () => refused(req, spent ? 'payment_replayed' : 'challenge_mismatch', { preSettle: true });
   if (!networkAllowed(challenge.network, cfg)) {
     return refused(req, 'network_not_accepted', { preSettle: true });
   }
@@ -217,13 +282,13 @@ export async function settleBoundPayment({
   const solana = isSolanaNetwork(challenge.network);
   const expectedPayTo = housePayee(cfg, challenge.network, payTo);
   if (!expectedPayTo || !samePayee(challenge.payTo, expectedPayTo, { solana })) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   const decoded = decodePaymentHeader(paymentHeader);
   if (!solana) {
     for (const recipient of signedRecipients(decoded)) {
       if (!samePayee(recipient, expectedPayTo, { solana: false })) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     }
     const declaredAsset = declaredEvmAsset(decoded);
@@ -242,23 +307,23 @@ export async function settleBoundPayment({
   const resourceWant = canonicalPaidRoute(expectedResourceOf({ resource, baseUrl }));
   const resourceHave = canonicalPaidRoute(challenge.resource);
   if (!resourceHave || !resourceWant || resourceHave !== resourceWant) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   if (challenge.quoteRoute && canonicalPaidRoute(challenge.quoteRoute) !== resourceHave) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   if (!challenge.payTo) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   if (strictTaskId && challenge.taskId !== taskId) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
 
   const issued = atomicUnits(challenge.amount);
   const lockedQuote = challenge.quotePrice != null ? atomicUnits(challenge.quotePrice) : issued;
   const routeLocked = challenge.routeQuote != null ? atomicUnits(challenge.routeQuote) : issued;
   if (issued == null || lockedQuote == null || routeLocked == null || issued !== lockedQuote || issued !== routeLocked) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
 
   let routePrice = null;
@@ -268,7 +333,7 @@ export async function settleBoundPayment({
     try {
       routePrice = atomicUnits(await resolveQuote());
     } catch {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
+      return mismatch();
     }
   } else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
     routePrice = issued;
@@ -276,21 +341,21 @@ export async function settleBoundPayment({
   // The quoted challenge is the price. It may exceed today's route price.
   // It cannot pay a route that now costs more.
   if (routePrice == null || routePrice > issued) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   const routeQuote = issued.toString();
 
   const settledPick = boundSettledAmount(paymentHeader, clientVersion, challenge);
   if (settledPick.refuse) {
-    return refused(req, 'challenge_mismatch', { preSettle: true });
+    return mismatch();
   }
   if (settledPick.amount != null) {
     try {
       if (BigInt(settledPick.amount) < BigInt(String(routeQuote))) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     } catch {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
+      return mismatch();
     }
   }
 
@@ -298,9 +363,19 @@ export async function settleBoundPayment({
   if (!solana && authEarly?.value) {
     try {
       if (BigInt(authEarly.value) < BigInt(String(routeQuote))) {
-        return refused(req, 'challenge_mismatch', { preSettle: true });
+        return mismatch();
       }
     } catch { /* the chain read is the authority when the value is not an integer */ }
+  }
+  // Same payer, same challenge, same route, same quoted price: the original
+  // receipt, with no second facilitator settle. This runs before the auth-spent
+  // check because that authorization is the one that already settled.
+  if (spent) {
+    const prior = settlementReplay(challenge, resourceHave);
+    if (prior && replayAllowed(prior, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+      return idempotentReplay(prior);
+    }
+    return refused(req, 'payment_replayed', { preSettle: true });
   }
   const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
     ? `${canonicalNetwork(challenge.network)}|${String(challenge.asset || '').toLowerCase()}|${String(authEarly.from).toLowerCase()}|${String(authEarly.nonce).toLowerCase()}`
@@ -320,12 +395,43 @@ export async function settleBoundPayment({
   const owner = `${taskId}:${nonce}`;
   const claim = active.claim(nonce, owner);
   if (!claim.ok) {
-    return refused(req, claim.reason, {
-      preSettle: true,
-      retryAfter: claim.reason === 'payment_in_flight' ? 2 : undefined,
-    });
+    if (claim.reason === 'payment_in_flight') {
+      const pending = inflightByNonce.get(String(nonce));
+      if (pending) {
+        const winner = await pending;
+        if (replayAllowed(winner, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+          return idempotentReplay(winner);
+        }
+        if (winner?.kind === 'settled') return refused(req, 'payment_replayed', { preSettle: true });
+      }
+      return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
+    }
+    if (claim.reason === 'payment_replayed') {
+      const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
+      const prior = rec ? settlementReplay(rec, resourceHave) : null;
+      if (prior && replayAllowed(prior, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+        return idempotentReplay(prior);
+      }
+    }
+    return refused(req, claim.reason, { preSettle: true });
   }
 
+  // Registered before any await so a concurrent same-nonce caller can wait
+  // for this settlement instead of taking a second one.
+  let resolveWaiters = () => {};
+  const nonceKey = String(nonce);
+  const waiter = new Promise((resolve) => { resolveWaiters = resolve; });
+  inflightByNonce.set(nonceKey, waiter);
+  let outcome;
+  try {
+    outcome = await settleClaimed();
+    return outcome;
+  } finally {
+    resolveWaiters(outcome);
+    if (inflightByNonce.get(nonceKey) === waiter) inflightByNonce.delete(nonceKey);
+  }
+
+  async function settleClaimed() {
   const gwOpts = {
     provider: (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
     gatewayUrl: (cfg.facilitatorProvider || 'zan') === 'zan' ? cfg.gatewayUrl : (cfg.facilitatorUrl || null),
@@ -488,6 +594,8 @@ export async function settleBoundPayment({
     amount: chain.amount,
     payer: chain.payer,
     payTo: chain.payTo,
+    route: resourceHave,
+    quotedAmount: String(challenge.amount),
     blockNumber: chain.blockNumber || null,
     logIndex: chain.logIndex ?? null,
     slot: chain.slot ?? null,
@@ -496,6 +604,9 @@ export async function settleBoundPayment({
     amount: String(chain.amount),
     payer: chain.payer,
     payTo: chain.payTo,
+    nonce,
+    route: resourceHave,
+    quotedAmount: String(challenge.amount),
     evidence: {
       blockNumber: chain.blockNumber ?? null,
       logIndex: chain.logIndex ?? null,
@@ -543,6 +654,7 @@ export async function settleBoundPayment({
       slot: chain.slot ?? null,
     },
   };
+  }
   }
 }
 

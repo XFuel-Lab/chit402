@@ -9,6 +9,11 @@ import http from 'node:http';
 
 const EVM_PAYER = '0x1234567890123456789012345678901234567890';
 const EVM_TX = '0x' + 'ab'.repeat(32);
+let evmSeq = 0;
+function nextEvmTx() {
+  evmSeq += 1;
+  return `0x${evmSeq.toString(16).padStart(64, '0')}`;
+}
 const SOL_PAYER = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
 const SOL_TX = '5'.repeat(87);
 const SOL_CAIP = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
@@ -58,20 +63,21 @@ function startFacilitator() {
         const network = String(parsed.paymentRequirements?.network || '');
         const solana = network.startsWith('solana');
         const payer = solana ? SOL_PAYER : EVM_PAYER;
-        const transaction = solana ? SOL_TX : EVM_TX;
+        const transaction = solana ? SOL_TX : nextEvmTx();
         if (url.endsWith('/verify')) return send(200, { isValid: true, payer });
         if (url.endsWith('/settle')) {
           return send(200, { success: true, transaction, network, payer });
         }
         return send(404, { error: 'not_found' });
       }
-      if (url.endsWith('/verify')) return send(200, { valid: true, isValid: true, txRef: EVM_TX, payer: EVM_PAYER });
+      if (url.endsWith('/verify')) return send(200, { valid: true, isValid: true, payer: EVM_PAYER });
       if (url.endsWith('/settle')) {
+        const txRef = nextEvmTx();
         return send(200, {
           settled: true,
           success: true,
-          txRef: EVM_TX,
-          transaction: EVM_TX,
+          txRef,
+          transaction: txRef,
           network: 'base',
           payer: EVM_PAYER,
         });
@@ -235,15 +241,17 @@ test('paid POST /v1/chat/completions on Base returns a 200 settlement header', a
   });
   const paid = await res.json();
   assert.equal(res.status, 200, JSON.stringify(paid));
+  const tx = decodePaymentResponseHeader(res.headers.get('payment-response')).transaction;
+  assert.match(tx, /^0x[0-9a-f]{64}$/);
   assertSettleHeader(res, {
     success: true,
-    transaction: EVM_TX,
+    transaction: tx,
     network: 'eip155:8453',
     payer: EVM_PAYER,
   });
   assert.equal(paid.xfuel.route_meta.chain_id, 'base');
   assert.equal(paid.xfuel.payment_meta.network, 'base');
-  assert.equal(decodeReceiptClaims(paid.xfuel).payment.ref, `base:${EVM_TX}`);
+  assert.equal(decodeReceiptClaims(paid.xfuel).payment.ref, `base:${tx}`);
   assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
 });
 
@@ -299,12 +307,15 @@ test('paid POST /a2a-message and /v1/responses share the settlement header', asy
   });
   const a2aBody = await a2a.json();
   assert.equal(a2a.status, 200, JSON.stringify(a2aBody));
+  const a2aTx = decodePaymentResponseHeader(a2a.headers.get('payment-response')).transaction;
+  assert.match(a2aTx, /^0x[0-9a-f]{64}$/);
   assertSettleHeader(a2a, {
     success: true,
-    transaction: EVM_TX,
+    transaction: a2aTx,
     network: 'eip155:8453',
     payer: EVM_PAYER,
   });
+  assert.equal(decodeReceiptClaims(a2aBody.xfuel).payment.ref, `base:${a2aTx}`);
 
   const responsesBody = { model: 'xfuel/auto', input: 'hello', max_output_tokens: 16 };
   const responsesChallenge = await challenge('/v1/responses', responsesBody);
@@ -320,12 +331,16 @@ test('paid POST /a2a-message and /v1/responses share the settlement header', asy
   });
   const responsesPaid = await responses.json();
   assert.equal(responses.status, 200, JSON.stringify(responsesPaid));
+  const responsesTx = decodePaymentResponseHeader(responses.headers.get('payment-response')).transaction;
+  assert.match(responsesTx, /^0x[0-9a-f]{64}$/);
+  assert.notEqual(responsesTx, a2aTx);
   assertSettleHeader(responses, {
     success: true,
-    transaction: EVM_TX,
+    transaction: responsesTx,
     network: 'eip155:8453',
     payer: EVM_PAYER,
   });
+  assert.equal(decodeReceiptClaims(responsesPaid.xfuel).payment.ref, `base:${responsesTx}`);
 });
 
 test('an authorised unpaid 200 does not claim a settlement', async () => {

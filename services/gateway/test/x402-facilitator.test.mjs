@@ -694,8 +694,8 @@ test('verifyViaFacilitator surfaces facilitator rejection', async () => {
   }
 });
 
-test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge → settle → replay-rejected', async () => {
-  const { url, close } = await startMockFacilitator();
+test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge, settle, then the original receipt', async () => {
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgX402(url);
 
@@ -720,10 +720,13 @@ test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge
     assert.equal(settled.kind, 'settled');
     assert.match(settled.paymentRef, /^base-sepolia:0x/);
 
-    // Step 3: replay the same nonce → rejected (spent).
+    // Step 3: the same nonce returns the original receipt. No second settle.
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-bs-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.kind, 'settled');
+    assert.equal(replay.idempotentReplay, true);
+    assert.equal(replay.replay, true);
+    assert.equal(replay.paymentRef, settled.paymentRef);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
@@ -731,7 +734,7 @@ test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge
 
 test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
   // CDP-native buyers like Bankr send PAYMENT-SIGNATURE header.
-  const { url, close } = await startMockFacilitator();
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgX402(url);
 
@@ -752,10 +755,12 @@ test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): C
     assert.equal(settled.kind, 'settled', 'v2 PAYMENT-SIGNATURE settles');
     assert.match(settled.paymentRef, /^base-sepolia:0x/);
 
-    // Step 3: replay → rejected
+    // Step 3: the same nonce returns the original receipt. No second settle.
     const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-fac', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.kind, 'settled');
+    assert.equal(replay.idempotentReplay, true);
+    assert.equal(replay.paymentRef, settled.paymentRef);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
