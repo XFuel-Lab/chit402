@@ -265,3 +265,33 @@ test('an RPC timeout at boot does not skip the epoch gate or the latest-anchor c
     await srv.close();
   }
 });
+
+test('the deferred checks refuse a foreign journal before reconcile rebroadcasts a stored raw', { timeout: 10_000 }, async () => {
+  const srv = await hungServer();
+  const foreign = async () => ({ root: `0x${'ee'.repeat(32)}`, tx: '0xforeign' });
+  try {
+    const tree = new ReceiptMerkleTree();
+    tree.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-deferred-order-'));
+    tree.allowFreshGenesis = true;
+    await finishReceiptLogBoot(tree, { baseRpc: srv.url, timeoutMs: 150 });
+    tree.allowFreshGenesis = false;
+    const rebroadcasts = [];
+    tree._deferredBoot = {
+      ...tree._deferredBoot,
+      readLatest: foreign,
+      lookup: async () => ({ rebroadcast: true }),
+      rebroadcast: async (raw) => { rebroadcasts.push(raw); },
+      readBlockTs: null,
+    };
+    tree.anchorIntents.push({ chain: 'base', day: '2026-10-05', root: `0x${'aa'.repeat(32)}`, nonce: 1, status: 'blocked', raw: '0xdeadbeef', tx: `0x${'ab'.repeat(32)}` });
+    await assert.rejects(
+      () => tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
+      (err) => err.code === 'anchor_not_in_journal',
+    );
+    assert.equal(rebroadcasts.length, 0);
+    assert.ok(tree._deferredBoot);
+    fs.rmSync(tree.dir, { recursive: true, force: true });
+  } finally {
+    await srv.close();
+  }
+});

@@ -2659,7 +2659,7 @@ export class ReceiptMerkleTree {
     try {
       await this._gateAnchorChain(request);
     } catch (err) {
-      return this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch' });
+      return this._anchorResult({ status: 'blocked', root, reason: err?.code || 'anchor_chain_mismatch' });
     }
     let signed;
     try {
@@ -3488,11 +3488,14 @@ async function finishReceiptLogBootChecks(tree, opts, chainRpc) {
         }
       }
       : null);
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
+  // Integrity first: reconcile can rebroadcast stored signed raws, so it runs
+  // only after the journal is shown to hold the latest Base anchor.
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
-  if (allow) return tree;
-  await assertLatestBaseAnchor(tree, opts);
-  gateEpochRecord(tree);
+  if (!allow) {
+    await assertLatestBaseAnchor(tree, opts);
+    gateEpochRecord(tree);
+  }
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
   return tree;
 }
 
