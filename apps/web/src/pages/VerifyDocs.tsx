@@ -9,7 +9,8 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'signed_receipt_unavailable', text: 'The document is the public shell. The signed receipt is on the owner view. Exit 2. This is not a missing issuer-history file.' },
   { id: 'unsupported_version', text: 'This verifier does not accept the receipt version. Exit 2. Upgrade the verifier.' },
   { id: 'kid_not_in_history', text: 'No loaded issuer history covers this key. Exit 2. Pass --issuer-history with a snapshot that includes the kid and prefix-extends the bundled snapshot.' },
-  { id: 'log_unreachable', text: 'The receipt, the log, or the anchor was not fetched. Exit 2. The receipt was not found invalid.' },
+  { id: 'receipt_unavailable', text: 'The receipt itself was not fetched. Exit 2. Every check is could_not_check. The receipt was not found invalid.' },
+  { id: 'log_unreachable', text: 'A loaded receipt\'s log or anchor was not fetched. Exit 2. The receipt was not found invalid.' },
   { id: 'anchor_unreachable', text: 'The anchor was not fetched. Exit 2. The receipt was not found invalid.' },
   { id: 'pending_anchor', text: 'The leaf is past the anchored tree. Exit 2. Re-run when the anchor for this leaf is published.' },
   { id: 'pending', text: 'The anchor is not in yet. Exit 2.' },
@@ -28,7 +29,7 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'issuer_history_seq_mismatch', text: 'The history seq does not match the pin. Exit 1.' },
   { id: 'issuer_history_not_extension', text: 'The --issuer-history file does not prefix-extend the bundled snapshot. Exit 1.' },
   { id: 'signature_invalid', text: 'The issuer signature does not verify. Exit 1.' },
-  { id: 'key untrusted', text: 'The signing key is not a pinned issuer key. Exit 1.' },
+  { id: 'key_untrusted', text: 'The signing key is not a pinned issuer key. The check reason is "key untrusted". Exit 1.' },
   { id: 'key_window', text: 'The key window check failed. Exit 1.' },
   { id: 'version_mismatch', text: 'The receipt version does not match the signature. Exit 1.' },
   { id: 'id_mismatch', text: 'The receipt id does not match the signature. Exit 1.' },
@@ -72,8 +73,9 @@ export default function VerifyDocs() {
           <p>
             A receipt URL is read as JSON (<code>?format=json</code>, <code>Accept: application/json</code>).
             HTML, a timeout, or a host that does not answer is exit 2. A fetched inclusion proof or tree head
-            that does not verify is exit 1. <code>NOT_IN_LOG</code> needs a signed head whose signature verifies
-            and that does not cover the leaf. An unsigned 404 body alone is not that result.
+            that does not verify is exit 1. <code>NOT_IN_LOG</code> needs the current signed tree head, and
+            that signature has to verify, beside an unsigned <code>not_in_tree</code> response. It does not
+            check that the head covers the leaf. An unsigned head, or an unsigned 404 alone, is not that result.
           </p>
           <p>
             The public page is an unsigned shell. That is <code>signed_receipt_unavailable</code> (exit 2) unless

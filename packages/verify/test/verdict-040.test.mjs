@@ -450,10 +450,19 @@ test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit
   const missed = JSON.parse(down.stdout);
   assert.equal(missed.result, 'could_not_check');
   assert.equal(missed.exit_code, 2);
+  assert.equal(missed.reason, 'receipt_unavailable');
+  assert.notEqual(missed.reason, 'kid_not_in_history');
   assert.match(missed.message, /NOT found invalid/);
+  for (const name of ['signature', 'key_window', 'payment_binding', 'log_inclusion', 'anchor', 'shape']) {
+    assert.equal(missed.checks[name], 'could_not_check', name);
+  }
+  assert.notEqual(missed.checks.payment_binding, 'pass');
   const human = runCli(['http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96']);
   assert.equal(human.status, 2, human.text);
   assert.match(human.stdout, /NOT found invalid/);
+  assert.match(human.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#receipt_unavailable/);
+  assert.doesNotMatch(human.stdout, /kid_not_in_history/);
+  assert.doesNotMatch(human.stdout, /#key untrusted/);
 });
 
 test('a null-inclusion shell is NOT_IN_LOG only beside a verified head', async () => {
@@ -500,6 +509,24 @@ test('a null-inclusion shell is NOT_IN_LOG only beside a verified head', async (
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('an unreachable history host does not exit 0', () => {
+  const house = JSON.parse(readFileSync(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url), 'utf8'));
+  house.verify_url = 'http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+  if (house.verification) delete house.verification.jwks_uri;
+  const dir = mkdtempSync(join(tmpdir(), 'chit-unreachable-history-'));
+  const receiptPath = join(dir, 'receipt.json');
+  writeFileSync(receiptPath, JSON.stringify(house));
+  const run = runCli([receiptPath, '--json']);
+  assert.equal(run.status, 2, run.text);
+  const body = JSON.parse(run.stdout);
+  assert.equal(body.result, 'could_not_check');
+  assert.equal(body.exit_code, 2);
+  assert.notEqual(body.result, 'verified');
+  assert.equal(body.checks.key_window, 'pass');
+  assert.equal(body.history.source, 'bundled');
+  assert.doesNotMatch(run.stdout, /verified_no_key_window/);
 });
 
 test('docs/verify publishes an anchor for every verdict reason', () => {

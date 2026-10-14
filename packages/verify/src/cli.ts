@@ -1930,7 +1930,7 @@ function inputFailure(err: unknown, target: string): { status: 1 | 2; message: s
   const message = err instanceof Error ? err.message : String(err);
   const remote = code === 'REMOTE' || code === 'FETCH' || /fetch failed|fetch \d+|timeout|aborted|network|ENOTFOUND|ECONNREFUSED|EAI_AGAIN/i.test(message);
   if (remote) {
-    return { status: 2, message: 'The receipt could not be fetched.', reason: 'log_unreachable' };
+    return { status: 2, message: 'The receipt could not be fetched.', reason: 'receipt_unavailable' };
   }
   if (code === 'ENOENT' || message.includes('ENOENT')) {
     return { status: 1, message: `Error reading receipt: ${target}`, reason: 'unreadable' };
@@ -2005,10 +2005,7 @@ async function main(): Promise<number> {
     if (failure.status === 2) {
       const verdict = buildVerifyVerdict({
         version: packageVersion(),
-        signatureChecked: false,
-        logInclusion: 'could_not_check',
-        anchor: 'could_not_check',
-        logReason: failure.reason,
+        absentReason: failure.reason,
       });
       return printLocked({
         ...verdict,

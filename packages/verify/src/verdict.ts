@@ -98,6 +98,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: 'Pass the signed receipt from the owner view.',
     };
   }
+  if (reason === 'receipt_unavailable') {
+    return {
+      message: 'The receipt could not be fetched.',
+      next_step: 'Fetch the receipt again, then re-run.',
+    };
+  }
   if (reason === 'log_unreachable' || reason === 'anchor_unreachable') {
     return {
       message: 'The receipt log or anchor could not be fetched.',
@@ -184,6 +190,11 @@ export interface VerdictInput {
   anchor?: CheckState | 'unclaimed';
   logReason?: string | null;
   log?: VerdictLog | null;
+  /**
+   * No receipt was loaded. Every check is `could_not_check` and this string
+   * is the reason. History and payment defaults must not run.
+   */
+  absentReason?: string | null;
 }
 
 function claimed(state: CheckState | 'unclaimed' | undefined): CheckState {
@@ -192,6 +203,7 @@ function claimed(state: CheckState | 'unclaimed' | undefined): CheckState {
 }
 
 export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
+  if (input.absentReason) return absentReceiptVerdict(input);
   const errors = input.errors || [];
   const unsupported = errors.includes('unsupported_version');
   const versionMismatch = errors.includes('version_mismatch') || errors.includes('payload_version_mismatch');
@@ -271,6 +283,38 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   };
 }
 
+function absentReceiptVerdict(input: VerdictInput): VerifyVerdict {
+  const reason = input.absentReason || 'receipt_unavailable';
+  const copy = verdictCopy(reason, 'could_not_check');
+  const could: CheckState = 'could_not_check';
+  return {
+    result: 'could_not_check',
+    exit_code: 2,
+    reason,
+    message: copy.message,
+    next_step: copy.next_step,
+    receipt_id: null,
+    display_id: null,
+    payload_version: null,
+    checks: {
+      signature: could,
+      key_window: could,
+      payment_binding: could,
+      log_inclusion: could,
+      anchor: could,
+      shape: could,
+    },
+    history: {
+      source: null,
+      head_hash: null,
+      entry_count: null,
+      as_of: null,
+    },
+    log: null,
+    verifier: { name: 'chit402-verify', version: input.version },
+  };
+}
+
 function failReason(
   failed: string[],
   historyReason: string | null,
@@ -317,11 +361,17 @@ export function overallLine(verdict: VerifyVerdict, legacyOverall?: string | nul
   return 'COULD_NOT_CHECK';
 }
 
+/** Fragment for `https://chit402.com/docs/verify#`. Ids have no spaces. */
+export function verdictDocAnchor(reason: string): string {
+  if (reason === 'key untrusted') return 'key_untrusted';
+  return reason;
+}
+
 /** Human lines. Exit 2 always includes the exact `NOT found invalid` line. */
 export function humanVerdictLines(verdict: VerifyVerdict): string[] {
   const lines = [overallLine(verdict), verdict.message];
   if (verdict.exit_code === 2) lines.push('NOT found invalid');
-  if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdict.reason}`);
+  if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
     lines.push(`Issuer history: as of ${verdict.history.as_of}`);
   }
@@ -338,6 +388,7 @@ export const VERDICT_DOC_ANCHORS = [
   'signed_receipt_unavailable',
   'unsupported_version',
   'kid_not_in_history',
+  'receipt_unavailable',
   'log_unreachable',
   'anchor_unreachable',
   'pending_anchor',
@@ -357,7 +408,7 @@ export const VERDICT_DOC_ANCHORS = [
   'issuer_history_seq_mismatch',
   'issuer_history_not_extension',
   'signature_invalid',
-  'key untrusted',
+  'key_untrusted',
   'key_window',
   'version_mismatch',
   'id_mismatch',
