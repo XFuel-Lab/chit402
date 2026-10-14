@@ -2009,6 +2009,7 @@ async function main(): Promise<number> {
       });
       return printLocked({
         ...verdict,
+        // Kept on the JSON verdict. Human lines drop this sentence so exit 2 does not read as INVALID.
         message: `${failure.message} It was NOT found invalid.`,
         next_step: 'Fetch the receipt again, then re-run.',
       }, args.json);

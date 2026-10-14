@@ -3,7 +3,13 @@
 All notable changes to the Chit402 verifier alias are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-The package re-exports `@xfuel/verify` and forwards CLI arguments to `xfuel-verify`.
+The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
+
+## 0.4.1 — Pin chit402-verify 0.4.1
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.1`.
+- Human `COULD_NOT_CHECK` text from that verifier says the receipt could not be checked and does not contain `invalid` or `INVALID`. `--json` and exit codes 0, 1, and 2 are unchanged. Not published. No deploy.
 
 ## 0.3.5 — Match @xfuel/verify 0.3.5
 

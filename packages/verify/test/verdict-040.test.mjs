@@ -248,7 +248,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.result === 'verified', false);
   assert.equal(body.verifier.name, 'chit402-verify');
-  assert.equal(body.verifier.version, '0.4.0');
+  assert.equal(body.verifier.version, '0.4.1');
   assert.equal(body.history.source, 'bundled');
   assert.equal(body.history.as_of, '2026-10-14');
   assert.doesNotMatch(run.stdout, /verified_no_key_window/);
@@ -257,7 +257,8 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   const text = runCli([receiptPath]);
   assert.equal(text.status, 2, text.text);
   assert.match(text.stdout, /^COULD_NOT_CHECK\n/);
-  assert.match(text.stdout, /NOT found invalid/);
+  assert.match(text.stdout, /The receipt could not be checked\./);
+  assert.doesNotMatch(text.stdout, /invalid/i);
   assert.match(text.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#log_unreachable/);
   assert.match(text.stdout, /Issuer history: as of 2026-10-14/);
   assert.doesNotMatch(text.stdout, /INCLUDED_SHELL/);
@@ -461,7 +462,8 @@ test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit
       const html = await runCliAsync([`http://127.0.0.1:${htmlPort}/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96`]);
       assert.equal(html.status, 2, html.text);
       assert.match(html.stdout, /^COULD_NOT_CHECK\n/);
-      assert.match(html.stdout, /NOT found invalid/);
+      assert.match(html.stdout, /The receipt could not be checked\./);
+      assert.doesNotMatch(html.stdout, /invalid/i);
       assert.doesNotMatch(html.text, /Unexpected token/);
     } finally {
       await new Promise((resolve) => htmlOnly.close(resolve));
@@ -484,7 +486,8 @@ test('a receipt URL requests JSON, and a non-JSON body or a failed fetch is exit
   assert.notEqual(missed.checks.payment_binding, 'pass');
   const human = runCli(['http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96']);
   assert.equal(human.status, 2, human.text);
-  assert.match(human.stdout, /NOT found invalid/);
+  assert.match(human.stdout, /The receipt could not be checked\./);
+  assert.doesNotMatch(human.stdout, /invalid/i);
   assert.match(human.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#receipt_unavailable/);
   assert.doesNotMatch(human.stdout, /kid_not_in_history/);
   assert.doesNotMatch(human.stdout, /#key untrusted/);
