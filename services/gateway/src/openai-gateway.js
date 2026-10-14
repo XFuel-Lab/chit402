@@ -45,7 +45,13 @@ import { capOpenRouterOutputTokens, OPENROUTER_CALLER_PAID_LABEL } from './openr
 import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
-import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import { runX402Handshake, extractPaymentHeader, extractPaymentNonce, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import {
+  abortServedReceipt,
+  commitServedReceipt,
+  notePaidFulfillment,
+  takeServedReceipt,
+} from './paid-response-replay.js';
 import { clientPaymentCode, paymentErrorStatus } from './x402-flags.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
@@ -644,6 +650,7 @@ async function meterV1Request(req, res, {
           asset: decision.asset,
           issuance_commitment: decision.issuance_commitment || null,
           dispute_window: decision.dispute_window || null,
+          idempotentReplay: decision.idempotentReplay === true,
         },
         hold: activeHold,
       };
@@ -1782,6 +1789,75 @@ function paidResourceUrl(baseUrl, resourcePath) {
   return `${String(baseUrl).replace(/\/$/, '')}${absPath}`;
 }
 
+const REPLAY_HEADER_NAMES = [
+  'payment-response',
+  'x-payment-response',
+  'x-xfuel-task-id',
+  'x-xfuel-provider',
+  'x-xfuel-compute-real',
+  'x-xfuel-payment-rail',
+  'x-xfuel-proof-status',
+  'x-xfuel-proof-url',
+  'x-xfuel-verify-url',
+  'x-xfuel-agent-id',
+  'x-chit-requested-model',
+  'x-chit-served-model',
+  'x-chit-model-substituted',
+];
+
+function captureReplayHeaders(res) {
+  const headers = {};
+  for (const name of REPLAY_HEADER_NAMES) {
+    const value = res.getHeader(name);
+    if (value != null && value !== '') headers[name] = String(value);
+  }
+  return headers;
+}
+
+function sendStoredPaidResponse(res, stored) {
+  res.status(stored.status || 200);
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  for (const [name, value] of Object.entries(stored.headers || {})) {
+    if (value != null) res.setHeader(name, value);
+  }
+  return res.end(Buffer.from(stored.bytes, 'utf8'));
+}
+
+/** Exact bytes from the first fulfillment. Does not run the handler. */
+async function maybeServePaidReplay(req, res, metering) {
+  if (!metering?.payment?.idempotentReplay) return false;
+  const stored = await takeServedReceipt(extractPaymentNonce(req));
+  if (!stored?.bytes) {
+    res.status(409).json({
+      error: {
+        message: 'Payment could not be settled',
+        type: 'payment_required',
+        code: 'payment_replayed',
+      },
+    });
+    return true;
+  }
+  sendStoredPaidResponse(res, stored);
+  return true;
+}
+
+function finishPaidBody(res, req, status, body, receipt) {
+  const bytes = Buffer.from(JSON.stringify(body));
+  const nonce = req ? extractPaymentNonce(req) : null;
+  if (nonce) {
+    commitServedReceipt(nonce, {
+      bytes: bytes.toString('utf8'),
+      signature: receipt?.issuer_signature?.jws || null,
+      taskId: receipt?.task_id || body?.xfuel?.task_id || body?.task_id || null,
+      status,
+      headers: captureReplayHeaders(res),
+    });
+  }
+  res.status(status);
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  return res.end(bytes);
+}
+
 function setReceiptHeaders(res, receipt, resourceUrl = null) {
   const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
@@ -2092,7 +2168,7 @@ function respondPaidV1Failure(res, {
     settleRecord,
   });
   setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, req?.path));
-  return res.status(statusCode).json({
+  return finishPaidBody(res, req, statusCode, {
     error: {
       message: message || 'Inference could not be completed after payment was collected.',
       type: statusCode >= 500 ? 'server_error' : 'invalid_request_error',
@@ -2101,7 +2177,7 @@ function respondPaidV1Failure(res, {
     task_id: taskId,
     payment_ref: payment?.ref || null,
     xfuel: receipt,
-  });
+  }, receipt);
 }
 
 /**
@@ -2501,6 +2577,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      if (await maybeServePaidReplay(req, res, metering)) return undefined;
       let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
@@ -2594,6 +2671,7 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      if (metering.payment && !metering.payment.idempotentReplay) notePaidFulfillment();
       const orUser = openrouterEndUser({
         payerWallet: metering.payment?.payer,
         apiKeyHash,
@@ -2792,10 +2870,11 @@ export function registerOpenAIRoutes(app, {
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
+      abortServedReceipt(extractPaymentNonce(req));
       return streamCompletion(res, { id, created, model: catalogModel, content, receipt });
     }
 
-    return res.json({
+    return finishPaidBody(res, req, 200, {
       id,
       object: 'chat.completion',
       created,
@@ -2814,7 +2893,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, receipt);
   }
 
   // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
@@ -3024,6 +3103,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      if (await maybeServePaidReplay(req, res, metering)) return undefined;
       let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
@@ -3098,6 +3178,7 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      if (metering.payment && !metering.payment.idempotentReplay) notePaidFulfillment();
       const orUser = openrouterEndUser({
         payerWallet: metering.payment?.payer,
         apiKeyHash,
@@ -3260,7 +3341,7 @@ export function registerOpenAIRoutes(app, {
     // Build Responses-shaped output
     const { output, output_text } = toResponsesOutput(content, toolCalls);
 
-    return res.json({
+    return finishPaidBody(res, req, 200, {
       id,
       object: 'response',
       created_at: created,
@@ -3271,7 +3352,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, receipt);
   });
 
   // ── POST /v1/images/generations ────────────────────────────────────────────

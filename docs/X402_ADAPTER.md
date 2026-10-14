@@ -67,6 +67,10 @@ Solana payments are verified and settled via PayAI. Base remains the default net
 4. Gateway routes to the appropriate facilitator based on the network in the payment
 5. Facilitator verifies / settles; task proceeds; `payment_ref` recorded on the receipt  
 
+A later retry that presents that same payment header for the same challenge receives the original response bytes (same `task_id` and receipt). It does not run the handler again. Any other header for that challenge is `409 payment_replayed` and does not include the wallet or the transaction.
+
+If that first attempt is pending or fails confirmation, the challenge stays `settle_unconfirmed` until reconcile runs. The client does not get a new challenge for that nonce, and a retry does not settle a second time.
+
 Payment binding into the SP1 proof is flag-gated (`X402_PROOF_BINDING`); in-proof field activates on SP1 guest v2.
 
 ## CDP Bazaar Discovery Listing

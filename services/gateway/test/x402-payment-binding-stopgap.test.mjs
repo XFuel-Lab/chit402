@@ -343,9 +343,10 @@ test('single claim: one challenge cannot mint two receipts', async () => {
     const cfg = cfgFor(mock.url);
     const body = await issueChallenge(cfg, { taskId: 'stopgap-claim', amount: '2000' });
     const nonce = body.accepts[0].extra.nonce;
+    const header = evmHeader({ amount: '2000' });
     const pay = () => runX402Handshake({
       headers: {
-        'x-payment': evmHeader({ amount: '2000' }),
+        'x-payment': header,
         'x-payment-nonce': nonce,
       },
       body: {},

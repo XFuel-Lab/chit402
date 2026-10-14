@@ -25,6 +25,7 @@ import {
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
 import { atomicUnits, canonicalPaidRoute } from './paid-route.js';
+import { abortServedReceipt, armServedReceipt } from './paid-response-replay.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -191,6 +192,7 @@ function settlementReplay(rec, resourceHave) {
     kind: 'settled',
     confirmed: true,
     paymentRef: settlement.txRef,
+    paymentHash: settlement.paymentHash || null,
     route: resourceHave,
     quotedAmount: String(rec.amount),
     settledAmount: String(settlement.amount),
@@ -208,19 +210,29 @@ function settlementReplay(rec, resourceHave) {
   };
 }
 
-function payersAgree(left, right, solana) {
-  if (left == null || left === '' || right == null || right === '') return false;
-  return samePayee(left, right, { solana });
+/** SHA-256 of the raw payment header. The signature is inside that header. */
+function headerDigest(header) {
+  if (typeof header !== 'string' || header.length === 0) return null;
+  return crypto.createHash('sha256').update(header, 'utf8').digest('hex');
 }
 
-/** Same route, quoted price, and payer (when the header or caller names one). */
-function replayAllowed(decision, { resourceHave, issued, expectedPayer, paymentHeader, solana }) {
+function digestEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || left.length !== right.length || left.length === 0) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+/**
+ * Same route, same quoted price, and the same payment header bytes.
+ * A header that only copies the payer address is not this proof.
+ */
+function replayAllowed(decision, { resourceHave, issued, paymentHeader }) {
   if (!decision || decision.kind !== 'settled' || decision.confirmed !== true || !decision.paymentRef) return false;
   if (canonicalPaidRoute(decision.route) !== resourceHave) return false;
   if (atomicUnits(decision.quotedAmount) !== issued) return false;
-  const auth = !solana ? readEvmAuthorization(paymentHeader) : null;
-  if (auth?.from && !payersAgree(auth.from, decision.payerWallet, false)) return false;
-  if (expectedPayer && !payersAgree(expectedPayer, decision.payerWallet, solana)) return false;
+  const got = headerDigest(paymentHeader);
+  if (!decision.paymentHash || !got || !digestEqual(decision.paymentHash, got)) return false;
   return true;
 }
 
@@ -372,7 +384,7 @@ export async function settleBoundPayment({
   // check because that authorization is the one that already settled.
   if (spent) {
     const prior = settlementReplay(challenge, resourceHave);
-    if (prior && replayAllowed(prior, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+    if (prior && replayAllowed(prior, { resourceHave, issued, paymentHeader })) {
       return idempotentReplay(prior);
     }
     return refused(req, 'payment_replayed', { preSettle: true });
@@ -399,7 +411,7 @@ export async function settleBoundPayment({
       const pending = inflightByNonce.get(String(nonce));
       if (pending) {
         const winner = await pending;
-        if (replayAllowed(winner, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+        if (replayAllowed(winner, { resourceHave, issued, paymentHeader })) {
           return idempotentReplay(winner);
         }
         if (winner?.kind === 'settled') return refused(req, 'payment_replayed', { preSettle: true });
@@ -409,7 +421,7 @@ export async function settleBoundPayment({
     if (claim.reason === 'payment_replayed') {
       const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
       const prior = rec ? settlementReplay(rec, resourceHave) : null;
-      if (prior && replayAllowed(prior, { resourceHave, issued, expectedPayer, paymentHeader, solana })) {
+      if (prior && replayAllowed(prior, { resourceHave, issued, paymentHeader })) {
         return idempotentReplay(prior);
       }
     }
@@ -426,12 +438,16 @@ export async function settleBoundPayment({
   try {
     outcome = await settleClaimed();
     return outcome;
+  } catch (err) {
+    abortServedReceipt(nonceKey);
+    throw err;
   } finally {
     resolveWaiters(outcome);
     if (inflightByNonce.get(nonceKey) === waiter) inflightByNonce.delete(nonceKey);
   }
 
   async function settleClaimed() {
+  armServedReceipt(nonce);
   const gwOpts = {
     provider: (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
     gatewayUrl: (cfg.facilitatorProvider || 'zan') === 'zan' ? cfg.gatewayUrl : (cfg.facilitatorUrl || null),
@@ -596,6 +612,7 @@ export async function settleBoundPayment({
     payTo: chain.payTo,
     route: resourceHave,
     quotedAmount: String(challenge.amount),
+    paymentHash: headerDigest(paymentHeader),
     blockNumber: chain.blockNumber || null,
     logIndex: chain.logIndex ?? null,
     slot: chain.slot ?? null,
@@ -639,6 +656,7 @@ export async function settleBoundPayment({
     kind: 'settled',
     confirmed: true,
     paymentRef: norm.key,
+    paymentHash: headerDigest(paymentHeader),
     route: resourceHave,
     quotedAmount: String(challenge.amount),
     settledAmount: String(chain.amount),

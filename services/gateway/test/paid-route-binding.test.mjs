@@ -46,13 +46,14 @@ function evmHeader({
   nonce = AUTH_NONCE,
   payTo = HOUSE,
   amount = '2000',
+  signature = `0x${'11'.repeat(65)}`,
 } = {}) {
   const blob = {
     network: 'base',
     amount,
     payTo,
     payload: {
-      signature: `0x${'11'.repeat(65)}`,
+      signature,
       authorization: {
         from,
         to,
@@ -656,6 +657,63 @@ test('a spent challenge on another route or price is payment_replayed', async ()
     });
     assert.equal(higher.code, 'payment_replayed');
     assert.notEqual(higher.kind, 'settled');
+    assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
+  } finally {
+    await fac.close();
+  }
+});
+
+test('a replay without the original payment proof is payment_replayed and leaks nothing', async () => {
+  const fac = await listenFacilitator();
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { amount: '2000', resource: '/task-request' });
+    const header = evmHeader();
+    const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const first = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+    });
+    assert.equal(first.kind, 'settled', first.code);
+    const cases = [
+      ['missing header', null],
+      ['garbage header', 'not-a-payment'],
+      ['forged authorization', evmHeader({ signature: `0x${'22'.repeat(65)}` })],
+    ];
+    for (const [label, paymentHeader] of cases) {
+      const replay = await settleBoundPayment({
+        taskId: 'task-1',
+        amount: '2000',
+        cfg,
+        store,
+        nonce,
+        paymentHeader,
+        resource: '/task-request',
+      });
+      assert.equal(replay.code, 'payment_replayed', label);
+      assert.notEqual(replay.kind, 'settled', label);
+      const leaked = JSON.stringify(replay);
+      assert.equal(leaked.includes(PAYER), false, label);
+      assert.equal(leaked.includes(TX), false, label);
+      assert.equal(replay.paymentRef, undefined, label);
+      assert.equal(replay.payerWallet, undefined, label);
+    }
+    const same = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+    });
+    assert.equal(same.idempotentReplay, true);
+    assert.equal(same.paymentRef, first.paymentRef);
     assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
   } finally {
     await fac.close();

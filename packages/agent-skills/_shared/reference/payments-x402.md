@@ -112,10 +112,22 @@ No 402 handshake — the existing amount-in-wei M2M flow settles on Theta (361/3
 
 Each 402 challenge carries a `nonce` bound to `{ amount, asset, network, payTo,
 resource }` with a TTL (`X402_CHALLENGE_TTL_MS`). Verify enforces expiry + amount
-binding; settle marks the nonce spent (replay protection — analogous to ZK
-nullifiers). Settlement requirements come from that server-issued challenge.
+binding; settle marks the nonce spent. Settlement requirements come from that
+server-issued challenge.
+
+Sending the **same** payment header again for that challenge, route, and quoted
+price returns the original response: the same `task_id`, the same receipt
+bytes, and the same signature. The gateway does not run the handler again and
+does not settle a second time. A missing header, a garbage header, or a new
+authorization that only copies the payer address is `409 payment_replayed`.
+That refusal does not include the wallet or the transaction.
 
 On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. Do not sign a new authorization for an in-flight challenge. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate SDK change.
+
+If the first attempt is pending or fails confirmation, the challenge stays
+`settle_unconfirmed` until reconcile runs. Retrying that challenge does not
+open a new 402 and does not settle again. Wait for reconcile; do not sign a
+second payment for the same attempt.
 
 ## Proof binding (Phase 2, flag-gated)
 

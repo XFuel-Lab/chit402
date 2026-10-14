@@ -523,6 +523,20 @@ export async function runX402Handshake(req, {
   // The challenge includes the CDP Bazaar extension for discovery cataloging.
   // Dual-network (2026-08-22): include Solana accepts entry when cfg.solana.enabled.
   if (!paymentHeader) {
+    // A spent challenge without the original proof is a replay refusal.
+    // An unconfirmed challenge stays unconfirmed until reconcile; a new 402
+    // would invite a second payment for the same attempt.
+    const earlyNonce = extractPaymentNonce(req);
+    if (earlyNonce && bindingEnforced(cfg)) {
+      const activeStore = store || getActiveChallengeStore() || challengeStore;
+      if (typeof activeStore?.isSpent === 'function' && activeStore.isSpent(earlyNonce)) {
+        return { kind: 'failed', reason: 'payment_replayed', code: 'payment_replayed', preSettle: true };
+      }
+      const pendingChallenge = typeof activeStore?.get === 'function' ? activeStore.get(earlyNonce) : null;
+      if (pendingChallenge?.state === 'unknown') {
+        return { kind: 'failed', reason: 'settle_unconfirmed', code: 'settle_unconfirmed', preSettle: true };
+      }
+    }
     const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {});
     let issuance_bind = null;
     if (bindParse.requested && bindParse.ok) {

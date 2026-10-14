@@ -21,12 +21,11 @@ delete process.env.THETA_EDGECLOUD_API_KEY;
 delete process.env.THETA_EDGE_URL;
 delete process.env.AKASHML_API_KEY;
 
-const { url: facUrl, close: closeFac } = await startMockFacilitator({
-  txRef: `0x${'ab'.repeat(32)}`,
-});
+const { url: facUrl, close: closeFac, server: facServer } = await startMockFacilitator();
 process.env.ZAN_X402_GATEWAY_URL = facUrl;
 
 const { createApp } = await import('../src/server.js');
+const { paidFulfillmentRuns, resetPaidFulfillmentRuns } = await import('../src/paid-response-replay.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { buildAuditorExport, renderAuditorHtml } = await import('../src/receipt.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
@@ -60,7 +59,7 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function paidChat(reuseNonce = null) {
+async function paidChat(reuseNonce = null, paymentHeader = 'PAYMENT-BLOB') {
   let nonce = reuseNonce;
   if (!nonce) {
     const challenge = await fetch(`${base}/v1/chat/completions`, {
@@ -72,17 +71,20 @@ async function paidChat(reuseNonce = null) {
     const challengeBody = await challenge.json();
     nonce = challengeBody.accepts[0].extra.nonce;
   }
+  const headers = {
+    'content-type': 'application/json',
+    'x-payment-nonce': nonce,
+  };
+  if (paymentHeader != null) headers['x-payment'] = paymentHeader;
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
-      'x-payment-nonce': nonce,
-    },
+    headers,
     body: JSON.stringify(chatBody),
   });
-  const body = await res.json();
-  return { status: res.status, body, nonce };
+  const raw = await res.text();
+  let body = null;
+  try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+  return { status: res.status, raw, body, nonce };
 }
 
 test('first paid call is settled; a repeat of the same payment is a replay', async () => {
@@ -115,12 +117,65 @@ test('first paid call is settled; a repeat of the same payment is a replay', asy
   assert.equal(row.replay_events, undefined);
 
   const second = await paidChat(first.nonce);
-  assert.equal(second.status, 200, JSON.stringify(second.body?.error || second.body));
-  assert.notEqual(second.body.xfuel.task_id, taskId);
-  assert.equal(second.body.xfuel.settlement_status, 'idempotent_replay');
-  assert.equal(second.body.xfuel.idempotent_replay, true);
-  assert.equal(second.body.xfuel.replay_of, taskId);
+  assert.equal(second.status, 200, second.raw);
+  assert.equal(second.raw, first.raw);
+  assert.equal(second.body.xfuel.task_id, taskId);
+  assert.equal(second.body.xfuel.issuer_signature.jws, xfuel.issuer_signature.jws);
   assert.equal(ledger.entries.filter((e) => e.payment_ref === xfuel.payment.ref).length, 1);
-  assert.equal(row.replay_events.length, 1);
-  assert.equal(row.replay_events[0].replay_of, taskId);
+  assert.equal(row.replay_events, undefined);
+});
+
+test('a replay without the original payment proof is 409 and leaks no wallet or tx', async () => {
+  const first = await paidChat();
+  assert.equal(first.status, 200, first.raw);
+  const tx = String(first.body.xfuel.payment.ref).split(':').slice(1).join(':');
+  const payer = first.body.xfuel.caller_binding?.payer_wallet
+    || first.body.xfuel.payment?.payer
+    || first.body.xfuel.payment?.payer_wallet;
+  assert.ok(tx, 'receipt has a transaction');
+  assert.ok(payer, 'receipt has a payer');
+  const forged = Buffer.from(JSON.stringify({
+    x402Version: 1,
+    scheme: 'exact',
+    network: 'base-sepolia',
+    payload: {
+      signature: `0x${'22'.repeat(65)}`,
+      authorization: { from: payer, to: '0xtreasury', value: '2000' },
+    },
+  }), 'utf8').toString('base64');
+  const cases = [
+    ['missing header', null],
+    ['garbage header', 'not-a-payment'],
+    ['forged authorization', forged],
+  ];
+  for (const [label, header] of cases) {
+    const replay = await paidChat(first.nonce, header);
+    assert.equal(replay.status, 409, `${label}: ${replay.raw}`);
+    assert.equal(replay.body?.error?.code, 'payment_replayed', label);
+    assert.equal(replay.raw.includes(tx), false, label);
+    assert.equal(replay.raw.includes(payer), false, label);
+    assert.equal(replay.raw.includes(first.body.xfuel.task_id), false, label);
+  }
+});
+
+test('20 concurrent copies of one challenge settle once and return one receipt', async () => {
+  const probe = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(chatBody),
+  });
+  assert.equal(probe.status, 402);
+  const nonce = (await probe.json()).accepts[0].extra.nonce;
+  const settlesBefore = facServer.settleCount;
+  resetPaidFulfillmentRuns();
+  const results = await Promise.all(Array.from({ length: 20 }, () => paidChat(nonce)));
+  assert.equal(facServer.settleCount - settlesBefore, 1);
+  assert.equal(paidFulfillmentRuns(), 1);
+  assert.equal(results.length, 20);
+  for (const result of results) {
+    assert.equal(result.status, 200, result.raw);
+    assert.equal(result.raw, results[0].raw);
+  }
+  const taskIds = new Set(results.map((result) => result.body.xfuel.task_id));
+  assert.equal(taskIds.size, 1);
 });

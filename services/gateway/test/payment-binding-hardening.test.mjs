@@ -509,9 +509,10 @@ test('PT9 one in-flight claim per challenge', async () => {
     const store = new ChallengeStore();
     const nonce = putChallenge(store);
     const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const header = evmHeader();
     const [a, b] = await Promise.all([
-      settle({ cfg, store, nonce }),
-      settle({ cfg, store, nonce }),
+      settle({ cfg, store, nonce, paymentHeader: header }),
+      settle({ cfg, store, nonce, paymentHeader: header }),
     ]);
     const fresh = [a, b].filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
     const replays = [a, b].filter((r) => r.idempotentReplay === true);
@@ -522,8 +523,9 @@ test('PT9 one in-flight claim per challenge', async () => {
 
     const many = new ChallengeStore();
     const nonceN = putChallenge(many);
+    const headerN = evmHeader();
     const raced = await Promise.all(Array.from({ length: 10 }, () => settle({
-      cfg, store: many, nonce: nonceN,
+      cfg, store: many, nonce: nonceN, paymentHeader: headerN,
     })));
     assert.equal(raced.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true).length, 1);
     assert.equal(raced.filter((r) => r.idempotentReplay === true).length, 9);
