@@ -386,13 +386,26 @@ async function baseAnchorFees(request) {
   };
 }
 
-async function broadcastBaseRaw(raw) {
-  const rpc = baseRpcUrl();
-  if (!rpc) throw new Error('no_rpc');
-  const { JsonRpcProvider } = await import('ethers');
-  const provider = new JsonRpcProvider(rpc);
-  const tx = await provider.broadcastTransaction(raw);
-  return tx.hash;
+async function broadcastBaseRaw(raw, { timeoutMs = RECEIPT_ANCHOR_RPC_TIMEOUT_MS } = {}) {
+  const rpcUrl = baseRpcUrl();
+  if (!rpcUrl) throw new Error('no_rpc');
+  const budget = Number.isFinite(Number(timeoutMs)) ? Math.max(1, Math.ceil(Number(timeoutMs))) : RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_sendRawTransaction',
+      params: [raw],
+    }),
+    signal: AbortSignal.timeout(budget),
+  });
+  if (!res.ok) throw new Error(`base_http_${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || 'base_rpc_error');
+  if (typeof json.result !== 'string' || !json.result) throw new Error('base_send_empty');
+  return json.result;
 }
 
 /**
@@ -2312,7 +2325,7 @@ export class ReceiptMerkleTree {
 
   async _gateAnchorChain(request) {
     try {
-      await assertBaseChainId({ request });
+      await assertBaseChainId({ request, timeoutMs: this._rpcTimeoutMs() });
     } catch (err) {
       this.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
@@ -2333,7 +2346,7 @@ export class ReceiptMerkleTree {
       });
       return;
     }
-    await broadcastBaseRaw(intent.raw);
+    await broadcastBaseRaw(intent.raw, { timeoutMs: this._rpcTimeoutMs() });
   }
 
   _anchoredFromConfirmation(intent, found, how) {
@@ -3413,7 +3426,7 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
   const chainRpc = opts.baseRpc || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
   if (chainRpc) {
     try {
-      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request });
+      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request, timeoutMs: opts.timeoutMs });
     } catch (err) {
       tree.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
