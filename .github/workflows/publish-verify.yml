@@ -87,7 +87,7 @@ jobs:
             echo "${name}@${version} is already published; skipping"
             exit 0
           fi
-          npm publish --provenance --access public
+          npm publish --provenance --access public --loglevel verbose
 
       - name: Publish @xfuel/verify alias
         working-directory: packages/aliases/chit402-verify
@@ -110,4 +110,4 @@ jobs:
             echo "${name}@${version} is already published; skipping"
             exit 0
           fi
-          npm publish --provenance --access public
+          npm publish --provenance --access public --loglevel verbose
