@@ -601,7 +601,25 @@ test('PT10 a challenge is bound to its resource and quote', async () => {
       paymentHeader: evmHeader(),
       resolveQuote: async () => '999999',
     });
-    assert.equal(priced.kind, 'settled', priced.code);
+    assert.equal(priced.code, 'challenge_mismatch');
+    assert.notEqual(priced.kind, 'settled');
+    assert.equal(fac.hits.length, 0);
+
+    const storeHeld = new ChallengeStore();
+    const nonceHeld = putChallenge(storeHeld, { amount: '2000', quoteBodyHash: quoteBodyHash(body) });
+    const held = await settleBoundPayment({
+      taskId: 'task-1',
+      cfg: baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) }),
+      store: storeHeld,
+      nonce: nonceHeld,
+      priceBody: body,
+      paymentHeader: evmHeader(),
+      resolveQuote: async () => '2000',
+    });
+    assert.equal(held.kind, 'settled', held.code);
+    assert.equal(held.confirmed, true);
+    assert.equal(held.quotedAmount, '2000');
+    assert.equal(held.route, '/task-request');
 
     const storeD = new ChallengeStore();
     const nonceD = putChallenge(storeD, { amount: '2000', quoteBodyHash: quoteBodyHash(body) });

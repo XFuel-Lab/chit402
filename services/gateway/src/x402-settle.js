@@ -24,6 +24,7 @@ import {
   buildDisputeWindow,
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
+import { atomicUnits, canonicalPaidRoute } from './paid-route.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -231,33 +232,50 @@ export async function settleBoundPayment({
       return refused(req, 'network_not_accepted', { preSettle: true });
     }
   }
-  const resourceWant = expectedResourceOf({ resource, baseUrl });
-  const resourceHave = challenge.resource ? String(challenge.resource).replace(/\/$/, '') : '';
-  if (resourceHave && resourceWant && resourceHave !== resourceWant) {
+  // NEW-3: the challenge is bound to this route, the price it was quoted at, and
+  // this payee. A missing route fails closed. A body-hash match does not keep a
+  // cheaper quote when this route's live price is higher. A lower live price
+  // still charges the quoted challenge amount.
+  const resourceWant = canonicalPaidRoute(expectedResourceOf({ resource, baseUrl }));
+  const resourceHave = canonicalPaidRoute(challenge.resource);
+  if (!resourceHave || !resourceWant || resourceHave !== resourceWant) {
+    return refused(req, 'challenge_mismatch', { preSettle: true });
+  }
+  if (challenge.quoteRoute && canonicalPaidRoute(challenge.quoteRoute) !== resourceHave) {
+    return refused(req, 'challenge_mismatch', { preSettle: true });
+  }
+  if (!challenge.payTo) {
     return refused(req, 'challenge_mismatch', { preSettle: true });
   }
   if (strictTaskId && challenge.taskId !== taskId) {
     return refused(req, 'challenge_mismatch', { preSettle: true });
   }
 
-  let routeQuote = challenge.amount;
-  if (amount != null) routeQuote = String(amount);
-  else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
-    routeQuote = String(challenge.amount);
+  const issued = atomicUnits(challenge.amount);
+  const lockedQuote = challenge.quotePrice != null ? atomicUnits(challenge.quotePrice) : issued;
+  const routeLocked = challenge.routeQuote != null ? atomicUnits(challenge.routeQuote) : issued;
+  if (issued == null || lockedQuote == null || routeLocked == null || issued !== lockedQuote || issued !== routeLocked) {
+    return refused(req, 'challenge_mismatch', { preSettle: true });
+  }
+
+  let routePrice = null;
+  if (amount != null) {
+    routePrice = atomicUnits(amount);
   } else if (typeof resolveQuote === 'function') {
     try {
-      routeQuote = String(await resolveQuote());
+      routePrice = atomicUnits(await resolveQuote());
     } catch {
       return refused(req, 'challenge_mismatch', { preSettle: true });
     }
+  } else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
+    routePrice = issued;
   }
-  try {
-    if (BigInt(String(challenge.amount)) < BigInt(String(routeQuote))) {
-      return refused(req, 'challenge_mismatch', { preSettle: true });
-    }
-  } catch {
+  // The quoted challenge is the price. It may exceed today's route price.
+  // It cannot pay a route that now costs more.
+  if (routePrice == null || routePrice > issued) {
     return refused(req, 'challenge_mismatch', { preSettle: true });
   }
+  const routeQuote = issued.toString();
 
   const settledPick = boundSettledAmount(paymentHeader, clientVersion, challenge);
   if (settledPick.refuse) {
@@ -389,33 +407,11 @@ export async function settleBoundPayment({
     pend('bad_tx');
     return refused(req, 'settle_unconfirmed');
   }
+  // PB4 / PB12: a booked transfer is not a second settlement. Facilitator
+  // success and a prior tx are not "settled". Only the chain confirmation
+  // below, for this challenge's route and quoted price, is.
   if (active.isTxSpent(norm.key)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
-    const prior = typeof active.txFactsOf === 'function' ? active.txFactsOf(norm.key) : null;
-    // MF2: a booked transfer only stands in for this challenge when it already
-    // covers this quote and paid this payee. A cheaper prior transfer never
-    // serves a larger quote. (Design PT8(c) wants payment_replayed outright;
-    // the idempotent-replay product tests on main still expect a 200 here.)
-    let covers = false;
-    try {
-      const paid = BigInt(String(prior?.amount));
-      covers = paid >= BigInt(String(routeQuote)) && paid >= BigInt(String(challenge.amount));
-    } catch { covers = false; }
-    if (covers && prior.payer && prior.payTo && samePayee(prior.payTo, expectedPayTo, { solana })) {
-      return {
-        kind: 'settled',
-        confirmed: true,
-        paymentRef: norm.key,
-        quotedAmount: String(challenge.amount),
-        settledAmount: String(prior.amount),
-        payerWallet: prior.payer,
-        payTo: prior.payTo,
-        asset: challenge.asset,
-        taskId,
-        replay: true,
-        settlementEvidence: prior.evidence || null,
-      };
-    }
     return refused(req, 'payment_replayed');
   }
   const authKey = !solana && auth?.from && auth?.nonce
@@ -510,6 +506,7 @@ export async function settleBoundPayment({
     kind: 'settled',
     confirmed: true,
     paymentRef: norm.key,
+    route: resourceHave,
     quotedAmount: String(challenge.amount),
     settledAmount: String(chain.amount),
     payerWallet: chain.payer,

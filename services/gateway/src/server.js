@@ -32,6 +32,7 @@ import {
   payerBucket,
   markSettled,
   markSettleFailed,
+  paymentBindsDebt,
   applyPaymentToOwedTask,
   configureRollingLedger,
 } from './rolling-settlement.js';
@@ -1844,10 +1845,12 @@ export function createApp() {
               const handshakeAmount = decision.pending ? decision.amount : null;
               // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
               const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+              const handshakeResource = `${String(handshakeBaseUrl || '').replace(/\/$/, '')}/task-request`;
               const hs = await runX402Handshake(req, {
                 taskId: handshakeTaskId,
                 amount: handshakeAmount,
                 baseUrl: handshakeBaseUrl,
+                resource: handshakeResource,
                 strictTaskId: !!decision.pending,
               });
               if (hs.kind === 'challenge') {
@@ -1860,9 +1863,12 @@ export function createApp() {
                 settledResponseRef = hs.paymentRef || null;
                 settledResponsePayer = hs.payerWallet || null;
                 if (decision.pending) {
-                  const pendingOk = hs.taskId === decision.pending.taskId
-                    && BigInt(String(hs.settledAmount)) >= BigInt(String(decision.amount))
-                    && (hs.payTo === config.x402.payTo || hs.payTo === decision.payTo);
+                  const pendingOk = paymentBindsDebt(decision.pending, {
+                    quotedAmount: hs.quotedAmount,
+                    settledAmount: hs.settledAmount,
+                    route: hs.route,
+                    taskId: hs.taskId,
+                  }) && (samePayee(hs.payTo, config.x402.payTo) || (decision.payTo && samePayee(hs.payTo, decision.payTo)));
                   if (!pendingOk) {
                     markSettleFailed(payerId, 'challenge_mismatch');
                     return res.status(402).json({ error: 'challenge_mismatch', code: 'challenge_mismatch' });
@@ -1873,6 +1879,7 @@ export function createApp() {
                     applyPaymentToOwedTask(owed, {
                       paymentRef: hs.paymentRef,
                       settledAmount: hs.settledAmount,
+                      quotedAmount: hs.quotedAmount,
                       protocolFeeBps: owed.feeBps || AI_TASK_FEE_BPS,
                     });
                     listener.activeTasks.set(owed.taskId, owed);
@@ -1919,7 +1926,12 @@ export function createApp() {
           } else {
             // Pass the public base URL for CDP Bazaar cataloging (absolute resource URLs)
             const handshakeBaseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-            const decision = await runX402Handshake(req, { taskId: `x402-${req.id}`, baseUrl: handshakeBaseUrl });
+            const handshakeResource = `${String(handshakeBaseUrl || '').replace(/\/$/, '')}/task-request`;
+            const decision = await runX402Handshake(req, {
+              taskId: `x402-${req.id}`,
+              baseUrl: handshakeBaseUrl,
+              resource: handshakeResource,
+            });
             if (decision.kind === 'challenge') {
               return sendPaymentRequired(res, decision.body);
             }

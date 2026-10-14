@@ -97,6 +97,9 @@ function legs() {
         settlement: {
           paymentRef: `base:${spec.leg}${crypto.randomBytes(4).toString('hex')}`,
           amount: String(spec.amount),
+          quotedAmount: String(spec.amount),
+          settledAmount: String(spec.amount),
+          route: spec.route,
           payer: WALLET,
           payTo: spec.payTo,
         },
@@ -368,7 +371,9 @@ test('HTTP pay challenge names the winner wallet, then the treasury', async () =
         kind: 'settled',
         confirmed: true,
         paymentRef: `base:http${calls}`,
+        quotedAmount: spec.amount,
         settledAmount: spec.amount,
+        route: spec.resource || spec.route || null,
         payerWallet: WALLET,
         payTo: spec.payTo || config.x402.payTo,
       };

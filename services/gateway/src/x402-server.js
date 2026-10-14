@@ -32,6 +32,7 @@ import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-atte
 import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
+import { canonicalPaidRoute } from './paid-route.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -558,6 +559,8 @@ export async function runX402Handshake(req, {
       if (!rec) continue;
       rec.quoteBodyHash = qHash;
       rec.routeQuote = charge;
+      rec.quotePrice = charge;
+      rec.quoteRoute = canonicalPaidRoute(rec.resource);
       if (bindParse.requested && bindParse.ok && entry === challengeBody.accepts[0]) {
         const stored = issuanceBindForChallenge(bindParse.bind, {
           challengeNonce: issuedNonce,
