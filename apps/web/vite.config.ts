@@ -8,6 +8,12 @@ export default defineConfig({
     strictPort: false,
     // Windows: some setups resolve localhost poorly; 0.0.0.0 + http://127.0.0.1:PORT is reliable
     host: true,
+    proxy: {
+      '/v1/receipts/check': {
+        target: 'http://127.0.0.1:3002',
+        changeOrigin: true,
+      },
+    },
   },
   build: { outDir: 'dist', sourcemap: true },
 });

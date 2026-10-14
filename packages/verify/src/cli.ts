@@ -15,8 +15,15 @@
  *   2 = COULD_NOT_CHECK
  */
 
-import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import {
+  checkReceiptInput,
+  displayIdOf,
+  freshPublicLog,
+  historyHostAllowed,
+  historyOptions,
+  packageVersion,
+} from './check-input.js';
 import {
   verifyReceipt,
   verifyRefusal,
@@ -452,12 +459,6 @@ function epochSignatureOk(record: EpochRecord, jws: string, jwks?: Jwks, trusted
   return false;
 }
 
-function packageVersion(): string {
-  const require = createRequire(__filename);
-  const pkg = require('../package.json') as { version?: string };
-  return pkg.version || '0.0.0';
-}
-
 const REMOVED_040: Record<string, string> = {
   '--strict': 'removed in 0.4: a skipped key window is no longer a separate result',
   '--no-issuer-history': 'removed in 0.4: the history check is always on',
@@ -485,24 +486,6 @@ async function resolvedHistory(
     jwks,
     trustedKids,
   });
-}
-
-function historyOptions(resolved: ResolvedIssuerHistory): {
-  issuerHistory: IssuerHistoryDocument | null;
-  issuerHistoryBytes: string | null;
-  fetchIssuerHistory: false;
-  skipIssuerHistory: false;
-  strictIssuerHistory: false;
-  labelSkippedKeyWindow: false;
-} {
-  return {
-    issuerHistory: resolved.document,
-    issuerHistoryBytes: resolved.bytes,
-    fetchIssuerHistory: false,
-    skipIssuerHistory: false,
-    strictIssuerHistory: false,
-    labelSkippedKeyWindow: false,
-  };
 }
 
 function printVerdict(
@@ -572,210 +555,6 @@ function fileLooksLikeHead(file: string | null): boolean {
   if (!file) return false;
   try {
     return looksLikeTreeHead(readJson(file));
-  } catch {
-    return false;
-  }
-}
-
-const LOG_FETCH_MS = 8000;
-
-function inclusionHeadUrl(
-  origin: string,
-  inclusion: { head_url?: string; tree_size?: number | null; anchored_tree_size?: number | null },
-): string | null {
-  if (typeof inclusion.head_url === 'string' && inclusion.head_url.length > 0) {
-    try {
-      return new URL(inclusion.head_url, origin).toString();
-    } catch {
-      return null;
-    }
-  }
-  const size = inclusion.anchored_tree_size ?? inclusion.tree_size;
-  if (size == null) return null;
-  return `${origin}/v1/receipts/tree/head?tree_size=${encodeURIComponent(String(size))}`;
-}
-
-type FreshLog = {
-  logInclusion: CheckState;
-  anchor: CheckState;
-  logReason: string | null;
-  log: VerifyVerdict['log'];
-};
-
-function missedLog(reason = 'log_unreachable'): FreshLog {
-  return {
-    logInclusion: 'could_not_check',
-    anchor: 'could_not_check',
-    logReason: reason,
-    log: null,
-  };
-}
-
-/**
- * A 404 `{ error: "not_in_tree" }` is unsigned. NOT_IN_LOG also needs the
- * log's signed head, and that signature has to verify. A head with no
- * signature leaves the check unfinished.
- */
-async function absenceAgainstSignedHead(
-  origin: string,
-  history: IssuerHistoryDocument | null,
-): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
-  try {
-    const res = await fetch(`${origin}/v1/receipts/tree/head`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
-    if (!res.ok) return { kind: 'unchecked' };
-    const head = await res.json() as AnchorHead;
-    const trust = verifyTreeHeadTrust(head, {
-      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
-      issuerHistory: history,
-    });
-    if (trust.ok) return { kind: 'not_in_log' };
-    if (!trust.reason || trust.reason === 'head_signature_missing') return { kind: 'unchecked' };
-    return { kind: 'bad_head', reason: trust.reason };
-  } catch {
-    return { kind: 'unchecked' };
-  }
-}
-
-function hardLogReason(result: AnchorWitnessResult): string | null {
-  if (result.head_signature?.checked && result.head_signature.valid === false && result.head_signature.reason) {
-    return result.head_signature.reason;
-  }
-  const inclusionReason = result.inclusion?.reason;
-  if (
-    result.inclusion
-    && result.inclusion.valid === false
-    && inclusionReason
-    && inclusionReason !== 'pending_anchor'
-    && inclusionReason !== 'not_in_tree'
-  ) {
-    return inclusionReason;
-  }
-  const mismatch = (result.errors || []).find((err) => (
-    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf/.test(err)
-  ));
-  return mismatch ? mismatch.replace(/^(solana|base):/, '') : null;
-}
-
-/** Shell absence check. A 200 proof is not verified here: there is no signed receipt. */
-async function publicShellAbsence(
-  receipt: { verify_url?: string; task_id?: string | null },
-  history: IssuerHistoryDocument | null,
-): Promise<boolean> {
-  try {
-    const origin = new URL(String(receipt.verify_url)).origin;
-    const task = receipt.task_id;
-    if (!task) return false;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
-    if (res.status !== 404) return false;
-    const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
-    if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return false;
-    const absence = await absenceAgainstSignedHead(origin, history);
-    return absence.kind === 'not_in_log';
-  } catch {
-    return false;
-  }
-}
-
-async function freshPublicLog(
-  receipt: { verify_url?: string; task_id?: string | null },
-  history: IssuerHistoryDocument | null = null,
-): Promise<FreshLog> {
-  const missed = missedLog();
-  try {
-    const origin = new URL(String(receipt.verify_url)).origin;
-    const task = receipt.task_id;
-    if (!task) return missed;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
-    if (res.status === 404) {
-      const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
-      if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return missed;
-      const absence = await absenceAgainstSignedHead(origin, history);
-      if (absence.kind === 'not_in_log') {
-        return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
-      }
-      if (absence.kind === 'bad_head') {
-        return { logInclusion: 'fail', anchor: 'fail', logReason: absence.reason, log: null };
-      }
-      return missed;
-    }
-    if (!res.ok) return missed;
-    const inclusion = await res.json() as AnchorInclusion & {
-      head_url?: string;
-      anchored_tree_size?: number;
-    };
-    const headUrl = inclusionHeadUrl(origin, inclusion);
-    if (!headUrl) return missed;
-    const headRes = await fetch(headUrl, {
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(LOG_FETCH_MS),
-    });
-    if (!headRes.ok) return missed;
-    const head = await headRes.json() as AnchorHead;
-    const result = await verifyAnchoredRoot({
-      receipt: receipt as AnchorReceipt,
-      inclusion,
-      head,
-      baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
-      solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
-      checkNewestAnchor: false,
-      issuerHistory: history,
-      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
-    });
-    if (result.overall === 'verified') {
-      return {
-        logInclusion: 'pass',
-        anchor: 'pass',
-        logReason: null,
-        log: {
-          leaf_index: inclusion.leaf_index ?? null,
-          tree_size: inclusion.tree_size ?? null,
-          root: result.root,
-          anchors: {
-            base: result.base.tx,
-            solana: result.solana.signature,
-          },
-        },
-      };
-    }
-    if (result.overall === 'not_in_log') {
-      return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
-    }
-    if (result.overall === 'pending') return missedLog('pending_anchor');
-    const hard = hardLogReason(result);
-    if (result.overall === 'failed' && hard) {
-      const anchorFail = /head_|anchor|mismatch/.test(hard);
-      const inclusionFail = result.inclusion?.valid === false || /inclusion|leaf|root|no_leaf|bad_root/.test(hard);
-      return {
-        logInclusion: inclusionFail ? 'fail' : 'could_not_check',
-        anchor: anchorFail || !inclusionFail ? 'fail' : 'pass',
-        logReason: hard,
-        log: null,
-      };
-    }
-    return missed;
-  } catch {
-    return missed;
-  }
-}
-
-function historyHostAllowed(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
-    if (parsed.protocol === 'http:' && parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return false;
-    if (parsed.protocol === 'https:') {
-      return DEFAULT_TRUSTED_JWKS_HOSTS.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase());
-    }
-    return true;
   } catch {
     return false;
   }
@@ -1121,13 +900,6 @@ function anchorLogState(result: AnchorWitnessResult): {
   }
   if (result.overall === 'verified') return { logInclusion: 'pass', anchor: 'pass', logReason: null };
   return { logInclusion: 'could_not_check', anchor: 'could_not_check', logReason: 'log_unreachable' };
-}
-
-function displayIdOf(receipt: { task_id?: string; display_id?: string; receipt_id?: string }): string | null {
-  if (typeof receipt.display_id === 'string' && receipt.display_id) return receipt.display_id;
-  const id = receipt.task_id || receipt.receipt_id || '';
-  const short = id.match(/^(chit-[0-9a-f]{8})/i);
-  return short ? short[1] : (id || null);
 }
 
 function printUnsigned(fields: string[]): void {
@@ -1793,8 +1565,6 @@ async function finish(code: number): Promise<void> {
   }
 }
 
-const RECEIPT_ID_RE = /^(chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function removedFlagMessage(argv: string[]): string | null {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -1877,99 +1647,6 @@ function lockedError(json: boolean, status: 1 | 2, message: string, reason: stri
   return status;
 }
 
-function receiptJsonUrl(raw: string): string {
-  const url = new URL(raw);
-  if (!url.pathname.endsWith('.json')) url.searchParams.set('format', 'json');
-  return url.toString();
-}
-
-type LoadedReceipt = {
-  receipt: XFuelReceipt;
-  /** Origin of a remote id or URL. Null for a file or stdin. */
-  origin: string | null;
-};
-
-async function loadReceiptTarget(target: string): Promise<LoadedReceipt> {
-  if (target === '-') {
-    return { receipt: JSON.parse(readFileSync(0, 'utf8')) as XFuelReceipt, origin: null };
-  }
-  let url: string | null = null;
-  if (/^https?:\/\//i.test(target)) url = receiptJsonUrl(target);
-  else if (RECEIPT_ID_RE.test(target)) url = `https://api.chit402.com/receipt/${target}?format=json`;
-  if (url) {
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(LOG_FETCH_MS),
-      });
-    } catch (err) {
-      const wrapped = new Error(err instanceof Error ? err.message : String(err));
-      (wrapped as { code?: string }).code = 'REMOTE';
-      throw wrapped;
-    }
-    if (!res.ok) {
-      const err = new Error(`fetch ${res.status}`);
-      (err as { code?: string }).code = 'REMOTE';
-      throw err;
-    }
-    const text = await res.text();
-    try {
-      return { receipt: JSON.parse(text) as XFuelReceipt, origin: new URL(url).origin };
-    } catch {
-      const err = new Error('receipt response was not JSON');
-      (err as { code?: string }).code = 'REMOTE';
-      throw err;
-    }
-  }
-  return { receipt: JSON.parse(readFileSync(target, 'utf8')) as XFuelReceipt, origin: null };
-}
-
-function inputFailure(err: unknown, target: string): { status: 1 | 2; message: string; reason: string } {
-  const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
-  const message = err instanceof Error ? err.message : String(err);
-  const remote = code === 'REMOTE' || code === 'FETCH' || /fetch failed|fetch \d+|timeout|aborted|network|ENOTFOUND|ECONNREFUSED|EAI_AGAIN/i.test(message);
-  if (remote) {
-    return { status: 2, message: 'The receipt could not be fetched.', reason: 'receipt_unavailable' };
-  }
-  if (code === 'ENOENT' || message.includes('ENOENT')) {
-    return { status: 1, message: `Error reading receipt: ${target}`, reason: 'unreadable' };
-  }
-  return { status: 1, message: `Error reading receipt: ${message}`, reason: 'unreadable' };
-}
-
-function shellInclusionAbsent(receipt: XFuelReceipt): boolean {
-  const inclusion = (receipt as { inclusion?: unknown }).inclusion;
-  if (inclusion == null) return true;
-  if (typeof inclusion !== 'object') return false;
-  const row = inclusion as { error?: unknown; leaf_hash?: unknown; leaf?: unknown; proof?: unknown; signed_head?: unknown };
-  if (row.error === 'not_in_tree') return true;
-  const leaf = row.leaf_hash ?? row.leaf ?? null;
-  const head = row.signed_head;
-  const headAbsent = head == null || (
-    typeof head === 'object'
-    && (head as { root?: unknown }).root == null
-    && (head as { signature?: unknown }).signature == null
-  );
-  return leaf == null && row.proof == null && headAbsent;
-}
-
-function shellLogReceipt(
-  receipt: XFuelReceipt,
-  origin: string | null,
-): { verify_url: string; task_id: string } | null {
-  const task = receipt.task_id || (receipt as { receipt_id?: string | null }).receipt_id || null;
-  if (!task || !RECEIPT_ID_RE.test(String(task))) return null;
-  let host = origin;
-  if (!host && typeof receipt.verify_url === 'string') {
-    try { host = new URL(receipt.verify_url).origin; } catch { host = null; }
-  }
-  if (!host) host = 'https://api.chit402.com';
-  const verifyUrl = `${host}/receipt/${encodeURIComponent(String(task))}`;
-  if (!historyHostAllowed(verifyUrl)) return null;
-  return { verify_url: verifyUrl, task_id: String(task) };
-}
-
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   const jsonEarly = argv.includes('--json');
@@ -1994,156 +1671,24 @@ async function main(): Promise<number> {
     return lockedError(args.json, 1, 'removed in 0.4: pass one receipt id, url, or file', 'removed_flag');
   }
 
-  let receipt: XFuelReceipt;
-  let receiptOrigin: string | null = null;
-  try {
-    const loaded = await loadReceiptTarget(args.positionals[0]);
-    receipt = loaded.receipt;
-    receiptOrigin = loaded.origin;
-  } catch (err) {
-    const failure = inputFailure(err, args.positionals[0]);
-    if (failure.status === 2) {
-      const verdict = buildVerifyVerdict({
-        version: packageVersion(),
-        absentReason: failure.reason,
-      });
-      return printLocked(verdict, args.json);
-    }
-    return lockedError(args.json, failure.status, failure.message, failure.reason);
-  }
-
-  const trustedKids = [...DEFAULT_TRUSTED_ISSUER_KIDS];
-  let fileBytes: string | null = null;
+  let issuerHistoryBytes: string | null = null;
   if (args.issuerHistoryFile) {
     try {
-      fileBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+      issuerHistoryBytes = readFileSync(args.issuerHistoryFile, 'utf8');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
     }
   }
 
-  let resolved: ResolvedIssuerHistory;
-  try {
-    resolved = await resolveIssuerHistory({
-      fileBytes,
-      receipt,
-      trustedKids,
-      timeoutMs: LOG_FETCH_MS,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
-  }
-
-  if (isRefusalDocument(receipt as unknown)) {
-    const result = verifyRefusal(receipt as unknown as RefusalDocument, { trustedKids });
-    const verdict = buildVerifyVerdict({
-      version: packageVersion(),
-      receiptId: result.refusal_id || null,
-      displayId: result.refusal_id || null,
-      payloadVersion: result.payload_version ?? null,
-      historySource: resolved.source,
-      historyHead: resolved.headHash,
-      historyCount: resolved.entryCount,
-      historyAsOf: resolved.asOf,
-      signatureValid: result.valid,
-      signatureChecked: true,
-      historyChecked: !resolved.invalid && resolved.document != null,
-      historyOk: !resolved.invalid && resolved.document != null,
-      historyReason: resolved.reason,
-      historyMissing: resolved.document == null && !resolved.invalid,
-      errors: result.errors,
-      logInclusion: 'unclaimed',
-      anchor: 'unclaimed',
-    });
-    return printLocked(verdict, args.json);
-  }
-
-  const unsigned = typeof receipt.issuer_signature?.jws !== 'string' || receipt.issuer_signature.jws.length === 0;
-  if (unsigned || isReceiptShell(receipt)) {
-    let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
-    let anchorState: CheckState | 'unclaimed' = 'unclaimed';
-    let logReason: string | null = 'signed_receipt_unavailable';
-    if (shellInclusionAbsent(receipt)) {
-      const logReceipt = shellLogReceipt(receipt, receiptOrigin);
-      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document)) {
-        logInclusion = 'fail';
-        anchorState = 'pass';
-        logReason = 'not_in_log';
-      }
-    }
-    const notInLog = logReason === 'not_in_log';
-    const verdict = buildVerifyVerdict({
-      version: packageVersion(),
-      receiptId: receipt.task_id || null,
-      displayId: displayIdOf(receipt),
-      payloadVersion: null,
-      historySource: resolved.source,
-      historyHead: resolved.headHash,
-      historyCount: resolved.entryCount,
-      historyAsOf: resolved.asOf,
-      signatureChecked: false,
-      historyReason: notInLog ? null : 'signed_receipt_unavailable',
-      historyMissing: false,
-      errors: [],
-      logInclusion,
-      anchor: anchorState,
-      logReason: notInLog ? 'not_in_log' : null,
-    });
-    return printLocked(verdict, args.json);
-  }
-
-  const result = await verifyReceipt(receipt, {
-    trustedKids,
-    requirePreimages: true,
-    ...historyOptions(resolved),
+  const outcome = await checkReceiptInput(args.positionals[0], {
+    issuerHistoryBytes,
   });
-
-  const unsupported = (result.errors || []).includes('unsupported_version');
-  let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
-  let anchorState: CheckState | 'unclaimed' = 'unclaimed';
-  let logReason: string | null = null;
-  let log: VerifyVerdict['log'] = null;
-  const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
-  const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url);
-  if (signatureOk && result.issuer_history.ok && logHostOk) {
-    const fresh = await freshPublicLog(receipt, resolved.document);
-    logInclusion = fresh.logInclusion;
-    anchorState = fresh.anchor;
-    logReason = fresh.logReason;
-    log = fresh.log;
+  if (outcome.report === 'stderr') {
+    return lockedError(args.json, 1, outcome.message || 'Error reading receipt', outcome.reason || 'unreadable');
   }
-
-  const verdict = buildVerifyVerdict({
-    version: packageVersion(),
-    receiptId: result.receipt_id,
-    displayId: displayIdOf(receipt),
-    payloadVersion: result.receipt_version ?? null,
-    historySource: resolved.source,
-    historyHead: resolved.headHash,
-    historyCount: resolved.entryCount,
-    historyAsOf: resolved.asOf,
-    signatureValid: unsupported ? null : result.issuer_signature.valid === true,
-    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
-    historyChecked: unsupported ? false : (resolved.invalid || result.issuer_history.checked),
-    historyOk: unsupported ? false : (resolved.invalid ? false : result.issuer_history.ok),
-    historyReason: resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason,
-    historyMissing: unsupported ? true : (resolved.document == null && !resolved.invalid),
-    bindingExpected: !!result.binding.expected,
-    bindingMatches: result.binding.matches,
-    claimMismatches: result.claim_mismatches.length,
-    payerChecked: result.payer.checked,
-    payerValid: result.payer.valid,
-    errors: result.errors,
-    logInclusion,
-    anchor: anchorState,
-    logReason,
-    log,
-  });
-  return printLocked(verdict, args.json);
+  return printLocked(outcome.verdict, args.json);
 }
-
 
 main()
   .then((code) => finish(code))

@@ -85,6 +85,8 @@ export default function ChitHome() {
               </div>
               <p style={styles.checkYourself}>
                 Check it yourself:{' '}
+                <Link to="/check" style={styles.checkLink}>Check a receipt</Link>
+                {' · '}
                 <Link to="/audit" style={styles.checkLink}>Audit a wallet</Link>
                 {' · '}
                 <a href="https://api.chit402.com/v1/receipts/tree/head" style={styles.checkLink}>

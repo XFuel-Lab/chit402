@@ -5,6 +5,9 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ## 0.4.1 — COULD_NOT_CHECK does not read as INVALID
 
+### Added
+- **`checkReceiptInput` is the locked check.** The CLI and the free receipt-check box both call it. A public caller can pass receipt JSON, an id, or a URL on a host the verifier already trusts. It does not read a local file. `BUILD_DIGEST.txt` moved because `src/check-input.ts` and `src/cli.ts` changed. The pinned epoch genesis digests did not. Not published. No deploy.
+
 ### Fixed
 - **Exit 2 no longer says the receipt was found invalid.** The fetch failure used to append `It was NOT found invalid.`, and human output added a stray `NOT found invalid` line. Both read as `INVALID`. Human text and the JSON `message` are the same: the receipt could not be fetched, and `COULD_NOT_CHECK` says the receipt could not be checked. That output does not contain `invalid` or `INVALID`. `result`, `reason`, `exit_code`, and the verdict keys are unchanged. A failed fetch is still exit 2, reason `receipt_unavailable`, and every check is `could_not_check`. Flags stay `--issuer-history` and `--json`. `BUILD_DIGEST.txt` moved because `src/verdict.ts` and `src/cli.ts` changed. The pinned epoch genesis digests did not. `@xfuel/verify` 0.4.1 depends on exactly `"chit402-verify": "0.4.1"`. Not published. No deploy.
 

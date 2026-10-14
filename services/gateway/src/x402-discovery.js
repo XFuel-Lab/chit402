@@ -2230,6 +2230,37 @@ export function buildOpenApiSpec(baseUrl = '') {
           responses: { 200: { description: 'Record card.' } },
         },
       },
+      '/v1/receipts/check': {
+        post: {
+          operationId: 'checkReceipt',
+          summary: 'Check a receipt. Free. Not x402.',
+          description: 'Paste a receipt JSON document, a receipt id, or a receipt URL. The verdict is the same text chit402-verify prints: VERIFIED, INVALID, or COULD_NOT_CHECK. No wallet lookup. No account. The input is not stored.',
+          tags: ['Receipts'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['input'],
+                  properties: {
+                    input: {
+                      type: 'string',
+                      description: 'Receipt JSON, a receipt id, or a receipt URL.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'VERIFIED, INVALID, or COULD_NOT_CHECK' },
+            400: { description: 'Input is not a receipt' },
+            413: { description: 'Input is too large' },
+            429: { description: 'Per-IP rate limit' },
+          },
+        },
+      },
       '/v1/receipts/tree/head': {
         get: {
           operationId: 'receiptTreeHead',
