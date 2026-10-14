@@ -68,6 +68,13 @@ import {
 } from './receipt-version.js';
 import { readIssuerPinClaim, type AssessIssuerPinInput, type IssuerPinRef } from './issuer-pin.js';
 import { HEAD_TRUST_MESSAGES, LEGACY_HEAD_UNPINNED_SIGNER, verifyTreeHeadTrust } from './anchor-trust.js';
+import {
+  isPublicRecordAttempt,
+  publicRecordJson,
+  readCompactPayload,
+  verifyPublicRecord,
+  type PublicRecordResult,
+} from './public-record.js';
 import type { CarryHead, CarryInclusion } from './carry-forward.js';
 
 const HELP = `
@@ -81,6 +88,8 @@ Usage:
 
 Exit codes:
   0  VERIFIED           every check passed
+                         A chit402.public.v1 record prints PUBLIC_VERIFIED
+                         (scope public). That is not a full-receipt VERIFIED.
   1  INVALID            tamper, bad signature, revoked key, NOT_IN_LOG
   2  COULD_NOT_CHECK    log or anchor was not checked
 
@@ -1970,6 +1979,221 @@ function shellLogReceipt(
   return { verify_url: verifyUrl, task_id: String(task) };
 }
 
+interface PublicPeek {
+  text: string;
+  origin: string | null;
+  receiptId: string | null;
+  fullJws: string | null;
+}
+
+function compactPublicText(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (!trimmed.startsWith('{')) return trimmed;
+  try {
+    const doc = JSON.parse(trimmed) as { jws?: unknown; issuer_signature?: { jws?: unknown } };
+    if (typeof doc.jws === 'string') return doc.jws;
+    if (typeof doc.issuer_signature?.jws === 'string') return doc.issuer_signature.jws;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function publicReceiptId(text: string): string | null {
+  const compact = compactPublicText(text);
+  if (!compact) return null;
+  const payload = readCompactPayload(compact);
+  return payload && typeof payload.receipt_id === 'string' ? payload.receipt_id : null;
+}
+
+function jwsFromReceiptDoc(doc: unknown): string | null {
+  if (!doc || typeof doc !== 'object') return null;
+  const sig = (doc as { issuer_signature?: { jws?: unknown } }).issuer_signature;
+  return sig && typeof sig.jws === 'string' ? sig.jws : null;
+}
+
+function taskIdFromReceiptDoc(doc: unknown): string | null {
+  if (!doc || typeof doc !== 'object') return null;
+  const row = doc as { task_id?: unknown; receipt_id?: unknown };
+  if (typeof row.task_id === 'string' && row.task_id) return row.task_id;
+  if (typeof row.receipt_id === 'string' && row.receipt_id) return row.receipt_id;
+  return null;
+}
+
+async function fetchBody(url: string): Promise<{ ok: boolean; text: string } | null> {
+  try {
+    const res = await publicFetch(url, 'application/jose, application/json');
+    return { ok: res.ok, text: await res.text() };
+  } catch {
+    return null;
+  }
+}
+
+/** Public fetches do not follow redirects. A hop to another host is not fetched. */
+function publicFetch(url: string, accept: string): Promise<Response> {
+  return fetch(url, {
+    headers: { accept },
+    redirect: 'error',
+    signal: AbortSignal.timeout(LOG_FETCH_MS),
+  });
+}
+
+/**
+ * A public record, its inclusion, and its head all come from one receipt URL.
+ * A bare receipt id is left to the receipt path. A file is public only when
+ * the bytes are a public record; there is then no URL to fetch.
+ */
+async function peekPublicRecord(target: string): Promise<PublicPeek | { unavailable: true } | null> {
+  if (target === '-' || RECEIPT_ID_RE.test(target)) return null;
+  if (/^https?:\/\//i.test(target)) {
+    let parsed: URL;
+    try { parsed = new URL(target); } catch { return null; }
+    if (!historyHostAllowed(target)) return null;
+    const origin = parsed.origin;
+    const publicUrl = parsed.pathname.endsWith('/public');
+    const fetched = await fetchBody(publicUrl ? target : receiptJsonUrl(target));
+    if (!fetched) return publicUrl ? { unavailable: true } : null;
+    if (!fetched.ok) return publicUrl ? { unavailable: true } : null;
+    if (isPublicRecordAttempt(fetched.text)) {
+      return {
+        text: fetched.text,
+        origin,
+        receiptId: publicReceiptId(fetched.text),
+        fullJws: null,
+      };
+    }
+    if (publicUrl) return { unavailable: true };
+    let doc: unknown;
+    try { doc = JSON.parse(fetched.text) as unknown; } catch { return null; }
+    const id = taskIdFromReceiptDoc(doc);
+    if (!id) return null;
+    const recordUrl = `${origin}/receipt/${encodeURIComponent(id)}/public`;
+    if (!historyHostAllowed(recordUrl)) return null;
+    const record = await fetchBody(recordUrl);
+    if (!record?.ok || !isPublicRecordAttempt(record.text)) return null;
+    return {
+      text: record.text,
+      origin,
+      receiptId: publicReceiptId(record.text) || id,
+      fullJws: jwsFromReceiptDoc(doc),
+    };
+  }
+  let text: string;
+  try { text = readFileSync(target, 'utf8'); } catch { return null; }
+  if (!isPublicRecordAttempt(text)) return null;
+  return { text, origin: null, receiptId: publicReceiptId(text), fullJws: null };
+}
+
+async function fetchPublicLog(origin: string, receiptId: string, wantFull: boolean): Promise<{
+  inclusion: Record<string, unknown> | null;
+  head: Record<string, unknown> | null;
+  fullJws: string | null;
+}> {
+  const out: {
+    inclusion: Record<string, unknown> | null;
+    head: Record<string, unknown> | null;
+    fullJws: string | null;
+  } = { inclusion: null, head: null, fullJws: null };
+  const base = `${origin}/receipt/${encodeURIComponent(receiptId)}`;
+  if (!historyHostAllowed(base)) return out;
+  try {
+    const incRes = await publicFetch(
+      `${origin}/v1/receipts/${encodeURIComponent(receiptId)}/inclusion`,
+      'application/json',
+    );
+    if (incRes.ok) {
+      const inclusion = await incRes.json() as { head_url?: string; tree_size?: number | null; anchored_tree_size?: number | null };
+      out.inclusion = inclusion as Record<string, unknown>;
+      const headUrl = inclusionHeadUrl(origin, inclusion);
+      if (headUrl && historyHostAllowed(headUrl)) {
+        const headRes = await publicFetch(headUrl, 'application/json');
+        if (headRes.ok) out.head = await headRes.json() as Record<string, unknown>;
+      }
+    }
+  } catch {
+    // A missed log is head_unavailable after the signature is trusted.
+  }
+  if (!wantFull) return out;
+  try {
+    const rec = await publicFetch(`${base}?format=json`, 'application/json');
+    if (rec.ok) out.fullJws = jwsFromReceiptDoc(await rec.json());
+  } catch {
+    // The full receipt is checked only when this URL returns one.
+  }
+  return out;
+}
+
+function printPublic(result: PublicRecordResult, json: boolean): number {
+  const code = result.exitCode === 0 ? 0 : result.exitCode === 2 ? 2 : 1;
+  if (json) {
+    const body = publicRecordJson(result, packageVersion());
+    console.log(JSON.stringify({ ...body, exit_code: code }, null, 2));
+    return code;
+  }
+  if (result.exitCode === 0) {
+    console.log('PUBLIC_VERIFIED');
+    if (result.headline) console.log(result.headline);
+    console.log('Payment: not checked');
+    console.log(`Leaf binding: ${result.leaf_binding}`);
+    return 0;
+  }
+  console.log(result.verdict);
+  if (result.reason) console.log(result.reason);
+  if (code === 2) console.log('NOT found invalid');
+  return code;
+}
+
+async function runPublicLocked(
+  args: { json: boolean; issuerHistoryFile: string | null },
+  peeked: PublicPeek,
+): Promise<number> {
+  const trustedKids = [...DEFAULT_TRUSTED_ISSUER_KIDS];
+  let fileBytes: string | null = null;
+  if (args.issuerHistoryFile) {
+    try {
+      fileBytes = readFileSync(args.issuerHistoryFile, 'utf8');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
+    }
+  }
+  let resolved;
+  try {
+    resolved = await resolveIssuerHistory({
+      fileBytes,
+      receipt: peeked.origin && peeked.receiptId
+        ? { verify_url: `${peeked.origin}/receipt/${encodeURIComponent(peeked.receiptId)}` }
+        : {},
+      trustedKids,
+      timeoutMs: LOG_FETCH_MS,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return lockedError(args.json, 1, `Error reading issuer history: ${message}`, 'unreadable');
+  }
+  if (resolved.invalid) {
+    return lockedError(args.json, 1, resolved.reason || 'issuer_history_invalid', resolved.reason || 'issuer_history_invalid');
+  }
+  let inclusion: Record<string, unknown> | null = null;
+  let head: Record<string, unknown> | null = null;
+  let fullJws = peeked.fullJws;
+  if (peeked.origin && peeked.receiptId) {
+    const log = await fetchPublicLog(peeked.origin, peeked.receiptId, fullJws == null);
+    inclusion = log.inclusion;
+    head = log.head;
+    if (fullJws == null) fullJws = log.fullJws;
+  }
+  const result = verifyPublicRecord(peeked.text, {
+    trustedKids,
+    history: resolved.document,
+    inclusion,
+    head,
+    fullJws,
+  });
+  return printPublic(result, args.json);
+}
+
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   const jsonEarly = argv.includes('--json');
@@ -1993,6 +2217,20 @@ async function main(): Promise<number> {
   if (args.positionals.length !== 1) {
     return lockedError(args.json, 1, 'removed in 0.4: pass one receipt id, url, or file', 'removed_flag');
   }
+
+  const peeked = await peekPublicRecord(args.positionals[0]);
+  if (peeked && 'unavailable' in peeked) {
+    const verdict = buildVerifyVerdict({
+      version: packageVersion(),
+      absentReason: 'receipt_unavailable',
+    });
+    return printLocked({
+      ...verdict,
+      message: 'The receipt could not be fetched. It was NOT found invalid.',
+      next_step: 'Fetch the receipt again, then re-run.',
+    }, args.json);
+  }
+  if (peeked) return runPublicLocked(args, peeked);
 
   let receipt: XFuelReceipt;
   let receiptOrigin: string | null = null;

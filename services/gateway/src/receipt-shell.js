@@ -138,7 +138,7 @@ export function receiptOwnsTx(receipt, tx) {
   return bare === want;
 }
 
-const PRIVATE_KEYS = [
+export const PRIVATE_KEYS = [
   'payer_wallet',
   'agent_id',
   'book_id',

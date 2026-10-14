@@ -190,12 +190,14 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 
 | Code | Meaning |
 |------|---------|
-| 0 | Verified |
+| 0 | Verified. A `chit402.public.v1` record prints `PUBLIC_VERIFIED` and still exits 0 |
 | 1 | Verification failed |
-| 2 | Partial (binding ok, nullifier not checked) |
+| 2 | Could not check. A public record whose schema or receipt version is unknown, or whose signed head is unavailable, also exits 2 |
 | 3 | Input error |
 
-`unsupported_version` uses exit 1. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+`unsupported_version` on a receipt uses exit 1. On a `chit402.public.v1` record, an unknown schema or receipt version uses exit 2. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+
+A public record is a derived statement, not the receipt. `chit402-verify` takes one receipt id, url, or file. Flags stay `--issuer-history` and `--json`. The record, the inclusion proof, and the signed head are fetched from that URL. Trust is the pinned kid plus verified issuer history. A key outside that set is `key untrusted`. `PUBLIC_VERIFIED` exits 0 and `--json` sets `scope` to `"public"`. It does not print a full-receipt `VERIFIED`. `payment_tx` is not in the record, so payment is `not_checked`. There is no `--require-full` flag. See [public-record.md](../../docs/product/public-record.md).
 
 ## Receipt versions
 
