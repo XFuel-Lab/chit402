@@ -12,23 +12,88 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(sab), 0, 0, ms);
 }
 
-function withFileLock(lockPath, fn) {
+function unavailable(message, cause) {
+  const wrapped = new Error(message);
+  wrapped.code = 'x402_unavailable';
+  if (cause) wrapped.cause = cause;
+  return wrapped;
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists and we cannot signal it.
+    return err.code !== 'ESRCH';
+  }
+}
+
+function readLockPid(lockPath) {
+  try {
+    const pid = Number(fs.readFileSync(lockPath, 'utf8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A live holder keeps the lock. A dead pid is renamed aside before anyone
+ * else creates a new lock, so a slow holder is never preempted.
+ */
+// A holder that never wrote its pid (crash between open and write) is stale
+// once the lock is older than this. A live holder writes its pid immediately.
+const PIDLESS_LOCK_STALE_MS = 10000;
+
+function lockAgeMs(lockPath) {
+  try {
+    return Date.now() - fs.statSync(lockPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function reclaimDeadLock(lockPath) {
+  const pid = readLockPid(lockPath);
+  // withFileLock is synchronous, so this process never waits on its own lock:
+  // our pid in the file is a previous incarnation (systemd or container restart).
+  const stale = pid == null
+    ? lockAgeMs(lockPath) > PIDLESS_LOCK_STALE_MS
+    : (pid === process.pid || !pidAlive(pid));
+  if (!stale) return false;
+  const grave = `${lockPath}.dead.${process.pid}.${Date.now()}`;
+  try {
+    fs.renameSync(lockPath, grave);
+  } catch {
+    return false;
+  }
+  try {
+    const movedText = fs.readFileSync(grave, 'utf8').trim();
+    fs.unlinkSync(grave);
+    return pid == null ? movedText === '' || !Number.isInteger(Number(movedText)) : Number(movedText) === pid;
+  } catch {
+    try { fs.unlinkSync(grave); } catch { /* gone */ }
+    return false;
+  }
+}
+
+function withFileLock(lockPath, fn, lockWaitMs = 4000) {
   const start = Date.now();
   let fd = null;
   for (;;) {
     try {
       fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, String(process.pid));
+      try { fs.fsyncSync(fd); } catch { /* best effort */ }
       break;
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
-      try {
-        const st = fs.statSync(lockPath);
-        if (Date.now() - st.mtimeMs > 5000) fs.unlinkSync(lockPath);
-      } catch { /* raced */ }
-      if (Date.now() - start > 4000) {
-        const timeout = new Error('x402 challenge store lock timeout');
-        timeout.code = 'x402_unavailable';
-        throw timeout;
+      reclaimDeadLock(lockPath);
+      if (Date.now() - start > lockWaitMs) {
+        throw unavailable('x402 challenge store lock timeout');
       }
       sleepSync(5);
     }
@@ -41,37 +106,87 @@ function withFileLock(lockPath, fn) {
   }
 }
 
+function isPairList(value) {
+  return Array.isArray(value) && value.every((row) => Array.isArray(row) && row.length === 2);
+}
+
+/**
+ * A missing file is the only empty store. Empty, truncated, or the wrong
+ * shape is corrupt: callers must not treat it as a fresh spent-set.
+ */
+function validState(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  if (!isPairList(raw.map)) return false;
+  if (!Array.isArray(raw.spent)) return false;
+  if (!isPairList(raw.authSpent)) return false;
+  if (!Array.isArray(raw.txSpent)) return false;
+  if (!isPairList(raw.txFacts)) return false;
+  if (!Array.isArray(raw.pending)) return false;
+  return true;
+}
+
 function readState(file) {
+  let text;
   try {
-    const text = fs.readFileSync(file, 'utf8');
-    if (!text.trim()) return null;
-    return JSON.parse(text);
+    text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return null;
-    const wrapped = new Error('x402 challenge store unreadable');
-    wrapped.code = 'x402_unavailable';
-    wrapped.cause = err;
-    throw wrapped;
+    throw unavailable('x402 challenge store unreadable', err);
   }
+  if (!String(text).trim()) {
+    throw unavailable('x402 challenge store unreadable', new Error('empty challenge store'));
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw unavailable('x402 challenge store unreadable', err);
+  }
+  if (!validState(parsed)) {
+    throw unavailable('x402 challenge store unreadable', new Error('challenge store shape'));
+  }
+  return parsed;
 }
 
 function writeState(file, state) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(state));
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeSync(fd, JSON.stringify(state));
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
   fs.renameSync(tmp, file);
+  try {
+    const dfd = fs.openSync(dir, 'r');
+    try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); }
+  } catch { /* directory fsync is best effort */ }
 }
 
+const EMPTY_STATE = { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] };
+
 export class DurableChallengeStore {
-  constructor(file, { ttlMs } = {}) {
+  constructor(file, { ttlMs, lockWaitMs, createIfMissing = true } = {}) {
     if (!file) throw new Error('challenge store path required');
     this.file = file;
     this.lockPath = `${file}.lock`;
     this.ttlMs = ttlMs;
+    this.lockWaitMs = Number.isFinite(Number(lockWaitMs)) && Number(lockWaitMs) >= 0
+      ? Number(lockWaitMs)
+      : 4000;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!fs.existsSync(file)) writeState(file, { map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [] });
-    // Fail closed if the file cannot be parsed.
+    if (!fs.existsSync(file)) {
+      // Boot refuses a missing file. A vanished volume must not look like a
+      // fresh spent-set. Direct construction may still create one.
+      if (!createIfMissing) {
+        throw unavailable('x402 challenge store missing; refusing a fresh spent-set', new Error(file));
+      }
+      writeState(file, EMPTY_STATE);
+    }
+    // Fail closed if the file cannot be parsed. Do not replace it.
     readState(file);
   }
 
@@ -79,11 +194,13 @@ export class DurableChallengeStore {
     return withFileLock(this.lockPath, () => {
       const inner = new ChallengeStore({ ttlMs: this.ttlMs });
       const raw = readState(this.file);
-      if (raw) inner.loadState(raw);
+      // ENOENT after open is a lost store, not a fresh one. Do not write.
+      if (!raw) throw unavailable('x402 challenge store unreadable', new Error('missing challenge store'));
+      inner.loadState(raw);
       const result = fn(inner);
       writeState(this.file, inner.dumpState());
       return result;
-    });
+    }, this.lockWaitMs);
   }
 
   put(nonce, data) { return this._with((s) => s.put(nonce, data)); }
@@ -128,11 +245,13 @@ export function markChallengeStoreFailed() {
 
 /**
  * Open the durable store. A load failure refuses x402 rather than running unbound.
+ * Boot passes createIfMissing false: a missing file is not a fresh spent-set.
  * @param {string} file
+ * @param {{ createIfMissing?: boolean }} [opts]
  */
-export function openDurableChallengeStore(file) {
+export function openDurableChallengeStore(file, { createIfMissing = false } = {}) {
   try {
-    const store = new DurableChallengeStore(file);
+    const store = new DurableChallengeStore(file, { createIfMissing });
     setActiveChallengeStore(store);
     return store;
   } catch (err) {

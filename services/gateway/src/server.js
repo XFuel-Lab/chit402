@@ -5707,10 +5707,14 @@ export async function startServer() {
       logger.error('x402 challenge store path missing; x402 will refuse');
     } else if (storePath) {
       try {
-        openDurableChallengeStore(storePath);
+        // A missing file is not a fresh spent-set. Refuse x402 and say so.
+        openDurableChallengeStore(storePath, { createIfMissing: false });
       } catch (err) {
         markChallengeStoreFailed();
-        logger.error({ err: err.message }, 'x402 challenge store failed to load');
+        logger.error(
+          { err: err.message, storePath },
+          'x402 challenge store failed to load; refusing a fresh spent-set',
+        );
       }
     }
   }
