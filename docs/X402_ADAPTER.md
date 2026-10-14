@@ -67,7 +67,11 @@ Solana payments are verified and settled via PayAI. Base remains the default net
 4. Gateway routes to the appropriate facilitator based on the network in the payment
 5. Facilitator verifies / settles; task proceeds; `payment_ref` recorded on the receipt  
 
-A later retry that presents that same payment header for the same challenge receives the original response bytes (same `task_id` and receipt). It does not run the handler again. Any other header for that challenge is `409 payment_replayed` and does not include the wallet or the transaction.
+A retry must resend the exact payment header from the first attempt, including the signature. Do not rebuild or re-sign it.
+
+`/task-request`, `/v1/agents/register`, `/v1/agents/:agent_id/book/ingest`, and the board routes answer that resend with `409 payment_replayed` and do not run the handler again. `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` return the original response bytes (same `task_id` and receipt) while this process still holds them: in memory only, for 120 seconds, and only up to 256 KiB. The response and the model output are not written to disk. After a restart, or after that copy expires, the same header is `409 payment_replayed`. Any other header is `409 payment_replayed` and does not include the wallet or the transaction.
+
+If the first attempt is still writing the response, the resend waits up to 60 seconds, then `402 payment_in_flight` with `Retry-After`. Resend the same header.
 
 If that first attempt is pending or fails confirmation, the challenge stays `settle_unconfirmed` until reconcile runs. The client does not get a new challenge for that nonce, and a retry does not settle a second time.
 

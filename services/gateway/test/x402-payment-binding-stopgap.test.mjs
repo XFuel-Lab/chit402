@@ -354,20 +354,20 @@ test('single claim: one challenge cannot mint two receipts', async () => {
 
     const results = await Promise.all(Array.from({ length: 10 }, () => pay()));
     const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
-    const replays = results.filter((r) => r.idempotentReplay === true);
+    const replays = results.filter((r) => r.code === 'payment_replayed');
     assert.equal(fresh.length, 1);
     assert.equal(replays.length, 9);
     assert.equal(mock.counts.settle, 1);
     assert.equal(mock.counts.verify, 1);
     for (const replayed of replays) {
-      assert.equal(replayed.paymentRef, fresh[0].paymentRef);
-      assert.equal(replayed.confirmed, true);
+      assert.notEqual(replayed.kind, 'settled');
+      assert.equal(replayed.paymentRef, undefined);
     }
 
     const replay = await pay();
-    assert.equal(replay.kind, 'settled');
-    assert.equal(replay.idempotentReplay, true);
-    assert.equal(replay.paymentRef, fresh[0].paymentRef);
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
     assert.equal(mock.counts.settle, 1);
   } finally {
     await mock.close();

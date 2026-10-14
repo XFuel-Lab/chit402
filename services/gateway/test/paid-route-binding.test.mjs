@@ -9,6 +9,13 @@ import crypto from 'node:crypto';
 import { ethers } from 'ethers';
 
 import { ChallengeStore } from '../src/x402-adapter.js';
+import {
+  clearReplayMemory,
+  commitServedReceipt,
+  setReplayLimitsForTests,
+  takeServedReceipt,
+  armServedReceipt,
+} from '../src/paid-response-replay.js';
 import { quoteBodyHash, settleBoundPayment } from '../src/x402-settle.js';
 import { confirmEvmReceipt, readEvmAuthorization } from '../src/x402-chain.js';
 import {
@@ -581,7 +588,7 @@ test('PB4 concurrent challenges carrying one transfer settle once', async () => 
   }
 });
 
-test('PB4 concurrent duplicates of one challenge settle once and replay the receipt', async () => {
+test('PB4 concurrent duplicates of one challenge settle once and do not replay the handler', async () => {
   const fac = await listenFacilitator();
   try {
     const store = new ChallengeStore();
@@ -601,18 +608,17 @@ test('PB4 concurrent duplicates of one challenge settle once and replay the rece
     });
     const results = await Promise.all([run(), run(), run()]);
     const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
-    const replays = results.filter((r) => r.idempotentReplay === true);
+    const refused = results.filter((r) => r.code === 'payment_replayed');
     assert.equal(fresh.length, 1, JSON.stringify(results.map((r) => ({ kind: r.kind, code: r.code, replay: r.idempotentReplay }))));
-    assert.equal(replays.length, 2);
+    assert.equal(refused.length, 2);
     assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
-    for (const replay of replays) {
-      assert.equal(replay.kind, 'settled');
-      assert.equal(replay.confirmed, true);
-      assert.equal(replay.replay, true);
-      assert.equal(replay.paymentRef, fresh[0].paymentRef);
-      assert.equal(replay.quotedAmount, fresh[0].quotedAmount);
-      assert.equal(replay.settledAmount, fresh[0].settledAmount);
-      assert.equal(replay.payerWallet, fresh[0].payerWallet);
+    for (const replay of refused) {
+      assert.notEqual(replay.kind, 'settled');
+      const leaked = JSON.stringify(replay);
+      assert.equal(leaked.includes(PAYER), false);
+      assert.equal(leaked.includes(fresh[0].paymentRef), false);
+      assert.equal(replay.paymentRef, undefined);
+      assert.equal(replay.payerWallet, undefined);
     }
   } finally {
     await fac.close();
@@ -712,10 +718,115 @@ test('a replay without the original payment proof is payment_replayed and leaks 
       paymentHeader: header,
       resource: '/task-request',
     });
-    assert.equal(same.idempotentReplay, true);
-    assert.equal(same.paymentRef, first.paymentRef);
+    assert.equal(same.code, 'payment_replayed');
+    assert.notEqual(same.kind, 'settled');
+    assert.equal(same.paymentRef, undefined);
     assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
   } finally {
     await fac.close();
+  }
+});
+
+test('an opted-in route replays stored bytes; a restart or an oversized body is 409', async () => {
+  const fac = await listenFacilitator();
+  const secret = 'MODEL-OUTPUT-SECRET-PHRASE';
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { amount: '2000', resource: '/task-request' });
+    const header = evmHeader();
+    const cfg = baseCfg(fac.url, { chainReader: chainFromReceipt(evmReceipt()) });
+    const first = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+      serveStoredResponse: true,
+    });
+    assert.equal(first.kind, 'settled', first.code);
+    const kept = commitServedReceipt(nonce, {
+      bytes: JSON.stringify({ output: secret, task_id: 'task-1' }),
+      signature: 'jws-original',
+      taskId: 'task-1',
+    }, store);
+    assert.ok(kept?.bytes.includes(secret));
+    const persisted = store.replayRecord(nonce).servedReceipt;
+    assert.equal(persisted.taskId, 'task-1');
+    assert.match(persisted.responseHash, /^[0-9a-f]{64}$/);
+    assert.equal(persisted.bytes, undefined);
+    assert.equal(JSON.stringify(persisted).includes(secret), false);
+    assert.equal(JSON.stringify(store.replayRecord(nonce)).includes(secret), false);
+
+    const again = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+      serveStoredResponse: true,
+    });
+    assert.equal(again.idempotentReplay, true);
+    assert.equal(again.paymentRef, first.paymentRef);
+    const served = await takeServedReceipt(nonce, store);
+    assert.equal(served.bytes, kept.bytes);
+    assert.equal(served.signature, 'jws-original');
+
+    clearReplayMemory();
+    const restarted = await settleBoundPayment({
+      taskId: 'task-1',
+      amount: '2000',
+      cfg,
+      store,
+      nonce,
+      paymentHeader: header,
+      resource: '/task-request',
+      serveStoredResponse: true,
+    });
+    assert.equal(restarted.code, 'payment_replayed');
+    assert.notEqual(restarted.kind, 'settled');
+    assert.equal(await takeServedReceipt(nonce, store), null);
+    assert.equal(fac.hits.filter((url) => String(url).endsWith('/settle')).length, 1);
+
+    setReplayLimitsForTests({ maxBytes: 8 });
+    const oversized = commitServedReceipt(nonce, {
+      bytes: secret,
+      taskId: 'task-1',
+    }, store);
+    assert.equal(oversized, null);
+    assert.equal(await takeServedReceipt(nonce, store), null);
+    assert.equal(JSON.stringify(store.replayRecord(nonce)).includes(secret), false);
+  } finally {
+    clearReplayMemory();
+    setReplayLimitsForTests(null);
+    await fac.close();
+  }
+});
+
+test('replay bytes expire, and the waiter times out instead of waiting forever', async () => {
+  const store = {
+    rec: {},
+    patch(_nonce, fields) { Object.assign(this.rec, fields); },
+    replayRecord() { return this.rec; },
+  };
+  try {
+    setReplayLimitsForTests({ ttlMs: 1, waiterMs: 30 });
+    commitServedReceipt('nonce-ttl', { bytes: 'stored-body', taskId: 't' }, store);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(await takeServedReceipt('nonce-ttl', store), null);
+    assert.equal(store.replayRecord().servedReceipt.taskId, 't');
+    assert.equal(store.replayRecord().servedReceipt.bytes, undefined);
+
+    armServedReceipt('nonce-wait');
+    const started = Date.now();
+    const got = await takeServedReceipt('nonce-wait');
+    assert.equal(got.timedOut, true);
+    assert.ok(Date.now() - started < 1000);
+  } finally {
+    clearReplayMemory();
+    setReplayLimitsForTests(null);
   }
 });

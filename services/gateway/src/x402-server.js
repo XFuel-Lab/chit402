@@ -495,6 +495,7 @@ export async function runX402Handshake(req, {
   payTo = null,
   strictTaskId = false,
   store = null,
+  serveStoredResponse = false,
 } = {}) {
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
@@ -629,6 +630,7 @@ export async function runX402Handshake(req, {
       paymentHeader,
       clientVersion,
       nonce,
+      serveStoredResponse,
       resolveQuote: () => priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
     });
   }

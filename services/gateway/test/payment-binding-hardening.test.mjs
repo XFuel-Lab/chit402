@@ -477,16 +477,13 @@ test('PT8 a spent nonce or the same authorization cannot settle twice', async ()
     const first = await settle({ cfg, store, nonce, paymentHeader: header });
     assert.equal(first.kind, 'settled');
     const again = await settle({ cfg, store, nonce, paymentHeader: header });
-    assert.equal(again.kind, 'settled');
-    assert.equal(again.idempotentReplay, true);
-    assert.equal(again.replay, true);
-    assert.equal(again.confirmed, true);
-    assert.equal(again.paymentRef, first.paymentRef);
+    assert.equal(again.code, 'payment_replayed');
+    assert.notEqual(again.kind, 'settled');
     const reopened = new DurableChallengeStore(file);
     const after = await settle({ cfg, store: reopened, nonce, paymentHeader: header });
-    assert.equal(after.kind, 'settled');
-    assert.equal(after.idempotentReplay, true);
-    assert.equal(after.paymentRef, first.paymentRef);
+    assert.equal(after.code, 'payment_replayed');
+    assert.notEqual(after.kind, 'settled');
+    assert.equal(after.paymentRef, undefined);
 
     const fresh = putChallenge(store, { nonce: `0x${'ef'.repeat(32)}` });
     const replayAuth = await settle({
@@ -515,10 +512,10 @@ test('PT9 one in-flight claim per challenge', async () => {
       settle({ cfg, store, nonce, paymentHeader: header }),
     ]);
     const fresh = [a, b].filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
-    const replays = [a, b].filter((r) => r.idempotentReplay === true);
+    const replays = [a, b].filter((r) => r.code === 'payment_replayed');
     assert.equal(fresh.length, 1);
     assert.equal(replays.length, 1);
-    assert.equal(replays[0].paymentRef, fresh[0].paymentRef);
+    assert.equal(replays[0].paymentRef, undefined);
     assert.equal(fac.hits.filter((h) => h.url.endsWith('/settle')).length, 1);
 
     const many = new ChallengeStore();
@@ -528,7 +525,7 @@ test('PT9 one in-flight claim per challenge', async () => {
       cfg, store: many, nonce: nonceN, paymentHeader: headerN,
     })));
     assert.equal(raced.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true).length, 1);
-    assert.equal(raced.filter((r) => r.idempotentReplay === true).length, 9);
+    assert.equal(raced.filter((r) => r.code === 'payment_replayed').length, 9);
     assert.equal(fac.hits.filter((h) => h.url.endsWith('/settle')).length, 2);
   } finally {
     await fac.close();

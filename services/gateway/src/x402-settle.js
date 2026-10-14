@@ -25,7 +25,13 @@ import {
   fetchBaseL1Anchor,
 } from './issuance-commitment.js';
 import { atomicUnits, canonicalPaidRoute } from './paid-route.js';
-import { abortServedReceipt, armServedReceipt } from './paid-response-replay.js';
+import {
+  abortServedReceipt,
+  armServedReceipt,
+  REPLAY_WAIT_TIMEOUT,
+  replayBytesReady,
+  replayWaiterMs,
+} from './paid-response-replay.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -236,6 +242,27 @@ function replayAllowed(decision, { resourceHave, issued, paymentHeader }) {
   return true;
 }
 
+/**
+ * Exact proof is not enough. The route must opt in, and this process must
+ * still hold the response (or be writing it). Anything else is payment_replayed.
+ * @returns {object|null} a decision to return, or null when this is not an exact replay
+ */
+function decideReplay(req, prior, { resourceHave, issued, paymentHeader, nonce, serveStoredResponse }) {
+  if (!replayAllowed(prior, { resourceHave, issued, paymentHeader })) return null;
+  if (serveStoredResponse === true && replayBytesReady(nonce)) {
+    return idempotentReplay(prior);
+  }
+  return refused(req, 'payment_replayed', { preSettle: true });
+}
+
+function awaitInflight(pending) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(REPLAY_WAIT_TIMEOUT), replayWaiterMs());
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function settleBoundPayment({
   req,
   taskId,
@@ -254,6 +281,7 @@ export async function settleBoundPayment({
   nonce,
   store = null,
   resolveQuote = null,
+  serveStoredResponse = false,
 }) {
   try {
     assertX402Boot(cfg);
@@ -379,14 +407,15 @@ export async function settleBoundPayment({
       }
     } catch { /* the chain read is the authority when the value is not an integer */ }
   }
-  // Same payer, same challenge, same route, same quoted price: the original
-  // receipt, with no second facilitator settle. This runs before the auth-spent
-  // check because that authorization is the one that already settled.
+  // Same challenge and the same payment header, before the auth-spent check:
+  // that authorization is the one that already settled. Default is 409. A route
+  // serves the stored response only when it opted in and the bytes are still here.
   if (spent) {
     const prior = settlementReplay(challenge, resourceHave);
-    if (prior && replayAllowed(prior, { resourceHave, issued, paymentHeader })) {
-      return idempotentReplay(prior);
-    }
+    const replay = decideReplay(req, prior, {
+      resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+    });
+    if (replay) return replay;
     return refused(req, 'payment_replayed', { preSettle: true });
   }
   const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
@@ -410,10 +439,14 @@ export async function settleBoundPayment({
     if (claim.reason === 'payment_in_flight') {
       const pending = inflightByNonce.get(String(nonce));
       if (pending) {
-        const winner = await pending;
-        if (replayAllowed(winner, { resourceHave, issued, paymentHeader })) {
-          return idempotentReplay(winner);
+        const winner = await awaitInflight(pending);
+        if (winner === REPLAY_WAIT_TIMEOUT) {
+          return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
         }
+        const replay = decideReplay(req, winner, {
+          resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+        });
+        if (replay) return replay;
         if (winner?.kind === 'settled') return refused(req, 'payment_replayed', { preSettle: true });
       }
       return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
@@ -421,9 +454,10 @@ export async function settleBoundPayment({
     if (claim.reason === 'payment_replayed') {
       const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
       const prior = rec ? settlementReplay(rec, resourceHave) : null;
-      if (prior && replayAllowed(prior, { resourceHave, issued, paymentHeader })) {
-        return idempotentReplay(prior);
-      }
+      const replay = decideReplay(req, prior, {
+        resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
+      });
+      if (replay) return replay;
     }
     return refused(req, claim.reason, { preSettle: true });
   }
@@ -447,7 +481,7 @@ export async function settleBoundPayment({
   }
 
   async function settleClaimed() {
-  armServedReceipt(nonce);
+  if (serveStoredResponse === true) armServedReceipt(nonce);
   const gwOpts = {
     provider: (cfg.facilitatorProvider || 'zan').toLowerCase() === 'x402' ? 'x402' : 'zan',
     gatewayUrl: (cfg.facilitatorProvider || 'zan') === 'zan' ? cfg.gatewayUrl : (cfg.facilitatorUrl || null),

@@ -429,6 +429,7 @@ async function meterV1Request(req, res, {
   bookPolicy = null,
   spendHolds = null,
   session = null,
+  serveStoredResponse = false,
 } = {}) {
   // When isAuthorised is passed, we use it to determine if the request is exempt.
   // Otherwise, fall back to the config-gated behavior for backward compat.
@@ -634,7 +635,7 @@ async function meterV1Request(req, res, {
     const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
     const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
     const decision = await runX402Handshake(req, {
-      taskId, body: pricedBody, baseUrl, resource, quoteOpts,
+      taskId, body: pricedBody, baseUrl, resource, quoteOpts, serveStoredResponse,
     });
 
     if (decision.kind === 'settled') {
@@ -1827,6 +1828,17 @@ function sendStoredPaidResponse(res, stored) {
 async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
+  if (stored?.timedOut) {
+    res.set('Retry-After', '2');
+    res.status(402).json({
+      error: {
+        message: 'Payment could not be settled',
+        type: 'payment_required',
+        code: 'payment_in_flight',
+      },
+    });
+    return true;
+  }
   if (!stored?.bytes) {
     res.status(409).json({
       error: {
@@ -2562,7 +2574,7 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy,
-        spendHolds, session: boundSession,
+        spendHolds, session: boundSession, serveStoredResponse: true,
       });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {
@@ -3088,7 +3100,7 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath: '/v1/responses', ledger, registry, bookPolicy,
-        spendHolds, session: boundSession,
+        spendHolds, session: boundSession, serveStoredResponse: true,
       });
       if (metering.meteringError) {
         return respondMeteringFailure(res, {

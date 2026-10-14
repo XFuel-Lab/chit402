@@ -115,12 +115,30 @@ resource }` with a TTL (`X402_CHALLENGE_TTL_MS`). Verify enforces expiry + amoun
 binding; settle marks the nonce spent. Settlement requirements come from that
 server-issued challenge.
 
-Sending the **same** payment header again for that challenge, route, and quoted
-price returns the original response: the same `task_id`, the same receipt
-bytes, and the same signature. The gateway does not run the handler again and
-does not settle a second time. A missing header, a garbage header, or a new
-authorization that only copies the payer address is `409 payment_replayed`.
-That refusal does not include the wallet or the transaction.
+Resend the **exact** payment header bytes from the first attempt: the full
+authorization, including the signature. Do not rebuild or re-sign that header.
+
+`/task-request`, `/v1/agents/register`, `/v1/agents/:agent_id/book/ingest`, and
+the board routes do not keep a response. An exact resend is
+`409 payment_replayed`. The handler does not run again. Start a new challenge
+for a new attempt.
+
+`POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` keep
+the original response in memory only, for 120 seconds, and only when it is at
+most 256 KiB. An exact resend inside that window returns those bytes: the same
+`task_id`, the same receipt, and the same signature. The gateway does not run
+the handler again and does not settle a second time. It does not write the
+response or the model output to disk. After a restart, or after that copy
+expires, the same header is `409 payment_replayed`.
+
+A missing header, a garbage header, or a new authorization that only copies the
+payer address is `409 payment_replayed`. That refusal does not include the
+wallet or the transaction.
+
+If the first attempt is still writing the response, the resend waits up to 60
+seconds. When that wait expires the status is `402 payment_in_flight` with
+`Retry-After`. Resend the same header. Do not sign a second authorization for
+that challenge.
 
 On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. Do not sign a new authorization for an in-flight challenge. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate SDK change.
 
