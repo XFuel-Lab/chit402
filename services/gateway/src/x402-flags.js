@@ -132,6 +132,7 @@ export function paymentFailureBody(decision) {
   const code = decision?.code || decision?.reason;
   const body = paymentErrorBody(code);
   if (decision?.pendingId) body.pending_id = decision.pendingId;
+  if (decision?.verifyUrl) body.verify_url = decision.verifyUrl;
   if (typeof decision?.receiptJws === 'string' && decision.receiptJws) body.receipt_jws = decision.receiptJws;
   return body;
 }

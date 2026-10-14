@@ -14,7 +14,7 @@ import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolv
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
-import { listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
+import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -74,7 +74,7 @@ import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
 import { AgentRegistry, registerAgent } from './agent-registry.js';
-import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook } from './usage-settled.js';
+import { UsageSettledLedger, setBookRowWrittenHook, setReceiptBoundHook, setLateIssueLedger, recordLateIssueReceipt } from './usage-settled.js';
 import { peekRefusalAnchor } from './refusal-anchor.js';
 import { withRefusal, presentRefusal, renderRefusalHtml, renderRefusalNotFound } from './refusal-receipt.js';
 import {
@@ -1006,6 +1006,7 @@ export function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+  setLateIssueLedger(usageSettled);
   // Null unless the founder turns the flag on. Production keeps the settled-only check.
   const spendHolds = config.spendHold?.enabled
     ? new SpendHoldStore({
@@ -3263,6 +3264,9 @@ export function createApp() {
       const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawTaskId);
       const openRouterReceipt = findOpenRouterPublicReceipt(taskId, { baseUrl, reqHost, ledgerRow })
         || findOpenRouterPublicReceipt(rawTaskId, { baseUrl, reqHost, ledgerRow });
+      const lateSnapshot = ledgerRow?.source === 'late_issue' && ledgerRow.receipt_snapshot?.issuer_signature?.jws
+        ? ledgerRow.receipt_snapshot
+        : null;
       const withBookCoverage = (receipt) => {
         if (!receipt || !ledgerRow?.agent_id) return receipt;
         try {
@@ -3296,6 +3300,7 @@ export function createApp() {
       };
 
       if (openRouterReceipt) return publishShell(withBookCoverage(openRouterReceipt), null);
+      if (lateSnapshot) return publishShell(lateSnapshot, null);
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
@@ -3306,6 +3311,8 @@ export function createApp() {
       const task = _findTask(aiListener, taskId);
 
       if (!task) {
+        const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
+        if (latePublic) return publishShell(latePublic, null);
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) return publishShell(spendReceipt, null);
         return sendPublicMissing(res, wantsJson);
@@ -5705,7 +5712,16 @@ export async function startServer() {
     } else if (storePath) {
       try {
         const opened = openDurableChallengeStore(storePath);
-        startLateIssueResolver(opened);
+        startLateIssueResolver(opened, {
+          cfg: config.x402,
+          recordLedger: (receipt) => {
+            try {
+              recordLateIssueReceipt(receipt);
+            } catch (err) {
+              logger.warn({ err: err.message }, 'late-issue ledger write failed');
+            }
+          },
+        });
       } catch (err) {
         markChallengeStoreFailed();
         logger.error({ err: err.message }, 'x402 challenge store failed to load');

@@ -198,10 +198,12 @@ test('qualifying settle failures stay unknown and are not released', async () =>
           throw err;
         },
       });
-      const first = await pay(store, cfg, nonce, evmHeader({ note: MARKER }), { prompt: MARKER });
+      const header = evmHeader({ note: MARKER });
+      const first = await pay(store, cfg, nonce, header, { prompt: MARKER });
       assert.equal(first.code, 'settle_pending', item.name);
       assert.equal(first.kind, 'failed', item.name);
       assert.ok(first.pendingId, item.name);
+      assert.match(first.verifyUrl, new RegExp(`/receipt/late-${first.pendingId}$`), item.name);
       assert.equal(first.paymentRef, undefined, item.name);
       assert.equal(fac.hits.settle, 1, item.name);
       assert.equal(seen.length, 1, item.name);
@@ -212,7 +214,7 @@ test('qualifying settle failures stay unknown and are not released', async () =>
       assert.equal(store.get(nonce)?.state, 'unknown', item.name);
       assert.equal(JSON.stringify(store.dumpState()).includes(MARKER), false, item.name);
 
-      const again = await pay(store, cfg, nonce, evmHeader());
+      const again = await pay(store, cfg, nonce, header);
       assert.equal(again.code, 'settle_pending', item.name);
       assert.equal(fac.hits.settle, 1, `${item.name} retry must not settle again`);
       assert.equal(store.listLateLedger().length, 0, item.name);
@@ -239,11 +241,12 @@ test('a thrown chain read after a successful settle stays unknown', async () => 
     const cfg = baseCfg(fac.url, {
       chainReader: async () => { throw new Error('local confirm failed'); },
     });
-    const decision = await pay(store, cfg, nonce, evmHeader());
+    const header = evmHeader();
+    const decision = await pay(store, cfg, nonce, header);
     assert.equal(decision.code, 'settle_pending');
     assert.equal(store.listLate()[0].state, 'unknown');
     assert.notEqual(store.get(nonce)?.state, 'issued');
-    const again = await pay(store, cfg, nonce, evmHeader());
+    const again = await pay(store, cfg, nonce, header);
     assert.equal(again.code, 'settle_pending');
     assert.equal(fac.hits.settle, 1);
   } finally {
@@ -296,11 +299,12 @@ test('transport failure then a finalized match issues one receipt', async () => 
       lateAppendLog: () => {},
       chainReader: async () => ({ ok: false, pending: true }),
     });
-    const pending = await pay(store, cfg, nonce, evmHeader());
+    const header = evmHeader();
+    const pending = await pay(store, cfg, nonce, header);
     assert.equal(pending.code, 'settle_pending');
     assert.equal(fac.hits.settle, 1);
     cfg.chainReader = finalizedReader();
-    const issued = await pay(store, cfg, nonce, evmHeader());
+    const issued = await pay(store, cfg, nonce, header);
     assert.equal(fac.hits.settle, 1);
     assert.equal(signs.length, 1);
     assert.equal(signs[0].amount_gross, '2000');

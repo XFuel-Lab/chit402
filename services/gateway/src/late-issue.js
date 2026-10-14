@@ -1,25 +1,32 @@
 /**
- * Late-issue receipts.
+ * Late-issue receipts. EVM only.
  *
- * A settle whose request left the process keeps one row in the replay store
- * (the durable challenge store). States run
+ * Solana late-issue is unsupported. A Solana settle that reports failure
+ * follows the main path: a transport error stays unknown, and an HTTP error
+ * or success:false is released so the same challenge can settle again.
+ * This module does not open a Solana row and does not sign one.
+ *
+ * A Base settle whose request left the process keeps one row in the replay
+ * store (the durable challenge store). States run
  * submitted → unknown → confirmed → issuing → issued.
  * The row is written before /settle and is not released after that.
  * Issuance is off unless X402_LATE_ISSUE is on. The receipt payload is the
  * existing v11 document. This module does not add a signed field.
+ * A finalized match is signed once. There is no redeem window.
  */
 import crypto from 'node:crypto';
 import logger from './logger.js';
-import { confirmSettlement, evmFinality } from './x402-chain.js';
+import { confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
 import { samePayee, truncateWallet } from './x402-flags.js';
 import { canonicalNetwork, encodeBase58, normalizePaymentRef, sameNetwork } from './payment-ref.js';
 import { buildV11SignedClaims, minuteIssuedAt } from './v11-seal.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { signJws } from './issuer-key.js';
 import { bindSaltReceipt, requestDigest, requestSalt, saltReceiptId } from './request-binding.js';
+import { buildVerifyUrl } from './receipt.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
 
 export const LATE_HORIZON_MS = 24 * 60 * 60 * 1000;
-export const LATE_REDEEM_MS = 15 * 60 * 1000;
 export const LATE_SKEW_MS = 120_000;
 /** Solana: settle timeout 45s + blockhash lifetime ~90s + 60s. */
 export const SOLANA_LATE_WINDOW_MS = (45 + 90 + 60) * 1000;
@@ -146,14 +153,6 @@ function digestOf(req, saltRef = null) {
   }
 }
 
-function samePrincipal(req, row) {
-  const stored = row?.principal;
-  if (!stored || stored === 'anon' || String(stored).startsWith('payer:')) return true;
-  const apiKey = req?.headers?.['x-api-key'];
-  if (typeof apiKey !== 'string' || apiKey.length === 0) return false;
-  return crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 32) === stored;
-}
-
 /**
  * One decision for "too late". On-chain times are seconds. `now` is store-clock ms.
  * @returns {'issue'|'mismatch_hold'|'expired_unresolved'|'not_settled'|'unknown'}
@@ -238,6 +237,7 @@ export function openLateSubmission(store, tuple) {
     fee_payer: tuple.feePayer || null,
     solana: tuple.solana === true,
     request_digest: tuple.requestDigest || null,
+    payment_hash: tuple.paymentHash || null,
     salt_ref: tuple.saltRef || null,
     principal: tuple.principal || 'anon',
     idempotency_key: tuple.idempotencyKey || null,
@@ -248,7 +248,9 @@ export function openLateSubmission(store, tuple) {
     tx_hint: null,
     tx_ref: null,
     jws: null,
-    receipt_id: null,
+    receipt_id: `late-${pendingId}`,
+    public_receipt: null,
+    ledger_recorded: false,
     served: false,
     why: null,
     lease_owner: null,
@@ -478,6 +480,16 @@ async function proveFinality(record, out, deps) {
 
 async function readSettlement(record, deps, reader) {
   const cfg = { ...(deps.cfg || {}) };
+  if (process.env.NODE_ENV !== 'test') {
+    delete cfg.chainReader;
+    delete cfg.chainReader2;
+    delete cfg.lateSigner;
+    delete cfg.lateAppendLog;
+    delete cfg.lateHasRefund;
+    delete cfg.crashBeforeLedger;
+    delete cfg.lateForcePaymentOnly;
+    delete cfg.lateOutputBytes;
+  }
   if (reader) cfg.chainReader = reader;
   try {
     return await confirmSettlement({
@@ -494,7 +506,7 @@ async function readSettlement(record, deps, reader) {
       authorization: record.auth,
       expectedPayTo: record.payee,
       cfg,
-      chainReader: reader || cfg.chainReader || deps.chainReader || null,
+      chainReader: reader || (process.env.NODE_ENV === 'test' ? cfg.chainReader : null) || null,
     });
   } catch (err) {
     logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from || record.payer_authority) }, 'late-issue chain read failed');
@@ -502,15 +514,120 @@ async function readSettlement(record, deps, reader) {
   }
 }
 
-async function readChain(record, deps) {
+/** Test-only cfg hooks. Production reads RPC from cfg and never these fields. */
+function testHooks(cfg) {
+  if (process.env.NODE_ENV !== 'test' || !cfg || typeof cfg !== 'object') return {};
+  const out = {};
+  if (typeof cfg.lateSigner === 'function') out.signer = cfg.lateSigner;
+  if (typeof cfg.lateAppendLog === 'function') out.appendLog = cfg.lateAppendLog;
+  if (typeof cfg.lateHasRefund === 'function') out.hasRefund = cfg.lateHasRefund;
+  if (cfg.crashBeforeLedger === true) out.crashBeforeLedger = true;
+  if (typeof cfg.chainReader === 'function') out.chainReader = cfg.chainReader;
+  if (typeof cfg.chainReader2 === 'function') out.chainReader2 = cfg.chainReader2;
+  return out;
+}
+
+function readerOf(deps) {
+  if (typeof deps.chainReader === 'function') return deps.chainReader;
+  if (process.env.NODE_ENV === 'test' && typeof deps.cfg?.chainReader === 'function') return deps.cfg.chainReader;
+  return null;
+}
+
+function paymentHeaderHash(header) {
+  if (typeof header !== 'string' || header.length === 0) return null;
+  return crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+}
+
+function hashesEqual(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || left.length !== right.length || left.length === 0) {
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
+}
+
+/** Stable public id for a late row. Assigned when the row is opened. */
+export function lateVerifyUrl(cfg, pendingId) {
+  if (!pendingId) return null;
+  const base = cfg?.publicBaseUrl || process.env.PUBLIC_BASE_URL || '';
+  return buildVerifyUrl(base, `late-${pendingId}`);
+}
+
+async function discoverHint(record, deps) {
+  if (record.solana || record.tx_hint) return record;
+  if (readerOf(deps)) return record;
   const cfg = deps.cfg || {};
-  const primary = deps.chainReader || cfg.chainReader || null;
-  const secondary = deps.chainReader2 || cfg.chainReader2 || null;
-  const first = await proveFinality(record, await readSettlement(record, deps, primary), deps);
-  if (!secondary) return first;
-  const second = await proveFinality(record, await readSettlement(record, deps, secondary), deps);
-  if (!sameChainIdentity(first, second)) return pendingChain(null);
-  return first;
+  const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  if (!url) return record;
+  const found = await findAuthorizationTx(url, {
+    asset: record.asset,
+    from: record.auth?.from,
+    nonce: record.auth?.nonce,
+  });
+  if (!found.ok || !found.tx) return record;
+  return { ...record, tx_hint: found.tx };
+}
+
+async function readChain(record, deps) {
+  const hinted = await discoverHint(record, deps);
+  if (!hinted.solana && !hinted.tx_hint && !readerOf(deps)) return pendingChain(null);
+  const cfg = deps.cfg || {};
+  const primary = readerOf(deps);
+  const secondary = typeof deps.chainReader2 === 'function'
+    ? deps.chainReader2
+    : (process.env.NODE_ENV === 'test' && typeof cfg.chainReader2 === 'function' ? cfg.chainReader2 : null);
+  const first = await proveFinality(hinted, await readSettlement(hinted, deps, primary), deps);
+  const withTx = first?.tx || first?.transaction || hinted.tx_hint
+    ? { ...first, tx: first?.tx || first?.transaction || hinted.tx_hint }
+    : first;
+  if (!secondary) return withTx;
+  const second = await proveFinality(hinted, await readSettlement(hinted, deps, secondary), deps);
+  if (!sameChainIdentity(withTx, second)) return pendingChain(null);
+  return withTx;
+}
+
+/**
+ * Re-read the receipt at finality depth before signing.
+ * An injected reader is called twice. A block hash, when both reads have one,
+ * must match, and a status, when present, must be 1. Without a reader the
+ * RPC receipt status and the block hash are read twice.
+ */
+async function reorgGuard(record, chain, deps) {
+  const cfg = deps.cfg || {};
+  const reader = readerOf(deps);
+  if (reader) {
+    let first;
+    let second;
+    try {
+      first = await readSettlement(record, deps, reader);
+      second = await readSettlement(record, deps, reader);
+    } catch (err) {
+      logger.warn({ err: err.message }, 'late-issue reorg read failed');
+      return false;
+    }
+    if (first?.status != null && Number(first.status) !== 1) return false;
+    if (second?.status != null && Number(second.status) !== 1) return false;
+    if (first?.blockHash && second?.blockHash && String(first.blockHash) !== String(second.blockHash)) {
+      return false;
+    }
+    return true;
+  }
+  const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  const tx = chain?.tx || chain?.transaction || record.tx_hint;
+  if (!url || !tx) return false;
+  try {
+    const receipt = await readEvmReceipt(url, tx);
+    if (!receipt || receipt.status !== 1 || !receipt.blockHash || receipt.blockNumber == null) return false;
+    const fin = await evmFinality(url, receipt.blockNumber);
+    if (!fin.finalized || !fin.blockHash) return false;
+    if (String(fin.blockHash).toLowerCase() !== String(receipt.blockHash).toLowerCase()) return false;
+    const again = await evmFinality(url, receipt.blockNumber);
+    if (!again.finalized || !again.blockHash) return false;
+    if (String(again.blockHash).toLowerCase() !== String(fin.blockHash).toLowerCase()) return false;
+    return true;
+  } catch (err) {
+    logger.warn({ err: err.message }, 'late-issue reorg read failed');
+    return false;
+  }
 }
 
 function refundBlocked(record, deps) {
@@ -590,13 +707,58 @@ function claimsFor(record, chain, outputBytes, issuedAt) {
   });
 }
 
+function publicLateReceipt(record, chain, jws) {
+  const txRef = ledgerRef(record, chain);
+  const receiptId = record.receipt_id || `late-${record.pending_id}`;
+  return {
+    task_id: receiptId,
+    receipt_id: receiptId,
+    status: 'paid',
+    payment: {
+      rail: 'usdc',
+      ref: txRef,
+      asset: 'USDC',
+      payee: chain?.payTo || record.payee,
+      gross_amount: String(record.route_quote),
+      settled_amount: String(chain?.amount || record.expected_settled_amount || ''),
+      network: record.network,
+    },
+    issuer_signature: { jws },
+    note: 'payment confirmed late; not served.',
+  };
+}
+
+async function writeLateLedger(receipt, deps) {
+  if (typeof deps.recordLedger === 'function') {
+    await deps.recordLedger(receipt);
+    return;
+  }
+  if (process.env.NODE_ENV === 'test') return;
+  const { recordLateIssueReceipt } = await import('./usage-settled.js');
+  recordLateIssueReceipt(receipt);
+}
+
 async function publishIssued(store, record, chain, deps, outputBytes) {
   const id = record.pending_id;
   const fresh = store.getLate(id) || record;
-  if (fresh.jws && fresh.log_appended === true && fresh.state === 'issued') {
+  if (fresh.jws && fresh.log_appended === true && fresh.state === 'issued' && fresh.ledger_recorded === true) {
     return { jws: fresh.jws, signed: false, served: fresh.served === true };
   }
   if (fresh.jws) {
+    const receipt = publicLateReceipt(fresh, chain, fresh.jws);
+    store.casLate(id, ['issuing', 'confirmed', 'issued'], fresh.state, {
+      public_receipt: receipt,
+      receipt_id: receipt.receipt_id,
+    });
+    if (fresh.ledger_recorded !== true) {
+      try {
+        await writeLateLedger(receipt, deps);
+        store.casLate(id, ['issuing', 'confirmed', 'issued'], fresh.state, { ledger_recorded: true });
+      } catch (err) {
+        logger.warn({ err: err.message }, 'late-issue ledger write failed');
+        return { pending: true, pendingId: id };
+      }
+    }
     const txRef = ledgerRef(fresh, chain);
     if (txRef && typeof store.appendLateLedger === 'function') {
       store.appendLateLedger({
@@ -707,14 +869,12 @@ export async function resolveLateRecord(store, record, deps = {}) {
       return { pending: true, pendingId: id, state: 'submitted' };
     }
   }
+  if (row.solana && !TERMINAL.has(row.state)) {
+    return { pending: true, pendingId: id, state: row.state, unsupported: 'solana' };
+  }
   if (row.state === 'issuing') {
-    const leaseHeld = row.lease_until > now && row.lease_owner && row.lease_owner !== (deps.owner || `p${process.pid}`);
-    if (leaseHeld && !row.jws) {
-      const jws = await waitForJws(store, id);
-      return jws
-        ? { jws, signed: false, pendingId: id }
-        : { pending: true, pendingId: id, state: 'issuing' };
-    }
+    const owner = deps.owner || `p${process.pid}`;
+    const leaseLive = row.lease_until > now && row.lease_owner && row.lease_owner !== owner;
     if (row.jws) {
       return publishIssued(store, row, {
         amount: row.expected_settled_amount,
@@ -723,6 +883,19 @@ export async function resolveLateRecord(store, record, deps = {}) {
         tx: row.tx_hint,
       }, deps, null);
     }
+    if (leaseLive) {
+      const jws = await waitForJws(store, id);
+      return jws
+        ? { jws, signed: false, pendingId: id }
+        : { pending: true, pendingId: id, state: 'issuing' };
+    }
+    const recovered = store.casLate(id, 'issuing', 'confirmed', {
+      lease_owner: null,
+      lease_until: 0,
+      jws: null,
+    });
+    if (!recovered) return { pending: true, pendingId: id, state: 'issuing' };
+    row = store.getLate(id);
   }
 
   const enabled = lateIssueEnabled(cfg);
@@ -774,31 +947,23 @@ export async function resolveLateRecord(store, record, deps = {}) {
       store.casLate(id, 'confirmed', 'confirmed', { why: 'refund_conflict' });
       return { state: 'confirmed', pendingId: id, ownerOnly: true, code: 'refund_conflict' };
     }
-    const confirmedAt = Number(row.confirmed_at || now);
-    const redeemWindow = deps.redeemWindowMs ?? LATE_REDEEM_MS;
-    const digest = deps.requestDigest || null;
-    const outputBytes = Buffer.isBuffer(deps.outputBytes) ? deps.outputBytes : null;
-    const digestOk = row.request_digest && digest && digest === row.request_digest;
-    if (digest && row.request_digest && digest !== row.request_digest) {
-      return { code: 'idempotency_conflict', pendingId: id };
+    const guarded = await reorgGuard(row, chain, deps);
+    if (!guarded) {
+      store.casLate(id, 'confirmed', 'unknown', { why: 'reorg' });
+      return { pending: true, pendingId: id, state: 'unknown' };
     }
-    const within = now <= confirmedAt + redeemWindow;
-    if (within && !(digestOk && outputBytes) && !deps.forcePaymentOnly) {
-      return { pending: true, pendingId: id, state: 'confirmed', redeemOpen: true };
-    }
-    const servedBytes = digestOk && outputBytes ? outputBytes : Buffer.alloc(0);
     const signing = withSigner(deps);
     const owner = deps.owner || `p${process.pid}`;
     const won = store.casLate(id, 'confirmed', 'issuing', {
       lease_owner: owner,
       lease_seq: Number(row.lease_seq || 0) + 1,
       lease_until: now + 60_000,
-      served: servedBytes.length > 0,
+      served: false,
     });
     if (!won) {
       const jws = await waitForJws(store, id);
       return jws
-        ? { jws, signed: false, pendingId: id, served: servedBytes.length > 0 }
+        ? { jws, signed: false, pendingId: id, served: false }
         : { pending: true, pendingId: id };
     }
     const tx = chain.tx || chain.transaction || row.tx_hint;
@@ -808,7 +973,7 @@ export async function resolveLateRecord(store, record, deps = {}) {
       if (norm.ok) txRef = norm.key;
     }
     store.casLate(id, 'issuing', 'issuing', { tx_ref: txRef, tx_hint: tx || row.tx_hint });
-    return publishIssued(store, store.getLate(id), { ...chain, tx }, signing, servedBytes);
+    return publishIssued(store, store.getLate(id), { ...chain, tx }, signing, Buffer.alloc(0));
   }
   return { pending: true, pendingId: id, state: row.state };
 }
@@ -833,80 +998,47 @@ function lookupLate(store, { nonce, pendingId, idempotencyKey, principal }) {
  * Retry of a submitted payment. Does not call /settle.
  * @returns {Promise<object|null>}
  */
-export async function resumeLateIssue({ store, req, cfg, nonce, taskId }) {
+function settlePending(row, cfg, extra = {}) {
+  return {
+    kind: 'failed',
+    reason: 'settle_pending',
+    code: 'settle_pending',
+    pendingId: row.pending_id,
+    retryAfter: LATE_RETRY_AFTER_SEC,
+    verifyUrl: lateVerifyUrl(cfg, row.pending_id),
+    served: false,
+    ...extra,
+  };
+}
+
+export async function resumeLateIssue({ store, req, cfg, nonce, taskId, paymentHeader }) {
   const pendingId = req?.headers?.['x-pending-id'] || null;
   const idempotencyKey = req?.headers?.['idempotency-key'] || null;
   const principal = principalOf(req, null);
   const row = lookupLate(store, { nonce, pendingId, idempotencyKey, principal });
   if (!row) return null;
-  const { digest } = digestOf(req, row.salt_ref);
   if (row.state === 'submitted' && row.sent !== true) return null;
   if (row.inline === true && row.state === 'issued') return null;
   if (row.state === 'ineligible_alert') return null;
+  if (row.solana) return null;
+  // Switch off, including shadow, leaves the retry on main's path.
+  if (!lateIssueEnabled(cfg)) return null;
+  const header = typeof paymentHeader === 'string' ? paymentHeader : (req?.headers?.['x-payment'] || null);
+  const got = paymentHeaderHash(header);
+  if (!row.payment_hash || !got || !hashesEqual(row.payment_hash, got)) return null;
   if (row.state === 'issued' && row.jws) {
-    return {
-      kind: 'failed',
-      reason: 'settle_pending',
-      code: 'settle_pending',
-      pendingId: row.pending_id,
-      receiptJws: row.jws,
-      served: false,
-      retryAfter: LATE_RETRY_AFTER_SEC,
-    };
+    return settlePending(row, cfg, { receiptJws: row.jws });
   }
-  const enabled = lateIssueEnabled(cfg);
-  if (!enabled && !lateIssueShadow(cfg)) {
-    return {
-      kind: 'failed',
-      reason: 'settle_unconfirmed',
-      code: 'settle_unconfirmed',
-      pendingId: row.pending_id,
-      preSettle: false,
-    };
-  }
+  const hooks = testHooks(cfg);
   const resolved = await resolveLateRecord(store, row, {
+    ...hooks,
     cfg,
     now: cfg?.now,
-    signer: cfg?.lateSigner,
-    appendLog: cfg?.lateAppendLog,
-    hasRefund: cfg?.lateHasRefund,
-    chainReader: cfg?.chainReader,
-    requestDigest: digest,
-    outputBytes: samePrincipal(req, row) ? (cfg?.lateOutputBytes || null) : null,
     owner: `resume:${taskId || 'late'}`,
     horizonMs: cfg?.lateHorizonMs,
-    redeemWindowMs: cfg?.lateRedeemWindowMs,
-    crashBeforeLedger: cfg?.crashBeforeLedger === true,
-    forcePaymentOnly: cfg?.lateForcePaymentOnly === true,
   });
-  if (resolved?.code === 'idempotency_conflict') {
-    return {
-      kind: 'failed',
-      reason: 'idempotency_conflict',
-      code: 'idempotency_conflict',
-      pendingId: row.pending_id,
-    };
-  }
-  if (resolved?.jws && resolved.served === true) {
-    return {
-      kind: 'settled',
-      confirmed: true,
-      lateRedeem: true,
-      receiptJws: resolved.jws,
-      pendingId: row.pending_id,
-      taskId: row.task_id || taskId || null,
-    };
-  }
   if (resolved?.jws) {
-    return {
-      kind: 'failed',
-      reason: 'settle_pending',
-      code: 'settle_pending',
-      pendingId: row.pending_id,
-      retryAfter: LATE_RETRY_AFTER_SEC,
-      receiptJws: resolved.jws,
-      served: false,
-    };
+    return settlePending(row, cfg, { receiptJws: resolved.jws });
   }
   if (resolved?.ownerOnly) {
     return {
@@ -914,19 +1046,17 @@ export async function resumeLateIssue({ store, req, cfg, nonce, taskId }) {
       reason: 'settle_unconfirmed',
       code: 'settle_unconfirmed',
       pendingId: row.pending_id,
+      verifyUrl: lateVerifyUrl(cfg, row.pending_id),
     };
   }
-  return {
-    kind: 'failed',
-    reason: 'settle_pending',
-    code: 'settle_pending',
-    pendingId: row.pending_id,
-    retryAfter: LATE_RETRY_AFTER_SEC,
-  };
+  return settlePending(row, cfg);
 }
 
 export async function tickLateIssue(store, deps = {}) {
   if (!store || typeof store.listLate !== 'function') return [];
+  if (typeof store.pruneLate === 'function') {
+    try { store.pruneLate(nowMs(deps, deps.cfg), LATE_HORIZON_MS); } catch { /* store */ }
+  }
   const cfg = deps.cfg || {};
   if (!lateIssueEnabled(cfg) && !lateIssueShadow(cfg)) return [];
   const out = [];
@@ -972,6 +1102,7 @@ export function lateTupleFrom({
   messageHash,
   payerAuthority,
   feePayer,
+  paymentHeader,
 }) {
   const svm = typeof decoded?.payload?.transaction === 'string'
     ? decoded.payload.transaction
@@ -1004,6 +1135,7 @@ export function lateTupleFrom({
     feePayer: feePayer || accounts?.feePayer || null,
     solana: solana === true,
     requestDigest: digest,
+    paymentHash: paymentHeaderHash(paymentHeader),
     saltRef,
     principal: principalOf(req, auth?.from || payerAuthority),
     idempotencyKey: req?.headers?.['idempotency-key'] || null,
@@ -1015,4 +1147,19 @@ export function lateTupleFrom({
     },
     challengeIssuedAt: Number.isFinite(issuedAt) ? issuedAt : submittedAt,
   };
+}
+
+/** Public late receipt stored on the row. Null until the signature is saved. */
+export function findLatePublicReceipt(taskId, store = null) {
+  const active = store || getActiveChallengeStore();
+  if (!taskId || !active || typeof active.listLate !== 'function') return null;
+  const id = String(taskId);
+  const row = active.listLate().find((item) => (
+    item.receipt_id === id
+    || item.public_receipt?.task_id === id
+    || `late-${item.pending_id}` === id
+  ));
+  const receipt = row?.public_receipt;
+  if (!receipt?.issuer_signature?.jws) return null;
+  return receipt;
 }

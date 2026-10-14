@@ -137,6 +137,7 @@ export function registerBoardRoutes(app, deps) {
           error: code,
           code,
           ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
+          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
         };
       }
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };

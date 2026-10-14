@@ -674,6 +674,7 @@ async function meterV1Request(req, res, {
         type: 'payment_required',
         code,
         ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
+        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
         ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
       },
     });

@@ -275,6 +275,8 @@ export function confirmEvmReceipt(receipt, {
     logIndex: matches[0].logIndex,
     blockNumber: receipt.blockNumber != null ? Number(receipt.blockNumber) : null,
     network: challenge.network || null,
+    blockHash: receipt.blockHash || null,
+    status: 1,
   };
 }
 
@@ -442,8 +444,47 @@ export async function evmFinality(rpcUrl, blockNumber, timeoutMs = 8000) {
   } catch {
     return { finalized: false, blockTimestamp: null };
   }
-  if (got !== want || !Number.isFinite(ts)) return { finalized: false, blockTimestamp: null };
-  return { finalized: got <= tipN, blockTimestamp: ts };
+  if (got !== want || !Number.isFinite(ts)) return { finalized: false, blockTimestamp: null, blockHash: null };
+  return { finalized: got <= tipN, blockTimestamp: ts, blockHash: block.hash || null };
+}
+
+/**
+ * One AuthorizationUsed log for this authorizer and nonce, at or below the
+ * finalized tip. Zero logs, many logs, or an RPC error stays unresolved.
+ */
+export async function findAuthorizationTx(rpcUrl, { asset, from, nonce, timeoutMs = 8000 } = {}) {
+  if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
+  let topic1;
+  let topic2;
+  try {
+    topic1 = ethers.zeroPadValue(ethers.getAddress(from), 32);
+    const raw = String(nonce).startsWith('0x') ? String(nonce) : `0x${nonce}`;
+    topic2 = ethers.zeroPadValue(raw, 32);
+  } catch {
+    return { ok: false, pending: true };
+  }
+  try {
+    const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
+    const toBlock = tip?.number || 'finalized';
+    const logs = await rpcCall(rpcUrl, 'eth_getLogs', [{
+      address: asset,
+      topics: [AUTH_USED_TOPIC, topic1, topic2],
+      fromBlock: '0x0',
+      toBlock,
+    }], timeoutMs);
+    if (!Array.isArray(logs) || logs.length !== 1 || !logs[0]?.transactionHash) {
+      return { ok: false, pending: true };
+    }
+    return {
+      ok: true,
+      tx: logs[0].transactionHash,
+      blockNumber: logs[0].blockNumber ?? null,
+      blockHash: logs[0].blockHash || null,
+    };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'x402: authorization log search failed');
+    return { ok: false, pending: true };
+  }
 }
 
 export async function readEvmReceipt(rpcUrl, txHash) {
@@ -453,6 +494,7 @@ export async function readEvmReceipt(rpcUrl, txHash) {
   return {
     status: result.status === '0x1' || result.status === 1 ? 1 : 0,
     blockNumber: result.blockNumber != null ? Number(BigInt(result.blockNumber)) : null,
+    blockHash: result.blockHash || null,
     contractAddress: result.contractAddress || null,
     logs: (result.logs || []).map((log) => ({
       address: log.address,

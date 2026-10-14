@@ -18,10 +18,8 @@ import logger from '../src/logger.js';
 import {
   casLateRefund,
   lateClaimSalt,
-  LATE_REDEEM_MS,
   listLateIssueOwnerView,
   resolveLateRecord,
-  solanaMessageHash,
 } from '../src/late-issue.js';
 
 const HOUSE = `0x${'11'.repeat(20)}`;
@@ -243,12 +241,11 @@ test.beforeEach(() => {
   delete process.env.X402_LATE_ISSUE_SHADOW;
 });
 
-test('LT1 Solana timeout then one finalized receipt', async () => {
+test('LT1 Solana is not a late-issue network', async () => {
   const tx = compiledMessage(SOL_FEE, SOL_PAYER);
-  const hash = solanaMessageHash(tx);
   assert.equal(decodeBase58(SOL_PAYER).length, 32);
   const fac = await listen(dropSettle);
-  const signs = [];
+  let signs = 0;
   try {
     const store = new ChallengeStore();
     const nonce = putChallenge(store, {
@@ -258,51 +255,18 @@ test('LT1 Solana timeout then one finalized receipt', async () => {
       extra: { feePayer: SOL_FEE },
     });
     const cfg = baseCfg(fac.url, {
-      lateForcePaymentOnly: true,
       solana: { enabled: true, network: 'solana', payTo: SOL_HOUSE, facilitatorUrl: fac.url },
       chainReader: async () => ({ ok: false, pending: true }),
+      lateSigner: () => { signs += 1; return 'jws.sol.no'; },
     });
     const pending = await pay(store, cfg, nonce, solHeader({ transaction: tx }), { clientVersion: 2 });
-    assert.equal(pending.code, 'settle_pending');
+    assert.notEqual(pending.code, 'settle_pending');
+    assert.equal(pending.receiptJws, undefined);
     assert.equal(fac.hits.settle, 1);
-    const row = store.listLate()[0];
-    assert.equal(row.message_hash, hash);
-    assert.equal(row.payer_authority, SOL_PAYER);
-    assert.equal(row.fee_payer, SOL_FEE);
-    cfg.lateSigner = (claims) => {
-      signs.push(claims);
-      return 'jws.sol.one';
-    };
-    cfg.lateAppendLog = () => {};
-    cfg.chainReader = async (args) => {
-      assert.equal(args.paymentHeader, null);
-      return match({
-        payer: SOL_PAYER,
-        payTo: SOL_HOUSE,
-        asset: SOL_MINT,
-        network: 'solana',
-        feePayer: SOL_FEE,
-        messageHash: hash,
-        tx: SOL_TX,
-        authorizer: undefined,
-      });
-    };
-    const issued = await pay(store, cfg, nonce, solHeader({ transaction: tx }), { clientVersion: 2 });
-    assert.equal(fac.hits.settle, 1);
-    assert.equal(issued.receiptJws, 'jws.sol.one');
-    assert.equal(store.listLate()[0].state, 'issued');
-    assert.equal(store.listLateLedger().length, 1);
-    assert.equal(signs.length, 1);
-    assert.equal(signs[0].amount_settled, '2000');
-    assert.equal(signs[0].payer, SOL_PAYER);
-    const again = await resolveLateRecord(store, store.getLate(row.pending_id), {
-      cfg,
-      signer: () => { signs.push({ amount_settled: 'again' }); return 'jws.other'; },
-      appendLog: () => {},
-      forcePaymentOnly: true,
-    });
-    assert.equal(again.jws, 'jws.sol.one');
-    assert.equal(signs.length, 1);
+    assert.equal(store.listLate().length, 0);
+    assert.equal(store.listLateLedger().length, 0);
+    assert.equal(signs, 0);
+    assert.equal(store.get(nonce)?.state, 'unknown');
   } finally {
     await fac.close();
   }
@@ -348,51 +312,29 @@ test('LT3 LT4 LT5 mismatches issue nothing', async () => {
   }
 });
 
-test('LT4 Solana payee and LT3 Solana amount issue nothing', async () => {
+test('LT4 Solana payee and LT3 Solana amount do not open a late row', async () => {
   const tx = compiledMessage(SOL_FEE, SOL_PAYER);
-  const hash = solanaMessageHash(tx);
-  const cases = [
-    { name: 'short amount', over: { amount: '1999' } },
-    { name: 'other destination', over: { payTo: SOL_OTHER } },
-    { name: 'lowercased destination', over: { payTo: SOL_HOUSE.slice(0, -1) + (SOL_HOUSE.endsWith('A') ? 'B' : 'A') } },
-    { name: 'devnet', over: { network: 'solana-devnet' } },
-    { name: 'wrong mint', over: { asset: pubkey(9) } },
-  ];
-  for (const item of cases) {
-    const fac = await listen(dropSettle);
-    let signs = 0;
-    try {
-      const store = new ChallengeStore();
-      const nonce = putChallenge(store, { network: 'solana', payTo: SOL_HOUSE, asset: SOL_MINT });
-      const cfg = baseCfg(fac.url, {
-        solana: { enabled: true, network: 'solana', payTo: SOL_HOUSE, facilitatorUrl: fac.url },
-      });
-      await pay(store, cfg, nonce, solHeader({ transaction: tx }), { clientVersion: 2 });
-      const resolved = await resolveLateRecord(store, store.listLate()[0], {
-        cfg: {
-          ...cfg,
-          chainReader: reader({
-            payer: SOL_PAYER,
-            payTo: SOL_HOUSE,
-            asset: SOL_MINT,
-            network: 'solana',
-            feePayer: SOL_FEE,
-            messageHash: hash,
-            tx: SOL_TX,
-            authorizer: undefined,
-            ...item.over,
-          }),
-        },
-        signer: () => { signs += 1; return 'jws.no'; },
-        appendLog: () => {},
-        forcePaymentOnly: true,
-      });
-      assert.equal(resolved.state, 'mismatch_hold', item.name);
-      assert.equal(signs, 0, item.name);
-      assert.equal(store.listLateLedger().length, 0, item.name);
-    } finally {
-      await fac.close();
-    }
+  const fac = await listen(({ res }) => {
+    res.statusCode = 500;
+    res.end('nope');
+  });
+  let signs = 0;
+  try {
+    const store = new ChallengeStore();
+    const nonce = putChallenge(store, { network: 'solana', payTo: SOL_HOUSE, asset: SOL_MINT });
+    const cfg = baseCfg(fac.url, {
+      solana: { enabled: true, network: 'solana', payTo: SOL_HOUSE, facilitatorUrl: fac.url },
+      lateSigner: () => { signs += 1; return 'jws.no'; },
+    });
+    const decision = await pay(store, cfg, nonce, solHeader({ transaction: tx }), { clientVersion: 2 });
+    assert.notEqual(decision.code, 'settle_pending');
+    assert.equal(decision.receiptJws, undefined);
+    assert.equal(store.listLate().length, 0);
+    assert.equal(store.listLateLedger().length, 0);
+    assert.equal(signs, 0);
+    assert.equal(store.get(nonce)?.state, 'issued');
+  } finally {
+    await fac.close();
   }
 });
 
@@ -695,8 +637,9 @@ test('LT12 a retry cannot change the tuple or call settle again', async () => {
   try {
     const store = new ChallengeStore();
     const nonce = putChallenge(store);
+    const header = evmHeader();
     const cfg = baseCfg(fac.url, { lateForcePaymentOnly: true, chainReader: reader() });
-    await pay(store, cfg, nonce, evmHeader());
+    await pay(store, cfg, nonce, header);
     const signed = [];
     const retryCfg = {
       ...cfg,
@@ -705,12 +648,17 @@ test('LT12 a retry cannot change the tuple or call settle again', async () => {
       lateSigner: (claims) => { signed.push(claims); signs += 1; return 'jws.stable'; },
       lateAppendLog: () => {},
     };
-    const again = await pay(
+    const mutated = await pay(
       store,
       retryCfg,
       nonce,
       evmHeader({ value: '9', to: OTHER, network: 'base-sepolia' }),
     );
+    assert.equal(fac.hits.settle, 1);
+    assert.equal(other.hits.settle, 0);
+    assert.equal(mutated.receiptJws, undefined);
+    assert.equal(signs, 0);
+    const again = await pay(store, retryCfg, nonce, header);
     assert.equal(fac.hits.settle, 1);
     assert.equal(other.hits.settle, 0);
     assert.equal(again.receiptJws, 'jws.stable');
@@ -922,86 +870,51 @@ test('LT18 logs truncate wallets', async () => {
   }
 });
 
-test('LT19 delivery honesty', async () => {
+test('LT19 a finalized match is issued once and only to the same header', async () => {
   const fac = await listen(dropSettle);
   try {
     const store = new ChallengeStore();
     const nonce = putChallenge(store);
-    const body = { prompt: 'same-body' };
-    const headers = { 'idempotency-key': 'idem-lt19' };
-    const cfg = baseCfg(fac.url, { chainReader: reader() });
-    await pay(store, cfg, nonce, evmHeader(), { method: 'POST', path: '/task-request', body, headers });
-    const row = store.listLate()[0];
-    assert.ok(row.request_digest);
-    let signs = 0;
-    const conflict = await pay(store, cfg, nonce, evmHeader(), {
-      method: 'POST',
-      path: '/task-request',
-      body: { prompt: 'other-body' },
-      headers,
+    const header = evmHeader();
+    const cfg = baseCfg(fac.url, {
+      publicBaseUrl: 'https://api.chit402.com',
+      chainReader: async () => ({ ok: false, pending: true }),
     });
-    assert.equal(conflict.code, 'idempotency_conflict');
-    assert.equal(signs, 0);
-    assert.equal(store.listLate()[0].state === 'issued', false);
-    cfg.lateOutputBytes = Buffer.from('served-output');
+    const pending = await pay(store, cfg, nonce, header);
+    assert.equal(pending.code, 'settle_pending');
+    assert.match(pending.verifyUrl, /\/receipt\/late-/);
+    let signs = 0;
+    cfg.chainReader = reader();
     cfg.lateSigner = (claims) => {
       signs += 1;
-      const salt = lateClaimSalt(store.getLate(row.pending_id));
-      assert.equal(claims.output_commitment, v11Commit(salt, V11_LABEL_OUTPUT, Buffer.from('served-output')));
-      return 'jws.served';
+      const salt = lateClaimSalt(store.listLate()[0]);
+      assert.equal(claims.output_commitment, v11Commit(salt, V11_LABEL_OUTPUT, Buffer.alloc(0)));
+      return 'jws.payment-only';
     };
     cfg.lateAppendLog = () => {};
-    const served = await pay(store, cfg, nonce, evmHeader(), {
-      method: 'POST', path: '/task-request', body, headers,
+    const garbage = await pay(store, cfg, nonce, 'not-a-payment');
+    assert.equal(garbage.receiptJws, undefined);
+    assert.equal(signs, 0);
+    const nonceOnly = await pay(store, cfg, nonce, nonce);
+    assert.equal(nonceOnly.receiptJws, undefined);
+    assert.equal(signs, 0);
+    const otherNonce = `0x${'22'.repeat(32)}`;
+    putChallenge(store, { nonce: otherNonce });
+    const swapped = await pay(store, cfg, otherNonce, evmHeader({ nonce: `0x${'62'.repeat(32)}` }), {
+      headers: { 'x-pending-id': pending.pendingId },
     });
-    assert.equal(served.kind, 'settled');
-    assert.equal(served.receiptJws, 'jws.served');
+    assert.equal(swapped.receiptJws, undefined);
+    assert.equal(signs, 0);
+    const issued = await pay(store, cfg, nonce, header);
+    assert.equal(issued.receiptJws, 'jws.payment-only');
+    assert.equal(issued.served, false);
     assert.equal(signs, 1);
-    assert.equal(store.listLate()[0].served, true);
-    const repeat = await pay(store, cfg, nonce, evmHeader(), {
-      method: 'POST', path: '/task-request', body, headers,
-    });
-    assert.equal(repeat.receiptJws, 'jws.served');
-    assert.equal(repeat.served, false);
+    assert.equal(store.listLate()[0].served, false);
+    assert.match(issued.verifyUrl, /\/receipt\/late-/);
+    assert.match(listLateIssueOwnerView(store).find((row) => row.pending_id === pending.pendingId).note, /not served/);
+    const repeat = await pay(store, cfg, nonce, header);
+    assert.equal(repeat.receiptJws, 'jws.payment-only');
     assert.equal(signs, 1);
-
-    const storeB = new ChallengeStore();
-    const nonceB = putChallenge(storeB);
-    const t0 = Date.now();
-    const cfgB = baseCfg(fac.url, { now: () => t0, chainReader: reader({ blockTimestamp: Math.floor(t0 / 1000) + 30 }) });
-    await pay(storeB, cfgB, nonceB, evmHeader({ nonce: `0x${'61'.repeat(32)}` }), {
-      method: 'POST', path: '/task-request', body, headers: { 'idempotency-key': 'idem-lt19b' },
-    });
-    const pending = storeB.listLate()[0];
-    await resolveLateRecord(storeB, pending, {
-      cfg: cfgB,
-      now: () => t0,
-      signer: () => { signs += 1; return 'jws.early'; },
-      appendLog: () => {},
-    });
-    assert.equal(storeB.listLate()[0].state, 'confirmed');
-    const solo = await resolveLateRecord(storeB, storeB.getLate(pending.pending_id), {
-      cfg: cfgB,
-      now: () => t0 + LATE_REDEEM_MS + 1000,
-      signer: (claims) => {
-        signs += 1;
-        const salt = lateClaimSalt(storeB.getLate(pending.pending_id));
-        assert.equal(claims.output_commitment, v11Commit(salt, V11_LABEL_OUTPUT, Buffer.alloc(0)));
-        return 'jws.payment-only';
-      },
-      appendLog: () => {},
-    });
-    assert.equal(solo.jws, 'jws.payment-only');
-    assert.equal(storeB.listLate()[0].served, false);
-    assert.match(listLateIssueOwnerView(storeB)[0].note, /not served/);
-    cfgB.lateOutputBytes = Buffer.from('too-late');
-    const after = await pay(storeB, cfgB, nonceB, evmHeader({ nonce: `0x${'61'.repeat(32)}` }), {
-      method: 'POST', path: '/task-request', body, headers: { 'idempotency-key': 'idem-lt19b' },
-    });
-    assert.equal(after.receiptJws, 'jws.payment-only');
-    assert.equal(after.served, false);
-    assert.equal(signs, 2);
-    assert.equal(storeB.listLateLedger().length, 1);
   } finally {
     await fac.close();
   }

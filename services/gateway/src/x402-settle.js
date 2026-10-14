@@ -38,10 +38,10 @@ import {
   evmAuthKey,
   lateIssueEnabled,
   lateTupleFrom,
+  lateVerifyUrl,
   noteLateInlineIssued,
   openLateSubmission,
   resumeLateIssue,
-  solanaMessageHash,
 } from './late-issue.js';
 
 function stable(value) {
@@ -312,7 +312,9 @@ export async function settleBoundPayment({
     const existing = active.findLate({ nonce });
     const stillSubmitting = existing && existing.state === 'submitted' && existing.sent !== true;
     if (!stillSubmitting) {
-      const resumed = await resumeLateIssue({ store: active, req, cfg, nonce, taskId });
+      const resumed = await resumeLateIssue({
+        store: active, req, cfg, nonce, taskId, paymentHeader,
+      });
       if (resumed) return resumed;
     }
   }
@@ -517,11 +519,35 @@ export async function settleBoundPayment({
 
   let lateRow = null;
   let preparedWindow = null;
+  let seenTx = null;
   const release = () => {
     if (lateRow?.sent) return;
     try { active.release(nonce, owner); } catch { /* already spent */ }
   };
-  const hold = (why, publicReason, { terminal = false } = {}) => {
+  const hold = (why, publicReason, { terminal = false, txHint = null } = {}) => {
+    const hint = txHint || seenTx || null;
+    if (lateRow && hint) lateRow.tx_hint = hint;
+    // Switch off keeps main's S1: an HTTP error or success:false is released
+    // so the same challenge can settle again. Transport still stays unknown.
+    const s1Release = !solana && !lateIssueEnabled(cfg) && !terminal
+      && (why === 'http' || why === 'success_false');
+    if (s1Release) {
+      if (lateRow && typeof active.casLate === 'function') {
+        try {
+          active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], 'unknown', {
+            why,
+            sent: true,
+            tx_hint: hint || lateRow.tx_hint || null,
+          });
+        } catch { /* store */ }
+      }
+      try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
+      return refused(req, publicReason);
+    }
+    if (solana && !terminal && (why === 'http' || why === 'success_false')) {
+      release();
+      return refused(req, publicReason);
+    }
     try { active.markUnknown(nonce); } catch { /* store */ }
     try {
       active.recordPending({
@@ -535,21 +561,30 @@ export async function settleBoundPayment({
     if (lateRow && typeof active.casLate === 'function') {
       const next = terminal ? 'mismatch_hold' : 'unknown';
       try {
-        active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], next, { why, sent: true });
+        active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], next, {
+          why,
+          sent: true,
+          tx_hint: hint || lateRow.tx_hint || null,
+        });
       } catch { /* store */ }
     }
-    if (lateIssueEnabled(cfg) && !terminal) {
+    const pendingId = lateRow?.pending_id || null;
+    if (!solana && lateIssueEnabled(cfg) && !terminal) {
       return refused(req, 'settle_pending', {
         retryAfter: LATE_RETRY_AFTER_SEC,
-        pendingId: lateRow?.pending_id,
+        pendingId,
+        verifyUrl: lateVerifyUrl(cfg, pendingId),
       });
     }
-    return refused(req, publicReason, { pendingId: lateRow?.pending_id });
+    return refused(req, publicReason, { pendingId, verifyUrl: lateVerifyUrl(cfg, pendingId) });
   };
 
-  if (authKeyEarly && typeof active.findLate === 'function' && active.findLate({ authKey: authKeyEarly })) {
-    release();
-    return refused(req, 'payment_replayed', { preSettle: true });
+  if (authKeyEarly && typeof active.findLate === 'function') {
+    const priorLate = active.findLate({ authKey: authKeyEarly });
+    if (priorLate && priorLate.nonce !== nonce) {
+      release();
+      return refused(req, 'payment_replayed', { preSettle: true });
+    }
   }
   if (!solana && authEarly && typeof cfg.authorizationState === 'function') {
     let used = null;
@@ -606,31 +641,39 @@ export async function settleBoundPayment({
   }
 
   const submittedAt = typeof cfg.now === 'function' ? cfg.now() : Date.now();
-  const svm = solana ? (decoded?.payload?.transaction || decoded?.transaction || null) : null;
-  const opened = openLateSubmission(active, lateTupleFrom({
-    req,
-    cfg,
-    challenge: { ...challenge, nonce },
-    decoded,
-    auth: authEarly,
-    authKey: authKeyEarly || evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce),
-    routeQuote,
-    expectedSettledAmount: settledPick.amount != null ? settledPick.amount : (authEarly?.value || null),
-    taskId,
-    resource: resourceHave,
-    submittedAt,
-    solana,
-    messageHash: typeof svm === 'string' ? solanaMessageHash(svm) : null,
-    payerAuthority: solana ? (decoded?.payload?.payer || decoded?.payer || null) : null,
-    feePayer: decoded?.accepted?.extra?.feePayer || decoded?.extra?.feePayer || challenge?.extra?.feePayer || null,
-  }));
-  if (!opened.ok) {
-    release();
-    if (opened.reason === 'replay_store_unavailable') return fail('replay_store_unavailable');
-    return refused(req, opened.reason || 'payment_replayed', { preSettle: true });
+  // Solana late-issue is unsupported. Those failures follow main: transport
+  // stays unknown, and an HTTP error or success:false is released.
+  if (!solana) {
+    const authKey = authKeyEarly || evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce);
+    const prior = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
+    const opened = prior && prior.auth_key && prior.auth_key === authKey
+      ? { ok: true, row: prior }
+      : openLateSubmission(active, lateTupleFrom({
+        req,
+        cfg,
+        challenge: { ...challenge, nonce },
+        decoded,
+        auth: authEarly,
+        authKey,
+        routeQuote,
+        expectedSettledAmount: settledPick.amount != null ? settledPick.amount : (authEarly?.value || null),
+        taskId,
+        resource: resourceHave,
+        submittedAt,
+        solana: false,
+        paymentHeader,
+        messageHash: null,
+        payerAuthority: null,
+        feePayer: null,
+      }));
+    if (!opened.ok) {
+      release();
+      if (opened.reason === 'replay_store_unavailable') return fail('replay_store_unavailable');
+      return refused(req, opened.reason || 'payment_replayed', { preSettle: true });
+    }
+    lateRow = opened.row;
+    try { active.markSubmitted(nonce); } catch { /* store */ }
   }
-  lateRow = opened.row;
-  try { active.markSubmitted(nonce); } catch { /* store */ }
 
   let settled;
   try {
@@ -640,13 +683,24 @@ export async function settleBoundPayment({
     return hold('transport', 'settle_failed');
   }
   if (!settled?.sent) {
-    try { active.abortLate(lateRow.pending_id); } catch { /* store */ }
+    if (lateRow) {
+      try { active.abortLate(lateRow.pending_id); } catch { /* store */ }
+    }
     try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
     lateRow = null;
     return refused(req, clientPaymentCode(settled?.reason || 'settle_failed'));
   }
-  lateRow.sent = true;
-  try { active.casLate(lateRow.pending_id, 'submitted', 'submitted', { sent: true }); } catch { /* store */ }
+  seenTx = settled.transaction || settled.txRef || null;
+  if (lateRow) {
+    lateRow.sent = true;
+    if (seenTx) lateRow.tx_hint = seenTx;
+    try {
+      active.casLate(lateRow.pending_id, 'submitted', 'submitted', {
+        sent: true,
+        tx_hint: seenTx || lateRow.tx_hint || null,
+      });
+    } catch { /* store */ }
+  }
   if (!settled.settled || settled.success === false) {
     const reason = String(settled.reason || '');
     const why = (reason === 'gateway_error' || reason === 'facilitator_error')
@@ -828,6 +882,7 @@ function refused(req, reason, extra = {}) {
     preSettle: extra.preSettle === true,
     retryAfter: extra.retryAfter,
     pendingId: extra.pendingId || null,
+    verifyUrl: extra.verifyUrl || null,
   };
 }
 

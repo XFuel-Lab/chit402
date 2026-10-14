@@ -434,7 +434,13 @@ export class ChallengeStore {
     const found = this._find(nonce);
     if (!found) return { ok: false, reason: 'challenge_required' };
     const rec = found.rec;
-    if (rec.state === 'unknown' || rec.state === 'submitted') {
+    if (rec.state === 'submitted') {
+      if (rec.lease_until && Date.now() > rec.lease_until) {
+        return { ok: false, reason: 'settle_unconfirmed' };
+      }
+      return { ok: false, reason: 'payment_in_flight' };
+    }
+    if (rec.state === 'unknown') {
       return { ok: false, reason: 'settle_unconfirmed' };
     }
     if (rec.state === 'spent') return { ok: false, reason: 'payment_replayed' };
@@ -614,6 +620,28 @@ export class ChallengeStore {
 
   listLateLedger() {
     return this.lateLedger.slice();
+  }
+
+  /**
+   * Drop terminal late rows older than `maxAge` (default 24h) from submitted_at.
+   * submitted, unknown, confirmed, and issuing stay.
+   */
+  pruneLate(now = Date.now(), maxAge = 24 * 60 * 60 * 1000) {
+    const terminal = new Set([
+      'issued',
+      'mismatch_hold',
+      'expired_unresolved',
+      'not_settled',
+      'refund_owed',
+      'ineligible_alert',
+    ]);
+    const cutoff = now - maxAge;
+    const before = this.late.length;
+    this.late = this.late.filter((row) => {
+      if (!terminal.has(row.state)) return true;
+      return Number(row.submitted_at || 0) > cutoff;
+    });
+    return before - this.late.length;
   }
 
   dumpState() {

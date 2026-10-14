@@ -117,6 +117,7 @@ export class DurableChallengeStore {
   listLate() { return this._with((s) => s.listLate()); }
   appendLateLedger(row) { return this._with((s) => s.appendLateLedger(row)); }
   listLateLedger() { return this._with((s) => s.listLateLedger()); }
+  pruneLate(now, maxAge) { return this._with((s) => s.pruneLate(now, maxAge)); }
 }
 
 let activeStore = null;
