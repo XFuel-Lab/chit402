@@ -2330,6 +2330,20 @@ export class ReceiptMerkleTree {
       this.lastAnchorError = err?.code === 'anchor_rpc_unavailable' ? 'anchor_rpc_unavailable' : 'anchor_chain_mismatch';
       throw err;
     }
+    if (this._deferredBoot) {
+      // Boot skipped reconcile and the latest-anchor check on an RPC timeout.
+      // Run them before any signed bytes go out. A refusal keeps anchoring paused.
+      // Cleared first: reconcile may rebroadcast through this gate.
+      const deferred = this._deferredBoot;
+      this._deferredBoot = null;
+      try {
+        await finishReceiptLogBootChecks(this, { ...deferred, request: deferred.request || request }, deferred.baseRpc);
+      } catch (err) {
+        this._deferredBoot = deferred;
+        this.lastAnchorError = err?.code || 'anchor_boot_check_failed';
+        throw err;
+      }
+    }
   }
 
   async _broadcastRaw(intent, send, request) {
@@ -3434,12 +3448,21 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
         // signed bytes go out until the chain id answers and matches.
         tree.lastAnchorError = 'anchor_rpc_unavailable';
         logger.warn({ err: err.message }, 'Base RPC unavailable at boot; anchoring paused until eth_chainId answers');
+        // The offline epoch gate still runs now. Reconcile and the latest
+        // Base anchor check run before the first send, under the send gate.
+        const allowNow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
+        if (!allowNow) gateEpochRecord(tree);
+        tree._deferredBoot = { ...opts, baseRpc: chainRpc };
         return tree;
       }
       tree.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
     }
   }
+  return finishReceiptLogBootChecks(tree, opts, chainRpc);
+}
+
+async function finishReceiptLogBootChecks(tree, opts, chainRpc) {
   const lookup = opts.lookup || ((intent) => lookupBaseTxByNonceOrHash({
     rpcUrl: opts.baseRpc,
     txHash: intent?.tx,

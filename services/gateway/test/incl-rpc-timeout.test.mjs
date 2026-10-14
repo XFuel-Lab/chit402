@@ -240,3 +240,28 @@ test('a send that times out and then succeeds late is not sent twice', { timeout
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('an RPC timeout at boot does not skip the epoch gate or the latest-anchor check', { timeout: 10_000 }, async () => {
+  const srv = await hungServer();
+  const foreign = async () => ({ root: `0x${'ee'.repeat(32)}`, tx: '0xforeign' });
+  try {
+    const bare = new ReceiptMerkleTree();
+    await assert.rejects(
+      () => finishReceiptLogBoot(bare, { baseRpc: srv.url, timeoutMs: 150, readLatest: foreign }),
+      (err) => err.code === 'epoch_record_missing',
+    );
+    const tree = new ReceiptMerkleTree();
+    tree.allowFreshGenesis = true;
+    await finishReceiptLogBoot(tree, { baseRpc: srv.url, timeoutMs: 150 });
+    assert.ok(tree._deferredBoot);
+    tree.allowFreshGenesis = false;
+    tree._deferredBoot = { ...tree._deferredBoot, readLatest: foreign, lookup: async () => null, rebroadcast: null, readBlockTs: null };
+    await assert.rejects(
+      () => tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
+      (err) => err.code === 'anchor_not_in_journal',
+    );
+    assert.ok(tree._deferredBoot, 'anchoring stays paused');
+  } finally {
+    await srv.close();
+  }
+});
