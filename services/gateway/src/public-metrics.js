@@ -45,6 +45,7 @@ export function publicHealthBody({
   quarantinedHeads = null,
   anchorLagS = 0,
   unanchoredLeaves = 0,
+  receiptFailures = 0,
 } = {}) {
   const body = {
     status: degraded ? 'degraded' : 'ok',
@@ -53,6 +54,7 @@ export function publicHealthBody({
     free_tier: 'available',
     anchor_lag_s: publicCount(anchorLagS),
     unanchored_leaves: publicCount(unanchoredLeaves),
+    receipt_failures: publicCount(receiptFailures),
   };
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
   // An acknowledged head stays in the list. It does not flip status to degraded.

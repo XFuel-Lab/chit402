@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { alertStuckPayment } from './stuck-payment-alert.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
 import {
@@ -569,6 +570,12 @@ export class ChallengeStore {
       ...row,
     };
     this.pending.push(rec);
+    void alertStuckPayment({
+      tx: rec.tx || null,
+      network: rec.network || null,
+      amount: rec.amount != null ? rec.amount : null,
+      reason: rec.reason || rec.why || null,
+    });
     return rec;
   }
 

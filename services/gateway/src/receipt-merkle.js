@@ -15,6 +15,7 @@
  */
 import crypto from 'crypto';
 import logger from './logger.js';
+import { recordReceiptFailure } from './receipt-failures.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
@@ -1191,6 +1192,7 @@ export class ReceiptMerkleTree {
             'receipt log append refused: no stored genesis. Rebuild epoch 1, or set RECEIPT_LOG_ACCEPT_FRESH_GENESIS to the documented flag.',
           );
         }
+        recordReceiptFailure({ stage: 'log', reason: 'log_uninitialized', outcome: 'refused' });
         return null;
       }
       this.ensureGenesis();
@@ -3189,7 +3191,27 @@ export class ReceiptMerkleTree {
     }
     const opts = { force: true, now: clock, send };
     if (!tail.due) opts.recheckDaily = true;
-    return this.publishHead(opts).catch(() => {});
+    return this.publishHead(opts).then((head) => {
+      const base = head?.anchors?.base || head?.anchor || null;
+      if (base?.status === 'blocked') {
+        recordReceiptFailure({
+          stage: 'anchor',
+          reason: base.reason || 'anchor_blocked',
+          outcome: 'pending',
+          network: 'base',
+          tx: base.tx || null,
+        });
+      }
+      return head;
+    }, (err) => {
+      recordReceiptFailure({
+        stage: 'anchor',
+        reason: err?.code || 'anchor_failed',
+        outcome: 'pending',
+        network: 'base',
+      });
+      return null;
+    });
   }
 
   _maybePublishDaily() {

@@ -42,7 +42,9 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
     'free_tier',
     'last_anchored_root',
     'last_anchored_tx',
+    'receipt_failures',
     'status',
     'unanchored_leaves',
   ]);
+  assert.equal(typeof body.receipt_failures, 'number');
 });

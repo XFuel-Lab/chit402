@@ -6,7 +6,7 @@
  * a required settlement tx, and a network check. settledAmount is the payer's
  * signed value, so an overpay of quote+1 is recorded as quote+1.
  */
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -176,13 +176,14 @@ async function issueChallenge(cfg, opts = {}) {
 }
 
 
-import { probeSettlementSide, resetSettlementRpcForTests, BASE_MAINNET_CHAIN_ID } from '../src/x402-chain.js';
+import { probeSettlementSide, resetSettlementRpcForTests, settlementRefusal, BASE_MAINNET_CHAIN_ID } from '../src/x402-chain.js';
 import { getActiveChallengeStore, setActiveChallengeStore, DurableChallengeStore } from '../src/x402-durable-store.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('PR556-MF1: a settle-RPC pause that lands after /settle must hold the payment, not refuse it', async () => {
+describe('pause versus confirm', { concurrency: 1 }, () => {
+test('a pause flip mid-settle still settles when the transfer is on this chain', async () => {
   resetSettlementRpcForTests();
   const previousStore = getActiveChallengeStore();
   const mock = await startMock({
@@ -214,15 +215,114 @@ test('PR556-MF1: a settle-RPC pause that lands after /settle must hold the payme
       body: {},
     }, { taskId: 'mf1', cfg, amount: '2000' });
     assert.equal(mock.counts.settle, 1, 'money moved');
+    assert.equal(decision.kind, 'settled');
     const store = getActiveChallengeStore();
     const pending = typeof store?.listPending === 'function' ? store.listPending() : [];
-    assert.equal(decision.code, 'settle_unconfirmed');
-    assert.notEqual(decision.code, 'network_not_accepted');
-    assert.equal(pending.length, 1);
-    assert.equal(pending[0].nonce, nonce);
+    assert.equal(pending.length, 0);
+    assert.equal(settlementRefusal('base'), 'network_not_accepted');
+    const next = await issueChallenge(cfg, { taskId: 'mf1-next', amount: '2000' });
+    const blocked = await runX402Handshake({
+      headers: {
+        'x-payment': evmHeader({ amount: '2000' }),
+        'x-payment-nonce': next.accepts[0].extra.nonce,
+      },
+      body: {},
+    }, { taskId: 'mf1-next', cfg, amount: '2000' });
+    assert.equal(blocked.code, 'network_not_accepted');
+    assert.equal(mock.counts.settle, 1);
   } finally {
     setActiveChallengeStore(previousStore);
     await mock.close();
     resetSettlementRpcForTests();
   }
+});
+
+test('a wrong-chain read still holds the payment with one pending row', async () => {
+  resetSettlementRpcForTests();
+  const previousStore = getActiveChallengeStore();
+  setChainReaderForTests(async () => ({ ok: false, confirmed: false, pending: true }));
+  const mock = await startMock({
+    settleBody: async (parsed) => {
+      await probeSettlementSide({
+        side: 'base',
+        url: 'http://local.invalid',
+        expected: BASE_MAINNET_CHAIN_ID,
+        request: async () => '0x14a34',
+      });
+      return {
+        success: true,
+        transaction: TX,
+        network: parsed.paymentRequirements?.network || 'eip155:8453',
+        payer: PAYER,
+        settled: true,
+        txRef: TX,
+      };
+    },
+  });
+  setActiveChallengeStore(new DurableChallengeStore(join(mkdtempSync(join(tmpdir(), 'mf1-')), 's.json')));
+  try {
+    const cfg = cfgFor(mock.url);
+    const body = await issueChallenge(cfg, { taskId: 'mf1-miss', amount: '2000' });
+    const nonce = body.accepts[0].extra.nonce;
+    const decision = await runX402Handshake({
+      headers: { 'x-payment': evmHeader({ amount: '2000' }), 'x-payment-nonce': nonce },
+      body: {},
+    }, { taskId: 'mf1-miss', cfg, amount: '2000' });
+    assert.equal(mock.counts.settle, 1);
+    assert.equal(decision.code, 'settle_unconfirmed');
+    const pending = getActiveChallengeStore().listPending();
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].nonce, nonce);
+    assert.equal(pending[0].tx, TX);
+    assert.equal(pending[0].amount, '2000');
+    assert.equal(pending[0].reason, 'settle_unconfirmed');
+    assert.equal(pending[0].payer, undefined);
+  } finally {
+    installEchoChainReader();
+    setActiveChallengeStore(previousStore);
+    await mock.close();
+    resetSettlementRpcForTests();
+  }
+});
+
+test('late-issue does not ignore a pause, and settle still runs the reader', async () => {
+  resetSettlementRpcForTests();
+  await probeSettlementSide({
+    side: 'base',
+    url: 'http://local.invalid',
+    expected: BASE_MAINNET_CHAIN_ID,
+    request: async () => '0x14a34',
+  });
+  let calls = 0;
+  setChainReaderForTests(async () => {
+    calls += 1;
+    return echoChainReader({
+      challenge: { amount: '2000', payTo: HOUSE, network: 'base' },
+      facilitator: { transaction: TX, payer: PAYER },
+    });
+  });
+  try {
+    const { confirmSettlement } = await import('../src/x402-chain.js');
+    const paused = await confirmSettlement({
+      challenge: { network: 'base', amount: '2000', payTo: HOUSE },
+      facilitator: { transaction: TX, payer: PAYER, network: 'base', success: true },
+      ignorePause: false,
+    });
+    assert.equal(calls, 0);
+    assert.equal(paused.ok, false);
+    assert.equal(paused.pending, true);
+    const seen = await confirmSettlement({
+      challenge: { network: 'base', amount: '2000', payTo: HOUSE },
+      facilitator: { transaction: TX, payer: PAYER, network: 'base', success: true },
+      ignorePause: true,
+    });
+    assert.equal(calls, 1);
+    assert.equal(seen.ok, true);
+    assert.equal(seen.transaction, TX);
+    assert.equal(seen.payTo, HOUSE);
+  } finally {
+    installEchoChainReader();
+    resetSettlementRpcForTests();
+  }
+});
 });

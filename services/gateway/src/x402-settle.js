@@ -18,6 +18,7 @@ import {
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
 import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal } from './x402-chain.js';
+import { recordReceiptFailure } from './receipt-failures.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
   verifyIssuanceBindAtSettle,
@@ -531,6 +532,7 @@ export async function settleBoundPayment({
   const hold = (why, publicReason, { terminal = false, txHint = null } = {}) => {
     const hint = txHint || seenTx || null;
     if (lateRow && hint) lateRow.tx_hint = hint;
+    const stage = (why === 'http' || why === 'success_false' || why === 'transport') ? 'settle' : 'confirm';
     // Switch off keeps main's S1: an HTTP error or success:false is released
     // so the same challenge can settle again. Transport still stays unknown.
     const s1Release = !solana && !lateIssueEnabled(cfg) && !terminal
@@ -546,15 +548,15 @@ export async function settleBoundPayment({
         } catch { /* store */ }
       }
       try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
-      return refused(req, publicReason);
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
     }
     if (lateCapped && !terminal && (why === 'http' || why === 'success_false')) {
       try { active.release(nonce, owner); } catch { /* store */ }
-      return refused(req, publicReason);
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
     }
     if (solana && !terminal && (why === 'http' || why === 'success_false')) {
       release();
-      return refused(req, publicReason);
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
     }
     try { active.markUnknown(nonce); } catch { /* store */ }
     try {
@@ -562,10 +564,21 @@ export async function settleBoundPayment({
         nonce,
         taskId,
         why,
+        reason: publicReason,
         network: challenge.network,
+        amount: challenge.amount != null ? String(challenge.amount) : null,
+        tx: hint,
         payTo: expectedPayTo,
       });
     } catch { /* store */ }
+    recordReceiptFailure({
+      network: challenge.network,
+      stage,
+      reason: publicReason,
+      tx: hint,
+      outcome: 'pending',
+      requestId: req?.id || null,
+    });
     if (lateRow && typeof active.casLate === 'function') {
       const next = terminal ? 'mismatch_hold' : 'unknown';
       try {
@@ -582,9 +595,14 @@ export async function settleBoundPayment({
         retryAfter: LATE_RETRY_AFTER_SEC,
         pendingId,
         verifyUrl: lateVerifyUrl(cfg, pendingId),
+        capture: false,
       });
     }
-    return refused(req, publicReason, { pendingId, verifyUrl: lateVerifyUrl(cfg, pendingId) });
+    return refused(req, publicReason, {
+      pendingId,
+      verifyUrl: lateVerifyUrl(cfg, pendingId),
+      capture: false,
+    });
   };
 
   if (authKeyEarly && typeof active.findLate === 'function') {
@@ -805,6 +823,7 @@ export async function settleBoundPayment({
     facilitator: fields,
     paymentHeader,
     expectedPayTo,
+    ignorePause: true,
     cfg: {
       ...cfg,
       baseRpcUrl: cfg.baseRpcUrl || cfg.rpcUrl || null,
@@ -812,8 +831,8 @@ export async function settleBoundPayment({
     },
   });
   if (!chain.ok) {
-    // A pause that lands after /settle never refuses: the transfer may be paid.
-    // Hold non-terminal so the pending row and late-issue recover it.
+    // Pause was already cleared before /settle. A miss here means the reader
+    // could not see the pinned transfer, so the MF1 hold is the fallback.
     return hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
       terminal: !chain.pending,
     });
@@ -919,6 +938,16 @@ function refused(req, reason, extra = {}) {
   const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref'].includes(reason)
     ? reason
     : clientPaymentCode(reason);
+  if (extra.capture !== false) {
+    recordReceiptFailure({
+      network: extra.network || null,
+      stage: extra.stage || (extra.preSettle ? 'pre-check' : 'settle'),
+      reason: code,
+      tx: extra.tx || null,
+      outcome: extra.outcome || 'refused',
+      requestId: req?.id || null,
+    });
+  }
   recordRefusal(code, userAgentOf(req));
   return {
     kind: 'failed',

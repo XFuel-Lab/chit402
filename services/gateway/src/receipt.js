@@ -9,6 +9,7 @@ import { formatPlainDecimal } from './openrouter-infer.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
 import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
+import { recordReceiptFailure } from './receipt-failures.js';
 import {
   assertIssuanceOpen,
   bindIssuerRoot,
@@ -1752,6 +1753,21 @@ function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
 }
 
 function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+  try {
+    return signReceiptEcdsaUnlocked(receipt, { baseUrl, iat });
+  } catch (err) {
+    recordReceiptFailure({
+      stage: 'sign',
+      reason: err?.code || 'sign_failed',
+      outcome: 'refused',
+      network: receipt?.payment?.network || receipt?.chain || null,
+      tx: receipt?.payment?.tx || receipt?.paymentRef || null,
+    });
+    throw err;
+  }
+}
+
+function signReceiptEcdsaUnlocked(receipt, { baseUrl = '', iat = null } = {}) {
   assertIssuanceOpen();
   if (issuerRootActive()) return signV11Receipt(receipt, { baseUrl, iat });
   const draft = canonicalSignedClaims(receipt, { iat });

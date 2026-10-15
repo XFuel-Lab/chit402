@@ -137,6 +137,13 @@ import {
 import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegraded } from './public-metrics.js';
 import {
+  receiptFailureCount,
+  listReceiptFailures,
+  receiptFailureCsv,
+  receiptFailuresAuth,
+  extractReceiptFailuresToken,
+} from './receipt-failures.js';
+import {
   computeDoorMetrics,
   computePublicDoorAggregate,
   doorMetricsAuthResult,
@@ -4307,6 +4314,7 @@ export function createApp() {
         quarantinedHeads: quarantinedCount > 0 ? log.quarantined_heads : null,
         anchorLagS: log?.anchor_lag_s ?? 0,
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
+        receiptFailures: receiptFailureCount(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
@@ -4406,6 +4414,26 @@ export function createApp() {
 
   let _doorMetricsCache = { at: 0, data: null };
   const DOOR_METRICS_TTL_MS = 15_000;
+
+  // GET /v1/ops/receipt-failures — owner export of receipt-path failures.
+  // Auth: RECEIPT_FAILURES_TOKEN. Off when unset (503). Counts only on /health.
+  app.get('/v1/ops/receipt-failures', rateLimit, (req, res) => {
+    const auth = receiptFailuresAuth(extractReceiptFailuresToken(req));
+    if (!auth.ok) {
+      return res.status(auth.status).json({ error: auth.error, message: auth.message });
+    }
+    const since = req.query?.since;
+    if (since != null && since !== '' && !Number.isFinite(Date.parse(String(since)))) {
+      return res.status(400).json({ error: 'bad_since' });
+    }
+    const failures = listReceiptFailures({ since: since ? String(since) : null });
+    const wantsCsv = req.query?.format === 'csv' || String(req.headers.accept || '').includes('text/csv');
+    res.set('Cache-Control', 'private, no-store');
+    if (wantsCsv) {
+      return res.type('text/csv').send(receiptFailureCsv(failures));
+    }
+    return res.json({ failures });
+  });
 
   app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {
     const auth = doorMetricsAuthResult(config.internal?.doorMetricsToken, extractDoorMetricsToken(req));

@@ -685,15 +685,21 @@ export async function confirmSettlement({
   cfg = {},
   chainReader = null,
   authorization = null,
+  ignorePause = false,
 } = {}) {
-  const paused = settlementRefusal(challenge?.network);
-  if (paused) {
-    return {
-      ok: false,
-      code: paused,
-      // Always pending: the RPC is untrusted right now, not the transfer.
-      pending: true,
-    };
+  // Settle sets ignorePause after the pre-settle check already passed.
+  // That OK lasts for this request. Late-issue leaves it false.
+  // Either way the reader below must still find the pinned transfer.
+  if (!ignorePause) {
+    const paused = settlementRefusal(challenge?.network);
+    if (paused) {
+      return {
+        ok: false,
+        code: paused,
+        // Always pending: the RPC is untrusted right now, not the transfer.
+        pending: true,
+      };
+    }
   }
   const reader = chainReader || cfg.chainReader || getChainReaderForTests();
   if (reader) {
