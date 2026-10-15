@@ -690,6 +690,14 @@ export function inclusionHeadUrl(epoch, treeSize) {
   return `/v1/receipts/tree/head?tree_size=${n}`;
 }
 
+/** Relative inclusion proof against one signed head size. No host. */
+function inclusionUrlFor(taskId, treeSize) {
+  const n = Number(treeSize);
+  if (taskId == null || taskId === '') return null;
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return `/v1/receipts/${encodeURIComponent(String(taskId))}/inclusion?tree_size=${n}`;
+}
+
 function receiptReverted(found) {
   if (!found) return false;
   const status = found.receiptStatus ?? found.receipt_status;
@@ -717,22 +725,28 @@ function namedSignedHead(head, facts = null) {
   };
 }
 
-/** Later anchored head that covers a leaf whose own head is not anchored. */
-function coveredByRecord(head, epoch, facts) {
+/**
+ * Smallest later anchored head that covers a leaf whose own head is not
+ * anchored. `inclusion_url` is the proof against that head's size.
+ */
+function coveredByRecord(head, epoch, facts, taskId) {
   const sol = head?.anchors?.solana || null;
   const solOn = Boolean(sol && sol.status === 'anchored' && sol.signature);
   const anchors = {};
   if (facts?.anchor_tx) anchors.base = { tx: facts.anchor_tx };
+  const treeSize = Number(head.tree_size);
+  const inclusionUrl = inclusionUrlFor(taskId, treeSize);
+  const body = {
+    epoch: Number(head?.epoch ?? epoch?.epoch),
+    tree_size: treeSize,
+    root: normalizeRoot(head.root),
+  };
+  if (inclusionUrl) body.inclusion_url = inclusionUrl;
   if (solOn) {
     const solana = { signature: sol.signature };
     if (sol.slot != null && sol.slot !== '') solana.slot = sol.slot;
     anchors.solana = solana;
   }
-  const body = {
-    epoch: Number(head?.epoch ?? epoch?.epoch),
-    tree_size: Number(head.tree_size),
-    root: normalizeRoot(head.root),
-  };
   if (anchors.base || anchors.solana) body.anchors = anchors;
   return body;
 }
@@ -1493,9 +1507,10 @@ export class ReceiptMerkleTree {
    * `pending_anchor` when the head is the anchored frontier, and a 4xx
    * otherwise. With no anchored head yet, the proof stays on the live tree
    * and is not reported as anchored. When the selected head is not anchored,
-   * `covered_by` names the later anchored signed head that contains the leaf.
-   * It is omitted when this head is itself anchored. This path stays strict:
-   * a rejected or mismatched head throws. Callers that only need the index use
+   * `covered_by` names the smallest later anchored signed head that contains
+   * the leaf, including `inclusion_url` for that size. It is omitted when
+   * this head is itself anchored. This path stays strict: a rejected or
+   * mismatched head throws. Callers that only need the index use
    * `leafIndexOf`.
    */
   inclusion(taskId, options = {}) {
@@ -1593,17 +1608,17 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * Later anchored signed head that contains this leaf.
+   * Smallest later anchored signed head that contains this leaf.
    * Present only when the inclusion head itself is not anchored.
    * A quarantined head is not served and is not an anchor.
    */
   _attachCoveredBy(body, epoch, head) {
-    const covered = this._coveredBy(epoch, body?.leaf_index, head);
+    const covered = this._coveredBy(epoch, body?.leaf_index, head, body?.task_id);
     if (!covered) return body;
     return { ...body, covered_by: covered };
   }
 
-  _coveredBy(epoch, leafIndex, head) {
+  _coveredBy(epoch, leafIndex, head, taskId) {
     if (!epoch || !head) return null;
     if (this.headChainFacts(head).anchored) return null;
     const size = Number(head.tree_size);
@@ -1620,10 +1635,10 @@ export class ReceiptMerkleTree {
       } catch {
         continue;
       }
-      if (!best || Number(accepted.tree_size) > Number(best.tree_size)) best = accepted;
+      if (!best || Number(accepted.tree_size) < Number(best.tree_size)) best = accepted;
     }
     if (!best) return null;
-    return coveredByRecord(best, epoch, this.headChainFacts(best));
+    return coveredByRecord(best, epoch, this.headChainFacts(best), taskId);
   }
 
   /**
@@ -1809,35 +1824,6 @@ export class ReceiptMerkleTree {
           if (outcome.hold || outcome.done) anchor = outcome.anchor;
         }
         if (!anchor) {
-          // A dropped or replaced receipt is terminal on its nonce, so it is
-          // no longer the unresolved raw. Sign that same root again. Do not
-          // fill the free nonce with a later tree.
-          const retry = this._replacedRootToResend();
-          if (retry && normalizeRoot(retry.root) !== normalizeRoot(root)) {
-            const retryReserved = this._reserveBaseIntent({
-              root: retry.root,
-              day: retry.day,
-              nonce: this._nextFreeNonce(intentNonce),
-            });
-            const resent = await this._anchorFromReserved(retryReserved, {
-              send,
-              lookup,
-              request,
-              root: retry.root,
-              day: retry.day,
-              sleep,
-              nowMs,
-            });
-            if (!(resent?.status === 'anchored' && resent.receipt_confirmed)) {
-              anchor = this._blockedPublish(
-                root,
-                { root: retry.root },
-                resent?.reason || 'prior_root_pending',
-              ).anchor;
-            }
-          }
-        }
-        if (!anchor) {
           reserved = this._reserveBaseIntent({
             root,
             day,
@@ -1847,15 +1833,27 @@ export class ReceiptMerkleTree {
       }
     }
     if (!anchor) {
-      anchor = await this._anchorFromReserved(reserved, {
-        send,
-        lookup,
-        request,
-        root,
-        day,
-        sleep,
-        nowMs,
-      });
+      if (reserved?.anchoredTx && !send) {
+        let looked = null;
+        try {
+          looked = await this._lookupIntent(reserved.intent || {
+            tx: reserved.anchoredTx,
+            root,
+            from: reserved.from,
+            to: reserved.from,
+          }, lookup, request);
+        } catch {
+          looked = null;
+        }
+        anchor = (looked && this._commitAnchored(reserved.intent || { root, from: reserved.from, to: reserved.from, tx: reserved.anchoredTx }, looked))
+          || this._anchorResult({ status: 'unconfirmed', root, tx: reserved.anchoredTx, reason: 'receipt_unconfirmed', from: reserved.from });
+      } else if (reserved?.raw) {
+        anchor = await this._resumeSignedIntent(reserved, { send, lookup, request, root, day, now: publishedAt, sleep, nowMs });
+      } else if (reserved?.needsSign) {
+        anchor = await this._signAndBroadcastIntent(reserved, { send, lookup, request, root, day, now: publishedAt, sleep, nowMs });
+      } else {
+        anchor = await describeAnchor(root, { send: send || null });
+      }
     }
     const priorSolana = solanaAnchoredForDay(this.heads, day, scope, this.anchorState);
     let solana;
@@ -2327,62 +2325,6 @@ export class ReceiptMerkleTree {
   }
 
   /**
-   * A replaced receipt whose root never confirmed. Clock drift consumed
-   * the nonce on purpose and is not retried here. An unresolved signed
-   * raw is handled first, so this does not open a second nonce for it.
-   */
-  _replacedRootToResend() {
-    if (this._lowestUnresolvedSigned()) return null;
-    const rows = this._latestBaseIntents().filter((row) => (
-      row.status !== 'superseded' && row.status !== 'abandoned_unsigned'
-    ));
-    rows.sort((a, b) => {
-      const nonce = Number(a.nonce) - Number(b.nonce);
-      if (nonce !== 0) return nonce;
-      return String(a.at || '').localeCompare(String(b.at || ''));
-    });
-    let pending = null;
-    for (const row of rows) {
-      if (row.status === 'anchored') {
-        pending = null;
-        continue;
-      }
-      if (row.status !== 'replaced' || row.reason === 'anchor_clock_drift') continue;
-      const key = normalizeRoot(row.root);
-      if (!key) continue;
-      const done = this.anchorState?.base?.[key];
-      if (done?.status === 'anchored' && done.tx) continue;
-      pending = row;
-    }
-    return pending;
-  }
-
-  async _anchorFromReserved(reserved, { send, lookup, request, root, day, sleep, nowMs }) {
-    if (reserved?.anchoredTx && !send) {
-      let looked = null;
-      try {
-        looked = await this._lookupIntent(reserved.intent || {
-          tx: reserved.anchoredTx,
-          root,
-          from: reserved.from,
-          to: reserved.from,
-        }, lookup, request);
-      } catch {
-        looked = null;
-      }
-      return (looked && this._commitAnchored(reserved.intent || { root, from: reserved.from, to: reserved.from, tx: reserved.anchoredTx }, looked))
-        || this._anchorResult({ status: 'unconfirmed', root, tx: reserved.anchoredTx, reason: 'receipt_unconfirmed', from: reserved.from });
-    }
-    if (reserved?.raw) {
-      return this._resumeSignedIntent(reserved, { send, lookup, request, root, day, sleep, nowMs });
-    }
-    if (reserved?.needsSign) {
-      return this._signAndBroadcastIntent(reserved, { send, lookup, request, root, day, sleep, nowMs });
-    }
-    return describeAnchor(root, { send: send || null });
-  }
-
-  /**
    * Two signed raws at one nonce means a replacement was persisted and the
    * process died before the older row was marked superseded. Keep the later
    * raw. Never broadcast the earlier one.
@@ -2532,25 +2474,13 @@ export class ReceiptMerkleTree {
   }
 
   async _replaceAtNonce(old, { root, day, send, lookup, request }) {
-    // The nonce still belongs to this intent. A later publish root must not
-    // replace the calldata. The same root stays queued until it confirms.
-    const queuedRoot = old.root;
-    const queuedDay = old.day || day;
-    const finish = (outcome) => {
-      if (normalizeRoot(queuedRoot) === normalizeRoot(root)) return outcome;
-      if (outcome?.released) return outcome;
-      if (outcome?.done && outcome.anchor?.status === 'anchored' && outcome.anchor?.receipt_confirmed) {
-        return { released: true };
-      }
-      return this._blockedPublish(root, { root: queuedRoot }, outcome?.anchor?.reason || 'prior_root_pending');
-    };
     const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
-    if (!key) return finish({ hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: 'no_key' }) });
+    if (!key) return { hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: 'no_key' }) };
     try {
       await this._gateAnchorChain(request);
     } catch (err) {
       this._markIntent(old, 'blocked', { reason: 'anchor_chain_mismatch', attempts: (Number(old.attempts) || 0) + 1 });
-      return finish({ hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch', from: old.from, tx: old.tx }) });
+      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch', from: old.from, tx: old.tx }) };
     }
     const previous = old.max_fee
       ? {
@@ -2564,7 +2494,7 @@ export class ReceiptMerkleTree {
       assertAnchorFeeCaps();
     } catch (err) {
       this.lastAnchorError = err.code || 'anchor_fee_cap_config';
-      return finish({
+      return {
         hold: true,
         anchor: this._anchorResult({
           status: 'blocked',
@@ -2573,11 +2503,11 @@ export class ReceiptMerkleTree {
           from: old.from,
           reason: 'anchor_fee_cap_config',
         }),
-      });
+      };
     }
     if (anchorQuoteOverCap(bumped)) {
       noteAnchorFeeCap(this, bumped);
-      return finish({
+      return {
         hold: true,
         anchor: this._anchorResult({
           status: 'blocked',
@@ -2586,26 +2516,26 @@ export class ReceiptMerkleTree {
           from: old.from,
           reason: 'anchor_fee_cap',
         }),
-      });
+      };
     }
     let signed;
     try {
       signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: old.nonce,
-        calldata: anchorCalldata(queuedRoot),
+        calldata: anchorCalldata(root),
         fees: bumped,
       });
     } catch (err) {
       const failed = this._noteSendFailure(old, err);
-      return finish({ hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: failed.reason, from: old.from }) });
+      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root, reason: failed.reason, from: old.from }) };
     }
     const created = {
       v: 1,
       op: 'anchor_intent',
       chain: 'base',
-      root: queuedRoot,
-      day: queuedDay,
+      root,
+      day,
       nonce: old.nonce,
       status: 'signed',
       raw: signed.raw,
@@ -2629,7 +2559,7 @@ export class ReceiptMerkleTree {
         known = true;
       } else {
         const failed = this._noteSendFailure(created, err);
-        return finish({
+        return {
           hold: true,
           anchor: this._anchorResult({
             status: 'blocked',
@@ -2638,7 +2568,7 @@ export class ReceiptMerkleTree {
             from: created.from,
             reason: failed.reason,
           }),
-        });
+        };
       }
     }
     if (known) {
@@ -2649,14 +2579,14 @@ export class ReceiptMerkleTree {
       confirmed = await this._lookupIntent(created, lookup, request);
     } catch (err) {
       const failed = this._noteSendFailure(created, err);
-      return finish({ hold: true, anchor: this._anchorResult({ status: 'blocked', root, tx: created.tx, reason: failed.reason, from: created.from }) });
+      return { hold: true, anchor: this._anchorResult({ status: 'blocked', root, tx: created.tx, reason: failed.reason, from: created.from }) };
     }
     const how = this._confirmed(confirmed, created);
     if (how) {
-      return finish({ done: true, anchor: this._anchoredFromConfirmation(created, confirmed, how) });
+      return { done: true, anchor: this._anchoredFromConfirmation(created, confirmed, how) };
     }
     this._markIntent(created, 'broadcast', { raw: created.raw, tx: created.tx, from: created.from, to: created.to });
-    return finish({
+    return {
       hold: true,
       anchor: this._anchorResult({
         status: 'broadcast',
@@ -2665,13 +2595,12 @@ export class ReceiptMerkleTree {
         from: created.from,
         reason: 'unconfirmed',
       }),
-    });
+    };
   }
 
   /**
    * One unresolved signed raw per sender. Look it up, rebroadcast those
    * bytes, and replace at the same nonce only after a permanent rejection.
-   * The replacement calldata is this intent's root, not a later tree.
    */
   async _resolveOutstanding(intent, { root, day, send, lookup, request, now }) {
     let found;

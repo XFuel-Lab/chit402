@@ -1,6 +1,6 @@
 /**
- * covered_by names a later anchored head when the inclusion head is not
- * anchored. It is omitted when that head is itself anchored.
+ * covered_by names the smallest later anchored head when the inclusion head
+ * is not anchored. It is omitted when that head is itself anchored.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,45 +51,23 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     assert.equal(pending.tree_size, 4);
     assert.notEqual(pending.anchor_status, 'anchored');
 
-    process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
     for (const id of ['d', 'e']) tree.appendReceipt(id, `r${id}`, { publish: false });
-    const mid = await tree.publishHead({
-      force: true,
-      now: '2026-10-08T06:00:00.000Z',
-      nonce: 4,
-      blockTimestamp: Math.floor(Date.parse('2026-10-08T06:00:00.000Z') / 1000),
-      sleep: async () => {},
-      lookup: async (intent) => ({
-        receiptOk: true,
-        receiptStatus: '0x1',
-        tx: intent.tx,
-        root: intent.root,
-        from: intent.from,
-        to: intent.to,
-        nonce: intent.nonce,
-      }),
-      send: async (args) => args.hash,
-    });
-    assert.equal(mid.anchor_status, 'anchored');
-    assert.equal(mid.tree_size, 6);
-
-    for (const id of ['f', 'g']) tree.appendReceipt(id, `r${id}`, { publish: false });
     const baseTx = `0x${'cd'.repeat(32)}`;
     const solanaSignature = 'covered-by-solana-signature';
-    const laterRoot = hex(rootOf(tree.leaves));
-    const later = signHead({
+    const smallRoot = hex(rootOf(tree.leaves));
+    const small = signHead({
       schema: 'chit402.tree_head.v2',
       payload_version: 2,
       epoch: tree.epoch,
       prev_epoch_root: tree.prevEpochRoot,
       prev_epoch_size: tree.prevEpochSize,
-      prev_root: mid.root,
+      prev_root: pending.root,
       tree_size: tree.leaves.length,
-      root: laterRoot,
+      root: smallRoot,
       anchor_status: 'anchored',
       anchor_tx: baseTx,
       anchor_from: `0x${'11'.repeat(20)}`,
-      published_at: '2026-10-08T07:00:00.000Z',
+      published_at: '2026-10-08T06:00:00.000Z',
       anchors: {
         base: {
           status: 'anchored',
@@ -105,7 +83,31 @@ test('a pending head reports covered_by and an anchored head does not', async ()
         },
       },
     });
-    tree.heads.push(later);
+    tree.heads.push(small);
+    assert.equal(small.tree_size, 6);
+
+    process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
+    for (const id of ['f', 'g']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    const larger = await tree.publishHead({
+      force: true,
+      now: '2026-10-08T07:00:00.000Z',
+      nonce: 4,
+      blockTimestamp: Math.floor(Date.parse('2026-10-08T07:00:00.000Z') / 1000),
+      sleep: async () => {},
+      lookup: async (intent) => ({
+        receiptOk: true,
+        receiptStatus: '0x1',
+        tx: intent.tx,
+        root: intent.root,
+        from: intent.from,
+        to: intent.to,
+        nonce: intent.nonce,
+      }),
+      send: async (args) => args.hash,
+    });
+    assert.equal(larger.anchor_status, 'anchored');
+    assert.equal(larger.tree_size, 8);
+    assert.notEqual(larger.root, smallRoot);
     tree.appendReceipt('h', 'rh', { publish: false });
 
     const early = tree.inclusion('a', { treeSize: pending.tree_size });
@@ -123,21 +125,24 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     ), true);
     assert.deepEqual(early.covered_by, {
       epoch: tree.epoch,
-      tree_size: later.tree_size,
-      root: laterRoot,
+      tree_size: small.tree_size,
+      root: smallRoot,
+      inclusion_url: `/v1/receipts/a/inclusion?tree_size=${small.tree_size}`,
       anchors: {
         base: { tx: baseTx },
         solana: { signature: solanaSignature, slot: 381234567 },
       },
     });
+    assert.notEqual(early.covered_by.root, larger.root);
+    assert.notEqual(early.covered_by.anchors.base.tx, larger.anchor_tx);
 
     const anchored = tree.inclusion('a');
     assert.equal(anchored.status, 'anchored');
-    assert.equal(anchored.tree_size, later.tree_size);
-    assert.equal(anchored.root, laterRoot);
+    assert.equal(anchored.tree_size, larger.tree_size);
+    assert.equal(anchored.root, larger.root);
     assert.equal(Object.hasOwn(anchored, 'covered_by'), false);
 
-    const selected = tree.inclusion('a', { treeSize: mid.tree_size });
+    const selected = tree.inclusion('a', { treeSize: small.tree_size });
     assert.equal(selected.status, 'anchored');
     assert.equal(Object.hasOwn(selected, 'covered_by'), false);
 
@@ -149,12 +154,13 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     const decoy = 'ee'.repeat(32);
     tree.quarantinedHeads.push({
       epoch: tree.epoch,
-      tree_size: later.tree_size,
+      tree_size: larger.tree_size,
       prefix_size: 4,
       root: decoy,
     });
     const still = tree.inclusion('a', { treeSize: pending.tree_size });
-    assert.equal(still.covered_by.root, laterRoot);
+    assert.equal(still.covered_by.root, smallRoot);
+    assert.equal(still.covered_by.tree_size, small.tree_size);
     assert.equal(JSON.stringify(still).includes(decoy), false);
   } finally {
     if (prevKey == null) delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;

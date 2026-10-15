@@ -2330,7 +2330,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptInclusion',
           summary: 'Inclusion proof for one receipt',
-          description: 'Public. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the later anchored head that contains the leaf (epoch, tree_size, root, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored.',
+          description: 'Public. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the smallest later anchored signed head that contains the leaf (epoch, tree_size, root, inclusion_url, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored.',
           tags: ['Receipts'],
           parameters: [
             { name: 'task_id', in: 'path', required: true, schema: { type: 'string' } },
