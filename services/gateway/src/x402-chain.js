@@ -691,7 +691,8 @@ export async function confirmSettlement({
     return {
       ok: false,
       code: paused,
-      pending: paused !== 'network_not_accepted',
+      // Always pending: the RPC is untrusted right now, not the transfer.
+      pending: true,
     };
   }
   const reader = chainReader || cfg.chainReader || getChainReaderForTests();

@@ -812,7 +812,8 @@ export async function settleBoundPayment({
     },
   });
   if (!chain.ok) {
-    if (chain.code === 'network_not_accepted') return refused(req, 'network_not_accepted');
+    // A pause that lands after /settle never refuses: the transfer may be paid.
+    // Hold non-terminal so the pending row and late-issue recover it.
     return hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
       terminal: !chain.pending,
     });
