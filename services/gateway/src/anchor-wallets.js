@@ -28,6 +28,11 @@ export const ANCHOR_WALLETS_JWT_TYP = 'chit402-anchor-wallets+jwt';
 
 export const PINNED_BASE_ANCHOR_WALLET = '0x1844D1F5FE42aff1Cce6F776514Fd40374079582';
 export const PINNED_SOLANA_ANCHOR_FEE_PAYER = 'BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD';
+/** Append-only. 2026-10-15: anchor key rotated to the second entry. */
+export const PINNED_SOLANA_ANCHOR_FEE_PAYERS = Object.freeze([
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  '8ef3GtYNuQ6P2ANxLMPUXTAo9BhfJJqMx6cdDVh7JM4U',
+]);
 
 function unique(values) {
   const seen = new Set();
@@ -42,7 +47,7 @@ function unique(values) {
 
 export function anchorWalletClaims(env = process.env) {
   const base = [PINNED_BASE_ANCHOR_WALLET];
-  const solana = [PINNED_SOLANA_ANCHOR_FEE_PAYER];
+  const solana = [...PINNED_SOLANA_ANCHOR_FEE_PAYERS];
   try {
     const from = resolveAnchorSender(env);
     if (from) base.push(from);

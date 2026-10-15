@@ -3,6 +3,11 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.2 — Solana anchor fee-payer pin is a list
+
+### Changed
+- **The Solana anchor pin is append-only.** `PINNED_SOLANA_ANCHOR_FEE_PAYERS` is `[BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD, 8ef3GtYNuQ6P2ANxLMPUXTAo9BhfJJqMx6cdDVh7JM4U]`. The second entry is the rotated anchor fee payer, effective 2026-10-15. A head anchored by either payer passes offline. `PINNED_SOLANA_ANCHOR_FEE_PAYER` still exports the first entry. A head is still trusted only through its issuer ES256 signature; the pin only names which memo signer may carry the root. The bundled issuer-history snapshot is unchanged. Flags stay `--issuer-history` and `--json`; exit codes stay 0, 1, 2. `BUILD_DIGEST.txt` moved because `src/anchor-trust.ts` and `src/index.ts` changed. The pinned epoch genesis digests did not. Not published. No deploy.
+
 ## 0.4.1 — COULD_NOT_CHECK does not read as INVALID
 
 ### Added
