@@ -18,6 +18,8 @@ const {
   evaluateCheckAlert,
   hourStart,
   clampStatsHours,
+  maskCount,
+  maskPublicStats,
   resultOfOverall,
 } = await import('../src/receipt-check-stats.js');
 const { mountReceiptCheck } = await import('../src/receipt-check.js');
@@ -303,8 +305,14 @@ test('GET /v1/receipts/check/stats returns buckets and an alert, and never the i
     assert.equal(body.to, new Date(CURRENT).toISOString());
     assert.equal(JSON.stringify(body).includes(MARKER), false);
     const current = body.buckets.find((bucket) => bucket.hour === new Date(CURRENT).toISOString());
-    assert.equal(current.verified, 1);
-    assert.equal(current.by_client.web.verified, 1);
+    assert.equal(current.verified, '<3');
+    assert.equal(current.by_client.web.verified, '<3');
+    assert.equal(body.alert.checks, '<3');
+    const previous = body.buckets.find((bucket) => bucket.hour === new Date(CURRENT - HOUR).toISOString());
+    assert.equal(previous.verified, 10);
+    assert.equal(previous.invalid, '<3');
+    assert.equal(previous.by_client.web.verified, 9);
+    assert.equal(previous.by_reason.find((item) => item.reason === 'signature_invalid').count, '<3');
     assert.equal(current.by_reason.some((item) => item.reason === 'none'), true);
     assert.equal(body.alert.raised, false);
     assert.equal(body.alert.minimum, 20);
@@ -334,6 +342,37 @@ test('GET /v1/receipts/check/stats returns buckets and an alert, and never the i
     stats.close();
   }
   noMarker(file);
+});
+
+test('a public count below 3 is <3 and 3 stays 3', () => {
+  assert.equal(maskCount(0), '<3');
+  assert.equal(maskCount(2), '<3');
+  assert.equal(maskCount(3), 3);
+  const masked = maskPublicStats([
+    {
+      hour: '2026-10-14T18:00:00.000Z',
+      verified: 5,
+      invalid: 2,
+      could_not_check: 0,
+      by_client: {
+        web: { verified: 5, invalid: 0, could_not_check: 0 },
+        api: { verified: 0, invalid: 2, could_not_check: 0 },
+      },
+      by_reason: [{ result: 'INVALID', reason: 'signature_invalid', client: 'api', count: 2 }],
+    },
+  ], {
+    raised: false,
+    checks: 20,
+    top_reason: { code: 'signature_invalid', count: 2, share: 0.1 },
+  });
+  assert.equal(masked.buckets[0].verified, 5);
+  assert.equal(masked.buckets[0].invalid, '<3');
+  assert.equal(masked.buckets[0].could_not_check, '<3');
+  assert.equal(masked.buckets[0].by_client.api.invalid, '<3');
+  assert.equal(masked.buckets[0].by_reason[0].count, '<3');
+  assert.equal(masked.alert.checks, 20);
+  assert.equal(masked.alert.top_reason.count, '<3');
+  assert.equal(masked.alert.top_reason.share, 0.1);
 });
 
 test('stats and the check share one per-IP limit', async () => {

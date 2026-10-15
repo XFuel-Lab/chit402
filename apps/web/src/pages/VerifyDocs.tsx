@@ -10,7 +10,7 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'unsupported_version', text: 'This verifier does not accept the receipt version. Exit 2. Upgrade the verifier.' },
   { id: 'kid_not_in_history', text: 'No loaded issuer history covers this key. Exit 2. Pass --issuer-history with a snapshot that includes the kid and prefix-extends the bundled snapshot.' },
   { id: 'receipt_unavailable', text: 'The receipt itself was not fetched. Exit 2. Every check is could_not_check. The receipt was not found invalid.' },
-  { id: 'issuer_history_unavailable', text: 'Issuer history could not be read. Exit 2. Every check is could_not_check. This is not a tampered receipt.' },
+  { id: 'issuer_history_unavailable', text: 'Issuer history could not be read. Exit 1, matching the CLI. This is not a tampered receipt.' },
   { id: 'log_unreachable', text: 'A loaded receipt\'s log or anchor was not fetched. Exit 2. The receipt was not found invalid.' },
   { id: 'anchor_unreachable', text: 'The anchor was not fetched. Exit 2. The receipt was not found invalid.' },
   { id: 'pending_anchor', text: 'The leaf is past the anchored tree. Exit 2. Re-run when the anchor for this leaf is published.' },

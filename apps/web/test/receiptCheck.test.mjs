@@ -132,7 +132,13 @@ test('the feedback box is opt-in and does not collect a contact address', () => 
   assert.match(src, /What did you expect\?/);
   assert.match(src, /What were you trying to do\?/);
   assert.match(src, /Attach the receipt I pasted so the team can reproduce it/);
+  assert.match(src, /Notes are posted publicly as GitHub issues\. Don't include private info\./);
   assert.equal(src.includes('defaultChecked'), false);
   assert.equal(src.includes('type="email"'), false);
   assert.equal(src.includes('contact'), false);
+});
+
+test('issuer history docs use the CLI exit', () => {
+  const src = readFileSync(new URL('../src/pages/VerifyDocs.tsx', import.meta.url), 'utf8');
+  assert.match(src, /id: 'issuer_history_unavailable'[\s\S]{0,160}Exit 1, matching the CLI/);
 });

@@ -63,6 +63,9 @@ function CheckFeedback({ view, receipt }: { view: ReceiptCheckView; receipt: str
 
   return (
     <div className="receipt-check-feedback">
+      <p className="receipt-check-feedback-public">
+        Notes are posted publicly as GitHub issues. Don't include private info.
+      </p>
       {!open && (
         <button type="button" className="receipt-check-feedback-link" onClick={() => setOpen(true)}>
           Something wrong? Tell us

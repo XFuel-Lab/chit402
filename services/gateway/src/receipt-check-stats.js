@@ -105,6 +105,46 @@ function sum(rows, pick = () => true) {
   return n;
 }
 
+export function maskCount(n) {
+  const value = Number(n) || 0;
+  return value < 3 ? '<3' : value;
+}
+
+function maskTrio(row) {
+  return {
+    verified: maskCount(row?.verified),
+    invalid: maskCount(row?.invalid),
+    could_not_check: maskCount(row?.could_not_check),
+  };
+}
+
+/** Public stats hide counts of 0, 1, and 2. Alert math stays on the raw rows. */
+export function maskPublicStats(buckets, alert) {
+  return {
+    buckets: (buckets || []).map((bucket) => ({
+      hour: bucket.hour,
+      ...maskTrio(bucket),
+      by_client: {
+        web: maskTrio(bucket.by_client?.web),
+        api: maskTrio(bucket.by_client?.api),
+      },
+      by_reason: (bucket.by_reason || []).map((item) => ({
+        result: item.result,
+        reason: item.reason,
+        client: item.client,
+        count: maskCount(item.count),
+      })),
+    })),
+    alert: {
+      ...alert,
+      checks: maskCount(alert?.checks),
+      top_reason: alert?.top_reason
+        ? { ...alert.top_reason, count: maskCount(alert.top_reason.count) }
+        : null,
+    },
+  };
+}
+
 export function bucketRows(rows) {
   const byHour = new Map();
   for (const row of rows) {

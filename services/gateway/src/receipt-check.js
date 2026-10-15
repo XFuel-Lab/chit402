@@ -19,6 +19,7 @@ import {
   clampStatsHours,
   evaluateCheckAlert,
   hourStart,
+  maskPublicStats,
   normalizeClient,
   openCheckStats,
   resultOfOverall,
@@ -26,11 +27,14 @@ import {
 } from './receipt-check-stats.js';
 import {
   buildFeedbackIssue,
+  checkSummary,
+  createCheckReports,
   feedbackEnabled,
   feedbackToken,
   FEEDBACK_TOKEN_ENV,
   fileFeedbackIssue,
   prepareFeedback,
+  withStoredReport,
 } from './receipt-feedback.js';
 
 export const RECEIPT_CHECK_PATH = '/v1/receipts/check';
@@ -46,6 +50,8 @@ export const RECEIPT_CHECK_INPUT_HINT = 'Paste receipt JSON, a chit- id, or a ve
 const ENVELOPE_BYTES = 64;
 const LIMITER_MAX_KEYS = 50_000;
 const HOUR_MS = 3_600_000;
+export const FEEDBACK_PER_IP_PER_HOUR = 3;
+export const FEEDBACK_GLOBAL_PER_HOUR = 30;
 
 export function createReceiptCheckLimiter(windowMs, maxHits, maxKeys = LIMITER_MAX_KEYS) {
   const buckets = new Map();
@@ -220,13 +226,27 @@ export function mountReceiptCheck(app, options = {}) {
   const check = options.check || checkReceiptInput;
   const log = options.log || defaultLog;
   const stats = options.stats || openCheckStats(':memory:');
+  const reports = options.reports || createCheckReports();
   const now = options.now || Date.now;
   const enabled = feedbackEnabled(options);
+  const feedbackLimiter = createReceiptCheckLimiter(
+    options.feedbackWindowMs ?? HOUR_MS,
+    options.feedbackMaxHits ?? FEEDBACK_PER_IP_PER_HOUR,
+  );
+  const feedbackGlobal = createReceiptCheckLimiter(
+    options.feedbackWindowMs ?? HOUR_MS,
+    options.feedbackGlobalMax ?? FEEDBACK_GLOBAL_PER_HOUR,
+    1,
+  );
   if (!enabled) logger.info({ env: FEEDBACK_TOKEN_ENV }, 'receipt feedback unavailable');
   app.locals.receiptCheck = state;
 
   function envelope(extra) {
     return { feedback_enabled: enabled, ...extra };
+  }
+
+  function remember(id, summary) {
+    reports.put(id, summary, now());
   }
 
   app.post(RECEIPT_CHECK_PATH, async (req, res) => {
@@ -240,7 +260,19 @@ export function mountReceiptCheck(app, options = {}) {
       const input = typeof req.body?.input === 'string' ? req.body.input : '';
       const bytes = Buffer.byteLength(input);
       const kind = classifyReceiptInput(input);
+      function note(extra = {}) {
+        remember(id, checkSummary({
+          overall: extra.overall ?? null,
+          verdict: extra.verdict ?? null,
+          lines: extra.lines || [],
+          facts: extra.facts || {},
+          client,
+          kind,
+          bytes,
+        }));
+      }
       if (rawLen > maxBytes + ENVELOPE_BYTES || bytes > maxBytes) {
+        note({ lines: ['Receipt input is too large.'] });
         log(receiptCheckLogFields({ overall: null, status: 413, request_id: id, client }));
         res.set('Cache-Control', 'private, no-store');
         state.counts.rejected += 1;
@@ -256,6 +288,7 @@ export function mountReceiptCheck(app, options = {}) {
       }
 
       if (kind !== 'json' && kind !== 'url' && kind !== 'id') {
+        note({ lines: [RECEIPT_CHECK_INPUT_HINT] });
         log(receiptCheckLogFields({ overall: null, status: 400, request_id: id, client }));
         res.set('Cache-Control', 'private, no-store');
         state.counts.rejected += 1;
@@ -274,6 +307,7 @@ export function mountReceiptCheck(app, options = {}) {
         try {
           const parsed = JSON.parse(input);
           if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            note({ lines: [RECEIPT_CHECK_INPUT_HINT] });
             log(receiptCheckLogFields({ overall: null, status: 400, request_id: id, client }));
             res.set('Cache-Control', 'private, no-store');
             state.counts.rejected += 1;
@@ -288,6 +322,7 @@ export function mountReceiptCheck(app, options = {}) {
             }));
           }
         } catch {
+          note({ lines: [RECEIPT_CHECK_INPUT_HINT] });
           log(receiptCheckLogFields({ overall: null, status: 400, request_id: id, client }));
           res.set('Cache-Control', 'private, no-store');
           state.counts.rejected += 1;
@@ -345,6 +380,7 @@ export function mountReceiptCheck(app, options = {}) {
       } catch (err) {
         logger.error({ err: err.message, request_id: id }, 'receipt check stats');
       }
+      note({ overall, verdict, lines, facts });
       log(receiptCheckLogFields({
         overall,
         status: 200,
@@ -374,7 +410,11 @@ export function mountReceiptCheck(app, options = {}) {
     const id = requestId();
     try {
       const ip = clientIp(req);
+      // Each accepted call files a public GitHub issue: own tight limits,
+      // per IP and global, separate from the check budget.
       if (!limiter.allow(ip)) return rateLimit(res, limiter, ip);
+      if (!feedbackLimiter.allow(ip)) return rateLimit(res, feedbackLimiter, ip);
+      if (!feedbackGlobal.allow('all')) return rateLimit(res, feedbackGlobal, 'all');
       const token = feedbackToken(options);
       if (!token) {
         log(receiptCheckLogFields({ overall: null, status: 503, request_id: id }));
@@ -390,17 +430,20 @@ export function mountReceiptCheck(app, options = {}) {
           request_id: id,
         });
       }
+      const submitted = prepared.record.request_id;
+      const stored = submitted ? reports.get(submitted, now()) : null;
       if (!prepared.record.request_id) prepared.record.request_id = id;
-      const issue = buildFeedbackIssue(prepared.record);
+      const record = withStoredReport(prepared.record, stored);
+      const issue = buildFeedbackIssue(record);
       await fileFeedbackIssue(issue, token, options.githubFetch || globalThis.fetch);
       log(receiptCheckLogFields({
-        overall: prepared.record.result_code,
+        overall: record.result_code,
         status: 202,
-        request_id: prepared.record.request_id || id,
-        client: prepared.record.client,
+        request_id: record.request_id || id,
+        client: record.client === 'web' || record.client === 'api' ? record.client : null,
       }));
       res.set('Cache-Control', 'private, no-store');
-      return res.status(202).json({ ok: true, request_id: prepared.record.request_id || id });
+      return res.status(202).json({ ok: true, request_id: record.request_id || id });
     } catch {
       log(receiptCheckLogFields({ overall: null, status: 502, request_id: id }));
       res.set('Cache-Control', 'private, no-store');
@@ -433,13 +476,16 @@ export function mountReceiptCheck(app, options = {}) {
       res.set('Cache-Control', 'private, no-store');
       return res.status(500).json({ error: 'internal', message: 'Internal server error' });
     }
+    const rawBuckets = bucketRows(windowRows);
+    const rawAlert = evaluateCheckAlert(alertRows, at);
+    const masked = maskPublicStats(rawBuckets, rawAlert);
     res.set('Cache-Control', 'public, max-age=30');
     return res.status(200).json({
       hours,
       from: new Date(start).toISOString(),
       to: new Date(end).toISOString(),
-      buckets: bucketRows(windowRows),
-      alert: evaluateCheckAlert(alertRows, at),
+      buckets: masked.buckets,
+      alert: masked.alert,
     });
   });
 
