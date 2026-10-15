@@ -17,7 +17,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests } from './x402-chain.js';
+import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal } from './x402-chain.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
   verifyIssuanceBindAtSettle,
@@ -336,6 +336,8 @@ export async function settleBoundPayment({
   if (!networkAllowed(challenge.network, cfg)) {
     return refused(req, 'network_not_accepted', { preSettle: true });
   }
+  const pausedNetwork = settlementRefusal(challenge.network);
+  if (pausedNetwork) return refused(req, pausedNetwork, { preSettle: true });
   const blobNet = blobNetwork(paymentHeader);
   if (blobNet && !sameNetwork(blobNet, challenge.network)) {
     return refused(req, 'network_not_accepted', { preSettle: true });
@@ -752,25 +754,49 @@ export async function settleBoundPayment({
     return refused(req, 'payment_replayed');
   }
 
-  // One transfer, one settlement: reserve the tx (and the EIP-3009 auth) before
-  // the chain await, so concurrent challenges carrying the same transfer cannot
-  // all pass isTxSpent and all settle. Released on every exit; markTxSpent
-  // keeps it spent on success. Per-process: a multi-instance deploy needs the
-  // durable store to reserve atomically.
-  if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
+  // One transfer, one settlement. reserveTx holds the spent check and the
+  // lease in one store lock, so two processes cannot both issue. Released
+  // on every exit that did not mark the tx spent. The in-memory sets remain
+  // only for a store that has no reserveTx.
+  const reserveOwner = `${process.pid}:${nonce}`;
+  const canReserve = typeof active.reserveTx === 'function';
+  let reserved = false;
+  if (canReserve) {
+    try {
+      reserved = active.reserveTx(norm.key, authKey, reserveOwner, 180_000) === true;
+    } catch (err) {
+      logger.warn({ err: err.message }, 'x402: reserveTx failed closed');
+      return refused(req, 'replay_store_unavailable');
+    }
+    if (!reserved) {
+      if (active.isTxSpent(norm.key) || (authKey && active.isAuthSpent(authKey))) {
+        active.markSpent(nonce, { txRef: norm.key, replay: true });
+      }
+      return refused(req, 'payment_replayed');
+    }
+  } else if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
     return refused(req, 'payment_replayed');
+  } else {
+    inflightTx.add(norm.key);
+    if (authKey) inflightAuth.add(authKey);
   }
-  inflightTx.add(norm.key);
-  if (authKey) inflightAuth.add(authKey);
   try {
     return await confirmAndSettle();
   } catch (err) {
     logger.warn({ err: err.message, taskId }, 'x402: local failure after settle');
     return hold('local_failure', 'settle_unconfirmed');
   } finally {
-    inflightTx.delete(norm.key);
-    if (authKey) inflightAuth.delete(authKey);
+    if (canReserve) {
+      if (reserved) {
+        try {
+          if (!active.isTxSpent(norm.key)) active.releaseTx(norm.key, authKey, reserveOwner);
+        } catch { /* the lease expires */ }
+      }
+    } else {
+      inflightTx.delete(norm.key);
+      if (authKey) inflightAuth.delete(authKey);
+    }
   }
 
   async function confirmAndSettle() {
@@ -786,6 +812,7 @@ export async function settleBoundPayment({
     },
   });
   if (!chain.ok) {
+    if (chain.code === 'network_not_accepted') return refused(req, 'network_not_accepted');
     return hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
       terminal: !chain.pending,
     });

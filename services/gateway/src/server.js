@@ -13,9 +13,9 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
-import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore } from './x402-durable-store.js';
+import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
-import { readHeadBlock } from './x402-chain.js';
+import { readHeadBlock, probeConfiguredSettlementRpcs, startSettlementRpcRecheck } from './x402-chain.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -85,11 +85,12 @@ import {
   finishReceiptLogBoot,
   publicLogWitness,
   assertAnchorFeeCaps,
+  startTailAnchorTimer,
 } from './receipt-merkle.js';
 import { publicEpochRecord } from './receipt-log-epoch.js';
 import { RelayerNonceStore, relayerAudience, resetRelayerNonceStore, verifyRelayerAuth } from './relayer-auth.js';
 import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
-import { withPublicPreimages, preimageField, preimageBytes } from './receipt-preimage.js';
+import { withPublicPreimages, preimageField, preimageBytes, setPublicShellHeaders } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { assertIssuerHistoryBoot, configureIssuerHistoryStore, currentIssuerHistory, writeIssuerHistory } from './issuer-history.js';
 import { applyRequestSaltHeader, captureRawRequestBody, clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
@@ -134,7 +135,7 @@ import {
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
-import { publicHealthBody, publicStatsBody, renderPublicStatsHtml } from './public-metrics.js';
+import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegraded } from './public-metrics.js';
 import {
   computeDoorMetrics,
   computePublicDoorAggregate,
@@ -392,7 +393,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 - POST /v1/receipts/feedback : optional note about a check. The pasted receipt is attached only when asked. Off when CHECK_FEEDBACK_GITHUB_TOKEN is unset.
 - GET /v1/receipts/check/stats?hours=N : anonymous hourly counts (N capped at 168) and an alert. No receipt input.
 - Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
-- Receipt hash preimages: GET /receipt/:id/preimage is the unsigned public shell (JCS). The holder signature is on the owner view. output.hash stays private.
+- Public receipt shell: GET /receipt/:id/preimage is the unsigned public shell (JCS). commits_to is null. It is not the signed payload. payload_hash is over the owner-held bytes. The holder signature is on the owner view. output.hash stays private.
 - Live receipt shell: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96 — public page is the shell. Full verify needs the payer wallet or the agent key.
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
@@ -3413,6 +3414,7 @@ export function createApp() {
       const { shell } = shellFor(receipt, receipt.task_id);
       const bytes = shellPreimageBytes(shell);
       res.set('Cache-Control', 'private, no-store');
+      setPublicShellHeaders(res);
       if (String(req.query.raw || '') === '1') {
         return res.type('application/octet-stream').send(bytes);
       }
@@ -4298,12 +4300,13 @@ export function createApp() {
     try {
       const log = getReceiptMerkleTree().bundleStatus();
       const quarantinedCount = Number(log?.quarantined_heads?.count) || 0;
-      const degraded = (log?.consecutive_failures > 0) || !!log?.last_error || quarantinedCount > 0;
       return res.json(publicHealthBody({
-        degraded,
+        degraded: healthIsDegraded(log),
         lastAnchoredRoot: log?.last_anchored_root ?? null,
         lastAnchoredTx: log?.last_anchored_tx ?? null,
         quarantinedHeads: quarantinedCount > 0 ? log.quarantined_heads : null,
+        anchorLagS: log?.anchor_lag_s ?? 0,
+        unanchoredLeaves: log?.unanchored_leaves ?? 0,
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
@@ -5755,6 +5758,7 @@ export async function startServer() {
       }
     }
   }
+  assertReserveTxInstances(getActiveChallengeStore());
   // The durable receipt log is part of serving. Unit tests call createApp
   // without this, so they do not have to carry the production pin.
   if (process.env.RECEIPT_LOG_BOOT == null || process.env.RECEIPT_LOG_BOOT === '') {
@@ -5830,6 +5834,18 @@ export async function startServer() {
   // in-place history edit does not stop signing; revocation is an append.
   assertIssuerHistoryBoot();
   await finishReceiptLogBoot(getReceiptMerkleTree());
+  try {
+    const probed = await probeConfiguredSettlementRpcs(config.x402);
+    for (const side of ['base', 'solana']) {
+      if (probed?.[side]?.paused) {
+        logger.warn({ side, reason: probed[side].reason }, 'settlement RPC paused for this network');
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, 'settlement RPC probe failed closed for the networks it could not check');
+  }
+  startSettlementRpcRecheck(config.x402);
+  startTailAnchorTimer(getReceiptMerkleTree);
 
   // Start the webhook dispatcher: watches activeTasks for terminal states
   // and delivers signed TaskSettled events to subscribers + per-task callbacks.

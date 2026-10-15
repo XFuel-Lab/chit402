@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { ChallengeStore } from './x402-adapter.js';
 
 function sleepSync(ms) {
@@ -121,6 +122,8 @@ function validState(raw) {
   if (!isPairList(raw.authSpent)) return false;
   if (!Array.isArray(raw.txSpent)) return false;
   if (!isPairList(raw.txFacts)) return false;
+  if (raw.txReserved != null && !isPairList(raw.txReserved)) return false;
+  if (raw.authReserved != null && !isPairList(raw.authReserved)) return false;
   if (!Array.isArray(raw.pending)) return false;
   return true;
 }
@@ -167,7 +170,7 @@ function writeState(file, state) {
 }
 
 const EMPTY_STATE = {
-  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], pending: [], late: [], lateLedger: [],
+  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], txReserved: [], authReserved: [], pending: [], late: [], lateLedger: [],
 };
 
 export class DurableChallengeStore {
@@ -175,6 +178,7 @@ export class DurableChallengeStore {
     if (!file) throw new Error('challenge store path required');
     this.file = file;
     this.lockPath = `${file}.lock`;
+    this.durableReserve = true;
     this.ttlMs = ttlMs;
     this.lockWaitMs = Number.isFinite(Number(lockWaitMs)) && Number(lockWaitMs) >= 0
       ? Number(lockWaitMs)
@@ -218,6 +222,12 @@ export class DurableChallengeStore {
   markAuthSpent(key, ref) { return this._with((s) => s.markAuthSpent(key, ref)); }
   isTxSpent(key) { return this._with((s) => s.isTxSpent(key)); }
   markTxSpent(key, facts) { return this._with((s) => s.markTxSpent(key, facts)); }
+  reserveTx(key, authKey, owner, leaseMs) {
+    return this._with((s) => s.reserveTx(key, authKey, owner, leaseMs));
+  }
+  releaseTx(key, authKey, owner) {
+    return this._with((s) => s.releaseTx(key, authKey, owner));
+  }
   txFactsOf(key) { return this._with((s) => s.txFactsOf(key)); }
   recordPending(row) { return this._with((s) => s.recordPending(row)); }
   listPending() { return this._with((s) => s.listPending()); }
@@ -283,4 +293,40 @@ export function challengeStorePlan({ nodeEnv, configured } = {}) {
     required: !devOrTest,
     storePath: configured || (devOrTest ? null : 'data/x402-challenges.json'),
   };
+}
+
+function pm2FileInstances() {
+  try {
+    const eco = createRequire(import.meta.url)('../ecosystem.config.cjs');
+    const n = Number(eco?.apps?.[0]?.instances);
+    return Number.isInteger(n) && n > 0 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function instanceCount(env = process.env) {
+  const raw = env.INSTANCES ?? env.PM2_INSTANCES ?? env.WEB_CONCURRENCY;
+  const fromEnv = Number(raw);
+  const envCount = Number.isFinite(fromEnv) && fromEnv >= 1 ? fromEnv : 1;
+  return Math.max(envCount, pm2FileInstances());
+}
+
+export function storeReservesDurably(store) {
+  return !!(store && store.durableReserve === true && typeof store.reserveTx === 'function');
+}
+
+/**
+ * More than one process is refused unless the active store reserves a
+ * transfer inside one file lock. An in-memory reserveTx does not count.
+ */
+export function assertReserveTxInstances(store, env = process.env) {
+  const count = instanceCount(env);
+  const nodeIndex = Number(env.NODE_APP_INSTANCE);
+  const multi = count > 1 || (Number.isInteger(nodeIndex) && nodeIndex > 0);
+  if (!multi) return;
+  if (storeReservesDurably(store)) return;
+  const err = new Error('instances>1 refused: challenge store has no atomic reserveTx');
+  err.code = 'instances_refused';
+  throw err;
 }

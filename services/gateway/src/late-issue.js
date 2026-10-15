@@ -846,7 +846,45 @@ export async function resolveLateRecord(store, record, deps = {}) {
       if (norm.ok) txRef = norm.key;
     }
     store.casLate(id, 'issuing', 'issuing', { tx_ref: txRef, tx_hint: tx || row.tx_hint });
-    return publishIssued(store, store.getLate(id), { ...chain, tx }, signing, Buffer.alloc(0));
+    const reserveOwner = `late:${process.pid}:${id}`;
+    let held = false;
+    if (txRef && typeof store.reserveTx === 'function') {
+      try {
+        held = store.reserveTx(txRef, row.auth_key || null, reserveOwner, 180_000) === true;
+      } catch (err) {
+        logger.warn({ err: err.message }, 'late-issue reserveTx failed closed');
+        store.casLate(id, 'issuing', 'confirmed', {
+          lease_owner: null,
+          lease_until: 0,
+          why: 'reserve_unavailable',
+        });
+        return { pending: true, pendingId: id, state: 'confirmed' };
+      }
+      if (!held) {
+        if (typeof store.isTxSpent === 'function' && store.isTxSpent(txRef)) {
+          store.casLate(id, 'issuing', 'issued', {
+            why: 'tx_already_receipted',
+            tx_ref: txRef,
+          });
+          return { state: 'issued', pendingId: id, duplicate: true };
+        }
+        store.casLate(id, 'issuing', 'confirmed', {
+          lease_owner: null,
+          lease_until: 0,
+          why: 'tx_reserved',
+        });
+        return { pending: true, pendingId: id, state: 'confirmed' };
+      }
+    }
+    try {
+      return await publishIssued(store, store.getLate(id), { ...chain, tx }, signing, Buffer.alloc(0));
+    } finally {
+      if (held && typeof store.releaseTx === 'function') {
+        try {
+          if (!store.isTxSpent(txRef)) store.releaseTx(txRef, row.auth_key || null, reserveOwner);
+        } catch { /* the lease expires */ }
+      }
+    }
   }
   return { pending: true, pendingId: id, state: row.state };
 }

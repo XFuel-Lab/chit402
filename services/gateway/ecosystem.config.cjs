@@ -9,6 +9,9 @@ module.exports = {
     max_memory_restart: '1G',
     env: {
       NODE_ENV: 'production',
+      // Must match instances above. Boot refuses a count above 1 unless the
+      // challenge store reserves each transfer in one file lock.
+      INSTANCES: '1',
       // Reverse-burn loop configuration
       YIELD_UNWRAP_PERCENTAGE: '30',
       YIELD_REINVEST_PERCENTAGE: '70'

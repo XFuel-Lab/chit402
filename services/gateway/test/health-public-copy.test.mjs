@@ -37,5 +37,12 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
   assert.equal(body.free_tier, 'available');
   assert.ok('last_anchored_root' in body);
   assert.ok('last_anchored_tx' in body);
-  assert.deepEqual(Object.keys(body).sort(), ['free_tier', 'last_anchored_root', 'last_anchored_tx', 'status']);
+  assert.deepEqual(Object.keys(body).sort(), [
+    'anchor_lag_s',
+    'free_tier',
+    'last_anchored_root',
+    'last_anchored_tx',
+    'status',
+    'unanchored_leaves',
+  ]);
 });

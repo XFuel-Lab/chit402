@@ -20,6 +20,15 @@ import { requestDigestOfPreimage } from './request-binding.js';
 
 export const PREIMAGE_SCHEMA = 'chit402.preimage.v1';
 
+/** GET /receipt/:id/preimage is the public shell. Nothing committed hashes to it. */
+export const PUBLIC_SHELL_NOTE = 'public shell; not the signed payload; payload_hash is over the owner-held bytes';
+
+export function setPublicShellHeaders(res) {
+  if (!res || typeof res.set !== 'function') return;
+  res.set('X-Chit-Commits-To', 'null');
+  res.set('X-Chit-Preimage-Note', PUBLIC_SHELL_NOTE);
+}
+
 const ZERO32 = `0x${'0'.repeat(64)}`;
 
 export const NOT_RECOMPUTABLE_REASONS = Object.freeze({

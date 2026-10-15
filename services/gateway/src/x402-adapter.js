@@ -344,6 +344,8 @@ export class ChallengeStore {
     this.authSpent = new Map(); // authorization key → tx ref
     this.txSpent = new Set(); // normalized payment ref
     this.txFacts = new Map(); // ref → confirmed amount, payer, payTo
+    this.txReserved = new Map(); // ref → { owner, until, authKey }
+    this.authReserved = new Map(); // auth key → { owner, until, key }
     this.pending = []; // unsigned owner-only rows; never a receipt
     // Late-issue rows. An array, persisted with the replay store. Not a Map.
     this.late = [];
@@ -502,7 +504,10 @@ export class ChallengeStore {
   }
 
   markAuthSpent(key, ref) {
-    if (key) this.authSpent.set(key, ref || true);
+    if (key) {
+      this.authSpent.set(key, ref || true);
+      this.authReserved.delete(key);
+    }
   }
 
   isTxSpent(key) {
@@ -512,7 +517,44 @@ export class ChallengeStore {
   markTxSpent(key, facts = null) {
     if (!key) return;
     this.txSpent.add(key);
+    const reserved = this.txReserved.get(key);
+    this.txReserved.delete(key);
+    if (reserved?.authKey) this.authReserved.delete(reserved.authKey);
     if (facts && typeof facts === 'object') this.txFacts.set(key, facts);
+  }
+
+  /**
+   * One lock covers the spent check and the lease. False when the key is
+   * spent or another owner holds a live lease. The same owner may refresh.
+   */
+  reserveTx(key, authKey, owner, leaseMs = 180_000, now = Date.now()) {
+    if (!key || !owner) return false;
+    if (this.isTxSpent(key)) return false;
+    if (authKey && this.isAuthSpent(authKey)) return false;
+    const held = this.txReserved.get(key);
+    if (held && Number(held.until) > now && held.owner !== owner) return false;
+    if (authKey) {
+      const auth = this.authReserved.get(authKey);
+      if (auth && Number(auth.until) > now && auth.owner !== owner) return false;
+      if (auth && auth.key && auth.key !== key && Number(auth.until) > now) return false;
+    }
+    const until = now + (Number(leaseMs) > 0 ? Number(leaseMs) : 180_000);
+    this.txReserved.set(key, { owner, until, authKey: authKey || null });
+    if (authKey) this.authReserved.set(authKey, { owner, until, key });
+    return true;
+  }
+
+  releaseTx(key, authKey, owner) {
+    const rec = key ? this.txReserved.get(key) : null;
+    if (!rec) return false;
+    if (owner && rec.owner !== owner) return false;
+    this.txReserved.delete(key);
+    const ak = authKey || rec.authKey;
+    if (ak) {
+      const auth = this.authReserved.get(ak);
+      if (auth && (!owner || auth.owner === owner)) this.authReserved.delete(ak);
+    }
+    return !this.isTxSpent(key);
   }
 
   txFactsOf(key) {
@@ -645,6 +687,8 @@ export class ChallengeStore {
       authSpent: [...this.authSpent.entries()],
       txSpent: [...this.txSpent],
       txFacts: [...this.txFacts.entries()],
+      txReserved: [...this.txReserved.entries()],
+      authReserved: [...this.authReserved.entries()],
       pending: this.pending,
       late: this.late,
       lateLedger: this.lateLedger,
@@ -657,6 +701,8 @@ export class ChallengeStore {
     this.authSpent = new Map(raw?.authSpent || []);
     this.txSpent = new Set(raw?.txSpent || []);
     this.txFacts = new Map(raw?.txFacts || []);
+    this.txReserved = new Map(raw?.txReserved || []);
+    this.authReserved = new Map(raw?.authReserved || []);
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
     this.late = Array.isArray(raw?.late) ? raw.late : [];
     this.lateLedger = Array.isArray(raw?.lateLedger) ? raw.lateLedger : [];
