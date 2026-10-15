@@ -6,7 +6,8 @@
  *
  * The first leaf is genesis (verifier build digest, when one is published).
  * Receipt leaves follow. A signed tree head is published on the first append
- * of each UTC day. The root is anchored on Base (calldata) and on Solana
+ * of each UTC day, and again when the oldest leaf past that head is older
+ * than ANCHOR_TAIL_MAX_AGE_S (default one hour). The root is anchored on Base (calldata) and on Solana
  * (SPL Memo). Each side stays pending until its own key and RPC are set.
  * Base: RECEIPT_ANCHOR_FROM, RECEIPT_ANCHOR_PRIVATE_KEY. Solana:
  * SOLANA_ANCHOR_SECRET_KEY, SOLANA_RPC_URL, optional SOLANA_ANCHOR_CLUSTER.
@@ -14,6 +15,7 @@
  */
 import crypto from 'crypto';
 import logger from './logger.js';
+import { recordReceiptFailure } from './receipt-failures.js';
 import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
@@ -987,6 +989,15 @@ export function confirmAnchor(receipt) {
  * ANCHOR_RETRY_MS has passed. A missing key stays quiet until the env appears,
  * and that transition is not debounced: the next append anchors.
  */
+/** Seconds an uncovered leaf may sit before the next head is published. */
+export function tailAnchorMaxAgeS(env = process.env) {
+  const raw = env.ANCHOR_TAIL_MAX_AGE_S;
+  if (raw == null || raw === '') return 3600;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 3600;
+  return n;
+}
+
 export function dailyAnchorDue(head, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
   if (!head || dayOf(head.published_at) !== today) return true;
@@ -1051,10 +1062,16 @@ export class ReceiptMerkleTree {
     this._push(g.task_id, g.bytes, g.kind);
   }
 
+  _now() {
+    if (typeof this._clock === 'function') return new Date(this._clock());
+    return new Date();
+  }
+
   _push(taskId, bytes, kind) {
     const buf = Buffer.from(bytes);
     const hash = leafHash(buf);
     const index = this.leaves.length;
+    const at = this._now().toISOString();
     if (this.dir) {
       this._ensureEpochOpen();
       appendJournal(this.dir, {
@@ -1065,6 +1082,7 @@ export class ReceiptMerkleTree {
         task_id: taskId,
         kind,
         preimage_b64: buf.toString('base64'),
+        at,
       });
     }
     this.leaves.push(hash);
@@ -1075,6 +1093,7 @@ export class ReceiptMerkleTree {
       leaf: hash.toString('hex'),
       preimage_b64: buf.toString('base64'),
       epoch: this.epoch,
+      at,
     });
     if (taskId) this.byTask.set(String(taskId), index);
     if (this.dir) this._writeSnapshot();
@@ -1207,6 +1226,7 @@ export class ReceiptMerkleTree {
             'receipt log append refused: no stored genesis. Rebuild epoch 1, or set RECEIPT_LOG_ACCEPT_FRESH_GENESIS to the documented flag.',
           );
         }
+        recordReceiptFailure({ stage: 'log', reason: 'log_uninitialized', outcome: 'refused' });
         return null;
       }
       this.ensureGenesis();
@@ -3069,14 +3089,21 @@ export class ReceiptMerkleTree {
       last_anchored_root: lastAnchoredRoot,
       last_anchored_tx: lastAnchoredTx,
       last_error: lastError,
-      quarantined_heads: {
-        count: (this.quarantinedHeads || []).length,
-        heads: (this.quarantinedHeads || []).map((row) => ({
+      quarantined_heads: (() => {
+        const heads = (this.quarantinedHeads || []).map((row) => ({
           epoch: row.epoch,
           tree_size: row.tree_size,
           prefix_size: row.prefix_size,
-        })),
-      },
+          acknowledged: row.acknowledged === true,
+        }));
+        return {
+          count: heads.length,
+          unacknowledged: heads.filter((row) => row.acknowledged !== true).length,
+          heads,
+        };
+      })(),
+      anchor_lag_s: this.tailAnchorStatus(now).anchor_lag_s,
+      unanchored_leaves: this.tailAnchorStatus(now).unanchored_leaves,
       stuck_pending_age_s: (() => {
         let stuckAt = null;
         for (const row of latest) {
@@ -3174,22 +3201,130 @@ export class ReceiptMerkleTree {
     if (this.bundleIndex) writeBundleIndexFile(this.dir, this.bundleIndex);
   }
 
-  _maybePublishDaily() {
+  /**
+   * Leaves past the largest published head. A missing timestamp is already
+   * past the deadline, so a log written before `at` was stored still anchors.
+   */
+  tailAnchorStatus(now = new Date()) {
+    let covered = 0;
+    for (const head of this.heads || []) {
+      const size = Number(head?.tree_size);
+      if (Number.isInteger(size) && size > covered) covered = size;
+    }
+    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+    const maxAge = tailAnchorMaxAgeS();
+    let count = 0;
+    let oldest = null;
+    let undated = false;
+    for (const meta of this.meta || []) {
+      if (Number(meta?.index) < covered) continue;
+      count += 1;
+      const at = Date.parse(meta?.at || '');
+      if (!Number.isFinite(at)) {
+        undated = true;
+        continue;
+      }
+      if (oldest == null || at < oldest) oldest = at;
+    }
+    let lag = 0;
+    if (count > 0) {
+      if (Number.isFinite(oldest)) lag = Math.max(0, Math.floor((nowMs - oldest) / 1000));
+      if (undated) lag = Math.max(lag, maxAge + 1);
+    }
+    return {
+      unanchored_leaves: count,
+      anchor_lag_s: lag,
+      due: count > 0 && lag > maxAge,
+    };
+  }
+
+  /**
+   * Publish when the UTC day rolled or the uncovered tail is past the deadline.
+   * One serialized publishHead. A second call after that head covers the tail
+   * does not send again.
+   */
+  tickAnchors({ now = null, send = null } = {}) {
+    const clock = now ? new Date(now) : this._now();
     const last = this.heads[this.heads.length - 1];
-    if (!dailyAnchorDue(last)) return null;
+    const tail = this.tailAnchorStatus(clock);
+    const daily = dailyAnchorDue(last, clock);
+    if (!daily && !tail.due) return null;
     if (this._dailyFollowUp) return this._dailyFollowUp;
     if (this._publishActive || this._publishQueued) {
       const waitFor = this._publishChain || Promise.resolve();
       this._dailyFollowUp = waitFor.then(() => {
         this._dailyFollowUp = null;
-        return this._maybePublishDaily();
+        return this.tickAnchors({ now: clock, send });
       }, () => {
         this._dailyFollowUp = null;
-        return this._maybePublishDaily();
+        return this.tickAnchors({ now: clock, send });
       });
       return this._dailyFollowUp;
     }
-    return this.publishHead({ force: true, recheckDaily: true }).catch(() => {});
+    const opts = { force: true, now: clock, send };
+    if (!tail.due) opts.recheckDaily = true;
+    return this.publishHead(opts).then((head) => {
+      const base = head?.anchors?.base || head?.anchor || null;
+      if (base?.status === 'blocked') {
+        recordReceiptFailure({
+          stage: 'anchor',
+          reason: base.reason || 'anchor_blocked',
+          outcome: 'pending',
+          network: 'base',
+          tx: base.tx || null,
+        });
+      }
+      return head;
+    }, (err) => {
+      recordReceiptFailure({
+        stage: 'anchor',
+        reason: err?.code || 'anchor_failed',
+        outcome: 'pending',
+        network: 'base',
+      });
+      return null;
+    });
+  }
+
+  _maybePublishDaily() {
+    return this.tickAnchors();
+  }
+
+  /**
+   * Append a signed note for one quarantined head. The head row is not edited.
+   * Returns null when that root is not quarantined.
+   */
+  acknowledgeQuarantinedHead(root) {
+    const want = String(root || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(want)) return null;
+    const row = (this.quarantinedHeads || []).find((head) => (
+      String(head.root || '').replace(/^0x/, '').toLowerCase() === want
+    ));
+    if (!row) return null;
+    if (row.acknowledged === true) return row;
+    const claims = {
+      schema: 'chit402.quarantine_ack.v1',
+      root: want,
+      epoch: Number(row.epoch),
+      tree_size: Number(row.tree_size),
+      prefix_size: Number(row.prefix_size),
+    };
+    const { jws, kid } = signJws(claims, { typ: 'chit402-quarantine-ack+jwt' });
+    if (this.dir) {
+      appendJournal(this.dir, {
+        v: 1,
+        op: 'quarantine_ack',
+        ...claims,
+        issuer_signature: {
+          alg: 'ES256',
+          typ: 'chit402-quarantine-ack+jwt',
+          jws,
+          kid,
+        },
+      });
+    }
+    row.acknowledged = true;
+    return row;
   }
 
   latestHead() {
@@ -3413,6 +3548,22 @@ function materializeEpoch(row) {
     byTask: row.byTask instanceof Map ? row.byTask : byTask,
     heads: row.heads || [],
   };
+}
+
+let tailTimer = null;
+
+/** Unref'd tick so a quiet tail still anchors inside the deadline. */
+export function startTailAnchorTimer(treeOrFn, intervalMs = 60_000) {
+  if (tailTimer) return tailTimer;
+  const every = Number(intervalMs);
+  const timer = setInterval(() => {
+    const tree = typeof treeOrFn === 'function' ? treeOrFn() : treeOrFn;
+    if (!tree || typeof tree.tickAnchors !== 'function') return;
+    Promise.resolve(tree.tickAnchors()).catch(() => {});
+  }, Number.isFinite(every) && every >= 1000 ? every : 60_000);
+  if (typeof timer.unref === 'function') timer.unref();
+  tailTimer = timer;
+  return timer;
 }
 
 export function getReceiptMerkleTree() {

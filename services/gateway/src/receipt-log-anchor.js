@@ -313,7 +313,7 @@ function rpcBudget(timeoutMs, fallback = BASE_RPC_TIMEOUT_MS) {
   return Math.max(1, Math.ceil(n));
 }
 
-function withRpcTimeout(work, ms) {
+export function withRpcTimeout(work, ms) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {

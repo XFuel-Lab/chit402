@@ -17,23 +17,57 @@ export function publicStatsBody(count) {
   return { receipts: receiptVolumeBucket(count) };
 }
 
+export function unacknowledgedQuarantineCount(log) {
+  const block = log?.quarantined_heads;
+  if (!block) return 0;
+  if (Array.isArray(block.heads)) {
+    return block.heads.filter((row) => row?.acknowledged !== true).length;
+  }
+  return Number(block.unacknowledged ?? block.count) || 0;
+}
+
+export function healthIsDegraded(log) {
+  return (Number(log?.consecutive_failures) > 0)
+    || !!log?.last_error
+    || unacknowledgedQuarantineCount(log) > 0;
+}
+
+function publicCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
 export function publicHealthBody({
   degraded = false,
   lastAnchoredRoot = null,
   lastAnchoredTx = null,
   quarantinedHeads = null,
+  anchorLagS = 0,
+  unanchoredLeaves = 0,
+  receiptFailures = 0,
 } = {}) {
   const body = {
     status: degraded ? 'degraded' : 'ok',
     last_anchored_root: lastAnchoredRoot ?? null,
     last_anchored_tx: lastAnchoredTx ?? null,
     free_tier: 'available',
+    anchor_lag_s: publicCount(anchorLagS),
+    unanchored_leaves: publicCount(unanchoredLeaves),
+    receipt_failures: publicCount(receiptFailures),
   };
-  // Absent when nothing is quarantined, so a clean boot keeps the public shape.
+  // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
+  // An acknowledged head stays in the list. It does not flip status to degraded.
   if (quarantinedHeads && Number(quarantinedHeads.count) > 0) {
+    const heads = Array.isArray(quarantinedHeads.heads) ? quarantinedHeads.heads : [];
     body.quarantined_heads = {
       count: Number(quarantinedHeads.count),
-      heads: Array.isArray(quarantinedHeads.heads) ? quarantinedHeads.heads : [],
+      heads: heads.map((row) => ({
+        epoch: row.epoch,
+        tree_size: row.tree_size,
+        prefix_size: row.prefix_size,
+        acknowledged: row.acknowledged === true,
+      })),
     };
   }
   return body;

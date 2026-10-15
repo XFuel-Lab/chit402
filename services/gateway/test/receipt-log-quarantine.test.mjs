@@ -151,6 +151,7 @@ test('a raced head is quarantined, /health shows it, and inclusion uses the last
       epoch: tree.epoch,
       tree_size: 6,
       prefix_size: 5,
+      acknowledged: false,
     }]);
 
     const inside = loaded.inclusion('b');
@@ -192,6 +193,7 @@ test('a raced head is quarantined, /health shows it, and inclusion uses the last
         epoch: tree.epoch,
         tree_size: 6,
         prefix_size: 5,
+        acknowledged: false,
       }]);
       assert.equal(JSON.stringify(health).includes('VERIFIED'), false);
       const inclusionRes = await fetch(`${base}/v1/receipts/b/inclusion`);
@@ -222,6 +224,51 @@ test('a head whose root matches no prefix still throws ReceiptLogRefused', async
       () => new ReceiptMerkleTree().load(dir),
       (err) => err instanceof ReceiptLogRefused && err.code === 'root_mismatch',
     );
+  });
+});
+
+test('a signed note acknowledges a raced head and an unsigned note does not', async () => {
+  await withAnchorKey(async () => {
+    const { healthIsDegraded } = await import('../src/public-metrics.js');
+    const { dir, tree } = await journalWithGoodHead();
+    const prefixRoot = hex(rootOf(tree.leaves.slice(0, 5)));
+    const raced = signHead(racedClaims(tree, 6, prefixRoot));
+    appendJournal(dir, { v: 1, op: 'head', epoch: tree.epoch, head: raced });
+    appendJournal(dir, {
+      v: 1,
+      op: 'quarantine_ack',
+      root: String(raced.root).replace(/^0x/, ''),
+      epoch: tree.epoch,
+      tree_size: 6,
+      prefix_size: 5,
+      issuer_signature: { jws: 'aa.bb.cc' },
+    });
+    resetReceiptMerkleTree();
+    const loaded = getReceiptMerkleTree();
+    loaded.load(dir);
+    assert.equal(loaded.quarantinedHeads.length, 1);
+    assert.equal(loaded.quarantinedHeads[0].acknowledged, false);
+    assert.equal(loaded.heads.some((head) => head.root === raced.root), false);
+    const openLog = {
+      consecutive_failures: 0,
+      last_error: null,
+      quarantined_heads: loaded.bundleStatus().quarantined_heads,
+    };
+    assert.equal(healthIsDegraded(openLog), true);
+
+    loaded.acknowledgeQuarantinedHead(loaded.quarantinedHeads[0].root);
+    const again = new ReceiptMerkleTree();
+    again.load(dir);
+    const heads = again.bundleStatus().quarantined_heads;
+    assert.equal(heads.count, 1);
+    assert.equal(heads.unacknowledged, 0);
+    assert.equal(heads.heads[0].acknowledged, true);
+    assert.equal(healthIsDegraded({
+      consecutive_failures: 0,
+      last_error: null,
+      quarantined_heads: heads,
+    }), false);
+    assert.equal(again.heads.some((head) => head.root === raced.root), false);
   });
 });
 

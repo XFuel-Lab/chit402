@@ -15,6 +15,7 @@ import {
   echoChainReader,
   installEchoChainReader,
 } from './x402-chain-hook.js';
+import { withRpcTimeout } from './receipt-log-anchor.js';
 
 export {
   setChainReaderForTests,
@@ -684,7 +685,22 @@ export async function confirmSettlement({
   cfg = {},
   chainReader = null,
   authorization = null,
+  ignorePause = false,
 } = {}) {
+  // Settle sets ignorePause after the pre-settle check already passed.
+  // That OK lasts for this request. Late-issue leaves it false.
+  // Either way the reader below must still find the pinned transfer.
+  if (!ignorePause) {
+    const paused = settlementRefusal(challenge?.network);
+    if (paused) {
+      return {
+        ok: false,
+        code: paused,
+        // Always pending: the RPC is untrusted right now, not the transfer.
+        pending: true,
+      };
+    }
+  }
   const reader = chainReader || cfg.chainReader || getChainReaderForTests();
   if (reader) {
     try {
@@ -753,3 +769,212 @@ export function facilitatorFieldsOk(settle, challenge) {
 }
 
 export { sameNetwork };
+
+export const BASE_MAINNET_CHAIN_ID = 8453;
+export const BASE_SEPOLIA_CHAIN_ID = 84532;
+export const SOLANA_MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+export const SOLANA_DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+
+const DEFAULT_SETTLEMENT_RECHECK_MS = 10 * 60 * 1000;
+
+function freshSettlementRow() {
+  return {
+    paused: false,
+    reason: null,
+    attempts: 0,
+    checked: false,
+    nextAt: 0,
+  };
+}
+
+const settlementRpc = {
+  base: freshSettlementRow(),
+  solana: freshSettlementRow(),
+};
+
+let settlementTimer = null;
+
+export function settlementRecheckMs(env = process.env, configured = null) {
+  const raw = configured != null ? configured : env.SETTLEMENT_RPC_RECHECK_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1000) return DEFAULT_SETTLEMENT_RECHECK_MS;
+  return n;
+}
+
+export function expectedBaseChainId(network) {
+  const n = String(network || '').trim().toLowerCase();
+  if (n === 'base' || n === 'eip155:8453') return BASE_MAINNET_CHAIN_ID;
+  if (n === 'base-sepolia' || n === 'eip155:84532') return BASE_SEPOLIA_CHAIN_ID;
+  return null;
+}
+
+export function expectedSolanaGenesis(network) {
+  const n = String(network || '').trim().toLowerCase();
+  if (n === 'solana' || n === `solana:${SOLANA_MAINNET_GENESIS.toLowerCase()}`) return SOLANA_MAINNET_GENESIS;
+  if (n === 'solana-devnet' || n === `solana:${SOLANA_DEVNET_GENESIS.toLowerCase()}`) return SOLANA_DEVNET_GENESIS;
+  return null;
+}
+
+function chainIdEquals(chainId, expected) {
+  if (chainId == null || chainId === '' || expected == null) return false;
+  if (Number(chainId) === expected) return true;
+  const hex = String(chainId).trim().toLowerCase();
+  if (!hex.startsWith('0x')) return false;
+  try {
+    return Number(BigInt(hex)) === expected;
+  } catch {
+    return false;
+  }
+}
+
+function settlementSide(network) {
+  if (!network) return null;
+  return isSolanaNetwork(network) ? 'solana' : 'base';
+}
+
+export function settlementRpcState(side) {
+  const row = settlementRpc[side];
+  if (!row) return null;
+  return {
+    paused: row.paused === true,
+    reason: row.reason,
+    attempts: row.attempts,
+    checked: row.checked === true,
+  };
+}
+
+export function resetSettlementRpcForTests() {
+  settlementRpc.base = freshSettlementRow();
+  settlementRpc.solana = freshSettlementRow();
+  if (settlementTimer) {
+    clearInterval(settlementTimer);
+    settlementTimer = null;
+  }
+}
+
+/** Refusal code when this network's settlement RPC is paused. Null when open. */
+export function settlementRefusal(network) {
+  const side = settlementSide(network);
+  if (!side) return null;
+  const row = settlementRpc[side];
+  if (!row?.paused) return null;
+  return row.reason || 'network_not_accepted';
+}
+
+async function callSettlementRpc(url, method, params, request, signal) {
+  if (typeof request === 'function') return request(url, method, params, signal);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal,
+  });
+  if (!res.ok) {
+    const err = new Error('rpc_http');
+    err.code = 'rpc_http';
+    throw err;
+  }
+  const data = await res.json();
+  if (data.error) {
+    const err = new Error('rpc_error');
+    err.code = 'rpc_error';
+    throw err;
+  }
+  return data.result;
+}
+
+async function pauseBackoff(attempts) {
+  const { anchorBackoffMs } = await import('./receipt-merkle.js');
+  return anchorBackoffMs(attempts);
+}
+
+/**
+ * eth_chainId for Base, getGenesisHash for Solana. A mismatch pauses that
+ * side only. A timeout pauses it and retries on the anchor backoff.
+ */
+export async function probeSettlementSide({
+  side,
+  url,
+  expected,
+  request,
+  timeoutMs = 5000,
+  now = Date.now(),
+} = {}) {
+  const row = settlementRpc[side];
+  if (!row || !url || expected == null) return settlementRpcState(side);
+  if (row.paused && row.nextAt && now < row.nextAt) return settlementRpcState(side);
+  const budget = Math.max(1, Math.ceil(Number(timeoutMs) || 5000));
+  const signal = AbortSignal.timeout(budget);
+  const method = side === 'solana' ? 'getGenesisHash' : 'eth_chainId';
+  try {
+    const result = await withRpcTimeout(
+      () => callSettlementRpc(url, method, [], request, signal),
+      budget,
+    );
+    const ok = side === 'solana' ? result === expected : chainIdEquals(result, expected);
+    row.checked = true;
+    if (!ok) {
+      row.paused = true;
+      row.reason = 'network_not_accepted';
+      row.attempts += 1;
+      row.nextAt = now + settlementRecheckMs();
+      return settlementRpcState(side);
+    }
+    row.paused = false;
+    row.reason = null;
+    row.attempts = 0;
+    row.nextAt = 0;
+    return settlementRpcState(side);
+  } catch {
+    row.checked = true;
+    row.paused = true;
+    row.reason = 'settle_unconfirmed';
+    row.attempts += 1;
+    row.nextAt = now + await pauseBackoff(row.attempts);
+    return settlementRpcState(side);
+  }
+}
+
+export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
+  const jobs = [];
+  const baseUrl = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  const baseExpected = expectedBaseChainId(cfg.network);
+  if (baseUrl && baseExpected != null) {
+    jobs.push(probeSettlementSide({
+      side: 'base',
+      url: baseUrl,
+      expected: baseExpected,
+      request: opts.request,
+      timeoutMs: opts.timeoutMs,
+      now: opts.now,
+    }));
+  }
+  const solUrl = cfg.solanaRpcUrl || cfg.solana?.rpcUrl || null;
+  const solExpected = expectedSolanaGenesis(cfg.solana?.network);
+  if (solUrl && solExpected) {
+    jobs.push(probeSettlementSide({
+      side: 'solana',
+      url: solUrl,
+      expected: solExpected,
+      request: opts.request,
+      timeoutMs: opts.timeoutMs,
+      now: opts.now,
+    }));
+  }
+  await Promise.all(jobs);
+  return {
+    base: settlementRpcState('base'),
+    solana: settlementRpcState('solana'),
+  };
+}
+
+export function startSettlementRpcRecheck(cfg = {}, { intervalMs } = {}) {
+  if (settlementTimer) return settlementTimer;
+  const every = intervalMs ?? settlementRecheckMs(process.env, cfg.settlementRpcRecheckMs);
+  const timer = setInterval(() => {
+    probeConfiguredSettlementRpcs(cfg).catch(() => {});
+  }, every);
+  if (typeof timer.unref === 'function') timer.unref();
+  settlementTimer = timer;
+  return timer;
+}

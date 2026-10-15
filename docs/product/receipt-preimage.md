@@ -1,12 +1,14 @@
 # Receipt hash preimages
 
-A stranger can recompute the public hashes on a receipt without asking us what bytes we hashed. `GET /receipt/:id?format=json` (schema `xfuel.receipt.v4`) adds an unsigned `preimages` block. The whole canonical object is `GET /receipt/:id/preimage`. One field is `GET /receipt/:id/preimage/:field`. A refusal (`chit402.refusal.v1`) does the same at `GET /refusal/:id`, `GET /refusal/:id/preimage`, and `GET /refusal/:id/preimage/:field`.
+A stranger can recompute the public hashes on a receipt without asking us what bytes we hashed. `GET /receipt/:id?format=json` (schema `xfuel.receipt.v4`) adds an unsigned `preimages` block. `GET /receipt/:id/preimage` is the unsigned public shell, not the signed payload. `GET /receipt/:id/preimage/:field` is not served. A refusal (`chit402.refusal.v1`) serves the stored canonical object at `GET /refusal/:id`, `GET /refusal/:id/preimage`, and `GET /refusal/:id/preimage/:field`.
 
 ## Whole canonical object
 
-`GET /receipt/:id/preimage` and `GET /refusal/:id/preimage` return the exact UTF-8 bytes stored at issuance. Those bytes are JCS (RFC 8785): object keys sorted by UTF-16 code unit, no insignificant whitespace, no trailing newline. SHA-256 of the body is `payload_hash` inside the signed JWS. The response sets `X-Chit-Hash-Alg: sha256`, `X-Chit-Payload-Hash` to that digest, and `X-Chit-Canonicalization: jcs-rfc8785`. `?meta=1` returns the algorithm and the hash without the body.
+`GET /refusal/:id/preimage` returns the exact UTF-8 bytes stored at issuance. Those bytes are JCS (RFC 8785): object keys sorted by UTF-16 code unit, no insignificant whitespace, no trailing newline. SHA-256 of the body is `payload_hash` inside the signed JWS. The response sets `X-Chit-Hash-Alg: sha256`, `X-Chit-Payload-Hash` to that digest, and `X-Chit-Canonicalization: jcs-rfc8785`. `?meta=1` returns the algorithm and the hash without the body.
 
-The hash is of the public claims **without** `payload_hash`. The JWS then carries `payload_hash`. A stranger hashes the response body and compares it to that claim. The server does not rebuild the object from the receipt on read. A document issued before the bytes were stored answers `404 preimage_unavailable`.
+`GET /receipt/:id/preimage` returns the unsigned public shell, not that canonical object. Nothing committed hashes to the shell. `payload_hash` is over the owner-held bytes. The body stays the shell bytes. The response sets `X-Chit-Commits-To: null` and `X-Chit-Preimage-Note`.
+
+For a refusal, the hash is of the public claims **without** `payload_hash`. The JWS then carries `payload_hash`. A stranger hashes that response body and compares it to that claim. The server does not rebuild the object on read. A refusal issued before the bytes were stored answers `404 preimage_unavailable`. The receipt shell is not that object: hashing it does not reproduce `payload_hash`.
 
 Payment receipts that store the object are payload version 10. Version 9 and earlier still verify and do not grow a canonical object after the fact. New refusals are payload version 2. Refusal payload version 1 still verifies.
 

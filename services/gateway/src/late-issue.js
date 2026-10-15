@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import logger from './logger.js';
 import { confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
 import { samePayee, truncateWallet } from './x402-flags.js';
+import { recordReceiptFailure } from './receipt-failures.js';
 import { canonicalNetwork, normalizePaymentRef, sameNetwork } from './payment-ref.js';
 import { buildV11SignedClaims, minuteIssuedAt } from './v11-seal.js';
 import { jcsRfc8785 } from './offer-receipt.js';
@@ -386,6 +387,8 @@ async function readSettlement(record, deps, reader) {
       expectedPayTo: record.payee,
       cfg,
       chainReader: reader || (process.env.NODE_ENV === 'test' ? cfg.chainReader : null) || null,
+      // No pre-settle OK on this path. A paused network stays pending.
+      ignorePause: false,
     });
   } catch (err) {
     logger.warn({ err: err.message, payer: truncateWallet(record.auth?.from) }, 'late-issue chain read failed');
@@ -532,6 +535,13 @@ async function appendLeaf(record, digest, deps) {
     return inclusion != null;
   } catch (err) {
     logger.warn({ err: err.message }, 'late-issue log append failed');
+    recordReceiptFailure({
+      stage: 'log',
+      reason: err?.code || 'log_append_failed',
+      outcome: 'pending',
+      network: record?.network || null,
+      tx: record?.tx_hint || record?.tx_ref || null,
+    });
     return false;
   }
 }
@@ -673,6 +683,13 @@ async function publishIssued(store, record, chain, deps, outputBytes) {
         payTo: chain?.payTo || fresh.payee,
       });
     }
+    recordReceiptFailure({
+      stage: 'confirm',
+      reason: 'receipt_issued',
+      outcome: 'recovered',
+      network: fresh?.network || null,
+      tx: txRef || fresh?.tx_hint || null,
+    });
     return { jws: fresh.jws, signed: false, served: fresh.served === true };
   }
 
@@ -694,6 +711,13 @@ async function publishIssued(store, record, chain, deps, outputBytes) {
   } catch (err) {
     if (err.code === 'injected_crash') throw err;
     logger.warn({ err: err.message, payer: truncateWallet(current.auth?.from) }, 'late-issue signer failed');
+    recordReceiptFailure({
+      stage: 'sign',
+      reason: err?.code || 'sign_failed',
+      outcome: 'pending',
+      network: current?.network || null,
+      tx: current?.tx_hint || current?.tx_ref || null,
+    });
     store.casLate(id, 'issuing', 'confirmed', { lease_owner: null, lease_until: 0, jws: null });
     return { pending: true, pendingId: id, signerFailed: true };
   }
@@ -846,7 +870,45 @@ export async function resolveLateRecord(store, record, deps = {}) {
       if (norm.ok) txRef = norm.key;
     }
     store.casLate(id, 'issuing', 'issuing', { tx_ref: txRef, tx_hint: tx || row.tx_hint });
-    return publishIssued(store, store.getLate(id), { ...chain, tx }, signing, Buffer.alloc(0));
+    const reserveOwner = `late:${process.pid}:${id}`;
+    let held = false;
+    if (txRef && typeof store.reserveTx === 'function') {
+      try {
+        held = store.reserveTx(txRef, row.auth_key || null, reserveOwner, 180_000) === true;
+      } catch (err) {
+        logger.warn({ err: err.message }, 'late-issue reserveTx failed closed');
+        store.casLate(id, 'issuing', 'confirmed', {
+          lease_owner: null,
+          lease_until: 0,
+          why: 'reserve_unavailable',
+        });
+        return { pending: true, pendingId: id, state: 'confirmed' };
+      }
+      if (!held) {
+        if (typeof store.isTxSpent === 'function' && store.isTxSpent(txRef)) {
+          store.casLate(id, 'issuing', 'issued', {
+            why: 'tx_already_receipted',
+            tx_ref: txRef,
+          });
+          return { state: 'issued', pendingId: id, duplicate: true };
+        }
+        store.casLate(id, 'issuing', 'confirmed', {
+          lease_owner: null,
+          lease_until: 0,
+          why: 'tx_reserved',
+        });
+        return { pending: true, pendingId: id, state: 'confirmed' };
+      }
+    }
+    try {
+      return await publishIssued(store, store.getLate(id), { ...chain, tx }, signing, Buffer.alloc(0));
+    } finally {
+      if (held && typeof store.releaseTx === 'function') {
+        try {
+          if (!store.isTxSpent(txRef)) store.releaseTx(txRef, row.auth_key || null, reserveOwner);
+        } catch { /* the lease expires */ }
+      }
+    }
   }
   return { pending: true, pendingId: id, state: row.state };
 }
