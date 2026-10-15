@@ -13,6 +13,10 @@ export default defineConfig({
         target: 'http://127.0.0.1:3002',
         changeOrigin: true,
       },
+      '/v1/receipts/feedback': {
+        target: 'http://127.0.0.1:3002',
+        changeOrigin: true,
+      },
     },
   },
   build: { outDir: 'dist', sourcemap: true },

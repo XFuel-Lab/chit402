@@ -125,7 +125,14 @@ test('VERIFIED uses the verifier headline and message', async () => {
     assert.equal(body.overall, 'VERIFIED');
     assert.deepEqual(body.lines, lines);
     assert.equal(body.verdict.exit_code, 0);
-    assert.deepEqual(seen, [{ overall: 'VERIFIED', status: 200 }]);
+    assert.equal(body.hint, null);
+    assert.match(body.request_id, /^chk_[0-9a-f]{16}$/);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].overall, 'VERIFIED');
+    assert.equal(seen[0].status, 200);
+    assert.equal(seen[0].client, 'api');
+    assert.equal(seen[0].request_id, body.request_id);
+    assert.equal(seen[0].reason, undefined);
     assert.equal(JSON.stringify(seen).includes('chit-1ebc5616'), false);
   } finally {
     await new Promise((resolve) => local.close(resolve));
@@ -168,7 +175,13 @@ test('oversized input is rejected and a wallet is not looked up', async () => {
   const looked = await postCheck(wallet);
   assert.equal(looked.res.status, 400);
   assert.equal(looked.body.error, 'receipt_required');
+  assert.equal(looked.body.hint, 'Paste receipt JSON, a chit- id, or a verify link.');
+  assert.deepEqual(looked.body.accepted, ['receipt JSON', 'a chit- id', 'a verify link']);
+  assert.equal(looked.body.example, 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96');
+  assert.match(looked.body.request_id, /^chk_[0-9a-f]{16}$/);
   assert.equal(JSON.stringify(looked.body).includes(wallet), false);
+  assert.equal(body.hint, 'Paste a shorter receipt, or a chit- id, or a verify link.');
+  assert.deepEqual(body.accepted, looked.body.accepted);
 });
 
 test('anonymous counts do not keep the pasted input', async () => {

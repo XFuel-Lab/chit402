@@ -712,3 +712,87 @@ select.input {
   font-size: 0.9rem;
 }
 .receipt-check-foot a { color: #2f6bff; }
+.receipt-check-hint {
+  margin: 0.85rem 0 0;
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.receipt-check-accepted-label {
+  margin: 1rem 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+}
+.receipt-check-accepted {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: #fff;
+}
+.receipt-check-accepted li { margin-top: 0.2rem; }
+.receipt-check-example-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.85rem 0 0;
+  color: #fff;
+}
+.receipt-check-example {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #2f6bff;
+  border-radius: 8px;
+  background: #000;
+  color: #2f6bff;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.receipt-check-feedback { margin-top: 1.1rem; }
+.receipt-check-feedback-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2f6bff;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.receipt-check-feedback-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.receipt-check-feedback-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: #fff;
+  font-size: 0.9rem;
+}
+.receipt-check-feedback-form input,
+.receipt-check-feedback-form select,
+.receipt-check-feedback-form textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #fff;
+  border-radius: 8px;
+  background: #000;
+  color: #fff;
+  font: inherit;
+}
+.receipt-check-feedback-form label.receipt-check-attach {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+.receipt-check-feedback-form label.receipt-check-attach input {
+  width: auto;
+  margin-top: 0.2rem;
+}
+.receipt-check-feedback-status {
+  margin: 0.6rem 0 0;
+  color: #fff;
+}
