@@ -12,6 +12,10 @@ export const LOG_REDACT = {
     'req.headers["x-chit-request-salt"]',
     'headers["x-chit-request-salt"]',
     'res.headers["x-chit-request-salt"]',
+    'req.body',
+    'req.rawBody',
+    'body.input',
+    'req.body.input',
   ],
   censor: '[Redacted]',
 };

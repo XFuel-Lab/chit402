@@ -153,6 +153,8 @@ import {
   legacyProofForReceipt,
 } from './issuer-root.js';
 import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
+import { mountReceiptCheck } from './receipt-check.js';
+import { openCheckStats } from './receipt-check-stats.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -169,6 +171,9 @@ import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-expo
  *   GET   /.well-known/agent-card.json  A2A v1.0 agent card
  *   GET   /.well-known/x402list.txt     x402-list domain verification (public, text/plain)
  *   GET   /receipt/:taskId Public, no-auth verifiable receipt (HTML + ?format=json)
+ *   POST  /v1/receipts/check  Free receipt check (not x402). Pasted JSON, id, or URL.
+ *   POST  /v1/receipts/feedback  File check feedback. Off without CHECK_FEEDBACK_GITHUB_TOKEN.
+ *   GET   /v1/receipts/check/stats  Anonymous hourly check counts and an alert.
  *   PUT   /webhook         Register a webhook for TaskSettled events (HMAC-signed)
  *   GET   /webhook         List registered webhooks
  *   DELETE /webhook        Remove a registered webhook (by id or url)
@@ -383,6 +388,9 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
+- POST /v1/receipts/check : free receipt check (not x402). Paste a receipt JSON document, a receipt id, or a receipt URL. Verdicts match chit402-verify. No wallet lookup. No account. https://www.chit402.com/check
+- POST /v1/receipts/feedback : optional note about a check. The pasted receipt is attached only when asked. Off when CHECK_FEEDBACK_GITHUB_TOKEN is unset.
+- GET /v1/receipts/check/stats?hours=N : anonymous hourly counts (N capped at 168) and an alert. No receipt input.
 - Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
 - Receipt hash preimages: GET /receipt/:id/preimage is the unsigned public shell (JCS). The holder signature is on the owner view. output.hash stays private.
 - Live receipt shell: https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96 — public page is the shell. Full verify needs the payer wallet or the agent key.
@@ -5555,6 +5563,13 @@ export function createApp() {
       res.set('Vary', 'Authorization');
       return res.status(200).json(result.body);
     },
+  });
+
+  mountReceiptCheck(app, {
+    windowMs: Number(process.env.RECEIPT_CHECK_WINDOW_MS) || undefined,
+    maxHits: Number(process.env.RECEIPT_CHECK_MAX) || undefined,
+    maxBytes: Number(process.env.RECEIPT_CHECK_MAX_BYTES) || undefined,
+    stats: openCheckStats(ownerStore.path),
   });
 
   registerOpenRouterBroadcast(app, {

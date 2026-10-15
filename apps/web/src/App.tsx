@@ -26,6 +26,7 @@ import BookBot from './pages/BookBot';
 import Register from './pages/Register';
 import PrivateSpendDocs from './pages/PrivateSpendDocs';
 import ReceiptCheckDocs from './pages/ReceiptCheckDocs';
+import ReceiptCheck from './pages/ReceiptCheck';
 import VerifyDocs from './pages/VerifyDocs';
 import Activity from './pages/Activity';
 import Audit from './pages/Audit';
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="/docs/acp" element={<AcpDocs />} />
         <Route path="/docs/private-spend" element={<PrivateSpendDocs />} />
         <Route path="/docs/receipt-check" element={<ReceiptCheckDocs />} />
+        <Route path="/check" element={<ReceiptCheck />} />
         <Route path="/docs/verify" element={<VerifyDocs />} />
         <Route path="/docs/swarm-platforms" element={<SwarmPlatforms />} />
         <Route path="/docs/olas" element={<SwarmPlatforms />} />

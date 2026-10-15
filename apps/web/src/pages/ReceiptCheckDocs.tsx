@@ -29,6 +29,10 @@ export default function ReceiptCheckDocs() {
             issuer also pins the key-history snapshot that was current when it signed. <code>xfuel-verify</code>{' '}
             checks that pin, including <code>not_after</code> on the pinned entry.
           </p>
+          <p>
+            <Link to="/check">Check a receipt</Link> in the browser. Paste the receipt JSON, or a receipt id or
+            URL. Free. No account.
+          </p>
         </header>
 
         <div className="docs-panel">

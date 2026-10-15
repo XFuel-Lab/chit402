@@ -69,6 +69,7 @@ quietly — the service starts, serves traffic, and is wrong:
 | `ANCHOR_MAX_FEE_WEI` | Required when `NODE_ENV` is production (any casing). Integer wei cap on `maxFeePerGas` for the first sign, replacement, and speed-up. Deploy default `20000000000` (20 gwei). Unset or non-numeric refuses to sign |
 | `ANCHOR_MAX_PRIORITY_WEI` | Same rule for `maxPriorityFeePerGas`. Deploy default `2000000000` (2 gwei) |
 | `M2M_RELAYER_AUDIENCE` | Required when relayer addresses are set. Signatures bind this audience and a single-use nonce |
+| `GATEWAY_COMMIT` | Deploy must export this. Set it to `$(git rev-parse HEAD)` for the checkout that is about to run. Receipt-check feedback names the commit. Unset is recorded as `GATEWAY_COMMIT unset` |
 
 Check names without printing values, from the gateway directory:
 
@@ -109,6 +110,8 @@ Day-to-day:
 ```bash
 cd "$XFUEL_REPO" && git pull
 cd services/gateway && npm ci --omit=dev
+# Deploy must export the commit this process will run.
+# Write GATEWAY_COMMIT=$(git rev-parse HEAD) into services/gateway/.env, then restart.
 sudo systemctl restart "$XFUEL_SYSTEMD_UNIT"
 sudo systemctl status "$XFUEL_SYSTEMD_UNIT" --no-pager
 ```

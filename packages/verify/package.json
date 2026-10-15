@@ -15,6 +15,11 @@
       "require": "./dist/index.js"
     },
     "./cli": "./dist/cli.js",
+    "./check-input": {
+      "types": "./dist/check-input.d.ts",
+      "import": "./dist/check-input.js",
+      "require": "./dist/check-input.js"
+    },
     "./dist/cli.js": "./dist/cli.js"
   },
   "sideEffects": false,

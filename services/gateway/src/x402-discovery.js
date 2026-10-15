@@ -2230,6 +2230,70 @@ export function buildOpenApiSpec(baseUrl = '') {
           responses: { 200: { description: 'Record card.' } },
         },
       },
+      '/v1/receipts/check': {
+        post: {
+          operationId: 'checkReceipt',
+          summary: 'Check a receipt. Free. Not x402.',
+          description: 'Paste a receipt JSON document, a receipt id, or a receipt URL. The verdict is the same text chit402-verify prints: VERIFIED, INVALID, or COULD_NOT_CHECK. No wallet lookup. No account. The input is not stored.',
+          tags: ['Receipts'],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['input'],
+                  properties: {
+                    input: {
+                      type: 'string',
+                      description: 'Receipt JSON, a receipt id, or a receipt URL.',
+                    },
+                    client: {
+                      type: 'string',
+                      enum: ['web', 'api'],
+                      description: 'web for the site. Any other value is counted as api.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: 'VERIFIED, INVALID, or COULD_NOT_CHECK. Includes request_id, hint when not verified, and a report of kind, bytes, receipt id, version, issuer, and chain.' },
+            400: { description: 'Input is not a receipt. hint and accepted list the next step.' },
+            413: { description: 'Input is too large. hint and accepted list the next step.' },
+            429: { description: 'Per-IP rate limit' },
+          },
+        },
+      },
+      '/v1/receipts/feedback': {
+        post: {
+          operationId: 'receiptCheckFeedback',
+          summary: 'File feedback about a receipt check. Free. Not x402.',
+          description: 'Body: expected (verified, invalid, or other), intent, optional note (max 1000), attach_receipt, receipt (only when attach_receipt is true), result_code, reason, checks, input_kind, input_bytes, receipt_id, receipt_version, issuer, chain, page, request_id, client (web or api). A contact address is not accepted. Off with 503 feedback_unavailable when CHECK_FEEDBACK_GITHUB_TOKEN is unset. The same per-IP limit as the check.',
+          tags: ['Receipts'],
+          responses: {
+            202: { description: 'Filed. ok true and request_id. The receipt is not echoed.' },
+            400: { description: 'expected or intent missing, or note too long' },
+            429: { description: 'Per-IP rate limit' },
+            503: { description: 'feedback_unavailable' },
+          },
+        },
+      },
+      '/v1/receipts/check/stats': {
+        get: {
+          operationId: 'receiptCheckStats',
+          summary: 'Anonymous hourly receipt-check counts and an alert. Free. Not x402.',
+          description: 'Query hours (default 24, capped at 168). buckets are hourly verified, invalid, and could_not_check totals split by client and reason. alert covers the latest hour with at least 20 checks. No receipt input.',
+          tags: ['Receipts'],
+          parameters: [{ name: 'hours', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 168 } }],
+          responses: {
+            200: { description: 'hours, from, to, buckets, alert' },
+            400: { description: 'bad_hours' },
+            429: { description: 'Per-IP rate limit' },
+          },
+        },
+      },
       '/v1/receipts/tree/head': {
         get: {
           operationId: 'receiptTreeHead',

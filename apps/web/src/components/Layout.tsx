@@ -16,6 +16,7 @@ const xfuelNavLinks: NavItem[] = [
 
 const chitNavLinks: NavItem[] = [
   { to: '/book', label: 'Book' },
+  { to: '/check', label: 'Check' },
   { to: '/audit', label: 'Audit' },
   { to: '/docs', label: 'Docs' },
   { to: '/pricing', label: 'Pricing' },

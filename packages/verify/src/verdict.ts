@@ -105,6 +105,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: 'Fetch the receipt again, then re-run.',
     };
   }
+  if (reason === 'issuer_history_unavailable') {
+    return {
+      message: 'Issuer history could not be read.',
+      next_step: null,
+    };
+  }
   if (reason === 'log_unreachable' || reason === 'anchor_unreachable') {
     return {
       message: 'The receipt log or anchor could not be fetched.',
@@ -408,6 +414,7 @@ export const VERDICT_DOC_ANCHORS = [
   'unsupported_version',
   'kid_not_in_history',
   'receipt_unavailable',
+  'issuer_history_unavailable',
   'log_unreachable',
   'anchor_unreachable',
   'pending_anchor',
