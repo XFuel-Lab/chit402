@@ -724,7 +724,7 @@ export async function confirmSettlement({
   const solana = isSolanaNetwork(challenge?.network);
   try {
     if (solana) {
-      const url = cfg.solanaRpcUrl || cfg.solana?.rpcUrl || null;
+      const url = settlementSolanaRpcUrl(cfg);
       if (!url) return { ok: false, code: 'settle_unconfirmed', pending: true };
       const sig = facilitator.transaction || facilitator.txRef;
       const tx = await readSolanaTransaction(url, sig, {
@@ -772,8 +772,24 @@ export { sameNetwork };
 
 export const BASE_MAINNET_CHAIN_ID = 8453;
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
-export const SOLANA_MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
-export const SOLANA_DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+// Full getGenesisHash values. CAIP-2 keeps only the first 32 characters.
+export const SOLANA_MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
+export const SOLANA_DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+const SOLANA_MAINNET_CAIP = 'solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp';
+const SOLANA_DEVNET_CAIP = 'solana:etwtrabzayq6imfeykouru166vu2xqa1';
+
+/** Same URL settle uses: SOLANA_RPC_URL on config.x402.solanaRpcUrl, then solana.rpcUrl. */
+export function settlementSolanaRpcUrl(cfg = {}) {
+  return cfg.solanaRpcUrl || cfg.solana?.rpcUrl || null;
+}
+
+function rpcHostname(url) {
+  try {
+    return new URL(url).hostname || null;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_SETTLEMENT_RECHECK_MS = 10 * 60 * 1000;
 
@@ -810,8 +826,12 @@ export function expectedBaseChainId(network) {
 
 export function expectedSolanaGenesis(network) {
   const n = String(network || '').trim().toLowerCase();
-  if (n === 'solana' || n === `solana:${SOLANA_MAINNET_GENESIS.toLowerCase()}`) return SOLANA_MAINNET_GENESIS;
-  if (n === 'solana-devnet' || n === `solana:${SOLANA_DEVNET_GENESIS.toLowerCase()}`) return SOLANA_DEVNET_GENESIS;
+  if (n === 'solana' || n === 'solana-mainnet' || n === 'mainnet-beta' || n === SOLANA_MAINNET_CAIP) {
+    return SOLANA_MAINNET_GENESIS;
+  }
+  if (n === 'solana-devnet' || n === 'devnet' || n === SOLANA_DEVNET_CAIP) {
+    return SOLANA_DEVNET_GENESIS;
+  }
   return null;
 }
 
@@ -899,6 +919,7 @@ export async function probeSettlementSide({
   request,
   timeoutMs = 5000,
   now = Date.now(),
+  warn = null,
 } = {}) {
   const row = settlementRpc[side];
   if (!row || !url || expected == null) return settlementRpcState(side);
@@ -918,6 +939,16 @@ export async function probeSettlementSide({
       row.reason = 'network_not_accepted';
       row.attempts += 1;
       row.nextAt = now + settlementRecheckMs();
+      if (side === 'solana') {
+        const report = warn || ((obj, msg) => logger.warn(obj, msg));
+        const actual = typeof result === 'string' ? result : null;
+        report({
+          side: 'solana',
+          expected,
+          actual,
+          host: rpcHostname(url),
+        }, 'settlement RPC genesis mismatch');
+      }
       return settlementRpcState(side);
     }
     row.paused = false;
@@ -949,7 +980,7 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
       now: opts.now,
     }));
   }
-  const solUrl = cfg.solanaRpcUrl || cfg.solana?.rpcUrl || null;
+  const solUrl = settlementSolanaRpcUrl(cfg);
   const solExpected = expectedSolanaGenesis(cfg.solana?.network);
   if (solUrl && solExpected) {
     jobs.push(probeSettlementSide({
@@ -959,6 +990,7 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
       request: opts.request,
       timeoutMs: opts.timeoutMs,
       now: opts.now,
+      warn: opts.warn,
     }));
   }
   await Promise.all(jobs);

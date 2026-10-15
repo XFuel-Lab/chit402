@@ -17,7 +17,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal } from './x402-chain.js';
+import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
@@ -827,7 +827,7 @@ export async function settleBoundPayment({
     cfg: {
       ...cfg,
       baseRpcUrl: cfg.baseRpcUrl || cfg.rpcUrl || null,
-      solanaRpcUrl: cfg.solanaRpcUrl || cfg.solana?.rpcUrl || null,
+      solanaRpcUrl: settlementSolanaRpcUrl(cfg),
     },
   });
   if (!chain.ok) {
