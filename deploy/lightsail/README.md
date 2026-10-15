@@ -109,7 +109,7 @@ Day-to-day:
 
 ```bash
 cd "$XFUEL_REPO" && git pull
-cd services/gateway && npm install --omit=dev
+cd services/gateway && npm ci --omit=dev
 # Deploy must export the commit this process will run.
 # Write GATEWAY_COMMIT=$(git rev-parse HEAD) into services/gateway/.env, then restart.
 sudo systemctl restart "$XFUEL_SYSTEMD_UNIT"
