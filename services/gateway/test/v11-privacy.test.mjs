@@ -468,6 +468,20 @@ test('logs redact the salt header', () => {
   assert.match(text, /Redacted/);
 });
 
+test('logs redact the Authorization header', () => {
+  const lines = [];
+  const log = pino({ redact: LOG_REDACT }, { write(chunk) { lines.push(chunk); } });
+  const secret = 'ops-bearer-secret-value';
+  log.info({
+    authorization: `Bearer ${secret}`,
+    headers: { authorization: `Bearer ${secret}` },
+    req: { headers: { authorization: `Bearer ${secret}` } },
+  }, 'request');
+  const text = lines.join('');
+  assert.equal(text.includes(secret), false);
+  assert.match(text, /Redacted/);
+});
+
 test('body commitment uses the v11/body subkey', () => {
   const salt = '01'.repeat(32);
   const body = 'hello';

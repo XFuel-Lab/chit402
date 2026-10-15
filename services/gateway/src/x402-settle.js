@@ -946,6 +946,7 @@ function refused(req, reason, extra = {}) {
       tx: extra.tx || null,
       outcome: extra.outcome || 'refused',
       requestId: req?.id || null,
+      preSettle: extra.preSettle === true,
     });
   }
   recordRefusal(code, userAgentOf(req));

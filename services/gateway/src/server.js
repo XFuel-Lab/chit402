@@ -139,6 +139,7 @@ import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegra
 import {
   receiptFailureCount,
   listReceiptFailures,
+  listRefusalCounts,
   receiptFailureCsv,
   receiptFailuresAuth,
   extractReceiptFailuresToken,
@@ -4435,12 +4436,13 @@ export function createApp() {
       return res.status(400).json({ error: 'bad_since' });
     }
     const failures = listReceiptFailures({ since: since ? String(since) : null });
+    const refusalCounts = listRefusalCounts({ since: since ? String(since) : null });
     const wantsCsv = req.query?.format === 'csv' || String(req.headers.accept || '').includes('text/csv');
     res.set('Cache-Control', 'private, no-store');
     if (wantsCsv) {
       return res.type('text/csv').send(receiptFailureCsv(failures));
     }
-    return res.json({ failures });
+    return res.json({ failures, refusal_counts: refusalCounts });
   });
 
   app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {

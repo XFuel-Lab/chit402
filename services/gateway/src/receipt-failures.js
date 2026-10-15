@@ -1,17 +1,30 @@
 /**
- * Append-only receipt-path failures for product review.
+ * Receipt-path failures for product review.
  * Rows are time, network, stage, reason, tx, outcome, request id.
+ * Pre-settle refusals are day/network/reason counts, not rows.
+ * Memory keeps 5,000 rows. The JSONL file rotates at 5 MB.
  * No payer, no payload, no header.
  */
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { PAYMENT_ERROR_CODES } from './x402-flags.js';
+import { facilitatorNetwork } from './x402-facilitator.js';
 
 const STAGES = new Set(['pre-check', 'settle', 'confirm', 'sign', 'log', 'anchor']);
 const OUTCOMES = new Set(['refused', 'pending', 'recovered']);
 const FIELDS = ['time', 'network', 'stage', 'reason', 'tx', 'outcome', 'request_id'];
+const REFUSAL_REASONS = new Set(PAYMENT_ERROR_CODES);
+const REFUSAL_NETWORKS = new Set(['base', 'base-sepolia', 'solana', 'solana-devnet']);
+
+export const RECEIPT_FAILURE_ROW_CAP = 5000;
+export const RECEIPT_FAILURE_FILE_BYTES = 5 * 1024 * 1024;
+const REFUSAL_DAY_CAP = 30;
 
 const rows = [];
+const refusalCounts = new Map();
+let total = 0;
+let loaded = false;
 
 function storeFile() {
   const configured = process.env.RECEIPT_FAILURES_FILE;
@@ -20,18 +33,43 @@ function storeFile() {
 }
 
 function loadFile() {
+  if (loaded) return;
+  loaded = true;
   const file = storeFile();
-  if (!file || rows.length > 0) return;
+  if (!file) return;
+  let size = 0;
+  try { size = statSync(file).size; } catch { return; }
+  if (size >= RECEIPT_FAILURE_FILE_BYTES) {
+    rotateFile(file);
+    return;
+  }
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { return; }
+  const parsed = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
-      const parsed = JSON.parse(line);
-      const row = shape(parsed);
-      if (row) rows.push(row);
+      const row = shape(JSON.parse(line));
+      if (row) parsed.push(row);
     } catch { /* skip a torn line */ }
   }
+  total += parsed.length;
+  rows.push(...parsed.slice(-RECEIPT_FAILURE_ROW_CAP));
+}
+
+function rotateFile(file) {
+  const backup = `${file}.1`;
+  try { rmSync(backup, { force: true }); } catch { /* nothing to replace */ }
+  try { renameSync(file, backup); } catch { /* the live file may already be gone */ }
+}
+
+function appendLimited(file, row) {
+  const line = `${JSON.stringify(row)}\n`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  let size = 0;
+  try { size = statSync(file).size; } catch { size = 0; }
+  if (size >= RECEIPT_FAILURE_FILE_BYTES) rotateFile(file);
+  appendFileSync(file, line);
 }
 
 function shape(input) {
@@ -63,21 +101,82 @@ function sanitizeTx(tx) {
   return text;
 }
 
+function refusalReason(reason) {
+  const code = String(reason || '');
+  return REFUSAL_REASONS.has(code) ? code : 'other';
+}
+
+function refusalNetwork(network) {
+  const name = facilitatorNetwork(network);
+  return REFUSAL_NETWORKS.has(name) ? name : 'other';
+}
+
+function dayKey(time) {
+  const parsed = Date.parse(time);
+  const when = Number.isFinite(parsed) ? new Date(parsed) : new Date();
+  return when.toISOString().slice(0, 10);
+}
+
+function pruneRefusalDays() {
+  const days = [...new Set([...refusalCounts.keys()].map((key) => key.slice(0, 10)))].sort();
+  if (days.length <= REFUSAL_DAY_CAP) return;
+  const drop = new Set(days.slice(0, days.length - REFUSAL_DAY_CAP));
+  for (const key of refusalCounts.keys()) {
+    if (drop.has(key.slice(0, 10))) refusalCounts.delete(key);
+  }
+}
+
+function recordPreSettleRefusal(input) {
+  const day = dayKey(input.time || new Date().toISOString());
+  const key = `${day}|${refusalNetwork(input.network)}|${refusalReason(input.reason)}`;
+  refusalCounts.set(key, (refusalCounts.get(key) || 0) + 1);
+  pruneRefusalDays();
+  return null;
+}
+
 export function recordReceiptFailure(input = {}) {
   try {
+    if (input?.preSettle === true || input?.stage === 'pre-check') {
+      return recordPreSettleRefusal(input);
+    }
     loadFile();
     const row = shape({ ...input, time: input.time || new Date().toISOString() });
     if (!row) return null;
     rows.push(row);
-    const file = storeFile();
-    if (file) {
-      mkdirSync(path.dirname(file), { recursive: true });
-      appendFileSync(file, `${JSON.stringify(row)}\n`);
+    total += 1;
+    if (rows.length > RECEIPT_FAILURE_ROW_CAP) {
+      rows.splice(0, rows.length - RECEIPT_FAILURE_ROW_CAP);
     }
+    const file = storeFile();
+    if (file) appendLimited(file, row);
     return row;
   } catch {
     return null;
   }
+}
+
+export function listRefusalCounts({ since = null } = {}) {
+  const sinceDay = since && Number.isFinite(Date.parse(since))
+    ? new Date(Date.parse(since)).toISOString().slice(0, 10)
+    : null;
+  const out = [];
+  for (const [key, count] of refusalCounts) {
+    const day = key.slice(0, 10);
+    const rest = key.slice(11);
+    const split = rest.indexOf('|');
+    if (split <= 0) continue;
+    if (sinceDay && day < sinceDay) continue;
+    out.push({
+      day,
+      network: rest.slice(0, split),
+      reason: rest.slice(split + 1),
+      count,
+    });
+  }
+  out.sort((a, b) => a.day.localeCompare(b.day)
+    || a.network.localeCompare(b.network)
+    || a.reason.localeCompare(b.reason));
+  return out;
 }
 
 export function listReceiptFailures({ since = null } = {}) {
@@ -92,11 +191,14 @@ export function listReceiptFailures({ since = null } = {}) {
 
 export function receiptFailureCount() {
   loadFile();
-  return rows.length;
+  return total;
 }
 
 export function resetReceiptFailuresForTests() {
   rows.length = 0;
+  refusalCounts.clear();
+  total = 0;
+  loaded = false;
 }
 
 export function receiptFailureCsv(list) {
@@ -108,7 +210,8 @@ export function receiptFailureCsv(list) {
 }
 
 function csvCell(value) {
-  const text = value == null ? '' : String(value);
+  let text = value == null ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
   return text;
 }

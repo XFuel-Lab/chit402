@@ -1,11 +1,17 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   recordReceiptFailure,
   listReceiptFailures,
+  listRefusalCounts,
   receiptFailureCount,
   receiptFailureCsv,
   resetReceiptFailuresForTests,
+  RECEIPT_FAILURE_ROW_CAP,
+  RECEIPT_FAILURE_FILE_BYTES,
 } from '../src/receipt-failures.js';
 
 process.env.M2M_DEMO_MODE = 'true';
@@ -58,7 +64,7 @@ test('a failure row keeps the review fields and drops payer and payload', () => 
   assert.equal(row.request_id, 'req-1');
   const older = recordReceiptFailure({
     time: '2020-01-01T00:00:00.000Z',
-    stage: 'pre-check',
+    stage: 'settle',
     outcome: 'refused',
     reason: 'network_not_accepted',
     network: 'base',
@@ -125,6 +131,7 @@ test('GET /v1/ops/receipt-failures with a valid token returns the rows', async (
   assert.equal(body.failures.length, 1);
   assert.equal(body.failures[0].stage, 'sign');
   assert.equal(JSON.stringify(body).includes('payer'), false);
+  assert.ok(Array.isArray(body.refusal_counts));
   const csv = await fetch(`${exportUrl()}?format=csv`, {
     headers: { authorization: `Bearer ${OPS}` },
   });
@@ -172,5 +179,107 @@ test('the export is GET-only and the read token opens nothing else', async () =>
   });
   assert.notEqual(door.status, 200);
   await door.text();
+});
+
+test('CSV escapes a leading formula character', () => {
+  resetReceiptFailuresForTests();
+  recordReceiptFailure({
+    stage: 'settle',
+    outcome: 'refused',
+    reason: '=1+1',
+    network: 'base',
+    tx: '0x' + 'ab'.repeat(32),
+  });
+  const csv = receiptFailureCsv(listReceiptFailures());
+  assert.equal(csv.includes("'=1+1"), true);
+  assert.equal(csv.includes(',=1+1,'), false);
+});
+
+test('20000 junk pre-settle calls stay bounded and keep the right counts', () => {
+  resetReceiptFailuresForTests();
+  const day = '2026-10-15T12:00:00.000Z';
+  for (let i = 0; i < 20000; i += 1) {
+    recordReceiptFailure({
+      stage: 'pre-check',
+      outcome: 'refused',
+      reason: i % 2 === 0 ? 'verify_failed' : `junk-${i}`,
+      network: i % 3 === 0 ? 'base' : `evil-${i}`,
+      requestId: `req-${i}`,
+      tx: `0x${'cd'.repeat(32)}${i}`,
+      time: day,
+      payer: `0x${'11'.repeat(20)}`,
+    });
+  }
+  assert.equal(listReceiptFailures().length, 0);
+  assert.equal(receiptFailureCount(), 0);
+  const counts = listRefusalCounts();
+  assert.equal(counts.reduce((sum, row) => sum + row.count, 0), 20000);
+  assert.equal(counts.length, 4);
+  const pick = (network, reason) => counts.find((row) => row.network === network && row.reason === reason);
+  assert.equal(pick('base', 'verify_failed').count, 3334);
+  assert.equal(pick('base', 'other').count, 3333);
+  assert.equal(pick('other', 'verify_failed').count, 6666);
+  assert.equal(pick('other', 'other').count, 6667);
+  const exported = JSON.stringify(counts);
+  assert.equal(exported.includes('req-'), false);
+  assert.equal(exported.includes('payer'), false);
+  assert.equal(exported.includes('0xcd'), false);
+  for (const row of counts) {
+    assert.deepEqual(Object.keys(row).sort(), ['count', 'day', 'network', 'reason']);
+  }
+
+  for (let i = 0; i < 31; i += 1) {
+    const when = new Date(Date.UTC(2026, 0, 1 + i)).toISOString();
+    recordReceiptFailure({
+      stage: 'pre-check',
+      outcome: 'refused',
+      reason: 'challenge_required',
+      network: 'solana',
+      time: when,
+    });
+  }
+  const days = new Set(listRefusalCounts().map((row) => row.day));
+  assert.equal(days.has('2026-01-01'), false);
+  assert.equal(days.has('2026-01-31'), true);
+  assert.ok(days.size <= 30);
+
+  for (let i = 0; i < RECEIPT_FAILURE_ROW_CAP + 1000; i += 1) {
+    recordReceiptFailure({
+      stage: 'settle',
+      outcome: 'refused',
+      reason: 'settle_failed',
+      network: 'base',
+      requestId: `settle-${i}`,
+    });
+  }
+  assert.equal(listReceiptFailures().length, RECEIPT_FAILURE_ROW_CAP);
+  assert.equal(receiptFailureCount(), RECEIPT_FAILURE_ROW_CAP + 1000);
+});
+
+test('the failure file rotates at 5 MB and keeps one backup', () => {
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  const dir = mkdtempSync(path.join(tmpdir(), 'receipt-failures-'));
+  const file = path.join(dir, 'failures.jsonl');
+  try {
+    writeFileSync(file, 'x'.repeat(RECEIPT_FAILURE_FILE_BYTES));
+    process.env.RECEIPT_FAILURES_FILE = file;
+    resetReceiptFailuresForTests();
+    const row = recordReceiptFailure({
+      stage: 'sign',
+      outcome: 'refused',
+      reason: 'sign_failed',
+      network: 'base',
+    });
+    assert.ok(row);
+    assert.equal(statSync(`${file}.1`).size, RECEIPT_FAILURE_FILE_BYTES);
+    assert.ok(statSync(file).size < RECEIPT_FAILURE_FILE_BYTES);
+    assert.equal(readFileSync(file, 'utf8').includes('sign_failed'), true);
+    assert.equal(listReceiptFailures().length, 1);
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    resetReceiptFailuresForTests();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 });
