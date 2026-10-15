@@ -690,6 +690,14 @@ export function inclusionHeadUrl(epoch, treeSize) {
   return `/v1/receipts/tree/head?tree_size=${n}`;
 }
 
+/** Relative inclusion proof against one signed head size. No host. */
+function inclusionUrlFor(taskId, treeSize) {
+  const n = Number(treeSize);
+  if (taskId == null || taskId === '') return null;
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return `/v1/receipts/${encodeURIComponent(String(taskId))}/inclusion?tree_size=${n}`;
+}
+
 function receiptReverted(found) {
   if (!found) return false;
   const status = found.receiptStatus ?? found.receipt_status;
@@ -715,6 +723,32 @@ function namedSignedHead(head, facts = null) {
     anchored: effective.anchored,
     anchored_signed: signed.anchored,
   };
+}
+
+/**
+ * Smallest later anchored head that covers a leaf whose own head is not
+ * anchored. `inclusion_url` is the proof against that head's size.
+ */
+function coveredByRecord(head, epoch, facts, taskId) {
+  const sol = head?.anchors?.solana || null;
+  const solOn = Boolean(sol && sol.status === 'anchored' && sol.signature);
+  const anchors = {};
+  if (facts?.anchor_tx) anchors.base = { tx: facts.anchor_tx };
+  const treeSize = Number(head.tree_size);
+  const inclusionUrl = inclusionUrlFor(taskId, treeSize);
+  const body = {
+    epoch: Number(head?.epoch ?? epoch?.epoch),
+    tree_size: treeSize,
+    root: normalizeRoot(head.root),
+  };
+  if (inclusionUrl) body.inclusion_url = inclusionUrl;
+  if (solOn) {
+    const solana = { signature: sol.signature };
+    if (sol.slot != null && sol.slot !== '') solana.slot = sol.slot;
+    anchors.solana = solana;
+  }
+  if (anchors.base || anchors.solana) body.anchors = anchors;
+  return body;
 }
 
 /**
@@ -1472,8 +1506,11 @@ export class ReceiptMerkleTree {
    * `treeSize` selects one signed head. A leaf past that head is
    * `pending_anchor` when the head is the anchored frontier, and a 4xx
    * otherwise. With no anchored head yet, the proof stays on the live tree
-   * and is not reported as anchored. This path stays strict: a rejected
-   * or mismatched head throws. Callers that only need the index use
+   * and is not reported as anchored. When the selected head is not anchored,
+   * `covered_by` names the smallest later anchored signed head that contains
+   * the leaf, including `inclusion_url` for that size. It is omitted when
+   * this head is itself anchored. This path stays strict: a rejected or
+   * mismatched head throws. Callers that only need the index use
    * `leafIndexOf`.
    */
   inclusion(taskId, options = {}) {
@@ -1503,6 +1540,7 @@ export class ReceiptMerkleTree {
     const named = namedSignedHead(head, facts);
     const confirmedBy = facts.anchored ? (facts.confirmed_by || null) : null;
     const headUrl = inclusionHeadUrl(epoch, size);
+    const finish = (body) => this._attachCoveredBy(body, epoch, head);
     if (index >= size) {
       const frontier = facts.anchored ? this._newestAnchoredHead(epoch) : null;
       const onFrontier = frontier
@@ -1511,7 +1549,7 @@ export class ReceiptMerkleTree {
       if (!onFrontier) {
         throw inclusionError('leaf_not_in_head', `leaf index ${index} is not in the signed head of size ${size}`);
       }
-      return {
+      return finish({
         schema: 'chit402.inclusion.v1',
         payload_version: 2,
         status: 'pending_anchor',
@@ -1535,14 +1573,14 @@ export class ReceiptMerkleTree {
         head: named,
         head_url: headUrl,
         verified_at: new Date().toISOString(),
-      };
+      });
     }
     const proof = inclusionProof(epoch.leaves.slice(0, size), index);
     const root = hex(rootOf(epoch.leaves.slice(0, size)));
     if (root !== named.root) {
       throw inclusionError('head_mismatch', 'signed head root does not match tree_size');
     }
-    return {
+    return finish({
       schema: 'chit402.inclusion.v1',
       payload_version: 2,
       status: facts.anchored ? 'anchored' : 'included',
@@ -1566,7 +1604,41 @@ export class ReceiptMerkleTree {
       head: named,
       head_url: headUrl,
       verified_at: new Date().toISOString(),
-    };
+    });
+  }
+
+  /**
+   * Smallest later anchored signed head that contains this leaf.
+   * Present only when the inclusion head itself is not anchored.
+   * A quarantined head is not served and is not an anchor.
+   */
+  _attachCoveredBy(body, epoch, head) {
+    const covered = this._coveredBy(epoch, body?.leaf_index, head, body?.task_id);
+    if (!covered) return body;
+    return { ...body, covered_by: covered };
+  }
+
+  _coveredBy(epoch, leafIndex, head, taskId) {
+    if (!epoch || !head) return null;
+    if (this.headChainFacts(head).anchored) return null;
+    const size = Number(head.tree_size);
+    const index = Number(leafIndex);
+    if (!Number.isSafeInteger(size) || !Number.isSafeInteger(index)) return null;
+    let best = null;
+    for (const candidate of this._candidateHeads(epoch)) {
+      const cSize = Number(candidate?.tree_size);
+      if (!Number.isSafeInteger(cSize) || cSize <= size || index >= cSize) continue;
+      if (!this.headChainFacts(candidate).anchored) continue;
+      let accepted;
+      try {
+        accepted = this._acceptAnchoredHead(epoch, candidate);
+      } catch {
+        continue;
+      }
+      if (!best || Number(accepted.tree_size) < Number(best.tree_size)) best = accepted;
+    }
+    if (!best) return null;
+    return coveredByRecord(best, epoch, this.headChainFacts(best), taskId);
   }
 
   /**
@@ -1584,7 +1656,7 @@ export class ReceiptMerkleTree {
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = head ? (head.anchors?.solana || null) : null;
     const solanaSig = solana?.status === 'anchored' ? solana.signature : null;
-    return {
+    return this._attachCoveredBy({
       schema: 'chit402.inclusion.v1',
       payload_version: 2,
       epoch: epoch.epoch,
@@ -1603,7 +1675,7 @@ export class ReceiptMerkleTree {
       anchors: head ? (head.anchors || null) : null,
       head_url: inclusionHeadUrl(epoch, epoch.leaves.length),
       verified_at: new Date().toISOString(),
-    };
+    }, epoch, head);
   }
 
   consistency(m, n, epochNumber = null) {
