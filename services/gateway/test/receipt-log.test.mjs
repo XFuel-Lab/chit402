@@ -1119,7 +1119,7 @@ test('a nonce that landed as something else is replaced and is not sent again', 
   }
 });
 
-test('a rejected broadcast is replaced at the same nonce for the next root', async () => {
+test('a rejected broadcast is replaced at the same nonce for the same root', async () => {
   const dir = tmp();
   const prevKey = process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
@@ -1138,7 +1138,9 @@ test('a rejected broadcast is replaced at the same nonce for the next root', asy
     assert.equal(tree.bundleStatus().blocked_intents >= 1, true);
     assert.equal(tree.bundleStatus().pending_intents, 0);
     assert.match(tree.bundleStatus().last_error, /broadcast_rejected/);
+    const root1 = hex(rootOf(tree.leaves));
     tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    const root2 = hex(rootOf(tree.leaves));
     const nonces = [];
     await tree.publishHead({
       force: true,
@@ -1148,6 +1150,8 @@ test('a rejected broadcast is replaced at the same nonce for the next root', asy
       send: async (args) => {
         nonces.push(args.nonce);
         if (args.raw === first.raw) throw new Error('broadcast_rejected');
+        assert.equal(args.calldata, `0x${root1}`);
+        assert.notEqual(args.calldata, `0x${root2}`);
         const rows = anchorIntentRows(dir);
         assert.ok(rows.some((row) => row.status === 'superseded' && row.superseded_by));
         assert.ok(rows.some((row) => row.raw === args.raw && row.nonce === 4 && row.status === 'signed'));
@@ -1473,8 +1477,9 @@ test('already known on replace is not anchored', async () => {
       send: async () => { throw new Error('broadcast_rejected'); },
     });
     const first = anchorIntentRows(dir).find((row) => row.status === 'signed' && row.raw);
+    const root1 = hex(rootOf(tree.leaves));
     tree.appendReceipt('row-2', 'hash-2', { publish: false });
-    const root = hex(rootOf(tree.leaves));
+    const root2 = hex(rootOf(tree.leaves));
     const head = await tree.publishHead({
       force: true,
       now: '2026-10-06T12:05:00.000Z',
@@ -1482,13 +1487,18 @@ test('already known on replace is not anchored', async () => {
       lookup: async () => ({ rebroadcast: true }),
       send: async (args) => {
         if (args.raw === first.raw) throw new Error('broadcast_rejected');
+        assert.equal(args.calldata, `0x${root1}`);
         throw new Error('already known');
       },
     });
+    assert.equal(head.root, root2);
     assert.notEqual(head.anchor_status, 'anchored');
-    assert.equal(head.anchor_status, 'broadcast');
-    assert.equal(tree.anchorState.base[root], undefined);
+    assert.equal(head.anchor_status, 'blocked');
+    assert.equal(head.anchor.tx, null);
+    assert.equal(tree.anchorState.base[root1], undefined);
+    assert.equal(tree.anchorState.base[root2], undefined);
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'anchored'), false);
+    assert.equal(anchorIntentRows(dir).some((row) => row.root === root1 && row.status === 'broadcast'), true);
     assert.equal(anchorIntentRows(dir).some((row) => row.nonce === 5), false);
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'superseded' && row.raw === first.raw), true);
   } finally {
@@ -1699,6 +1709,7 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
     assert.equal(health.stuck_pending_age_s, null);
     assert.equal(tree.heads.at(-1).anchor_status, 'broadcast');
     const first = anchorIntentRows(dir).find((row) => row.raw);
+    const root1 = hex(rootOf(tree.leaves));
     tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const root2 = hex(rootOf(tree.leaves));
     const head = await tree.publishHead({
@@ -1725,7 +1736,8 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
     });
     assert.equal(sent.length, 2);
     assert.equal(sent[1].nonce, 4);
-    assert.equal(sent[1].calldata, `0x${root2}`);
+    assert.equal(sent[1].calldata, `0x${root1}`);
+    assert.notEqual(root1, root2);
     assert.notEqual(sent[1].raw, first.raw);
     const { Transaction } = await import('ethers');
     assert.ok(Transaction.from(sent[1].raw).maxFeePerGas > Transaction.from(first.raw).maxFeePerGas);
