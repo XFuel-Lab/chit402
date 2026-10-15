@@ -4415,8 +4415,16 @@ export function createApp() {
   let _doorMetricsCache = { at: 0, data: null };
   const DOOR_METRICS_TTL_MS = 15_000;
 
-  // GET /v1/ops/receipt-failures — owner export of receipt-path failures.
-  // Auth: RECEIPT_FAILURES_TOKEN. Off when unset (503). Counts only on /health.
+  // GET /v1/ops/receipt-failures — read-only export for a monitor routine.
+  // Auth: OPS_READ_TOKEN via Authorization: Bearer. Off when unset (503).
+  // GET only. Other methods are 405 and never a payment challenge.
+  // The token is not logged and is not accepted on any other route.
+  app.all('/v1/ops/receipt-failures', (req, res, next) => {
+    if (req.method === 'GET') return next();
+    res.set('Allow', 'GET');
+    res.set('Cache-Control', 'private, no-store');
+    return res.status(405).json({ error: 'method_not_allowed' });
+  });
   app.get('/v1/ops/receipt-failures', rateLimit, (req, res) => {
     const auth = receiptFailuresAuth(extractReceiptFailuresToken(req));
     if (!auth.ok) {

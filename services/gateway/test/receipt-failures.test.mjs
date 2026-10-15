@@ -11,7 +11,8 @@ import {
 process.env.M2M_DEMO_MODE = 'true';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
-process.env.RECEIPT_FAILURES_TOKEN = 'owner-test-token';
+process.env.OPS_READ_TOKEN = 'owner-test-token';
+delete process.env.RECEIPT_FAILURES_TOKEN;
 
 const { createApp } = await import('../src/server.js');
 
@@ -71,7 +72,43 @@ test('a failure row keeps the review fields and drops payer and payload', () => 
   assert.equal(csv.split('\n')[0], 'time,network,stage,reason,tx,outcome,request_id');
 });
 
-test('GET /v1/ops/receipt-failures is owner-only JSON and CSV, and /health counts rows', async () => {
+const OPS = 'owner-test-token';
+const exportUrl = () => `${base}/v1/ops/receipt-failures`;
+
+function bodyHidesTokens(text, ...secrets) {
+  for (const secret of secrets) {
+    assert.equal(text.includes(secret), false);
+  }
+}
+
+test('GET /v1/ops/receipt-failures with no token is 401', async () => {
+  process.env.OPS_READ_TOKEN = OPS;
+  const res = await fetch(exportUrl());
+  const text = await res.text();
+  assert.equal(res.status, 401);
+  bodyHidesTokens(text, OPS);
+  assert.equal(JSON.parse(text).error, 'unauthorized');
+});
+
+test('GET /v1/ops/receipt-failures with a wrong token is 401', async () => {
+  process.env.OPS_READ_TOKEN = OPS;
+  const wrong = 'wrong-token-value';
+  const res = await fetch(exportUrl(), {
+    headers: { authorization: `Bearer ${wrong}` },
+  });
+  const text = await res.text();
+  assert.equal(res.status, 401);
+  bodyHidesTokens(text, OPS, wrong);
+  const header = await fetch(exportUrl(), {
+    headers: { 'x-receipt-failures-token': OPS },
+  });
+  assert.equal(header.status, 401);
+  const query = await fetch(`${exportUrl()}?token=${encodeURIComponent(OPS)}`);
+  assert.equal(query.status, 401);
+});
+
+test('GET /v1/ops/receipt-failures with a valid token returns the rows', async () => {
+  process.env.OPS_READ_TOKEN = OPS;
   resetReceiptFailuresForTests();
   recordReceiptFailure({
     stage: 'sign',
@@ -80,31 +117,60 @@ test('GET /v1/ops/receipt-failures is owner-only JSON and CSV, and /health count
     network: 'solana',
     requestId: 'req-2',
   });
-  const saved = process.env.RECEIPT_FAILURES_TOKEN;
-  delete process.env.RECEIPT_FAILURES_TOKEN;
-  const open = await fetch(`${base}/v1/ops/receipt-failures`);
-  process.env.RECEIPT_FAILURES_TOKEN = saved;
-  assert.equal(open.status, 503);
-  const denied = await fetch(`${base}/v1/ops/receipt-failures`, {
-    headers: { authorization: 'Bearer wrong' },
-  });
-  assert.equal(denied.status, 401);
-  const res = await fetch(`${base}/v1/ops/receipt-failures`, {
-    headers: { authorization: 'Bearer owner-test-token' },
+  const res = await fetch(exportUrl(), {
+    headers: { authorization: `Bearer ${OPS}` },
   });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.failures.length, 1);
   assert.equal(body.failures[0].stage, 'sign');
   assert.equal(JSON.stringify(body).includes('payer'), false);
-  const csv = await fetch(`${base}/v1/ops/receipt-failures?format=csv`, {
-    headers: { 'x-receipt-failures-token': 'owner-test-token' },
+  const csv = await fetch(`${exportUrl()}?format=csv`, {
+    headers: { authorization: `Bearer ${OPS}` },
   });
   assert.equal(csv.headers.get('content-type').includes('text/csv'), true);
-  assert.equal((await csv.text()).includes('sign_failed'), true);
+  const csvText = await csv.text();
+  assert.equal(csvText.includes('sign_failed'), true);
+  assert.equal(csvText.includes(OPS), false);
   const health = await fetch(`${base}/health`);
   const healthBody = await health.json();
   assert.equal(healthBody.receipt_failures, receiptFailureCount());
   assert.equal(healthBody.receipt_failures >= 1, true);
+});
+
+test('GET /v1/ops/receipt-failures is disabled when OPS_READ_TOKEN is unset', async () => {
+  const saved = process.env.OPS_READ_TOKEN;
+  delete process.env.OPS_READ_TOKEN;
+  const res = await fetch(exportUrl(), {
+    headers: { authorization: `Bearer ${OPS}` },
+  });
+  const text = await res.text();
+  process.env.OPS_READ_TOKEN = saved;
+  assert.equal(res.status, 503);
+  bodyHidesTokens(text, OPS);
+  assert.equal(JSON.parse(text).error, 'disabled');
+});
+
+test('the export is GET-only and the read token opens nothing else', async () => {
+  process.env.OPS_READ_TOKEN = OPS;
+  const post = await fetch(exportUrl(), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${OPS}`,
+      'content-type': 'application/json',
+    },
+    body: '{}',
+  });
+  const postBody = await post.json();
+  assert.equal(post.status, 405);
+  assert.equal(post.headers.get('allow'), 'GET');
+  assert.equal(postBody.error, 'method_not_allowed');
+  assert.equal(postBody.accepts, undefined);
+  assert.equal(post.headers.get('payment-required'), null);
+  const door = await fetch(`${base}/v1/internal/door-metrics`, {
+    headers: { authorization: `Bearer ${OPS}` },
+  });
+  assert.notEqual(door.status, 200);
+  await door.text();
 });
 });

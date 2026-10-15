@@ -5,7 +5,7 @@
  */
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const STAGES = new Set(['pre-check', 'settle', 'confirm', 'sign', 'log', 'anchor']);
 const OUTCOMES = new Set(['refused', 'pending', 'recovered']);
@@ -113,20 +113,18 @@ function csvCell(value) {
   return text;
 }
 
+/** Read at request time. Never copied onto config and never logged. */
 export function receiptFailuresToken() {
-  const token = process.env.RECEIPT_FAILURES_TOKEN;
+  const token = process.env.OPS_READ_TOKEN;
   return typeof token === 'string' && token.trim() ? token.trim() : null;
 }
 
+/** Authorization: Bearer only. Other headers and the query string are ignored. */
 export function extractReceiptFailuresToken(req) {
   const auth = req.headers?.authorization;
-  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
-    const value = auth.slice(7).trim();
-    if (value) return value;
-  }
-  const header = req.headers?.['x-receipt-failures-token'];
-  if (typeof header === 'string' && header.trim()) return header.trim();
-  return null;
+  if (typeof auth !== 'string' || !auth.startsWith('Bearer ')) return null;
+  const value = auth.slice(7).trim();
+  return value || null;
 }
 
 export function receiptFailuresAuth(provided) {
@@ -136,23 +134,22 @@ export function receiptFailuresAuth(provided) {
       ok: false,
       status: 503,
       error: 'disabled',
-      message: 'RECEIPT_FAILURES_TOKEN is not configured; endpoint stays off.',
+      message: 'OPS_READ_TOKEN is not configured; endpoint stays off.',
     };
   }
-  if (!provided || !safeEqual(provided, configured)) {
+  if (!provided || !tokenMatches(provided, configured)) {
     return {
       ok: false,
       status: 401,
       error: 'unauthorized',
-      message: 'Provide Authorization: Bearer or X-Receipt-Failures-Token.',
+      message: 'Provide Authorization: Bearer.',
     };
   }
   return { ok: true };
 }
 
-function safeEqual(left, right) {
-  const a = Buffer.from(String(left));
-  const b = Buffer.from(String(right));
-  if (a.length !== b.length) return false;
+function tokenMatches(provided, configured) {
+  const a = createHash('sha256').update(String(provided), 'utf8').digest();
+  const b = createHash('sha256').update(String(configured), 'utf8').digest();
   return timingSafeEqual(a, b);
 }

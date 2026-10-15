@@ -456,7 +456,6 @@ const config = {
   // Private house ops — not on public OpenAPI. Fail closed when unset.
   internal: {
     doorMetricsToken: process.env.DOOR_METRICS_TOKEN || null,
-    receiptFailuresToken: process.env.RECEIPT_FAILURES_TOKEN || null,
   },
 };
 
