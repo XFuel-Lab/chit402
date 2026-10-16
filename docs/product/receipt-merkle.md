@@ -34,6 +34,8 @@ Calldata is the root. The sender is `RECEIPT_ANCHOR_FROM`, or the key's own addr
 
 ### Solana
 
+The Solana anchor fee payer is pinned as an append-only list. The anchor key rotated on 2026-10-15; heads anchored before that name `BHTn…EioD`, heads after name `8ef3…JM4U`. Both pass offline. An entry is never removed.
+
 The signer is `SOLANA_ANCHOR_SECRET_KEY` (base58 or a JSON byte array, the `solana-keygen` file shape). The RPC is `SOLANA_RPC_URL`. `SOLANA_ANCHOR_CLUSTER` defaults to `mainnet-beta`; `devnet` is for tests and `scripts/solana-anchor-smoke`. The gateway reads those from the process environment only. It does not load an env file and it does not log the secret.
 
 A memo transaction pays the protocol base fee of 5,000 lamports (0.000005 SOL) for one signature. No account is created, so there is no rent, and this sender does not set a priority fee. At about $120 per SOL that is well under a tenth of a cent.

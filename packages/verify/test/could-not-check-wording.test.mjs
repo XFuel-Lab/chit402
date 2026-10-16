@@ -26,7 +26,7 @@ function assertNoInvalidWord(text) {
 
 test('exit codes 0, 1, and 2 stay on the locked verdict', () => {
   const verified = buildVerifyVerdict({
-    version: '0.4.1',
+    version: '0.4.2',
     signatureValid: true,
     signatureChecked: true,
     historyChecked: true,
@@ -39,7 +39,7 @@ test('exit codes 0, 1, and 2 stay on the locked verdict', () => {
   assert.equal(humanVerdictLines(verified)[0], 'VERIFIED');
 
   const invalid = buildVerifyVerdict({
-    version: '0.4.1',
+    version: '0.4.2',
     signatureValid: false,
     signatureChecked: true,
     errors: ['key untrusted'],
@@ -53,7 +53,7 @@ test('exit codes 0, 1, and 2 stay on the locked verdict', () => {
   assert.equal(humanVerdictLines(invalid)[0], 'INVALID');
 
   const unchecked = buildVerifyVerdict({
-    version: '0.4.1',
+    version: '0.4.2',
     absentReason: 'receipt_unavailable',
   });
   assert.equal(unchecked.exit_code, 2);
@@ -108,14 +108,14 @@ test('offline COULD_NOT_CHECK human text and JSON message do not say invalid', (
     log: null,
     verifier: {
       name: 'chit402-verify',
-      version: '0.4.1',
+      version: '0.4.2',
     },
   });
   for (const name of CHECKS) assert.equal(body.checks[name], 'could_not_check', name);
 
   const version = runCli(['--version']);
   assert.equal(version.status, 0, version.text);
-  assert.match(version.stdout, /^chit402-verify 0\.4\.1\n/);
+  assert.match(version.stdout, /^chit402-verify 0\.4\.2\n/);
 
   const removed = runCli(['--strict', '--json']);
   assert.equal(removed.status, 1, removed.text);
@@ -150,7 +150,7 @@ test('a local receipt whose log was not checked does not print invalid', () => {
   assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.checks.log_inclusion, 'could_not_check');
   assert.equal(body.checks.anchor, 'could_not_check');
-  assert.equal(body.verifier.version, '0.4.1');
+  assert.equal(body.verifier.version, '0.4.2');
   assert.equal(/invalid/i.test(body.message), false);
   assert.equal(body.message, 'The receipt log or anchor could not be fetched.');
 });
