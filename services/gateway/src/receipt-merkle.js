@@ -3070,13 +3070,16 @@ export class ReceiptMerkleTree {
     let lastAnchoredRoot = null;
     let lastAnchoredTx = null;
     let lastError = null;
+    // Journal order is the record order. A later successful anchor supersedes
+    // an earlier error. A reopened row keeps its original `at`, so position
+    // in this list is what makes the error newer or older than that success.
     for (const row of this.anchorIntents || []) {
       if (row.chain !== 'base') continue;
       if (row.status === 'anchored' && row.root && row.tx) {
         lastAnchoredRoot = row.root;
         lastAnchoredTx = row.tx;
-      }
-      if (row.reason === 'prior_nonce_pending' || row.status === 'blocked' || row.status === 'replaced' || (row.status === 'signed' && row.reason)) {
+        lastError = null;
+      } else if (row.reason === 'prior_nonce_pending' || row.status === 'blocked' || row.status === 'replaced' || (row.status === 'signed' && row.reason)) {
         lastError = row.reason || row.status;
       }
     }
