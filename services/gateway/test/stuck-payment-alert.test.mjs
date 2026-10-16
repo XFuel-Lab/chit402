@@ -86,7 +86,7 @@ test('recordPending emits one alert and does not call a webhook when the env is 
   globalThis.fetch = async () => { calls += 1; return { ok: true }; };
   try {
     const store = new ChallengeStore();
-    const row = store.recordPending({
+    const row = await store.recordPending({
       tx: '0x' + 'cd'.repeat(32),
       network: 'base',
       amount: '2000',

@@ -929,7 +929,7 @@ export async function probeSettlementSide({
   const method = side === 'solana' ? 'getGenesisHash' : 'eth_chainId';
   try {
     const result = await withRpcTimeout(
-      () => callSettlementRpc(url, method, [], request, signal),
+      async () => await callSettlementRpc(url, method, [], request, signal),
       budget,
     );
     const ok = side === 'solana' ? result === expected : chainIdEquals(result, expected);
@@ -971,7 +971,7 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
   const baseUrl = cfg.baseRpcUrl || cfg.rpcUrl || null;
   const baseExpected = expectedBaseChainId(cfg.network);
   if (baseUrl && baseExpected != null) {
-    jobs.push(probeSettlementSide({
+    jobs.push(await probeSettlementSide({
       side: 'base',
       url: baseUrl,
       expected: baseExpected,
@@ -983,7 +983,7 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
   const solUrl = settlementSolanaRpcUrl(cfg);
   const solExpected = expectedSolanaGenesis(cfg.solana?.network);
   if (solUrl && solExpected) {
-    jobs.push(probeSettlementSide({
+    jobs.push(await probeSettlementSide({
       side: 'solana',
       url: solUrl,
       expected: solExpected,
@@ -1003,8 +1003,8 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
 export function startSettlementRpcRecheck(cfg = {}, { intervalMs } = {}) {
   if (settlementTimer) return settlementTimer;
   const every = intervalMs ?? settlementRecheckMs(process.env, cfg.settlementRpcRecheckMs);
-  const timer = setInterval(() => {
-    probeConfiguredSettlementRpcs(cfg).catch(() => {});
+  const timer = setInterval(async () => {
+    await probeConfiguredSettlementRpcs(cfg).catch(() => {});
   }, every);
   if (typeof timer.unref === 'function') timer.unref();
   settlementTimer = timer;

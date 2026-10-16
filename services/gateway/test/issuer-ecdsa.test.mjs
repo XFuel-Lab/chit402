@@ -59,7 +59,7 @@ before(async () => {
   _resetIssuerKey();
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -129,8 +129,8 @@ describe('Issuer Key Management', () => {
 });
 
 describe('Receipt ECDSA Signing', () => {
-  test('buildReceipt includes issuer_signature with compact JWS', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('buildReceipt includes issuer_signature with compact JWS', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'test-secret',
     });
@@ -158,8 +158,8 @@ describe('Receipt ECDSA Signing', () => {
     assert.equal(payload.iss, 'chit402');
   });
 
-  test('buildReceipt includes HMAC attestations and ECDSA signature', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('buildReceipt includes HMAC attestations and ECDSA signature', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'primary-secret',
       coSignerSecret: 'co-signer-secret',
@@ -180,11 +180,11 @@ describe('Receipt ECDSA Signing', () => {
 });
 
 describe('Receipt ECDSA Verification', () => {
-  test('verifyReceiptEcdsa validates correct JWS signature', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsa validates correct JWS signature', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
-    const result = verifyReceiptEcdsa(receipt, jwk);
+    const result = await verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
     assert.ok(result.kid);
@@ -192,8 +192,8 @@ describe('Receipt ECDSA Verification', () => {
     assert.equal(result.payload.task_id, receipt.task_id);
   });
 
-  test('verifyReceiptEcdsa rejects tampered task_id', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsa rejects tampered task_id', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
     // Tamper with the task_id (which is in the signed claims)
@@ -202,14 +202,14 @@ describe('Receipt ECDSA Verification', () => {
       task_id: 'tampered-task-id',
     };
 
-    const result = verifyReceiptEcdsa(tampered, jwk);
+    const result = await verifyReceiptEcdsa(tampered, jwk);
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'task_id_mismatch');
   });
 
-  test('verifyReceiptEcdsa rejects wrong key', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsa rejects wrong key', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
 
     // Generate a different key but use the same kid so we actually test crypto verification
     const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -220,45 +220,45 @@ describe('Receipt ECDSA Verification', () => {
       use: 'sig',
     };
 
-    const result = verifyReceiptEcdsa(receipt, wrongJwk);
+    const result = await verifyReceiptEcdsa(receipt, wrongJwk);
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
   });
 
-  test('verifyReceiptEcdsa rejects mismatched kid', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsa rejects mismatched kid', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
     // Use correct key but wrong kid
     const wrongKidJwk = { ...jwk, kid: 'different-kid' };
 
-    const result = verifyReceiptEcdsa(receipt, wrongKidJwk);
+    const result = await verifyReceiptEcdsa(receipt, wrongKidJwk);
     assert.equal(result.checked, false);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'kid_mismatch');
   });
 
-  test('verifyReceiptEcdsa returns error for missing signature', () => {
+  test('verifyReceiptEcdsa returns error for missing signature', async () => {
     const receipt = { task_id: 'test' };
 
-    const result = verifyReceiptEcdsa(receipt, {});
+    const result = await verifyReceiptEcdsa(receipt, {});
     assert.equal(result.checked, false);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'no_issuer_signature');
   });
 
-  test('verifyReceiptEcdsaWithJwks finds matching key', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsaWithJwks finds matching key', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const jwks = getJwks();
 
-    const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
+    const result = await verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
     assert.ok(result.payload, 'should return parsed payload');
   });
 
-  test('verifyReceiptEcdsaWithJwks rejects when no matching key', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsaWithJwks rejects when no matching key', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     // Legacy receipts without pin fall back to JWKS lookup.
     delete receipt.issuer_signature.issuer_jwk;
 
@@ -273,15 +273,15 @@ describe('Receipt ECDSA Verification', () => {
       }],
     };
 
-    const result = verifyReceiptEcdsaWithJwks(receipt, wrongJwks);
+    const result = await verifyReceiptEcdsaWithJwks(receipt, wrongJwks);
     // No matching key found (kid mismatch in key selection)
     assert.equal(result.checked, false);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'no_matching_key');
   });
 
-  test('verifyReceiptEcdsaWithJwks rejects wrong key with matching kid', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptEcdsaWithJwks rejects wrong key with matching kid', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     delete receipt.issuer_signature.issuer_jwk;
 
     // Generate a JWKS with a wrong key but matching kid
@@ -295,7 +295,7 @@ describe('Receipt ECDSA Verification', () => {
       }],
     };
 
-    const result = verifyReceiptEcdsaWithJwks(receipt, wrongJwks);
+    const result = await verifyReceiptEcdsaWithJwks(receipt, wrongJwks);
     // Key found, but signature verification fails
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
@@ -374,7 +374,7 @@ describe('End-to-End Verification', () => {
     const jwks = await jwksRes.json();
 
     // 4. Verify the signature the caller was given
-    const result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+    const result = await verifyReceiptEcdsaWithJwks(xfuel, jwks);
     assert.equal(result.checked, true, 'should check the signature');
     assert.equal(result.valid, true, 'signature should be valid');
   });
@@ -400,7 +400,7 @@ describe('End-to-End Verification', () => {
     const jwks = await jwksRes.json();
 
     // 5. Verify should fail because task_id mismatch
-    const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
+    const result = await verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(result.checked, true);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'task_id_mismatch');
@@ -411,7 +411,7 @@ describe('Standard Library Compatibility (jose)', () => {
   test('JWS can be verified with jose library', async () => {
     const jose = await import('jose');
     
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const jwks = getJwks();
     
     // Import the public key from our JWKS
@@ -444,7 +444,7 @@ describe('Standard Library Compatibility (jose)', () => {
   test('jose rejects tampered JWS', async () => {
     const jose = await import('jose');
     
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const jwks = getJwks();
     const key = await jose.importJWK(jwks.keys[0], 'ES256');
     
@@ -464,7 +464,7 @@ describe('Standard Library Compatibility (jose)', () => {
   test('JWS payload is self-contained (no external signed_fields needed)', async () => {
     const jose = await import('jose');
     
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const jwks = getJwks();
     const key = await jose.importJWK(jwks.keys[0], 'ES256');
     
@@ -485,8 +485,8 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.ok(!receipt.issuer_signature.signed_fields, 'signed_fields should not be in issuer_signature');
   });
 
-  test('verifyReceiptJws validates receipt JWS', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptJws validates receipt JWS', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
     const result = verifyReceiptJws(receipt, jwk);
@@ -496,8 +496,8 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.equal(result.payload.task_id, receipt.task_id);
   });
 
-  test('verifyReceiptJwsWithJwks validates receipt JWS', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptJwsWithJwks validates receipt JWS', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const jwks = getJwks();
 
     const result = verifyReceiptJwsWithJwks(receipt, jwks);
@@ -507,8 +507,8 @@ describe('Standard Library Compatibility (jose)', () => {
     assert.ok(result.kid);
   });
 
-  test('verifyReceiptJwsWithJwks validates with pinned issuer_jwk only', () => {
-    const receipt = buildReceipt(mockTask, { baseUrl: 'https://api.test' });
+  test('verifyReceiptJwsWithJwks validates with pinned issuer_jwk only', async () => {
+    const receipt = await buildReceipt(mockTask, { baseUrl: 'https://api.test' });
     const result = verifyReceiptJwsWithJwks(receipt, { keys: [] });
     assert.equal(result.checked, true);
     assert.equal(result.valid, true);
@@ -570,9 +570,9 @@ describe('Caller/Payer Binding', () => {
     assert.equal(binding.api_key_hash, 'hash123');
   });
 
-  test('buildReceipt includes caller_binding when data is present', () => {
+  test('buildReceipt includes caller_binding when data is present', async () => {
     const payer = '0x1234567890123456789012345678901234567890';
-    const receipt = buildReceipt(mockTask, {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       payerWallet: payer,
       apiKeyHash: 'test-api-key-hash',
@@ -584,9 +584,9 @@ describe('Caller/Payer Binding', () => {
     assert.equal(binding.api_key_hash, 'test-api-key-hash');
   });
 
-  test('caller_binding is included in JWS claims', () => {
+  test('caller_binding is included in JWS claims', async () => {
     const payer = '0x1234567890123456789012345678901234567890';
-    const receipt = buildReceipt(mockTask, {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       payerWallet: payer,
       apiKeyHash: 'test-api-key-hash',
@@ -598,15 +598,15 @@ describe('Caller/Payer Binding', () => {
     assert.equal(payload.caller_binding.api_key_hash, 'test-api-key-hash');
   });
 
-  test('tampering signed claims in JWS invalidates verification', () => {
+  test('tampering signed claims in JWS invalidates verification', async () => {
     const payer = '0x1234567890123456789012345678901234567890';
-    const receipt = buildReceipt(mockTask, {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       payerWallet: payer,
     });
     const { publicKeyJwk: jwk } = initIssuerKey();
 
-    let result = verifyReceiptEcdsa(receipt, jwk);
+    let result = await verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.valid, true, 'original should verify');
 
     const parts = receipt.issuer_signature.jws.split('.');
@@ -618,12 +618,12 @@ describe('Caller/Payer Binding', () => {
       issuer_signature: { ...receipt.issuer_signature, jws: tamperedJws },
     };
 
-    result = verifyReceiptEcdsa(tampered, jwk);
+    result = await verifyReceiptEcdsa(tampered, jwk);
     assert.equal(result.valid, false, 'tampered JWS payer_wallet should fail verification');
   });
 
-  test('hmac attestation omits signed_fields from public JSON', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('hmac attestation omits signed_fields from public JSON', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'test-secret',
     });
@@ -746,8 +746,8 @@ describe('Agent E2E JWS Verification Flow', () => {
 });
 
 describe('Backward Compatibility', () => {
-  test('HMAC verification still works alongside ECDSA', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('HMAC verification still works alongside ECDSA', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: 'test-secret',
     });
@@ -759,13 +759,13 @@ describe('Backward Compatibility', () => {
 
     // ECDSA verify
     const { publicKeyJwk: jwk } = initIssuerKey();
-    const ecdsaResult = verifyReceiptEcdsa(receipt, jwk);
+    const ecdsaResult = await verifyReceiptEcdsa(receipt, jwk);
     assert.equal(ecdsaResult.checked, true);
     assert.equal(ecdsaResult.valid, true);
   });
 
-  test('receipt without HMAC secret still has ECDSA signature', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('receipt without HMAC secret still has ECDSA signature', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       // No signingSecret, no coSignerSecret
     });
@@ -781,7 +781,7 @@ describe('Backward Compatibility', () => {
 
     // And it verifies
     const { publicKeyJwk: jwk } = initIssuerKey();
-    const result = verifyReceiptEcdsa(receipt, jwk);
+    const result = await verifyReceiptEcdsa(receipt, jwk);
     assert.equal(result.valid, true);
   });
 });

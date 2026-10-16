@@ -27,9 +27,9 @@ function fakeJws(payload) {
   return `${header}.${body}.sig`;
 }
 
-test('P-GW builders emit allowlisted versions and junk is not treated as 11', () => {
+test('P-GW builders emit allowlisted versions and junk is not treated as 11', async () => {
   assert.equal(activeReceiptPayloadVersion(), 10);
-  const legacy = canonicalSignedClaims({
+  const legacy = await canonicalSignedClaims({
     task_id: 'task-allowlist',
     created_at: 1,
     payment: { rail: 'usdc', ref: 'base:0xabc', gross_amount: '2000' },

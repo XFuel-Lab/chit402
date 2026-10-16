@@ -99,10 +99,10 @@ before(async () => {
   genesisBody = tree.genesisLeaf().bytes.toString('utf8');
   await initAIListener();
   const store = getAIListener().activeTasks;
-  httpApp = createApp();
+  httpApp = await createApp();
   const ledger = httpApp.locals.__test.usageSettled;
-  const plant = (taskId, rowHash, nibble) => {
-    tree.appendReceipt(taskId, rowHash, { publish: false });
+  const plant = async (taskId, rowHash, nibble) => {
+    await tree.appendReceipt(taskId, rowHash, { publish: false });
     planted.push({
       taskId,
       body: `${taskId}|${rowHash}`,
@@ -110,10 +110,10 @@ before(async () => {
     });
     store.set(taskId, paidTask(taskId, nibble));
   };
-  FOREIGN.slice(0, 3).forEach((taskId, i) => {
-    plant(taskId, `audit-row-${i}-${taskId}`, (i + 1).toString(16));
+  FOREIGN.slice(0, 3).forEach(async (taskId, i) => {
+    await plant(taskId, `audit-row-${i}-${taskId}`, (i + 1).toString(16));
   });
-  ledger._index({
+  await ledger._index({
     task_id: SPECIMEN,
     agent_id: 187,
     evidence: 'collected',
@@ -121,9 +121,9 @@ before(async () => {
     collected_at: '2026-09-05T17:14:11.000Z',
   }, { persist: false, notify: false });
   const booked = ledger.findByTask(SPECIMEN);
-  plant(SPECIMEN, booked.book_chain.row_hash, '4');
-  FOREIGN.slice(3).forEach((taskId, i) => {
-    plant(taskId, `audit-row-${i + 4}-${taskId}`, (i + 5).toString(16));
+  await plant(SPECIMEN, booked.book_chain.row_hash, '4');
+  FOREIGN.slice(3).forEach(async (taskId, i) => {
+    await plant(taskId, `audit-row-${i + 4}-${taskId}`, (i + 5).toString(16));
   });
   assert.ok(planted.every((row) => row.index > 0));
   assert.equal(planted.find((row) => row.taskId === SPECIMEN).index, 4);
@@ -242,7 +242,7 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
   const task = getAIListener().activeTasks.get(SPECIMEN);
   const tree = getReceiptMerkleTree();
   const ledgerRow = httpApp.locals.__test.usageSettled.findByTask(SPECIMEN);
-  const built = buildReceipt(task, { persistSignature: false, agentId: 187, baseUrl: base });
+  const built = await buildReceipt(task, { persistSignature: false, agentId: 187, baseUrl: base });
   const prefix = tree.publicPrefixAudit(SPECIMEN, (id) => {
     const row = httpApp.locals.__test.usageSettled.findByTask(id);
     return row?.row_hash ?? null;
@@ -251,12 +251,12 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     {
       ...built,
       ...(ledgerRow?.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
-      ...publicLogWitness(tree, SPECIMEN),
+      ...await publicLogWitness(tree, SPECIMEN),
     },
     { baseUrl: base, prefix },
   );
   const kid = receipt.issuer_signature.kid;
-  const historyRecord = currentIssuerHistory();
+  const historyRecord = await currentIssuerHistory();
   const historyBytes = historyRecord.body;
   const history = JSON.parse(historyBytes);
   assert.equal(history.entries.some((row) => row.kid === kid && row.not_before), true);

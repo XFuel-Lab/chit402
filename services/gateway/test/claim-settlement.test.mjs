@@ -58,11 +58,11 @@ test('concurrent double-settle: one commit, the other is claim_already_settled',
   assert.equal(store.rows.size, 1);
 });
 
-test('a second receipt is rejected and a replay of the same payment returns the stored receipt', () => {
+test('a second receipt is rejected and a replay of the same payment returns the stored receipt', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const firstBody = receipt({ task_id: 'task-1', claim_id: 'claim-9', ref: 'base:0x111' });
-  const first = recordCollectedSpend(firstBody, {
+  const first = await recordCollectedSpend(firstBody, {
     ledger,
     registry,
     agentId: null,
@@ -72,7 +72,7 @@ test('a second receipt is rejected and a replay of the same payment returns the 
   assert.equal(first.idempotent_replay, false);
   assert.equal(ledger.entries.length, 1);
 
-  const second = recordCollectedSpend(
+  const second = await recordCollectedSpend(
     receipt({ task_id: 'task-2', claim_id: 'claim-9', ref: 'base:0x222' }),
     { ledger, registry, agentId: first.agent_id, singleUseClaim: true },
   );
@@ -81,7 +81,7 @@ test('a second receipt is rejected and a replay of the same payment returns the 
   assert.equal(second.receipt.task_id, 'task-1');
   assert.equal(ledger.entries.length, 1);
 
-  const replay = recordCollectedSpend(firstBody, {
+  const replay = await recordCollectedSpend(firstBody, {
     ledger,
     registry,
     agentId: first.agent_id,
@@ -95,16 +95,16 @@ test('a second receipt is rejected and a replay of the same payment returns the 
   assert.equal(ledger.claims.rows.get('claim-9').state, 'settled');
 });
 
-test('two spends on the same book seat both record', () => {
+test('two spends on the same book seat both record', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const first = recordCollectedSpend(
+  const first = await recordCollectedSpend(
     receipt({ task_id: 'seat-1', claim_id: '1', ref: 'base:0xseat1' }),
     { ledger, registry },
   );
   assert.equal(first.ok, true, first.reason);
   const seat = String(first.agent_id);
-  const second = recordCollectedSpend(
+  const second = await recordCollectedSpend(
     receipt({ task_id: 'seat-2', claim_id: seat, ref: 'base:0xseat2' }),
     { ledger, registry, agentId: first.agent_id },
   );
@@ -113,13 +113,13 @@ test('two spends on the same book seat both record', () => {
   assert.equal(ledger.claims.rows.size, 0);
 });
 
-test('a failed book append does not leave the claim closed', () => {
+test('a failed book append does not leave the claim closed', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-rollback-'));
   const ledger = new UsageSettledLedger({ dir, persist: true });
   const registry = new AgentRegistry();
   const body = receipt({ task_id: 'roll-1', claim_id: 'claim-roll', ref: 'base:0xroll' });
   ledger.append = () => ({ ok: false, reason: 'duplicate task_id', code: 'duplicate_task' });
-  const failed = recordCollectedSpend(body, {
+  const failed = await recordCollectedSpend(body, {
     ledger,
     registry,
     singleUseClaim: true,
@@ -130,7 +130,7 @@ test('a failed book append does not leave the claim closed', () => {
 
   const reloaded = new UsageSettledLedger({ dir, persist: true });
   assert.equal(reloaded.claims.rows.size, 0);
-  const again = recordCollectedSpend(
+  const again = await recordCollectedSpend(
     receipt({ task_id: 'roll-2', claim_id: 'claim-roll', ref: 'base:0xroll2' }),
     { ledger: reloaded, registry, singleUseClaim: true },
   );

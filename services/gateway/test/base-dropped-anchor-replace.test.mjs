@@ -18,7 +18,7 @@ test('dropped anchor tx is surfaced, then replaced at the same nonce', async () 
   const lookup = async (i) => ({ rebroadcast: true, missing: true, tx: i.tx, nonce: i.nonce });
   const t0 = Date.parse('2026-10-08T05:00:00Z');
   const tick = async (min, id) => {
-    tree.appendReceipt(id, `r${id}`, { publish: false });
+    await tree.appendReceipt(id, `r${id}`, { publish: false });
     await tree.publishHead({ force: true, now: new Date(t0 + min * 60e3).toISOString(), nonce: 4, sleep: async () => {}, send, lookup });
   };
   await tick(0, 'a');

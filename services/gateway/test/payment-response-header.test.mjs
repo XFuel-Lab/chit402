@@ -110,8 +110,8 @@ const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const { verifyReceiptEcdsaWithJwks, decodeReceiptClaims } = await import('../src/receipt.js');
 
-test('encodeX402PaymentResponseHeader matches the settle-response shape for Base and Solana', () => {
-  const baseHeader = encodeX402PaymentResponseHeader({
+test('encodeX402PaymentResponseHeader matches the settle-response shape for Base and Solana', async () => {
+  const baseHeader = await encodeX402PaymentResponseHeader({
     ref: `base:${EVM_TX}`,
     payer: EVM_PAYER,
   });
@@ -123,7 +123,7 @@ test('encodeX402PaymentResponseHeader matches the settle-response shape for Base
   });
   assert.equal(toCaip2Network('base'), 'eip155:8453');
 
-  const solHeader = encodeX402PaymentResponseHeader({
+  const solHeader = await encodeX402PaymentResponseHeader({
     ref: `solana:${SOL_TX}`,
     network: 'solana',
     payer: SOL_PAYER,
@@ -134,7 +134,7 @@ test('encodeX402PaymentResponseHeader matches the settle-response shape for Base
     network: SOL_CAIP,
     payer: SOL_PAYER,
   });
-  assert.equal(encodeX402PaymentResponseHeader({ ref: null }), null);
+  assert.equal(await encodeX402PaymentResponseHeader({ ref: null }), null);
 });
 
 let server;
@@ -149,7 +149,7 @@ const chatBody = {
 before(async () => {
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -252,7 +252,7 @@ test('paid POST /v1/chat/completions on Base returns a 200 settlement header', a
   assert.equal(paid.xfuel.route_meta.chain_id, 'base');
   assert.equal(paid.xfuel.payment_meta.network, 'base');
   assert.equal(decodeReceiptClaims(paid.xfuel).payment.ref, `base:${tx}`);
-  assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
+  assert.equal((await verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] })).valid, true);
 });
 
 test('paid POST /v1/chat/completions on Solana returns a 200 settlement header and solana route_meta', async () => {
@@ -282,7 +282,7 @@ test('paid POST /v1/chat/completions on Solana returns a 200 settlement header a
   assert.equal(paid.xfuel.payment_meta.network, 'solana');
   const claims = decodeReceiptClaims(paid.xfuel);
   assert.equal(claims.payment.ref, `solana:${SOL_TX}`);
-  assert.equal(verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] }).valid, true);
+  assert.equal((await verifyReceiptEcdsaWithJwks(paid.xfuel, { keys: [] })).valid, true);
 
   const receiptRes = await fetch(`${base}/receipt/${paid.xfuel.task_id}?format=json`);
   assert.equal(receiptRes.status, 200);

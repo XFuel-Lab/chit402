@@ -65,10 +65,10 @@ describe('UNVERIFIED evidence', () => {
     assert.equal(deriveEvidence(entry), BOOK_EVIDENCE.UNVERIFIED);
   });
 
-  test('book and export render UNVERIFIED with null amount — not zero', () => {
+  test('book and export render UNVERIFIED with null amount — not zero', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 'ok-1', ref: 'base:0xok' }), {
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 'ok-1', ref: 'base:0xok' }), {
       ledger,
       registry,
     });
@@ -88,7 +88,7 @@ describe('UNVERIFIED evidence', () => {
       hub: 'mock',
     });
 
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -101,7 +101,7 @@ describe('UNVERIFIED evidence', () => {
     assert.equal(unverified.collected, false);
     assert.equal(book.body.totals.usdc_sum, '10000');
 
-    const exported = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json' }, {
+    const exported = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json' }, {
       ledger,
       verify: bindBookVerifier(registry),
       baseUrl: 'https://api.chit402.com',
@@ -110,7 +110,7 @@ describe('UNVERIFIED evidence', () => {
     assert.equal(row.evidence, 'UNVERIFIED');
     assert.equal(row.amount, null);
 
-    const csv = buildBookExportCsv(ledger.listByAgent(recorded.agent_id), recorded.agent_id, 'https://api.chit402.com');
+    const csv = await buildBookExportCsv(ledger.listByAgent(recorded.agent_id), recorded.agent_id, 'https://api.chit402.com');
     assert.match(csv, /unverified-1,UNVERIFIED/);
     assert.doesNotMatch(csv, /unverified-1,UNVERIFIED,[^,]*,[^,]*,99999/);
   });
@@ -127,11 +127,11 @@ describe('UNVERIFIED evidence', () => {
 });
 
 describe('settle-time book row', () => {
-  test('recordSettleBookRow writes RECORDED_BY_SETTLE (not collected until ingress)', () => {
+  test('recordSettleBookRow writes RECORDED_BY_SETTLE (not collected until ingress)', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const payer = '0x1234567890123456789012345678901234567890';
-    const recorded = recordSettleBookRow({
+    const recorded = await recordSettleBookRow({
       taskId: 'xfuel-settle-1',
       paymentRef: 'base:0xsettleabc',
       amount: '2000',
@@ -155,10 +155,10 @@ describe('settle-time book row', () => {
     assert.equal(byRef.task_id, 'xfuel-settle-1');
   });
 
-  test('ingress_receipt promotes RECORDED_BY_SETTLE to collected', () => {
+  test('ingress_receipt promotes RECORDED_BY_SETTLE to collected', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const settled = recordSettleBookRow({
+    const settled = await recordSettleBookRow({
       taskId: 'xfuel-arrival-1',
       paymentRef: 'base:0xarrival',
       amount: '5000',
@@ -167,7 +167,7 @@ describe('settle-time book row', () => {
     });
     assert.equal(deriveEvidence(settled.entry), BOOK_EVIDENCE.RECORDED_BY_SETTLE);
 
-    const afterReceipt = recordCollectedSpend(collectedReceipt({
+    const afterReceipt = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-arrival-1',
       ref: 'base:0xarrival',
       amount: '5000',
@@ -187,10 +187,10 @@ describe('settle-time book row', () => {
     assert.equal(entryQualifiesForTotals(afterReceipt.entry), true);
   });
 
-  test('markArrivalUnverified sets ARRIVAL_UNVERIFIED with explicit omission', () => {
+  test('markArrivalUnverified sets ARRIVAL_UNVERIFIED with explicit omission', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const settled = recordSettleBookRow({
+    const settled = await recordSettleBookRow({
       taskId: 'xfuel-omit-1',
       paymentRef: 'base:0xomit',
       amount: '8000',
@@ -202,7 +202,7 @@ describe('settle-time book row', () => {
     assert.equal(deriveEvidence(marked.entry), BOOK_EVIDENCE.ARRIVAL_UNVERIFIED);
     assert.equal(entryQualifiesForTotals(marked.entry), false);
 
-    const book = readAgentBook(settled.agent_id, { session: settled.session }, {
+    const book = await readAgentBook(settled.agent_id, { session: settled.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -214,14 +214,14 @@ describe('settle-time book row', () => {
     assert.equal(book.body.totals.usdc_sum, '0');
   });
 
-  test('RECORDED_BY_SETTLE shows amount in book but excluded from totals', () => {
+  test('RECORDED_BY_SETTLE shows amount in book but excluded from totals', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const collected = recordCollectedSpend(collectedReceipt({ task_id: 'ok-collected', ref: 'base:0xok2' }), {
+    const collected = await recordCollectedSpend(collectedReceipt({ task_id: 'ok-collected', ref: 'base:0xok2' }), {
       ledger,
       registry,
     });
-    const settled = recordSettleBookRow({
+    const settled = await recordSettleBookRow({
       taskId: 'xfuel-pending-1',
       paymentRef: 'base:0xpending',
       amount: '3000',
@@ -230,7 +230,7 @@ describe('settle-time book row', () => {
       agentId: collected.agent_id,
     });
 
-    const book = readAgentBook(collected.agent_id, { session: collected.session }, {
+    const book = await readAgentBook(collected.agent_id, { session: collected.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -242,17 +242,17 @@ describe('settle-time book row', () => {
     assert.equal(book.body.totals.usdc_sum, '10000');
   });
 
-  test('recordSettleBookRow is idempotent on payment.ref', () => {
+  test('recordSettleBookRow is idempotent on payment.ref', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const first = recordSettleBookRow({
+    const first = await recordSettleBookRow({
       taskId: 'xfuel-idem-1',
       paymentRef: 'base:0xidem',
       amount: '1000',
       ledger,
       registry,
     });
-    const second = recordSettleBookRow({
+    const second = await recordSettleBookRow({
       taskId: 'xfuel-idem-1',
       paymentRef: 'base:0xidem',
       amount: '1000',
@@ -265,10 +265,10 @@ describe('settle-time book row', () => {
     assert.equal(ledger.entries.length, 1);
   });
 
-  test('recordCollectedSpend after settle row is idempotent', () => {
+  test('recordCollectedSpend after settle row is idempotent', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const settled = recordSettleBookRow({
+    const settled = await recordSettleBookRow({
       taskId: 'xfuel-post-1',
       paymentRef: 'base:0xpost',
       amount: '3000',
@@ -277,7 +277,7 @@ describe('settle-time book row', () => {
       ledger,
       registry,
     });
-    const afterReceipt = recordCollectedSpend(collectedReceipt({
+    const afterReceipt = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-post-1',
       ref: 'base:0xpost',
       amount: '3000',
@@ -296,11 +296,11 @@ describe('settle-time book row', () => {
     assert.equal(ledger.entries[0].replay_events.length, 1);
   });
 
-  test('closing the settle row of the same paid call is settled, not a self-replay', () => {
+  test('closing the settle row of the same paid call is settled, not a self-replay', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const payer = '0xabcdef1234567890abcdef1234567890abcdef12';
-    const opened = recordSettleBookRow({
+    const opened = await recordSettleBookRow({
       taskId: 'xfuel-fresh',
       paymentRef: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
       amount: '2000',
@@ -313,7 +313,7 @@ describe('settle-time book row', () => {
     assert.equal(opened.idempotent_replay, false);
     assert.equal(opened.replay_of, null);
 
-    const closed = recordCollectedSpend(collectedReceipt({
+    const closed = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-fresh',
       ref: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
       amount: '2000',
@@ -335,7 +335,7 @@ describe('settle-time book row', () => {
     assert.equal(closed.entry.arrival_status, ARRIVAL_STATUS.CONFIRMED);
     assert.equal(entryQualifiesForTotals(closed.entry), true);
 
-    const again = recordCollectedSpend(collectedReceipt({
+    const again = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-fresh',
       ref: 'solana:4KZ9iXA43AnV4yqfDNuST3z2HcSjpDEuKZ1sjhUd6kmn',
       amount: '2000',
@@ -351,10 +351,10 @@ describe('settle-time book row', () => {
     assert.equal(deriveEvidence(again.entry), BOOK_EVIDENCE.COLLECTED);
   });
 
-  test('an already-closed settle row is collected without a new ingress receipt', () => {
+  test('an already-closed settle row is collected without a new ingress receipt', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const opened = recordSettleBookRow({
+    const opened = await recordSettleBookRow({
       taskId: 'xfuel-already-closed',
       paymentRef: 'base:0xalready',
       amount: '2000',
@@ -368,10 +368,10 @@ describe('settle-time book row', () => {
     assert.equal(entryQualifiesForTotals(opened.entry), true);
   });
 
-  test('closing a refund-owed settle does not make the row citable', () => {
+  test('closing a refund-owed settle does not make the row citable', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const opened = recordSettleBookRow({
+    const opened = await recordSettleBookRow({
       taskId: 'xfuel-refund-close',
       paymentRef: 'base:0xrefundclose',
       amount: '2000',
@@ -383,7 +383,7 @@ describe('settle-time book row', () => {
       amount: '2000',
       paymentRef: 'base:0xrefundclose',
     });
-    const closed = recordCollectedSpend(collectedReceipt({
+    const closed = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-refund-close',
       ref: 'base:0xrefundclose',
       amount: '2000',
@@ -398,25 +398,25 @@ describe('settle-time book row', () => {
     assert.equal(entryQualifiesForTotals(closed.entry), false);
   });
 
-  test('a later call with the same payment.ref replays the first task, not itself', () => {
+  test('a later call with the same payment.ref replays the first task, not itself', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const ref = 'solana:sig-once';
-    const first = recordSettleBookRow({
+    const first = await recordSettleBookRow({
       taskId: 'xfuel-first',
       paymentRef: ref,
       amount: '2000',
       ledger,
       registry,
     });
-    recordCollectedSpend(collectedReceipt({ task_id: 'xfuel-first', ref, amount: '2000' }), {
+    await recordCollectedSpend(collectedReceipt({ task_id: 'xfuel-first', ref, amount: '2000' }), {
       ledger,
       registry,
       agentId: first.agent_id,
       closeSettle: true,
     });
 
-    const replaySettle = recordSettleBookRow({
+    const replaySettle = await recordSettleBookRow({
       taskId: 'xfuel-second',
       paymentRef: ref,
       amount: '2000',
@@ -428,7 +428,7 @@ describe('settle-time book row', () => {
     assert.equal(replaySettle.replay_of, 'xfuel-first');
     assert.notEqual(replaySettle.replay_of, 'xfuel-second');
 
-    const replayClose = recordCollectedSpend(collectedReceipt({
+    const replayClose = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-second',
       ref,
       amount: '2000',
@@ -447,16 +447,16 @@ describe('settle-time book row', () => {
 });
 
 describe('unaffiliated inflow (hemei)', () => {
-  test('recordBookInflow writes signed inflow_claim row', () => {
+  test('recordBookInflow writes signed inflow_claim row', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const collected = recordCollectedSpend(collectedReceipt({ task_id: 'seed-1', ref: 'base:0xseed' }), {
+    const collected = await recordCollectedSpend(collectedReceipt({ task_id: 'seed-1', ref: 'base:0xseed' }), {
       ledger,
       registry,
     });
     const verify = bindBookVerifier(registry);
 
-    const result = recordBookInflow(collected.agent_id, {
+    const result = await recordBookInflow(collected.agent_id, {
       bucket: 'patron',
       allocation: '15000',
       task_id: 'inflow-test-1',
@@ -476,7 +476,7 @@ describe('unaffiliated inflow (hemei)', () => {
     assert.equal(deriveEvidence(entry), BOOK_EVIDENCE.INFLOW_CLAIMED);
     assert.equal(entryQualifiesForTotals(entry), true);
 
-    const book = readAgentBook(collected.agent_id, { session: collected.session }, {
+    const book = await readAgentBook(collected.agent_id, { session: collected.session }, {
       ledger,
       verify,
       registry,
@@ -488,16 +488,16 @@ describe('unaffiliated inflow (hemei)', () => {
     assert.equal(book.body.totals.usdc_sum, '25000');
   });
 
-  test('correctBookInflow appends correction without mutating original claim', () => {
+  test('correctBookInflow appends correction without mutating original claim', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const collected = recordCollectedSpend(collectedReceipt({ task_id: 'seed-2', ref: 'base:0xseed2' }), {
+    const collected = await recordCollectedSpend(collectedReceipt({ task_id: 'seed-2', ref: 'base:0xseed2' }), {
       ledger,
       registry,
     });
     const verify = bindBookVerifier(registry);
 
-    recordBookInflow(collected.agent_id, {
+    await recordBookInflow(collected.agent_id, {
       bucket: 'treasury',
       allocation: '10000',
       task_id: 'inflow-correct-1',
@@ -506,7 +506,7 @@ describe('unaffiliated inflow (hemei)', () => {
     const original = ledger.findByTask('inflow-correct-1');
     const originalClaim = { ...original.inflow_claim };
 
-    const corrected = correctBookInflow(collected.agent_id, {
+    const corrected = await correctBookInflow(collected.agent_id, {
       task_id: 'inflow-correct-1',
       bucket: 'treasury',
       allocation: '12000',
@@ -519,7 +519,7 @@ describe('unaffiliated inflow (hemei)', () => {
     assert.deepEqual(original.inflow_claim, originalClaim);
     assert.equal(ledger.findByTask('inflow-correct-1').amount, '12000');
 
-    const exported = exportAgentBook(collected.agent_id, { session: collected.session, format: 'json' }, {
+    const exported = await exportAgentBook(collected.agent_id, { session: collected.session, format: 'json' }, {
       ledger,
       verify,
       baseUrl: 'https://api.chit402.com',
@@ -529,16 +529,16 @@ describe('unaffiliated inflow (hemei)', () => {
     assert.equal(row.amount, '12000');
     assert.equal(row.inflow_corrections.length, 1);
 
-    const csv = buildBookExportCsv(ledger.listByAgent(collected.agent_id), collected.agent_id, 'https://api.chit402.com');
+    const csv = await buildBookExportCsv(ledger.listByAgent(collected.agent_id), collected.agent_id, 'https://api.chit402.com');
     assert.match(csv, /inflow-correct-1,inflow_claimed/);
   });
 });
 
 describe('refund owed after a settle that served nothing', () => {
-  test('book lists the row and excludes it from spend totals', () => {
+  test('book lists the row and excludes it from spend totals', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordSettleBookRow({
+    const recorded = await recordSettleBookRow({
       taskId: 'chit-unserved',
       paymentRef: 'base:0x91561d887821d7584247cd4d1273424c797e7ccaa24a3373cb7c6456eb061059',
       amount: '2000',
@@ -570,7 +570,7 @@ describe('refund owed after a settle that served nothing', () => {
     const row = listed.find((e) => e.task_id === 'chit-unserved');
     assert.ok(row, 'refund-owed settle stays on the book');
 
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       registry,
       verify: bindBookVerifier(registry),

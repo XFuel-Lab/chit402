@@ -15,7 +15,7 @@ process.env.RECEIPT_SIGNING_SECRET = process.env.RECEIPT_SIGNING_SECRET || 'owne
 process.env.OWNER_VIEW_AUDIENCES = process.env.OWNER_VIEW_AUDIENCES || '127.0.0.1';
 
 const { createApp } = await import('../../src/server.js');
-const app = createApp();
+const app = await createApp();
 const server = http.createServer(app);
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const { port } = server.address();

@@ -143,7 +143,7 @@ async function run(body = {}) {
   assert.equal(shell.schema, 'chit402.receipt_shell.v1');
   assert.equal(shell.issuer_signature, undefined);
   const task = getAIListener().activeTasks.get(taskId);
-  const receipt = storedReceiptJson(buildReceipt(task, {
+  const receipt = storedReceiptJson(await buildReceipt(task, {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET,
     persistSignature: false,
   }));
@@ -154,7 +154,7 @@ before(async () => {
   globalThis.fetch = stubFetch;
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

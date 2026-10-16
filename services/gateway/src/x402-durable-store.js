@@ -229,7 +229,7 @@ export class DurableChallengeStore {
     return this._with((s) => s.releaseTx(key, authKey, owner));
   }
   txFactsOf(key) { return this._with((s) => s.txFactsOf(key)); }
-  recordPending(row) { return this._with((s) => s.recordPending(row)); }
+  recordPending(row) { return this._with(async (s) => await s.recordPending(row)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
   markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }

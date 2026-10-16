@@ -10,7 +10,7 @@
  * receipt still verifies. Versions 2 and 3 still verify.
  */
 import crypto from 'crypto';
-import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { signJws, signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { actOf } from './book-act.js';
 
 export const BOOK_SEQ_SCHEMA = 'chit402.book_seq.v1';
@@ -148,21 +148,33 @@ export function bookSeqClaims(row) {
  * the same JWS for a stable issuer key.
  * @param {object} row
  */
-export function signBookSeq(row) {
-  if (row?.seq == null || !row?.task_id || !row?.agent_id) return null;
-  const claims = bookSeqClaims(row);
-  const { jws, kid } = signJws(claims, { typ: BOOK_SEQ_JWT_TYP });
+function signedBookSeq(row, signed) {
+  if (!signed) return null;
   return {
-    ...claims,
+    ...bookSeqClaims(row),
     issuer_signature: {
       alg: 'ES256',
       typ: BOOK_SEQ_JWT_TYP,
-      payload_version: claims.payload_version,
-      jws,
-      kid,
+      payload_version: bookSeqClaims(row).payload_version,
+      jws: signed.jws,
+      kid: signed.kid,
       issuer_jwk: getIssuerPublicKeyJwk(),
     },
   };
+}
+
+/** Env signer only. KMS uses signBookSeq. Loading a ledger file calls this before the constructor returns. */
+export function signBookSeqSync(row) {
+  if (row?.seq == null || !row?.task_id || !row?.agent_id) return null;
+  const claims = bookSeqClaims(row);
+  return signedBookSeq(row, signJws(claims, { typ: BOOK_SEQ_JWT_TYP }));
+}
+
+export async function signBookSeq(row) {
+  if (row?.seq == null || !row?.task_id || !row?.agent_id) return null;
+  const claims = bookSeqClaims(row);
+  const signed = await signJwsAsync(claims, { typ: BOOK_SEQ_JWT_TYP });
+  return signedBookSeq(row, signed);
 }
 
 export function verifyBookSeq(signed, jwks = null) {

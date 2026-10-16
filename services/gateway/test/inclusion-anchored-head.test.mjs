@@ -32,7 +32,7 @@ function receiptFor(intent) {
 }
 
 async function anchorAt(tree, now) {
-  return tree.publishHead({
+  return await tree.publishHead({
     force: true,
     now,
     nonce: 4,
@@ -70,19 +70,19 @@ test('epoch-2 style: anchored at 4, live at 5', async () => {
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-'));
-    tree.appendReceipt('leaf-a', 'ra', { publish: false });
-    tree.appendReceipt('leaf-b', 'rb', { publish: false });
-    tree.appendReceipt('leaf-c', 'rc', { publish: false });
+    await tree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await tree.appendReceipt('leaf-b', 'rb', { publish: false });
+    await tree.appendReceipt('leaf-c', 'rc', { publish: false });
     assert.equal(tree.leaves.length, 4);
     const head = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
     assert.equal(head.tree_size, 4);
     assert.equal(head.anchor_status, 'anchored');
     assert.equal(headAnchorFacts(head).anchored, true);
-    tree.appendReceipt('leaf-d', 'rd', { publish: false });
+    await tree.appendReceipt('leaf-d', 'rd', { publish: false });
     assert.equal(tree.leaves.length, 5);
 
     for (const id of ['genesis', 'leaf-a', 'leaf-b', 'leaf-c']) {
-      const inc = tree.inclusion(id);
+      const inc = await tree.inclusion(id);
       assert.equal(inc.status, 'anchored', id);
       assert.equal(inc.tree_size, 4, id);
       assert.equal(inc.live_tree_size, 5, id);
@@ -98,7 +98,7 @@ test('epoch-2 style: anchored at 4, live at 5', async () => {
       assert.equal(verifyInclusion(leaf, inc.leaf_index, inc.tree_size, inc.root, inc.proof), true, id);
     }
 
-    const pending = tree.inclusion('leaf-d');
+    const pending = await tree.inclusion('leaf-d');
     assert.equal(pending.status, 'pending_anchor');
     assert.equal(pending.proof, null);
     assert.equal(pending.anchored_tree_size, 4);
@@ -122,10 +122,10 @@ test('an unanchored head is not presented as anchored', async () => {
   await withAnchorKey(async () => {
     delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('solo', 'hh', { publish: false });
+    await tree.appendReceipt('solo', 'hh', { publish: false });
     const head = await tree.publishHead({ force: true, now: '2026-10-08T06:00:00.000Z' });
     assert.equal(headAnchorFacts(head).anchored, false);
-    const inc = tree.inclusion('solo', { treeSize: head.tree_size });
+    const inc = await tree.inclusion('solo', { treeSize: head.tree_size });
     assert.notEqual(inc.status, 'anchored');
     assert.equal(inc.anchor_status, 'pending');
     assert.equal(inc.head.anchored, false);
@@ -137,13 +137,13 @@ test('unsigned, mismatched, and out-of-range tree sizes are rejected', async () 
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-bad-'));
-    tree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await tree.appendReceipt('leaf-a', 'ra', { publish: false });
     const head = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
     const live = tree.leaves.length;
 
-    assert.throws(() => tree.inclusion('leaf-a', { treeSize: live + 1 }), (err) => err.code === 'bad_tree_size');
-    assert.throws(() => tree.inclusion('leaf-a', { treeSize: 0 }), (err) => err.code === 'bad_tree_size');
-    assert.throws(() => tree.inclusion('missing', { treeSize: live + 3 }), (err) => err.code === 'bad_tree_size');
+    await assert.rejects(async () => await tree.inclusion('leaf-a', { treeSize: live + 1 }), (err) => err.code === 'bad_tree_size');
+    await assert.rejects(async () => await tree.inclusion('leaf-a', { treeSize: 0 }), (err) => err.code === 'bad_tree_size');
+    await assert.rejects(async () => await tree.inclusion('missing', { treeSize: live + 3 }), (err) => err.code === 'bad_tree_size');
 
     tree.heads.push({
       tree_size: live,
@@ -151,32 +151,32 @@ test('unsigned, mismatched, and out-of-range tree sizes are rejected', async () 
       anchors: head.anchors,
     });
     const unsignedOnly = new ReceiptMerkleTree();
-    unsignedOnly.appendReceipt('leaf-a', 'ra', { publish: false });
+    await unsignedOnly.appendReceipt('leaf-a', 'ra', { publish: false });
     unsignedOnly.heads.push({ tree_size: unsignedOnly.leaves.length, root: 'ab'.repeat(32) });
-    assert.throws(
-      () => unsignedOnly.inclusion('leaf-a', { treeSize: unsignedOnly.leaves.length }),
+    await assert.rejects(
+      async () => await unsignedOnly.inclusion('leaf-a', { treeSize: unsignedOnly.leaves.length }),
       (err) => err.code === 'head_rejected',
     );
 
     const forged = { ...head, issuer_signature: { ...head.issuer_signature, jws: `${head.issuer_signature.jws.slice(0, -4)}AAAA` } };
     const mismatchTree = new ReceiptMerkleTree();
-    mismatchTree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await mismatchTree.appendReceipt('leaf-a', 'ra', { publish: false });
     mismatchTree.heads.push({ ...head, root: 'cd'.repeat(32), tree_size: mismatchTree.leaves.length });
-    assert.throws(
-      () => mismatchTree.inclusion('leaf-a', { treeSize: mismatchTree.leaves.length }),
+    await assert.rejects(
+      async () => await mismatchTree.inclusion('leaf-a', { treeSize: mismatchTree.leaves.length }),
       (err) => err.code === 'head_mismatch' || err.code === 'head_rejected',
     );
     assert.equal(forged.issuer_signature.jws.endsWith('AAAA'), true);
 
-    assert.throws(() => tree.inclusion('leaf-a', { treeSize: 1 }), (err) => err.code === 'no_signed_head');
+    await assert.rejects(async () => await tree.inclusion('leaf-a', { treeSize: 1 }), (err) => err.code === 'no_signed_head');
   });
 });
 
-test('a swapped index, sibling, or position fails', () => {
+test('a swapped index, sibling, or position fails', async () => {
   const tree = new ReceiptMerkleTree();
-  tree.appendReceipt('leaf-a', 'ra');
-  tree.appendReceipt('leaf-b', 'rb');
-  const inc = tree.inclusion('leaf-b');
+  await tree.appendReceipt('leaf-a', 'ra');
+  await tree.appendReceipt('leaf-b', 'rb');
+  const inc = await tree.inclusion('leaf-b');
   const leaf = tree.leaves[inc.leaf_index];
   assert.equal(verifyInclusion(leaf, inc.leaf_index, inc.tree_size, inc.root, inc.proof), true);
   assert.equal(verifyInclusion(leaf, inc.leaf_index === 0 ? 1 : 0, inc.tree_size, inc.root, inc.proof), false);
@@ -194,9 +194,9 @@ test('GET /inclusion rejects a tree_size past the live tree', async () => {
   await withAnchorKey(async () => {
     resetReceiptMerkleTree();
     const tree = getReceiptMerkleTree();
-    tree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await tree.appendReceipt('leaf-a', 'ra', { publish: false });
     const { createApp } = await import('../src/server.js');
-    const app = createApp();
+    const app = await createApp();
     const server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
     });
@@ -247,12 +247,12 @@ test('a closed epoch verifies against its pinned final head and rejects a differ
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-closed-'));
-    tree.appendReceipt('leaf-a', 'ra', { publish: false });
-    tree.appendReceipt('leaf-b', 'rb', { publish: false });
-    tree.appendReceipt('leaf-c', 'rc', { publish: false });
+    await tree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await tree.appendReceipt('leaf-b', 'rb', { publish: false });
+    await tree.appendReceipt('leaf-c', 'rc', { publish: false });
     const daily = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
     assert.equal(daily.tree_size, 4);
-    tree.appendReceipt('leaf-d', 'rd', { publish: false });
+    await tree.appendReceipt('leaf-d', 'rd', { publish: false });
     const pinned = await anchorAt(tree, '2026-10-08T12:00:00.000Z');
     assert.equal(pinned.tree_size, 5);
     assert.equal(headAnchorFacts(pinned).anchored, true);
@@ -261,7 +261,7 @@ test('a closed epoch verifies against its pinned final head and rejects a differ
     parkClosed(tree, [daily]);
     tree.signedClosedEpochHead = (n) => (Number(n) === epochNo ? pinned : null);
 
-    const late = tree.inclusion('leaf-d');
+    const late = await tree.inclusion('leaf-d');
     assert.equal(late.status, 'anchored');
     assert.notEqual(late.status, 'pending_anchor');
     assert.equal(late.tree_size, pinned.tree_size);
@@ -270,7 +270,7 @@ test('a closed epoch verifies against its pinned final head and rejects a differ
     const lateLeaf = tree.closedEpochs[0].leaves[late.leaf_index];
     assert.equal(verifyInclusion(lateLeaf, late.leaf_index, late.tree_size, late.root, late.proof), true);
 
-    const early = tree.inclusion('leaf-a');
+    const early = await tree.inclusion('leaf-a');
     assert.equal(early.status, 'anchored');
     assert.equal(early.tree_size, pinned.tree_size);
     assert.equal(verifyInclusion(
@@ -282,42 +282,42 @@ test('a closed epoch verifies against its pinned final head and rejects a differ
     ), true);
 
     tree.signedClosedEpochHead = () => ({ ...pinned, root: 'cd'.repeat(32) });
-    assert.throws(
-      () => tree.inclusion('leaf-d'),
+    await assert.rejects(
+      async () => await tree.inclusion('leaf-d'),
       (err) => err.code === 'head_mismatch' || err.code === 'head_rejected',
     );
-    assert.throws(
-      () => tree.inclusion('leaf-d', { treeSize: daily.tree_size }),
+    await assert.rejects(
+      async () => await tree.inclusion('leaf-d', { treeSize: daily.tree_size }),
       (err) => err.code === 'head_mismatch' || err.code === 'head_rejected',
     );
 
     const newerTree = new ReceiptMerkleTree();
     newerTree.dir = mkdtempSync(join(tmpdir(), 'chit-incl-newer-'));
-    newerTree.appendReceipt('leaf-a', 'ra', { publish: false });
-    newerTree.appendReceipt('leaf-b', 'rb', { publish: false });
-    newerTree.appendReceipt('leaf-c', 'rc', { publish: false });
+    await newerTree.appendReceipt('leaf-a', 'ra', { publish: false });
+    await newerTree.appendReceipt('leaf-b', 'rb', { publish: false });
+    await newerTree.appendReceipt('leaf-c', 'rc', { publish: false });
     const older = await anchorAt(newerTree, '2026-10-08T05:32:00.000Z');
-    newerTree.appendReceipt('leaf-d', 'rd', { publish: false });
+    await newerTree.appendReceipt('leaf-d', 'rd', { publish: false });
     const finalHead = await anchorAt(newerTree, '2026-10-08T12:00:00.000Z');
-    newerTree.appendReceipt('leaf-e', 're', { publish: false });
+    await newerTree.appendReceipt('leaf-e', 're', { publish: false });
     const newer = await anchorAt(newerTree, '2026-10-09T12:00:00.000Z');
     assert.equal(newer.tree_size, finalHead.tree_size + 1);
     const newerEpoch = newerTree.epoch;
     parkClosed(newerTree, [older, newer]);
     newerTree.signedClosedEpochHead = (n) => (Number(n) === newerEpoch ? finalHead : null);
-    assert.throws(
-      () => newerTree.inclusion('leaf-e'),
+    await assert.rejects(
+      async () => await newerTree.inclusion('leaf-e'),
       (err) => err.code === 'head_rejected',
     );
-    assert.throws(
-      () => newerTree.inclusion('leaf-d', { treeSize: newer.tree_size }),
+    await assert.rejects(
+      async () => await newerTree.inclusion('leaf-d', { treeSize: newer.tree_size }),
       (err) => err.code === 'head_rejected',
     );
 
     const foreign = { ...finalHead, root: 'ab'.repeat(32) };
     newerTree.closedEpochs[0].heads = [older, foreign];
-    assert.throws(
-      () => newerTree.inclusion('leaf-d'),
+    await assert.rejects(
+      async () => await newerTree.inclusion('leaf-d'),
       (err) => err.code === 'head_mismatch',
     );
   });
@@ -360,7 +360,7 @@ test('a pending leaf renders PENDING ahead of a carry-forward line', () => {
 
 test('the receipt page reports a failed receipt instead of PENDING', async () => {
   const { buildReceipt, renderReceiptHtml } = await import('../src/receipt.js');
-  const receipt = buildReceipt({
+  const receipt = await buildReceipt({
     taskId: 'xfuel-pending-failed',
     status: 'completed',
     createdAt: '2026-10-08T12:00:00.000Z',
@@ -409,7 +409,7 @@ async function bookAround(taskId) {
   } = await import('../src/agent-book.js');
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const recorded = recordCollectedSpend({
+  const recorded = await recordCollectedSpend({
     schema: 'xfuel.receipt.v4',
     task_id: taskId,
     status: 'completed',
@@ -422,12 +422,12 @@ async function bookAround(taskId) {
   const deps = { ledger, registry, verify, baseUrl: 'https://api.chit402.com' };
   return {
     recorded,
-    surfaces() {
-      const listed = readAgentBook(recorded.agent_id, claim, deps);
-      const lineage = queryLineage(recorded.agent_id, taskId, claim, deps);
-      const json = exportAgentBook(recorded.agent_id, { ...claim, format: 'json' }, deps);
-      const csv = exportAgentBook(recorded.agent_id, { ...claim, format: 'csv' }, deps);
-      const html = exportAgentBook(recorded.agent_id, { ...claim, format: 'html' }, deps);
+    async surfaces() {
+      const listed = await readAgentBook(recorded.agent_id, claim, deps);
+      const lineage = await queryLineage(recorded.agent_id, taskId, claim, deps);
+      const json = await exportAgentBook(recorded.agent_id, { ...claim, format: 'json' }, deps);
+      const csv = await exportAgentBook(recorded.agent_id, { ...claim, format: 'csv' }, deps);
+      const html = await exportAgentBook(recorded.agent_id, { ...claim, format: 'html' }, deps);
       return { listed, lineage, json, csv, html };
     },
   };
@@ -461,13 +461,13 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
     const tree = getReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-head-'));
     const taskId = 'leaf-lane-reject';
-    tree.appendReceipt(taskId, 'rr', { publish: false });
+    await tree.appendReceipt(taskId, 'rr', { publish: false });
     const head = await anchorAt(tree, '2026-10-08T05:32:00.000Z');
     assert.equal(tree.heads[tree.heads.length - 1], head);
-    const savedIndex = tree.inclusion(taskId).leaf_index;
+    const savedIndex = (await tree.inclusion(taskId)).leaf_index;
     assert.equal(tree.leafIndexOf(taskId), savedIndex);
     const book = await bookAround(taskId);
-    const healthy = book.surfaces();
+    const healthy = await book.surfaces();
     assert.equal(healthy.listed.status, 200);
     const healthyRow = healthy.listed.body.entries.find((row) => row.task_id === taskId);
     assert.equal(healthyRow.receipt_lane.anchor_changed_since_binding, false);
@@ -476,10 +476,10 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
     const stored = tree.heads[tree.heads.length - 1];
     const savedJws = stored.issuer_signature.jws;
     stored.issuer_signature = { ...stored.issuer_signature, jws: `${savedJws.slice(0, -4)}AAAA` };
-    assert.throws(() => tree.inclusion(taskId), (err) => err.code === 'head_rejected');
+    await assert.rejects(async () => await tree.inclusion(taskId), (err) => err.code === 'head_rejected');
     assert.equal(tree.leafIndexOf(taskId), savedIndex);
 
-    const app = createApp();
+    const app = await createApp();
     const server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
     });
@@ -491,10 +491,10 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
       assert.equal(rejectedBody.error, 'head_rejected');
       assert.equal(rejectedBody.status, undefined);
       assert.equal(rejectedBody.proof, undefined);
-      assertLaneUnknown(book.surfaces(), taskId);
+      assertLaneUnknown(await book.surfaces(), taskId);
 
       stored.issuer_signature = { ...stored.issuer_signature, jws: savedJws };
-      tree.appendReceipt('leaf-lane-later', 'rl', { publish: false });
+      await tree.appendReceipt('leaf-lane-later', 'rl', { publish: false });
       await anchorAt(tree, '2026-10-08T18:00:00.000Z');
       const first = tree.heads[0];
       const newestStored = tree.heads[tree.heads.length - 1];
@@ -505,11 +505,11 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
         jws: `${newestJws.slice(0, -4)}AAAA`,
       };
       assert.equal(first.issuer_signature.jws, savedJws);
-      assert.throws(() => tree.inclusion(taskId), (err) => err.code === 'head_rejected');
+      await assert.rejects(async () => await tree.inclusion(taskId), (err) => err.code === 'head_rejected');
       assert.equal(tree.leafIndexOf(taskId), savedIndex);
-      const coveredByOlder = book.surfaces();
+      const coveredByOlder = await book.surfaces();
       assertLaneUnknown(coveredByOlder, taskId);
-      const witness = publicLogWitness(tree, taskId);
+      const witness = await publicLogWitness(tree, taskId);
       assert.equal(witness.inclusion, undefined);
       assert.equal(witness.carry_forward, undefined);
 
@@ -517,25 +517,25 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
       const mismatchTree = getReceiptMerkleTree();
       mismatchTree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-mismatch-'));
       const mismatchId = 'leaf-lane-mismatch';
-      mismatchTree.appendReceipt(mismatchId, 'rm', { publish: false });
+      await mismatchTree.appendReceipt(mismatchId, 'rm', { publish: false });
       const mismatchHead = await anchorAt(mismatchTree, '2026-10-08T05:32:00.000Z');
       const mismatchIndex = mismatchTree.leafIndexOf(mismatchId);
       mismatchHead.root = 'cd'.repeat(32);
-      assert.throws(() => mismatchTree.inclusion(mismatchId), (err) => err.code === 'head_mismatch');
+      await assert.rejects(async () => await mismatchTree.inclusion(mismatchId), (err) => err.code === 'head_mismatch');
       assert.equal(mismatchTree.leafIndexOf(mismatchId), mismatchIndex);
       const mismatchHttp = await fetch(`${base}/v1/receipts/${mismatchId}/inclusion`);
       const mismatchBody = await mismatchHttp.json();
       assert.equal(mismatchHttp.status, 400);
       assert.equal(mismatchBody.error, 'head_mismatch');
       const mismatchBook = await bookAround(mismatchId);
-      assertLaneUnknown(mismatchBook.surfaces(), mismatchId);
-      assert.equal(publicLogWitness(mismatchTree, mismatchId).inclusion, undefined);
+      assertLaneUnknown(await mismatchBook.surfaces(), mismatchId);
+      assert.equal((await publicLogWitness(mismatchTree, mismatchId)).inclusion, undefined);
 
       resetReceiptMerkleTree();
       const closedTree = getReceiptMerkleTree();
       closedTree.dir = mkdtempSync(join(tmpdir(), 'chit-lane-closed-'));
       const closedId = 'leaf-lane-closed';
-      closedTree.appendReceipt(closedId, 'rc', { publish: false });
+      await closedTree.appendReceipt(closedId, 'rc', { publish: false });
       const pinned = await anchorAt(closedTree, '2026-10-08T12:00:00.000Z');
       const closedIndex = closedTree.leafIndexOf(closedId);
       const epochNo = closedTree.epoch;
@@ -551,15 +551,15 @@ test('a rejected or mismatched head does not break book listing, lineage, or exp
           }
           : null
       );
-      assert.throws(() => closedTree.inclusion(closedId), (err) => err.code === 'head_rejected');
+      await assert.rejects(async () => await closedTree.inclusion(closedId), (err) => err.code === 'head_rejected');
       assert.equal(closedTree.leafIndexOf(closedId), closedIndex);
       const closedHttp = await fetch(`${base}/v1/receipts/${closedId}/inclusion`);
       const closedBody = await closedHttp.json();
       assert.equal(closedHttp.status, 400);
       assert.equal(closedBody.error, 'head_rejected');
       const closedBook = await bookAround(closedId);
-      assertLaneUnknown(closedBook.surfaces(), closedId);
-      assert.equal(publicLogWitness(closedTree, closedId).inclusion, undefined);
+      assertLaneUnknown(await closedBook.surfaces(), closedId);
+      assert.equal((await publicLogWitness(closedTree, closedId)).inclusion, undefined);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

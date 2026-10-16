@@ -28,7 +28,7 @@ before(async () => {
   initIssuerKey();
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       const { port } = server.address();

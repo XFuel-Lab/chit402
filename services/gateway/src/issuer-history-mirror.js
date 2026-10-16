@@ -134,7 +134,7 @@ export function issuerHistoryMirrorFileBytes(record) {
  * @param {import('express').Response} res
  * @param {{ hash: string, body: string }|null} [record]
  */
-export function writeIssuerHistoryMirror(res, record = null) {
+export async function writeIssuerHistoryMirror(res, record = null) {
   const cfg = readIssuerHistoryMirrorConfig();
   if (!cfg.configured) {
     return res.status(404).json({
@@ -148,7 +148,7 @@ export function writeIssuerHistoryMirror(res, record = null) {
       message: `issuer history mirror config is incomplete: ${cfg.problems.join(', ')}`,
     });
   }
-  const current = record || currentIssuerHistory();
+  const current = record || await currentIssuerHistory();
   let doc;
   try {
     doc = issuerHistoryMirrorAnnouncement(current);

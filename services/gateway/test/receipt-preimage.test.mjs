@@ -90,12 +90,12 @@ test('binding preimage is the abi.encodePacked bytes of the commitment', () => {
   assert.equal(published.preimages.fields['binding.expected_commitment'].preimage_hex, packed.preimage_hex);
 });
 
-test('inclusion leaf and tree prefix preimages recompute the published hashes', () => {
+test('inclusion leaf and tree prefix preimages recompute the published hashes', async () => {
   const tree = resetReceiptMerkleTree();
   const rowHash = 'bf'.repeat(32);
-  tree.appendReceipt('task-other', 'aa'.repeat(32), { publish: false });
-  tree.appendReceipt('task-leaf', rowHash, { publish: false });
-  const inclusion = tree.inclusion('task-leaf');
+  await tree.appendReceipt('task-other', 'aa'.repeat(32), { publish: false });
+  await tree.appendReceipt('task-leaf', rowHash, { publish: false });
+  const inclusion = await tree.inclusion('task-leaf');
   const audit = tree.publicPrefixAudit('task-leaf');
   assert.equal(audit.ok, true);
   assert.equal(audit.leaf.task_id, 'task-leaf');
@@ -154,7 +154,7 @@ test('coverage of book rows is not a public preimage; the empty set is', () => {
   assert.equal(empty.preimages.fields['coverage.universe_hash'].preimage_utf8, '');
 });
 
-test('a refusal publishes the book row preimage and not the output', () => {
+test('a refusal publishes the book row preimage and not the output', async () => {
   const row = {
     agent_id: 9,
     task_id: 'xfuel-refused',
@@ -165,7 +165,7 @@ test('a refusal publishes the book row preimage and not the output', () => {
     collected_at: '2026-10-01T00:00:00.000Z',
   };
   row.row_hash = bookRowHash(row);
-  const doc = presentRefusal(issueRefusalReceipt(row), 'https://api.chit402.com');
+  const doc = presentRefusal(await issueRefusalReceipt(row), 'https://api.chit402.com');
   const field = doc.preimages.fields['book_row.row_hash'];
   assert.equal(field.preimage_utf8, bookRowPreimage(row));
   assert.equal(field.hash, row.row_hash);
@@ -184,10 +184,10 @@ test('job spec preimage is the JSON the board hash covers', () => {
   assert.equal(preimage.startsWith('{"text":'), true);
 });
 
-test('issuer history chains, signs, and rejects a rewritten entry', () => {
+test('issuer history chains, signs, and rejects a rewritten entry', async () => {
   const prevNotBefore = process.env.ISSUER_KEY_NOT_BEFORE;
   delete process.env.ISSUER_KEY_NOT_BEFORE;
-  const doc = buildIssuerHistory();
+  const doc = await buildIssuerHistory();
   assert.equal(verifyIssuerHistory(doc).valid, true);
   assert.equal(doc.entries[0].prev_hash, null);
   assert.equal(doc.entries.at(-1).kid, getIssuerKid());
@@ -211,7 +211,7 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
   tampered.entries[0].custody = 'rewritten';
   assert.equal(verifyIssuerHistory(tampered).valid, false);
 
-  const revoked = buildIssuerHistory({
+  const revoked = await buildIssuerHistory({
     entries: [{
       kid,
       jwk: getJwks().keys[0],
@@ -234,7 +234,7 @@ test('issuer history chains, signs, and rejects a rewritten entry', () => {
   else process.env.ISSUER_KEY_NOT_BEFORE = prevNotBefore;
 });
 
-test('a rotated kid does not inherit the production not_before', () => {
+test('a rotated kid does not inherit the production not_before', async () => {
   const prev = process.env.ISSUER_KEY_NOT_BEFORE;
   delete process.env.ISSUER_KEY_NOT_BEFORE;
   try {
@@ -247,7 +247,7 @@ test('a rotated kid does not inherit the production not_before', () => {
     assert.equal(notBeforeForKid(PRODUCTION_ISSUER_KID, null), PRODUCTION_KEY_NOT_BEFORE);
     const liveKid = getIssuerKid();
     if (liveKid !== PRODUCTION_ISSUER_KID) {
-      const dated = buildIssuerHistory();
+      const dated = await buildIssuerHistory();
       assert.equal(dated.entries.at(-1).not_before, '2026-10-01T00:00:00.000Z');
       const early = issuerKeyWindow(dated, liveKid, '2026-09-04T08:52:05.000Z');
       assert.equal(early.ok, false);

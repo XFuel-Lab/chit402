@@ -29,7 +29,7 @@ const post = (body, headers = {}) => fetch(`${base}/v1/chat/completions`, {
 
 before(async () => {
   resetHubCatalogCache();
-  const app = createApp();
+  const app = await createApp();
   server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;

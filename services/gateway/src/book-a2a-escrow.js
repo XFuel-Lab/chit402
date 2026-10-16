@@ -255,7 +255,7 @@ export async function handleA2aJobAction(input, deps = {}) {
     jobs.bySpec.set(specKey, jobId);
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'open',
@@ -316,7 +316,7 @@ export async function handleA2aJobAction(input, deps = {}) {
     job.funded_at = new Date().toISOString();
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'fund',
@@ -366,7 +366,7 @@ export async function handleA2aJobAction(input, deps = {}) {
 
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'submit',
@@ -401,7 +401,7 @@ export async function handleA2aJobAction(input, deps = {}) {
     job.close_reason = 'release';
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'release',
@@ -449,7 +449,7 @@ export async function handleA2aJobAction(input, deps = {}) {
     }
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'clawback',
@@ -504,7 +504,7 @@ export async function handleA2aJobAction(input, deps = {}) {
     }
     jobs._save();
 
-    const bookRow = recordBookRow?.({
+    const bookRow = await recordBookRow?.({
       agentId: principalId,
       jobId,
       phase: 'challenge',

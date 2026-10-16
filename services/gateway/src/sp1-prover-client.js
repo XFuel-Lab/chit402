@@ -171,11 +171,11 @@ class SP1ProverClient {
 
     // If batching disabled or urgent, process immediately as single deposit
     if (!this.batchingEnabled || urgent) {
-      return this._generateSingleProof(request);
+      return await this._generateSingleProof(request);
     }
 
     // Add to batch queue and return promise that resolves when batch is processed
-    return this._addToBatch(request);
+    return await this._addToBatch(request);
   }
 
   /**
@@ -211,7 +211,7 @@ class SP1ProverClient {
         { batchSize: this.batchQueue.length },
         'Batch full, processing immediately'
       );
-      this._processBatch();
+      await this._processBatch();
     } else {
       // Start/reset timeout timer
       this._resetBatchTimer();
@@ -229,7 +229,7 @@ class SP1ProverClient {
       clearTimeout(this.batchTimer);
     }
 
-    this.batchTimer = setTimeout(() => {
+    this.batchTimer = setTimeout(async () => {
       if (this.batchQueue.length >= this.minBatchSize) {
         logger.info(
           {
@@ -239,7 +239,7 @@ class SP1ProverClient {
           },
           'Batch timeout reached, processing partial batch'
         );
-        this._processBatch();
+        await this._processBatch();
       } else if (this.batchQueue.length > 0) {
         logger.warn(
           {
@@ -249,7 +249,7 @@ class SP1ProverClient {
           'Batch timeout but queue below min size, processing as single deposits'
         );
         // Process remaining requests as single deposits
-        this._flushAsSingle();
+        await this._flushAsSingle();
       }
     }, this.batchTimeoutMs);
   }
@@ -626,7 +626,7 @@ class SP1ProverClient {
     }
 
     // JSON fallback (original path)
-    return this._generateSingleProofJson(request, startTime);
+    return await this._generateSingleProofJson(request, startTime);
   }
 
   /**
@@ -753,7 +753,7 @@ class SP1ProverClient {
    * On failure (timeout >8s, 5xx, or connection error), switch to fallback
    * for fallbackDurationMs, then try primary again.
    */
-  startFallbackMonitor(pingIntervalMs = 10000, fallbackDurationMs = 60000) {
+  async startFallbackMonitor(pingIntervalMs = 10000, fallbackDurationMs = 60000) {
     if (!this.fallbackUrl) {
       logger.info('No SP1_FALLBACK_URL configured, fallback monitor disabled');
       return;
@@ -798,7 +798,7 @@ class SP1ProverClient {
       }
     };
 
-    checkPrimary();
+    await checkPrimary();
     this._primaryHealthInterval = setInterval(checkPrimary, pingIntervalMs);
     logger.info({ pingIntervalMs, fallbackDurationMs, fallbackUrl: this.fallbackUrl }, 'Fallback monitor started');
   }
@@ -829,8 +829,8 @@ class SP1ProverClient {
       'Fallback activated \u2014 using Succinct'
     );
 
-    this._fallbackRecoveryTimer = setTimeout(() => {
-      this._attemptPrimaryRecovery();
+    this._fallbackRecoveryTimer = setTimeout(async () => {
+      await this._attemptPrimaryRecovery();
     }, this._fallbackDurationMs);
   }
 
@@ -864,8 +864,8 @@ class SP1ProverClient {
     }
 
     logger.warn('Primary still down, extending fallback for another cycle');
-    this._fallbackRecoveryTimer = setTimeout(() => {
-      this._attemptPrimaryRecovery();
+    this._fallbackRecoveryTimer = setTimeout(async () => {
+      await this._attemptPrimaryRecovery();
     }, this._fallbackDurationMs);
   }
 
@@ -892,7 +892,7 @@ class SP1ProverClient {
    * Start polling /metrics from the prover every intervalMs.
    * Stores last maxHistory readings for dashboard graphs.
    */
-  startMetricsPolling(intervalMs = 5000, maxHistory = 360) {
+  async startMetricsPolling(intervalMs = 5000, maxHistory = 360) {
     if (this._metricsInterval) return;
     this._metricsHistory = this._metricsHistory || [];
     this._maxHistory = maxHistory;
@@ -926,7 +926,7 @@ class SP1ProverClient {
       }
     };
 
-    poll();
+    await poll();
     this._metricsInterval = setInterval(poll, intervalMs);
     logger.info({ intervalMs }, 'Metrics polling started');
   }
@@ -1327,8 +1327,8 @@ export async function initSP1Prover() {
         { primaryUrl: sp1ProverClient.primaryUrl, fallbackUrl: sp1ProverClient.fallbackUrl },
         'SP1 prover client initialized successfully'
       );
-      sp1ProverClient.startMetricsPolling();
-      sp1ProverClient.startFallbackMonitor();
+      await sp1ProverClient.startMetricsPolling();
+      await sp1ProverClient.startFallbackMonitor();
       const dashPort = parseInt(process.env.SP1_DASHBOARD_PORT || '9100');
       sp1ProverClient.startDashboard(dashPort);
     } else {

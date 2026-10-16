@@ -76,7 +76,7 @@ test('parallel reserves against one cap cannot exceed it', async () => {
   const { api } = service('10000');
   const { server, base } = await listen(api.handle);
   try {
-    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => call(
+    const results = await Promise.all(Array.from({ length: 8 }, async (_, i) => await call(
       base,
       'POST',
       '/v1/spend/holds',

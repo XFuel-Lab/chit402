@@ -120,8 +120,8 @@ function baseCfg(url, over = {}) {
   };
 }
 
-function pay(store, cfg, nonce, header, body = { prompt: 'hello' }) {
-  return settleBoundPayment({
+async function pay(store, cfg, nonce, header, body = { prompt: 'hello' }) {
+  return await settleBoundPayment({
     req: { headers: { 'x-payment': header }, body },
     taskId: 'task-late',
     amount: '2000',
@@ -355,7 +355,7 @@ test('restart mid-resolve publishes the persisted signature once', async () => {
     cfg.chainReader = finalizedReader();
     const row = store.listLate()[0];
     await assert.rejects(
-      () => resolveLateRecord(store, row, {
+      async () => await resolveLateRecord(store, row, {
         cfg,
         signer,
         appendLog: () => {},

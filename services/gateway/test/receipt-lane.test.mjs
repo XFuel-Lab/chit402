@@ -180,10 +180,10 @@ test('same head is not an anchor change, and a leaf with no covering head is unk
   assert.equal(unknown.freeze, false);
 });
 
-test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', () => {
+test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const recorded = recordCollectedSpend({
+  const recorded = await recordCollectedSpend({
     schema: 'xfuel.receipt.v4',
     task_id: 'lane-1',
     status: 'completed',
@@ -198,7 +198,7 @@ test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', 
   assert.equal(payload.anchor_changed_since_binding, undefined);
   assert.equal(payload.freeze, undefined);
 
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
     ledger,
     registry,
     verify: bindBookVerifier(registry),
@@ -211,10 +211,10 @@ test('book_seq signature stays verifiable; receipt_lane is not inside the JWS', 
   assert.equal(row.receipt_lane.freeze, false);
   assert.equal(verifyBookSeq(row.book_chain).valid, true);
 
-  const lane = receiptLaneForEntry(recorded.entry, { tree: null });
+  const lane = await receiptLaneForEntry(recorded.entry, { tree: null });
   assert.equal(lane.anchor_changed_since_binding, null);
 
-  const csv = buildBookExportCsv(ledger.listByAgent(recorded.agent_id), recorded.agent_id, 'https://api.chit402.com');
+  const csv = await buildBookExportCsv(ledger.listByAgent(recorded.agent_id), recorded.agent_id, 'https://api.chit402.com');
   assert.match(csv.split('\n')[0], /settled_by,settled,anchor_changed_since_binding,freeze,classification/);
   assert.match(csv, /receipt,/);
   assert.equal(payload.classification, undefined);

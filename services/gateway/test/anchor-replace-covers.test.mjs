@@ -54,7 +54,7 @@ test("a replaced head's covered_by names the replacement anchor", async () => {
     const dir = mkdtempSync(join(tmpdir(), 'chit-replace-cover-'));
     const tree = new ReceiptMerkleTree();
     tree.dir = dir;
-    for (const id of ['a', 'b', 'c']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['a', 'b', 'c']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     await tree.publishHead({
       force: true,
       now: '2026-10-08T05:00:00.000Z',
@@ -71,7 +71,7 @@ test("a replaced head's covered_by names the replacement anchor", async () => {
     assert.equal(rejected.nonce, 4);
     assert.equal(rejected.root, firstRoot);
 
-    for (const id of ['d', 'e']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['d', 'e']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const replacementRoot = hex(rootOf(tree.leaves));
     assert.notEqual(replacementRoot, firstRoot);
     const sent = [];
@@ -110,7 +110,7 @@ test("a replaced head's covered_by names the replacement anchor", async () => {
       row.root === firstRoot && row.nonce === 4 && row.status === 'superseded'
     )), true);
 
-    const early = tree.inclusion('a', { treeSize: first.tree_size });
+    const early = await tree.inclusion('a', { treeSize: first.tree_size });
     assert.equal(early.head.anchored, false);
     assert.equal(early.anchor_status, 'pending');
     assert.deepEqual(early.covered_by, {
@@ -123,7 +123,7 @@ test("a replaced head's covered_by names the replacement anchor", async () => {
       },
     });
 
-    for (const id of ['f', 'g']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['f', 'g']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const laterRoot = hex(rootOf(tree.leaves));
     const laterTx = `0x${'cd'.repeat(32)}`;
     tree.heads.push(signHead({
@@ -148,13 +148,13 @@ test("a replaced head's covered_by names the replacement anchor", async () => {
         },
       },
     }));
-    const still = tree.inclusion('a', { treeSize: first.tree_size });
+    const still = await tree.inclusion('a', { treeSize: first.tree_size });
     assert.equal(still.covered_by.root, replacementRoot);
     assert.equal(still.covered_by.tree_size, replacement.tree_size);
     assert.equal(still.covered_by.anchors.base.tx, replacement.anchor_tx);
     assert.notEqual(still.covered_by.anchors.base.tx, laterTx);
 
-    const onReplacement = tree.inclusion('a', { treeSize: replacement.tree_size });
+    const onReplacement = await tree.inclusion('a', { treeSize: replacement.tree_size });
     assert.equal(onReplacement.status, 'anchored');
     assert.equal(Object.hasOwn(onReplacement, 'covered_by'), false);
   } finally {

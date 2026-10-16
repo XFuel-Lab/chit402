@@ -127,7 +127,7 @@ async function waitComplete(taskId) {
       })).json();
       if (shell.schema !== 'chit402.receipt_shell.v1') continue;
       const task = getAIListener().activeTasks.get(taskId);
-      receipt = storedReceiptJson(buildReceipt(task, {
+      receipt = storedReceiptJson(await buildReceipt(task, {
         signingSecret: process.env.RECEIPT_SIGNING_SECRET,
         persistSignature: false,
       }));
@@ -141,7 +141,7 @@ before(async () => {
   globalThis.fetch = stubFetch;
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -189,7 +189,7 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   assert.equal(owedShell.schema, 'chit402.receipt_shell.v1');
   assert.equal(owedShell.issuer_signature, undefined);
   const owedTask = getAIListener().activeTasks.get(first.task_id);
-  const owed = storedReceiptJson(buildReceipt(owedTask, {
+  const owed = storedReceiptJson(await buildReceipt(owedTask, {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET,
     persistSignature: false,
   }));

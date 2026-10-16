@@ -48,7 +48,7 @@ let server;
 let base;
 
 before(async () => {
-  const app = createApp();
+  const app = await createApp();
   ({ server, base } = await listen(app));
 });
 
@@ -185,7 +185,7 @@ test('oversized input is rejected and a wallet is not looked up', async () => {
 });
 
 test('anonymous counts do not keep the pasted input', async () => {
-  const app = createApp();
+  const app = await createApp();
   const state = app.locals.receiptCheck;
   const before = JSON.stringify(state);
   assert.equal(before.includes(MARKER), false);

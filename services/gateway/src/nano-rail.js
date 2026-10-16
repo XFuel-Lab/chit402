@@ -230,7 +230,7 @@ export async function verifyNanoSend({ hash, recipient, amountRaw }, {
 
   let infos;
   try {
-    infos = await Promise.all(urls.map((url) => rpcBlockInfo(url, hash, fetchImpl)));
+    infos = await Promise.all(urls.map(async (url) => await rpcBlockInfo(url, hash, fetchImpl)));
   } catch (err) {
     return {
       ok: false,
@@ -291,7 +291,7 @@ export async function verifyNanoSend({ hash, recipient, amountRaw }, {
   if (previous && previous !== ZERO_HASH && !/^0+$/.test(previous)) {
     let prevs;
     try {
-      prevs = await Promise.all(urls.map((url) => rpcBlockInfo(url, previous, fetchImpl)));
+      prevs = await Promise.all(urls.map(async (url) => await rpcBlockInfo(url, previous, fetchImpl)));
     } catch (err) {
       return {
         ok: false,

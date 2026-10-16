@@ -181,7 +181,7 @@ test('guardian_set_hash is the RFC 8785 set, and a private key is refused', () =
   }
 });
 
-test('v11 entries reference the guardian set and show the retirement block', () => {
+test('v11 entries reference the guardian set and show the retirement block', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
@@ -191,7 +191,7 @@ test('v11 entries reference the guardian set and show the retirement block', () 
     const doc = writeSet([prior, other]);
     const setHash = guardianSetHash(doc);
     _recordRegistryRetirement({ kid: prior.kid, blockNumber: 42, notAfter: 1700000000 });
-    const history = buildIssuerHistory({ entries: [historyEntry(prior)] });
+    const history = await buildIssuerHistory({ entries: [historyEntry(prior)] });
     const retired = history.entries.find((entry) => entry.kid === prior.kid);
     const live = history.entries.at(-1);
     assert.equal(retired.status, 'retired');
@@ -211,7 +211,7 @@ test('v11 entries reference the guardian set and show the retirement block', () 
   }
 });
 
-test('flag-off history omits guardian_set_hash and retirement_block', () => {
+test('flag-off history omits guardian_set_hash and retirement_block', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
@@ -220,7 +220,7 @@ test('flag-off history omits guardian_set_hash and retirement_block', () => {
     const other = publicGuardian();
     writeSet([prior, other]);
     _recordRegistryRetirement({ kid: prior.kid, blockNumber: 42, notAfter: 1700000000 });
-    const history = buildIssuerHistory({ entries: [historyEntry(prior)] });
+    const history = await buildIssuerHistory({ entries: [historyEntry(prior)] });
     const row = history.entries.find((entry) => entry.kid === prior.kid);
     assert.equal(row.status, 'active');
     assert.equal(Object.hasOwn(row, 'guardian_set_hash'), false);
@@ -231,7 +231,7 @@ test('flag-off history omits guardian_set_hash and retirement_block', () => {
   }
 });
 
-test('a retired signing key and a guardian signing key cannot sign', () => {
+test('a retired signing key and a guardian signing key cannot sign', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
@@ -241,11 +241,11 @@ test('a retired signing key and a guardian signing key cannot sign', () => {
       assert.equal(err.code, 'issuer_key_retired');
       return true;
     });
-    assert.throws(() => buildIssuerHistory(), (err) => {
+    await assert.rejects(async () => await buildIssuerHistory(), (err) => {
       assert.equal(err.code, 'issuer_key_retired');
       return true;
     });
-    assert.throws(() => buildReceipt({
+    await assert.rejects(async () => await buildReceipt({
       taskId: 'xfuel-retired-key',
       status: 'completed',
       createdAt: '2026-09-26T17:27:32Z',
@@ -265,7 +265,7 @@ test('a retired signing key and a guardian signing key cannot sign', () => {
       assert.equal(err.code, 'issuer_key_is_guardian');
       return true;
     });
-    assert.throws(() => buildIssuerHistory(), (err) => {
+    await assert.rejects(async () => await buildIssuerHistory(), (err) => {
       assert.equal(err.code, 'issuer_key_is_guardian');
       return true;
     });
@@ -326,7 +326,7 @@ test('KeyRetired logs decode from the artifact and both RPCs must agree', async 
     };
 
     await assert.rejects(
-      () => assertIssuerRootStartup({
+      async () => await assertIssuerRootStartup({
         fetchImpl: fetchImpl((url) => (url.endsWith(':10') ? [retiredLog(retired, 17)] : [log])),
         log() {},
       }),

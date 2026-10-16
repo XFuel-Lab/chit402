@@ -188,7 +188,7 @@ test('mocked connection records signature, slot, cluster, and memo', async () =>
     SOLANA_ANCHOR_CLUSTER: 'devnet',
   }, async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('row-1', 'hash-1');
+    await tree.appendReceipt('row-1', 'hash-1');
     await new Promise((resolve) => setImmediate(resolve));
     const head = await tree.publishHead({
       force: true,
@@ -211,7 +211,7 @@ test('mocked connection records signature, slot, cluster, and memo', async () =>
     assert.equal(JSON.stringify(head).includes(kp.json), false);
     assert.equal(verifyTreeHead(head).valid, true);
     const { renderInclusionSection } = await import('../src/receipt-merkle.js');
-    assert.match(renderInclusionSection(tree.inclusion('row-1')), /anchored in Solana tx/);
+    assert.match(renderInclusionSection(await tree.inclusion('row-1')), /anchored in Solana tx/);
     const again = await tree.publishHead({
       force: true,
       now: '2026-09-30T16:00:00.000Z',
@@ -231,7 +231,7 @@ test('a failed send stays pending and a later publish retries once', async () =>
     SOLANA_ANCHOR_CLUSTER: 'devnet',
   }, async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('row-1', 'hash-1');
+    await tree.appendReceipt('row-1', 'hash-1');
     await new Promise((resolve) => setImmediate(resolve));
     const failed = await tree.publishHead({
       force: true,
@@ -266,14 +266,14 @@ test('a day that already anchored a different root is not sent again', async () 
     SOLANA_ANCHOR_CLUSTER: 'mainnet-beta',
   }, async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('row-1', 'hash-1');
+    await tree.appendReceipt('row-1', 'hash-1');
     await new Promise((resolve) => setImmediate(resolve));
     const first = await tree.publishHead({
       force: true,
       now: '2026-09-29T12:00:00.000Z',
       solanaConnection: connection,
     });
-    tree.appendReceipt('row-2', 'hash-2');
+    await tree.appendReceipt('row-2', 'hash-2');
     const secondDay = await tree.publishHead({
       force: true,
       now: '2026-09-30T12:00:00.000Z',
@@ -281,7 +281,7 @@ test('a day that already anchored a different root is not sent again', async () 
     });
     assert.equal(connection.sent.length, 2);
     assert.equal(parseAnchorMemo(secondDay.anchors.solana.memo).prev, first.root);
-    tree.appendReceipt('row-3', 'hash-3');
+    await tree.appendReceipt('row-3', 'hash-3');
     const grown = await tree.publishHead({
       force: true,
       now: '2026-09-30T18:00:00.000Z',
@@ -303,7 +303,7 @@ test('confirm timeout still records the broadcast signature', async () => {
     SOLANA_ANCHOR_CLUSTER: 'devnet',
   }, async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('row-1', 'hash-1');
+    await tree.appendReceipt('row-1', 'hash-1');
     await new Promise((resolve) => setImmediate(resolve));
     const head = await tree.publishHead({
       force: true,

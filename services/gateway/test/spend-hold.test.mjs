@@ -67,8 +67,8 @@ test('cap view counts open holds and omits the field when nothing is held', () =
   assert.equal(Object.hasOwn(unlimited, 'held'), false);
 });
 
-test('book JSON shows held when open holds shrink remaining', () => {
-  const open = packBook([], 7, 50, {
+test('book JSON shows held when open holds shrink remaining', async () => {
+  const open = await packBook([], 7, 50, {
     identity: { budget: '10000' },
     spent: 2000n,
     held: 3000n,
@@ -81,7 +81,7 @@ test('book JSON shows held when open holds shrink remaining', () => {
     BigInt(open.spent) + BigInt(open.held) + BigInt(open.remaining),
     BigInt(open.cap),
   );
-  const plain = packBook([], 7, 50, {
+  const plain = await packBook([], 7, 50, {
     identity: { budget: '10000' },
     spent: 2000n,
   });

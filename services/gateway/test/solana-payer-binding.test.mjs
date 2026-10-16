@@ -168,7 +168,7 @@ test('Solana settle path stamps caller_binding.payer_wallet in signed JWS claims
       netAmount: '1990',
       feeBps: 50,
     };
-    const receipt = buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
+    const receipt = await buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
     const view = mergeReceiptView(receipt);
     assert.equal(view.caller_binding.payer_wallet, SOLANA_PAYER);
     assert.equal(receipt.route_meta.chain_id, 'solana');
@@ -176,18 +176,18 @@ test('Solana settle path stamps caller_binding.payer_wallet in signed JWS claims
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.caller_binding.payer_wallet, SOLANA_PAYER);
     assert.equal(claims.payment.ref, `solana:${SOLANA_TX}`);
-    assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
-    const rebuilt = buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
+    assert.equal((await verifyReceiptEcdsaWithJwks(receipt, { keys: [] })).valid, true);
+    const rebuilt = await buildReceipt(task, { payerWallet: settled.payerWallet, persistSignature: true });
     assert.equal(rebuilt.issuer_signature.jws, receipt.issuer_signature.jws);
     assert.equal(rebuilt.route_meta.chain_id, 'solana');
-    assert.equal(verifyReceiptEcdsaWithJwks(rebuilt, { keys: [] }).valid, true);
+    assert.equal((await verifyReceiptEcdsaWithJwks(rebuilt, { keys: [] })).valid, true);
   } finally {
     await closeCdp();
     await solanaMock.close();
   }
 });
 
-test('Base settle path still stamps EVM caller_binding.payer_wallet', () => {
+test('Base settle path still stamps EVM caller_binding.payer_wallet', async () => {
   const evmPayer = '0x1234567890123456789012345678901234567890';
   const task = {
     taskId: 'xfuel-base-payer-bind',
@@ -205,7 +205,7 @@ test('Base settle path still stamps EVM caller_binding.payer_wallet', () => {
     netAmount: '1990',
     feeBps: 50,
   };
-  const receipt = buildReceipt(task, { payerWallet: evmPayer, persistSignature: true });
+  const receipt = await buildReceipt(task, { payerWallet: evmPayer, persistSignature: true });
   assert.equal(mergeReceiptView(receipt).caller_binding.payer_wallet, evmPayer);
   assert.equal(decodeReceiptClaims(receipt).caller_binding.payer_wallet, evmPayer);
 });

@@ -262,14 +262,14 @@ describe('buildReceipt with handoff', () => {
     sp1Proof: null,
   };
 
-  test('buildReceipt omits handoff when not present', () => {
-    const receipt = buildReceipt(baseTask, {});
+  test('buildReceipt omits handoff when not present', async () => {
+    const receipt = await buildReceipt(baseTask, {});
     assert.equal(receipt.handoff, undefined);
     assert.equal('handoff' in receipt, false);
     assert.equal(receipt.task_id, baseTask.taskId);
   });
 
-  test('buildReceipt includes pending handoff with origin only', () => {
+  test('buildReceipt includes pending handoff with origin only', async () => {
     const now = Date.now();
     const task = {
       ...baseTask,
@@ -284,7 +284,7 @@ describe('buildReceipt with handoff', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     assert.ok(receipt.handoff);
     assert.equal(receipt.handoff.status, 'pending_dest_ack');
     assert.ok(receipt.handoff.origin);
@@ -292,7 +292,7 @@ describe('buildReceipt with handoff', () => {
     assert.equal(receipt.handoff.dest, null);
   });
 
-  test('buildReceipt includes complete handoff', () => {
+  test('buildReceipt includes complete handoff', async () => {
     const now = Date.now();
     const task = {
       ...baseTask,
@@ -313,7 +313,7 @@ describe('buildReceipt with handoff', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     assert.ok(receipt.handoff);
     assert.equal(receipt.handoff.status, 'complete');
     assert.ok(receipt.handoff.origin);
@@ -325,8 +325,8 @@ describe('buildReceipt with handoff', () => {
 // ─── Integration Tests: renderReceiptHtml with handoff ──────────────────────
 
 describe('renderReceiptHtml with handoff', () => {
-  test('HTML does not show handoff section when no handoff', () => {
-    const receipt = buildReceipt({
+  test('HTML does not show handoff section when no handoff', async () => {
+    const receipt = await buildReceipt({
       taskId: 'xfuel-html-no-handoff',
       status: 'completed',
       intent: { paymentRail: 'usdc', amount: '10000' },
@@ -337,9 +337,9 @@ describe('renderReceiptHtml with handoff', () => {
     assert.ok(!html.includes('wallet-move delegation'));
   });
 
-  test('HTML shows pending handoff section', () => {
+  test('HTML shows pending handoff section', async () => {
     const now = Date.now();
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'xfuel-html-pending',
       status: 'completed',
       intent: { paymentRail: 'usdc', amount: '10000' },
@@ -362,9 +362,9 @@ describe('renderReceiptHtml with handoff', () => {
     assert.ok(html.includes('Destination'));
   });
 
-  test('HTML shows complete handoff section', () => {
+  test('HTML shows complete handoff section', async () => {
     const now = Date.now();
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'xfuel-html-complete',
       status: 'completed',
       intent: { paymentRail: 'usdc', amount: '10000' },
@@ -391,9 +391,9 @@ describe('renderReceiptHtml with handoff', () => {
     assert.ok(html.includes('Acknowledged'));
   });
 
-  test('HTML escapes hostile input in handoff addresses', () => {
+  test('HTML escapes hostile input in handoff addresses', async () => {
     const now = Date.now();
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'xfuel-html-escape',
       status: 'completed',
       intent: { paymentRail: 'usdc', amount: '10000' },
@@ -417,7 +417,7 @@ describe('renderReceiptHtml with handoff', () => {
 // ─── Backwards Compatibility Tests ───────────────────────────────────────────
 
 describe('Backwards Compatibility', () => {
-  test('existing receipt without handoff still returns 200 JSON', () => {
+  test('existing receipt without handoff still returns 200 JSON', async () => {
     const task = {
       taskId: 'xfuel-1e57cdd7',
       status: 'completed',
@@ -434,7 +434,7 @@ describe('Backwards Compatibility', () => {
       result: { provider: 'test' },
     };
 
-    const receipt = buildReceipt(task, { signingSecret: 'test-secret' });
+    const receipt = await buildReceipt(task, { signingSecret: 'test-secret' });
 
     assert.ok(receipt.task_id);
     assert.ok(receipt.issuer_signature);
@@ -444,18 +444,18 @@ describe('Backwards Compatibility', () => {
     assert.ok(mergeReceiptView(receipt).payment);
   });
 
-  test('receipt JSON schema is stable (v3)', () => {
+  test('receipt JSON schema is stable (v3)', async () => {
     const task = {
       taskId: 'xfuel-schema-check',
       status: 'completed',
       intent: { paymentRail: 'usdc', amount: '10000' },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     assert.equal(receipt.schema, 'xfuel.receipt.v4');
   });
 
-  test('handoff is additive — does not remove existing fields', () => {
+  test('handoff is additive — does not remove existing fields', async () => {
     const now = Date.now();
     const task = {
       taskId: 'xfuel-additive',
@@ -483,7 +483,7 @@ describe('Backwards Compatibility', () => {
       },
     };
 
-    const receipt = buildReceipt(task, { signingSecret: 'test-secret' });
+    const receipt = await buildReceipt(task, { signingSecret: 'test-secret' });
 
     // All existing fields still present
     assert.ok(receipt.task_id);
@@ -558,7 +558,7 @@ describe('End-to-End Signature Flow', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
 
     assert.ok(receipt.handoff);
     assert.equal(receipt.handoff.status, 'complete');

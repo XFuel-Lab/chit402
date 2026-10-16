@@ -46,12 +46,12 @@ test('a pending head reports covered_by and an anchored head does not', async ()
   try {
     const tree = new ReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-covered-'));
-    for (const id of ['a', 'b', 'c']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['a', 'b', 'c']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const pending = await tree.publishHead({ force: true, now: '2026-10-08T05:00:00.000Z' });
     assert.equal(pending.tree_size, 4);
     assert.notEqual(pending.anchor_status, 'anchored');
 
-    for (const id of ['d', 'e']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['d', 'e']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const baseTx = `0x${'cd'.repeat(32)}`;
     const solanaSignature = 'covered-by-solana-signature';
     const smallRoot = hex(rootOf(tree.leaves));
@@ -87,7 +87,7 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     assert.equal(small.tree_size, 6);
 
     process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
-    for (const id of ['f', 'g']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['f', 'g']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const larger = await tree.publishHead({
       force: true,
       now: '2026-10-08T07:00:00.000Z',
@@ -108,9 +108,9 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     assert.equal(larger.anchor_status, 'anchored');
     assert.equal(larger.tree_size, 8);
     assert.notEqual(larger.root, smallRoot);
-    tree.appendReceipt('h', 'rh', { publish: false });
+    await tree.appendReceipt('h', 'rh', { publish: false });
 
-    const early = tree.inclusion('a', { treeSize: pending.tree_size });
+    const early = await tree.inclusion('a', { treeSize: pending.tree_size });
     assert.equal(early.status, 'included');
     assert.equal(early.anchor_status, 'pending');
     assert.equal(early.tree_size, 4);
@@ -136,17 +136,17 @@ test('a pending head reports covered_by and an anchored head does not', async ()
     assert.notEqual(early.covered_by.root, larger.root);
     assert.notEqual(early.covered_by.anchors.base.tx, larger.anchor_tx);
 
-    const anchored = tree.inclusion('a');
+    const anchored = await tree.inclusion('a');
     assert.equal(anchored.status, 'anchored');
     assert.equal(anchored.tree_size, larger.tree_size);
     assert.equal(anchored.root, larger.root);
     assert.equal(Object.hasOwn(anchored, 'covered_by'), false);
 
-    const selected = tree.inclusion('a', { treeSize: small.tree_size });
+    const selected = await tree.inclusion('a', { treeSize: small.tree_size });
     assert.equal(selected.status, 'anchored');
     assert.equal(Object.hasOwn(selected, 'covered_by'), false);
 
-    const past = tree.inclusion('h');
+    const past = await tree.inclusion('h');
     assert.equal(past.status, 'pending_anchor');
     assert.equal(past.head.anchored, true);
     assert.equal(Object.hasOwn(past, 'covered_by'), false);
@@ -158,7 +158,7 @@ test('a pending head reports covered_by and an anchored head does not', async ()
       prefix_size: 4,
       root: decoy,
     });
-    const still = tree.inclusion('a', { treeSize: pending.tree_size });
+    const still = await tree.inclusion('a', { treeSize: pending.tree_size });
     assert.equal(still.covered_by.root, smallRoot);
     assert.equal(still.covered_by.tree_size, small.tree_size);
     assert.equal(JSON.stringify(still).includes(decoy), false);

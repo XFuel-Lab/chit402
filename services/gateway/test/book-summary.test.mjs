@@ -32,12 +32,12 @@ function collectedReceipt(over = {}) {
   };
 }
 
-function bookOf(rows) {
+async function bookOf(rows) {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   let recorded = null;
   for (const row of rows) {
-    recorded = recordCollectedSpend(collectedReceipt(row), { ledger, registry, agentId: recorded?.agent_id });
+    recorded = await recordCollectedSpend(collectedReceipt(row), { ledger, registry, agentId: recorded?.agent_id });
     assert.equal(recorded.ok, true, recorded.reason);
     if (row.collected_at) {
       const entry = ledger.findByTask(row.task_id);
@@ -60,10 +60,10 @@ test('summarizeBookWindow is zeroed for an empty set', () => {
   assert.equal(summary.verified_percent, 0);
 });
 
-test('book summary counts the full window, not the last-N page', () => {
+test('book summary counts the full window, not the last-N page', async () => {
   const recent = '2026-09-30T12:00:00.000Z';
   const old = '2026-08-01T12:00:00.000Z';
-  const { ledger, registry, recorded } = bookOf([
+  const { ledger, registry, recorded } = await bookOf([
     { task_id: 'old-theta', ref: 'base:old', amount: '9000000', hub: 'theta', collected_at: old },
     { task_id: 'new-theta', ref: 'base:t', amount: '1000000', hub: 'Theta', collected_at: recent },
     { task_id: 'new-akash', ref: 'base:a', amount: '500000', hub: 'akash', collected_at: recent },
@@ -97,7 +97,7 @@ test('book summary counts the full window, not the last-N page', () => {
   });
 
   const from = '2026-09-24T00:00:00.000Z';
-  const book = readAgentBook(agentId, { session: recorded.session, from, limit: 1 }, {
+  const book = await readAgentBook(agentId, { session: recorded.session, from, limit: 1 }, {
     ledger,
     verify: bindBookVerifier(registry),
     registry,
@@ -114,12 +114,12 @@ test('book summary counts the full window, not the last-N page', () => {
   assert.ok(book.body.entries.every((row) => row.task_id !== 'old-theta'));
 });
 
-test('a window with no rows still returns a zero summary', () => {
-  const { ledger, registry, recorded } = bookOf([
+test('a window with no rows still returns a zero summary', async () => {
+  const { ledger, registry, recorded } = await bookOf([
     { task_id: 'only', ref: 'base:only', amount: '1000', hub: 'theta' },
   ]);
   const from = '2099-01-01T00:00:00.000Z';
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session, from }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session, from }, {
     ledger,
     verify: bindBookVerifier(registry),
     registry,
@@ -133,12 +133,12 @@ test('a window with no rows still returns a zero summary', () => {
   assert.equal(book.body.summary.verified_percent, 0);
 });
 
-test('existing CSV export honors the same from bound the dashboard sends', () => {
-  const { ledger, registry, recorded } = bookOf([
+test('existing CSV export honors the same from bound the dashboard sends', async () => {
+  const { ledger, registry, recorded } = await bookOf([
     { task_id: 'old-row', ref: 'base:oldrow', amount: '1000', hub: 'theta', collected_at: '2026-08-01T00:00:00.000Z' },
     { task_id: 'new-row', ref: 'base:newrow', amount: '2000', hub: 'akash', collected_at: '2026-09-30T00:00:00.000Z' },
   ]);
-  const csv = exportAgentBook(recorded.agent_id, {
+  const csv = await exportAgentBook(recorded.agent_id, {
     session: recorded.session,
     format: 'csv',
     limit: 200,

@@ -158,8 +158,8 @@ function baseCfg(url, over = {}) {
   };
 }
 
-function pay(store, cfg, nonce, header) {
-  return settleBoundPayment({
+async function pay(store, cfg, nonce, header) {
+  return await settleBoundPayment({
     req: { headers: { 'x-payment': header }, body: { prompt: 'hello' } },
     taskId: 'task-late',
     amount: '2000',
@@ -513,9 +513,9 @@ test('a late receipt has a public page, a ledger row, and old rows are pruned', 
       cfg,
       signer: () => 'jws.page',
       appendLog: () => {},
-      recordLedger: (receipt) => {
+      recordLedger: async (receipt) => {
         recorded.push(receipt);
-        return ledger.recordLateIssue(receipt);
+        return await ledger.recordLateIssue(receipt);
       },
     });
     assert.equal(issued.jws, 'jws.page');

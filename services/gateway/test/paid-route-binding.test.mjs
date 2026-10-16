@@ -449,7 +449,7 @@ test('PB7 fee and leg checks use the on-chain amount, not a larger quote', async
   const id = created.body.job.id;
   const bid = await placeBoardBid(id, { price: '1000000', pitch: 'ready' }, { ...base, actor: bidderActor });
   assert.equal(bid.status, 201, bid.message);
-  awardBoardBid(id, { bid_id: bid.body.bid_id }, base);
+  await awardBoardBid(id, { bid_id: bid.body.bid_id }, base);
   deliverBoardJob(id, { output_sha256: sha256Prefixed('done') }, { ...base, actor: bidderActor });
 
   const winnerRoute = `/v1/board/jobs/${id}/pay/winner`;
@@ -574,7 +574,7 @@ test('PB4 concurrent challenges carrying one transfer settle once', async () => 
       await new Promise((r) => setTimeout(r, 30));
       return chainFromReceipt(receipt)(args);
     };
-    const run = (task) => settleBoundPayment({
+    const run = async (task) => await settleBoundPayment({
       taskId: task,
       amount: '2000',
       cfg: baseCfg(fac.url, { chainReader: slow(evmReceipt()) }),
@@ -600,7 +600,7 @@ test('PB4 concurrent duplicates of one challenge settle once and do not replay t
       await new Promise((r) => setTimeout(r, 30));
       return chainFromReceipt(receipt)(args);
     };
-    const run = () => settleBoundPayment({
+    const run = async () => await settleBoundPayment({
       taskId: 'race-same',
       amount: '2000',
       cfg: baseCfg(fac.url, { chainReader: slow(evmReceipt()) }),

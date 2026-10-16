@@ -233,7 +233,7 @@ function putChallenge(store, fields = {}) {
 }
 
 async function settle(opts) {
-  return settleBoundPayment({
+  return await settleBoundPayment({
     taskId: 'task-1',
     amount: '2000',
     paymentHeader: evmHeader(),
@@ -521,7 +521,7 @@ test('PT9 one in-flight claim per challenge', async () => {
     const many = new ChallengeStore();
     const nonceN = putChallenge(many);
     const headerN = evmHeader();
-    const raced = await Promise.all(Array.from({ length: 10 }, () => settle({
+    const raced = await Promise.all(Array.from({ length: 10 }, async () => await settle({
       cfg, store: many, nonce: nonceN, paymentHeader: headerN,
     })));
     assert.equal(raced.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true).length, 1);
@@ -835,7 +835,7 @@ test('PT13 Solana transfers are one finalized transferChecked into the house ATA
       feePayer: SOL_FEE,
       ...challengeOver,
     });
-    return settle({
+    return await settle({
       cfg: solCfg(async (args) => confirmSolanaTransaction(built, {
         challenge: args.challenge,
         expectedPayTo: args.expectedPayTo,

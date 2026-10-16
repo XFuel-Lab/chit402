@@ -344,7 +344,7 @@ test('single claim: one challenge cannot mint two receipts', async () => {
     const body = await issueChallenge(cfg, { taskId: 'stopgap-claim', amount: '2000' });
     const nonce = body.accepts[0].extra.nonce;
     const header = evmHeader({ amount: '2000' });
-    const pay = () => runX402Handshake({
+    const pay = async () => await runX402Handshake({
       headers: {
         'x-payment': header,
         'x-payment-nonce': nonce,
@@ -352,7 +352,7 @@ test('single claim: one challenge cannot mint two receipts', async () => {
       body: {},
     }, { taskId: 'stopgap-claim', cfg, amount: '2000' });
 
-    const results = await Promise.all(Array.from({ length: 10 }, () => pay()));
+    const results = await Promise.all(Array.from({ length: 10 }, async () => await pay()));
     const fresh = results.filter((r) => r.kind === 'settled' && r.idempotentReplay !== true);
     const replays = results.filter((r) => r.code === 'payment_replayed');
     assert.equal(fresh.length, 1);

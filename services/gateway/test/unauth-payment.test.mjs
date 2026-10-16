@@ -186,7 +186,7 @@ async function waitComplete(taskId) {
       const shell = await (await realFetch(`${base}/receipt/${taskId}?format=json`)).json();
       if (shell.schema !== 'chit402.receipt_shell.v1') continue;
       const task = getAIListener().activeTasks.get(taskId);
-      receipt = storedReceiptJson(buildReceipt(task, {
+      receipt = storedReceiptJson(await buildReceipt(task, {
         signingSecret: process.env.RECEIPT_SIGNING_SECRET,
         persistSignature: false,
       }));
@@ -200,7 +200,7 @@ before(async () => {
   globalThis.fetch = stubFetch;
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

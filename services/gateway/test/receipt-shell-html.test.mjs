@@ -107,7 +107,7 @@ before(async () => {
   resetReceiptMerkleTree();
   await initAIListener();
   const store = getAIListener().activeTasks;
-  httpApp = createApp();
+  httpApp = await createApp();
   const tree = getReceiptMerkleTree();
   const put = (task) => {
     store.set(task.taskId, task);
@@ -115,7 +115,7 @@ before(async () => {
   };
   const main = paidTask(STORED);
   put(main);
-  tree.appendReceipt(STORED, 'row-shell-card', { publish: false });
+  await tree.appendReceipt(STORED, 'row-shell-card', { publish: false });
   put(paidTask(NO_LOG, {
     intent: { paymentRef: `base:0x${'ef'.repeat(32)}` },
   }));
@@ -347,10 +347,10 @@ test('T12 USDC label and matches tick follow the shell', () => {
 
 test('T1 route HTML hides private sentinels for every HTML accept', async () => {
   const probes = [
-    fetchText(`/receipt/${DISPLAY}`, { accept: 'text/html' }),
-    fetchText(`/receipt/${DISPLAY}`, { accept: '*/*' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: 'text/html' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: '*/*' }),
     rawGet(`/receipt/${DISPLAY}`),
-    fetchText(`/receipt/${DISPLAY}`, { accept: 'application/xml' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: 'application/xml' }),
   ];
   for (const pending of probes) {
     const res = await pending;
@@ -376,7 +376,7 @@ test('T3 host header cannot set canonical, og:url, or og:image', () => {
     const id = ${JSON.stringify(STORED)};
     resetReceiptMerkleTree();
     await initAIListener();
-    const app = createApp();
+    const app = await createApp();
     getAIListener().activeTasks.set(id, {
       taskId: id,
       status: 'completed',

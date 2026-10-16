@@ -59,23 +59,23 @@ function collectedReceipt(over = {}) {
 // ─── LINEAGE TESTS ─────────────────────────────────────────────────────────────
 
 describe('Lineage', () => {
-  test('parent_ref field is stored and returned in book entries', () => {
+  test('parent_ref field is stored and returned in book entries', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
     const parent = collectedReceipt({ task_id: 'parent-task', ref: 'base:0xparent' });
-    const recorded = recordCollectedSpend(parent, { ledger, registry });
+    const recorded = await recordCollectedSpend(parent, { ledger, registry });
     assert.equal(recorded.ok, true);
 
     const child = collectedReceipt({ task_id: 'child-task', ref: 'base:0xchild' });
-    const childRecorded = ledger.append(child, {
+    const childRecorded = await ledger.append(child, {
       agentId: recorded.agent_id,
       parentRef: 'base:0xparent',
     });
     assert.equal(childRecorded.ok, true);
     assert.equal(childRecorded.entry.parent_ref, 'base:0xparent');
 
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -85,19 +85,19 @@ describe('Lineage', () => {
     assert.equal(childEntry.parent_ref, 'base:0xparent');
   });
 
-  test('lineageOf walks A→B→inference chain', () => {
+  test('lineageOf walks A→B→inference chain', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
     const agentA = collectedReceipt({ task_id: 'agent-a', ref: 'base:0xa', amount: '10000' });
-    const recordedA = recordCollectedSpend(agentA, { ledger, registry });
+    const recordedA = await recordCollectedSpend(agentA, { ledger, registry });
 
-    ledger.append(collectedReceipt({ task_id: 'agent-b', ref: 'base:0xb' }), {
+    await ledger.append(collectedReceipt({ task_id: 'agent-b', ref: 'base:0xb' }), {
       agentId: recordedA.agent_id,
       parentRef: 'base:0xa',
     });
 
-    ledger.append(collectedReceipt({ task_id: 'inference', ref: 'base:0xc' }), {
+    await ledger.append(collectedReceipt({ task_id: 'inference', ref: 'base:0xc' }), {
       agentId: recordedA.agent_id,
       parentRef: 'base:0xb',
     });
@@ -111,19 +111,19 @@ describe('Lineage', () => {
     assert.equal(lineage.depth, 2);
   });
 
-  test('queryLineage is possession-gated', () => {
+  test('queryLineage is possession-gated', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 'task-1', ref: 'base:0x1' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 'task-1', ref: 'base:0x1' }), { ledger, registry });
     const verify = bindBookVerifier(registry);
 
-    const unauth = queryLineage(recorded.agent_id, 'task-1', {}, { ledger, verify });
+    const unauth = await queryLineage(recorded.agent_id, 'task-1', {}, { ledger, verify });
     assert.equal(unauth.status, 401);
 
-    const wrongSession = queryLineage(recorded.agent_id, 'task-1', { session: 'wrong' }, { ledger, verify });
+    const wrongSession = await queryLineage(recorded.agent_id, 'task-1', { session: 'wrong' }, { ledger, verify });
     assert.equal(wrongSession.status, 403);
 
-    const ok = queryLineage(recorded.agent_id, 'task-1', { session: recorded.session }, { ledger, verify });
+    const ok = await queryLineage(recorded.agent_id, 'task-1', { session: recorded.session }, { ledger, verify });
     assert.equal(ok.status, 200);
     assert.equal(ok.body.task_id, 'task-1');
   });
@@ -177,12 +177,12 @@ describe('Caps as Rows', () => {
     assert.equal(allowed.allowed, true);
   });
 
-  test('enforcePolicy blocks when daily cap exceeded', () => {
+  test('enforcePolicy blocks when daily cap exceeded', async () => {
     const policy = new BookPolicyStore();
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1', amount: '50000' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1', amount: '50000' }), { ledger, registry });
     policy.set(recorded.agent_id, POLICY_TYPES.DAILY_CAP, '60000');
 
     const smallSpend = enforcePolicy(recorded.agent_id, { amount: '10000' }, { policy, ledger });
@@ -207,12 +207,12 @@ describe('Caps as Rows', () => {
     assert.ok(result.policy.hourly_cap.reset_at);
   });
 
-  test('enforcePolicy blocks when hourly cap exceeded', () => {
+  test('enforcePolicy blocks when hourly cap exceeded', async () => {
     const policy = new BookPolicyStore();
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1', amount: '40000' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1', amount: '40000' }), { ledger, registry });
     policy.set(recorded.agent_id, POLICY_TYPES.HOURLY_CAP, '50000');
 
     const smallSpend = enforcePolicy(recorded.agent_id, { amount: '10000' }, { policy, ledger });
@@ -234,12 +234,12 @@ describe('Caps as Rows', () => {
     assert.equal(result.policy.require_payment_ref, true);
   });
 
-  test('enforcePolicy blocks when require_payment_ref and ledger gap', () => {
+  test('enforcePolicy blocks when require_payment_ref and ledger gap', async () => {
     const policy = new BookPolicyStore();
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
     policy.set(recorded.agent_id, POLICY_TYPES.REQUIRE_PAYMENT_REF, true);
 
     const ok = enforcePolicy(recorded.agent_id, { amount: '10000' }, { policy, ledger });
@@ -362,10 +362,10 @@ describe('Caps as Rows', () => {
 // ─── EXPORT TESTS ───────────────────────────────────────────────────────────────
 
 describe('Book Export', () => {
-  test('exportAgentBook returns CSV for possession holder', () => {
+  test('exportAgentBook returns CSV for possession holder', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'export-t1',
       ref: 'base:0xexport1',
       amount: '10000',
@@ -373,7 +373,7 @@ describe('Book Export', () => {
       hub: 'theta',
     }), { ledger, registry });
 
-    const result = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'csv' }, {
+    const result = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'csv' }, {
       ledger,
       verify: bindBookVerifier(registry),
       baseUrl: 'https://api.chit402.com',
@@ -385,12 +385,12 @@ describe('Book Export', () => {
     assert.match(result.body, /theta\/qwen3/);
   });
 
-  test('exportAgentBook returns JSON audit pack', () => {
+  test('exportAgentBook returns JSON audit pack', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 'audit-t1', ref: 'base:0xa1' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 'audit-t1', ref: 'base:0xa1' }), { ledger, registry });
 
-    const result = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json' }, {
+    const result = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json' }, {
       ledger,
       verify: bindBookVerifier(registry),
       baseUrl: 'https://api.chit402.com',
@@ -402,19 +402,19 @@ describe('Book Export', () => {
     assert.match(result.body.rows[0].auditor_url, /format=auditor/);
   });
 
-  test('exportAgentBook is possession-gated', () => {
+  test('exportAgentBook is possession-gated', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
 
-    const unauth = exportAgentBook(recorded.agent_id, {}, { ledger, verify: bindBookVerifier(registry) });
+    const unauth = await exportAgentBook(recorded.agent_id, {}, { ledger, verify: bindBookVerifier(registry) });
     assert.equal(unauth.status, 401);
 
-    const wrong = exportAgentBook(recorded.agent_id, { session: 'wrong' }, { ledger, verify: bindBookVerifier(registry) });
+    const wrong = await exportAgentBook(recorded.agent_id, { session: 'wrong' }, { ledger, verify: bindBookVerifier(registry) });
     assert.equal(wrong.status, 403);
   });
 
-  test('buildBookExportCsv escapes commas', () => {
+  test('buildBookExportCsv escapes commas', async () => {
     const entries = [{
       task_id: 't1',
       payment_ref: 'base:0x1',
@@ -424,7 +424,7 @@ describe('Book Export', () => {
       model: 'hub/model,with,comma',
       hub: 'hub',
     }];
-    const csv = buildBookExportCsv(entries, 1, 'https://api.chit402.com');
+    const csv = await buildBookExportCsv(entries, 1, 'https://api.chit402.com');
     assert.match(csv, /"hub\/model,with,comma"/);
   });
 });
@@ -445,17 +445,17 @@ describe('Assign', () => {
     assert.equal(result.assignment.slice.from_date, '2026-08-01T00:00:00Z');
   });
 
-  test('read slice by token', () => {
+  test('read slice by token', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const assignments = new BookAssignmentStore();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 't1',
       ref: 'base:0x1',
       amount: '10000',
     }), { ledger, registry });
-    ledger.append(collectedReceipt({ task_id: 't2', ref: 'base:0x2' }), { agentId: recorded.agent_id });
+    await ledger.append(collectedReceipt({ task_id: 't2', ref: 'base:0x2' }), { agentId: recorded.agent_id });
 
     const assign = assignments.create(recorded.agent_id, {
       grant_type: GRANT_TYPES.READ,
@@ -476,12 +476,12 @@ describe('Assign', () => {
     assert.equal(slice.status, 403);
   });
 
-  test('revoke assignment invalidates token', () => {
+  test('revoke assignment invalidates token', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const assignments = new BookAssignmentStore();
 
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't1', ref: 'base:0x1' }), { ledger, registry });
     const assign = assignments.create(recorded.agent_id, {
       grant_type: GRANT_TYPES.READ,
       slice: { limit: 10 },
@@ -531,7 +531,7 @@ describe('Dispute', () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-dispute-1',
       ref: 'base:0xd1',
     }), { ledger, registry });
@@ -557,7 +557,7 @@ describe('Dispute', () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-dc-1',
       ref: 'base:0xsame',
     }), { ledger, registry });
@@ -586,7 +586,7 @@ describe('Dispute', () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-wm-1',
       ref: 'base:0xwm',
       model: 'akash/llama',
@@ -608,7 +608,7 @@ describe('Dispute', () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-dup',
       ref: 'base:0xdup',
     }), { ledger, registry });
@@ -633,19 +633,19 @@ describe('Dispute', () => {
 // ─── POSSESSION SANITY TESTS ────────────────────────────────────────────────────
 
 describe('Possession Sanity', () => {
-  test('key rotation does not drop the book (entries stay with agent_id)', () => {
+  test('key rotation does not drop the book (entries stay with agent_id)', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-rotate-1',
       ref: 'base:0xrotate1',
     }), { ledger, registry });
-    ledger.append(collectedReceipt({ task_id: 'task-rotate-2', ref: 'base:0xrotate2' }), {
+    await ledger.append(collectedReceipt({ task_id: 'task-rotate-2', ref: 'base:0xrotate2' }), {
       agentId: recorded.agent_id,
     });
 
-    const bookBefore = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const bookBefore = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -657,14 +657,14 @@ describe('Possession Sanity', () => {
     assert.equal(rotated.ok, true);
     assert.notEqual(rotated.session, recorded.session);
 
-    const bookWithOldSession = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const bookWithOldSession = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
     });
     assert.equal(bookWithOldSession.status, 403, 'old session is invalid');
 
-    const bookWithNewSession = readAgentBook(recorded.agent_id, { session: rotated.session }, {
+    const bookWithNewSession = await readAgentBook(recorded.agent_id, { session: rotated.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -702,11 +702,11 @@ describe('Possession Sanity', () => {
 // ─── FIXTURE: 2-hop lineage ─────────────────────────────────────────────────────
 
 describe('Fixtures', () => {
-  test('2-hop lineage fixture: A→B→inference', () => {
+  test('2-hop lineage fixture: A→B→inference', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const agentA = recordCollectedSpend(collectedReceipt({
+    const agentA = await recordCollectedSpend(collectedReceipt({
       task_id: 'agent-A-task',
       ref: 'base:0xAgentA',
       amount: '20000',
@@ -714,7 +714,7 @@ describe('Fixtures', () => {
       hub: 'theta',
     }), { ledger, registry });
 
-    ledger.append(collectedReceipt({
+    await ledger.append(collectedReceipt({
       task_id: 'agent-B-task',
       ref: 'base:0xAgentB',
       amount: '15000',
@@ -722,7 +722,7 @@ describe('Fixtures', () => {
       hub: 'akash',
     }), { agentId: agentA.agent_id, parentRef: 'base:0xAgentA' });
 
-    ledger.append(collectedReceipt({
+    await ledger.append(collectedReceipt({
       task_id: 'inference-task',
       ref: 'base:0xInference',
       amount: '10000',
@@ -730,7 +730,7 @@ describe('Fixtures', () => {
       hub: 'theta',
     }), { agentId: agentA.agent_id, parentRef: 'base:0xAgentB' });
 
-    const lineage = queryLineage(agentA.agent_id, 'inference-task', { session: agentA.session }, {
+    const lineage = await queryLineage(agentA.agent_id, 'inference-task', { session: agentA.session }, {
       ledger,
       verify: bindBookVerifier(registry),
     });

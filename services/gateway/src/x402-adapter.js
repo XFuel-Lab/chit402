@@ -562,7 +562,7 @@ export class ChallengeStore {
     return (key && this.txFacts.get(key)) || null;
   }
 
-  recordPending(row) {
+  async recordPending(row) {
     const rec = {
       id: `pending-${Date.now().toString(36)}-${this.pending.length}`,
       at: new Date().toISOString(),
@@ -570,7 +570,7 @@ export class ChallengeStore {
       ...row,
     };
     this.pending.push(rec);
-    void alertStuckPayment({
+    void await alertStuckPayment({
       tx: rec.tx || null,
       network: rec.network || null,
       amount: rec.amount != null ? rec.amount : null,
@@ -773,7 +773,7 @@ export function encodePaymentRequiredHeader(body) {
  *   success, transaction, network, and payer are unchanged.
  * @returns {string|null} standard base64, or null when nothing was collected
  */
-export function encodeX402PaymentResponseHeader({
+export async function encodeX402PaymentResponseHeader({
   ref, network = null, payer = null, success = true, resourceUrl = null,
 } = {}) {
   if (!ref || typeof ref !== 'string') return null;
@@ -789,7 +789,7 @@ export function encodeX402PaymentResponseHeader({
   // x402 offer-receipt §5.1: extensions["offer-receipt"].info.receipt on success.
   // Omitted when resourceUrl or payer is missing — the four legacy fields still go out.
   const receiptExt = body.success && resourceUrl
-    ? buildReceiptExtension({
+    ? await buildReceiptExtension({
       network: body.network,
       resourceUrl,
       payer: body.payer,
@@ -805,8 +805,8 @@ export function encodeX402PaymentResponseHeader({
  * No-op when `settle.ref` is missing — unpaid responses stay unset.
  * @returns {boolean} true when the headers were written
  */
-export function setX402PaymentResponseHeaders(res, settle) {
-  const encoded = encodeX402PaymentResponseHeader(settle);
+export async function setX402PaymentResponseHeaders(res, settle) {
+  const encoded = await encodeX402PaymentResponseHeader(settle);
   if (!encoded || !res || typeof res.setHeader !== 'function') return false;
   res.setHeader('PAYMENT-RESPONSE', encoded);
   res.setHeader('X-PAYMENT-RESPONSE', encoded);
@@ -847,7 +847,7 @@ export function setX402PaymentResponseHeaders(res, settle) {
  * @param {ChallengeStore|null} [opts.store]  store to record into (default module store; null to skip)
  * @returns {{ status:number, body:Object, headers:Record<string,string> }}
  */
-export function buildPaymentChallenge(p, opts = {}) {
+export async function buildPaymentChallenge(p, opts = {}) {
   if (!p || !p.taskId) throw new Error('taskId is required');
   if (!p.maxAmountRequired) throw new Error('maxAmountRequired is required');
 
@@ -1027,7 +1027,7 @@ export function buildPaymentChallenge(p, opts = {}) {
   // Stored challenge extensions stay bazaar-only so settle still echoes bazaar,
   // not a fresh signature the client was not shown as the catalog extension.
   // validUntil is unix seconds; accepts[].extra.expiresAt stays milliseconds.
-  const offerReceipt = buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
+  const offerReceipt = await buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
   const bodyExtensions = {
     ...(extensions || {}),
     ...(offerReceipt ? { [OFFER_RECEIPT_KEY]: offerReceipt } : {}),

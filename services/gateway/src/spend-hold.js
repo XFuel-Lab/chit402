@@ -527,7 +527,7 @@ export class SpendHoldStore {
       const verdict = this._verdict(legs, requested, at);
       if (!verdict.ok) return verdict;
       if (typeof this.testYield === 'function') await this.testYield();
-      return this._commit(requestId, requested, legs, at);
+      return await this._commit(requestId, requested, legs, at);
     });
   }
 

@@ -30,8 +30,8 @@ function world() {
   return { registry, ledger, posts, agent, other };
 }
 
-function addChitReceipt(ledger, agentId, { taskId = 'chit-task-1', ref = `base:0x${'11'.repeat(32)}`, amount = '2000', payer = WALLET } = {}) {
-  const appended = ledger.append({
+async function addChitReceipt(ledger, agentId, { taskId = 'chit-task-1', ref = `base:0x${'11'.repeat(32)}`, amount = '2000', payer = WALLET } = {}) {
+  const appended = await ledger.append({
     task_id: taskId,
     payment: {
       rail: 'usdc',
@@ -46,7 +46,7 @@ function addChitReceipt(ledger, agentId, { taskId = 'chit-task-1', ref = `base:0
   return appended.entry;
 }
 
-function addForeignReceipt(ledger, agentId, {
+async function addForeignReceipt(ledger, agentId, {
   taskId = 'foreign-task-1',
   ref = `base:0x${'22'.repeat(32)}`,
   amount = '9000',
@@ -54,7 +54,7 @@ function addForeignReceipt(ledger, agentId, {
   payTo = `0x${'11'.repeat(20)}`,
   resource = 'https://shop.example/v1/chat',
 } = {}) {
-  const appended = ledger.append({
+  const appended = await ledger.append({
     task_id: taskId,
     foreign_x402: true,
     source: 'foreign_ingest',
@@ -89,7 +89,7 @@ function stampOk() {
 
 async function postReport(ctx, body, { actor = ctx.agent, ensureStamp, houseAgentIds, suspendedAgentIds } = {}) {
   const stamp = ensureStamp || stampOk().ensure;
-  return createEndpointReport(body, {
+  return await createEndpointReport(body, {
     posts: ctx.posts,
     ledger: ctx.ledger,
     actor,
@@ -113,7 +113,7 @@ test('findSecret catches api keys, bearer tokens, PEM, and 64-hex keys', () => {
 
 test('possession gate: receipt on another book is 403 and does not stamp', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.other.agent_id, { ref: 'base:0xother' });
+  await addChitReceipt(ctx.ledger, ctx.other.agent_id, { ref: 'base:0xother' });
   const stamp = stampOk();
   const missing = await postReport(ctx, {
     receipt_ref: 'base:0xmissing',
@@ -134,7 +134,7 @@ test('possession gate: receipt on another book is 403 and does not stamp', async
 
 test('stamp is 402 until paid, then the book records board_stamp without debiting the cap', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const before = ctx.ledger.sumCollectedByAgent(ctx.agent.agent_id);
   const challenged = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
@@ -173,7 +173,7 @@ test('stamp is 402 until paid, then the book records board_stamp without debitin
   const listed = ctx.ledger.listByAgent(ctx.agent.agent_id);
   assert.ok(listed.some((e) => e.event === 'board_stamp'));
   assert.ok(listed.some((e) => e.event === 'board_post'));
-  const bidRow = ctx.ledger.recordBoardEvent({
+  const bidRow = await ctx.ledger.recordBoardEvent({
     agentId: ctx.agent.agent_id,
     kind: 'board_bid',
     taskId: 'board-bid-reserved',
@@ -187,7 +187,7 @@ test('stamp is 402 until paid, then the book records board_stamp without debitin
 
 test('one receipt backs one post', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const stamp = stampOk();
   const first = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
@@ -208,7 +208,7 @@ test('one receipt backs one post', async () => {
 
 test('secret scan rejects the post and stores nothing', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const stamp = stampOk();
   const samples = [
     'key sk-live-abcdef123456',
@@ -242,7 +242,7 @@ test('public rendering is plain text with only the published fields', async () =
   const ctx = world();
   const payer = WALLET;
   const payTo = WALLET;
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id, { payer, payTo, amount: '5000' });
+  await addForeignReceipt(ctx.ledger, ctx.agent.agent_id, { payer, payTo, amount: '5000' });
   const html = '<script>alert(1)</script> click here';
   const created = await postReport(ctx, {
     receipt_ref: 'foreign-task-1',
@@ -284,8 +284,8 @@ test('public rendering is plain text with only the published fields', async () =
 
 test('a foreign report that is not self counts the payer; a Chit receipt cannot review another host', async () => {
   const ctx = world();
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id, { taskId: 'chit-2', ref: `base:0x${'33'.repeat(32)}` });
+  await addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id, { taskId: 'chit-2', ref: `base:0x${'33'.repeat(32)}` });
   const stamp = stampOk();
   const foreign = await postReport(ctx, {
     receipt_ref: 'foreign-task-1',
@@ -324,7 +324,7 @@ test('a foreign report that is not self counts the payer; a Chit receipt cannot 
 
 test('takedown is the poster only and becomes a tombstone; flag costs one stamp', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const created = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
@@ -332,16 +332,16 @@ test('takedown is the poster only and becomes a tombstone; flag costs one stamp'
     text: 'fine',
   });
   const id = created.body.post.id;
-  const stranger = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.other });
+  const stranger = await takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.other });
   assert.equal(stranger.status, 403);
-  const down = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
+  const down = await takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
   assert.equal(down.status, 200);
   assert.equal(down.body.post.status, 'taken_down');
   assert.equal(down.body.post.untrusted_text, undefined);
   assert.equal(getBoardPost(id, { posts: ctx.posts }).body.post.status, 'taken_down');
 
   const ctx2 = world();
-  addChitReceipt(ctx2.ledger, ctx2.agent.agent_id);
+  await addChitReceipt(ctx2.ledger, ctx2.agent.agent_id);
   const live = await postReport(ctx2, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
@@ -372,16 +372,16 @@ test('takedown is the poster only and becomes a tombstone; flag costs one stamp'
 
 test('takedown then ops hide keeps the receipt locked', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const created = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
     outcome: 'success',
   });
   const id = created.body.post.id;
-  const down = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
+  const down = await takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
   assert.equal(down.status, 200);
-  const hidden = hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+  const hidden = await hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
   assert.equal(hidden.body.status, 'taken_down');
   assert.equal(hidden.body.hidden, false);
   assert.equal(ctx.posts.get(id).free_repost, false);
@@ -420,7 +420,7 @@ test('takedown then ops hide keeps the receipt locked', async () => {
 
 test('a flag that loses the race still records the stamp', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const created = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
@@ -453,7 +453,7 @@ test('ops hide removes the post and allows one free re-post', async () => {
   process.env.BOARD_OPS_TOKEN = 'ops-test-token';
   try {
     const ctx = world();
-    addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+    await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
     const created = await postReport(ctx, {
       receipt_ref: 'chit-task-1',
       endpoint: 'https://api.chit402.com/v1',
@@ -461,9 +461,9 @@ test('ops hide removes the post and allows one free re-post', async () => {
       text: 'keep me',
     });
     const id = created.body.post.id;
-    const missing = hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: false, status: 503, error: 'ops_unavailable', message: 'no' } });
+    const missing = await hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: false, status: 503, error: 'ops_unavailable', message: 'no' } });
     assert.equal(missing.status, 503);
-    const hidden = hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+    const hidden = await hideBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
     assert.equal(hidden.body.hidden, true);
     assert.equal(getBoardPost(id, { posts: ctx.posts }).status, 404);
     assert.equal(listBoardPosts({}, { posts: ctx.posts }).body.posts.length, 0);
@@ -492,7 +492,7 @@ test('ops hide removes the post and allows one free re-post', async () => {
 
 test('pilot stamp waiver is committed once; a free repost does not consume it', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   let commits = 0;
   const deps = {
     posts: ctx.posts,
@@ -520,7 +520,7 @@ test('pilot stamp waiver is committed once; a free repost does not consume it', 
   const prev = process.env.BOARD_OPS_TOKEN;
   process.env.BOARD_OPS_TOKEN = 'waiver-ops';
   try {
-    hideBoardPost(created.body.post.id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+    await hideBoardPost(created.body.post.id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
     const repost = await createEndpointReport({
       receipt_ref: 'chit-task-1',
       endpoint: 'https://api.chit402.com/v1',
@@ -540,10 +540,10 @@ test('pilot stamp waiver is committed once; a free repost does not consume it', 
   }
 });
 
-test('house seed lists real rows and does not write posts', () => {
+test('house seed lists real rows and does not write posts', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
   const plan = planHouseSeed(ctx.ledger, { agentId: ctx.agent.agent_id, posts: ctx.posts, chitHosts: CHIT });
   assert.equal(plan.length, 2);
   assert.ok(plan.some((row) => row.endpoint_host === 'api.chit402.com' && row.foreign === false));
@@ -555,7 +555,7 @@ test('board store reloads posts from disk', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'board-posts-'));
   const posts = new BoardPostStore({ dir, persist: true });
   const ctx = { ...world(), posts };
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const created = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
@@ -572,8 +572,8 @@ test('HTTP: session gate, 402 stamp, duplicate, secret, and plain-text body', as
   const prevPayTo = config.x402.payTo;
   config.x402.payTo = `0x${'11'.repeat(20)}`;
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
-  addChitReceipt(ctx.ledger, ctx.other.agent_id, { taskId: 'other-task', ref: 'base:0xotherpay' });
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.other.agent_id, { taskId: 'other-task', ref: 'base:0xotherpay' });
   let mode = 'challenge';
   const app = express();
   app.use(express.json());
@@ -729,7 +729,7 @@ test('stamp-backed first post when nothing on the book is citable', async () => 
   assert.equal(stored.receipt_key, stored.stamp_ref);
   assert.equal(JSON.stringify(created.body.post).includes(stored.receipt_key), false);
 
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const mustCite = await postReport(ctx, {
     endpoint: 'https://api.chit402.com/v1',
     outcome: 'success',
@@ -779,13 +779,13 @@ test('one stamp cannot back two posts, including a replayed payment ref', async 
 
 test('a receipt that backs a post cannot back a confirm, and the reverse', async () => {
   const ctx = world();
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
-  addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
+  await addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
     taskId: 'foreign-other',
     ref: `base:0x${'44'.repeat(32)}`,
     payer: OTHER_WALLET,
   });
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id, { taskId: 'chit-host', ref: `base:0x${'55'.repeat(32)}` });
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id, { taskId: 'chit-host', ref: `base:0x${'55'.repeat(32)}` });
   const post = await postReport(ctx, {
     receipt_ref: 'foreign-task-1',
     endpoint: 'https://shop.example/v1/chat',
@@ -800,7 +800,7 @@ test('a receipt that backs a post cannot back a confirm, and the reverse', async
   });
   assert.equal(reuse.status, 409);
   assert.equal(reuse.error, 'self_confirm');
-  addChitReceipt(ctx.ledger, ctx.other.agent_id, {
+  await addChitReceipt(ctx.ledger, ctx.other.agent_id, {
     taskId: 'chit-other',
     ref: `base:0x${'66'.repeat(32)}`,
     payer: OTHER_WALLET,
@@ -846,7 +846,7 @@ test('a receipt that backs a post cannot back a confirm, and the reverse', async
 
 test('house confirms are labeled and do not count toward N', async () => {
   const ctx = world();
-  addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
+  await addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
     taskId: 'foreign-other',
     ref: `base:0x${'66'.repeat(32)}`,
     payer: OTHER_WALLET,
@@ -860,7 +860,7 @@ test('house confirms are labeled and do not count toward N', async () => {
   const thirdWallet = `0x${'ef'.repeat(20)}`;
   const third = ctx.registry.allocate();
   ctx.registry.bindWallet(third.agent_id, { agentWallet: thirdWallet });
-  addForeignReceipt(ctx.ledger, third.agent_id, {
+  await addForeignReceipt(ctx.ledger, third.agent_id, {
     taskId: 'foreign-third',
     ref: `base:0x${'77'.repeat(32)}`,
     payer: thirdWallet,
@@ -952,7 +952,7 @@ test('comments reject secrets and links, cost a stamp, and follow flag hide take
   assert.equal(listed.body.comments.length, 1);
   assert.equal(JSON.stringify(listed.body).includes('agent_id'), false);
 
-  const stranger = takedownBoardComment(comment.body.comment.id, {
+  const stranger = await takedownBoardComment(comment.body.comment.id, {
     posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent,
   });
   assert.equal(stranger.status, 403);
@@ -975,7 +975,7 @@ test('comments reject secrets and links, cost a stamp, and follow flag hide take
   const prev = process.env.BOARD_OPS_TOKEN;
   process.env.BOARD_OPS_TOKEN = 'comment-ops';
   try {
-    const hidden = hideBoardComment(comment.body.comment.id, {
+    const hidden = await hideBoardComment(comment.body.comment.id, {
       posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true },
     });
     assert.equal(hidden.body.hidden, true);
@@ -992,7 +992,7 @@ test('comments reject secrets and links, cost a stamp, and follow flag hide take
     actor: ctx.other,
     ensureStamp: stamp.ensure,
   });
-  const down = takedownBoardComment(second.body.comment.id, {
+  const down = await takedownBoardComment(second.body.comment.id, {
     posts: ctx.posts, ledger: ctx.ledger, actor: ctx.other,
   });
   assert.equal(down.body.comment.status, 'taken_down');
@@ -1056,7 +1056,7 @@ test('likes toggle for a registered agent and reject anonymous', async () => {
 
 test('a Chit register receipt does not block a stamp-backed report on another host', async () => {
   const ctx = world();
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const foreign = await postReport(ctx, {
     endpoint: 'https://example-x402.com/v1',
     outcome: 'success',
@@ -1098,7 +1098,7 @@ test('a waived stamp cannot back a stamp-backed post', async () => {
   }, {
     ensureStamp: async () => ({ ok: true, waived: true, waiverKey: true }),
   });
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const spendAfter = await postReport(ctx, {
     receipt_ref: 'chit-task-1',
     endpoint: 'https://api.chit402.com/v1',
@@ -1182,8 +1182,8 @@ test('ops-hidden stamp repost keeps the host check', async () => {
     text: 'stamp first',
   });
   assert.equal(created.body.post.backing, BACKING_STAMP);
-  hideBoardPost(created.body.post.id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
-  addChitReceipt(ctx.ledger, ctx.agent.agent_id);
+  await hideBoardPost(created.body.post.id, { posts: ctx.posts, ledger: ctx.ledger, ops: { ok: true } });
+  await addChitReceipt(ctx.ledger, ctx.agent.agent_id);
   const stamp = stampOk();
   const retarget = await postReport(ctx, {
     endpoint: 'https://api.chit402.com/v1',
@@ -1206,7 +1206,7 @@ test('ops-hidden stamp repost keeps the host check', async () => {
 
 test('a closed Chit settle can back a post and a confirm', async () => {
   const ctx = world();
-  const opened = recordSettleBookRow({
+  const opened = await recordSettleBookRow({
     taskId: 'xfuel-chit-1',
     paymentRef: 'base:0xchitsettle',
     amount: '2000',
@@ -1225,7 +1225,7 @@ test('a closed Chit settle can back a post and a confirm', async () => {
   });
   assert.equal(pending.status, 400);
   assert.equal(pending.error, 'receipt_not_reportable');
-  recordCollectedSpend({
+  await recordCollectedSpend({
     task_id: 'xfuel-chit-1',
     payment: { rail: 'usdc', ref: 'base:0xchitsettle', collected: true, gross_amount: '2000' },
     route: { model: 'chit/auto', hub: 'chit' },
@@ -1245,7 +1245,7 @@ test('a closed Chit settle can back a post and a confirm', async () => {
   assert.equal(posted.status, 201, posted.message);
   assert.match(posted.body.post.verify_url, /\/receipt\/xfuel-chit-1$/);
 
-  recordSettleBookRow({
+  await recordSettleBookRow({
     taskId: 'xfuel-chit-2',
     paymentRef: 'base:0xchitsettle2',
     amount: '2000',
@@ -1262,7 +1262,7 @@ test('a closed Chit settle can back a post and a confirm', async () => {
   });
   assert.equal(early.status, 400);
   assert.equal(early.error, 'receipt_not_reportable');
-  recordCollectedSpend({
+  await recordCollectedSpend({
     task_id: 'xfuel-chit-2',
     payment: { rail: 'usdc', ref: 'base:0xchitsettle2', collected: true, gross_amount: '2000' },
     route: { model: 'chit/auto', hub: 'chit' },
@@ -1299,7 +1299,7 @@ test('taken-down posts return an empty comment thread', async () => {
     ensureStamp: stampOk().ensure,
   });
   assert.equal(comment.status, 201);
-  const down = takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
+  const down = await takedownBoardPost(id, { posts: ctx.posts, ledger: ctx.ledger, actor: ctx.agent });
   assert.equal(down.body.post.status, 'taken_down');
   const thread = listBoardComments(id, { posts: ctx.posts });
   assert.equal(thread.status, 200);
@@ -1310,7 +1310,7 @@ test('taken-down posts return an empty comment thread', async () => {
 
 test('the author cannot confirm their own report, nor the same payer', async () => {
   const ctx = world();
-  addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
+  await addForeignReceipt(ctx.ledger, ctx.agent.agent_id);
   const post = await postReport(ctx, {
     receipt_ref: 'foreign-task-1',
     endpoint: 'https://shop.example/v1/chat',
@@ -1324,7 +1324,7 @@ test('the author cannot confirm their own report, nor the same payer', async () 
   });
   assert.equal(self.status, 409);
   assert.equal(self.error, 'self_confirm');
-  addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
+  await addForeignReceipt(ctx.ledger, ctx.other.agent_id, {
     taskId: 'same-payer',
     ref: `base:0x${'88'.repeat(32)}`,
     payer: WALLET,

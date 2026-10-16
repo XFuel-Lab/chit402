@@ -27,18 +27,18 @@ function paid(taskId, ref) {
   };
 }
 
-test('a correction names the subject and does not call the writer the subject', () => {
+test('a correction names the subject and does not call the writer the subject', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const verify = bindBookVerifier(registry);
-  const collected = recordCollectedSpend(paid('host-auth', 'base:0xauth'), { ledger, registry });
+  const collected = await recordCollectedSpend(paid('host-auth', 'base:0xauth'), { ledger, registry });
   assert.equal(collected.entry.authority, undefined);
-  recordBookInflow(collected.agent_id, {
+  await recordBookInflow(collected.agent_id, {
     bucket: 'treasury',
     allocation: '10000',
     task_id: 'inflow-auth',
   }, { ledger, registry, verify, claim: { session: collected.session } });
-  const corrected = correctBookInflow(collected.agent_id, {
+  const corrected = await correctBookInflow(collected.agent_id, {
     task_id: 'inflow-auth',
     bucket: 'treasury',
     allocation: '11000',
@@ -64,11 +64,11 @@ test('a correction names the subject and does not call the writer the subject', 
   assert.equal(collected.entry.book_chain.payment_ref, 'base:0xauth');
 });
 
-test('a successor row with parent_ref gets an authority distinct from the issuer', () => {
+test('a successor row with parent_ref gets an authority distinct from the issuer', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const parent = recordCollectedSpend(paid('parent-auth', 'base:0xparentauth'), { ledger, registry });
-  const child = ledger.append(paid('child-auth', 'base:0xchildauth'), {
+  const parent = await recordCollectedSpend(paid('parent-auth', 'base:0xparentauth'), { ledger, registry });
+  const child = await ledger.append(paid('child-auth', 'base:0xchildauth'), {
     agentId: parent.agent_id,
     parentRef: 'base:0xparentauth',
   });

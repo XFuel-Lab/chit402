@@ -51,7 +51,7 @@ before(async () => {
   // constructs the listener — `startListening()` is what opens sockets, and is
   // deliberately not called here.
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -74,7 +74,7 @@ test('a /v1 receipt carries an ES256 issuer_signature (primary) and verifies aga
   
   // Verify the JWS against JWKS
   const jwks = getJwks();
-  const result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  const result = await verifyReceiptEcdsaWithJwks(xfuel, jwks);
   assert.equal(result.valid, true, 'issuer_signature must verify against JWKS');
   
   // HMAC attestation is secondary (optional)
@@ -90,12 +90,12 @@ test('tampering with the attested provider breaks ES256 verification', async () 
   const jwks = getJwks();
   
   // Original should verify
-  const originalResult = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  const originalResult = await verifyReceiptEcdsaWithJwks(xfuel, jwks);
   assert.equal(originalResult.valid, true);
   
   // Tampered should fail (task_id mismatch since provider is in signed claims)
   const tampered = { ...xfuel, task_id: 'tampered-task-id' };
-  const tamperedResult = verifyReceiptEcdsaWithJwks(tampered, jwks);
+  const tamperedResult = await verifyReceiptEcdsaWithJwks(tampered, jwks);
   assert.equal(tamperedResult.valid, false);
 });
 
@@ -111,7 +111,7 @@ test('the public receipt is an unsigned shell and the holder JWS stays on /v1', 
   const fetched = await (await fetch(`${base}/receipt/${xfuel.task_id}?format=json`)).json();
   const jwks = getJwks();
 
-  const v1Result = verifyReceiptEcdsaWithJwks(xfuel, jwks);
+  const v1Result = await verifyReceiptEcdsaWithJwks(xfuel, jwks);
   assert.equal(v1Result.valid, true, '/v1 receipt should verify');
   assert.equal(fetched.schema, 'chit402.receipt_shell.v1');
   assert.equal(fetched.unsigned, true);

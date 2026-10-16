@@ -55,7 +55,7 @@ test('boot eth_chainId aborts when the RPC never answers', { timeout: 10_000 }, 
   const started = Date.now();
   try {
     await assert.rejects(
-      () => assertBaseChainId({ rpcUrl: srv.url, timeoutMs: 150 }),
+      async () => await assertBaseChainId({ rpcUrl: srv.url, timeoutMs: 150 }),
       (err) => err.code === 'anchor_rpc_unavailable' && /timeout/i.test(err.message),
     );
     assert.ok(Date.now() - started < 2_000, `chain id took ${Date.now() - started} ms`);
@@ -79,7 +79,7 @@ test('boot eth_chainId aborts when the RPC never answers', { timeout: 10_000 }, 
 test('boot eth_chainId aborts when the injected request ignores the signal', { timeout: 10_000 }, async () => {
   const started = Date.now();
   await assert.rejects(
-    () => assertBaseChainId({
+    async () => await assertBaseChainId({
       rpcUrl: 'http://127.0.0.1:9',
       timeoutMs: 150,
       request: () => new Promise(() => {}),
@@ -97,7 +97,7 @@ test('the Base send aborts when eth_sendRawTransaction never answers', { timeout
   tree.anchorRpcTimeoutMs = 150;
   const started = Date.now();
   try {
-    await assert.rejects(() => tree._broadcastRaw({
+    await assert.rejects(async () => await tree._broadcastRaw({
       raw: '0x02',
       from: '0x1111111111111111111111111111111111111111',
       to: '0x1111111111111111111111111111111111111111',
@@ -187,7 +187,7 @@ test('a send that times out and then succeeds late is not sent twice', { timeout
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
   tree.anchorRpcTimeoutMs = 150;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let landed = null;
   const request = async (_url, method) => {
     if (method === 'eth_chainId') return '0x2105';
@@ -247,7 +247,7 @@ test('an RPC timeout at boot does not skip the epoch gate or the latest-anchor c
   try {
     const bare = new ReceiptMerkleTree();
     await assert.rejects(
-      () => finishReceiptLogBoot(bare, { baseRpc: srv.url, timeoutMs: 150, readLatest: foreign }),
+      async () => await finishReceiptLogBoot(bare, { baseRpc: srv.url, timeoutMs: 150, readLatest: foreign }),
       (err) => err.code === 'epoch_record_missing',
     );
     const tree = new ReceiptMerkleTree();
@@ -257,7 +257,7 @@ test('an RPC timeout at boot does not skip the epoch gate or the latest-anchor c
     tree.allowFreshGenesis = false;
     tree._deferredBoot = { ...tree._deferredBoot, readLatest: foreign, lookup: async () => null, rebroadcast: null, readBlockTs: null };
     await assert.rejects(
-      () => tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
+      async () => await tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
       (err) => err.code === 'anchor_not_in_journal',
     );
     assert.ok(tree._deferredBoot, 'anchoring stays paused');
@@ -285,7 +285,7 @@ test('the deferred checks refuse a foreign journal before reconcile rebroadcasts
     };
     tree.anchorIntents.push({ chain: 'base', day: '2026-10-05', root: `0x${'aa'.repeat(32)}`, nonce: 1, status: 'blocked', raw: '0xdeadbeef', tx: `0x${'ab'.repeat(32)}` });
     await assert.rejects(
-      () => tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
+      async () => await tree._gateAnchorChain(async (_u, method) => (method === 'eth_chainId' ? '0x2105' : null)),
       (err) => err.code === 'anchor_not_in_journal',
     );
     assert.equal(rebroadcasts.length, 0);

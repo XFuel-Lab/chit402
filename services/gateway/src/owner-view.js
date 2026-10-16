@@ -472,12 +472,12 @@ export function createOwnerView(deps) {
       let code = '0x';
       if (typeof provider.getCode === 'function') code = await provider.getCode(address);
       if (code && code !== '0x') {
-        return verifyErc1271(address, challenge, innerSig);
+        return await verifyErc1271(address, challenge, innerSig);
       }
       const returned = await provider.call({ to: factory, data: factoryCalldata });
       const deployed = ethers.getAddress(`0x${String(returned).slice(-40)}`);
       if (deployed.toLowerCase() !== String(address).toLowerCase()) return false;
-      return verifyErc1271(address, challenge, innerSig);
+      return await verifyErc1271(address, challenge, innerSig);
     } catch {
       return false;
     }
@@ -584,11 +584,11 @@ export function createOwnerView(deps) {
     // No session, and a house session, are not receipt owners. Skip the load
     // so an unknown id and a real id take the same path.
     if (!session || session.kind === 'house') {
-      return sendGenericNotFound(res, started, budgetMs);
+      return await sendGenericNotFound(res, started, budgetMs);
     }
     const loaded = await loadOne(req.params.receipt_id);
     if (!receiptAllowed(session, loaded, req.params.receipt_id)) {
-      return sendGenericNotFound(res, started, budgetMs);
+      return await sendGenericNotFound(res, started, budgetMs);
     }
     preparePrivate(res);
     return res.json(privateBody(loaded));
@@ -601,7 +601,7 @@ export function createOwnerView(deps) {
     if (!allowFetch(req, session?.agentId != null ? `agent:${session.agentId}` : 'anon')) return sendRateLimit(res);
     const owns = session?.kind === 'agent' && Number.isInteger(id) && Number(session.agentId) === id;
     if (!owns || typeof deps.listReceipts !== 'function') {
-      return sendGenericNotFound(res, started, budgetMs);
+      return await sendGenericNotFound(res, started, budgetMs);
     }
     const rows = await deps.listReceipts({ agentId: id });
     const receipts = [];
@@ -616,7 +616,7 @@ export function createOwnerView(deps) {
     const started = now();
     const session = sessionFromReq(req);
     if (!allowFetch(req, session?.kind === 'house' ? 'house' : 'anon')) return sendRateLimit(res);
-    if (!session || session.kind !== 'house') return sendGenericNotFound(res, started, budgetMs);
+    if (!session || session.kind !== 'house') return await sendGenericNotFound(res, started, budgetMs);
     const body = typeof deps.houseMetrics === 'function' ? await deps.houseMetrics() : {};
     preparePrivate(res);
     return res.json(body);
@@ -636,7 +636,7 @@ export function createOwnerView(deps) {
         agentWallet: wallet,
       })
       : { ok: false };
-    if (!bound.ok) return sendGenericNotFound(res, started, budgetMs);
+    if (!bound.ok) return await sendGenericNotFound(res, started, budgetMs);
     preparePrivate(res);
     return res.json({ bound: true, agent_id: id });
   }

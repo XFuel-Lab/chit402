@@ -13,14 +13,14 @@ test('drift-rejected prior Base tx is replaced by a fresh anchor on the next tic
   delete process.env.SOLANA_RPC_URL;
   const tree = new ReceiptMerkleTree();
   tree.dir = mkdtempSync(join(tmpdir(), 'drift-'));
-  tree.appendReceipt('a', 'ra', { publish: false });
+  await tree.appendReceipt('a', 'ra', { publish: false });
   const sent = [];
   const send = async (a) => { sent.push(a.hash); return a.hash; };
   const lookup = async (i) => ({ receiptOk: true, receiptStatus: '0x1', tx: i.tx, root: i.root, from: i.from, to: i.to, nonce: i.nonce });
   const sec = (iso) => Math.floor(Date.parse(iso) / 1000);
   const first = await tree.publishHead({ force: true, now: '2026-10-15T17:50:00Z', nonce: 4, sleep: async () => {}, send, lookup, blockTimestamp: sec('2026-10-15T17:50:25Z') });
   const oldTx = first.anchors.base.tx;
-  const pub = (iso, force = false) => tree.publishHead({ force, recheckDaily: true, now: iso, nonce: 4 + sent.length, sleep: async () => {}, send, lookup,
+  const pub = async (iso, force = false) => await tree.publishHead({ force, recheckDaily: true, now: iso, nonce: 4 + sent.length, sleep: async () => {}, send, lookup,
     readBlockTs: async (tx) => (tx === oldTx ? sec('2026-10-15T17:50:25Z') : sec(iso) + 25) });
   const drifted = await pub('2026-10-16T00:00:30Z', true);
   assert.equal(drifted.anchors.base.reason, 'anchor_clock_drift');
