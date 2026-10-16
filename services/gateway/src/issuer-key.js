@@ -97,7 +97,13 @@ function generateKeyPair() {
  * Call once at startup; subsequent calls return cached values.
  */
 export function initIssuerKey() {
-  if (String(process.env.ISSUER_SIGNER || '').trim() === 'kms') {
+  const signerSetting = String(process.env.ISSUER_SIGNER || '').trim();
+  if (signerSetting && signerSetting !== 'env' && signerSetting !== 'kms') {
+    const err = new Error('unknown issuer signer');
+    err.code = 'issuer_signer_unknown';
+    throw err;
+  }
+  if (signerSetting === 'kms') {
     const err = new Error('issuer signer requires async signing');
     err.code = 'issuer_signer_async_required';
     throw err;

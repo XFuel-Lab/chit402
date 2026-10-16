@@ -437,7 +437,7 @@ export class UsageSettledLedger {
       } catch (err) {
         throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: mkdir failed');
       }
-      this._load();
+      this.ready = this._load();
     }
   }
 
@@ -466,7 +466,7 @@ export class UsageSettledLedger {
         } else if (needsSign) deferred.push(row);
         else this._rememberLoaded(row);
       }
-      this.ready = await this._indexDeferred(deferred);
+      await this._indexDeferred(deferred);
       if (this.refCollisionCount > 0) {
         logger.warn(
           { count: this.refCollisionCount },
@@ -1937,6 +1937,17 @@ let _lateLedger = null;
 
 export function setLateIssueLedger(ledger) {
   _lateLedger = ledger || null;
+}
+
+// Writers run one at a time. Dedupe, seq and sign must not interleave across an await.
+for (const name of ['append', 'appendInflow', 'appendInflowCorrection', 'recordPolicyBlocked',
+  'recordIngestStamp', 'recordBoardEvent', 'recordLateIssue']) {
+  const inner = UsageSettledLedger.prototype[name];
+  UsageSettledLedger.prototype[name] = function exclusive(...args) {
+    const run = (this._serial || Promise.resolve()).then(() => inner.apply(this, args));
+    this._serial = run.catch(() => {});
+    return run;
+  };
 }
 
 /** The app ledger when createApp registered one, otherwise the process ledger. */

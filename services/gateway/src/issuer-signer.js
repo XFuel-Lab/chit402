@@ -17,7 +17,9 @@ function coded(message, code) {
 
 export function signerMode(env = process.env) {
   const mode = String(env.ISSUER_SIGNER || '').trim() || 'env';
-  if (mode !== 'env' && mode !== 'kms') return mode;
+  if (mode !== 'env' && mode !== 'kms') {
+    throw coded('unknown issuer signer', 'issuer_signer_unknown');
+  }
   return mode;
 }
 

@@ -1236,9 +1236,8 @@ export class ReceiptMerkleTree {
     if (publish) {
       // A publish already in flight is waiting on this append (anchor lookup).
       // Waiting for the daily follow-up would wait on that same publish.
-      const daily = this._maybePublishDaily();
-      if (this._publishActive) daily.catch(() => {});
-      else await daily;
+      // As on main: the daily head publishes in the background, not on the receipt path.
+      this._maybePublishDaily().catch(() => {});
     }
     return await this.inclusion(taskId);
   }
