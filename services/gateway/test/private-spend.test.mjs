@@ -44,7 +44,7 @@ test('computeUsageStats: filters by apiKeyHash for buyer scope', () => {
   assert.equal(mine.payments.by_rail.usdc.count, 1);
 });
 
-test('privacyOf / buildReceipt: vendor_blind when meta set', () => {
+test('privacyOf / buildReceipt: vendor_blind when meta set', async () => {
   const task = {
     taskId: 'priv-1',
     status: 'completed',
@@ -58,7 +58,7 @@ test('privacyOf / buildReceipt: vendor_blind when meta set', () => {
     sp1Proof: null,
   };
   assert.equal(privacyOf(task).mode, 'vendor_blind');
-  const receipt = buildReceipt(task, { baseUrl: 'https://api.example' });
+  const receipt = await buildReceipt(task, { baseUrl: 'https://api.example' });
   assert.equal(receipt.privacy.mode, 'vendor_blind');
   assert.equal(receipt.privacy.trust, 'gateway');
   assert.ok(receipt.links.json.includes('format=json'));
@@ -133,7 +133,7 @@ test('buildAuditorExport: redacts content; reports policy', async () => {
     sp1Proof: null,
     result: { secret_prompt: 'should never appear in auditor export' },
   };
-  const receipt = buildReceipt(task, { baseUrl: 'https://api.example' });
+  const receipt = await buildReceipt(task, { baseUrl: 'https://api.example' });
   const exp = buildAuditorExport(receipt);
   assert.equal(exp.schema, 'xfuel.auditor_export.v1');
   assert.equal(exp.in_policy, true);

@@ -34,6 +34,7 @@ import { getActiveChallengeStore } from './x402-durable-store.js';
 import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 import { canonicalPaidRoute } from './paid-route.js';
 import { readHeadBlock } from './x402-chain.js';
+import { capGate } from './issuance-cap.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -498,6 +499,10 @@ export async function runX402Handshake(req, {
   store = null,
   serveStoredResponse = false,
 } = {}) {
+  const gate = capGate();
+  if (gate.paused) {
+    return { kind: 'issuance_paused', status: 503, reason: 'issuance_paused' };
+  }
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
   if (bindParse.requested && !bindParse.ok) {
@@ -549,7 +554,7 @@ export async function runX402Handshake(req, {
     }
     const activeStore = store || getActiveChallengeStore() || challengeStore;
     const issueBlock = await readHeadBlock(cfg.baseRpcUrl || cfg.rpcUrl || null, 250);
-    const { body: challengeBody } = buildPaymentChallenge(
+    const { body: challengeBody } = await buildPaymentChallenge(
       {
         taskId,
         maxAmountRequired: charge,
@@ -615,7 +620,7 @@ export async function runX402Handshake(req, {
   // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
   if (bindingEnforced(cfg)) {
-    return settleBoundPayment({
+    return await settleBoundPayment({
       req,
       taskId,
       cfg,
@@ -633,7 +638,7 @@ export async function runX402Handshake(req, {
       clientVersion,
       nonce,
       serveStoredResponse,
-      resolveQuote: () => priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
+      resolveQuote: async () => await priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
     });
   }
   noteUnboundUse('runX402Handshake', { taskId });

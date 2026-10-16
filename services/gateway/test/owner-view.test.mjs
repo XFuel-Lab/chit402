@@ -178,7 +178,7 @@ function median(values) {
 
 before(async () => {
   await initAIListener();
-  app = createApp();
+  app = await createApp();
   plant(TASK_A, PAYER_A, 4);
   plant(TASK_B, payerB.address, 4);
   app.locals.__test.agentRegistry.byId.set(4, {
@@ -251,7 +251,7 @@ test('O1 replay, expiry, and one winner on concurrent use', async () => {
 
   const prev = process.env.OWNER_VIEW_NONCE_TTL_MS;
   process.env.OWNER_VIEW_NONCE_TTL_MS = '40';
-  const shortApp = createApp();
+  const shortApp = await createApp();
   const short = await new Promise((resolve) => {
     const listening = shortApp.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -525,8 +525,8 @@ test('O8 enumeration returns identical 404s and the rate limit trips', async () 
   for (let offset = 0; offset < 1000; offset += 25) {
     const batch = [];
     for (let i = offset; i < offset + 25; i += 1) {
-      batch.push(readNotFound(`${base}/v1/receipts/${i % 2 === 0 ? TASK_A : TASK_B}/owner`).then((row) => realRows.push(row)));
-      batch.push(readNotFound(`${base}/v1/receipts/xfuel-miss-${i}/owner`).then((row) => unknownRows.push(row)));
+      batch.push(await readNotFound(`${base}/v1/receipts/${i % 2 === 0 ? TASK_A : TASK_B}/owner`).then((row) => realRows.push(row)));
+      batch.push(await readNotFound(`${base}/v1/receipts/xfuel-miss-${i}/owner`).then((row) => unknownRows.push(row)));
     }
     await Promise.all(batch);
   }
@@ -553,7 +553,7 @@ test('O8 enumeration returns identical 404s and the rate limit trips', async () 
 
   const prev = process.env.OWNER_VIEW_FETCH_MAX;
   process.env.OWNER_VIEW_FETCH_MAX = '2';
-  const limitedApp = createApp();
+  const limitedApp = await createApp();
   const limited = await new Promise((resolve) => {
     const listening = limitedApp.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -656,7 +656,7 @@ test('O10 public surfaces for v1–v11 shells omit excluded fields', async () =>
 test('O12 the owner view returns this receipt row_hash', async () => {
   const taskId = 'xfuel-owner-rowhash';
   plant(taskId, PAYER_A, 4);
-  const appended = app.locals.__test.usageSettled.append({
+  const appended = await app.locals.__test.usageSettled.append({
     task_id: taskId,
     payment: {
       rail: 'usdc',
@@ -680,7 +680,7 @@ test('O12 the owner view returns the original JWS bytes', async () => {
   const second = await (await fetch(`${base}/v1/receipts/${TASK_A}/owner`, { headers: auth(opened.body.token) })).json();
   assert.equal(typeof first.jws, 'string');
   assert.equal(first.jws, second.jws);
-  const verified = verifyReceiptEcdsaWithJwks(
+  const verified = await verifyReceiptEcdsaWithJwks(
     { issuer_signature: { jws: first.jws } },
     getJwks(),
     { validateClaims: false },

@@ -44,7 +44,7 @@ import {
   explorerUrlForRef,
 } from './receipt.js';
 import { RECEIPT_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
-import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { getIssuerPublicKeyJwk, signJwsAsync } from './issuer-key.js';
 import { bookNetwork, extractRouteFromResource } from './foreign-x402-ingest.js';
 import logger from './logger.js';
 
@@ -289,7 +289,7 @@ export function createSpendHoldService({
     return { entries: rows, ...statusFor(funder, holds) };
   }
 
-  function issueReceipt({ requestId, hold, body, req }) {
+  async function issueReceipt({ requestId, hold, body, req }) {
     const meta = entries.get(requestId);
     const tx = String(body.tx || body.transaction || '').trim();
     const payer = normalizeFunder(body.payer);
@@ -358,9 +358,13 @@ export function createSpendHoldService({
         request_id: requestId,
       },
     };
-    const claims = canonicalSignedClaims(draft);
+    const claims = await canonicalSignedClaims(draft);
     const sealed = sealCanonicalObject(claims, RECEIPT_CANONICAL_FIELDS);
-    const { jws, kid } = signJws(sealed.claims, { jku: ISSUER_JWKS_URI });
+    const { jws, kid } = await signJwsAsync(sealed.claims, {
+      jku: ISSUER_JWKS_URI,
+      capKind: 'receipt',
+      receiptId: taskId,
+    });
     const verifyUrl = buildVerifyUrl(publicBase, taskId);
     const receipt = {
       ...draft,
@@ -481,7 +485,7 @@ export function createSpendHoldService({
           } else if (hold.state !== 'consumed') {
             return { status: 409, body: { error: { code: 'hold_not_open', message: 'hold is not open', state: hold.state } } };
           }
-          const issued = issueReceipt({ requestId, hold, body, req });
+          const issued = await issueReceipt({ requestId, hold, body, req });
           if (!issued.ok) return { status: issued.status, body: { error: issued.error } };
           return {
             status: 200,
@@ -494,7 +498,7 @@ export function createSpendHoldService({
 
       if (method === 'POST' && (pathname === '/holds' || pathname === '/holds/')) {
         const body = await readBody(req);
-        const outcome = await lock(async () => place(body));
+        const outcome = await lock(async () => await place(body));
         json(res, outcome.status, outcome.body);
         return;
       }

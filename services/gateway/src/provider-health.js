@@ -270,7 +270,7 @@ export async function probeModels(models, { baseUrl, apiKey, fetchFn } = {}) {
  *
  * @param {() => Promise<{models: object[]}>} getCatalog
  */
-export function startHealthProbes(getCatalog, { intervalMs = null, fetchFn } = {}) {
+export async function startHealthProbes(getCatalog, { intervalMs = null, fetchFn } = {}) {
   if (!probingEnabled() || _timer) return false;
 
   const every = intervalMs || intEnv('PROVIDER_HEALTH_INTERVAL_MS', DEFAULT_PROBE_INTERVAL_MS);
@@ -291,7 +291,7 @@ export function startHealthProbes(getCatalog, { intervalMs = null, fetchFn } = {
   // Never hold the process open for a health check.
   if (typeof _timer.unref === 'function') _timer.unref();
   // Kick one off immediately so a fresh process is not blind for a full interval.
-  sweep();
+  await sweep();
   logger.info({ intervalMs: every }, 'provider-health: probing enabled');
   return true;
 }

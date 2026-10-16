@@ -182,7 +182,7 @@ export function calldataRoot(input) {
 
 async function rpc(rpcUrl, method, params, request, signal) {
   if (typeof request === 'function') return request(rpcUrl, method, params, signal);
-  return defaultRpc(rpcUrl, method, params, signal);
+  return await defaultRpc(rpcUrl, method, params, signal);
 }
 
 async function defaultRpc(rpcUrl, method, params, signal) {
@@ -350,7 +350,7 @@ export async function assertBaseChainId({ rpcUrl, request, timeoutMs = BASE_RPC_
   let chainId;
   try {
     chainId = await withRpcTimeout(
-      () => rpc(url, 'eth_chainId', [], request, signal),
+      async () => await rpc(url, 'eth_chainId', [], request, signal),
       budget,
     );
   } catch (err) {
@@ -455,19 +455,19 @@ export async function lookupBaseTxByNonceOrHash({
     } catch {
       return { pending: true, blocked: true, reason: 'rpc_error' };
     }
-    if (tx) return classify(tx, tx.hash || txHash);
-    return classifyMissingHash({ url, nonce, sender, txHash, request, signal });
+    if (tx) return await classify(tx, tx.hash || txHash);
+    return await classifyMissingHash({ url, nonce, sender, txHash, request, signal });
   }
 
   if (nonce != null) {
     const nonceHex = `0x${Number(nonce).toString(16)}`;
     try {
       const probed = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request, signal);
-      if (probed) return classify(probed, probed.hash);
+      if (probed) return await classify(probed, probed.hash);
     } catch {
       // Optional. A normal RPC has no ots method.
     }
-    return classifyMissingHash({ url, nonce, sender, txHash: null, request, signal });
+    return await classifyMissingHash({ url, nonce, sender, txHash: null, request, signal });
   }
   return { pending: true, blocked: true, reason: 'no_tx_hash' };
 }

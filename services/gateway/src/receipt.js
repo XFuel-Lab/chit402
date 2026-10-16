@@ -8,7 +8,7 @@ import { OPENROUTER_CALLER_PAID_LABEL } from './openrouter-pricing.js';
 import { formatPlainDecimal } from './openrouter-infer.js';
 import { verifyAttestation, attestationNonce } from './tee-attestation.js';
 import { buildSpotCheckRecord } from './spotcheck.js';
-import { signJws, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
+import { signJwsAsync, verifyJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import {
   assertIssuanceOpen,
@@ -1047,7 +1047,7 @@ function clientRequestBinding(view) {
   return { request_preimage, request_digest };
 }
 
-export function canonicalSignedClaims(receipt, { iat = null } = {}) {
+export async function canonicalSignedClaims(receipt, { iat = null } = {}) {
   const view = mergeReceiptView(receipt);
   const issuedAt = iat ?? toUnixSeconds(receipt.created_at) ?? Math.floor(Date.now() / 1000);
   const inherited = isInheritedSettlement(view);
@@ -1080,7 +1080,7 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     defaultJobKind: view.foreign_x402 ? 'other' : 'completions',
   });
   const requestBinding = clientRequestBinding(view);
-  const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
+  const historyMirror = issuerRootActive() ? issuerHistoryMirrorClaim(await currentIssuerHistory()) : null;
   const payloadVersion = activeReceiptPayloadVersion();
   return {
     task_id: view.task_id,
@@ -1133,10 +1133,10 @@ export function canonicalSignedClaims(receipt, { iat = null } = {}) {
     issuance_commitment: view.issuance_commitment ?? view.meta?.issuanceCommitment ?? null,
     dispute_window: view.dispute_window ?? view.meta?.disputeWindow ?? null,
     ...headBindingClaims(treeHeadHashForClaims(view)),
-    issuer_history: currentHistoryPin(payloadVersion),
+    issuer_history: await currentHistoryPin(payloadVersion),
     ...(issuerRootActive() ? {
       canonicalization: V11_CANONICALIZATION,
-      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_history_snapshot: await issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
       policy: signedReceiptPolicy(),
       ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
@@ -1463,7 +1463,7 @@ function attachCoveringHeadSidecar(receipt, claims) {
  * claim inside the JWS. v9 and older are returned unchanged.
  * @param {object} receipt
  */
-export function stampCoveringTreeHead(receipt) {
+export async function stampCoveringTreeHead(receipt) {
   if (!receipt || typeof receipt !== 'object' || !receipt.issuer_signature?.jws) return receipt;
   if (storedJwsImmutable(receipt) || !treeHeadRestampAllowed(receipt)) {
     const original = receipt.issuer_signature;
@@ -1492,7 +1492,7 @@ export function stampCoveringTreeHead(receipt) {
     receipt.issuer_signature.payload_hash = sealed.payload_hash;
     receipt.issuer_signature.hash_alg = sealed.hash_alg;
   }
-  const { jws, kid } = signJws(toSign);
+  const { jws, kid } = await signJwsAsync(toSign, { capKind: 'receipt', receiptId: receipt.task_id || null });
   receipt.issuer_signature.jws = jws;
   if (kid) receipt.issuer_signature.kid = kid;
   receipt.tree_head_hash = root;
@@ -1685,10 +1685,10 @@ function sessionClaimsFrozen(cachedClaims, draft) {
     === settlementIdentity(draft, { claimEra: true, claimId: comparedDraftSeat });
 }
 
-function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
+async function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
   assertIssuanceOpen();
   // Stale mirror pin still refuses issuance. The pin is not a v11 field.
-  issuerHistoryMirrorClaim(currentIssuerHistory());
+  issuerHistoryMirrorClaim(await currentIssuerHistory());
   const receiptId = String(receipt.task_id || receipt.receipt_id);
   const request = receipt.request || receipt.meta?.request || null;
   let digest;
@@ -1733,9 +1733,11 @@ function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
   });
   const payloadUtf8 = jcsRfc8785(claims);
   const jwksUri = buildJwksUri(baseUrl);
-  const { jws, kid: signedKid } = signJws(claims, {
+  const { jws, kid: signedKid } = await signJwsAsync(claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
     payloadUtf8,
+    capKind: 'receipt',
+    receiptId,
   });
   bindIssuerRoot(claims, signedKid, getIssuerPublicKeyJwk());
   const payload_hash = crypto.createHash('sha256').update(payloadUtf8, 'utf8').digest('hex');
@@ -1752,9 +1754,9 @@ function signV11Receipt(receipt, { baseUrl = '', iat = null } = {}) {
   };
 }
 
-function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
+async function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   try {
-    return signReceiptEcdsaUnlocked(receipt, { baseUrl, iat });
+    return await signReceiptEcdsaUnlocked(receipt, { baseUrl, iat });
   } catch (err) {
     recordReceiptFailure({
       stage: 'sign',
@@ -1767,15 +1769,17 @@ function signReceiptEcdsa(receipt, { baseUrl = '', iat = null } = {}) {
   }
 }
 
-function signReceiptEcdsaUnlocked(receipt, { baseUrl = '', iat = null } = {}) {
+async function signReceiptEcdsaUnlocked(receipt, { baseUrl = '', iat = null } = {}) {
   assertIssuanceOpen();
-  if (issuerRootActive()) return signV11Receipt(receipt, { baseUrl, iat });
-  const draft = canonicalSignedClaims(receipt, { iat });
+  if (issuerRootActive()) return await signV11Receipt(receipt, { baseUrl, iat });
+  const draft = await canonicalSignedClaims(receipt, { iat });
   const canonicalize = draft.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
   const sealed = sealCanonicalObject(draft, RECEIPT_CANONICAL_FIELDS, canonicalize);
   const jwksUri = buildJwksUri(baseUrl);
-  const { jws, kid } = signJws(sealed.claims, {
+  const { jws, kid } = await signJwsAsync(sealed.claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
+    capKind: 'receipt',
+    receiptId: receipt.task_id || receipt.receipt_id || null,
   });
   const issuer_jwk = getIssuerPublicKeyJwk();
   bindIssuerRoot(sealed.claims, kid, issuer_jwk);
@@ -1858,7 +1862,7 @@ export function verifyReceiptMultiKey(receipt, secrets) {
  * @param {{ validateClaims?: boolean }} [opts] - Whether to validate claims match receipt
  * @returns {{ checked: boolean, valid: boolean, kid?: string, payload?: object, reason?: string }}
  */
-export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {}) {
+export async function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {}) {
   const sig = receipt?.issuer_signature;
   if (!sig || !sig.jws) {
     return { checked: false, valid: false, reason: 'no_issuer_signature' };
@@ -1905,7 +1909,7 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
       return { checked: true, valid: false, reason: window.reason, payload: result.payload };
     }
     const snapshot = verifyHistorySnapshotClaims(result.payload, {
-      publishedEntries: publishedHistoryEntries(result.payload.issuer_history) ?? undefined,
+      publishedEntries: await publishedHistoryEntries(result.payload.issuer_history) ?? undefined,
     });
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: result.payload };
@@ -1930,7 +1934,7 @@ export function verifyReceiptEcdsa(receipt, jwk, { validateClaims = true } = {})
  * @param {{ validateClaims?: boolean }} [opts] - Whether to validate claims match receipt
  * @returns {{ checked: boolean, valid: boolean, kid?: string, payload?: object, reason?: string }}
  */
-export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = true } = {}) {
+export async function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = true } = {}) {
   const sig = receipt?.issuer_signature;
   if (!sig || !sig.jws) {
     return { checked: false, valid: false, reason: 'no_issuer_signature' };
@@ -1938,7 +1942,7 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
 
   const pinned = resolvePinnedIssuerJwk(receipt);
   if (pinned) {
-    return verifyReceiptEcdsa(receipt, pinned, { validateClaims });
+    return await verifyReceiptEcdsa(receipt, pinned, { validateClaims });
   }
 
   if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
@@ -1977,7 +1981,7 @@ export function verifyReceiptEcdsaWithJwks(receipt, jwks, { validateClaims = tru
       return { checked: true, valid: false, reason: window.reason, payload: jwsResult.payload };
     }
     const snapshot = verifyHistorySnapshotClaims(jwsResult.payload, {
-      publishedEntries: publishedHistoryEntries(jwsResult.payload.issuer_history) ?? undefined,
+      publishedEntries: await publishedHistoryEntries(jwsResult.payload.issuer_history) ?? undefined,
     });
     if (snapshot.checked && !snapshot.ok) {
       return { checked: true, valid: false, reason: snapshot.reason, payload: jwsResult.payload };
@@ -2316,7 +2320,7 @@ export function usageOf(task) {
  *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
  *                          entitlement verification (who is entitled to this receipt).
  */
-export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false, readOnly = false } = {}) {
+export async function buildReceipt(task, { baseUrl = '', signingSecret = null, coSignerSecret = null, viPolicy = null, reqHost = null, apiKeyHash = null, agentId = null, agentPubkey = null, payerWallet = null, payTo = null, persistSignature = false, readOnly = false } = {}) {
   if (agentId != null && task && typeof task === 'object') {
     task.meta = task.meta || {};
     if (task.meta.agentId == null && task.meta.agent_id == null) {
@@ -2568,7 +2572,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
       // still reseal tree_head_hash inside the same claim set. Do not drop
       // the JWS and call signReceiptEcdsa: that would issue a new payload.
       const before = issuer_signature.jws;
-      const refreshed = stampCoveringTreeHead({
+      const refreshed = await stampCoveringTreeHead({
         task_id: draft.task_id,
         issuer_signature,
       });
@@ -2583,7 +2587,7 @@ export function buildReceipt(task, { baseUrl = '', signingSecret = null, coSigne
   }
   if (!keepStoredSignature && !issuer_signature?.jws) {
     try {
-      issuer_signature = signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
+      issuer_signature = await signReceiptEcdsa(draft, { baseUrl: base, iat: createdAt });
       rememberIssuerSignature(issuer_signature);
     } catch (err) {
       if (err?.code !== 'payment_unbound') throw err;
@@ -3896,7 +3900,7 @@ export function verifyReceiptJws(receipt, jwk) {
  * }} [opts]
  * @returns {{ childTask: object, receipt: object }}
  */
-export function issueSessionHandoffReceipt(parentTask, session, {
+export async function issueSessionHandoffReceipt(parentTask, session, {
   baseUrl = '',
   signingSecret = null,
   coSignerSecret = null,
@@ -3963,7 +3967,7 @@ export function issueSessionHandoffReceipt(parentTask, session, {
     sp1Proof: null,
     issuerSignature: null,
   };
-  const receipt = buildReceipt(childTask, {
+  const receipt = await buildReceipt(childTask, {
     baseUrl,
     signingSecret,
     coSignerSecret,

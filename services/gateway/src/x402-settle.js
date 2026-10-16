@@ -529,7 +529,7 @@ export async function settleBoundPayment({
     if (lateRow?.sent) return;
     try { active.release(nonce, owner); } catch { /* already spent */ }
   };
-  const hold = (why, publicReason, { terminal = false, txHint = null } = {}) => {
+  const hold = async (why, publicReason, { terminal = false, txHint = null } = {}) => {
     const hint = txHint || seenTx || null;
     if (lateRow && hint) lateRow.tx_hint = hint;
     const stage = (why === 'http' || why === 'success_false' || why === 'transport') ? 'settle' : 'confirm';
@@ -560,7 +560,7 @@ export async function settleBoundPayment({
     }
     try { active.markUnknown(nonce); } catch { /* store */ }
     try {
-      active.recordPending({
+      await active.recordPending({
         nonce,
         taskId,
         why,
@@ -704,7 +704,7 @@ export async function settleBoundPayment({
     settled = await settlePayment(paymentHeader, gwOpts);
   } catch (err) {
     logger.warn({ err: err.message, payer: truncateWallet(authEarly?.from) }, 'x402: settle threw after submit');
-    return hold('transport', 'settle_failed');
+    return await hold('transport', 'settle_failed');
   }
   if (!settled?.sent) {
     if (lateRow) {
@@ -730,7 +730,7 @@ export async function settleBoundPayment({
     const why = (reason === 'gateway_error' || reason === 'facilitator_error')
       ? 'transport'
       : ((reason.startsWith('gateway_http_') || reason.startsWith('facilitator_http_')) ? 'http' : 'success_false');
-    return hold(why, clientPaymentCode(reason || 'settle_failed'));
+    return await hold(why, clientPaymentCode(reason || 'settle_failed'));
   }
 
   const fields = {
@@ -741,21 +741,21 @@ export async function settleBoundPayment({
   };
   // ZAN mocks echo the short network. Accept it when it matches the challenge.
   if (settled.network && !sameNetwork(settled.network, challenge.network)) {
-    return hold('facilitator_network', 'network_not_accepted');
+    return await hold('facilitator_network', 'network_not_accepted');
   }
   if (!fields.network) fields.network = challenge.network;
   if (!facilitatorFieldsOk(fields, challenge)) {
-    return hold('missing_tx', 'settle_unconfirmed');
+    return await hold('missing_tx', 'settle_unconfirmed');
   }
 
   const auth = readEvmAuthorization(paymentHeader);
   if (!solana && auth?.from && fields.payer && !samePayee(auth.from, fields.payer)) {
-    return hold('payer_field', 'settle_unconfirmed');
+    return await hold('payer_field', 'settle_unconfirmed');
   }
 
   const norm = normalizePaymentRef(challenge.network, fields.transaction);
   if (!norm.ok) {
-    return hold('missing_tx', 'settle_unconfirmed');
+    return await hold('missing_tx', 'settle_unconfirmed');
   }
   // PB4 / PB12: a booked transfer is not a second settlement. Facilitator
   // success and a prior tx are not "settled". Only the chain confirmation
@@ -803,7 +803,7 @@ export async function settleBoundPayment({
     return await confirmAndSettle();
   } catch (err) {
     logger.warn({ err: err.message, taskId }, 'x402: local failure after settle');
-    return hold('local_failure', 'settle_unconfirmed');
+    return await hold('local_failure', 'settle_unconfirmed');
   } finally {
     if (canReserve) {
       if (reserved) {
@@ -833,7 +833,7 @@ export async function settleBoundPayment({
   if (!chain.ok) {
     // Pause was already cleared before /settle. A miss here means the reader
     // could not see the pinned transfer, so the MF1 hold is the fallback.
-    return hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
+    return await hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
       terminal: !chain.pending,
     });
   }
@@ -848,10 +848,10 @@ export async function settleBoundPayment({
     try { pinnedAmount = BigInt(String(challenge.amount)); } catch { pinnedAmount = quote; }
   }
   if (chainAmount < quote || chainAmount < pinnedAmount) {
-    return hold('underpaid', 'settle_unconfirmed', { terminal: true });
+    return await hold('underpaid', 'settle_unconfirmed', { terminal: true });
   }
   if (!samePayee(chain.payTo, expectedPayTo, { solana })) {
-    return hold('payee', 'settle_unconfirmed', { terminal: true });
+    return await hold('payee', 'settle_unconfirmed', { terminal: true });
   }
   if (expectedPayer && !samePayee(chain.payer, expectedPayer, { solana })) {
     active.markSpent(nonce, { txRef: norm.key, payer: chain.payer, rejected: 'payer_mismatch' });

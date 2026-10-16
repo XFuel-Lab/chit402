@@ -89,7 +89,7 @@ test('clock_tolerance_s is named per chain and does not bump the head version', 
 test('a block outside the bound is not published as anchored', async () => {
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('late', 'hh');
+    await tree.appendReceipt('late', 'hh');
     const head = await tree.publishHead({
       force: true,
       send: async () => `0x${'cd'.repeat(32)}`,
@@ -107,7 +107,7 @@ test('a block outside the bound is not published as anchored', async () => {
     assert.equal(payload.clock_tolerance_s.solana, 150);
     assert.equal(payload.published_at, head.published_at);
     assert.equal(verifyTreeHead(head).valid, true);
-    assert.match(renderInclusionSection(tree.inclusion('late')), /pending anchor/);
+    assert.match(renderInclusionSection(await tree.inclusion('late')), /pending anchor/);
     const drifted = await gatePublishedAnchor({
       status: 'anchored',
       chain: 'base',
@@ -125,7 +125,7 @@ test('a block outside the bound is not published as anchored', async () => {
 test('a block inside the bound stays anchored, and an old head still verifies', async () => {
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('on-time', 'hh');
+    await tree.appendReceipt('on-time', 'hh');
     const head = await tree.publishHead({
       force: true,
       send: async () => `0x${'ef'.repeat(32)}`,
@@ -136,7 +136,7 @@ test('a block inside the bound stays anchored, and an old head still verifies', 
     assert.equal(head.anchor.tx, `0x${'ef'.repeat(32)}`);
     assert.equal(head.payload_version, 2);
     assert.equal(verifyTreeHead(head).valid, true);
-    assert.match(renderInclusionSection(tree.inclusion('on-time')), /pending anchor/);
+    assert.match(renderInclusionSection(await tree.inclusion('on-time')), /pending anchor/);
     const kept = await gatePublishedAnchor({
       status: 'anchored',
       chain: 'base',
@@ -226,7 +226,7 @@ test('without --rpc the clock check is skipped and does not call RPC', async () 
 test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', async () => {
   await withAnchorKey(async () => {
     const tree = new ReceiptMerkleTree();
-    tree.appendReceipt('row-1', 'rowhash');
+    await tree.appendReceipt('row-1', 'rowhash');
     const blockTs = Math.floor(Date.now() / 1000);
     const head = await tree.publishHead({
       force: true,
@@ -243,7 +243,7 @@ test('mocked RPC refuses anchor_clock_drift and a receipt newer than the head', 
         base: { ...head.anchors.base, status: 'anchored', tx: head.anchor.tx },
       },
     };
-    const inclusion = tree.inclusion('row-1');
+    const inclusion = await tree.inclusion('row-1');
     const receipt = {
       task_id: 'row-1',
       row_hash: 'rowhash',

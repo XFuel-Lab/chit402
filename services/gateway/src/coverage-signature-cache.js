@@ -242,10 +242,10 @@ export function loadStableCoverageSignature(claims, { header, publicJwk }) {
  * @param {object} claims
  * @param {{ header: object, publicJwk: object, sign: () => object }} opts
  */
-export function takeStableCoverageSignature(claims, { header, publicJwk, sign }) {
+export async function takeStableCoverageSignature(claims, { header, publicJwk, sign }) {
   const hit = loadStableCoverageSignature(claims, { header, publicJwk });
   if (hit) return hit;
-  const issuerSignature = sign();
+  const issuerSignature = await sign();
   stats.signed += 1;
   if (!issuerSignature?.jws) return issuerSignature;
   const verified = verifyJws(issuerSignature.jws, publicJwk);

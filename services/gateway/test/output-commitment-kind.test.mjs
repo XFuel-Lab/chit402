@@ -34,13 +34,13 @@ function invoice(extra = {}) {
 }
 
 describe('output commitment kind', () => {
-  test('a gateway-hashed deliverable is sha256', () => {
+  test('a gateway-hashed deliverable is sha256', async () => {
     const payload = '{"report":"kestrel"}';
     const fields = fulfillmentFieldsFromIngestBody(invoice({ deliverable: payload }));
     assert.equal(fields.commitmentError, undefined);
     assert.equal(fields.hashKind, 'sha256');
     assert.equal(fields.deliverableHash, hashDeliverablePayload(payload));
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-kind-sha',
       paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
       paymentResponse: { tx: '0xabc', payer: '0xp', network: 'base' },
@@ -74,7 +74,7 @@ describe('output commitment kind', () => {
     assert.equal(viaObject.hash, KECCAK);
   });
 
-  test('a kind-less commitment object keeps the sibling hash kind', () => {
+  test('a kind-less commitment object keeps the sibling hash kind', async () => {
     const direct = outputCommitmentOf({
       outputCommitment: { status: 'committed', hash: KECCAK },
       hashKind: 'keccak256',
@@ -95,7 +95,7 @@ describe('output commitment kind', () => {
     assert.equal(normalized.ok, true, normalized.reason);
     assert.equal(normalized.fulfillmentMeta.hashKind, 'keccak256');
     assert.equal(normalized.fulfillmentMeta.outputCommitment.kind, 'keccak256');
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-kind-sibling',
       paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
       paymentResponse: { tx: '0xsibling', payer: '0xp', network: 'base' },
@@ -114,7 +114,7 @@ describe('output commitment kind', () => {
     assert.equal(clash.error, 'invalid_output_commitment');
   });
 
-  test('a labeled commitment hash that disagrees with deliverable_kind is rejected before signing', () => {
+  test('a labeled commitment hash that disagrees with deliverable_kind is rejected before signing', async () => {
     const hex = 'cd'.repeat(32);
     const clash = normalizeIngestInput(invoice({
       output_commitment: { status: 'committed', hash: `sha256:${hex}` },
@@ -129,7 +129,7 @@ describe('output commitment kind', () => {
       deliverable_kind: 'sha256',
     }));
     assert.equal(agreed.ok, true, agreed.reason);
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-kind-label',
       paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
       paymentResponse: { tx: '0xlabel', payer: '0xp', network: 'base' },
@@ -141,14 +141,14 @@ describe('output commitment kind', () => {
     assert.match(receipt.issuer_signature.jws, /^[^.]+\.[^.]+\.[^.]+$/);
   });
 
-  test('output_commitment.kind applies when the digest is only on deliverable_hash', () => {
+  test('output_commitment.kind applies when the digest is only on deliverable_hash', async () => {
     const split = normalizeIngestInput(invoice({
       output_commitment: { kind: 'keccak256' },
       deliverable_hash: KECCAK,
     }));
     assert.equal(split.ok, true, split.reason);
     assert.equal(split.fulfillmentMeta.hashKind, 'keccak256');
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-kind-split',
       paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
       paymentResponse: { tx: '0xsplit', payer: '0xp', network: 'base' },
@@ -188,7 +188,7 @@ describe('output commitment kind', () => {
     assert.match(unknown.reason, /not blake3/);
   });
 
-  test('a kind mismatch cannot be smuggled onto a gateway sha256', () => {
+  test('a kind mismatch cannot be smuggled onto a gateway sha256', async () => {
     const payload = 'page-body';
     const fields = fulfillmentFieldsFromIngestBody(invoice({
       deliverable: payload,
@@ -200,8 +200,8 @@ describe('output commitment kind', () => {
       },
     }));
     assert.match(fields.commitmentError, /sha256/);
-    assert.throws(
-      () => buildForeignReceipt({
+    await assert.rejects(
+      async () => await buildForeignReceipt({
         taskId: 'foreign-kind-smuggle',
         paymentRequired: { resource: 'https://research.example/run', amount: '1000', payTo: '0xt' },
         paymentResponse: { tx: '0xabc', payer: '0xp', network: 'base' },
@@ -245,8 +245,8 @@ describe('output commitment kind', () => {
     assert.equal(kept.hash, `0x${hex}`);
   });
 
-  test('the listener keccak256 and the sha256 fallback are labeled explicitly', () => {
-    const committed = buildReceipt({
+  test('the listener keccak256 and the sha256 fallback are labeled explicitly', async () => {
+    const committed = await buildReceipt({
       taskId: 'task-kind-keccak',
       status: 'completed',
       createdAt: Date.now(),
@@ -257,7 +257,7 @@ describe('output commitment kind', () => {
     assert.equal(committed.fulfillment.output_commitment.kind, 'keccak256');
     assert.equal(decodeReceiptClaims(committed).fulfillment.output_commitment.kind, 'keccak256');
 
-    const hashed = buildReceipt({
+    const hashed = await buildReceipt({
       taskId: 'task-kind-sha',
       status: 'completed',
       createdAt: Date.now(),

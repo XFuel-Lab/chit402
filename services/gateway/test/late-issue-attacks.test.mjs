@@ -186,14 +186,14 @@ function baseCfg(url, over = {}) {
   };
 }
 
-function pay(store, cfg, nonce, header, reqOver = {}) {
+async function pay(store, cfg, nonce, header, reqOver = {}) {
   const req = {
     headers: { 'x-payment': header, ...(reqOver.headers || {}) },
     body: reqOver.body || { prompt: 'hello' },
     method: reqOver.method,
     path: reqOver.path,
   };
-  return settleBoundPayment({
+  return await settleBoundPayment({
     req,
     taskId: 'task-late',
     amount: '2000',

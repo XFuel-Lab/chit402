@@ -109,10 +109,10 @@ async function journalWithGoodHead() {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  for (const id of ['a', 'b', 'c']) tree.appendReceipt(id, `r${id}`, { publish: false });
+  for (const id of ['a', 'b', 'c']) await tree.appendReceipt(id, `r${id}`, { publish: false });
   const good = await tree.publishHead(publishOpts('2026-10-08T05:32:00.000Z'));
   assert.equal(good.tree_size, 4);
-  for (const id of ['d', 'e']) tree.appendReceipt(id, `r${id}`, { publish: false });
+  for (const id of ['d', 'e']) await tree.appendReceipt(id, `r${id}`, { publish: false });
   assert.equal(tree.leaves.length, 6);
   return { dir, tree, good };
 }
@@ -154,7 +154,7 @@ test('a raced head is quarantined, /health shows it, and inclusion uses the last
       acknowledged: false,
     }]);
 
-    const inside = loaded.inclusion('b');
+    const inside = await loaded.inclusion('b');
     assert.equal(inside.status, 'anchored');
     assert.equal(inside.root, good.root);
     assert.equal(inside.head.root, good.root);
@@ -165,7 +165,7 @@ test('a raced head is quarantined, /health shows it, and inclusion uses the last
     noVerified(inside);
     assert.equal(renderInclusionSection(inside).includes('VERIFIED'), false);
 
-    const past = loaded.inclusion('e');
+    const past = await loaded.inclusion('e');
     assert.equal(past.status, 'pending_anchor');
     assert.equal(past.head.root, good.root);
     assert.equal(past.head.tree_size, 4);
@@ -173,13 +173,13 @@ test('a raced head is quarantined, /health shows it, and inclusion uses the last
     noVerified(past);
     assert.equal(renderInclusionSection(past).includes('VERIFIED'), false);
 
-    assert.throws(
-      () => loaded.inclusion('b', { treeSize: 6 }),
+    await assert.rejects(
+      async () => await loaded.inclusion('b', { treeSize: 6 }),
       (err) => err.code === 'no_signed_head',
     );
 
     const { createApp } = await import('../src/server.js');
-    const app = createApp();
+    const app = await createApp();
     const server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
     });
@@ -256,7 +256,7 @@ test('a signed note acknowledges a raced head and an unsigned note does not', as
     };
     assert.equal(healthIsDegraded(openLog), true);
 
-    loaded.acknowledgeQuarantinedHead(loaded.quarantinedHeads[0].root);
+    await loaded.acknowledgeQuarantinedHead(loaded.quarantinedHeads[0].root);
     const again = new ReceiptMerkleTree();
     again.load(dir);
     const heads = again.bundleStatus().quarantined_heads;

@@ -225,7 +225,7 @@ export function startHourlyBundleTimer({ tree, config, receipts, onError, interv
       if (onError) onError(err);
     }
   };
-  const timer = setInterval(() => { tick(); }, intervalMs);
+  const timer = setInterval(async () => { await tick(); }, intervalMs);
   if (typeof timer.unref === 'function') timer.unref();
   return { timer, tick };
 }

@@ -149,7 +149,7 @@ test('post, bid, award, deliver, then one leg does not issue a receipt', async (
   const again = await placeBoardBid(id, { price: '800000', pitch: 'no' }, deps(ctx, ctx.bidder, { ensureStamp: stamp.ensure }));
   assert.equal(again.status, 409);
 
-  const awarded = awardBoardBid(id, { bid_id: bidId }, deps(ctx, ctx.poster));
+  const awarded = await awardBoardBid(id, { bid_id: bidId }, deps(ctx, ctx.poster));
   assert.equal(awarded.status, 200);
   assert.equal(awarded.body.job.status, 'awarded');
   assert.equal(awarded.body.job.bids.filter((b) => b.status === 'awarded').length, 1);
@@ -183,7 +183,7 @@ test('both legs issue one signed receipt on both books and reveal checks the has
   const ctx = world();
   const { id } = await openJob(ctx);
   const bid = await placeBoardBid(id, { price: '1000000', pitch: 'ready' }, deps(ctx, ctx.bidder, { ensureStamp: stampOk().ensure }));
-  awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
+  await awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
   const output = 'delivered work';
   const hash = sha256Prefixed(output);
   deliverBoardJob(id, { output_sha256: hash, preview: 'work' }, deps(ctx, ctx.bidder));
@@ -247,7 +247,7 @@ test('a challenged job counts as paid, not delivered, and a mutual pair is relat
   const ctx = world();
   const { id } = await openJob(ctx);
   const bid = await placeBoardBid(id, { price: '1000000' }, deps(ctx, ctx.bidder, { ensureStamp: stampOk().ensure }));
-  awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
+  await awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
   const hash = sha256Prefixed('hidden');
   deliverBoardJob(id, { output_sha256: hash }, deps(ctx, ctx.bidder));
   const pay = legs();
@@ -272,16 +272,16 @@ test('a challenged job counts as paid, not delivered, and a mutual pair is relat
     deadline: futureDeadline(),
   }, deps(ctx, ctx.bidder, { ensureStamp: stampOk().ensure }));
   const backBid = await placeBoardBid(back.body.job.id, { price: '1000000' }, deps(ctx, ctx.poster, { ensureStamp: stampOk().ensure }));
-  const awarded = awardBoardBid(back.body.job.id, { bid_id: backBid.body.bid_id }, deps(ctx, ctx.bidder));
+  const awarded = await awardBoardBid(back.body.job.id, { bid_id: backBid.body.bid_id }, deps(ctx, ctx.bidder));
   assert.equal(awarded.body.job.related, true);
 });
 
-test('inbound completion returns a Chit receipt and replays the same verify_url', () => {
+test('inbound completion returns a Chit receipt and replays the same verify_url', async () => {
   const ctx = world();
   const prev = process.env.CHIT_BOARD_INBOUND_SECRET;
   process.env.CHIT_BOARD_INBOUND_SECRET = 'inbound-test-secret';
   try {
-    const denied = ingestExternalCompletion({
+    const denied = await ingestExternalCompletion({
       source: 'daydreams',
       external_id: 'task-1',
       payer: WALLET,
@@ -303,7 +303,7 @@ test('inbound completion returns a Chit receipt and replays the same verify_url'
       network: 'solana',
       output_hash: hash,
     };
-    const created = ingestExternalCompletion(body, deps(ctx, null, { inboundAuth: authorizeInbound('inbound-test-secret') }));
+    const created = await ingestExternalCompletion(body, deps(ctx, null, { inboundAuth: authorizeInbound('inbound-test-secret') }));
     assert.equal(created.status, 201);
     assert.match(created.body.verify_url, /^https:\/\/api\.chit402\.com\/receipt\//);
     const claims = decodeReceiptClaims(created.body.receipt);
@@ -312,7 +312,7 @@ test('inbound completion returns a Chit receipt and replays the same verify_url'
     assert.equal(claims.caller_binding.payer_wallet.toLowerCase(), WALLET);
     assert.equal(claims.payment.payee.toLowerCase(), OTHER);
     assert.equal(claims.fulfillment.output_commitment.hash, hash);
-    const replay = ingestExternalCompletion(body, deps(ctx, null, { inboundAuth: authorizeInbound('inbound-test-secret') }));
+    const replay = await ingestExternalCompletion(body, deps(ctx, null, { inboundAuth: authorizeInbound('inbound-test-secret') }));
     assert.equal(replay.status, 200);
     assert.equal(replay.body.idempotent, true);
     assert.equal(replay.body.payout.verify_url, created.body.verify_url);
@@ -324,8 +324,8 @@ test('inbound completion returns a Chit receipt and replays the same verify_url'
   }
 });
 
-test('buildJobPayoutReceipt does not invent a new signed schema', () => {
-  const built = buildJobPayoutReceipt({
+test('buildJobPayoutReceipt does not invent a new signed schema', async () => {
+  const built = await buildJobPayoutReceipt({
     taskId: 'xfuel-job-example',
     payerWallet: WALLET,
     paymentRef: 'base:0xexample',
@@ -348,7 +348,7 @@ test('HTTP pay challenge names the winner wallet, then the treasury', async () =
   const ctx = world();
   const { id } = await openJob(ctx);
   const bid = await placeBoardBid(id, { price: '1000000', pitch: 'ok' }, deps(ctx, ctx.bidder, { ensureStamp: stampOk().ensure }));
-  awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
+  await awardBoardBid(id, { bid_id: bid.body.bid_id }, deps(ctx, ctx.poster));
   deliverBoardJob(id, { output_sha256: sha256Prefixed('http') }, deps(ctx, ctx.bidder));
 
   let calls = 0;

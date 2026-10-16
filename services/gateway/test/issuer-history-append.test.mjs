@@ -77,14 +77,14 @@ function mockRes() {
   };
 }
 
-function withHistory(fn) {
+async function withHistory(fn) {
   const previousBefore = process.env.ISSUER_KEY_NOT_BEFORE;
   const previousExtra = process.env.ISSUER_HISTORY_EXTRA;
   process.env.ISSUER_KEY_NOT_BEFORE = '2020-01-01T00:00:00.000Z';
   delete process.env.ISSUER_HISTORY_EXTRA;
   resetIssuerHistoryStore();
   try {
-    return fn();
+    return await fn();
   } finally {
     if (previousBefore == null) delete process.env.ISSUER_KEY_NOT_BEFORE;
     else process.env.ISSUER_KEY_NOT_BEFORE = previousBefore;
@@ -94,10 +94,10 @@ function withHistory(fn) {
   }
 }
 
-test('an extension seals the next version and version 1 bytes stay', () => withHistory(() => {
-  const v1 = currentIssuerHistory();
+test('an extension seals the next version and version 1 bytes stay', () => withHistory(async () => {
+  const v1 = await currentIssuerHistory();
   const newbie = freshKey();
-  const v2 = sealExtendingIssuerHistory([{
+  const v2 = await sealExtendingIssuerHistory([{
     kid: newbie.publicJwk.kid,
     jwk: newbie.publicJwk,
     alg: 'ES256',
@@ -110,9 +110,9 @@ test('an extension seals the next version and version 1 bytes stay', () => withH
   }]);
   assert.equal(v2.version, v1.version + 1);
   assert.notEqual(v2.body, v1.body);
-  assert.equal(issuerHistoryRecord({ version: 1 }).body, v1.body);
+  assert.equal((await issuerHistoryRecord({ version: 1 })).body, v1.body);
   const served = mockRes();
-  writeIssuerHistory(served, { version: '1' });
+  await writeIssuerHistory(served, { version: '1' });
   assert.equal(served.statusCode, 200);
   assert.equal(served.body, v1.body);
   const parsed = JSON.parse(v2.body);
@@ -121,10 +121,10 @@ test('an extension seals the next version and version 1 bytes stay', () => withH
   assert.equal(verifyIssuerHistory(parsed).valid, true);
 }));
 
-test('a new key that inherits the old window is refused', () => withHistory(() => {
-  currentIssuerHistory();
+test('a new key that inherits the old window is refused', () => withHistory(async () => {
+  await currentIssuerHistory();
   const newbie = freshKey();
-  assert.throws(() => sealExtendingIssuerHistory([{
+  await assert.rejects(async () => await sealExtendingIssuerHistory([{
     kid: newbie.publicJwk.kid,
     jwk: newbie.publicJwk,
     alg: 'ES256',
@@ -133,14 +133,14 @@ test('a new key that inherits the old window is refused', () => withHistory(() =
     status: 'active',
     custody: 'copied window',
   }]), (err) => err.code === 'inherited_key_window');
-  assert.equal(issuerHistoryRecord({ version: 1 }).version, 1);
+  assert.equal((await issuerHistoryRecord({ version: 1 })).version, 1);
 }));
 
-test('a history signed only by the key it introduces fails, and genesis does not', () => withHistory(() => {
-  const genesis = buildIssuerHistory({ version: 1, seq: 1 });
+test('a history signed only by the key it introduces fails, and genesis does not', () => withHistory(async () => {
+  const genesis = await buildIssuerHistory({ version: 1, seq: 1 });
   assert.equal(verifyIssuerHistory(genesis).valid, true);
 
-  const v1 = currentIssuerHistory();
+  const v1 = await currentIssuerHistory();
   const prefix = JSON.parse(v1.body).entries;
   const newbie = freshKey();
   const raw = {
@@ -186,27 +186,27 @@ test('a history signed only by the key it introduces fails, and genesis does not
   assert.equal(typeof signJws, 'function');
 }));
 
-test('issuer-history rejects seq and unknown query parameters', () => withHistory(() => {
-  const v1 = currentIssuerHistory();
+test('issuer-history rejects seq and unknown query parameters', () => withHistory(async () => {
+  const v1 = await currentIssuerHistory();
   for (const query of [{ seq: '1' }, { foo: '1' }, { version: '1', seq: '1' }]) {
     const res = mockRes();
-    writeIssuerHistory(res, query);
+    await writeIssuerHistory(res, query);
     assert.equal(res.statusCode, 400, JSON.stringify(query));
     assert.equal(res.body.error, 'bad_query');
   }
   const ok = mockRes();
-  writeIssuerHistory(ok, { version: '1' });
+  await writeIssuerHistory(ok, { version: '1' });
   assert.equal(ok.statusCode, 200);
   assert.equal(ok.body, v1.body);
   const latest = mockRes();
-  writeIssuerHistory(latest, {});
+  await writeIssuerHistory(latest, {});
   assert.equal(latest.statusCode, 200);
   assert.equal(latest.body, v1.body);
 }));
 
-test('issuance stays at payload version 10 and pins the document hash', () => withHistory(() => {
-  const record = currentIssuerHistory();
-  const issued = currentHistoryPin(10);
+test('issuance stays at payload version 10 and pins the document hash', () => withHistory(async () => {
+  const record = await currentIssuerHistory();
+  const issued = await currentHistoryPin(10);
   assert.equal(typeof issued.hash, 'string');
   assert.equal(issued.version, record.version);
   assert.equal(issued.hash, record.hash);
@@ -241,21 +241,21 @@ function swapProcessKey(privateKey) {
   };
 }
 
-test('an in-memory log reseals when the process key changes', () => withHistory(() => {
+test('an in-memory log reseals when the process key changes', () => withHistory(async () => {
   const previousFlag = process.env.ISSUER_HISTORY_TEST_ROTATION;
   process.env.ISSUER_HISTORY_TEST_ROTATION = 'true';
-  const v1 = currentIssuerHistory();
+  const v1 = await currentIssuerHistory();
   const kidA = JSON.parse(v1.body).entries.at(-1).kid;
   const next = freshKey();
   const restore = swapProcessKey(next.privateKey);
   try {
-    const resealed = currentIssuerHistory();
+    const resealed = await currentIssuerHistory();
     assert.equal(resealed.version, 1);
     const doc = JSON.parse(resealed.body);
     assert.equal(doc.entries.at(-1).kid, next.publicJwk.kid);
     assert.notEqual(doc.entries.at(-1).kid, kidA);
-    assert.equal(issuerHistoryRecord({ version: 1 }).body, resealed.body);
-    assert.equal(issuerHistoryRecord({ hash: v1.hash }), null);
+    assert.equal((await issuerHistoryRecord({ version: 1 })).body, resealed.body);
+    assert.equal(await issuerHistoryRecord({ hash: v1.hash }), null);
   } finally {
     restore();
     if (previousFlag == null) delete process.env.ISSUER_HISTORY_TEST_ROTATION;
@@ -263,20 +263,20 @@ test('an in-memory log reseals when the process key changes', () => withHistory(
   }
 }));
 
-test('a persisted log refuses a different process key and still serves version 1', () => withHistory(() => {
+test('a persisted log refuses a different process key and still serves version 1', () => withHistory(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
   const previousEnv = process.env.NODE_ENV;
   let restore = () => {};
   try {
     configureIssuerHistoryStore({ dir, persist: true });
-    const v1 = currentIssuerHistory();
+    const v1 = await currentIssuerHistory();
     const next = freshKey();
     restore = swapProcessKey(next.privateKey);
     process.env.NODE_ENV = 'production';
     process.env.ISSUER_KID = next.publicJwk.kid;
     _resetIssuerKey();
-    assert.throws(() => currentIssuerHistory(), (err) => err.code === 'issuer_history_rewrite');
-    assert.equal(issuerHistoryRecord({ version: 1 }).body, v1.body);
+    await assert.rejects(async () => await currentIssuerHistory(), (err) => err.code === 'issuer_history_rewrite');
+    assert.equal((await issuerHistoryRecord({ version: 1 })).body, v1.body);
   } finally {
     if (previousEnv == null) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousEnv;
@@ -286,17 +286,17 @@ test('a persisted log refuses a different process key and still serves version 1
   }
 }));
 
-test('a test process does not append a non-extending line when its key changes', () => withHistory(() => {
+test('a test process does not append a non-extending line when its key changes', () => withHistory(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
   const previousFlag = process.env.ISSUER_HISTORY_TEST_ROTATION;
   process.env.ISSUER_HISTORY_TEST_ROTATION = 'true';
   let restore = () => {};
   try {
     configureIssuerHistoryStore({ dir, persist: true });
-    const v1 = currentIssuerHistory();
+    const v1 = await currentIssuerHistory();
     const next = freshKey();
     restore = swapProcessKey(next.privateKey);
-    const resealed = currentIssuerHistory();
+    const resealed = await currentIssuerHistory();
     assert.equal(resealed.version, 1);
     assert.equal(JSON.parse(resealed.body).entries.at(-1).kid, next.publicJwk.kid);
     const lines = readFileSync(join(dir, 'issuer-history-versions.jsonl'), 'utf8').trim().split('\n');
@@ -311,9 +311,9 @@ test('a test process does not append a non-extending line when its key changes',
   }
 }));
 
-test('a retire or revoke appends and the last entry is the window', () => withHistory(() => {
+test('a retire or revoke appends and the last entry is the window', () => withHistory(async () => {
   const kid = getIssuerKid();
-  const retired = retireOrRevokeIssuerKey({
+  const retired = await retireOrRevokeIssuerKey({
     status: 'retired',
     not_before: '2020-01-01T00:00:00.000Z',
     not_after: '2021-06-01T00:00:00.000Z',
@@ -325,10 +325,10 @@ test('a retire or revoke appends and the last entry is the window', () => withHi
   const afterEnd = issuerKeyWindow(retiredDoc, kid, '2021-07-01T00:00:00.000Z');
   assert.equal(afterEnd.ok, false);
   assert.equal(afterEnd.reason, 'issued_after_not_after');
-  assert.throws(() => assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
+  await assert.rejects(async () => await assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
 
   resetIssuerHistoryStore();
-  const revoked = retireOrRevokeIssuerKey({
+  const revoked = await retireOrRevokeIssuerKey({
     status: 'revoked',
     not_before: '2020-01-01T00:00:00.000Z',
     revoked_at: '2021-06-01T00:00:00.000Z',
@@ -342,9 +342,9 @@ test('a retire or revoke appends and the last entry is the window', () => withHi
   assert.equal(early.ok, true, early.reason);
 }));
 
-test('a later active entry does not clear a revocation and retire refuses it', () => withHistory(() => {
+test('a later active entry does not clear a revocation and retire refuses it', () => withHistory(async () => {
   const kid = getIssuerKid();
-  const revoked = retireOrRevokeIssuerKey({
+  const revoked = await retireOrRevokeIssuerKey({
     status: 'revoked',
     not_before: '2020-01-01T00:00:00.000Z',
     revoked_at: '2026-06-01T00:00:00.000Z',
@@ -364,7 +364,7 @@ test('a later active entry does not clear a revocation and retire refuses it', (
   assert.equal(late.reason, 'kid_revoked_before_issuance');
   const early = issuerKeyWindow({ entries: reactivated }, kid, '2026-03-01T00:00:00.000Z');
   assert.equal(early.ok, true, early.reason);
-  assert.throws(() => sealExtendingIssuerHistory([{
+  await assert.rejects(async () => await sealExtendingIssuerHistory([{
     kid,
     jwk: prior.jwk,
     alg: 'ES256',
@@ -375,7 +375,7 @@ test('a later active entry does not clear a revocation and retire refuses it', (
     reason: 'unrevoke',
     custody: 'no',
   }]), (err) => err.code === 'kid_status_regression');
-  assert.throws(() => retireOrRevokeIssuerKey({
+  await assert.rejects(async () => await retireOrRevokeIssuerKey({
     status: 'retired',
     not_before: '2020-01-01T00:00:00.000Z',
     not_after: '2026-12-01T00:00:00.000Z',
@@ -383,9 +383,9 @@ test('a later active entry does not clear a revocation and retire refuses it', (
   }), (err) => err.code === 'kid_status_regression');
 }));
 
-test('retired then active is refused and not_after stays', () => withHistory(() => {
+test('retired then active is refused and not_after stays', () => withHistory(async () => {
   const kid = getIssuerKid();
-  const retired = retireOrRevokeIssuerKey({
+  const retired = await retireOrRevokeIssuerKey({
     status: 'retired',
     not_before: '2020-01-01T00:00:00.000Z',
     not_after: '2026-06-01T00:00:00.000Z',
@@ -404,7 +404,7 @@ test('retired then active is refused and not_after stays', () => withHistory(() 
   }, kid, '2026-09-01T00:00:00.000Z');
   assert.equal(extended.ok, false);
   assert.equal(extended.reason, 'issued_after_not_after');
-  assert.throws(() => sealExtendingIssuerHistory([{
+  await assert.rejects(async () => await sealExtendingIssuerHistory([{
     kid,
     jwk: prior.jwk,
     alg: 'ES256',
@@ -417,13 +417,13 @@ test('retired then active is refused and not_after stays', () => withHistory(() 
   }]), (err) => err.code === 'kid_status_regression');
 
   resetIssuerHistoryStore();
-  retireOrRevokeIssuerKey({
+  await retireOrRevokeIssuerKey({
     status: 'retired',
     not_before: '2020-01-01T00:00:00.000Z',
     not_after: '2026-06-01T00:00:00.000Z',
     reason: 'rotated',
   });
-  const tightened = retireOrRevokeIssuerKey({
+  const tightened = await retireOrRevokeIssuerKey({
     status: 'revoked',
     not_before: '2020-01-01T00:00:00.000Z',
     revoked_at: '2026-06-01T00:00:00.000Z',
@@ -433,9 +433,9 @@ test('retired then active is refused and not_after stays', () => withHistory(() 
   assert.equal(verifyIssuerHistory(JSON.parse(tightened.body)).valid, true);
 }));
 
-test('a later not_before is refused and does not widen the window', () => withHistory(() => {
+test('a later not_before is refused and does not widen the window', () => withHistory(async () => {
   const kid = getIssuerKid();
-  assert.throws(() => retireOrRevokeIssuerKey({
+  await assert.rejects(async () => await retireOrRevokeIssuerKey({
     status: 'retired',
     not_before: '2026-01-01T00:00:00.000Z',
     not_after: '2026-06-01T00:00:00.000Z',
@@ -461,16 +461,16 @@ test('a later not_before is refused and does not widen the window', () => withHi
   assert.equal(widened.reason, 'issued_before_not_before');
 }));
 
-test('truncating the history file cannot reissue a version', () => withHistory(() => {
+test('truncating the history file cannot reissue a version', () => withHistory(async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issuer-hist-'));
   const logDir = mkdtempSync(join(tmpdir(), 'issuer-log-'));
   const previousLog = process.env.RECEIPT_LOG_DIR;
   process.env.RECEIPT_LOG_DIR = logDir;
   try {
     configureIssuerHistoryStore({ dir, persist: true });
-    currentIssuerHistory();
+    await currentIssuerHistory();
     const newbie = freshKey();
-    const v2 = sealExtendingIssuerHistory([{
+    const v2 = await sealExtendingIssuerHistory([{
       kid: newbie.publicJwk.kid,
       jwk: newbie.publicJwk,
       alg: 'ES256',
@@ -530,7 +530,7 @@ test('the prod v1 to v2 rewrite is grandfathered and recorded', () => withHistor
   }
 }));
 
-test('the retire script is offline, two-person, and appends', () => withHistory(() => {
+test('the retire script is offline, two-person, and appends', () => withHistory(async () => {
   const script = fileURLToPath(new URL('../scripts/retire-issuer-key.mjs', import.meta.url));
   const dir = mkdtempSync(join(tmpdir(), 'issuer-retire-'));
   const agents = join(dir, 'agents');
@@ -597,7 +597,7 @@ test('the retire script is offline, two-person, and appends', () => withHistory(
     const lines = readFileSync(join(agents, 'issuer-history-versions.jsonl'), 'utf8').trim().split('\n');
     assert.equal(lines.length, 2);
     configureIssuerHistoryStore({ dir: agents, persist: true });
-    assert.throws(() => assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
+    await assert.rejects(async () => await assertIssuerHistoryBoot(), (err) => err.code === 'issuer_key_not_active');
   } finally {
     restore();
     configureIssuerHistoryStore({ dir: null, persist: false });

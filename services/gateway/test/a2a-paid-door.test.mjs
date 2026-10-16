@@ -86,7 +86,7 @@ let base;
 
 before(async () => {
   resetHubCatalogCache();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -157,7 +157,7 @@ test('demo key on /a2a-message is 402 on empty body (no free path)', async () =>
   assert.equal(body.error.type, 'payment_required');
 });
 
-test('recordCollectedSpend appends hub/model/amount under bookable agent_id without register', () => {
+test('recordCollectedSpend appends hub/model/amount under bookable agent_id without register', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const receipt = {
@@ -170,7 +170,7 @@ test('recordCollectedSpend appends hub/model/amount under bookable agent_id with
     },
     route: { model: 'theta/qwen3', provider: 'theta-edgecloud' },
   };
-  const recorded = recordCollectedSpend(receipt, { ledger, registry });
+  const recorded = await recordCollectedSpend(receipt, { ledger, registry });
   assert.equal(recorded.ok, true);
   assert.equal(recorded.duplicate, false);
   assert.ok(Number.isInteger(recorded.agent_id) && recorded.agent_id >= 1);
@@ -181,7 +181,7 @@ test('recordCollectedSpend appends hub/model/amount under bookable agent_id with
   assert.equal(recorded.entry.hub, 'theta');
   assert.equal(ledger.entries.length, 1);
 
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
     ledger,
     verify: bindBookVerifier(registry),
   });

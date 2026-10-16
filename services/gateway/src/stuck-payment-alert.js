@@ -61,7 +61,7 @@ async function writeAlert(sample, count, deps, { summary = false } = {}) {
 function armSummary(delay) {
   if (timer) return;
   const wait = Math.max(0, delay);
-  timer = setTimeout(() => {
+  timer = setTimeout(async () => {
     timer = null;
     if (extra <= 0) return;
     const count = extra;
@@ -69,7 +69,7 @@ function armSummary(delay) {
     extra = 0;
     heldSample = null;
     lastAt = Date.now();
-    void writeAlert(sample, count, {}, { summary: true });
+    void await writeAlert(sample, count, {}, { summary: true });
   }, wait);
   if (typeof timer.unref === 'function') timer.unref();
 }
@@ -82,7 +82,7 @@ export function resetStuckPaymentAlertsForTests() {
 }
 
 /** Emit the held summary without waiting out the minute. Tests use this. */
-export function flushStuckPaymentAlert(deps = {}) {
+export async function flushStuckPaymentAlert(deps = {}) {
   if (extra <= 0) return null;
   const count = extra;
   const sample = heldSample || { tx: null, network: null, amount: null, reason: null };
@@ -91,7 +91,7 @@ export function flushStuckPaymentAlert(deps = {}) {
   clearTimer();
   const now = typeof deps.now === 'function' ? deps.now() : Date.now();
   lastAt = now;
-  return writeAlert(sample, count, deps, { summary: true });
+  return await writeAlert(sample, count, deps, { summary: true });
 }
 
 export async function alertStuckPayment(fields = {}, deps = {}) {

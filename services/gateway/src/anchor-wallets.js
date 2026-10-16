@@ -19,7 +19,7 @@
  * The issuer key signs the list. This is not a receipt and it does not
  * change the epoch record.
  */
-import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { getIssuerPublicKeyJwk, signJwsAsync } from './issuer-key.js';
 import { resolveAnchorSender } from './receipt-log-anchor.js';
 import { solanaAnchorFeePayer } from './solana-receipt-anchor.js';
 
@@ -76,11 +76,11 @@ let cachedKey = '';
 let cachedDoc = null;
 
 /** Same claims reuse the signed bytes. ES256 is non-deterministic, so a changed list is the only re-sign. */
-export function currentAnchorWallets(env = process.env) {
+export async function currentAnchorWallets(env = process.env) {
   const claims = anchorWalletClaims(env);
   const key = JSON.stringify(claims);
   if (cachedDoc && cachedKey === key) return cachedDoc;
-  const { jws, kid } = signJws(claims, { typ: ANCHOR_WALLETS_JWT_TYP });
+  const { jws, kid } = await signJwsAsync(claims, { typ: ANCHOR_WALLETS_JWT_TYP });
   cachedDoc = {
     ...claims,
     issuer_signature: {
@@ -101,8 +101,8 @@ export function resetAnchorWalletCache() {
   cachedDoc = null;
 }
 
-export function writeAnchorWallets(res) {
-  const doc = currentAnchorWallets();
+export async function writeAnchorWallets(res) {
+  const doc = await currentAnchorWallets();
   res.set('Cache-Control', 'public, max-age=300');
   res.json(doc);
 }

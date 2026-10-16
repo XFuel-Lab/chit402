@@ -48,7 +48,7 @@ test('preimage shell bytes stay the snapshot and the response names commits_to n
       payTo: '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334',
     },
   });
-  const app = createApp();
+  const app = await createApp();
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -93,14 +93,14 @@ test('an unanchored leaf older than one hour publishes once', async () => {
       sends.push(Date.now());
       return `0x${'ab'.repeat(32)}`;
     };
-    tree.appendReceipt('covered', 'h1', { publish: false });
+    await tree.appendReceipt('covered', 'h1', { publish: false });
     await tree.tickAnchors({ now: t, send });
     assert.equal(sends.length, 1);
     // Keep the daily retry inside its quiet window. The later ticks then
     // publish only because the uncovered tail crossed the deadline.
     const head = tree.heads[tree.heads.length - 1];
     head.published_at = new Date(t + 3600 * 1000 - 1000).toISOString();
-    tree.appendReceipt('tail', 'h2', { publish: false });
+    await tree.appendReceipt('tail', 'h2', { publish: false });
     sends.length = 0;
     const early = tree.tailAnchorStatus(new Date(t + 3600 * 1000));
     assert.equal(early.unanchored_leaves, 1);

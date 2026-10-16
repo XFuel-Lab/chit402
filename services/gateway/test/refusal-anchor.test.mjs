@@ -26,7 +26,7 @@ test('a refusal with no RPC is UNAVAILABLE and still appends', async () => {
     const anchor = await observeBaseAnchor();
     assert.equal(anchor.status, ANCHOR_UNAVAILABLE);
     const ledger = new UsageSettledLedger();
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 7,
       taskId: 'blocked-no-rpc',
       policyCode: 'kill_switch',
@@ -67,7 +67,7 @@ test('a refusal signs the observed block hash', async () => {
     assert.equal(anchor.chain_id, 8453);
     assert.equal(anchor.block_number, '16');
     const ledger = new UsageSettledLedger();
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 7,
       taskId: 'blocked-anchored',
       policyCode: 'daily_cap_exceeded',
@@ -97,7 +97,7 @@ test('an RPC failure does not fail the refusal', async () => {
     const anchor = await observeBaseAnchor();
     assert.equal(anchor.status, 'UNAVAILABLE');
     const ledger = new UsageSettledLedger();
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 3,
       taskId: 'blocked-rpc-down',
       policyCode: 'kill_switch',

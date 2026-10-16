@@ -58,13 +58,13 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(taskResource.input.required.includes('sender'));
 });
 
-test('402 challenge resource URL matches discovery manifest resource URL', () => {
+test('402 challenge resource URL matches discovery manifest resource URL', async () => {
   // The 402 challenge and the discovery manifest must agree on the resource URL
   // so CDP Bazaar catalogs them as the same service.
   const baseUrl = 'https://api.xfuel.app';
 
   const manifest = buildX402Manifest(baseUrl);
-  const { body: challenge } = buildPaymentChallenge({
+  const { body: challenge } = await buildPaymentChallenge({
     taskId: 'test-task',
     maxAmountRequired: '50000',
     baseUrl,
@@ -80,8 +80,8 @@ test('402 challenge resource URL matches discovery manifest resource URL', () =>
     'challenge points to the absolute /task-request URL');
 });
 
-test('402 challenge includes top-level bazaar extension for CDP cataloging', () => {
-  const { body } = buildPaymentChallenge({
+test('402 challenge includes top-level bazaar extension for CDP cataloging', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'catalog-test',
     maxAmountRequired: '10000',
     baseUrl: 'https://api.xfuel.app',

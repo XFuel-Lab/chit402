@@ -816,7 +816,7 @@ async function collectStamp(ensureStamp) {
   };
 }
 
-function writeStampRow(ledger, { agentId, taskId, stamp, parentRef, purpose, postId }) {
+async function writeStampRow(ledger, { agentId, taskId, stamp, parentRef, purpose, postId }) {
   if (!ledger || typeof ledger.recordBoardEvent !== 'function') {
     return { ok: false, reason: 'ledger unavailable' };
   }
@@ -824,7 +824,7 @@ function writeStampRow(ledger, { agentId, taskId, stamp, parentRef, purpose, pos
   const paymentRef = waived
     ? `waiver:board:${taskId}`
     : (stamp.settlement?.paymentRef || null);
-  return ledger.recordBoardEvent({
+  return await ledger.recordBoardEvent({
     agentId,
     kind: 'board_stamp',
     taskId,
@@ -843,8 +843,8 @@ function writeStampRow(ledger, { agentId, taskId, stamp, parentRef, purpose, pos
   });
 }
 
-function writePostRow(ledger, { agentId, post, phase }) {
-  return ledger.recordBoardEvent({
+async function writePostRow(ledger, { agentId, post, phase }) {
+  return await ledger.recordBoardEvent({
     agentId,
     kind: 'board_post',
     taskId: phase === 'published' ? `board-post-${post.id}` : `board-post-${post.id}-${phase}`,
@@ -1046,7 +1046,7 @@ export async function createEndpointReport(body = {}, deps = {}) {
   }
 
   if (!freeRepost && cited && (posts.findByReceipt(typed.type, receiptKey) || posts.isReceiptTaken(receiptKey))) {
-    writeStampRow(ledger, {
+    await writeStampRow(ledger, {
       agentId: actor.agent_id,
       taskId: `board-stamp-race-${crypto.randomBytes(4).toString('hex')}`,
       stamp,
@@ -1112,7 +1112,7 @@ export async function createEndpointReport(body = {}, deps = {}) {
     confirms: [],
   };
 
-  const stamped = writeStampRow(ledger, {
+  const stamped = await writeStampRow(ledger, {
     agentId: actor.agent_id,
     taskId: stampTaskId,
     stamp,
@@ -1127,7 +1127,7 @@ export async function createEndpointReport(body = {}, deps = {}) {
   if (!posts.tryInsert(post)) {
     return fail(409, 'duplicate_receipt', 'This receipt already backs a post or a confirm');
   }
-  writePostRow(ledger, { agentId: actor.agent_id, post, phase: 'published' });
+  await writePostRow(ledger, { agentId: actor.agent_id, post, phase: 'published' });
   if (prior) {
     prior.free_repost = false;
     prior.repost_consumed_by = id;
@@ -1204,7 +1204,7 @@ export function getBoardPost(id, { posts } = {}) {
   return { ok: true, status: 200, body: { post: view } };
 }
 
-export function takedownBoardPost(id, deps = {}) {
+export async function takedownBoardPost(id, deps = {}) {
   const { posts, ledger, actor, isDemo = false } = deps;
   if (isDemo) return fail(403, 'demo_rejected', 'Demo keys cannot change the board');
   if (!actor?.agent_id) return fail(401, 'unauthorized', 'Possession proof (session) is required');
@@ -1220,7 +1220,7 @@ export function takedownBoardPost(id, deps = {}) {
   post.taken_down_at = new Date().toISOString();
   posts.update(post);
   if (ledger && typeof ledger.recordBoardEvent === 'function') {
-    writePostRow(ledger, { agentId: actor.agent_id, post, phase: 'taken_down' });
+    await writePostRow(ledger, { agentId: actor.agent_id, post, phase: 'taken_down' });
   }
   return { ok: true, status: 200, body: { post: toPublicPost(post) } };
 }
@@ -1241,7 +1241,7 @@ export async function flagBoardPost(id, deps = {}) {
   const stamp = await collectStamp(ensureStamp);
   if (!stamp.ok) return stamp;
   if ((post.flags || []).some((f) => f.agent_id === actor.agent_id)) {
-    writeStampRow(ledger, {
+    await writeStampRow(ledger, {
       agentId: actor.agent_id,
       taskId: `board-stamp-flag-race-${crypto.randomBytes(4).toString('hex')}`,
       stamp,
@@ -1255,7 +1255,7 @@ export async function flagBoardPost(id, deps = {}) {
     return fail(409, 'duplicate_flag', 'This agent already flagged this post');
   }
   const stampTaskId = `board-stamp-flag-${post.id}-${actor.agent_id}`;
-  const stamped = writeStampRow(ledger, {
+  const stamped = await writeStampRow(ledger, {
     agentId: actor.agent_id,
     taskId: stampTaskId,
     stamp,
@@ -1289,7 +1289,7 @@ export async function flagBoardPost(id, deps = {}) {
   };
 }
 
-export function hideBoardPost(id, deps = {}) {
+export async function hideBoardPost(id, deps = {}) {
   const { posts, ledger, ops } = deps;
   if (!ops?.ok) return ops || fail(401, 'unauthorized', 'Ops token rejected');
   const post = posts?.get(id);
@@ -1311,7 +1311,7 @@ export function hideBoardPost(id, deps = {}) {
     posts.releaseReceipt(post);
     posts.update(post);
     if (ledger && typeof ledger.recordBoardEvent === 'function') {
-      ledger.recordBoardEvent({
+      await ledger.recordBoardEvent({
         agentId: post.agent_id,
         kind: 'board_ops',
         taskId: `board-ops-${post.id}-hide`,
@@ -1401,7 +1401,7 @@ export async function createBoardComment(postId, body = {}, deps = {}) {
   if (!stamp.ok) return stamp;
   const again = posts.get(postId);
   if (!again || again.status !== 'live') {
-    writeStampRow(ledger, {
+    await writeStampRow(ledger, {
       agentId: actor.agent_id,
       taskId: `board-stamp-comment-race-${crypto.randomBytes(4).toString('hex')}`,
       stamp,
@@ -1414,7 +1414,7 @@ export async function createBoardComment(postId, body = {}, deps = {}) {
 
   const id = newCommentId();
   const stampTaskId = `board-stamp-comment-${id}`;
-  const stamped = writeStampRow(ledger, {
+  const stamped = await writeStampRow(ledger, {
     agentId: actor.agent_id,
     taskId: stampTaskId,
     stamp,
@@ -1426,7 +1426,7 @@ export async function createBoardComment(postId, body = {}, deps = {}) {
     return fail(409, 'stamp_not_recorded', 'Comment stamp could not be written to the book');
   }
   if (ledger && typeof ledger.recordBoardEvent === 'function') {
-    ledger.recordBoardEvent({
+    await ledger.recordBoardEvent({
       agentId: actor.agent_id,
       kind: 'board_comment',
       taskId: `board-comment-${id}`,
@@ -1462,7 +1462,7 @@ export async function createBoardComment(postId, body = {}, deps = {}) {
   };
 }
 
-export function takedownBoardComment(commentId, deps = {}) {
+export async function takedownBoardComment(commentId, deps = {}) {
   const { posts, ledger, actor, isDemo = false } = deps;
   const denied = actorOrFail({ actor, isDemo, suspendedAgentIds: [] });
   if (denied && denied.error !== 'posting_suspended') return denied;
@@ -1478,7 +1478,7 @@ export function takedownBoardComment(commentId, deps = {}) {
   comment.taken_down_at = new Date().toISOString();
   posts.addComment(comment);
   if (ledger && typeof ledger.recordBoardEvent === 'function') {
-    ledger.recordBoardEvent({
+    await ledger.recordBoardEvent({
       agentId: actor.agent_id,
       kind: 'board_comment',
       taskId: `board-comment-${comment.id}-taken_down`,
@@ -1501,7 +1501,7 @@ export async function flagBoardComment(commentId, deps = {}) {
   const stamp = await collectStamp(ensureStamp);
   if (!stamp.ok) return stamp;
   if ((posts.getComment(commentId)?.flags || []).some((f) => f.agent_id === actor.agent_id)) {
-    writeStampRow(ledger, {
+    await writeStampRow(ledger, {
       agentId: actor.agent_id,
       taskId: `board-stamp-cflag-race-${crypto.randomBytes(4).toString('hex')}`,
       stamp,
@@ -1512,7 +1512,7 @@ export async function flagBoardComment(commentId, deps = {}) {
     return fail(409, 'duplicate_flag', 'This agent already flagged this comment');
   }
   const stampTaskId = `board-stamp-cflag-${comment.id}-${actor.agent_id}`;
-  const stamped = writeStampRow(ledger, {
+  const stamped = await writeStampRow(ledger, {
     agentId: actor.agent_id,
     taskId: stampTaskId,
     stamp,
@@ -1540,7 +1540,7 @@ export async function flagBoardComment(commentId, deps = {}) {
   };
 }
 
-export function hideBoardComment(commentId, deps = {}) {
+export async function hideBoardComment(commentId, deps = {}) {
   const { posts, ledger, ops } = deps;
   if (!ops?.ok) return ops || fail(401, 'unauthorized', 'Ops token rejected');
   const comment = posts?.getComment(commentId);
@@ -1554,7 +1554,7 @@ export function hideBoardComment(commentId, deps = {}) {
     comment.hidden_at = new Date().toISOString();
     posts.addComment(comment);
     if (ledger && typeof ledger.recordBoardEvent === 'function') {
-      ledger.recordBoardEvent({
+      await ledger.recordBoardEvent({
         agentId: comment.agent_id,
         kind: 'board_ops',
         taskId: `board-ops-${comment.id}-hide`,

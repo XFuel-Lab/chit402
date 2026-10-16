@@ -48,7 +48,7 @@ let server;
 let base;
 
 before(async () => {
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -226,7 +226,7 @@ test('fixture stamps reported receipts, drops content, and replays on generation
   assert.equal(packed.includes(COMPLETION), false);
 
   const jwks = getJwks();
-  const verified = verifyReceiptEcdsaWithJwks(receipt, jwks);
+  const verified = await verifyReceiptEcdsaWithJwks(receipt, jwks);
   assert.equal(verified.valid, true);
 
   const childList = await fetch(`${base}/v1/openrouter/books/${child.json.book_id}/receipts`, {
@@ -446,7 +446,7 @@ test('pilot off still records the fee and does not charge', async () => {
   assert.equal(rows.receipts[0].stamp.fee_usd, '0.002');
 });
 
-test('a bound numeric agent sees the row and the USDC spent total stays put', () => {
+test('a bound numeric agent sees the row and the USDC spent total stays put', async () => {
   resetOpenRouterBroadcastForTests();
   const ledger = new UsageSettledLedger();
   const registry = { get(id) { return Number(id) === 7 ? { agent_id: 7 } : null; } };
@@ -454,7 +454,7 @@ test('a bound numeric agent sees the row and the USDC spent total stays put', ()
   assert.equal(created.ok, true);
   const one = structuredClone(FIXTURE);
   one.resourceSpans[0].scopeSpans[0].spans = [one.resourceSpans[0].scopeSpans[0].spans[0]];
-  const result = ingestOpenRouterBroadcast(one, {
+  const result = await ingestOpenRouterBroadcast(one, {
     book: created.book,
     ledger,
     registry,
@@ -479,7 +479,7 @@ test('a bound numeric agent sees the row and the USDC spent total stays put', ()
       return n === 7 || n === 8 ? { agent_id: n } : null;
     },
   };
-  const again = ingestOpenRouterBroadcast(one, {
+  const again = await ingestOpenRouterBroadcast(one, {
     book: other.book,
     ledger,
     registry: registryBoth,

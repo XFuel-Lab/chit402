@@ -12,7 +12,7 @@
 import crypto from 'crypto';
 import { deriveEvidence } from './usage-settled.js';
 import { takeStableCoverageSignature } from './coverage-signature-cache.js';
-import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 
 function jwksUri(baseUrl = '') {
   const path = '/.well-known/jwks.json';
@@ -237,16 +237,16 @@ export function coverageJwsHeader(baseUrl, kid) {
  * @param {object} coverage
  * @param {{ baseUrl?: string }} [opts]
  */
-export function signExportCoverage(coverage, { baseUrl = '' } = {}) {
+export async function signExportCoverage(coverage, { baseUrl = '' } = {}) {
   const claims = coverageClaims(coverage);
   const publicJwk = getIssuerPublicKeyJwk();
   const header = coverageJwsHeader(baseUrl, publicJwk.kid);
-  const issuer_signature = takeStableCoverageSignature(claims, {
+  const issuer_signature = await takeStableCoverageSignature(claims, {
     header,
     publicJwk,
-    sign: () => {
+    sign: async () => {
       const uri = jwksUri(baseUrl);
-      const { jws, kid } = signJws(claims, {
+      const { jws, kid } = await signJwsAsync(claims, {
         jku: uri.startsWith('http') ? uri : null,
         typ: COVERAGE_JWT_TYP,
       });
@@ -315,7 +315,7 @@ export function verifyExportCoverage(signed, jwks = null) {
  * Newest-first window plus the signed coverage of the full scoped set.
  * @returns {{ entries: object[], coverage: object }}
  */
-export function selectBookWindow(ledger, agentId, opts = {}) {
+export async function selectBookWindow(ledger, agentId, opts = {}) {
   const scope = {
     from: opts.from || null,
     to: opts.to || null,
@@ -327,7 +327,7 @@ export function selectBookWindow(ledger, agentId, opts = {}) {
     return {
       entries: [],
       universe: [],
-      coverage: signExportCoverage(buildExportCoverage({
+      coverage: await signExportCoverage(buildExportCoverage({
         bookId: agentId,
         universe: [],
         enumerated: [],
@@ -350,7 +350,7 @@ export function selectBookWindow(ledger, agentId, opts = {}) {
   return {
     entries: enumerated,
     universe: matched,
-    coverage: signExportCoverage(buildExportCoverage({
+    coverage: await signExportCoverage(buildExportCoverage({
       bookId: agentId,
       universe: matched,
       enumerated,
@@ -363,8 +363,8 @@ export function selectBookWindow(ledger, agentId, opts = {}) {
   };
 }
 
-export function coverageForLedger(ledger, agentId, opts = {}) {
-  return selectBookWindow(ledger, agentId, opts).coverage;
+export async function coverageForLedger(ledger, agentId, opts = {}) {
+  return (await selectBookWindow(ledger, agentId, opts)).coverage;
 }
 
 /**

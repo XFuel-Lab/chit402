@@ -54,7 +54,7 @@ const persist = process.env.TASK_STORE_PERSIST !== 'false' && !!agentsDir;
 configureIssuerHistoryStore({ dir: agentsDir, persist });
 
 initIssuerKey();
-const record = retireOrRevokeIssuerKey({
+const record = await retireOrRevokeIssuerKey({
   status,
   not_before: notBefore,
   not_after: arg('--not-after'),

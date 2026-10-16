@@ -25,7 +25,7 @@ import fs from 'fs';
 import path from 'path';
 import { jcsCanonicalize, jcsRfc8785 } from './offer-receipt.js';
 import { V11_CANONICALIZATION } from './canonical-preimage.js';
-import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv, signJws, verifyJwsWithJwks } from './issuer-key.js';
+import { getIssuerKid, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import {
   assertSigningKeyNotRetired,
   bindIssuerRoot,
@@ -208,7 +208,7 @@ function withGuardianFacts(entry) {
   return next;
 }
 
-export function buildIssuerHistory({ entries = null, version = null, seq = null, sealedEntries = null } = {}) {
+export async function buildIssuerHistory({ entries = null, version = null, seq = null, sealedEntries = null } = {}) {
   assertSigningKeyNotGuardian();
   assertSigningKeyNotRetired();
   const current = getIssuerPublicKeyJwk();
@@ -238,7 +238,7 @@ export function buildIssuerHistory({ entries = null, version = null, seq = null,
     claims.seq = seq == null ? version : seq;
   }
   if (issuerRootActive()) claims.issuer_root = issuerRootClaim(getIssuerKid());
-  const { jws, kid } = signJws(claims, { typ: ISSUER_HISTORY_JWT_TYP });
+  const { jws, kid } = await signJwsAsync(claims, { typ: ISSUER_HISTORY_JWT_TYP });
   bindIssuerRoot(claims, kid, current);
   return {
     schema: ISSUER_HISTORY_SCHEMA,
@@ -822,8 +822,8 @@ function dropUnrelatedProcessKey(latest, previewEntries) {
   return true;
 }
 
-export function currentIssuerHistory() {
-  const preview = buildIssuerHistory();
+export async function currentIssuerHistory() {
+  const preview = await buildIssuerHistory();
   const fingerprint = sealFingerprint(preview);
   let latest = historyStore.versions[historyStore.versions.length - 1] || null;
   if (latest && latest.fingerprint === fingerprint) return latest;
@@ -847,7 +847,7 @@ export function currentIssuerHistory() {
   }
   const version = (latest?.version || 0) + 1;
   const seq = version;
-  const doc = buildIssuerHistory({ version, seq });
+  const doc = await buildIssuerHistory({ version, seq });
   if (latest && !entriesExtend(sealedEntriesOf(latest), doc.entries)) {
     throw issuerHistoryRewriteError();
   }
@@ -873,13 +873,13 @@ export function currentIssuerHistory() {
  * or a document signed by the key it introduces is refused.
  * @param {object[]} rawEntries
  */
-export function sealExtendingIssuerHistory(rawEntries) {
+export async function sealExtendingIssuerHistory(rawEntries) {
   if (!Array.isArray(rawEntries) || rawEntries.length === 0) {
     const err = new Error('issuer history extension needs a new entry');
     err.code = 'issuer_history_extension';
     throw err;
   }
-  const latest = currentIssuerHistory();
+  const latest = await currentIssuerHistory();
   const prefix = sealedEntriesOf(latest);
   let prev = prefix.length ? prefix[prefix.length - 1].entry_hash : null;
   const added = [];
@@ -894,7 +894,7 @@ export function sealExtendingIssuerHistory(rawEntries) {
     throw issuerHistoryRewriteError();
   }
   const version = latest.version + 1;
-  const doc = buildIssuerHistory({ version, seq: version, sealedEntries: chained });
+  const doc = await buildIssuerHistory({ version, seq: version, sealedEntries: chained });
   const verified = verifyIssuerHistory(doc);
   if (!verified.valid) {
     const err = new Error(`issuer history extension refused: ${verified.reason}`);
@@ -922,9 +922,9 @@ export function sealExtendingIssuerHistory(rawEntries) {
  * The previous key signs the new snapshot. An in-place edit is not used.
  * @param {{ status?: string, not_before: string, not_after?: string|null, revoked_at?: string|null, reason?: string|null, custody?: string|null, kid?: string|null }} spec
  */
-export function retireOrRevokeIssuerKey(spec = {}) {
+export async function retireOrRevokeIssuerKey(spec = {}) {
   const status = spec.status === 'revoked' ? 'revoked' : 'retired';
-  const latest = currentIssuerHistory();
+  const latest = await currentIssuerHistory();
   const doc = JSON.parse(latest.body);
   const kid = spec.kid || getIssuerKid();
   const prior = [...(doc.entries || [])].reverse().find((entry) => entry.kid === kid);
@@ -948,7 +948,7 @@ export function retireOrRevokeIssuerKey(spec = {}) {
     err.code = 'kid_status_regression';
     throw err;
   }
-  return sealExtendingIssuerHistory([{
+  return await sealExtendingIssuerHistory([{
     kid,
     jwk: prior.jwk,
     alg: prior.alg || 'ES256',
@@ -966,8 +966,8 @@ export function retireOrRevokeIssuerKey(spec = {}) {
  * A stale in-place edit does not. Call after the history store is loaded
  * and before listen.
  */
-export function assertIssuerHistoryBoot() {
-  const record = currentIssuerHistory();
+export async function assertIssuerHistoryBoot() {
+  const record = await currentIssuerHistory();
   const doc = JSON.parse(record.body);
   const kid = getIssuerKid();
   if (kidStatusRegression(doc.entries)) {
@@ -997,8 +997,8 @@ export function assertIssuerHistoryBoot() {
  * @param {number|null} [_payloadVersion]
  * @returns {{ hash: string, version: number, seq: number }}
  */
-export function currentHistoryPin(_payloadVersion = null) {
-  const record = currentIssuerHistory();
+export async function currentHistoryPin(_payloadVersion = null) {
+  const record = await currentIssuerHistory();
   const hash = issuerRootActive() ? record.entries_snapshot_hash : record.hash;
   return { hash, version: record.version, seq: record.seq };
 }
@@ -1123,9 +1123,9 @@ export function verifyHistorySnapshotClaims(claims, { publishedEntries = undefin
  * this process has not sealed that version.
  * @param {{ version?: unknown }} [pin]
  */
-export function publishedHistoryEntries(pin) {
+export async function publishedHistoryEntries(pin) {
   if (!pin || pin.version == null) return null;
-  const record = issuerHistoryRecord({ version: pin.version });
+  const record = await issuerHistoryRecord({ version: pin.version });
   if (!record?.body) return null;
   try {
     const entries = JSON.parse(record.body).entries;
@@ -1135,13 +1135,14 @@ export function publishedHistoryEntries(pin) {
   }
 }
 
-export function issuerHistorySnapshotClaim(record = currentIssuerHistory()) {
-  const doc = JSON.parse(record.body);
+export async function issuerHistorySnapshotClaim(record = null) {
+  const resolved = record || await currentIssuerHistory();
+  const doc = JSON.parse(resolved.body);
   const entries = (doc.entries || []).map(historyEmbedEntry);
   return {
     schema: ISSUER_HISTORY_EMBED_SCHEMA,
-    version: record.version,
-    seq: record.seq,
+    version: resolved.version,
+    seq: resolved.seq,
     head_hash: doc.head_hash,
     snapshot_hash: historyEntriesSnapshotHash(entries),
     entries,
@@ -1152,14 +1153,14 @@ export function issuerHistorySnapshotClaim(record = currentIssuerHistory()) {
  * Latest snapshot, or a sealed older one by version or hash.
  * @param {{ version?: unknown, hash?: unknown }} [query]
  */
-export function issuerHistoryRecord({ version = null, hash = null } = {}) {
+export async function issuerHistoryRecord({ version = null, hash = null } = {}) {
   const wantsVersion = version != null && version !== '';
   const wantsHash = hash != null && hash !== '';
-  if (!wantsVersion && !wantsHash) return currentIssuerHistory();
+  if (!wantsVersion && !wantsHash) return await currentIssuerHistory();
   // A live chain that would rewrite a sealed entry must not hide the bytes
   // already stored. Old versions stay fetchable.
   try {
-    currentIssuerHistory();
+    await currentIssuerHistory();
   } catch (err) {
     if (err?.code !== 'issuer_history_rewrite') throw err;
   }
@@ -1177,7 +1178,7 @@ export function issuerHistoryRecord({ version = null, hash = null } = {}) {
  * @param {import('express').Response} res
  * @param {{ version?: unknown, hash?: unknown }} [query]
  */
-export function writeIssuerHistory(res, query = {}) {
+export async function writeIssuerHistory(res, query = {}) {
   const keys = query && typeof query === 'object' ? Object.keys(query) : [];
   for (const key of keys) {
     if (!ISSUER_HISTORY_QUERY_KEYS.has(key)) {
@@ -1187,7 +1188,7 @@ export function writeIssuerHistory(res, query = {}) {
       });
     }
   }
-  const record = issuerHistoryRecord(query);
+  const record = await issuerHistoryRecord(query);
   if (!record) {
     return res.status(404).json({
       error: 'not_found',

@@ -236,9 +236,9 @@ async function collectStamp(ensureStamp) {
   return { ok: true, waived: stamp.waived === true, settlement: stamp.settlement || null };
 }
 
-function writeBoard(ledger, row) {
+async function writeBoard(ledger, row) {
   if (!ledger || typeof ledger.recordBoardEvent !== 'function') return { ok: false };
-  return ledger.recordBoardEvent(row);
+  return await ledger.recordBoardEvent(row);
 }
 
 function stampRef(stamp, taskId) {
@@ -406,7 +406,7 @@ export async function createBoardJob(body = {}, deps = {}) {
     a2a_job_id: null,
   };
   jobs.insert(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_stamp',
     taskId,
@@ -416,7 +416,7 @@ export async function createBoardJob(body = {}, deps = {}) {
     rail: stamp.waived ? null : 'usdc',
     board: { job_id: id, purpose: 'job_post', waived: stamp.waived === true, fee_units: String(STAMP_FEE_UNITS) },
   });
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_post',
     taskId: `board-job-${id}`,
@@ -515,7 +515,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
   const ref = stampRef(stamp, taskId);
   bid.stamp_refs.push(ref);
   jobs.update(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_stamp',
     taskId,
@@ -525,7 +525,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
     rail: stamp.waived ? null : 'usdc',
     board: { job_id: job.id, bid_id: bid.id, purpose: bid.revision ? 'bid_revise' : 'bid', waived: stamp.waived === true },
   });
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_bid',
     taskId: `board-bid-${bid.id}-${bid.revision}`,
@@ -536,7 +536,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
   return { ok: true, status: existing ? 200 : 201, body: { job: toPublicJob(job), bid_id: bid.id } };
 }
 
-export function awardBoardBid(jobId, body = {}, deps = {}) {
+export async function awardBoardBid(jobId, body = {}, deps = {}) {
   const { jobs, ledger, actor, houseAgentIds } = deps;
   if (!actor?.agent_id) return fail(401, 'unauthorized', 'Possession proof (session) is required');
   const job = jobs.get(jobId);
@@ -556,7 +556,7 @@ export function awardBoardBid(jobId, body = {}, deps = {}) {
     else other.status = 'awarded';
   }
   jobs.update(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_pick',
     taskId: `board-pick-${job.id}`,
@@ -633,7 +633,7 @@ export function legSettlement(raw, expectedAmount, expectedRoute = null) {
  *   agentId?: number|string|null,
  * }} input
  */
-export function buildJobPayoutReceipt(input) {
+export async function buildJobPayoutReceipt(input) {
   const outputHash = normalizeHash(input.outputHash);
   const commitment = outputCommitmentOf({
     hash: outputHash,
@@ -673,7 +673,7 @@ export function buildJobPayoutReceipt(input) {
     fulfillment: { output_commitment: commitment },
     result: { content_hash: outputHash },
   };
-  const receipt = buildReceipt(task, {
+  const receipt = await buildReceipt(task, {
     baseUrl: input.baseUrl || '',
     reqHost: input.reqHost || null,
     signingSecret: input.signingSecret || null,
@@ -685,7 +685,7 @@ export function buildJobPayoutReceipt(input) {
   return { task, receipt, fulfillment, commitment };
 }
 
-function rememberReceipt(deps, built, parties) {
+async function rememberReceipt(deps, built, parties) {
   if (typeof deps.persistTask === 'function') {
     try { deps.persistTask(built.task); } catch (err) {
       logger.warn({ err: err.message }, 'board job: persist payout task failed');
@@ -717,9 +717,9 @@ function rememberReceipt(deps, built, parties) {
     fee: parties.fee || null,
     source: parties.source || 'board',
   };
-  const close = (agentId, taskId, paymentRef) => {
+  const close = async (agentId, taskId, paymentRef) => {
     if (!agentId) return;
-    const written = writeBoard(deps.ledger, {
+    const written = await writeBoard(deps.ledger, {
       agentId,
       kind: 'board_close',
       taskId,
@@ -734,9 +734,9 @@ function rememberReceipt(deps, built, parties) {
     });
     return written;
   };
-  close(parties.payerAgentId, built.task.taskId, parties.paymentRef);
+  await close(parties.payerAgentId, built.task.taskId, parties.paymentRef);
   if (parties.winnerAgentId && Number(parties.winnerAgentId) !== Number(parties.payerAgentId)) {
-    close(parties.winnerAgentId, `${built.task.taskId}-payee`, null);
+    await close(parties.winnerAgentId, `${built.task.taskId}-payee`, null);
   }
   return payout;
 }
@@ -848,7 +848,7 @@ export async function payBoardJob(jobId, deps = {}) {
   }
 
   const taskId = `xfuel-job-${job.id.slice(4)}`;
-  const built = buildJobPayoutReceipt({
+  const built = await buildJobPayoutReceipt({
     taskId,
     payerWallet: posterWallet,
     paymentRef: job.winner_leg.payment_ref,
@@ -861,7 +861,7 @@ export async function payBoardJob(jobId, deps = {}) {
     signingSecret: deps.signingSecret || null,
     agentId: job.poster_agent_id,
   });
-  const payout = rememberReceipt(deps, built, {
+  const payout = await rememberReceipt(deps, built, {
     payerWallet: posterWallet,
     payerAgentId: job.poster_agent_id,
     paymentRef: job.winner_leg.payment_ref,
@@ -1099,7 +1099,7 @@ function paymentRefOf(body) {
  * External board completion. One signed Chit receipt for a payment this
  * process did not custody. Idempotent on source + external_id and on payment ref.
  */
-export function ingestExternalCompletion(body = {}, deps = {}) {
+export async function ingestExternalCompletion(body = {}, deps = {}) {
   const auth = deps.inboundAuth;
   if (!auth || auth.ok !== true) return auth || fail(503, 'inbound_unconfigured', 'Inbound job receipts are not configured');
   const source = String(body.source || '').trim().toLowerCase();
@@ -1135,7 +1135,7 @@ export function ingestExternalCompletion(body = {}, deps = {}) {
   const payerAgent = deps.registry?.getByWallet?.(payer);
   const payeeAgent = deps.registry?.getByWallet?.(payee);
   const taskId = `xfuel-job-ext-${crypto.randomBytes(8).toString('hex')}`;
-  const built = buildJobPayoutReceipt({
+  const built = await buildJobPayoutReceipt({
     taskId,
     payerWallet: payer,
     paymentRef,
@@ -1148,7 +1148,7 @@ export function ingestExternalCompletion(body = {}, deps = {}) {
     signingSecret: deps.signingSecret || null,
     agentId: payerAgent?.agent_id || null,
   });
-  const payout = rememberReceipt(deps, built, {
+  const payout = await rememberReceipt(deps, built, {
     payerWallet: payer,
     payerAgentId: payerAgent?.agent_id || null,
     paymentRef,

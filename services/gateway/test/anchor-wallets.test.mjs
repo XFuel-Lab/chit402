@@ -14,9 +14,9 @@ import {
 import { getJwks, verifyJwsWithJwks } from '../src/issuer-key.js';
 import { EPOCH1_FINAL_ROOT, EPOCH2_OPENING_ROOT, epochRecordClaims } from '../src/receipt-log-epoch.js';
 
-test('anchor wallets pin the confirmed epoch-1 sender and fee payer', () => {
+test('anchor wallets pin the confirmed epoch-1 sender and fee payer', async () => {
   resetAnchorWalletCache();
-  const doc = currentAnchorWallets({
+  const doc = await currentAnchorWallets({
     ...process.env,
     RECEIPT_ANCHOR_PRIVATE_KEY: '',
     RECEIPT_ANCHOR_FROM: '',
@@ -34,7 +34,7 @@ test('anchor wallets pin the confirmed epoch-1 sender and fee payer', () => {
   assert.deepEqual(verified.payload.base, [PINNED_BASE_ANCHOR_WALLET]);
   assert.equal(verified.payload.issuer_root, null);
   assert.equal(verified.payload.dns, null);
-  const again = currentAnchorWallets({
+  const again = await currentAnchorWallets({
     ...process.env,
     RECEIPT_ANCHOR_PRIVATE_KEY: '',
     RECEIPT_ANCHOR_FROM: '',

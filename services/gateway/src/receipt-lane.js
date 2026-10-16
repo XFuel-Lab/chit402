@@ -400,7 +400,7 @@ export function buildReceiptLane({
  * @param {object} entry
  * @param {{ tree?: object|null, payer?: object|null }} [opts]
  */
-export function receiptLaneForEntry(entry, { tree = null, payer = null, now = Date.now() } = {}) {
+export async function receiptLaneForEntry(entry, { tree = null, payer = null, now = Date.now() } = {}) {
   if (!entry || typeof entry !== 'object') {
     return buildReceiptLane({ entry: null });
   }
@@ -419,7 +419,7 @@ export function receiptLaneForEntry(entry, { tree = null, payer = null, now = Da
         if (Number.isInteger(index) && index >= 0) leafIndex = index;
       }
       if (typeof tree.laneHeadsFor === 'function') {
-        const lane = tree.laneHeadsFor(taskId);
+        const lane = await tree.laneHeadsFor(taskId);
         const laneHeads = Array.isArray(lane?.heads) ? lane.heads : [];
         if (lane?.frontierRejected !== true && laneHeads.length > 0) heads = laneHeads;
       }

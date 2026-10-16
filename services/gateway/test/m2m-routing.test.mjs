@@ -118,8 +118,8 @@ test('a model no hub serves is rejected, so routing can fail instead of mocking'
   assert.equal(res.reason, 'model_not_found');
 });
 
-test('receipt names the model that served, not the xfuel/auto alias asked for', () => {
-  const r = buildReceipt({
+test('receipt names the model that served, not the xfuel/auto alias asked for', async () => {
+  const r = await buildReceipt({
     taskId: 't-served',
     status: 'completed',
     intent: { type: 'inference_request', modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '10000' },
@@ -131,10 +131,10 @@ test('receipt names the model that served, not the xfuel/auto alias asked for', 
   assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
 });
 
-test('a failed task attests no provider, even when a float default is set', () => {
+test('a failed task attests no provider, even when a float default is set', async () => {
   // meta.provider carries PROVIDER_FLOAT_DEFAULT. Naming it here would have the
   // receipt credit a provider that never ran the task.
-  const r = buildReceipt({
+  const r = await buildReceipt({
     taskId: 't-failed',
     status: 'failed',
     intent: { type: 'inference_request', modelId: 'acme/nope', paymentRail: 'usdc', amount: '10000' },
@@ -144,8 +144,8 @@ test('a failed task attests no provider, even when a float default is set', () =
   assert.equal(mergeReceiptView(r).route.provider, null);
 });
 
-test('a real COGS burn outranks the float default label', () => {
-  const r = buildReceipt({
+test('a real COGS burn outranks the float default label', async () => {
+  const r = await buildReceipt({
     taskId: 't-cogs',
     status: 'completed',
     intent: { type: 'inference_request', paymentRail: 'usdc', amount: '10000' },
@@ -159,8 +159,8 @@ test('a real COGS burn outranks the float default label', () => {
   assert.equal(mergeReceiptView(r).route.provider, 'akash-network');
 });
 
-test('a mock result is still reported as mock, never as a real provider', () => {
-  const r = buildReceipt({
+test('a mock result is still reported as mock, never as a real provider', async () => {
+  const r = await buildReceipt({
     taskId: 't-mock',
     status: 'completed',
     intent: { type: 'inference_request', paymentRail: 'usdc', amount: '10000' },

@@ -44,7 +44,7 @@ function claimsReceipt(ref, stored) {
   };
 }
 
-function viewUrls(stored, ref) {
+async function viewUrls(stored, ref) {
   const claims = claimsReceipt(ref, stored);
   const merged = mergeReceiptView(claims);
   const json = storedReceiptJson(claims);
@@ -69,7 +69,7 @@ function viewUrls(stored, ref) {
   };
   const sealed = mergeReceiptView(bearing);
   const foreignHtml = renderReceiptHtml(bearing);
-  const book = packBook([{
+  const book = await packBook([{
     task_id: 'book-1',
     payment_ref: ref,
     explorer_url: stored,
@@ -175,7 +175,7 @@ test('T6 base tx hashes are exactly 0x plus 64 hex characters', () => {
   assert.equal(explorerUrlForRef(`base-sepolia:${tx}`), `https://sepolia.basescan.org/tx/${tx}`);
 });
 
-test('T7 and T8 every view takes the signed ref, and hostile stored URLs become null', () => {
+test('T7 and T8 every view takes the signed ref, and hostile stored URLs become null', async () => {
   const valid = `solana-devnet:${SIG88}`;
   const invalid = 'solana-devnet:not-a-signature';
   const legacy = `https://solscan.io/tx/?cluster=devnet${SIG88}`;
@@ -188,7 +188,7 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
     { href: 'https://evil.example/' },
   ];
 
-  const legacyViews = viewUrls(legacy, valid);
+  const legacyViews = await viewUrls(legacy, valid);
   for (const [name, value] of Object.entries(legacyViews)) {
     if (name === 'html' || name === 'foreignHtml') {
       assert.equal(value.includes(`href="${DEVNET}"`), true, name);
@@ -201,7 +201,7 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
   }
 
   for (const stored of hostile) {
-    const good = viewUrls(stored, valid);
+    const good = await viewUrls(stored, valid);
     for (const [name, value] of Object.entries(good)) {
       if (name === 'html' || name === 'foreignHtml') {
         assert.equal(value.includes(`href="${DEVNET}"`), true, `${name} ${stored}`);
@@ -213,7 +213,7 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
         assert.equal(value, DEVNET, `${name} valid ref`);
       }
     }
-    const bad = viewUrls(stored, invalid);
+    const bad = await viewUrls(stored, invalid);
     for (const [name, value] of Object.entries(bad)) {
       if (name === 'html' || name === 'foreignHtml') {
         assert.equal(value.includes('solscan.io'), false, name);
@@ -225,7 +225,7 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
     }
   }
 
-  const mainnetStored = viewUrls(MAINNET, valid);
+  const mainnetStored = await viewUrls(MAINNET, valid);
   assert.equal(mainnetStored.claims, DEVNET);
   assert.equal(mainnetStored.json, DEVNET);
   assert.equal(mainnetStored.auditor, DEVNET);
@@ -238,7 +238,7 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
   // M3 fallback: a well-formed allowlisted stored URL stays when the ref cannot build a link.
   // Hostile stored values above stay null. T8 is the signed-ref-wins case, not this one.
   assert.equal(safeExplorerUrl(MAINNET, invalid), MAINNET);
-  const mainnetFallback = viewUrls(MAINNET, invalid);
+  const mainnetFallback = await viewUrls(MAINNET, invalid);
   assert.equal(mainnetFallback.claims, MAINNET);
   assert.equal(mainnetFallback.json, MAINNET);
   assert.equal(mainnetFallback.auditor, MAINNET);

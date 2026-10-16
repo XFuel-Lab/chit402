@@ -21,8 +21,8 @@ import {
 } from '../src/x402-facilitator.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
-test('buildPaymentChallenge produces a valid x402 v2 PaymentRequired', () => {
-  const { status, body, headers } = buildPaymentChallenge({
+test('buildPaymentChallenge produces a valid x402 v2 PaymentRequired', async () => {
+  const { status, body, headers } = await buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '1000000',
     network: 'base',
@@ -90,8 +90,8 @@ test('buildBazaarExtension: produces a spec-conformant bazaar extension', () => 
   assert.ok(bazaar.info.output.example.verify_url);
 });
 
-test('buildPaymentChallenge: includes bazaar extension by default', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: includes bazaar extension by default', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '50000',
     baseUrl: 'https://api.xfuel.app',
@@ -105,8 +105,8 @@ test('buildPaymentChallenge: includes bazaar extension by default', () => {
   assert.ok(bazaar.info.output.type, 'info.output.type is present');
 });
 
-test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-abc',
     maxAmountRequired: '50000',
     baseUrl: 'https://api.xfuel.app',
@@ -120,8 +120,8 @@ test('buildPaymentChallenge: uses absolute resource URL for bazaar cataloging', 
   assert.ok(!body.resource.url.includes('task-abc'), 'resource URL does not contain taskId');
 });
 
-test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaar body', () => {
-  const { body, headers } = buildPaymentChallenge({
+test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaar body', async () => {
+  const { body, headers } = await buildPaymentChallenge({
     taskId: 'xfuel-1',
     maxAmountRequired: '10000',
     baseUrl: 'https://api.xfuel.app',
@@ -142,8 +142,8 @@ test('buildPaymentChallenge: /v1/chat/completions resource catalogs OpenAI bazaa
   );
 });
 
-test('buildPaymentChallenge: falls back to relative path when no baseUrl', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: falls back to relative path when no baseUrl', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-xyz',
     maxAmountRequired: '50000',
   });
@@ -151,8 +151,8 @@ test('buildPaymentChallenge: falls back to relative path when no baseUrl', () =>
   assert.equal(body.resource.url, '/task-request', 'resource.url is relative /task-request');
 });
 
-test('buildPaymentChallenge: includes service metadata for bazaar', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: includes service metadata for bazaar', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '50000',
     baseUrl: 'https://api.xfuel.app',
@@ -182,8 +182,8 @@ test('buildPaymentChallenge: includes service metadata for bazaar', () => {
   assert.ok(!r.iconUrl.includes('xfuel-icon'), 'iconUrl has no legacy xfuel-icon');
 });
 
-test('buildPaymentChallenge: description mentions real USDC settlement', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: description mentions real USDC settlement', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '50000',
     baseUrl: 'https://api.xfuel.app',
@@ -198,9 +198,9 @@ test('buildPaymentChallenge: description mentions real USDC settlement', () => {
   assert.ok(d.includes('verify_url'), 'description mentions verify_url');
 });
 
-test('buildPaymentChallenge: stores bazaar fields on the bound challenge', () => {
+test('buildPaymentChallenge: stores bazaar fields on the bound challenge', async () => {
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-store',
       maxAmountRequired: '10000',
@@ -218,8 +218,8 @@ test('buildPaymentChallenge: stores bazaar fields on the bound challenge', () =>
   assert.ok(stored.description.includes('USDC'));
 });
 
-test('buildPaymentChallenge: can disable bazaar extension', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: can disable bazaar extension', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-1',
     maxAmountRequired: '50000',
     includeBazaar: false,
@@ -228,9 +228,9 @@ test('buildPaymentChallenge: can disable bazaar extension', () => {
   assert.ok(!body.extensions, 'no extensions when includeBazaar=false');
 });
 
-test('buildPaymentChallenge requires taskId and amount', () => {
-  assert.throws(() => buildPaymentChallenge({ maxAmountRequired: '1' }), /taskId is required/);
-  assert.throws(() => buildPaymentChallenge({ taskId: 't' }), /maxAmountRequired is required/);
+test('buildPaymentChallenge requires taskId and amount', async () => {
+  await assert.rejects(async () => await buildPaymentChallenge({ maxAmountRequired: '1' }), /taskId is required/);
+  await assert.rejects(async () => await buildPaymentChallenge({ taskId: 't' }), /maxAmountRequired is required/);
 });
 
 test('verifyPayment returns gateway_not_configured without env', async () => {
@@ -333,9 +333,9 @@ test('ChallengeStore: accepts both 0x-prefixed and raw nonces (backward compat)'
   assert.equal(store.get(fullNonce2).amount, '20000', 'lookup with 0x prefix finds raw 64-char');
 });
 
-test('buildPaymentChallenge records into the store with nonce + expiry', () => {
+test('buildPaymentChallenge records into the store with nonce + expiry', async () => {
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     { taskId: 'task-x', maxAmountRequired: '50000', payTo: '0xtreasury' },
     { store }
   );
@@ -352,7 +352,7 @@ test('verify + settle against mock facilitator (happy path + replay)', async () 
   const { url, close } = await startMockFacilitator();
   try {
     const store = new ChallengeStore();
-    const { body } = buildPaymentChallenge(
+    const { body } = await buildPaymentChallenge(
       { taskId: 't', maxAmountRequired: '50000', payTo: '0xtreasury' },
       { store }
     );
@@ -451,8 +451,8 @@ test('isEvmNetwork: correctly identifies EVM networks', () => {
   assert.equal(isEvmNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'), false, 'solana CAIP-2 is not EVM');
 });
 
-test('buildPaymentChallenge: single network (Base only) when Solana not configured', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: single network (Base only) when Solana not configured', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-single-network',
     maxAmountRequired: '50000',
     network: 'base',
@@ -466,8 +466,8 @@ test('buildPaymentChallenge: single network (Base only) when Solana not configur
   assert.ok(body.resource.description.includes('Base'), 'description mentions Base');
 });
 
-test('buildPaymentChallenge: dual-network 402 lists both Base and Solana', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: dual-network 402 lists both Base and Solana', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-dual-network',
     maxAmountRequired: '50000',
     network: 'base',
@@ -503,8 +503,8 @@ test('buildPaymentChallenge: dual-network 402 lists both Base and Solana', () =>
   assert.ok(body.resource.description.includes('Solana'), 'description mentions Solana');
 });
 
-test('buildPaymentChallenge: Solana disabled when payTo missing', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: Solana disabled when payTo missing', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-no-solana-payto',
     maxAmountRequired: '50000',
     network: 'base',
@@ -520,8 +520,8 @@ test('buildPaymentChallenge: Solana disabled when payTo missing', () => {
   assert.equal(body.accepts[0].network, 'eip155:8453', 'only Base');
 });
 
-test('buildPaymentChallenge: Solana disabled when enabled=false', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: Solana disabled when enabled=false', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-solana-disabled',
     maxAmountRequired: '50000',
     network: 'base',
@@ -536,9 +536,9 @@ test('buildPaymentChallenge: Solana disabled when enabled=false', () => {
   assert.equal(body.accepts.length, 1, 'Solana disabled when enabled=false');
 });
 
-test('buildPaymentChallenge: stores separate nonces for Base and Solana challenges', () => {
+test('buildPaymentChallenge: stores separate nonces for Base and Solana challenges', async () => {
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-dual-nonces',
       maxAmountRequired: '50000',
@@ -573,8 +573,8 @@ test('buildPaymentChallenge: stores separate nonces for Base and Solana challeng
   assert.equal(baseChallenge.facilitator, undefined, 'Base challenge uses default facilitator');
 });
 
-test('buildPaymentChallenge: Solana devnet network', () => {
-  const { body } = buildPaymentChallenge({
+test('buildPaymentChallenge: Solana devnet network', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-solana-devnet',
     maxAmountRequired: '50000',
     network: 'base-sepolia',
@@ -604,7 +604,7 @@ test('verifyPayment routes to PayAI for Solana challenge', async () => {
   // This test verifies the routing logic — the actual PayAI call would require
   // a mock PayAI server, but we can verify the gateway is resolved correctly.
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-sol-verify',
       maxAmountRequired: '50000',
@@ -643,7 +643,7 @@ test('verifyPayment routes to PayAI for Solana challenge', async () => {
 test('Base payment path unchanged: dummy payment fails with signature error', async () => {
   // Regression test: ensure Base/CDP path is not affected by Solana addition
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-base-unchanged',
       maxAmountRequired: '50000',

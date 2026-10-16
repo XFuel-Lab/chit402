@@ -207,7 +207,7 @@ export class WebhookDispatcher {
 
   start() {
     if (this._timer) return;
-    this._timer = setInterval(() => this._scan().catch(err => {
+    this._timer = setInterval(async () => await this._scan().catch(err => {
       logger.error({ err }, 'Webhook dispatcher scan failed');
     }), this.intervalMs);
     if (typeof this._timer.unref === 'function') this._timer.unref();

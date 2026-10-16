@@ -108,7 +108,7 @@ async function getReceipt(taskId) {
   const store = getAIListener().activeTasks;
   const storedId = taskId.startsWith('chit-') ? `xfuel-${taskId.slice(5)}` : taskId;
   const onDisk = JSON.parse(fs.readFileSync(store._fileFor(storedId), 'utf8'));
-  return buildReceipt(onDisk, {
+  return await buildReceipt(onDisk, {
     baseUrl: BASE_URL,
     persistSignature: false,
     agentId: onDisk.meta?.agentId ?? onDisk.meta?.agent_id ?? null,
@@ -121,7 +121,7 @@ before(async () => {
   assert.equal(store.persist, true, 'eviction test needs a durable task store');
 
   const stored = byokTask(STORED_ID, 'cd');
-  const drafted = buildReceipt(stored, {
+  const drafted = await buildReceipt(stored, {
     baseUrl: BASE_URL,
     persistSignature: true,
     agentId: 187,
@@ -138,7 +138,7 @@ before(async () => {
   const bareFile = JSON.parse(fs.readFileSync(store._fileFor(BARE_ID), 'utf8'));
   assert.equal(bareFile.issuerSignature, undefined, 'byok row on disk has no issuer JWS yet');
 
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -187,7 +187,7 @@ test('two GETs after eviction persist one issuer JWS for a byok row that had non
   try {
     assert.equal(restarted.size, 0);
     const reread = restarted.get(BARE_ID);
-    const rebuilt = buildReceipt(reread, {
+    const rebuilt = await buildReceipt(reread, {
       baseUrl: BASE_URL,
       persistSignature: true,
       agentId: 187,

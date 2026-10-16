@@ -49,13 +49,13 @@ function paidTask() {
 before(async () => {
   resetReceiptMerkleTree();
   const tree = getReceiptMerkleTree();
-  tree.appendReceipt(TASK_ID, 'row-stale-v9');
+  await tree.appendReceipt(TASK_ID, 'row-stale-v9');
   const covering = tree.prefixRoot(TASK_ID);
   assert.ok(covering);
   assert.notEqual(covering, STALE_HEAD);
 
   const task = paidTask();
-  const drafted = buildReceipt(task, {
+  const drafted = await buildReceipt(task, {
     baseUrl: 'https://api.chit402.com',
     persistSignature: true,
     agentId: 4,
@@ -73,15 +73,15 @@ before(async () => {
     kid,
     issuer_jwk: drafted.issuer_signature.issuer_jwk,
   };
-  assert.equal(stampCoveringTreeHead({
+  assert.equal((await stampCoveringTreeHead({
     task_id: TASK_ID,
     issuer_signature: task.issuerSignature,
-  }).issuer_signature.jws, originalJws);
+  })).issuer_signature.jws, originalJws);
 
   await initAIListener();
   getAIListener().activeTasks.set(TASK_ID, task);
 
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

@@ -140,12 +140,12 @@ function mockConnection() {
   };
 }
 
-test('append, restart, and the recomputed root matches', () => {
+test('append, restart, and the recomputed root matches', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('r1', 'h1');
-  tree.appendReceipt('r2', 'h2');
+  await tree.appendReceipt('r1', 'h1');
+  await tree.appendReceipt('r2', 'h2');
   const root = hex(rootOf(tree.leaves));
   const again = new ReceiptMerkleTree();
   again.load(dir);
@@ -153,14 +153,14 @@ test('append, restart, and the recomputed root matches', () => {
   assert.equal(again.leaves.length, tree.leaves.length);
   const genesis = JSON.parse(Buffer.from(again.meta[0].preimage_b64, 'base64').toString('utf8'));
   assert.equal(genesis.verifier_binary_build_digest, JSON.parse(tree.genesisLeaf().bytes.toString()).verifier_binary_build_digest);
-  assert.equal(again.inclusion('r2').root, root);
+  assert.equal((await again.inclusion('r2')).root, root);
 });
 
 test('a corrupt journal refuses to load and the server refuses to start', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('r1', 'h1');
+  await tree.appendReceipt('r1', 'h1');
   fs.appendFileSync(path.join(dir, 'journal.jsonl'), '{not-json\n');
   assert.throws(() => new ReceiptMerkleTree().load(dir), (err) => {
     assert.equal(err instanceof ReceiptLogRefused, true);
@@ -171,7 +171,7 @@ test('a corrupt journal refuses to load and the server refuses to start', async 
   process.env.RECEIPT_LOG_DIR = dir;
   try {
     const { createApp } = await import('../src/server.js');
-    assert.throws(() => createApp(), (err) => err.code === 'corrupt_journal');
+    await assert.rejects(async () => await createApp(), (err) => err.code === 'corrupt_journal');
   } finally {
     if (prev == null) delete process.env.RECEIPT_LOG_DIR;
     else process.env.RECEIPT_LOG_DIR = prev;
@@ -197,7 +197,7 @@ test('an empty directory with the pin refuses to start', async () => {
   process.env.RECEIPT_LOG_DIR = dir;
   try {
     const { createApp } = await import('../src/server.js');
-    assert.throws(() => createApp(), (err) => err.code === 'pin_unmet');
+    await assert.rejects(async () => await createApp(), (err) => err.code === 'pin_unmet');
   } finally {
     if (prev == null) delete process.env.RECEIPT_LOG_DIR;
     else process.env.RECEIPT_LOG_DIR = prev;
@@ -213,7 +213,7 @@ test('an empty directory with the fresh-genesis flag boots and logs loudly', asy
   process.env.RECEIPT_LOG_DIR = dir;
   try {
     const { createApp } = await import('../src/server.js');
-    const app = createApp();
+    const app = await createApp();
     const tree = (await import('../src/receipt-merkle.js')).getReceiptMerkleTree();
     assert.equal(tree.allowFreshGenesis, true);
     assert.ok(tree.bootWarnings.some((line) => /FRESH GENESIS/.test(line)));
@@ -270,7 +270,7 @@ test('the one-anchor-per-day guard survives a restart', async () => {
     const firstConn = mockConnection();
     const tree = new ReceiptMerkleTree();
     tree.dir = dir;
-    tree.appendReceipt('row-1', 'hash-1');
+    await tree.appendReceipt('row-1', 'hash-1');
     const head = await tree.publishHead({
       force: true,
       now: '2026-10-06T12:00:00.000Z',
@@ -357,7 +357,7 @@ test('S3 bundle round-trip restores the log and checks the anchored root', async
   const objects = new Map();
   const client = lockingClient(objects);
   const tree = new ReceiptMerkleTree();
-  tree.appendReceipt('bundled', 'hh');
+  await tree.appendReceipt('bundled', 'hh');
   const root = hex(rootOf(tree.leaves));
   const uploaded = await publishTreeBundle(tree, {
     client,
@@ -387,7 +387,7 @@ test('S3 bundle round-trip restores the log and checks the anchored root', async
   assert.equal(restored.epochs[0].root, root);
   objects.set(uploaded.key, Buffer.from('tampered'));
   await assert.rejects(
-    () => restoreFromS3({
+    async () => await restoreFromS3({
       client,
       bucket: 'receipt-log-test',
       prefix: 'receipt-log/',
@@ -398,7 +398,7 @@ test('S3 bundle round-trip restores the log and checks the anchored root', async
   );
 });
 
-test('duplicate seq and a prev_hash mismatch mark the book FORKED', () => {
+test('duplicate seq and a prev_hash mismatch mark the book FORKED', async () => {
   const chain = analyzeSeq([
     { seq: 1, prev_hash: null, row_hash: 'aa' },
     { seq: 2, prev_hash: 'aa', row_hash: 'bb' },
@@ -433,7 +433,7 @@ test('duplicate seq and a prev_hash mismatch mark the book FORKED', () => {
   const ledger = new UsageSettledLedger({ dir, persist: true });
   assert.equal(ledger.findByTask('t-tip').row_hash, 'bb');
   const stamped = { agent_id: 7, task_id: 't-next', payment_ref: 'base:0x2', event: 'collected' };
-  ledger._stampSeq(stamped);
+  await ledger._stampSeq(stamped);
   assert.equal(stamped.seq, 3);
   assert.equal(stamped.prev_hash, 'bb');
   const report = ledger.seqReport(7);
@@ -441,11 +441,11 @@ test('duplicate seq and a prev_hash mismatch mark the book FORKED', () => {
   assert.ok(report.duplicate_rows.some((row) => row.kind === 'duplicate_seq' || row.kind === 'duplicate_task_id'));
 });
 
-test('a non-empty journal that is not the pinned epoch refuses to boot', () => {
+test('a non-empty journal that is not the pinned epoch refuses to boot', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('not-the-historical-log', 'zz', { publish: false });
+  await tree.appendReceipt('not-the-historical-log', 'zz', { publish: false });
   assert.throws(() => bootReceiptLog(dir), (err) => err.code === 'pin_unmet');
   resetReceiptMerkleTree();
 });
@@ -461,7 +461,7 @@ test('an on-chain root missing from the journal refuses boot', async () => {
   const tree = new ReceiptMerkleTree();
   tree.heads.push({ root: 'aa'.repeat(32), tree_size: 1, epoch: 2 });
   await assert.rejects(
-    () => assertLatestBaseAnchor(tree, { readLatest: async () => ({ root: 'bb'.repeat(32), tx: '0x' + '11'.repeat(32) }) }),
+    async () => await assertLatestBaseAnchor(tree, { readLatest: async () => ({ root: 'bb'.repeat(32), tx: '0x' + '11'.repeat(32) }) }),
     (err) => err.code === 'anchor_not_in_journal',
   );
   await assertLatestBaseAnchor(tree, { readLatest: async () => ({ root: 'aa'.repeat(32), tx: '0x' + '22'.repeat(32) }) });
@@ -498,7 +498,7 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   let sawIntent = false;
   try {
@@ -551,11 +551,11 @@ test('an anchor intent is fsynced before broadcast and a crash does not send twi
   }
 });
 
-test('backfill lists rows after epoch 1 and --apply writes them without publishing', () => {
+test('backfill lists rows after epoch 1 and --apply writes them without publishing', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('epoch1-leaf', 'h1', { publish: false });
+  await tree.appendReceipt('epoch1-leaf', 'h1', { publish: false });
   tree.closedEpochs.push({
     epoch: 1,
     status: 'closed',
@@ -578,17 +578,17 @@ test('backfill lists rows after epoch 1 and --apply writes them without publishi
   const plan = planReceiptBackfill(tree, rows);
   assert.deepEqual(plan.append.map((row) => row.task_id), ['after-1', 'after-2']);
   const headsBefore = tree.heads.length;
-  for (const row of plan.append) tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  for (const row of plan.append) await tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
   assert.equal(tree.heads.length, headsBefore);
-  assert.equal(tree.inclusion('after-2').epoch, 2);
-  assert.equal(tree.inclusion('after-1').leaf_index > 0, true);
+  assert.equal((await tree.inclusion('after-2')).epoch, 2);
+  assert.equal((await tree.inclusion('after-1')).leaf_index > 0, true);
 });
 
 test('a bundle upload failure is counted and a retention policy is hashed into the index', async () => {
   const tree = new ReceiptMerkleTree();
-  tree.appendReceipt('bundled-fail', 'hh', { publish: false });
+  await tree.appendReceipt('bundled-fail', 'hh', { publish: false });
   await assert.rejects(
-    () => publishTreeBundle(tree, {
+    async () => await publishTreeBundle(tree, {
       client: { send: async () => { throw new Error('s3 down'); } },
       bucket: 'receipt-log-test',
       prefix: 'receipt-log/',
@@ -608,7 +608,7 @@ test('a bundle upload failure is counted and a retention policy is hashed into t
   const objects = new Map();
   const client = lockingClient(objects);
   const ok = new ReceiptMerkleTree();
-  ok.appendReceipt('bundled-ok', 'hh', { publish: false });
+  await ok.appendReceipt('bundled-ok', 'hh', { publish: false });
   const uploaded = await publishTreeBundle(ok, {
     client,
     bucket: 'receipt-log-test',
@@ -642,7 +642,7 @@ test('a mined anchor is adopted only when calldata, sender, to, and receipt stat
   const txHash = `0x${'11'.repeat(32)}`;
   const wrong = '0x2222222222222222222222222222222222222222';
   async function lookupInput(input, { txFrom = from, txTo = from, status = '0x1' } = {}) {
-    return lookupBaseTxByNonceOrHash({
+    return await lookupBaseTxByNonceOrHash({
       txHash,
       nonce: 4,
       from,
@@ -689,7 +689,7 @@ test('a mined anchor is adopted only when calldata, sender, to, and receipt stat
     status: 'signed',
   });
   await tree.reconcileAnchorIntents({
-    lookup: async () => lookupInput('0x'),
+    lookup: async () => await lookupInput('0x'),
   });
   assert.equal(tree.anchorState.base[root], undefined);
   assert.equal(anchorIntentRows(dir).some((row) => row.status === 'replaced'), true);
@@ -751,7 +751,7 @@ test('crash after the signed raw tx is persisted and before send rebroadcasts th
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let persisted = null;
   try {
     const head = await tree.publishHead({
@@ -806,7 +806,7 @@ test('crash after send and before the broadcast record still has the tx hash and
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   let persisted = null;
   try {
@@ -862,7 +862,7 @@ test('an RPC error leaves the signed nonce blocked and does not sign a new trans
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -928,7 +928,7 @@ test('a crash after reserve and before sign reuses the nonce with no gap', async
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   try {
     tree._reserveBaseIntent({ root, day: '2026-10-06', nonce: 4 });
@@ -967,7 +967,7 @@ test('an unsigned crash frees the nonce for the next root', async () => {
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   try {
     tree._reserveBaseIntent({ root, day: '2026-10-06', nonce: 4 });
@@ -977,7 +977,7 @@ test('an unsigned crash frees the nonce for the next root', async () => {
       lookup: async () => ({ blocked: true, reason: 'rpc_error' }),
     });
     assert.equal(anchorIntentRows(dir).some((row) => row.status === 'abandoned_unsigned' && row.nonce === 4), true);
-    restored.appendReceipt('row-2', 'hash-2', { publish: false });
+    await restored.appendReceipt('row-2', 'hash-2', { publish: false });
     const root2 = hex(rootOf(restored.leaves));
     assert.notEqual(root2, root);
     let used = null;
@@ -1042,7 +1042,7 @@ test('health reports blocked and pending anchor intents', async () => {
     },
   );
   const { createApp } = await import('../src/server.js');
-  const app = createApp();
+  const app = await createApp();
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -1075,7 +1075,7 @@ test('a nonce that landed as something else is replaced and is not sent again', 
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1125,7 +1125,7 @@ test('a rejected broadcast is replaced at the same nonce for the next root', asy
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1138,7 +1138,7 @@ test('a rejected broadcast is replaced at the same nonce for the next root', asy
     assert.equal(tree.bundleStatus().blocked_intents >= 1, true);
     assert.equal(tree.bundleStatus().pending_intents, 0);
     assert.match(tree.bundleStatus().last_error, /broadcast_rejected/);
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const nonces = [];
     await tree.publishHead({
       force: true,
@@ -1174,7 +1174,7 @@ test('a transient anchor error stays on its nonce across a new root', async () =
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1183,7 +1183,7 @@ test('a transient anchor error stays on its nonce across a new root', async () =
       send: async () => { throw new Error('connection refused'); },
     });
     const first = anchorIntentRows(dir).find((row) => row.raw);
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     let sent = false;
     const held = await tree.publishHead({
       force: true,
@@ -1220,7 +1220,7 @@ test('a replacement crash does not rebroadcast the superseded raw', async () => 
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1229,7 +1229,7 @@ test('a replacement crash does not rebroadcast the superseded raw', async () => 
       send: async () => { throw new Error('broadcast_rejected'); },
     });
     const first = anchorIntentRows(dir).find((row) => row.raw);
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     await tree.publishHead({
       force: true,
       now: '2026-10-06T12:05:00.000Z',
@@ -1273,7 +1273,7 @@ test('a node that already has the signed raw is not replaced', async () => {
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1321,7 +1321,7 @@ test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', asyn
   const fresh = new ReceiptMerkleTree();
   fresh.allowFreshGenesis = true;
   await assert.rejects(
-    () => finishReceiptLogBoot(fresh, {
+    async () => await finishReceiptLogBoot(fresh, {
       allowFreshGenesis: true,
       baseRpc: 'http://127.0.0.1/not-base',
       request: async (_url, method) => (method === 'eth_chainId' ? '0x89' : null),
@@ -1331,7 +1331,7 @@ test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', asyn
   assert.equal(fresh.bundleStatus().last_error, 'anchor_chain_mismatch');
   const tree = getReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let sent = false;
   let chainCalls = 0;
   try {
@@ -1355,7 +1355,7 @@ test('a BASE_RPC_URL that is not Base mainnet never receives signed bytes', asyn
     assert.equal(anchorIntentRows(dir).some((row) => row.raw), false);
     assert.equal(tree.bundleStatus().last_error, 'anchor_chain_mismatch');
     const { createApp } = await import('../src/server.js');
-    const app = createApp();
+    const app = await createApp();
     const server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
     });
@@ -1400,7 +1400,7 @@ test('already known on the first send is not anchored, and a dropped tx is retri
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   try {
     const { classifyAnchorSendError } = await import('../src/receipt-merkle.js');
@@ -1441,7 +1441,7 @@ test('already known on the first send is not anchored, and a dropped tx is retri
     const low = new ReceiptMerkleTree();
     const lowDir = tmp();
     low.dir = lowDir;
-    low.appendReceipt('row-1', 'hash-1', { publish: false });
+    await low.appendReceipt('row-1', 'hash-1', { publish: false });
     const lowHead = await low.publishHead({
       force: true,
       now: '2026-10-06T12:00:00.000Z',
@@ -1464,7 +1464,7 @@ test('already known on replace is not anchored', async () => {
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   try {
     await tree.publishHead({
       force: true,
@@ -1473,7 +1473,7 @@ test('already known on replace is not anchored', async () => {
       send: async () => { throw new Error('broadcast_rejected'); },
     });
     const first = anchorIntentRows(dir).find((row) => row.status === 'signed' && row.raw);
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const root = hex(rootOf(tree.leaves));
     const head = await tree.publishHead({
       force: true,
@@ -1521,7 +1521,7 @@ test('an unreadable block time does not stay anchored and is looked up again', a
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   let lookups = 0;
   try {
@@ -1566,7 +1566,7 @@ test('a mined receipt outside the clock bound is replaced and the next publish a
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   try {
     const head = await tree.publishHead({
@@ -1619,7 +1619,7 @@ test('a stored anchor without a receipt is looked up again and the dropped tx is
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const root = hex(rootOf(tree.leaves));
   const tx = `0x${'ab'.repeat(32)}`;
   const from = '0xe239cdc5fbe977a8a141b72194d3cf8c41bc5bc6';
@@ -1671,7 +1671,7 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
   process.env.RECEIPT_ANCHOR_PRIVATE_KEY = `0x${'ab'.repeat(32)}`;
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   const sent = [];
   try {
     await tree.publishHead({
@@ -1699,7 +1699,7 @@ test('a mempool anchor stuck past ANCHOR_STUCK_MS is replaced at the same nonce'
     assert.equal(health.stuck_pending_age_s, null);
     assert.equal(tree.heads.at(-1).anchor_status, 'broadcast');
     const first = anchorIntentRows(dir).find((row) => row.raw);
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const root2 = hex(rootOf(tree.leaves));
     const head = await tree.publishHead({
       force: true,
@@ -1746,7 +1746,7 @@ test('a stuck replacement stops when the fee cap is hit', async () => {
   process.env.ANCHOR_MAX_FEE_WEI = '1000000000';
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let sends = 0;
   try {
     await tree.publishHead({
@@ -1766,7 +1766,7 @@ test('a stuck replacement stops when the fee cap is hit', async () => {
         return args.hash;
       },
     });
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const head = await tree.publishHead({
       force: true,
       now: '2026-10-06T12:11:00.000Z',
@@ -2016,7 +2016,7 @@ test('backfill lists a forked agent instead of aborting the file', () => {
 test('restore checks the signed bundle index hash and object lock compliance', async () => {
   const { uploadHourlyBundle, buildBundle } = await import('../src/receipt-log-s3.js');
   const tree = new ReceiptMerkleTree();
-  tree.appendReceipt('later-leaf', 'row', { publish: false });
+  await tree.appendReceipt('later-leaf', 'row', { publish: false });
   const view = tree.bundleView([], new Date('2026-10-06T18:00:00.000Z'));
   const bundle = buildBundle({
     hour: view.hour,
@@ -2028,7 +2028,7 @@ test('restore checks the signed bundle index hash and object lock compliance', a
   });
   const governance = lockingClient(new Map(), 'GOVERNANCE');
   await assert.rejects(
-    () => uploadHourlyBundle({
+    async () => await uploadHourlyBundle({
       client: governance,
       bucket: 'b',
       prefix: 'receipt-log/',
@@ -2049,7 +2049,7 @@ test('restore checks the signed bundle index hash and object lock compliance', a
     index: { schema: 'chit402.receipt_log_bundle_index.v1', bundles: [] },
   });
   await assert.rejects(
-    () => uploadHourlyBundle({
+    async () => await uploadHourlyBundle({
       client,
       bucket: 'b',
       prefix: 'receipt-log/',
@@ -2062,7 +2062,7 @@ test('restore checks the signed bundle index hash and object lock compliance', a
   const fullRoot = hex(rootOf(tree.leaves));
   const prefixRoot = hex(rootOf(tree.leaves.slice(0, 1)));
   await assert.rejects(
-    () => restoreFromS3({
+    async () => await restoreFromS3({
       client,
       bucket: 'b',
       prefix: 'receipt-log/',
@@ -2078,7 +2078,7 @@ test('restore checks the signed bundle index hash and object lock compliance', a
     /bundle_index_hash/,
   );
   await assert.rejects(
-    () => restoreFromS3({
+    async () => await restoreFromS3({
       client,
       bucket: 'b',
       prefix: 'receipt-log/',
@@ -2163,7 +2163,7 @@ test('an env root cannot replace the committed pin or skip RPC', async () => {
     tree.heads.push({ root });
   }
   await assert.rejects(
-    () => assertLatestBaseAnchor(tree, { pin, request: async () => null }),
+    async () => await assertLatestBaseAnchor(tree, { pin, request: async () => null }),
     (err) => err.code === 'anchor_rpc_missing',
   );
 });
@@ -2264,11 +2264,11 @@ test('a gateway epoch-1 record at size 3 is not final', () => {
   assert.equal(result.reason, 'epoch1_root');
 });
 
-test('boot refuses a non-empty journal with no epoch record', () => {
+test('boot refuses a non-empty journal with no epoch record', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('local-only', 'hh', { publish: false });
+  await tree.appendReceipt('local-only', 'hh', { publish: false });
   assert.throws(() => bootReceiptLog(dir, { pin: null }), (err) => err.code === 'epoch_record_missing');
   resetReceiptMerkleTree();
 });
@@ -2278,13 +2278,13 @@ test('a known anchor transaction the RPC does not return refuses boot', async ()
   const root = 'aa'.repeat(32);
   const pin = { anchors: [{ chain: 'base', root, tx: `0x${'11'.repeat(32)}` }] };
   await assert.rejects(
-    () => assertKnownAnchorTxs(pin, { request: async () => null, tree: new ReceiptMerkleTree() }),
+    async () => await assertKnownAnchorTxs(pin, { request: async () => null, tree: new ReceiptMerkleTree() }),
     (err) => err.code === 'anchor_rpc_missing',
   );
   const tree = new ReceiptMerkleTree();
   tree.anchorState.base[root] = { status: 'anchored', tx: pin.anchors[0].tx };
   await assert.rejects(
-    () => assertKnownAnchorTxs(pin, {
+    async () => await assertKnownAnchorTxs(pin, {
       tree,
       request: async () => ({ hash: pin.anchors[0].tx, input: `0x${root}` }),
     }),
@@ -2316,11 +2316,11 @@ test('a forged epoch record is not a pinned epoch', async () => {
   assert.equal(assertPinnedEpochRecord(dropped).reason, 'orphan_ff950e72_missing');
 });
 
-test('backfill dry-run lists each refusal', () => {
+test('backfill dry-run lists each refusal', async () => {
   const dir = tmp();
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('leaf-1', 'aa', { publish: false });
+  await tree.appendReceipt('leaf-1', 'aa', { publish: false });
   const jsonl = path.join(dir, 'rows.jsonl');
   const rows = [
     { agent_id: 3, task_id: 'leaf-1', seq: 1, prev_hash: null, row_hash: 'aa' },
@@ -2340,7 +2340,7 @@ test('backfill dry-run lists each refusal', () => {
   assert.doesNotMatch(out.stdout + out.stderr, /epoch1_has_no_receipt_leaf/);
 });
 
-test('clean rows append and the pinned epoch bytes stay put', () => {
+test('clean rows append and the pinned epoch bytes stay put', async () => {
   const anchor = 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af';
   const rows = [
     { agent_id: 7, task_id: 'older', seq: 1, prev_hash: null, row_hash: 'h0' },
@@ -2421,7 +2421,7 @@ test('clean rows append and the pinned epoch bytes stay put', () => {
   const epoch1Before = tree.closedEpochs[0].root;
   const openingBefore = Buffer.from(tree.leaves[0]).toString('hex');
   assert.equal(openingBefore, EPOCH2_OPENING_ROOT);
-  for (const row of plan.append) tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  for (const row of plan.append) await tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
   assert.equal(tree.closedEpochs[0].root, epoch1Before);
   assert.equal(tree.closedEpochs[0].root, EPOCH1_FINAL_ROOT);
   assert.equal(Buffer.from(tree.leaves[0]).toString('hex'), EPOCH2_OPENING_ROOT);
@@ -2455,7 +2455,7 @@ test('inclusion of an unlogged id is a generic 404 and the epoch commits without
   let server;
   try {
     const { createApp } = await import('../src/server.js');
-    const app = createApp();
+    const app = await createApp();
     getReceiptMerkleTree().epochRecord = record;
     server = await new Promise((resolve) => {
       const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -2648,7 +2648,7 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
   assert.ok(head.anchors.base.from);
   assert.ok(head.anchors.solana.fee_payer);
   const { createApp } = await import('../src/server.js');
-  const app = createApp();
+  const app = await createApp();
   const gateway = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -2713,13 +2713,13 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     ...receiptClaims,
     verify_url: verifyUrl,
   }));
-  fs.writeFileSync(inclusionPath, JSON.stringify(tree.inclusion('cli-row')));
+  fs.writeFileSync(inclusionPath, JSON.stringify(await tree.inclusion('cli-row')));
   fs.writeFileSync(headPath, JSON.stringify(head));
   fs.writeFileSync(jwksPath, JSON.stringify({ keys: [jwk] }));
   const { currentAnchorWallets, resetAnchorWalletCache } = await import('../src/anchor-wallets.js');
   resetAnchorWalletCache();
   const walletsPath = path.join(work, 'wallets.json');
-  fs.writeFileSync(walletsPath, JSON.stringify(currentAnchorWallets()));
+  fs.writeFileSync(walletsPath, JSON.stringify(await currentAnchorWallets()));
   const verifyRoot = path.resolve(gatewayRoot, '../../packages/verify');
   const built = spawnSync(path.join(verifyRoot, 'node_modules/.bin/tsc'), [], { cwd: verifyRoot, encoding: 'utf8' });
   assert.equal(built.status, 0, built.stdout + built.stderr);
@@ -2797,7 +2797,7 @@ test('epoch 1 inclusion names the pin anchors and the closed head is signed', as
   assert.equal(pair.base.tx, '0x1d8d7ea255170c8d4b87bef9382e13555dded2072fd877ce35f995f1ab54ee09');
   assert.equal(pair.solana.tx, '61RHMsPPseUc35v5oxDEtANEDCvXk5fmxZdrFDMknGWc5m7U8YhMfz4En1eFFj3z9n67ZtMiha1zkwnneL2LUiXk');
   assert.equal(pair.solana.slot, 452921175);
-  const historical = signPinnedClosedHead({
+  const historical = await signPinnedClosedHead({
     epoch: 1,
     root: EPOCH1_FINAL_ROOT,
     treeSize: 4,
@@ -2877,8 +2877,8 @@ test('epoch 1 inclusion names the pin anchors and the closed head is signed', as
   tree.heads = [];
   tree.byTask = new Map();
   assert.equal(hex(rootOf(tree.leaves)), EPOCH2_OPENING_ROOT);
-  assert.equal(tree.signedClosedEpochHead(1), null);
-  const pending = tree.inclusion(rows[0].task_id);
+  assert.equal(await tree.signedClosedEpochHead(1), null);
+  const pending = await tree.inclusion(rows[0].task_id);
   assert.equal(pending.epoch, 1);
   assert.equal(pending.root, want);
   assert.equal(pending.anchor_status, 'pending');
@@ -2895,22 +2895,22 @@ test('epoch 1 inclusion names the pin anchors and the closed head is signed', as
     ],
   }));
   process.env.RECEIPT_LOG_PIN_FILE = pinPath;
-  const head = tree.signedClosedEpochHead(1);
-  const again = tree.signedClosedEpochHead(1);
+  const head = await tree.signedClosedEpochHead(1);
+  const again = await tree.signedClosedEpochHead(1);
   assert.equal(head.issuer_signature.jws, again.issuer_signature.jws);
   assert.equal(head.root, want);
   assert.equal(head.tree_size, 4);
   assert.equal(head.anchors.base.tx, baseTx);
   assert.equal(head.anchors.solana.signature, solSig);
   assert.equal(verifyTreeHead(head).valid, true);
-  const inc = tree.inclusion(rows[0].task_id);
+  const inc = await tree.inclusion(rows[0].task_id);
   assert.equal(inc.anchor_status, 'anchored');
   assert.equal(inc.anchor_tx, baseTx);
   assert.equal(inc.solana_signature, solSig);
   assert.equal(fs.existsSync(path.join(dir, 'journal.jsonl')), false);
 
   const { createApp } = await import('../src/server.js');
-  const app = createApp();
+  const app = await createApp();
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -3004,7 +3004,7 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
         else process.env.ANCHOR_MAX_PRIORITY_WEI = caps[1];
         const tree = new ReceiptMerkleTree();
         tree.dir = tmp();
-        tree.appendReceipt('row-1', 'hash-1', { publish: false });
+        await tree.appendReceipt('row-1', 'hash-1', { publish: false });
         const before = signs;
         const head = await tree.publishHead({
           force: true,
@@ -3054,7 +3054,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
   process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  tree.appendReceipt('row-1', 'hash-1', { publish: false });
+  await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let phase = 'first';
   const lookup = async (intent) => {
     if (phase === 'first') {
@@ -3086,7 +3086,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     delete process.env.ANCHOR_MAX_FEE_WEI;
     delete process.env.ANCHOR_MAX_PRIORITY_WEI;
     phase = 'replace';
-    tree.appendReceipt('row-2', 'hash-2', { publish: false });
+    await tree.appendReceipt('row-2', 'hash-2', { publish: false });
     const replaced = await tree.publishHead({
       force: true,
       now: '2026-10-06T12:01:00.000Z',
@@ -3103,7 +3103,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     const speedDir = tmp();
     const speed = new ReceiptMerkleTree();
     speed.dir = speedDir;
-    speed.appendReceipt('row-1', 'hash-1', { publish: false });
+    await speed.appendReceipt('row-1', 'hash-1', { publish: false });
     process.env.NODE_ENV = 'PRODUCTION';
     process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
     process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
@@ -3126,7 +3126,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     assert.equal(signs, 2);
     process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
     process.env.ANCHOR_MAX_PRIORITY_WEI = '100000000';
-    speed.appendReceipt('row-2', 'hash-2', { publish: false });
+    await speed.appendReceipt('row-2', 'hash-2', { publish: false });
     const sped = await speed.publishHead({
       force: true,
       now: '2026-10-06T12:11:00.000Z',

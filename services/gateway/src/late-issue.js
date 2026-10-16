@@ -18,7 +18,7 @@ import { recordReceiptFailure } from './receipt-failures.js';
 import { canonicalNetwork, normalizePaymentRef, sameNetwork } from './payment-ref.js';
 import { buildV11SignedClaims, minuteIssuedAt } from './v11-seal.js';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { getIssuerKid, signJws } from './issuer-key.js';
+import { getIssuerKid, signJwsAsync } from './issuer-key.js';
 import { bindSaltReceipt, requestDigest, requestSalt, saltReceiptId } from './request-binding.js';
 import { buildVerifyUrl } from './receipt.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
@@ -531,7 +531,7 @@ async function appendLeaf(record, digest, deps) {
   }
   try {
     const { getReceiptMerkleTree } = await import('./receipt-merkle.js');
-    const inclusion = getReceiptMerkleTree().appendReceipt(record.receipt_id, digest, { publish: false });
+    const inclusion = await getReceiptMerkleTree().appendReceipt(record.receipt_id, digest, { publish: false });
     return inclusion != null;
   } catch (err) {
     logger.warn({ err: err.message }, 'late-issue log append failed');
@@ -548,7 +548,12 @@ async function appendLeaf(record, digest, deps) {
 
 async function defaultSigner(claims) {
   const payloadUtf8 = jcsRfc8785(claims);
-  const signed = signJws(claims, { payloadUtf8 });
+  const signed = await signJwsAsync(claims, {
+    payloadUtf8,
+    capKind: 'receipt',
+    receiptId: claims?.receipt_id || null,
+    parkLate: false,
+  });
   return signed.jws;
 }
 
@@ -620,7 +625,7 @@ async function writeLateLedger(receipt, deps) {
   }
   if (process.env.NODE_ENV === 'test') return;
   const { recordLateIssueReceipt } = await import('./usage-settled.js');
-  recordLateIssueReceipt(receipt);
+  await recordLateIssueReceipt(receipt);
 }
 
 async function publishIssued(store, record, chain, deps, outputBytes) {
@@ -733,7 +738,7 @@ async function publishIssued(store, record, chain, deps, outputBytes) {
     err.code = 'injected_crash';
     throw err;
   }
-  return publishIssued(store, store.getLate(id), chain, deps, outputBytes);
+  return await publishIssued(store, store.getLate(id), chain, deps, outputBytes);
 }
 
 async function waitForJws(store, id) {
@@ -772,7 +777,7 @@ export async function resolveLateRecord(store, record, deps = {}) {
     const owner = deps.owner || `p${process.pid}`;
     const leaseLive = row.lease_until > now && row.lease_owner && row.lease_owner !== owner;
     if (row.jws) {
-      return publishIssued(store, row, {
+      return await publishIssued(store, row, {
         amount: row.expected_settled_amount,
         payer: row.auth?.from,
         payTo: row.payee,
@@ -1043,8 +1048,8 @@ let timer = null;
 export function startLateIssueResolver(store, deps = {}) {
   if (timer) return;
   const interval = deps.intervalMs || 60_000;
-  timer = setInterval(() => {
-    tickLateIssue(store, deps).catch((err) => {
+  timer = setInterval(async () => {
+    await tickLateIssue(store, deps).catch((err) => {
       logger.warn({ err: err.message }, 'late-issue tick failed');
     });
   }, interval);

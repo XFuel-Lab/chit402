@@ -9,7 +9,7 @@ import crypto from 'crypto';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { signJws, getIssuerPublicKeyJwk, verifyJwsWithJwks } from './issuer-key.js';
+import { signJwsAsync, getIssuerPublicKeyJwk, verifyJwsWithJwks } from './issuer-key.js';
 import { buildJwksUri } from './receipt.js';
 import { coverageFromDocument, signExportCoverage } from './export-coverage.js';
 
@@ -108,7 +108,7 @@ export function loadPublishedExportDocument(filename, format) {
  * @param {string} slug
  * @param {{ format?: 'json'|'csv', baseUrl?: string }} [opts]
  */
-export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = {}) {
+export async function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = {}) {
   const meta = PUBLIC_PULL_EXPORTS[slug];
   if (!meta) {
     throw new Error('unknown_pull_export');
@@ -118,7 +118,7 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
   const document = loadPublishedExportDocument(filename, fmt);
   const exported_at = new Date().toISOString();
   const document_sha256 = documentDigest(document, fmt);
-  const coverage = signExportCoverage(coverageFromDocument(document, {
+  const coverage = await signExportCoverage(coverageFromDocument(document, {
     bookId: meta.agent_id,
     format: fmt,
   }), { baseUrl });
@@ -145,7 +145,7 @@ export function buildPublicPullExport(slug, { format = 'json', baseUrl = '' } = 
     },
   });
   const jwksUri = buildJwksUri(baseUrl);
-  const { jws, kid } = signJws(claims, {
+  const { jws, kid } = await signJwsAsync(claims, {
     jku: jwksUri.startsWith('http') ? jwksUri : null,
     typ: PULL_EXPORT_JWT_TYP,
   });

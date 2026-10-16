@@ -44,7 +44,7 @@ test('N1 a failed task snapshot is not left in memory', () => {
   }
 });
 
-test('N1 a failed ledger append leaves no in-memory row', () => {
+test('N1 a failed ledger append leaves no in-memory row', async () => {
   const dir = tmp();
   const prevNode = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
@@ -56,8 +56,8 @@ test('N1 a failed ledger append leaves no in-memory row', () => {
     throw err;
   };
   try {
-    assert.throws(
-      () => ledger.append({
+    await assert.rejects(
+      async () => await ledger.append({
         task_id: 'task-n1',
         payment: { rail: 'usdc', ref: 'base:0x' + '11'.repeat(32), collected: true, gross_amount: '2000' },
         route: { hub: 'theta', model: 'theta/glm' },
@@ -115,13 +115,13 @@ test('N8 a relayer signature verifies once and only for its audience', async () 
   assert.equal(verifyRelayerAuth({ ...args, nonce: '', signature }), false);
 });
 
-test('Doctor 537-M1: the log leaf is appended before the covering head is stamped', () => {
+test('Doctor 537-M1: the log leaf is appended before the covering head is stamped', async () => {
   const order = [];
   setBookRowWrittenHook(() => order.push('leaf'));
   setReceiptBoundHook(() => order.push('stamp'));
   try {
     const ledger = new UsageSettledLedger({ persist: false });
-    const r = ledger.append({
+    const r = await ledger.append({
       task_id: 'doctor-537-m1',
       payment: { rail: 'usdc', ref: `base:0x${'ef'.repeat(32)}`, collected: true, gross_amount: '5000' },
     }, { agentId: 1 });

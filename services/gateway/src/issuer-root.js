@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 import { Interface, getAddress, zeroPadValue, toBeHex } from 'ethers';
 import logger from './logger.js';
 import { assertSaltStoreForIssuance } from './salt-store.js';
-import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { computeJwkThumbprint, getIssuerKid, getIssuerPublicKeyJwk, signJwsAsync } from './issuer-key.js';
 import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
 import {
   LEGACY_SET_SCHEMA,
@@ -658,7 +658,7 @@ async function readFrozen(url, cfg, record, toBlock, fetchImpl) {
   if (logs.length !== 1) {
     throw new Error(`freeze ${universeHex} is not a single finalized Frozen log`);
   }
-  return parseFrozenLog(logs[0], async (frozenBlock) => rpcCall(
+  return await parseFrozenLog(logs[0], async (frozenBlock) => await rpcCall(
     url, 'eth_getBlockByNumber', [toBeHex(frozenBlock), false], fetchImpl,
   ));
 }
@@ -799,7 +799,7 @@ async function captureLegacyFrozen(cfg, finalized, fetchImpl) {
   if (leftRead.logs.length !== 1) {
     throw new Error('legacy Frozen log is not a single finalized log');
   }
-  const blockOf = (url) => async (frozenBlock) => rpcCall(
+  const blockOf = (url) => async (frozenBlock) => await rpcCall(
     url, 'eth_getBlockByNumber', [toBeHex(frozenBlock), false], fetchImpl,
   );
   const left = await parseFrozenLog(leftRead.logs[0], blockOf(cfg.rpcUrls[0]));
@@ -916,7 +916,7 @@ function freezeRecordOk(row) {
  * it does not sign a freeze document.
  * @param {string} universeId
  */
-export function freezeDocumentFor(universeId) {
+export async function freezeDocumentFor(universeId) {
   if (!issuerRootActive() || !startupState.verified || startupState.skipped) return null;
   const cfg = readIssuerRootConfig();
   if (!cfg.freezeFile) return null;
@@ -942,7 +942,7 @@ export function freezeDocumentFor(universeId) {
     issuer_root: issuerRootClaim(kid),
     tx_hash: row.tx_hash.toLowerCase(),
   };
-  const { jws, kid: signedKid } = signJws(claims, { typ: FREEZE_JWT_TYP });
+  const { jws, kid: signedKid } = await signJwsAsync(claims, { typ: FREEZE_JWT_TYP });
   bindIssuerRoot(claims, signedKid, jwk);
   return {
     ...claims,

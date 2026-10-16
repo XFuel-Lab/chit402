@@ -182,7 +182,7 @@ test('mapThetaService reads live worker count as capacity', () => {
   assert.equal(mapThetaService(svc('sdxl', { default: 39 })).capacity, 39);
   // The case that 409s.
   assert.equal(mapThetaService(svc('qwen3', {})).capacity, 0);
-  // Absent is unknown, not zero ù AkashML publishes no equivalent, and reading
+  // Absent is unknown, not zero ÔøΩ AkashML publishes no equivalent, and reading
   // silence as "down" would take a working hub offline.
   assert.equal(mapThetaService(svc('qwen3', undefined)).capacity, null);
 });
@@ -196,7 +196,7 @@ test('hasCapacity: only a hub that reports none counts as down', () => {
 
 test('xfuel/auto never routes to a model the hub says is empty', () => {
   // theta/qwen3 sits third in the non-agent preference order, so this is not
-  // hypothetical: an Akash outage ù the one time failover matters ù used to pick
+  // hypothetical: an Akash outage ÔøΩ the one time failover matters ÔøΩ used to pick
   // a model that answers every request with a 409.
   const models = [
     { id: 'theta/qwen3', hub: 'theta', modality: 'chat', capacity: 0 },
@@ -228,6 +228,6 @@ test('/v1/models publishes availability so an agent can avoid a dead model', () 
   assert.equal(at('theta/qwen3').status, 'no_capacity');
   assert.equal(at('theta/glm_5_2').status, 'available');
   assert.equal(at('theta/glm_5_2').workers, 1);
-  // Not "down" ù Akash simply does not report capacity.
+  // Not "down" ÔøΩ Akash simply does not report capacity.
   assert.equal(at('akash/x').status, 'unknown');
 });

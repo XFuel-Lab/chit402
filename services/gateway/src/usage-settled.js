@@ -14,7 +14,7 @@ import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { paymentRefIndexKey } from './payment-ref.js';
 import { bookFulfillmentRowOf } from './fulfillment-receipt.js';
-import { bookRowHash, signBookSeq, analyzeSeq } from './book-seq.js';
+import { bookRowHash, signBookSeq, signBookSeqSync, analyzeSeq } from './book-seq.js';
 import { actOf } from './book-act.js';
 import { refusalAnchorOrUnavailable } from './refusal-anchor.js';
 import { issueRefusalReceipt } from './refusal-receipt.js';
@@ -429,6 +429,7 @@ export class UsageSettledLedger {
     this._lastRowHash = new Map();
     /** Fork notes that a reload must not resolve by keeping the last line. */
     this._forks = new Map();
+    this.ready = Promise.resolve();
 
     if (this.persist) {
       try {
@@ -436,7 +437,7 @@ export class UsageSettledLedger {
       } catch (err) {
         throw err?.code === 'persist_failed' ? err : persistFailed(err, 'usage-settled: mkdir failed');
       }
-      this._load();
+      this.ready = this._load();
     }
   }
 
@@ -444,16 +445,28 @@ export class UsageSettledLedger {
     return path.join(this.dir, 'usage-settled.jsonl');
   }
 
-  _load() {
+  async _load() {
     this._indexingLoad = true;
     this.refCollisionCount = 0;
     try {
       const text = fs.readFileSync(this._file(), 'utf8');
+      const deferred = [];
       for (const line of text.split('\n')) {
         if (!line.trim()) continue;
         const row = JSON.parse(line);
-        this._index(row, { persist: false, notify: false });
+        const id = Number(row?.agent_id);
+        const needsSign = Number.isInteger(id) && id >= 1
+          && (row.seq == null || row.seq === '' || !row.book_chain);
+        const kms = String(process.env.ISSUER_SIGNER || '').trim() === 'kms';
+        if (needsSign && !kms && row.seq != null && row.seq !== '') {
+          this._prepareSeq(row);
+          this._noteExistingSeq(row, id);
+          if (!row.book_chain) row.book_chain = signBookSeqSync(row);
+          this._remember(row, { persist: false, notify: false });
+        } else if (needsSign) deferred.push(row);
+        else this._rememberLoaded(row);
       }
+      await this._indexDeferred(deferred);
       if (this.refCollisionCount > 0) {
         logger.warn(
           { count: this.refCollisionCount },
@@ -469,9 +482,9 @@ export class UsageSettledLedger {
     }
   }
 
-  _stampSeq(row) {
+  _prepareSeq(row) {
     const id = Number(row?.agent_id);
-    if (!Number.isInteger(id) || id < 1) return;
+    if (!Number.isInteger(id) || id < 1) return null;
     if (!row.act) row.act = actOf(row);
     const successor = row.event === 'inflow_correction' || row.corrects || row.parent_ref;
     if (!row.authority && successor) {
@@ -482,33 +495,47 @@ export class UsageSettledLedger {
         issuer: 'chit402',
       };
     }
+    return id;
+  }
+
+  _noteExistingSeq(row, id) {
+    const seq = Number(row.seq);
+    const tip = this._tipSeq.get(id) || 0;
+    if (!row.prev_hash && Number.isInteger(seq) && seq === tip + 1) {
+      row.prev_hash = this._lastRowHash.get(id) || null;
+    }
+    if (!row.row_hash) row.row_hash = bookRowHash(row);
+    if (Number.isInteger(seq) && seq > tip) {
+      this._tipSeq.set(id, seq);
+      this._nextSeq.set(id, seq + 1);
+      if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
+    } else if (Number.isInteger(seq) && seq === tip && tip > 0) {
+      this._noteFork(id, { kind: 'duplicate_seq', seq, task_id: row.task_id || null });
+    }
+  }
+
+  /**
+   * Sign before the row is indexed. A reload that already has book_chain
+   * does not sign, so the constructor stays synchronous for that file.
+   */
+  async _stampSeq(row) {
+    const id = this._prepareSeq(row);
+    if (id == null) return;
     if (row.seq != null && row.seq !== '') {
-      const seq = Number(row.seq);
-      const tip = this._tipSeq.get(id) || 0;
-      if (!row.prev_hash && Number.isInteger(seq) && seq === tip + 1) {
-        row.prev_hash = this._lastRowHash.get(id) || null;
-      }
-      if (!row.row_hash) row.row_hash = bookRowHash(row);
-      if (Number.isInteger(seq) && seq > tip) {
-        this._tipSeq.set(id, seq);
-        this._nextSeq.set(id, seq + 1);
-        if (row.row_hash) this._lastRowHash.set(id, row.row_hash);
-      } else if (Number.isInteger(seq) && seq === tip && tip > 0) {
-        this._noteFork(id, { kind: 'duplicate_seq', seq, task_id: row.task_id || null });
-      }
-      if (!row.book_chain) row.book_chain = signBookSeq(row);
+      this._noteExistingSeq(row, id);
+      if (!row.book_chain) row.book_chain = await signBookSeq(row);
       return;
     }
     const seq = this._nextSeq.get(id) || 1;
     row.seq = seq;
     row.prev_hash = this._lastRowHash.get(id) || null;
     row.row_hash = bookRowHash(row);
-    row.book_chain = signBookSeq(row);
+    row.book_chain = await signBookSeq(row);
     this._nextSeq.set(id, seq + 1);
     this._tipSeq.set(id, seq);
     this._lastRowHash.set(id, row.row_hash);
     try {
-      this._issueRefusal(row, { rethrowBinding: true });
+      await this._issueRefusal(row, { rethrowBinding: true });
     } catch (err) {
       if (!isRequestBindingError(err)) throw err;
       this._nextSeq.set(id, seq);
@@ -536,11 +563,11 @@ export class UsageSettledLedger {
    * seq, so it does not mint a new nonce. Signing failure still keeps the row.
    * @param {object} row
    */
-  _issueRefusal(row, { rethrowBinding = false } = {}) {
+  async _issueRefusal(row, { rethrowBinding = false } = {}) {
     const blocked = row?.event === 'policy_blocked' || row?.evidence === 'policy_blocked';
     if (!blocked || row.refusal) return;
     try {
-      row.refusal = issueRefusalReceipt(row);
+      row.refusal = await issueRefusalReceipt(row);
     } catch (err) {
       if (rethrowBinding && isRequestBindingError(err)) throw err;
       logger.warn({ err: err.message, task_id: row.task_id }, 'refusal receipt not signed');
@@ -586,8 +613,24 @@ export class UsageSettledLedger {
     return supersessionForRow(row, this._rowsForAgent(row.agent_id));
   }
 
-  _index(row, { persist = true, notify = true } = {}) {
-    this._stampSeq(row);
+  _rememberLoaded(row) {
+    const id = this._prepareSeq(row);
+    if (id != null && row.seq != null && row.seq !== '') this._noteExistingSeq(row, id);
+    this._remember(row, { persist: false, notify: false });
+  }
+
+  async _indexDeferred(rows) {
+    for (const row of rows) {
+      await this._index(row, { persist: false, notify: false });
+    }
+  }
+
+  async _index(row, { persist = true, notify = true } = {}) {
+    await this._stampSeq(row);
+    this._remember(row, { persist, notify });
+  }
+
+  _remember(row, { persist = true, notify = true } = {}) {
     this.entries.push(row);
     if (row.payment_ref) {
       const raw = String(row.payment_ref);
@@ -787,13 +830,14 @@ export class UsageSettledLedger {
    *   attemptIndex?: number|null,
    * }} [opts]
    */
-  append(receipt, {
+  async append(receipt, {
     payer = null,
     agentId = null,
     parentRef = null,
     intentId = null,
     attemptIndex = null,
   } = {}) {
+    await this.ready;
     const q = receiptQualifiesForLedger(receipt);
     if (!q.ok) return { ok: false, reason: q.reason, code: 'not_qualifying' };
 
@@ -883,7 +927,7 @@ export class UsageSettledLedger {
     // signed into the snapshot includes this receipt. A failed write removes
     // the ledger row and the request fails. The log is append-only, so the
     // leaf stays; it is logged as an orphan for ops.
-    this._index(entry, { persist: false, notify: true });
+    await this._index(entry, { persist: false, notify: true });
     try {
       emitReceiptBound(receipt, entry);
       this._persistRow(entry);
@@ -921,7 +965,7 @@ export class UsageSettledLedger {
    *   attemptIndex?: number|null,
    * }} row
    */
-  appendInflow({
+  async appendInflow({
     agentId,
     taskId,
     bucket,
@@ -968,7 +1012,7 @@ export class UsageSettledLedger {
       intent_id: intentId || null,
       attempt_index: attemptIndex != null ? Number(attemptIndex) : null,
     };
-    this._index(entry);
+    await this._index(entry);
     return { ok: true, entry };
   }
 
@@ -978,7 +1022,7 @@ export class UsageSettledLedger {
    * @param {number} agentId
    * @param {object} correction
    */
-  appendInflowCorrection(taskId, agentId, correction) {
+  async appendInflowCorrection(taskId, agentId, correction) {
     const entry = this.findByTask(String(taskId));
     const id = Number(agentId);
     if (!entry || Number(entry.agent_id) !== id) {
@@ -1016,7 +1060,7 @@ export class UsageSettledLedger {
       model: entry.model || null,
       hub: entry.hub || null,
     };
-    this._index(correctionRow);
+    await this._index(correctionRow);
     return { ok: true, entry, correction, correction_row: correctionRow };
   }
 
@@ -1038,7 +1082,7 @@ export class UsageSettledLedger {
    *   amountRequested?: string|null,
    * }} row
    */
-  recordPolicyBlocked({
+  async recordPolicyBlocked({
     agentId,
     taskId,
     policyCode,
@@ -1123,7 +1167,7 @@ export class UsageSettledLedger {
       intent_supplied: request?.intent_supplied === true,
     };
     try {
-      this._index(entry);
+      await this._index(entry);
     } catch (err) {
       if (isRequestBindingError(err)) {
         return { ok: false, reason: err.message, code: err.code };
@@ -1145,7 +1189,7 @@ export class UsageSettledLedger {
    *   challengeIndex?: number|null,
    * }} row
    */
-  recordA2aEscrowEvent({
+  async recordA2aEscrowEvent({
     agentId,
     jobId,
     phase,
@@ -1191,7 +1235,7 @@ export class UsageSettledLedger {
       hub: null,
       parent_ref: job?.task_id || null,
     };
-    this._index(entry);
+    await this._index(entry);
     return { ok: true, entry, duplicate: false };
   }
 
@@ -1207,7 +1251,7 @@ export class UsageSettledLedger {
    *   parentRef?: string|null,
    * }} row
    */
-  recordIngestStamp({
+  async recordIngestStamp({
     agentId,
     taskId,
     paymentRef,
@@ -1245,7 +1289,7 @@ export class UsageSettledLedger {
       hub: null,
       parent_ref: parentRef || null,
     };
-    this._index(entry);
+    await this._index(entry);
     return { ok: true, entry, duplicate: false };
   }
 
@@ -1267,7 +1311,7 @@ export class UsageSettledLedger {
    *   fulfillment?: object|null,
    * }} row
    */
-  recordBoardEvent({
+  async recordBoardEvent({
     agentId,
     kind,
     taskId,
@@ -1319,7 +1363,7 @@ export class UsageSettledLedger {
       entry.fulfillment = fulfillment;
       entry.job_kind = fulfillment.intent?.job_kind || null;
     }
-    this._index(entry);
+    await this._index(entry);
     return { ok: true, entry, duplicate: false };
   }
 
@@ -1564,7 +1608,7 @@ export class UsageSettledLedger {
    * One indexed row for a late receipt. No book sequence: agent_id is unset.
    * A second write of the same task or payment ref is a duplicate.
    */
-  recordLateIssue(receipt) {
+  async recordLateIssue(receipt) {
     const taskId = receipt?.task_id || receipt?.receipt_id;
     if (!taskId || !receipt?.issuer_signature?.jws) return { ok: false, reason: 'invalid' };
     const paymentRef = receipt?.payment?.ref || null;
@@ -1583,7 +1627,7 @@ export class UsageSettledLedger {
       payer: null,
       at: new Date().toISOString(),
     };
-    this._index(row);
+    await this._index(row);
     return { ok: true, duplicate: false, entry: row };
   }
 }
@@ -1609,7 +1653,7 @@ export class UsageSettledLedger {
  *   attemptIndex?: number|null,
  * }} row
  */
-export function recordSettleBookRow({
+export async function recordSettleBookRow({
   taskId,
   paymentRef,
   amount = null,
@@ -1643,7 +1687,7 @@ export function recordSettleBookRow({
       hub: hub || (model && String(model).includes('/') ? String(model).split('/')[0] : null),
     },
   };
-  const result = recordCollectedSpend(receipt, {
+  const result = await recordCollectedSpend(receipt, {
     ledger,
     registry,
     payer,
@@ -1760,7 +1804,7 @@ function rollbackClaimClose(ledger, closed, receipt) {
   };
 }
 
-export function recordCollectedSpend(receipt, {
+export async function recordCollectedSpend(receipt, {
   ledger,
   registry,
   payer = null,
@@ -1859,7 +1903,7 @@ export function recordCollectedSpend(receipt, {
   }
   let credited;
   try {
-    credited = ledger.append(receipt, {
+    credited = await ledger.append(receipt, {
       payer,
       agentId: identity.agent_id,
       parentRef,
@@ -1895,10 +1939,21 @@ export function setLateIssueLedger(ledger) {
   _lateLedger = ledger || null;
 }
 
+// Writers run one at a time. Dedupe, seq and sign must not interleave across an await.
+for (const name of ['append', 'appendInflow', 'appendInflowCorrection', 'recordPolicyBlocked',
+  'recordIngestStamp', 'recordBoardEvent', 'recordLateIssue']) {
+  const inner = UsageSettledLedger.prototype[name];
+  UsageSettledLedger.prototype[name] = function exclusive(...args) {
+    const run = (this._serial || Promise.resolve()).then(() => inner.apply(this, args));
+    this._serial = run.catch(() => {});
+    return run;
+  };
+}
+
 /** The app ledger when createApp registered one, otherwise the process ledger. */
-export function recordLateIssueReceipt(receipt) {
+export async function recordLateIssueReceipt(receipt) {
   const ledger = _lateLedger || getUsageSettledLedger();
-  return ledger.recordLateIssue(receipt);
+  return await ledger.recordLateIssue(receipt);
 }
 
 export function getUsageSettledLedger(opts) {

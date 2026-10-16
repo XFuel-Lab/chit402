@@ -48,7 +48,7 @@ export class ClaimSettlementStore {
    * @param {{ claimId: unknown, taskId: unknown, paymentRef: unknown, receipt?: object|null }} input
    */
   settle(input) {
-    const run = this._chain.then(() => this._commit(input));
+    const run = this._chain.then(async () => await this._commit(input));
     this._chain = run.then(() => undefined, () => undefined);
     return run;
   }

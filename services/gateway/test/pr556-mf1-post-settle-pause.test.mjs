@@ -296,7 +296,7 @@ test('late-issue does not ignore a pause, and settle still runs the reader', asy
   let calls = 0;
   setChainReaderForTests(async () => {
     calls += 1;
-    return echoChainReader({
+    return await echoChainReader({
       challenge: { amount: '2000', payTo: HOUSE, network: 'base' },
       facilitator: { transaction: TX, payer: PAYER },
     });

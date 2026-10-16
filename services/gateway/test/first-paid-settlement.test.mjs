@@ -43,7 +43,7 @@ const chatBody = {
 before(async () => {
   resetHubCatalogCache();
   await initAIListener();
-  app = createApp();
+  app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -168,7 +168,7 @@ test('20 concurrent copies of one challenge settle once and return one receipt',
   const nonce = (await probe.json()).accepts[0].extra.nonce;
   const settlesBefore = facServer.settleCount;
   resetPaidFulfillmentRuns();
-  const results = await Promise.all(Array.from({ length: 20 }, () => paidChat(nonce)));
+  const results = await Promise.all(Array.from({ length: 20 }, async () => await paidChat(nonce)));
   assert.equal(facServer.settleCount - settlesBefore, 1);
   assert.equal(paidFulfillmentRuns(), 1);
   assert.equal(results.length, 20);

@@ -153,7 +153,9 @@ import {
 import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
-import { getJwks, initIssuerKey } from './issuer-key.js';
+import { getJwks } from './issuer-key.js';
+import { initIssuerSigner } from './issuer-signer.js';
+import { issuanceCapHealth } from './issuance-cap.js';
 import {
   assertIssuerRootStartup,
   freezeDocumentFor,
@@ -974,7 +976,7 @@ function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
  * Build and return a configured Express app.
  * Called from `startServer()` or directly in tests.
  */
-export function createApp() {
+export async function createApp() {
   const saltStore = bootSaltStore(process.env, process.env.ISSUER_PRIVATE_KEY);
   setSaltStore(saltStore);
   assertV11IssuanceAllowed(saltStore, process.env);
@@ -1064,9 +1066,9 @@ export function createApp() {
       onError: (err) => logger.error({ err: err.message }, 'receipt log bundle upload failed'),
     });
   }
-  setBookRowWrittenHook((entry) => {
+  setBookRowWrittenHook(async (entry) => {
     try {
-      if (entry?.task_id) getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+      if (entry?.task_id) await getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
     } catch (err) {
       logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt merkle append failed');
     }
@@ -1075,9 +1077,9 @@ export function createApp() {
       baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
     });
   });
-  setReceiptBoundHook((receipt, entry) => {
+  setReceiptBoundHook(async (receipt, entry) => {
     const storedJws = receipt?.issuer_signature?.jws || null;
-    stampCoveringTreeHead(receipt);
+    await stampCoveringTreeHead(receipt);
     const version = Number(receipt?.issuer_signature?.payload_version);
     const immutable = issuerRootActive() || (Number.isFinite(version) && version >= 11);
     if (immutable && storedJws && receipt?.issuer_signature && receipt.issuer_signature.jws !== storedJws) {
@@ -1235,7 +1237,7 @@ export function createApp() {
    * Pre-check approval_ttl before SessionAct nonce consumption.
    * Records policy_blocked on the agent book when high-blast approval expired.
    */
-  function gateSessionActApproval(req, { action, delegationHash, session = null } = {}) {
+  async function gateSessionActApproval(req, { action, delegationHash, session = null } = {}) {
     const hash = delegationHash || req.params?.delegation_hash || req.body?.delegation_hash;
     const bound = session || (hash ? sessionStore.get(hash) : null);
     if (!bound || !action) return { allowed: true };
@@ -1259,7 +1261,7 @@ export function createApp() {
     const taskId = `policy-sa-${crypto.randomBytes(8).toString('hex')}`;
     let refusalEntry = null;
     if (usageSettled && typeof usageSettled.recordPolicyBlocked === 'function') {
-      const recorded = usageSettled.recordPolicyBlocked({
+      const recorded = await usageSettled.recordPolicyBlocked({
         agentId: identity.agent_id,
         taskId,
         policyCode: check.code || 'approval_ttl_expired',
@@ -1299,11 +1301,11 @@ export function createApp() {
     }
   }
 
-  function issueChildHandoff(req, parent, session, sessionAct = null) {
+  async function issueChildHandoff(req, parent, session, sessionAct = null) {
     const parentJws = parent.issuerSignature?.jws || parent.issuer_signature?.jws || null;
     const baseUrl = sessionIssuerUri(req);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const { childTask, receipt } = issueSessionHandoffReceipt(parent, session, {
+    const { childTask, receipt } = await issueSessionHandoffReceipt(parent, session, {
       baseUrl,
       signingSecret: config.receipts?.signingSecret,
       coSignerSecret: config.receipts?.coSignerSecret,
@@ -1319,13 +1321,13 @@ export function createApp() {
     return { childTask, receipt, parentJws };
   }
 
-  function executeReadPrivate(req, accepted) {
+  async function executeReadPrivate(req, accepted) {
     const resource = accepted.resource;
     const aiListener = getAIListener();
     const taskId = normalizeTaskIdForLookup(resource);
     const task = _findTask(aiListener, taskId) || _findTask(aiListener, resource);
     if (task) {
-      const receipt = buildReceipt(task, {
+      const receipt = await buildReceipt(task, {
         baseUrl: sessionIssuerUri(req),
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -1384,7 +1386,7 @@ export function createApp() {
         body: {
           action: SESSION_ACT_ACTIONS.READ_PRIVATE,
           resource,
-          book: packBook(entries, identity.agent_id, 20, {
+          book: await packBook(entries, identity.agent_id, 20, {
             identity,
             spent,
             held,
@@ -1405,7 +1407,7 @@ export function createApp() {
     };
   }
 
-  function executeSessionAct(req, accepted) {
+  async function executeSessionAct(req, accepted) {
     const action = accepted.action;
     if (action === SESSION_ACT_ACTIONS.HANDOFF) {
       const taskId = normalizeTaskIdForLookup(accepted.resource);
@@ -1447,7 +1449,7 @@ export function createApp() {
           },
         };
       }
-      const { childTask, receipt } = issueChildHandoff(req, parent, accepted.session, accepted);
+      const { childTask, receipt } = await issueChildHandoff(req, parent, accepted.session, accepted);
       logger.info({
         reqId: req.id,
         parent: parent.taskId,
@@ -1468,7 +1470,7 @@ export function createApp() {
     }
 
     if (action === SESSION_ACT_ACTIONS.READ_PRIVATE) {
-      return executeReadPrivate(req, accepted);
+      return await executeReadPrivate(req, accepted);
     }
 
     if (action === SESSION_ACT_ACTIONS.REDEEM) {
@@ -1528,7 +1530,7 @@ export function createApp() {
   // without this an outage there is discovered by failing a customer's call.
   // Opt-in (`PROVIDER_HEALTH_PROBE=true`) because it spends real money on
   // requests nobody asked for; passive observation runs regardless.
-  startHealthProbes(() => getHubCatalog());
+  await startHealthProbes(async () => await getHubCatalog());
 
   // ── Proxy trust ──────────────────────────────────────────────────────────
   // Behind a TLS reverse proxy (Caddy/nginx), req.ip is the proxy's address
@@ -1724,7 +1726,7 @@ export function createApp() {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
     const issueBlock = await readHeadBlock(x.baseRpcUrl || x.rpcUrl || null, 250);
-    const { body, headers } = buildPaymentChallenge({
+    const { body, headers } = await buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
       maxAmountRequired: String(x.usdcPriceDefault || '10000'),
       network: x.network,
@@ -1876,6 +1878,9 @@ export function createApp() {
                 resource: handshakeResource,
                 strictTaskId: !!decision.pending,
               });
+              if (hs.kind === 'issuance_paused') {
+                return res.status(503).json({ error: 'issuance_paused' });
+              }
               if (hs.kind === 'challenge') {
                 return sendPaymentRequired(res, hs.body);
               }
@@ -1955,6 +1960,9 @@ export function createApp() {
               baseUrl: handshakeBaseUrl,
               resource: handshakeResource,
             });
+            if (decision.kind === 'issuance_paused') {
+              return res.status(503).json({ error: 'issuance_paused' });
+            }
             if (decision.kind === 'challenge') {
               return sendPaymentRequired(res, decision.body);
             }
@@ -2226,7 +2234,7 @@ export function createApp() {
       aiListener.activeTasks.set(taskId, task);
 
       // Fire-and-forget: process asynchronously (matches ai-listener flow)
-      aiListener._processAIIntent(intent, meta).catch(err => {
+      await aiListener._processAIIntent(intent, meta).catch(err => {
         logger.error({ err, taskId }, 'Async AI intent processing failed');
       });
 
@@ -2256,7 +2264,7 @@ export function createApp() {
         ? `${String(taskBaseUrl).replace(/\/$/, '')}/task-request`
         : null;
 
-      setX402PaymentResponseHeaders(res, {
+      await setX402PaymentResponseHeaders(res, {
         ref: settledResponseRef,
         payer: settledResponsePayer,
         resourceUrl: taskResourceUrl,
@@ -2435,7 +2443,7 @@ export function createApp() {
       }
 
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const receipt = buildReceipt(task, {
+      const receipt = await buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -2581,7 +2589,7 @@ export function createApp() {
     }
   });
 
-  function recordA2AMessage({
+  async function recordA2AMessage({
     message_type,
     sender_chain,
     recipient_chain,
@@ -2618,7 +2626,7 @@ export function createApp() {
       correlationId: correlation_id || null,
     };
     _a2aMessages.set(messageId, a2aMessage);
-    _generateA2AProof(a2aMessage).catch((err) => {
+    await _generateA2AProof(a2aMessage).catch((err) => {
       logger.error({ err, messageId }, 'A2A proof generation failed');
     });
     return {
@@ -2838,9 +2846,9 @@ export function createApp() {
   });
 
   // GET /freeze/:universeId — signed freeze document. 404 when the flag is off.
-  app.get('/freeze/:universeId', rateLimit, (req, res) => {
+  app.get('/freeze/:universeId', rateLimit, async (req, res) => {
     try {
-      const doc = freezeDocumentFor(req.params.universeId);
+      const doc = await freezeDocumentFor(req.params.universeId);
       if (!doc) return res.status(404).json({ error: 'not_found' });
       res.set('Cache-Control', 'public, max-age=300');
       return res.json(doc);
@@ -2935,13 +2943,13 @@ export function createApp() {
     return redactPublicReceipt(withPublicPreimages(receipt, { baseUrl, prefix }));
   }
 
-  function shellFor(receipt, taskId) {
+  async function shellFor(receipt, taskId) {
     let inclusion = null;
     let signedHead = null;
     const id = taskId || receipt?.task_id;
     try {
       const tree = getReceiptMerkleTree();
-      if (id && typeof tree.inclusion === 'function') inclusion = tree.inclusion(id);
+      if (id && typeof tree.inclusion === 'function') inclusion = await tree.inclusion(id);
       if (typeof tree.latestSignedHead === 'function') signedHead = tree.latestSignedHead();
     } catch {
       inclusion = null;
@@ -2952,8 +2960,8 @@ export function createApp() {
     };
   }
 
-  function sendPublicShell(res, receipt, { wantsJson, taskId }) {
-    const { shell, inclusion } = shellFor(receipt, taskId);
+  async function sendPublicShell(res, receipt, { wantsJson, taskId }) {
+    const { shell, inclusion } = await shellFor(receipt, taskId);
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
@@ -3071,7 +3079,7 @@ export function createApp() {
         if (!task) {
           return res.status(404).type('text/plain').send('not found');
         }
-        receipt = buildReceipt(task, {
+        receipt = await buildReceipt(task, {
           baseUrl,
           signingSecret: config.receipts?.signingSecret,
           coSignerSecret: config.receipts?.coSignerSecret,
@@ -3108,7 +3116,7 @@ export function createApp() {
         const treeSize = canonicalPositiveInteger(spelled);
         if (treeSize == null) return res.status(400).json({ error: 'bad_tree_size' });
         try {
-          const head = tree.signedHeadAt(treeSize);
+          const head = await tree.signedHeadAt(treeSize);
           const facts = tree.headChainFacts(head);
           return res.json({
             ...head,
@@ -3150,13 +3158,13 @@ export function createApp() {
     return res.json(record);
   });
 
-  app.get('/v1/receipts/tree/epoch/:epoch/head', (req, res) => {
+  app.get('/v1/receipts/tree/epoch/:epoch/head', async (req, res) => {
     const epoch = canonicalPositiveInteger(req.params.epoch);
     if (epoch == null) {
       return res.status(400).json({ error: 'bad_epoch' });
     }
     try {
-      const head = getReceiptMerkleTree().signedClosedEpochHead(epoch);
+      const head = await getReceiptMerkleTree().signedClosedEpochHead(epoch);
       if (!head) {
         return res.json({
           schema: 'chit402.tree_head.v2',
@@ -3198,7 +3206,7 @@ export function createApp() {
     }
   });
 
-  app.get('/v1/receipts/:task_id/inclusion', (req, res) => {
+  app.get('/v1/receipts/:task_id/inclusion', async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     const tree = getReceiptMerkleTree();
     // Same raw spelling as consistency. Express may turn `01` or `+1` into 1.
@@ -3222,7 +3230,7 @@ export function createApp() {
     }
     try {
       // Exact lowercase chit- only. CHIT-, Chit-, and short ids stay unmatched.
-      const found = tree.inclusion(
+      const found = await tree.inclusion(
         normalizeTaskIdForLookup(req.params.task_id),
         treeSize == null ? {} : { treeSize },
       );
@@ -3247,7 +3255,7 @@ export function createApp() {
     next();
   });
 
-  app.get('/receipt/:taskId', rateLimit, (req, res) => {
+  app.get('/receipt/:taskId', rateLimit, async (req, res) => {
     // HTML and JSON share this URL. A shared cache must not keep either
     // body: the preimage used to include other leaves, and a stored copy
     // of that body would keep the leak after this process stopped emitting it.
@@ -3288,10 +3296,10 @@ export function createApp() {
       const lateSnapshot = ledgerRow?.source === 'late_issue' && ledgerRow.receipt_snapshot?.issuer_signature?.jws
         ? ledgerRow.receipt_snapshot
         : null;
-      const withBookCoverage = (receipt) => {
+      const withBookCoverage = async (receipt) => {
         if (!receipt || !ledgerRow?.agent_id) return receipt;
         try {
-          const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
+          const coverage = await coverageForLedger(usageSettled, ledgerRow.agent_id, {
             subjectTaskId: ledgerRow.task_id || receipt.task_id,
           });
           const supersession = typeof usageSettled.supersessionOf === 'function'
@@ -3303,8 +3311,8 @@ export function createApp() {
             ...(supersession ? { supersession } : {}),
             ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
             ...(ledgerRow.seq != null ? { book_seq: ledgerRow.seq } : {}),
-            receipt_lane: receiptLaneForEntry(ledgerRow, { tree: getReceiptMerkleTree() }),
-            ...publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
+            receipt_lane: await receiptLaneForEntry(ledgerRow, { tree: getReceiptMerkleTree() }),
+            ...await publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
           };
         } catch (err) {
           logger.warn({ err: err.message, taskId }, 'receipt coverage omitted');
@@ -3312,20 +3320,20 @@ export function createApp() {
         }
       };
 
-      const publishShell = (receipt, task) => {
+      const publishShell = async (receipt, task) => {
         if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
-        return sendPublicShell(res, receipt, {
+        return await sendPublicShell(res, receipt, {
           wantsJson,
           taskId: receipt?.task_id || taskId,
         });
       };
 
-      if (openRouterReceipt) return publishShell(withBookCoverage(openRouterReceipt), null);
-      if (lateSnapshot) return publishShell(lateSnapshot, null);
+      if (openRouterReceipt) return await publishShell(await withBookCoverage(openRouterReceipt), null);
+      if (lateSnapshot) return await publishShell(lateSnapshot, null);
       const foreignReceipt = ledgerRow?.receipt_snapshot && ledgerRow.source !== 'openrouter_broadcast'
         ? buildPublicForeignIngestReceipt(ledgerRow.receipt_snapshot, { baseUrl, reqHost })
         : null;
-      if (foreignReceipt) return publishShell(withBookCoverage(foreignReceipt), null);
+      if (foreignReceipt) return await publishShell(await withBookCoverage(foreignReceipt), null);
 
       const aiListener = getAIListener();
       // ?tx= may confirm this id. It must not select a different receipt.
@@ -3333,13 +3341,13 @@ export function createApp() {
 
       if (!task) {
         const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
-        if (latePublic) return publishShell(latePublic, null);
+        if (latePublic) return await publishShell(latePublic, null);
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
-        if (spendReceipt) return publishShell(spendReceipt, null);
+        if (spendReceipt) return await publishShell(spendReceipt, null);
         return sendPublicMissing(res, wantsJson);
       }
 
-      const receipt = buildReceipt(task, {
+      const receipt = await buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -3352,14 +3360,14 @@ export function createApp() {
       });
       if (rejectsTx(receipt, task)) return sendPublicMissing(res, wantsJson);
 
-      return publishShell(withBookCoverage(receipt), task);
+      return await publishShell(await withBookCoverage(receipt), task);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET /receipt error');
       return res.status(500).json({ error: 'internal', message: 'internal error' });
     }
   });
 
-  function loadPreimageReceipt(req) {
+  async function loadPreimageReceipt(req) {
     let rawTaskId = req.params.taskId;
     if (rawTaskId && rawTaskId.endsWith('.json')) rawTaskId = rawTaskId.slice(0, -5);
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
@@ -3380,7 +3388,7 @@ export function createApp() {
         if (!String(err?.message || '').includes('not initialized')) throw err;
       }
       if (!task) return null;
-      receipt = buildReceipt(task, {
+      receipt = await buildReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -3394,14 +3402,14 @@ export function createApp() {
     }
     if (ledgerRow?.agent_id) {
       try {
-        const coverage = coverageForLedger(usageSettled, ledgerRow.agent_id, {
+        const coverage = await coverageForLedger(usageSettled, ledgerRow.agent_id, {
           subjectTaskId: ledgerRow.task_id || receipt.task_id,
         });
         receipt = {
           ...receipt,
           coverage,
           ...(ledgerRow.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
-          ...publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
+          ...await publicLogWitness(getReceiptMerkleTree(), ledgerRow.task_id),
         };
       } catch {
         /* coverage is optional for the preimage route */
@@ -3410,16 +3418,16 @@ export function createApp() {
     return publishReceipt(receipt, req);
   }
 
-  app.get('/receipt/:taskId/preimage', rateLimit, (req, res) => {
+  app.get('/receipt/:taskId/preimage', rateLimit, async (req, res) => {
     try {
       res.set('Cache-Control', 'private, no-store');
-      const receipt = loadPreimageReceipt(req);
+      const receipt = await loadPreimageReceipt(req);
       if (!receipt) return sendPublicMissing(res, false);
       const tx = txQueryValue(req);
       if (tx === null || (tx && !receiptOwnsTx(tx, { receipt, ledgerRow: null }))) {
         return sendPublicMissing(res, false);
       }
-      const { shell } = shellFor(receipt, receipt.task_id);
+      const { shell } = await shellFor(receipt, receipt.task_id);
       const bytes = shellPreimageBytes(shell);
       res.set('Cache-Control', 'private, no-store');
       setPublicShellHeaders(res);
@@ -3634,7 +3642,7 @@ export function createApp() {
   // Prove-key (challenge_id + SessionAct) is the privileged path; AuthorizeSession
   // bind remains for locked session-delegation v1 late-assign.
   // ═══════════════════════════════════════════════════════════════════════
-  app.post('/receipt/:taskId/session/handoff', rateLimit, (req, res) => {
+  app.post('/receipt/:taskId/session/handoff', rateLimit, async (req, res) => {
     try {
       const { taskId: rawTaskId } = req.params;
       const taskId = normalizeTaskIdForLookup(rawTaskId);
@@ -3659,7 +3667,7 @@ export function createApp() {
         const hash = req.body?.delegation_hash
           || req.params?.delegation_hash
           || sessionActStore.peek(challengeId)?.delegation_hash;
-        const approvalGate = gateSessionActApproval(req, {
+        const approvalGate = await gateSessionActApproval(req, {
           action: SESSION_ACT_ACTIONS.HANDOFF,
           delegationHash: hash,
         });
@@ -3697,7 +3705,7 @@ export function createApp() {
             message: 'SessionAct prove-key failed for handoff',
           });
         }
-        const executed = executeSessionAct(req, { ...accepted, action: SESSION_ACT_ACTIONS.HANDOFF, resource: parent.taskId });
+        const executed = await executeSessionAct(req, { ...accepted, action: SESSION_ACT_ACTIONS.HANDOFF, resource: parent.taskId });
         if (executed.status >= 200 && executed.status < 300) {
           recordSessionActApproval(accepted);
         }
@@ -3717,7 +3725,7 @@ export function createApp() {
           message: 'Child handoff requires a valid AuthorizeSession proof or SessionAct prove-key',
         });
       }
-      const { childTask, receipt } = issueChildHandoff(req, parent, bind.session);
+      const { childTask, receipt } = await issueChildHandoff(req, parent, bind.session);
       logger.info({
         reqId: req.id,
         parent: parent.taskId,
@@ -3834,7 +3842,7 @@ export function createApp() {
     }
   });
 
-  app.post('/v1/sessions/:delegation_hash/act', rateLimit, (req, res) => {
+  app.post('/v1/sessions/:delegation_hash/act', rateLimit, async (req, res) => {
     try {
       const hash = req.params.delegation_hash;
       const action = req.body?.action;
@@ -3846,7 +3854,7 @@ export function createApp() {
         });
       }
       const actionHint = action || req.body?.action;
-      const approvalGate = gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
+      const approvalGate = await gateSessionActApproval(req, { action: actionHint, delegationHash: hash });
       if (!approvalGate.allowed) {
         if (isRequestBindingError({ code: approvalGate.code })) {
           const status = approvalGate.code === 'idempotency_conflict' ? 409 : 400;
@@ -3891,7 +3899,7 @@ export function createApp() {
           proof: accepted.proof,
         });
       }
-      const executed = executeSessionAct(req, accepted);
+      const executed = await executeSessionAct(req, accepted);
       if (executed.status >= 200 && executed.status < 300) {
         recordSessionActApproval(accepted);
       }
@@ -4061,7 +4069,7 @@ export function createApp() {
   });
 
   // GET /public/export/:slug — signed pull-export for treasury desks (no session).
-  app.get('/public/export/:slug', rateLimit, (req, res) => {
+  app.get('/public/export/:slug', rateLimit, async (req, res) => {
     const slug = path.basename(String(req.params.slug || ''));
     if (!isKnownPullExportSlug(slug)) {
       return res.status(404).json({ error: 'not_found', message: 'Unknown pull-export slug' });
@@ -4069,7 +4077,7 @@ export function createApp() {
     const format = String(req.query.format || 'json').toLowerCase() === 'csv' ? 'csv' : 'json';
     try {
       const baseUrl = baseUrlFromReq(req);
-      const envelope = buildPublicPullExport(slug, { format, baseUrl });
+      const envelope = await buildPublicPullExport(slug, { format, baseUrl });
       res.set('Cache-Control', 'public, max-age=3600');
       return res.type('application/json; charset=utf-8').json(envelope);
     } catch (err) {
@@ -4112,9 +4120,9 @@ export function createApp() {
   // Append-only issuer key history. Signed by the current issuer key.
   // ?version=N and ?hash= serve a sealed snapshot forever. ?seq= and any
   // other query parameter are 400. The body is stored bytes.
-  app.get('/.well-known/issuer-history.json', (req, res) => {
+  app.get('/.well-known/issuer-history.json', async (req, res) => {
     try {
-      return writeIssuerHistory(res, req.query);
+      return await writeIssuerHistory(res, req.query);
     } catch (err) {
       return sendPublicInternal(res, err, 'GET issuer-history error', 'issuer_history_failed');
     }
@@ -4122,9 +4130,9 @@ export function createApp() {
 
   // Announcement of a commit-pinned third-party copy. Not a custodian.
   // The gateway does not push that repo. Absent when the mirror is unset.
-  app.get('/.well-known/issuer-history-mirror.json', (req, res) => {
+  app.get('/.well-known/issuer-history-mirror.json', async (req, res) => {
     try {
-      return writeIssuerHistoryMirror(res);
+      return await writeIssuerHistoryMirror(res);
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'GET issuer-history-mirror error');
       return res.status(500).json({ error: 'internal', message: err.message });
@@ -4151,9 +4159,9 @@ export function createApp() {
 
   // Anchor wallets the verifier accepts besides the package pin.
   // issuer_root and dns are reserved for the Base registry and _issuer.chit402.com.
-  app.get('/.well-known/anchor-wallets.json', (req, res) => {
+  app.get('/.well-known/anchor-wallets.json', async (req, res) => {
     try {
-      return writeAnchorWallets(res);
+      return await writeAnchorWallets(res);
     } catch (err) {
       return sendPublicInternal(res, err, 'GET anchor-wallets error', 'anchor_wallets_failed');
     }
@@ -4316,6 +4324,7 @@ export function createApp() {
         anchorLagS: log?.anchor_lag_s ?? 0,
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
         receiptFailures: receiptFailureCount(),
+        issuanceCap: issuanceCapHealth(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
@@ -4479,7 +4488,7 @@ export function createApp() {
       const aiListener = getAIListener();
       const task = _findTask(aiListener, taskId);
       if (!task) return null;
-      const receipt = buildReceipt(task, {
+      const receipt = await buildReceipt(task, {
         baseUrl: config.service.publicBaseUrl || '',
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -4517,6 +4526,9 @@ export function createApp() {
           evmOnly: true,
           expectedPayer: agentWallet,
         });
+        if (decision.kind === 'issuance_paused') {
+          return { ok: false, status: 503, error: 'issuance_paused' };
+        }
         if (decision.kind === 'challenge') {
           return {
             ok: false,
@@ -4561,7 +4573,7 @@ export function createApp() {
           return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
         }
         if (typeof setX402PaymentResponseHeaders === 'function') {
-          setX402PaymentResponseHeaders(res, {
+          await setX402PaymentResponseHeaders(res, {
             ref: decision.paymentRef,
             payer: decision.payerWallet || null,
             resourceUrl: resource,
@@ -4585,7 +4597,7 @@ export function createApp() {
         apiKey: req.headers['x-api-key'] || null,
         walletOpts: { provider: aawp.provider, identity: aawp.identity },
         provider: aawp.provider,
-        postA2A: (fields) => recordA2AMessage(fields),
+        postA2A: async (fields) => await recordA2AMessage(fields),
         ensureRegisterStamp,
       });
       if (!result.ok) {
@@ -4620,7 +4632,7 @@ export function createApp() {
     }
   });
 
-  function sendAgentBook(req, res) {
+  async function sendAgentBook(req, res) {
     try {
       const claim = claimFromRequest(req);
       if (req.method === 'POST' && claim.budget !== undefined) {
@@ -4632,7 +4644,7 @@ export function createApp() {
           return res.status(set.status).end();
         }
       }
-      const result = readAgentBook(req.params.agent_id, claim, {
+      const result = await readAgentBook(req.params.agent_id, claim, {
         ledger: usageSettled,
         verify: verifyBook,
         registry: agentRegistry,
@@ -4654,12 +4666,12 @@ export function createApp() {
   app.post('/v1/agents/:agent_id/book', sendAgentBook);
 
   // POST /v1/agents/:agent_id/book/inflow — Unaffiliated inflow (no payment.ref)
-  app.post('/v1/agents/:agent_id/book/inflow', (req, res) => {
+  app.post('/v1/agents/:agent_id/book/inflow', async (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
       const isDemo = isDemoKey(apiKey);
-      const result = recordBookInflow(req.params.agent_id, req.body || {}, {
+      const result = await recordBookInflow(req.params.agent_id, req.body || {}, {
         ledger: usageSettled,
         registry: agentRegistry,
         verify: verifyBook,
@@ -4676,12 +4688,12 @@ export function createApp() {
   });
 
   // POST /v1/agents/:agent_id/book/inflow/correct — Append-only inflow correction
-  app.post('/v1/agents/:agent_id/book/inflow/correct', (req, res) => {
+  app.post('/v1/agents/:agent_id/book/inflow/correct', async (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const apiKey = req.headers['x-api-key'] || null;
       const isDemo = isDemoKey(apiKey);
-      const result = correctBookInflow(req.params.agent_id, req.body || {}, {
+      const result = await correctBookInflow(req.params.agent_id, req.body || {}, {
         ledger: usageSettled,
         registry: agentRegistry,
         verify: verifyBook,
@@ -4739,6 +4751,9 @@ export function createApp() {
           resource,
           body: {},
         });
+        if (decision.kind === 'issuance_paused') {
+          return { ok: false, status: 503, error: 'issuance_paused' };
+        }
         if (decision.kind === 'challenge') {
           return {
             ok: false,
@@ -4772,7 +4787,7 @@ export function createApp() {
             code: 'stamp_underpaid',
           };
         }
-        setX402PaymentResponseHeaders(res, {
+        await setX402PaymentResponseHeaders(res, {
           ref: decision.paymentRef,
           payer: decision.payerWallet || null,
           resourceUrl: resource,
@@ -4836,10 +4851,10 @@ export function createApp() {
 
   // GET /v1/agents/:agent_id/book/lineage/:task_id — Possession-gated lineage query
   // Per whitepaper: A→B→inference is one row-chain. A2A disputes need this.
-  app.get('/v1/agents/:agent_id/book/lineage/:task_id', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/lineage/:task_id', async (req, res) => {
     try {
       const claim = claimFromRequest(req);
-      const result = queryLineage(req.params.agent_id, req.params.task_id, claim, {
+      const result = await queryLineage(req.params.agent_id, req.params.task_id, claim, {
         ledger: usageSettled,
         verify: verifyBook,
       });
@@ -4920,7 +4935,7 @@ export function createApp() {
   });
 
   // GET|POST /v1/agents/:agent_id/book/export — possession-gated accounting export
-  app.get('/v1/agents/:agent_id/book/export', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/export', async (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -4938,7 +4953,7 @@ export function createApp() {
       const format = req.query.format || 'csv';
       const limit = req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, {
+      const result = await exportAgentBook(id, {
         session,
         proof,
         limit,
@@ -4970,7 +4985,7 @@ export function createApp() {
     }
   });
 
-  app.post('/v1/agents/:agent_id/book/export', (req, res) => {
+  app.post('/v1/agents/:agent_id/book/export', async (req, res) => {
     try {
       const body = req.body || {};
       const claim = claimFromRequest(req);
@@ -4989,7 +5004,7 @@ export function createApp() {
       const format = body.format || req.query.format || 'csv';
       const limit = body.limit ?? req.query.limit;
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const result = exportAgentBook(id, {
+      const result = await exportAgentBook(id, {
         session,
         proof,
         limit,
@@ -5352,7 +5367,7 @@ export function createApp() {
       }
 
       const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
-      const recordBookRow = (row) => usageSettled.recordA2aEscrowEvent({
+      const recordBookRow = async (row) => await usageSettled.recordA2aEscrowEvent({
         agentId: row.agentId,
         jobId: row.jobId,
         phase: row.phase,
@@ -5494,7 +5509,7 @@ export function createApp() {
     commitStampWaiver,
   });
 
-  function loadFullReceipt(rawId) {
+  async function loadFullReceipt(rawId) {
     const baseUrl = config.service.publicBaseUrl || '';
     const taskId = normalizeTaskIdForLookup(String(rawId || ''));
     const ledgerRow = usageSettled.findByTask(taskId) || usageSettled.findByTask(rawId);
@@ -5513,7 +5528,7 @@ export function createApp() {
       if (spend) return { receipt: spend, ledgerRow, taskId };
       return null;
     }
-    const receipt = buildReceipt(task, {
+    const receipt = await buildReceipt(task, {
       baseUrl,
       signingSecret: config.receipts?.signingSecret,
       coSignerSecret: config.receipts?.coSignerSecret,
@@ -5525,7 +5540,7 @@ export function createApp() {
     return { receipt, ledgerRow, taskId };
   }
 
-  function listOwnedReceipts() {
+  async function listOwnedReceipts() {
     const rows = [];
     let tasks = [];
     try {
@@ -5534,7 +5549,7 @@ export function createApp() {
     } catch { tasks = []; }
     for (const task of tasks) {
       if (!task?.taskId) continue;
-      const loaded = loadFullReceipt(task.taskId);
+      const loaded = await loadFullReceipt(task.taskId);
       if (loaded) rows.push(loaded);
     }
     return rows;
@@ -5583,13 +5598,13 @@ export function createApp() {
         // Listener is not up in some tests. The receipt is still returned on the job.
       }
     },
-    gateAgentRecord(req, res) {
+    async gateAgentRecord(req, res) {
       const started = Date.now();
       const id = Number(req.params.agent_id);
       const identity = Number.isInteger(id) && id > 0 ? agentRegistry.get(id) : null;
       const session = ownerView.sessionFromReq(req);
       const owns = !!(identity && session?.kind === 'agent' && Number(session.agentId) === id);
-      if (!owns) return sendGenericNotFound(res, started, 12);
+      if (!owns) return await sendGenericNotFound(res, started, 12);
       const result = getAgentRecord(id, {}, {
         registry: agentRegistry,
         jobs: boardJobs,
@@ -5597,7 +5612,7 @@ export function createApp() {
         houseAgentIds: houseAgentIdsFromEnv(),
         actor: { agent_id: id },
       });
-      if (!result?.ok) return sendGenericNotFound(res, started, 12);
+      if (!result?.ok) return await sendGenericNotFound(res, started, 12);
       res.removeHeader('Access-Control-Allow-Origin');
       res.removeHeader('Access-Control-Allow-Credentials');
       res.set('Cache-Control', 'private, no-store');
@@ -5779,9 +5794,9 @@ export async function startServer() {
         const opened = openDurableChallengeStore(storePath, { createIfMissing: false });
         startLateIssueResolver(opened, {
           cfg: config.x402,
-          recordLedger: (receipt) => {
+          recordLedger: async (receipt) => {
             try {
-              recordLateIssueReceipt(receipt);
+              await recordLateIssueReceipt(receipt);
             } catch (err) {
               logger.warn({ err: err.message }, 'late-issue ledger write failed');
             }
@@ -5852,8 +5867,8 @@ export async function startServer() {
   // Initialize the issuer ECDSA key for receipt signing.
   // Production refuses a missing or empty ISSUER_PRIVATE_KEY. Local and test
   // runs still generate an ephemeral key when the variable is unset.
-  const { kid } = initIssuerKey();
-  logger.info({ kid }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
+  const signer = await initIssuerSigner();
+  logger.info({ kid: signer.kid, signer: signer.kind }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 
   // The signing key is never a guardian. A partial mirror pin refuses to
   // start. A pin whose sha256 is not the current well-known document refuses
@@ -5861,16 +5876,16 @@ export async function startServer() {
   try {
     assertSigningKeyNotGuardian();
     const mirror = assertIssuerHistoryMirrorBoot();
-    if (mirror) issuerHistoryMirrorClaim(currentIssuerHistory());
+    if (mirror) issuerHistoryMirrorClaim(await currentIssuerHistory());
   } catch (err) {
     logger.error({ err }, 'Issuer history mirror or guardian check failed');
     throw err;
   }
 
-  const app = createApp();
+  const app = await createApp();
   // A revoked or retired signing key fails here, before listen. A stale
   // in-place history edit does not stop signing; revocation is an append.
-  assertIssuerHistoryBoot();
+  await assertIssuerHistoryBoot();
   await finishReceiptLogBoot(getReceiptMerkleTree());
   try {
     const probed = await probeConfiguredSettlementRpcs(config.x402);
@@ -5963,7 +5978,7 @@ const isMainModule =
    process.argv[1].endsWith('server'));
 
 if (isMainModule) {
-  startServer().catch((err) => {
+  await startServer().catch((err) => {
     logger.error({ err }, 'Fatal: M2M API server failed to start');
     process.exit(1);
   });

@@ -104,6 +104,9 @@ export function registerBoardJobRoutes(app, deps) {
       resource,
       body: {},
     });
+    if (decision.kind === 'issuance_paused') {
+      return { ok: false, status: 503, error: 'issuance_paused' };
+    }
     if (decision.kind === 'challenge') {
       return { ok: false, status: 402, error: 'stamp_payment_required', message: STAMP_DUE, challenge: decision.body };
     }
@@ -200,6 +203,9 @@ export function registerBoardJobRoutes(app, deps) {
       evmOnly: true,
       strictTaskId: true,
     });
+    if (decision.kind === 'issuance_paused') {
+      return { ok: false, status: 503, error: 'issuance_paused' };
+    }
     if (decision.kind === 'challenge') {
       return {
         ok: false,
@@ -261,7 +267,7 @@ app.post('/v1/board/jobs', async (req, res) => {
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
       const result = await createBoardJob(req.body || {}, jobDeps(req, actor.ok ? actor.identity : null, {
-        ensureStamp: () => ensureStamp(req, res, apiKey, 'job'),
+        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'job'),
       }));
       if (result.ok && apiKey && result.body && typeof commitStampWaiver === 'function') {
         const waiver = typeof peekStampWaiver === 'function' ? peekStampWaiver(apiKey) : { eligible: false };
@@ -298,7 +304,7 @@ app.post('/v1/board/jobs', async (req, res) => {
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
       const result = await placeBoardBid(req.params.id, req.body || {}, jobDeps(req, actor.ok ? actor.identity : null, {
-        ensureStamp: () => ensureStamp(req, res, apiKey, 'bid'),
+        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'bid'),
       }));
       return sendResult(res, result);
     } catch {
@@ -306,12 +312,12 @@ app.post('/v1/board/jobs', async (req, res) => {
     }
   });
 
-  app.post('/v1/board/jobs/:id/pick', (req, res) => {
+  app.post('/v1/board/jobs/:id/pick', async (req, res) => {
     try {
       if (!requireJobs(res)) return;
       const actor = actorOf(req);
       if (!actor.ok) return sendResult(res, actor);
-      return sendResult(res, awardBoardBid(req.params.id, req.body || {}, jobDeps(req, actor.identity)));
+      return sendResult(res, await awardBoardBid(req.params.id, req.body || {}, jobDeps(req, actor.identity)));
     } catch {
       return res.status(500).json({ error: 'internal', message: 'Board award failed' });
     }
@@ -335,7 +341,7 @@ app.post('/v1/board/jobs', async (req, res) => {
       if (!actor.ok) return sendResult(res, actor);
       req.res = res;
       const result = await payBoardJob(req.params.id, jobDeps(req, actor.identity, {
-        settleLeg: (spec) => settleLeg(req, spec),
+        settleLeg: async (spec) => await settleLeg(req, spec),
       }));
       return sendResult(res, result);
     } catch {
@@ -376,12 +382,12 @@ app.post('/v1/board/jobs', async (req, res) => {
     }
   });
 
-  app.post('/v1/board/inbound/completions', (req, res) => {
+  app.post('/v1/board/inbound/completions', async (req, res) => {
     try {
       if (!requireJobs(res)) return;
       const header = req.headers['x-chit-board-inbound']
         || String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-      const result = ingestExternalCompletion(req.body || {}, jobDeps(req, null, {
+      const result = await ingestExternalCompletion(req.body || {}, jobDeps(req, null, {
         inboundAuth: authorizeInbound(header),
       }));
       return sendResult(res, result);

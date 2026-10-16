@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Pluggable issuer signer.** `ISSUER_SIGNER` defaults to `env`. Signatures, `kid`, and JWKS are unchanged when it is unset. `ISSUER_SIGNER=kms` uses AWS KMS (`ECC_NIST_P256`, `ECDSA_SHA_256`), checks the kid at boot, and does not fall back to `ISSUER_PRIVATE_KEY`. KMS signatures are low-S 64-byte JOSE. The env signer normalises low-S only when `ISSUER_SIGNER_LOW_S=true`. Sync `signJws` throws `issuer_signer_async_required` while KMS is selected. Any other `ISSUER_SIGNER` value refuses to boot. Book writes run one at a time and wait for the ledger load. A receipt append still publishes the daily head in the background. Receipt signs can be capped with `ISSUER_CAP_RECEIPTS_PER_HOUR` and `ISSUER_CAP_RECEIPTS_PER_DAY` (both unset means off). At the soft threshold, paid routes return 503 `issuance_paused` before the challenge and before settle. At the hard cap the signer throws `issuance_cap`. A late-issue row is written when `X402_LATE_ISSUE` is on. When it is off, the log line is `issuance_cap_lost_receipt` and carries the receipt id only. Heads, history, anchor wallets, exports, and offers are not capped. `GET /health` reports `issuance.cap` counts and state. See [docs/ops/issuer-kms.md](docs/ops/issuer-kms.md). Not published. No deploy. No AWS calls in tests.
+
 ### Fixed
 - **A later Base anchor clears a stored anchor error.** `bundleStatus()` counted every Base error row, so a kept `anchor_clock_drift` rejection left `last_error` set and `/health` `degraded` after later anchors succeeded with `consecutive_failures` 0. An error row counts only when it follows the last successful Base anchor in journal order. A newer rejection still degrades health. Not published. No deploy.
 

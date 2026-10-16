@@ -62,7 +62,7 @@ async function post(url, { headers = {}, body = {}, payment = undefined, nonce =
   const h = { 'content-type': 'application/json', ...headers };
   if (nonce) h['x-payment-nonce'] = nonce;
   if (payment !== undefined && payment !== null) h['x-payment'] = payment;
-  return read(await fetch(url, { method: 'POST', headers: h, body: JSON.stringify(body) }));
+  return await read(await fetch(url, { method: 'POST', headers: h, body: JSON.stringify(body) }));
 }
 
 before(async () => {
@@ -73,7 +73,7 @@ before(async () => {
     blockNumber: 12,
   }));
   await initAIListener();
-  app = createApp();
+  app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

@@ -56,12 +56,12 @@ function paid(over = {}) {
   };
 }
 
-function bookWith(n, prefix) {
+async function bookWith(n, prefix) {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   let recorded = null;
   for (let i = 0; i < n; i++) {
-    recorded = recordCollectedSpend(paid({
+    recorded = await recordCollectedSpend(paid({
       task_id: `${prefix}-${i}`,
       ref: `base:0x${prefix}${i}`,
       amount: String(1000 + i),
@@ -76,11 +76,11 @@ function fresh() {
   resetCoverageSignatureStats();
 }
 
-test('two coverage reads return the same JWS and do not sign again', () => {
+test('two coverage reads return the same JWS and do not sign again', async () => {
   fresh();
-  const { ledger, recorded } = bookWith(1, 'stable');
-  const first = coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
-  const second = coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
+  const { ledger, recorded } = await bookWith(1, 'stable');
+  const first = await coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
+  const second = await coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
   assert.equal(second.issuer_signature.jws, first.issuer_signature.jws);
   assert.equal(second.issuer_signature.kid, first.issuer_signature.kid);
   assert.equal(verifyExportCoverage(first).valid, true);
@@ -90,23 +90,23 @@ test('two coverage reads return the same JWS and do not sign again', () => {
   assert.equal(after.hits, 1);
 
   clearCoverageSignatureMemory();
-  const restarted = coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
+  const restarted = await coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'stable-0' });
   assert.equal(restarted.issuer_signature.jws, first.issuer_signature.jws);
   assert.equal(coverageSignatureStats().signed, 1);
   assert.equal(coverageSignatureStats().hits, 2);
 });
 
-test('adding a row changes the claims and the signature', () => {
+test('adding a row changes the claims and the signature', async () => {
   fresh();
-  const { ledger, registry, recorded } = bookWith(1, 'grow');
-  const before = coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'grow-0' });
-  const added = recordCollectedSpend(paid({
+  const { ledger, registry, recorded } = await bookWith(1, 'grow');
+  const before = await coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'grow-0' });
+  const added = await recordCollectedSpend(paid({
     task_id: 'grow-1',
     ref: 'base:0xgrow1',
     amount: '1001',
   }), { ledger, registry, agentId: recorded.agent_id });
   assert.equal(added.ok, true);
-  const after = coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'grow-0' });
+  const after = await coverageForLedger(ledger, recorded.agent_id, { subjectTaskId: 'grow-0' });
   assert.notEqual(after.universe_hash, before.universe_hash);
   assert.notEqual(after.enumerated_count, before.enumerated_count);
   assert.notEqual(after.issuer_signature.jws, before.issuer_signature.jws);
@@ -118,7 +118,7 @@ test('adding a row changes the claims and the signature', () => {
   );
 });
 
-test('a changed claim cannot reuse a stored signature', () => {
+test('a changed claim cannot reuse a stored signature', async () => {
   fresh();
   const base = buildExportCoverage({
     bookId: 9,
@@ -128,7 +128,7 @@ test('a changed claim cannot reuse a stored signature', () => {
     scope: { limit: 1 },
     subjectTaskId: 'claim-a',
   });
-  const signed = signExportCoverage(base, { baseUrl: 'https://api.chit402.com' });
+  const signed = await signExportCoverage(base, { baseUrl: 'https://api.chit402.com' });
   const tampered = {
     ...base,
     universe_hash: 'ff'.repeat(32),
@@ -145,7 +145,7 @@ test('a changed claim cannot reuse a stored signature', () => {
     issuer_signature: signed.issuer_signature,
   }));
   clearCoverageSignatureMemory();
-  const again = signExportCoverage(tampered, { baseUrl: 'https://api.chit402.com' });
+  const again = await signExportCoverage(tampered, { baseUrl: 'https://api.chit402.com' });
   assert.notEqual(again.issuer_signature.jws, signed.issuer_signature.jws);
   const verified = verifyExportCoverage(again);
   assert.equal(verified.valid, true, verified.reason);
@@ -153,12 +153,12 @@ test('a changed claim cannot reuse a stored signature', () => {
   assert.equal(verifyJws(signed.issuer_signature.jws, publicJwk).payload.universe_hash, base.universe_hash);
 });
 
-test('a cache entry from another ledger is not served', () => {
+test('a cache entry from another ledger is not served', async () => {
   fresh();
-  const a = bookWith(1, 'ledger-a');
-  const b = bookWith(1, 'ledger-b');
-  const covA = coverageForLedger(a.ledger, a.recorded.agent_id, { subjectTaskId: 'ledger-a-0' });
-  const covB = coverageForLedger(b.ledger, b.recorded.agent_id, { subjectTaskId: 'ledger-b-0' });
+  const a = await bookWith(1, 'ledger-a');
+  const b = await bookWith(1, 'ledger-b');
+  const covA = await coverageForLedger(a.ledger, a.recorded.agent_id, { subjectTaskId: 'ledger-a-0' });
+  const covB = await coverageForLedger(b.ledger, b.recorded.agent_id, { subjectTaskId: 'ledger-b-0' });
   assert.notEqual(covA.issuer_signature.jws, covB.issuer_signature.jws);
   assert.notEqual(covA.universe_hash, covB.universe_hash);
 
@@ -173,14 +173,14 @@ test('a cache entry from another ledger is not served', () => {
     issuer_signature: covA.issuer_signature,
   }));
   clearCoverageSignatureMemory();
-  const served = coverageForLedger(b.ledger, b.recorded.agent_id, { subjectTaskId: 'ledger-b-0' });
+  const served = await coverageForLedger(b.ledger, b.recorded.agent_id, { subjectTaskId: 'ledger-b-0' });
   assert.notEqual(served.issuer_signature.jws, covA.issuer_signature.jws);
   assert.equal(verifyExportCoverage(served).valid, true);
   assert.equal(verifyExportCoverage(served).payload.book_id, b.recorded.agent_id);
   assert.equal(verifyExportCoverage(served).payload.universe_hash, covB.universe_hash);
 });
 
-test('request fields cannot poison the cache or the filename', () => {
+test('request fields cannot poison the cache or the filename', async () => {
   fresh();
   const coverage = buildExportCoverage({
     bookId: 4,
@@ -200,8 +200,8 @@ test('request fields cannot poison the cache or the filename', () => {
     issuer_signature: { jws: 'attacker.two.sig', kid: 'also-not' },
     cache_key: '../coverage-signatures',
   };
-  const first = signExportCoverage(attackerA, { baseUrl: 'https://api.chit402.com' });
-  const second = signExportCoverage(attackerB, { baseUrl: 'https://api.chit402.com' });
+  const first = await signExportCoverage(attackerA, { baseUrl: 'https://api.chit402.com' });
+  const second = await signExportCoverage(attackerB, { baseUrl: 'https://api.chit402.com' });
   assert.equal(second.issuer_signature.jws, first.issuer_signature.jws);
   assert.notEqual(first.issuer_signature.jws, 'attacker.one.sig');
   assert.equal(verifyExportCoverage(first).valid, true);
@@ -215,7 +215,7 @@ test('request fields cannot poison the cache or the filename', () => {
   assert.equal(coverageSignatureStats().signed, 1);
 });
 
-test('rotating the issuer key invalidates a stored coverage signature', () => {
+test('rotating the issuer key invalidates a stored coverage signature', async () => {
   fresh();
   const previous = process.env.ISSUER_PRIVATE_KEY;
   const coverage = buildExportCoverage({
@@ -229,7 +229,7 @@ test('rotating the issuer key invalidates a stored coverage signature', () => {
     process.env.ISSUER_PRIVATE_KEY = pemEnv();
     _resetIssuerKey();
     clearCoverageSignatureCache();
-    const first = signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
+    const first = await signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
     const kidA = first.issuer_signature.kid;
     const jwkA = getIssuerPublicKeyJwk();
     assert.equal(verifyJws(first.issuer_signature.jws, jwkA).valid, true);
@@ -238,7 +238,7 @@ test('rotating the issuer key invalidates a stored coverage signature', () => {
     _resetIssuerKey();
     const jwkB = getIssuerPublicKeyJwk();
     assert.notEqual(jwkB.kid, kidA);
-    const second = signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
+    const second = await signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
     assert.notEqual(second.issuer_signature.jws, first.issuer_signature.jws);
     assert.equal(second.issuer_signature.kid, jwkB.kid);
     assert.equal(verifyExportCoverage(second).valid, true);
@@ -255,7 +255,7 @@ test('rotating the issuer key invalidates a stored coverage signature', () => {
       issuer_signature: first.issuer_signature,
     }));
     clearCoverageSignatureMemory();
-    const served = signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
+    const served = await signExportCoverage(coverage, { baseUrl: 'https://api.chit402.com' });
     assert.notEqual(served.issuer_signature.jws, first.issuer_signature.jws);
     assert.equal(verifyJws(served.issuer_signature.jws, getJwks().keys[0]).valid, true);
     assert.equal(served.issuer_signature.kid, jwkB.kid);
@@ -267,23 +267,26 @@ test('rotating the issuer key invalidates a stored coverage signature', () => {
   }
 });
 
-test('the cache stays bounded', () => {
+test('the cache stays bounded', async () => {
   fresh();
   const previous = process.env.COVERAGE_SIG_CACHE_MAX;
   process.env.COVERAGE_SIG_CACHE_MAX = '2';
   try {
     clearCoverageSignatureCache();
-    const signed = [1, 2, 3].map((id) => signExportCoverage(buildExportCoverage({
-      bookId: id,
-      universe: [],
-      enumerated: [],
-      scanComplete: true,
-      scope: { limit: 1 },
-      subjectTaskId: `bound-${id}`,
-    })));
+    const signed = [];
+    for (const id of [1, 2, 3]) {
+      signed.push(await signExportCoverage(buildExportCoverage({
+        bookId: id,
+        universe: [],
+        enumerated: [],
+        scanComplete: true,
+        scope: { limit: 1 },
+        subjectTaskId: `bound-${id}`,
+      })));
+    }
     const names = fs.readdirSync(dir).filter((name) => /^[0-9a-f]{64}\.json$/.test(name));
     assert.equal(names.length, 2);
-    const againFirst = signExportCoverage(buildExportCoverage({
+    const againFirst = await signExportCoverage(buildExportCoverage({
       bookId: 1,
       universe: [],
       enumerated: [],
@@ -292,7 +295,7 @@ test('the cache stays bounded', () => {
       subjectTaskId: 'bound-1',
     }));
     assert.notEqual(againFirst.issuer_signature.jws, signed[0].issuer_signature.jws);
-    const againThird = signExportCoverage(buildExportCoverage({
+    const againThird = await signExportCoverage(buildExportCoverage({
       bookId: 3,
       universe: [],
       enumerated: [],
@@ -310,7 +313,7 @@ test('the cache stays bounded', () => {
   }
 });
 
-test('a restart keeps post-restart signatures ahead of leftover sequence numbers', () => {
+test('a restart keeps post-restart signatures ahead of leftover sequence numbers', async () => {
   fresh();
   const previous = process.env.COVERAGE_SIG_CACHE_MAX;
   process.env.COVERAGE_SIG_CACHE_MAX = '2';
@@ -335,12 +338,12 @@ test('a restart keeps post-restart signatures ahead of leftover sequence numbers
       scope: { limit: 1 },
       subjectTaskId: `restart-${id}`,
     });
-    const first = signExportCoverage(coverageFor(41));
-    const second = signExportCoverage(coverageFor(42));
+    const first = await signExportCoverage(coverageFor(41));
+    const second = await signExportCoverage(coverageFor(42));
     clearCoverageSignatureMemory();
     restartCoverageStoreSeq();
-    const againFirst = signExportCoverage(coverageFor(41));
-    const againSecond = signExportCoverage(coverageFor(42));
+    const againFirst = await signExportCoverage(coverageFor(41));
+    const againSecond = await signExportCoverage(coverageFor(42));
     assert.equal(againFirst.issuer_signature.jws, first.issuer_signature.jws);
     assert.equal(againSecond.issuer_signature.jws, second.issuer_signature.jws);
     assert.equal(coverageSignatureStats().signed, 2);
