@@ -1784,7 +1784,12 @@ export class ReceiptMerkleTree {
       return last;
     }
 
-    const priorBase = baseAnchoredForRoot(this.heads, root, this.anchorState);
+    let priorBase = baseAnchoredForRoot(this.heads, root, this.anchorState);
+    // A tx the clock gate already rejected cannot anchor a later head of the same root. Send a fresh one.
+    if (priorBase?.tx && (this.anchorIntents || []).some((row) => row.chain === 'base'
+      && row.status === 'replaced' && row.reason === 'anchor_clock_drift' && sameHex(row.tx, priorBase.tx))) {
+      priorBase = null;
+    }
     let reserved = null;
     const reserveBase = Boolean(this.dir) && (nonce != null || process.env.RECEIPT_ANCHOR_PRIVATE_KEY);
     let anchor = null;
@@ -2472,10 +2477,10 @@ export class ReceiptMerkleTree {
     });
   }
 
-  async _maybeReplaceStuck(intent, { root, day, send, lookup, request, now }) {
+  async _maybeReplaceStuck(intent, { root, day, send, lookup, request, now, factor = 1 }) {
     const at = Date.parse(intent.at || '');
     const nowMs = now instanceof Date ? now.getTime() : Date.parse(now || '');
-    if (!Number.isFinite(at) || !Number.isFinite(nowMs) || nowMs - at < anchorStuckMs()) return null;
+    if (!Number.isFinite(at) || !Number.isFinite(nowMs) || nowMs - at < anchorStuckMs() * factor) return null;
     return this._replaceAtNonce(intent, { root, day, send, lookup, request });
   }
 
@@ -2664,6 +2669,12 @@ export class ReceiptMerkleTree {
     if ((found?.blocked || found?.pending) && !found?.rebroadcast) {
       const failed = this._noteSendFailure(intent, new Error(found.reason || 'rpc_error'));
       return this._blockedPublish(root, intent, failed.reason);
+    }
+    if (found?.rebroadcast && intent.raw && intent.status === 'broadcast') {
+      // Dropped for 6x the stuck age: rebroadcasting the same bytes is not working. Bump at the nonce.
+      const stuck = await this._maybeReplaceStuck(intent, { root, day, send, lookup, request, now, factor: 6 });
+      if (stuck) return stuck;
+      this.lastAnchorError = 'prior_nonce_dropped';
     }
     if (this._backoffActive(intent, now)) {
       return this._blockedPublish(root, intent, intent.reason || 'anchor_backoff');
