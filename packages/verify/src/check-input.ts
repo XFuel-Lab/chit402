@@ -23,6 +23,7 @@ import {
 } from './anchor-witness.js';
 import { isReceiptShell } from './shell.js';
 import {
+  epochHistoryKeyAllowed,
   resolveIssuerHistory,
   type IssuerHistoryDocument,
   type ResolvedIssuerHistory,
@@ -216,10 +217,22 @@ async function publicShellAbsence(
   }
 }
 
-function epochRecordSignatureOk(
+function sameEpochKey(a: Es256Jwk, b: Es256Jwk): boolean {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
+}
+
+/**
+ * The epoch record is trusted only when its ES256 signature matches the
+ * epochs, orphans, and unlogged claims, and the signing key was `active`
+ * at `publishedAt` (or the JWS `iat`) and this history never revokes it.
+ * A production pin with no history row for that kid stays the package pin.
+ * A revoked or retired history key does not, even when the bytes verify.
+ */
+export function epochRecordSignatureOk(
   record: EpochRecord,
   jws: string,
   history: IssuerHistoryDocument | null,
+  publishedAt: unknown = null,
 ): boolean {
   let kid: string | null = null;
   try {
@@ -230,13 +243,15 @@ function epochRecordSignatureOk(
   }
   const keys: Es256Jwk[] = [];
   const embedded = (record.issuer_signature as { issuer_jwk?: Es256Jwk } | null | undefined)?.issuer_jwk;
-  if (embedded && DEFAULT_TRUSTED_ISSUER_KIDS.some((pin) => pin === jwkThumbprint(embedded))) {
-    keys.push(embedded);
-  }
+  const pin = embedded && DEFAULT_TRUSTED_ISSUER_KIDS.some((id) => id === jwkThumbprint(embedded))
+    ? embedded
+    : null;
+  if (pin) keys.push(pin);
   for (const entry of history?.entries || []) {
     const jwk = entry?.jwk as Es256Jwk | undefined;
     if (!jwk) continue;
     if (kid && entry.kid !== kid && jwk.kid !== kid) continue;
+    if (keys.some((have) => sameEpochKey(have, jwk))) continue;
     keys.push(jwk);
   }
   for (const key of keys) {
@@ -248,7 +263,21 @@ function epochRecordSignatureOk(
     const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
     const recordUnlogged = record.unlogged === undefined ? null : record.unlogged;
     if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) continue;
-    return true;
+    const signerKid = kid || key.kid || null;
+    const at = payload.iat != null ? payload.iat : publishedAt;
+    const inHistory = (history?.entries || []).some((row) => (
+      signerKid != null && (row.kid === signerKid || row.jwk?.kid === signerKid)
+    ));
+    if (inHistory) {
+      if (!epochHistoryKeyAllowed(history, signerKid, at)) continue;
+      const listed = (history?.entries || []).some((row) => (
+        row.jwk && sameEpochKey(row.jwk as Es256Jwk, key)
+        && (row.kid === signerKid || row.jwk.kid === signerKid)
+      ));
+      if (!listed) continue;
+      return true;
+    }
+    if (pin && sameEpochKey(key, pin)) return true;
   }
   return false;
 }
@@ -321,7 +350,12 @@ export async function freshPublicLog(
       trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
       epochRecord,
       verifyEpochSignature: epochRecord
-        ? (jws) => epochRecordSignatureOk(epochRecord as EpochRecord, jws, history)
+        ? (jws) => epochRecordSignatureOk(
+          epochRecord as EpochRecord,
+          jws,
+          history,
+          (head as { published_at?: unknown }).published_at ?? null,
+        )
         : undefined,
     });
     if (result.overall === 'verified') {

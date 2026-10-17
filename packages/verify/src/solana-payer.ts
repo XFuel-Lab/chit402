@@ -6,7 +6,7 @@
  * as authority (x402 exact-svm) without trusting Chit logs.
  */
 
-import { jsonRpc, rpcFailureReason } from './rpc-deadline.js';
+import { jsonRpc, openRpcDeadline, rpcFailureReason, SOLANA_RPC_TIMEOUT_MS } from './rpc-deadline.js';
 
 /** Solana mainnet USDC mint (SPL, 6 decimals). */
 export const SOLANA_USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -191,20 +191,53 @@ export function inferUsdcOutflowFromBalances(
 }
 
 /**
+ * Net USDC credited to token accounts owned by `owner` in this transaction,
+ * from pre/post token balances. Mint-checked, so another token never counts.
+ */
+export function inferUsdcInflowFromBalances(
+  tx: SolanaRpcGetTransactionResult,
+  owner: string,
+  mint: string = SOLANA_USDC_MINT_MAINNET,
+): bigint {
+  const pre = tx.meta?.preTokenBalances || [];
+  const post = tx.meta?.postTokenBalances || [];
+  const before = new Map<number, bigint>();
+  for (const row of pre) {
+    if (row.mint !== mint || row.owner !== owner) continue;
+    before.set(row.accountIndex, BigInt(row.uiTokenAmount?.amount || '0'));
+  }
+  let totalIn = 0n;
+  for (const row of post) {
+    if (row.mint !== mint || row.owner !== owner) continue;
+    const after = BigInt(row.uiTokenAmount?.amount || '0');
+    const was = before.get(row.accountIndex) ?? 0n;
+    if (after > was) totalIn += after - was;
+  }
+  return totalIn;
+}
+
+/**
  * Default JSON-RPC fetcher for getTransaction (jsonParsed).
+ * One request, 30s, no retry. A caller-supplied signal replaces that clock.
  */
 export async function fetchSolanaTransaction(
   signature: string,
   rpcUrl?: string,
+  signal?: AbortSignal,
 ): Promise<SolanaRpcGetTransactionResult | null> {
   const url = resolveRpcUrl(rpcUrl);
-  const result = await jsonRpc(url, 'getTransaction', [
-    signature,
-    { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
-  ]);
-  if (result == null) return null;
-  if (typeof result !== 'object') throw new Error('rpc_error: solana transaction was not an object');
-  return result as SolanaRpcGetTransactionResult;
+  const owned = signal ? null : openRpcDeadline(SOLANA_RPC_TIMEOUT_MS);
+  try {
+    const result = await jsonRpc(url, 'getTransaction', [
+      signature,
+      { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+    ], signal ?? owned?.signal);
+    if (result == null) return null;
+    if (typeof result !== 'object') throw new Error('rpc_error: solana transaction was not an object');
+    return result as SolanaRpcGetTransactionResult;
+  } finally {
+    owned?.cancel();
+  }
 }
 
 export interface VerifySolanaPayerInput {
@@ -212,6 +245,11 @@ export interface VerifySolanaPayerInput {
   payerWallet: string;
   grossAmount: string | number | bigint;
   mint?: string;
+  /**
+   * Signed payee wallet (owner of the receiving USDC account). Required for a
+   * pass: a transfer from the payer to anyone else is not this payment.
+   */
+  payee?: string | null;
   rpcUrl?: string;
   fetchTransaction?: SolanaRpcFetcher;
 }
@@ -281,10 +319,34 @@ export async function verifySolanaPayer(input: VerifySolanaPayerInput): Promise<
   const accountKeys = tx.transaction?.message?.accountKeys || [];
   const payerIsSigner = accountKeys.some((k) => accountPubkey(k) === payerWallet && isSigner(k));
 
+  const payee = String(input.payee || '').trim();
+  if (!isSolanaBase58Pubkey(payee)) {
+    return {
+      checked: false,
+      valid: false,
+      signature,
+      payerWallet,
+      expectedAmount: expectedAmount.toString(),
+      mint,
+      reason: 'no_payee',
+    };
+  }
+  const credited = inferUsdcInflowFromBalances(tx, payee, mint);
+  const payeeShort = () => ({
+    checked: true,
+    valid: false,
+    signature,
+    payerWallet,
+    expectedAmount: expectedAmount.toString(),
+    mint,
+    reason: `payee_mismatch: USDC credited to ${payee} is ${credited}, expected ${expectedAmount}`,
+  });
+
   const transfers = extractUsdcTransfersFromTx(tx, mint);
   const authorityMatch = transfers.find((t) => t.authority === payerWallet && t.amount >= expectedAmount);
 
   if (authorityMatch) {
+    if (credited < expectedAmount) return payeeShort();
     return {
       checked: true,
       valid: true,
@@ -299,6 +361,7 @@ export async function verifySolanaPayer(input: VerifySolanaPayerInput): Promise<
   // x402 exact-svm: payer may co-sign while authority is their ATA owner — accept signer + balance delta.
   const outflow = inferUsdcOutflowFromBalances(tx, payerWallet, mint);
   if (payerIsSigner && outflow >= expectedAmount) {
+    if (credited < expectedAmount) return payeeShort();
     return {
       checked: true,
       valid: true,

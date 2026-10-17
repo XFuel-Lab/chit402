@@ -425,6 +425,20 @@ test('a null payer receipt is not exit 0 when the log was not the failure', asyn
   }
 });
 
+test('a fabricated payment.ref is exit 2', async () => {
+  const source = loadFixture('chit-5d775d12.v7.json');
+  const forged = resign(source, { payment: { ref: 'base:not-a-transaction' } });
+  const outcome = await checkReceiptInput(JSON.stringify(forged.receipt), {
+    publicInput: true,
+    trustedKids: [forged.kid, PRODUCTION],
+    rpcUrl: 'http://127.0.0.1:9',
+  });
+  assert.equal(outcome.verdict.exit_code, 2, JSON.stringify(outcome.verdict));
+  assert.equal(outcome.verdict.result, 'could_not_check');
+  assert.notEqual(outcome.verdict.result, 'verified');
+  assert.equal(outcome.verdict.checks.payment_binding, 'could_not_check');
+});
+
 test('an unsupported rail and a missing payer field are exit 2', async () => {
   const source = loadFixture('chit-5d775d12.v7.json');
   const rail = resign(source, { payment: { ref: 'card:not-a-chain' } });

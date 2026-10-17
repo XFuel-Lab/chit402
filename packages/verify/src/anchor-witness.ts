@@ -24,7 +24,7 @@ import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { boundRowHash } from './row-hash.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
-import { jsonRpc, openRpcDeadline } from './rpc-deadline.js';
+import { jsonRpc, openRpcDeadline, SOLANA_RPC_TIMEOUT_MS } from './rpc-deadline.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PROGRAM_ID_V1 = 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo';
@@ -398,9 +398,14 @@ async function defaultRpc(url: string, method: string, params: unknown[], signal
 }
 
 export async function fetchSolanaGenesisHash(rpcUrl: string, signal?: AbortSignal): Promise<string> {
-  const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], signal);
-  if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
-  return result;
+  const owned = signal ? null : openRpcDeadline(SOLANA_RPC_TIMEOUT_MS);
+  try {
+    const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], signal ?? owned?.signal);
+    if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
+    return result;
+  } finally {
+    owned?.cancel();
+  }
 }
 
 export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string): Promise<BaseAnchorTx | null> {
@@ -779,9 +784,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       errors.push('fee_payer_missing');
     } else {
       solana.checked = true;
+      const solanaClock = openRpcDeadline(SOLANA_RPC_TIMEOUT_MS);
       try {
-        const fetchTx = input.fetchSolanaTx || ((sig, url) => fetchSolanaTransaction(sig, url) as Promise<SolanaAnchorTx | null>);
-        const fetchGenesis = input.fetchGenesis || fetchSolanaGenesisHash;
+        const fetchTx = input.fetchSolanaTx || ((sig, url) => fetchSolanaTransaction(sig, url, solanaClock.signal) as Promise<SolanaAnchorTx | null>);
+        const fetchGenesis = input.fetchGenesis || ((url: string) => fetchSolanaGenesisHash(url, solanaClock.signal));
         const tx = await fetchTx(signature, solanaRpc);
         if (!tx) {
           solana.reason = 'tx_not_found';
@@ -819,6 +825,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
         }
       } catch (err) {
         solana.reason = err instanceof Error ? err.message : 'solana_rpc_error';
+      } finally {
+        solanaClock.cancel();
       }
       if (!solana.valid && solana.reason) errors.push(`solana:${solana.reason}`);
     }

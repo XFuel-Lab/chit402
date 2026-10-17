@@ -182,7 +182,7 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 
 The command is `chit402-verify <id|url|file|-> [--issuer-history <file>] [--json]`. `-h`/`--help` and `-V`/`--version` exit 0. Any other flag, and any argument after `--`, exits 1. `unsupported_version` is exit 2 and is decided before any chain RPC. No flag turns it into a pass.
 
-Offline, with no RPC reachable, a signed receipt is exit 2. It is not exit 0. Old receipts still verify when the signed transfer is on chain and the log check passes. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
+Offline, with no RPC reachable, a signed receipt is exit 2. It is not exit 0. A fabricated `payment.ref` is also exit 2: the chain was not checked, so it is not a mismatch. Old receipts still verify when the signed transfer is on chain and the log check passes. Solana credits the signed payee in USDC; a missing payee is exit 2. Base RPC waits 12 seconds. Solana RPC waits 30 seconds. Neither retries. The epoch record is trusted only for a history key that was active at the head time and was never revoked. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
 
 ## Receipt versions
 

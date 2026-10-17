@@ -6,6 +6,9 @@
 
 export const RPC_TIMEOUT_MS = 12_000;
 
+/** One Solana JSON-RPC check. No retry. The payer call is one request; an anchor adds genesis under the same cap when a shared signal is passed. */
+export const SOLANA_RPC_TIMEOUT_MS = 30_000;
+
 export function rpcFailureReason(err: unknown): string {
   const name = err && typeof err === 'object' && 'name' in err
     ? String((err as { name?: string }).name)
@@ -66,9 +69,10 @@ export async function jsonRpc(
   method: string,
   params: unknown[],
   signal?: AbortSignal,
+  timeoutMs: number = RPC_TIMEOUT_MS,
 ): Promise<unknown> {
   assertHermeticRpc(url);
-  const owned = signal ? null : openRpcDeadline();
+  const owned = signal ? null : openRpcDeadline(timeoutMs);
   try {
     const res = await fetch(url, {
       method: 'POST',

@@ -148,6 +148,7 @@ export async function verifyPayerBinding(
       paymentRef,
       payerWallet,
       grossAmount,
+      payee,
       rpcUrl: options.solanaRpcUrl || options.rpcUrl,
       fetchTransaction: options.fetchSolanaTransaction,
     });
