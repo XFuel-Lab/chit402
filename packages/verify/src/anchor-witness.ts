@@ -23,7 +23,7 @@ import { assessIssuerPin, type AssessIssuerPinInput, type IssuerPinAssessment } 
 import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { boundRowHash } from './row-hash.js';
-import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
+import { SOLANA_RPC_URL } from './solana-payer.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PROGRAM_ID_V1 = 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo';
@@ -41,11 +41,26 @@ export const SOLANA_GENESIS: Record<string, string> = {
 
 export const BASE_MAINNET_CHAIN_ID = 8453;
 
+/**
+ * Blocks the Base anchor must sit behind the tip before it counts.
+ * Base block time is about 2 seconds, so 12 blocks is about 24 seconds.
+ * A shallower receipt is not final: the sequencer can still reorg it.
+ * This is a fixed depth, not the `safe` tag. `safe` on Base waits for L1
+ * derivation and is not a constant number of blocks.
+ */
+export const BASE_ANCHOR_MIN_CONFIRMATIONS = 12;
+
+/** Solana `getTransaction` commitment for an anchor. Confirmed is not enough. */
+export const SOLANA_ANCHOR_COMMITMENT = 'finalized' as const;
+
+/** JSON-RPC budget for one anchor call. A hung node is not a pass. */
+export const ANCHOR_RPC_TIMEOUT_MS = 8_000;
+
 export const ANCHOR_PROVES = [
   'This receipt leaf is inside the tree of the stated size, under the stated root.',
   'The tree head carries a valid ES256 issuer signature. The kid is trusted by the production pin, issuer history, or JWKS, and the signed root, size, epoch, and anchors match the head.',
-  'The Solana transaction memo contains that root, its fee payer is the signed fee payer, and the RPC genesis hash is the cluster named on the head.',
-  'The Base transaction calldata is that same root, on chain id 8453, and its sender is the signed anchor wallet.',
+  'The Solana transaction memo contains that root, its fee payer is the signed fee payer, the transaction is finalized, and the RPC genesis hash is the cluster named on the head.',
+  `The Base transaction receipt succeeded, its block is at least ${BASE_ANCHOR_MIN_CONFIRMATIONS} blocks below the tip, its calldata is that same root, on chain id 8453, and its sender is the signed anchor wallet.`,
   'Those wallets are on the issuer anchor-wallet list: the package pin, or a signed well-known or issuer-history list.',
 ];
 
@@ -126,12 +141,17 @@ interface SolanaIx {
 
 export interface SolanaAnchorTx {
   slot?: number;
+  /** Set by some RPCs. Anything other than `finalized` is not an anchor. */
+  confirmationStatus?: string | null;
+  /** Set when the fetcher recorded the commitment it requested. */
+  commitment?: string | null;
   meta?: {
     err?: unknown;
     logMessages?: string[];
     innerInstructions?: Array<{ instructions?: SolanaIx[] }>;
   } | null;
   transaction?: {
+    signatures?: string[];
     message?: {
       instructions?: SolanaIx[];
       accountKeys?: Array<{ pubkey?: string; signer?: boolean } | string>;
@@ -142,12 +162,28 @@ export interface SolanaAnchorTx {
 export interface BaseAnchorTx {
   hash?: string;
   input?: string;
-  chainId?: number;
+  /**
+   * Chain id from `eth_chainId`. Null means the RPC did not name a chain.
+   * A missing id is not skipped.
+   */
+  chainId?: number | string | null;
   from?: string;
+  /** Receipt status. `0x1` / `1` succeeded. `0x0` / `0` reverted. Null means no receipt. */
+  status?: number | string | null;
+  blockNumber?: number | string | null;
+  /** Tip from `eth_blockNumber`. Depth is tip minus the anchor block. */
+  tipBlockNumber?: number | string | null;
+  /**
+   * Chain id carried on the transaction itself, when the node sent one.
+   * A value that disagrees with `chainId` is not an anchor.
+   */
+  txChainId?: number | string | null;
+  /** Set when the fetcher already classified an RPC failure. */
+  rpcCode?: string | null;
 }
 
 export interface AnchorWitnessResult {
-  overall: 'verified' | 'partial' | 'pending' | 'failed' | 'not_in_log';
+  overall: 'verified' | 'partial' | 'pending' | 'failed' | 'not_in_log' | 'could_not_check';
   root: string | null;
   inclusion: {
     valid: boolean;
@@ -392,16 +428,152 @@ export function extractMemos(tx: SolanaAnchorTx | null | undefined): string[] {
   return found;
 }
 
-async function defaultRpc(url: string, method: string, params: unknown[]): Promise<unknown> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  });
+function rpcTimedOut(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = (err as { name?: string }).name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
+async function defaultRpc(
+  url: string,
+  method: string,
+  params: unknown[],
+  timeoutMs = ANCHOR_RPC_TIMEOUT_MS,
+): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    if (rpcTimedOut(err)) throw new Error('rpc_timeout');
+    throw err;
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json() as { result?: unknown; error?: { message?: string } };
   if (json.error) throw new Error(json.error.message || 'rpc_error');
   return json.result ?? null;
+}
+
+function parseQuantity(value: unknown): number | null {
+  if (typeof value === 'bigint') {
+    if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(value);
+  }
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    return value;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  try {
+    if (/^0x[0-9a-fA-F]+$/.test(trimmed)) {
+      const n = BigInt(trimmed);
+      if (n > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      return Number(n);
+    }
+  } catch {
+    return null;
+  }
+  if (/^(0|[1-9]\d*)$/.test(trimmed)) {
+    const n = Number(trimmed);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
+}
+
+function parseReceiptStatus(value: unknown): 0 | 1 | null {
+  const n = parseQuantity(value);
+  if (n === 0 || n === 1) return n;
+  return null;
+}
+
+/**
+ * Reasons that mean the anchor was not observed, not that it was a bad anchor.
+ * The verdict is COULD_NOT_CHECK. A reverted receipt and a wrong chain are not
+ * in this set.
+ */
+export const ANCHOR_UNCHECKED_REASONS: readonly string[] = Object.freeze([
+  'tx_not_found',
+  'receipt_missing',
+  'block_number_missing',
+  'confirmation_shallow',
+  'chain_id_missing',
+  'receipt_status_missing',
+  'not_finalized',
+  'base_rpc_null',
+  'base_rpc_error',
+  'base_rpc_timeout',
+  'solana_rpc_null',
+  'solana_rpc_error',
+  'solana_rpc_timeout',
+  'anchor_inconsistent',
+]);
+
+const UNCHECKED_ANCHOR = new Set<string>(ANCHOR_UNCHECKED_REASONS);
+
+export function isUncheckedAnchorReason(reason: string | null | undefined): boolean {
+  return typeof reason === 'string' && UNCHECKED_ANCHOR.has(reason);
+}
+
+export interface BaseAnchorAssessment {
+  ok: boolean;
+  reason?: string;
+  chainId: number | null;
+}
+
+/**
+ * A Base anchor counts only when the receipt succeeded, the chain id is the
+ * one the head named, and the block is at least `BASE_ANCHOR_MIN_CONFIRMATIONS`
+ * behind the tip. A null chain id is not treated as a match.
+ */
+export function assessBaseAnchor(tx: BaseAnchorTx | null, expectedChain: number): BaseAnchorAssessment {
+  if (!tx) return { ok: false, reason: 'tx_not_found', chainId: null };
+  if (tx.rpcCode) return { ok: false, reason: tx.rpcCode, chainId: null };
+  if (tx.chainId == null || tx.chainId === '') {
+    return { ok: false, reason: 'chain_id_missing', chainId: null };
+  }
+  const chainId = parseQuantity(tx.chainId);
+  if (chainId == null) return { ok: false, reason: 'chain_id_missing', chainId: null };
+  if (chainId !== Number(expectedChain)) return { ok: false, reason: 'chain_mismatch', chainId };
+  if (tx.txChainId != null && tx.txChainId !== '') {
+    const embedded = parseQuantity(tx.txChainId);
+    if (embedded == null || embedded !== chainId) {
+      return { ok: false, reason: 'chain_mismatch', chainId: embedded };
+    }
+  }
+  if (tx.status == null || tx.status === '') {
+    return { ok: false, reason: 'receipt_missing', chainId };
+  }
+  const status = parseReceiptStatus(tx.status);
+  if (status == null) return { ok: false, reason: 'receipt_status_missing', chainId };
+  if (status === 0) return { ok: false, reason: 'tx_reverted', chainId };
+  if (tx.blockNumber == null || tx.blockNumber === '') {
+    return { ok: false, reason: 'block_number_missing', chainId };
+  }
+  const blockNumber = parseQuantity(tx.blockNumber);
+  if (blockNumber == null) return { ok: false, reason: 'block_number_missing', chainId };
+  if (tx.tipBlockNumber == null || tx.tipBlockNumber === '') {
+    return { ok: false, reason: 'base_rpc_null', chainId };
+  }
+  const tip = parseQuantity(tx.tipBlockNumber);
+  if (tip == null) return { ok: false, reason: 'base_rpc_null', chainId };
+  if (tip - blockNumber < BASE_ANCHOR_MIN_CONFIRMATIONS) {
+    return { ok: false, reason: 'confirmation_shallow', chainId };
+  }
+  return { ok: true, chainId };
+}
+
+function mapAnchorRpcError(err: unknown, side: 'base' | 'solana'): string {
+  const message = err instanceof Error ? err.message : '';
+  if (message === 'rpc_timeout' || message === `${side}_rpc_timeout`) return `${side}_rpc_timeout`;
+  if (message === `${side}_rpc_null` || message === `${side}_rpc_error`) return message;
+  if (side === 'solana' && (message === 'no_genesis' || message === 'not_finalized')) return message;
+  return `${side}_rpc_error`;
 }
 
 export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
@@ -410,16 +582,104 @@ export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
   return result;
 }
 
-export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string): Promise<BaseAnchorTx | null> {
-  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { hash?: string; input?: string; from?: string } | null;
-  const chainHex = await defaultRpc(rpcUrl, 'eth_chainId', []) as string | null;
-  if (!tx) return null;
+/**
+ * Load the named Base anchor. The receipt, the chain id, and the tip are
+ * required. A null answer is not filled in from an older anchor hash.
+ */
+export async function fetchBaseAnchorTransaction(
+  txHash: string,
+  rpcUrl: string,
+  timeoutMs = ANCHOR_RPC_TIMEOUT_MS,
+): Promise<BaseAnchorTx | null> {
+  let tx: {
+    hash?: string;
+    input?: string;
+    from?: string;
+    blockNumber?: string | null;
+    chainId?: string | number | null;
+  } | null;
+  let receipt: {
+    status?: string | number | null;
+    blockNumber?: string | null;
+    from?: string;
+    transactionHash?: string;
+  } | null;
+  let chainHex: string | null;
+  let tipHex: string | null;
+  try {
+    tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash], timeoutMs) as typeof tx;
+    receipt = await defaultRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash], timeoutMs) as typeof receipt;
+    chainHex = await defaultRpc(rpcUrl, 'eth_chainId', [], timeoutMs) as string | null;
+    tipHex = await defaultRpc(rpcUrl, 'eth_blockNumber', [], timeoutMs) as string | null;
+  } catch (err) {
+    throw new Error(mapAnchorRpcError(err, 'base'));
+  }
+  const chainMissing = chainHex == null || chainHex === '';
+  const tipMissing = tipHex == null || tipHex === '';
+  if (tx == null && receipt == null && chainMissing && tipMissing) {
+    throw new Error('base_rpc_null');
+  }
+  if (tx == null && receipt == null) return null;
+  const want = txHash.toLowerCase();
+  const hashes = [tx?.hash, receipt?.transactionHash]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .map((value) => value.toLowerCase());
+  const hashDisagrees = hashes.some((value) => value !== want);
+  const fromDisagrees = Boolean(
+    tx?.from && receipt?.from && tx.from.toLowerCase() !== receipt.from.toLowerCase(),
+  );
+  const txBlock = tx?.blockNumber == null || tx.blockNumber === '' ? null : parseQuantity(tx.blockNumber);
+  const receiptBlock = receipt?.blockNumber == null || receipt.blockNumber === ''
+    ? null
+    : parseQuantity(receipt.blockNumber);
+  const blockDisagrees = txBlock != null && receiptBlock != null && txBlock !== receiptBlock;
+  if (hashDisagrees || fromDisagrees || blockDisagrees) {
+    return {
+      hash: tx?.hash || receipt?.transactionHash || txHash,
+      input: tx?.input,
+      from: receipt?.from || tx?.from,
+      chainId: chainMissing ? null : chainHex,
+      txChainId: tx?.chainId ?? null,
+      status: receipt == null ? null : (receipt.status ?? null),
+      blockNumber: receipt == null ? null : (receipt.blockNumber ?? null),
+      tipBlockNumber: tipMissing ? null : tipHex,
+      rpcCode: 'anchor_inconsistent',
+    };
+  }
   return {
-    hash: tx.hash,
-    input: tx.input,
-    from: tx.from,
-    chainId: chainHex ? Number(chainHex) : undefined,
+    hash: tx?.hash || receipt?.transactionHash || txHash,
+    input: tx?.input,
+    from: receipt?.from || tx?.from,
+    chainId: chainMissing ? null : chainHex,
+    txChainId: tx?.chainId ?? null,
+    status: receipt == null ? null : (receipt.status ?? null),
+    blockNumber: receipt == null ? null : (receipt.blockNumber ?? null),
+    tipBlockNumber: tipMissing ? null : tipHex,
   };
+}
+
+/**
+ * Solana anchor read. `commitment` is `finalized`. A processed or confirmed
+ * transaction is not returned by a node that honors that commitment.
+ */
+export async function fetchSolanaAnchorTransaction(
+  signature: string,
+  rpcUrl: string,
+  timeoutMs = ANCHOR_RPC_TIMEOUT_MS,
+): Promise<SolanaAnchorTx | null> {
+  let result: unknown;
+  try {
+    result = await defaultRpc(rpcUrl, 'getTransaction', [signature, {
+      encoding: 'jsonParsed',
+      maxSupportedTransactionVersion: 0,
+      commitment: SOLANA_ANCHOR_COMMITMENT,
+    }], timeoutMs);
+  } catch (err) {
+    throw new Error(mapAnchorRpcError(err, 'solana'));
+  }
+  if (result == null) return null;
+  if (typeof result !== 'object') throw new Error('solana_rpc_error');
+  return result as SolanaAnchorTx;
 }
 
 export interface NewestAnchor {
@@ -479,7 +739,7 @@ export async function fetchNewestSolanaAnchorRoot(
   rpcUrl: string,
   fetchTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>,
 ): Promise<NewestAnchor | null> {
-  const load = fetchTx || ((signature, url) => fetchSolanaTransaction(signature, url) as Promise<SolanaAnchorTx | null>);
+  const load = fetchTx || ((signature, url) => fetchSolanaAnchorTransaction(signature, url));
   let before: string | undefined;
   for (let page = 0; page < NEWEST_ANCHOR_PAGE_CAP; page += 1) {
     const query: { limit: number; before?: string } = { limit: NEWEST_ANCHOR_PAGE_LIMIT };
@@ -782,13 +1042,22 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     } else {
       solana.checked = true;
       try {
-        const fetchTx = input.fetchSolanaTx || ((sig, url) => fetchSolanaTransaction(sig, url) as Promise<SolanaAnchorTx | null>);
+        const fetchTx = input.fetchSolanaTx || ((sig, url) => fetchSolanaAnchorTransaction(sig, url));
         const fetchGenesis = input.fetchGenesis || fetchSolanaGenesisHash;
         const tx = await fetchTx(signature, solanaRpc);
+        const reportedCommitment = tx?.confirmationStatus ?? tx?.commitment ?? null;
         if (!tx) {
           solana.reason = 'tx_not_found';
+        } else if (reportedCommitment != null && reportedCommitment !== SOLANA_ANCHOR_COMMITMENT) {
+          solana.reason = 'not_finalized';
         } else if (tx.meta?.err) {
           solana.reason = 'tx_failed';
+        } else if (
+          Array.isArray(tx.transaction?.signatures)
+          && tx.transaction.signatures.length > 0
+          && tx.transaction.signatures[0] !== signature
+        ) {
+          solana.reason = 'signature_mismatch';
         } else {
           const memos = extractMemos(tx);
           const recorded = input.head.anchors?.solana?.memo || null;
@@ -820,7 +1089,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
           }
         }
       } catch (err) {
-        solana.reason = err instanceof Error ? err.message : 'solana_rpc_error';
+        solana.reason = mapAnchorRpcError(err, 'solana');
       }
       if (!solana.valid && solana.reason) errors.push(`solana:${solana.reason}`);
     }
@@ -836,24 +1105,28 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       try {
         const fetchBase = input.fetchBaseTx || fetchBaseAnchorTransaction;
         const tx = await fetchBase(txHash, baseRpc);
-        const expectedChain = input.head.anchors?.base?.chain_id || input.head.anchor?.chain_id || BASE_MAINNET_CHAIN_ID;
-        if (!tx) {
-          base.reason = 'tx_not_found';
-        } else if (tx.chainId != null && Number(tx.chainId) !== Number(expectedChain)) {
-          base.reason = 'chain_mismatch';
-          base.chain_id = Number(tx.chainId);
+        const expectedChain = Number(
+          input.head.anchors?.base?.chain_id || input.head.anchor?.chain_id || BASE_MAINNET_CHAIN_ID,
+        );
+        const assessed = assessBaseAnchor(tx, expectedChain);
+        if (!assessed.ok) {
+          base.reason = assessed.reason;
+          if (assessed.chainId != null) base.chain_id = assessed.chainId;
+        } else if (tx?.hash && tx.hash.toLowerCase() !== txHash.toLowerCase()) {
+          base.reason = 'tx_hash_mismatch';
+          base.chain_id = assessed.chainId;
         } else {
-          const inputData = String(tx.input || '').toLowerCase().replace(/^0x/, '');
+          const inputData = String(tx?.input || '').toLowerCase().replace(/^0x/, '');
           if (inputData !== root) base.reason = 'calldata_mismatch';
-          else if (!tx.from || !sameBaseAddress(tx.from, signedFrom)) base.reason = 'sender_mismatch';
+          else if (!tx?.from || !sameBaseAddress(tx.from, signedFrom)) base.reason = 'sender_mismatch';
           else {
             base.valid = true;
             base.tx = tx.hash || txHash;
-            base.chain_id = tx.chainId ?? expectedChain;
+            base.chain_id = assessed.chainId;
           }
         }
       } catch (err) {
-        base.reason = err instanceof Error ? err.message : 'base_rpc_error';
+        base.reason = mapAnchorRpcError(err, 'base');
       }
       if (!base.valid && base.reason) errors.push(`base:${base.reason}`);
     }
@@ -892,8 +1165,13 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   }
 
   let overall: AnchorWitnessResult['overall'];
-  const anchorSideFailed = (solana.reason && solana.reason !== 'pending' && solana.reason !== 'pending_anchor')
-    || (base.reason && base.reason !== 'pending' && base.reason !== 'pending_anchor');
+  const anchorSideFailed = [solana.reason, base.reason].some((reason) => (
+    Boolean(reason)
+    && reason !== 'pending'
+    && reason !== 'pending_anchor'
+    && !isUncheckedAnchorReason(reason)
+  ));
+  const anchorUnchecked = isUncheckedAnchorReason(solana.reason) || isUncheckedAnchorReason(base.reason);
   const pendingOk = pendingLeaf
     && inclusionReason === 'pending_anchor'
     && headTrust.ok
@@ -930,10 +1208,11 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     || anchorSideFailed
     || staleReason
     || errors.includes('head_not_anchored')
-    || (solana.checked && !solana.valid)
-    || (base.checked && !base.valid)
+    || (solana.checked && !solana.valid && !isUncheckedAnchorReason(solana.reason))
+    || (base.checked && !base.valid && !isUncheckedAnchorReason(base.reason))
     || pinFailed
   ) overall = 'failed';
+  else if (anchorUnchecked) overall = 'could_not_check';
   else if (solana.valid && base.valid) overall = 'verified';
   else overall = 'partial';
 
@@ -973,7 +1252,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     },
     proves: overall === 'pending'
       ? ['This leaf is past the anchored tree size. It waits for the next anchor.']
-      : ANCHOR_PROVES,
+      : overall === 'verified' || overall === 'partial'
+        ? ANCHOR_PROVES
+        : [],
     does_not_prove: doesNotProve,
     errors,
     issuer_pin: issuerPin,

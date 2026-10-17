@@ -112,6 +112,9 @@ function fixture() {
     input: `0x${root}`,
     chainId: 8453,
     from: PINNED_BASE_ANCHOR_WALLET,
+    status: '0x1',
+    blockNumber: '0x64',
+    tipBlockNumber: '0x70',
   };
   return { key, head, receipt, inclusion, solanaTx, baseTx, root };
 }

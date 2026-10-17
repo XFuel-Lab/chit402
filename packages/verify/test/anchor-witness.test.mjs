@@ -122,7 +122,15 @@ function fixture() {
       },
     },
   };
-  const baseTx = { hash: head.anchors.base.tx, input: `0x${root}`, chainId: 8453, from: PINNED_BASE_ANCHOR_WALLET };
+  const baseTx = {
+    hash: head.anchors.base.tx,
+    input: `0x${root}`,
+    chainId: 8453,
+    from: PINNED_BASE_ANCHOR_WALLET,
+    status: '0x1',
+    blockNumber: '0x64',
+    tipBlockNumber: '0x70',
+  };
   return {
     receipt,
     inclusion,
