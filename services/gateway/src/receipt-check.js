@@ -44,8 +44,8 @@ export const RECEIPT_CHECK_MAX_BYTES = 65_536;
 export const RECEIPT_CHECK_WINDOW_MS = 60_000;
 export const RECEIPT_CHECK_MAX_HITS = 30;
 export const RECEIPT_CHECK_ACCEPTED = ['receipt JSON', 'a chit- id', 'a verify link'];
-export const RECEIPT_CHECK_EXAMPLE = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
-export const RECEIPT_CHECK_INPUT_HINT = 'Paste receipt JSON, a chit- id, or a verify link.';
+export const RECEIPT_CHECK_EXAMPLE = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
+export const RECEIPT_CHECK_INPUT_HINT = 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.';
 
 const ENVELOPE_BYTES = 64;
 const LIMITER_MAX_KEYS = 50_000;
@@ -277,7 +277,7 @@ export function mountReceiptCheck(app, options = {}) {
         return res.status(413).json(envelope({
           error: 'payload_too_large',
           message: 'Receipt input is too large.',
-          hint: 'Paste a shorter receipt, or a chit- id, or a verify link.',
+          hint: 'Paste a shorter receipt, or a chit- or xfuel- id, or a verify link.',
           accepted: RECEIPT_CHECK_ACCEPTED,
           example: RECEIPT_CHECK_EXAMPLE,
           request_id: id,

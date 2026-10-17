@@ -47,8 +47,19 @@ test('400 and 413 are an input error, not INVALID', () => {
   assert.equal(large.overall === 'INVALID', false);
   assert.deepEqual(bad.accepted, ['receipt JSON', 'a chit- id', 'a verify link']);
   assert.equal(bad.example, 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944');
-  assert.equal(bad.hint, 'Paste receipt JSON, a chit- id, or a verify link.');
+  assert.equal(bad.hint, 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.');
   assert.equal(bad.lines.includes(bad.hint), false);
+});
+
+test('a server-sent example replaces the local fallback', () => {
+  const sent = 'xfuel-sent-by-the-check-server';
+  const view = receiptCheckView(400, {
+    error: 'receipt_required',
+    message: 'Paste a receipt, a receipt id, or a receipt URL.',
+    example: sent,
+  });
+  assert.equal(view.kind, 'input-error');
+  assert.equal(view.example, sent);
 });
 
 test('invalid and could-not-check keep the same headlines', () => {
