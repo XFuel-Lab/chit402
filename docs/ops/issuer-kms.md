@@ -45,7 +45,7 @@ The runtime principal has no Decrypt, Verify, Create, Import, Disable, ScheduleK
 
 1. Create an external key: `aws kms create-key --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY --origin EXTERNAL` and alias `alias/chit402-issuer-v1`.
 2. Import the current PKCS#8 material with `RSA_AES_KEY_WRAP_SHA_256`, then wipe the local DER. The RFC 7638 thumbprint does not change, so verifier 0.4.2 and existing receipts stay valid.
-3. Dry-run: `ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=… ISSUER_KMS_REGION=eu-west-3 ISSUER_KID=… ISSUER_JWKS_URL=https://api.chit402.com/.well-known/jwks.json node scripts/issuer-kms-check.mjs`. It prints `kid`, `jwks match|mismatch|skipped`, and `PASS` or `FAIL <code>`.
+3. Dry-run: `ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=… ISSUER_KMS_REGION=eu-west-3 ISSUER_KID=… ISSUER_JWKS_URL=https://api.chit402.com/.well-known/jwks.json node scripts/issuer-kms-check.mjs`. It prints `kid`, `jwks match|mismatch|unavailable|skipped`, and `PASS` or `FAIL <code>`.
 4. Set `ISSUER_SIGNER=kms`, `ISSUER_KMS_KEY_ID`, `ISSUER_KMS_REGION`, and `ISSUER_KID`. Restart. `GET /health` and a local verify of a new receipt must succeed.
 5. Leave `ISSUER_PRIVATE_KEY` in `.env` during the soak. `ISSUER_SIGNER=env` rollback needs it. Removing it is a separate later step. Keep one sealed offline backup until Phase 2.
 
@@ -84,7 +84,7 @@ ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=alias/chit402-issuer-v1 ISSUER_KMS_REGION=eu
   node scripts/issuer-kms-check.mjs
 ```
 
-The script calls `GetPublicKey`, signs one fixed message, and verifies it locally. When `ISSUER_JWKS_URL` is set it sends one GET (5 second timeout, no body) and requires exactly one published key whose `kid`, `x`, and `y` match the signer, then verifies that same signature with the JWKS key. It prints three lines and nothing else:
+The script calls `GetPublicKey`, signs one fixed message, and verifies it locally. When `ISSUER_JWKS_URL` is set it must be `https`. The script sends one GET (5 second timeout, no body, redirects refused) and requires exactly one published key whose `kid`, `x`, and `y` match the signer, then verifies that same signature with the JWKS key. It prints three lines and nothing else:
 
 ```
 kid <kid>
@@ -92,7 +92,7 @@ jwks match
 PASS
 ```
 
-`jwks` is `match`, `mismatch`, or `skipped` when `ISSUER_JWKS_URL` is unset. A failure prints `FAIL <code>` and exits 1. `<code>` is the error code when it is a short lowercase token, otherwise `error`. The script does not print the signature, the key, env values, or the error message.
+`jwks` is `match`, `mismatch`, `unavailable`, or `skipped`. `unavailable` means the JWKS could not be fetched or the URL was refused. `skipped` means `ISSUER_JWKS_URL` is unset. A failure prints `FAIL <code>` and exits 1. `<code>` is the error code when it is a short lowercase token, otherwise `error`. The script does not print the signature, the key, env values, or the error message.
 
 ## Self-review (receipt signature checklist)
 
