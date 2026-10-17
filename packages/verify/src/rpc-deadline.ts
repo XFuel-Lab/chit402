@@ -6,7 +6,7 @@
 
 export const RPC_TIMEOUT_MS = 12_000;
 
-/** One Solana JSON-RPC check. No retry. The payer call is one request; an anchor adds genesis under the same cap when a shared signal is passed. */
+/** One Solana payer JSON-RPC check. No retry. Anchor calls pass their own timeout into `jsonRpc`. */
 export const SOLANA_RPC_TIMEOUT_MS = 30_000;
 
 export function rpcFailureReason(err: unknown): string {

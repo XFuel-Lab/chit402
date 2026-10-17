@@ -1,0 +1,44 @@
+{
+  "schema": "chit402.recorded_anchor_rpc.v1",
+  "source": "packages/verify/test/fixtures/pardal-head-honest.json",
+  "note": "Offline stand-in for the epoch-2 anchor already stored in this repo. Block numbers place that anchor 12 or more blocks behind the tip. This file is not a live chain response.",
+  "base": {
+    "tx": "0x6afb4117833e1412ad0b10af2fb1ba777544460f9c04a6625a578556e4fa37fe",
+    "from": "0x1844D1F5FE42aff1Cce6F776514Fd40374079582",
+    "chainId": "0x2105",
+    "tip": "0x2000",
+    "transaction": {
+      "hash": "0x6afb4117833e1412ad0b10af2fb1ba777544460f9c04a6625a578556e4fa37fe",
+      "input": "0x1e3c8ad7ba0910dcee9194902681cf3bfc5445c59b2068230514b15b4e4fa28e",
+      "from": "0x1844D1F5FE42aff1Cce6F776514Fd40374079582",
+      "blockNumber": "0x1000"
+    },
+    "receipt": {
+      "transactionHash": "0x6afb4117833e1412ad0b10af2fb1ba777544460f9c04a6625a578556e4fa37fe",
+      "status": "0x1",
+      "blockNumber": "0x1000",
+      "from": "0x1844D1F5FE42aff1Cce6F776514Fd40374079582"
+    }
+  },
+  "solana": {
+    "genesis": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+    "signature": "4nLHmApkgsGNeVyAR7pKwsdVo2kA2czWWzesYJiPvmcM8f45SMTqmG3wtn7AsSL9DveDCSzELDvtDHShtpM5LTBj",
+    "commitment": "finalized",
+    "transaction": {
+      "slot": 454213067,
+      "confirmationStatus": "finalized",
+      "meta": { "err": null },
+      "transaction": {
+        "signatures": ["4nLHmApkgsGNeVyAR7pKwsdVo2kA2czWWzesYJiPvmcM8f45SMTqmG3wtn7AsSL9DveDCSzELDvtDHShtpM5LTBj"],
+        "message": {
+          "accountKeys": [{ "pubkey": "BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD", "signer": true, "writable": true }],
+          "instructions": [{
+            "program": "spl-memo",
+            "programId": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+            "parsed": "chit402:root:v2:global:2026-10-07:1e3c8ad7ba0910dcee9194902681cf3bfc5445c59b2068230514b15b4e4fa28e:f2043ee96b6e9f678b76bb3c512b5d911293dbb2a3bf198c98252c83802f3286:2:dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973:4:190a84631eb90fe925f8aa50e110db503e192662d3ebf6a44d567d8febc992c0"
+          }]
+        }
+      }
+    }
+  }
+}

@@ -5,11 +5,11 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ## 0.4.4 — Payer check is on in the CLI
 
-Numbered 0.4.4. 0.4.3 is the other open verifier change.
+Numbered 0.4.4, above the 0.4.3 anchor-finality release.
 
 ### Security
 - **Exit 0 includes the on-chain payer check.** `chit402-verify` calls `verifyReceipt` with `checkPayer: true`. A USDC transfer that does not match the signed payer, payee, or amount is exit 1 `payment_mismatch`. An RPC timeout, a null receipt, an RPC error, a missing payer field, an unsigned public shell, or an unsupported rail is exit 2 `payer_unchecked` (or the existing log reason when the log was also not checked). It is not exit 0. There is no flag to turn the check off. A fabricated `payment.ref` (a rail this verifier cannot read, or a transaction the RPC does not have) is exit 2, not exit 1: the chain did not disagree, it could not be checked. Solana requires the signed payee to be credited at least the amount in USDC. A legacy `transfer` of another token does not count. A Solana receipt with no signed payee is exit 2. `BUILD_DIGEST.txt` moved because the verifier sources changed. The pinned epoch genesis digests did not. Not published. No deploy.
-- **RPC calls stop.** Base reads use one 12s deadline. The Solana payer `getTransaction` has its own 30s deadline, separate from the Solana anchor reads, which have their own 30s deadline. Neither retries. A deadline is exit 2. The worst case is about 60s of Solana plus 12s of Base.
+- **RPC calls stop.** The payer check and the anchor reads share one JSON-RPC helper: one request, one deadline, no retry. The Base payer read waits 12 seconds. The Solana payer `getTransaction` waits 30 seconds. Base anchor calls keep the 8 second budget (`ANCHOR_RPC_TIMEOUT_MS`). Each Solana anchor call keeps `SOLANA_ANCHOR_RPC_TIMEOUT_MS` (30 seconds). A deadline is exit 2.
 - **The epoch record is a trust path.** `GET /v1/receipts/tree/epoch` is checked when the head names an epoch. The signer has to be `active` at the verified head's `published_at`. The epoch JWS `iat` is not that time. The loaded history must never revoke that kid. A `revoked` or `retired` history key does not sign the epoch, even when the signature bytes verify. A production pin with no history row for that kid stays the package pin.
 - **`--` does not hide a flag.** `chit402-verify receipt.json -- --check-payer` and `chit402-verify receipt.json -- anything` exit 1. The grammar stays `<id|url|file|-> [--issuer-history <file>] [--json]`, plus `-h`/`--help` and `-V`/`--version`.
 
@@ -18,6 +18,13 @@ Numbered 0.4.4. 0.4.3 is the other open verifier change.
 
 ### Changed
 - `@xfuel/verify` 0.4.4 depends on exactly `"chit402-verify": "0.4.4"`. `--version` prints `chit402-verify 0.4.4`. Not published. No deploy.
+
+## 0.4.3 — Anchors must be mined, successful, and final
+
+### Security
+- **A Base anchor is accepted only when its receipt succeeded and the block is at least 12 below the tip.** `fetchBaseAnchorTransaction` reads `eth_getTransactionReceipt`, `eth_chainId`, and `eth_blockNumber` for the hash the head named. Status must be `0x1`, `blockNumber` must be present, and `tip - blockNumber` must be at least `BASE_ANCHOR_MIN_CONFIRMATIONS` (12). Twelve confirmations means the receipt is mined and successful. It is not finality. A requirement that the block be at or below the `safe` tag is a follow-up. Base blocks are about 2 seconds, so a fresh anchor stays `COULD_NOT_CHECK` for about 24 seconds. Pending, no receipt, a null block, a null tip, or a shallow block is `could_not_check`. A reverted receipt (`0x0`) is `tx_reverted` and is not verified. A null or unparseable chain id is `chain_id_missing` and is not skipped. A different chain id, or a transaction chain id that disagrees with `eth_chainId`, stays `chain_mismatch`. A receipt hash, sender, or block that disagrees with the transaction is `anchor_inconsistent`. A receipt with no transaction body is the same code and is `could_not_check`, because there is no calldata to compare. A null RPC, a thrown RPC, and a timeout are `base_rpc_null`, `base_rpc_error`, and `base_rpc_timeout`. None of those fall back to an older anchor hash. `BUILD_DIGEST.txt` moved because `src/anchor-witness.ts` changed. The pinned epoch genesis digests did not. Not published. No deploy.
+- **A Solana anchor is fetched at `finalized`.** `getTransaction` sends `commitment: "finalized"`. Each Solana anchor call has its own budget, `SOLANA_ANCHOR_RPC_TIMEOUT_MS` (30 seconds). A historical `getTransaction` on the public mainnet-beta RPC takes about 11–15 seconds, so the 8 second Base budget is not used for Solana. A null body or a `confirmationStatus` other than `finalized` is `could_not_check`. `meta.err` on a finalized transaction still fails. The full genesis hash comparison is unchanged. The fee-payer list is unchanged: `BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD` stays first.
+- **The Base payer check is unchanged.** It still uses `getTransactionReceipt` with no confirmation depth. That path is separate from the anchor JSON-RPC, and another change is already editing the payer-check default and the RPC timeout. Depth there would collide with that work.
 
 ## 0.4.2 — Solana anchor fee-payer pin is a list
 

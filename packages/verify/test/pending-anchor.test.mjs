@@ -182,6 +182,9 @@ function fetchers(fx, newestRoot = fx.root) {
       input: `0x${fx.root}`,
       chainId: 8453,
       from: PINNED_BASE_ANCHOR_WALLET,
+      status: '0x1',
+      blockNumber: '0x64',
+      tipBlockNumber: '0x70',
     }),
     fetchNewestAnchor: async () => ({ root: newestRoot, signature: 'sig-anchored-4' }),
   };
@@ -559,6 +562,9 @@ test('a missing fee payer fails closed and another listed payer cannot force sta
       input: `0x${fx.root}`,
       chainId: 8453,
       from: PINNED_BASE_ANCHOR_WALLET,
+      status: '0x1',
+      blockNumber: '0x64',
+      tipBlockNumber: '0x70',
     }),
   });
   assert.equal(missingPayer.overall, 'failed');
@@ -616,14 +622,25 @@ test('a foreign-payer memo with a newer root does not force stale_head', async (
       ];
     }
     if (msg.method === 'getTransaction') {
+      const opts = msg.params && msg.params[1];
+      if (!opts || opts.commitment !== 'finalized') return null;
       if (msg.params[0] === 'sig-foreign') return solanaTx(foreignMemo, stranger);
       return solanaTx(fx.memo);
     }
     if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
     if (msg.method === 'eth_chainId') return '0x2105';
     if (msg.method === 'eth_getTransactionByHash') {
-      return { hash: fx.head.anchors.base.tx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET };
+      return { hash: fx.head.anchors.base.tx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET, blockNumber: '0x64' };
     }
+    if (msg.method === 'eth_getTransactionReceipt') {
+      return {
+        transactionHash: fx.head.anchors.base.tx,
+        status: '0x1',
+        blockNumber: '0x64',
+        from: PINNED_BASE_ANCHOR_WALLET,
+      };
+    }
+    if (msg.method === 'eth_blockNumber') return '0x70';
     return null;
   });
   const port = await listen(rpc);

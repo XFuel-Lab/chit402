@@ -16,6 +16,7 @@ import {
 } from './index.js';
 import {
   verifyAnchoredRoot,
+  isUncheckedAnchorReason,
   type AnchorHead,
   type AnchorInclusion,
   type AnchorReceipt,
@@ -382,6 +383,16 @@ export async function freshPublicLog(
       return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
     }
     if (result.overall === 'pending') return missedLog('pending_anchor');
+    if (result.overall === 'could_not_check') {
+      const reason = [result.base.reason, result.solana.reason].find((code) => isUncheckedAnchorReason(code))
+        || 'anchor_unreachable';
+      return {
+        logInclusion: result.inclusion.valid ? 'pass' : 'could_not_check',
+        anchor: 'could_not_check',
+        logReason: reason,
+        log: null,
+      };
+    }
     const hard = hardLogReason(result);
     if (result.overall === 'failed' && hard) {
       const anchorFail = /head_|anchor|mismatch/.test(hard);
@@ -392,6 +403,14 @@ export async function freshPublicLog(
         logReason: hard,
         log: null,
       };
+    }
+    if (result.overall === 'failed') {
+      const definitive = [result.base.reason, result.solana.reason].find((code) => (
+        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch'
+      ));
+      if (definitive) {
+        return { logInclusion: 'pass', anchor: 'fail', logReason: definitive, log: null };
+      }
     }
     return missed;
   } catch {

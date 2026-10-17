@@ -2659,9 +2659,23 @@ test('xfuel-verify --rpc accepts a published v2 head and rejects a forged epoch'
     req.on('end', () => {
       const msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       let result = null;
+      const asked = Array.isArray(msg.params) ? msg.params[0] : baseTx;
       if (msg.method === 'eth_chainId') result = '0x2105';
-      else       if (msg.method === 'eth_getTransactionByHash') {
-        result = { hash: baseTx, input: `0x${head.root}`, from: head.anchors.base.from };
+      else if (msg.method === 'eth_blockNumber') result = '0x70';
+      else if (msg.method === 'eth_getTransactionReceipt') {
+        result = {
+          transactionHash: asked,
+          status: '0x1',
+          blockNumber: '0x64',
+          from: head.anchors.base.from,
+        };
+      } else if (msg.method === 'eth_getTransactionByHash') {
+        result = {
+          hash: asked,
+          input: `0x${head.root}`,
+          from: head.anchors.base.from,
+          blockNumber: '0x64',
+        };
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: head.anchors.solana.slot,
