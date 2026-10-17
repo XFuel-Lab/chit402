@@ -99,3 +99,41 @@ test('an active key is not active before not_before', () => {
     false,
   );
 });
+
+test('a retired key cannot backdate the epoch with its own iat', () => {
+  const pair = keyPair();
+  const retiredAt = '2026-07-01T00:00:00.000Z';
+  const doc = {
+    schema: 'chit402.issuer_history.v1',
+    entries: [
+      {
+        kid: pair.kid,
+        jwk: pair.jwk,
+        alg: 'ES256',
+        not_before: BEFORE,
+        not_after: null,
+        status: 'active',
+        revoked_at: null,
+      },
+      {
+        kid: pair.kid,
+        jwk: pair.jwk,
+        alg: 'ES256',
+        not_before: retiredAt,
+        not_after: null,
+        status: 'retired',
+        revoked_at: null,
+      },
+    ],
+  };
+  const earlyIat = recordFor(pair, { ...claims, iat: AT });
+  assert.equal(
+    epochRecordSignatureOk(earlyIat, earlyIat.issuer_signature.jws, doc, '2026-08-01T00:00:00.000Z'),
+    false,
+  );
+  const lateIat = recordFor(pair, { ...claims, iat: '2026-08-01T00:00:00.000Z' });
+  assert.equal(
+    epochRecordSignatureOk(lateIat, lateIat.issuer_signature.jws, doc, AT),
+    true,
+  );
+});

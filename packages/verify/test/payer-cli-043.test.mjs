@@ -66,7 +66,7 @@ function listen(server) {
   });
 }
 
-const rpcPreload = fileURLToPath(new URL('./rpc-preload.mjs', import.meta.url));
+const rpcPreload = new URL('./rpc-preload.mjs', import.meta.url).href;
 
 function runCli(args, env = {}, timeout = 20000) {
   const started = Date.now();

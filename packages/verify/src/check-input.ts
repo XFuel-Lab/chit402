@@ -224,9 +224,11 @@ function sameEpochKey(a: Es256Jwk, b: Es256Jwk): boolean {
 /**
  * The epoch record is trusted only when its ES256 signature matches the
  * epochs, orphans, and unlogged claims, and the signing key was `active`
- * at `publishedAt` (or the JWS `iat`) and this history never revokes it.
- * A production pin with no history row for that kid stays the package pin.
- * A revoked or retired history key does not, even when the bytes verify.
+ * at the verified head's `published_at`. The epoch JWS `iat` is not that
+ * time: a retired key must not backdate it. This history must never revoke
+ * the kid. A production pin with no history row for that kid stays the
+ * package pin. A revoked or retired history key does not, even when the
+ * bytes verify.
  */
 export function epochRecordSignatureOk(
   record: EpochRecord,
@@ -264,7 +266,7 @@ export function epochRecordSignatureOk(
     const recordUnlogged = record.unlogged === undefined ? null : record.unlogged;
     if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) continue;
     const signerKid = kid || key.kid || null;
-    const at = payload.iat != null ? payload.iat : publishedAt;
+    const at = publishedAt;
     const inHistory = (history?.entries || []).some((row) => (
       signerKid != null && (row.kid === signerKid || row.jwk?.kid === signerKid)
     ));
@@ -350,12 +352,14 @@ export async function freshPublicLog(
       trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
       epochRecord,
       verifyEpochSignature: epochRecord
-        ? (jws) => epochRecordSignatureOk(
-          epochRecord as EpochRecord,
-          jws,
-          history,
-          (head as { published_at?: unknown }).published_at ?? null,
-        )
+        ? (jws) => {
+          const trust = verifyTreeHeadTrust(head, {
+            trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+            issuerHistory: history,
+          });
+          const signedAt = trust.ok ? (trust.payload?.published_at ?? null) : null;
+          return epochRecordSignatureOk(epochRecord as EpochRecord, jws, history, signedAt);
+        }
         : undefined,
     });
     if (result.overall === 'verified') {
