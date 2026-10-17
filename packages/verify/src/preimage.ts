@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { keccak256 } from 'ethers';
 import { inclusionRoot } from './anchor-witness.js';
+import { decodeJwsPayload } from './payer.js';
 import { boundRowHash } from './row-hash.js';
 
 export interface PreimageLeaf {
@@ -295,14 +296,38 @@ function withheld(block: PreimageBlock | null, field: string): boolean {
 }
 
 /**
+ * Row hashes are not receipt claims. The log leaf `task_id|row_hash` binds
+ * them, and the preimage contains `agent_id`, which is not public. A missing
+ * preimage is not a failure. A published preimage that does not match still
+ * fails, and so does a row hash that the receipt JWS actually signs.
+ */
+const UNSIGNED_UNLESS_SIGNED = new Set([
+  'row_hash',
+  'book_chain.row_hash',
+]);
+
+function signedClaimsOf(receipt: Record<string, unknown>): Record<string, unknown> | null {
+  const signature = receipt.issuer_signature;
+  if (!signature || typeof signature !== 'object') return null;
+  const jws = (signature as { jws?: unknown }).jws;
+  if (typeof jws !== 'string' || jws.length === 0) return null;
+  return decodeJwsPayload(jws);
+}
+
+/**
  * Fields a stranger is expected to recompute when they are present.
  * Coverage and tree_head_hash count only when the issuer published a preimage.
  * Output, HMAC, and book-row universe hashes do not.
+ * An unsigned `row_hash` or `book_chain.row_hash` does not.
  */
 export function requiredPreimageFields(receipt: Record<string, unknown>): string[] {
   const block = (receipt.preimages || null) as PreimageBlock | null;
+  const claims = signedClaimsOf(receipt);
   const fields: string[] = [];
   for (const field of ALWAYS_REQUIRED) {
+    if (UNSIGNED_UNLESS_SIGNED.has(field) && !hasHash(readPath((claims || {}) as Record<string, unknown>, field))) {
+      continue;
+    }
     if (hasHash(readPath(receipt, field)) && !withheld(block, field)) fields.push(field);
   }
   for (const field of ['tree_head_hash', 'coverage.universe_hash', 'coverage.enumerated_hash']) {

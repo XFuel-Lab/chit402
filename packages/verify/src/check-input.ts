@@ -9,6 +9,7 @@ import {
   verifyReceipt,
   verifyRefusal,
   isRefusalDocument,
+  signedReceiptId,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   DEFAULT_TRUSTED_JWKS_HOSTS,
   type XFuelReceipt,
@@ -72,8 +73,11 @@ export function historyOptions(resolved: ResolvedIssuerHistory): {
   };
 }
 
+/**
+ * Short form of a task id. Outer `display_id` is unsigned and is not read.
+ * Verdicts use the full signed task id instead of this helper.
+ */
 export function displayIdOf(receipt: { task_id?: string; display_id?: string; receipt_id?: string }): string | null {
-  if (typeof receipt.display_id === 'string' && receipt.display_id) return receipt.display_id;
   const id = receipt.task_id || receipt.receipt_id || '';
   const short = id.match(/^(chit-[0-9a-f]{8})/i);
   return short ? short[1] : (id || null);
@@ -412,6 +416,16 @@ export async function freshPublicLog(
         return { logInclusion: 'pass', anchor: 'fail', logReason: definitive, log: null };
       }
     }
+    // A reached log whose signed head names no chain anchor is not an
+    // unreachable log. `partial` is that case: inclusion held, both anchors pending.
+    if (result.overall === 'partial') {
+      return {
+        logInclusion: result.inclusion.valid ? 'pass' : 'could_not_check',
+        anchor: 'could_not_check',
+        logReason: 'pending',
+        log: null,
+      };
+    }
     return missed;
   } catch {
     return missed;
@@ -643,10 +657,11 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
 
   if (isRefusalDocument(receipt as unknown)) {
     const result = verifyRefusal(receipt as unknown as RefusalDocument, { trustedKids });
+    const refusalId = result.valid ? (result.refusal_id || null) : null;
     const verdict = buildVerifyVerdict({
       version: packageVersion(),
-      receiptId: result.refusal_id || null,
-      displayId: result.refusal_id || null,
+      receiptId: refusalId,
+      displayId: refusalId,
       payloadVersion: result.payload_version ?? null,
       historySource: resolved.source,
       historyHead: resolved.headHash,
@@ -681,8 +696,8 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     const notInLog = logReason === 'not_in_log';
     const verdict = buildVerifyVerdict({
       version: packageVersion(),
-      receiptId: receipt.task_id || null,
-      displayId: displayIdOf(receipt),
+      receiptId: null,
+      displayId: null,
       payloadVersion: null,
       historySource: resolved.source,
       historyHead: resolved.headHash,
@@ -723,10 +738,13 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     log = fresh.log;
   }
 
+  const signedId = result.issuer_signature.valid === true
+    ? signedReceiptId(result.issuer_signature.payload)
+    : null;
   const verdict = buildVerifyVerdict({
     version: packageVersion(),
-    receiptId: result.receipt_id,
-    displayId: displayIdOf(receipt),
+    receiptId: signedId,
+    displayId: signedId,
     payloadVersion: result.receipt_version ?? null,
     historySource: resolved.source,
     historyHead: resolved.headHash,

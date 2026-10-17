@@ -66,7 +66,7 @@ function nodeHash(left, right) {
   return sha256(Buffer.concat([Buffer.from([0x01]), left, right]));
 }
 
-function fixture() {
+function fixture(patch = {}) {
   const taskId = 'task-1';
   const rowHash = 'row-hash-1';
   const leaf = sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(`${taskId}|${rowHash}`)]));
@@ -97,7 +97,7 @@ function fixture() {
         chain_id: 8453,
         from: PINNED_BASE_ANCHOR_WALLET,
       },
-      solana: {
+      solana: patch.solana || {
         status: 'anchored',
         signature: 'sig1',
         slot: 99,
@@ -263,6 +263,33 @@ test('a devnet RPC genesis does not satisfy a mainnet-beta head', async () => {
   });
   assert.equal(result.overall, 'failed');
   assert.equal(result.solana.reason, 'cluster_mismatch');
+});
+
+test('a signed head that anchors Base and leaves Solana pending verifies on Base', async () => {
+  const fx = fixture({
+    solana: {
+      status: 'pending',
+      signature: null,
+      slot: null,
+      cluster: 'mainnet-beta',
+      memo: null,
+      fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER,
+    },
+  });
+  const fetched = fetchers(fx);
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: fx.trustedKids,
+    ...fetched,
+  });
+  assert.equal(result.overall, 'verified', result.errors.join(','));
+  assert.equal(result.inclusion.valid, true);
+  assert.equal(result.base.valid, true);
+  assert.equal(result.solana.reason, 'pending');
+  assert.equal(result.solana.valid, false);
+  assert.deepEqual(fetched.calls, ['base']);
 });
 
 test('pending anchors are partial and do not fetch', async () => {

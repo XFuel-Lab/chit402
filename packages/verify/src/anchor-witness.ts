@@ -823,6 +823,21 @@ function rowHashFrom(
   return { rowHash: bound.row, source: fromReceipt ? 'receipt' : 'inclusion' };
 }
 
+/**
+ * A signed head verifies when every chain it claims is valid, and it claims
+ * at least one. A side with status `pending` is not a claim: the issuer
+ * signed that the anchor is not there. Base-only is the live log. Both
+ * sides pending stays partial.
+ */
+function anchoredChainsVerified(head: AnchorHead, solanaValid: boolean, baseValid: boolean): boolean {
+  const solanaOn = Boolean(solanaSignature(head));
+  const baseOn = Boolean(baseTxHash(head));
+  if (!solanaOn && !baseOn) return false;
+  if (solanaOn && !solanaValid) return false;
+  if (baseOn && !baseValid) return false;
+  return true;
+}
+
 function solanaSignature(head: AnchorHead): string | null {
   const sol = head.anchors?.solana;
   if (!sol || sol.status === 'pending') return null;
@@ -1232,7 +1247,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     || pinFailed
   ) overall = 'failed';
   else if (anchorUnchecked) overall = 'could_not_check';
-  else if (solana.valid && base.valid) overall = 'verified';
+  else if (anchoredChainsVerified(input.head, solana.valid, base.valid)) overall = 'verified';
   else overall = 'partial';
 
   let unloggedReason: string | undefined;

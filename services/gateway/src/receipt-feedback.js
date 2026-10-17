@@ -105,6 +105,7 @@ const REASON_CHECK = {
   issuer_history_seq_mismatch: 'key_window',
   issuer_history_not_extension: 'key_window',
   payment_mismatch: 'payment_binding',
+  claim_mismatch: 'payment_binding',
   binding_mismatch: 'payment_binding',
   not_in_log: 'log_inclusion',
   log_inclusion: 'log_inclusion',
