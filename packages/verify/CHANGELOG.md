@@ -28,6 +28,9 @@ Numbered 0.4.4, above the 0.4.3 anchor-finality release.
 ### Removed
 - The unused pre-0.4 argument parser and `legacyMain` are gone. The running command is the locked verdict.
 
+### Fixed
+- **`fetchBaseAnchorTransaction` closes on its own line.** The return and the function were written as `};}` on one line. The Base anchor reads are unchanged. `BUILD_DIGEST.txt` moved because `src/anchor-witness.ts` changed. The pinned epoch genesis digests did not. Not published. No deploy.
+
 ### Changed
 - `@xfuel/verify` 0.4.4 depends on exactly `"chit402-verify": "0.4.4"`. `--version` prints `chit402-verify 0.4.4`. Not published. No deploy.
 

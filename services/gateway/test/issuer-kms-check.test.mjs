@@ -227,6 +227,43 @@ test('jwks mismatch when x differs', async () => {
   }
 });
 
+test('jwks mismatch when y differs', async () => {
+  const { publicJwk, kid, env, signer } = await boot();
+  const other = publicParts(pair().publicKey);
+  const server = await startJwks({
+    body: { keys: [jwkEntry({ ...publicJwk, y: other.publicJwk.y }, kid)] },
+  });
+  try {
+    const { result, out } = await capture(() => runIssuerKmsCheck({
+      env: { ...env, ISSUER_JWKS_URL: server.url },
+      signer,
+    }));
+    assert.equal(result.exitCode, 1);
+    assert.equal(out, `kid ${kid}\njwks mismatch\nFAIL jwks_mismatch\n`);
+    assertGetOnly(server);
+  } finally {
+    await server.close();
+  }
+});
+
+test('jwks mismatch when the kid is duplicated', async () => {
+  const { publicJwk, kid, env, signer } = await boot();
+  const server = await startJwks({
+    body: { keys: [jwkEntry(publicJwk, kid), jwkEntry(publicJwk, kid)] },
+  });
+  try {
+    const { result, out } = await capture(() => runIssuerKmsCheck({
+      env: { ...env, ISSUER_JWKS_URL: server.url },
+      signer,
+    }));
+    assert.equal(result.exitCode, 1);
+    assert.equal(out, `kid ${kid}\njwks mismatch\nFAIL jwks_mismatch\n`);
+    assertGetOnly(server);
+  } finally {
+    await server.close();
+  }
+});
+
 test('FAIL when the signer kid is absent from the JWKS', async () => {
   const { publicJwk, kid, env, signer } = await boot();
   const other = publicParts(pair().publicKey);
@@ -256,7 +293,7 @@ test('JWKS HTTP 500 is FAIL', async () => {
       signer,
     }));
     assert.equal(result.exitCode, 1);
-    assert.equal(out, `kid ${kid}\njwks mismatch\nFAIL jwks_unavailable\n`);
+    assert.equal(out, `kid ${kid}\njwks unavailable\nFAIL jwks_unavailable\n`);
     assert.doesNotMatch(out, /\nPASS\n/);
     assertGetOnly(server);
   } finally {
@@ -276,12 +313,115 @@ test('JWKS timeout is FAIL', async () => {
     const elapsed = Date.now() - started;
     assert.ok(elapsed >= 4500);
     assert.equal(result.exitCode, 1);
-    assert.equal(out, `kid ${kid}\njwks mismatch\nFAIL jwks_unavailable\n`);
+    assert.equal(out, `kid ${kid}\njwks unavailable\nFAIL jwks_unavailable\n`);
     assert.doesNotMatch(out, /\nPASS\n/);
     assertGetOnly(server);
   } finally {
     await server.close();
   }
+});
+
+test('a JWKS redirect is refused', async () => {
+  const { publicJwk, kid, env, signer } = await boot();
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    hits.push(req.url || '');
+    if (req.url === '/landed') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ keys: [jwkEntry(publicJwk, kid)] }));
+      return;
+    }
+    res.writeHead(302, { location: '/landed' });
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const { result, out } = await capture(() => runIssuerKmsCheck({
+      env: { ...env, ISSUER_JWKS_URL: `http://127.0.0.1:${port}/jwks` },
+      signer,
+    }));
+    assert.equal(result.exitCode, 1);
+    assert.equal(out, `kid ${kid}\njwks unavailable\nFAIL jwks_unavailable\n`);
+    assert.deepEqual(hits, ['/jwks']);
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((done) => server.close(() => done()));
+  }
+});
+
+test('http JWKS URL off loopback is refused', async () => {
+  const { kid, env, signer } = await boot();
+  let called = 0;
+  const fetchImpl = async () => {
+    called += 1;
+    return new Response('{}', { status: 200 });
+  };
+  const { result, out } = await capture(() => runIssuerKmsCheck({
+    env: { ...env, ISSUER_JWKS_URL: 'http://example.com/.well-known/jwks.json' },
+    fetchImpl,
+    signer,
+  }));
+  assert.equal(called, 0);
+  assert.equal(result.exitCode, 1);
+  assert.equal(out, `kid ${kid}\njwks unavailable\nFAIL jwks_url\n`);
+});
+
+test('http loopback JWKS URL is refused outside tests', async () => {
+  const { kid, env, signer } = await boot();
+  let called = 0;
+  const fetchImpl = async () => {
+    called += 1;
+    return new Response('{}', { status: 200 });
+  };
+  const { result, out } = await capture(() => runIssuerKmsCheck({
+    env: { ...env, NODE_ENV: 'production', ISSUER_JWKS_URL: 'http://127.0.0.1:9/jwks.json' },
+    fetchImpl,
+    signer,
+  }));
+  assert.equal(called, 0);
+  assert.equal(result.exitCode, 1);
+  assert.equal(out, `kid ${kid}\njwks unavailable\nFAIL jwks_url\n`);
+});
+
+test('http localhost is allowed in tests', async () => {
+  const { publicJwk, kid, env, signer } = await boot();
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({
+      host: new URL(url).hostname,
+      method: init && init.method,
+      redirect: init && init.redirect,
+    });
+    const body = JSON.stringify({ keys: [jwkEntry(publicJwk, kid)] });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const { result, out } = await capture(() => runIssuerKmsCheck({
+    env: { ...env, ISSUER_JWKS_URL: 'http://localhost:9/.well-known/jwks.json' },
+    fetchImpl,
+    signer,
+  }));
+  assert.equal(result.exitCode, 0);
+  assert.equal(out, `kid ${kid}\njwks match\nPASS\n`);
+  assert.deepEqual(seen, [{ host: 'localhost', method: 'GET', redirect: 'error' }]);
+});
+
+test('https JWKS URL is fetched', async () => {
+  const { publicJwk, kid, env, signer } = await boot();
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ protocol: new URL(url).protocol, redirect: init && init.redirect });
+    const body = JSON.stringify({ keys: [jwkEntry(publicJwk, kid)] });
+    return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const { result, out } = await capture(() => runIssuerKmsCheck({
+    env: { ...env, NODE_ENV: 'production', ISSUER_JWKS_URL: 'https://api.chit402.com/.well-known/jwks.json' },
+    fetchImpl,
+    signer,
+  }));
+  assert.equal(result.exitCode, 0);
+  assert.equal(out, `kid ${kid}\njwks match\nPASS\n`);
+  assert.deepEqual(seen, [{ protocol: 'https:', redirect: 'error' }]);
 });
 
 test('jwks skipped when ISSUER_JWKS_URL is unset still PASS', async () => {
