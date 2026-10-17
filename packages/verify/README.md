@@ -37,6 +37,8 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 npx chit402-verify receipt.json
 npx chit402-verify chit-39af100b-23dd-4d86-a16b-4556ca6796af
 curl -s "https://api.chit402.com/receipt/RECEIPT_ID?format=json" | npx chit402-verify -
+# An id or public URL gives the unsigned public shell: COULD_NOT_CHECK (exit 2).
+# Pass the signed JSON from the owner view for VERIFIED.
 
 # Offline issuer history (the check is always on; with no file, a live snapshot
 # must prefix-extend the copy shipped in this package, or that copy is used).

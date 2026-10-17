@@ -34,7 +34,7 @@ A source fills a missing commit or file hash only when that source already names
 
 ## Rotation
 
-The specimen kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. Passing `--issuer-prior-pin` does not turn that gate off. A prior whose kid is not this specimen is `ISSUER_ROTATION_UNCONTROLLED`, including when the same attacker file is passed as both the pin and the prior. The prior file is bound with `--issuer-prior-commit` and `--issuer-prior-sha256`. A prior with no commit, or a branch name, is `ISSUER_PIN_MUTABLE_REF`.
+The specimen kid is `kATmVjz6J8QvSTS-bS1NUjWaLs35o-PXYurO2blMf-c`. Supplying a prior pin does not turn that gate off. A prior whose kid is not this specimen is `ISSUER_ROTATION_UNCONTROLLED`, including when the same attacker file is given as both the pin and the prior. The prior file is bound by its commit and SHA-256. A prior with no commit, or a branch name, is `ISSUER_PIN_MUTABLE_REF`.
 
 A new kid is accepted only when this specimen key signs a `chit402.freeze.v1` JWS (`typ: chit402-freeze+jwt`) with `purpose: citizen_issuer_key` in the same event that updates the pin and the self-signature. The statement is:
 
@@ -49,7 +49,7 @@ chit402-issuer-rotation-v1
 eip155:84532
 ```
 
-Pass the previous pin with `--issuer-prior-pin`, `--issuer-prior-commit`, and `--issuer-prior-sha256`, and the freeze JWS with `--issuer-control`. A new key without that event is `ISSUER_ROTATION_UNCONTROLLED`. A receipt signed by the new key while the pin is still the old key is `ISSUER_PIN_MISMATCH`.
+The check needs the previous pin (file, commit, SHA-256) and the freeze JWS. A new key without that event is `ISSUER_ROTATION_UNCONTROLLED`. A receipt signed by the new key while the pin is still the old key is `ISSUER_PIN_MISMATCH`.
 
 The freeze JWS is not inside the hashed pin file. The statement names the file hash, so the hash cannot include the JWS.
 

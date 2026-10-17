@@ -35,6 +35,8 @@ console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
 # One receipt: an id, a URL, a file, or - for stdin.
 npx chit402-verify receipt.json
 curl -s "https://api.chit402.com/receipt/RECEIPT_ID?format=json" | npx chit402-verify -
+# An id or public URL gives the unsigned public shell: COULD_NOT_CHECK (exit 2).
+# Pass the signed JSON from the owner view for VERIFIED.
 
 # Offline issuer history (the check is always on)
 npx chit402-verify receipt.json --issuer-history issuer-history.json

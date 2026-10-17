@@ -175,12 +175,11 @@ npx xfuel-verify receipt.json --json
 **JWKS fallback** (older receipts or cross-check kid rotation):
 
 ```bash
-curl -sS "https://api.chit402.com/.well-known/jwks.json" -o jwks.json
-npx xfuel-verify receipt.json --jwks-file jwks.json --json
+npx chit402-verify receipt.json --json
 ```
 
 Then confirm **payer on-chain** matches `caller_binding.payer_wallet` for `payment.ref`
-(Base USDC Transfer / EIP-3009 `from`). CLI: `--check-payer` when RPC is available.
+(Base USDC Transfer / EIP-3009 `from`). The CLI does not run this check; use the library: `verifyReceipt(receipt, { checkPayer: true })` from `chit402-verify`.
 
 **Do not** treat SP1 / `binding.in_proof` as the default prove-it path. Signed JWS +
 payer bind is enough for most agent treasury workflows.
