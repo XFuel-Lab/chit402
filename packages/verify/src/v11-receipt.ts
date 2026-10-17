@@ -114,8 +114,10 @@ function shell(
 ): ReceiptVerification {
   const failed = errors.length > 0 || issuer.valid !== true;
   const payload = issuer.payload || {};
+  const task = typeof payload.task_id === 'string' && payload.task_id ? payload.task_id : '';
+  const id = typeof payload.receipt_id === 'string' && payload.receipt_id ? payload.receipt_id : '';
   return {
-    receipt_id: String((receipt as { receipt_id?: string }).receipt_id || payload.receipt_id || receipt.task_id || ''),
+    receipt_id: issuer.valid === true ? (task || id || null) : null,
     binding: {
       verified: issuer.valid === true && !errors.some((e) => e.startsWith('v11_')),
       expected: typeof payload.payment_tx === 'string' ? payload.payment_tx : null,

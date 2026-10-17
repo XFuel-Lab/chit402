@@ -345,7 +345,11 @@ export interface PayerVerification {
 }
 
 export interface ReceiptVerification {
-  receipt_id: string;
+  /**
+   * Verified signed `task_id`, or signed `receipt_id` when that payload has
+   * no task id. Null when the signature is not trusted. Never the outer copy.
+   */
+  receipt_id: string | null;
   binding: BindingVerification;
   issuer_signature: IssuerSignatureVerification;
   payer: PayerVerification;
@@ -1145,10 +1149,30 @@ function compareSignedNode(
  * values must match, including null against a filled-in outer copy. A path
  * the outer receipt omits is not a copy, so it is not a mismatch.
  */
+/** Signed receipt id. `task_id` wins. v11 signs `receipt_id` and has no task id. */
+export function signedReceiptId(payload: Record<string, unknown> | null | undefined): string | null {
+  if (!payload) return null;
+  const task = payload.task_id;
+  if (typeof task === 'string' && task.length > 0) return task;
+  const id = payload.receipt_id;
+  if (typeof id === 'string' && id.length > 0) return id;
+  return null;
+}
+
 export function diffOuterClaims(receipt: XFuelReceipt, claims: Record<string, unknown> | null): ClaimMismatch[] {
   if (!claims) return [];
   const mismatches: ClaimMismatch[] = [];
   compareSignedNode(claims, receipt, '', mismatches);
+  // `receipt_id` is not a v10 signed key. When the outer document names one,
+  // it has to be the signed task id. A missing outer key is not a copy.
+  if (!Object.prototype.hasOwnProperty.call(claims, 'receipt_id')
+    && Object.prototype.hasOwnProperty.call(receipt, 'receipt_id')) {
+    const signed = signedReceiptId(claims);
+    const outer = (receipt as { receipt_id?: unknown }).receipt_id;
+    if (signed != null && outer !== signed) {
+      mismatches.push({ field: 'receipt_id', outer: formatClaim(outer), signed });
+    }
+  }
   return mismatches;
 }
 
@@ -2025,7 +2049,7 @@ export async function verifyReceipt(
   });
 
   return {
-    receipt_id: receipt.task_id,
+    receipt_id: issuer_signature.valid === true ? signedReceiptId(issuer_signature.payload) : null,
     binding,
     issuer_signature,
     payer,

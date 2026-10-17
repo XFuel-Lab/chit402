@@ -152,6 +152,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: null,
     };
   }
+  if (reason === 'claim_mismatch') {
+    return {
+      message: 'A field on the receipt does not match the signature.',
+      next_step: null,
+    };
+  }
   if (reason === 'payment_mismatch' || reason === 'binding_mismatch') {
     return {
       message: 'The payment on the receipt does not match the signature or the on-chain transfer.',
@@ -286,7 +292,7 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   let reason: string | null = null;
   if (failed.length) {
     result = 'invalid';
-    reason = failReason(failed, historyReason, input.logReason || null, errors, payment);
+    reason = failReason(failed, historyReason, input.logReason || null, errors, payment, input.claimMismatches || 0);
   } else if (unchecked.length) {
     result = 'could_not_check';
     reason = uncheckedReason(unchecked, historyReason, input.logReason || null, errors);
@@ -353,6 +359,7 @@ function failReason(
   logReason: string | null,
   errors: string[],
   payment: CheckState,
+  claimMismatches = 0,
 ): string {
   if (failed.includes('shape')) {
     if (errors.includes('id_prefix_version_mismatch')) return 'id_prefix_version_mismatch';
@@ -362,7 +369,10 @@ function failReason(
   }
   if (failed.includes('signature')) return errors.find((err) => err === 'key untrusted') || 'signature_invalid';
   if (failed.includes('key_window')) return historyReason || 'key_window';
-  if (failed.includes('payment_binding') || payment === 'fail') return 'payment_mismatch';
+  if (failed.includes('payment_binding') || payment === 'fail') {
+    if (claimMismatches > 0) return 'claim_mismatch';
+    return 'payment_mismatch';
+  }
   if (failed.includes('log_inclusion')) {
     if (logReason === 'not_in_log') return 'not_in_log';
     return logReason || 'log_inclusion';
@@ -457,6 +467,7 @@ export const VERDICT_DOC_ANCHORS = [
   'id_prefix_version_mismatch',
   'intent_on_legacy_version',
   'payment_mismatch',
+  'claim_mismatch',
   'payer_unchecked',
   'log_inclusion',
   'anchor',
