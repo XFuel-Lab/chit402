@@ -825,14 +825,21 @@ function rowHashFrom(
 
 /**
  * A signed head verifies when every chain it claims is valid, and it claims
- * at least one. A side with status `pending` is not a claim: the issuer
- * signed that the anchor is not there. Base-only is the live log. Both
- * sides pending stays partial.
+ * at least one. One claimed chain (Base-only or Solana-only) is enough.
+ * A side is claimed only when it is not `pending` and it names a tx or
+ * signature. A side the issuer signed as anything else with no tx or
+ * signature is malformed and stays partial. Both sides pending stays partial.
  */
 function anchoredChainsVerified(head: AnchorHead, solanaValid: boolean, baseValid: boolean): boolean {
   const solanaOn = Boolean(solanaSignature(head));
   const baseOn = Boolean(baseTxHash(head));
   if (!solanaOn && !baseOn) return false;
+  // Only an explicit `pending` (or an absent side) is "not claimed". A side
+  // the issuer signed as anything else with no tx or signature is malformed.
+  const sol = head.anchors?.solana;
+  const base = head.anchors?.base;
+  if (sol && sol.status !== 'pending' && !solanaOn) return false;
+  if (base && base.status !== 'pending' && !baseOn) return false;
   if (solanaOn && !solanaValid) return false;
   if (baseOn && !baseValid) return false;
   return true;
