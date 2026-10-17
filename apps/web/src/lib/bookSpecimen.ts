@@ -1,8 +1,8 @@
 import type { BookEntry } from './agentBook';
 import {
   LIVE_RECEIPT_AMOUNT_ATOMIC,
-  LIVE_RECEIPT_HUB,
-  LIVE_RECEIPT_MODEL,
+  LIVE_RECEIPT_COLLECTED_AT,
+  LIVE_RECEIPT_PAYMENT_REF,
   LIVE_RECEIPT_TASK_ID,
 } from './liveReceiptSpecimen';
 
@@ -13,14 +13,12 @@ export const BOOK_SPECIMEN_ENTRIES: BookEntry[] = [
   {
     task_id: LIVE_RECEIPT_TASK_ID,
     evidence: 'collected',
-    collected_at: '2026-09-05T18:14:09.000Z',
-    route: { hub: LIVE_RECEIPT_HUB, model: LIVE_RECEIPT_MODEL },
+    collected_at: LIVE_RECEIPT_COLLECTED_AT,
     payment: {
       rail: 'usdc',
-      ref: 'base:0xf63e…83f6f',
+      ref: LIVE_RECEIPT_PAYMENT_REF,
       amount: LIVE_RECEIPT_AMOUNT_ATOMIC,
     },
-    payer_wallet: '0x2536…e499',
     collected: true,
   },
   {

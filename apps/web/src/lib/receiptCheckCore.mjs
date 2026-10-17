@@ -4,8 +4,8 @@ export function receiptCheckBody(input) {
 }
 
 const INPUT_ERROR_TITLE = "Couldn't read that input.";
-const INPUT_HINT = 'Paste receipt JSON, a chit- id, or a verify link.';
-const EXAMPLE = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+const INPUT_HINT = 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.';
+const EXAMPLE = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
 const ACCEPTED = ['receipt JSON', 'a chit- id', 'a verify link'];
 
 function stringOrNull(value) {
@@ -39,7 +39,7 @@ function extras(payload) {
 }
 
 function fallbackHint(overall, status) {
-  if (status === 413) return 'Paste a shorter receipt, or a chit- id, or a verify link.';
+  if (status === 413) return 'Paste a shorter receipt, or a chit- or xfuel- id, or a verify link.';
   if (status === 429) return 'Wait, then try the check again.';
   if (overall === 'NOT_IN_LOG') return 'This receipt is not in the public log. The book row is unchanged.';
   if (overall === 'INVALID') return 'Paste the signed receipt from the owner view and check it again.';
