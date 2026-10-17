@@ -3,6 +3,9 @@
  * Prints three lines: the kid, the JWKS result, and PASS or FAIL <code>.
  * Does not print the signature, the key, env values, or error messages.
  *
+ * ISSUER_JWKS_URL must be https. http is accepted only for 127.0.0.1 or
+ * localhost when NODE_ENV is test. Redirects are refused.
+ *
  *   ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=… ISSUER_KMS_REGION=… ISSUER_KID=… \
  *   ISSUER_JWKS_URL=https://api.chit402.com/.well-known/jwks.json \
  *     node scripts/issuer-kms-check.mjs
@@ -53,7 +56,26 @@ function verifies(jwk, sig) {
 }
 
 /**
- * One GET. No body. A transport or HTTP failure is jwks_unavailable.
+ * https only. http is limited to 127.0.0.1 and localhost while NODE_ENV is test.
+ * @param {string} raw
+ * @param {NodeJS.ProcessEnv} env
+ */
+function assertJwksUrl(raw, env) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw coded('jwks url rejected', 'jwks_url');
+  }
+  if (url.protocol === 'https:') return;
+  const loopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+  const inTest = String(env?.NODE_ENV || '').trim().toLowerCase() === 'test';
+  if (url.protocol === 'http:' && loopback && inTest) return;
+  throw coded('jwks url rejected', 'jwks_url');
+}
+
+/**
+ * One GET. No body. Redirects are an error. A transport or HTTP failure is jwks_unavailable.
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  */
@@ -62,12 +84,15 @@ async function readJwks(url, fetchImpl) {
   try {
     res = await fetchImpl(url, {
       method: 'GET',
+      redirect: 'error',
       signal: AbortSignal.timeout(JWKS_TIMEOUT_MS),
     });
   } catch {
     throw coded('jwks fetch failed', 'jwks_unavailable');
   }
-  if (!res || res.ok !== true) throw coded('jwks fetch failed', 'jwks_unavailable');
+  if (!res || res.ok !== true || res.redirected === true) {
+    throw coded('jwks fetch failed', 'jwks_unavailable');
+  }
   try {
     return await res.json();
   } catch {
@@ -87,6 +112,12 @@ async function assertJwks({ url, fetchImpl, kid, publicJwk, sig }) {
   const key = found[0];
   if (key.x !== publicJwk.x || key.y !== publicJwk.y) throw coded('jwks mismatch', 'jwks_mismatch');
   if (!verifies(key, sig)) throw coded('jwks mismatch', 'jwks_mismatch');
+}
+
+function jwksWord(code) {
+  if (code === 'jwks_mismatch') return 'mismatch';
+  if (code === 'jwks_unavailable' || code === 'jwks_url') return 'unavailable';
+  return '';
 }
 
 function writeResult(kid, jwks, ok, code) {
@@ -111,7 +142,7 @@ export async function runIssuerKmsCheck({ env = process.env, fetchImpl = globalT
     if (!verifies(active.publicJwk, sig)) throw coded('issuer sign invalid', 'issuer_sign_invalid');
     const jwksUrl = String(source.ISSUER_JWKS_URL || '').trim();
     if (jwksUrl) {
-      jwks = 'mismatch';
+      assertJwksUrl(jwksUrl, source);
       await assertJwks({
         url: jwksUrl,
         fetchImpl,
@@ -125,6 +156,8 @@ export async function runIssuerKmsCheck({ env = process.env, fetchImpl = globalT
     return { exitCode: 0, kid, jwks, ok: true, code: '' };
   } catch (err) {
     const code = failCode(err);
+    const word = jwksWord(code);
+    if (word) jwks = word;
     writeResult(kid, jwks, false, code);
     return { exitCode: 1, kid, jwks, ok: false, code };
   }
