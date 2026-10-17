@@ -10,7 +10,7 @@ import { initAIListener, getAIListener } from './ai-listener.js';
 import {
   configurePublicAttestationStore,
   publicAttestationServeEnabled,
-  publicAttestationSignEnabled,
+  publicAttestationSignDecision,
 } from './public-attestation-store.js';
 import { createPublicAttestationWorker } from './public-attestation-worker.js';
 import { attestationShellDrift } from './public-attestation.js';
@@ -1079,11 +1079,19 @@ export async function createApp() {
   // PUBLIC_ATTESTATION_SIGN=true. Serving is PUBLIC_ATTESTATION_SERVE=true.
   // Deploy order: publish 0.4.6, then sign and store, then serve.
   const publicAttestationAlert = (event) => logger.error(event, 'public attestation alert');
+  const publicAttestationDir = config.taskStore?.persist && agentsDir ? path.join(agentsDir, 'public-attestations') : null;
   const publicAttestations = configurePublicAttestationStore({
-    file: config.taskStore?.persist && agentsDir ? path.join(agentsDir, 'public-attestations.jsonl') : null,
+    dir: publicAttestationDir,
     alert: publicAttestationAlert,
   });
-  const publicAttestationWorker = publicAttestationSignEnabled()
+  // Signing needs a durable store: without one, rows and the one-per-ref
+  // index would be lost on restart and a task could be signed twice.
+  const publicAttestationSign = publicAttestationSignDecision({ env: process.env, dir: publicAttestationDir });
+  if (publicAttestationSign.reason === 'no_durable_store') {
+    logger.error({}, 'PUBLIC_ATTESTATION_SIGN=true without a persistent task store; attestation signing stays off');
+  }
+  const publicAttestationSignOn = publicAttestationSign.on;
+  const publicAttestationWorker = publicAttestationSignOn
     ? createPublicAttestationWorker({
       store: publicAttestations,
       tree: getReceiptMerkleTree,
@@ -1113,11 +1121,10 @@ export async function createApp() {
     }
     // Queued only after the leaf exists. Signing is async, off this path.
     if (leafAppended && publicAttestationWorker) {
-      try {
-        publicAttestationWorker.enqueue(entry);
-      } catch (err) {
-        logger.warn({ err: err.message, taskId: entry?.task_id }, 'public attestation enqueue failed');
-      }
+      // Not awaited: the durable write runs off this hook, the webhook is not delayed.
+      Promise.resolve()
+        .then(() => publicAttestationWorker.enqueue(entry))
+        .catch((err) => logger.warn({ err: err.message, taskId: entry?.task_id }, 'public attestation enqueue failed'));
     }
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
@@ -3011,7 +3018,7 @@ export async function createApp() {
     const { shell, inclusion } = await shellFor(receipt, taskId);
     // Read only: a stored attestation or a pending marker. Never signs.
     if (attestation && publicAttestationServeEnabled()) {
-      const served = publicAttestations.servedAttestation(shell.task_id || taskId);
+      const served = await publicAttestations.servedAttestation(shell.task_id || taskId);
       const drift = served?.jws ? attestationShellDrift(served.jws, shell) : null;
       if (drift) {
         logger.error({ taskId: shell.task_id, field: drift }, 'public attestation withheld: shell differs from signed claims');

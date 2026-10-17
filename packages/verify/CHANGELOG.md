@@ -3,6 +3,16 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.7 — Public attestation fail-closed edges
+
+### Changed
+- **The signed epoch must be confirmed.** With a public attestation, a log that serves no epoch on either the inclusion or the head is exit 2 `log_epoch_mismatch`. Before, the signed epoch went unchecked in that case.
+- **A removed log is exit 2.** A Base receipt that carries any log with `removed: true` (a reorg in flight) is `payer_unchecked`, exit 2. It is never a pass.
+- **Copy.** The `VERIFIED_PUBLIC` scope reads "settled amount": only the settled amount is checked on chain.
+
+### Tests
+- The on-chain check now covers a wrong chainId, 11 against 12 confirmations, a relayer `tx.from` against the token sender, one payee Transfer plus a non-payee Transfer (passes), and a removed log.
+
 ## 0.4.6 — Public receipt attestation, VERIFIED_PUBLIC
 
 ### Added

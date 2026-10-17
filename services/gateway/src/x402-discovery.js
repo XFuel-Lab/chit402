@@ -2285,7 +2285,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptCheckStats',
           summary: 'Anonymous hourly receipt-check counts and an alert. Free. Not x402.',
-          description: 'Query hours (default 24, capped at 168). buckets are hourly verified, invalid, and could_not_check totals split by client and reason. alert covers the latest hour with at least 20 checks. No receipt input.',
+          description: 'Query hours (default 24, capped at 168). buckets are hourly verified, verified_public (0.4.6 public scope, counted apart from verified), invalid, and could_not_check totals split by client and reason. alert covers the latest hour with at least 20 checks. No receipt input.',
           tags: ['Receipts'],
           parameters: [{ name: 'hours', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 168 } }],
           responses: {

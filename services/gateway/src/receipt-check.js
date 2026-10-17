@@ -91,7 +91,7 @@ export function createReceiptCheckLimiter(windowMs, maxHits, maxKeys = LIMITER_M
 }
 
 function emptyCounts() {
-  return { verified: 0, invalid: 0, could_not_check: 0, rejected: 0 };
+  return { verified: 0, verified_public: 0, invalid: 0, could_not_check: 0, rejected: 0 };
 }
 
 function clientIp(req) {
@@ -104,8 +104,10 @@ function dropRequestBody(req) {
 }
 
 function countBucket(result) {
-  // verified_public (0.4.6) is exit 0. It is counted with verified.
-  if (result === 'verified' || result === 'verified_public') return 'verified';
+  // verified_public (0.4.6) is exit 0 with the public scope only. Its own
+  // bucket: never counted as a holder verified.
+  if (result === 'verified') return 'verified';
+  if (result === 'verified_public') return 'verified_public';
   if (result === 'invalid') return 'invalid';
   return 'could_not_check';
 }

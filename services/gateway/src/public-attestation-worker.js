@@ -2,7 +2,8 @@
  * Public attestation worker (verifier 0.4.6).
  *
  * Runs after the log leaf exists, never on the paid path and never on a
- * read. One sign at a time, a per-minute rate cap, a sign timeout, bounded
+ * read. One sign in flight at a time (a timed-out sign still counts until it
+ * settles), a per-minute rate cap, a sign timeout, bounded
  * retries with backoff, then `failed` plus an alert. It does not consume an
  * issuance-cap slot and never parks a late submission, so it cannot take a
  * slot from receipt signing.
@@ -28,6 +29,8 @@ export const PUBLIC_ATTESTATION_DEFAULTS = Object.freeze({
   maxDelayMs: 30 * 60_000,
   signTimeoutMs: 3_000,
   tickMs: 15_000,
+  // A sign still outstanding this long after it started raises one alert.
+  stuckAfterMs: 60_000,
 });
 
 const SIGN_BUCKETS_MS = [50, 100, 250, 500, 1000, 2500, 5000, 10000];
@@ -37,12 +40,13 @@ function positiveInt(value, fallback) {
   return Number.isSafeInteger(n) && n > 0 ? n : fallback;
 }
 
-async function defaultSign(payloadUtf8) {
+async function defaultSign(payloadUtf8, { signal } = {}) {
   return await signJwsAsync(null, {
     typ: PUBLIC_RECEIPT_TYP,
     payloadUtf8,
     capKind: 'public_attestation',
     parkLate: false,
+    signal,
   });
 }
 
@@ -87,6 +91,7 @@ export function createPublicAttestationWorker(deps) {
     maxDelayMs: positiveInt(deps.maxDelayMs, PUBLIC_ATTESTATION_DEFAULTS.maxDelayMs),
     signTimeoutMs: positiveInt(deps.signTimeoutMs, PUBLIC_ATTESTATION_DEFAULTS.signTimeoutMs),
     tickMs: positiveInt(deps.tickMs, PUBLIC_ATTESTATION_DEFAULTS.tickMs),
+    stuckAfterMs: positiveInt(deps.stuckAfterMs, PUBLIC_ATTESTATION_DEFAULTS.stuckAfterMs),
   };
   const sign = deps.sign || defaultSign;
   const publicJwk = deps.publicJwk || defaultPublicJwk;
@@ -100,11 +105,18 @@ export function createPublicAttestationWorker(deps) {
     skipped: 0,
     retried: 0,
     throttled: 0,
+    timed_out: 0,
+    waited_on_inflight: 0,
     sign_ms: Object.fromEntries([...SIGN_BUCKETS_MS.map((b) => [`le_${b}`, 0]), ['gt_10000', 0]]),
   };
   let tokens = cfg.ratePerMinute;
   let refilledAt = now();
   let running = false;
+  // The sign promise still outstanding, even after its timeout fired. No new
+  // sign starts until it settles, so at most one Sign is ever in flight (S3).
+  let inflight = null;
+  let inflightSince = 0;
+  let stuckAlerted = false;
   let timer = null;
   let interval = null;
 
@@ -124,16 +136,35 @@ export function createPublicAttestationWorker(deps) {
     stats.sign_ms[bucket ? `le_${bucket}` : 'gt_10000'] += 1;
   }
 
-  function retryOrFail(row, error) {
+  async function retryOrFail(row, error) {
     const attempts = Number(row.attempts || 0) + 1;
     if (attempts >= cfg.maxAttempts) {
-      store.markFailed(row.task_id, { error });
+      await store.markFailed(row.task_id, { error });
       stats.failed += 1;
       return;
     }
     const delay = Math.min(cfg.baseDelayMs * (2 ** (attempts - 1)), cfg.maxDelayMs);
-    store.markRetry(row.task_id, { error, nextAt: now() + delay });
+    await store.markRetry(row.task_id, { error, nextAt: now() + delay });
     stats.retried += 1;
+  }
+
+  /** Start one sign. The timeout rejects the wait, not the sign; `inflight` holds until it settles. */
+  function startSign(payload) {
+    const controller = new AbortController();
+    const attempt = Promise.resolve().then(() => sign(payload, { signal: controller.signal }));
+    const tracked = attempt.then(() => {}, () => {}).finally(() => {
+      if (inflight === tracked) inflight = null;
+    });
+    inflight = tracked;
+    inflightSince = Date.now();
+    stuckAlerted = false;
+    return withTimeout(attempt, cfg.signTimeoutMs).catch((err) => {
+      if (err?.code === 'sign_timeout') {
+        stats.timed_out += 1;
+        controller.abort(err);
+      }
+      throw err;
+    });
   }
 
   async function processOne(row) {
@@ -144,19 +175,19 @@ export function createPublicAttestationWorker(deps) {
     const claims = decodeJwsClaims(holder);
     const eligible = publicAttestationEligibility(entry, claims);
     if (!eligible.ok) {
-      store.markSkipped(row.task_id, { reason: eligible.reason });
+      await store.markSkipped(row.task_id, { reason: eligible.reason });
       stats.skipped += 1;
       return;
     }
     if (row.ref && normalizeBaseRef(claims.payment.ref) !== row.ref) {
-      store.markSkipped(row.task_id, { reason: 'ref_mismatch' });
+      await store.markSkipped(row.task_id, { reason: 'ref_mismatch' });
       stats.skipped += 1;
       return;
     }
     const leaf = leafRecordFor(deps.tree(), row.task_id, entry.row_hash || '');
     if (!leaf.ok) {
       if (leaf.reason === 'leaf_mismatch') {
-        store.markFailed(row.task_id, { error: 'leaf_mismatch' });
+        await store.markFailed(row.task_id, { error: 'leaf_mismatch' });
         stats.failed += 1;
         return;
       }
@@ -167,17 +198,17 @@ export function createPublicAttestationWorker(deps) {
     const started = Date.now();
     let signed;
     try {
-      signed = await withTimeout(Promise.resolve().then(() => sign(payload)), cfg.signTimeoutMs);
+      signed = await startSign(payload);
     } finally {
       observe(Date.now() - started);
     }
     const jwk = publicJwk();
     if (!jwk || !verifyPublicAttestationJws(signed?.jws, jwk)) {
-      store.markFailed(row.task_id, { error: 'self_verify_failed' });
+      await store.markFailed(row.task_id, { error: 'self_verify_failed' });
       stats.failed += 1;
       return;
     }
-    const saved = store.markSigned(row.task_id, { jws: signed.jws, kid: signed.kid, now: now() });
+    const saved = await store.markSigned(row.task_id, { jws: signed.jws, kid: signed.kid, now: now() });
     if (saved.ok && !saved.duplicate) stats.signed += 1;
   }
 
@@ -186,17 +217,28 @@ export function createPublicAttestationWorker(deps) {
     running = true;
     try {
       refill();
-      const due = store.due(now());
-      for (const row of due) {
+      for (;;) {
+        if (inflight) {
+          // A timed-out sign is still outstanding. Wait for a later tick.
+          stats.waited_on_inflight += 1;
+          if (!stuckAlerted && Date.now() - inflightSince >= cfg.stuckAfterMs) {
+            stuckAlerted = true;
+            alert({ event: 'public_attestation_sign_stuck', outstanding_ms: Date.now() - inflightSince });
+          }
+          break;
+        }
+        if (!store.hasDue(now())) break;
         if (tokens < 1) {
           stats.throttled += 1;
           break;
         }
+        const [row] = store.due(now(), 1);
+        if (!row) continue;
         tokens -= 1;
         try {
           await processOne(row);
         } catch (err) {
-          retryOrFail(row, err?.code || err?.message || 'sign_error');
+          await retryOrFail(row, err?.code || err?.message || 'sign_error').catch(() => {});
         }
       }
     } finally {
@@ -215,17 +257,17 @@ export function createPublicAttestationWorker(deps) {
 
   return {
     config: cfg,
-    stats: () => ({ ...stats, sign_ms: { ...stats.sign_ms }, tokens, rows: store.counts() }),
+    stats: () => ({ ...stats, sign_ms: { ...stats.sign_ms }, tokens, inflight: Boolean(inflight), rows: store.counts() }),
     /**
      * Queue a book row after its leaf append succeeded. Cheap: no sign here.
      * Rows that are plainly not collected native Base USDC are not queued.
      */
-    enqueue(entry) {
+    async enqueue(entry) {
       if (!entry?.task_id || entry.collected !== true) return null;
       if (entry.foreign_x402 || entry.source) return null;
       const ref = normalizeBaseRef(entry.payment_ref);
       if (!ref) return null;
-      const out = store.enqueue({ taskId: String(entry.task_id), ref, now: now() });
+      const out = await store.enqueue({ taskId: String(entry.task_id), ref, now: now() });
       if (out.ok && !out.duplicate) kick();
       return out;
     },

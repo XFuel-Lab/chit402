@@ -109,7 +109,7 @@ export async function createKmsSigner({ client, env = process.env } = {}) {
     kind: 'kms',
     kid: material.kid,
     publicJwk: material.publicJwk,
-    async sign(input) {
+    async sign(input, { signal = null } = {}) {
       const message = Buffer.isBuffer(input) ? input : Buffer.from(input || []);
       const digest = message.length > RAW_LIMIT;
       const payload = digest ? crypto.createHash('sha256').update(message).digest() : message;
@@ -120,7 +120,7 @@ export async function createKmsSigner({ client, env = process.env } = {}) {
           Message: payload,
           MessageType: digest ? 'DIGEST' : 'RAW',
           SigningAlgorithm: 'ECDSA_SHA_256',
-        }), { abortSignal: AbortSignal.timeout(ms) });
+        }), { abortSignal: signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([AbortSignal.timeout(ms), signal]) : AbortSignal.timeout(ms) });
       } catch (err) {
         if (isTimeout(err) || isThrottle(err)) throw unavailable();
         throw unavailable();
