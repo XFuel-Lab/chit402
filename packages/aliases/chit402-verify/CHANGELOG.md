@@ -5,6 +5,11 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
 
+## 0.4.4 — Pin chit402-verify 0.4.4
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.4`. The CLI forwards to that verifier. Exit 0 includes the on-chain payer check. An RPC that cannot be checked is exit 2. Not published. No deploy.
+
 ## 0.4.2 — Pin chit402-verify 0.4.2
 
 ### Changed

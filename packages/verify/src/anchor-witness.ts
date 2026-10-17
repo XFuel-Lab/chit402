@@ -24,6 +24,7 @@ import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { boundRowHash } from './row-hash.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
+import { jsonRpc, rpcFailureReason } from './rpc-deadline.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PROGRAM_ID_V1 = 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo';
@@ -435,34 +436,33 @@ export function extractMemos(tx: SolanaAnchorTx | null | undefined): string[] {
   return found;
 }
 
-function rpcTimedOut(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const name = (err as { name?: string }).name;
-  return name === 'TimeoutError' || name === 'AbortError';
+function anchorRpcError(err: unknown): Error {
+  if (rpcFailureReason(err) === 'rpc_timeout') return new Error('rpc_timeout');
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.startsWith('rpc_error:')) {
+    const detail = message.slice('rpc_error:'.length).trim();
+    return new Error(detail || 'rpc_error');
+  }
+  if (message.startsWith('rpc_http_')) return new Error(`HTTP ${message.slice('rpc_http_'.length)}`);
+  return err instanceof Error ? err : new Error(message);
 }
 
+/**
+ * One JSON-RPC call through the shared helper. The timeout is this anchor's
+ * budget: 8s on Base (`ANCHOR_RPC_TIMEOUT_MS`), 30s on Solana
+ * (`SOLANA_ANCHOR_RPC_TIMEOUT_MS`). The payer check passes its own budgets.
+ */
 async function defaultRpc(
   url: string,
   method: string,
   params: unknown[],
   timeoutMs = ANCHOR_RPC_TIMEOUT_MS,
 ): Promise<unknown> {
-  let res: Response;
   try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    return await jsonRpc(url, method, params, undefined, timeoutMs);
   } catch (err) {
-    if (rpcTimedOut(err)) throw new Error('rpc_timeout');
-    throw err;
+    throw anchorRpcError(err);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json() as { result?: unknown; error?: { message?: string } };
-  if (json.error) throw new Error(json.error.message || 'rpc_error');
-  return json.result ?? null;
 }
 
 function parseQuantity(value: unknown): number | null {
@@ -675,8 +675,7 @@ export async function fetchBaseAnchorTransaction(
     status: receipt == null ? null : (receipt.status ?? null),
     blockNumber: receipt == null ? null : (receipt.blockNumber ?? null),
     tipBlockNumber: tipMissing ? null : tipHex,
-  };
-}
+  };}
 
 /**
  * Solana anchor read. `commitment` is `finalized`. A processed or confirmed

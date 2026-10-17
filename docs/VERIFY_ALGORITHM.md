@@ -646,7 +646,7 @@ read it, and do not fail a signature because it is present or absent.
 
 | Field | Rule |
 |-------|------|
-| `settled_by` | `observed_transfer` when `--check-payer` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
+| `settled_by` | `observed_transfer` when the CLI payer check confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). The CLI runs that check by default. `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
 | `anchor_changed_since_binding` | true when `anchor_at_binding` and the current head (or `anchor_current`) differ in root, Base tx, or Solana signature. Null if either identity is missing |
 | `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
 | `ordering` | `seq + settled_by + (anchor_changed AND not settled)` |

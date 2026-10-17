@@ -3,6 +3,22 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.4 — Payer check is on in the CLI
+
+Numbered 0.4.4, above the 0.4.3 anchor-finality release.
+
+### Security
+- **Exit 0 includes the on-chain payer check.** `chit402-verify` calls `verifyReceipt` with `checkPayer: true`. A USDC transfer that does not match the signed payer, payee, or amount is exit 1 `payment_mismatch`. An RPC timeout, a null receipt, an RPC error, a missing payer field, an unsigned public shell, or an unsupported rail is exit 2 `payer_unchecked` (or the existing log reason when the log was also not checked). It is not exit 0. There is no flag to turn the check off. A fabricated `payment.ref` (a rail this verifier cannot read, or a transaction the RPC does not have) is exit 2, not exit 1: the chain did not disagree, it could not be checked. Solana requires the signed payee to be credited at least the amount in USDC. A legacy `transfer` of another token does not count. A Solana receipt with no signed payee is exit 2. `BUILD_DIGEST.txt` moved because the verifier sources changed. The pinned epoch genesis digests did not. Not published. No deploy.
+- **RPC calls stop.** The payer check and the anchor reads share one JSON-RPC helper: one request, one deadline, no retry. The Base payer read waits 12 seconds. The Solana payer `getTransaction` waits 30 seconds. Base anchor calls keep the 8 second budget (`ANCHOR_RPC_TIMEOUT_MS`). Each Solana anchor call keeps `SOLANA_ANCHOR_RPC_TIMEOUT_MS` (30 seconds). A deadline is exit 2.
+- **The epoch record is a trust path.** `GET /v1/receipts/tree/epoch` is checked when the head names an epoch. The signer has to be `active` at the verified head's `published_at`. The epoch JWS `iat` is not that time. The loaded history must never revoke that kid. A `revoked` or `retired` history key does not sign the epoch, even when the signature bytes verify. A production pin with no history row for that kid stays the package pin.
+- **`--` does not hide a flag.** `chit402-verify receipt.json -- --check-payer` and `chit402-verify receipt.json -- anything` exit 1. The grammar stays `<id|url|file|-> [--issuer-history <file>] [--json]`, plus `-h`/`--help` and `-V`/`--version`.
+
+### Removed
+- The unused pre-0.4 argument parser and `legacyMain` are gone. The running command is the locked verdict.
+
+### Changed
+- `@xfuel/verify` 0.4.4 depends on exactly `"chit402-verify": "0.4.4"`. `--version` prints `chit402-verify 0.4.4`. Not published. No deploy.
+
 ## 0.4.3 — Anchors must be mined, successful, and final
 
 ### Security

@@ -24,12 +24,16 @@ import {
 } from './anchor-witness.js';
 import { isReceiptShell } from './shell.js';
 import {
+  epochHistoryKeyAllowed,
   resolveIssuerHistory,
   type IssuerHistoryDocument,
   type ResolvedIssuerHistory,
 } from './issuer-history.js';
 import { BASE_RPC_URL } from './base-payer.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
+import { payerCheckOutcome } from './payer.js';
+import { type EpochRecord } from './epoch.js';
+import { jwkThumbprint, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
   humanVerdictLines,
@@ -214,6 +218,73 @@ async function publicShellAbsence(
   }
 }
 
+function sameEpochKey(a: Es256Jwk, b: Es256Jwk): boolean {
+  return a.kty === b.kty && a.crv === b.crv && a.x === b.x && a.y === b.y;
+}
+
+/**
+ * The epoch record is trusted only when its ES256 signature matches the
+ * epochs, orphans, and unlogged claims, and the signing key was `active`
+ * at the verified head's `published_at`. The epoch JWS `iat` is not that
+ * time: a retired key must not backdate it. This history must never revoke
+ * the kid. A production pin with no history row for that kid stays the
+ * package pin. A revoked or retired history key does not, even when the
+ * bytes verify.
+ */
+export function epochRecordSignatureOk(
+  record: EpochRecord,
+  jws: string,
+  history: IssuerHistoryDocument | null,
+  publishedAt: unknown = null,
+): boolean {
+  let kid: string | null = null;
+  try {
+    const header = JSON.parse(Buffer.from(jws.split('.')[0] || '', 'base64url').toString('utf8')) as { kid?: unknown };
+    kid = typeof header.kid === 'string' ? header.kid : null;
+  } catch {
+    kid = null;
+  }
+  const keys: Es256Jwk[] = [];
+  const embedded = (record.issuer_signature as { issuer_jwk?: Es256Jwk } | null | undefined)?.issuer_jwk;
+  const pin = embedded && DEFAULT_TRUSTED_ISSUER_KIDS.some((id) => id === jwkThumbprint(embedded))
+    ? embedded
+    : null;
+  if (pin) keys.push(pin);
+  for (const entry of history?.entries || []) {
+    const jwk = entry?.jwk as Es256Jwk | undefined;
+    if (!jwk) continue;
+    if (kid && entry.kid !== kid && jwk.kid !== kid) continue;
+    if (keys.some((have) => sameEpochKey(have, jwk))) continue;
+    keys.push(jwk);
+  }
+  for (const key of keys) {
+    const verified = verifyIssuerJws(jws, key);
+    if (!verified.valid || !verified.payload) continue;
+    const payload = verified.payload;
+    if (JSON.stringify(payload.epochs ?? null) !== JSON.stringify(record.epochs ?? null)) continue;
+    if (JSON.stringify(payload.orphans ?? []) !== JSON.stringify(record.orphans ?? [])) continue;
+    const payloadUnlogged = payload.unlogged === undefined ? null : payload.unlogged;
+    const recordUnlogged = record.unlogged === undefined ? null : record.unlogged;
+    if (JSON.stringify(payloadUnlogged) !== JSON.stringify(recordUnlogged)) continue;
+    const signerKid = kid || key.kid || null;
+    const at = publishedAt;
+    const inHistory = (history?.entries || []).some((row) => (
+      signerKid != null && (row.kid === signerKid || row.jwk?.kid === signerKid)
+    ));
+    if (inHistory) {
+      if (!epochHistoryKeyAllowed(history, signerKid, at)) continue;
+      const listed = (history?.entries || []).some((row) => (
+        row.jwk && sameEpochKey(row.jwk as Es256Jwk, key)
+        && (row.kid === signerKid || row.jwk.kid === signerKid)
+      ));
+      if (!listed) continue;
+      return true;
+    }
+    if (pin && sameEpochKey(key, pin)) return true;
+  }
+  return false;
+}
+
 export async function freshPublicLog(
   receipt: { verify_url?: string; task_id?: string | null },
   history: IssuerHistoryDocument | null = null,
@@ -252,6 +323,25 @@ export async function freshPublicLog(
     });
     if (!headRes.ok) return missed;
     const head = await headRes.json() as AnchorHead;
+    let epochRecord: EpochRecord | null = null;
+    const headEpoch = (head as { epoch?: unknown; schema?: string }).epoch;
+    const headSchema = (head as { schema?: string }).schema;
+    if (headEpoch != null || headSchema === 'chit402.tree_head.v2') {
+      try {
+        const epochRes = await fetch(`${origin}/v1/receipts/tree/epoch`, {
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(LOG_FETCH_MS),
+        });
+        if (epochRes.ok) {
+          const body = await epochRes.json() as EpochRecord;
+          if (typeof body?.issuer_signature?.jws === 'string' && body.issuer_signature.jws.length > 0) {
+            epochRecord = body;
+          }
+        }
+      } catch {
+        epochRecord = null;
+      }
+    }
     const result = await verifyAnchoredRoot({
       receipt: receipt as AnchorReceipt,
       inclusion,
@@ -261,6 +351,17 @@ export async function freshPublicLog(
       checkNewestAnchor: false,
       issuerHistory: history,
       trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+      epochRecord,
+      verifyEpochSignature: epochRecord
+        ? (jws) => {
+          const trust = verifyTreeHeadTrust(head, {
+            trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+            issuerHistory: history,
+          });
+          const signedAt = trust.ok ? (trust.payload?.published_at ?? null) : null;
+          return epochRecordSignatureOk(epochRecord as EpochRecord, jws, history, signedAt);
+        }
+        : undefined,
     });
     if (result.overall === 'verified') {
       return {
@@ -424,6 +525,15 @@ export interface CheckReceiptOptions {
    * its host is one the verifier already trusts.
    */
   publicInput?: boolean;
+  /**
+   * Defaults to the production pin. A test may add a throwaway kid. The CLI
+   * does not set this.
+   */
+  trustedKids?: readonly string[];
+  /** Default true. Exit 0 requires this check to have passed. */
+  checkPayer?: boolean;
+  rpcUrl?: string;
+  solanaRpcUrl?: string;
 }
 
 export interface CheckReceiptOutcome {
@@ -502,7 +612,8 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     };
   }
 
-  const trustedKids = [...DEFAULT_TRUSTED_ISSUER_KIDS];
+  const trustedKids = options.trustedKids ? [...options.trustedKids] : [...DEFAULT_TRUSTED_ISSUER_KIDS];
+  const checkPayer = options.checkPayer !== false;
   let resolved: ResolvedIssuerHistory;
   try {
     resolved = await resolveIssuerHistory({
@@ -591,6 +702,9 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   const result = await verifyReceipt(receipt, {
     trustedKids,
     requirePreimages: true,
+    checkPayer,
+    rpcUrl: options.rpcUrl || process.env.BASE_RPC_URL || BASE_RPC_URL,
+    solanaRpcUrl: options.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
     ...historyOptions(resolved),
   });
 
@@ -629,6 +743,8 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     claimMismatches: result.claim_mismatches.length,
     payerChecked: result.payer.checked,
     payerValid: result.payer.valid,
+    payerRequired: checkPayer,
+    payerOutcome: checkPayer ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
     errors: result.errors,
     logInclusion,
     anchor: anchorState,

@@ -310,6 +310,44 @@ export function issuerKeyWindow(
   }, issuedAt);
 }
 
+/**
+ * Epoch records are a new trust path. The signer has to be `active` at `at`
+ * and this history must never revoke that kid. A later `revoked` row sticks,
+ * including for a time before `revoked_at`. `retired` is not active.
+ * A missing time cannot show the key was active.
+ */
+export function epochHistoryKeyAllowed(
+  doc: IssuerHistoryDocument | null | undefined,
+  kid: string | null,
+  at: unknown,
+): boolean {
+  if (!doc || !kid) return false;
+  const matches = (doc.entries || []).filter((row) => row.kid === kid || row.jwk?.kid === kid);
+  if (!matches.length) return false;
+  for (const row of matches) {
+    if (row.status === 'revoked') return false;
+    if (row.revoked_at != null && row.revoked_at !== '') return false;
+  }
+  const issued = parseTime(at);
+  if (issued == null) return false;
+  let chosen: IssuerHistoryEntry | null = null;
+  let chosenMs: number | null = null;
+  for (const row of matches) {
+    const start = parseTime(row.not_before);
+    if (start == null || start > issued) continue;
+    if (chosenMs == null || start >= chosenMs) {
+      chosen = row;
+      chosenMs = start;
+    }
+  }
+  if (!chosen || chosen.status !== 'active') return false;
+  if (chosen.not_after != null && chosen.not_after !== '') {
+    const end = parseTime(chosen.not_after);
+    if (end == null || issued > end) return false;
+  }
+  return true;
+}
+
 export function issuerHistoryDocumentHash(doc: unknown): string {
   return sha256Hex(jcsCanonicalize(doc));
 }

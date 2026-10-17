@@ -148,6 +148,7 @@ export async function verifyPayerBinding(
       paymentRef,
       payerWallet,
       grossAmount,
+      payee,
       rpcUrl: options.solanaRpcUrl || options.rpcUrl,
       fetchTransaction: options.fetchSolanaTransaction,
     });
@@ -200,4 +201,32 @@ export async function verifyPayerBinding(
     expectedAmount: grossAmount,
     reason: `unsupported_payment_ref: ${paymentRef}`,
   };
+}
+
+export type PayerCheckOutcome = 'pass' | 'fail' | 'unchecked';
+
+/**
+ * A decisive mismatch is `fail` (the chain answered and disagreed).
+ * Anything else that is not a pass was not checked: timeout, null, throw,
+ * a missing field, or a rail this verifier cannot read.
+ */
+const PAYER_MISMATCH = [
+  /^transferred_\d+_lt_expected_\d+$/,
+  /^payee_mismatch:/,
+  /^no_usdc_transfer_from_/,
+  /^no_usdc_transfer_of_/,
+  /^asset_mismatch:/,
+  /^payer_mismatch:/,
+  /^transaction_reverted$/,
+  /^transaction_failed$/,
+];
+
+export function payerCheckOutcome(input: {
+  valid?: boolean;
+  reason?: string | null;
+}): PayerCheckOutcome {
+  if (input.valid === true) return 'pass';
+  const reason = input.reason || '';
+  if (PAYER_MISMATCH.some((pattern) => pattern.test(reason))) return 'fail';
+  return 'unchecked';
 }
