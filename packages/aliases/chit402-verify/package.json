@@ -1,6 +1,6 @@
 {
   "name": "@xfuel/verify",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Alias of chit402-verify. The xfuel-verify bin stays.",
   "type": "module",
   "main": "./index.js",
@@ -56,6 +56,6 @@
     "directory": "packages/aliases/chit402-verify"
   },
   "dependencies": {
-    "chit402-verify": "0.4.5"
+    "chit402-verify": "0.4.6"
   }
 }

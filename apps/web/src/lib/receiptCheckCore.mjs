@@ -44,12 +44,12 @@ function fallbackHint(overall, status) {
   if (overall === 'NOT_IN_LOG') return 'This receipt is not in the public log. The book row is unchanged.';
   if (overall === 'INVALID') return 'Paste the signed receipt from the owner view and check it again.';
   if (overall === 'INPUT_ERROR') return INPUT_HINT;
-  if (overall === 'VERIFIED') return null;
+  if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return null;
   return 'Try this check again.';
 }
 
 function hintOf(payload, overall, status) {
-  if (overall === 'VERIFIED') return null;
+  if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return null;
   const row = payload && typeof payload === 'object' ? payload : {};
   return stringOrNull(row.hint) || fallbackHint(overall, status);
 }

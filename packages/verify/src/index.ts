@@ -2288,6 +2288,22 @@ export {
   INCLUDED_SHELL_LINE,
 } from './shell.js';
 
+export {
+  PUBLIC_RECEIPT_TAG,
+  PUBLIC_RECEIPT_TYP,
+  PUBLIC_RECEIPT_PREFIX,
+  PUBLIC_RECEIPT_CLAIM_KEYS,
+  PUBLIC_RECEIPT_PAYMENT_KEYS,
+  PUBLIC_RECEIPT_LOG_KEYS,
+  checkPublicReceiptClaims,
+  parsePublicAttestation,
+  publicReceiptPayload,
+  verifyPublicAttestationTrust,
+  sameReceiptId,
+  type PublicReceiptClaims,
+} from './public-attestation.js';
+export { verifyPublicBasePayment } from './public-payment.js';
+
 export default {
   verifyBinding,
   verifyIssuerSignature,

@@ -377,6 +377,18 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     ].join('\n');
   }
 
+  // Public attestation (0.4.6), only when the serve flag put it on the shell.
+  // The page never says VERIFIED: it does not run the verifier.
+  let attestationHtml = '';
+  const attestation = own(shell, 'public_attestation');
+  if (attestation && typeof attestation === 'object' && !Array.isArray(attestation)) {
+    if (typeof own(attestation, 'jws') === 'string') {
+      attestationHtml = textRow('Public attestation', 'Signed. Check it with chit402-verify 0.4.6 or later.');
+    } else if (own(attestation, 'status') === 'pending') {
+      attestationHtml = textRow('Public attestation', 'Public attestation pending');
+    }
+  }
+
   const links = [anchor('?format=json', 'JSON')];
   const pair = shellProofLinks(storedId, inclusion);
   if (card.leaf_hash != null && storedId && pair.inclusion) {
@@ -450,7 +462,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     ${issued}
     ${format}
     <hr />
-    ${logHtml}
+    ${logHtml}${attestationHtml ? `\n    ${attestationHtml}` : ''}
     <hr />
     <p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Check it with <code>npx chit402-verify</code> (0.4.2 or later).</p>
     <div class="links">

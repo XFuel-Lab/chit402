@@ -38,10 +38,18 @@ import { jwkThumbprint, verifyIssuerJws, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
   humanVerdictLines,
+  verdictCopy,
   type CheckState,
   type VerifyVerdict,
 } from './verdict.js';
 import { verifyTreeHeadTrust } from './anchor-trust.js';
+import {
+  parsePublicAttestation,
+  sameReceiptId,
+  verifyPublicAttestationTrust,
+  type PublicReceiptClaims,
+} from './public-attestation.js';
+import { truncateAddress, verifyPublicBasePayment } from './public-payment.js';
 
 export const RECEIPT_ID_RE = /^(chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -292,7 +300,13 @@ export function epochRecordSignatureOk(
 export async function freshPublicLog(
   receipt: { verify_url?: string; task_id?: string | null },
   history: IssuerHistoryDocument | null = null,
+  options: {
+    /** Public attestation: prove this signed leaf, not a recomputed one. */
+    signedLeaf?: { leaf_hash: string; leaf_index: number; epoch: number } | null;
+    trustedKids?: readonly string[];
+  } = {},
 ): Promise<FreshLog> {
+  const pins = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const missed = missedLog();
   try {
     const origin = new URL(String(receipt.verify_url)).origin;
@@ -353,13 +367,14 @@ export async function freshPublicLog(
       baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
       solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
       checkNewestAnchor: false,
+      signedLeaf: options.signedLeaf ?? null,
       issuerHistory: history,
-      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+      trustedKids: pins,
       epochRecord,
       verifyEpochSignature: epochRecord
         ? (jws) => {
           const trust = verifyTreeHeadTrust(head, {
-            trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+            trustedKids: pins,
             issuerHistory: history,
           });
           const signedAt = trust.ok ? (trust.payload?.published_at ?? null) : null;
@@ -367,6 +382,11 @@ export async function freshPublicLog(
         }
         : undefined,
     });
+    // The log answered for another epoch than the one signed. It may be a
+    // rollover race; it is not a proof either way.
+    if (options.signedLeaf && result.inclusion?.reason === 'log_epoch_mismatch') {
+      return missedLog('log_epoch_mismatch');
+    }
     if (result.overall === 'verified') {
       return {
         logInclusion: 'pass',
@@ -430,6 +450,204 @@ export async function freshPublicLog(
   } catch {
     return missed;
   }
+}
+
+export interface PublicShellOptions {
+  version?: string;
+  /** Verified issuer history (bundled, live, or file). Null is could_not_check. */
+  history: IssuerHistoryDocument | null;
+  historySource?: 'file' | 'live' | 'bundled' | null;
+  historyHead?: string | null;
+  historyCount?: number | null;
+  historyAsOf?: string | null;
+  /** History that failed to verify or extend the bundled chain: exit 1. */
+  historyInvalidReason?: string | null;
+  /** The id the user asked for (URL path or id input). Null for pasted JSON. */
+  requestedId?: string | null;
+  /** Origin of the log. Loopback only when not public input. */
+  origin?: string | null;
+  publicInput?: boolean;
+  rpcUrl?: string;
+  trustedKids?: readonly string[];
+}
+
+type PublicChecks = VerifyVerdict['checks'];
+
+function publicVerdict(
+  opts: PublicShellOptions,
+  result: VerifyVerdict['result'],
+  reason: string | null,
+  checks: PublicChecks,
+  claims: PublicReceiptClaims | null,
+  log: VerifyVerdict['log'],
+  chainFrom: string | null,
+): VerifyVerdict {
+  const copy = verdictCopy(reason, result);
+  const exit_code: 0 | 1 | 2 = result === 'verified_public' ? 0 : result === 'invalid' ? 1 : 2;
+  const id = result === 'verified_public' && claims ? claims.task_id : null;
+  return {
+    result,
+    exit_code,
+    reason,
+    message: copy.message,
+    next_step: copy.next_step,
+    receipt_id: id,
+    display_id: id,
+    payload_version: null,
+    checks: { ...checks, payer: 'not_claimed' },
+    scope: 'public',
+    public: {
+      claims: 'amount, payee, tx, log position',
+      payer: 'not_claimed',
+      chain_from: result === 'verified_public' ? truncateAddress(chainFrom) : null,
+      task_id_to_leaf: 'issuer_signature',
+    },
+    history: {
+      source: opts.historySource ?? null,
+      head_hash: opts.historyHead ?? null,
+      entry_count: opts.historyCount ?? null,
+      as_of: opts.historyAsOf ?? null,
+    },
+    log,
+    verifier: { name: 'chit402-verify', version: opts.version || packageVersion() },
+  };
+}
+
+function shellFieldMismatch(shell: Record<string, unknown>, claims: PublicReceiptClaims): string | null {
+  const eqId = (field: string) => {
+    const value = shell[field];
+    return value == null || sameReceiptId(value, claims.task_id);
+  };
+  if (!eqId('task_id')) return 'task_id';
+  if (!eqId('receipt_id')) return 'receipt_id';
+  const pay = claims.payment;
+  const txHash = pay.ref.slice('base:'.length);
+  const checks: Array<[string, (value: unknown) => boolean]> = [
+    ['amount_gross', (v) => String(v) === pay.gross_amount],
+    ['amount_settled', (v) => String(v) === pay.settled_amount],
+    ['pay_to', (v) => typeof v === 'string' && v.toLowerCase() === pay.payee.toLowerCase()],
+    ['payment_tx', (v) => typeof v === 'string' && v.toLowerCase().replace(/^base:/, '') === txHash],
+    ['chain', (v) => typeof v === 'string' && ['base', 'eip155:8453'].includes(v.toLowerCase())],
+    ['asset', (v) => typeof v === 'string' && (v.toLowerCase() === pay.asset.toLowerCase() || v.toUpperCase() === 'USDC')],
+    ['issued_at', (v) => v === claims.issued_at],
+  ];
+  for (const [field, ok] of checks) {
+    const value = shell[field];
+    if (value == null) continue;
+    if (!ok(value)) return field;
+  }
+  return null;
+}
+
+/**
+ * Public attestation path (0.4.6). Returns null when the document carries
+ * no `public_attestation`; the caller keeps the 0.4.5 result. A present but
+ * malformed or invalid attestation is exit 1. It never falls back to
+ * `signed_receipt_unavailable`. A pending attestation is exit 2.
+ */
+export async function verifyPublicShell(
+  shell: Record<string, unknown>,
+  opts: PublicShellOptions,
+): Promise<VerifyVerdict | null> {
+  if (!Object.prototype.hasOwnProperty.call(shell, 'public_attestation')) return null;
+  const could: PublicChecks = {
+    signature: 'could_not_check',
+    key_window: 'could_not_check',
+    payment_binding: 'could_not_check',
+    log_inclusion: 'could_not_check',
+    anchor: 'could_not_check',
+    shape: 'could_not_check',
+  };
+  const att = shell.public_attestation as { status?: unknown; jws?: unknown } | null;
+  if (att && typeof att === 'object' && !Array.isArray(att) && att.jws == null && att.status === 'pending'
+    && Object.keys(att).length === 1) {
+    return publicVerdict(opts, 'could_not_check', 'public_attestation_pending', could, null, null, null);
+  }
+  const parsed = parsePublicAttestation(att && typeof att === 'object' ? att.jws : null);
+  if (!parsed.ok || !parsed.claims) {
+    return publicVerdict(opts, 'invalid', 'invalid_jws', { ...could, shape: 'fail' }, null, null, null);
+  }
+  const claims = parsed.claims;
+  const checks: PublicChecks = { ...could, shape: 'pass' };
+  if (opts.historyInvalidReason) {
+    return publicVerdict(opts, 'invalid', opts.historyInvalidReason, { ...checks, key_window: 'fail' }, null, null, null);
+  }
+  if (!opts.history) {
+    return publicVerdict(opts, 'could_not_check', 'issuer_history_unavailable', checks, null, null, null);
+  }
+  const trust = verifyPublicAttestationTrust(parsed, opts.history);
+  if (!trust.ok) {
+    if (trust.check === 'key_window') {
+      return publicVerdict(opts, 'invalid', trust.reason, { ...checks, signature: 'pass', key_window: 'fail' }, null, null, null);
+    }
+    return publicVerdict(opts, 'invalid', trust.reason, { ...checks, signature: 'fail' }, null, null, null);
+  }
+  checks.signature = 'pass';
+  checks.key_window = 'pass';
+  if (claims.payment.ref.startsWith('solana:')) {
+    return publicVerdict(opts, 'could_not_check', 'public_rail_unsupported', checks, null, null, null);
+  }
+
+  // Subject binding: the id asked for, and every outer shell field, must
+  // be the signed value. The outer fields are display only.
+  if (opts.requestedId != null && !sameReceiptId(opts.requestedId, claims.task_id)) {
+    return publicVerdict(opts, 'invalid', 'claim_mismatch', { ...checks, payment_binding: 'fail' }, null, null, null);
+  }
+  if (shellFieldMismatch(shell, claims)) {
+    return publicVerdict(opts, 'invalid', 'claim_mismatch', { ...checks, payment_binding: 'fail' }, null, null, null);
+  }
+  const shellInclusion = shell.inclusion as { leaf_hash?: unknown } | null | undefined;
+  if (shellInclusion && typeof shellInclusion === 'object' && shellInclusion.leaf_hash != null
+    && String(shellInclusion.leaf_hash).toLowerCase() !== claims.log.leaf_hash) {
+    return publicVerdict(opts, 'invalid', 'leaf_not_bound', { ...checks, log_inclusion: 'fail' }, null, null, null);
+  }
+
+  // Fresh log: the proof is for the signed leaf at the signed index.
+  let host = opts.origin || null;
+  if (!host) host = 'https://api.chit402.com';
+  const verifyUrl = `${host}/receipt/${encodeURIComponent(claims.task_id)}`;
+  let fresh: FreshLog;
+  if (!historyHostAllowed(verifyUrl, { loopback: opts.publicInput !== true })) {
+    fresh = missedLog();
+  } else {
+    fresh = await freshPublicLog(
+      { verify_url: verifyUrl, task_id: claims.task_id },
+      opts.history,
+      { signedLeaf: claims.log, trustedKids: opts.trustedKids },
+    );
+  }
+  checks.log_inclusion = fresh.logInclusion;
+  checks.anchor = fresh.anchor;
+  if (fresh.logInclusion === 'fail' || fresh.anchor === 'fail') {
+    const reason = fresh.logReason === 'not_in_log' ? 'not_in_log' : (fresh.logReason || 'log_inclusion');
+    return publicVerdict(opts, 'invalid', reason, checks, null, null, null);
+  }
+
+  // On chain: exactly one matching Transfer of the signed settled amount.
+  const paid = await verifyPublicBasePayment({
+    ref: claims.payment.ref,
+    asset: claims.payment.asset,
+    payee: claims.payment.payee,
+    settledAmount: claims.payment.settled_amount,
+    rpcUrl: opts.rpcUrl,
+  });
+  checks.payment_binding = paid.state;
+  if (paid.state === 'fail') {
+    return publicVerdict(opts, 'invalid', paid.reason || 'transfer_mismatch', checks, null, null, null);
+  }
+  if (fresh.logInclusion !== 'pass' || fresh.anchor !== 'pass') {
+    return publicVerdict(opts, 'could_not_check', fresh.logReason || 'log_unreachable', checks, null, null, null);
+  }
+  if (paid.state !== 'pass') {
+    return publicVerdict(opts, 'could_not_check', paid.reason || 'payer_unchecked', checks, null, null, null);
+  }
+  return publicVerdict(opts, 'verified_public', null, checks, claims, fresh.log, paid.from);
+}
+
+/** The receipt id named by an id or receipt URL input. Null for files and pasted JSON. */
+export function receiptIdFromTarget(target: string): string | null {
+  const id = /(?:^|\/receipt\/)((?:chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:$|[/?#.])/i.exec(target.trim());
+  return id ? id[1] : null;
 }
 
 async function loadReceiptTarget(target: string, publicInput: boolean): Promise<LoadedReceipt> {
@@ -630,9 +848,15 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   const checkPayer = options.checkPayer !== false;
   let resolved: ResolvedIssuerHistory;
   try {
+    // A public shell has no verify_url. When it was fetched from a host,
+    // read that host's live history (same host rule as a holder receipt) so
+    // an attestation under a key added after the bundled snapshot can check.
+    const shellOrigin = receiptOrigin
+      && typeof receipt.verify_url !== 'string'
+      && Object.prototype.hasOwnProperty.call(receipt, 'public_attestation');
     resolved = await resolveIssuerHistory({
       fileBytes: options.issuerHistoryBytes ?? null,
-      receipt,
+      receipt: shellOrigin ? { ...receipt, verify_url: `${receiptOrigin}/receipt/` } : receipt,
       trustedKids,
       timeoutMs: LOG_FETCH_MS,
     });
@@ -682,6 +906,21 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
 
   const unsigned = typeof receipt.issuer_signature?.jws !== 'string' || receipt.issuer_signature.jws.length === 0;
   if (unsigned || isReceiptShell(receipt)) {
+    const kind = classifyReceiptInput(target);
+    const publicResult = await verifyPublicShell(receipt as unknown as Record<string, unknown>, {
+      history: resolved.invalid ? null : resolved.document,
+      historyInvalidReason: resolved.invalid ? (resolved.reason || 'issuer_history_invalid') : null,
+      historySource: resolved.source,
+      historyHead: resolved.headHash,
+      historyCount: resolved.entryCount,
+      historyAsOf: resolved.asOf,
+      requestedId: kind === 'url' || kind === 'id' ? receiptIdFromTarget(target) : null,
+      origin: receiptOrigin,
+      publicInput,
+      rpcUrl: options.rpcUrl,
+      trustedKids,
+    });
+    if (publicResult) return linesOutcome(publicResult);
     let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
     let anchorState: CheckState | 'unclaimed' = 'unclaimed';
     let logReason: string | null = 'signed_receipt_unavailable';

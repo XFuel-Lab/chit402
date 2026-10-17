@@ -7,7 +7,12 @@
 
 export type CheckState = 'pass' | 'fail' | 'could_not_check';
 
-export type VerdictResult = 'verified' | 'invalid' | 'could_not_check';
+/**
+ * `verified_public` is the public-attestation result (0.4.6). It is exit 0,
+ * but its scope is the signed public fields only: amount, payee, tx, and log
+ * position. It does not claim the payer or fulfillment.
+ */
+export type VerdictResult = 'verified' | 'verified_public' | 'invalid' | 'could_not_check';
 
 export interface VerdictLog {
   leaf_index: number | null;
@@ -35,6 +40,16 @@ export interface VerifyVerdict {
     log_inclusion: CheckState;
     anchor: CheckState;
     shape: CheckState;
+    /** Public scope only: the payer is not part of the claim. */
+    payer?: 'not_claimed';
+  };
+  /** Present only on the public-attestation path. */
+  scope?: 'public';
+  public?: {
+    claims: string;
+    payer: 'not_claimed';
+    chain_from: string | null;
+    task_id_to_leaf: 'issuer_signature';
   };
   history: {
     source: 'file' | 'live' | 'bundled' | null;
@@ -75,6 +90,48 @@ const WINDOW_FAIL = new Set([
 
 export function verdictCopy(reason: string | null, result: VerdictResult): { message: string; next_step: string | null } {
   if (result === 'verified') return { message: 'Every check passed.', next_step: null };
+  if (result === 'verified_public') {
+    return {
+      message: 'The public attestation verified: amount, payee, tx, and log position. The link from this id to the log leaf rests on the issuer signature. The payer and fulfillment are not claimed.',
+      next_step: null,
+    };
+  }
+  if (reason === 'public_attestation_pending') {
+    return {
+      message: 'The public attestation is pending. It is signed after the log leaf exists.',
+      next_step: 'Re-run in a few minutes.',
+    };
+  }
+  if (reason === 'leaf_not_bound' || reason === 'leaf_index_mismatch') {
+    return {
+      message: 'The log leaf does not match the leaf the issuer signed.',
+      next_step: null,
+    };
+  }
+  if (reason === 'log_epoch_mismatch') {
+    return {
+      message: 'The log served a different epoch than the one the issuer signed.',
+      next_step: 'Re-run later.',
+    };
+  }
+  if (reason === 'invalid_jws') {
+    return {
+      message: 'The public attestation is malformed or not the tagged public payload.',
+      next_step: null,
+    };
+  }
+  if (reason === 'transfer_mismatch') {
+    return {
+      message: 'The on-chain transfer does not match the signed amount, payee, or asset.',
+      next_step: null,
+    };
+  }
+  if (reason === 'public_rail_unsupported') {
+    return {
+      message: 'This verifier checks public attestations on Base only.',
+      next_step: null,
+    };
+  }
   if (reason === 'not_in_log' || reason === 'NOT_IN_LOG') {
     return {
       message: 'This receipt is not a leaf of the public log. The payment row in the book is unchanged.',
@@ -397,6 +454,7 @@ function uncheckedReason(
 
 export function overallLine(verdict: VerifyVerdict, legacyOverall?: string | null): string {
   if (verdict.result === 'verified') return 'VERIFIED';
+  if (verdict.result === 'verified_public') return 'VERIFIED_PUBLIC';
   if (verdict.reason === 'not_in_log') return 'NOT_IN_LOG';
   if (verdict.result === 'invalid') return 'INVALID';
   if (legacyOverall === 'pending' || verdict.reason === 'pending' || verdict.reason === 'pending_anchor') return 'PENDING';
@@ -421,6 +479,11 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
   if (verdict.message) lines.push(verdict.message);
   if (couldNotCheck && !/could not be checked/i.test(verdict.message)) {
     lines.push('The receipt could not be checked.');
+  }
+  if (verdict.result === 'verified_public') {
+    lines.push('Scope: public fields only (amount, payee, tx, log position). Payer: not claimed.');
+    if (verdict.public?.chain_from) lines.push(`On-chain sender (chain fact, not signed): ${verdict.public.chain_from}`);
+    lines.push('Details: https://chit402.com/docs/verify#verified_public');
   }
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
@@ -485,4 +548,12 @@ export const VERDICT_DOC_ANCHORS = [
   'head_key_untrusted',
   'inclusion_failed',
   'root_mismatch',
+  'verified_public',
+  'public_attestation_pending',
+  'invalid_jws',
+  'leaf_not_bound',
+  'leaf_index_mismatch',
+  'log_epoch_mismatch',
+  'transfer_mismatch',
+  'public_rail_unsupported',
 ] as const;

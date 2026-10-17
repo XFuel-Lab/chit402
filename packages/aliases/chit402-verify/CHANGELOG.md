@@ -5,6 +5,11 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
 
+## 0.4.6 — Pin chit402-verify 0.4.6
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.6`. The CLI forwards to that verifier. A public shell with a valid public attestation is `VERIFIED_PUBLIC` (exit 0, public scope: amount, payee, tx, log position; payer not claimed). A malformed or invalid attestation is exit 1. Not published. No deploy.
+
 ## 0.4.5 — Pin chit402-verify 0.4.5
 
 ### Changed
