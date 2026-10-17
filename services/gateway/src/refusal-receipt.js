@@ -16,7 +16,7 @@
  * means the issuer had no block. verify_url is not inside the signature.
  */
 import crypto from 'crypto';
-import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
+import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getIssuerKid, getJwks, computeJwkThumbprint } from './issuer-key.js';
 import { withPublicPreimages } from './receipt-preimage.js';
 import { REFUSAL_CANONICAL_FIELDS, V11_CANONICALIZATION, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
@@ -109,8 +109,8 @@ function bindingError(message, code) {
   return err;
 }
 
-function issueV11Refusal(row, request) {
-  issuerHistoryMirrorClaim(currentIssuerHistory());
+async function issueV11Refusal(row, request) {
+  issuerHistoryMirrorClaim(await currentIssuerHistory());
   const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
   if (!request) throw bindingError('request_digest is required to bind this refusal', 'request_unbound');
   const request_digest = requestDigest(request);
@@ -134,12 +134,17 @@ function issueV11Refusal(row, request) {
     issuedAt: minuteIssuedAt(row?.collected_at || row?.recorded_at || new Date()),
   });
   const payloadUtf8 = jcsRfc8785(claims);
-  const { jws, kid: signedKid } = signJws(claims, { typ: REFUSAL_JWT_TYP, payloadUtf8 });
+  const { jws, kid: signedKid } = await signJwsAsync(claims, {
+    typ: REFUSAL_JWT_TYP,
+    payloadUtf8,
+    capKind: 'receipt',
+    receiptId: refusalId,
+  });
   bindIssuerRoot(claims, signedKid, getIssuerPublicKeyJwk());
   return publicV11Refusal({ claims, jws, kid: signedKid, verifyUrl: null });
 }
 
-export function issueRefusalReceipt(row) {
+export async function issueRefusalReceipt(row) {
   assertIssuanceOpen();
   const anchor = refusalAnchorClaims(row?.anchor);
   const request = row?.request && typeof row.request === 'object' ? row.request : null;
@@ -148,7 +153,7 @@ export function issueRefusalReceipt(row) {
   if (intentSupplied && !intentId) {
     throw bindingError('intent_id is required when the request carried one', 'intent_id_required');
   }
-  if (issuerRootActive()) return issueV11Refusal(row, request);
+  if (issuerRootActive()) return await issueV11Refusal(row, request);
   const refusalId = `rfs-${crypto.randomBytes(8).toString('hex')}`;
   const nonce = crypto.randomBytes(16).toString('hex');
   const amount = textOrNull(row?.amount_requested);
@@ -163,7 +168,7 @@ export function issueRefusalReceipt(row) {
     if (request.idempotency_key) claimIdempotency(request.idempotency_key, request_digest, requestSalt(request));
     bound = { request_preimage, request_digest };
   }
-  const historyMirror = v2 ? issuerHistoryMirrorClaim(currentIssuerHistory()) : null;
+  const historyMirror = v2 ? issuerHistoryMirrorClaim(await currentIssuerHistory()) : null;
   const claims = {
     schema,
     payload_version: payloadVersion,
@@ -197,17 +202,21 @@ export function issueRefusalReceipt(row) {
     },
     charged: false,
     amount_charged: '0',
-    issuer_history: currentHistoryPin(),
+    issuer_history: await currentHistoryPin(),
     ...(v2 ? {
       canonicalization: V11_CANONICALIZATION,
-      issuer_history_snapshot: issuerHistorySnapshotClaim(),
+      issuer_history_snapshot: await issuerHistorySnapshotClaim(),
       issuer_root: issuerRootClaim(getIssuerKid()),
       request_digest: bound.request_digest,
       ...(historyMirror ? { issuer_history_mirror: historyMirror } : {}),
     } : {}),
   };
   const sealed = sealCanonicalObject(claims, REFUSAL_CANONICAL_FIELDS, v2 ? jcsRfc8785 : undefined);
-  const { jws, kid } = signJws(sealed.claims, { typ: REFUSAL_JWT_TYP });
+  const { jws, kid } = await signJwsAsync(sealed.claims, {
+    typ: REFUSAL_JWT_TYP,
+    capKind: 'receipt',
+    receiptId: refusalId,
+  });
   bindIssuerRoot(sealed.claims, kid, getIssuerPublicKeyJwk());
   return {
     ...sealed.claims,
@@ -360,7 +369,7 @@ function bookRowSame(outer, signed) {
  * @param {object} doc
  * @param {{ keys: object[] }|null} [jwks]
  */
-export function verifyRefusalReceipt(doc, jwks = null) {
+export async function verifyRefusalReceipt(doc, jwks = null) {
   if (!doc || typeof doc !== 'object') {
     return { checked: false, valid: false, reason: 'not_a_refusal' };
   }
@@ -396,7 +405,7 @@ export function verifyRefusalReceipt(doc, jwks = null) {
     // v11 apply here. A gate of payload_version >= 11 would skip them.
     if (version === REFUSAL_PAYLOAD_VERSION_V2) {
       const snapshot = verifyHistorySnapshotClaims(payload, {
-        publishedEntries: publishedHistoryEntries(payload.issuer_history) ?? undefined,
+        publishedEntries: await publishedHistoryEntries(payload.issuer_history) ?? undefined,
       });
       if (!snapshot.ok) {
         return { checked: true, valid: false, reason: snapshot.reason, payload };

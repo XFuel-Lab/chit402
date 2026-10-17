@@ -104,6 +104,16 @@ const ROUTE_CONTENT = {
     h1: 'Receipt check',
     lede: 'Recompute public receipt hashes from published preimages, and check the signed issuer key history.',
   },
+  '/check': {
+    title: 'Receipt check | Chit402',
+    h1: 'Receipt check',
+    lede: 'Paste a receipt, a receipt id, or a receipt URL. Free. The verdict matches chit402-verify. No account.',
+  },
+  '/docs/verify': {
+    title: 'Verify | Chit402',
+    h1: 'Verify',
+    lede: 'Exit codes for chit402-verify and the reason each Details link names.',
+  },
   '/docs/private-spend': {
     title: 'Private Spend | Chit402',
     h1: 'Private Spend',

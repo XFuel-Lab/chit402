@@ -22,6 +22,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { isDisputeWindowOpen } from './issuance-commitment.js';
 
 export const CLAIM_TYPES = {
@@ -54,9 +55,7 @@ export class BookDisputeStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'book-dispute: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-dispute: mkdir failed');
       }
     }
   }
@@ -88,7 +87,7 @@ export class BookDisputeStore {
       fs.writeFileSync(tmp, JSON.stringify({ disputes }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'book-dispute: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-dispute: save failed');
     }
   }
 

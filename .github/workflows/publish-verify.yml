@@ -1,0 +1,113 @@
+name: Publish verifier
+
+# The owner approves the release by running this workflow. It does not run on push.
+# Trusted publishing uses the id-token. Node 22 runners ship npm 10.x, which
+# cannot exchange that token and fail the registry PUT with E404.
+# setup-node registry-url writes an _authToken line. npm sends that token and
+# skips the OIDC exchange. This job leaves registry auth unset.
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: Publish chit402-verify and the @xfuel/verify alias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Versions match and the alias pin is exact
+        run: node scripts/check-verify-publish.mjs
+
+      - name: Test chit402-verify
+        working-directory: packages/verify
+        run: npm ci --no-audit --no-fund && npm test
+
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@11.21.0
+          npm --version
+          version="$(npm --version)"
+          if [ "$version" != "11.21.0" ]; then
+            echo "npm ${version} is not the pinned 11.21.0"
+            exit 1
+          fi
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); if(!(a>11||(a===11&&(b>5||(b===5&&c>=1))))){console.error("npm "+process.argv[1]+" is below 11.5.1"); process.exit(1)}' "$version"
+
+      - name: Remove registry auth before publish
+        run: |
+          unset NODE_AUTH_TOKEN
+          strip_auth() {
+            local file="$1"
+            if [ -z "$file" ] || [ ! -f "$file" ]; then
+              return 0
+            fi
+            if ! grep -q -e '_authToken' -e 'NODE_AUTH_TOKEN' "$file"; then
+              return 0
+            fi
+            grep -v -e '_authToken' -e 'NODE_AUTH_TOKEN' "$file" > "${file}.stripped" || true
+            mv "${file}.stripped" "$file"
+          }
+          strip_auth "${NPM_CONFIG_USERCONFIG:-}"
+          strip_auth "${RUNNER_TEMP:-}/.npmrc"
+          strip_auth "${HOME}/.npmrc"
+          strip_auth "${GITHUB_WORKSPACE:-}/.npmrc"
+          for file in "${NPM_CONFIG_USERCONFIG:-}" "${RUNNER_TEMP:-}/.npmrc" "${HOME}/.npmrc" "${GITHUB_WORKSPACE:-}/.npmrc"; do
+            if [ -n "$file" ] && [ -f "$file" ] && grep -q -e '_authToken' -e 'NODE_AUTH_TOKEN' "$file"; then
+              echo "registry auth line remains in ${file}"
+              exit 1
+            fi
+          done
+
+      - name: Publish chit402-verify
+        working-directory: packages/verify
+        run: |
+          unset NODE_AUTH_TOKEN
+          if [ -n "${NODE_AUTH_TOKEN+x}" ]; then
+            echo "NODE_AUTH_TOKEN is set; refusing to publish"
+            exit 1
+          fi
+          for file in "${NPM_CONFIG_USERCONFIG:-}" "${RUNNER_TEMP:-}/.npmrc" "${HOME}/.npmrc" "${GITHUB_WORKSPACE:-}/.npmrc"; do
+            if [ -n "$file" ] && [ -f "$file" ] && grep -q -e '_authToken' -e 'NODE_AUTH_TOKEN' "$file"; then
+              echo "registry auth line remains in ${file}"
+              exit 1
+            fi
+          done
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          seen="$(npm view "${name}@${version}" version --prefer-online 2>/dev/null || true)"
+          if [ "$seen" = "$version" ]; then
+            echo "${name}@${version} is already published; skipping"
+            exit 0
+          fi
+          npm publish --provenance --access public --loglevel verbose
+
+      - name: Publish @xfuel/verify alias
+        working-directory: packages/aliases/chit402-verify
+        run: |
+          unset NODE_AUTH_TOKEN
+          if [ -n "${NODE_AUTH_TOKEN+x}" ]; then
+            echo "NODE_AUTH_TOKEN is set; refusing to publish"
+            exit 1
+          fi
+          for file in "${NPM_CONFIG_USERCONFIG:-}" "${RUNNER_TEMP:-}/.npmrc" "${HOME}/.npmrc" "${GITHUB_WORKSPACE:-}/.npmrc"; do
+            if [ -n "$file" ] && [ -f "$file" ] && grep -q -e '_authToken' -e 'NODE_AUTH_TOKEN' "$file"; then
+              echo "registry auth line remains in ${file}"
+              exit 1
+            fi
+          done
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          seen="$(npm view "${name}@${version}" version --prefer-online 2>/dev/null || true)"
+          if [ "$seen" = "$version" ]; then
+            echo "${name}@${version} is already published; skipping"
+            exit 0
+          fi
+          npm publish --provenance --access public --loglevel verbose

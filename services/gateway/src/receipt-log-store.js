@@ -173,6 +173,7 @@ function pushLeaf(bucket, row) {
     preimage_b64: body.toString('base64'),
     epoch: bucket.epoch,
   };
+  if (row.at) meta.at = row.at;
   bucket.meta.push(meta);
   if (row.task_id) bucket.byTask.set(String(row.task_id), index);
 }
@@ -187,6 +188,8 @@ function prefixRootHex(leaves, size) {
  * Unsigned historical heads have no JWS and are not this case.
  */
 const TREE_HEAD_JWT_TYP = 'chit402-tree-head+jwt';
+const QUARANTINE_ACK_TYP = 'chit402-quarantine-ack+jwt';
+const QUARANTINE_ACK_SCHEMA = 'chit402.quarantine_ack.v1';
 const ROTATED_KEY_REASONS = new Set(['no_matching_key', 'empty_jwks']);
 
 /**
@@ -211,6 +214,63 @@ function storedHeadJwks() {
     }
   }
   return { keys };
+}
+
+function ackRoot(value) {
+  const hex = String(value || '').replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+  return hex;
+}
+
+/**
+ * A signed note clears one raced head from the degraded count. The journal
+ * line stays. A bad signature does not acknowledge and does not refuse boot.
+ */
+function readQuarantineAck(row) {
+  const jws = row?.issuer_signature?.jws;
+  if (typeof jws !== 'string' || jws.length === 0) return null;
+  let header = null;
+  try {
+    header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (header?.typ !== QUARANTINE_ACK_TYP) return null;
+  const result = verifyJwsWithJwks(jws, storedHeadJwks());
+  if (!result.valid) return null;
+  const payload = result.payload || {};
+  const root = ackRoot(payload.root);
+  if (!root || root !== ackRoot(row.root)) return null;
+  if (payload.schema !== QUARANTINE_ACK_SCHEMA) return null;
+  if (Number(payload.epoch) !== Number(row.epoch)) return null;
+  if (Number(payload.tree_size) !== Number(row.tree_size)) return null;
+  const prefix = payload.prefix_size == null ? null : Number(payload.prefix_size);
+  if (prefix != null && prefix !== Number(row.prefix_size)) return null;
+  return {
+    root,
+    epoch: Number(payload.epoch),
+    tree_size: Number(payload.tree_size),
+    prefix_size: prefix,
+  };
+}
+
+function applyQuarantineAcks(epochs, acks) {
+  const valid = [];
+  for (const row of acks || []) {
+    const ack = readQuarantineAck(row);
+    if (ack) valid.push(ack);
+  }
+  for (const epoch of epochs || []) {
+    for (const head of epoch.quarantinedHeads || []) {
+      const root = ackRoot(head.root);
+      head.acknowledged = valid.some((ack) => (
+        ack.root === root
+        && ack.epoch === Number(head.epoch)
+        && ack.tree_size === Number(head.tree_size)
+        && (ack.prefix_size == null || ack.prefix_size === Number(head.prefix_size))
+      ));
+    }
+  }
 }
 
 function storedHeadSignature(head) {
@@ -351,6 +411,7 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
   let epochRecordV1 = null;
   let bundleIndex = null;
   const intents = [];
+  const acks = [];
 
   const lines = text.split('\n');
   for (let lineNo = 0; lineNo < lines.length; lineNo += 1) {
@@ -422,6 +483,8 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
       if (isSignedEpochV1(epochRecord)) epochRecordV1 = epochRecord;
     } else if (row.op === 'bundle_index') {
       bundleIndex = row.index || null;
+    } else if (row.op === 'quarantine_ack') {
+      acks.push(row);
     } else {
       throw new ReceiptLogRefused('bad_op', `journal line ${lineNo + 1} has unknown op ${row.op}`);
     }
@@ -491,6 +554,8 @@ export function readReceiptLog(dir, { strict = true, allowFresh = false } = {}) 
       throw new ReceiptLogRefused('corrupt_bundle_index', `bundle index does not parse: ${err.message}`);
     }
   }
+
+  applyQuarantineAcks(epochs, acks);
 
   return {
     empty: false,
@@ -584,6 +649,8 @@ function mergeAnchor(folded, fileState) {
   for (const [key, row] of Object.entries(folded.base || {})) {
     out.base[key] = mergeBaseRow(fileState?.base?.[key], row);
   }
+  // The issuer-history high-water mark lives on this file and is not a journal row.
+  if (fileState?.issuer_history) out.issuer_history = fileState.issuer_history;
   return out;
 }
 
@@ -606,7 +673,19 @@ export function writeCheckpoint(dir, epochs) {
 }
 
 export function writeAnchorState(dir, state) {
-  atomicWrite(path.join(dir, ANCHOR_STATE_NAME), `${JSON.stringify(state)}\n`);
+  const next = state && typeof state === 'object' ? { ...state } : emptyAnchorState();
+  if (!next.issuer_history) {
+    const anchorPath = path.join(dir, ANCHOR_STATE_NAME);
+    if (fs.existsSync(anchorPath)) {
+      try {
+        const existing = readJson(anchorPath);
+        if (existing?.issuer_history) next.issuer_history = existing.issuer_history;
+      } catch {
+        /* a later read of a corrupt anchor file still fails closed */
+      }
+    }
+  }
+  atomicWrite(path.join(dir, ANCHOR_STATE_NAME), `${JSON.stringify(next)}\n`);
 }
 
 export function writeEpochRecordFile(dir, record) {

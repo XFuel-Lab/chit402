@@ -128,9 +128,9 @@ test('/v1/models reports observed health, and a failing model overrides its own 
 
 // ── Probing ──────────────────────────────────────────────────────────────────
 
-test('probing is off unless asked for — it spends real money', () => {
+test('probing is off unless asked for — it spends real money', async () => {
   assert.equal(probingEnabled(), false);
-  assert.equal(startHealthProbes(async () => ({ models: [] })), false);
+  assert.equal(await startHealthProbes(async () => ({ models: [] })), false);
   process.env.PROVIDER_HEALTH_PROBE = 'true';
   assert.equal(probingEnabled(), true);
 });

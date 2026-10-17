@@ -179,7 +179,7 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
     }).then((res) => res.json());
     assert.equal(Number(chainId.result), 84532);
 
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'xfuel-anvil-v11',
       status: 'completed',
       createdAt: '2026-09-26T17:27:32Z',
@@ -208,7 +208,7 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
     const lied = JSON.parse(fs.readFileSync(setFile, 'utf8'));
     lied.leaves[0].payload_hash = '44'.repeat(32);
     fs.writeFileSync(setFile, JSON.stringify(lied));
-    assert.throws(() => buildReceipt({
+    await assert.rejects(async () => await buildReceipt({
       taskId: 'xfuel-anvil-paused',
       status: 'completed',
       createdAt: '2026-09-26T17:27:32Z',

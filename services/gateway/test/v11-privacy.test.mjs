@@ -234,7 +234,7 @@ test('production boot with the memory store refuses v11 issuance', async () => {
     assert.equal(getSaltStore().kind, 'memory');
     let called = 0;
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: async () => { called += 1; return { ok: false }; } }),
+      async () => await assertIssuerRootStartup({ fetchImpl: async () => { called += 1; return { ok: false }; } }),
       /encrypted SaltStore/,
     );
     assert.equal(called, 0);
@@ -281,7 +281,7 @@ test('v11 public receipt hides output, route, economics, and book ids', async ()
   try {
     await arm();
     const task = paidTask('xfuel-v11-open', { output: 'ok', agentId: 4 });
-    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.deepEqual(Object.keys(claims).sort(), [...V11_SIGNED_FIELDS].sort());
     assert.equal(claims.v, 11);
@@ -307,10 +307,10 @@ test('v11 public receipt hides output, route, economics, and book ids', async ()
     assert.notEqual(claims.accounting_commitment, claims.routing_commitment);
     const sameBytes = Buffer.from('ok');
     assert.notEqual(v11Commit(salt, V11_LABEL_OUTPUT, sameBytes), v11Commit(salt, V11_LABEL_BODY, sameBytes));
-    const other = buildReceipt(paidTask('xfuel-v11-open-2', { output: 'ok', agentId: 4 }), { signingSecret: 's', agentId: 4 });
+    const other = await buildReceipt(paidTask('xfuel-v11-open-2', { output: 'ok', agentId: 4 }), { signingSecret: 's', agentId: 4 });
     assert.notEqual(other.output_commitment, receipt.output_commitment);
     assert.equal(other.book_ref, receipt.book_ref);
-    const stranger = buildReceipt(paidTask('xfuel-v11-open-3', { output: 'ok', agentId: 9 }), { signingSecret: 's', agentId: 9 });
+    const stranger = await buildReceipt(paidTask('xfuel-v11-open-3', { output: 'ok', agentId: 9 }), { signingSecret: 's', agentId: 9 });
     assert.notEqual(stranger.book_ref, receipt.book_ref);
     const nums = [Number.parseInt(receipt.book_ref, 16), Number.parseInt(stranger.book_ref, 16)];
     assert.notEqual(Math.abs(nums[0] - nums[1]), 1);
@@ -339,15 +339,15 @@ test('v11 public receipt hides output, route, economics, and book ids', async ()
       jws: receipt.issuer_signature.jws,
       payload_version: 11,
     };
-    const again = buildReceipt(task, { signingSecret: 's', agentId: 4 });
-    getReceiptMerkleTree().appendReceipt(task.taskId, 'row-later');
-    const after = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const again = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    await getReceiptMerkleTree().appendReceipt(task.taskId, 'row-later');
+    const after = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     assert.equal(after.issuer_signature.jws, receipt.issuer_signature.jws);
-    stampCoveringTreeHead(after);
+    await stampCoveringTreeHead(after);
     assert.equal(after.issuer_signature.jws, receipt.issuer_signature.jws);
     resetSaltStore();
     resetIdempotencyStore();
-    const restarted = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const restarted = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     assert.equal(restarted.issuer_signature.jws, receipt.issuer_signature.jws);
     const restartedHeaders = headersFrom(restarted, task.request);
     assert.equal(restartedHeaders['x-chit-request-salt'], undefined);
@@ -366,9 +366,9 @@ test('idempotency does not hand one principal the other salt', async () => {
     const b = paidTask('xfuel-v11-b', { body, payer: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', agentId: 9 });
     a.request.idempotency_key = 'shared-key';
     b.request.idempotency_key = 'shared-key';
-    const receiptA = buildReceipt(a, { signingSecret: 's', agentId: 4 });
+    const receiptA = await buildReceipt(a, { signingSecret: 's', agentId: 4 });
     const saltA = headersFrom(receiptA, a.request)['x-chit-request-salt'];
-    const receiptB = buildReceipt(b, { signingSecret: 's', agentId: 9 });
+    const receiptB = await buildReceipt(b, { signingSecret: 's', agentId: 9 });
     const saltB = headersFrom(receiptB, b.request)['x-chit-request-salt'];
     assert.notEqual(saltA, saltB);
     assert.equal(JSON.stringify(receiptB).includes(saltA), false);
@@ -407,15 +407,15 @@ test('refusals at different caps publish the same shape', async () => {
         payer: '0x1111111111111111111111111111111111111111',
       },
     });
-    const left = issueRefusalReceipt(row('xfuel-cap-a', '100'));
-    const right = issueRefusalReceipt(row('xfuel-cap-b', '999'));
+    const left = await issueRefusalReceipt(row('xfuel-cap-a', '100'));
+    const right = await issueRefusalReceipt(row('xfuel-cap-b', '999'));
     assert.equal(left.reason, 'cap_exceeded');
     assert.equal(right.reason, 'cap_exceeded');
     assert.deepEqual(Object.keys(left).sort(), Object.keys(right).sort());
     assert.equal(JSON.stringify(left).includes('"100"'), false);
     assert.equal(JSON.stringify(right).includes('"999"'), false);
     assert.equal(Object.hasOwn(left, 'cap_atomic'), false);
-    assert.equal(verifyRefusalReceipt(left).valid, true);
+    assert.equal((await verifyRefusalReceipt(left)).valid, true);
     const salt = requestSalt(row('xfuel-cap-a', '100').request) || getSaltStore().get(left.refusal_id).toString('hex');
     const book = bookRefForInternal(4);
     assert.equal(v11Commit(salt, V11_LABEL_REFUSAL, jcsRfc8785(refusalOpening({
@@ -441,7 +441,7 @@ test('disk snapshots keep the commitment and drop the prompt, salt, and output',
     assert.equal(file.includes('super-secret-prompt-text'), false);
     assert.equal(file.includes('cd'.repeat(32)), false);
     const ledger = new UsageSettledLedger({ dir, persist: true });
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 4,
       taskId: 'xfuel-v11-disk-refusal',
       policyCode: 'cap',
@@ -465,6 +465,20 @@ test('logs redact the salt header', () => {
   const text = lines.join('');
   assert.equal(text.includes('ab'.repeat(32)), false);
   assert.equal(text.includes('cd'.repeat(32)), false);
+  assert.match(text, /Redacted/);
+});
+
+test('logs redact the Authorization header', () => {
+  const lines = [];
+  const log = pino({ redact: LOG_REDACT }, { write(chunk) { lines.push(chunk); } });
+  const secret = 'ops-bearer-secret-value';
+  log.info({
+    authorization: `Bearer ${secret}`,
+    headers: { authorization: `Bearer ${secret}` },
+    req: { headers: { authorization: `Bearer ${secret}` } },
+  }, 'request');
+  const text = lines.join('');
+  assert.equal(text.includes(secret), false);
   assert.match(text, /Redacted/);
 });
 
@@ -499,22 +513,22 @@ test('amount_settled is the bound transfer and a short or missing value is not s
   const prev = snapshotEnv();
   try {
     await arm();
-    const over = buildReceipt(paidTask('xfuel-v11-over', { quoted: '2000', settled: '2001' }), { signingSecret: 's', agentId: 4 });
+    const over = await buildReceipt(paidTask('xfuel-v11-over', { quoted: '2000', settled: '2001' }), { signingSecret: 's', agentId: 4 });
     const overClaims = decodeReceiptClaims(over);
     assert.equal(overClaims.amount_gross, '2000');
     assert.equal(overClaims.amount_settled, '2001');
-    const missing = buildReceipt(paidTask('xfuel-v11-missing', { settled: null }), { signingSecret: 's', agentId: 4 });
+    const missing = await buildReceipt(paidTask('xfuel-v11-missing', { settled: null }), { signingSecret: 's', agentId: 4 });
     assert.equal(missing.issuer_signature, null);
     assert.equal(missing.proof_outcome, 'pending');
     assert.equal(Object.hasOwn(missing, 'usage'), false);
-    const short = buildReceipt(paidTask('xfuel-v11-short', { quoted: '2000', settled: '1999' }), { signingSecret: 's', agentId: 4 });
+    const short = await buildReceipt(paidTask('xfuel-v11-short', { quoted: '2000', settled: '1999' }), { signingSecret: 's', agentId: 4 });
     assert.equal(short.issuer_signature, null);
     const unbound = paidTask('xfuel-v11-placeholder', { quoted: '2000', settled: '2000' });
     unbound.intent.paymentRef = 'base:unknown';
-    const placeholder = buildReceipt(unbound, { signingSecret: 's', agentId: 4 });
+    const placeholder = await buildReceipt(unbound, { signingSecret: 's', agentId: 4 });
     assert.equal(placeholder.issuer_signature, null);
     const solanaPayer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
-    const solana = buildReceipt(paidTask('xfuel-v11-sol', { chain: 'solana', payer: solanaPayer }), { signingSecret: 's', agentId: 4 });
+    const solana = await buildReceipt(paidTask('xfuel-v11-sol', { chain: 'solana', payer: solanaPayer }), { signingSecret: 's', agentId: 4 });
     assert.equal(decodeReceiptClaims(solana).chain, 'solana');
     assert.equal(decodeReceiptClaims(solana).amount_settled, '2000');
   } finally {
@@ -529,10 +543,10 @@ test('flag off still serves the stored v11 document on every public view', async
     const task = paidTask('xfuel-v11-flag-off', { output: 'secret-output' });
     task.usage = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };
     task.meta.pricing = { floor_applied: true, basis: 'test' };
-    const first = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const first = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     task.issuerSignature = first.issuer_signature;
     process.env.ISSUER_ROOT_ENABLED = 'false';
-    const json = storedReceiptJson(buildReceipt(task, { signingSecret: 's', agentId: 4 }));
+    const json = storedReceiptJson(await buildReceipt(task, { signingSecret: 's', agentId: 4 }));
     assert.deepEqual(publicKeys(json), PUBLIC_V11);
     const text = JSON.stringify(json);
     assert.equal(text.includes('usage'), false);
@@ -566,7 +580,7 @@ test('T4 T8 T12 public surfaces hide the salt and reject injected fields', async
     task.meta.internal_breakdown = { provider_cogs_amount: '1' };
     task.meta.cap = '9';
     task.meta.spent = '1';
-    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     const salt = headersFrom(receipt, task.request)['x-chit-request-salt'];
     const surfaces = [
       JSON.stringify(receipt),
@@ -583,7 +597,7 @@ test('T4 T8 T12 public surfaces hide the salt and reject injected fields', async
       assert.equal(surface.includes('ISSUER_PRIVATE_KEY'), false);
     }
     assert.deepEqual(publicKeys(receipt), PUBLIC_V11);
-    const again = JSON.stringify(buildReceipt({ ...task, issuerSignature: receipt.issuer_signature }, { signingSecret: 's', agentId: 4 }));
+    const again = JSON.stringify(await buildReceipt({ ...task, issuerSignature: receipt.issuer_signature }, { signingSecret: 's', agentId: 4 }));
     assert.equal(again, JSON.stringify(receipt));
   } finally {
     restoreEnv(prev);
@@ -685,7 +699,7 @@ test('T19 the owner view keeps one book ref and the public document has no salt'
   try {
     await arm();
     const task = paidTask('xfuel-v11-owner', { output: 'ok', agentId: 4 });
-    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     const salt = headersFrom(receipt, task.request)['x-chit-request-salt'];
     assert.match(salt, /^[0-9a-f]{64}$/);
     assert.equal(v11Commit(salt, V11_LABEL_OUTPUT, Buffer.from('ok')), receipt.output_commitment);
@@ -706,11 +720,11 @@ test('T19 the owner view keeps one book ref and the public document has no salt'
     assert.equal(persisted, receipt.book_ref);
     resetBookRefs();
     task.issuerSignature = receipt.issuer_signature;
-    const rebuilt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const rebuilt = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     assert.equal(rebuilt.book_ref, persisted);
     assert.equal(rebuilt.issuer_signature.jws, receipt.issuer_signature.jws);
     const otherAgent = paidTask('xfuel-v11-owner-b', { agentId: 8 });
-    const other = buildReceipt(otherAgent, { signingSecret: 's', agentId: 8 });
+    const other = await buildReceipt(otherAgent, { signingSecret: 's', agentId: 8 });
     assert.notEqual(other.book_ref, persisted);
     const holder = {};
     bindSaltReceipt(holder, 'rcpt');
@@ -726,7 +740,7 @@ test('foreign ingest refuses to sign while v11 issuance is on', async () => {
   const prev = snapshotEnv();
   try {
     await arm();
-    assert.throws(() => buildForeignReceipt({}), (err) => err.code === 'v11_foreign_unsupported');
+    await assert.rejects(async () => await buildForeignReceipt({}), (err) => err.code === 'v11_foreign_unsupported');
   } finally {
     restoreEnv(prev);
   }
@@ -762,6 +776,10 @@ test('production issuer key rejects a missing, wrong-type, or mismatched key', (
     delete process.env.ISSUER_PRIVATE_KEY;
     delete process.env.ISSUER_KID;
     process.env.ALLOW_EPHEMERAL_ISSUER_KEY = 'true';
+    _resetIssuerKey();
+    assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
+
+    process.env.NODE_ENV = 'development';
     _resetIssuerKey();
     const minted = initIssuerKey();
     assert.equal(minted.publicKeyJwk.crv, 'P-256');

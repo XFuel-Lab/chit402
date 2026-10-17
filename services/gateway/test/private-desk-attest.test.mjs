@@ -89,7 +89,7 @@ test('privacyOf: Private + Attest tier2 + proof-oriented copy', () => {
   assert.match(p.notes, /in_proof/i);
 });
 
-test('buildReceipt privacy block uses product chrome', () => {
+test('buildReceipt privacy block uses product chrome', async () => {
   const task = {
     taskId: 'desk-1',
     status: 'completed',
@@ -107,7 +107,7 @@ test('buildReceipt privacy block uses product chrome', () => {
     },
     sp1Proof: null,
   };
-  const receipt = buildReceipt(task, { baseUrl: 'https://api.example' });
+  const receipt = await buildReceipt(task, { baseUrl: 'https://api.example' });
   assert.equal(receipt.privacy.label, 'Private Desk');
 });
 

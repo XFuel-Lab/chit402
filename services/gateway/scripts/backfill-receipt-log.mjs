@@ -120,7 +120,7 @@ try {
   process.exit(1);
 }
 for (const row of plan.append) {
-  tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
+  await tree.appendReceipt(row.task_id, row.row_hash, { publish: false });
 }
 appendSignedEpochRecord(abs, record);
 printPlan('appended', 'listed as unlogged');

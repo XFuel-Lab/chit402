@@ -225,7 +225,7 @@ async function runBenchmark() {
   const concPromises = [];
   for (let i = 0; i < CONC_COUNT; i++) {
     concPromises.push(
-      doProof(i, 'concurrent').catch(e => ({
+      await doProof(i, 'concurrent').catch(e => ({
         index: i, tag: 'concurrent', gpuTimeMs: 0, roundTripMs: 0, responseBytes: 0,
         batchSize: BATCH_SIZE, effectiveMsPerDeposit: 0, timestamp: new Date().toISOString(), error: e.message,
       }))
@@ -266,7 +266,7 @@ async function runBenchmark() {
       for (let i = 0; i < waveCount; i++) {
         const idx = w * WAVE_SIZE + i;
         wavePromises.push(
-          doProof(idx, 'stress').catch(e => ({
+          await doProof(idx, 'stress').catch(e => ({
             index: idx, tag: 'stress', gpuTimeMs: 0, roundTripMs: 0, responseBytes: 0,
             batchSize: BATCH_SIZE, effectiveMsPerDeposit: 0, timestamp: new Date().toISOString(), error: e.message,
           }))
@@ -368,7 +368,7 @@ async function runBenchmark() {
   process.exit(0);
 }
 
-runBenchmark().catch(e => {
+await runBenchmark().catch(e => {
   console.error('Benchmark failed:', e);
   process.exit(1);
 });

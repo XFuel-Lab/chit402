@@ -107,7 +107,7 @@ before(async () => {
   resetReceiptMerkleTree();
   await initAIListener();
   const store = getAIListener().activeTasks;
-  httpApp = createApp();
+  httpApp = await createApp();
   const tree = getReceiptMerkleTree();
   const put = (task) => {
     store.set(task.taskId, task);
@@ -115,7 +115,7 @@ before(async () => {
   };
   const main = paidTask(STORED);
   put(main);
-  tree.appendReceipt(STORED, 'row-shell-card', { publish: false });
+  await tree.appendReceipt(STORED, 'row-shell-card', { publish: false });
   put(paidTask(NO_LOG, {
     intent: { paymentRef: `base:0x${'ef'.repeat(32)}` },
   }));
@@ -347,10 +347,10 @@ test('T12 USDC label and matches tick follow the shell', () => {
 
 test('T1 route HTML hides private sentinels for every HTML accept', async () => {
   const probes = [
-    fetchText(`/receipt/${DISPLAY}`, { accept: 'text/html' }),
-    fetchText(`/receipt/${DISPLAY}`, { accept: '*/*' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: 'text/html' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: '*/*' }),
     rawGet(`/receipt/${DISPLAY}`),
-    fetchText(`/receipt/${DISPLAY}`, { accept: 'application/xml' }),
+    await fetchText(`/receipt/${DISPLAY}`, { accept: 'application/xml' }),
   ];
   for (const pending of probes) {
     const res = await pending;
@@ -376,7 +376,7 @@ test('T3 host header cannot set canonical, og:url, or og:image', () => {
     const id = ${JSON.stringify(STORED)};
     resetReceiptMerkleTree();
     await initAIListener();
-    const app = createApp();
+    const app = await createApp();
     getAIListener().activeTasks.set(id, {
       taskId: id,
       status: 'completed',
@@ -677,7 +677,21 @@ test('T17 verifier accepts the public shell as INCLUDED_SHELL', () => {
   writeFileSync(file, JSON.stringify(shell));
   const cli = join(verifyDir, 'dist/cli.js');
   const run = spawnSync(process.execPath, [cli, file, '--accept-shell'], { encoding: 'utf8', timeout: 15000 });
-  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
-  assert.match(run.stdout, /INCLUDED_SHELL/);
-  assert.doesNotMatch(run.stdout, /Overall:\s*VERIFIED/);
+  assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
+  assert.match(run.stderr, /removed in 0\.4: a shell is not a verified payment/);
+  assert.doesNotMatch(`${run.stdout}\n${run.stderr}`, /INCLUDED_SHELL/);
+  const plain = spawnSync(process.execPath, [cli, file], { encoding: 'utf8', timeout: 15000 });
+  assert.equal(plain.status, 2, `${plain.stdout}\n${plain.stderr}`);
+  assert.match(plain.stdout, /COULD_NOT_CHECK/);
+  assert.doesNotMatch(plain.stdout, /INCLUDED_SHELL/);
+  assert.doesNotMatch(plain.stdout, /^VERIFIED\n/);
+});
+
+test('T18 shell footer points at the primary verifier package', () => {
+  const receipt = JSON.parse(readFileSync(fileURLToPath(new URL('../../../packages/verify/test/fixtures/public/chit-39af100b.json', import.meta.url)), 'utf8'));
+  const shell = toPublicShell(receipt);
+  const html = renderReceiptShellHtml(shell);
+  assert.match(html, /Check it with <code>npx chit402-verify<\/code> \(0\.4\.2 or later\)\./);
+  assert.match(html, /only it can verify/);
+  assert.doesNotMatch(html, /@xfuel\/verify<\/code> 0\.3\.5 or later/);
 });

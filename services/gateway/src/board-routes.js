@@ -119,6 +119,9 @@ export function registerBoardRoutes(app, deps) {
       resource,
       body: {},
     });
+    if (decision.kind === 'issuance_paused') {
+      return { ok: false, status: 503, error: 'issuance_paused' };
+    }
     if (decision.kind === 'challenge') {
       return {
         ok: false,
@@ -131,7 +134,14 @@ export function registerBoardRoutes(app, deps) {
     if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
       const code = decision.code || decision.reason;
       if (isBindingRefusal(code)) {
-        return { ok: false, status: paymentErrorStatus(code), error: code, code };
+        return {
+          ok: false,
+          status: paymentErrorStatus(code),
+          error: code,
+          code,
+          ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
+          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
+        };
       }
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };
     }
@@ -167,7 +177,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: () => ensureStamp(req, res, apiKey, 'post'),
+        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'post'),
         houseAgentIds: houseAgentIdsFromEnv(),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         chitHosts: chitHostsFromEnv(),
@@ -198,12 +208,12 @@ export function registerBoardRoutes(app, deps) {
     }
   });
 
-  app.post('/v1/board/posts/:id/takedown', (req, res) => {
+  app.post('/v1/board/posts/:id/takedown', async (req, res) => {
     try {
       const apiKey = apiKeyOf(req);
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
-      return sendResult(res, takedownBoardPost(req.params.id, {
+      return sendResult(res, await takedownBoardPost(req.params.id, {
         posts,
         ledger,
         actor: actor.ok ? actor.identity : null,
@@ -224,7 +234,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: () => ensureStamp(req, res, apiKey, 'flag'),
+        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'flag'),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)
@@ -236,10 +246,10 @@ export function registerBoardRoutes(app, deps) {
     }
   });
 
-  app.post('/v1/board/posts/:id/hide', (req, res) => {
+  app.post('/v1/board/posts/:id/hide', async (req, res) => {
     try {
       const ops = authorizeOps(req.headers['x-chit-board-ops']);
-      return sendResult(res, hideBoardPost(req.params.id, { posts, ledger, ops }));
+      return sendResult(res, await hideBoardPost(req.params.id, { posts, ledger, ops }));
     } catch {
       return res.status(500).json({ error: 'internal', message: 'Board hide failed' });
     }
@@ -254,7 +264,7 @@ export function registerBoardRoutes(app, deps) {
       ledger,
       actor: actor.ok ? actor.identity : null,
       isDemo: isDemoKey(apiKey),
-      ensureStamp: () => ensureStamp(req, res, apiKey, 'comment'),
+      ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment'),
       suspendedAgentIds: suspendedAgentIdsFromEnv(),
       commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
         ? () => commitStampWaiver(apiKey)
@@ -323,12 +333,12 @@ export function registerBoardRoutes(app, deps) {
     }
   });
 
-  app.post('/v1/board/posts/:id/comments/:commentId/takedown', (req, res) => {
+  app.post('/v1/board/posts/:id/comments/:commentId/takedown', async (req, res) => {
     try {
       const apiKey = apiKeyOf(req);
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
-      return sendResult(res, takedownBoardComment(req.params.commentId, {
+      return sendResult(res, await takedownBoardComment(req.params.commentId, {
         posts,
         ledger,
         actor: actor.ok ? actor.identity : null,
@@ -349,7 +359,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: () => ensureStamp(req, res, apiKey, 'comment-flag'),
+        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment-flag'),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)
@@ -361,10 +371,10 @@ export function registerBoardRoutes(app, deps) {
     }
   });
 
-  app.post('/v1/board/posts/:id/comments/:commentId/hide', (req, res) => {
+  app.post('/v1/board/posts/:id/comments/:commentId/hide', async (req, res) => {
     try {
       const ops = authorizeOps(req.headers['x-chit-board-ops']);
-      return sendResult(res, hideBoardComment(req.params.commentId, { posts, ledger, ops }));
+      return sendResult(res, await hideBoardComment(req.params.commentId, { posts, ledger, ops }));
     } catch {
       return res.status(500).json({ error: 'internal', message: 'Board comment hide failed' });
     }

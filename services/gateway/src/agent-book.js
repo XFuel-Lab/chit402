@@ -78,7 +78,7 @@ function addAmount(acc, v) {
   }
 }
 
-function rowOf(entry) {
+async function rowOf(entry) {
   const evidence = deriveEvidence(entry);
   const isBlocked = evidence === BOOK_EVIDENCE.POLICY_BLOCKED;
   const isA2aEscrow = evidence === BOOK_EVIDENCE.A2A_ESCROW;
@@ -206,7 +206,7 @@ function rowOf(entry) {
   } else {
     row.collected = true;
   }
-  row.receipt_lane = receiptLaneForEntry(entry, { tree: getReceiptMerkleTree() });
+  row.receipt_lane = await receiptLaneForEntry(entry, { tree: getReceiptMerkleTree() });
   return row;
 }
 
@@ -426,7 +426,7 @@ function packAllowance(agentId, remaining, session) {
  *   session?: string|null,
  * }} [extra]
  */
-export function packBook(entries, agentId, limit, extra = {}) {
+export async function packBook(entries, agentId, limit, extra = {}) {
   const spent = extra.spent != null ? extra.spent : 0n;
   const held = extra.held != null ? extra.held : 0n;
   const caps = capViewOf(extra.identity || null, spent, held);
@@ -434,7 +434,7 @@ export function packBook(entries, agentId, limit, extra = {}) {
   const body = {
     agent_id: Number(agentId),
     limit,
-    entries: entries.map(rowOf),
+    entries: await Promise.all(entries.map(rowOf)),
     totals: totalsOf(entries),
     intents: Object.keys(intents).length > 0 ? intents : undefined,
     window: caps.window,
@@ -544,7 +544,7 @@ export function remainingBlocksDoor(remaining) {
  *   registry?: { get: Function },
  * }} deps
  */
-export function readAgentBook(agentId, claim = {}, {
+export async function readAgentBook(agentId, claim = {}, {
   ledger, verify, registry, heldAtomic = null,
 } = {}) {
   const window = clampBookLimit(claim.limit);
@@ -568,7 +568,7 @@ export function readAgentBook(agentId, claim = {}, {
   }
 
   const scope = scopeFromClaim(claim, window);
-  const selected = selectBookWindow(ledger, id, scope);
+  const selected = await selectBookWindow(ledger, id, scope);
   const entries = selected.entries;
   const identity = typeof registry?.get === 'function' ? registry.get(id) : null;
   const spent = typeof ledger.sumCollectedByAgent === 'function'
@@ -584,7 +584,7 @@ export function readAgentBook(agentId, claim = {}, {
     }
   }
   const sessionKey = session || identity?.session || null;
-  const body = packBook(entries, id, window, {
+  const body = await packBook(entries, id, window, {
     identity,
     spent,
     held,
@@ -649,7 +649,7 @@ export function setAgentBudget(agentId, claim = {}, { registry, verify } = {}) {
  *   verify: Function,
  * }} deps
  */
-export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {}) {
+export async function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {}) {
   const session = claim.session ? String(claim.session) : null;
   const proof = claim.proof ? String(claim.proof) : null;
   if (!session && !proof) {
@@ -679,13 +679,13 @@ export function queryLineage(agentId, taskId, claim = {}, { ledger, verify } = {
   const body = {
     agent_id: id,
     task_id: String(taskId),
-    self: lineage.self ? rowOf(lineage.self) : null,
-    ancestors: lineage.ancestors.map(rowOf),
-    descendants: lineage.descendants.map(rowOf),
-    root: lineage.root ? rowOf(lineage.root) : null,
+    self: lineage.self ? await rowOf(lineage.self) : null,
+    ancestors: await Promise.all(lineage.ancestors.map(rowOf)),
+    descendants: await Promise.all(lineage.descendants.map(rowOf)),
+    root: lineage.root ? await rowOf(lineage.root) : null,
     depth: lineage.ancestors.length,
     intent_id: lineage.intent_id || null,
-    intent_attempts: (lineage.intent_attempts || []).map(rowOf),
+    intent_attempts: await Promise.all((lineage.intent_attempts || []).map(rowOf)),
   };
   if (typeof ledger.supersessionOf === 'function') {
     const stamp = (row) => (row ? { ...row, supersession: ledger.supersessionOf(row.task_id) } : row);
@@ -737,11 +737,11 @@ export function bindBookVerifier(registry) {
  * @param {number} agentId
  * @param {string} baseUrl — gateway public base for verify_url
  */
-export function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
+export async function buildBookExportCsv(entries, agentId, baseUrl, coverage = null) {
   const header = 'task_id,evidence,collected_at,hub,model,amount,payment_ref,rail,bucket,payer_wallet,intent_id,attempt_index,policy_code,reason,policy_key,spent_atomic,cap_atomic,period_start,replay_count,verify_url,explorer_url,seq,prev_hash,row_hash,act,settled_by,settled,anchor_changed_since_binding,freeze,classification';
   const lines = [header];
   for (const e of entries) {
-    const row = rowOf(e);
+    const row = await rowOf(e);
     const verifyUrl = buildVerifyUrl(baseUrl, row.task_id);
     const explorerUrl = explorerUrlForRef(row.payment.ref) || '';
     const cols = [
@@ -796,9 +796,9 @@ function csvEscape(v) {
  * @param {string} baseUrl
  * @param {{ policy?: object|null, totals?: object }} [opts]
  */
-export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, totals = null, coverage = null } = {}) {
-  const rows = entries.map((e) => {
-    const row = rowOf(e);
+export async function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, totals = null, coverage = null } = {}) {
+  const rows = await Promise.all(entries.map(async (e) => {
+    const row = await rowOf(e);
     return {
       task_id: row.task_id,
       seq: row.seq ?? null,
@@ -836,7 +836,7 @@ export function buildBookAuditPack(entries, agentId, baseUrl, { policy = null, t
       explorer_url: explorerUrlForRef(row.payment.ref),
       ...(row.fulfillment ? { fulfillment: row.fulfillment } : {}),
     };
-  });
+  }));
   return {
     schema: 'chit402.book_audit.v1',
     agent_id: Number(agentId),
@@ -914,7 +914,7 @@ ${pack.coverage ? renderCoverageSection(pack.coverage) : ''}
  * @param {{ session?: string|null, proof?: string|null, limit?: number, format?: string }} claim
  * @param {{ ledger, verify, registry?, policyStore?, baseUrl? }} deps
  */
-export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry, policyStore, baseUrl } = {}) {
+export async function exportAgentBook(agentId, claim = {}, { ledger, verify, registry, policyStore, baseUrl } = {}) {
   const window = clampBookLimit(claim.limit ?? BOOK_MAX_LIMIT);
   const session = claim.session ? String(claim.session) : null;
   const proof = claim.proof ? String(claim.proof) : null;
@@ -937,7 +937,7 @@ export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry,
 
   const format = String(claim.format || 'csv').toLowerCase();
   const scope = scopeFromClaim(claim, window);
-  const selected = selectBookWindow(ledger, id, scope);
+  const selected = await selectBookWindow(ledger, id, scope);
   const entries = selected.entries;
   const policy = typeof policyStore?.get === 'function' ? policyStore.get(id) : null;
   const pubBase = baseUrl || '';
@@ -947,11 +947,11 @@ export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry,
     return {
       status: 200,
       contentType: 'application/json',
-      body: buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage }),
+      body: await buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage }),
     };
   }
   if (format === 'html') {
-    const pack = buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage });
+    const pack = await buildBookAuditPack(entries, id, pubBase, { policy, totals: totalsOf(entries), coverage });
     return {
       status: 200,
       contentType: 'text/html; charset=utf-8',
@@ -963,6 +963,6 @@ export function exportAgentBook(agentId, claim = {}, { ledger, verify, registry,
     status: 200,
     contentType: 'text/csv; charset=utf-8',
     filename: `chit402-book-${id}.csv`,
-    body: buildBookExportCsv(entries, id, pubBase, coverage),
+    body: await buildBookExportCsv(entries, id, pubBase, coverage),
   };
 }

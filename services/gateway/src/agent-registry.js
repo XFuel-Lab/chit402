@@ -12,6 +12,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
@@ -41,9 +42,7 @@ export class AgentRegistry {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'agent-registry: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: mkdir failed');
       }
     }
   }
@@ -79,7 +78,7 @@ export class AgentRegistry {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'agent-registry: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: save failed');
     }
   }
 
@@ -184,7 +183,13 @@ export class AgentRegistry {
       updated_at: new Date().toISOString(),
     };
     this.byId.set(agentId, row);
-    this._save();
+    try {
+      this._save();
+    } catch (err) {
+      this.byId.delete(agentId);
+      this.nextId = agentId;
+      throw err;
+    }
     return row;
   }
 
@@ -493,7 +498,7 @@ async function assertRegistererIsPayer({
     };
   }
   const signedMessage = message || canonicalRegisterRecoverMessage(taskId, wallet, ts);
-  return verifyErc1271({
+  return await verifyErc1271({
     provider,
     payer,
     message: signedMessage,
@@ -558,7 +563,7 @@ function payerGateFailure(payer, bound) {
  * A settled register payment we will not turn into an agent. The row stays on
  * the book as refund_owed so the USDC is not dropped. The wallet is not bound.
  */
-function recordRegisterRefundOwed(ledger, registry, { paymentRef, amount, payer }) {
+async function recordRegisterRefundOwed(ledger, registry, { paymentRef, amount, payer }) {
   if (!ledger || typeof ledger.append !== 'function' || !registry || typeof registry.allocate !== 'function') {
     return null;
   }
@@ -594,7 +599,7 @@ function recordRegisterRefundOwed(ledger, registry, { paymentRef, amount, payer 
       resource: 'https://api.chit402.com/v1/agents/register',
     },
   };
-  const appended = ledger.append(receipt, { payer: payer || null, agentId: identity.agent_id });
+  const appended = await ledger.append(receipt, { payer: payer || null, agentId: identity.agent_id });
   if (!appended.ok) return null;
   const marked = markRefundOwed(ledger, {
     taskId,
@@ -677,7 +682,7 @@ async function registerPaidStamp(body, deps) {
     return { ok: false, status: 402, error: 'stamp_payment_required', message: 'Register stamp did not include a payment ref' };
   }
   if (!paidPayer || paidPayer !== getAddress(bound.address)) {
-    recordRegisterRefundOwed(ledger, registry, {
+    await recordRegisterRefundOwed(ledger, registry, {
       paymentRef,
       amount: stamp.settlement?.amount,
       payer: rawPayer,
@@ -692,7 +697,7 @@ async function registerPaidStamp(body, deps) {
   let paid = 0n;
   try { paid = BigInt(String(stamp.settlement.amount)); } catch { paid = 0n; }
   if (paid < BigInt(STAMP_FEE_UNITS)) {
-    recordRegisterRefundOwed(ledger, registry, {
+    await recordRegisterRefundOwed(ledger, registry, {
       paymentRef,
       amount: stamp.settlement?.amount,
       payer: paidPayer,
@@ -765,7 +770,7 @@ async function registerPaidStamp(body, deps) {
       paymentRef,
     });
     identity = upserted.identity;
-    const credited = ledger.append(receipt, { payer: paidPayer, agentId: identity.agent_id });
+    const credited = await ledger.append(receipt, { payer: paidPayer, agentId: identity.agent_id });
     if (!credited.ok) {
       return { ok: false, status: 409, error: credited.code, message: credited.reason };
     }
@@ -779,7 +784,7 @@ async function registerPaidStamp(body, deps) {
     amount: String(STAMP_FEE_UNITS),
   }), persistTask);
 
-  return finishRegistration({
+  return await finishRegistration({
     identity,
     bound,
     receipt,
@@ -930,7 +935,7 @@ export async function registerAgent(body = {}, {
     return { ok: false, status: 400, error: 'validation_error', message: 'agentWallet is required' };
   }
   if (!taskId) {
-    return registerPaidStamp(body, {
+    return await registerPaidStamp(body, {
       registry,
       ledger,
       bindWallet,
@@ -1058,7 +1063,7 @@ export async function registerAgent(body = {}, {
       paymentRef: oracle.receipt.payment.ref,
     });
     identity = upserted.identity;
-    const credited = ledger.append(oracle.receipt, {
+    const credited = await ledger.append(oracle.receipt, {
       payer: onChainPayer,
       agentId: identity.agent_id,
     });
@@ -1068,7 +1073,7 @@ export async function registerAgent(body = {}, {
     creditedEntry = credited.entry;
   }
 
-  return finishRegistration({
+  return await finishRegistration({
     identity,
     bound,
     receipt: oracle.receipt,

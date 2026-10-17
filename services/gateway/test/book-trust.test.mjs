@@ -82,7 +82,7 @@ describe('Private Spend by Session', () => {
     assert.equal(privacy.trust, 'gateway');
   });
 
-  test('book response includes private_spend when session verified', () => {
+  test('book response includes private_spend when session verified', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry({ persist: false });
     const receipt = {
@@ -91,8 +91,8 @@ describe('Private Spend by Session', () => {
       payment: { rail: 'usdc', ref: 'base:0xps1', collected: true, gross_amount: '1000' },
       route: { model: 'xfuel/auto', hub: 'mock' },
     };
-    const recorded = recordCollectedSpend(receipt, { ledger, registry });
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const recorded = await recordCollectedSpend(receipt, { ledger, registry });
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -128,8 +128,8 @@ describe('Replaceable Signer', () => {
     result: { model: 'test-model' },
   };
 
-  test('buildReceipt adds co_attestation when coSignerSecret provided', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('buildReceipt adds co_attestation when coSignerSecret provided', async () => {
+    const receipt = await buildReceipt(mockTask, {
       baseUrl: 'https://api.test',
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
@@ -156,8 +156,8 @@ describe('Replaceable Signer', () => {
     assert.ok(receipt.issuer_signature.jws, 'has compact JWS');
   });
 
-  test('verifyReceiptHmac validates hmac_attestation', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('verifyReceiptHmac validates hmac_attestation', async () => {
+    const receipt = await buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
@@ -168,8 +168,8 @@ describe('Replaceable Signer', () => {
     assert.equal(result.role, 'attestor');
   });
 
-  test('verifyReceiptHmac validates co_attestation with sigField option', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('verifyReceiptHmac validates co_attestation with sigField option', async () => {
+    const receipt = await buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
@@ -180,8 +180,8 @@ describe('Replaceable Signer', () => {
     assert.equal(result.role, 'co_attestor');
   });
 
-  test('verifyReceiptHmac fails with wrong secret', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('verifyReceiptHmac fails with wrong secret', async () => {
+    const receipt = await buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
     });
 
@@ -190,8 +190,8 @@ describe('Replaceable Signer', () => {
     assert.equal(result.valid, false);
   });
 
-  test('verifyReceiptMultiKey succeeds if any key matches any HMAC attestation', () => {
-    const receipt = buildReceipt(mockTask, {
+  test('verifyReceiptMultiKey succeeds if any key matches any HMAC attestation', async () => {
+    const receipt = await buildReceipt(mockTask, {
       signingSecret: PRIMARY_SECRET,
       coSignerSecret: CO_SIGNER_SECRET,
     });
@@ -216,16 +216,16 @@ describe('Replaceable Signer', () => {
     assert.equal(r4.reason, 'all_keys_failed');
   });
 
-  test('verifyReceiptMultiKey fails with no HMAC attestations', () => {
-    const receipt = buildReceipt(mockTask, {});
+  test('verifyReceiptMultiKey fails with no HMAC attestations', async () => {
+    const receipt = await buildReceipt(mockTask, {});
 
     const result = verifyReceiptMultiKey(receipt, [PRIMARY_SECRET]);
     assert.equal(result.valid, false);
     assert.equal(result.reason, 'no_signature');
   });
 
-  test('canonicalSignedPayload is deterministic', () => {
-    const receipt = buildReceipt(mockTask, {});
+  test('canonicalSignedPayload is deterministic', async () => {
+    const receipt = await buildReceipt(mockTask, {});
 
     const p1 = canonicalSignedPayload(receipt);
     const p2 = canonicalSignedPayload(receipt);
@@ -236,7 +236,7 @@ describe('Replaceable Signer', () => {
 // ─── in_proof Path (Fail Closed) ─────────────────────────────────────────────
 
 describe('in_proof / nullifier Path', () => {
-  test('binding.in_proof is false by default (server-attested)', () => {
+  test('binding.in_proof is false by default (server-attested)', async () => {
     // The payment binding is server-attested until SP1 guest v2 ships.
     // This is by design: in_proof:true requires the commitment in the proof's
     // public values, which needs a rebuilt guest ELF + new programVKey.
@@ -262,12 +262,12 @@ describe('in_proof / nullifier Path', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     // binding.in_proof should be false
     assert.equal(receipt.binding?.in_proof, false);
   });
 
-  test('receipt correctly reports nullifier from sp1Proof', () => {
+  test('receipt correctly reports nullifier from sp1Proof', async () => {
     const nullifier = '0x' + 'f'.repeat(64);
     const task = {
       taskId: 'nullifier-1',
@@ -282,13 +282,13 @@ describe('in_proof / nullifier Path', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     assert.equal(receipt.proof.nullifier, nullifier);
     assert.equal(receipt.proof.has_proof, true);
     assert.equal(receipt.proof.proving_time_ms, 1234);
   });
 
-  test('in_proof fail-closed: binding without proof is server-attested', () => {
+  test('in_proof fail-closed: binding without proof is server-attested', async () => {
     // A task with paymentBinding but no SP1 proof should report in_proof:false
     const task = {
       taskId: 'failclosed-1',
@@ -306,13 +306,13 @@ describe('in_proof / nullifier Path', () => {
       // No sp1Proof at all — binding should still be computed but server-attested
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     // Without proof, binding is not present (needs sp1Proof.paymentBinding)
     assert.equal(receipt.binding, undefined);
     assert.equal('binding' in receipt, false);
   });
 
-  test('receipt.proof.tier is settlement when has_proof is true', () => {
+  test('receipt.proof.tier is settlement when has_proof is true', async () => {
     const task = {
       taskId: 'tier-1',
       status: 'completed',
@@ -325,12 +325,12 @@ describe('in_proof / nullifier Path', () => {
       },
     };
 
-    const receipt = buildReceipt(task, {});
+    const receipt = await buildReceipt(task, {});
     assert.equal(receipt.proof.tier, 'settlement');
     assert.equal(receipt.proof.has_proof, true);
   });
 
-  test('receipt.proof.tier is signed when no proof', () => {
+  test('receipt.proof.tier is signed when no proof', async () => {
     const task = {
       taskId: 'tier-2',
       status: 'completed',
@@ -340,7 +340,7 @@ describe('in_proof / nullifier Path', () => {
       sp1Proof: null,
     };
 
-    const receipt = buildReceipt(task, { signingSecret: 'test-secret' });
+    const receipt = await buildReceipt(task, { signingSecret: 'test-secret' });
     assert.equal(receipt.proof.tier, 'signed');
     assert.equal(receipt.proof.has_proof, false);
     assert.ok(receipt.issuer_signature, 'signed receipt has issuer_signature');
@@ -353,7 +353,7 @@ describe('in_proof / nullifier Path', () => {
 describe('Offline Verification', () => {
   const SECRET = 'offline-verify-test-secret';
 
-  test('verify algorithm matches docs/VERIFY_ALGORITHM.md', () => {
+  test('verify algorithm matches docs/VERIFY_ALGORITHM.md', async () => {
     const task = {
       taskId: 'offline-1',
       status: 'completed',
@@ -372,7 +372,7 @@ describe('Offline Verification', () => {
       result: { model: 'test-model' },
     };
 
-    const receipt = buildReceipt(task, { signingSecret: SECRET });
+    const receipt = await buildReceipt(task, { signingSecret: SECRET });
     const view = mergeReceiptView(receipt);
 
     // The canonical payload should be a JSON array (for HMAC backward compat)
@@ -392,7 +392,7 @@ describe('Offline Verification', () => {
     assert.equal(wrongResult.valid, false);
   });
 
-  test('tampered receipt fails HMAC verification', () => {
+  test('tampered receipt fails HMAC verification', async () => {
     const task = {
       taskId: 'tamper-1',
       status: 'completed',
@@ -408,7 +408,7 @@ describe('Offline Verification', () => {
       netAmount: '99500',
     };
 
-    const receipt = buildReceipt(task, { signingSecret: SECRET });
+    const receipt = await buildReceipt(task, { signingSecret: SECRET });
 
     // Tamper signed claims inside the JWS (outer envelope has no payment mirror)
     const parts = receipt.issuer_signature.jws.split('.');

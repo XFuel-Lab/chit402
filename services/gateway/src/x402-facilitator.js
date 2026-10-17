@@ -73,7 +73,8 @@ export function facilitatorTimeout(operation, network) {
   const timeouts = isSolanaNetwork(network)
     ? FACILITATOR_TIMEOUTS.solana
     : FACILITATOR_TIMEOUTS.evm;
-  return timeouts[operation] || FACILITATOR_TIMEOUTS.evm.verify;
+  if (operation !== 'verify' && operation !== 'settle') return FACILITATOR_TIMEOUTS.evm.verify;
+  return timeouts[operation];
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -92,6 +93,48 @@ const SOLANA_CAIP2_TO_SHORT = Object.fromEntries([
   ...Object.entries(SOLANA_NETWORKS).map(([k, v]) => [v.toLowerCase(), k]),
 ]);
 
+/** Names that `in` would hit on Object.prototype. They are not networks. */
+const PROTO_NETWORK_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'valueOf',
+  'hasOwnProperty',
+  'toLocaleString',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+]);
+
+function isProtoNetworkKey(value) {
+  return typeof value === 'string' && (PROTO_NETWORK_KEYS.has(value) || PROTO_NETWORK_KEYS.has(value.toLowerCase()));
+}
+
+function ownValue(map, key) {
+  if (typeof key !== 'string' || isProtoNetworkKey(key)) return undefined;
+  if (!Object.hasOwn(map, key)) return undefined;
+  return map[key];
+}
+
+/**
+ * Canonical short name, or `unknown-network`.
+ * Lookups are own properties only. Prototype keys are not Solana.
+ * @param {unknown} network
+ * @returns {string}
+ */
+export function facilitatorNetwork(network) {
+  if (network == null || network === '') return 'unknown-network';
+  const n = String(network);
+  const nLower = n.toLowerCase();
+  if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return 'unknown-network';
+  if (nLower === 'base' || nLower === 'eip155:8453') return 'base';
+  if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'base-sepolia';
+  if (ownValue(SOLANA_NETWORKS, nLower) != null) return nLower;
+  const fromCaip = ownValue(SOLANA_CAIP2_TO_SHORT, n) ?? ownValue(SOLANA_CAIP2_TO_SHORT, nLower);
+  if (typeof fromCaip === 'string') return fromCaip;
+  return 'unknown-network';
+}
+
 /**
  * True if this network is a Solana network (mainnet or devnet).
  * Supports both short names (solana, solana-devnet) and CAIP-2 identifiers.
@@ -101,11 +144,10 @@ export function isSolanaNetwork(network) {
   if (!network) return false;
   const n = String(network);
   const nLower = n.toLowerCase();
-  // Check short names (case-insensitive)
-  if (nLower in SOLANA_NETWORKS) return true;
-  // Check CAIP-2 (exact match first, then lowercase)
-  if (n in SOLANA_CAIP2_TO_SHORT) return true;
-  if (nLower in SOLANA_CAIP2_TO_SHORT) return true;
+  if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return false;
+  if (ownValue(SOLANA_NETWORKS, nLower) != null) return true;
+  if (ownValue(SOLANA_CAIP2_TO_SHORT, n) != null) return true;
+  if (ownValue(SOLANA_CAIP2_TO_SHORT, nLower) != null) return true;
   return false;
 }
 
@@ -297,14 +339,16 @@ export function toCaip2Network(network) {
   if (!network) return 'eip155:8453';
   const n = String(network);
   const nLower = n.toLowerCase();
+  if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return 'unknown-network';
   // EVM networks (lowercase compare)
   if (nLower === 'base' || nLower === 'eip155:8453') return 'eip155:8453';
   if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'eip155:84532';
   // Solana networks: short name → CAIP-2
-  if (nLower in SOLANA_NETWORKS) return SOLANA_NETWORKS[nLower];
+  const sol = ownValue(SOLANA_NETWORKS, nLower);
+  if (typeof sol === 'string') return sol;
   // Already CAIP-2 (exact match or lowercase match in reverse map)
-  if (n in SOLANA_CAIP2_TO_SHORT) return n;
-  if (nLower in SOLANA_CAIP2_TO_SHORT) return n;  // Preserve original case
+  if (ownValue(SOLANA_CAIP2_TO_SHORT, n) != null) return n;
+  if (ownValue(SOLANA_CAIP2_TO_SHORT, nLower) != null) return n;
   return network;
 }
 
@@ -312,14 +356,17 @@ export function fromCaip2Network(network) {
   if (!network) return 'base';
   const n = String(network);
   const nLower = n.toLowerCase();
+  if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return 'unknown-network';
   // EVM networks (lowercase compare)
   if (nLower === 'eip155:8453' || nLower === 'base') return 'base';
   if (nLower === 'eip155:84532' || nLower === 'base-sepolia') return 'base-sepolia';
   // Solana networks: CAIP-2 → short name
-  if (n in SOLANA_CAIP2_TO_SHORT) return SOLANA_CAIP2_TO_SHORT[n];
-  if (nLower in SOLANA_CAIP2_TO_SHORT) return SOLANA_CAIP2_TO_SHORT[nLower];
+  const exact = ownValue(SOLANA_CAIP2_TO_SHORT, n);
+  if (typeof exact === 'string') return exact;
+  const folded = ownValue(SOLANA_CAIP2_TO_SHORT, nLower);
+  if (typeof folded === 'string') return folded;
   // Already short form
-  if (nLower in SOLANA_NETWORKS) return nLower;
+  if (ownValue(SOLANA_NETWORKS, nLower) != null) return nLower;
   return network;
 }
 
@@ -334,7 +381,9 @@ export function fromCaip2Network(network) {
  */
 export function usdcFor(network) {
   const shortNet = fromCaip2Network(network);
-  const known = USDC_NETWORKS[shortNet] || {};
+  const known = (typeof shortNet === 'string' && Object.hasOwn(USDC_NETWORKS, shortNet))
+    ? USDC_NETWORKS[shortNet]
+    : {};
   // Solana: no EIP-712 domain — PayAI handles Ed25519 signatures natively.
   // feePayer is required by @x402/svm ExactSvmScheme — PayAI's facilitator pays tx fees.
   if (isSolanaNetwork(shortNet)) {
@@ -830,9 +879,72 @@ function authorizationDiagnostics(paymentPayload) {
   };
 }
 
+/** Facilitator JSON bodies larger than this are refused. */
+export const FACILITATOR_MAX_BODY_BYTES = 1_048_576;
+
+function facilitatorUrlError(code) {
+  const err = new Error(code);
+  err.code = code;
+  return err;
+}
+
+/**
+ * HTTPS facilitators only. Loopback HTTP is allowed outside production so
+ * the mock facilitator can run. Redirects are not followed. Credentials in
+ * the URL are refused.
+ * @param {string} gateway
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function assertFacilitatorUrl(gateway, env = process.env) {
+  let url;
+  try {
+    url = new URL(String(gateway || ''));
+  } catch {
+    throw facilitatorUrlError('facilitator_http_rejected');
+  }
+  if (url.username || url.password) throw facilitatorUrlError('facilitator_http_rejected');
+  const production = String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+  const loopback = url.hostname === '127.0.0.1'
+    || url.hostname === 'localhost'
+    || url.hostname === '::1'
+    || url.hostname === '[::1]';
+  if (url.protocol === 'https:') return url;
+  if (url.protocol === 'http:' && loopback && !production) return url;
+  throw facilitatorUrlError('facilitator_http_rejected');
+}
+
+async function readFacilitatorBody(res) {
+  const declared = Number(res.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > FACILITATOR_MAX_BODY_BYTES) {
+    throw facilitatorUrlError('facilitator_http_body');
+  }
+  const reader = res.body?.getReader?.();
+  if (!reader) {
+    const text = await res.text();
+    if (Buffer.byteLength(text) > FACILITATOR_MAX_BODY_BYTES) {
+      throw facilitatorUrlError('facilitator_http_body');
+    }
+    return text;
+  }
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > FACILITATOR_MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw facilitatorUrlError('facilitator_http_body');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
   const headers = { 'Content-Type': 'application/json' };
-  const url = `${gateway.replace(/\/$/, '')}${path}`;
+  const parsed = assertFacilitatorUrl(gateway);
+  const url = `${parsed.origin}${parsed.pathname.replace(/\/$/, '')}${path}${parsed.search}`;
   // Public testnet facilitator needs no key. CDP mainnet uses per-request EdDSA JWT
   // (CDP_API_KEY_ID + CDP_API_KEY_SECRET). Optional static bearer via apiKey /
   // X402_FACILITATOR_API_KEY for non-CDP facilitators.
@@ -843,9 +955,10 @@ async function callFacilitator(path, { gateway, apiKey, body, timeoutMs }) {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const text = await res.text();
+  const text = await readFacilitatorBody(res);
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
   return {
@@ -1024,6 +1137,9 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       },
       'x402 facilitator verify failed',
     );
+    if (typeof err?.code === 'string' && err.code.startsWith('facilitator_http_')) {
+      return { valid: false, reason: err.code };
+    }
     return { valid: false, reason: 'facilitator_error' };
   }
 }
@@ -1093,7 +1209,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
         },
         'x402 facilitator settle HTTP error',
       );
-      return { settled: false, reason: 'settle_failed' };
+      return { settled: false, reason: 'settle_failed', sent: true };
     }
     logBazaarResponses('/settle', extensionResponses, paymentPayload);
     const settled = !!data.success;
@@ -1106,6 +1222,7 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       network: data.network || null,
       reason: settled ? null : 'settle_failed',
       bazaarStatus: extensionResponses?.bazaar?.status || null,
+      sent: true,
     };
   } catch (err) {
     // Log gateway host (not secrets), elapsedMs, and network for debugging.
@@ -1123,6 +1240,9 @@ export async function settleViaFacilitator(paymentHeader, { gateway, apiKey, cha
       },
       'x402 facilitator settle failed',
     );
-    return { settled: false, reason: 'facilitator_error' };
+    if (typeof err?.code === 'string' && err.code.startsWith('facilitator_http_')) {
+      return { settled: false, reason: err.code, sent: true };
+    }
+    return { settled: false, reason: 'facilitator_error', sent: true };
   }
 }

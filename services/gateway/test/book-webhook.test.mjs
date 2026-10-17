@@ -152,7 +152,7 @@ test('no fire when webhook unset', async () => {
     scheduleBookWebhook(entry, { registry, baseUrl: 'https://api.chit402.com' });
   });
 
-  recordCollectedSpend(collectedReceipt({ task_id: 'no-hook-1', ref: 'base:0xnohook' }), {
+  await recordCollectedSpend(collectedReceipt({ task_id: 'no-hook-1', ref: 'base:0xnohook' }), {
     ledger,
     registry: reg,
   });
@@ -194,7 +194,7 @@ test('fire on synthetic book write — mock server receives envelope + valid HMA
     scheduleBookWebhook(entry, { registry, baseUrl: 'https://api.chit402.com' });
   });
 
-  const recorded = recordCollectedSpend(
+  const recorded = await recordCollectedSpend(
     collectedReceipt({ task_id: 'wh-fire-1', ref: 'base:0xfire1', amount: '25000' }),
     { ledger, registry: reg, agentId: identity.agent_id },
   );
@@ -225,7 +225,7 @@ test('settle row maps to settle event', async () => {
   const registry = new BookWebhookRegistry();
   const ledger = new UsageSettledLedger();
   const reg = new AgentRegistry();
-  const recorded = recordSettleBookRow({
+  const recorded = await recordSettleBookRow({
     taskId: 'settle-wh-1',
     paymentRef: 'base:0xsettle1',
     amount: '5000',
@@ -238,13 +238,13 @@ test('settle row maps to settle event', async () => {
   assert.equal(envelope.recorded_by, 'settle');
 });
 
-test('inflow row maps to inflow event', () => {
+test('inflow row maps to inflow event', async () => {
   const ledger = new UsageSettledLedger();
   const reg = new AgentRegistry();
   const identity = reg.allocate({ taskId: 'inflow-1', paymentRef: 'base:0xinflow' });
   const verify = bindBookVerifier(reg);
 
-  recordBookInflow(
+  await recordBookInflow(
     identity.agent_id,
     {
       session: identity.session,

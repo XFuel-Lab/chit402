@@ -10,7 +10,7 @@
  * served at GET /.well-known/did.json. Payloads are JCS (RFC 8785) before signing.
  * This module does not replace the chit402 receipt JWS (xfuel.receipt.v4 / JWKS).
  */
-import { signJws, getIssuerPublicKeyJwk, getIssuerKid } from './issuer-key.js';
+import { signJwsAsync, getIssuerPublicKeyJwk, getIssuerKid } from './issuer-key.js';
 
 export const OFFER_RECEIPT_KEY = 'offer-receipt';
 
@@ -184,14 +184,14 @@ export function didHostFromRequest(req) {
   }
 }
 
-function sign(payload, resourceUrl) {
+async function sign(payload, resourceUrl) {
   const kid = kidFor(resourceUrl);
   if (!kid) throw new Error('offer-receipt: resourceUrl must be an absolute http(s) URL');
   const canonical = jcsCanonicalize(payload);
   // signJws JSON.stringifies the object. Parse the JCS text so key order and
   // number/string encoding are the canonical bytes (flat payloads round-trip).
   const parsed = JSON.parse(canonical);
-  const { jws } = signJws(parsed, { typ: null, kid });
+  const { jws } = await signJwsAsync(parsed, { typ: null, kid });
   const payloadB64 = jws.split('.')[1];
   const signed = Buffer.from(payloadB64, 'base64url').toString('utf8');
   if (signed !== canonical) {
@@ -245,26 +245,29 @@ const RECEIPT_SCHEMA = {
  * @param {{ expiresAtMs?: number|null }} [opts]
  * @returns {object|null} null when resourceUrl is not an absolute http(s) URL
  */
-export function buildOfferExtension(accepts, resourceUrl, { expiresAtMs = null } = {}) {
+export async function buildOfferExtension(accepts, resourceUrl, { expiresAtMs = null } = {}) {
   if (!httpUrlHost(resourceUrl)) return null;
   const validUntil = expiresAtMs ? Math.floor(Number(expiresAtMs) / 1000) : undefined;
+  const offers = [];
+  for (let acceptIndex = 0; acceptIndex < accepts.length; acceptIndex += 1) {
+    const a = accepts[acceptIndex];
+    offers.push({
+      format: 'jws',
+      acceptIndex,
+      signature: await sign({
+        version: 1,
+        resourceUrl,
+        scheme: a.scheme,
+        network: a.network,
+        asset: a.asset,
+        payTo: a.payTo,
+        amount: a.amount,
+        validUntil,
+      }, resourceUrl),
+    });
+  }
   return {
-    info: {
-      offers: accepts.map((a, acceptIndex) => ({
-        format: 'jws',
-        acceptIndex,
-        signature: sign({
-          version: 1,
-          resourceUrl,
-          scheme: a.scheme,
-          network: a.network,
-          asset: a.asset,
-          payTo: a.payTo,
-          amount: a.amount,
-          validUntil,
-        }, resourceUrl),
-      })),
-    },
+    info: { offers },
     schema: OFFER_SCHEMA,
   };
 }
@@ -274,14 +277,14 @@ export function buildOfferExtension(accepts, resourceUrl, { expiresAtMs = null }
  * Returns null when network, resourceUrl, or payer is missing — the caller
  * still emits the legacy success/transaction/network/payer fields.
  */
-export function buildReceiptExtension({ network, resourceUrl, payer, transaction = '', issuedAt = null }) {
+export async function buildReceiptExtension({ network, resourceUrl, payer, transaction = '', issuedAt = null }) {
   if (!network || !resourceUrl || !payer) return null;
   if (!httpUrlHost(resourceUrl)) return null;
   return {
     info: {
       receipt: {
         format: 'jws',
-        signature: sign({
+        signature: await sign({
           version: 1,
           network,
           resourceUrl,

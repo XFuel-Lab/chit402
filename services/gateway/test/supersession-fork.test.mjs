@@ -145,25 +145,25 @@ test('exactly one subject match is authoritative even when its seq is lower', ()
   assert.deepEqual(report.successors.map((item) => item.id), ['corr-high', 'corr-low']);
 });
 
-test('a seq-monotonic hash chain stays FORKED when two rows supersede one subject', () => {
+test('a seq-monotonic hash chain stays FORKED when two rows supersede one subject', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const verify = bindBookVerifier(registry);
-  const collected = recordCollectedSpend(paid('host-fork', 'base:0xfork'), { ledger, registry });
-  recordBookInflow(collected.agent_id, {
+  const collected = await recordCollectedSpend(paid('host-fork', 'base:0xfork'), { ledger, registry });
+  await recordBookInflow(collected.agent_id, {
     bucket: 'treasury',
     allocation: '10000',
     task_id: 'inflow-fork',
   }, { ledger, registry, verify, claim: { session: collected.session } });
   const original = ledger.findByTask('inflow-fork');
-  const first = correctBookInflow(collected.agent_id, {
+  const first = await correctBookInflow(collected.agent_id, {
     task_id: 'inflow-fork',
     bucket: 'treasury',
     allocation: '11000',
     reason: 'first pass',
     subject_handle: 'verdigris',
   }, { ledger, registry, verify, claim: { session: collected.session } });
-  const second = correctBookInflow(collected.agent_id, {
+  const second = await correctBookInflow(collected.agent_id, {
     task_id: 'inflow-fork',
     bucket: 'treasury',
     allocation: '12000',
@@ -207,7 +207,7 @@ test('a seq-monotonic hash chain stays FORKED when two rows supersede one subjec
     assert.equal(claims.supersedes, undefined);
   }
 
-  const book = readAgentBook(collected.agent_id, { session: collected.session }, {
+  const book = await readAgentBook(collected.agent_id, { session: collected.session }, {
     ledger, verify,
   });
   const inflow = book.body.entries.find((entry) => entry.task_id === 'inflow-fork');
@@ -217,11 +217,11 @@ test('a seq-monotonic hash chain stays FORKED when two rows supersede one subjec
   assert.equal(second.body.supersession.authoritative, null);
 });
 
-test('a lineage parent_ref is not a supersession claim', () => {
+test('a lineage parent_ref is not a supersession claim', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const parent = recordCollectedSpend(paid('parent-line', 'base:0xparentline'), { ledger, registry });
-  const child = ledger.append(paid('child-line', 'base:0xchildline'), {
+  const parent = await recordCollectedSpend(paid('parent-line', 'base:0xparentline'), { ledger, registry });
+  const child = await ledger.append(paid('child-line', 'base:0xchildline'), {
     agentId: parent.agent_id,
     parentRef: 'base:0xparentline',
   });
@@ -234,18 +234,18 @@ test('a lineage parent_ref is not a supersession claim', () => {
   assert.equal(ledger.seqReport(parent.agent_id).supersession.status, 'none');
 });
 
-test('one real correction stays linear and the signed book chain is unchanged', () => {
+test('one real correction stays linear and the signed book chain is unchanged', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const verify = bindBookVerifier(registry);
-  const collected = recordCollectedSpend(paid('host-line', 'base:0xline'), { ledger, registry });
+  const collected = await recordCollectedSpend(paid('host-line', 'base:0xline'), { ledger, registry });
   const before = collected.entry.book_chain.issuer_signature.jws;
-  recordBookInflow(collected.agent_id, {
+  await recordBookInflow(collected.agent_id, {
     bucket: 'treasury',
     allocation: '10000',
     task_id: 'inflow-line',
   }, { ledger, registry, verify, claim: { session: collected.session } });
-  const corrected = correctBookInflow(collected.agent_id, {
+  const corrected = await correctBookInflow(collected.agent_id, {
     task_id: 'inflow-line',
     allocation: '11000',
     reason: 'once',

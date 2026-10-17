@@ -112,6 +112,9 @@ function fixture() {
     input: `0x${root}`,
     chainId: 8453,
     from: PINNED_BASE_ANCHOR_WALLET,
+    status: '0x1',
+    blockNumber: '0x64',
+    tipBlockNumber: '0x70',
   };
   return { key, head, receipt, inclusion, solanaTx, baseTx, root };
 }
@@ -236,6 +239,19 @@ test('a signed head that names an unlisted wallet does not verify', async () => 
 test('a kid that is only in verified issuer history can sign the head', async () => {
   const current = issuerKey();
   const retired = issuerKey();
+  const currentBody = {
+    kid: current.kid,
+    jwk: current.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-08-01T00:00:00Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+    prev_hash: null,
+  };
+  const currentHash = issuerHistoryEntryHash(currentBody);
   const retiredBody = {
     kid: retired.kid,
     jwk: retired.publicJwk,
@@ -246,35 +262,22 @@ test('a kid that is only in verified issuer history can sign the head', async ()
     revoked_at: null,
     reason: null,
     custody: 'test',
-    prev_hash: null,
+    prev_hash: currentHash,
   };
   const retiredHash = issuerHistoryEntryHash(retiredBody);
-  const currentBody = {
-    kid: current.kid,
-    jwk: current.publicJwk,
-    alg: 'ES256',
-    not_before: '2026-09-04T08:52:05Z',
-    not_after: null,
-    status: 'active',
-    revoked_at: null,
-    reason: null,
-    custody: 'test',
-    prev_hash: retiredHash,
-  };
-  const currentHash = issuerHistoryEntryHash(currentBody);
   const claims = {
     schema: 'chit402.issuer_history.v1',
     payload_version: 1,
     entry_count: 2,
-    head_hash: currentHash,
+    head_hash: retiredHash,
   };
   const history = {
     schema: 'chit402.issuer_history.v1',
     entries: [
-      { ...retiredBody, entry_hash: retiredHash },
       { ...currentBody, entry_hash: currentHash },
+      { ...retiredBody, entry_hash: retiredHash },
     ],
-    head_hash: currentHash,
+    head_hash: retiredHash,
     issuer_signature: {
       jws: signClaims(claims, current, 'chit402-issuer-history+jwt'),
       kid: current.kid,
@@ -480,6 +483,19 @@ test('offline verifyReceipt rejects a head whose issuer signature was removed', 
 test('offline head trust uses issuer history fetched for the receipt', async () => {
   const current = issuerKey();
   const retired = issuerKey();
+  const currentBody = {
+    kid: current.kid,
+    jwk: current.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-08-01T00:00:00Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    custody: 'test',
+    prev_hash: null,
+  };
+  const currentHash = issuerHistoryEntryHash(currentBody);
   const retiredBody = {
     kid: retired.kid,
     jwk: retired.publicJwk,
@@ -490,35 +506,22 @@ test('offline head trust uses issuer history fetched for the receipt', async () 
     revoked_at: null,
     reason: null,
     custody: 'test',
-    prev_hash: null,
+    prev_hash: currentHash,
   };
   const retiredHash = issuerHistoryEntryHash(retiredBody);
-  const currentBody = {
-    kid: current.kid,
-    jwk: current.publicJwk,
-    alg: 'ES256',
-    not_before: '2026-09-04T08:52:05Z',
-    not_after: null,
-    status: 'active',
-    revoked_at: null,
-    reason: null,
-    custody: 'test',
-    prev_hash: retiredHash,
-  };
-  const currentHash = issuerHistoryEntryHash(currentBody);
   const claims = {
     schema: 'chit402.issuer_history.v1',
     payload_version: 1,
     entry_count: 2,
-    head_hash: currentHash,
+    head_hash: retiredHash,
   };
   const history = {
     schema: 'chit402.issuer_history.v1',
     entries: [
-      { ...retiredBody, entry_hash: retiredHash },
       { ...currentBody, entry_hash: currentHash },
+      { ...retiredBody, entry_hash: retiredHash },
     ],
-    head_hash: currentHash,
+    head_hash: retiredHash,
     issuer_signature: {
       jws: signClaims(claims, current, 'chit402-issuer-history+jwt'),
       kid: current.kid,
@@ -734,7 +737,7 @@ test('duplicate history matches for one kid or thumbprint fail closed', () => {
 
   const sameThumb = historyFrom(key, [
     { ...open, kid: 'label-a' },
-    { ...open, kid: 'label-b' },
+    { ...open, kid: 'label-b', not_before: '2026-10-01T00:00:00Z' },
   ]);
   const byThumb = verifyTreeHeadTrust(headFor(key, '2026-10-03T11:33:37.000Z'), {
     trustedKids: [key.kid],

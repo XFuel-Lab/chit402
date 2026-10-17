@@ -45,8 +45,14 @@ import { capOpenRouterOutputTokens, OPENROUTER_CALLER_PAID_LABEL } from './openr
 import { preflightBeforeSettle } from './route-preflight.js';
 import { markRefundOwed } from './refund-owed.js';
 import { normalizeUsage, messagesToText } from './usage.js';
-import { runX402Handshake, extractPaymentHeader, priceUSDCResolved, quoteResolved } from './x402-server.js';
-import { clientPaymentCode, paymentErrorStatus } from './x402-flags.js';
+import { runX402Handshake, extractPaymentHeader, extractPaymentNonce, priceUSDCResolved, quoteResolved } from './x402-server.js';
+import {
+  abortServedReceipt,
+  commitServedReceipt,
+  notePaidFulfillment,
+  takeServedReceipt,
+} from './paid-response-replay.js';
+import { clientPaymentCode, paymentErrorStatus, paymentFailureBody } from './x402-flags.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
@@ -250,7 +256,7 @@ async function recordSpendRefusal(ledger, fields) {
     anchor = null;
   }
   try {
-    const recorded = ledger.recordPolicyBlocked({ ...fields, anchor });
+    const recorded = await ledger.recordPolicyBlocked({ ...fields, anchor });
     if (!recorded?.ok && isRequestBindingError({ code: recorded?.code })) {
       const err = new Error(recorded.reason || recorded.code);
       err.code = recorded.code;
@@ -423,6 +429,7 @@ async function meterV1Request(req, res, {
   bookPolicy = null,
   spendHolds = null,
   session = null,
+  serveStoredResponse = false,
 } = {}) {
   // When isAuthorised is passed, we use it to determine if the request is exempt.
   // Otherwise, fall back to the config-gated behavior for backward compat.
@@ -628,8 +635,14 @@ async function meterV1Request(req, res, {
     const path = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
     const resource = `${baseUrl.replace(/\/$/, '')}${path}`;
     const decision = await runX402Handshake(req, {
-      taskId, body: pricedBody, baseUrl, resource, quoteOpts,
+      taskId, body: pricedBody, baseUrl, resource, quoteOpts, serveStoredResponse,
     });
+
+    if (decision.kind === 'issuance_paused') {
+      if (activeHold) await spendHolds.release(activeHold.request_id);
+      res.status(503).json({ error: 'issuance_paused' });
+      return { halted: true };
+    }
 
     if (decision.kind === 'settled') {
       return {
@@ -644,6 +657,7 @@ async function meterV1Request(req, res, {
           asset: decision.asset,
           issuance_commitment: decision.issuance_commitment || null,
           dispute_window: decision.dispute_window || null,
+          idempotentReplay: decision.idempotentReplay === true,
         },
         hold: activeHold,
       };
@@ -659,11 +673,15 @@ async function meterV1Request(req, res, {
     const code = clientPaymentCode(decision.code || decision.reason);
     logger.warn({ reqId: req.id, code }, 'openai-gateway: x402 payment failed');
     if (decision.retryAfter) res.set('Retry-After', String(decision.retryAfter));
+    const failure = paymentFailureBody(decision);
     res.status(paymentErrorStatus(code)).json({
       error: {
         message: 'Payment could not be settled',
         type: 'payment_required',
         code,
+        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
+        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
+        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
       },
     });
     return { halted: true };
@@ -1361,7 +1379,7 @@ function extractContent(result) {
  *
  * @returns {{ taskId: string, proverConfigured: boolean }}
  */
-function startTaskProof(task, proveAllowed) {
+async function startTaskProof(task, proveAllowed) {
   if (!task) return;
   task.intent = task.intent || {};
   task.intent.proveAllowed = !!proveAllowed;
@@ -1373,7 +1391,7 @@ function startTaskProof(task, proveAllowed) {
     return;
   }
   if (!getSP1Prover() || typeof aiListener._generateTaskProof !== 'function') return;
-  aiListener._generateTaskProof(task).catch((err) => {
+  await aiListener._generateTaskProof(task).catch((err) => {
     logger.warn({ err: err.message, taskId: task.taskId }, 'OpenAI gateway: async proof failed (non-fatal)');
   });
 }
@@ -1409,7 +1427,7 @@ async function ensureAttestProof(task, privacyCtx) {
   return attestProofGateError(task, privacyCtx);
 }
 
-function registerTaskAndProve({
+async function registerTaskAndProve({
   taskId: providedTaskId,
   model, requestedModel = null, messages, content, provider, toolCalls = null,
   proveAllowed = true, apiKeyHash = null, privateSpend = false,
@@ -1507,7 +1525,7 @@ function registerTaskAndProve({
   aiListener.activeTasks.set(taskId, task);
 
   const proverConfigured = !!getSP1Prover();
-  if (!deferProve) startTaskProof(task, proveAllowed);
+  if (!deferProve) await startTaskProof(task, proveAllowed);
 
   return { taskId, proverConfigured, proveAllowed, task };
 }
@@ -1660,7 +1678,7 @@ async function chargeServedInference({
  * unsigned presentation fields are added after signing — never a field in
  * `canonicalSignedPayload`.
  */
-function buildReceipt({
+async function buildReceipt({
   task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
@@ -1686,7 +1704,7 @@ function buildReceipt({
   const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
 
   const signed = task
-    ? buildSignedReceipt(task, {
+    ? await buildSignedReceipt(task, {
         baseUrl,
         signingSecret: config.receipts?.signingSecret,
         coSignerSecret: config.receipts?.coSignerSecret,
@@ -1782,7 +1800,87 @@ function paidResourceUrl(baseUrl, resourcePath) {
   return `${String(baseUrl).replace(/\/$/, '')}${absPath}`;
 }
 
-function setReceiptHeaders(res, receipt, resourceUrl = null) {
+const REPLAY_HEADER_NAMES = [
+  'payment-response',
+  'x-payment-response',
+  'x-xfuel-task-id',
+  'x-xfuel-provider',
+  'x-xfuel-compute-real',
+  'x-xfuel-payment-rail',
+  'x-xfuel-proof-status',
+  'x-xfuel-proof-url',
+  'x-xfuel-verify-url',
+  'x-xfuel-agent-id',
+  'x-chit-requested-model',
+  'x-chit-served-model',
+  'x-chit-model-substituted',
+];
+
+function captureReplayHeaders(res) {
+  const headers = {};
+  for (const name of REPLAY_HEADER_NAMES) {
+    const value = res.getHeader(name);
+    if (value != null && value !== '') headers[name] = String(value);
+  }
+  return headers;
+}
+
+function sendStoredPaidResponse(res, stored) {
+  res.status(stored.status || 200);
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  for (const [name, value] of Object.entries(stored.headers || {})) {
+    if (value != null) res.setHeader(name, value);
+  }
+  return res.end(Buffer.from(stored.bytes, 'utf8'));
+}
+
+/** Exact bytes from the first fulfillment. Does not run the handler. */
+async function maybeServePaidReplay(req, res, metering) {
+  if (!metering?.payment?.idempotentReplay) return false;
+  const stored = await takeServedReceipt(extractPaymentNonce(req));
+  if (stored?.timedOut) {
+    res.set('Retry-After', '2');
+    res.status(402).json({
+      error: {
+        message: 'Payment could not be settled',
+        type: 'payment_required',
+        code: 'payment_in_flight',
+      },
+    });
+    return true;
+  }
+  if (!stored?.bytes) {
+    res.status(409).json({
+      error: {
+        message: 'Payment could not be settled',
+        type: 'payment_required',
+        code: 'payment_replayed',
+      },
+    });
+    return true;
+  }
+  sendStoredPaidResponse(res, stored);
+  return true;
+}
+
+function finishPaidBody(res, req, status, body, receipt) {
+  const bytes = Buffer.from(JSON.stringify(body));
+  const nonce = req ? extractPaymentNonce(req) : null;
+  if (nonce) {
+    commitServedReceipt(nonce, {
+      bytes: bytes.toString('utf8'),
+      signature: receipt?.issuer_signature?.jws || null,
+      taskId: receipt?.task_id || body?.xfuel?.task_id || body?.task_id || null,
+      status,
+      headers: captureReplayHeaders(res),
+    });
+  }
+  res.status(status);
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  return res.end(bytes);
+}
+
+async function setReceiptHeaders(res, receipt, resourceUrl = null) {
   const view = mergeReceiptView(receipt);
   res.setHeader('x-xfuel-task-id', receipt.task_id);
   if (receipt.compute?.provider) res.setHeader('x-xfuel-provider', receipt.compute.provider);
@@ -1803,7 +1901,7 @@ function setReceiptHeaders(res, receipt, resourceUrl = null) {
   // A refund-owed receipt is not collected spend, but the client must still see
   // the settlement header or it will retry and charge the payer again.
   if (view.payment?.ref && (view.payment.collected !== false || refundOwed)) {
-    setX402PaymentResponseHeaders(res, {
+    await setX402PaymentResponseHeaders(res, {
       ref: view.payment.ref,
       network: view.payment.network,
       payer: view.caller_binding?.payer_wallet || null,
@@ -1817,7 +1915,7 @@ function setReceiptHeaders(res, receipt, resourceUrl = null) {
  * Session is possession for GET|POST book — returned once here, not on public GET /receipt.
  * Do not wait for POST /v1/agents/register. Reuse agent_id when session is presented.
  */
-function withBookSpend(receipt, {
+async function withBookSpend(receipt, {
   ledger, registry, agentId = null, intentId = null, attemptIndex = null, payer = null,
   settleRecord = null,
 } = {}) {
@@ -1829,7 +1927,7 @@ function withBookSpend(receipt, {
     || receipt?.payment?.payer
     || null;
   try {
-    const recorded = recordCollectedSpend(receipt, {
+    const recorded = await recordCollectedSpend(receipt, {
       ledger,
       registry,
       agentId,
@@ -1857,7 +1955,7 @@ function withBookSpend(receipt, {
       row_hash: recorded.entry?.row_hash ?? null,
       book_chain: recorded.entry?.book_chain || null,
       receipt_lane: recorded.entry
-        ? receiptLaneForEntry(recorded.entry, { tree: getReceiptMerkleTree() })
+        ? await receiptLaneForEntry(recorded.entry, { tree: getReceiptMerkleTree() })
         : null,
       settlement_status: recorded.settlement_status || 'settled',
       idempotent_replay: recorded.idempotent_replay === true,
@@ -1875,6 +1973,7 @@ function withBookSpend(receipt, {
     bindRequestSalt(next, receipt);
     return next;
   } catch (err) {
+    if (err?.code === 'persist_failed') throw err;
     logger.warn({ err: err.message, taskId: receipt.task_id }, 'openai-gateway: UsageSettled append threw');
     return receipt;
   }
@@ -1884,7 +1983,7 @@ function withBookSpend(receipt, {
  * Write UsageSettled at x402 settle time so a book row exists even if inference fails later.
  * Export reads ledger rows only — not live wallet scrape.
  */
-function writeSettleBookRow({
+async function writeSettleBookRow({
   taskId, payment, model, req, ledger, registry, boundSession, agentId = null,
   issuanceCommitment = null,
   disputeWindow = null,
@@ -1898,7 +1997,7 @@ function writeSettleBookRow({
   const intentFields = resolveIntentFields(intentMeta, ledger, resolvedAgentId);
   const echoModel = model || 'xfuel/auto';
   try {
-    const recorded = recordSettleBookRow({
+    const recorded = await recordSettleBookRow({
       taskId,
       paymentRef: payment.ref,
       amount: payment.amount,
@@ -1922,6 +2021,7 @@ function writeSettleBookRow({
     }
     return recorded;
   } catch (err) {
+    if (err?.code === 'persist_failed') throw err;
     logger.warn({ err: err.message, taskId }, 'openai-gateway: settle-time UsageSettled append threw');
     return null;
   }
@@ -1931,7 +2031,7 @@ function writeSettleBookRow({
  * Register a paid /v1 task immediately after x402 settlement so a downstream
  * failure never leaves money moved with no durable task or public receipt.
  */
-export function registerPaidV1Shell({
+export async function registerPaidV1Shell({
   taskId, payment, model, messages, apiKeyHash, privateSpend, privacyProduct = null,
   privacyAttest = null, session = null, requestedModel = null,
   req = null, resourcePath = '/v1/chat/completions',
@@ -1941,7 +2041,7 @@ export function registerPaidV1Shell({
     delete request.payer;
     if (payment?.payer) request.payer = String(payment.payer);
   }
-  return registerTaskAndProve({
+  return await registerTaskAndProve({
     taskId,
     model: model || 'xfuel/auto',
     requestedModel,
@@ -1999,7 +2099,7 @@ function stampServedRoute(task, { requested, served, provider }) {
   if (provider) task.meta.provider = provider;
 }
 
-function respondPaidV1Failure(res, {
+async function respondPaidV1Failure(res, {
   task, taskId, payment, baseUrl, privateSpend = false,
   statusCode = 503, message, code = 'inference_failed',
   requestedModel = null, resolvedModel = null, provider = null,
@@ -2064,7 +2164,7 @@ function respondPaidV1Failure(res, {
     task.meta = task.meta || {};
     task.meta.agentId = reuseId;
   }
-  let receipt = buildReceipt({
+  let receipt = await buildReceipt({
     task,
     taskId,
     provider: provider || task?.meta?.provider || 'none',
@@ -2081,7 +2181,7 @@ function respondPaidV1Failure(res, {
   });
   const intentMeta = req ? extractIntentMeta(req) : {};
   const intentFields = resolveIntentFields(intentMeta, ledger, reuseId);
-  receipt = withBookSpend(receipt, {
+  receipt = await withBookSpend(receipt, {
     ledger,
     registry,
     agentId: reuseId,
@@ -2089,8 +2189,8 @@ function respondPaidV1Failure(res, {
     attemptIndex: intentFields.attempt_index,
     settleRecord,
   });
-  setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, req?.path));
-  return res.status(statusCode).json({
+  await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, req?.path));
+  return finishPaidBody(res, req, statusCode, {
     error: {
       message: message || 'Inference could not be completed after payment was collected.',
       type: statusCode >= 500 ? 'server_error' : 'invalid_request_error',
@@ -2099,16 +2199,16 @@ function respondPaidV1Failure(res, {
     task_id: taskId,
     payment_ref: payment?.ref || null,
     xfuel: receipt,
-  });
+  }, receipt);
 }
 
 /**
  * Metering threw after handshake — respond without a bare 500 when we already
  * know payment moved (should be rare; settlement path is defensive).
  */
-function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false, ledger = null, registry = null, req = null }) {
+async function respondMeteringFailure(res, { taskId, payment, task, baseUrl, privateSpend = false, ledger = null, registry = null, req = null }) {
   if (payment?.ref) {
-    return respondPaidV1Failure(res, {
+    return await respondPaidV1Failure(res, {
       task, taskId, payment, baseUrl, privateSpend,
       statusCode: 503,
       message: 'Payment was collected but the gateway could not finish processing this request.',
@@ -2239,7 +2339,7 @@ export function registerOpenAIRoutes(app, {
   app.use('/v1/audio', ...authChain);
   app.use('/v1/chat', ...baseChain);
 
-  const bookSpend = (req, settleRecord, task, build) => {
+  const bookSpend = async (req, settleRecord, task, build) => {
     const sessionAgent = resolveBookableAgent(req, registry);
     const agentId = resolvePaidClaimAgent({
       settleAgentId: settleRecord?.agent_id ?? null,
@@ -2254,10 +2354,10 @@ export function registerOpenAIRoutes(app, {
       task.meta = task.meta || {};
       task.meta.agentId = agentId;
     }
-    const receipt = typeof build === 'function' ? build() : build;
+    const receipt = typeof build === 'function' ? await build() : await build;
     const intentMeta = req ? extractIntentMeta(req) : {};
     const intentFields = resolveIntentFields(intentMeta, ledger, agentId);
-    const recorded = withBookSpend(receipt, {
+    const recorded = await withBookSpend(receipt, {
       ledger,
       registry,
       agentId,
@@ -2322,8 +2422,8 @@ export function registerOpenAIRoutes(app, {
       ...(pricing ? { pricing } : {}),
     });
   }
-  app.get('/v1/models/:hub/:alias', (req, res) => getModelById(req, res, `${req.params.hub}/${req.params.alias}`));
-  app.get('/v1/models/:id', (req, res) => getModelById(req, res, req.params.id));
+  app.get('/v1/models/:hub/:alias', async (req, res) => await getModelById(req, res, `${req.params.hub}/${req.params.alias}`));
+  app.get('/v1/models/:id', async (req, res) => await getModelById(req, res, req.params.id));
 
   async function maybeMeterUnauthChat(req, res, resourcePath = '/v1/chat/completions') {
     const { header: paymentHeader } = extractPaymentHeader(req);
@@ -2334,7 +2434,7 @@ export function registerOpenAIRoutes(app, {
         taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy, spendHolds,
       });
       if (metering.meteringError) {
-        return respondMeteringFailure(res, {
+        return await respondMeteringFailure(res, {
           taskId,
           payment: metering.payment,
           task: null,
@@ -2484,10 +2584,10 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath, ledger, registry, bookPolicy,
-        spendHolds, session: boundSession,
+        spendHolds, session: boundSession, serveStoredResponse: true,
       });
       if (metering.meteringError) {
-        return respondMeteringFailure(res, {
+        return await respondMeteringFailure(res, {
           taskId,
           payment: metering.payment,
           task: paidTask,
@@ -2499,6 +2599,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      if (await maybeServePaidReplay(req, res, metering)) return undefined;
       let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
@@ -2513,7 +2614,7 @@ export function registerOpenAIRoutes(app, {
           // The session cap must not keep a hold for a payer that is not the session.
           dropSessionHold = true;
         }
-        ({ task: paidTask } = registerPaidV1Shell({
+        ({ task: paidTask } = await registerPaidV1Shell({
           taskId,
           payment: metering.payment,
           model: servedModel,
@@ -2528,7 +2629,7 @@ export function registerOpenAIRoutes(app, {
           resourcePath,
         }));
         await attachQuotedPricing(paidTask, req, privacyCtx, { byok: orAccess.mode === 'byok' });
-        settleRecord = writeSettleBookRow({
+        settleRecord = await writeSettleBookRow({
           taskId,
           payment: metering.payment,
           model: servedModel,
@@ -2592,6 +2693,7 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      if (metering.payment && !metering.payment.idempotentReplay) notePaidFulfillment();
       const orUser = openrouterEndUser({
         payerWallet: metering.payment?.payer,
         apiKeyHash,
@@ -2614,7 +2716,7 @@ export function registerOpenAIRoutes(app, {
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/chat/completions inference error');
       if (metering.payment) {
-        return respondPaidV1Failure(res, {
+        return await respondPaidV1Failure(res, {
           task: paidTask,
           taskId,
           payment: metering.payment,
@@ -2639,7 +2741,7 @@ export function registerOpenAIRoutes(app, {
 
     if (inference.error) {
       if (metering.payment) {
-        return respondPaidV1Failure(res, {
+        return await respondPaidV1Failure(res, {
           task: paidTask,
           taskId,
           payment: metering.payment,
@@ -2705,7 +2807,7 @@ export function registerOpenAIRoutes(app, {
       task.usage = { ...counts, source };
       proverConfigured = !!getSP1Prover();
     } else {
-      ({ proverConfigured, task } = registerTaskAndProve({
+      ({ proverConfigured, task } = await registerTaskAndProve({
         taskId,
         model: echoModel,
         requestedModel,
@@ -2748,7 +2850,7 @@ export function registerOpenAIRoutes(app, {
       const attestErr = await ensureAttestProof(task, privacyCtx);
       if (attestErr) {
         if (metering.payment) {
-          return respondPaidV1Failure(res, {
+          return await respondPaidV1Failure(res, {
             task,
             taskId,
             payment: metering.payment,
@@ -2774,11 +2876,11 @@ export function registerOpenAIRoutes(app, {
         });
       }
     } else {
-      startTaskProof(task, proveAllowed);
+      await startTaskProof(task, proveAllowed);
     }
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = bookSpend(req, settleRecord, task, () => buildReceipt({
+    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
@@ -2786,14 +2888,15 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
 
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
+    await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     if (stream) {
+      abortServedReceipt(extractPaymentNonce(req));
       return streamCompletion(res, { id, created, model: catalogModel, content, receipt });
     }
 
-    return res.json({
+    return finishPaidBody(res, req, 200, {
       id,
       object: 'chat.completion',
       created,
@@ -2812,7 +2915,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, receipt);
   }
 
   // GET /v1/chat/completions — same unauth 402 as POST {}. Not a second receipt.
@@ -2830,8 +2933,8 @@ export function registerOpenAIRoutes(app, {
   });
 
   // Same handshake + fulfillment: /v1 door and A2A card URL. Same $0.01. No second door.
-  app.post('/v1/chat/completions', (req, res) => handlePaidChatPost(req, res, '/v1/chat/completions'));
-  app.post('/a2a-message', ...baseChain, (req, res) => handlePaidChatPost(req, res, '/a2a-message'));
+  app.post('/v1/chat/completions', async (req, res) => await handlePaidChatPost(req, res, '/v1/chat/completions'));
+  app.post('/a2a-message', ...baseChain, async (req, res) => await handlePaidChatPost(req, res, '/a2a-message'));
 
   // ── POST /v1/responses ─────────────────────────────────────────────────────
   // Responses API drop-in: same x402 + signed receipt as /v1/chat/completions.
@@ -3007,10 +3110,10 @@ export function registerOpenAIRoutes(app, {
       preflightModel = pre.model;
       metering = await meterV1Request(req, res, {
         taskId, isAuthorised, resourcePath: '/v1/responses', ledger, registry, bookPolicy,
-        spendHolds, session: boundSession,
+        spendHolds, session: boundSession, serveStoredResponse: true,
       });
       if (metering.meteringError) {
-        return respondMeteringFailure(res, {
+        return await respondMeteringFailure(res, {
           taskId,
           payment: metering.payment,
           task: paidTask,
@@ -3022,6 +3125,7 @@ export function registerOpenAIRoutes(app, {
         });
       }
       if (metering.halted) return undefined;
+      if (await maybeServePaidReplay(req, res, metering)) return undefined;
       let dropSessionHold = false;
       if (metering.payment) {
         if (boundSession && metering.payment.payer
@@ -3034,7 +3138,7 @@ export function registerOpenAIRoutes(app, {
           boundSession = null;
           dropSessionHold = true;
         }
-        ({ task: paidTask } = registerPaidV1Shell({
+        ({ task: paidTask } = await registerPaidV1Shell({
           taskId,
           payment: metering.payment,
           model: servedModel,
@@ -3048,7 +3152,7 @@ export function registerOpenAIRoutes(app, {
           req,
           resourcePath: '/v1/responses',
         }));
-        settleRecord = writeSettleBookRow({
+        settleRecord = await writeSettleBookRow({
           taskId,
           payment: metering.payment,
           model: servedModel,
@@ -3096,6 +3200,7 @@ export function registerOpenAIRoutes(app, {
 
     let inference;
     try {
+      if (metering.payment && !metering.payment.idempotentReplay) notePaidFulfillment();
       const orUser = openrouterEndUser({
         payerWallet: metering.payment?.payer,
         apiKeyHash,
@@ -3118,7 +3223,7 @@ export function registerOpenAIRoutes(app, {
     } catch (err) {
       logger.error({ err, reqId: req.id }, 'POST /v1/responses inference error');
       if (metering.payment) {
-        return respondPaidV1Failure(res, {
+        return await respondPaidV1Failure(res, {
           task: paidTask,
           taskId,
           payment: metering.payment,
@@ -3143,7 +3248,7 @@ export function registerOpenAIRoutes(app, {
 
     if (inference.error) {
       if (metering.payment) {
-        return respondPaidV1Failure(res, {
+        return await respondPaidV1Failure(res, {
           task: paidTask,
           taskId,
           payment: metering.payment,
@@ -3206,7 +3311,7 @@ export function registerOpenAIRoutes(app, {
       task.usage = { ...counts, source };
       proverConfigured = !!getSP1Prover();
     } else {
-      ({ proverConfigured, task } = registerTaskAndProve({
+      ({ proverConfigured, task } = await registerTaskAndProve({
         taskId,
         model: echoModel,
         requestedModel,
@@ -3241,10 +3346,10 @@ export function registerOpenAIRoutes(app, {
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier,
       minCogs: config.verifiedInference?.tier2MinCogs,
     });
-    startTaskProof(task, proveAllowed);
+    await startTaskProof(task, proveAllowed);
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = bookSpend(req, settleRecord, task, () => buildReceipt({
+    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
@@ -3252,13 +3357,13 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
 
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
+    await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
 
     // Build Responses-shaped output
     const { output, output_text } = toResponsesOutput(content, toolCalls);
 
-    return res.json({
+    return finishPaidBody(res, req, 200, {
       id,
       object: 'response',
       created_at: created,
@@ -3269,7 +3374,7 @@ export function registerOpenAIRoutes(app, {
       usage,
       chit: chitDisclosure(requestedModel, echoModel),
       xfuel: receipt,
-    });
+    }, receipt);
   });
 
   // ── POST /v1/images/generations ────────────────────────────────────────────
@@ -3299,7 +3404,7 @@ export function registerOpenAIRoutes(app, {
     const privacyCtx = privacyFromReq(req, registry);
     const privateSpend = privacyCtx.privateSpend;
     const content = inference.url || JSON.stringify(inference.raw?.output || {});
-    const { taskId, proverConfigured, task } = registerTaskAndProve({
+    const { taskId, proverConfigured, task } = await registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: prompt }],
       content,
@@ -3311,7 +3416,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3324,7 +3429,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
+    await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
     const data = [];
@@ -3365,7 +3470,7 @@ export function registerOpenAIRoutes(app, {
     });
     const privacyCtx = privacyFromReq(req, registry);
     const privateSpend = privacyCtx.privateSpend;
-    const { taskId, proverConfigured, task } = registerTaskAndProve({
+    const { taskId, proverConfigured, task } = await registerTaskAndProve({
       model: inference.resolvedModel,
       messages: [{ role: 'user', content: String(audioUrl) }],
       content: inference.text || '',
@@ -3377,7 +3482,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3390,7 +3495,7 @@ export function registerOpenAIRoutes(app, {
       resolvedModel: inference.resolvedModel,
       reqHost,
     });
-    setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
+    await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
     return res.json({
       text: inference.text || '',
       model: inference.resolvedModel,

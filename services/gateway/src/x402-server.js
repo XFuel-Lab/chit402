@@ -32,6 +32,9 @@ import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-atte
 import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
+import { canonicalPaidRoute } from './paid-route.js';
+import { readHeadBlock } from './x402-chain.js';
+import { capGate } from './issuance-cap.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -494,7 +497,12 @@ export async function runX402Handshake(req, {
   payTo = null,
   strictTaskId = false,
   store = null,
+  serveStoredResponse = false,
 } = {}) {
+  const gate = capGate();
+  if (gate.paused) {
+    return { kind: 'issuance_paused', status: 503, reason: 'issuance_paused' };
+  }
   const priceBody = body || req.body;
   const bindParse = parseIssuanceBindFromBody(priceBody);
   if (bindParse.requested && !bindParse.ok) {
@@ -522,6 +530,20 @@ export async function runX402Handshake(req, {
   // The challenge includes the CDP Bazaar extension for discovery cataloging.
   // Dual-network (2026-08-22): include Solana accepts entry when cfg.solana.enabled.
   if (!paymentHeader) {
+    // A spent challenge without the original proof is a replay refusal.
+    // An unconfirmed challenge stays unconfirmed until reconcile; a new 402
+    // would invite a second payment for the same attempt.
+    const earlyNonce = extractPaymentNonce(req);
+    if (earlyNonce && bindingEnforced(cfg)) {
+      const activeStore = store || getActiveChallengeStore() || challengeStore;
+      if (typeof activeStore?.isSpent === 'function' && activeStore.isSpent(earlyNonce)) {
+        return { kind: 'failed', reason: 'payment_replayed', code: 'payment_replayed', preSettle: true };
+      }
+      const pendingChallenge = typeof activeStore?.get === 'function' ? activeStore.get(earlyNonce) : null;
+      if (pendingChallenge?.state === 'unknown') {
+        return { kind: 'failed', reason: 'settle_unconfirmed', code: 'settle_unconfirmed', preSettle: true };
+      }
+    }
     const charge = amount != null ? String(amount) : await priceUSDCResolved(priceBody, cfg, quoteOpts || {});
     let issuance_bind = null;
     if (bindParse.requested && bindParse.ok) {
@@ -531,7 +553,8 @@ export async function runX402Handshake(req, {
       };
     }
     const activeStore = store || getActiveChallengeStore() || challengeStore;
-    const { body: challengeBody } = buildPaymentChallenge(
+    const issueBlock = await readHeadBlock(cfg.baseRpcUrl || cfg.rpcUrl || null, 250);
+    const { body: challengeBody } = await buildPaymentChallenge(
       {
         taskId,
         maxAmountRequired: charge,
@@ -548,7 +571,7 @@ export async function runX402Handshake(req, {
           network: cfg.solana.network,
         },
       },
-      { store: activeStore },
+      { store: activeStore, issueBlock },
     );
     const qHash = quoteBodyHash(priceBody);
     for (const entry of challengeBody?.accepts || []) {
@@ -558,6 +581,8 @@ export async function runX402Handshake(req, {
       if (!rec) continue;
       rec.quoteBodyHash = qHash;
       rec.routeQuote = charge;
+      rec.quotePrice = charge;
+      rec.quoteRoute = canonicalPaidRoute(rec.resource);
       if (bindParse.requested && bindParse.ok && entry === challengeBody.accepts[0]) {
         const stored = issuanceBindForChallenge(bindParse.bind, {
           challengeNonce: issuedNonce,
@@ -595,7 +620,7 @@ export async function runX402Handshake(req, {
   // The challenge network determines the facilitator route (CDP for Base, PayAI for Solana).
   const nonce = extractPaymentNonce(req);
   if (bindingEnforced(cfg)) {
-    return settleBoundPayment({
+    return await settleBoundPayment({
       req,
       taskId,
       cfg,
@@ -612,7 +637,8 @@ export async function runX402Handshake(req, {
       paymentHeader,
       clientVersion,
       nonce,
-      resolveQuote: () => priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
+      serveStoredResponse,
+      resolveQuote: async () => await priceUSDCResolved(priceBody, cfg, quoteOpts || {}),
     });
   }
   noteUnboundUse('runX402Handshake', { taskId });

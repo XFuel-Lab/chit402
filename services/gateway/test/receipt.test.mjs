@@ -115,8 +115,8 @@ test('explorerUrlForRef: base-sepolia, base, solana, unknown', () => {
   );
 });
 
-test('buildReceipt: USDC task is proven, priced, and independently binding-verified', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
+test('buildReceipt: USDC task is proven, priced, and independently binding-verified', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
   const v = mergeReceiptView(r);
   assert.equal(r.task_id, TASK_ID);
   assert.equal(r.status, 'completed');
@@ -167,10 +167,10 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(r.verify_url, r.links.self);
 });
 
-test('paid USDC without a binding commitment does not claim payment_binding', () => {
+test('paid USDC without a binding commitment does not claim payment_binding', async () => {
   const task = usdcTask();
   delete task.sp1Proof.paymentBinding;
-  const r = buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
+  const r = await buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
   assert.equal(r.proof.attestation_scope.payment_binding, false);
   assert.equal(r.binding, undefined);
   const claims = decodeReceiptClaims(r);
@@ -234,28 +234,28 @@ test('buildVerifyUrl: uses chit- prefix when reqHost is api.chit402.com', () => 
   );
 });
 
-test('buildReceipt: uses chit- prefix in verify_url and links when reqHost is api.chit402.com', () => {
+test('buildReceipt: uses chit- prefix in verify_url and links when reqHost is api.chit402.com', async () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
     intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
     result: { provider: 'theta-edgecloud' },
   };
-  const r = buildReceipt(xfuelTask, { baseUrl: 'https://api.chit402.com', reqHost: 'api.chit402.com' });
+  const r = await buildReceipt(xfuelTask, { baseUrl: 'https://api.chit402.com', reqHost: 'api.chit402.com' });
   assert.equal(r.verify_url, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587');
   assert.equal(r.links.self, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587');
   assert.equal(r.links.json, 'https://api.chit402.com/receipt/chit-247049dd-0075-4372-b7f7-508c62b9b587?format=json');
   assert.equal(r.task_id, 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
 });
 
-test('buildReceipt: keeps xfuel- prefix when reqHost is api.xfuel.app', () => {
+test('buildReceipt: keeps xfuel- prefix when reqHost is api.xfuel.app', async () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
     intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
     result: { provider: 'theta-edgecloud' },
   };
-  const r = buildReceipt(xfuelTask, { baseUrl: 'https://api.xfuel.app', reqHost: 'api.xfuel.app' });
+  const r = await buildReceipt(xfuelTask, { baseUrl: 'https://api.xfuel.app', reqHost: 'api.xfuel.app' });
   assert.equal(r.verify_url, 'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
   assert.equal(r.links.self, 'https://api.xfuel.app/receipt/xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
   assert.equal(r.task_id, 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587');
@@ -295,20 +295,20 @@ test('baseUrlFromReq: uses request host when it matches allowedHosts', () => {
   assert.equal(baseUrlFromReq(upperReq, 'https://api.xfuel.app', allowedHosts), 'https://API.CHIT402.COM');
 });
 
-test('buildReceipt: binding mismatch is detected (tampered commitment)', () => {
+test('buildReceipt: binding mismatch is detected (tampered commitment)', async () => {
   const task = usdcTask();
   task.sp1Proof.paymentBinding.commitment = '0x' + '00'.repeat(32);
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(r.binding.matches, false);
   assert.notEqual(r.binding.expected_commitment, r.binding.recomputed_commitment);
 });
 
-test('buildReceipt: TFUEL task has no binding and no explorer link', () => {
+test('buildReceipt: TFUEL task has no binding and no explorer link', async () => {
   const task = usdcTask({
     intent: { type: 'inference_request', amount: '1000000', paymentRail: 'tfuel', paymentRef: null, proofSystem: 'sp1' },
     sp1Proof: { proof: '0x', nullifier: '0xnull', provingTimeMs: 100 },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   const v = mergeReceiptView(r);
   assert.equal(v.payment.rail, 'tfuel');
   assert.equal(v.payment.explorer_url, null);
@@ -316,26 +316,26 @@ test('buildReceipt: TFUEL task has no binding and no explorer link', () => {
   assert.equal('binding' in r, false);
 });
 
-test('buildReceipt: mock compute wins over float provider label', () => {
+test('buildReceipt: mock compute wins over float provider label', async () => {
   const task = usdcTask({
     meta: { chain: 'base', provider: 'theta-edgecloud', providerCogs: { provider: 'theta-edgecloud' } },
     result: { mock: true, provider: 'theta-edge-mock', outputHash: '0xabc' },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(mergeReceiptView(r).route.provider, 'theta-edge-mock');
 });
 
-test('buildReceipt: pending task (no proof yet)', () => {
+test('buildReceipt: pending task (no proof yet)', async () => {
   const task = usdcTask({ status: 'routing', sp1Proof: null, result: null });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(r.proof_outcome, 'pending');
   assert.equal(r.proof.has_proof, false);
   assert.equal(mergeReceiptView(r).output, null);
 });
 
-test('renderReceiptHtml: shareable page includes key fields + escapes hostile input', () => {
+test('renderReceiptHtml: shareable page includes key fields + escapes hostile input', async () => {
   const task = usdcTask({ intent: { ...usdcTask().intent, model: '<script>alert(1)</script>' } });
-  const html = renderReceiptHtml(buildReceipt(task));
+  const html = renderReceiptHtml(await buildReceipt(task));
   assert.match(html, /<!doctype html>/i);
   assert.ok(html.includes(TASK_ID));
   assert.match(html, /Proven/);
@@ -361,8 +361,8 @@ test('displayRouteModel: auto aliases become chit/auto; served hub ids pass thro
   assert.equal(isAutoRouteAlias('theta/qwen3'), false);
 });
 
-test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', () => {
-  const failed = renderReceiptHtml(buildReceipt({
+test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', async () => {
+  const failed = renderReceiptHtml(await buildReceipt({
     taskId: 'xfuel-d0e1f963-dc24-4eb2-aa64-cda0e1851f75',
     status: 'failed',
     intent: { paymentRail: 'usdc', amount: '10000', modelId: 'xfuel/auto' },
@@ -371,13 +371,13 @@ test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', 
   assert.match(failed, /Route details[\s\S]*chit\/auto/);
   assert.ok(!failed.includes('xfuel/auto'), 'wire alias must not appear in HTML chrome');
   assert.ok(!failed.includes('XFuel'), 'XFuel brand must not appear in HTML chrome');
-  assert.equal(mergeReceiptView(buildReceipt({
+  assert.equal(mergeReceiptView(await buildReceipt({
     taskId: 'xfuel-wire',
     status: 'failed',
     intent: { modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '1' },
   })).route.model, 'xfuel/auto', 'signed JSON keeps wire model id');
 
-  const served = renderReceiptHtml(buildReceipt({
+  const served = renderReceiptHtml(await buildReceipt({
     taskId: 'xfuel-served',
     status: 'completed',
     intent: { modelId: 'xfuel/auto', paymentRail: 'usdc', amount: '10000' },
@@ -388,13 +388,13 @@ test('renderReceiptHtml: route chrome hides xfuel auto alias and footer brand', 
   assert.ok(!served.includes('xfuel/auto'));
 });
 
-test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix becomes chit- in display', () => {
+test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix becomes chit- in display', async () => {
   const xfuelTask = {
     taskId: 'xfuel-247049dd-0075-4372-b7f7-508c62b9b587',
     status: 'completed',
     intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
   };
-  const html = renderReceiptHtml(buildReceipt(xfuelTask));
+  const html = renderReceiptHtml(await buildReceipt(xfuelTask));
 
   assert.match(html, /<title>0\.01 USDC · chit-247049dd…<\/title>/);
   assert.match(html, /property="og:title" content="0\.01 USDC · chit-247049dd…"/);
@@ -414,7 +414,7 @@ test('renderReceiptNotFound does not echo the requested id', () => {
   assert.match(html, /Receipt not found/);
 });
 
-test('buildReceipt: rolling first call is pending, not a legacy rail, and carries usage', () => {
+test('buildReceipt: rolling first call is pending, not a legacy rail, and carries usage', async () => {
   const base = usdcTask();
   const task = usdcTask({
     sp1Proof: null,
@@ -437,7 +437,7 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
       },
     },
   });
-  const r = buildReceipt(task, { signingSecret: 'test-receipt-secret' });
+  const r = await buildReceipt(task, { signingSecret: 'test-receipt-secret' });
   const v = mergeReceiptView(r);
   assert.equal(v.payment.ref, null);
   assert.equal(v.payment.collected, false);
@@ -462,18 +462,18 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
 
 // ── Phase 2 — Verified Inference fields (PoMA + PBR + signature) ────────────────
 
-test('buildReceipt: proof.tier is "settlement" with a proof, "signed" without', () => {
-  assert.equal(buildReceipt(usdcTask()).proof.tier, 'settlement');
+test('buildReceipt: proof.tier is "settlement" with a proof, "signed" without', async () => {
+  assert.equal((await buildReceipt(usdcTask())).proof.tier, 'settlement');
   const pending = usdcTask({ status: 'routing', sp1Proof: null, result: null });
-  assert.equal(buildReceipt(pending).proof.tier, 'signed');
+  assert.equal((await buildReceipt(pending)).proof.tier, 'signed');
 });
 
-test('buildReceipt: binding.covers reports payment/settlement by default', () => {
-  const r = buildReceipt(usdcTask());
+test('buildReceipt: binding.covers reports payment/settlement by default', async () => {
+  const r = await buildReceipt(usdcTask());
   assert.deepEqual(r.binding.covers, ['payment', 'settlement']);
 });
 
-test('buildReceipt: PBR binding (model + output) verifies via the superset commitment', () => {
+test('buildReceipt: PBR binding (model + output) verifies via the superset commitment', async () => {
   const MODEL_C = '0x' + 'ab'.repeat(32);
   const OUTPUT_H = '0x' + 'cd'.repeat(32);
   const netAmount = '995000';
@@ -488,17 +488,17 @@ test('buildReceipt: PBR binding (model + output) verifies via the superset commi
     model_commitment: MODEL_C, output_hash: OUTPUT_H,
     covers: ['payment', 'settlement', 'model', 'inference'],
   };
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.deepEqual(r.binding.covers, ['payment', 'settlement', 'model', 'inference']);
   assert.equal(r.binding.matches, true);
   assert.equal(r.binding.model_commitment, MODEL_C);
 });
 
-test('buildReceipt: hmac_attestation is absent by default and valid HMAC when a secret is given', () => {
+test('buildReceipt: hmac_attestation is absent by default and valid HMAC when a secret is given', async () => {
   const secret = 'test-receipt-secret';
-  assert.equal(buildReceipt(usdcTask()).hmac_attestation, undefined);
+  assert.equal((await buildReceipt(usdcTask())).hmac_attestation, undefined);
 
-  const r = buildReceipt(usdcTask(), { signingSecret: secret });
+  const r = await buildReceipt(usdcTask(), { signingSecret: secret });
   assert.ok(r.hmac_attestation);
   assert.equal(r.hmac_attestation.alg, 'HMAC-SHA256');
   assert.equal(r.hmac_attestation.payload_version, 8);
@@ -515,7 +515,7 @@ test('signed cost-plus fields recompute to gross', async () => {
   const { quoteFromCogs } = await import('../src/pricing.js');
   const quote = quoteFromCogs(10_000n, { usdcFloor: '0' });
   const base = usdcTask();
-  const r = buildReceipt(usdcTask({
+  const r = await buildReceipt(usdcTask({
     intent: { ...base.intent, amount: quote.amount },
     meta: {
       ...base.meta,
@@ -549,7 +549,7 @@ test('v8 x402 settle signs the on-chain amount and live 100 bps margin, not a 50
   const base = usdcTask();
   const payee = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
   const ref = 'base:0x' + 'bc'.repeat(32);
-  const r = buildReceipt(usdcTask({
+  const r = await buildReceipt(usdcTask({
     intent: { ...base.intent, amount: quote.amount, paymentRef: ref },
     // Stale protocol split must not be signed.
     feeAmount: '10',
@@ -621,7 +621,7 @@ test('proofOutcomeOf: skipped or gated tasks are not_applicable; in-flight stays
 test('buildReceipt: child session handoff uses not_applicable proof outcome on outer envelope', async () => {
   const { issueSessionHandoffReceipt } = await import('../src/receipt.js');
   const parent = usdcTask({ taskId: 'xfuel-parent-proof-na' });
-  const { receipt: child } = issueSessionHandoffReceipt(parent, {
+  const { receipt: child } = await issueSessionHandoffReceipt(parent, {
     delegation_hash: '0x' + 'cd'.repeat(32),
     agent_pubkey: '0x' + 'ab'.repeat(20),
     payer_wallet: '0x' + '12'.repeat(20),
@@ -633,34 +633,34 @@ test('buildReceipt: child session handoff uses not_applicable proof outcome on o
   assert.equal(child.proof.has_proof, false);
 });
 
-test('buildReceipt: signed-tier receipt without SP1 uses not_applicable proof outcome', () => {
+test('buildReceipt: signed-tier receipt without SP1 uses not_applicable proof outcome', async () => {
   const task = usdcTask({
     intent: { ...usdcTask().intent, proveAllowed: false },
     sp1Proof: { skipped: true, reason: 'proving_gated' },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(r.proof_outcome, 'not_applicable');
   assert.equal(r.proof.outcome, 'not_applicable');
   assert.equal(r.proof.has_proof, false);
   assert.equal(r.proof.tier, 'signed');
 });
 
-test('renderReceiptHtml: caller_binding payer_wallet shows bound address, not "not recorded"', () => {
+test('renderReceiptHtml: caller_binding payer_wallet shows bound address, not "not recorded"', async () => {
   const payer = '0x1234567890123456789012345678901234567890';
   const base = usdcTask();
   const task = usdcTask({
     intent: { ...base.intent, proveAllowed: false },
     sp1Proof: { skipped: true, reason: 'proving_gated' },
   });
-  const r = buildReceipt(task, { payerWallet: payer });
+  const r = await buildReceipt(task, { payerWallet: payer });
   const html = renderReceiptHtml(r);
   assert.ok(html.includes(payer), 'payer wallet should appear in HTML');
   assert.ok(!html.includes('Payment binding was not recorded'), 'stale unbound copy must not appear');
   assert.match(html, /signed caller binding/i);
 });
 
-test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price', () => {
-  const html = renderReceiptHtml(buildReceipt({
+test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price', async () => {
+  const html = renderReceiptHtml(await buildReceipt({
     taskId: 'xfuel-free',
     status: 'completed',
     intent: { paymentRail: 'unmetered', amount: '10000', model: 'xfuel/auto' },
@@ -677,11 +677,11 @@ test('renderReceiptHtml: unmetered /v1 does not print the $0.01 floor as a price
   assert.ok(!html.includes('>10000<'), html);
 });
 
-test('renderReceiptHtml: historical openai-* task ids still render (no prefix stripping)', () => {
+test('renderReceiptHtml: historical openai-* task ids still render (no prefix stripping)', async () => {
   // Pre-cutover receipts were minted as openai-<uuid>. Lookup and chrome must
   // still work; we do not rename stored ids. Only xfuel- prefix is stripped.
   const taskId = 'openai-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const html = renderReceiptHtml(buildReceipt({
+  const html = renderReceiptHtml(await buildReceipt({
     taskId,
     status: 'completed',
     intent: { paymentRail: 'usdc', amount: '10000', model: 'theta/qwen3' },
@@ -696,7 +696,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
 test('outputHashOf prefers result.outputHash over hashing the result envelope', async () => {
   const { buildReceipt } = await import('../src/receipt.js');
   const hash = '0x' + '11'.repeat(32);
-  const r = buildReceipt({
+  const r = await buildReceipt({
     taskId: 'xfuel-hash-check',
     status: 'completed',
     intent: { paymentRail: 'unmetered', amount: '0' },
@@ -710,8 +710,8 @@ test('outputHashOf prefers result.outputHash over hashing the result envelope', 
 
 // ── Receipt HTML hierarchy tests (Chit polish) ──────────────────────────────
 
-test('renderReceiptHtml: Payment section appears before Route details (de-emphasis)', () => {
-  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+test('renderReceiptHtml: Payment section appears before Route details (de-emphasis)', async () => {
+  const html = renderReceiptHtml(await buildReceipt(usdcTask()));
   const paymentIdx = html.indexOf('<h2>Payment</h2>');
   const routeIdx = html.indexOf('<h2>Route details</h2>');
   assert.ok(paymentIdx > 0, 'Payment section must exist');
@@ -719,14 +719,14 @@ test('renderReceiptHtml: Payment section appears before Route details (de-emphas
   assert.ok(paymentIdx < routeIdx, 'Payment must appear before Route details');
 });
 
-test('renderReceiptHtml: Route details has secondary class (de-emphasized)', () => {
-  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+test('renderReceiptHtml: Route details has secondary class (de-emphasized)', async () => {
+  const html = renderReceiptHtml(await buildReceipt(usdcTask()));
   assert.match(html, /class="card secondary"[^>]*>[\s\S]*?<h2>Route details<\/h2>/);
 });
 
-test('renderReceiptHtml: Verification section shows issuer signature with ES256 and JWKS link', () => {
+test('renderReceiptHtml: Verification section shows issuer signature with ES256 and JWKS link', async () => {
   const task = usdcTask();
-  const r = buildReceipt(task, { signingSecret: 'test-secret' });
+  const r = await buildReceipt(task, { signingSecret: 'test-secret' });
   const html = renderReceiptHtml(r);
   
   assert.match(html, /<h2>Verification<\/h2>/, 'Verification section heading');
@@ -736,8 +736,8 @@ test('renderReceiptHtml: Verification section shows issuer signature with ES256 
   assert.match(html, /\.well-known\/jwks\.json/, 'JWKS link');
 });
 
-test('renderReceiptHtml: Model and Provider are in Route details, not primary card', () => {
-  const html = renderReceiptHtml(buildReceipt(usdcTask()));
+test('renderReceiptHtml: Model and Provider are in Route details, not primary card', async () => {
+  const html = renderReceiptHtml(await buildReceipt(usdcTask()));
   const routeDetailsStart = html.indexOf('Route details</h2>');
   const routeDetailsEnd = html.indexOf('</section>', routeDetailsStart);
   const routeSection = html.slice(routeDetailsStart, routeDetailsEnd);
@@ -746,16 +746,16 @@ test('renderReceiptHtml: Model and Provider are in Route details, not primary ca
   assert.ok(routeSection.includes('Provider'), 'Provider in Route details');
 });
 
-test('renderReceiptHtml: JWKS link is absolute when receipt has base URL', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+test('renderReceiptHtml: JWKS link is absolute when receipt has base URL', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   const html = renderReceiptHtml(r);
   assert.match(html, /href="https:\/\/api\.chit402\.com\/\.well-known\/jwks\.json"/, 'Absolute JWKS URL');
 });
 
-test('renderReceiptHtml: token counts stay off the public page', () => {
+test('renderReceiptHtml: token counts stay off the public page', async () => {
   const task = usdcTask();
   task.usage = { prompt_tokens: 4242, completion_tokens: 4343, total_tokens: 8585 };
-  const built = buildReceipt(task);
+  const built = await buildReceipt(task);
   assert.equal(built.usage.prompt_tokens, 4242);
   assert.equal(built.usage.completion_tokens, 4343);
   const html = renderReceiptHtml(built);
@@ -766,8 +766,8 @@ test('renderReceiptHtml: token counts stay off the public page', () => {
   assert.equal(built.usage.total_tokens, 8585);
 });
 
-test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compact JWS', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compact JWS', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   assert.ok(r.issuer_signature, 'issuer_signature present');
   assert.equal(r.issuer_signature.alg, 'ES256');
   assert.equal(r.verification.jwks_uri, 'https://api.chit402.com/.well-known/jwks.json');
@@ -797,15 +797,15 @@ test('buildReceipt: issuer_signature has ES256 alg, absolute JWKS uri, and compa
   assert.equal(payload.payload_version, 10);
 });
 
-test('buildReceipt: omits inactive extension fields and documents provider_cogs units', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
+test('buildReceipt: omits inactive extension fields and documents provider_cogs units', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.xfuel.app' });
   assert.equal('verified_inference' in r, false);
   assert.equal('privacy' in r, false);
   assert.equal('lineage' in r, false);
   assert.equal('handoff' in r, false);
   assert.ok(r.binding, 'active binding is retained');
 
-  const withCogs = buildReceipt(usdcTask({
+  const withCogs = await buildReceipt(usdcTask({
     meta: {
       providerCogs: {
         provider: 'theta-edgecloud',
@@ -826,16 +826,16 @@ test('buildReceipt: omits inactive extension fields and documents provider_cogs 
 
 // ── Issuer signature verification correctness tests ─────────────────────────
 
-test('renderReceiptHtml: valid issuer signature shows "verified" badge', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
+test('renderReceiptHtml: valid issuer signature shows "verified" badge', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present');
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="badge ok">verified<\/span>/, 'verified badge must appear for valid signature');
   assert.ok(!html.includes('badge bad">not verified'), 'must NOT show "not verified" badge for valid signature');
 });
 
-test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
+test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present before tampering');
   
   // Tamper with a canonically signed field AFTER the signature was computed
@@ -846,8 +846,8 @@ test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)'
   assert.ok(!html.includes('badge ok">verified'), 'must NOT show "verified" badge for tampered receipt');
 });
 
-test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', () => {
-  const r = buildReceipt(usdcTask());
+test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', async () => {
+  const r = await buildReceipt(usdcTask());
   delete r.issuer_signature;
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="muted">unsigned<\/span>/, 'unsigned badge must appear when no issuer_signature');
@@ -856,8 +856,8 @@ test('renderReceiptHtml: receipt without issuer_signature shows "unsigned"', () 
 
 // ── Caller binding tests ─────────────────────────────────────────────────────
 
-test('buildReceipt: caller_binding is present in JWS claims', () => {
-  const r = buildReceipt(usdcTask());
+test('buildReceipt: caller_binding is present in JWS claims', async () => {
+  const r = await buildReceipt(usdcTask());
   const binding = mergeReceiptView(r).caller_binding;
   assert.ok(binding, 'caller_binding must be present in JWS');
   assert.ok('payer_wallet' in binding, 'payer_wallet field present');
@@ -865,7 +865,7 @@ test('buildReceipt: caller_binding is present in JWS claims', () => {
   assert.ok('api_key_hash' in binding, 'api_key_hash field present');
 });
 
-test('buildReceipt: caller_binding uses actual wallet address, never symbolic labels', () => {
+test('buildReceipt: caller_binding uses actual wallet address, never symbolic labels', async () => {
   // Task with an actual payer address from x402 settlement
   const taskWithAddress = usdcTask({
     meta: {
@@ -873,16 +873,16 @@ test('buildReceipt: caller_binding uses actual wallet address, never symbolic la
       payerAddress: '0x1234567890123456789012345678901234567890',
     },
   });
-  const r = buildReceipt(taskWithAddress);
+  const r = await buildReceipt(taskWithAddress);
   assert.equal(mergeReceiptView(r).caller_binding.payer_wallet, '0x1234567890123456789012345678901234567890');
   
   // Task without an address should have null, not a label like "openai-gateway"
   const taskWithoutAddress = usdcTask();
-  const r2 = buildReceipt(taskWithoutAddress);
+  const r2 = await buildReceipt(taskWithoutAddress);
   assert.equal(mergeReceiptView(r2).caller_binding.payer_wallet, null, 'payer_wallet should be null when no actual address, never a symbolic label');
 });
 
-test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () => {
+test('buildReceipt: caller_binding.payer_wallet rejects non-address values', async () => {
   // Task with a symbolic label (the bug we're fixing)
   const taskWithLabel = usdcTask({
     meta: {
@@ -890,7 +890,7 @@ test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () 
       payerAddress: 'openai-gateway',
     },
   });
-  const r = buildReceipt(taskWithLabel);
+  const r = await buildReceipt(taskWithLabel);
   assert.equal(mergeReceiptView(r).caller_binding.payer_wallet, null, 'symbolic labels must be rejected');
   
   // Task with invalid address format
@@ -900,11 +900,11 @@ test('buildReceipt: caller_binding.payer_wallet rejects non-address values', () 
       payerAddress: '0x123',
     },
   });
-  const r2 = buildReceipt(taskWithInvalid);
+  const r2 = await buildReceipt(taskWithInvalid);
   assert.equal(mergeReceiptView(r2).caller_binding.payer_wallet, null, 'invalid addresses must be rejected');
 });
 
-test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting the signed ref', () => {
+test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting the signed ref', async () => {
   const solSig = '5'.repeat(87);
   const paymentRef = `solana:${solSig}`;
   const payer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
@@ -920,25 +920,25 @@ test('buildReceipt: Solana payment sets route_meta.chain_id without rewriting th
       payerWallet: payer,
     },
   });
-  const r = buildReceipt(task, { payerWallet: payer, persistSignature: true, agentId: 7 });
+  const r = await buildReceipt(task, { payerWallet: payer, persistSignature: true, agentId: 7 });
   assert.equal(r.route_meta.chain_id, 'solana');
   assert.equal(r.payment_meta.network, 'solana');
   const claims = decodeReceiptClaims(r);
   assert.equal(claims.payment.ref, paymentRef, 'JWS payment ref stays network:tx');
   assert.equal(claims.claim_id, '7');
-  const rebuilt = buildReceipt(task, { payerWallet: payer, persistSignature: true });
+  const rebuilt = await buildReceipt(task, { payerWallet: payer, persistSignature: true });
   assert.equal(rebuilt.issuer_signature.jws, r.issuer_signature.jws, 'existing receipt JWS is kept');
   assert.equal(rebuilt.route_meta.chain_id, 'solana');
 });
 
-test('buildReceipt: Solana devnet receipt explorer_url keeps the full signature, and a stale stored link is repaired in the view', () => {
+test('buildReceipt: Solana devnet receipt explorer_url keeps the full signature, and a stale stored link is repaired in the view', async () => {
   const sig = '6'.repeat(88);
   const paymentRef = `solana-devnet:${sig}`;
   const task = usdcTask({
     intent: { ...usdcTask().intent, paymentRef, chainId: 'base' },
     meta: { ...usdcTask().meta, chain: 'base' },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   const want = `https://solscan.io/tx/${sig}?cluster=devnet`;
   assert.equal(r.payment_meta.network, 'solana-devnet');
   assert.equal(r.payment_meta.explorer_url, want);
@@ -948,31 +948,31 @@ test('buildReceipt: Solana devnet receipt explorer_url keeps the full signature,
   assert.equal(decodeReceiptClaims(r).payment.ref, paymentRef, 'signed ref unchanged');
 });
 
-test('buildReceipt: Base payment ref wins over a different routing chain', () => {
+test('buildReceipt: Base payment ref wins over a different routing chain', async () => {
   const tx = '0x' + 'cd'.repeat(32);
   const paymentRef = `base:${tx}`;
   const task = usdcTask({
     intent: { ...usdcTask().intent, paymentRef, chainId: 'theta' },
     meta: { ...usdcTask().meta, chain: 'theta' },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(r.route_meta.chain_id, 'base');
   assert.equal(r.payment_meta.network, 'base');
   assert.equal(decodeReceiptClaims(r).payment.ref, paymentRef);
 });
 
-test('buildReceipt: unpaid route_meta.chain_id stays the routing chain', () => {
+test('buildReceipt: unpaid route_meta.chain_id stays the routing chain', async () => {
   const task = usdcTask({
     intent: { ...usdcTask().intent, paymentRef: null, paymentRail: 'unmetered' },
     meta: { ...usdcTask().meta, chain: 'base' },
   });
-  const r = buildReceipt(task);
+  const r = await buildReceipt(task);
   assert.equal(r.route_meta.chain_id, 'base');
   assert.equal(r.payment_meta.network, null);
   assert.equal(decodeReceiptClaims(r).payment.ref, null);
 });
 
-test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', () => {
+test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', async () => {
   const solanaPayer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
   const solSig = '5'.repeat(87);
   const task = usdcTask({
@@ -986,7 +986,7 @@ test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', 
       chain: 'solana',
     },
   });
-  const r = buildReceipt(task, { payerWallet: solanaPayer, persistSignature: true });
+  const r = await buildReceipt(task, { payerWallet: solanaPayer, persistSignature: true });
   const view = mergeReceiptView(r);
   assert.equal(view.caller_binding.payer_wallet, solanaPayer);
   assert.equal(view.payment.network, 'solana');
@@ -995,7 +995,7 @@ test('buildReceipt: caller_binding stamps Solana payer_wallet from settlement', 
   assert.equal(claims.caller_binding.payer_wallet, solanaPayer);
 });
 
-test('buildReceipt: caller_binding includes agent_pubkey when present', () => {
+test('buildReceipt: caller_binding includes agent_pubkey when present', async () => {
   const taskWithAgent = usdcTask({
     meta: {
       ...usdcTask().meta,
@@ -1003,13 +1003,13 @@ test('buildReceipt: caller_binding includes agent_pubkey when present', () => {
       apiKeyHash: 'sha256=abcdef',
     },
   });
-  const r = buildReceipt(taskWithAgent);
+  const r = await buildReceipt(taskWithAgent);
   const binding = mergeReceiptView(r).caller_binding;
   assert.equal(binding.agent_pubkey, '0xagentpubkey123');
   assert.equal(binding.api_key_hash, 'sha256=abcdef');
 });
 
-test('buildReceipt: caller_binding.agent_pubkey rejects symbolic labels', () => {
+test('buildReceipt: caller_binding.agent_pubkey rejects symbolic labels', async () => {
   // Vendor/gateway labels must NEVER appear in agent_pubkey — only real pubkeys or null
   const symbolicLabels = ['openai-gateway', 'openai', 'anthropic', 'openrouter', 'gateway', 'internal'];
   
@@ -1020,13 +1020,13 @@ test('buildReceipt: caller_binding.agent_pubkey rejects symbolic labels', () => 
         agentPubkey: label,
       },
     });
-    const r = buildReceipt(taskWithLabel);
+    const r = await buildReceipt(taskWithLabel);
     assert.equal(mergeReceiptView(r).caller_binding.agent_pubkey, null, `symbolic label "${label}" must be rejected for agent_pubkey`);
   }
 });
 
-test('buildReceipt: pins issuer_jwk for offline verify (no live JWKS)', () => {
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+test('buildReceipt: pins issuer_jwk for offline verify (no live JWKS)', async () => {
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   assert.ok(r.issuer_signature.issuer_jwk, 'issuer_jwk pinned at sign time');
   assert.equal(r.issuer_signature.issuer_jwk.kid, r.issuer_signature.kid);
   assert.equal(r.issuer_signature.issuer_jwk.alg, 'ES256');
@@ -1036,14 +1036,14 @@ test('buildReceipt: pins issuer_jwk for offline verify (no live JWKS)', () => {
 
 test('verifyReceiptEcdsaWithJwks: verifies with pin only (empty JWKS rejected after pin path)', async () => {
   const { verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
-  const ok = verifyReceiptEcdsaWithJwks(r, { keys: [] });
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
+  const ok = await verifyReceiptEcdsaWithJwks(r, { keys: [] });
   assert.equal(ok.valid, true, 'pinned issuer_jwk verifies without live JWKS');
 });
 
 test('verifyReceiptEcdsaWithJwks: tampered JWS fails with pin only', async () => {
   const { verifyReceiptEcdsaWithJwks } = await import('../src/receipt.js');
-  const r = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   const parts = r.issuer_signature.jws.split('.');
   const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
   payload.payment.gross_amount = '9999999';
@@ -1054,11 +1054,11 @@ test('verifyReceiptEcdsaWithJwks: tampered JWS fails with pin only', async () =>
       jws: `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`,
     },
   };
-  const bad = verifyReceiptEcdsaWithJwks(tampered, { keys: [] });
+  const bad = await verifyReceiptEcdsaWithJwks(tampered, { keys: [] });
   assert.equal(bad.valid, false);
 });
 
-test('buildReceipt: collected settle binds payer, payee, asset, ref in JWS', () => {
+test('buildReceipt: collected settle binds payer, payee, asset, ref in JWS', async () => {
   const payer = '0x1111111111111111111111111111111111111111';
   const payee = '0x2222222222222222222222222222222222222222';
   const task = usdcTask({
@@ -1068,7 +1068,7 @@ test('buildReceipt: collected settle binds payer, payee, asset, ref in JWS', () 
       paymentAsset: 'USDC',
     },
   });
-  const r = buildReceipt(task, { baseUrl: 'https://api.chit402.com', payerWallet: payer, payTo: payee });
+  const r = await buildReceipt(task, { baseUrl: 'https://api.chit402.com', payerWallet: payer, payTo: payee });
   const v = mergeReceiptView(r);
   assert.equal(v.payment.ref, task.intent.paymentRef);
   assert.equal(v.payment.asset, 'USDC');
@@ -1082,11 +1082,11 @@ test('buildReceipt: collected settle binds payer, payee, asset, ref in JWS', () 
   assert.equal(claims.caller_binding.payer_wallet, payer);
 });
 
-test('renderReceiptHtml: shows settle bind rows when present', () => {
+test('renderReceiptHtml: shows settle bind rows when present', async () => {
   const payer = '0x1111111111111111111111111111111111111111';
   const payee = '0x2222222222222222222222222222222222222222';
   const task = usdcTask({ meta: { payerWallet: payer, payTo: payee } });
-  const html = renderReceiptHtml(buildReceipt(task, { payerWallet: payer, payTo: payee }));
+  const html = renderReceiptHtml(await buildReceipt(task, { payerWallet: payer, payTo: payee }));
   assert.match(html, /Payer/);
   assert.match(html, /Payee/);
   assert.match(html, /Asset/);
@@ -1095,11 +1095,11 @@ test('renderReceiptHtml: shows settle bind rows when present', () => {
 
 test('verifyIssuerForHtml: published JWKS verifies; embedded key is pinned only on a thumbprint match', async () => {
   const { verifyIssuerForHtml, embeddedIssuerKeyIsPinned } = await import('../src/receipt.js');
-  const receipt = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
+  const receipt = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   const honest = verifyIssuerForHtml(receipt);
   assert.equal(honest.verified, true, honest.reason);
   assert.equal(honest.reason, 'verified');
-  const unsignedSeat = buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
+  const unsignedSeat = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com' });
   const refused = verifyIssuerForHtml(unsignedSeat);
   assert.equal(refused.verified, false);
   assert.equal(refused.reason, 'claim_id_missing');
@@ -1209,7 +1209,8 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
 test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof object', () => {
   const sender = '0x1111111111111111111111111111111111111111';
   const recipient = '0x2222222222222222222222222222222222222222';
-  const explorer = 'https://basescan.org/tx/0xabc';
+  const tx = `0x${'ab'.repeat(32)}`;
+  const explorer = `https://basescan.org/tx/${tx}`;
   const html = renderReceiptHtml({
     schema: 'xfuel.receipt.v3',
     task_id: 'foreign-x402-usdc-1',
@@ -1221,7 +1222,7 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
       rail: 'usdc',
       network: 'base',
       asset: 'USDC',
-      ref: 'base:0xabc',
+      ref: `base:${tx}`,
       collected: true,
       gross_amount: '5000',
       fee_amount: '0',
@@ -1239,8 +1240,8 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
   assert.match(html, /\$0\.005/);
   assert.match(html, new RegExp(sender));
   assert.match(html, new RegExp(recipient));
-  assert.match(html, /base:0xabc/);
-  assert.match(html, new RegExp(`href="${explorer}"`));
+  assert.match(html, new RegExp(`base:${tx}`));
+  assert.match(html, new RegExp(`href="${explorer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   assert.match(html, /\$0\.002/);
   assert.match(html, /paid/);
   assert.doesNotMatch(html, /waived/);

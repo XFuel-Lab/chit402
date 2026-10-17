@@ -182,7 +182,7 @@ export function calldataRoot(input) {
 
 async function rpc(rpcUrl, method, params, request, signal) {
   if (typeof request === 'function') return request(rpcUrl, method, params, signal);
-  return defaultRpc(rpcUrl, method, params, signal);
+  return await defaultRpc(rpcUrl, method, params, signal);
 }
 
 async function defaultRpc(rpcUrl, method, params, signal) {
@@ -303,6 +303,30 @@ export function anchorWalletAddress(env = process.env) {
 export const BASE_ANCHOR_CHAIN_ID = 8453;
 export const BASE_ANCHOR_CHAIN_ID_HEX = '0x2105';
 
+/** Boot eth_chainId and the Base send share this budget. Both run under the publish lock. */
+export const BASE_RPC_TIMEOUT_MS = 5_000;
+
+function rpcBudget(timeoutMs, fallback = BASE_RPC_TIMEOUT_MS) {
+  if (timeoutMs == null || timeoutMs === '') return fallback;
+  const n = Number(timeoutMs);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.ceil(n));
+}
+
+export function withRpcTimeout(work, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('rpc_timeout');
+      err.code = 'rpc_timeout';
+      reject(err);
+    }, ms);
+  });
+  const pending = Promise.resolve().then(work);
+  pending.catch(() => {});
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 function chainIdIsBaseMainnet(chainId) {
   if (chainId == null || chainId === '') return false;
   if (Number(chainId) === BASE_ANCHOR_CHAIN_ID) return true;
@@ -314,17 +338,25 @@ function chainIdIsBaseMainnet(chainId) {
 
 /**
  * Refuse unless BASE_RPC_URL is Base mainnet. No URL and no injected
- * request means there is no RPC to send to. A wrong or failed eth_chainId
- * throws anchor_chain_mismatch before any signed bytes are broadcast.
+ * request means there is no RPC to send to. A wrong chain id throws
+ * anchor_chain_mismatch. A timeout or transport failure throws
+ * anchor_rpc_unavailable. Either refusal happens before signed bytes go out.
  */
-export async function assertBaseChainId({ rpcUrl, request } = {}) {
+export async function assertBaseChainId({ rpcUrl, request, timeoutMs = BASE_RPC_TIMEOUT_MS } = {}) {
   const url = rpcUrl || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
   if (!url && typeof request !== 'function') return null;
+  const budget = rpcBudget(timeoutMs);
+  const signal = AbortSignal.timeout(budget);
   let chainId;
   try {
-    chainId = await rpc(url, 'eth_chainId', [], request);
+    chainId = await withRpcTimeout(
+      async () => await rpc(url, 'eth_chainId', [], request, signal),
+      budget,
+    );
   } catch (err) {
-    throw new ReceiptLogRefused('anchor_chain_mismatch', `eth_chainId failed: ${err.message}`);
+    // No answer is not a wrong answer. A timeout or transport failure is
+    // anchor_rpc_unavailable; only a returned non-Base chain id is a mismatch.
+    throw new ReceiptLogRefused('anchor_rpc_unavailable', `eth_chainId failed: ${err.message}`);
   }
   if (!chainIdIsBaseMainnet(chainId)) {
     throw new ReceiptLogRefused(
@@ -423,19 +455,19 @@ export async function lookupBaseTxByNonceOrHash({
     } catch {
       return { pending: true, blocked: true, reason: 'rpc_error' };
     }
-    if (tx) return classify(tx, tx.hash || txHash);
-    return classifyMissingHash({ url, nonce, sender, txHash, request, signal });
+    if (tx) return await classify(tx, tx.hash || txHash);
+    return await classifyMissingHash({ url, nonce, sender, txHash, request, signal });
   }
 
   if (nonce != null) {
     const nonceHex = `0x${Number(nonce).toString(16)}`;
     try {
       const probed = await rpc(url, 'ots_getTransactionBySenderAndNonce', [sender, nonceHex], request, signal);
-      if (probed) return classify(probed, probed.hash);
+      if (probed) return await classify(probed, probed.hash);
     } catch {
       // Optional. A normal RPC has no ots method.
     }
-    return classifyMissingHash({ url, nonce, sender, txHash: null, request, signal });
+    return await classifyMissingHash({ url, nonce, sender, txHash: null, request, signal });
   }
   return { pending: true, blocked: true, reason: 'no_tx_hash' };
 }

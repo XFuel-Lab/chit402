@@ -58,13 +58,13 @@ test('buildX402Manifest: describes paid resources in the v2 bazaar shape', () =>
   assert.ok(taskResource.input.required.includes('sender'));
 });
 
-test('402 challenge resource URL matches discovery manifest resource URL', () => {
+test('402 challenge resource URL matches discovery manifest resource URL', async () => {
   // The 402 challenge and the discovery manifest must agree on the resource URL
   // so CDP Bazaar catalogs them as the same service.
   const baseUrl = 'https://api.xfuel.app';
 
   const manifest = buildX402Manifest(baseUrl);
-  const { body: challenge } = buildPaymentChallenge({
+  const { body: challenge } = await buildPaymentChallenge({
     taskId: 'test-task',
     maxAmountRequired: '50000',
     baseUrl,
@@ -80,8 +80,8 @@ test('402 challenge resource URL matches discovery manifest resource URL', () =>
     'challenge points to the absolute /task-request URL');
 });
 
-test('402 challenge includes top-level bazaar extension for CDP cataloging', () => {
-  const { body } = buildPaymentChallenge({
+test('402 challenge includes top-level bazaar extension for CDP cataloging', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'catalog-test',
     maxAmountRequired: '10000',
     baseUrl: 'https://api.xfuel.app',
@@ -183,6 +183,9 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/v1/board/jobs/{id}/reveal',
     '/v1/board/inbound/completions',
     '/v1/agents/{agent_id}/record',
+    '/v1/receipts/check',
+    '/v1/receipts/feedback',
+    '/v1/receipts/check/stats',
     '/v1/receipts/tree/head',
     '/v1/receipts/tree/epoch/{epoch}/head',
     '/v1/receipts/tree/consistency',
@@ -197,6 +200,12 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
     '/public/specimens/fulfillment-foreign-research.json',
     '/public/export/{slug}',
   ], 'chat completions is the public door; responses is the same floor; a2a is same floor; task-request is M2M; register is identity; book is possession-gated; ingest is foreign x402; lineage/policy/assign/dispute/escrow/webhook/rotate are book extensions; receipt endpoints are public verification; specimens are stranger-auditable fixtures; pull-export is signed treasury pull');
+  assert.equal(spec.paths['/v1/receipts/check'].post['x-payment-info'], undefined,
+    'receipt check is free');
+  assert.equal(spec.paths['/v1/receipts/feedback'].post['x-payment-info'], undefined,
+    'receipt feedback is free');
+  assert.equal(spec.paths['/v1/receipts/check/stats'].get['x-payment-info'], undefined,
+    'receipt check stats are free');
   assert.equal(spec.paths['/v1/agents/register'].post['x-payment-info'], undefined,
     'register is not the paid door');
   assert.equal(spec.paths['/v1/agents/{agent_id}/book'].post['x-payment-info'], undefined,

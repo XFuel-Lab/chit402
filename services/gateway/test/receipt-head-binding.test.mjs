@@ -46,8 +46,8 @@ function paidTask(over = {}) {
   };
 }
 
-test('a new receipt verifies with the head pair inside the signed claims', () => {
-  const receipt = buildReceipt(paidTask(), { signingSecret: 'head-bind-secret' });
+test('a new receipt verifies with the head pair inside the signed claims', async () => {
+  const receipt = await buildReceipt(paidTask(), { signingSecret: 'head-bind-secret' });
   const claims = decodeReceiptClaims(receipt);
   assert.equal(claims.payload_version, 10);
   assert.equal(receipt.issuer_signature.payload_version, 10);
@@ -61,8 +61,8 @@ test('a new receipt verifies with the head pair inside the signed claims', () =>
   assert.equal(verified.verified, true, verified.reason);
 });
 
-test('tampered outer tolerance or head hash fails, and the check does not adopt them', () => {
-  const receipt = buildReceipt(paidTask({ taskId: 'xfuel-head-tamper' }), {
+test('tampered outer tolerance or head hash fails, and the check does not adopt them', async () => {
+  const receipt = await buildReceipt(paidTask({ taskId: 'xfuel-head-tamper' }), {
     signingSecret: 'head-bind-secret',
   });
   const claims = decodeReceiptClaims(receipt);
@@ -138,14 +138,14 @@ test('v9 signs the prefix root that includes this receipt, not the prior head', 
   resetReceiptMerkleTree();
   try {
     const tree = getReceiptMerkleTree();
-    tree.appendReceipt('earlier-than-receipt', 'h0');
+    await tree.appendReceipt('earlier-than-receipt', 'h0');
     const prior = await tree.publishHead({ force: true });
     const taskId = 'xfuel-covering-head';
-    tree.appendReceipt(taskId, 'row-1');
+    await tree.appendReceipt(taskId, 'row-1');
     assert.equal(tree.latestHead().root, prior.root);
     assert.notEqual(tree.prefixRoot(taskId), prior.root);
 
-    const receipt = buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
+    const receipt = await buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
     const claims = decodeReceiptClaims(receipt);
     const prefix = prefixThrough(tree, taskId);
     assert.equal(claims.tree_head_hash, prefix.root);
@@ -161,7 +161,7 @@ test('v9 signs the prefix root that includes this receipt, not the prior head', 
       false,
     );
 
-    tree.appendReceipt('after-receipt', 'h2');
+    await tree.appendReceipt('after-receipt', 'h2');
     const later = await tree.publishHead({ force: true });
     assert.notEqual(later.root, claims.tree_head_hash);
     const laterSlice = tree.leaves.slice(0, later.tree_size);
@@ -181,16 +181,16 @@ test('v9 signs the prefix root that includes this receipt, not the prior head', 
   }
 });
 
-test('a signature taken before the append is restamped onto the covering prefix', () => {
+test('a signature taken before the append is restamped onto the covering prefix', async () => {
   resetReceiptMerkleTree();
   try {
     const tree = getReceiptMerkleTree();
-    tree.appendReceipt('prior-leaf', 'h0');
+    await tree.appendReceipt('prior-leaf', 'h0');
     const taskId = 'xfuel-restamp-head';
-    const early = buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
+    const early = await buildReceipt(paidTask({ taskId }), { signingSecret: 'head-bind-secret' });
     assert.equal(decodeReceiptClaims(early).tree_head_hash, null);
-    tree.appendReceipt(taskId, 'row-restamp');
-    stampCoveringTreeHead(early);
+    await tree.appendReceipt(taskId, 'row-restamp');
+    await stampCoveringTreeHead(early);
     const claims = decodeReceiptClaims(early);
     const prefix = prefixThrough(tree, taskId);
     assert.equal(claims.tree_head_hash, prefix.root);

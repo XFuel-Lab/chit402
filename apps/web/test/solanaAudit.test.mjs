@@ -1923,6 +1923,99 @@ test('B1 lookupReceipt follows by-tx in browser semantics and checks where it la
   assert.equal(opaque.status, 'unavailable');
 });
 
+test('X24 a wallet self-hop proven by pre and post balances is internal and the scan is not withheld', async () => {
+  const hop = sigOf(240);
+  const other = A44;
+  const tx = outTx({
+    source: ATA,
+    destination: other,
+    sourceOwner: WALLET,
+    destOwner: WALLET,
+    amount: '2000',
+    pre: '5000',
+    post: '3000',
+    preTokenBalances: [
+      { accountIndex: 1, mint: SOLANA_USDC_MINT, owner: WALLET, programId: TOKEN_PROGRAM_ID, amount: '5000', decimals: 6 },
+      { accountIndex: 2, mint: SOLANA_USDC_MINT, owner: WALLET, programId: TOKEN_PROGRAM_ID, amount: '1000', decimals: 6 },
+    ],
+    postTokenBalances: [
+      { accountIndex: 1, mint: SOLANA_USDC_MINT, owner: WALLET, programId: TOKEN_PROGRAM_ID, amount: '3000', decimals: 6 },
+      { accountIndex: 2, mint: SOLANA_USDC_MINT, owner: WALLET, programId: TOKEN_PROGRAM_ID, amount: '3000', decimals: 6 },
+    ],
+  });
+  const decoded = decodeSolanaUsdcTransfers(tx, {
+    mode: 'wallet',
+    wallet: WALLET,
+    tokenAccounts: new Set([ATA, other]),
+    signature: hop,
+  });
+  assert.equal(decoded.internal, 1);
+  assert.equal(decoded.rows.length, 0);
+  assert.equal(decoded.unexplained, false);
+  const tokenAccountMode = decodeSolanaUsdcTransfers(tx, {
+    mode: 'token_account',
+    wallet: WALLET,
+    account: ATA,
+    tokenAccounts: new Set([ATA]),
+    signature: hop,
+  });
+  assert.equal(tokenAccountMode.internal, 0);
+  assert.equal(tokenAccountMode.rows.length, 1);
+  const { result } = await scan(WALLET, {
+    tokenAccounts: [
+      { address: ATA, mint: SOLANA_USDC_MINT, owner: WALLET, amount: '3000' },
+      { address: other, mint: SOLANA_USDC_MINT, owner: WALLET, amount: '3000' },
+    ],
+    sigsFor: (who) => (who === WALLET ? [{ signature: hop, slot: 10, blockTime: IN, failed: false }] : []),
+    txs: new Map([[hop, tx]]),
+  });
+  assert.equal(result.report.headline.status, 'empty');
+  assert.equal(result.report.headline.usdc_out_atomic, '0');
+  assert.equal(result.report.coverage.failed_ranges.some((range) => range.error === 'unexplained_out'), false);
+});
+
+test('X25 a destination listed in token accounts but owned by an attacker is not internal', () => {
+  const signature = sigOf(241);
+  const decoded = decodeSolanaUsdcTransfers(outTx({
+    destination: A43,
+    destOwner: FEE_PAYER,
+    sourceOwner: WALLET,
+    amount: '2000',
+    pre: '5000',
+    post: '3000',
+  }), {
+    mode: 'wallet',
+    wallet: WALLET,
+    tokenAccounts: new Set([ATA, A43]),
+    signature,
+  });
+  assert.equal(decoded.internal, 0);
+  assert.equal(decoded.rows.length, 1);
+  assert.equal(decoded.rows[0].amount_atomic, '2000');
+  assert.equal(decoded.unexplained, false);
+});
+
+test('X26 an attacker account in the token-account set is never internal', () => {
+  const signature = sigOf(242);
+  const decoded = decodeSolanaUsdcTransfers(outTx({
+    source: A43,
+    destination: A44,
+    sourceOwner: FEE_PAYER,
+    destOwner: FEE_PAYER,
+    authority: FEE_PAYER,
+    feePayer: FEE_PAYER,
+    amount: '2000',
+    pre: '5000',
+    post: '3000',
+  }), {
+    mode: 'wallet',
+    wallet: WALLET,
+    tokenAccounts: new Set([A43, A44]),
+    signature,
+  });
+  assert.equal(decoded.internal, 0);
+});
+
 test('B2 the SPA catch-all rewrite excludes /api so dynamic functions are reachable', () => {
   for (const file of [join(repo, 'vercel.json'), join(here, '../vercel.json')]) {
     const rewrites = JSON.parse(readFileSync(file, 'utf8')).rewrites || [];

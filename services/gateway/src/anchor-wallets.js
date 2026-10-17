@@ -19,7 +19,7 @@
  * The issuer key signs the list. This is not a receipt and it does not
  * change the epoch record.
  */
-import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { getIssuerPublicKeyJwk, signJwsAsync } from './issuer-key.js';
 import { resolveAnchorSender } from './receipt-log-anchor.js';
 import { solanaAnchorFeePayer } from './solana-receipt-anchor.js';
 
@@ -28,6 +28,11 @@ export const ANCHOR_WALLETS_JWT_TYP = 'chit402-anchor-wallets+jwt';
 
 export const PINNED_BASE_ANCHOR_WALLET = '0x1844D1F5FE42aff1Cce6F776514Fd40374079582';
 export const PINNED_SOLANA_ANCHOR_FEE_PAYER = 'BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD';
+/** Append-only. 2026-10-15: anchor key rotated to the second entry. */
+export const PINNED_SOLANA_ANCHOR_FEE_PAYERS = Object.freeze([
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  '8ef3GtYNuQ6P2ANxLMPUXTAo9BhfJJqMx6cdDVh7JM4U',
+]);
 
 function unique(values) {
   const seen = new Set();
@@ -42,7 +47,7 @@ function unique(values) {
 
 export function anchorWalletClaims(env = process.env) {
   const base = [PINNED_BASE_ANCHOR_WALLET];
-  const solana = [PINNED_SOLANA_ANCHOR_FEE_PAYER];
+  const solana = [...PINNED_SOLANA_ANCHOR_FEE_PAYERS];
   try {
     const from = resolveAnchorSender(env);
     if (from) base.push(from);
@@ -71,11 +76,11 @@ let cachedKey = '';
 let cachedDoc = null;
 
 /** Same claims reuse the signed bytes. ES256 is non-deterministic, so a changed list is the only re-sign. */
-export function currentAnchorWallets(env = process.env) {
+export async function currentAnchorWallets(env = process.env) {
   const claims = anchorWalletClaims(env);
   const key = JSON.stringify(claims);
   if (cachedDoc && cachedKey === key) return cachedDoc;
-  const { jws, kid } = signJws(claims, { typ: ANCHOR_WALLETS_JWT_TYP });
+  const { jws, kid } = await signJwsAsync(claims, { typ: ANCHOR_WALLETS_JWT_TYP });
   cachedDoc = {
     ...claims,
     issuer_signature: {
@@ -96,8 +101,8 @@ export function resetAnchorWalletCache() {
   cachedDoc = null;
 }
 
-export function writeAnchorWallets(res) {
-  const doc = currentAnchorWallets();
+export async function writeAnchorWallets(res) {
+  const doc = await currentAnchorWallets();
   res.set('Cache-Control', 'public, max-age=300');
   res.json(doc);
 }

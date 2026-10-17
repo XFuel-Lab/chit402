@@ -110,11 +110,11 @@ function treeAt(dir) {
   return tree;
 }
 
-function grow(tree, n, prefix) {
+async function grow(tree, n, prefix) {
   const ids = [];
   while (tree.leaves.length < n) {
     const id = `${prefix}-${tree.leaves.length}`;
-    tree.appendReceipt(id, `row-${id}`, { publish: false });
+    await tree.appendReceipt(id, `row-${id}`, { publish: false });
     ids.push(id);
   }
   return ids;
@@ -122,7 +122,7 @@ function grow(tree, n, prefix) {
 
 async function publishAnchored(tree, now, nonce = 4) {
   const blockTimestamp = Math.floor(Date.parse(now) / 1000);
-  return tree.publishHead({
+  return await tree.publishHead({
     force: true,
     now,
     nonce,
@@ -134,7 +134,7 @@ async function publishAnchored(tree, now, nonce = 4) {
 }
 
 async function publishBroadcast(tree, now, nonce = 5) {
-  return tree.publishHead({
+  return await tree.publishHead({
     force: true,
     now,
     nonce,
@@ -203,7 +203,7 @@ async function listen(tree) {
   live.prevEpochRoot = tree.prevEpochRoot;
   live.prevEpochSize = tree.prevEpochSize;
   const { createApp } = await import('../src/server.js');
-  const app = createApp();
+  const app = await createApp();
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -218,11 +218,11 @@ test('T1 tracker-confirmed broadcast head is the default inclusion', async () =>
   await withAnchorKey(async () => {
     const dir = tmp('chit-t1-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't1');
+    await grow(tree, 4, 't1');
     const anchored = await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
     assert.equal(anchored.tree_size, 4);
     assert.equal(headAnchorFacts(anchored).anchored, true);
-    grow(tree, 11, 't1');
+    await grow(tree, 11, 't1');
     const publishedAt = '2026-10-09T10:23:55.863Z';
     const broadcast = await publishBroadcast(tree, publishedAt, 5);
     assert.equal(broadcast.tree_size, 11);
@@ -232,7 +232,7 @@ test('T1 tracker-confirmed broadcast head is the default inclusion', async () =>
     stampUpgrade(tree, broadcast, { blockTs });
     assert.equal(JSON.stringify(broadcast), before);
     assert.equal(broadcast.anchors.base.status, 'broadcast');
-    const inc = tree.inclusion('t1-0');
+    const inc = await tree.inclusion('t1-0');
     assert.equal(inc.tree_size, 11);
     assert.equal(inc.status, 'anchored');
     assert.equal(inc.anchor_confirmed_by, 'anchor_state');
@@ -248,13 +248,13 @@ test('T1 tracker-confirmed broadcast head is the default inclusion', async () =>
 test('T2 a tracker row without receipt_confirmed is not upgraded', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t2-'));
-    grow(tree, 4, 't2');
+    await grow(tree, 4, 't2');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't2');
+    await grow(tree, 11, 't2');
     const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
     const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000);
     stampUpgrade(tree, broadcast, { blockTs, receipt: false });
-    const inc = tree.inclusion('t2-0');
+    const inc = await tree.inclusion('t2-0');
     assert.equal(inc.tree_size, 4);
     assert.equal(inc.anchor_confirmed_by, 'signed_head');
   });
@@ -264,23 +264,23 @@ test('T3 broadcast, signed, blocked, and mempool-only intents stay at size 4', a
   await withAnchorKey(async () => {
     for (const status of ['broadcast', 'signed', 'blocked']) {
       const tree = treeAt(tmp('chit-t3-'));
-      grow(tree, 4, 't3');
+      await grow(tree, 4, 't3');
       await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-      grow(tree, 11, 't3');
+      await grow(tree, 11, 't3');
       const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
       const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000);
       stampUpgrade(tree, broadcast, { blockTs, status });
       if (status !== 'anchored') {
-        const inc = tree.inclusion('t3-0');
+        const inc = await tree.inclusion('t3-0');
         assert.equal(inc.tree_size, 4, status);
       }
     }
     const tree = treeAt(tmp('chit-t3b-'));
-    grow(tree, 4, 't3b');
+    await grow(tree, 4, 't3b');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't3b');
+    await grow(tree, 11, 't3b');
     await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
-    assert.equal(tree.inclusion('t3b-0').tree_size, 4);
+    assert.equal((await tree.inclusion('t3b-0')).tree_size, 4);
   });
 });
 
@@ -301,9 +301,9 @@ test('T4 reverted and replaced transactions are not anchored', async () => {
       { replaced: true, reason: 'nonce_replaced' },
     ]) {
       const tree = treeAt(tmp('chit-t4-'));
-      grow(tree, 4, 't4');
+      await grow(tree, 4, 't4');
       await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-      grow(tree, 11, 't4');
+      await grow(tree, 11, 't4');
       const head = await tree.publishHead({
         force: true,
         now: '2026-10-09T10:23:55.863Z',
@@ -324,7 +324,7 @@ test('T4 reverted and replaced transactions are not anchored', async () => {
       const root = String(head.root).replace(/^0x/, '');
       const intent = latestBaseIntentForRoot(tree.anchorIntents, root);
       assert.equal(intent.status, 'replaced');
-      assert.equal(tree.inclusion('t4-0').tree_size, 4);
+      assert.equal((await tree.inclusion('t4-0')).tree_size, 4);
       assert.notEqual(tree.anchorState.base[root]?.receipt_confirmed, true);
     }
   });
@@ -340,13 +340,13 @@ test('T5 tx, from, nonce, and chain must match the signed head', async () => {
     ];
     for (const item of cases) {
       const tree = treeAt(tmp('chit-t5-'));
-      grow(tree, 4, 't5');
+      await grow(tree, 4, 't5');
       await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-      grow(tree, 11, 't5');
+      await grow(tree, 11, 't5');
       const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
       const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000);
       stampUpgrade(tree, broadcast, { blockTs, ...item.patch });
-      assert.equal(tree.inclusion('t5-0').tree_size, 4, item.name);
+      assert.equal((await tree.inclusion('t5-0')).tree_size, 4, item.name);
       assert.equal(headChainFacts(broadcast, tree.anchorState, tree.anchorIntents).anchored, false, item.name);
     }
   });
@@ -355,9 +355,9 @@ test('T5 tx, from, nonce, and chain must match the signed head', async () => {
 test('T6 a tracker entry for a different root is not this head', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t6-'));
-    grow(tree, 4, 't6');
+    await grow(tree, 4, 't6');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't6');
+    await grow(tree, 11, 't6');
     const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
     const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000);
     const intent = latestBaseIntentForRoot(tree.anchorIntents, broadcast.root);
@@ -371,7 +371,7 @@ test('T6 a tracker entry for a different root is not this head', async () => {
       block_ts: blockTs,
     };
     tree._markIntent(intent, 'anchored', { tx: intent.tx, from: intent.from, block_ts: blockTs });
-    assert.equal(tree.inclusion('t6-0').tree_size, 4);
+    assert.equal((await tree.inclusion('t6-0')).tree_size, 4);
 
     const mismatch = await tree.publishHead({
       force: true,
@@ -406,35 +406,35 @@ test('T6 a tracker entry for a different root is not this head', async () => {
 test('T7 block time is required and boot can backfill it', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t7-'));
-    grow(tree, 4, 't7');
+    await grow(tree, 4, 't7');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't7');
+    await grow(tree, 11, 't7');
     const publishedAt = '2026-10-09T10:23:55.863Z';
     const broadcast = await publishBroadcast(tree, publishedAt, 5);
     const published = Math.floor(Date.parse(publishedAt) / 1000);
     stampUpgrade(tree, broadcast, { blockTs: published + 301 });
-    assert.equal(tree.inclusion('t7-0').tree_size, 4);
+    assert.equal((await tree.inclusion('t7-0')).tree_size, 4);
     const root = String(broadcast.root).replace(/^0x/, '');
     delete tree.anchorState.base[root].block_ts;
     const intent = latestBaseIntentForRoot(tree.anchorIntents, root);
     assert.equal(headChainFacts(broadcast, tree.anchorState, tree.anchorIntents).anchored, false);
 
     const prod = treeAt(tmp('chit-t7b-'));
-    grow(prod, 4, 't7b');
+    await grow(prod, 4, 't7b');
     await publishAnchored(prod, '2026-10-08T05:32:00.000Z', 4);
-    grow(prod, 11, 't7b');
+    await grow(prod, 11, 't7b');
     const sized = await publishBroadcast(prod, publishedAt, 5);
     stampUpgrade(prod, sized, { blockTs: null });
     const key = String(sized.root).replace(/^0x/, '');
     delete prod.anchorState.base[key].block_ts;
-    assert.equal(prod.inclusion('t7b-0').tree_size, 4);
+    assert.equal((await prod.inclusion('t7b-0')).tree_size, 4);
     const blockTs = published + 2;
     await prod.reconcileAnchorIntents({
       readBlockTs: async () => blockTs,
     });
     assert.equal(prod.anchorState.base[key].block_ts, blockTs);
     assert.equal(latestBaseIntentForRoot(prod.anchorIntents, key).block_ts, blockTs);
-    const inc = prod.inclusion('t7b-0');
+    const inc = await prod.inclusion('t7b-0');
     assert.equal(inc.tree_size, 11);
     assert.equal(inc.anchor_confirmed_by, 'anchor_state');
     assert.equal(intent == null, false);
@@ -445,9 +445,9 @@ test('T8 a quarantined size is never served beside a valid head of that size', a
   await withAnchorKey(async () => {
     const dir = tmp('chit-t8-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't8');
+    await grow(tree, 4, 't8');
     const small = await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't8');
+    await grow(tree, 11, 't8');
     const publishedAt = '2026-10-09T10:23:55.863Z';
     const valid = await publishBroadcast(tree, publishedAt, 5);
     const blockTs = Math.floor(Date.parse(publishedAt) / 1000) + 1;
@@ -490,11 +490,11 @@ test('T8 a quarantined size is never served beside a valid head of that size', a
     loaded.load(dir);
     assert.equal(loaded.quarantinedHeads.length, 1);
     assert.equal(loaded.heads.some((head) => head.root === prefix), false);
-    const inc = loaded.inclusion('t8-0');
+    const inc = await loaded.inclusion('t8-0');
     assert.equal(inc.tree_size, 11);
     assert.equal(inc.root, valid.root);
     assert.equal(JSON.stringify(inc).includes(prefix), false);
-    assert.equal(loaded.signedHeadAt(11).root, valid.root);
+    assert.equal((await loaded.signedHeadAt(11)).root, valid.root);
     const http = await listen(loaded);
     try {
       const sized = await fetch(`${http.base}/v1/receipts/tree/head?tree_size=11`);
@@ -511,9 +511,9 @@ test('T8 a quarantined size is never served beside a valid head of that size', a
     }
 
     const only = treeAt(tmp('chit-t8b-'));
-    grow(only, 4, 't8b');
+    await grow(only, 4, 't8b');
     await publishAnchored(only, '2026-10-08T05:32:00.000Z', 4);
-    grow(only, 11, 't8b');
+    await grow(only, 11, 't8b');
     const racedOnly = signHead({
       schema: 'chit402.tree_head.v2',
       payload_version: 2,
@@ -536,12 +536,12 @@ test('T8 a quarantined size is never served beside a valid head of that size', a
     const quarantined = new ReceiptMerkleTree();
     quarantined.load(only.dir);
     assert.equal(quarantined.heads.some((head) => head.tree_size === 11), false);
-    assert.throws(() => quarantined.signedHeadAt(11), (err) => err.code === 'no_signed_head');
-    assert.throws(
-      () => quarantined.inclusion('t8b-1', { treeSize: 11 }),
+    await assert.rejects(async () => await quarantined.signedHeadAt(11), (err) => err.code === 'no_signed_head');
+    await assert.rejects(
+      async () => await quarantined.inclusion('t8b-1', { treeSize: 11 }),
       (err) => err.code === 'no_signed_head',
     );
-    assert.equal(JSON.stringify(quarantined.inclusion('t8b-0')).includes(racedOnly.root), false);
+    assert.equal(JSON.stringify(await quarantined.inclusion('t8b-0')).includes(racedOnly.root), false);
   });
 });
 
@@ -549,9 +549,9 @@ test('T9 a bad upgraded head is refused with no fallback', async () => {
   await withAnchorKey(async () => {
     async function sized() {
       const tree = treeAt(tmp('chit-t9-'));
-      grow(tree, 4, 't9');
+      await grow(tree, 4, 't9');
       await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-      grow(tree, 11, 't9');
+      await grow(tree, 11, 't9');
       const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
       const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000) + 1;
       stampUpgrade(tree, broadcast, { blockTs });
@@ -560,20 +560,20 @@ test('T9 a bad upgraded head is refused with no fallback', async () => {
     const badSig = await sized();
     const head = badSig.heads[badSig.heads.length - 1];
     head.issuer_signature = { ...head.issuer_signature, jws: `${head.issuer_signature.jws.slice(0, -4)}AAAA` };
-    assert.throws(() => badSig.inclusion('t9-0'), (err) => err.code === 'head_rejected');
-    assert.equal(badSig.laneHeadsFor('t9-0').frontierRejected, true);
-    assert.deepEqual(badSig.laneHeadsFor('t9-0').heads, []);
+    await assert.rejects(async () => await badSig.inclusion('t9-0'), (err) => err.code === 'head_rejected');
+    assert.equal((await badSig.laneHeadsFor('t9-0')).frontierRejected, true);
+    assert.deepEqual((await badSig.laneHeadsFor('t9-0')).heads, []);
 
     const badRoot = await sized();
     const rootHead = badRoot.heads[badRoot.heads.length - 1];
     rootHead.tree_size = 4;
-    assert.throws(() => badRoot.inclusion('t9-0'), (err) => err.code === 'head_mismatch' || err.code === 'head_rejected');
-    assert.equal(badRoot.laneHeadsFor('t9-0').frontierRejected, true);
+    await assert.rejects(async () => await badRoot.inclusion('t9-0'), (err) => err.code === 'head_mismatch' || err.code === 'head_rejected');
+    assert.equal((await badRoot.laneHeadsFor('t9-0')).frontierRejected, true);
 
     const tooBig = await sized();
     tooBig.heads[tooBig.heads.length - 1].tree_size = 99;
-    assert.throws(() => tooBig.inclusion('t9-0'), (err) => err.code === 'head_mismatch' || err.code === 'head_rejected');
-    assert.equal(tooBig.laneHeadsFor('t9-0').frontierRejected, true);
+    await assert.rejects(async () => await tooBig.inclusion('t9-0'), (err) => err.code === 'head_mismatch' || err.code === 'head_rejected');
+    assert.equal((await tooBig.laneHeadsFor('t9-0')).frontierRejected, true);
   });
 });
 
@@ -581,9 +581,9 @@ test('T10 reads do not rewrite the head, the journal, or the anchor file', async
   await withAnchorKey(async () => {
     const dir = tmp('chit-t10-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't10');
+    await grow(tree, 4, 't10');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't10');
+    await grow(tree, 11, 't10');
     const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
     const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000) + 1;
     stampUpgrade(tree, broadcast, { blockTs });
@@ -591,7 +591,7 @@ test('T10 reads do not rewrite the head, the journal, or the anchor file', async
     const journal = sha256File(path.join(dir, JOURNAL_NAME));
     const anchorFile = path.join(dir, ANCHOR_STATE_NAME);
     const anchorBefore = fs.readFileSync(anchorFile);
-    for (let i = 0; i < 1000; i += 1) tree.inclusion('t10-0');
+    for (let i = 0; i < 1000; i += 1) await tree.inclusion('t10-0');
     assert.deepEqual(tree.heads.map((head) => JSON.stringify(head)), headsBefore);
     assert.equal(sha256File(path.join(dir, JOURNAL_NAME)), journal);
     assert.equal(fs.readFileSync(anchorFile).equals(anchorBefore), true);
@@ -602,16 +602,16 @@ test('T11 the upgrade survives reboot and fails closed without the tracker', asy
   await withAnchorKey(async () => {
     const dir = tmp('chit-t11-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't11');
+    await grow(tree, 4, 't11');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't11');
+    await grow(tree, 11, 't11');
     const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
     const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000) + 1;
     stampUpgrade(tree, broadcast, { blockTs });
     const reloaded = new ReceiptMerkleTree();
     reloaded.load(dir);
-    assert.equal(reloaded.inclusion('t11-0').tree_size, 11);
-    assert.equal(reloaded.inclusion('t11-0').anchor_confirmed_by, 'anchor_state');
+    assert.equal((await reloaded.inclusion('t11-0')).tree_size, 11);
+    assert.equal((await reloaded.inclusion('t11-0')).anchor_confirmed_by, 'anchor_state');
 
     const stripped = tmp('chit-t11b-');
     cpSync(dir, stripped, { recursive: true });
@@ -620,7 +620,7 @@ test('T11 the upgrade survives reboot and fails closed without the tracker', asy
     fs.writeFileSync(path.join(stripped, ANCHOR_STATE_NAME), `${JSON.stringify(state)}\n`);
     const closed = new ReceiptMerkleTree();
     closed.load(stripped);
-    assert.equal(closed.inclusion('t11-0').tree_size, 4);
+    assert.equal((await closed.inclusion('t11-0')).tree_size, 4);
 
     const replacedDir = tmp('chit-t11c-');
     cpSync(dir, replacedDir, { recursive: true });
@@ -639,7 +639,7 @@ test('T11 the upgrade survives reboot and fails closed without the tracker', asy
     });
     const after = new ReceiptMerkleTree();
     after.load(replacedDir);
-    assert.equal(after.inclusion('t11-0').tree_size, 4);
+    assert.equal((await after.inclusion('t11-0')).tree_size, 4);
   });
 });
 
@@ -694,7 +694,7 @@ test('T12 a log with block_ts still boots on 484c5b7e', async () => {
     _resetIssuerKey();
     const dir = tmp('chit-t12-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't12');
+    await grow(tree, 4, 't12');
     const head = await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
     const blockTs = Math.floor(Date.parse(head.published_at) / 1000);
     const root = String(head.root).replace(/^0x/, '');
@@ -793,18 +793,18 @@ test('T13 reopen drops the upgrade in process and after reboot', async () => {
   await withAnchorKey(async () => {
     const dir = tmp('chit-t13-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't13');
+    await grow(tree, 4, 't13');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 11, 't13');
+    await grow(tree, 11, 't13');
     const broadcast = await publishBroadcast(tree, '2026-10-09T10:23:55.863Z', 5);
     const blockTs = Math.floor(Date.parse(broadcast.published_at) / 1000) + 1;
     stampUpgrade(tree, broadcast, { blockTs });
-    assert.equal(tree.inclusion('t13-0').tree_size, 11);
+    assert.equal((await tree.inclusion('t13-0')).tree_size, 11);
     tree._reopenAnchored(broadcast.root, broadcast.anchors.base.tx, 'reorg');
-    assert.equal(tree.inclusion('t13-0').tree_size, 4);
+    assert.equal((await tree.inclusion('t13-0')).tree_size, 4);
     const loaded = new ReceiptMerkleTree();
     loaded.load(dir);
-    assert.equal(loaded.inclusion('t13-0').tree_size, 4);
+    assert.equal((await loaded.inclusion('t13-0')).tree_size, 4);
     const root = String(broadcast.root).replace(/^0x/, '');
     assert.notEqual(loaded.anchorState.base[root]?.receipt_confirmed, true);
     assert.notEqual(latestBaseIntentForRoot(loaded.anchorIntents, root)?.status, 'anchored');
@@ -814,7 +814,7 @@ test('T13 reopen drops the upgrade in process and after reboot', async () => {
 test('T14 a closed epoch pairs with its pinned head, not the open size', async () => {
   await withAnchorKey(async () => {
     const pair = closedEpochAnchorPair(readReceiptLogPin(), 1, EPOCH1_FINAL_ROOT, 4);
-    const historical = signPinnedClosedHead({
+    const historical = await signPinnedClosedHead({
       epoch: 1,
       root: EPOCH1_FINAL_ROOT,
       treeSize: 4,
@@ -865,7 +865,7 @@ test('T14 a closed epoch pairs with its pinned head, not the open size', async (
     tree.byTask = new Map();
     tree.heads = [];
     assert.equal(hex(rootOf(tree.leaves)), EPOCH2_OPENING_ROOT);
-    grow(tree, 4, 'e2');
+    await grow(tree, 4, 'e2');
     const openHead = await publishAnchored(tree, '2026-10-09T12:00:00.000Z', 4);
     assert.equal(openHead.tree_size, 4);
     assert.notEqual(openHead.root, rebuilt.root);
@@ -878,7 +878,7 @@ test('T14 a closed epoch pairs with its pinned head, not the open size', async (
       ],
     }));
     process.env.RECEIPT_LOG_PIN_FILE = pinPath;
-    const inc = tree.inclusion(EPOCH1_ANCHOR_TASK);
+    const inc = await tree.inclusion(EPOCH1_ANCHOR_TASK);
     assert.equal(inc.epoch, 1);
     assert.equal(inc.tree_size, 4);
     assert.equal(inc.root, want);
@@ -892,7 +892,7 @@ test('T14 a closed epoch pairs with its pinned head, not the open size', async (
 test('T15 tree_size on /tree/head is strict and uncached', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t15-'));
-    grow(tree, 4, 't15');
+    await grow(tree, 4, 't15');
     const head = await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
     const http = await listen(tree);
     try {
@@ -938,11 +938,11 @@ test('T15 tree_size on /tree/head is strict and uncached', async () => {
 test('T16 page links name one inclusion and one head', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t16-'));
-    grow(tree, 4, 't16');
+    await grow(tree, 4, 't16');
     const head = await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 5, 't16');
-    const included = tree.inclusion('t16-0');
-    const pending = tree.inclusion('t16-4');
+    await grow(tree, 5, 't16');
+    const included = await tree.inclusion('t16-0');
+    const pending = await tree.inclusion('t16-4');
     const shell = toPublicShell({ task_id: 't16-0', issuer_signature: { jws: head.issuer_signature.jws } }, {
       inclusion: included,
       signedHead: head,
@@ -983,7 +983,7 @@ test('T16 page links name one inclusion and one head', async () => {
 test('T17 the confirm poll commits on the third lookup', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t17-'));
-    grow(tree, 4, 't17');
+    await grow(tree, 4, 't17');
     let sleeps = 0;
     let tries = 0;
     const now = '2026-10-09T10:23:55.863Z';
@@ -1011,7 +1011,7 @@ test('T17 the confirm poll commits on the third lookup', async () => {
 test('T18 the poll stops on the deadline and a hung lookup', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t18-'));
-    grow(tree, 4, 't18');
+    await grow(tree, 4, 't18');
     let now = 1_000_000;
     let lookups = 0;
     const hungClock = await tree.publishHead({
@@ -1032,7 +1032,7 @@ test('T18 the poll stops on the deadline and a hung lookup', async () => {
     assert.equal(tree._publishActive, false);
 
     const hungTree = treeAt(tmp('chit-t18b-'));
-    grow(hungTree, 4, 't18b');
+    await grow(hungTree, 4, 't18b');
     hungTree.anchorRpcTimeoutMs = 30;
     const started = Date.now();
     const hung = await hungTree.publishHead({
@@ -1054,7 +1054,7 @@ test('T18 the poll stops on the deadline and a hung lookup', async () => {
 test('T19 a mempool tx keeps polling and does not stick the nonce', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t19-'));
-    grow(tree, 4, 't19');
+    await grow(tree, 4, 't19');
     let tries = 0;
     const head = await tree.publishHead({
       force: true,
@@ -1079,9 +1079,9 @@ test('T19 a mempool tx keeps polling and does not stick the nonce', async () => 
 test('T20 an append during the poll does not change the signed snapshot', async () => {
   await withAnchorKey(async () => {
     const tree = treeAt(tmp('chit-t20-'));
-    grow(tree, 4, 't20');
+    await grow(tree, 4, 't20');
     await publishAnchored(tree, '2026-10-08T05:32:00.000Z', 4);
-    grow(tree, 6, 't20');
+    await grow(tree, 6, 't20');
     const snapshotSize = tree.leaves.length;
     const snapshotRoot = hex(rootOf(tree.leaves));
     let sends = 0;
@@ -1096,7 +1096,7 @@ test('T20 an append during the poll does not change the signed snapshot', async 
       lookup: async (intent) => {
         if (String(intent.root).replace(/^0x/, '') !== snapshotRoot) return { replaced: true, reason: 'unexpected_root', tx: intent.tx };
         for (let i = 0; i < 10; i += 1) {
-          tree.appendReceipt(`t20-late-${i}`, `row-${i}`, { publish: true });
+          await tree.appendReceipt(`t20-late-${i}`, `row-${i}`, { publish: true });
         }
         return receiptFor(intent, { blockTimestamp });
       },
@@ -1110,7 +1110,7 @@ test('T20 an append during the poll does not change the signed snapshot', async 
     assert.equal(head.root, snapshotRoot);
     assert.equal(head.anchor_status, 'anchored');
     assert.equal(sends, 1);
-    const late = tree.inclusion('t20-late-0');
+    const late = await tree.inclusion('t20-late-0');
     assert.equal(late.status, 'pending_anchor');
     assert.equal(late.proof, null);
     assert.equal(late.tree_size, snapshotSize);
@@ -1122,7 +1122,7 @@ test('T21 a restart mid-poll reconciles the journaled raw', async () => {
   await withAnchorKey(async () => {
     const dir = tmp('chit-t21-');
     const tree = treeAt(dir);
-    grow(tree, 4, 't21');
+    await grow(tree, 4, 't21');
     let release;
     const hold = new Promise((resolve) => { release = resolve; });
     let opened;

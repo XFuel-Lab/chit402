@@ -59,8 +59,8 @@ function preV9Task() {
 }
 
 /** Sign once, then restamp the same claims as payload v7 (no head binding, no claim_id). */
-function cachePreV9Signature(task) {
-  const signed = buildReceipt(task, {
+async function cachePreV9Signature(task) {
+  const signed = await buildReceipt(task, {
     baseUrl: 'https://api.chit402.com',
     persistSignature: true,
   });
@@ -83,7 +83,7 @@ function cachePreV9Signature(task) {
 before(async () => {
   await initAIListener();
   const store = getAIListener().activeTasks;
-  const task = cachePreV9Signature(preV9Task());
+  const task = await cachePreV9Signature(preV9Task());
   store.set(STORED_ID, task);
   // Hot-map eviction retains the file. GC then used to unlink it.
   assert.equal(store.delete(STORED_ID), true);
@@ -94,7 +94,7 @@ before(async () => {
   const rehydrated = store.get(STORED_ID);
   assert.equal(rehydrated?.issuerSignature?.payload_version, 7);
 
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

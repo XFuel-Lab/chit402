@@ -101,16 +101,10 @@ Facilitator JSON shapes differ. Coinbase CDP returns `transaction`. Other settle
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/<chit_receipt_id>?format=json" -o receipt.json
-npx xfuel-verify receipt.json --fetch-jwks --check-payer
+npx chit402-verify receipt.json
 ```
 
-`--fetch-jwks` loads `verification.jwks_uri` when the host is allowlisted (`api.chit402.com`). For any other issuer, pass the published key explicitly:
-
-```bash
-npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
-```
-
-`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. `xfuel-verify` does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
+The CLI runs the payer check by default. It reads Base or Solana and checks payer, payee, asset, and amount. It does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
 
 The instruction and the money are bound when steps 2, 3, and 4 succeed. A receipt with no `agent_record_entry` can still verify as a payment. It does not bind an Agent Record entry.
 

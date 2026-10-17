@@ -12,10 +12,10 @@ import { buildReceiptOgSvg, renderReceiptOgPng } from '../src/receipt-og.js';
 
 const BANKR_FIXTURE_ID = 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
 
-function bankrStyleReceipt() {
+async function bankrStyleReceipt() {
   const taskId = BANKR_FIXTURE_ID;
   const paymentRef = 'base:0x' + 'cd'.repeat(32);
-  return buildReceipt({
+  return await buildReceipt({
     taskId,
     status: 'completed',
     createdAt: '2026-09-18T12:00:00.000Z',
@@ -35,8 +35,8 @@ function bankrStyleReceipt() {
   });
 }
 
-test('buildReceiptOgMeta: Bankr-style receipt has amount, rail, collected, per-receipt image', () => {
-  const receipt = bankrStyleReceipt();
+test('buildReceiptOgMeta: Bankr-style receipt has amount, rail, collected, per-receipt image', async () => {
+  const receipt = await bankrStyleReceipt();
   const meta = buildReceiptOgMeta(receipt, mergeReceiptView(receipt));
   assert.equal(meta.title, '0.002 USDC · chit-1ebc5616…');
   assert.equal(meta.description, 'Base USDC · collected');
@@ -60,8 +60,8 @@ test('buildReceiptOgMeta: foreign ingest includes third-party in description', (
   assert.match(meta.description, /collected/);
 });
 
-test('renderReceiptHtml: fixture receipt OG tags are not generic site card', () => {
-  const receipt = bankrStyleReceipt();
+test('renderReceiptHtml: fixture receipt OG tags are not generic site card', async () => {
+  const receipt = await bankrStyleReceipt();
   const html = renderReceiptHtml(receipt);
   assert.match(html, /property="og:title" content="0\.002 USDC · chit-1ebc5616…"/);
   assert.match(html, /property="og:description" content="Base USDC · collected"/);
@@ -82,8 +82,8 @@ test('buildReceiptOgImageUrl appends /og.png to verify_url', () => {
 });
 
 test('renderReceiptOgPng returns distinct PNG bytes per receipt id', async () => {
-  const a = bankrStyleReceipt();
-  const b = buildReceipt({
+  const a = await bankrStyleReceipt();
+  const b = await buildReceipt({
     taskId: 'xfuel-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     status: 'completed',
     intent: { paymentRail: 'usdc', amount: '1000000', paymentRef: 'base:0x' + '11'.repeat(32) },
@@ -97,8 +97,8 @@ test('renderReceiptOgPng returns distinct PNG bytes per receipt id', async () =>
   assert.notDeepEqual(pngA, pngB);
 });
 
-test('buildReceiptOgSvg embeds receipt title', () => {
-  const svg = buildReceiptOgSvg(bankrStyleReceipt());
+test('buildReceiptOgSvg embeds receipt title', async () => {
+  const svg = buildReceiptOgSvg(await bankrStyleReceipt());
   assert.match(svg, /0\.002 USDC/);
   assert.match(svg, /chit-1ebc5616/);
 });

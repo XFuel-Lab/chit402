@@ -52,7 +52,7 @@ function receiptFor(over = {}) {
 }
 
 function recordBookRowFactory(ledger) {
-  return (row) => ledger.recordA2aEscrowEvent({
+  return async (row) => await ledger.recordA2aEscrowEvent({
     agentId: row.agentId,
     jobId: row.jobId,
     phase: row.phase,

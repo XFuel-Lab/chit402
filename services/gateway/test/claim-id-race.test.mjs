@@ -21,7 +21,7 @@ let app;
 
 before(async () => {
   await initAIListener();
-  app = createApp();
+  app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -63,7 +63,7 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
   const earlyShell = await earlyRes.json();
   assert.equal(earlyShell.schema, 'chit402.receipt_shell.v1');
   assert.equal(earlyShell.issuer_signature, undefined);
-  const early = buildReceipt(task, { baseUrl: base, persistSignature: false });
+  const early = await buildReceipt(task, { baseUrl: base, persistSignature: false });
   const earlyClaims = decodeReceiptClaims(early);
   assert.equal(earlyClaims.payment.ref, paymentRef);
   assert.equal(earlyClaims.claim_id, null);
@@ -71,11 +71,11 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
   assert.equal(task.issuerSignature?.jws, early.issuer_signature.jws);
 
   await fetch(`${base}/receipt/${taskId}?format=json`);
-  const stillEarly = buildReceipt(task, { baseUrl: base, persistSignature: false });
+  const stillEarly = await buildReceipt(task, { baseUrl: base, persistSignature: false });
   assert.equal(stillEarly.issuer_signature.jws, early.issuer_signature.jws, 'no seat yet: genesis JWS stays');
 
   const { usageSettled, agentRegistry } = app.locals.__test;
-  const settled = recordSettleBookRow({
+  const settled = await recordSettleBookRow({
     taskId,
     paymentRef,
     amount: '2000',
@@ -89,7 +89,7 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
 
   // bookSpend stamps the seat, then buildReceipt signs.
   task.meta.agentId = settled.agent_id;
-  const booked = buildReceipt(task, {
+  const booked = await buildReceipt(task, {
     baseUrl: base,
     agentId: settled.agent_id,
     persistSignature: true,
@@ -102,7 +102,7 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
 
   const againShell = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
   assert.equal(againShell.schema, 'chit402.receipt_shell.v1');
-  const again = buildReceipt(task, { baseUrl: base, agentId: settled.agent_id, persistSignature: false });
+  const again = await buildReceipt(task, { baseUrl: base, agentId: settled.agent_id, persistSignature: false });
   const againClaims = decodeReceiptClaims(again);
   assert.equal(againClaims.claim_id, String(settled.agent_id));
   assert.equal(verifyIssuerForHtml(again).verified, true, verifyIssuerForHtml(again).reason);
@@ -110,7 +110,7 @@ test('GET /receipt before writeSettleBookRow does not freeze a null claim_id', a
   // A later build that does not repeat the seat must not replace it with null.
   delete task.meta.agentId;
   delete task.meta.agent_id;
-  const kept = buildReceipt(task, { baseUrl: base, persistSignature: true });
+  const kept = await buildReceipt(task, { baseUrl: base, persistSignature: true });
   assert.equal(decodeReceiptClaims(kept).claim_id, String(settled.agent_id));
   assert.equal(verifyIssuerForHtml(kept).verified, true);
 });

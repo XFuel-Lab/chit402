@@ -58,7 +58,11 @@ const config = {
     defaultRail: (process.env.X402_DEFAULT_RAIL || 'usdc').toLowerCase() === 'tfuel' ? 'tfuel' : 'usdc',
     // If usdc is requested but the facilitator is unavailable: fall back to TFUEL
     // (true) or return 503 (false).
-    fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true',
+    // Ignored on Base or Solana mainnet. A failed USDC settle must not
+    // become a TFUEL receipt there. Testnet may still opt in.
+    fallbackToTfuel: process.env.X402_FALLBACK_TFUEL === 'true'
+      && !['base', 'eip155:8453', 'solana', 'solana:5eykt4usfv8p8njdtrepy1vzqkqzkvdp']
+        .includes(String(process.env.X402_NETWORK || 'base-sepolia').trim().toLowerCase()),
     // Emergency rollback only. Off (unset or false) enforces server-issued challenges.
     // Boot refuses true when X402_NETWORK is a mainnet network.
     allowUnboundPayments: process.env.X402_ALLOW_UNBOUND === 'true',
@@ -71,6 +75,11 @@ const config = {
       return Number.isFinite(n) && n >= 0 ? n : 30000;
     })(),
     challengeStorePath: process.env.X402_CHALLENGE_STORE || null,
+    // How often to re-read eth_chainId / getGenesisHash on the settlement RPCs.
+    settlementRpcRecheckMs: (() => {
+      const n = parseInt(process.env.SETTLEMENT_RPC_RECHECK_MS, 10);
+      return Number.isFinite(n) && n >= 1000 ? n : 600_000;
+    })(),
     // Facilitator protocol: 'x402' (standard public Base facilitator) or 'zan'.
     facilitatorProvider: (process.env.X402_FACILITATOR_PROVIDER || 'x402').toLowerCase() === 'zan' ? 'zan' : 'x402',
     // Standard x402 facilitator URL (facilitatorProvider='x402').

@@ -40,6 +40,15 @@ export const PINNED_BASE_ANCHOR_WALLET = '0x1844D1F5FE42aff1Cce6F776514Fd4037407
 /** Fee payer of Solana memo 61RHMsPPseUc35v5oxDEtANEDCvXk5fmxZdrFDMknGWc5m7U8YhMfz4En1eFFj3z9n67ZtMiha1zkwnneL2LUiXk. */
 export const PINNED_SOLANA_ANCHOR_FEE_PAYER = 'BHTnbPu6UZ7zQZ7Qpkpz4LcUQbMN73YDsMtvaNXpEioD';
 
+/**
+ * Append-only. Never remove an entry: old heads name the earlier payer.
+ * 2026-10-15: anchor key rotated to the second entry.
+ */
+export const PINNED_SOLANA_ANCHOR_FEE_PAYERS: readonly string[] = Object.freeze([
+  PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  '8ef3GtYNuQ6P2ANxLMPUXTAo9BhfJJqMx6cdDVh7JM4U',
+]);
+
 /** A head signed before `anchors.base.from` and `anchors.solana.fee_payer` existed. Never VERIFIED. */
 export const LEGACY_HEAD_UNPINNED_SIGNER = 'LEGACY_HEAD_UNPINNED_SIGNER';
 
@@ -509,7 +518,7 @@ export function compileAnchorWallets({
   published?: { base: string[]; solana: string[] } | null;
 } = {}): AnchorWalletList {
   const base = [PINNED_BASE_ANCHOR_WALLET];
-  const solana = [PINNED_SOLANA_ANCHOR_FEE_PAYER];
+  const solana = [...PINNED_SOLANA_ANCHOR_FEE_PAYERS];
   const sources: AnchorWalletList['sources'] = ['pin'];
   const fromHistory = walletsFromHistory(issuerHistory, jwks, trustedKids);
   if (fromHistory && (fromHistory.base.length || fromHistory.solana.length)) {

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { alertStuckPayment } from './stuck-payment-alert.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
 import {
@@ -344,7 +345,12 @@ export class ChallengeStore {
     this.authSpent = new Map(); // authorization key → tx ref
     this.txSpent = new Set(); // normalized payment ref
     this.txFacts = new Map(); // ref → confirmed amount, payer, payTo
+    this.txReserved = new Map(); // ref → { owner, until, authKey }
+    this.authReserved = new Map(); // auth key → { owner, until, key }
     this.pending = []; // unsigned owner-only rows; never a receipt
+    // Late-issue rows. An array, persisted with the replay store. Not a Map.
+    this.late = [];
+    this.lateLedger = [];
   }
 
   put(nonce, data) {
@@ -380,12 +386,12 @@ export class ChallengeStore {
     if (!found) return null;
     const { key, rec } = found;
     if (rec.state === 'spent') return null;
-    if (rec.state === 'unknown') return rec;
+    if (rec.state === 'unknown' || rec.state === 'submitted') return rec;
     if (rec.state === 'claimed' && rec.lease_until && Date.now() > rec.lease_until) {
       rec.state = 'unknown';
       return rec;
     }
-    if (rec.state !== 'claimed' && Date.now() > rec.expiresAt) {
+    if (rec.state !== 'claimed' && rec.state !== 'submitted' && Date.now() > rec.expiresAt) {
       this.map.delete(key);
       return null;
     }
@@ -399,6 +405,13 @@ export class ChallengeStore {
       if (rec?.state === 'spent') return true;
     }
     return false;
+  }
+
+  /** Spent challenge, including its settlement. `get` hides spent rows. */
+  replayRecord(nonce) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'spent') return null;
+    return found.rec;
   }
 
   markSpent(nonce, meta = null) {
@@ -424,7 +437,15 @@ export class ChallengeStore {
     const found = this._find(nonce);
     if (!found) return { ok: false, reason: 'challenge_required' };
     const rec = found.rec;
-    if (rec.state === 'unknown') return { ok: false, reason: 'settle_unconfirmed' };
+    if (rec.state === 'submitted') {
+      if (rec.lease_until && Date.now() > rec.lease_until) {
+        return { ok: false, reason: 'settle_unconfirmed' };
+      }
+      return { ok: false, reason: 'payment_in_flight' };
+    }
+    if (rec.state === 'unknown') {
+      return { ok: false, reason: 'settle_unconfirmed' };
+    }
     if (rec.state === 'spent') return { ok: false, reason: 'payment_replayed' };
     if (rec.state === 'claimed') {
       if (rec.lease_until && Date.now() > rec.lease_until) {
@@ -462,12 +483,32 @@ export class ChallengeStore {
     found.rec.state = 'unknown';
   }
 
+  /** Claimed → submitted. Only the settle path, and only before the fetch. */
+  markSubmitted(nonce) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'claimed') return false;
+    found.rec.state = 'submitted';
+    return true;
+  }
+
+  /** A pre-fetch failure may undo submitted. A sent settle never calls this. */
+  revertSubmitted(nonce, owner) {
+    const found = this._find(nonce);
+    if (!found || found.rec.state !== 'submitted') return false;
+    found.rec.state = 'claimed';
+    found.rec.lease_owner = owner || found.rec.lease_owner || 'local';
+    return this.release(nonce, owner);
+  }
+
   isAuthSpent(key) {
     return !!(key && this.authSpent.has(key));
   }
 
   markAuthSpent(key, ref) {
-    if (key) this.authSpent.set(key, ref || true);
+    if (key) {
+      this.authSpent.set(key, ref || true);
+      this.authReserved.delete(key);
+    }
   }
 
   isTxSpent(key) {
@@ -477,14 +518,51 @@ export class ChallengeStore {
   markTxSpent(key, facts = null) {
     if (!key) return;
     this.txSpent.add(key);
+    const reserved = this.txReserved.get(key);
+    this.txReserved.delete(key);
+    if (reserved?.authKey) this.authReserved.delete(reserved.authKey);
     if (facts && typeof facts === 'object') this.txFacts.set(key, facts);
+  }
+
+  /**
+   * One lock covers the spent check and the lease. False when the key is
+   * spent or another owner holds a live lease. The same owner may refresh.
+   */
+  reserveTx(key, authKey, owner, leaseMs = 180_000, now = Date.now()) {
+    if (!key || !owner) return false;
+    if (this.isTxSpent(key)) return false;
+    if (authKey && this.isAuthSpent(authKey)) return false;
+    const held = this.txReserved.get(key);
+    if (held && Number(held.until) > now && held.owner !== owner) return false;
+    if (authKey) {
+      const auth = this.authReserved.get(authKey);
+      if (auth && Number(auth.until) > now && auth.owner !== owner) return false;
+      if (auth && auth.key && auth.key !== key && Number(auth.until) > now) return false;
+    }
+    const until = now + (Number(leaseMs) > 0 ? Number(leaseMs) : 180_000);
+    this.txReserved.set(key, { owner, until, authKey: authKey || null });
+    if (authKey) this.authReserved.set(authKey, { owner, until, key });
+    return true;
+  }
+
+  releaseTx(key, authKey, owner) {
+    const rec = key ? this.txReserved.get(key) : null;
+    if (!rec) return false;
+    if (owner && rec.owner !== owner) return false;
+    this.txReserved.delete(key);
+    const ak = authKey || rec.authKey;
+    if (ak) {
+      const auth = this.authReserved.get(ak);
+      if (auth && (!owner || auth.owner === owner)) this.authReserved.delete(ak);
+    }
+    return !this.isTxSpent(key);
   }
 
   txFactsOf(key) {
     return (key && this.txFacts.get(key)) || null;
   }
 
-  recordPending(row) {
+  async recordPending(row) {
     const rec = {
       id: `pending-${Date.now().toString(36)}-${this.pending.length}`,
       at: new Date().toISOString(),
@@ -492,6 +570,12 @@ export class ChallengeStore {
       ...row,
     };
     this.pending.push(rec);
+    void await alertStuckPayment({
+      tx: rec.tx || null,
+      network: rec.network || null,
+      amount: rec.amount != null ? rec.amount : null,
+      reason: rec.reason || rec.why || null,
+    });
     return rec;
   }
 
@@ -506,6 +590,103 @@ export class ChallengeStore {
     return rec;
   }
 
+  /**
+   * Insert one late-issue row. Refuses a second row for the same authorization
+   * identity. The raw header is not a field.
+   */
+  putLate(row) {
+    if (!row || !row.pending_id) return { ok: false, reason: 'replay_store_unavailable' };
+    if (this.late.some((r) => r.pending_id === row.pending_id)) {
+      return { ok: false, reason: 'payment_replayed' };
+    }
+    if (row.auth_key && this.late.some((r) => r.auth_key === row.auth_key)) {
+      return { ok: false, reason: 'payment_replayed' };
+    }
+    this.late.push(row);
+    return { ok: true, row };
+  }
+
+  getLate(id) {
+    return this.late.find((r) => r.pending_id === id) || null;
+  }
+
+  findLate(query = {}) {
+    return this.late.find((row) => {
+      if (query.pendingId && row.pending_id !== query.pendingId) return false;
+      if (query.nonce && row.nonce !== query.nonce) return false;
+      if (query.authKey && row.auth_key !== query.authKey) return false;
+      if (query.txRef && row.tx_ref !== query.txRef) return false;
+      if (query.idempotencyKey && row.idempotency_key !== query.idempotencyKey) return false;
+      if (query.principal && row.principal !== query.principal) return false;
+      return !!(query.pendingId || query.nonce || query.authKey || query.txRef || query.idempotencyKey);
+    }) || null;
+  }
+
+  /**
+   * Compare-and-set. `from` is one state or a list. A tx ref already on
+   * another row loses the CAS.
+   */
+  casLate(id, from, to, patch = {}) {
+    const rec = this.late.find((r) => r.pending_id === id);
+    if (!rec) return null;
+    const allowed = Array.isArray(from) ? from : [from];
+    if (!allowed.includes(rec.state)) return null;
+    if (patch.tx_ref) {
+      const clash = this.late.find((r) => r !== rec && r.tx_ref === patch.tx_ref);
+      if (clash) return null;
+    }
+    Object.assign(rec, patch, { state: to });
+    return rec;
+  }
+
+  abortLate(id) {
+    const idx = this.late.findIndex((r) => r.pending_id === id);
+    if (idx < 0) return false;
+    if (this.late[idx].sent === true) return false;
+    if (this.late[idx].state !== 'submitted') return false;
+    this.late.splice(idx, 1);
+    return true;
+  }
+
+  listLate() {
+    return this.late.slice();
+  }
+
+  /** One ledger row per auth key and per normalized tx ref. */
+  appendLateLedger(row) {
+    if (!row) return { ok: false, reason: 'invalid' };
+    const dup = this.lateLedger.find((r) =>
+      (row.auth_key && r.auth_key === row.auth_key)
+      || (row.tx_ref && r.tx_ref === row.tx_ref));
+    if (dup) return { ok: true, row: dup, duplicate: true };
+    this.lateLedger.push(row);
+    return { ok: true, row, duplicate: false };
+  }
+
+  listLateLedger() {
+    return this.lateLedger.slice();
+  }
+
+  /**
+   * Drop terminal late rows older than `maxAge` (default 24h) from submitted_at.
+   * submitted, unknown, confirmed, and issuing stay.
+   */
+  pruneLate(now = Date.now(), maxAge = 24 * 60 * 60 * 1000) {
+    const terminal = new Set([
+      'issued',
+      'mismatch_hold',
+      'expired_unresolved',
+      'not_settled',
+    ]);
+    const cutoff = now - maxAge;
+    const before = this.late.length;
+    this.late = this.late.filter((row) => {
+      if (!terminal.has(row.state)) return true;
+      return Number(row.submitted_at || 0) > cutoff;
+    });
+    return before - this.late.length;
+  }
+
   dumpState() {
     return {
       map: [...this.map.entries()],
@@ -513,7 +694,11 @@ export class ChallengeStore {
       authSpent: [...this.authSpent.entries()],
       txSpent: [...this.txSpent],
       txFacts: [...this.txFacts.entries()],
+      txReserved: [...this.txReserved.entries()],
+      authReserved: [...this.authReserved.entries()],
       pending: this.pending,
+      late: this.late,
+      lateLedger: this.lateLedger,
     };
   }
 
@@ -523,13 +708,17 @@ export class ChallengeStore {
     this.authSpent = new Map(raw?.authSpent || []);
     this.txSpent = new Set(raw?.txSpent || []);
     this.txFacts = new Map(raw?.txFacts || []);
+    this.txReserved = new Map(raw?.txReserved || []);
+    this.authReserved = new Map(raw?.authReserved || []);
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
+    this.late = Array.isArray(raw?.late) ? raw.late : [];
+    this.lateLedger = Array.isArray(raw?.lateLedger) ? raw.lateLedger : [];
   }
 
   _gc() {
     const now = Date.now();
     for (const [k, v] of this.map) {
-      if (v.state === 'spent' || v.state === 'unknown' || v.state === 'claimed') continue;
+      if (v.state === 'spent' || v.state === 'unknown' || v.state === 'claimed' || v.state === 'submitted') continue;
       if (now > v.expiresAt) this.map.delete(k);
     }
   }
@@ -584,7 +773,7 @@ export function encodePaymentRequiredHeader(body) {
  *   success, transaction, network, and payer are unchanged.
  * @returns {string|null} standard base64, or null when nothing was collected
  */
-export function encodeX402PaymentResponseHeader({
+export async function encodeX402PaymentResponseHeader({
   ref, network = null, payer = null, success = true, resourceUrl = null,
 } = {}) {
   if (!ref || typeof ref !== 'string') return null;
@@ -600,7 +789,7 @@ export function encodeX402PaymentResponseHeader({
   // x402 offer-receipt §5.1: extensions["offer-receipt"].info.receipt on success.
   // Omitted when resourceUrl or payer is missing — the four legacy fields still go out.
   const receiptExt = body.success && resourceUrl
-    ? buildReceiptExtension({
+    ? await buildReceiptExtension({
       network: body.network,
       resourceUrl,
       payer: body.payer,
@@ -616,8 +805,8 @@ export function encodeX402PaymentResponseHeader({
  * No-op when `settle.ref` is missing — unpaid responses stay unset.
  * @returns {boolean} true when the headers were written
  */
-export function setX402PaymentResponseHeaders(res, settle) {
-  const encoded = encodeX402PaymentResponseHeader(settle);
+export async function setX402PaymentResponseHeaders(res, settle) {
+  const encoded = await encodeX402PaymentResponseHeader(settle);
   if (!encoded || !res || typeof res.setHeader !== 'function') return false;
   res.setHeader('PAYMENT-RESPONSE', encoded);
   res.setHeader('X-PAYMENT-RESPONSE', encoded);
@@ -658,7 +847,7 @@ export function setX402PaymentResponseHeaders(res, settle) {
  * @param {ChallengeStore|null} [opts.store]  store to record into (default module store; null to skip)
  * @returns {{ status:number, body:Object, headers:Record<string,string> }}
  */
-export function buildPaymentChallenge(p, opts = {}) {
+export async function buildPaymentChallenge(p, opts = {}) {
   if (!p || !p.taskId) throw new Error('taskId is required');
   if (!p.maxAmountRequired) throw new Error('maxAmountRequired is required');
 
@@ -719,11 +908,16 @@ export function buildPaymentChallenge(p, opts = {}) {
 
   const store = opts.store === undefined ? challengeStore : opts.store;
   let expiresAt = null;
+  let stampedBlock = null;
+  if (!isSolanaNetwork(network) && opts.issueBlock != null && opts.issueBlock !== '') {
+    const n = Number(opts.issueBlock);
+    if (Number.isSafeInteger(n) && n >= 0) stampedBlock = n;
+  }
   if (store) {
     // Persist bazaar fields so settleViaFacilitator can echo them on the
     // PaymentPayload even when the buyer SDK omits them. CDP will not catalog
     // a settle that lacks paymentPayload.resource.
-    const rec = store.put(nonce, {
+    const fields = {
       taskId: p.taskId,
       amount,
       asset: assetAddress,
@@ -735,7 +929,9 @@ export function buildPaymentChallenge(p, opts = {}) {
       extensions,
       outputSchema,
       issuance_bind: p.issuance_bind || null,
-    });
+    };
+    if (stampedBlock != null) fields.issueBlock = stampedBlock;
+    const rec = store.put(nonce, fields);
     expiresAt = rec.expiresAt;
   }
 
@@ -831,7 +1027,7 @@ export function buildPaymentChallenge(p, opts = {}) {
   // Stored challenge extensions stay bazaar-only so settle still echoes bazaar,
   // not a fresh signature the client was not shown as the catalog extension.
   // validUntil is unix seconds; accepts[].extra.expiresAt stays milliseconds.
-  const offerReceipt = buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
+  const offerReceipt = await buildOfferExtension(accepts, resourceUrl, { expiresAtMs: expiresAt });
   const bodyExtensions = {
     ...(extensions || {}),
     ...(offerReceipt ? { [OFFER_RECEIPT_KEY]: offerReceipt } : {}),
@@ -1110,7 +1306,7 @@ export async function settlePayment(paymentHeader, opts = {}) {
       }),
       signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) return { settled: false, reason: `gateway_http_${res.status}` };
+    if (!res.ok) return { settled: false, reason: `gateway_http_${res.status}`, sent: true };
     const data = await res.json();
     const settled = !!(data.settled || data.success);
     const txRef = data.txRef || data.transaction || null;
@@ -1123,10 +1319,11 @@ export async function settlePayment(paymentHeader, opts = {}) {
       payer: data.payer || null,
       network: data.network || null,
       reason: data.reason,
+      sent: true,
     };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 settlePayment failed');
-    return { settled: false, reason: 'gateway_error' };
+    return { settled: false, reason: 'gateway_error', sent: true };
   }
 }
 

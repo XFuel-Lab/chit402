@@ -122,6 +122,13 @@ const builders: DocLink[] = [
     internal: true,
   },
   {
+    title: 'Verify',
+    description: 'Exit codes and the reason anchors chit402-verify prints.',
+    href: '/docs/verify',
+    meta: 'verify',
+    internal: true,
+  },
+  {
     title: 'Install doors',
     description: 'Chat /v1 wire, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
     href: '/doors',

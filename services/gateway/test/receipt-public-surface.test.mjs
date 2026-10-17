@@ -78,16 +78,16 @@ before(async () => {
   resetReceiptMerkleTree();
   await initAIListener();
   const store = getAIListener().activeTasks;
-  httpApp = createApp();
+  httpApp = await createApp();
   const tree = getReceiptMerkleTree();
   const ledger = httpApp.locals.__test.usageSettled;
-  const plant = (taskId, rowHash, ref, agentId, wallet) => {
-    tree.appendReceipt(taskId, rowHash, { publish: false });
+  const plant = async (taskId, rowHash, ref, agentId, wallet) => {
+    await tree.appendReceipt(taskId, rowHash, { publish: false });
     store.set(taskId, paidTask(taskId, ref, agentId, wallet));
     planted.push(taskId);
   };
-  plant(A, 'row-own-a', REF_A, 187, '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52');
-  plant(B, ROW_B, REF_B, AGENT_B, WALLET_B);
+  await plant(A, 'row-own-a', REF_A, 187, '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52');
+  await plant(B, ROW_B, REF_B, AGENT_B, WALLET_B);
   store.set(PRE, paidTask(PRE, `base:0x${'c3'.repeat(32)}`, 188, '0x1111111111111111111111111111111111111111'));
   planted.push(PRE);
   const taskA = store.get(A);
@@ -102,7 +102,7 @@ before(async () => {
     basis: 'measured',
     below_low_water: true,
   };
-  ledger._index({
+  await ledger._index({
     task_id: A,
     agent_id: 187,
     evidence: 'collected',

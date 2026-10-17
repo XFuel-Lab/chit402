@@ -484,7 +484,7 @@ test('generation cost is recorded on the receipt after the response, without blo
     fetchFn,
   });
   assert.equal(task.meta.providerCogs.openrouter_generation, undefined);
-  const early = buildReceipt(task, { persistSignature: false });
+  const early = await buildReceipt(task, { persistSignature: false });
   assert.equal(early.provider_cogs.openrouter_generation, undefined);
   assert.equal(early.provider_cogs.actual, '5');
   release();
@@ -499,7 +499,7 @@ test('generation cost is recorded on the receipt after the response, without blo
     upstream_inference_cost: '0.0012',
     currency: 'USD',
   });
-  const later = buildReceipt(task, { persistSignature: false });
+  const later = await buildReceipt(task, { persistSignature: false });
   assert.equal(later.provider_cogs.actual, '5');
   assert.equal(later.provider_cogs.openrouter_generation.total_cost, '0.0015');
   assert.equal(later.provider_cogs.openrouter_generation.upstream_inference_cost, '0.0012');
@@ -672,7 +672,7 @@ test('reported USD cost is a plain decimal, never scientific notation', () => {
   assert.equal(cogs.reported_cost_usd, '0.00000083');
 });
 
-test('signed JWS covers OpenRouter generation id, served model, tokens, cost, and label', () => {
+test('signed JWS covers OpenRouter generation id, served model, tokens, cost, and label', async () => {
   const task = {
     taskId: 'xfuel-or-facts',
     status: 'completed',
@@ -722,7 +722,7 @@ test('signed JWS covers OpenRouter generation id, served model, tokens, cost, an
       },
     },
   };
-  const receipt = buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
+  const receipt = await buildReceipt(task, { baseUrl: 'https://api.chit402.com' });
   const stored = storedReceiptJson(receipt);
   assert.equal(stored.openrouter.generation_id, 'gen-live-1');
   assert.equal(stored.openrouter.reported_cost_usd, '0.00000083');
@@ -740,8 +740,8 @@ test('signed JWS covers OpenRouter generation id, served model, tokens, cost, an
   assert.equal(stored.session, undefined);
   assert.equal(stored.agent_pubkey, undefined);
   assert.equal(receipt.payment, undefined, 'slim envelope keeps payment inside the JWS');
-  assert.equal(verifyReceiptEcdsaWithJwks(stored, { keys: [] }).valid, true);
-  assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
+  assert.equal((await verifyReceiptEcdsaWithJwks(stored, { keys: [] })).valid, true);
+  assert.equal((await verifyReceiptEcdsaWithJwks(receipt, { keys: [] })).valid, true);
   const claims = decodeReceiptClaims(receipt);
   assert.equal(claims.route.model, 'meta-llama/llama-3.1-8b-instruct');
   assert.equal(claims.openrouter.generation_id, 'gen-live-1');

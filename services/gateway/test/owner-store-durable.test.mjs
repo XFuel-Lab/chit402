@@ -60,5 +60,5 @@ test('boot fails closed when the owner view store cannot be written', async () =
   fs.writeFileSync(blocker, 'not-a-directory');
   process.env.OWNER_VIEW_DB = path.join(blocker, 'owner-view.sqlite');
   const { createApp } = await import('../src/server.js');
-  assert.throws(() => createApp(), /owner view store cannot be written/);
+  await assert.rejects(async () => await createApp(), /owner view store cannot be written/);
 });

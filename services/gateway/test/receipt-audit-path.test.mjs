@@ -11,9 +11,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_PERSIST = 'false';
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 delete process.env.SOLANA_ANCHOR_SECRET_KEY;
 delete process.env.SOLANA_RPC_URL;
+// The specimen is issued 2026-09-26. The test key's window has to cover that instant.
+process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
 
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
@@ -23,6 +26,7 @@ const { withPublicPreimages } = await import('../src/receipt-preimage.js');
 const logger = (await import('../src/logger.js')).default;
 
 const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
+const { currentIssuerHistory } = await import('../src/issuer-history.js');
 const { verifyPublishedPreimages } = await import('../../../packages/verify/dist/preimage.js');
 const cliPath = fileURLToPath(new URL('../../../packages/verify/dist/cli.js', import.meta.url));
 
@@ -95,10 +99,10 @@ before(async () => {
   genesisBody = tree.genesisLeaf().bytes.toString('utf8');
   await initAIListener();
   const store = getAIListener().activeTasks;
-  httpApp = createApp();
+  httpApp = await createApp();
   const ledger = httpApp.locals.__test.usageSettled;
-  const plant = (taskId, rowHash, nibble) => {
-    tree.appendReceipt(taskId, rowHash, { publish: false });
+  const plant = async (taskId, rowHash, nibble) => {
+    await tree.appendReceipt(taskId, rowHash, { publish: false });
     planted.push({
       taskId,
       body: `${taskId}|${rowHash}`,
@@ -106,10 +110,10 @@ before(async () => {
     });
     store.set(taskId, paidTask(taskId, nibble));
   };
-  FOREIGN.slice(0, 3).forEach((taskId, i) => {
-    plant(taskId, `audit-row-${i}-${taskId}`, (i + 1).toString(16));
+  FOREIGN.slice(0, 3).forEach(async (taskId, i) => {
+    await plant(taskId, `audit-row-${i}-${taskId}`, (i + 1).toString(16));
   });
-  ledger._index({
+  await ledger._index({
     task_id: SPECIMEN,
     agent_id: 187,
     evidence: 'collected',
@@ -117,9 +121,9 @@ before(async () => {
     collected_at: '2026-09-05T17:14:11.000Z',
   }, { persist: false, notify: false });
   const booked = ledger.findByTask(SPECIMEN);
-  plant(SPECIMEN, booked.book_chain.row_hash, '4');
-  FOREIGN.slice(3).forEach((taskId, i) => {
-    plant(taskId, `audit-row-${i + 4}-${taskId}`, (i + 5).toString(16));
+  await plant(SPECIMEN, booked.book_chain.row_hash, '4');
+  FOREIGN.slice(3).forEach(async (taskId, i) => {
+    await plant(taskId, `audit-row-${i + 4}-${taskId}`, (i + 5).toString(16));
   });
   assert.ok(planted.every((row) => row.index > 0));
   assert.equal(planted.find((row) => row.taskId === SPECIMEN).index, 4);
@@ -238,7 +242,7 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
   const task = getAIListener().activeTasks.get(SPECIMEN);
   const tree = getReceiptMerkleTree();
   const ledgerRow = httpApp.locals.__test.usageSettled.findByTask(SPECIMEN);
-  const built = buildReceipt(task, { persistSignature: false, agentId: 187, baseUrl: base });
+  const built = await buildReceipt(task, { persistSignature: false, agentId: 187, baseUrl: base });
   const prefix = tree.publicPrefixAudit(SPECIMEN, (id) => {
     const row = httpApp.locals.__test.usageSettled.findByTask(id);
     return row?.row_hash ?? null;
@@ -247,39 +251,43 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     {
       ...built,
       ...(ledgerRow?.book_chain ? { book_chain: ledgerRow.book_chain } : {}),
-      ...publicLogWitness(tree, SPECIMEN),
+      ...await publicLogWitness(tree, SPECIMEN),
     },
     { baseUrl: base, prefix },
   );
   const kid = receipt.issuer_signature.kid;
+  const historyRecord = await currentIssuerHistory();
+  const historyBytes = historyRecord.body;
+  const history = JSON.parse(historyBytes);
+  assert.equal(history.entries.some((row) => row.kid === kid && row.not_before), true);
   const checked = await verifyReceipt(receipt, {
     trustedKids: [kid],
-    skipIssuerHistory: true,
+    issuerHistory: history,
+    issuerHistoryBytes: historyBytes,
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
   assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assert.equal(checked.issuer_history.checked, true);
+  assert.equal(checked.issuer_history.ok, true, checked.issuer_history.reason || checked.issuer_history.warning);
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-http-'));
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(receipt));
-  const cli = cliPath;
-  for (const extra of [[], ['--rpc', 'http://127.0.0.1:9']]) {
-    const run = spawnSync(process.execPath, [
-      cli,
-      file,
-      '--json',
-      '--no-issuer-history',
-      '--trusted-kid',
-      kid,
-      ...extra,
-    ], { encoding: 'utf8' });
-    assert.equal(run.status, 0, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
-    const parsed = JSON.parse(run.stdout);
-    assert.equal(parsed.overall, 'verified', (parsed.errors || []).join('; '));
-    assert.equal(parsed.preimages.ok, true);
-  }
+  // 0.4 has no --issuer-history-file, --trusted-kid, or --rpc. The test key is
+  // not the pinned issuer, so the CLI does not report verified.
+  const run = spawnSync(process.execPath, [cliPath, file, '--json'], { encoding: 'utf8' });
+  assert.equal(run.status, 1, `status=${run.status} stderr=${run.stderr} stdout=${run.stdout}`);
+  const parsed = JSON.parse(run.stdout);
+  assert.equal(parsed.result, 'invalid');
+  assert.equal(parsed.reason, 'key untrusted');
+  assert.equal(parsed.exit_code, 1);
+  assert.notEqual(parsed.result, 'verified');
+  const human = spawnSync(process.execPath, [cliPath, file], { encoding: 'utf8' });
+  assert.equal(human.status, 1, human.stdout);
+  assert.match(human.stdout, /Details: https:\/\/chit402\.com\/docs\/verify#key_untrusted/);
+  assert.doesNotMatch(human.stdout, /#key untrusted/);
 
   const field = receipt.preimages.fields.tree_head_hash;
   const cases = [

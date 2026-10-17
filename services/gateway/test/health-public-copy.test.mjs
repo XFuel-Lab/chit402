@@ -14,7 +14,7 @@ let server;
 let base;
 
 before(async () => {
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -37,5 +37,17 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
   assert.equal(body.free_tier, 'available');
   assert.ok('last_anchored_root' in body);
   assert.ok('last_anchored_tx' in body);
-  assert.deepEqual(Object.keys(body).sort(), ['free_tier', 'last_anchored_root', 'last_anchored_tx', 'status']);
+  assert.deepEqual(Object.keys(body).sort(), [
+    'anchor_lag_s',
+    'free_tier',
+    'issuance',
+    'last_anchored_root',
+    'last_anchored_tx',
+    'receipt_failures',
+    'status',
+    'unanchored_leaves',
+  ]);
+  assert.deepEqual(Object.keys(body.issuance.cap).sort(), ['day_used', 'hour_used', 'state']);
+  assert.equal(body.issuance.cap.state, 'off');
+  assert.equal(typeof body.receipt_failures, 'number');
 });

@@ -59,9 +59,9 @@ async function journal({ raced = true, typ } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'chit-rotation-'));
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
-  for (const id of ['a', 'b', 'c']) tree.appendReceipt(id, `r${id}`, { publish: false });
+  for (const id of ['a', 'b', 'c']) await tree.appendReceipt(id, `r${id}`, { publish: false });
   await tree.publishHead(opts('2026-10-08T05:32:00.000Z', 4));
-  for (const id of ['d', 'e']) tree.appendReceipt(id, `r${id}`, { publish: false });
+  for (const id of ['d', 'e']) await tree.appendReceipt(id, `r${id}`, { publish: false });
   if (raced) {
     const head = racedHead(tree, 6, hex(rootOf(tree.leaves.slice(0, 5))), typ);
     appendJournal(dir, { v: 1, op: 'head', epoch: tree.epoch, head });

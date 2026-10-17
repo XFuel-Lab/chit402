@@ -16,35 +16,32 @@ New receipts pin the issuer public key at `issuer_signature.issuer_jwk`.
    - `payment.asset` (USDC)
    - `payment.gross_amount` (atomic 6 dp)
    - `payment.ref` (tx: `base:0x…`)
-5. Optionally fetch tx on Base RPC and confirm USDC transfer `from` = payer,
-   `to` = payee, amount ≥ gross.
+5. The CLI checks the settlement on chain by default. On Base, the USDC
+   transfer `from` is the payer, `to` is the payee, and the amount is at
+   least `gross_amount`.
 
-CLI (no JWKS download):
+CLI:
 
 ```bash
-npx xfuel-verify receipt.json --json
+npx chit402-verify receipt.json --json
 ```
 
 Library:
 
 ```typescript
-import { verifyReceipt } from '@xfuel/verify';
+import { verifyReceipt } from 'chit402-verify';
 
-const result = await verifyReceipt(receipt);
-// result.issuer_signature.valid — uses pinned issuer_jwk
-// result.payer_binding — when --check-payer / RPC enabled
+const result = await verifyReceipt(receipt, { checkPayer: true });
+// result.issuer_signature.valid — pinned kid, or a key in issuer history
+// result.payer — the CLI runs this check by default
 ```
 
-## JWKS fallback
+## Issuer key
 
-If `issuer_jwk` is absent (older receipt):
-
-```bash
-curl -sS https://api.chit402.com/.well-known/jwks.json -o jwks.json
-npx xfuel-verify receipt.json --jwks-file jwks.json --json
-```
-
-Match `issuer_signature.kid` to `jwks.keys[].kid`.
+The CLI does not download a JWKS file, and it does not match
+`issuer_signature.kid` to `jwks.keys[].kid`. A signature counts when the
+key's thumbprint is the pinned kid, or when that kid is in a verified
+issuer-history snapshot. `--jwks-file` is not a CLI flag.
 
 ## What not to default to
 

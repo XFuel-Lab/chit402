@@ -120,7 +120,7 @@ export function refreshProverProbe(prover, { ttlMs = PROBE_TTL_MS, now = Date.no
 
   _probe = { ..._probe, inFlight: true };
   return Promise.resolve()
-    .then(() => prover.healthCheck())
+    .then(async () => await prover.healthCheck())
     .then((ok) => { _probe = { at: Date.now(), reachable: !!ok, inFlight: false }; })
     .catch(() => { _probe = { at: Date.now(), reachable: false, inFlight: false }; });
 }

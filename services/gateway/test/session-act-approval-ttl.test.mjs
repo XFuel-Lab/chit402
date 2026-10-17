@@ -116,7 +116,7 @@ describe('SessionAct approval_ttl HTTP', () => {
     resetSessionActApprovalStore();
     resetHubCatalogCache();
     await initAIListener();
-    const app = createApp();
+    const app = await createApp();
     await new Promise((resolve) => {
       server = app.listen(0, () => {
         base = `http://127.0.0.1:${server.address().port}`;
@@ -130,7 +130,7 @@ describe('SessionAct approval_ttl HTTP', () => {
       meta: { chain: 'base', provider: 'theta-edgecloud', payerWallet: AGENT.address },
     });
     listener.activeTasks.set(regTask.taskId, regTask);
-    buildReceipt(regTask, { persistSignature: true, payerWallet: AGENT.address });
+    await buildReceipt(regTask, { persistSignature: true, payerWallet: AGENT.address });
 
     const signatureTimestamp = nowSec();
     const walletSignature = await AGENT.signMessage(
@@ -306,7 +306,7 @@ describe('SessionAct approval_ttl HTTP', () => {
       meta: { payerWallet: PAYER.address, session },
     });
     listener.activeTasks.set(task.taskId, task);
-    buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
+    await buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
 
     getSessionActApprovalStore().recordHighBlast(session.delegation_hash, nowSec() - 300);
 
