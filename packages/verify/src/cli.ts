@@ -345,7 +345,7 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean,
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  if (quiet && result.overall !== 'failed' && result.overall !== 'not_in_log') return;
+  if (quiet && result.overall !== 'failed' && result.overall !== 'not_in_log' && result.overall !== 'could_not_check') return;
   const mark = (ok: boolean) => (ok ? '✓ YES' : '✗ NO');
   console.log('');
   console.log('  Anchored receipt root');
@@ -377,7 +377,7 @@ function printAnchor(result: AnchorWitnessResult, json: boolean, quiet: boolean,
   if (result.base.chain_id != null) console.log(`  Chain id:      ${result.base.chain_id}`);
   if (result.base.reason && !result.base.valid) console.log(`  Base reason:   ${result.base.reason}`);
   console.log('');
-  if (result.overall !== 'failed' && result.overall !== 'not_in_log') {
+  if (result.overall !== 'failed' && result.overall !== 'not_in_log' && result.overall !== 'could_not_check') {
     console.log('  What this proves');
     console.log('  ─────────────────────────────────────────────────');
     for (const line of result.proves) console.log(`  ${line}`);
@@ -893,6 +893,16 @@ function anchorLogState(result: AnchorWitnessResult): {
       logInclusion: 'fail',
       anchor: 'fail',
       logReason: result.errors[0] || result.inclusion.reason || 'log_inclusion',
+    };
+  }
+  if (result.overall === 'could_not_check') {
+    const reason = [result.base.reason, result.solana.reason].find((code) => (
+      code && code !== 'pending' && code !== 'pending_anchor'
+    )) || result.errors[0] || 'anchor_unreachable';
+    return {
+      logInclusion: result.inclusion.valid ? 'pass' : 'could_not_check',
+      anchor: 'could_not_check',
+      logReason: reason,
     };
   }
   if (result.overall === 'failed') {
