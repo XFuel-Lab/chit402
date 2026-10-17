@@ -101,6 +101,7 @@ import { VERIFIER_MIN, VERIFIER_MIN_HEADER, receiptPolicyAdvisory, withVerifierA
 import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { privateNoStore } from './private-read.js';
 import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
@@ -4662,7 +4663,7 @@ export async function createApp() {
     }
   }
 
-  app.get('/v1/agents/:agent_id/book', sendAgentBook);
+  app.get('/v1/agents/:agent_id/book', privateNoStore(), sendAgentBook);
   app.post('/v1/agents/:agent_id/book', sendAgentBook);
 
   // POST /v1/agents/:agent_id/book/inflow — Unaffiliated inflow (no payment.ref)
@@ -4851,7 +4852,7 @@ export async function createApp() {
 
   // GET /v1/agents/:agent_id/book/lineage/:task_id — Possession-gated lineage query
   // Per whitepaper: A→B→inference is one row-chain. A2A disputes need this.
-  app.get('/v1/agents/:agent_id/book/lineage/:task_id', async (req, res) => {
+  app.get('/v1/agents/:agent_id/book/lineage/:task_id', privateNoStore(), async (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const result = await queryLineage(req.params.agent_id, req.params.task_id, claim, {
@@ -4911,7 +4912,7 @@ export async function createApp() {
   });
 
   // GET /v1/agents/:agent_id/book/policy — Get current policy
-  app.get('/v1/agents/:agent_id/book/policy', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/policy', privateNoStore(), (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -4935,7 +4936,7 @@ export async function createApp() {
   });
 
   // GET|POST /v1/agents/:agent_id/book/export — possession-gated accounting export
-  app.get('/v1/agents/:agent_id/book/export', async (req, res) => {
+  app.get('/v1/agents/:agent_id/book/export', privateNoStore(), async (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -5037,7 +5038,7 @@ export async function createApp() {
   });
 
   // GET /v1/agents/:agent_id/book/gaps — monotonic seq gap check
-  app.get('/v1/agents/:agent_id/book/gaps', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/gaps', privateNoStore(), (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -5114,7 +5115,7 @@ export async function createApp() {
   });
 
   // GET /v1/agents/:agent_id/book/assign — List assignments for agent (possession-gated)
-  app.get('/v1/agents/:agent_id/book/assign', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/assign', privateNoStore(), (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -5165,7 +5166,7 @@ export async function createApp() {
 
   // GET /v1/book/slice — Read a slice by assignment token (no possession needed)
   // Token IS the access credential. Does not leak agent list.
-  app.get('/v1/book/slice', (req, res) => {
+  app.get('/v1/book/slice', privateNoStore({ vary: ['X-XFuel-Assign-Token'] }), (req, res) => {
     try {
       const token = req.query.token || req.headers['x-xfuel-assign-token'] || null;
       if (!token) {
@@ -5234,7 +5235,7 @@ export async function createApp() {
   });
 
   // GET /v1/agents/:agent_id/book/dispute — List disputes for agent (possession-gated)
-  app.get('/v1/agents/:agent_id/book/dispute', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/dispute', privateNoStore(), (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -5319,7 +5320,7 @@ export async function createApp() {
   });
 
   // GET /v1/agents/:agent_id/book/a2a-escrow — List A2A jobs (possession-gated)
-  app.get('/v1/agents/:agent_id/book/a2a-escrow', (req, res) => {
+  app.get('/v1/agents/:agent_id/book/a2a-escrow', privateNoStore(), (req, res) => {
     try {
       const claim = claimFromRequest(req);
       const session = claim.session;
@@ -5474,7 +5475,7 @@ export async function createApp() {
   // PUT|POST|GET|DELETE /v1/agents/:agent_id/book/webhook — treasury desk push (possession-gated)
   app.put('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
   app.post('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
-  app.get('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
+  app.get('/v1/agents/:agent_id/book/webhook', privateNoStore(), sendBookWebhook);
   app.delete('/v1/agents/:agent_id/book/webhook', sendBookWebhook);
 
   registerOpenAIRoutes(app, {
