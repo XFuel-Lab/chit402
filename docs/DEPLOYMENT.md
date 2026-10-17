@@ -67,6 +67,8 @@ On a new host with x402 enabled, create the empty challenge store before the fir
 
 When `NODE_ENV` is production in any casing, the gateway refuses to boot and refuses to sign a Base anchor unless `ANCHOR_MAX_FEE_WEI` and `ANCHOR_MAX_PRIORITY_WEI` are both integer wei strings. The cap applies to the first sign, a same-nonce replacement, and a stuck-mempool speed-up, and it covers both `maxFeePerGas` and `maxPriorityFeePerGas`. Deploy defaults are 20 gwei and 2 gwei. An RPC error while reconciling an already anchored intent at boot keeps that intent `anchored`. It is not marked `blocked` and it is not broadcast again. Relayer signatures need `M2M_RELAYER_AUDIENCE` plus a single-use `X-Sig-Nonce`. Used nonces are stored at `<data-dir>/relayer-nonces.json`, the parent of `TASK_STORE_DIR`, so a restart inside the 300 second window does not accept the same nonce again.
 
+If the gateway refuses to boot with `persist_failed` on `book-policy.json` or `identities.json`, restore that file from the latest backup and restart. Never delete it to get past the error, because that wipes caps and reissues agent ids.
+
 ## Verify
 
 ```bash

@@ -503,7 +503,8 @@ async function meterV1Request(req, res, {
   // Server-side: a caller key prices OpenRouter at the receipt, even if resale is on.
   const quoteOpts = openRouterQuoteOpts(req, isAuthorised);
 
-  // Book policy rows (caps, kill switch, tier2_above) — beside the book, not the router.
+  // Caps are limits set with the book session, enforced on spends under that
+  // session, not signed, and changeable by the session holder. Beside the book, not the router.
   if (bookable && bookPolicy) {
     let quotedAmount = '0';
     try {
