@@ -452,7 +452,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     <hr />
     ${logHtml}
     <hr />
-    <p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Use <code>@xfuel/verify</code> 0.3.5 or later.</p>
+    <p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Check it with <code>npx chit402-verify</code> (0.4.2 or later).</p>
     <div class="links">
       ${links.join('\n      ')}
     </div>
