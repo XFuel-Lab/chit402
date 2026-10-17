@@ -675,7 +675,8 @@ export async function fetchBaseAnchorTransaction(
     status: receipt == null ? null : (receipt.status ?? null),
     blockNumber: receipt == null ? null : (receipt.blockNumber ?? null),
     tipBlockNumber: tipMissing ? null : tipHex,
-  };}
+  };
+}
 
 /**
  * Solana anchor read. `commitment` is `finalized`. A processed or confirmed
