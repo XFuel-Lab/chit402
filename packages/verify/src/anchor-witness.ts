@@ -44,17 +44,24 @@ export const BASE_MAINNET_CHAIN_ID = 8453;
 /**
  * Blocks the Base anchor must sit behind the tip before it counts.
  * Base block time is about 2 seconds, so 12 blocks is about 24 seconds.
- * A shallower receipt is not final: the sequencer can still reorg it.
- * This is a fixed depth, not the `safe` tag. `safe` on Base waits for L1
- * derivation and is not a constant number of blocks.
+ * Twelve confirmations means the receipt is mined and successful.
+ * It is not finality. A requirement that the block be at or below `safe`
+ * is a follow-up.
  */
 export const BASE_ANCHOR_MIN_CONFIRMATIONS = 12;
 
 /** Solana `getTransaction` commitment for an anchor. Confirmed is not enough. */
 export const SOLANA_ANCHOR_COMMITMENT = 'finalized' as const;
 
-/** JSON-RPC budget for one anchor call. A hung node is not a pass. */
+/** JSON-RPC budget for one Base anchor call. A hung node is not a pass. */
 export const ANCHOR_RPC_TIMEOUT_MS = 8_000;
+
+/**
+ * JSON-RPC budget for one Solana anchor call. The public mainnet-beta RPC
+ * takes 11-15 s for a historical `getTransaction` at `finalized`, so the Base
+ * budget would turn every older anchor into `solana_rpc_timeout`. Still bounded.
+ */
+export const SOLANA_ANCHOR_RPC_TIMEOUT_MS = 30_000;
 
 export const ANCHOR_PROVES = [
   'This receipt leaf is inside the tree of the stated size, under the stated root.',
@@ -577,7 +584,7 @@ function mapAnchorRpcError(err: unknown, side: 'base' | 'solana'): string {
 }
 
 export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
-  const result = await defaultRpc(rpcUrl, 'getGenesisHash', []);
+  const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], SOLANA_ANCHOR_RPC_TIMEOUT_MS);
   if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
   return result;
 }
@@ -620,6 +627,19 @@ export async function fetchBaseAnchorTransaction(
     throw new Error('base_rpc_null');
   }
   if (tx == null && receipt == null) return null;
+  // A receipt with no transaction body (or the reverse after mining) is one
+  // node out of step with itself. There is no calldata to compare, so this is
+  // not a calldata mismatch: it is an observation we could not make.
+  if (tx == null && receipt != null) {
+    return {
+      hash: receipt.transactionHash || txHash,
+      chainId: chainMissing ? null : chainHex,
+      status: receipt.status ?? null,
+      blockNumber: receipt.blockNumber ?? null,
+      tipBlockNumber: tipMissing ? null : tipHex,
+      rpcCode: 'anchor_inconsistent',
+    };
+  }
   const want = txHash.toLowerCase();
   const hashes = [tx?.hash, receipt?.transactionHash]
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
@@ -665,7 +685,7 @@ export async function fetchBaseAnchorTransaction(
 export async function fetchSolanaAnchorTransaction(
   signature: string,
   rpcUrl: string,
-  timeoutMs = ANCHOR_RPC_TIMEOUT_MS,
+  timeoutMs = SOLANA_ANCHOR_RPC_TIMEOUT_MS,
 ): Promise<SolanaAnchorTx | null> {
   let result: unknown;
   try {
@@ -744,7 +764,7 @@ export async function fetchNewestSolanaAnchorRoot(
   for (let page = 0; page < NEWEST_ANCHOR_PAGE_CAP; page += 1) {
     const query: { limit: number; before?: string } = { limit: NEWEST_ANCHOR_PAGE_LIMIT };
     if (before) query.before = before;
-    const listed = await defaultRpc(rpcUrl, 'getSignaturesForAddress', [feePayer, query]);
+    const listed = await defaultRpc(rpcUrl, 'getSignaturesForAddress', [feePayer, query], SOLANA_ANCHOR_RPC_TIMEOUT_MS);
     if (!Array.isArray(listed)) throw new Error('newest_anchor_unavailable');
     if (listed.length === 0) return null;
     for (const row of listed) {
