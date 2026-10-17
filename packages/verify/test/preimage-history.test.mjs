@@ -34,7 +34,13 @@ function b64url(obj) {
   return Buffer.from(JSON.stringify(obj)).toString('base64url');
 }
 
-test('a published row preimage must match, and a missing one fails closed', async () => {
+function compactJws(payload) {
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${header}.${body}.sig`;
+}
+
+test('a published row preimage must match, and a missing unsigned one does not fail', async () => {
   const line = '7|1|task-1||collected';
   const hash = sha256Hex(line);
   const receipt = {
@@ -67,8 +73,15 @@ test('a published row preimage must match, and a missing one fails closed', asyn
     { ...receipt, book_chain: { row_hash: hash } },
     { requirePreimages: true },
   );
-  assert.equal(missing.ok, false);
-  assert.match(missing.errors.join(' '), /preimage missing for book_chain.row_hash/);
+  assert.equal(missing.ok, true, missing.errors.join('; '));
+  assert.equal(missing.errors.some((err) => /book_chain\.row_hash/.test(err)), false);
+
+  const signedMissing = await verifyPublishedPreimages({
+    book_chain: { row_hash: hash },
+    issuer_signature: { jws: compactJws({ book_chain: { row_hash: hash } }) },
+  }, { requirePreimages: true });
+  assert.equal(signedMissing.ok, false);
+  assert.match(signedMissing.errors.join(' '), /preimage missing for book_chain.row_hash/);
 
   const legacy = await verifyPublishedPreimages(
     { book_chain: { row_hash: hash }, output: { hash: '0x' + '11'.repeat(32) } },
@@ -79,18 +92,22 @@ test('a published row preimage must match, and a missing one fails closed', asyn
   assert.deepEqual(requiredPreimageFields({ output: { hash: '0xabc' } }), []);
 });
 
-test('requirePreimages covers a non-empty top-level row_hash', async () => {
+test('an unsigned top-level row_hash does not require a preimage', async () => {
   const hash = 'ab'.repeat(32);
-  assert.deepEqual(requiredPreimageFields({ row_hash: hash }), ['row_hash']);
+  assert.deepEqual(requiredPreimageFields({ row_hash: hash }), []);
   assert.equal(requiredPreimageFields({ row_hash: '' }).includes('row_hash'), false);
   assert.equal(requiredPreimageFields({ book_chain: { row_hash: hash } }).includes('row_hash'), false);
+  assert.deepEqual(requiredPreimageFields({
+    row_hash: hash,
+    issuer_signature: { jws: compactJws({ row_hash: hash }) },
+  }), ['row_hash']);
 
   const missing = await verifyPublishedPreimages(
     { task_id: 'task-top-row', row_hash: hash },
     { requirePreimages: true },
   );
-  assert.equal(missing.ok, false);
-  assert.match(missing.errors.join(' '), /preimage missing for row_hash/);
+  assert.equal(missing.ok, true, missing.errors.join('; '));
+  assert.equal(missing.errors.some((err) => /preimage missing for row_hash/.test(err)), false);
 
   const taskId = 'task-top-row';
   const paymentRef = `base:0x${'ab'.repeat(32)}`;
@@ -108,9 +125,19 @@ test('requirePreimages covers a non-empty top-level row_hash', async () => {
     payment: { rail: 'usdc', ref: paymentRef, net_amount: amount },
     binding: { expected_commitment: commitment, amount, rail: 'usdc', covers: ['payment'] },
   }, { requirePreimages: true, skipIssuerHistory: true });
-  assert.equal(unverified.overall, 'failed');
-  assert.match(unverified.errors.join(' '), /preimage missing for row_hash/);
-  assert.notEqual(unverified.overall, 'verified');
+  assert.equal(unverified.errors.some((err) => /preimage missing for row_hash/.test(err)), false);
+
+  const publishedBad = await verifyPublishedPreimages({
+    task_id: 'task-top-row',
+    row_hash: hash,
+    preimages: {
+      fields: {
+        row_hash: { alg: 'sha256', recomputable: true, preimage_utf8: 'nope', hash },
+      },
+    },
+  }, { requirePreimages: true });
+  assert.equal(publishedBad.ok, false);
+  assert.match(publishedBad.errors.join(' '), /preimage mismatch for row_hash/);
 
   const line = '7|1|task-top-row||collected';
   const good = sha256Hex(line);

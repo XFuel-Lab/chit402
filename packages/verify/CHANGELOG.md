@@ -3,6 +3,18 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.5 — Signed ids, unsigned row hash, claim mismatch
+
+### Security
+- **Verdict ids come from the signed task id.** `receipt_id` and `display_id` in the CLI verdict, `--json`, the library result, and `POST /v1/receipts/check` are the verified `task_id` (v11 uses the signed `receipt_id` when the payload has no task id). They are null when the signature is not valid. An outer `display_id`, `receipt_id`, or `task_id` is not copied into those fields. An outer `receipt_id` that disagrees with the signed id is a claim mismatch. `BUILD_DIGEST.txt` moved because the verifier sources changed. The pinned epoch genesis digests did not. Not published. No deploy.
+- **Public shells and id lookups show null ids.** `receipt_id` and `display_id` are null for an unsigned public shell and for an id lookup, where 0.4.4 showed the unsigned outer id.
+- **An unsigned `book_chain.row_hash` does not need a published preimage.** The log leaf binds `task_id|row_hash`, and the preimage contains `agent_id`, which is not public. The same rule covers a top-level `row_hash`. A published preimage that does not match still fails. A row hash that the receipt JWS actually signs still requires a preimage. An honest holder built by `holderDocumentFromOwnerView` is no longer exit 1 `payment_mismatch` for a missing row-hash preimage.
+- **An outer copy that disagrees with the signature is `claim_mismatch`.** Exit 1. It is not `payment_mismatch`. `payment_binding` is still `fail`. A payer, payee, or amount that the chain disagrees with, and that the outer copy did not rewrite, stays `payment_mismatch`.
+- **One claimed chain verifies.** Base-only or Solana-only: a signed head claims a chain only when that side is not `pending` and it names a tx or signature. A side the issuer signed as anything else with no tx or signature stays partial. The live log anchors Base and leaves Solana pending. Both sides pending stays partial, and the CLI reports that as `pending`, not `log_unreachable`.
+
+### Changed
+- `@xfuel/verify` 0.4.5 depends on exactly `"chit402-verify": "0.4.5"`. `--version` prints `chit402-verify 0.4.5`. Not published. No deploy.
+
 ## 0.4.4 — Payer check is on in the CLI
 
 Numbered 0.4.4, above the 0.4.3 anchor-finality release.

@@ -136,7 +136,6 @@ export function receiptFacts(input, kind, verdict) {
     issuer: null,
     chain: null,
   };
-  if (kind === 'id' && !facts.receipt_id) facts.receipt_id = oneLine(input, 80);
   if (kind !== 'json') return facts;
   let doc;
   try {
@@ -145,7 +144,6 @@ export function receiptFacts(input, kind, verdict) {
     return facts;
   }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return facts;
-  if (!facts.receipt_id) facts.receipt_id = oneLine(doc.task_id || doc.receipt_id, 80);
   if (facts.receipt_version == null && Number.isInteger(doc.payload_version)) {
     facts.receipt_version = doc.payload_version;
   }

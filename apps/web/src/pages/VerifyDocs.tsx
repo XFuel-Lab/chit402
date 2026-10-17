@@ -37,6 +37,7 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'id_prefix_version_mismatch', text: 'The id prefix is not valid for this receipt version. Exit 1.' },
   { id: 'intent_on_legacy_version', text: 'A signed intent is not a payment on this receipt version. Exit 1.' },
   { id: 'payment_mismatch', text: 'The payment on the receipt does not match the signature or the on-chain transfer. Exit 1.' },
+  { id: 'claim_mismatch', text: 'A field on the receipt does not match the signed copy. Exit 1. This is not a payer mismatch.' },
   { id: 'payer_unchecked', text: 'The on-chain payer check did not finish. The RPC timed out, returned null or an error, a payer field is missing, or the rail is not one this verifier can read. Exit 2. The receipt was not found invalid.' },
   { id: 'log_inclusion', text: 'The inclusion proof did not verify. Exit 1.' },
   { id: 'anchor', text: 'The anchor did not verify. Exit 1.' },
