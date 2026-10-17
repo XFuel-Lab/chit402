@@ -238,6 +238,21 @@ test('buildOpenApiSpec: x402scan document lists chat first with x-payment-info',
   assert.ok(task.requestBody.content['application/json'].schema.required.includes('sender'));
 });
 
+test('book policy copy says caps are session limits, not signed', () => {
+  const spec = buildOpenApiSpec('https://api.chit402.com');
+  const policy = spec.paths['/v1/agents/{agent_id}/book/policy'];
+  const honest = /caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder/i;
+  assert.match(policy.get.description, honest);
+  assert.match(policy.post.description, honest);
+  assert.match(policy.get.description, /Possession-gated/);
+  assert.match(policy.post.description, /not in the router/);
+  assert.match(policy.post.description, /Demo keys cannot write policy rows/);
+  assert.doesNotMatch(policy.get.description, /caps as rows/i);
+  assert.doesNotMatch(policy.post.description, /caps as rows/i);
+  assert.doesNotMatch(`${policy.get.description} ${policy.post.description}`, /signed cap/i);
+  assert.doesNotMatch(`${policy.get.description} ${policy.post.description}`, /traceable to a person/i);
+});
+
 test('buildOpenApiSpec: omits servers when no base URL is known', () => {
   const spec = buildOpenApiSpec('');
   assert.equal(spec.servers, undefined);

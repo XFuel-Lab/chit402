@@ -160,6 +160,10 @@ test('GET /llms.txt serves a public agent manifest (no auth)', async () => {
   assert.match(body, /www\.chit402\.com\/trust/);
   assert.match(body, /\/v1\/board\/posts/);
   assert.match(body, /untrusted_text/);
+  assert.match(body, /caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder/i);
+  assert.match(body, /Live policy_blocked rows appear on the book when a cap trips mid-burn/);
+  assert.doesNotMatch(body, /caps as rows/i);
+  assert.doesNotMatch(body, /signed cap/i);
   assert.doesNotMatch(body, /\$0\.01/); // No fixed price in public copy
   assert.doesNotMatch(body, /unmetered/i);
   assert.doesNotMatch(body, /free path/i);

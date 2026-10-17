@@ -2,8 +2,9 @@
  * Book Policy — possession-gated policy rows for an agent's book.
  *
  * Treasury sets policy on the book: max $X / day, allowlisted models, kill switch.
- * The agent just runs. Store caps as book policy rows the possession holder writes;
- * gateway enforces them on spend. Per whitepaper lineage: A→B→inference is one chain.
+ * The agent just runs. Caps are limits set with the book session, enforced on
+ * spends made under that session, not signed, and changeable by the session holder.
+ * Per whitepaper lineage: A→B→inference is one chain.
  *
  * Policy types:
  *   daily_cap           — max $X / day (resets at midnight UTC)
@@ -21,7 +22,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { normalizeSessionActAction } from './session-act.js';
 
@@ -70,15 +70,28 @@ export class BookPolicyStore {
   }
 
   _load() {
+    let raw;
     try {
-      const data = JSON.parse(fs.readFileSync(this._file(), 'utf8'));
-      for (const [k, v] of Object.entries(data.policies || {})) {
-        this.byAgent.set(Number(k), v);
-      }
+      raw = fs.readFileSync(this._file(), 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        logger.warn({ err: err.message }, 'book-policy: load failed');
-      }
+      if (err.code === 'ENOENT') return; // first run: no caps set yet
+      throw persistFailed(err, 'book-policy: load failed');
+    }
+    // Fail closed: an unreadable or malformed store must stop boot. Running
+    // with an empty map would drop every cap and kill switch, and the next
+    // save would overwrite the file with only the new policy.
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      throw persistFailed(err, 'book-policy: load failed');
+    }
+    const policies = data && typeof data === 'object' ? data.policies : undefined;
+    if (!policies || typeof policies !== 'object' || Array.isArray(policies)) {
+      throw persistFailed(new Error('policies map missing'), 'book-policy: load failed');
+    }
+    for (const [k, v] of Object.entries(policies)) {
+      this.byAgent.set(Number(k), v);
     }
   }
 

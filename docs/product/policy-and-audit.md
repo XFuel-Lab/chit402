@@ -4,7 +4,7 @@ Products that sit **beside** the book — not inside the router.
 
 ## Policy v2 (`GET|POST /v1/agents/:agent_id/book/policy`)
 
-Possession-gated (same session as the book). Demo keys cannot write policy rows.
+Possession-gated (same session as the book). Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder. Demo keys cannot write policy rows.
 
 | Policy type | Value | Enforcement |
 |-------------|-------|-------------|
@@ -23,7 +23,7 @@ Enforcement runs on the paid `POST /v1/chat/completions` path via `enforcePolicy
 
 The principal sees the block on `GET|POST /v1/agents/:agent_id/book` and `/book` — no SSH or PID required.
 
-Caps sit on the book the principal holds — not inside the router.
+Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder. They sit beside the book, not inside the router.
 
 ## Audit export (`GET|POST /v1/agents/:agent_id/book/export`)
 

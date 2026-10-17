@@ -1353,7 +1353,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'getBookPolicy',
           summary: 'Get current policy for agent',
-          description: 'Returns daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above, approval_ttl, risk_tiers. Possession-gated.',
+          description: 'Returns daily_cap, hourly_cap, model_allowlist, kill_switch, require_payment_ref, tier2_above, approval_ttl, risk_tiers. Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder. Possession-gated.',
           tags: ['Agents'],
           parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'integer' } }],
           responses: {
@@ -1366,7 +1366,8 @@ export function buildOpenApiSpec(baseUrl = '') {
           operationId: 'setBookPolicy',
           summary: 'Set policy for agent',
           description:
-            'Caps as rows beside the book (not the router). Set daily_cap, hourly_cap (clock hour UTC), '
+            'Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder. '
+            + 'They sit beside the book, not in the router. Set daily_cap, hourly_cap (clock hour UTC), '
             + 'model_allowlist, kill_switch, require_payment_ref, tier2_above (USDC atomic), '
             + 'approval_ttl (seconds — high-blast SessionAct re-challenge window), or risk_tiers '
             + '({ high: string[], low: string[] }). Demo keys cannot write policy rows.',

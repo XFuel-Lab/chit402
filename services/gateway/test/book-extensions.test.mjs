@@ -1,5 +1,5 @@
 /**
- * Book Extensions: lineage, caps as rows, assign, dispute, possession sanity.
+ * Book Extensions: lineage, session caps (limits on spends under the book session, not signed), assign, dispute, possession sanity.
  *
  * Per whitepaper: the book is NOT a router. GET /v1/agents/:agent_id/book is the product.
  * POST /v1/chat/completions is bait. A holder can prove:

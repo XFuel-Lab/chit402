@@ -283,6 +283,16 @@ test('Book principal dashboard v1 wires live API beats', () => {
   assert.match(book, /computeModelMix/, 'Book derives model mix from entries');
   assert.match(book, /verifyUrlFor/, 'Book links verify_url per row');
   assert.match(book, /Treasury advanced/, 'Policy/export/escrow tucked under advanced');
+  assert.match(
+    book,
+    /Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder\./,
+    'Book policy copy names unsigned session caps',
+  );
+  assert.match(book, /not inside the router/, 'Book policy still says caps are not router config');
+  assert.match(book, /Demo keys cannot write policy/, 'Demo keys still cannot write policy');
+  assert.doesNotMatch(book, /Caps sit on the book you hold/);
+  assert.doesNotMatch(book, /caps as rows/i);
+  assert.doesNotMatch(book, /signed cap/i);
   assert.match(book, /BookKpiStrip/, 'Book renders the KPI strip');
   assert.match(book, /useState<BookWindowPreset>\('7d'\)/, 'Default window is last 7 days');
   assert.match(strip, /Spend/, 'KPI tile: Spend');

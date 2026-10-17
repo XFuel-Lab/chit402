@@ -981,7 +981,7 @@ export default function Book() {
             <section className="card" style={{ marginBottom: 0 }}>
               <h3 style={{ marginBottom: '0.75rem' }}>Book policy</h3>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '0.75rem' }}>
-                Caps sit on the book you hold — not inside the router. Possession-gated via{' '}
+                Caps are limits set with the book session, enforced on spends made under that session, not signed, and changeable by the session holder. They sit beside the book, not inside the router. Possession-gated via{' '}
                 <code>POST /v1/agents/:agent_id/book/policy</code>. Demo keys cannot write policy.
               </p>
               <div className="book-policy-form" style={{ display: 'grid', gap: '0.75rem' }}>

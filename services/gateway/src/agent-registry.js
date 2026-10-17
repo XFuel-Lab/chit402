@@ -52,19 +52,35 @@ export class AgentRegistry {
   }
 
   _load() {
+    let raw;
     try {
-      const snap = JSON.parse(fs.readFileSync(this._file(), 'utf8'));
-      this.nextId = Number(snap.nextId) || 1;
-      for (const row of snap.identities || []) {
-        if (row.budget === undefined) row.budget = null;
-        this.byId.set(Number(row.agent_id), row);
-        if (row.agentWallet) this.byWallet.set(String(row.agentWallet).toLowerCase(), Number(row.agent_id));
-      }
+      raw = fs.readFileSync(this._file(), 'utf8');
     } catch (err) {
-      if (err.code !== 'ENOENT') {
-        logger.warn({ err: err.message }, 'agent-registry: load failed');
-      }
+      if (err.code === 'ENOENT') return; // first run
+      throw persistFailed(err, 'agent-registry: load failed');
     }
+    // Fail closed: starting empty would reissue agent_id 1..N to new callers,
+    // whose fresh sessions then read the earlier owners' books, and would drop
+    // every budget Y (null = unlimited).
+    let snap;
+    try {
+      snap = JSON.parse(raw);
+    } catch (err) {
+      throw persistFailed(err, 'agent-registry: load failed');
+    }
+    if (!snap || typeof snap !== 'object' || !Array.isArray(snap.identities)) {
+      throw persistFailed(new Error('identities list missing'), 'agent-registry: load failed');
+    }
+    let maxId = 0;
+    for (const row of snap.identities) {
+      if (row.budget === undefined) row.budget = null;
+      const id = Number(row.agent_id);
+      if (id > maxId) maxId = id;
+      this.byId.set(id, row);
+      if (row.agentWallet) this.byWallet.set(String(row.agentWallet).toLowerCase(), id);
+    }
+    // Never hand out an id at or below one already on disk.
+    this.nextId = Math.max(Number(snap.nextId) || 1, maxId + 1);
   }
 
   _save() {
