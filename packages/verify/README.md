@@ -73,7 +73,7 @@ counts only when the verifying key is trusted:
    RFC 7638 thumbprint equals a trusted kid. The default offline pin is the
    production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`.
 
-The CLI checks the tree head it fetches for the receipt. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list. The chain sender and fee payer must be those wallets. `--version` prints `chit402-verify 0.4.5`. Flags other than `--issuer-history` and `--json` exit 1.
+The CLI checks the tree head it fetches for the receipt. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list. The chain sender and fee payer must be those wallets. `--version` prints `chit402-verify 0.4.6`. Flags other than `--issuer-history` and `--json` exit 1.
 
 Anchor mode also checks a content-addressed issuer pin when the receipt or the head carries `issuer_key_pin`, or when you pass `--issuer-pin`. The pin is a 40-hex commit plus the SHA-256 of `docs/well-known/issuer-key.json`. A branch name is not fetched. A claimed pin requires `issuer_signature.jws` verified under that key. Unsigned envelope kids do not satisfy the check. The registration self-signature is checked when the file has one. A claimed era with no pin fails `ISSUER_PIN_DOWNGRADE`. Receipts that do not claim the era skip this check. The pin chain is Base Sepolia (`eip155:84532`). See [issuer-key-pin.md](../../docs/product/issuer-key-pin.md).
 
@@ -177,12 +177,26 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | Code | Meaning |
 |------|---------|
 | 0 | `VERIFIED`. Every check passed, including the on-chain payer check |
+| 0 | `VERIFIED_PUBLIC` (0.4.6). A public shell's attestation verified. Scope: amount, payee, tx, log position. The payer and fulfillment are not claimed |
 | 1 | `INVALID`. Tamper, a bad signature, a revoked key, a payer mismatch, `NOT_IN_LOG` |
 | 2 | `COULD_NOT_CHECK`. The log, the anchor, or the payer was not checked. An RPC timeout, a null or error result, a missing payer field, an unsigned public shell, or an unsupported rail is this code |
 
 The command is `chit402-verify <id|url|file|-> [--issuer-history <file>] [--json]`. `-h`/`--help` and `-V`/`--version` exit 0. Any other flag, and any argument after `--`, exits 1. `unsupported_version` is exit 2 and is decided before any chain RPC. No flag turns it into a pass.
 
 Offline, with no RPC reachable, a signed receipt is exit 2. It is not exit 0. A fabricated `payment.ref` is also exit 2: the chain was not checked, so it is not a mismatch. Old receipts still verify when the signed transfer is on chain and the log check passes. Solana credits the signed payee in USDC; a missing payee is exit 2. The Base payer read waits 12 seconds. Each Base anchor call waits 8 seconds. The Solana payer read waits 30 seconds, and each Solana anchor call waits 30 seconds. None of them retry. The epoch record is trusted only for a history key that was active at the verified head's `published_at` and was never revoked. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
+
+## Public receipt attestation (0.4.6)
+
+A public shell may carry `public_attestation: { "jws": "..." }`, or `{ "status": "pending" }` while it is being signed. The JWS typ is `chit402-public-receipt+jwt`. Its payload is not JSON: it is the line `chit402.public_receipt.v1` and a newline, then the RFC 8785 canonical claims. The claims are exactly `task_id`, `iss`, `issued_at` (minute), `attested_at` (minute), `payment` {`rail`, `ref`, `asset`, `payee`, `gross_amount`, `settled_amount`}, and `log` {`epoch`, `leaf_index`, `leaf_hash`}. `payload_version` and `v` are not allowed. The full-receipt hash is not part of it.
+
+`VERIFIED_PUBLIC` (exit 0) needs all of these:
+- The JWS parses to that exact shape, with canonical claim bytes.
+- The kid is a verified issuer-history key, its JWK thumbprint is the kid, the signature verifies, and the key is active and never revoked for the whole `attested_at` minute.
+- The id you asked for, and every outer shell field, equals the signed value. A swapped id is exit 1 `claim_mismatch`.
+- A fresh inclusion proof for the signed leaf hash at the signed index reaches a trusted, anchored head. A different leaf is exit 1 `leaf_not_bound`. A different index is exit 1. A different epoch is exit 2.
+- The Base receipt is on chain 8453, succeeded, is at least 12 blocks deep, and holds exactly one USDC Transfer to the signed payee for the signed `settled_amount`. Zero or two is exit 1 `transfer_mismatch`. An RPC that does not answer is exit 2.
+
+A malformed or invalid attestation is exit 1. It never falls back to `signed_receipt_unavailable`. A pending one is exit 2. Base only; Solana is a later release. Every published verifier from 0.3.0 to 0.4.5 rejects the tagged payload. `verifyIssuerJws` refuses this typ, so the attestation cannot stand in for a receipt, tree head, epoch, refusal, or history signature.
 
 ## Receipt versions
 

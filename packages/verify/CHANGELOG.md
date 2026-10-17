@@ -3,6 +3,23 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.6 — Public receipt attestation, VERIFIED_PUBLIC
+
+### Added
+- **`VERIFIED_PUBLIC`, exit 0.** A public shell with a `public_attestation` JWS is checked on its own path. The scope is the signed public fields: amount, payee, tx, and log position. The payer and fulfillment are not claimed; the verdict says `payer: not_claimed` and shows the on-chain sender, truncated, as a chain fact. The link from the receipt id to the log leaf rests on the issuer signature. Base only.
+- **Tagged, non-JSON payload.** `chit402.public_receipt.v1` plus a newline, then RFC 8785 canonical claims. typ `chit402-public-receipt+jwt`. The claims are an exact allowlist; `payload_version` and `v` are not allowed. Non-canonical bytes are exit 1 `invalid_jws`. Each published verifier from 0.3.0 to 0.4.5 rejects the payload.
+- **Key trust.** The kid must be a verified issuer-history entry whose JWK thumbprint is the kid, active and never revoked at the start and the end of the `attested_at` minute. An untrusted kid is exit 1 `key untrusted`. A key outside its window is exit 1 `key_window`.
+- **Subject and leaf binding.** The requested id and every outer shell field must equal the signed value (exit 1 `claim_mismatch`). The fresh proof is checked for the signed leaf hash at the signed index (`verifyAnchoredRoot` option `signedLeaf`). A different leaf is exit 1 `leaf_not_bound`, a different index exit 1 `leaf_index_mismatch`, a different epoch exit 2 `log_epoch_mismatch`.
+- **On-chain check.** Chain 8453, status 1, 12 blocks deep, and exactly one USDC Transfer to the signed payee for the signed settled amount. Zero or two is exit 1 `transfer_mismatch`. An RPC that does not answer or returns null is exit 2.
+- A pending attestation is exit 2 `public_attestation_pending`. A present but malformed or invalid attestation is exit 1; it never falls back to `signed_receipt_unavailable`.
+
+### Security
+- **`verifyIssuerJws` refuses typ `chit402-public-receipt+jwt`** (`typ_mismatch`), so an attestation cannot verify as a receipt, tree head, epoch, refusal, or history document.
+- Old receipts and holder documents verify as in 0.4.5. A holder JWS that does not verify never consults the attestation. `BUILD_DIGEST.txt` moved because the verifier sources changed. The pinned epoch genesis digests did not. Not published. No deploy.
+
+### Changed
+- `@xfuel/verify` 0.4.6 depends on exactly `"chit402-verify": "0.4.6"`. `--version` prints `chit402-verify 0.4.6`.
+
 ## 0.4.5 — Signed ids, unsigned row hash, claim mismatch
 
 ### Security

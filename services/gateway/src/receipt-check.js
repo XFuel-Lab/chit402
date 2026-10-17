@@ -104,7 +104,8 @@ function dropRequestBody(req) {
 }
 
 function countBucket(result) {
-  if (result === 'verified') return 'verified';
+  // verified_public (0.4.6) is exit 0. It is counted with verified.
+  if (result === 'verified' || result === 'verified_public') return 'verified';
   if (result === 'invalid') return 'invalid';
   return 'could_not_check';
 }
@@ -114,7 +115,7 @@ function requestId() {
 }
 
 export function hintForOverall(overall, verdict) {
-  if (overall === 'VERIFIED') return null;
+  if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return null;
   const step = verdict && typeof verdict.next_step === 'string' ? verdict.next_step.trim() : '';
   if (step) return step;
   if (overall === 'NOT_IN_LOG') return 'This receipt is not in the public log. The book row is unchanged.';

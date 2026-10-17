@@ -40,6 +40,9 @@ export const DEFAULT_TRUSTED_JWKS_HOSTS = ['api.chit402.com'] as const;
 
 export const KEY_UNTRUSTED = 'key untrusted';
 
+/** JWS typ of the 0.4.6 public receipt attestation. Only public-attestation.ts accepts it. */
+export const PUBLIC_RECEIPT_TYP = 'chit402-public-receipt+jwt';
+
 export function resolvePinnedIssuerJwk(receipt: ReceiptWithIssuerJwk): Es256Jwk | null {
   const jwk = receipt.issuer_signature?.issuer_jwk as Es256Jwk | undefined;
   if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) return null;
@@ -112,10 +115,19 @@ export function verifyIssuerJws(
   }
 
   const [headerB64, payloadB64, signatureB64] = parts;
-  let header: { alg?: string; kid?: string };
+  let header: { alg?: string; kid?: string; typ?: string };
   let payload: Record<string, unknown>;
   try {
     header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+  } catch {
+    return { valid: false, reason: 'json_parse_error' };
+  }
+  // A public attestation is never a receipt, head, epoch, refusal, or history
+  // document. Its payload is tagged, not JSON, so it also fails the parse below.
+  if (header && typeof header === 'object' && header.typ === PUBLIC_RECEIPT_TYP) {
+    return { valid: false, reason: 'typ_mismatch' };
+  }
+  try {
     payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
   } catch {
     return { valid: false, reason: 'json_parse_error' };

@@ -7,6 +7,13 @@ import { ethers } from 'ethers';
 import config from './config.js';
 import logger from './logger.js';
 import { initAIListener, getAIListener } from './ai-listener.js';
+import {
+  configurePublicAttestationStore,
+  publicAttestationServeEnabled,
+  publicAttestationSignEnabled,
+} from './public-attestation-store.js';
+import { createPublicAttestationWorker } from './public-attestation-worker.js';
+import { attestationShellDrift } from './public-attestation.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
@@ -1067,11 +1074,50 @@ export async function createApp() {
       onError: (err) => logger.error({ err: err.message }, 'receipt log bundle upload failed'),
     });
   }
+  // Public attestation (verifier 0.4.6). The store always loads so a
+  // stored row can be served; the worker runs only with
+  // PUBLIC_ATTESTATION_SIGN=true. Serving is PUBLIC_ATTESTATION_SERVE=true.
+  // Deploy order: publish 0.4.6, then sign and store, then serve.
+  const publicAttestationAlert = (event) => logger.error(event, 'public attestation alert');
+  const publicAttestations = configurePublicAttestationStore({
+    file: config.taskStore?.persist && agentsDir ? path.join(agentsDir, 'public-attestations.jsonl') : null,
+    alert: publicAttestationAlert,
+  });
+  const publicAttestationWorker = publicAttestationSignEnabled()
+    ? createPublicAttestationWorker({
+      store: publicAttestations,
+      tree: getReceiptMerkleTree,
+      findEntry: (taskId) => usageSettled.findByTask(taskId),
+      holderJws: (taskId) => {
+        let task = null;
+        try {
+          task = _findTask(getAIListener(), taskId);
+        } catch {
+          task = null;
+        }
+        return task?.issuerSignature?.jws || task?.issuer_signature?.jws || null;
+      },
+      alert: publicAttestationAlert,
+    })
+    : null;
+  if (publicAttestationWorker && process.env.NODE_ENV !== 'test') publicAttestationWorker.start();
   setBookRowWrittenHook(async (entry) => {
+    let leafAppended = false;
     try {
-      if (entry?.task_id) await getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+      if (entry?.task_id) {
+        const appended = await getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+        leafAppended = appended != null;
+      }
     } catch (err) {
       logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt merkle append failed');
+    }
+    // Queued only after the leaf exists. Signing is async, off this path.
+    if (leafAppended && publicAttestationWorker) {
+      try {
+        publicAttestationWorker.enqueue(entry);
+      } catch (err) {
+        logger.warn({ err: err.message, taskId: entry?.task_id }, 'public attestation enqueue failed');
+      }
     }
     scheduleBookWebhook(entry, {
       registry: getBookWebhookRegistry(),
@@ -2961,8 +3007,18 @@ export async function createApp() {
     };
   }
 
-  async function sendPublicShell(res, receipt, { wantsJson, taskId }) {
+  async function sendPublicShell(res, receipt, { wantsJson, taskId, attestation = false }) {
     const { shell, inclusion } = await shellFor(receipt, taskId);
+    // Read only: a stored attestation or a pending marker. Never signs.
+    if (attestation && publicAttestationServeEnabled()) {
+      const served = publicAttestations.servedAttestation(shell.task_id || taskId);
+      const drift = served?.jws ? attestationShellDrift(served.jws, shell) : null;
+      if (drift) {
+        logger.error({ taskId: shell.task_id, field: drift }, 'public attestation withheld: shell differs from signed claims');
+      } else if (served) {
+        shell.public_attestation = served;
+      }
+    }
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
@@ -3326,6 +3382,9 @@ export async function createApp() {
         return await sendPublicShell(res, receipt, {
           wantsJson,
           taskId: receipt?.task_id || taskId,
+          // Native task receipts only. Foreign, OpenRouter, late, and spend
+          // shells never carry an attestation.
+          attestation: task != null,
         });
       };
 
@@ -5652,7 +5711,7 @@ export async function createApp() {
     res.status(500).json({ error: 'internal', message: 'Internal server error' });
   });
 
-  app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs, ownerView, saltStore };
+  app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs, ownerView, saltStore, publicAttestations, publicAttestationWorker };
 
   return app;
 }

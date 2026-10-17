@@ -30,7 +30,8 @@ export function normalizeClient(value) {
 }
 
 export function resultOfOverall(overall) {
-  if (overall === 'VERIFIED') return 'VERIFIED';
+  // VERIFIED_PUBLIC (0.4.6) is exit 0. It counts with VERIFIED, not as a could-not-check.
+  if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return 'VERIFIED';
   if (overall === 'INVALID' || overall === 'NOT_IN_LOG') return 'INVALID';
   return 'COULD_NOT_CHECK';
 }

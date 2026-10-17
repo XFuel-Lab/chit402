@@ -55,6 +55,14 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'head_key_untrusted', text: 'The tree head is signed by a key this verifier does not pin. Exit 1.' },
   { id: 'inclusion_failed', text: 'The inclusion proof does not reach the signed root. Exit 1.' },
   { id: 'root_mismatch', text: 'The inclusion root does not match the signed head. Exit 1.' },
+  { id: 'verified_public', text: 'VERIFIED_PUBLIC (0.4.6, exit 0). The public attestation on the shell verified: its signature and key window, the amount, payee, and tx against one on-chain Base USDC transfer of the signed settled amount, and the signed log leaf and index against a fresh proof and anchor. It does not claim the payer or fulfillment. The link from the receipt id to the log leaf rests on the issuer signature.' },
+  { id: 'public_attestation_pending', text: 'The shell says the public attestation is pending. It is signed after the log leaf exists. Exit 2.' },
+  { id: 'invalid_jws', text: 'The public attestation is malformed: wrong typ, no tag line, a claim outside the allowlist, or non-canonical claims. Exit 1. It never falls back to signed_receipt_unavailable.' },
+  { id: 'leaf_not_bound', text: 'The log served a leaf that is not the leaf the issuer signed. Exit 1.' },
+  { id: 'leaf_index_mismatch', text: 'The log served a leaf index that is not the index the issuer signed. Exit 1.' },
+  { id: 'log_epoch_mismatch', text: 'The log answered for a different epoch than the one the issuer signed. Exit 2.' },
+  { id: 'transfer_mismatch', text: 'The Base transaction does not hold exactly one USDC transfer of the signed settled amount to the signed payee, or it reverted or is on another chain. Exit 1.' },
+  { id: 'public_rail_unsupported', text: 'Public attestations are checked on Base only. Exit 2.' },
 ];
 
 export default function VerifyDocs() {
@@ -86,6 +94,13 @@ export default function VerifyDocs() {
             The public page is an unsigned shell. That is <code>signed_receipt_unavailable</code> (exit 2) unless
             the shell has no inclusion and a fresh <code>not_in_tree</code> sits beside a verified head. Then it
             is <code>NOT_IN_LOG</code>. The signed receipt stays on the owner view.
+          </p>
+          <p>
+            From 0.4.6 a shell may carry <code>public_attestation</code>: a separate issuer signature over the
+            public fields of a collected Base USDC receipt. When it verifies, with a fresh log proof and one
+            matching on-chain transfer, the result is <code>VERIFIED_PUBLIC</code> (exit 0). It does not claim
+            the payer or fulfillment. A malformed or invalid attestation is exit 1. A pending one is exit 2.
+            Older verifiers reject it.
           </p>
           <p>
             History is always on. <code>--issuer-history &lt;file&gt;</code> must prefix-extend the snapshot

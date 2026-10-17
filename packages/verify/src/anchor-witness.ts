@@ -894,6 +894,26 @@ export interface VerifyAnchoredRootInput {
     solana?: unknown;
     issuer_signature?: { jws?: string; issuer_jwk?: Es256Jwk };
   } | null;
+  /**
+   * Public attestation (0.4.6): the leaf the issuer signed. The proof is
+   * checked for this leaf hash at this index. The leaf is not recomputed
+   * from a row hash. A served leaf, index, or epoch that differs fails.
+   */
+  signedLeaf?: { leaf_hash: string; leaf_index: number; epoch: number } | null;
+}
+
+function signedLeafReason(
+  signed: { leaf_hash: string; leaf_index: number; epoch: number },
+  inclusion: AnchorInclusion,
+  head: AnchorHead,
+): string | null {
+  const servedEpoch = (inclusion as { epoch?: unknown }).epoch;
+  if (servedEpoch != null && Number(servedEpoch) !== signed.epoch) return 'log_epoch_mismatch';
+  const headEpoch = (head as { epoch?: unknown } | null)?.epoch;
+  if (headEpoch != null && Number(headEpoch) !== signed.epoch) return 'log_epoch_mismatch';
+  if (typeof inclusion.leaf === 'string' && inclusion.leaf.toLowerCase() !== signed.leaf_hash) return 'leaf_not_bound';
+  if (inclusion.leaf_index != null && Number(inclusion.leaf_index) !== signed.leaf_index) return 'leaf_index_mismatch';
+  return null;
 }
 
 /**
@@ -920,6 +940,9 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     else if (input.head.tree_size != null && input.inclusion.tree_size != null
       && Number(input.head.tree_size) !== Number(input.inclusion.tree_size)) {
       inclusionReason = 'tree_size_mismatch';
+    } else if (input.signedLeaf && typeof input.inclusion.leaf === 'string'
+      && input.inclusion.leaf.toLowerCase() !== input.signedLeaf.leaf_hash) {
+      inclusionReason = 'leaf_not_bound';
     } else inclusionReason = pendingGeometryReason(input.inclusion) || 'pending_anchor';
   } else if (inclusionError === 'not_in_tree') {
     inclusionReason = 'not_in_tree';
@@ -933,6 +956,23 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     inclusionReason = 'root_mismatch';
   } else if (input.head.tree_size != null && Number(input.head.tree_size) !== Number(input.inclusion.tree_size)) {
     inclusionReason = 'tree_size_mismatch';
+  } else if (input.signedLeaf) {
+    const bound = signedLeafReason(input.signedLeaf, input.inclusion, input.head);
+    if (bound) {
+      inclusionReason = bound;
+    } else {
+      const leaf = Buffer.from(input.signedLeaf.leaf_hash, 'hex');
+      leafSource = 'public_attestation';
+      leafHex = leaf.toString('hex');
+      inclusionValid = verifyMerkleInclusion(
+        leaf,
+        input.signedLeaf.leaf_index,
+        Number(input.inclusion.tree_size),
+        root,
+        input.inclusion.proof || [],
+      );
+      if (!inclusionValid) inclusionReason = 'inclusion_failed';
+    }
   } else {
     const row = rowHashFrom(input.receipt, input.inclusion);
     let leaf: Buffer | null = null;
