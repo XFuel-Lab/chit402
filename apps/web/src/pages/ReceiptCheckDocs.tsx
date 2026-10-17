@@ -81,7 +81,7 @@ export default function ReceiptCheckDocs() {
           <p style={styles.note}>
             <code>GET /receipt/{RECEIPT_ID}</code> returns 200. <code>GET /receipt/{RECEIPT_ID}/preimage</code>{' '}
             returns 404: the canonical object was not stored with that document. The same path returns the
-            stored bytes once a receipt is issued with them. <code>@xfuel/verify</code> 0.3.1 is published;
+            stored bytes once a receipt is issued with them. <code>chit402-verify</code> 0.4.2 is published;
             the command above checks the issuer-history pin on the receipt file without that preimage.
           </p>
         </div>

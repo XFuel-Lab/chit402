@@ -54,7 +54,7 @@ Bankr wallet funds Base USDC x402. Agent signs `PAYMENT-SIGNATURE` (CDP v2).
 ## Example agent return
 
 ```text
-Paid $0.01 USDC on Base for xfuel/auto (openrouter) — receipt: https://api.chit402.com/receipt/openai-abc123
+Paid $0.002 USDC for xfuel/auto (openrouter) — receipt: <verify_url from the response>
 ```
 
 JSON/tool payload should include top-level `verify_url` when structured output is used.

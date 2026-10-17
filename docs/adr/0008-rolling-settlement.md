@@ -1,6 +1,8 @@
 # ADR 0008 — Rolling Settlement: Charge the Previous Call
 
 Status: **Accepted — live on public gateway (`api.chit402.com`) `/task-request` since 2026-08-16** (was briefly named `api-testnet.xfuel.app` in the demo era; that hostname is retired). `/v1` stays free (ADR 0006). Date: 2026-08-13.
+> **Pricing superseded.** The formula below is the 2026-08 rate. Current pricing is `max($0.002, provider_cogs + 1%)`, plus $0.10 for a Tier-2 settlement proof (`quoteFromCogs` in `pricing.js`). There is no monthly plan. The rolling-settlement ordering in this ADR still holds.
+
 Related: [ADR 0002](./0002-base-settlement-home.md), [ADR 0006](./0006-receipts-are-not-a-paid-feature.md), [X402_SCHEME_MIGRATION.md](../X402_SCHEME_MIGRATION.md).
 
 ## Context

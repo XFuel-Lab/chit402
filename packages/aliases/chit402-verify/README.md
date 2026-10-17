@@ -4,6 +4,8 @@ Offline verification for Chit402 receipts — verify payment binding and output 
 
 npm: `chit402-verify` · License: Apache-2.0 · Docs: https://chit402.com
 
+Current version: 0.4.2. `@xfuel/verify` is an alias pinned to the same version, and the `xfuel-verify` command stays.
+
 ## Installation
 
 ```bash
@@ -63,14 +65,11 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verif
 
 | Code | Meaning |
 |------|---------|
-| 0 | Verified |
-| 1 | Verification failed |
-| 2 | Partial (binding ok, nullifier not checked) |
-| 3 | Input error |
+| 0 | VERIFIED |
+| 1 | INVALID |
+| 2 | COULD_NOT_CHECK |
 
-## Publish
-
-`publishConfig` sets `access` to `public` and does not name an owner. On the registry, `chit402-verify` (latest `0.2.0`) and `@xfuel/verify` (latest `0.2.1`) are both maintained by the npm user `xfuel`. Publish `@xfuel/verify` first. `npm whoami` must print `xfuel`. A `404` on `PUT https://registry.npmjs.org/chit402-verify` is that login, not a missing package and not a new scope: the name already exists.
+The issuer-history check is always on. `VERIFIED_NO_KEY_WINDOW` was retired in 0.4.
 
 ## Documentation
 

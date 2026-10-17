@@ -129,10 +129,6 @@ export default function Pricing() {
               <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> — Desk + $0.10 Tier-2
               (fail closed if proving unavailable)
             </li>
-            <li>
-              <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available
-              to buy yet
-            </li>
           </ul>
           <p style={{ ...styles.muted, marginTop: '0.85rem' }}>
             Volume and premier stamp houses win because the receipt is flat and boring — high

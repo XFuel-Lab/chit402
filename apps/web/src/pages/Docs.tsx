@@ -248,15 +248,14 @@ export default function Docs() {
               <strong>2026-09-30</strong> — the receipt root is published daily on Base and on Solana.
               The current head is{' '}
               <a href={`${apiHost}/v1/receipts/tree/head`}>GET /v1/receipts/tree/head</a>.{' '}
-              <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that the anchor transaction
-              is present. It is not a full inclusion check.
+              <code>npx chit402-verify</code> (0.4.2 or later) checks a receipt against the signed log.
             </li>
             <li>
               <strong>2026-10-06</strong> — the public receipt log is durable and tied to an epoch.
             </li>
             <li>
               <strong>2026-10-03</strong> — a blocked spend can return a signed refusal
-              (<code>chit402.refusal.v1</code>). <code>@xfuel/verify</code> 0.3.1 verifies it.
+              (<code>chit402.refusal.v1</code>). <code>chit402-verify</code> 0.4.2 verifies it.
             </li>
             <li>
               <strong>2026-10-04</strong> — public spend audit at <Link to="/audit">/audit</Link>.

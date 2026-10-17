@@ -132,7 +132,7 @@ export default function Layout() {
               <>
                 <a href="https://github.com/XFuel-Lab/chit402/blob/main/WHITEPAPER.md" target="_blank" rel="noreferrer">Whitepaper</a>
                 <a href="https://www.npmjs.com/package/chit402-sdk" target="_blank" rel="noreferrer">chit402-sdk</a>
-                <a href="https://www.npmjs.com/package/@xfuel/verify" target="_blank" rel="noreferrer">@xfuel/verify</a>
+                <a href="https://www.npmjs.com/package/chit402-verify" target="_blank" rel="noreferrer">chit402-verify</a>
                 <NavLink to="/trust">Trust</NavLink>
                 <NavLink to="/register">Register</NavLink>
                 <NavLink to="/activity">Activity</NavLink>

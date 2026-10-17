@@ -8,7 +8,7 @@ const JWK_X = '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk';
 const JWK_Y = 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34';
 
 const verifyCli = `# Pin JWKS once (out-of-band), then verify a receipt JSON file.
-# The CLI is the xfuel-verify bin inside the published package @xfuel/verify.
+# The CLI ships in the published package chit402-verify (alias @xfuel/verify; xfuel-verify bin kept).
 curl -sS -o chit402-issuer.jwks.json ${JWKS_PRIMARY}
 npx -p @xfuel/verify xfuel-verify receipt.json --jwks-file chit402-issuer.jwks.json
 

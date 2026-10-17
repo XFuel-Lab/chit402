@@ -263,7 +263,8 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.match(book, /id="what-the-book-is"/, 'Book explains what it is');
   assert.match(book, /client-attested/);
   assert.match(book, /chit402\.refusal\.v1/);
-  assert.match(book, /not a full inclusion check/i);
+  assert.match(book, /npx chit402-verify<\/code> \(0\.4\.2 or later\)/);
+  assert.doesNotMatch(book, /0\.3\.2 has not shipped/);
   assert.doesNotMatch(book, /prepaid hold|holds are live/i);
   assert.doesNotMatch(book, /chit-1e57cdd7/);
 });

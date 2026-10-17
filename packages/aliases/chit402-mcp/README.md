@@ -1,6 +1,6 @@
 # chit402-mcp
 
-MCP server for Chit402 — OpenAI-compatible door; signed spend receipt after USDC settle.
+MCP server for Chit402 receipts: a signed spend receipt after USDC settles, for every paid agent call. Uses the OpenAI chat format.
 
 **First hour:** `list_models` then `chat_completions` — that is unmetered `/v1`.
 `submit_inference` is the **paid** door and returns 402 without a payer.

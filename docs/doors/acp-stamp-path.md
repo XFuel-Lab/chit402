@@ -46,5 +46,5 @@ Register once (POST /v1/agents/register) to hold the possession-gated book.
 ## Do not
 
 - Fork ACP or replace Virtuals wallet flows
-- Lead with ~$0.01 floor pricing in partner copy
+- Lead with floor pricing in partner copy (the product is the $0.002 receipt, not cheap inference)
 - Default to SP1 — signed ES256 receipt is table stakes

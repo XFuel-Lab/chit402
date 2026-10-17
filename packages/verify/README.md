@@ -4,7 +4,7 @@ Offline verification for Chit402 receipts — verify payment binding and output 
 
 npm: `chit402-verify` · License: Apache-2.0 · Docs: https://chit402.com
 
-`@xfuel/verify` 0.4.1 is an alias pinned to exactly this version. The `xfuel-verify` command stays.
+`@xfuel/verify` is an alias pinned to exactly this version (0.4.2). The `xfuel-verify` command stays.
 
 ## Installation
 
