@@ -13,7 +13,7 @@ skills/chit402-receipt/
   catalog.json          # Bankr catalog schema v1
   references/
     api.md              # Endpoints, 402/200 shapes
-    verify-offline.md   # issuer_jwk pin + JWKS fallback + payer bind
+    verify-offline.md   # issuer pin + CLI payer check
 ```
 
 ## Bankr install (one-liner)

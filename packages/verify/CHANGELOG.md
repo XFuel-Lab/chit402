@@ -3,7 +3,9 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## 0.4.3 — Payer check is on in the CLI
+## 0.4.4 — Payer check is on in the CLI
+
+Numbered 0.4.4. 0.4.3 is the other open verifier change.
 
 ### Security
 - **Exit 0 includes the on-chain payer check.** `chit402-verify` calls `verifyReceipt` with `checkPayer: true`. A USDC transfer that does not match the signed payer, payee, or amount is exit 1 `payment_mismatch`. An RPC timeout, a null receipt, an RPC error, a missing payer field, an unsigned public shell, or an unsupported rail is exit 2 `payer_unchecked` (or the existing log reason when the log was also not checked). It is not exit 0. There is no flag to turn the check off. A fabricated `payment.ref` (a rail this verifier cannot read, or a transaction the RPC does not have) is exit 2, not exit 1: the chain did not disagree, it could not be checked. Solana requires the signed payee to be credited at least the amount in USDC. A legacy `transfer` of another token does not count. A Solana receipt with no signed payee is exit 2. `BUILD_DIGEST.txt` moved because the verifier sources changed. The pinned epoch genesis digests did not. Not published. No deploy.
@@ -15,7 +17,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - The unused pre-0.4 argument parser and `legacyMain` are gone. The running command is the locked verdict.
 
 ### Changed
-- `@xfuel/verify` 0.4.3 depends on exactly `"chit402-verify": "0.4.3"`. `--version` prints `chit402-verify 0.4.3`. Not published. No deploy.
+- `@xfuel/verify` 0.4.4 depends on exactly `"chit402-verify": "0.4.4"`. `--version` prints `chit402-verify 0.4.4`. Not published. No deploy.
 
 ## 0.4.2 — Solana anchor fee-payer pin is a list
 
