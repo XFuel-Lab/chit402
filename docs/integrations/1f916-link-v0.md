@@ -95,22 +95,16 @@ Facilitator JSON shapes differ. Coinbase CDP returns `transaction`. Other settle
 3. **Check payer, payee, and amount against the on-chain transaction.** Read `caller_binding.payer_wallet`, `payment.payee`, `payment.asset`, `payment.gross_amount`, and `payment.ref` from the verified JWS claims. On Base, the USDC `Transfer` log in that transaction, from the payer to the payee, of that asset, must sum to at least `gross_amount`. A mismatch between the verified claims and the unsigned outer `payment` / `caller_binding` fails the receipt.
 4. **Compare fingerprints.** For `fingerprint_alg` `1f916-entry-hash`, compare `agent_record_entry.fingerprint` to the hash the registry publishes on that log entry. For `provisional-sha256-jcs`, hash the JCS form of the entry and compare. `registry` is `1f916`.
 
-`xfuel-verify` covers steps 2 and 3 for a receipt JSON file. It does not compare `agent_record_entry.fingerprint`.
+`chit402-verify` (CLI for step 2, library `checkPayer` for step 3) covers steps 2 and 3 for a receipt JSON file. It does not compare `agent_record_entry.fingerprint`.
 
 `scripts/verify-1f916-link.mjs` fetches the receipt, checks the signature against the Chit JWKS, checks the signed book chain, checks the Base transaction on a public RPC, and compares `agent_record_entry.fingerprint` to the hash 1F916 publishes for the claimed identity-log event. It prints PASS or FAIL per step. Node built-ins only.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/<chit_receipt_id>?format=json" -o receipt.json
-npx xfuel-verify receipt.json --fetch-jwks --check-payer
+npx chit402-verify receipt.json
 ```
 
-`--fetch-jwks` loads `verification.jwks_uri` when the host is allowlisted (`api.chit402.com`). For any other issuer, pass the published key explicitly:
-
-```bash
-npx xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
-```
-
-`--check-payer` queries Base or Solana and checks payer, payee, asset, and amount. `xfuel-verify` does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
+The CLI trusts the Chit issuer key. The on-chain payer check is library-only: `verifyReceipt(receipt, { checkPayer: true })` from `chit402-verify` queries Base or Solana and checks payer, payee, asset, and amount. It does not run step 4. `scripts/verify-1f916-link.mjs` does, against the specimen file. Issuance still does not stamp `agent_record_entry` on the receipt.
 
 The instruction and the money are bound when steps 2, 3, and 4 succeed. A receipt with no `agent_record_entry` can still verify as a payment. It does not bind an Agent Record entry.
 

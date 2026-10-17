@@ -32,34 +32,30 @@ console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
 ### CLI
 
 ```bash
-# Local binding verification (no network required)
+# One receipt: an id, a URL, a file, or - for stdin.
 npx chit402-verify receipt.json
+curl -s "https://api.chit402.com/receipt/RECEIPT_ID?format=json" | npx chit402-verify -
 
-# Hash the canonical object (must match signed payload_hash) and read not_after
-# from a pinned issuer-history snapshot. Both flags are offline.
-npx chit402-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
+# Offline issuer history (the check is always on)
+npx chit402-verify receipt.json --issuer-history issuer-history.json
 
-# With on-chain nullifier check (requires network)
-npx chit402-verify receipt.json --check-nullifier
-
-# Output as JSON
+# Machine-readable output
 npx chit402-verify receipt.json --json
-
-# From stdin
-curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verify -
 ```
+
+The 0.4 CLI accepts exactly: one receipt argument, `--issuer-history <file>`, `--json`, `-h`/`--help`, and `-V`/`--version`. Any other flag exits 1 (`removed_flag`). `BASE_RPC_URL` and `SOLANA_RPC_URL` set the RPC endpoints for the anchor check (public RPCs otherwise).
 
 ## What This Verifies
 
-| Check | Requires Network? | Description |
-|-------|-------------------|-------------|
-| Payment binding | No | Recompute commitment from receipt fields |
-| Issuer signature | No, unless `--fetch-jwks` | ES256. Trusted via JWKS (by kid) or the pinned production kid. Embedded `issuer_jwk` alone is not enough. |
-| Output hash | No | Hash is on the receipt |
-| On-chain settlement | Yes | Query Base RPC for tx |
-| Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
-| Canonical preimage | No | `--canonical-preimage` is SHA-256'd and matched to signed `payload_hash` |
-| Issuer history | No, with `--issuer-history` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match |
+| Check | Where | Description |
+|-------|-------|-------------|
+| Payment binding | CLI and library | Recompute commitment from receipt fields |
+| Issuer signature | CLI and library | ES256. Trusted via JWKS (by kid) or the pinned production kid. Embedded `issuer_jwk` alone is not enough. |
+| Output hash | CLI and library | Hash is on the receipt |
+| Log inclusion and anchors | CLI and library | Signed tree head, inclusion proof, Base and Solana anchors |
+| Issuer history | CLI and library, always | `iat` is inside the kid's `not_before` / `not_after` |
+| On-chain payer / settlement | Library only | `verifyReceipt(receipt, { checkPayer: true })` |
+| Nullifier anchor | Library only | `verifyReceipt(receipt, { checkNullifier: true })` |
 
 ## Exit Codes (CLI)
 

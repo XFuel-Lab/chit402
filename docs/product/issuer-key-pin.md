@@ -24,24 +24,13 @@ The pin `chain_id` is `eip155:84532`. Base mainnet (`eip155:8453`) is `ISSUER_PI
 
 ## Anchor check
 
-`xfuel-verify receipt.json inclusion.json head.json --rpc` runs the pin check when the receipt or the head has `issuer_key_pin`, or when `--issuer-pin` is set.
+The pin check runs when the receipt or the head has `issuer_key_pin`. The 0.4 CLI (`npx chit402-verify receipt.json`) has no pin flags; the `--issuer-pin*`, `--issuer-witnesses`, `--issuer-prior-pin`, `--issuer-control` and `--rpc` flags were removed and exit 1. The rules below describe the check.
 
-```bash
-xfuel-verify receipt.json inclusion.json head.json --rpc \
-  --issuer-pin docs/well-known/issuer-key.json \
-  --issuer-pin-commit <40-hex> \
-  --issuer-pin-sha256 <64-hex>
-```
-
-`--issuer-pin-sig` is the sibling signature. `--issuer-witnesses` is a saved `/api/witnesses` document. The command reads those files. It does not GET the commit.
-
-`--issuer-witnesses`, `--issuer-pin-sig`, `--issuer-prior-pin`, `--issuer-control`, `--issuer-pin-commit`, and `--issuer-pin-sha256` do not start the check. On a receipt that does not claim `issuer_key_pin`, those flags alone leave the anchor result unchanged. They are not `ISSUER_PIN_DOWNGRADE`. A witnesses file does not stand in for the pin.
-
-A claimed era with no pin file is `ISSUER_PIN_DOWNGRADE`. A file whose bytes are not the stated hash is `ISSUER_PIN_HASH_MISMATCH`. A receipt key that is not the pin is `ISSUER_PIN_MISMATCH`. A receipt that does not claim the era, and a command that does not pass `--issuer-pin`, keeps the previous anchor result.
+A claimed era with no pin file is `ISSUER_PIN_DOWNGRADE`. A file whose bytes are not the stated hash is `ISSUER_PIN_HASH_MISMATCH`. A receipt key that is not the pin is `ISSUER_PIN_MISMATCH`. A receipt that does not claim the era keeps the previous anchor result.
 
 When the receipt or the head claims `issuer_key_pin`, a compact JWS that verifies under the pin key is required. The kid is the one in that protected header, and a v11 `issuer_root.kid` is the one in the verified payload. Unsigned `issuer_signature.kid`, `issuer_jwk`, and `issuer_root.kid` do not satisfy the check. Stripping the JWS and leaving those fields equal to the pin is `ISSUER_PIN_MISMATCH`. A JWS that does not verify under the pin is the same code.
 
-A source fills a missing commit or file hash only when that source already names both. A commit on the receipt and a hash on the head are not one pin (`ISSUER_PIN_DOWNGRADE`). Commit hex is lowercased before it is compared, the same way as the file hash. If the receipt and the head both name `issuer_key_pin`, the commit, path, and file hash must be the same, and the same as `--issuer-pin-commit` / `--issuer-pin-sha256` when those are set.
+A source fills a missing commit or file hash only when that source already names both. A commit on the receipt and a hash on the head are not one pin (`ISSUER_PIN_DOWNGRADE`). Commit hex is lowercased before it is compared, the same way as the file hash. If the receipt and the head both name `issuer_key_pin`, the commit, path, and file hash must be the same.
 
 ## Rotation
 

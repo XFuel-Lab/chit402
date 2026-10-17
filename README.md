@@ -96,7 +96,7 @@ Keys stay in the host environment. They are not read from a file in this repo.
 `GET /v1/receipts/:task_id/inclusion` proves one leaf against a signed head. When that head is not itself anchored and a later anchored signed head contains the leaf, the JSON adds optional `covered_by`. It names the smallest such head: `epoch`, `tree_size`, `root`, `inclusion_url` (`/v1/receipts/<task_id>/inclusion?tree_size=<N>`), and `anchors` (`anchors.base.tx`, and `anchors.solana.slot` / `anchors.solana.signature` when Solana is present). The field is omitted when the head is itself anchored. A quarantined head is not served and is not used as `covered_by`. Existing fields stay as they are. Detail: [docs/product/receipt-merkle.md](docs/product/receipt-merkle.md).
 
 ```bash
-npx chit402-verify receipt.json inclusion.json head.json --rpc
+npx chit402-verify receipt.json   # fetches inclusion, head and anchors; BASE_RPC_URL / SOLANA_RPC_URL optional
 ```
 
 That checks the inclusion proof, fetches the Solana transaction and requires the memo to contain the root, and checks the Base calldata the same way. It prints what this proves and what it does not prove.

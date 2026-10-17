@@ -50,7 +50,7 @@ A payment receipt at payload version 9 also signs that pair inside its own issue
 
 If that side's transaction is already confirmed and `|published_at - block_ts|` is outside the bound for that chain, the side stays `pending` with reason `anchor_clock_drift` and the head does not claim it is anchored. The next head samples that side again. No new environment variable. The Base and Solana keys already in the environment are unchanged.
 
-The offline verifier checks the same bound when you pass `--rpc` (and `--solana-rpc` for a Solana anchor). It fetches the anchor transaction's block time. It also refuses a receipt whose own timestamp is later than `published_at` plus the tolerance, so a later receipt cannot be treated as covered by an older anchor. Without `--rpc` the check is reported as skipped, not passed.
+`chit402-verify` checks the same bound (RPC endpoints from `BASE_RPC_URL` / `SOLANA_RPC_URL`, public RPCs otherwise). It fetches the anchor transaction's block time. It also refuses a receipt whose own timestamp is later than `published_at` plus the tolerance, so a later receipt cannot be treated as covered by an older anchor. If the anchor cannot be fetched the result is COULD_NOT_CHECK (exit 2), not a pass.
 
 ```bash
 node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head head.json --rpc "$BASE_RPC_URL"
@@ -60,7 +60,7 @@ node services/gateway/scripts/verify-receipt.mjs receipt.json "$SECRET" --head h
 
 The leaf for this receipt is in the issuer's tree of the stated size, under the stated root. A consistency proof shows an earlier root is a prefix of a later one. A signed head shows the issuer published that root. A Base transaction whose calldata is the root, and a Solana memo that contains the root, show that root was published on those chains.
 
-`chit402-verify receipt.json inclusion.json head.json --rpc` checks the inclusion, fetches the Solana transaction, and checks the Base calldata. It prints the same boundary.
+`npx chit402-verify receipt.json` checks the inclusion, fetches the Solana transaction, and checks the Base calldata. It prints the same boundary.
 
 ## What this does not prove
 

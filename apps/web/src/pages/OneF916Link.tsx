@@ -24,11 +24,10 @@ const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
 const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
 const STAMP_SCRIPT = 'services/gateway/scripts/stamp-foreign-payout.mjs';
 
-const verifyCli = `npx -p @xfuel/verify xfuel-verify receipt.json --fetch-jwks --check-payer
+const verifyCli = `npx chit402-verify receipt.json
 
-# A facilitator (or any other issuer) publishes its own key.
-# --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
-# npx -p @xfuel/verify xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
+# The on-chain payer check is library-only:
+# verifyReceipt(receipt, { checkPayer: true }) from chit402-verify
 
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
@@ -238,7 +237,7 @@ export default function OneF916Link() {
             </li>
           </ol>
           <p>
-            <code>npx -p @xfuel/verify xfuel-verify</code> runs the signature and the chain check on a receipt file.
+            <code>npx chit402-verify</code> runs the signature and log checks on a receipt; the payer check is the library's <code>checkPayer</code>.
             It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt
             fetch, the issuer signature, the book chain, the Base transfer, and the entry fingerprint.
             These specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public
