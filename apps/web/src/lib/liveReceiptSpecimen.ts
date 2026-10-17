@@ -1,5 +1,5 @@
 /** Live collected receipt used in marketing specimens (Bankr-class Base agent door). */
-export const LIVE_RECEIPT_TASK_ID = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+export const LIVE_RECEIPT_TASK_ID = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
 
 export const LIVE_RECEIPT_VERIFY_URL = `https://api.chit402.com/receipt/${LIVE_RECEIPT_TASK_ID}`;
 

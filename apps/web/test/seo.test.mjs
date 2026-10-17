@@ -200,7 +200,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Who paid which call — and you still hold it\./, 'ChitHome leads principal-first');
   assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
   assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
-  assert.match(liveSpecimen, /chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96/, 'Live receipt specimen id locked');
+  assert.match(liveSpecimen, /xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944/, 'Live receipt specimen id locked');
   assert.match(receiptCard, /owner view/, 'Live receipt card points hub and model at the owner view');
   assert.doesNotMatch(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card does not publish the hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
@@ -520,7 +520,7 @@ test('false claims called out in the site alignment stay fixed', () => {
   assert.doesNotMatch(security, /ZKVerifierSP1 \(env\)/);
   assert.match(security, /Base and Solana/);
   assert.doesNotMatch(receipt, /Publish <code>@xfuel\/verify<\/code> before/);
-  assert.match(receipt, /chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96/);
+  assert.match(receipt, /xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944/);
   assert.doesNotMatch(receipt, /chit-1e57cdd7/);
   assert.doesNotMatch(middleware, /or a demo key/);
 });

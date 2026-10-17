@@ -1169,8 +1169,8 @@ export default function Book() {
               <strong>Not a router.</strong> {productName} is not a router and not a model shop. The
               book is the last-N collected rows for the session that holds it. A live example that
               returns 200 is{' '}
-              <a href="https://api.chit402.com/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96">
-                chit-1ebc5616
+              <a href="https://api.chit402.com/receipt/xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944">
+                xfuel-661ca345
               </a>
               .
             </p>
