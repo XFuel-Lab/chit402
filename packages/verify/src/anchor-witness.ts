@@ -24,6 +24,7 @@ import type { IssuerHistoryDocument } from './issuer-history.js';
 import type { Es256Jwk } from './jws.js';
 import { boundRowHash } from './row-hash.js';
 import { fetchSolanaTransaction, SOLANA_RPC_URL } from './solana-payer.js';
+import { jsonRpc, openRpcDeadline } from './rpc-deadline.js';
 
 export const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr';
 export const MEMO_PROGRAM_ID_V1 = 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo';
@@ -392,34 +393,31 @@ export function extractMemos(tx: SolanaAnchorTx | null | undefined): string[] {
   return found;
 }
 
-async function defaultRpc(url: string, method: string, params: unknown[]): Promise<unknown> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json() as { result?: unknown; error?: { message?: string } };
-  if (json.error) throw new Error(json.error.message || 'rpc_error');
-  return json.result ?? null;
+async function defaultRpc(url: string, method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> {
+  return jsonRpc(url, method, params, signal);
 }
 
-export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
-  const result = await defaultRpc(rpcUrl, 'getGenesisHash', []);
+export async function fetchSolanaGenesisHash(rpcUrl: string, signal?: AbortSignal): Promise<string> {
+  const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], signal);
   if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
   return result;
 }
 
 export async function fetchBaseAnchorTransaction(txHash: string, rpcUrl: string): Promise<BaseAnchorTx | null> {
-  const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash]) as { hash?: string; input?: string; from?: string } | null;
-  const chainHex = await defaultRpc(rpcUrl, 'eth_chainId', []) as string | null;
-  if (!tx) return null;
-  return {
-    hash: tx.hash,
-    input: tx.input,
-    from: tx.from,
-    chainId: chainHex ? Number(chainHex) : undefined,
-  };
+  const clock = openRpcDeadline();
+  try {
+    const tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash], clock.signal) as { hash?: string; input?: string; from?: string } | null;
+    const chainHex = await defaultRpc(rpcUrl, 'eth_chainId', [], clock.signal) as string | null;
+    if (!tx) return null;
+    return {
+      hash: tx.hash,
+      input: tx.input,
+      from: tx.from,
+      chainId: chainHex ? Number(chainHex) : undefined,
+    };
+  } finally {
+    clock.cancel();
+  }
 }
 
 export interface NewestAnchor {

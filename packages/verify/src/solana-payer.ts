@@ -6,6 +6,8 @@
  * as authority (x402 exact-svm) without trusting Chit logs.
  */
 
+import { jsonRpc, rpcFailureReason } from './rpc-deadline.js';
+
 /** Solana mainnet USDC mint (SPL, 6 decimals). */
 export const SOLANA_USDC_MINT_MAINNET = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
@@ -196,28 +198,13 @@ export async function fetchSolanaTransaction(
   rpcUrl?: string,
 ): Promise<SolanaRpcGetTransactionResult | null> {
   const url = resolveRpcUrl(rpcUrl);
-  const body = {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'getTransaction',
-    params: [signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Solana RPC HTTP ${res.status}`);
-  }
-
-  const json = await res.json() as { result?: SolanaRpcGetTransactionResult | null; error?: { message?: string } };
-  if (json.error) {
-    throw new Error(`Solana RPC error: ${json.error.message || 'unknown'}`);
-  }
-  return json.result ?? null;
+  const result = await jsonRpc(url, 'getTransaction', [
+    signature,
+    { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+  ]);
+  if (result == null) return null;
+  if (typeof result !== 'object') throw new Error('rpc_error: solana transaction was not an object');
+  return result as SolanaRpcGetTransactionResult;
 }
 
 export interface VerifySolanaPayerInput {
@@ -257,19 +244,19 @@ export async function verifySolanaPayer(input: VerifySolanaPayerInput): Promise<
     tx = await fetcher(signature, rpcUrl);
   } catch (err) {
     return {
-      checked: true,
+      checked: false,
       valid: false,
       signature,
       payerWallet,
       expectedAmount: expectedAmount.toString(),
       mint,
-      reason: `rpc_error: ${(err as Error).message}`,
+      reason: rpcFailureReason(err),
     };
   }
 
   if (!tx) {
     return {
-      checked: true,
+      checked: false,
       valid: false,
       signature,
       payerWallet,

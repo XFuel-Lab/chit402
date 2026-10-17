@@ -6,7 +6,8 @@
  * transferWithAuthorization records `from` as the payer).
  */
 
-import { JsonRpcProvider, getAddress, type TransactionReceipt } from 'ethers';
+import { getAddress, type TransactionReceipt } from 'ethers';
+import { jsonRpc, rpcFailureReason } from './rpc-deadline.js';
 
 /** ERC-20 Transfer(address,address,uint256) topic. */
 export const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -121,15 +122,47 @@ export function sumUsdcTransfersFromPayer(
 /**
  * Default ethers provider fetcher for getTransactionReceipt.
  */
+function receiptStatus(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string' && /^0x[0-9a-fA-F]+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+  if (typeof value === 'string' && /^[0-9]+$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * One eth_getTransactionReceipt. No provider retry. A null result is a miss.
+ * A body that is not a receipt (no status, logs that are not an array, or a
+ * different transaction hash) is refused rather than treated as a payment.
+ */
 export async function fetchBaseTransactionReceipt(
   txHash: string,
   rpcUrl?: string,
 ): Promise<TransactionReceipt | null> {
-  const provider = new JsonRpcProvider(resolveRpcUrl(rpcUrl), undefined, {
-    staticNetwork: true,
-    batchMaxCount: 1,
-  });
-  return provider.getTransactionReceipt(txHash);
+  const raw = await jsonRpc(resolveRpcUrl(rpcUrl), 'eth_getTransactionReceipt', [txHash]);
+  if (raw == null) return null;
+  if (typeof raw !== 'object') throw new Error('rpc_error: receipt was not an object');
+  const row = raw as {
+    status?: unknown;
+    logs?: unknown;
+    transactionHash?: unknown;
+    hash?: unknown;
+  };
+  const claimed = typeof row.transactionHash === 'string'
+    ? row.transactionHash
+    : (typeof row.hash === 'string' ? row.hash : null);
+  if (!claimed || claimed.toLowerCase() !== txHash.toLowerCase()) {
+    throw new Error('rpc_error: receipt transaction hash does not match payment.ref');
+  }
+  const status = receiptStatus(row.status);
+  if (status == null) throw new Error('rpc_error: receipt status missing');
+  if (!Array.isArray(row.logs)) throw new Error('rpc_error: receipt logs missing');
+  return { status, logs: row.logs, hash: txHash } as unknown as TransactionReceipt;
 }
 
 export interface VerifyBasePayerInput {
@@ -206,13 +239,13 @@ export async function verifyBasePayer(input: VerifyBasePayerInput): Promise<Base
     receipt = await fetcher(parsed.txHash, rpcUrl);
   } catch (err) {
     return {
-      checked: true,
+      checked: false,
       valid: false,
       txHash: parsed.txHash,
       payerWallet: getAddress(payerWallet),
       expectedAmount: expectedAmount.toString(),
       network,
-      reason: `rpc_error: ${(err as Error).message}`,
+      reason: rpcFailureReason(err),
     };
   }
 
@@ -227,7 +260,7 @@ export async function verifyBasePayer(input: VerifyBasePayerInput): Promise<Base
 
   if (!receipt) {
     return {
-      checked: true,
+      checked: false,
       valid: false,
       ...baseFields,
       reason: 'transaction_not_found',

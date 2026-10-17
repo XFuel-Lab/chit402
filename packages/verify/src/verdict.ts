@@ -154,8 +154,14 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
   }
   if (reason === 'payment_mismatch' || reason === 'binding_mismatch') {
     return {
-      message: 'The payment on the receipt does not match the signature.',
+      message: 'The payment on the receipt does not match the signature or the on-chain transfer.',
       next_step: null,
+    };
+  }
+  if (reason === 'payer_unchecked') {
+    return {
+      message: 'The on-chain payment could not be checked.',
+      next_step: 'Check the RPC, then re-run.',
     };
   }
   if (reason === 'key untrusted') {
@@ -197,6 +203,13 @@ export interface VerdictInput {
   claimMismatches?: number;
   payerChecked?: boolean;
   payerValid?: boolean;
+  /**
+   * The CLI requires the on-chain payer check. `pass` is the only value that
+   * may leave payment_binding as pass. `fail` is a mismatch. Anything else,
+   * including a missing value, is could_not_check.
+   */
+  payerRequired?: boolean;
+  payerOutcome?: 'pass' | 'fail' | 'unchecked' | null;
   errors?: string[];
   /** `unclaimed` is could_not_check: 0.4 never passes a log or anchor it did not fetch. */
   logInclusion?: CheckState | 'unclaimed';
@@ -248,7 +261,9 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   const preimageFailed = errors.some((err) => /preimage|payload_hash_mismatch|canonical preimage/.test(err));
   if (signature === 'pass') {
     if ((input.claimMismatches || 0) > 0 || (input.bindingExpected && input.bindingMatches === false) || preimageFailed) payment = 'fail';
-    else if (input.payerChecked && input.payerValid === false) payment = 'fail';
+    else if (input.payerRequired && input.payerOutcome === 'fail') payment = 'fail';
+    else if (input.payerRequired && input.payerOutcome !== 'pass') payment = 'could_not_check';
+    else if (!input.payerRequired && input.payerChecked && input.payerValid === false) payment = 'fail';
     else if (input.bindingExpected && input.bindingMatches !== true && !unsupported) payment = 'could_not_check';
   }
 
@@ -366,6 +381,7 @@ function uncheckedReason(
   if (unchecked.includes('key_window')) return historyReason || 'kid_not_in_history';
   if (unchecked.includes('signature')) return 'signature_unchecked';
   if (unchecked.includes('log_inclusion') || unchecked.includes('anchor')) return logReason || 'log_unreachable';
+  if (unchecked.includes('payment_binding')) return 'payer_unchecked';
   return 'could_not_check';
 }
 
@@ -441,6 +457,7 @@ export const VERDICT_DOC_ANCHORS = [
   'id_prefix_version_mismatch',
   'intent_on_legacy_version',
   'payment_mismatch',
+  'payer_unchecked',
   'log_inclusion',
   'anchor',
   'invalid',

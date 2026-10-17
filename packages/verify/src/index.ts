@@ -57,6 +57,7 @@ import {
   verifyPayerBinding,
   receiptPayerClaimsFromEnvelope,
   decodeJwsPayload,
+  payerCheckOutcome,
   type PayerBindingVerification,
   type ReceiptPayerClaims,
   type PayerRail,
@@ -333,6 +334,8 @@ export interface NullifierVerification {
 export interface PayerVerification {
   checked: boolean;
   valid: boolean;
+  /** Set when checkPayer ran. `unchecked` is not a pass and not a mismatch. */
+  outcome?: 'pass' | 'fail' | 'unchecked';
   rail?: PayerRail;
   reason?: string;
   payer_wallet?: string | null;
@@ -1802,6 +1805,7 @@ export async function verifyReceipt(
       payer = {
         checked: false,
         valid: false,
+        outcome: 'unchecked',
         reason: 'Payer facts come from verified signed claims — issuer signature is not trusted',
       };
     } else {
@@ -1811,9 +1815,11 @@ export async function verifyReceipt(
         fetchSolanaTransaction: options.fetchSolanaTransaction,
         fetchBaseReceipt: options.fetchBaseReceipt,
       });
+      const outcome = payerCheckOutcome(payerResult);
       payer = {
-        checked: payerResult.checked,
-        valid: payerResult.valid,
+        checked: outcome === 'fail' || outcome === 'pass',
+        valid: outcome === 'pass',
+        outcome,
         rail: payerResult.rail,
         reason: payerResult.reason,
         payer_wallet: payerResult.payerWallet ?? signedPayerClaims.caller_binding?.payer_wallet ?? null,
@@ -1821,7 +1827,7 @@ export async function verifyReceipt(
         asset: signedPayerClaims.payment?.asset ?? null,
         amount: payerResult.expectedAmount ?? signedPayerClaims.payment?.gross_amount ?? null,
       };
-      if (payerResult.checked && !payerResult.valid) {
+      if (outcome === 'fail') {
         errors.push(`Payer binding mismatch: ${payerResult.reason}`);
       }
     }
@@ -1924,7 +1930,7 @@ export async function verifyReceipt(
   );
   const mismatchFailed = claim_mismatches.length > 0;
   const bindingFailed = !!(binding.expected && !binding.matches);
-  const payerFailed = !!(options.checkPayer && payer.checked && !payer.valid);
+  const payerFailed = options.checkPayer === true && payer.outcome === 'fail';
   const nullifierFailed = !!(
     options.checkNullifier
     && receipt.proof?.nullifier
@@ -1943,7 +1949,7 @@ export async function verifyReceipt(
     overall = 'partial';
   } else if (
     (binding.matches || !binding.expected)
-    && (!options.checkPayer || payer.valid)
+    && (!options.checkPayer || payer.outcome === 'pass')
     && (!options.checkNullifier || !receipt.proof?.nullifier || nullifier.anchored === true)
     && (issuer_signature.valid || !hasIssuerSig)
   ) {

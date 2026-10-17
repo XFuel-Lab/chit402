@@ -36,7 +36,8 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'id_mismatch', text: 'The receipt id does not match the signature. Exit 1.' },
   { id: 'id_prefix_version_mismatch', text: 'The id prefix is not valid for this receipt version. Exit 1.' },
   { id: 'intent_on_legacy_version', text: 'A signed intent is not a payment on this receipt version. Exit 1.' },
-  { id: 'payment_mismatch', text: 'The payment on the receipt does not match the signature. Exit 1.' },
+  { id: 'payment_mismatch', text: 'The payment on the receipt does not match the signature or the on-chain transfer. Exit 1.' },
+  { id: 'payer_unchecked', text: 'The on-chain payer check did not finish. The RPC timed out, returned null or an error, a payer field is missing, or the rail is not one this verifier can read. Exit 2. The receipt was not found invalid.' },
   { id: 'log_inclusion', text: 'The inclusion proof did not verify. Exit 1.' },
   { id: 'anchor', text: 'The anchor did not verify. Exit 1.' },
   { id: 'invalid', text: 'The receipt is invalid. Exit 1.' },
@@ -64,8 +65,10 @@ export default function VerifyDocs() {
           <h1>Verify</h1>
           <p>
             <code>npx chit402-verify &lt;id|url|file&gt;</code> prints a verdict and a link to one of the reasons
-            below. Exit 0 is <code>VERIFIED</code>. Exit 1 is <code>INVALID</code>, including <code>NOT_IN_LOG</code>.
-            Exit 2 is <code>COULD_NOT_CHECK</code>. That line says the receipt was not found invalid.
+            below.             Exit 0 is <code>VERIFIED</code> only when the on-chain payer check ran and passed, with the
+            signature, the key window, the log, and the anchor. Exit 1 is <code>INVALID</code>, including
+            a payer mismatch and <code>NOT_IN_LOG</code>. Exit 2 is <code>COULD_NOT_CHECK</code> when the
+            log, the anchor, or the payer could not be checked. That line does not say the receipt was invalid.
           </p>
         </header>
 
@@ -85,8 +88,9 @@ export default function VerifyDocs() {
           </p>
           <p>
             History is always on. <code>--issuer-history &lt;file&gt;</code> must prefix-extend the snapshot
-            shipped in the package (as of 2026-10-14). <code>--json</code> prints the verdict. Other flags,
-            including <code>--issuer-history-file</code>, are removed.
+            shipped in the package (as of 2026-10-14). <code>--json</code> prints the verdict. The payer
+            check is on; there is no flag to skip it. Other flags, including <code>--issuer-history-file</code>
+            and any argument after <code>--</code>, are removed.
           </p>
         </div>
 

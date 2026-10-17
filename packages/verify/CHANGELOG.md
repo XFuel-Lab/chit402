@@ -3,6 +3,19 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.3 — Payer check is on in the CLI
+
+### Security
+- **Exit 0 includes the on-chain payer check.** `chit402-verify` calls `verifyReceipt` with `checkPayer: true`. A USDC transfer that does not match the signed payer, payee, or amount is exit 1 `payment_mismatch`. An RPC timeout, a null receipt, an RPC error, a missing payer field, an unsigned public shell, or an unsupported rail is exit 2 `payer_unchecked` (or the existing log reason when the log was also not checked). It is not exit 0. There is no flag to turn the check off. `BUILD_DIGEST.txt` moved because `src/cli.ts`, `src/check-input.ts`, `src/verdict.ts`, `src/base-payer.ts`, `src/solana-payer.ts`, and `src/anchor-witness.ts` changed. The pinned epoch genesis digests did not. Not published. No deploy.
+- **RPC calls stop.** Base `eth_getTransactionReceipt`, Solana `getTransaction`, and the anchor reads this path makes (`eth_getTransactionByHash`, `eth_chainId`, `getGenesisHash`) each use one 12s deadline and do not retry. A deadline is exit 2.
+- **`--` does not hide a flag.** `chit402-verify receipt.json -- --check-payer` and `chit402-verify receipt.json -- anything` exit 1. The grammar stays `<id|url|file|-> [--issuer-history <file>] [--json]`, plus `-h`/`--help` and `-V`/`--version`.
+
+### Removed
+- The unused pre-0.4 argument parser and `legacyMain` are gone. The running command is the locked verdict.
+
+### Changed
+- `@xfuel/verify` 0.4.3 depends on exactly `"chit402-verify": "0.4.3"`. `--version` prints `chit402-verify 0.4.3`. Not published. No deploy.
+
 ## 0.4.2 — Solana anchor fee-payer pin is a list
 
 ### Changed
