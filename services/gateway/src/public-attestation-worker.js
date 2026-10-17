@@ -26,7 +26,7 @@ export const PUBLIC_ATTESTATION_DEFAULTS = Object.freeze({
   maxAttempts: 20,
   baseDelayMs: 30_000,
   maxDelayMs: 30 * 60_000,
-  signTimeoutMs: 10_000,
+  signTimeoutMs: 3_000,
   tickMs: 15_000,
 });
 

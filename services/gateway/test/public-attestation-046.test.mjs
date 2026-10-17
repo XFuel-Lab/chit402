@@ -22,7 +22,7 @@ const verifyDist = path.join(here, '..', '..', '..', 'packages', 'verify', 'dist
 
 const pa = await import('../src/public-attestation.js');
 const storeMod = await import('../src/public-attestation-store.js');
-const { createPublicAttestationWorker } = await import('../src/public-attestation-worker.js');
+const { createPublicAttestationWorker, PUBLIC_ATTESTATION_DEFAULTS } = await import('../src/public-attestation-worker.js');
 const { _setIssuerSignerForTest } = await import('../src/issuer-signer.js');
 const { readCapUsage, consumeReceiptSlot } = await import('../src/issuance-cap.js');
 const verifier = await import(path.join(verifyDist, 'public-attestation.js'));
@@ -359,6 +359,12 @@ test('flags default off', () => {
   assert.equal(storeMod.publicAttestationServeEnabled({}), false);
   assert.equal(storeMod.publicAttestationSignEnabled({ PUBLIC_ATTESTATION_SIGN: '1' }), false);
   assert.equal(storeMod.publicAttestationServeEnabled({ PUBLIC_ATTESTATION_SERVE: 'true' }), true);
+  // T10 bounds: 3 s sign timeout, 20 attempts, 30 s doubling to 30 min, 30 signs a minute.
+  assert.equal(PUBLIC_ATTESTATION_DEFAULTS.signTimeoutMs, 3_000);
+  assert.equal(PUBLIC_ATTESTATION_DEFAULTS.maxAttempts, 20);
+  assert.equal(PUBLIC_ATTESTATION_DEFAULTS.baseDelayMs, 30_000);
+  assert.equal(PUBLIC_ATTESTATION_DEFAULTS.maxDelayMs, 30 * 60_000);
+  assert.equal(PUBLIC_ATTESTATION_DEFAULTS.ratePerMinute, 30);
 });
 
 test('read paths import no signer, and enqueue never signs inline', async () => {
