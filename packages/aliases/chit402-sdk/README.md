@@ -1,6 +1,6 @@
 # chit402-sdk
 
-OpenAI-compatible TypeScript client for Chit402 — signed spend receipt after USDC settle (x402 on Base or Solana).
+TypeScript client for Chit402 receipts: every paid agent call returns a signed receipt after USDC settles (x402 on Base or Solana), so the principal can check what was spent. It speaks the OpenAI chat format.
 
 npm: `chit402-sdk` · License: Apache-2.0  
 Docs: https://chit402.com · API: https://api.chit402.com

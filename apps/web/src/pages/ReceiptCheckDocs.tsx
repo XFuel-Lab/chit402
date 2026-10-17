@@ -12,9 +12,8 @@ curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preima
 # HTTP 404 preimage_unavailable — the canonical object was not stored with this
 # document, and the server does not rebuild it on read.
 curl -sS "${HISTORY}?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history issuer-history.json
+npx chit402-verify receipt.json --issuer-history issuer-history.json
 # After a receipt is issued with a stored object, /preimage returns 200.
-# Then: npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 # sha256 of that body is payload_hash. X-Chit-Hash-Alg is sha256.`;
 
 export default function ReceiptCheckDocs() {
@@ -69,7 +68,7 @@ export default function ReceiptCheckDocs() {
             A new key gets a new <code>kid</code> and a new snapshot. <code>not_after</code> is read from the
             snapshot the receipt pinned. A revoked key fails verification for receipts issued at or after{' '}
             <code>revoked_at</code> on that entry. A pinned receipt fails closed when its snapshot cannot be
-            fetched. An older receipt with no pin warns unless <code>--strict-issuer-history</code> is set.
+            fetched. An older receipt with no pin is checked against the shipped history snapshot.
           </p>
         </div>
 
@@ -81,7 +80,7 @@ export default function ReceiptCheckDocs() {
           <p style={styles.note}>
             <code>GET /receipt/{RECEIPT_ID}</code> returns 200. <code>GET /receipt/{RECEIPT_ID}/preimage</code>{' '}
             returns 404: the canonical object was not stored with that document. The same path returns the
-            stored bytes once a receipt is issued with them. <code>@xfuel/verify</code> 0.3.1 is published;
+            stored bytes once a receipt is issued with them. <code>chit402-verify</code> 0.4.2 is published;
             the command above checks the issuer-history pin on the receipt file without that preimage.
           </p>
         </div>

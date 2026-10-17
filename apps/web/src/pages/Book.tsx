@@ -1143,7 +1143,7 @@ export default function Book() {
             </p>
             <p>
               <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
-              that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
+              that with the library call <code>verifyReceipt(receipt, {'{'} checkPayer: true {'}'})</code> from <code>chit402-verify</code>; the CLI (<code>npx chit402-verify receipt.json</code>) does not run the payer check.
               It does not prove the model computed the answer. SP1 is on demand at $0.10. That proof
               covers settlement, not correctness.
             </p>
@@ -1156,13 +1156,13 @@ export default function Book() {
               <strong>Daily anchoring.</strong> The receipt root is published daily on Base and on
               Solana.{' '}
               <a href="https://api.chit402.com/v1/receipts/tree/head">Today&apos;s head</a> names both
-              anchors. <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that those anchor
-              transactions are present. It is not a full inclusion check. 0.3.2 has not shipped.
+              anchors. <code>npx chit402-verify</code> (0.4.2 or later) checks a receipt against the
+              signed log.
             </p>
             <p>
               <strong>Signed refusal.</strong> A blocked spend can come back as a signed refusal,
               schema <code>chit402.refusal.v1</code>, from the same ES256 key. It is not a payment
-              receipt. <code>@xfuel/verify</code> 0.3.1 verifies it. The document is public at{' '}
+              receipt. <code>chit402-verify</code> 0.4.2 verifies it. The document is public at{' '}
               <code>GET /refusal/:id</code>.
             </p>
             <p>

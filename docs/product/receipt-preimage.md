@@ -30,7 +30,7 @@ Prompt text, model output text, API keys, private JWKs, weight shards, and posse
 
 The block is not inside the payment JWS, the book-seq JWS, or the coverage JWS. Old signatures still verify.
 
-`xfuel-verify receipt.json` hashes each published preimage and exits 1 if a preimage is missing or does not match. A saved receipt from before this block still verifies in the library. The CLI requires the block when the receipt carries a hash this page lists as recomputable. `--no-preimage` skips that requirement.
+`chit402-verify receipt.json` hashes each published preimage and exits 1 if a preimage is missing or does not match. A saved receipt from before this block still verifies in the library. The CLI requires the block when the receipt carries a hash this page lists as recomputable. From 0.4 the requirement is always on; `--no-preimage` was removed.
 
 ## Canonicalization
 

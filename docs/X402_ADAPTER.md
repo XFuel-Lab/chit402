@@ -129,7 +129,7 @@ Want `valid: true` and `simulation.outcome: "accepted"`. Do not pay until that l
 
 ### Manual Listing Trigger (Post-Deploy)
 
-After deploying, confirm validate is green, then one ~$0.01 paid request (API key + payer):
+After deploying, confirm validate is green, then one ~$0.002 paid request (API key + payer):
 
 ```bash
 # Prerequisites: XFUEL_PAYER_PRIVATE_KEY / DEPLOYER_PRIVATE_KEY set

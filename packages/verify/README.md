@@ -4,7 +4,7 @@ Offline verification for Chit402 receipts — verify payment binding and output 
 
 npm: `chit402-verify` · License: Apache-2.0 · Docs: https://chit402.com
 
-`@xfuel/verify` 0.4.1 is an alias pinned to exactly this version. The `xfuel-verify` command stays.
+`@xfuel/verify` is an alias pinned to exactly this version (0.4.2). The `xfuel-verify` command stays.
 
 ## Installation
 
@@ -17,7 +17,7 @@ npm install chit402-verify
 ### Library
 
 ```typescript
-import { verifyReceipt, verifyBinding, verifyNullifier } from '@xfuel/verify';
+import { verifyReceipt, verifyBinding, verifyNullifier } from 'chit402-verify';
 
 // Verify a receipt offline (binding only, no network)
 const receipt = { /* Chit402 receipt JSON */ };
@@ -33,96 +33,60 @@ console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overal
 ### CLI
 
 ```bash
-# History is always checked. With no file, a live snapshot must prefix-extend
-# the copy shipped in this package, or that copy is used (as of 2026-10-14).
-npx xfuel-verify receipt.json
+# One receipt: an id, a URL, a file, or - for stdin.
+npx chit402-verify receipt.json
+npx chit402-verify chit-39af100b-23dd-4d86-a16b-4556ca6796af
+curl -s "https://api.chit402.com/receipt/RECEIPT_ID?format=json" | npx chit402-verify -
+# An id or public URL gives the unsigned public shell: COULD_NOT_CHECK (exit 2).
+# Pass the signed JSON from the owner view for VERIFIED.
 
-# Offline history. --no-issuer-history, --strict, --accept-no-key-window,
-# and --accept-shell are removed.
-npx xfuel-verify receipt.json --issuer-history issuer-history.json
+# Offline issuer history (the check is always on; with no file, a live snapshot
+# must prefix-extend the copy shipped in this package, or that copy is used).
+npx chit402-verify receipt.json --issuer-history issuer-history.json
 
-# Hash the canonical object (must match signed payload_hash).
-npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
+# Machine-readable output
+npx chit402-verify receipt.json --json
 
 # A signed refusal (schema chit402.refusal.v1) is not a payment.
-# The check proves the issuer refused, at the signed anchor, for that code.
-# It does not prove a payment or that the block still stands.
-npx xfuel-verify refusal.json
-
-# With on-chain nullifier check (requires network)
-npx xfuel-verify receipt.json --check-nullifier
-
-# Output as JSON
-npx xfuel-verify receipt.json --json
-
-# From stdin
-curl -s https://api.chit402.com/receipt/task-123?format=json | npx xfuel-verify -
-
-# Dual anchor: inclusion, Solana memo, Base calldata
-npx xfuel-verify receipt.json inclusion.json head.json --rpc
+npx chit402-verify refusal.json
 ```
+
+The 0.4 CLI accepts exactly: one receipt argument, `--issuer-history <file>`, `--json`, `-h`/`--help`, and `-V`/`--version`. Any other flag exits 1 (`removed_flag`). Exit codes: 0 VERIFIED, 1 INVALID, 2 COULD_NOT_CHECK.
+
+The CLI fetches the log and anchor itself. `BASE_RPC_URL` and `SOLANA_RPC_URL` set the RPC endpoints for the anchor check; without them it falls back to public RPCs.
+
+The on-chain payer check is not in the CLI. Use the library: `verifyReceipt(receipt, { checkPayer: true })`.
 
 ## What This Verifies
 
-| Check | Requires Network? | Description |
-|-------|-------------------|-------------|
-| Payment binding | No | Recompute commitment from receipt fields |
-| Issuer signature | No, unless `--fetch-jwks` | ES256. Trusted only via JWKS (by kid) or a pinned RFC 7638 kid |
-| Output hash | No | Hash is on the receipt |
-| On-chain settlement | Yes | Query Base RPC for tx |
-| Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
-| Tree head and inclusion | No | Head ES256 signature over size and root, then an index-and-size-bound inclusion proof |
-| Anchored receipt root | Yes, with `--rpc` | The offline head and inclusion checks, then Solana memo and fee payer and Base calldata and sender |
-| Canonical preimage | No | SHA-256 of `--canonical-preimage`, or the stored canonical object, matches signed `payload_hash` |
-| Issuer history | Always. File, else a live prefix of the shipped snapshot, else the shipped snapshot | `iat` is inside the latest `not_before` and the earliest `not_after` for that kid. A changed `not_before` is `kid_status_regression` (exit 1). No covering key is exit 2 |
+| Check | Where | Description |
+|-------|-------|-------------|
+| Payment binding | CLI and library | Recompute commitment from receipt fields |
+| Issuer signature | CLI and library | ES256. Trusted only via JWKS (by kid) or a pinned RFC 7638 kid |
+| Output hash | CLI and library | Hash is on the receipt |
+| Tree head, inclusion, anchors | CLI and library | Head ES256 signature, index-and-size-bound inclusion proof, Base and Solana anchors |
+| Issuer history | CLI and library, always | `iat` is inside the latest `not_before` and the earliest `not_after` for that kid. A changed `not_before` is `kid_status_regression` (exit 1). No covering key is exit 2 |
+| On-chain payer / settlement | Library only (`checkPayer: true`) | Payer, payee, asset, and amount in the USDC `Transfer` log |
+| Nullifier anchor | Library only (`checkNullifier: true`) | Query ZKVerifierSP1 contract |
 
 ## Issuer Signature Verification (ES256)
 
 Receipts include `issuer_signature.jws` (compact ES256 / P-256). The signature
-counts only when the verifying key is trusted:
+counts only when the verifying key is trusted: a JWKS key whose `kid` matches the
+JWS, or an embedded `issuer_jwk` whose RFC 7638 thumbprint equals a trusted kid
+(the default pin is the production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`)
+or is in a verified issuer-history entry. `issuer_jwk` on the receipt is not a
+trust root: a copy re-signed with an arbitrary P-256 key reports `key untrusted`.
 
-1. **JWKS by kid** — a key in `--jwks-file`, `--jwks-url`, or `--fetch-jwks`
-   (allowlisted host, default `api.chit402.com`) whose `kid` matches the JWS.
-2. **Pinned thumbprint** — the embedded `issuer_jwk` is used only when its
-   RFC 7638 thumbprint equals a trusted kid. The default offline pin is the
-   production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`. Override with
-   `--trusted-kid`, or disable with `--no-trusted-kid`.
-
-The epoch record and the tree head use those same sources, with or without `--rpc`. `xfuel-verify receipt.json inclusion.json head.json` checks the head signature and the inclusion proof offline. `--rpc` adds the chain checks. An embedded key still has to match the trusted-kid pin, or the kid has to be in a verified issuer-history entry. The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the anchor-wallet list (the package pin, or a verified `/.well-known/anchor-wallets.json`). The chain sender and fee payer must be those wallets. `--version` prints the package version.
-
-Anchor mode also checks a content-addressed issuer pin when the receipt or the head carries `issuer_key_pin`, or when you pass `--issuer-pin`. The pin is a 40-hex commit plus the SHA-256 of `docs/well-known/issuer-key.json`. A branch name is not fetched. A claimed pin requires `issuer_signature.jws` verified under that key. Unsigned envelope kids do not satisfy the check. The registration self-signature is checked when the file has one. A claimed era with no pin fails `ISSUER_PIN_DOWNGRADE`. Receipts that do not claim the era skip this check. The pin chain is Base Sepolia (`eip155:84532`). See [issuer-key-pin.md](../../docs/product/issuer-key-pin.md).
-
-`issuer_jwk` on the receipt is not a trust root. A copy re-signed with an
-arbitrary P-256 key reports `key untrusted` (`issuer_signature.valid === false`),
-including when `--jwks-file` points at the real JWKS.
-
-```bash
-# History is always on. A local snapshot:
-npx xfuel-verify receipt.json --issuer-history issuer-history.json
-
-# Recompute a published canonical preimage and check the kid window.
-# curl -f stops on HTTP errors. Most receipts have no /preimage (a 404).
-# A missing preimage is not a verification failure: omit --canonical-preimage.
-curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
-curl -fsS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
-if curl -fsS "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json; then
-  npx xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
-else
-  npx xfuel-verify receipt.json --issuer-history issuer-history.json
-fi
-
-# Trust the published JWKS instead of (or in addition to) the pin
-curl -o issuer-jwks.json https://api.chit402.com/.well-known/jwks.json
-npx xfuel-verify receipt.json --jwks-file issuer-jwks.json --no-trusted-kid
-
-# Fetch the issuer JWKS (https://api.chit402.com/.well-known/jwks.json)
-npx xfuel-verify receipt.json --fetch-jwks
-```
+The head's signed `anchors.base.from` and `anchors.solana.fee_payer` must be on the
+anchor-wallet list (the package pin, or a verified `/.well-known/anchor-wallets.json`).
+Receipts that claim a content-addressed issuer pin are checked against it; see
+[issuer-key-pin.md](../../docs/product/issuer-key-pin.md).
 
 ```typescript
-import { verifyReceipt } from '@xfuel/verify';
+import { verifyReceipt } from 'chit402-verify';
 
-const result = await verifyReceipt(receipt);
+const result = await verifyReceipt(receipt, { checkPayer: true });
 console.log(result.issuer_signature.valid);      // true only for a trusted key
 console.log(result.issuer_signature.key_trusted);
 console.log(result.amount_usdc);                 // from verified claims, not the outer copy
@@ -135,16 +99,12 @@ Amount, payer, payee, asset, and tx are read from the verified JWS claims.
 Every signed path is compared with the outer receipt. A mismatch fails.
 Paths the signature does not cover are `unsigned_fields` and are printed as
 `UNVERIFIED`. Overall does not verify them. The outer document `schema` is
-not a copy of the JWS `schema`. `--check-payer` on Base confirms payer, payee,
-asset, and amount in the USDC `Transfer` log.
-
-`xfuel-verify receipt.json inclusion.json head.json` also runs those receipt
-checks. A matching inclusion proof does not make a tampered receipt VERIFIED.
+not a copy of the JWS `schema`. A matching inclusion proof does not make a
+tampered receipt VERIFIED.
 
 A paid USDC receipt whose signed `binding.expected_commitment` is null is
 reported as “No payment-binding commitment”, not as an unmetered or TFUEL receipt.
 
-The CLI does **not** fetch JWKS unless `--fetch-jwks` or `--jwks-url` is set.
 Exit code 1 is returned when the key is untrusted, the signature is invalid, or
 a signed claim disagrees with the outer copy.
 
@@ -195,7 +155,7 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | 2 | Partial (binding ok, nullifier not checked) |
 | 3 | Input error |
 
-`unsupported_version` uses exit 1. No flag (`--check-payer`, `--rpc`, `--fetch-jwks`, `--no-issuer-history`, `--no-preimage`, `--no-trusted-kid`, `--accept-shell`) turns an unknown version into a pass. The check runs before any chain RPC.
+`unsupported_version` uses exit 1. Nothing turns an unknown version into a pass; any flag other than `--issuer-history <file>` and `--json` exits 1 (`removed_flag`). The check runs before any chain RPC.
 
 ## Receipt versions
 
@@ -210,7 +170,7 @@ The signed JWS payload is the version. It is an exact JSON number. Strings, bool
 
 An outer `v` or `issuer_signature.payload_version` that differs in value or type is `version_mismatch`. A `v` or `payload_version` in the JWS protected header is ignored.
 
-Receipts issued after 2026-10-08 require `@xfuel/verify` >= 0.3.5. Older versions may print VERIFIED for formats they do not understand. `--help` and `--version` print this list.
+Receipts issued after 2026-10-08 require `chit402-verify` (or the `@xfuel/verify` alias) >= 0.3.5. Older versions may print VERIFIED for formats they do not understand. `--help` and `--version` print this list.
 
 ## API Reference
 

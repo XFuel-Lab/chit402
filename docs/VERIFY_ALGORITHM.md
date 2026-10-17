@@ -646,7 +646,7 @@ read it, and do not fail a signature because it is present or absent.
 
 | Field | Rule |
 |-------|------|
-| `settled_by` | `observed_transfer` when `--check-payer` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
+| `settled_by` | `observed_transfer` when the library's `checkPayer: true` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
 | `anchor_changed_since_binding` | true when `anchor_at_binding` and the current head (or `anchor_current`) differ in root, Base tx, or Solana signature. Null if either identity is missing |
 | `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
 | `ordering` | `seq + settled_by + (anchor_changed AND not settled)` |
@@ -672,6 +672,6 @@ Solana SessionAct in v1).
 
 `GET /receipt/:id?format=json` adds an unsigned `preimages` block. Each recomputable hash names the exact bytes, the encoding, and the algorithm. `GET /receipt/:id/preimage/:field` returns that one field. `xfuel-verify` hashes those bytes and fails if a preimage is missing or does not match. `output.hash` stays a private commitment. Coverage hashes over book rows stay off the public preimage. HMAC stays a keyed tag.
 
-`GET /.well-known/issuer-history.json` is the signed key history. `xfuel-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. If the history cannot be fetched, the command warns. `--strict-issuer-history` fails closed instead.
+`GET /.well-known/issuer-history.json` is the signed key history. `xfuel-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. From 0.4 the check is always on: a failed window exits 1, and no history that can be loaded exits 2 (COULD_NOT_CHECK).
 
 See [receipt-preimage.md](./product/receipt-preimage.md) and [issuer-key-history.md](./product/issuer-key-history.md).

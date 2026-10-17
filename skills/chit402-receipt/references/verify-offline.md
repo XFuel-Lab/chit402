@@ -28,11 +28,11 @@ npx xfuel-verify receipt.json --json
 Library:
 
 ```typescript
-import { verifyReceipt } from '@xfuel/verify';
+import { verifyReceipt } from 'chit402-verify';
 
-const result = await verifyReceipt(receipt);
+const result = await verifyReceipt(receipt, { checkPayer: true });
 // result.issuer_signature.valid — uses pinned issuer_jwk
-// result.payer_binding — when --check-payer / RPC enabled
+// result.payer_binding — on-chain payer check (library-only, checkPayer: true)
 ```
 
 ## JWKS fallback
@@ -40,8 +40,7 @@ const result = await verifyReceipt(receipt);
 If `issuer_jwk` is absent (older receipt):
 
 ```bash
-curl -sS https://api.chit402.com/.well-known/jwks.json -o jwks.json
-npx xfuel-verify receipt.json --jwks-file jwks.json --json
+npx chit402-verify receipt.json --json
 ```
 
 Match `issuer_signature.kid` to `jwks.keys[].kid`.

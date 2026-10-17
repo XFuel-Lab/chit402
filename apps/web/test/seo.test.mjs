@@ -263,7 +263,8 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.match(book, /id="what-the-book-is"/, 'Book explains what it is');
   assert.match(book, /client-attested/);
   assert.match(book, /chit402\.refusal\.v1/);
-  assert.match(book, /not a full inclusion check/i);
+  assert.match(book, /npx chit402-verify<\/code> \(0\.4\.2 or later\)/);
+  assert.doesNotMatch(book, /0\.3\.2 has not shipped/);
   assert.doesNotMatch(book, /prepaid hold|holds are live/i);
   assert.doesNotMatch(book, /chit-1e57cdd7/);
 });
@@ -456,7 +457,8 @@ test('1F916 link draft is a public docs page', () => {
   assert.doesNotMatch(page, /1ebc5616/);
   assert.doesNotMatch(page, /chit-1b7ac401/);
   assert.doesNotMatch(page, /chit-5d775d12/);
-  assert.match(page, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.match(page, /npx chit402-verify/);
+  assert.doesNotMatch(page, /--check-payer|--fetch-jwks|--jwks-url|-p @xfuel\/verify/);
   assert.doesNotMatch(page, /npx xfuel-verify/);
   assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
   assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);
@@ -508,7 +510,8 @@ test('false claims called out in the site alignment stay fixed', () => {
   const security = readFileSync(join(root, 'src/pages/Security.tsx'), 'utf8');
   const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');
   const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
-  assert.match(trust, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.match(trust, /npx chit402-verify/);
+  assert.doesNotMatch(trust, /--jwks-file|-p @xfuel\/verify/);
   assert.doesNotMatch(trust, /npx xfuel-verify/);
   assert.doesNotMatch(register, /The demo key/);
   assert.match(register, /Public demo keys never register/);
