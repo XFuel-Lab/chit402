@@ -6,7 +6,7 @@ import { receiptCheckBody, receiptCheckView, receiptFeedbackBody } from '../src/
 const MARKER = 'paste-marker-9f3c2a-do-not-store';
 
 test('the check request is the pasted receipt and the web client', () => {
-  const body = receiptCheckBody('{"task_id":"chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96"}');
+  const body = receiptCheckBody('{"task_id":"xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944"}');
   assert.deepEqual(Object.keys(body).sort(), ['client', 'input']);
   assert.equal(body.client, 'web');
   assert.equal(body.wallet, undefined);
@@ -46,7 +46,7 @@ test('400 and 413 are an input error, not INVALID', () => {
   assert.equal(/INVALID/.test(large.lines.join('\n')), false);
   assert.equal(large.overall === 'INVALID', false);
   assert.deepEqual(bad.accepted, ['receipt JSON', 'a chit- id', 'a verify link']);
-  assert.equal(bad.example, 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96');
+  assert.equal(bad.example, 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944');
   assert.equal(bad.hint, 'Paste receipt JSON, a chit- id, or a verify link.');
   assert.equal(bad.lines.includes(bad.hint), false);
 });

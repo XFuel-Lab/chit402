@@ -201,6 +201,9 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
   assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
   assert.match(liveSpecimen, /xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944/, 'Live receipt specimen id locked');
+  assert.match(liveSpecimen, /2026-10-10T00:17:00\.000Z/, 'Live receipt time is the public issued_at');
+  assert.match(liveSpecimen, /0x923bf06d920f2886d28c07202fe6b58fc30cb119169dd39e749f822ca6a0ac48/, 'Live receipt payment tx is the public shell tx');
+  assert.doesNotMatch(liveSpecimen, /akash-network|Llama-3\.3|0x2536|0xf63e/, 'Live receipt specimen does not keep the previous receipt route or payer');
   assert.match(receiptCard, /owner view/, 'Live receipt card points hub and model at the owner view');
   assert.doesNotMatch(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card does not publish the hub');
   assert.match(receiptCard, /Verify receipt/, 'Live receipt card links verify');
@@ -257,6 +260,9 @@ test('Book page shows specimen banner and rows before possession', () => {
   const specimen = readFileSync(join(root, 'src/lib/bookSpecimen.ts'), 'utf8');
   assert.match(book, /BookSpecimenPanel/, 'Book renders specimen panel');
   assert.match(specimen, /Specimen — not live money/, 'Specimen banner copy locked');
+  assert.match(specimen, /LIVE_RECEIPT_COLLECTED_AT/, 'Specimen time comes from the public shell');
+  assert.match(specimen, /LIVE_RECEIPT_PAYMENT_REF/, 'Specimen payment comes from the public shell');
+  assert.doesNotMatch(specimen, /2026-09-05T18:14:09|0xf63e|0x2536|LIVE_RECEIPT_HUB|LIVE_RECEIPT_MODEL/, 'Specimen row does not keep the previous receipt');
   assert.doesNotMatch(book, /You get nothing without the session/, 'Book must not be lock-only on first visit');
   assert.match(specimenPanel, /computeBurnRate/, 'Specimen panel previews burn rate');
   assert.match(specimenPanel, /computeModelMix/, 'Specimen panel previews model mix');
