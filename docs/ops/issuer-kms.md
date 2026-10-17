@@ -30,21 +30,24 @@ KMS init runs once at boot, before listen. A failed `GetPublicKey`, a key that i
 {"Version":"2012-10-17","Statement":[
  {"Sid":"Sign","Effect":"Allow","Action":"kms:Sign",
   "Resource":"arn:aws:kms:REGION:ACCT:key/KEY_ID",
-  "Condition":{"StringEquals":{"kms:SigningAlgorithm":"ECDSA_SHA_256","kms:MessageType":"RAW"},
-               "IpAddress":{"aws:SourceIp":"LIGHTSAIL_STATIC_IP/32"}}},
+  "Condition":{"StringEquals":{"kms:SigningAlgorithm":"ECDSA_SHA_256","kms:MessageType":["RAW","DIGEST"]},
+               "IpAddress":{"aws:SourceIp":"STATIC_IP/32"}}},
  {"Sid":"Pub","Effect":"Allow","Action":["kms:GetPublicKey","kms:DescribeKey"],
-  "Resource":"arn:aws:kms:REGION:ACCT:key/KEY_ID"}]}
+  "Resource":"arn:aws:kms:REGION:ACCT:key/KEY_ID",
+  "Condition":{"IpAddress":{"aws:SourceIp":"STATIC_IP/32"}}}]}
 ```
 
-The runtime principal has no Decrypt, Verify, Create, Import, Disable, ScheduleKeyDeletion, PutKeyPolicy, or CreateGrant. Admin actions belong on a separate break-glass role. Messages longer than 4096 bytes are signed as `DIGEST` (SHA-256 computed locally). A policy that allows only `RAW` must also allow `DIGEST` before that path is used, or those signs fail closed.
+Inputs over 4096 bytes are hashed locally and sent as `DIGEST`; the algorithm is still `ECDSA_SHA_256`.
+
+The runtime principal has no Decrypt, Verify, Create, Import, Disable, ScheduleKeyDeletion, PutKeyPolicy, or CreateGrant. Admin actions belong on a separate break-glass role.
 
 ## Phase 1 (same kid)
 
 1. Create an external key: `aws kms create-key --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY --origin EXTERNAL` and alias `alias/chit402-issuer-v1`.
 2. Import the current PKCS#8 material with `RSA_AES_KEY_WRAP_SHA_256`, then wipe the local DER. The RFC 7638 thumbprint does not change, so verifier 0.4.2 and existing receipts stay valid.
-3. Dry-run: `ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=… ISSUER_KMS_REGION=… ISSUER_KID=… node scripts/issuer-kms-check.mjs`. It prints the kid and `PASS` or `FAIL` only.
+3. Dry-run: `ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=… ISSUER_KMS_REGION=eu-west-3 ISSUER_KID=… ISSUER_JWKS_URL=https://api.chit402.com/.well-known/jwks.json node scripts/issuer-kms-check.mjs`. It prints `kid`, `jwks match|mismatch|skipped`, and `PASS` or `FAIL <code>`.
 4. Set `ISSUER_SIGNER=kms`, `ISSUER_KMS_KEY_ID`, `ISSUER_KMS_REGION`, and `ISSUER_KID`. Restart. `GET /health` and a local verify of a new receipt must succeed.
-5. Remove `ISSUER_PRIVATE_KEY` from the process environment. Keep one sealed offline backup until Phase 2.
+5. Leave `ISSUER_PRIVATE_KEY` in `.env` during the soak. `ISSUER_SIGNER=env` rollback needs it. Removing it is a separate later step. Keep one sealed offline backup until Phase 2.
 
 Imported material does not prove the key was never copied. Keep this phase short.
 
@@ -76,8 +79,27 @@ Counters live in `issuer_sign_counts(window_start, span, count)` with fixed UTC 
 ## Dry run
 
 ```bash
-ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=alias/chit402-issuer-v1 ISSUER_KMS_REGION=us-east-1 ISSUER_KID=… \
+ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=alias/chit402-issuer-v1 ISSUER_KMS_REGION=eu-west-3 ISSUER_KID=… \
+  ISSUER_JWKS_URL=https://api.chit402.com/.well-known/jwks.json \
   node scripts/issuer-kms-check.mjs
 ```
 
-The script calls `GetPublicKey`, signs one fixed message, verifies it locally, and prints the kid and `PASS` or `FAIL`. It does not print the signature or the key.
+The script calls `GetPublicKey`, signs one fixed message, and verifies it locally. When `ISSUER_JWKS_URL` is set it sends one GET (5 second timeout, no body) and requires exactly one published key whose `kid`, `x`, and `y` match the signer, then verifies that same signature with the JWKS key. It prints three lines and nothing else:
+
+```
+kid <kid>
+jwks match
+PASS
+```
+
+`jwks` is `match`, `mismatch`, or `skipped` when `ISSUER_JWKS_URL` is unset. A failure prints `FAIL <code>` and exits 1. `<code>` is the error code when it is a short lowercase token, otherwise `error`. The script does not print the signature, the key, env values, or the error message.
+
+## Self-review (receipt signature checklist)
+
+- §2 key resolution: kid comes from GetPublicKey, pinned via `ISSUER_KID` and checked against the JWKS.
+- §3 rotation: Phase 1 keeps the kid; Phase 2 needs an old-key-signed history entry.
+- §4 algorithm: ES256 bound to the key, DER strictly parsed, low-S, self-verify.
+- §5 no re-signing on read: the signer is called only at issuance.
+- §9 fail closed: no env fallback, a boot refusal and sign errors.
+- Cost/DoS: issuance cap plus timeout.
+- Open item: the verifier doesn't enforce low-S yet (G6).
