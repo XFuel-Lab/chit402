@@ -394,3 +394,31 @@ test('M5 under races: a ref released by a failed row is taken by exactly one new
     }
   }
 });
+
+test('S3 a sign that finishes frees the slot at once: one tick drains several due rows', async () => {
+  const ids = Array.from({ length: 3 }, (_, i) => `xfuel-0b1e2c3d-4e5f-4a6b-8c7d-${(100 + i).toString(16).padStart(12, '0')}`);
+  const refs = new Map(ids.map((id, i) => [id, refFor(500 + i)]));
+  const store = new storeMod.PublicAttestationStore();
+  for (const id of ids) await store.enqueue({ taskId: id, ref: refs.get(id), now: 0 });
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const worker = workerFor(store, {
+    ids,
+    refs,
+    sign: async (p) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        return await realSign(p);
+      } finally {
+        inFlight -= 1;
+      }
+    },
+  });
+  await worker.tick();
+  assert.equal(store.counts().pending, 0);
+  assert.equal(store.counts().signed, 3);
+  assert.equal(maxInFlight, 1);
+  assert.equal(worker.stats().waited_on_inflight, 0);
+  assert.equal(worker.stats().inflight, false);
+});

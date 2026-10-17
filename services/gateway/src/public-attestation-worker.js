@@ -158,10 +158,19 @@ export function createPublicAttestationWorker(deps) {
     inflight = tracked;
     inflightSince = Date.now();
     stuckAlerted = false;
-    return withTimeout(attempt, cfg.signTimeoutMs).catch((err) => {
+    const settledHere = () => {
+      if (inflight === tracked) inflight = null;
+    };
+    return withTimeout(attempt, cfg.signTimeoutMs).then((value) => {
+      settledHere(); // the sign itself finished: free the slot now
+      return value;
+    }, (err) => {
       if (err?.code === 'sign_timeout') {
+        // The sign is still outstanding: the slot stays taken until it settles.
         stats.timed_out += 1;
         controller.abort(err);
+      } else {
+        settledHere();
       }
       throw err;
     });
