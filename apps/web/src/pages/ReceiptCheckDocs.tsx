@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 
 const HISTORY = 'https://api.chit402.com/.well-known/issuer-history.json';
-const RECEIPT_ID = 'chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
+const RECEIPT_ID = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
 const RECEIPT = `https://api.chit402.com/receipt/${RECEIPT_ID}?format=json`;
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
