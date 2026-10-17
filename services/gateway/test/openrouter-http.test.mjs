@@ -171,7 +171,7 @@ before(async () => {
   resetHubCatalogCache();
   resetOpenRouterPreflightCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -311,7 +311,7 @@ test('gateway quotes, fails closed before settle, and receipts a mocked OpenRout
   assert.equal(shell.schema, 'chit402.receipt_shell.v1');
   assert.equal(JSON.stringify(shell).includes('gen-http-1'), false);
   const stored = getAIListener().activeTasks.get(paidBody.xfuel.task_id);
-  const receipt = storedReceiptJson(buildReceipt(stored, {
+  const receipt = storedReceiptJson(await buildReceipt(stored, {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET,
     persistSignature: false,
   }));
@@ -535,7 +535,7 @@ test('BYOK forwards the caller key, charges only the receipt, and redacts the ke
   assert.equal(shell.schema, 'chit402.receipt_shell.v1');
   assert.equal(JSON.stringify(shell).includes('paid-by-caller-to-OpenRouter'), false);
   const stored = getAIListener().activeTasks.get(paidBody.xfuel.task_id);
-  const receipt = storedReceiptJson(buildReceipt(stored, {
+  const receipt = storedReceiptJson(await buildReceipt(stored, {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET,
     persistSignature: false,
   }));

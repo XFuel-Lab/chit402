@@ -935,6 +935,25 @@ function accountIsSource(pubkey, ctx, keys, pre, post) {
   return !!(bal && bal.owner === ctx.wallet && bal.mint === SOLANA_USDC_MINT && bal.programId === TOKEN_PROGRAM_ID);
 }
 
+/**
+ * Owner comes from pre and post token balances, not from the instruction
+ * and not from the token-account set. Both sides that exist must name the
+ * wallet. A missing side is allowed (create or close). A disagreeing side
+ * is not this wallet.
+ */
+function balanceProvesOwner(pubkey, wallet, keys, pre, post) {
+  if (!wallet || typeof pubkey !== 'string') return false;
+  const sides = [balanceForPubkey(pubkey, keys, pre), balanceForPubkey(pubkey, keys, post)];
+  let saw = false;
+  for (const bal of sides) {
+    if (!bal) continue;
+    if (bal.mint !== SOLANA_USDC_MINT || bal.programId !== TOKEN_PROGRAM_ID) return false;
+    if (bal.owner !== wallet) return false;
+    saw = true;
+  }
+  return saw;
+}
+
 function settlementFor(transfer, keys) {
   if (transfer.type === 'transfer') return 'spl_transfer';
   const feePayer = keys[0]?.pubkey || null;
@@ -958,25 +977,33 @@ function txMetaMissing(tx) {
 /**
  * USDC out of the scanned wallet or token account. Pure.
  * `program: "spl-token"` is ignored; Token-2022 uses that label too.
- * @returns {{ rows: object[], incoming: bigint, unexplained: boolean, failedTx?: boolean, error?: string }}
+ * An internal move is a wallet-mode hop whose source and destination owners
+ * are both the scanned wallet in pre/postTokenBalances. It is not spend.
+ * @returns {{ rows: object[], incoming: bigint, unexplained: boolean, internal: number, failedTx?: boolean, error?: string }}
  */
 export function decodeSolanaUsdcTransfers(tx, ctx) {
-  if (!tx || typeof tx !== 'object') return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
-  if (txMetaMissing(tx)) return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
-  if (tx.blockTime == null) return { rows: [], incoming: 0n, unexplained: false, error: 'tx_unavailable' };
-  if (txIsFailed(tx)) return { rows: [], incoming: 0n, unexplained: false, failedTx: true };
+  if (!tx || typeof tx !== 'object') return { rows: [], incoming: 0n, unexplained: false, internal: 0, error: 'tx_unavailable' };
+  if (txMetaMissing(tx)) return { rows: [], incoming: 0n, unexplained: false, internal: 0, error: 'tx_unavailable' };
+  if (tx.blockTime == null) return { rows: [], incoming: 0n, unexplained: false, internal: 0, error: 'tx_unavailable' };
+  if (txIsFailed(tx)) return { rows: [], incoming: 0n, unexplained: false, internal: 0, failedTx: true };
 
   const keys = accountKeysOf(tx);
   const pre = balancesOf(tx, 'pre');
   const post = balancesOf(tx, 'post');
   const rows = [];
   let incoming = 0n;
+  let internal = 0;
   for (const { ix, logIndex } of instructionList(tx)) {
     const transfer = readSplTransfer(ix, keys, pre, post);
     if (!transfer) continue;
     const sourceOurs = accountIsSource(transfer.source, ctx, keys, pre, post);
     const destOurs = accountIsSource(transfer.destination, ctx, keys, pre, post);
-    if (sourceOurs) {
+    const internalMove = ctx.mode !== 'token_account'
+      && balanceProvesOwner(transfer.source, ctx.wallet, keys, pre, post)
+      && balanceProvesOwner(transfer.destination, ctx.wallet, keys, pre, post);
+    if (internalMove) {
+      internal += 1;
+    } else if (sourceOurs) {
       const destBal = balanceForPubkey(transfer.destination, keys, post);
       rows.push({
         tx_hash: ctx.signature,
@@ -998,7 +1025,7 @@ export function decodeSolanaUsdcTransfers(tx, ctx) {
   const parsedOut = rows.reduce((acc, row) => acc + BigInt(row.amount_atomic), 0n);
   const expectedOut = incoming - (postSum.total - preSum.total);
   const unexplained = preSum.unreadable || postSum.unreadable || parsedOut !== expectedOut;
-  return { rows, incoming, unexplained };
+  return { rows, incoming, unexplained, internal };
 }
 
 function sumRelevant(balances, keys, ctx) {

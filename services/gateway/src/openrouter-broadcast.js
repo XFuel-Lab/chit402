@@ -1049,7 +1049,7 @@ async function runVerification(job, env) {
   }, 'openrouter-broadcast: generation checked');
 }
 
-function stampGeneration(generation, book, routedBy, deps) {
+async function stampGeneration(generation, book, routedBy, deps) {
   const existing = byFamilyGeneration.get(familyGenerationKey(book.family_id, generation.generationId));
   if (existing) {
     enqueueVerification(existing, deps.env);
@@ -1102,7 +1102,7 @@ function stampGeneration(generation, book, routedBy, deps) {
     sp1Proof: { skipped: true },
   };
 
-  const envelope = buildReceipt(task, {
+  const envelope = await buildReceipt(task, {
     baseUrl: deps.baseUrl,
     signingSecret: deps.signingSecret,
     coSignerSecret: deps.coSignerSecret,
@@ -1176,7 +1176,7 @@ function stampGeneration(generation, book, routedBy, deps) {
     : null;
   if (knownAgent && deps.ledger && typeof deps.ledger.append === 'function') {
     const view = mergeReceiptView(envelope);
-    const appended = deps.ledger.append({
+    const appended = await deps.ledger.append({
       ...envelope,
       payment: {
         rail: PAYMENT_RAIL,
@@ -1215,7 +1215,7 @@ function stampGeneration(generation, book, routedBy, deps) {
 /**
  * Stamp one receipt per generation. Idempotent on (book family, generation id).
  */
-export function ingestOpenRouterBroadcast(body, {
+export async function ingestOpenRouterBroadcast(body, {
   book,
   signingSecret = null,
   coSignerSecret = null,
@@ -1250,7 +1250,7 @@ export function ingestOpenRouterBroadcast(body, {
 
   for (const generation of generations) {
     const target = resolveBook(book, generation);
-    const result = stampGeneration(generation, target.book, target.routedBy, deps);
+    const result = await stampGeneration(generation, target.book, target.routedBy, deps);
     const summary = {
       generation_id: generation.generationId,
       book_id: result.record?.book_id || target.book.book_id,
@@ -1417,7 +1417,7 @@ export function registerOpenRouterBroadcast(app, {
     }
   });
 
-  function handleBroadcast(req, res) {
+  async function handleBroadcast(req, res) {
     try {
       if (!broadcastEnabled()) return disabled(res);
       const ip = clientIp(req);
@@ -1442,7 +1442,7 @@ export function registerOpenRouterBroadcast(app, {
         return res.status(200).json({ ok: true, test: true, book_id: book.book_id });
       }
       const { baseUrl, reqHost } = ctx(req);
-      const result = ingestOpenRouterBroadcast(req.body, {
+      const result = await ingestOpenRouterBroadcast(req.body, {
         book,
         signingSecret,
         coSignerSecret,

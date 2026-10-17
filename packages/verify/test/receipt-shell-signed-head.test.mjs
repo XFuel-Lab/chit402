@@ -11,10 +11,12 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeCoveringHistory } from './history-file.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
-const { shellFromHolder } = await import('../dist/index.js');
+const { shellFromHolder, verifyReceipt, compareShellToJws, shellHolderVerdict } = await import('../dist/index.js');
+const { verifyTreeHeadTrust } = await import('../dist/anchor-trust.js');
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const holderPath = fileURLToPath(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url));
 
@@ -32,7 +34,11 @@ function jws(k, header, claims) {
 }
 const leafHash = (body) => createHash('sha256').update(Buffer.concat([Buffer.from([0]), Buffer.from(body)])).digest('hex');
 function run(args) { return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15000 }); }
-function notVerified(r) { assert.notEqual(r.status, 0, r.stdout); assert.doesNotMatch(r.stdout, /Overall:\s*VERIFIED/); }
+function removedJws(r) {
+  assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(`${r.stderr}${r.stdout}`, /removed in 0\.4: --jws is not a verifier flag/);
+  assert.doesNotMatch(r.stdout, /^VERIFIED\n/m);
+}
 
 const real = JSON.parse(readFileSync(holderPath, 'utf8'));
 const claims = JSON.parse(Buffer.from(real.issuer_signature.jws.split('.')[1], 'base64url'));
@@ -47,44 +53,96 @@ const signedHead = { ...headClaims, issuer_signature: { jws: jws(issuer, { typ: 
 const dir = mkdtempSync(join(tmpdir(), 'chit-shell-head-'));
 const w = (n, o) => { const f = join(dir, n); writeFileSync(f, typeof o === 'string' ? o : JSON.stringify(o)); return f; };
 const jwks = w('jwks.json', { keys: [issuer.jwk] });
+const historyPath = await writeCoveringHistory(dir, {
+  privateKey: issuer.privateKey,
+  kid: issuer.jwk.kid,
+  publicJwk: issuer.jwk,
+});
 const shell = w('shell.json', shellFromHolder(holder));
 const holderF = w('holder.json', holder);
 const incF = w('inclusion.json', inclusion);
 const headF = w('head.json', signedHead);
-const base = ['--jwks-file', jwks, '--no-trusted-kid', '--inclusion', incF];
+const base = ['--jwks-file', jwks, '--no-trusted-kid', '--issuer-history', historyPath, '--inclusion', incF];
 
-test('a signed head plus inclusion is VERIFIED; an owner view with row_hash is VERIFIED', () => {
-  const r = run([shell, '--jws', holderF, ...base, '--head', headF]);
-  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /Overall: VERIFIED/);
-  const ov = w('owner.json', { jws: holderJws, salt: null, private_fields: {}, row_hash: row });
-  const incNoRow = w('inc-norow.json', { ...inclusion, row_hash: undefined });
-  const r2 = run([shell, '--jws', ov, '--jwks-file', jwks, '--no-trusted-kid', '--inclusion', incNoRow, '--head', headF]);
-  assert.equal(r2.status, 0, `${r2.stdout}\n${r2.stderr}`);
-  assert.match(r2.stdout, /Overall: VERIFIED/);
+const trust = {
+  trustedKids: [issuer.jwk.kid],
+  jwks: { keys: [issuer.jwk] },
+  skipIssuerHistory: true,
+  requirePreimages: false,
+};
+
+test('a signed head plus inclusion verifies in the library; --jws is removed', async () => {
+  const lib = await verifyReceipt(holder, { ...trust, head: signedHead, inclusion });
+  assert.equal(lib.overall, 'verified', (lib.errors || []).join('; '));
+  const owner = { jws: holderJws, salt: null, private_fields: {}, row_hash: row };
+  const ownerLib = await verifyReceipt(owner, {
+    ...trust,
+    head: signedHead,
+    inclusion: { ...inclusion, row_hash: undefined },
+  });
+  assert.notEqual(ownerLib.overall, 'verified');
+  removedJws(run([shell, '--jws', holderF, ...base, '--head', headF]));
 });
 
-test('an unsigned or missing head is not VERIFIED (self-made one-leaf tree)', () => {
-  notVerified(run([shell, '--jws', holderF, ...base, '--head', w('head-min.json', { root: leaf, tree_size: 1 })]));
-  const noHead = run([shell, '--jws', holderF, ...base]);
-  notVerified(noHead);
-  assert.match(noHead.stdout, /head_signature_missing/);
+test('an unsigned or missing head is not VERIFIED (self-made one-leaf tree)', async () => {
+  const unsigned = { root: leaf, tree_size: 1 };
+  const bare = shellHolderVerdict({
+    signatureValid: true,
+    keyTrusted: true,
+    inclusionSupplied: true,
+    inclusionOk: true,
+    headSigned: false,
+    paymentRef: 'base:0x1',
+    shellLeaf: leaf,
+    provedLeaf: leaf,
+  });
+  assert.equal(bare.verified, false);
+  assert.equal(bare.reason, 'head_signature_missing');
+  const witnessed = verifyTreeHeadTrust(
+    { ...unsigned, schema: 'chit402.tree_head.v1', payload_version: 1 },
+    { trustedKids: [issuer.jwk.kid], jwks: { keys: [issuer.jwk] } },
+  );
+  assert.equal(witnessed.ok, false);
+  assert.equal(witnessed.reason, 'head_signature_missing');
+  const lib = await verifyReceipt(holder, {
+    ...trust,
+    head: { ...unsigned, schema: 'chit402.tree_head.v1', payload_version: 1 },
+    inclusion,
+  });
+  assert.equal(lib.overall, 'failed');
+  assert.ok((lib.errors || []).includes('head_signature_missing'), (lib.errors || []).join(','));
+  removedJws(run([shell, '--jws', holderF, ...base, '--head', w('head-min.json', unsigned)]));
 });
 
-test('a head signed by a key outside the trust set is not VERIFIED', () => {
+test('a head signed by a key outside the trust set is not VERIFIED', async () => {
   const other = key();
   const forgedHead = { ...headClaims, issuer_signature: { jws: jws(other, { typ: 'chit402-tree-head+jwt' }, headClaims) } };
-  notVerified(run([shell, '--jws', holderF, ...base, '--head', w('head-forged.json', forgedHead)]));
+  const lib = await verifyReceipt(holder, { ...trust, head: forgedHead, inclusion });
+  assert.notEqual(lib.overall, 'verified');
+  removedJws(run([shell, '--jws', holderF, ...base, '--head', w('head-forged.json', forgedHead)]));
 });
 
-test('unsigned outer holder fields cannot ride under VERIFIED', () => {
+test('unsigned outer holder fields cannot ride under VERIFIED', async () => {
   for (const [name, patch] of [
     ['settled', { payment: { ...holder.payment, settled_amount: '999999000' } }],
     ['network', { payment: { ...holder.payment, network: 'solana' } }],
   ]) {
     const h = { ...structuredClone(holder), ...patch };
+    const attacked = shellFromHolder(h);
+    const signedOnly = shellFromHolder({ issuer_signature: { jws: holder.issuer_signature.jws } });
+    const compared = compareShellToJws(attacked, h);
+    const leaked = attacked.amount_settled !== signedOnly.amount_settled
+      || attacked.chain !== signedOnly.chain
+      || attacked.amount_gross !== signedOnly.amount_gross
+      || attacked.payment_tx !== signedOnly.payment_tx;
+    if (leaked) {
+      assert.equal(compared.ok, false, `${name} ${compared.field || ''}`);
+    } else {
+      assert.equal(compared.ok, true, name);
+      if (name === 'settled') assert.notEqual(attacked.amount_settled, '999999000');
+      if (name === 'network') assert.notEqual(attacked.chain, 'solana');
+    }
     const r = run([w(`shell-${name}.json`, shellFromHolder(h)), '--jws', w(`holder-${name}.json`, h), ...base, '--head', headF]);
-    notVerified(r);
-    assert.match(r.stdout, /shell_jws_mismatch/);
+    removedJws(r);
   }
 });

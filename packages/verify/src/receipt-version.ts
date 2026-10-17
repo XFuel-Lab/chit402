@@ -232,6 +232,40 @@ export function signedClaimsOnAllowlist(claims: unknown): boolean {
   return decision.ok === true;
 }
 
+const UUID_BODY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * UUID ids must match the receipt version. Non-uuid task ids are documented
+ * legacy formats and are not this check. A wrong prefix is reported even
+ * when the version is otherwise unsupported.
+ */
+export function legacyIdentityErrors(receipt: unknown): string[] {
+  if (!isPlainObject(receipt)) return [];
+  const signature = receipt.issuer_signature;
+  const jws = isPlainObject(signature) ? signature.jws : undefined;
+  if (typeof jws !== 'string' || jws.length === 0) return [];
+  const read = readSignedClaims(jws);
+  if (!read.ok) return [];
+  const claims = read.claims;
+  let version: number | null = null;
+  if (hasOwn(claims, 'v') && isJsonInteger(claims.v)) version = claims.v;
+  else if (hasOwn(claims, 'payload_version') && isJsonInteger(claims.payload_version)) version = claims.payload_version;
+  const legacy = version == null || version <= 11;
+  const errors: string[] = [];
+  for (const id of [claims.task_id, claims.receipt_id]) {
+    if (typeof id !== 'string') continue;
+    const match = /^(chit|xfuel)-(.+)$/i.exec(id);
+    if (!match || !UUID_BODY.test(match[2])) continue;
+    const prefix = match[1].toLowerCase();
+    if ((legacy && prefix === 'chit') || (!legacy && prefix === 'xfuel')) {
+      errors.push('id_prefix_version_mismatch');
+      break;
+    }
+  }
+  if (legacy && hasOwn(claims, 'intent')) errors.push('intent_on_legacy_version');
+  return errors;
+}
+
 export function classifyReceiptDocument(receipt: unknown): ReceiptVersionDecision {
   if (!isPlainObject(receipt)) return fail(UNSUPPORTED_VERSION);
   const signature = receipt.issuer_signature;
@@ -280,8 +314,8 @@ export function formatSupportedReceiptVersions(): string {
     `  payload_version: ${LEGACY_PAYLOAD_VERSIONS.join(', ')}, and 11 only with a signed issuer_root`,
     `  refusal payload_version: ${REFUSAL_EXACT_VERSIONS.join(', ')}`,
     '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred)',
-    'Unknown versions fail closed: unsupported_version, exit 1.',
-    `Receipts issued after 2026-10-08 require @xfuel/verify >= ${VERIFIER_MIN}.`,
+    'Unknown versions fail closed: unsupported_version, exit 2.',
+    `Receipts issued after 2026-10-08 require chit402-verify >= ${VERIFIER_MIN}.`,
     'Older verifiers may print VERIFIED for formats they do not understand.',
   ].join('\n');
 }

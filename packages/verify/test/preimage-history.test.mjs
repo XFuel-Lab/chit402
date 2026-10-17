@@ -510,18 +510,17 @@ test('a tampered canonical preimage fails the receipt and the CLI', async () => 
     join(dir, 'receipt.json'),
     '--json',
     '--no-preimage',
-    '--no-issuer-history',
     '--trusted-kid',
     receipt.issuer_signature.kid,
   ], { encoding: 'utf8' });
   const spawnDetail = `status=${run.status} stderr=${run.stderr || ''} stdout=${run.stdout || ''} cli=${cli}`;
   assert.equal(run.error ?? null, null, `${run.error?.code || 'spawn'} ${spawnDetail}`);
-  assert.equal(typeof run.status, 'number', `CLI did not exit. ${spawnDetail}`);
-  assert.notEqual(run.status, 0, spawnDetail);
+  assert.equal(run.status, 1, spawnDetail);
   assert.match(String(run.stdout), /^\s*\{/, `CLI stdout is not JSON. ${spawnDetail}`);
   const parsed = JSON.parse(run.stdout);
-  assert.equal(parsed.overall, 'failed');
-  assert.match(parsed.errors.join(' '), /canonical preimage: payload_hash_mismatch/);
+  assert.equal(parsed.reason, 'removed_flag');
+  assert.match(parsed.message, /removed in 0\.4: --no-preimage is not a verifier flag/);
+  assert.notEqual(parsed.result, 'verified');
 });
 
 test('payload v10 without an issuer_history pin fails closed', async () => {

@@ -36,8 +36,8 @@ grep -E '^X402_NETWORK=|^X402_PAY_TO=|^X402_ENABLED=|^CDP_API_KEY_ID=' "$GW/.env
 grep -q '^X402_NETWORK=base$' "$GW/.env" || die "X402_NETWORK must be exactly: base"
 grep -q '^CDP_API_KEY_SECRET=.' "$GW/.env" || die "CDP_API_KEY_SECRET missing"
 
-ylw "==> npm install"
-( cd "$GW" && npm install --omit=dev )
+ylw "==> npm ci"
+( cd "$GW" && npm ci --omit=dev )
 
 ylw "==> Stopping / disabling legacy units"
 if [[ -n "${XFUEL_LEGACY_PM2_APP:-}" ]] && command -v pm2 >/dev/null 2>&1; then

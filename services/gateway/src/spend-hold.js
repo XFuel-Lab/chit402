@@ -29,6 +29,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 
 export const CEILING_EXCEEDED = 'CEILING_EXCEEDED';
 
@@ -208,12 +209,10 @@ export class SpendHoldStore {
     if (this.persist) {
       try {
         fs.mkdirSync(this.dir, { recursive: true });
-        this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'spend-hold: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'spend-hold: mkdir failed');
       }
+      this._load();
     }
   }
 
@@ -288,7 +287,7 @@ export class SpendHoldStore {
       });
       replaceFile(this._file(), body);
     } catch (err) {
-      logger.warn({ err: err.message }, 'spend-hold: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'spend-hold: save failed');
     }
   }
 
@@ -323,16 +322,25 @@ export class SpendHoldStore {
   }
 
   _expire(now) {
-    let changed = false;
+    const touched = [];
     for (const hold of this._byRequest.values()) {
       if (hold.state === OPEN && hold.expires_at <= now) {
+        touched.push({ hold, state: hold.state, released_at: hold.released_at });
         hold.state = EXPIRED;
         hold.released_at = new Date(now).toISOString();
-        changed = true;
       }
     }
-    if (changed) this._save();
-    return changed;
+    if (touched.length === 0) return false;
+    try {
+      this._save();
+    } catch (err) {
+      for (const item of touched) {
+        item.hold.state = item.state;
+        item.hold.released_at = item.released_at;
+      }
+      throw err;
+    }
+    return true;
   }
 
   _settled(leg) {
@@ -457,7 +465,12 @@ export class SpendHoldStore {
       released_at: null,
     };
     this._byRequest.set(hold.request_id, hold);
-    this._save();
+    try {
+      this._save();
+    } catch (err) {
+      this._byRequest.delete(hold.request_id);
+      throw err;
+    }
     return { ok: true, hold: this._public(hold), idempotent: false };
   }
 
@@ -514,7 +527,7 @@ export class SpendHoldStore {
       const verdict = this._verdict(legs, requested, at);
       if (!verdict.ok) return verdict;
       if (typeof this.testYield === 'function') await this.testYield();
-      return this._commit(requestId, requested, legs, at);
+      return await this._commit(requestId, requested, legs, at);
     });
   }
 
@@ -541,11 +554,25 @@ export class SpendHoldStore {
       const parsed = actual == null ? hold.reserved : parseAtomic(actual);
       const wanted = parsed == null ? hold.reserved : parsed;
       const applied = wanted > hold.reserved ? hold.reserved : wanted;
+      const prior = {
+        state: hold.state,
+        consumed_amount: hold.consumed_amount,
+        shortfall: hold.shortfall,
+        consumed_at: hold.consumed_at,
+      };
       hold.state = CONSUMED;
       hold.consumed_amount = applied;
       hold.shortfall = wanted > hold.reserved ? wanted - hold.reserved : 0n;
       hold.consumed_at = new Date(at).toISOString();
-      this._save();
+      try {
+        this._save();
+      } catch (err) {
+        hold.state = prior.state;
+        hold.consumed_amount = prior.consumed_amount;
+        hold.shortfall = prior.shortfall;
+        hold.consumed_at = prior.consumed_at;
+        throw err;
+      }
       return {
         ok: true,
         hold: this._public(hold),
@@ -571,9 +598,16 @@ export class SpendHoldStore {
       if (hold.state === RELEASED || hold.state === EXPIRED || hold.state === CONSUMED) {
         return { ok: true, hold: this._public(hold), idempotent: true };
       }
+      const prior = { state: hold.state, released_at: hold.released_at };
       hold.state = RELEASED;
       hold.released_at = new Date(at).toISOString();
-      this._save();
+      try {
+        this._save();
+      } catch (err) {
+        hold.state = prior.state;
+        hold.released_at = prior.released_at;
+        throw err;
+      }
       return { ok: true, hold: this._public(hold), idempotent: false };
     });
   }

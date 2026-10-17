@@ -124,7 +124,7 @@ class MultiRpcProvider {
         if (switched || retries > 1) {
           // Wait before retry
           await this.sleep(config.retry.delayMs);
-          return this.executeWithRetry(fn, retries - 1);
+          return await this.executeWithRetry(fn, retries - 1);
         }
       }
 
@@ -137,7 +137,7 @@ class MultiRpcProvider {
    * @returns {Promise<number>}
    */
   async getBlockNumber() {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.getBlockNumber();
     });
   }
@@ -148,7 +148,7 @@ class MultiRpcProvider {
    * @returns {Promise<Object>}
    */
   async getTransactionReceipt(txHash) {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.getTransactionReceipt(txHash);
     });
   }
@@ -159,7 +159,7 @@ class MultiRpcProvider {
    * @returns {Promise<Object>}
    */
   async getTransaction(txHash) {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.getTransaction(txHash);
     });
   }
@@ -170,7 +170,7 @@ class MultiRpcProvider {
    * @returns {Promise<Object>}
    */
   async getBlock(blockHashOrNumber) {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.getBlock(blockHashOrNumber);
     });
   }
@@ -182,7 +182,7 @@ class MultiRpcProvider {
    * @returns {Promise<Object>}
    */
   async waitForTransaction(txHash, confirmations = config.theta.requiredConfirmations) {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.waitForTransaction(txHash, confirmations);
     });
   }
@@ -211,7 +211,7 @@ class MultiRpcProvider {
    * @returns {Promise<Object>}
    */
   async getNetwork() {
-    return this.executeWithRetry(async (provider) => {
+    return await this.executeWithRetry(async (provider) => {
       return await provider.getNetwork();
     });
   }

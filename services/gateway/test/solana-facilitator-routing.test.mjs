@@ -156,7 +156,7 @@ test('Solana verifyPayment uses Solana facilitator when opts.gatewayUrl is CDP U
   requestLog.solana = [];
 
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-solana-routing',
       maxAmountRequired: '50000',
@@ -205,7 +205,7 @@ test('Solana settlePayment uses Solana facilitator when opts.gatewayUrl is CDP U
   requestLog.solana = [];
 
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-solana-settle-routing',
       maxAmountRequired: '50000',
@@ -255,7 +255,7 @@ test('Base verifyPayment uses CDP facilitator (opts.gatewayUrl)', async () => {
   requestLog.solana = [];
 
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-base-routing',
       maxAmountRequired: '50000',
@@ -301,7 +301,7 @@ test('Base settlePayment uses CDP facilitator (opts.gatewayUrl)', async () => {
   requestLog.solana = [];
 
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-base-settle-routing',
       maxAmountRequired: '50000',
@@ -350,7 +350,7 @@ test('Solana verifyPayment routes to Solana facilitator without explicit gateway
   requestLog.solana = [];
 
   const store = new ChallengeStore();
-  const { body } = buildPaymentChallenge(
+  const { body } = await buildPaymentChallenge(
     {
       taskId: 'task-solana-no-gw',
       maxAmountRequired: '50000',

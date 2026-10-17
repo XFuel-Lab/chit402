@@ -87,8 +87,8 @@ test('the same idempotency key with a different payload fails closed', () => {
   );
 });
 
-test('a missing intent_id fails closed when the request carried one', () => {
-  assert.throws(() => issueRefusalReceipt({
+test('a missing intent_id fails closed when the request carried one', async () => {
+  await assert.rejects(async () => await issueRefusalReceipt({
     policy_code: 'policy_blocked',
     reason: 'cap',
     agent_id: 4,
@@ -104,9 +104,9 @@ test('a missing intent_id fails closed when the request carried one', () => {
   }), (err) => err.code === 'intent_id_required');
 });
 
-test('a binding failure is returned and does not keep the book row', () => {
+test('a binding failure is returned and does not keep the book row', async () => {
   const ledger = new UsageSettledLedger();
-  const missing = ledger.recordPolicyBlocked({
+  const missing = await ledger.recordPolicyBlocked({
     agentId: 4,
     taskId: 'bind-missing-intent',
     policyCode: 'policy_blocked',
@@ -121,7 +121,7 @@ test('a binding failure is returned and does not keep the book row', () => {
   assert.equal(missing.ok, false);
   assert.equal(missing.code, 'intent_id_required');
   assert.equal(ledger.findByTask('bind-missing-intent'), null);
-  const kept = ledger.recordPolicyBlocked({
+  const kept = await ledger.recordPolicyBlocked({
     agentId: 4,
     taskId: 'bind-missing-intent',
     policyCode: 'policy_blocked',
@@ -233,7 +233,7 @@ test('an open v11 refusal without a request is request_unbound and is not stored
     };
     await assertIssuerRootStartup({ fetchImpl, log() {} });
     const ledger = new UsageSettledLedger();
-    const unbound = ledger.recordPolicyBlocked({
+    const unbound = await ledger.recordPolicyBlocked({
       agentId: 4,
       taskId: 'bind-unbound',
       policyCode: 'policy_blocked',
@@ -243,7 +243,7 @@ test('an open v11 refusal without a request is request_unbound and is not stored
     assert.equal(unbound.code, 'request_unbound');
     assert.equal(ledger.findByTask('bind-unbound'), null);
     const boundRequest = { method: 'POST', path: '/v1/chat/completions', body: BODY };
-    const bound = ledger.recordPolicyBlocked({
+    const bound = await ledger.recordPolicyBlocked({
       agentId: 4,
       taskId: 'bind-unbound',
       policyCode: 'policy_blocked',
@@ -349,7 +349,7 @@ test('a paid settle signs request_digest without publishing an unsalted body has
       rawBody: Buffer.from(raw),
       body: JSON.parse(raw),
     };
-    const { task } = registerPaidV1Shell({
+    const { task } = await registerPaidV1Shell({
       taskId: 'xfuel-paid-bind',
       payment: {
         amount: '2000',
@@ -366,7 +366,7 @@ test('a paid settle signs request_digest without publishing an unsalted body has
       resourcePath: '/v1/chat/completions',
     });
     assert.ok(task.request);
-    const receipt = buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 });
+    const receipt = await buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 });
     const headers = {};
     applyRequestSaltHeader({ setHeader(name, value) { headers[name.toLowerCase()] = value; } }, receipt);
     const salt = headers['x-chit-request-salt'];
@@ -389,11 +389,11 @@ test('a paid settle signs request_digest without publishing an unsalted body has
 
     const storedJws = receipt.issuer_signature.jws;
     task.issuerSignature = receipt.issuer_signature;
-    const replay = buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 });
+    const replay = await buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 });
     assert.equal(replay.issuer_signature.jws, storedJws);
     task.request = { ...task.request, body: `${raw} ` };
-    assert.throws(
-      () => buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 }),
+    await assert.rejects(
+      async () => await buildReceipt(task, { signingSecret: 'paid-bind', agentId: 4 }),
       (err) => err.code === 'idempotency_conflict',
     );
     assert.equal(task.issuerSignature.jws, storedJws);

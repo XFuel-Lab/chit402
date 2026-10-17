@@ -41,7 +41,7 @@ test('a policy refusal signs a document and does not charge', async () => {
     assert.equal(anchor.state_root, null);
     const ledger = new UsageSettledLedger();
     const before = ledger.sumCollectedByAgent(7);
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 7,
       taskId: 'blocked-signed',
       policyCode: 'daily_cap_exceeded',
@@ -77,11 +77,11 @@ test('a policy refusal signs a document and does not charge', async () => {
     assert.equal(doc.book_row.row_hash, recorded.entry.row_hash);
     assert.equal(doc.issuer_signature.alg, 'ES256');
     assert.equal(doc.issuer_signature.typ, 'chit402-refusal+jwt');
-    assert.equal(verifyRefusalReceipt(doc).valid, true);
+    assert.equal((await verifyRefusalReceipt(doc)).valid, true);
     assert.equal(RECEIPT_PAYLOAD_VERSION, 10);
     const found = ledger.findByRefusal(doc.refusal_id);
     assert.equal(found.task_id, 'blocked-signed');
-    const again = ledger.recordPolicyBlocked({
+    const again = await ledger.recordPolicyBlocked({
       agentId: 7,
       taskId: 'blocked-signed',
       policyCode: 'daily_cap_exceeded',
@@ -118,7 +118,7 @@ test('an observed block hash and state root are inside the signature', async () 
     assert.equal(anchor.chain_id, 8453);
     assert.equal(anchor.state_root, stateRoot);
     const ledger = new UsageSettledLedger();
-    const recorded = ledger.recordPolicyBlocked({
+    const recorded = await ledger.recordPolicyBlocked({
       agentId: 4,
       taskId: 'blocked-rooted',
       policyCode: 'kill_switch',
@@ -131,10 +131,10 @@ test('an observed block hash and state root are inside the signature', async () 
     assert.equal(doc.anchor.state_root, stateRoot);
     assert.equal(doc.amount_requested, null);
     assert.equal(doc.asset, null);
-    assert.equal(verifyRefusalReceipt(doc, getJwks()).valid, true);
+    assert.equal((await verifyRefusalReceipt(doc, getJwks())).valid, true);
     const presented = presentRefusal(doc, 'https://api.chit402.com');
     assert.equal(presented.verify_url, `https://api.chit402.com/refusal/${doc.refusal_id}`);
-    assert.equal(verifyRefusalReceipt(presented).valid, true);
+    assert.equal((await verifyRefusalReceipt(presented)).valid, true);
   } finally {
     globalThis.fetch = original;
     if (prev == null) delete process.env.BASE_RPC_URL;
@@ -142,9 +142,9 @@ test('an observed block hash and state root are inside the signature', async () 
   }
 });
 
-test('changing refusal_code or nonce fails verification', () => {
+test('changing refusal_code or nonce fails verification', async () => {
   const ledger = new UsageSettledLedger();
-  const recorded = ledger.recordPolicyBlocked({
+  const recorded = await ledger.recordPolicyBlocked({
     agentId: 3,
     taskId: 'blocked-tamper',
     policyCode: 'hourly_cap_exceeded',
@@ -152,15 +152,15 @@ test('changing refusal_code or nonce fails verification', () => {
     amountRequested: '2000',
   });
   const doc = recorded.entry.refusal;
-  assert.equal(verifyRefusalReceipt(doc).valid, true);
+  assert.equal((await verifyRefusalReceipt(doc)).valid, true);
 
   const coded = { ...doc, refusal_code: 'kill_switch' };
-  const codeResult = verifyRefusalReceipt(coded);
+  const codeResult = await verifyRefusalReceipt(coded);
   assert.equal(codeResult.valid, false);
   assert.equal(codeResult.reason, 'refusal_code_mismatch');
 
   const nonced = { ...doc, nonce: 'f'.repeat(32) };
-  const nonceResult = verifyRefusalReceipt(nonced);
+  const nonceResult = await verifyRefusalReceipt(nonced);
   assert.equal(nonceResult.valid, false);
   assert.equal(nonceResult.reason, 'nonce_mismatch');
 
@@ -174,7 +174,7 @@ test('changing refusal_code or nonce fails verification', () => {
       }),
     },
   };
-  const rewrittenCode = verifyRefusalReceipt(rewritten);
+  const rewrittenCode = await verifyRefusalReceipt(rewritten);
   assert.equal(rewrittenCode.valid, false);
   assert.equal(rewrittenCode.reason, 'signature_invalid');
 
@@ -188,37 +188,37 @@ test('changing refusal_code or nonce fails verification', () => {
       }),
     },
   };
-  const nonceSig = verifyRefusalReceipt(rewrittenNonce);
+  const nonceSig = await verifyRefusalReceipt(rewrittenNonce);
   assert.equal(nonceSig.valid, false);
   assert.equal(nonceSig.reason, 'signature_invalid');
 });
 
-test('dropping the outer schema still verifies the signed refusal', () => {
+test('dropping the outer schema still verifies the signed refusal', async () => {
   const ledger = new UsageSettledLedger();
   const doc = {
-    ...ledger.recordPolicyBlocked({
+    ...(await ledger.recordPolicyBlocked({
       agentId: 2,
       taskId: 'blocked-outer-schema',
       policyCode: 'kill_switch',
       reason: 'killed',
-    }).entry.refusal,
+    })).entry.refusal,
   };
   delete doc.schema;
-  const result = verifyRefusalReceipt(doc);
+  const result = await verifyRefusalReceipt(doc);
   assert.equal(result.valid, true);
   assert.equal(result.refusal_code, 'kill_switch');
   const rewritten = { ...doc, schema: 'xfuel.receipt.v4' };
-  assert.equal(verifyRefusalReceipt(rewritten).reason, 'schema_mismatch');
+  assert.equal((await verifyRefusalReceipt(rewritten)).reason, 'schema_mismatch');
 });
 
-test('a refusal that claims a charge does not verify', () => {
+test('a refusal that claims a charge does not verify', async () => {
   const ledger = new UsageSettledLedger();
-  const doc = ledger.recordPolicyBlocked({
+  const doc = (await ledger.recordPolicyBlocked({
     agentId: 2,
     taskId: 'blocked-charge',
     policyCode: 'kill_switch',
     reason: 'killed',
-  }).entry.refusal;
+  })).entry.refusal;
   const charged = { ...doc, charged: true };
-  assert.equal(verifyRefusalReceipt(charged).reason, 'charged_not_zero');
+  assert.equal((await verifyRefusalReceipt(charged)).reason, 'charged_not_zero');
 });

@@ -115,7 +115,7 @@ test('reconcileAfterServe burns the ACTUAL provider float, not preferred', () =>
   assert.equal(mgr.get('theta-edgecloud').balance, 100000n);
 });
 
-test('buildReceipt emits provider_cogs from task.meta', () => {
+test('buildReceipt emits provider_cogs from task.meta', async () => {
   const task = {
     taskId: 'task-float-1',
     status: 'completed',
@@ -139,7 +139,7 @@ test('buildReceipt emits provider_cogs from task.meta', () => {
   };
   const cogs = providerCogsOf(task);
   assert.equal(cogs.provider, 'theta-edgecloud');
-  const r = buildReceipt(task, { baseUrl: 'https://api.xfuel.app' });
+  const r = await buildReceipt(task, { baseUrl: 'https://api.xfuel.app' });
   const v = mergeReceiptView(r);
   assert.equal(v.payment.rail, 'usdc');
   assert.equal(r.provider_cogs.currency, 'USDC');
@@ -149,8 +149,8 @@ test('buildReceipt emits provider_cogs from task.meta', () => {
   assert.equal(v.route.provider, 'theta-edgecloud');
 });
 
-test('buildReceipt defaults payment rail to usdc (not tfuel)', () => {
-  const r = buildReceipt({
+test('buildReceipt defaults payment rail to usdc (not tfuel)', async () => {
+  const r = await buildReceipt({
     taskId: 't1',
     status: 'pending',
     intent: { type: 'inference_request' },

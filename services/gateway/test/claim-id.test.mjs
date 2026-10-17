@@ -34,10 +34,10 @@ function paidTask(over = {}) {
   };
 }
 
-test('a paid receipt signs claim_id and leaves the v8 HMAC array unchanged', () => {
+test('a paid receipt signs claim_id and leaves the v8 HMAC array unchanged', async () => {
   const secret = 'claim-secret';
-  const withSeat = buildReceipt(paidTask(), { agentId: 42, signingSecret: secret });
-  const withoutSeat = buildReceipt(paidTask(), { signingSecret: secret });
+  const withSeat = await buildReceipt(paidTask(), { agentId: 42, signingSecret: secret });
+  const withoutSeat = await buildReceipt(paidTask(), { signingSecret: secret });
   const seated = decodeReceiptClaims(withSeat);
   const bare = decodeReceiptClaims(withoutSeat);
   assert.equal(seated.payload_version, 10);
@@ -50,8 +50,8 @@ test('a paid receipt signs claim_id and leaves the v8 HMAC array unchanged', () 
   assert.equal(verifyIssuerForHtml(withoutSeat).reason, 'claim_id_missing');
 });
 
-test('private desk uses the same claim_id as a native paid call', () => {
-  const receipt = buildReceipt(paidTask({
+test('private desk uses the same claim_id as a native paid call', async () => {
+  const receipt = await buildReceipt(paidTask({
     meta: { privateSpend: true, privacyMode: 'vendor_blind', privacyProduct: 'private_desk' },
   }), { agentId: 9 });
   const claims = decodeReceiptClaims(receipt);
@@ -61,19 +61,19 @@ test('private desk uses the same claim_id as a native paid call', () => {
   assert.equal(verifyIssuerForHtml(receipt).verified, true);
 });
 
-test('an unmetered receipt may sign claim_id null', () => {
-  const receipt = buildReceipt(paidTask({ ref: null, rail: 'unmetered' }), {});
+test('an unmetered receipt may sign claim_id null', async () => {
+  const receipt = await buildReceipt(paidTask({ ref: null, rail: 'unmetered' }), {});
   const claims = decodeReceiptClaims(receipt);
   assert.equal(claims.payment.ref, null);
   assert.equal(claims.claim_id, null);
   assert.equal(verifyIssuerForHtml(receipt).verified, true);
 });
 
-test('the book id is chosen before the receipt is signed', () => {
+test('the book id is chosen before the receipt is signed', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const identity = registry.allocate({ taskId: 'seat' });
-  ledger.recordIngestStamp({
+  await ledger.recordIngestStamp({
     agentId: identity.agent_id,
     taskId: 'already',
     paymentRef: 'base:0xalready',
@@ -97,15 +97,15 @@ test('the book id is chosen before the receipt is signed', () => {
   assert.notEqual(fresh, identity.agent_id);
   const task = paidTask({ taskId: 'new-task', ref: 'base:0xnew' });
   task.meta.agentId = fresh;
-  const claims = decodeReceiptClaims(buildReceipt(task, { agentId: fresh }));
+  const claims = decodeReceiptClaims(await buildReceipt(task, { agentId: fresh }));
   assert.equal(claims.claim_id, String(fresh));
 });
 
-test('a board stamp row signs the stamp tx with the poster book', () => {
+test('a board stamp row signs the stamp tx with the poster book', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const identity = registry.allocate({ taskId: 'poster' });
-  const stamped = ledger.recordBoardEvent({
+  const stamped = await ledger.recordBoardEvent({
     agentId: identity.agent_id,
     kind: 'board_stamp',
     taskId: 'board-stamp-1',

@@ -123,7 +123,7 @@ export function verifyInflowCorrection(correction, ctx, session) {
  * @param {object} body — { bucket, allocation, task_id?, model?, hub?, signature? }
  * @param {{ ledger, registry, verify, isDemo?, claim? }} deps
  */
-export function recordBookInflow(agentId, body = {}, { ledger, registry, verify, isDemo = false, claim = {} } = {}) {
+export async function recordBookInflow(agentId, body = {}, { ledger, registry, verify, isDemo = false, claim = {} } = {}) {
   if (isDemo) {
     return {
       status: 403,
@@ -187,7 +187,7 @@ export function recordBookInflow(agentId, body = {}, { ledger, registry, verify,
     }
   }
 
-  const recorded = ledger.appendInflow({
+  const recorded = await ledger.appendInflow({
     agentId: id,
     taskId,
     bucket,
@@ -226,7 +226,7 @@ export function recordBookInflow(agentId, body = {}, { ledger, registry, verify,
  * @param {object} body — { task_id, bucket?, allocation?, reason, correction? }
  * @param {{ ledger, registry, verify, isDemo?, claim? }} deps
  */
-export function correctBookInflow(agentId, body = {}, { ledger, registry, verify, isDemo = false, claim = {} } = {}) {
+export async function correctBookInflow(agentId, body = {}, { ledger, registry, verify, isDemo = false, claim = {} } = {}) {
   if (isDemo) {
     return {
       status: 403,
@@ -299,7 +299,7 @@ export function correctBookInflow(agentId, body = {}, { ledger, registry, verify
     || body.authority?.subject_wallet
     || body.authority?.wallet
     || null;
-  const result = ledger.appendInflowCorrection(taskId, id, correction);
+  const result = await ledger.appendInflowCorrection(taskId, id, correction);
   if (!result.ok) {
     return {
       status: result.code === 'not_found' ? 404 : 400,

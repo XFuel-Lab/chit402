@@ -122,7 +122,15 @@ function fixture() {
       },
     },
   };
-  const baseTx = { hash: head.anchors.base.tx, input: `0x${root}`, chainId: 8453, from: PINNED_BASE_ANCHOR_WALLET };
+  const baseTx = {
+    hash: head.anchors.base.tx,
+    input: `0x${root}`,
+    chainId: 8453,
+    from: PINNED_BASE_ANCHOR_WALLET,
+    status: '0x1',
+    blockNumber: '0x64',
+    tipBlockNumber: '0x70',
+  };
   return {
     receipt,
     inclusion,
@@ -314,14 +322,12 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
     '--rpc',
     '--jwks-file', join(dir, 'jwks.json'),
     '--trusted-kid', fx.key.kid,
-    '--no-issuer-history',
     '--no-preimage',
   ], { encoding: 'utf8' });
-  assert.equal(run.status, 2);
-  assert.match(run.stdout, /What this proves/);
-  assert.match(run.stdout, /What this does not prove/);
-  assert.match(run.stdout, /does not prove the payment/i);
-  assert.match(run.stdout, /PARTIAL/);
+  assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);
+  assert.match(`${run.stderr}`, /removed in 0\.4: --rpc is not a verifier flag/);
+  assert.equal(`${run.stdout}`.includes('What this proves'), false);
+  assert.doesNotMatch(`${run.stdout}`, /^VERIFIED\n/m);
 
   const payerMode = spawnSync(process.execPath, [
     cli,
@@ -329,8 +335,9 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
     '--rpc',
     'https://mainnet.base.org',
   ], { encoding: 'utf8' });
+  assert.equal(payerMode.status, 1, `${payerMode.stdout}\n${payerMode.stderr}`);
+  assert.match(`${payerMode.stderr}`, /removed in 0\.4: --rpc is not a verifier flag/);
   assert.equal(`${payerMode.stdout}`.includes('What this proves'), false);
-  assert.notEqual(payerMode.status, 0);
 });
 
 /**
@@ -379,6 +386,7 @@ test('an inclusion endpoint 404 body is not_in_tree', async () => {
     ...fetched,
   });
   assert.equal(result.inclusion.reason, 'not_in_tree');
+  assert.equal(result.overall, 'not_in_log');
   assert.equal(result.errors.includes('not_in_tree'), true);
   assert.equal(result.errors.includes('bad_root'), false);
   assert.deepEqual(fetched.calls, []);

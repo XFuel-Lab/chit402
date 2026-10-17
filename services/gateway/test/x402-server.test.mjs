@@ -165,8 +165,8 @@ test('extractPaymentNonce: v1 explicit header, v2 explicit header, json blob, ba
   assert.equal(extractPaymentNonce({ headers: {} }), null);
 });
 
-test('full 402 loop against mock facilitator: challenge ? settle ? replay-rejected', async () => {
-  const { url, close } = await startMockFacilitator();
+test('full 402 loop against mock facilitator: challenge, settle, then replay is refused', async () => {
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url);
 
@@ -194,10 +194,12 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
     assert.match(settled.paymentRef, /^base:0x/);
     assert.equal(settled.settledAmount, '50000', 'settled gross comes from the bound challenge');
 
-    // Step 3: replay the same nonce ? rejected (spent)
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
@@ -206,7 +208,7 @@ test('full 402 loop against mock facilitator: challenge ? settle ? replay-reject
 test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
   // This is the Bankr case: CDP-native client sends PAYMENT-SIGNATURE, not X-PAYMENT.
   // The challenge still returns x402Version: 2, and the paid retry must succeed.
-  const { url, close } = await startMockFacilitator();
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgFor(url);
 
@@ -230,10 +232,12 @@ test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native 
     assert.match(settled.paymentRef, /^base:0x/);
     assert.equal(settled.settledAmount, '50000');
 
-    // Step 3: replay the same nonce → rejected (spent)
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
@@ -443,8 +447,8 @@ test('X402_COST_PLUS actually changes the quote, not just the advertised price',
   await primeCatalog();
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
-  const card = await withCostPlus(false, () => priceUSDCResolved(agentBody(), cfg));
-  const plus = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+  const card = await withCostPlus(false, async () => await priceUSDCResolved(agentBody(), cfg));
+  const plus = await withCostPlus(true, async () => await priceUSDCResolved(agentBody(), cfg));
 
   assert.notEqual(plus, card, 'the flag changed nothing — cost-plus is not wired');
 
@@ -467,17 +471,17 @@ test('an opt-in proof is charged for at quote time', async () => {
   await primeCatalog();
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
-  const plain = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
-  const proved = await withCostPlus(true, () =>
-    priceUSDCResolved(agentBody({ proof_tier: 'settlement' }), cfg));
+  const plain = await withCostPlus(true, async () => await priceUSDCResolved(agentBody(), cfg));
+  const proved = await withCostPlus(true, async () =>
+    await priceUSDCResolved(agentBody({ proof_tier: 'settlement' }), cfg));
 
   // A requested tier raises the floor past tier2MinCogs, so without this an
   // opt-in proof is a fixed ~$0.050 cost against a few cents of fee.
   assert.equal(BigInt(proved) - BigInt(plain), 100_000n, 'the flat $0.10 proof price');
 
   // `signed` is not a proof and must not be charged as one.
-  const signed = await withCostPlus(true, () =>
-    priceUSDCResolved(agentBody({ proof_tier: 'signed' }), cfg));
+  const signed = await withCostPlus(true, async () =>
+    await priceUSDCResolved(agentBody({ proof_tier: 'signed' }), cfg));
   assert.equal(signed, plain);
 });
 
@@ -486,8 +490,8 @@ test('a model with no published rate falls back to the card, never to the floor'
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
   const body = agentBody({ model_id: 'theta/glm_5_2' });
 
-  const plus = await withCostPlus(true, () => priceUSDCResolved(body, cfg));
-  const card = await withCostPlus(false, () => priceUSDCResolved(body, cfg));
+  const plus = await withCostPlus(true, async () => await priceUSDCResolved(body, cfg));
+  const card = await withCostPlus(false, async () => await priceUSDCResolved(body, cfg));
 
   // Theta publishes no rate in this catalogue, so cost-plus cannot price it.
   // Quoting an unknown cost at cost-plus would land every such call on the
@@ -501,8 +505,8 @@ test('a cost-plus quote publishes a breakdown that rebuilds the price', async ()
   const { quoteResolved } = await import('../src/x402-server.js');
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
-  const q = await withCostPlus(true, () =>
-    quoteResolved(agentBody({ proof_tier: 'settlement' }), cfg));
+  const q = await withCostPlus(true, async () =>
+    await quoteResolved(agentBody({ proof_tier: 'settlement' }), cfg));
 
   assert.equal(q.basis, 'cost_plus');
 
@@ -530,13 +534,13 @@ test('TEE / spot-check / zk-full do not add the $0.10 settlement-proof surcharge
     assert.equal(wantsSettlementProof({ proof_tier: t }), false, String(t));
   }
 
-  const plain = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
-  const tee = await withCostPlus(true, () =>
-    priceUSDCResolved(agentBody({ proof_tier: 'tee' }), cfg));
-  const spot = await withCostPlus(true, () =>
-    priceUSDCResolved(agentBody({ proof_tier: 'zk-spotcheck' }), cfg));
-  const full = await withCostPlus(true, () =>
-    priceUSDCResolved(agentBody({ proof_tier: 'zk-full' }), cfg));
+  const plain = await withCostPlus(true, async () => await priceUSDCResolved(agentBody(), cfg));
+  const tee = await withCostPlus(true, async () =>
+    await priceUSDCResolved(agentBody({ proof_tier: 'tee' }), cfg));
+  const spot = await withCostPlus(true, async () =>
+    await priceUSDCResolved(agentBody({ proof_tier: 'zk-spotcheck' }), cfg));
+  const full = await withCostPlus(true, async () =>
+    await priceUSDCResolved(agentBody({ proof_tier: 'zk-full' }), cfg));
 
   assert.equal(tee, plain);
   assert.equal(spot, plain);
@@ -564,6 +568,6 @@ test('X402_USDC_PRICES wins even under cost-plus', async () => {
     usdcPriceDefault: '2000',
     usdcPrices: { 'akash/zai-org/GLM-5.2': '77777' },
   };
-  const priced = await withCostPlus(true, () => priceUSDCResolved(agentBody(), cfg));
+  const priced = await withCostPlus(true, async () => await priceUSDCResolved(agentBody(), cfg));
   assert.equal(priced, '77777');
 });

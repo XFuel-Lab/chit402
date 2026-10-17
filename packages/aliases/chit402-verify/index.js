@@ -3,5 +3,5 @@
  *
  * Verify payment binding and output commitment offline.
  */
-export * from '@xfuel/verify';
-export { default } from '@xfuel/verify';
+export * from 'chit402-verify';
+export { default } from 'chit402-verify';

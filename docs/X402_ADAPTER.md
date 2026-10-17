@@ -40,6 +40,19 @@ CDP_API_KEY_SECRET=...
 If `X402_FACILITATOR_URL` is unset and `X402_NETWORK=base`, the gateway defaults to  
 `https://api.cdp.coinbase.com/platform/v2/x402` and authenticates with a per-request EdDSA JWT. Full checklist: [MAINNET_X402_CHECKLIST.md](./MAINNET_X402_CHECKLIST.md).
 
+## Challenge store
+
+Spent nonces live in one JSON file. This file is opened only when x402 is enabled (`X402_ENABLED=true`). Outside `NODE_ENV=test` and `NODE_ENV=development` the default path is `data/x402-challenges.json`, relative to the gateway process working directory (`services/gateway` when you start it from there). `X402_CHALLENGE_STORE` overrides it and is also resolved from that working directory. Boot does not create the file. A missing file refuses x402, so a volume that disappeared cannot look like a fresh spent-set.
+
+On a new host with x402 enabled, create the empty store once before the first start, from that same working directory:
+
+```bash
+mkdir -p data
+printf '%s\n' '{"map":[],"spent":[],"authSpent":[],"txSpent":[],"txFacts":[],"pending":[]}' > data/x402-challenges.json
+```
+
+Create that file only on a host that has never settled. Do not write a new one over a path whose store was lost.
+
 ## Solana mainnet (PayAI facilitator, optional)
 
 ```
@@ -66,6 +79,14 @@ Solana payments are verified and settled via PayAI. Base remains the default net
 3. Agent retries with `X-PAYMENT` header  
 4. Gateway routes to the appropriate facilitator based on the network in the payment
 5. Facilitator verifies / settles; task proceeds; `payment_ref` recorded on the receipt  
+
+A retry must resend the exact payment header from the first attempt, including the signature. Do not rebuild or re-sign it.
+
+`/task-request`, `/v1/agents/register`, `/v1/agents/:agent_id/book/ingest`, and the board routes answer that resend with `409 payment_replayed` and do not run the handler again. `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /a2a-message` return the original response bytes (same `task_id` and receipt) while this process still holds them: in memory only, for 120 seconds, and only up to 256 KiB. A stored copy can be dropped early under memory pressure, which gives `409`. The response and the model output are not written to disk. After a restart, or after that copy expires, the same header is `409 payment_replayed`. Any other header is `409 payment_replayed` and does not include the wallet or the transaction.
+
+If the first attempt is still writing the response, the resend waits up to 60 seconds, then `402 payment_in_flight` with `Retry-After`. Resend the same header.
+
+If that first attempt is pending or fails confirmation, the challenge stays `settle_unconfirmed` until reconcile runs. The client does not get a new challenge for that nonce, and a retry does not settle a second time.
 
 Payment binding into the SP1 proof is flag-gated (`X402_PROOF_BINDING`); in-proof field activates on SP1 guest v2.
 

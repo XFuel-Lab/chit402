@@ -114,14 +114,14 @@ test('book with session returns last-N collected rows for that agent_id only', a
   const agentId = registered.body.agent_id;
   const session = registered.body.session;
 
-  d.ledger.append(collectedReceipt({
+  await d.ledger.append(collectedReceipt({
     task_id: 'task-a2', ref: 'base:0xa2', amount: '20000', rail: 'solana', model: 'xfuel/auto', hub: 'akash',
   }), { agentId });
-  d.ledger.append(collectedReceipt({
+  await d.ledger.append(collectedReceipt({
     task_id: 'task-b', ref: 'base:0xb', amount: '50000',
   }), { agentId: agentId + 9 });
 
-  const book = readAgentBook(agentId, { session }, {
+  const book = await readAgentBook(agentId, { session }, {
     ledger: d.ledger,
     verify: bindBookVerifier(d.registry),
   });
@@ -151,7 +151,7 @@ test('HMAC over agent_id + window is valid possession', async () => {
   const registered = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-h' }, d);
   const agentId = registered.body.agent_id;
   const proof = hmacProof(registered.body.session, agentId, 50);
-  const book = readAgentBook(agentId, { proof }, {
+  const book = await readAgentBook(agentId, { proof }, {
     ledger: d.ledger,
     verify: bindBookVerifier(d.registry),
   });
@@ -159,10 +159,10 @@ test('HMAC over agent_id + window is valid possession', async () => {
   assert.equal(book.body.entries.length, 1);
 });
 
-test('unauth book is 401 with empty body', () => {
+test('unauth book is 401 with empty body', async () => {
   const registry = new AgentRegistry();
   const ledger = new UsageSettledLedger();
-  const miss = readAgentBook(1, {}, { ledger, verify: bindBookVerifier(registry) });
+  const miss = await readAgentBook(1, {}, { ledger, verify: bindBookVerifier(registry) });
   assert.equal(miss.status, 401);
   assert.equal(miss.body, null);
 });
@@ -173,14 +173,14 @@ test('wrong possession and unknown agent_id are 403 with empty body', async () =
   const registered = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-w' }, d);
   const verify = bindBookVerifier(d.registry);
 
-  const wrong = readAgentBook(registered.body.agent_id, { session: 'not-the-session' }, {
+  const wrong = await readAgentBook(registered.body.agent_id, { session: 'not-the-session' }, {
     ledger: d.ledger,
     verify,
   });
   assert.equal(wrong.status, 403);
   assert.equal(wrong.body, null);
 
-  const unknown = readAgentBook(99999, { session: registered.body.session }, {
+  const unknown = await readAgentBook(99999, { session: registered.body.session }, {
     ledger: d.ledger,
     verify,
   });
@@ -195,7 +195,7 @@ test('demo / unmetered / collected:false rows never appear', async () => {
   const registered = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-q' }, d);
   const agentId = registered.body.agent_id;
 
-  const demo = d.ledger.append({
+  const demo = await d.ledger.append({
     task_id: 'task-demo',
     payment: { rail: 'unmetered', ref: 'demo:1', collected: false, gross_amount: '0' },
   }, { agentId });
@@ -218,7 +218,7 @@ test('demo / unmetered / collected:false rows never appear', async () => {
     amount: '10000',
   });
 
-  const book = readAgentBook(agentId, { session: registered.body.session }, {
+  const book = await readAgentBook(agentId, { session: registered.body.session }, {
     ledger: d.ledger,
     verify: bindBookVerifier(d.registry),
   });
@@ -233,7 +233,7 @@ test('only the requested agent_id appears', async () => {
   const d = deps({ 'task-1': a, 'task-2': b });
   const first = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-1' }, d);
   const second = await registerAgent({ agentWallet: WALLET_B, task_id: 'task-2' }, d);
-  const book = readAgentBook(first.body.agent_id, { session: first.body.session }, {
+  const book = await readAgentBook(first.body.agent_id, { session: first.body.session }, {
     ledger: d.ledger,
     verify: bindBookVerifier(d.registry),
   });
@@ -254,7 +254,7 @@ test('dedup still holds on payment.ref and task_id', async () => {
   assert.equal(second.error, 'duplicate_ref');
   assert.equal(d.ledger.entries.length, 1);
 
-  const again = d.ledger.append(a, { agentId: first.body.agent_id });
+  const again = await d.ledger.append(a, { agentId: first.body.agent_id });
   assert.equal(again.ok, false);
   assert.equal(again.code, 'duplicate_ref');
 });
@@ -264,13 +264,13 @@ test('limit hard-max 200', async () => {
   const d = deps({ 'task-lim': a });
   const registered = await registerAgent({ agentWallet: WALLET_A, task_id: 'task-lim' }, d);
   for (let i = 0; i < 210; i++) {
-    d.ledger.append(collectedReceipt({
+    await d.ledger.append(collectedReceipt({
       task_id: `task-extra-${i}`,
       ref: `base:0xextra${i}`,
       amount: '10000',
     }), { agentId: registered.body.agent_id });
   }
-  const book = readAgentBook(registered.body.agent_id, {
+  const book = await readAgentBook(registered.body.agent_id, {
     session: registered.body.session,
     limit: 1000,
   }, {
@@ -286,7 +286,7 @@ let server;
 let base;
 
 before(async () => {
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       const { port } = server.address();

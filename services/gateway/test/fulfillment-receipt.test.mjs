@@ -72,9 +72,9 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(fields.commitmentError, undefined);
   });
 
-  test('buildForeignReceipt attaches fulfillment envelope', () => {
+  test('buildForeignReceipt attaches fulfillment envelope', async () => {
     const hash = hashDeliverablePayload('swap-output');
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-x402-test',
       paymentRequired: {
         resource: 'https://swap.example/v1/execute',
@@ -97,9 +97,9 @@ describe('fulfillment-receipt v1', () => {
     assert.match(receipt.fulfillment.authorization.payment_ref, /^base:0xdead$/);
   });
 
-  test('foreign ingest ledger row + book row expose fulfillment', () => {
+  test('foreign ingest ledger row + book row expose fulfillment', async () => {
     const ledger = new UsageSettledLedger();
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-x402-book',
       paymentRequired: {
         resource: 'https://scrape.example/page',
@@ -110,16 +110,16 @@ describe('fulfillment-receipt v1', () => {
       rail: 'usdc',
       fulfillmentMeta: { jobKind: 'scrape', omitDeliverable: true },
     });
-    const appended = ledger.append(receipt, { payer: '0xpayer', agentId: 42 });
+    const appended = await ledger.append(receipt, { payer: '0xpayer', agentId: 42 });
     assert.equal(appended.ok, true);
     const row = bookFulfillmentRowOf(appended.entry);
     assert.equal(row.job_kind, 'scrape');
     assert.equal(row.output_commitment.status, 'UNVERIFIED');
   });
 
-  test('buildReceipt includes fulfillment for completions task', () => {
+  test('buildReceipt includes fulfillment for completions task', async () => {
     const outputHash = '0x' + 'cd'.repeat(32);
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'task-fulfill-1',
       status: 'completed',
       createdAt: Date.now(),
@@ -137,11 +137,11 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(receipt.issuer_signature.payload_version, RECEIPT_PAYLOAD_VERSION);
   });
 
-  test('buildReceipt: fulfillment.authorization.payer_wallet matches settle meta.payerWallet', () => {
+  test('buildReceipt: fulfillment.authorization.payer_wallet matches settle meta.payerWallet', async () => {
     const payer = '0x1111111111111111111111111111111111111111';
     const paymentRef = 'base:0x' + 'ab'.repeat(32);
     const outputHash = '0x' + 'cd'.repeat(32);
-    const receipt = buildReceipt({
+    const receipt = await buildReceipt({
       taskId: 'task-fulfill-payer',
       status: 'completed',
       createdAt: Date.now(),
@@ -163,8 +163,8 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(claims.fulfillment.authorization.payment_ref, paymentRef);
   });
 
-  test('buildPublicForeignIngestReceipt preserves fulfillment for stranger verify', () => {
-    const snapshot = buildForeignReceipt({
+  test('buildPublicForeignIngestReceipt preserves fulfillment for stranger verify', async () => {
+    const snapshot = await buildForeignReceipt({
       taskId: 'foreign-x402-verify',
       paymentRequired: {
         resource: 'https://acp.example/job/1',
@@ -230,9 +230,9 @@ describe('fulfillment-receipt v1', () => {
     assert.equal(row.output_commitment.status, 'UNVERIFIED');
   });
 
-  test('buildBookAuditPack includes fulfillment block on foreign ingest rows', () => {
+  test('buildBookAuditPack includes fulfillment block on foreign ingest rows', async () => {
     const ledger = new UsageSettledLedger();
-    const receipt = buildForeignReceipt({
+    const receipt = await buildForeignReceipt({
       taskId: 'foreign-x402-audit',
       paymentRequired: {
         resource: 'https://scrape.example/page',
@@ -243,8 +243,8 @@ describe('fulfillment-receipt v1', () => {
       rail: 'usdc',
       fulfillmentMeta: { jobKind: 'scrape', omitDeliverable: true },
     });
-    ledger.append(receipt, { payer: '0xpayer', agentId: 7 });
-    const pack = buildBookAuditPack(ledger.listByAgent(7), 7, 'https://api.chit402.com');
+    await ledger.append(receipt, { payer: '0xpayer', agentId: 7 });
+    const pack = await buildBookAuditPack(ledger.listByAgent(7), 7, 'https://api.chit402.com');
     const row = pack.rows.find((r) => r.task_id === 'foreign-x402-audit');
     assert.ok(row?.fulfillment);
     assert.equal(row.fulfillment.job_kind, 'scrape');

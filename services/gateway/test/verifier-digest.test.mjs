@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const { verifierBuildDigest } = await import('../src/verifier-digest.js');
 const { ReceiptMerkleTree } = await import('../src/receipt-merkle.js');
 
-test('genesis commits the published verifier digest', () => {
+test('genesis commits the published verifier digest', async () => {
   const digest = verifierBuildDigest();
   assert.match(digest, /^[0-9a-f]{64}$/);
   const tree = new ReceiptMerkleTree();
@@ -15,5 +15,5 @@ test('genesis commits the published verifier digest', () => {
   assert.equal(genesis.schema, 'chit402.tree_genesis.v1');
   assert.equal(genesis.verifier_binary_build_digest, digest);
   tree.ensureGenesis();
-  assert.equal(tree.inclusion('genesis').leaf_index, 0);
+  assert.equal((await tree.inclusion('genesis')).leaf_index, 0);
 });

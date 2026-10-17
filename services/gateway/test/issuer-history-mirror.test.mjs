@@ -159,20 +159,20 @@ test('a partial pin fails closed and a github URL normalizes to owner/name', () 
   );
 });
 
-test('flag-off receipts omit the pin and the history document is not the custodian', () => {
+test('flag-off receipts omit the pin and the history document is not the custodian', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
-    const plain = buildReceipt(paidTask('xfuel-mirror-off'), { signingSecret: 's', agentId: 4 });
-    const record = currentIssuerHistory();
+    const plain = await buildReceipt(paidTask('xfuel-mirror-off'), { signingSecret: 's', agentId: 4 });
+    const record = await currentIssuerHistory();
     pinMirror(record);
-    const again = buildReceipt(paidTask('xfuel-mirror-off-2'), { signingSecret: 's', agentId: 4 });
+    const again = await buildReceipt(paidTask('xfuel-mirror-off-2'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(again);
     assert.equal(claims.payload_version, 10);
     assert.equal(Object.hasOwn(claims, 'issuer_history_mirror'), false);
     assert.equal(again.issuer_signature.canonical_preimage.includes('issuer_history_mirror'), false);
     assert.equal(plain.issuer_signature.canonical_preimage.includes('issuer_history_mirror'), false);
-    const history = currentIssuerHistory();
+    const history = await currentIssuerHistory();
     assert.equal(history.body.includes('example-org/issuer-history'), false);
     assert.equal(history.body.includes('issuer_history_mirror'), false);
     const announced = issuerHistoryMirrorAnnouncement(history);
@@ -186,11 +186,11 @@ test('flag-off receipts omit the pin and the history document is not the custodi
   }
 });
 
-test('a stale sha256 is not announced and a matching pin is', () => {
+test('a stale sha256 is not announced and a matching pin is', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
-    const record = currentIssuerHistory();
+    const record = await currentIssuerHistory();
     pinMirror(record, { mirrorPath: 'issuer-history.json' });
     process.env.ISSUER_HISTORY_MIRROR_SHA256 = 'ab'.repeat(32);
     const res = {
@@ -203,7 +203,7 @@ test('a stale sha256 is not announced and a matching pin is', () => {
       send(body) { this.body = Buffer.isBuffer(body) ? body.toString('utf8') : body; },
       json(body) { this.body = JSON.stringify(body); },
     };
-    writeIssuerHistoryMirror(res, record);
+    await writeIssuerHistoryMirror(res, record);
     assert.equal(res.statusCode, 409);
     assert.equal(JSON.parse(res.body).error, 'issuer_history_mirror_stale');
     assert.throws(() => issuerHistoryMirrorClaim(record), (err) => {
@@ -221,7 +221,7 @@ test('a stale sha256 is not announced and a matching pin is', () => {
       send(body) { this.body = Buffer.isBuffer(body) ? body.toString('utf8') : body; },
       json(body) { this.body = JSON.stringify(body); },
     };
-    writeIssuerHistoryMirror(ok, record);
+    await writeIssuerHistoryMirror(ok, record);
     const doc = JSON.parse(ok.body);
     assert.equal(ok.body, jcsRfc8785(doc));
     assert.equal(doc.schema, ISSUER_HISTORY_MIRROR_SCHEMA);
@@ -274,22 +274,22 @@ test('a matching mirror pin lets v11 issue, and the receipt does not carry the p
       throw new Error(`unexpected ${body.method}`);
     };
     await assertIssuerRootStartup({ fetchImpl, log() {} });
-    const record = currentIssuerHistory();
+    const record = await currentIssuerHistory();
     const without = record.entries_snapshot_hash;
     pinMirror(record);
-    const receipt = buildReceipt(paidTask('xfuel-mirror-v11'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-mirror-v11'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.v, 11);
     assert.equal(Object.hasOwn(claims, 'issuer_history_mirror'), false);
     assert.equal(JSON.stringify(receipt).includes('example-org/issuer-history'), false);
-    const published = currentIssuerHistory();
+    const published = await currentIssuerHistory();
     assert.equal(published.body.includes('issuer_history_mirror'), false);
     assert.equal(published.body.includes('example-org/issuer-history'), false);
     assert.equal(published.hash, record.hash);
     assert.equal(published.entries_snapshot_hash, without);
     process.env.ISSUER_HISTORY_MIRROR_SHA256 = 'ab'.repeat(32);
-    assert.throws(
-      () => buildReceipt(paidTask('xfuel-mirror-stale'), { signingSecret: 's', agentId: 4 }),
+    await assert.rejects(
+      async () => await buildReceipt(paidTask('xfuel-mirror-stale'), { signingSecret: 's', agentId: 4 }),
       (err) => err.code === 'issuer_history_mirror_stale',
     );
   } finally {

@@ -57,12 +57,13 @@ import {
   verifyPayerBinding,
   receiptPayerClaimsFromEnvelope,
   decodeJwsPayload,
+  payerCheckOutcome,
   type PayerBindingVerification,
   type ReceiptPayerClaims,
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -333,6 +334,8 @@ export interface NullifierVerification {
 export interface PayerVerification {
   checked: boolean;
   valid: boolean;
+  /** Set when checkPayer ran. `unchecked` is not a pass and not a mismatch. */
+  outcome?: 'pass' | 'fail' | 'unchecked';
   rail?: PayerRail;
   reason?: string;
   payer_wallet?: string | null;
@@ -1448,8 +1451,14 @@ export interface VerifyReceiptOptions {
   issuerHistoryUrl?: string | null;
   /** Exact issuer-history response bytes. SHA-256 must match a signed pin. */
   issuerHistoryBytes?: string | null;
-  /** `--no-issuer-history`. A signed pin is not checked. */
+  /**
+   * Library seam. The CLI does not set this: 0.4.0 always checks history.
+   * A skipped window is not a verified result. Callers that pass a document
+   * still run the window.
+   */
   skipIssuerHistory?: boolean;
+  /** Ignored. `VERIFIED_NO_KEY_WINDOW` is retired. */
+  labelSkippedKeyWindow?: boolean;
   /**
    * Earlier-epoch head and current-epoch head for a leaf that was carried
    * into the current log. Omitted for a receipt that is only in the current
@@ -1590,6 +1599,10 @@ export async function verifyReceipt(
     gate = classifyReceiptDocument(receipt);
   } catch {
     return rejectReceiptVersion(receipt, ['unsupported_version'], 'unsupported_version');
+  }
+  const identityErrors = legacyIdentityErrors(receipt);
+  if (identityErrors.length) {
+    return rejectReceiptVersion(receipt, identityErrors, identityErrors[0]);
   }
   if (!gate.ok) {
     return rejectReceiptVersion(receipt, gate.errors, gate.reason);
@@ -1792,6 +1805,7 @@ export async function verifyReceipt(
       payer = {
         checked: false,
         valid: false,
+        outcome: 'unchecked',
         reason: 'Payer facts come from verified signed claims — issuer signature is not trusted',
       };
     } else {
@@ -1801,9 +1815,11 @@ export async function verifyReceipt(
         fetchSolanaTransaction: options.fetchSolanaTransaction,
         fetchBaseReceipt: options.fetchBaseReceipt,
       });
+      const outcome = payerCheckOutcome(payerResult);
       payer = {
-        checked: payerResult.checked,
-        valid: payerResult.valid,
+        checked: outcome === 'fail' || outcome === 'pass',
+        valid: outcome === 'pass',
+        outcome,
         rail: payerResult.rail,
         reason: payerResult.reason,
         payer_wallet: payerResult.payerWallet ?? signedPayerClaims.caller_binding?.payer_wallet ?? null,
@@ -1811,7 +1827,7 @@ export async function verifyReceipt(
         asset: signedPayerClaims.payment?.asset ?? null,
         amount: payerResult.expectedAmount ?? signedPayerClaims.payment?.gross_amount ?? null,
       };
-      if (payerResult.checked && !payerResult.valid) {
+      if (outcome === 'fail') {
         errors.push(`Payer binding mismatch: ${payerResult.reason}`);
       }
     }
@@ -1914,7 +1930,7 @@ export async function verifyReceipt(
   );
   const mismatchFailed = claim_mismatches.length > 0;
   const bindingFailed = !!(binding.expected && !binding.matches);
-  const payerFailed = !!(options.checkPayer && payer.checked && !payer.valid);
+  const payerFailed = options.checkPayer === true && payer.outcome === 'fail';
   const nullifierFailed = !!(
     options.checkNullifier
     && receipt.proof?.nullifier
@@ -1933,7 +1949,7 @@ export async function verifyReceipt(
     overall = 'partial';
   } else if (
     (binding.matches || !binding.expected)
-    && (!options.checkPayer || payer.valid)
+    && (!options.checkPayer || payer.outcome === 'pass')
     && (!options.checkNullifier || !receipt.proof?.nullifier || nullifier.anchored === true)
     && (issuer_signature.valid || !hasIssuerSig)
   ) {
@@ -2145,6 +2161,13 @@ export {
   ANCHOR_DOES_NOT_PROVE,
   SOLANA_GENESIS,
   BASE_MAINNET_CHAIN_ID,
+  BASE_ANCHOR_MIN_CONFIRMATIONS,
+  ANCHOR_RPC_TIMEOUT_MS,
+  SOLANA_ANCHOR_RPC_TIMEOUT_MS,
+  SOLANA_ANCHOR_COMMITMENT,
+  ANCHOR_UNCHECKED_REASONS,
+  assessBaseAnchor,
+  isUncheckedAnchorReason,
   type AnchorWitnessResult,
   type AnchorReceipt,
   type AnchorInclusion,
@@ -2189,6 +2212,7 @@ export {
 export {
   PINNED_BASE_ANCHOR_WALLET,
   PINNED_SOLANA_ANCHOR_FEE_PAYER,
+  PINNED_SOLANA_ANCHOR_FEE_PAYERS,
   ANCHOR_WALLET_SOURCES_NOT_CONSULTED,
   LEGACY_HEAD_UNPINNED_SIGNER,
   HEAD_TRUST_MESSAGES,
@@ -2213,6 +2237,7 @@ export {
   VERSION_MISMATCH,
   classifyReceiptDocument,
   classifySignedClaims,
+  legacyIdentityErrors,
   classifyShellDocument,
   signedClaimsOnAllowlist,
   formatSupportedReceiptVersions,

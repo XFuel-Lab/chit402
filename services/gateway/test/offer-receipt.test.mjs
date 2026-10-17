@@ -95,7 +95,7 @@ test('signJws keeps the chit402 receipt typ and thumbprint kid unless overridden
 });
 
 test('signed offers for both live accepts[] entries verify and use second validUntil', async () => {
-  const ext = buildOfferExtension(LIVE_ACCEPTS, LIVE_RESOURCE, { expiresAtMs: LIVE_EXPIRES_AT_MS });
+  const ext = await buildOfferExtension(LIVE_ACCEPTS, LIVE_RESOURCE, { expiresAtMs: LIVE_EXPIRES_AT_MS });
   assert.equal(ext.info.offers.length, 2);
   const jwk = issuerJwk();
   const expectedUntil = Math.floor(LIVE_EXPIRES_AT_MS / 1000);
@@ -129,7 +129,7 @@ test('signed offers for both live accepts[] entries verify and use second validU
 
 test('buildPaymentChallenge keeps bazaar and adds one offer per accepts[] entry', async () => {
   const store = new ChallengeStore();
-  const { body, headers } = buildPaymentChallenge({
+  const { body, headers } = await buildPaymentChallenge({
     taskId: 'task-offer',
     maxAmountRequired: '2000',
     network: 'base',
@@ -168,8 +168,8 @@ test('buildPaymentChallenge keeps bazaar and adds one offer per accepts[] entry'
   assert.equal(stored.extensions[OFFER_RECEIPT_KEY], undefined);
 });
 
-test('relative resource URL does not throw and still omits extensions when bazaar is off', () => {
-  const { body } = buildPaymentChallenge({
+test('relative resource URL does not throw and still omits extensions when bazaar is off', async () => {
+  const { body } = await buildPaymentChallenge({
     taskId: 'task-rel',
     maxAmountRequired: '2000',
     includeBazaar: false,
@@ -180,12 +180,12 @@ test('relative resource URL does not throw and still omits extensions when bazaa
 
 test('receipt JWS verifies and the legacy settle fields stay put', async () => {
   const resourceUrl = LIVE_RESOURCE;
-  const header = encodeX402PaymentResponseHeader({
+  const header = await encodeX402PaymentResponseHeader({
     ref: `base:${TX}`,
     payer: PAYER,
     resourceUrl,
   });
-  const bare = encodeX402PaymentResponseHeader({
+  const bare = await encodeX402PaymentResponseHeader({
     ref: `base:${TX}`,
     payer: PAYER,
   });
@@ -216,7 +216,7 @@ test('receipt JWS verifies and the legacy settle fields stay put', async () => {
   assert.equal(raw, canonicalize(JSON.parse(raw)));
   assert.equal(extractJWSHeader(receipt.signature).typ, undefined);
 
-  const direct = buildReceiptExtension({
+  const direct = await buildReceiptExtension({
     network: 'eip155:8453',
     resourceUrl,
     payer: PAYER,
@@ -227,8 +227,8 @@ test('receipt JWS verifies and the legacy settle fields stay put', async () => {
   assert.equal(pinned.issuedAt, 1789739532);
 });
 
-test('legacy xfuel.receipt.v4 schema, verify_url, and JWKS verify still pass', () => {
-  const receipt = buildReceipt({
+test('legacy xfuel.receipt.v4 schema, verify_url, and JWKS verify still pass', async () => {
+  const receipt = await buildReceipt({
     taskId: 'xfuel-offer-receipt-legacy',
     status: 'completed',
     createdAt: Date.now(),
@@ -259,7 +259,7 @@ test('legacy xfuel.receipt.v4 schema, verify_url, and JWKS verify still pass', (
   assert.equal(header.typ, 'chit402-receipt+jwt');
   assert.equal(header.kid, getIssuerKid());
   assert.equal(header.kid.includes('did:'), false);
-  assert.equal(verifyReceiptEcdsaWithJwks(receipt, { keys: [] }).valid, true);
+  assert.equal((await verifyReceiptEcdsaWithJwks(receipt, { keys: [] })).valid, true);
   assert.equal(verifyReceiptJwsWithJwks(receipt, { keys: [] }).valid, true);
   assert.equal(receipt.extensions, undefined);
 });
@@ -290,7 +290,7 @@ let port;
 
 before(async () => {
   const { createApp } = await import('../src/server.js');
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -324,7 +324,7 @@ test('GET /.well-known/did.json is host-correct for both public hosts', async ()
 
 test('reference verifier resolves did:web against the served did.json for offers and a receipt', async () => {
   const localResource = `http://127.0.0.1:${port}/task-request`;
-  const offers = buildOfferExtension(LIVE_ACCEPTS, localResource, { expiresAtMs: LIVE_EXPIRES_AT_MS });
+  const offers = await buildOfferExtension(LIVE_ACCEPTS, localResource, { expiresAtMs: LIVE_EXPIRES_AT_MS });
   for (const offer of offers.info.offers) {
     const payload = await verifyOfferSignatureJWS(offer);
     assert.equal(payload.resourceUrl, localResource);
@@ -345,7 +345,7 @@ test('reference verifier resolves did:web against the served did.json for offers
     assert.equal(payload.amount, accept.amount);
   }
 
-  const receiptExt = buildReceiptExtension({
+  const receiptExt = await buildReceiptExtension({
     network: 'eip155:8453',
     resourceUrl: `http://127.0.0.1:${port}/v1/chat/completions`,
     payer: PAYER,
@@ -377,7 +377,7 @@ test('reference verifier resolves did:web against the served did.json for offers
   try {
     for (const host of ['api.chit402.com', 'api.xfuel.app']) {
       const resourceUrl = `https://${host}/task-request`;
-      const ext = buildOfferExtension(LIVE_ACCEPTS, resourceUrl, { expiresAtMs: LIVE_EXPIRES_AT_MS });
+      const ext = await buildOfferExtension(LIVE_ACCEPTS, resourceUrl, { expiresAtMs: LIVE_EXPIRES_AT_MS });
       const evm = await verifyOfferSignatureJWS(ext.info.offers[0]);
       const svm = await verifyOfferSignatureJWS(ext.info.offers[1]);
       assert.equal(evm.network, 'eip155:8453');

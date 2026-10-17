@@ -19,6 +19,8 @@
  *   4. Verify: ES256(canonicalSignedPayload(receipt)) == issuer_signature.value
  */
 import crypto from 'crypto';
+import { peekIssuerSigner, resetIssuerSigner } from './issuer-signer-state.js';
+import { lowS } from './ecdsa-der.js';
 
 let _privateKey = null;
 let _publicKeyJwk = null;
@@ -45,12 +47,14 @@ export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {
 
 /**
  * Production never mints a temporary key. An empty env value counts as missing.
- * ISSUER_ROOT_ENABLED and the skip acknowledgement do not override this.
- * ALLOW_EPHEMERAL_ISSUER_KEY=true is the local opt-in.
+ * Unset NODE_ENV is production. ISSUER_ROOT_ENABLED, ISSUER_ROOT_ALLOW_SKIP,
+ * and ALLOW_EPHEMERAL_ISSUER_KEY do not override this. The ephemeral opt-in
+ * applies only when NODE_ENV is test or development, which already mint a
+ * key when ISSUER_PRIVATE_KEY is unset.
  */
 function assertProductionIssuerKeyPresent(envKey) {
-  if (String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true') return;
-  if (isProductionIssuerEnv() && !envKey) {
+  if (!isProductionIssuerEnv()) return;
+  if (!envKey) {
     const err = new Error('production refuses to boot when ISSUER_PRIVATE_KEY is missing or empty');
     err.code = 'issuer_key_missing';
     throw err;
@@ -68,8 +72,8 @@ function assertIssuerKeyType(privateKey) {
 
 function assertIssuerKid(kid) {
   const explicit = String(process.env.ISSUER_KID || '').trim();
-  const ephemeral = String(process.env.ALLOW_EPHEMERAL_ISSUER_KEY || '').trim() === 'true';
-  const configured = explicit || (isProductionIssuerEnv() && !ephemeral ? PRODUCTION_ISSUER_KID : '');
+  // Production always asserts a kid. The ephemeral flag does not skip it.
+  const configured = explicit || (isProductionIssuerEnv() ? PRODUCTION_ISSUER_KID : '');
   if (configured && kid !== configured) {
     const err = new Error('issuer kid does not match the configured kid');
     err.code = 'issuer_kid_mismatch';
@@ -93,6 +97,17 @@ function generateKeyPair() {
  * Call once at startup; subsequent calls return cached values.
  */
 export function initIssuerKey() {
+  const signerSetting = String(process.env.ISSUER_SIGNER || '').trim();
+  if (signerSetting && signerSetting !== 'env' && signerSetting !== 'kms') {
+    const err = new Error('unknown issuer signer');
+    err.code = 'issuer_signer_unknown';
+    throw err;
+  }
+  if (signerSetting === 'kms') {
+    const err = new Error('issuer signer requires async signing');
+    err.code = 'issuer_signer_async_required';
+    throw err;
+  }
   if (_privateKey) return { privateKey: _privateKey, publicKeyJwk: _publicKeyJwk, kid: _kid };
 
   const envKey = issuerKeyMaterial();
@@ -150,18 +165,58 @@ export function computeJwkThumbprint(jwk) {
   return crypto.createHash('sha256').update(canonical).digest('base64url');
 }
 
+function assertSyncSignerAllowed() {
+  const peeked = peekIssuerSigner();
+  if (String(process.env.ISSUER_SIGNER || '').trim() === 'kms' || peeked?.kind === 'kms') {
+    const err = new Error('issuer signer requires async signing');
+    err.code = 'issuer_signer_async_required';
+    throw err;
+  }
+}
+
+/**
+ * Header and payload bytes shared by the sync and async signers.
+ * `typ: null` omits typ. A kid override is for offer-receipt did:web ids.
+ * `payloadUtf8`, when set, is the exact payload segment (v11 JCS).
+ */
+export function jwsSigningInput(payload, {
+  jku = null,
+  typ = 'chit402-receipt+jwt',
+  kid,
+  payloadUtf8 = null,
+} = {}) {
+  const header = { alg: 'ES256' };
+  if (typ !== null) header.typ = typ || 'chit402-receipt+jwt';
+  header.kid = kid;
+  if (jku && typeof jku === 'string' && jku.startsWith('http')) header.jku = jku;
+  const payloadPart = payloadUtf8 != null
+    ? Buffer.from(String(payloadUtf8), 'utf8').toString('base64url')
+    : b64urlJson(payload);
+  return `${b64urlJson(header)}.${payloadPart}`;
+}
+
 /**
  * Sign a message with the issuer's private key (ES256).
  * Returns the raw signature as base64url (R || S, 64 bytes for P-256).
  * @deprecated Use signJws() for standard-library-compatible signatures.
  */
 export function signWithIssuerKey(message) {
+  assertSyncSignerAllowed();
   const { privateKey, kid } = initIssuerKey();
-  const signature = crypto.sign('sha256', Buffer.from(message, 'utf8'), {
+  let signature = crypto.sign('sha256', Buffer.from(message, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',
   });
+  if (String(process.env.ISSUER_SIGNER_LOW_S || '').trim() === 'true') signature = lowS(signature);
   return { value: signature.toString('base64url'), kid };
+}
+
+/** Async form of signWithIssuerKey. Delegates to the active signer. */
+export async function signWithIssuerKeyAsync(message) {
+  const { initIssuerSigner } = await import('./issuer-signer.js');
+  const signer = peekIssuerSigner() || await initIssuerSigner();
+  const signature = await signer.sign(Buffer.from(message, 'utf8'));
+  return { value: signature.toString('base64url'), kid: signer.kid };
 }
 
 /**
@@ -192,28 +247,88 @@ function b64urlJson(obj) {
  * @returns {{ jws: string, kid: string }} - Compact JWS and key ID
  */
 export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid: kidOverride = null, payloadUtf8 = null } = {}) {
+  assertSyncSignerAllowed();
   const { privateKey, kid: thumbKid } = initIssuerKey();
   const kid = kidOverride || thumbKid;
-
-  // typ: null omits the header. Any other falsy typ keeps the chit402 receipt default.
-  const header = { alg: 'ES256' };
-  if (typ !== null) header.typ = typ || 'chit402-receipt+jwt';
-  header.kid = kid;
-  if (jku && typeof jku === 'string' && jku.startsWith('http')) {
-    header.jku = jku;
-  }
-
-  const payloadPart = payloadUtf8 != null
-    ? Buffer.from(String(payloadUtf8), 'utf8').toString('base64url')
-    : b64urlJson(payload);
-  const signingInput = `${b64urlJson(header)}.${payloadPart}`;
-  const signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
+  const signingInput = jwsSigningInput(payload, { jku, typ, kid, payloadUtf8 });
+  let signature = crypto.sign('sha256', Buffer.from(signingInput, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',
   });
-  
+  if (String(process.env.ISSUER_SIGNER_LOW_S || '').trim() === 'true') signature = lowS(signature);
   const jws = `${signingInput}.${signature.toString('base64url')}`;
   return { jws, kid };
+}
+
+/**
+ * Async JWS. Header and payload bytes match signJws. Receipt signs pass
+ * capKind:'receipt'. The cap update finishes before signer.sign is awaited.
+ * @param {object} payload
+ * @param {{ jku?: string|null, typ?: string|null, kid?: string|null, payloadUtf8?: string|null, capKind?: string|null, receiptId?: string|null, parkLate?: boolean }} [opts]
+ */
+export async function signJwsAsync(payload, {
+  jku = null,
+  typ = 'chit402-receipt+jwt',
+  kid: kidOverride = null,
+  payloadUtf8 = null,
+  capKind = null,
+  receiptId = null,
+  parkLate = true,
+} = {}) {
+  if (capKind === 'receipt') {
+    const { consumeReceiptSlot } = await import('./issuance-cap.js');
+    try {
+      consumeReceiptSlot();
+    } catch (err) {
+      if (err?.code === 'issuance_cap' && parkLate !== false) {
+        const { noteIssuanceCapLost } = await import('./issuance-cap.js');
+        const { lateIssueEnabled, openLateSubmission } = await import('./late-issue.js');
+        const { getActiveChallengeStore } = await import('./x402-durable-store.js');
+        await noteIssuanceCapLost(receiptId, {
+          park() {
+            if (!lateIssueEnabled()) return null;
+            const store = getActiveChallengeStore();
+            if (!store || typeof store.putLate !== 'function') return null;
+            const opened = openLateSubmission(store, {
+              facilitatorId: 'gateway',
+              submittedAt: Date.now(),
+              nonce: `cap:${receiptId || 'receipt'}`,
+              network: 'base',
+              asset: null,
+              payee: null,
+              challengeAmount: null,
+              routeQuote: null,
+              expectedSettledAmount: null,
+              authKey: receiptId ? `cap|${receiptId}` : null,
+              auth: null,
+              issueBlock: null,
+              requestDigest: null,
+              paymentHash: null,
+              saltRef: null,
+              principal: 'issuance_cap',
+              idempotencyKey: null,
+              taskId: receiptId || null,
+              route: null,
+              challengeIssuedAt: Date.now(),
+            });
+            return opened.ok ? opened.row : null;
+          },
+        });
+      }
+      throw err;
+    }
+  }
+  const { initIssuerSigner } = await import('./issuer-signer.js');
+  const signer = peekIssuerSigner() || await initIssuerSigner();
+  const kid = kidOverride || signer.kid;
+  const signingInput = jwsSigningInput(payload, { jku, typ, kid, payloadUtf8 });
+  const signature = await signer.sign(Buffer.from(signingInput, 'utf8'));
+  if (!Buffer.isBuffer(signature) || signature.length !== 64) {
+    const err = new Error('issuer sign invalid');
+    err.code = 'issuer_sign_invalid';
+    throw err;
+  }
+  return { jws: `${signingInput}.${signature.toString('base64url')}`, kid };
 }
 
 /**
@@ -355,8 +470,32 @@ export function verifyWithJwk(message, signatureB64url, jwk) {
 /**
  * Get the JWKS document for /.well-known/jwks.json.
  */
+function jwkFromSigner(signer) {
+  return {
+    kty: signer.publicJwk.kty,
+    crv: signer.publicJwk.crv,
+    x: signer.publicJwk.x,
+    y: signer.publicJwk.y,
+    kid: signer.kid,
+    alg: 'ES256',
+    use: 'sig',
+  };
+}
+
+function activeIssuerMaterial() {
+  const peeked = peekIssuerSigner();
+  if (peeked) return { kid: peeked.kid, publicKeyJwk: jwkFromSigner(peeked) };
+  if (String(process.env.ISSUER_SIGNER || '').trim() === 'kms') {
+    const err = new Error('issuer signer is not initialised');
+    err.code = 'issuer_signer_uninitialized';
+    throw err;
+  }
+  const loaded = initIssuerKey();
+  return { kid: loaded.kid, publicKeyJwk: loaded.publicKeyJwk };
+}
+
 export function getJwks() {
-  const { publicKeyJwk } = initIssuerKey();
+  const { publicKeyJwk } = activeIssuerMaterial();
   return { keys: [publicKeyJwk] };
 }
 
@@ -364,16 +503,14 @@ export function getJwks() {
  * Get the issuer's public key JWK (for embedding in receipts if needed).
  */
 export function getIssuerPublicKeyJwk() {
-  const { publicKeyJwk } = initIssuerKey();
-  return publicKeyJwk;
+  return activeIssuerMaterial().publicKeyJwk;
 }
 
 /**
  * Get the issuer's key ID (kid).
  */
 export function getIssuerKid() {
-  const { kid } = initIssuerKey();
-  return kid;
+  return activeIssuerMaterial().kid;
 }
 
 /**
@@ -383,12 +520,15 @@ export function _resetIssuerKey() {
   _privateKey = null;
   _publicKeyJwk = null;
   _kid = null;
+  resetIssuerSigner();
 }
 
 export default {
   initIssuerKey,
   signWithIssuerKey,
+  signWithIssuerKeyAsync,
   signJws,
+  signJwsAsync,
   verifyWithIssuerKey,
   verifyWithJwk,
   verifyJws,

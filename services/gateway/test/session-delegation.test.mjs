@@ -268,7 +268,7 @@ describe('Bind-at-settle JWS claims', () => {
         providerCogs: { provider: 'theta-edgecloud', actual: '2000', basis: 'measured' },
       },
     });
-    const receipt = buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
+    const receipt = await buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.caller_binding.payer_wallet, PAYER.address);
     assert.equal(claims.agent_pubkey, AGENT.address);
@@ -291,7 +291,7 @@ describe('Bind-at-settle JWS claims', () => {
     assert.equal(receipt.session, undefined, 'outer envelope must not mirror full session block');
 
     const jwks = getJwks();
-    const verified = verifyReceiptEcdsaWithJwks(receipt, jwks);
+    const verified = await verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(verified.valid, true);
 
     const html = renderReceiptHtml(receipt);
@@ -302,7 +302,7 @@ describe('Bind-at-settle JWS claims', () => {
   test('provider_cogs unit laws stay intact on a session-bound receipt', async () => {
     const { typed, signature } = await signAuthorize();
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
-    const receipt = buildReceipt(usdcTask({
+    const receipt = await buildReceipt(usdcTask({
       meta: {
         payerWallet: PAYER.address,
         session: accepted.session,
@@ -344,14 +344,14 @@ describe('Session window verify', () => {
       createdAt: Date.now(),
       meta: { payerWallet: PAYER.address, session, agentId: 7 },
     });
-    const receipt = buildReceipt(task);
+    const receipt = await buildReceipt(task);
     const claims = decodeReceiptClaims(receipt);
     const window = verifySessionWindow(claims);
     assert.equal(window.valid, false);
     assert.equal(window.reason, 'iat_outside_session_window');
 
     const jwks = getJwks();
-    const ecdsa = verifyReceiptEcdsaWithJwks(receipt, jwks);
+    const ecdsa = await verifyReceiptEcdsaWithJwks(receipt, jwks);
     assert.equal(ecdsa.valid, false);
     assert.equal(ecdsa.reason, 'iat_outside_session_window');
   });
@@ -359,12 +359,12 @@ describe('Session window verify', () => {
   test('iat inside window verifies without a new payer signature', async () => {
     const { typed, signature } = await signAuthorize();
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
-    const receipt = buildReceipt(usdcTask({
+    const receipt = await buildReceipt(usdcTask({
       meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     }));
     const claims = decodeReceiptClaims(receipt);
     assert.equal(verifySessionWindow(claims).valid, true);
-    assert.equal(verifyReceiptEcdsaWithJwks(receipt, getJwks()).valid, true);
+    assert.equal((await verifyReceiptEcdsaWithJwks(receipt, getJwks())).valid, true);
   });
 });
 
@@ -376,13 +376,13 @@ describe('Genesis immutability + child handoff', () => {
       taskId: 'xfuel-genesis-immutable',
       meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     });
-    const first = buildReceipt(task, { persistSignature: true });
+    const first = await buildReceipt(task, { persistSignature: true });
     const firstJws = first.issuer_signature.jws;
     const firstHash = decodeReceiptClaims(first).delegation_hash;
 
     task.meta.session = null;
     task.meta.agentPubkey = OTHER.address;
-    const second = buildReceipt(task, { persistSignature: true });
+    const second = await buildReceipt(task, { persistSignature: true });
     assert.equal(second.issuer_signature.jws, firstJws, 'genesis JWS must not be re-signed');
     assert.equal(decodeReceiptClaims(second).delegation_hash, firstHash);
     assert.equal(decodeReceiptClaims(second).agent_pubkey, AGENT.address);
@@ -395,11 +395,11 @@ describe('Genesis immutability + child handoff', () => {
       taskId: 'xfuel-parent-genesis',
       meta: { payerWallet: PAYER.address, agentId: 7 },
     });
-    const genesis = buildReceipt(parent, { persistSignature: true });
+    const genesis = await buildReceipt(parent, { persistSignature: true });
     const genesisJws = genesis.issuer_signature.jws;
     assert.equal(decodeReceiptClaims(genesis).delegation_hash, null);
 
-    const { childTask, receipt: child } = issueSessionHandoffReceipt(parent, accepted.session, {
+    const { childTask, receipt: child } = await issueSessionHandoffReceipt(parent, accepted.session, {
       childTaskId: 'xfuel-child-handoff',
     });
     assert.equal(child.kind, 'session_handoff');
@@ -425,7 +425,7 @@ describe('Genesis immutability + child handoff', () => {
     assert.equal(child.proof.outcome, 'not_applicable');
     assert.equal(child.proof.has_proof, false);
 
-    const again = buildReceipt(parent, { persistSignature: true });
+    const again = await buildReceipt(parent, { persistSignature: true });
     assert.equal(again.issuer_signature.jws, genesisJws, 'parent genesis JWS stays frozen');
     assert.equal(decodeReceiptClaims(again).delegation_hash, null);
     assert.equal(childTask.parentReceiptId, parent.taskId);
@@ -440,7 +440,7 @@ describe('Revoke status store', () => {
     const accepted = acceptDelegationProof({ signature, typed_data: typed });
     store.put(accepted.session);
 
-    const receipt = buildReceipt(usdcTask({
+    const receipt = await buildReceipt(usdcTask({
       taskId: 'xfuel-revoke-genesis',
       meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
     }), { persistSignature: true });
@@ -468,7 +468,7 @@ describe('Revoke status store', () => {
     assert.equal(store.status(accepted.session.delegation_hash).status, 'revoked');
     assert.equal(store.listRevocations().length, 1);
 
-    const after = buildReceipt(usdcTask({
+    const after = await buildReceipt(usdcTask({
       taskId: 'xfuel-revoke-genesis',
       meta: { payerWallet: PAYER.address, session: accepted.session, agentId: 7 },
       issuerSignature: receipt.issuer_signature,
@@ -540,7 +540,7 @@ describe('HTTP session status + revoke + child handoff', () => {
   before(async () => {
     resetHubCatalogCache();
     await initAIListener();
-    const app = createApp();
+    const app = await createApp();
     await new Promise((resolve) => {
       server = app.listen(0, () => {
         base = `http://127.0.0.1:${server.address().port}`;
@@ -573,7 +573,7 @@ describe('HTTP session status + revoke + child handoff', () => {
     const shell = await (await fetch(`${base}/receipt/${task.taskId}?format=json`)).json();
     assert.equal(shell.schema, 'chit402.receipt_shell.v1');
     assert.equal(shell.issuer_signature, undefined);
-    const receipt = buildReceipt(getAIListener().activeTasks.get(task.taskId), {
+    const receipt = await buildReceipt(getAIListener().activeTasks.get(task.taskId), {
       signingSecret: process.env.RECEIPT_SIGNING_SECRET,
       persistSignature: false,
     });
@@ -611,7 +611,7 @@ describe('HTTP session status + revoke + child handoff', () => {
     const listed = await (await fetch(`${base}/.well-known/revocations`)).json();
     assert.ok(listed.revocations.some((r) => r.delegation_hash.toLowerCase() === accepted.session.delegation_hash.toLowerCase()));
 
-    const after = buildReceipt(getAIListener().activeTasks.get(task.taskId), {
+    const after = await buildReceipt(getAIListener().activeTasks.get(task.taskId), {
       signingSecret: process.env.RECEIPT_SIGNING_SECRET,
       persistSignature: false,
     });
@@ -629,7 +629,7 @@ describe('HTTP session status + revoke + child handoff', () => {
 
     const genesisShell = await (await fetch(`${base}/receipt/${parent.taskId}?format=json`)).json();
     assert.equal(genesisShell.schema, 'chit402.receipt_shell.v1');
-    const genesis = buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
+    const genesis = await buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
       signingSecret: process.env.RECEIPT_SIGNING_SECRET,
       persistSignature: false,
     });
@@ -650,7 +650,7 @@ describe('HTTP session status + revoke + child handoff', () => {
     assert.equal(body.receipt.parent_receipt_id, parent.taskId);
     assert.equal(decodeReceiptClaims(body.receipt).agent_pubkey, AGENT.address);
 
-    const parentAgain = buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
+    const parentAgain = await buildReceipt(getAIListener().activeTasks.get(parent.taskId), {
       signingSecret: process.env.RECEIPT_SIGNING_SECRET,
       persistSignature: false,
     });

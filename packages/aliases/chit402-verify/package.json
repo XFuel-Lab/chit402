@@ -1,12 +1,12 @@
 {
-  "name": "chit402-verify",
-  "version": "0.3.5",
-  "description": "Chit402 receipt verification — verify payment binding and output commitment offline.",
+  "name": "@xfuel/verify",
+  "version": "0.4.4",
+  "description": "Alias of chit402-verify. The xfuel-verify bin stays.",
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",
   "bin": {
-    "chit402-verify": "cli.js"
+    "xfuel-verify": "cli.js"
   },
   "exports": {
     ".": {
@@ -28,7 +28,8 @@
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "test": "node test.mjs"
@@ -55,6 +56,6 @@
     "directory": "packages/aliases/chit402-verify"
   },
   "dependencies": {
-    "@xfuel/verify": "^0.3.5"
+    "chit402-verify": "0.4.4"
   }
 }

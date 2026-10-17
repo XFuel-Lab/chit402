@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { quoteFromCogs } from './pricing.js';
+import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 
 /**
  * Rolling settlement — charge the previous call's *measured* cost-plus bill
@@ -62,9 +64,9 @@ export function configureRollingLedger({ dir = null, persist = false } = {}) {
     try {
       fs.mkdirSync(persistDir, { recursive: true });
     } catch (err) {
-      logger.warn({ err: err.message, dir: persistDir }, 'rolling-settlement: mkdir failed; persistence disabled');
       persistEnabled = false;
       persistDir = null;
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'rolling-settlement: mkdir failed');
     }
   }
 }
@@ -81,7 +83,7 @@ function persistPayer(id, rec) {
     fs.writeFileSync(tmp, JSON.stringify(rec));
     fs.renameSync(tmp, target);
   } catch (err) {
-    logger.warn({ err: err.message, payer: id }, 'rolling-settlement: persist failed');
+    throw err?.code === 'persist_failed' ? err : persistFailed(err, 'rolling-settlement: persist failed');
   }
 }
 
@@ -198,6 +200,7 @@ export function recordPending(payerId, {
     );
     if (BigInt(rec.pending.amount) >= BigInt(billed.amount)) return rec.pending;
   }
+  const previousPending = rec.pending;
   rec.pending = {
     amount: String(billed.amount),
     taskId,
@@ -212,10 +215,16 @@ export function recordPending(payerId, {
     tier2_proof: billed.tier2_proof != null ? String(billed.tier2_proof) : '0',
     floor_applied: !!billed.floor_applied,
     basis: billed.basis || 'cost_plus',
+    route: '/task-request',
     at: Date.now(),
     attempts: 0,
   };
-  persistPayer(payerId, rec);
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending = previousPending;
+    throw err;
+  }
   return rec.pending;
 }
 
@@ -225,9 +234,16 @@ export function markSettled(payerId) {
   if (!rec) return null;
   ledger.set(payerId, rec);
   const cleared = rec.pending;
+  const previousSettled = rec.settled || 0;
   rec.pending = null;
-  rec.settled = (rec.settled || 0) + 1;
-  persistPayer(payerId, rec);
+  rec.settled = previousSettled + 1;
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending = cleared;
+    rec.settled = previousSettled;
+    throw err;
+  }
   return cleared;
 }
 
@@ -239,8 +255,14 @@ export function markSettleFailed(payerId, reason = null) {
   const rec = ledger.get(payerId) || loadPayer(payerId);
   if (!rec?.pending) return null;
   ledger.set(payerId, rec);
+  const previousAttempts = rec.pending.attempts;
   rec.pending.attempts += 1;
-  persistPayer(payerId, rec);
+  try {
+    persistPayer(payerId, rec);
+  } catch (err) {
+    rec.pending.attempts = previousAttempts;
+    throw err;
+  }
   logger.warn(
     { payer: payerId, amount: rec.pending.amount, attempts: rec.pending.attempts, reason },
     'rolling-settlement: settlement failed; debt retained for the next request',
@@ -249,26 +271,41 @@ export function markSettleFailed(payerId, reason = null) {
 }
 
 /**
+ * A rolling debt clears only when this payment was quoted for that debt's
+ * price and route, and the on-chain amount covers that price. A higher quote
+ * is not a payment. A payment for another route is not this debt.
+ */
+export function paymentBindsDebt(pending, payment) {
+  if (!pending || !payment) return false;
+  if (payment.taskId && pending.taskId && String(payment.taskId) !== String(pending.taskId)) return false;
+  if (!sameQuotedPrice(payment.quotedAmount, pending.amount)) return false;
+  if (!chainCoversPrice(payment.settledAmount, pending.amount)) return false;
+  const route = canonicalPaidRoute(payment.route);
+  const dueRoute = canonicalPaidRoute(pending.route || '/task-request');
+  if (!route || route !== dueRoute) return false;
+  return true;
+}
+
+/**
  * Stamp a settled rolling payment onto the *owed* task, so the receipt for the
  * work that ran binds the USDC that paid for it — not the next request.
+ * The protocol fee is a cut of the on-chain amount. The quote is not the base.
  */
-export function applyPaymentToOwedTask(task, { paymentRef, settledAmount, protocolFeeBps = 50 } = {}) {
+export function applyPaymentToOwedTask(task, { paymentRef, settledAmount, quotedAmount = null, protocolFeeBps = 50 } = {}) {
   if (!task) return null;
   task.intent = task.intent || {};
   task.meta = task.meta || {};
-  if (task.meta.quotedAmount == null && task.intent.amount != null && task.intent.amount !== '') {
+  if (quotedAmount != null && quotedAmount !== '') {
+    task.meta.quotedAmount = String(quotedAmount);
+  } else if (task.meta.quotedAmount == null && task.intent.amount != null && task.intent.amount !== '') {
     task.meta.quotedAmount = String(task.intent.amount);
   }
-  task.meta.boundSettledAmount = String(settledAmount);
+  const gross = atomicUnits(settledAmount);
+  task.meta.boundSettledAmount = gross == null ? null : gross.toString();
   task.intent.paymentRef = paymentRef;
   task.intent.paymentRail = 'usdc';
-  task.intent.amount = String(settledAmount);
-  let gross;
-  try {
-    gross = BigInt(settledAmount);
-  } catch {
-    return task;
-  }
+  if (gross == null) return task;
+  task.intent.amount = gross.toString();
   const bps = BigInt(Math.min(Math.max(Number(protocolFeeBps) || 50, 50), 100));
   const fee = (gross * bps) / 10000n;
   task.feeAmount = fee.toString();
@@ -402,6 +439,7 @@ export default {
   recordPending,
   markSettled,
   markSettleFailed,
+  paymentBindsDebt,
   applyPaymentToOwedTask,
   decideRolling,
   rollingDecision,

@@ -15,7 +15,9 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import { findLink, findSecret } from './board-posts.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
 import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
@@ -111,9 +113,7 @@ export class BoardJobStore {
         fs.mkdirSync(this.dir, { recursive: true });
         this._load();
       } catch (err) {
-        logger.warn({ err: err.message, dir: this.dir }, 'board-jobs: persist disabled');
-        this.persist = false;
-        this.dir = null;
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-jobs: mkdir failed');
       }
     }
   }
@@ -149,7 +149,7 @@ export class BoardJobStore {
       }));
       fs.renameSync(tmp, target);
     } catch (err) {
-      logger.warn({ err: err.message }, 'board-jobs: save failed');
+      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'board-jobs: save failed');
     }
   }
 
@@ -236,9 +236,9 @@ async function collectStamp(ensureStamp) {
   return { ok: true, waived: stamp.waived === true, settlement: stamp.settlement || null };
 }
 
-function writeBoard(ledger, row) {
+async function writeBoard(ledger, row) {
   if (!ledger || typeof ledger.recordBoardEvent !== 'function') return { ok: false };
-  return ledger.recordBoardEvent(row);
+  return await ledger.recordBoardEvent(row);
 }
 
 function stampRef(stamp, taskId) {
@@ -406,7 +406,7 @@ export async function createBoardJob(body = {}, deps = {}) {
     a2a_job_id: null,
   };
   jobs.insert(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_stamp',
     taskId,
@@ -416,7 +416,7 @@ export async function createBoardJob(body = {}, deps = {}) {
     rail: stamp.waived ? null : 'usdc',
     board: { job_id: id, purpose: 'job_post', waived: stamp.waived === true, fee_units: String(STAMP_FEE_UNITS) },
   });
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_post',
     taskId: `board-job-${id}`,
@@ -515,7 +515,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
   const ref = stampRef(stamp, taskId);
   bid.stamp_refs.push(ref);
   jobs.update(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_stamp',
     taskId,
@@ -525,7 +525,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
     rail: stamp.waived ? null : 'usdc',
     board: { job_id: job.id, bid_id: bid.id, purpose: bid.revision ? 'bid_revise' : 'bid', waived: stamp.waived === true },
   });
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_bid',
     taskId: `board-bid-${bid.id}-${bid.revision}`,
@@ -536,7 +536,7 @@ export async function placeBoardBid(jobId, body = {}, deps = {}) {
   return { ok: true, status: existing ? 200 : 201, body: { job: toPublicJob(job), bid_id: bid.id } };
 }
 
-export function awardBoardBid(jobId, body = {}, deps = {}) {
+export async function awardBoardBid(jobId, body = {}, deps = {}) {
   const { jobs, ledger, actor, houseAgentIds } = deps;
   if (!actor?.agent_id) return fail(401, 'unauthorized', 'Possession proof (session) is required');
   const job = jobs.get(jobId);
@@ -556,7 +556,7 @@ export function awardBoardBid(jobId, body = {}, deps = {}) {
     else other.status = 'awarded';
   }
   jobs.update(job);
-  writeBoard(ledger, {
+  await writeBoard(ledger, {
     agentId: actor.agent_id,
     kind: 'board_pick',
     taskId: `board-pick-${job.id}`,
@@ -590,17 +590,30 @@ export function deliverBoardJob(jobId, body = {}, deps = {}) {
   return { ok: true, status: 200, body: { job: toPublicJob(job) } };
 }
 
-function legSettlement(raw, expectedAmount) {
+/**
+ * A board leg is paid only when the on-chain amount covers the price that leg
+ * was quoted at. `amount` may be the quote. `settledAmount` is the transfer.
+ * When both are present, the quote does not stand in for the transfer.
+ */
+export function legSettlement(raw, expectedAmount, expectedRoute = null) {
   const ref = raw?.paymentRef || raw?.payment_ref || null;
   if (!ref || !/^(base|solana):.+/.test(String(ref))) return null;
-  let paid = 0n;
-  try { paid = BigInt(String(raw.amount ?? raw.settledAmount ?? '0')); } catch { return null; }
-  if (paid < BigInt(expectedAmount)) return null;
+  const quotedRaw = raw?.quotedAmount != null ? raw.quotedAmount : raw?.amount;
+  const chainRaw = raw?.settledAmount != null ? raw.settledAmount : raw?.amount;
+  if (!sameQuotedPrice(quotedRaw, expectedAmount)) return null;
+  if (!chainCoversPrice(chainRaw, expectedAmount)) return null;
+  if (expectedRoute) {
+    const got = canonicalPaidRoute(raw?.route);
+    if (!got || got !== canonicalPaidRoute(expectedRoute)) return null;
+  }
+  const chain = atomicUnits(chainRaw);
   return {
     payment_ref: String(ref),
-    amount: String(expectedAmount),
+    amount: chain.toString(),
+    quoted_amount: atomicUnits(expectedAmount).toString(),
     payer: raw.payer || raw.payerWallet || null,
     payee: raw.payee || raw.payTo || null,
+    route: raw?.route ? canonicalPaidRoute(raw.route) : null,
   };
 }
 
@@ -620,7 +633,7 @@ function legSettlement(raw, expectedAmount) {
  *   agentId?: number|string|null,
  * }} input
  */
-export function buildJobPayoutReceipt(input) {
+export async function buildJobPayoutReceipt(input) {
   const outputHash = normalizeHash(input.outputHash);
   const commitment = outputCommitmentOf({
     hash: outputHash,
@@ -660,7 +673,7 @@ export function buildJobPayoutReceipt(input) {
     fulfillment: { output_commitment: commitment },
     result: { content_hash: outputHash },
   };
-  const receipt = buildReceipt(task, {
+  const receipt = await buildReceipt(task, {
     baseUrl: input.baseUrl || '',
     reqHost: input.reqHost || null,
     signingSecret: input.signingSecret || null,
@@ -672,7 +685,7 @@ export function buildJobPayoutReceipt(input) {
   return { task, receipt, fulfillment, commitment };
 }
 
-function rememberReceipt(deps, built, parties) {
+async function rememberReceipt(deps, built, parties) {
   if (typeof deps.persistTask === 'function') {
     try { deps.persistTask(built.task); } catch (err) {
       logger.warn({ err: err.message }, 'board job: persist payout task failed');
@@ -704,9 +717,9 @@ function rememberReceipt(deps, built, parties) {
     fee: parties.fee || null,
     source: parties.source || 'board',
   };
-  const close = (agentId, taskId, paymentRef) => {
+  const close = async (agentId, taskId, paymentRef) => {
     if (!agentId) return;
-    const written = writeBoard(deps.ledger, {
+    const written = await writeBoard(deps.ledger, {
       agentId,
       kind: 'board_close',
       taskId,
@@ -721,9 +734,9 @@ function rememberReceipt(deps, built, parties) {
     });
     return written;
   };
-  close(parties.payerAgentId, built.task.taskId, parties.paymentRef);
+  await close(parties.payerAgentId, built.task.taskId, parties.paymentRef);
   if (parties.winnerAgentId && Number(parties.winnerAgentId) !== Number(parties.payerAgentId)) {
-    close(parties.winnerAgentId, `${built.task.taskId}-payee`, null);
+    await close(parties.winnerAgentId, `${built.task.taskId}-payee`, null);
   }
   return payout;
 }
@@ -748,6 +761,8 @@ export async function payBoardJob(jobId, deps = {}) {
   const chitPayTo = deps.chitPayTo;
   if (!chitPayTo) return fail(503, 'fee_payee_unconfigured', 'Chit payTo is not configured for the fee leg');
   const price = bid.price_atomic;
+  const winnerRoute = `/v1/board/jobs/${job.id}/pay/winner`;
+  const feeRoute = `/v1/board/jobs/${job.id}/pay/fee`;
   const fee = feeLegAmount(price);
 
   if (!job.winner_leg) {
@@ -757,6 +772,7 @@ export async function payBoardJob(jobId, deps = {}) {
       amount: price,
       payTo: winnerWallet,
       expectedPayer: posterWallet,
+      route: winnerRoute,
     });
     if (!settled?.ok) {
       return {
@@ -770,22 +786,24 @@ export async function payBoardJob(jobId, deps = {}) {
         },
       };
     }
-    const leg = legSettlement(settled.settlement, price);
+    const leg = legSettlement(settled.settlement, price, winnerRoute);
     if (!leg) return fail(402, 'stamp_underpaid', 'Winner leg did not settle the bid price');
     if (leg.payer && leg.payer.toLowerCase() !== String(posterWallet).toLowerCase()) {
       return fail(402, 'payer_mismatch', 'The job payment must come from the poster wallet');
     }
     job.winner_leg = { ...leg, payee: winnerWallet };
     jobs.update(job);
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const legs = {
-      winner: { amount: String(price), pay_to: winnerWallet, settled: true },
-      fee: { amount: fee.toString(), pay_to: chitPayTo, settled: false },
+      winner: { amount: String(job.winner_leg.amount), pay_to: winnerWallet, settled: true },
+      fee: { amount: winnerFee.toString(), pay_to: chitPayTo, settled: false },
     };
     const feeChallenge = await deps.settleLeg({
       leg: 'fee',
-      amount: fee.toString(),
+      amount: winnerFee.toString(),
       payTo: chitPayTo,
       expectedPayer: posterWallet,
+      route: feeRoute,
       challengeOnly: true,
     });
     const challenge = {
@@ -810,14 +828,16 @@ export async function payBoardJob(jobId, deps = {}) {
   }
 
   if (!job.fee_leg) {
+    const winnerFee = feeLegAmount(job.winner_leg.quoted_amount || price);
     const settled = await deps.settleLeg({
       leg: 'fee',
-      amount: fee.toString(),
+      amount: winnerFee.toString(),
       payTo: chitPayTo,
       expectedPayer: posterWallet,
+      route: feeRoute,
     });
     if (!settled?.ok) return settled;
-    const leg = legSettlement(settled.settlement, fee.toString());
+    const leg = legSettlement(settled.settlement, winnerFee.toString(), feeRoute);
     if (!leg) return fail(402, 'stamp_underpaid', 'Fee leg did not settle the stamp plus 1%');
     job.fee_leg = { ...leg, payee: chitPayTo };
     jobs.update(job);
@@ -828,7 +848,7 @@ export async function payBoardJob(jobId, deps = {}) {
   }
 
   const taskId = `xfuel-job-${job.id.slice(4)}`;
-  const built = buildJobPayoutReceipt({
+  const built = await buildJobPayoutReceipt({
     taskId,
     payerWallet: posterWallet,
     paymentRef: job.winner_leg.payment_ref,
@@ -841,14 +861,18 @@ export async function payBoardJob(jobId, deps = {}) {
     signingSecret: deps.signingSecret || null,
     agentId: job.poster_agent_id,
   });
-  const payout = rememberReceipt(deps, built, {
+  const payout = await rememberReceipt(deps, built, {
     payerWallet: posterWallet,
     payerAgentId: job.poster_agent_id,
     paymentRef: job.winner_leg.payment_ref,
     amount: price,
     winnerAgentId: job.winner_agent_id,
     winnerWallet,
-    fee: { amount: fee.toString(), payment_ref: job.fee_leg.payment_ref, pay_to: chitPayTo },
+    fee: {
+      amount: feeLegAmount(job.winner_leg.quoted_amount || price).toString(),
+      payment_ref: job.fee_leg.payment_ref,
+      pay_to: chitPayTo,
+    },
     jobId: job.id,
     source: 'board',
   });
@@ -1075,7 +1099,7 @@ function paymentRefOf(body) {
  * External board completion. One signed Chit receipt for a payment this
  * process did not custody. Idempotent on source + external_id and on payment ref.
  */
-export function ingestExternalCompletion(body = {}, deps = {}) {
+export async function ingestExternalCompletion(body = {}, deps = {}) {
   const auth = deps.inboundAuth;
   if (!auth || auth.ok !== true) return auth || fail(503, 'inbound_unconfigured', 'Inbound job receipts are not configured');
   const source = String(body.source || '').trim().toLowerCase();
@@ -1111,7 +1135,7 @@ export function ingestExternalCompletion(body = {}, deps = {}) {
   const payerAgent = deps.registry?.getByWallet?.(payer);
   const payeeAgent = deps.registry?.getByWallet?.(payee);
   const taskId = `xfuel-job-ext-${crypto.randomBytes(8).toString('hex')}`;
-  const built = buildJobPayoutReceipt({
+  const built = await buildJobPayoutReceipt({
     taskId,
     payerWallet: payer,
     paymentRef,
@@ -1124,7 +1148,7 @@ export function ingestExternalCompletion(body = {}, deps = {}) {
     signingSecret: deps.signingSecret || null,
     agentId: payerAgent?.agent_id || null,
   });
-  const payout = rememberReceipt(deps, built, {
+  const payout = await rememberReceipt(deps, built, {
     payerWallet: payer,
     payerAgentId: payerAgent?.agent_id || null,
     paymentRef,

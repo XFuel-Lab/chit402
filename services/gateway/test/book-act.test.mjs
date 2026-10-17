@@ -15,10 +15,10 @@ function decode(jws) {
   return JSON.parse(Buffer.from(jws.split('.')[1], 'base64url').toString('utf8'));
 }
 
-test('spend, refusal, and correction rows carry signed acts', () => {
+test('spend, refusal, and correction rows carry signed acts', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const spent = recordCollectedSpend({
+  const spent = await recordCollectedSpend({
     schema: 'xfuel.receipt.v4',
     task_id: 'act-spend',
     payment: { rail: 'usdc', ref: 'base:0xact', collected: true, gross_amount: '2000' },
@@ -31,7 +31,7 @@ test('spend, refusal, and correction rows carry signed acts', () => {
   assert.equal(spendClaims.payment_ref, 'base:0xact');
   assert.equal(verifyBookSeq(spent.entry.book_chain).valid, true);
 
-  const blocked = ledger.recordPolicyBlocked({
+  const blocked = await ledger.recordPolicyBlocked({
     agentId: spent.agent_id,
     taskId: 'act-block',
     policyCode: 'kill_switch',
@@ -41,7 +41,7 @@ test('spend, refusal, and correction rows carry signed acts', () => {
   assert.equal(blocked.entry.act, 'refusal');
   assert.equal(decode(blocked.entry.book_chain.issuer_signature.jws).act, 'refusal');
 
-  ledger._index({
+  await ledger._index({
     task_id: 'act-fix',
     agent_id: spent.agent_id,
     event: 'inflow_correction',

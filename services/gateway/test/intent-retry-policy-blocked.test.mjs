@@ -118,7 +118,7 @@ let base;
 
 before(async () => {
   resetHubCatalogCache();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -164,10 +164,10 @@ async function settlePaid(headers = {}, body = chatBody) {
 }
 
 describe('Intent / retry grouping', () => {
-  test('explicit intent_id and attempt_index stored on ledger row', () => {
+  test('explicit intent_id and attempt_index stored on ledger row', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 't-int-1', ref: 'base:0xi1' }), {
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 't-int-1', ref: 'base:0xi1' }), {
       ledger,
       registry,
       intentId: 'intent-abc',
@@ -177,7 +177,7 @@ describe('Intent / retry grouping', () => {
     assert.equal(recorded.entry.intent_id, 'intent-abc');
     assert.equal(recorded.entry.attempt_index, 0);
 
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -189,21 +189,21 @@ describe('Intent / retry grouping', () => {
     assert.equal(book.body.intents['intent-abc'].collected_count, 1);
   });
 
-  test('N hops share one intent_id in book intents map', () => {
+  test('N hops share one intent_id in book intents map', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const intentId = 'intent-shared-1';
-    const first = recordCollectedSpend(collectedReceipt({ task_id: 't-a0', ref: 'base:0xa0' }), {
+    const first = await recordCollectedSpend(collectedReceipt({ task_id: 't-a0', ref: 'base:0xa0' }), {
       ledger, registry, intentId, attemptIndex: 0,
     });
-    recordCollectedSpend(collectedReceipt({ task_id: 't-a1', ref: 'base:0xa1' }), {
+    await recordCollectedSpend(collectedReceipt({ task_id: 't-a1', ref: 'base:0xa1' }), {
       ledger,
       registry,
       agentId: first.agent_id,
       intentId,
       attemptIndex: 1,
     });
-    recordCollectedSpend(collectedReceipt({ task_id: 't-a2', ref: 'base:0xa2' }), {
+    await recordCollectedSpend(collectedReceipt({ task_id: 't-a2', ref: 'base:0xa2' }), {
       ledger,
       registry,
       agentId: first.agent_id,
@@ -211,7 +211,7 @@ describe('Intent / retry grouping', () => {
       attemptIndex: 2,
     });
 
-    const book = readAgentBook(first.agent_id, { session: first.session }, {
+    const book = await readAgentBook(first.agent_id, { session: first.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -237,18 +237,18 @@ describe('Intent / retry grouping', () => {
     assert.equal(fields.attempt_index, 1);
   });
 
-  test('lineage includes intent_attempts when intent_id present', () => {
+  test('lineage includes intent_attempts when intent_id present', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const intentId = 'intent-lineage';
-    const first = recordCollectedSpend(collectedReceipt({ task_id: 'lin-0', ref: 'base:0xl0' }), {
+    const first = await recordCollectedSpend(collectedReceipt({ task_id: 'lin-0', ref: 'base:0xl0' }), {
       ledger, registry, intentId, attemptIndex: 0,
     });
-    recordCollectedSpend(collectedReceipt({ task_id: 'lin-1', ref: 'base:0xl1' }), {
+    await recordCollectedSpend(collectedReceipt({ task_id: 'lin-1', ref: 'base:0xl1' }), {
       ledger, registry, agentId: first.agent_id, intentId, attemptIndex: 1,
     });
 
-    const result = queryLineage(first.agent_id, 'lin-1', { session: first.session }, {
+    const result = await queryLineage(first.agent_id, 'lin-1', { session: first.session }, {
       ledger,
       verify: bindBookVerifier(registry),
     });
@@ -257,9 +257,9 @@ describe('Intent / retry grouping', () => {
     assert.equal(result.body.intent_attempts.length, 2);
   });
 
-  test('groupEntriesByIntent aggregates collected and blocked', () => {
+  test('groupEntriesByIntent aggregates collected and blocked', async () => {
     const ledger = new UsageSettledLedger();
-    ledger.recordPolicyBlocked({
+    await ledger.recordPolicyBlocked({
       agentId: 1,
       taskId: 'block-1',
       policyCode: 'kill_switch',
@@ -267,7 +267,7 @@ describe('Intent / retry grouping', () => {
       intentId: 'intent-mix',
       attemptIndex: 1,
     });
-    ledger.append(collectedReceipt({ task_id: 'col-1', ref: 'base:0xc1' }), {
+    await ledger.append(collectedReceipt({ task_id: 'col-1', ref: 'base:0xc1' }), {
       agentId: 1,
       intentId: 'intent-mix',
       attemptIndex: 0,
@@ -340,7 +340,7 @@ describe('policy_blocked mid-burn', () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const policy = new BookPolicyStore();
-    const recorded = recordCollectedSpend(collectedReceipt({ task_id: 'cap-base', ref: 'base:0xcapbase', amount: '50000' }), {
+    const recorded = await recordCollectedSpend(collectedReceipt({ task_id: 'cap-base', ref: 'base:0xcapbase', amount: '50000' }), {
       ledger, registry,
     });
     policy.set(recorded.agent_id, POLICY_TYPES.HOURLY_CAP, '60000');
@@ -353,7 +353,7 @@ describe('policy_blocked mid-burn', () => {
     assert.equal(policyCheck.cap_atomic, '60000');
     assert.equal(policyCheck.period_start, currentHourStartUTC());
 
-    ledger.recordPolicyBlocked({
+    await ledger.recordPolicyBlocked({
       agentId: recorded.agent_id,
       taskId: 'cap-block-task',
       policyCode: policyCheck.code,
@@ -366,7 +366,7 @@ describe('policy_blocked mid-burn', () => {
       periodStart: policyCheck.period_start,
     });
 
-    const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -381,11 +381,11 @@ describe('policy_blocked mid-burn', () => {
     assert.equal(book.body.spent, '50000', 'blocked hop must not increase spent');
 
     const entries = ledger.listByAgent(recorded.agent_id);
-    const csv = buildBookExportCsv(entries, recorded.agent_id, 'https://api.chit402.com');
+    const csv = await buildBookExportCsv(entries, recorded.agent_id, 'https://api.chit402.com');
     assert.match(csv, /policy_key,spent_atomic,cap_atomic,period_start/);
     assert.match(csv, /hourly_cap,50000,60000/);
 
-    const pack = buildBookAuditPack(entries, recorded.agent_id, 'https://api.chit402.com');
+    const pack = await buildBookAuditPack(entries, recorded.agent_id, 'https://api.chit402.com');
     const auditRow = pack.rows.find((r) => r.task_id === 'cap-block-task');
     assert.equal(auditRow.policy_key, 'hourly_cap');
     assert.equal(auditRow.spent_atomic, '50000');

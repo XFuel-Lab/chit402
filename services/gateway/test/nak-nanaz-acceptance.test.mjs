@@ -58,11 +58,11 @@ function collectedReceipt(over = {}) {
 }
 
 describe('A) Idempotent replay classification', () => {
-  test('first settle collects; second same payment.ref returns idempotent_replay', () => {
+  test('first settle collects; second same payment.ref returns idempotent_replay', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const first = recordCollectedSpend(collectedReceipt({
+    const first = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-first',
       ref: 'base:0xidem1',
       amount: '10000',
@@ -74,7 +74,7 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(first.replay_of, null);
     assert.equal(ledger.entries.length, 1);
 
-    const second = recordCollectedSpend(collectedReceipt({
+    const second = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-first',
       ref: 'base:0xidem1',
       amount: '10000',
@@ -86,7 +86,7 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(second.replay_of, 'xfuel-first');
     assert.equal(ledger.entries.length, 1, 'no second row');
 
-    const book = readAgentBook(first.agent_id, { session: second.session }, {
+    const book = await readAgentBook(first.agent_id, { session: second.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -100,12 +100,12 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(row.replay_events[0].settlement_status, SETTLEMENT_STATUS.IDEMPOTENT_REPLAY);
   });
 
-  test('recordSettleBookRow replay does not double-count under daily cap', () => {
+  test('recordSettleBookRow replay does not double-count under daily cap', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
     const policy = new BookPolicyStore();
 
-    const first = recordSettleBookRow({
+    const first = await recordSettleBookRow({
       taskId: 'xfuel-cap-1',
       paymentRef: 'base:0xcap1',
       amount: '50000',
@@ -115,7 +115,7 @@ describe('A) Idempotent replay classification', () => {
     });
     policy.set(first.agent_id, POLICY_TYPES.DAILY_CAP, '60000');
 
-    const replay = recordSettleBookRow({
+    const replay = await recordSettleBookRow({
       taskId: 'xfuel-cap-1',
       paymentRef: 'base:0xcap1',
       amount: '50000',
@@ -164,21 +164,21 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(deps.ledger.entries.length, 1);
   });
 
-  test('export shows replay_count and payer_wallet without double-count', () => {
+  test('export shows replay_count and payer_wallet without double-count', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
-    const first = recordCollectedSpend(collectedReceipt({
+    const first = await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-export',
       ref: 'base:0xexport1',
       amount: '8000',
     }), { ledger, registry, payer: PAYER, intentId: 'intent-a', attemptIndex: 0 });
-    recordCollectedSpend(collectedReceipt({
+    await recordCollectedSpend(collectedReceipt({
       task_id: 'xfuel-export',
       ref: 'base:0xexport1',
       amount: '8000',
     }), { ledger, registry, payer: PAYER, agentId: first.agent_id });
 
-    const exported = exportAgentBook(first.agent_id, { session: first.session, format: 'json' }, {
+    const exported = await exportAgentBook(first.agent_id, { session: first.session, format: 'json' }, {
       ledger,
       verify: bindBookVerifier(registry),
       baseUrl: 'https://api.chit402.com',
@@ -190,27 +190,27 @@ describe('A) Idempotent replay classification', () => {
     assert.equal(row.replay_count, 1);
     assert.equal(exported.body.totals.usdc_sum, '8000');
 
-    const csv = buildBookExportCsv(ledger.listByAgent(first.agent_id), first.agent_id, 'https://api.chit402.com');
+    const csv = await buildBookExportCsv(ledger.listByAgent(first.agent_id), first.agent_id, 'https://api.chit402.com');
     assert.match(csv, /xfuel-export,.*,8000,base:0xexport1/);
     assert.match(csv, /,1,https:\/\/api\.chit402\.com\/receipt\/xfuel-export/);
 
-    const pack = buildBookAuditPack(ledger.listByAgent(first.agent_id), first.agent_id, 'https://api.chit402.com');
+    const pack = await buildBookAuditPack(ledger.listByAgent(first.agent_id), first.agent_id, 'https://api.chit402.com');
     assert.equal(pack.rows[0].replay_events?.[0]?.replay_of, 'xfuel-export');
   });
 });
 
 describe('B) Path-rotation prove', () => {
-  test('payer_wallet ↔ payment.ref survives session rotate on book + export', () => {
+  test('payer_wallet ↔ payment.ref survives session rotate on book + export', async () => {
     const ledger = new UsageSettledLedger();
     const registry = new AgentRegistry();
 
-    const recorded = recordCollectedSpend(collectedReceipt({
+    const recorded = await recordCollectedSpend(collectedReceipt({
       task_id: 'task-rotate-bind',
       ref: 'base:0xrotatebind',
       amount: '12000',
     }), { ledger, registry, payer: PAYER });
 
-    const bookBefore = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+    const bookBefore = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -222,7 +222,7 @@ describe('B) Path-rotation prove', () => {
     const rotated = registry.rotateSession(recorded.agent_id, recorded.session);
     assert.equal(rotated.ok, true);
 
-    const bookAfter = readAgentBook(recorded.agent_id, { session: rotated.session }, {
+    const bookAfter = await readAgentBook(recorded.agent_id, { session: rotated.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,
@@ -233,7 +233,7 @@ describe('B) Path-rotation prove', () => {
     assert.equal(rowAfter.payment.ref, 'base:0xrotatebind');
     assert.equal(bookAfter.body.totals.usdc_sum, '12000');
 
-    const exported = exportAgentBook(recorded.agent_id, { session: rotated.session, format: 'json' }, {
+    const exported = await exportAgentBook(recorded.agent_id, { session: rotated.session, format: 'json' }, {
       ledger,
       verify: bindBookVerifier(registry),
       baseUrl: 'https://api.chit402.com',
@@ -270,7 +270,7 @@ describe('B) Path-rotation prove', () => {
     const rotated = registry.rotateSession(registered.body.agent_id, oldSession);
     assert.equal(rotated.ok, true);
 
-    const book = readAgentBook(registered.body.agent_id, { session: rotated.session }, {
+    const book = await readAgentBook(registered.body.agent_id, { session: rotated.session }, {
       ledger,
       verify: bindBookVerifier(registry),
       registry,

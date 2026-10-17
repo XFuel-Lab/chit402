@@ -30,21 +30,17 @@ console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
 ### CLI
 
 ```bash
-# Local binding verification (no network required)
+# The payer check is on. Exit 0 needs the on-chain transfer to match.
 npx chit402-verify receipt.json
 
-# Hash the canonical object (must match signed payload_hash) and read not_after
-# from a pinned issuer-history snapshot. Both flags are offline.
-npx chit402-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
-
-# With on-chain nullifier check (requires network)
-npx chit402-verify receipt.json --check-nullifier
+# History file that prefix-extends the snapshot shipped in chit402-verify.
+npx chit402-verify receipt.json --issuer-history issuer-history.json
 
 # Output as JSON
 npx chit402-verify receipt.json --json
 
 # From stdin
-curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verify -
+npx chit402-verify - < receipt.json
 ```
 
 ## What This Verifies
@@ -54,19 +50,20 @@ curl -s https://api.chit402.com/receipt/task-123?format=json | npx chit402-verif
 | Payment binding | No | Recompute commitment from receipt fields |
 | Issuer signature | No, unless `--fetch-jwks` | ES256. Trusted via JWKS (by kid) or the pinned production kid. Embedded `issuer_jwk` alone is not enough. |
 | Output hash | No | Hash is on the receipt |
-| On-chain settlement | Yes | Query Base RPC for tx |
+| On-chain payer | Yes, always in the CLI | Payer, payee, asset, and amount. A mismatch is exit 1. An RPC that does not answer is exit 2 |
 | Nullifier anchor | Yes | Query ZKVerifierSP1 contract |
 | Canonical preimage | No | `--canonical-preimage` is SHA-256'd and matched to signed `payload_hash` |
-| Issuer history | No, with `--issuer-history-file` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match |
+| Issuer history | No, with `--issuer-history` | `iat` is inside the kid's `not_before` / `not_after`. A payload v10 pin must match |
 
 ## Exit Codes (CLI)
 
 | Code | Meaning |
 |------|---------|
-| 0 | Verified |
-| 1 | Verification failed |
-| 2 | Partial (binding ok, nullifier not checked) |
-| 3 | Input error |
+| 0 | `VERIFIED`. The payer check ran and passed, with the other checks |
+| 1 | `INVALID`. Includes a payer, payee, or amount mismatch |
+| 2 | `COULD_NOT_CHECK`. The log, the anchor, or the payer was not checked |
+
+Flags are `--issuer-history <file>` and `--json`. Anything after `--` exits 1. With no RPC reachable, a signed receipt is exit 2, not exit 0. This alias forwards every argument to `chit402-verify` 0.4.4.
 
 ## Publish
 

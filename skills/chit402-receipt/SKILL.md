@@ -163,24 +163,17 @@ Full offline steps: [references/verify-offline.md](references/verify-offline.md)
 
 ## Offline verification (JWKS → JWS)
 
-**Pin-first (recommended):** newer receipts include `issuer_signature.issuer_jwk`.
-Verify the compact JWS with ES256 — no network required for signature check.
+The CLI trusts the pinned kid and issuer history. It does not download a JWKS
+file and does not match `issuer_signature.kid` to `jwks.keys[].kid`.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/<task_id>?format=json" -o receipt.json
-npx xfuel-verify receipt.json --json
-# Uses pinned issuer_jwk automatically (@xfuel/verify)
+npx chit402-verify receipt.json --json
 ```
 
-**JWKS fallback** (older receipts or cross-check kid rotation):
-
-```bash
-curl -sS "https://api.chit402.com/.well-known/jwks.json" -o jwks.json
-npx xfuel-verify receipt.json --jwks-file jwks.json --json
-```
-
-Then confirm **payer on-chain** matches `caller_binding.payer_wallet` for `payment.ref`
-(Base USDC Transfer / EIP-3009 `from`). CLI: `--check-payer` when RPC is available.
+The CLI runs the payer check by default. It confirms the on-chain USDC transfer
+matches `caller_binding.payer_wallet` for `payment.ref` (Base USDC Transfer /
+EIP-3009 `from`, and the signed payee and amount).
 
 **Do not** treat SP1 / `binding.in_proof` as the default prove-it path. Signed JWS +
 payer bind is enough for most agent treasury workflows.

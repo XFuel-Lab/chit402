@@ -413,7 +413,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     const shell = await res.json();
     assert.equal(shell.schema, 'chit402.receipt_shell.v1');
     const task = getAIListener().activeTasks.get(taskId);
-    return buildReceipt(task, {
+    return await buildReceipt(task, {
       signingSecret: process.env.RECEIPT_SIGNING_SECRET,
       persistSignature: false,
     });
@@ -423,7 +423,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
     _resetSessionActStore();
     resetHubCatalogCache();
     await initAIListener();
-    const app = createApp();
+    const app = await createApp();
     await new Promise((resolve) => {
       server = app.listen(0, () => {
         base = `http://127.0.0.1:${server.address().port}`;
@@ -825,7 +825,7 @@ describe('HTTP prove-key challenge → SessionAct → handoff', () => {
       meta: { payerWallet: PAYER.address, session },
     });
     listener.activeTasks.set(task.taskId, task);
-    buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
+    await buildReceipt(task, { persistSignature: true, payerWallet: PAYER.address });
 
     const { json: ch } = await challengeFor(session, { resource: task.taskId });
     const { typed, signature } = await signAct({

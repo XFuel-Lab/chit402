@@ -93,7 +93,7 @@ test('SP1_PROVER=zan with a wrong API key is rejected (401, no fallback)', async
   client._binarySupported = false;
 
   await assert.rejects(
-    () => client.generateProof(REQUEST, true),
+    async () => await client.generateProof(REQUEST, true),
     /SP1 proof generation failed/,
   );
 

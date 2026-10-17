@@ -15,6 +15,11 @@ import {
   facilitatorTimeout,
   isSolanaNetwork,
   isEvmNetwork,
+  facilitatorNetwork,
+  toCaip2Network,
+  fromCaip2Network,
+  assertFacilitatorUrl,
+  FACILITATOR_MAX_BODY_BYTES,
 } from '../src/x402-facilitator.js';
 import { buildBazaarExtension } from '../src/x402-adapter.js';
 import { runX402Handshake } from '../src/x402-server.js';
@@ -689,8 +694,8 @@ test('verifyViaFacilitator surfaces facilitator rejection', async () => {
   }
 });
 
-test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge → settle → replay-rejected', async () => {
-  const { url, close } = await startMockFacilitator();
+test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge, settle, then replay is refused', async () => {
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgX402(url);
 
@@ -715,18 +720,20 @@ test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge
     assert.equal(settled.kind, 'settled');
     assert.match(settled.paymentRef, /^base-sepolia:0x/);
 
-    // Step 3: replay the same nonce → rejected (spent).
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPay, { taskId: 'x402-bs-1', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
 });
 
-test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): CDP-native buyer', async () => {
+test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): settle once, replay is refused', async () => {
   // CDP-native buyers like Bankr send PAYMENT-SIGNATURE header.
-  const { url, close } = await startMockFacilitator();
+  const { url, close, server } = await startMockFacilitator();
   try {
     const cfg = cfgX402(url);
 
@@ -747,10 +754,12 @@ test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): C
     assert.equal(settled.kind, 'settled', 'v2 PAYMENT-SIGNATURE settles');
     assert.match(settled.paymentRef, /^base-sepolia:0x/);
 
-    // Step 3: replay → rejected
+    // Step 3: the shared handshake does not serve a stored response. No second settle.
     const replay = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-fac', cfg });
-    assert.equal(replay.kind, 'failed');
-    assert.equal(replay.reason, 'payment_replayed');
+    assert.equal(replay.code, 'payment_replayed');
+    assert.notEqual(replay.kind, 'settled');
+    assert.equal(replay.paymentRef, undefined);
+    assert.equal(server.settleCount, 1);
   } finally {
     await close();
   }
@@ -2913,5 +2922,79 @@ test('verifyViaFacilitator forwards memo to facilitator in both payload and requ
     assert.equal(receivedRequirements.extra.memo, 'challengeNonce123', 'requirements.extra.memo forwarded');
   } finally {
     await new Promise((r) => server.close(r));
+  }
+});
+
+test('prototype network keys are unknown-network', () => {
+  for (const key of ['__proto__', 'constructor', 'toString']) {
+    assert.equal(facilitatorNetwork(key), 'unknown-network', key);
+    assert.equal(toCaip2Network(key), 'unknown-network', key);
+    assert.equal(fromCaip2Network(key), 'unknown-network', key);
+    assert.equal(isSolanaNetwork(key), false, key);
+  }
+  assert.equal(facilitatorNetwork('base'), 'base');
+  assert.equal(toCaip2Network('ethereum'), 'ethereum');
+  assert.equal(fromCaip2Network('nano'), 'nano');
+});
+
+test('facilitator HTTP rejects cleartext, does not follow redirects, and caps the body', async () => {
+  assert.throws(
+    () => assertFacilitatorUrl('http://evil.example/verify'),
+    (err) => err.code === 'facilitator_http_rejected',
+  );
+  assert.throws(
+    () => assertFacilitatorUrl('https://user:pass@facilitator.example/verify'),
+    (err) => err.code === 'facilitator_http_rejected',
+  );
+  const loop = assertFacilitatorUrl('http://127.0.0.1:9/x');
+  assert.equal(loop.protocol, 'http:');
+
+  const header = makePaymentHeader();
+  const challenge = { network: 'base-sepolia', amount: '50000', payTo: '0xtreasury' };
+  const rejected = await verifyViaFacilitator(header, { gateway: 'http://evil.example/verify', challenge });
+  assert.equal(rejected.valid, false);
+  assert.equal(rejected.reason, 'facilitator_http_rejected');
+
+  let followed = 0;
+  const target = http.createServer((req, res) => {
+    followed += 1;
+    res.end('landed');
+  });
+  await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+  const redirector = http.createServer((req, res) => {
+    const port = target.address().port;
+    res.writeHead(302, { location: `http://127.0.0.1:${port}/landed` });
+    res.end();
+  });
+  await new Promise((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+  try {
+    const redirected = await verifyViaFacilitator(header, {
+      gateway: `http://127.0.0.1:${redirector.address().port}`,
+      challenge,
+    });
+    assert.equal(followed, 0);
+    assert.equal(redirected.valid, false);
+  } finally {
+    await new Promise((resolve) => redirector.close(resolve));
+    await new Promise((resolve) => target.close(resolve));
+  }
+
+  const big = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': String(FACILITATOR_MAX_BODY_BYTES + 1),
+    });
+    res.end('{}');
+  });
+  await new Promise((resolve) => big.listen(0, '127.0.0.1', resolve));
+  try {
+    const oversized = await verifyViaFacilitator(header, {
+      gateway: `http://127.0.0.1:${big.address().port}`,
+      challenge,
+    });
+    assert.equal(oversized.valid, false);
+    assert.equal(oversized.reason, 'facilitator_http_body');
+  } finally {
+    await new Promise((resolve) => big.close(resolve));
   }
 });

@@ -6,7 +6,8 @@
  *
  * The first leaf is genesis (verifier build digest, when one is published).
  * Receipt leaves follow. A signed tree head is published on the first append
- * of each UTC day. The root is anchored on Base (calldata) and on Solana
+ * of each UTC day, and again when the oldest leaf past that head is older
+ * than ANCHOR_TAIL_MAX_AGE_S (default one hour). The root is anchored on Base (calldata) and on Solana
  * (SPL Memo). Each side stays pending until its own key and RPC are set.
  * Base: RECEIPT_ANCHOR_FROM, RECEIPT_ANCHOR_PRIVATE_KEY. Solana:
  * SOLANA_ANCHOR_SECRET_KEY, SOLANA_RPC_URL, optional SOLANA_ANCHOR_CLUSTER.
@@ -14,7 +15,8 @@
  */
 import crypto from 'crypto';
 import logger from './logger.js';
-import { signJws, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { recordReceiptFailure } from './receipt-failures.js';
+import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
   clockToleranceClaim,
@@ -305,6 +307,16 @@ export async function signBaseAnchorRaw({ privateKey, nonce, calldata, fees = nu
   };
 }
 
+/**
+ * First sign, replacement, and speed-up all go through this object.
+ * Tests replace `sign` to prove a quote over the cap never reaches the signer.
+ */
+export const baseAnchorSigner = {
+  async sign(args) {
+    return await signBaseAnchorRaw(args);
+  },
+};
+
 /** How long to wait before another send after `attempts` transient failures. */
 export function anchorBackoffMs(attempts) {
   const n = Math.max(0, Math.min(Number(attempts) || 0, 6));
@@ -376,13 +388,26 @@ async function baseAnchorFees(request) {
   };
 }
 
-async function broadcastBaseRaw(raw) {
-  const rpc = baseRpcUrl();
-  if (!rpc) throw new Error('no_rpc');
-  const { JsonRpcProvider } = await import('ethers');
-  const provider = new JsonRpcProvider(rpc);
-  const tx = await provider.broadcastTransaction(raw);
-  return tx.hash;
+async function broadcastBaseRaw(raw, { timeoutMs = RECEIPT_ANCHOR_RPC_TIMEOUT_MS } = {}) {
+  const rpcUrl = baseRpcUrl();
+  if (!rpcUrl) throw new Error('no_rpc');
+  const budget = Number.isFinite(Number(timeoutMs)) ? Math.max(1, Math.ceil(Number(timeoutMs))) : RECEIPT_ANCHOR_RPC_TIMEOUT_MS;
+  const res = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'eth_sendRawTransaction',
+      params: [raw],
+    }),
+    signal: AbortSignal.timeout(budget),
+  });
+  if (!res.ok) throw new Error(`base_http_${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || 'base_rpc_error');
+  if (typeof json.result !== 'string' || !json.result) throw new Error('base_send_empty');
+  return json.result;
 }
 
 /**
@@ -444,7 +469,7 @@ export async function describeAnchor(rootHex, { send = null } = {}) {
   try {
     const sender = typeof send === 'function'
       ? send
-      : (args) => sendBaseAnchorTx({ ...args, privateKey: key });
+      : async (args) => await sendBaseAnchorTx({ ...args, privateKey: key });
     const tx = await sender({ from, calldata, value: '0' });
     return {
       status: 'broadcast',
@@ -667,6 +692,14 @@ export function inclusionHeadUrl(epoch, treeSize) {
   return `/v1/receipts/tree/head?tree_size=${n}`;
 }
 
+/** Relative inclusion proof against one signed head size. No host. */
+function inclusionUrlFor(taskId, treeSize) {
+  const n = Number(treeSize);
+  if (taskId == null || taskId === '') return null;
+  if (!Number.isSafeInteger(n) || n < 1) return null;
+  return `/v1/receipts/${encodeURIComponent(String(taskId))}/inclusion?tree_size=${n}`;
+}
+
 function receiptReverted(found) {
   if (!found) return false;
   const status = found.receiptStatus ?? found.receipt_status;
@@ -692,6 +725,32 @@ function namedSignedHead(head, facts = null) {
     anchored: effective.anchored,
     anchored_signed: signed.anchored,
   };
+}
+
+/**
+ * Smallest later anchored head that covers a leaf whose own head is not
+ * anchored. `inclusion_url` is the proof against that head's size.
+ */
+function coveredByRecord(head, epoch, facts, taskId) {
+  const sol = head?.anchors?.solana || null;
+  const solOn = Boolean(sol && sol.status === 'anchored' && sol.signature);
+  const anchors = {};
+  if (facts?.anchor_tx) anchors.base = { tx: facts.anchor_tx };
+  const treeSize = Number(head.tree_size);
+  const inclusionUrl = inclusionUrlFor(taskId, treeSize);
+  const body = {
+    epoch: Number(head?.epoch ?? epoch?.epoch),
+    tree_size: treeSize,
+    root: normalizeRoot(head.root),
+  };
+  if (inclusionUrl) body.inclusion_url = inclusionUrl;
+  if (solOn) {
+    const solana = { signature: sol.signature };
+    if (sol.slot != null && sol.slot !== '') solana.slot = sol.slot;
+    anchors.solana = solana;
+  }
+  if (anchors.base || anchors.solana) body.anchors = anchors;
+  return body;
 }
 
 /**
@@ -727,7 +786,7 @@ const PIN_ANCHORED = 'anchored';
  * committed pin's transactions. This does not write the journal, broadcast,
  * or change the epoch record.
  */
-export function signPinnedClosedHead({
+export async function signPinnedClosedHead({
   epoch,
   root,
   treeSize,
@@ -777,7 +836,7 @@ export function signPinnedClosedHead({
     clock_tolerance_s: clockToleranceClaim(),
     anchors: { base: baseSide, solana: solanaSide },
   };
-  const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
+  const { jws, kid } = await signJwsAsync(claims, { typ: TREE_HEAD_JWT_TYP });
   return {
     ...claims,
     anchor: baseSide,
@@ -828,14 +887,71 @@ export function anchorStuckMs(env = process.env) {
   return Number.isFinite(raw) && raw >= 0 ? raw : ANCHOR_STUCK_MS;
 }
 
-export function anchorMaxFeeWei(env = process.env) {
-  const raw = env.ANCHOR_MAX_FEE_WEI;
-  if (raw == null || raw === '') return null;
+function parseAnchorWei(raw) {
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (!/^[0-9]+$/.test(text)) return null;
   try {
-    return BigInt(raw);
+    return BigInt(text);
   } catch {
     return null;
   }
+}
+
+/** Any casing of production. Unset, test, and development are not production. */
+export function anchorFeeCapsRequired(env = process.env) {
+  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+}
+
+/** Max `maxFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
+export function anchorMaxFeeWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_FEE_WEI);
+}
+
+/** Max `maxPriorityFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
+export function anchorMaxPriorityWei(env = process.env) {
+  return parseAnchorWei(env.ANCHOR_MAX_PRIORITY_WEI);
+}
+
+/**
+ * Production must name both caps as integer wei strings. There is no flag
+ * that skips this. The check is case-insensitive on NODE_ENV. Dev and test
+ * may leave the caps unset, and unset then means no cap.
+ * @throws {ReceiptLogRefused}
+ */
+export function assertAnchorFeeCaps(env = process.env) {
+  if (!anchorFeeCapsRequired(env)) return;
+  for (const name of ['ANCHOR_MAX_FEE_WEI', 'ANCHOR_MAX_PRIORITY_WEI']) {
+    const raw = env[name];
+    if (parseAnchorWei(raw) == null) {
+      throw new ReceiptLogRefused(
+        'anchor_fee_cap_config',
+        `${name} is unset or not numeric. Production refuses to sign without a numeric wei cap.`,
+      );
+    }
+  }
+}
+
+function anchorQuoteOverCap(fees, env = process.env) {
+  const maxFee = anchorMaxFeeWei(env);
+  const maxPriority = anchorMaxPriorityWei(env);
+  if (maxFee != null && BigInt(fees.maxFeePerGas) > maxFee) return true;
+  if (maxPriority != null && BigInt(fees.maxPriorityFeePerGas) > maxPriority) return true;
+  return false;
+}
+
+function noteAnchorFeeCap(tree, quoted) {
+  tree.lastAnchorError = 'anchor_fee_cap';
+  logger.error(
+    {
+      reason: 'anchor_fee_cap',
+      max_fee: quoted.maxFeePerGas.toString(),
+      max_priority: quoted.maxPriorityFeePerGas.toString(),
+      cap_fee: anchorMaxFeeWei()?.toString() ?? null,
+      cap_priority: anchorMaxPriorityWei()?.toString() ?? null,
+    },
+    'anchor fee cap: quote exceeds ANCHOR_MAX_FEE_WEI or ANCHOR_MAX_PRIORITY_WEI. Refusing to sign or broadcast.',
+  );
 }
 
 /**
@@ -873,6 +989,15 @@ export function confirmAnchor(receipt) {
  * ANCHOR_RETRY_MS has passed. A missing key stays quiet until the env appears,
  * and that transition is not debounced: the next append anchors.
  */
+/** Seconds an uncovered leaf may sit before the next head is published. */
+export function tailAnchorMaxAgeS(env = process.env) {
+  const raw = env.ANCHOR_TAIL_MAX_AGE_S;
+  if (raw == null || raw === '') return 3600;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 3600;
+  return n;
+}
+
 export function dailyAnchorDue(head, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
   if (!head || dayOf(head.published_at) !== today) return true;
@@ -937,10 +1062,16 @@ export class ReceiptMerkleTree {
     this._push(g.task_id, g.bytes, g.kind);
   }
 
+  _now() {
+    if (typeof this._clock === 'function') return new Date(this._clock());
+    return new Date();
+  }
+
   _push(taskId, bytes, kind) {
     const buf = Buffer.from(bytes);
     const hash = leafHash(buf);
     const index = this.leaves.length;
+    const at = this._now().toISOString();
     if (this.dir) {
       this._ensureEpochOpen();
       appendJournal(this.dir, {
@@ -951,6 +1082,7 @@ export class ReceiptMerkleTree {
         task_id: taskId,
         kind,
         preimage_b64: buf.toString('base64'),
+        at,
       });
     }
     this.leaves.push(hash);
@@ -961,6 +1093,7 @@ export class ReceiptMerkleTree {
       leaf: hash.toString('hex'),
       preimage_b64: buf.toString('base64'),
       epoch: this.epoch,
+      at,
     });
     if (taskId) this.byTask.set(String(taskId), index);
     if (this.dir) this._writeSnapshot();
@@ -1080,10 +1213,10 @@ export class ReceiptMerkleTree {
     };
   }
 
-  appendReceipt(taskId, rowHash, { publish = true } = {}) {
+  async appendReceipt(taskId, rowHash, { publish = true } = {}) {
     if (!taskId) return null;
-    if (this.byTask.has(String(taskId))) return this.inclusion(taskId);
-    if (this._findClosed(taskId)) return this.inclusion(taskId);
+    if (this.byTask.has(String(taskId))) return await this.inclusion(taskId);
+    if (this._findClosed(taskId)) return await this.inclusion(taskId);
     if (this.leaves.length === 0) {
       if (this.durable && !this.allowFreshGenesis) {
         if (!this._warnedUninitialized) {
@@ -1093,14 +1226,20 @@ export class ReceiptMerkleTree {
             'receipt log append refused: no stored genesis. Rebuild epoch 1, or set RECEIPT_LOG_ACCEPT_FRESH_GENESIS to the documented flag.',
           );
         }
+        recordReceiptFailure({ stage: 'log', reason: 'log_uninitialized', outcome: 'refused' });
         return null;
       }
       this.ensureGenesis();
     }
     const bytes = Buffer.from(`${taskId}|${rowHash || ''}`);
     this._push(String(taskId), bytes, 'receipt');
-    if (publish) this._maybePublishDaily();
-    return this.inclusion(taskId);
+    if (publish) {
+      // A publish already in flight is waiting on this append (anchor lookup).
+      // Waiting for the daily follow-up would wait on that same publish.
+      // As on main: the daily head publishes in the background, not on the receipt path.
+      this._maybePublishDaily().catch(() => {});
+    }
+    return await this.inclusion(taskId);
   }
 
   /**
@@ -1134,7 +1273,7 @@ export class ReceiptMerkleTree {
    * Leaf present in an earlier epoch and in a later epoch. Null when the
    * task is only in one epoch, which is the current-epoch case.
    */
-  carryForwardFor(taskId) {
+  async carryForwardFor(taskId) {
     const id = String(taskId);
     const views = [];
     for (const epoch of this.closedEpochs || []) views.push(epoch);
@@ -1151,11 +1290,11 @@ export class ReceiptMerkleTree {
     const old = hits[0];
     const current = hits[hits.length - 1];
     if (Number(old.epoch) === Number(current.epoch)) return null;
-    const oldInclusion = this._inclusionIn(old, id);
-    const currentInclusion = this._inclusionIn(current, id);
+    const oldInclusion = await this._inclusionIn(old, id);
+    const currentInclusion = await this._inclusionIn(current, id);
     if (!oldInclusion || !currentInclusion) return null;
-    const oldHead = this._coveringHead(old, oldInclusion.root);
-    const currentHead = this._coveringHead(current, currentInclusion.root);
+    const oldHead = await this._coveringHead(old, oldInclusion.root);
+    const currentHead = await this._coveringHead(current, currentInclusion.root);
     const leaf = current.leaves[currentInclusion.leaf_index];
     const leafHex = Buffer.from(leaf).toString('hex');
     const currentInclusions = [];
@@ -1202,9 +1341,9 @@ export class ReceiptMerkleTree {
    * Pinned final head for a closed epoch, or null when this epoch has none.
    * The pin is the full-tree anchor. A smaller daily journal anchor is not it.
    */
-  _pinnedClosedHead(epoch) {
+  async _pinnedClosedHead(epoch) {
     if (!epoch || epoch.status !== 'closed' || typeof this.signedClosedEpochHead !== 'function') return null;
-    const signed = this.signedClosedEpochHead(epoch.epoch);
+    const signed = await this.signedClosedEpochHead(epoch.epoch);
     if (!signed || !headAnchorFacts(signed).anchored) return null;
     return signed;
   }
@@ -1240,8 +1379,8 @@ export class ReceiptMerkleTree {
   }
 
   /** Accepted pinned final head, or null when the closed epoch has no pin. */
-  _closedPinnedFrontier(epoch) {
-    const pinned = this._pinnedClosedHead(epoch);
+  async _closedPinnedFrontier(epoch) {
+    const pinned = await this._pinnedClosedHead(epoch);
     if (!pinned) return null;
     const accepted = this._acceptAnchoredHead(epoch, pinned);
     this._rejectForeignClosedHead(epoch, accepted);
@@ -1256,8 +1395,8 @@ export class ReceiptMerkleTree {
    * Effective anchor facts include a tracker-confirmed broadcast head.
    * Publish triggers stay on the signed claims.
    */
-  _newestAnchoredHead(epoch) {
-    const pinned = this._closedPinnedFrontier(epoch);
+  async _newestAnchoredHead(epoch) {
+    const pinned = await this._closedPinnedFrontier(epoch);
     if (pinned) return pinned;
     const heads = epoch.heads || [];
     for (let i = heads.length - 1; i >= 0; i -= 1) {
@@ -1295,17 +1434,17 @@ export class ReceiptMerkleTree {
     return head;
   }
 
-  _candidateHeads(epoch) {
+  async _candidateHeads(epoch) {
     const heads = [...(epoch.heads || [])];
     if (epoch.status === 'closed' && typeof this.signedClosedEpochHead === 'function') {
-      const signed = this.signedClosedEpochHead(epoch.epoch);
+      const signed = await this.signedClosedEpochHead(epoch.epoch);
       if (signed) heads.push(signed);
     }
     return heads;
   }
 
   /** Signed head of exactly `treeSize`, or a 4xx error. */
-  _requireSignedHead(epoch, treeSize) {
+  async _requireSignedHead(epoch, treeSize) {
     const live = epoch.leaves.length;
     if (!Number.isSafeInteger(treeSize) || treeSize < 1 || treeSize > live) {
       throw inclusionError(
@@ -1313,7 +1452,7 @@ export class ReceiptMerkleTree {
         `tree_size must be a positive integer no greater than the live tree (${live})`,
       );
     }
-    const candidates = this._candidateHeads(epoch);
+    const candidates = await this._candidateHeads(epoch);
     let unsigned = false;
     let mismatch = false;
     for (let i = candidates.length - 1; i >= 0; i -= 1) {
@@ -1350,8 +1489,8 @@ export class ReceiptMerkleTree {
    * Quarantined heads are not in `epoch.heads`, so a size that only a
    * raced head claimed is `no_signed_head`.
    */
-  signedHeadAt(treeSize) {
-    return this._requireSignedHead(this._openEpoch(), Number(treeSize));
+  async signedHeadAt(treeSize) {
+    return await this._requireSignedHead(this._openEpoch(), Number(treeSize));
   }
 
   /**
@@ -1374,13 +1513,13 @@ export class ReceiptMerkleTree {
    * the leaf as verified-included. An intact frontier returns the open
    * journal, the same list inclusion used to hand the lane. Does not throw.
    */
-  laneHeadsFor(taskId) {
+  async laneHeadsFor(taskId) {
     const openHeads = Array.isArray(this.heads) ? this.heads : [];
     const epoch = this._locate(taskId);
     if (!epoch) return { frontierRejected: false, heads: openHeads };
     try {
-      if (epoch.status === 'closed') this._closedPinnedFrontier(epoch);
-      this._newestAnchoredHead(epoch);
+      if (epoch.status === 'closed') await this._closedPinnedFrontier(epoch);
+      await this._newestAnchoredHead(epoch);
     } catch {
       return { frontierRejected: true, heads: [] };
     }
@@ -1392,29 +1531,32 @@ export class ReceiptMerkleTree {
    * `treeSize` selects one signed head. A leaf past that head is
    * `pending_anchor` when the head is the anchored frontier, and a 4xx
    * otherwise. With no anchored head yet, the proof stays on the live tree
-   * and is not reported as anchored. This path stays strict: a rejected
-   * or mismatched head throws. Callers that only need the index use
+   * and is not reported as anchored. When the selected head is not anchored,
+   * `covered_by` names the smallest later anchored signed head that contains
+   * the leaf, including `inclusion_url` for that size. It is omitted when
+   * this head is itself anchored. This path stays strict: a rejected or
+   * mismatched head throws. Callers that only need the index use
    * `leafIndexOf`.
    */
-  inclusion(taskId, options = {}) {
+  async inclusion(taskId, options = {}) {
     const requested = options.treeSize == null || options.treeSize === '' ? null : Number(options.treeSize);
     const located = this._locate(taskId);
     const epoch = located || this._openEpoch();
     // Fail closed before a proof or pending_anchor can hide a leaf that the
     // pinned final head already covers, or serve a head the pin rejects.
-    if (epoch.status === 'closed') this._closedPinnedFrontier(epoch);
+    if (epoch.status === 'closed') await this._closedPinnedFrontier(epoch);
     if (requested != null) {
-      const head = this._requireSignedHead(epoch, requested);
+      const head = await this._requireSignedHead(epoch, requested);
       if (!located) return null;
-      return this._inclusionAgainstHead(epoch, taskId, head);
+      return await this._inclusionAgainstHead(epoch, taskId, head);
     }
     if (!located) return null;
-    const anchored = this._newestAnchoredHead(epoch);
-    if (anchored) return this._inclusionAgainstHead(epoch, taskId, anchored);
-    return this._inclusionIn(epoch, taskId);
+    const anchored = await this._newestAnchoredHead(epoch);
+    if (anchored) return await this._inclusionAgainstHead(epoch, taskId, anchored);
+    return await this._inclusionIn(epoch, taskId);
   }
 
-  _inclusionAgainstHead(epoch, taskId, head) {
+  async _inclusionAgainstHead(epoch, taskId, head) {
     const index = epoch.byTask.get(String(taskId));
     if (index == null) return null;
     const size = Number(head.tree_size);
@@ -1423,15 +1565,16 @@ export class ReceiptMerkleTree {
     const named = namedSignedHead(head, facts);
     const confirmedBy = facts.anchored ? (facts.confirmed_by || null) : null;
     const headUrl = inclusionHeadUrl(epoch, size);
+    const finish = async (body) => await this._attachCoveredBy(body, epoch, head);
     if (index >= size) {
-      const frontier = facts.anchored ? this._newestAnchoredHead(epoch) : null;
+      const frontier = facts.anchored ? await this._newestAnchoredHead(epoch) : null;
       const onFrontier = frontier
         && Number(frontier.tree_size) === size
         && normalizeRoot(frontier.root) === named.root;
       if (!onFrontier) {
         throw inclusionError('leaf_not_in_head', `leaf index ${index} is not in the signed head of size ${size}`);
       }
-      return {
+      return await finish({
         schema: 'chit402.inclusion.v1',
         payload_version: 2,
         status: 'pending_anchor',
@@ -1455,14 +1598,14 @@ export class ReceiptMerkleTree {
         head: named,
         head_url: headUrl,
         verified_at: new Date().toISOString(),
-      };
+      });
     }
     const proof = inclusionProof(epoch.leaves.slice(0, size), index);
     const root = hex(rootOf(epoch.leaves.slice(0, size)));
     if (root !== named.root) {
       throw inclusionError('head_mismatch', 'signed head root does not match tree_size');
     }
-    return {
+    return await finish({
       schema: 'chit402.inclusion.v1',
       payload_version: 2,
       status: facts.anchored ? 'anchored' : 'included',
@@ -1486,7 +1629,41 @@ export class ReceiptMerkleTree {
       head: named,
       head_url: headUrl,
       verified_at: new Date().toISOString(),
-    };
+    });
+  }
+
+  /**
+   * Smallest later anchored signed head that contains this leaf.
+   * Present only when the inclusion head itself is not anchored.
+   * A quarantined head is not served and is not an anchor.
+   */
+  async _attachCoveredBy(body, epoch, head) {
+    const covered = await this._coveredBy(epoch, body?.leaf_index, head, body?.task_id);
+    if (!covered) return body;
+    return { ...body, covered_by: covered };
+  }
+
+  async _coveredBy(epoch, leafIndex, head, taskId) {
+    if (!epoch || !head) return null;
+    if (this.headChainFacts(head).anchored) return null;
+    const size = Number(head.tree_size);
+    const index = Number(leafIndex);
+    if (!Number.isSafeInteger(size) || !Number.isSafeInteger(index)) return null;
+    let best = null;
+    for (const candidate of await this._candidateHeads(epoch)) {
+      const cSize = Number(candidate?.tree_size);
+      if (!Number.isSafeInteger(cSize) || cSize <= size || index >= cSize) continue;
+      if (!this.headChainFacts(candidate).anchored) continue;
+      let accepted;
+      try {
+        accepted = this._acceptAnchoredHead(epoch, candidate);
+      } catch {
+        continue;
+      }
+      if (!best || Number(accepted.tree_size) < Number(best.tree_size)) best = accepted;
+    }
+    if (!best) return null;
+    return coveredByRecord(best, epoch, this.headChainFacts(best), taskId);
   }
 
   /**
@@ -1494,17 +1671,17 @@ export class ReceiptMerkleTree {
    * Signed claims only. The tracker upgrade is not applied here.
    * The default path calls `_newestAnchoredHead` first, and that does.
    */
-  _inclusionIn(epoch, taskId) {
+  async _inclusionIn(epoch, taskId) {
     const index = epoch.byTask.get(String(taskId));
     if (index == null) return null;
     const proof = inclusionProof(epoch.leaves, index);
     const root = hex(rootOf(epoch.leaves));
-    const head = this._coveringHead(epoch, root);
+    const head = await this._coveringHead(epoch, root);
     const baseSide = head ? (head.anchors?.base || head.anchor || null) : null;
     const baseTx = baseSide?.status === 'anchored' ? (baseSide.tx || null) : null;
     const solana = head ? (head.anchors?.solana || null) : null;
     const solanaSig = solana?.status === 'anchored' ? solana.signature : null;
-    return {
+    return await this._attachCoveredBy({
       schema: 'chit402.inclusion.v1',
       payload_version: 2,
       epoch: epoch.epoch,
@@ -1523,7 +1700,7 @@ export class ReceiptMerkleTree {
       anchors: head ? (head.anchors || null) : null,
       head_url: inclusionHeadUrl(epoch, epoch.leaves.length),
       verified_at: new Date().toISOString(),
-    };
+    }, epoch, head);
   }
 
   consistency(m, n, epochNumber = null) {
@@ -1612,7 +1789,12 @@ export class ReceiptMerkleTree {
       return last;
     }
 
-    const priorBase = baseAnchoredForRoot(this.heads, root, this.anchorState);
+    let priorBase = baseAnchoredForRoot(this.heads, root, this.anchorState);
+    // A tx the clock gate already rejected cannot anchor a later head of the same root. Send a fresh one.
+    if (priorBase?.tx && (this.anchorIntents || []).some((row) => row.chain === 'base'
+      && row.status === 'replaced' && row.reason === 'anchor_clock_drift' && sameHex(row.tx, priorBase.tx))) {
+      priorBase = null;
+    }
     let reserved = null;
     const reserveBase = Boolean(this.dir) && (nonce != null || process.env.RECEIPT_ANCHOR_PRIVATE_KEY);
     let anchor = null;
@@ -1792,7 +1974,7 @@ export class ReceiptMerkleTree {
       clock_tolerance_s: clockToleranceClaim(),
       anchors,
     };
-    const { jws, kid } = signJws(claims, { typ: TREE_HEAD_JWT_TYP });
+    const { jws, kid } = await signJwsAsync(claims, { typ: TREE_HEAD_JWT_TYP });
     const head = {
       ...claims,
       published_at: publishedAt,
@@ -2146,7 +2328,7 @@ export class ReceiptMerkleTree {
     try {
       const run = typeof lookup === 'function'
         ? Promise.resolve().then(() => lookup(intent, { signal }))
-        : lookupBaseTxByNonceOrHash({
+        : await lookupBaseTxByNonceOrHash({
           txHash: intent?.tx,
           root: intent?.root,
           nonce: intent?.nonce,
@@ -2232,7 +2414,7 @@ export class ReceiptMerkleTree {
   }
 
   async _lookupIntent(intent, lookup, request) {
-    return this._boundedLookup(intent, lookup, request);
+    return await this._boundedLookup(intent, lookup, request);
   }
 
   _confirmed(found, intent) {
@@ -2245,10 +2427,24 @@ export class ReceiptMerkleTree {
 
   async _gateAnchorChain(request) {
     try {
-      await assertBaseChainId({ request });
+      await assertBaseChainId({ request, timeoutMs: this._rpcTimeoutMs() });
     } catch (err) {
-      this.lastAnchorError = 'anchor_chain_mismatch';
+      this.lastAnchorError = err?.code === 'anchor_rpc_unavailable' ? 'anchor_rpc_unavailable' : 'anchor_chain_mismatch';
       throw err;
+    }
+    if (this._deferredBoot) {
+      // Boot skipped reconcile and the latest-anchor check on an RPC timeout.
+      // Run them before any signed bytes go out. A refusal keeps anchoring paused.
+      // Cleared first: reconcile may rebroadcast through this gate.
+      const deferred = this._deferredBoot;
+      this._deferredBoot = null;
+      try {
+        await finishReceiptLogBootChecks(this, { ...deferred, request: deferred.request || request }, deferred.baseRpc);
+      } catch (err) {
+        this._deferredBoot = deferred;
+        this.lastAnchorError = err?.code || 'anchor_boot_check_failed';
+        throw err;
+      }
     }
   }
 
@@ -2266,7 +2462,7 @@ export class ReceiptMerkleTree {
       });
       return;
     }
-    await broadcastBaseRaw(intent.raw);
+    await broadcastBaseRaw(intent.raw, { timeoutMs: this._rpcTimeoutMs() });
   }
 
   _anchoredFromConfirmation(intent, found, how) {
@@ -2286,29 +2482,11 @@ export class ReceiptMerkleTree {
     });
   }
 
-  async _maybeReplaceStuck(intent, { root, day, send, lookup, request, now }) {
+  async _maybeReplaceStuck(intent, { root, day, send, lookup, request, now, factor = 1 }) {
     const at = Date.parse(intent.at || '');
     const nowMs = now instanceof Date ? now.getTime() : Date.parse(now || '');
-    if (!Number.isFinite(at) || !Number.isFinite(nowMs) || nowMs - at < anchorStuckMs()) return null;
-    let fees;
-    try {
-      fees = intent.max_fee
-        ? {
-          gasLimit: FIXED_ANCHOR_FEES.gasLimit,
-          maxFeePerGas: BigInt(intent.max_fee),
-          maxPriorityFeePerGas: BigInt(intent.max_priority || intent.max_fee),
-        }
-        : await feesFromSignedRaw(intent.raw, FIXED_ANCHOR_FEES);
-    } catch {
-      fees = FIXED_ANCHOR_FEES;
-    }
-    const bumped = bumpAnchorFees(fees);
-    const cap = anchorMaxFeeWei();
-    if (cap != null && bumped.maxFeePerGas > cap) {
-      this.lastAnchorError = 'anchor_fee_cap';
-      return this._blockedPublish(root, intent, 'anchor_fee_cap');
-    }
-    return this._replaceAtNonce(intent, { root, day, send, lookup, request });
+    if (!Number.isFinite(at) || !Number.isFinite(nowMs) || nowMs - at < anchorStuckMs() * factor) return null;
+    return await this._replaceAtNonce(intent, { root, day, send, lookup, request });
   }
 
   _blockedPublish(publishRoot, intent, reason) {
@@ -2341,13 +2519,42 @@ export class ReceiptMerkleTree {
         maxPriorityFeePerGas: BigInt(old.max_priority || old.max_fee),
       }
       : await feesFromSignedRaw(old.raw, FIXED_ANCHOR_FEES);
+    const bumped = bumpAnchorFees(previous);
+    try {
+      assertAnchorFeeCaps();
+    } catch (err) {
+      this.lastAnchorError = err.code || 'anchor_fee_cap_config';
+      return {
+        hold: true,
+        anchor: this._anchorResult({
+          status: 'blocked',
+          root,
+          tx: old.tx,
+          from: old.from,
+          reason: 'anchor_fee_cap_config',
+        }),
+      };
+    }
+    if (anchorQuoteOverCap(bumped)) {
+      noteAnchorFeeCap(this, bumped);
+      return {
+        hold: true,
+        anchor: this._anchorResult({
+          status: 'blocked',
+          root,
+          tx: old.tx,
+          from: old.from,
+          reason: 'anchor_fee_cap',
+        }),
+      };
+    }
     let signed;
     try {
-      signed = await signBaseAnchorRaw({
+      signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: old.nonce,
         calldata: anchorCalldata(root),
-        fees: bumpAnchorFees(previous),
+        fees: bumped,
       });
     } catch (err) {
       const failed = this._noteSendFailure(old, err);
@@ -2468,6 +2675,12 @@ export class ReceiptMerkleTree {
       const failed = this._noteSendFailure(intent, new Error(found.reason || 'rpc_error'));
       return this._blockedPublish(root, intent, failed.reason);
     }
+    if (found?.rebroadcast && intent.raw && intent.status === 'broadcast') {
+      // Dropped for 6x the stuck age: rebroadcasting the same bytes is not working. Bump at the nonce.
+      const stuck = await this._maybeReplaceStuck(intent, { root, day, send, lookup, request, now, factor: 6 });
+      if (stuck) return stuck;
+      this.lastAnchorError = 'prior_nonce_dropped';
+    }
     if (this._backoffActive(intent, now)) {
       return this._blockedPublish(root, intent, intent.reason || 'anchor_backoff');
     }
@@ -2546,18 +2759,34 @@ export class ReceiptMerkleTree {
     const key = process.env.RECEIPT_ANCHOR_PRIVATE_KEY || null;
     if (!key) return this._anchorResult({ status: 'pending', root, reason: 'no_key' });
     try {
+      assertAnchorFeeCaps();
+    } catch (err) {
+      this.lastAnchorError = err.code || 'anchor_fee_cap_config';
+      return this._anchorResult({ status: 'pending', root, reason: 'anchor_fee_cap_config' });
+    }
+    try {
       await this._gateAnchorChain(request);
     } catch (err) {
-      return this._anchorResult({ status: 'blocked', root, reason: 'anchor_chain_mismatch' });
+      return this._anchorResult({ status: 'blocked', root, reason: err?.code || 'anchor_chain_mismatch' });
     }
     let signed;
     try {
-      const fees = typeof send === 'function' ? null : await baseAnchorFees(request);
-      signed = await signBaseAnchorRaw({
+      // An injected send without an RPC transport keeps the fixed schedule.
+      // A request transport is the RPC quote, including production where
+      // send is absent. The cap applies to whichever quote we would sign.
+      const dynamic = typeof send === 'function' && typeof request !== 'function'
+        ? null
+        : await baseAnchorFees(request);
+      const quoted = dynamic || FIXED_ANCHOR_FEES;
+      if (anchorQuoteOverCap(quoted)) {
+        noteAnchorFeeCap(this, quoted);
+        return this._anchorResult({ status: 'pending', root, reason: 'anchor_fee_cap' });
+      }
+      signed = await baseAnchorSigner.sign({
         privateKey: key,
         nonce: reserved.nonce,
         calldata: anchorCalldata(root),
-        fees,
+        fees: quoted,
       });
     } catch (err) {
       if (err?.code === 'anchor_chain_mismatch') {
@@ -2607,7 +2836,7 @@ export class ReceiptMerkleTree {
       to: signed.to,
       reason: known ? 'already_known' : null,
     });
-    return this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
+    return await this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
   }
 
   /**
@@ -2722,7 +2951,7 @@ export class ReceiptMerkleTree {
         to: intent.to,
         reason: 'unconfirmed',
       });
-      return this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
+      return await this._pollBaseConfirmation(broadcastIntent, { lookup, request, root, sleep, nowMs });
     }
     if (!intent.raw) {
       this._markIntent(intent, 'abandoned_unsigned', { reason: 'never_broadcast' });
@@ -2740,8 +2969,10 @@ export class ReceiptMerkleTree {
    * A signed raw transaction is fsynced before broadcast. Recovery looks up
    * that hash. A match is adopted. Anything else mined is replaced. An
    * unsigned intent was never broadcast: it is abandoned and the nonce is
-   * free. An RPC error on a signed raw stays blocked and is retried. The
-   * same raw is rebroadcast only when the nonce is still unused.
+   * free. An RPC error on a signed raw that is not yet anchored stays
+   * blocked and is retried. An RPC error on an already anchored row keeps
+   * `anchored`: it is not marked blocked and it is not broadcast again.
+   * The same raw is rebroadcast only when the nonce is still unused.
    */
   async reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs } = {}) {
     this._supersedeLowerFeeAtNonce();
@@ -2758,6 +2989,7 @@ export class ReceiptMerkleTree {
           ? await this._boundedLookup(intent, lookup, null)
           : null;
       } catch (err) {
+        if (intent.status === 'anchored') continue;
         this._markIntent(intent, 'blocked', { reason: err?.message || 'rpc_error' });
         continue;
       }
@@ -2843,13 +3075,16 @@ export class ReceiptMerkleTree {
     let lastAnchoredRoot = null;
     let lastAnchoredTx = null;
     let lastError = null;
+    // Journal order is the record order. A later successful anchor supersedes
+    // an earlier error. A reopened row keeps its original `at`, so position
+    // in this list is what makes the error newer or older than that success.
     for (const row of this.anchorIntents || []) {
       if (row.chain !== 'base') continue;
       if (row.status === 'anchored' && row.root && row.tx) {
         lastAnchoredRoot = row.root;
         lastAnchoredTx = row.tx;
-      }
-      if (row.reason === 'prior_nonce_pending' || row.status === 'blocked' || row.status === 'replaced' || (row.status === 'signed' && row.reason)) {
+        lastError = null;
+      } else if (row.reason === 'prior_nonce_pending' || row.status === 'blocked' || row.status === 'replaced' || (row.status === 'signed' && row.reason)) {
         lastError = row.reason || row.status;
       }
     }
@@ -2873,14 +3108,21 @@ export class ReceiptMerkleTree {
       last_anchored_root: lastAnchoredRoot,
       last_anchored_tx: lastAnchoredTx,
       last_error: lastError,
-      quarantined_heads: {
-        count: (this.quarantinedHeads || []).length,
-        heads: (this.quarantinedHeads || []).map((row) => ({
+      quarantined_heads: (() => {
+        const heads = (this.quarantinedHeads || []).map((row) => ({
           epoch: row.epoch,
           tree_size: row.tree_size,
           prefix_size: row.prefix_size,
-        })),
-      },
+          acknowledged: row.acknowledged === true,
+        }));
+        return {
+          count: heads.length,
+          unacknowledged: heads.filter((row) => row.acknowledged !== true).length,
+          heads,
+        };
+      })(),
+      anchor_lag_s: this.tailAnchorStatus(now).anchor_lag_s,
+      unanchored_leaves: this.tailAnchorStatus(now).unanchored_leaves,
       stuck_pending_age_s: (() => {
         let stuckAt = null;
         for (const row of latest) {
@@ -2978,22 +3220,130 @@ export class ReceiptMerkleTree {
     if (this.bundleIndex) writeBundleIndexFile(this.dir, this.bundleIndex);
   }
 
-  _maybePublishDaily() {
+  /**
+   * Leaves past the largest published head. A missing timestamp is already
+   * past the deadline, so a log written before `at` was stored still anchors.
+   */
+  tailAnchorStatus(now = new Date()) {
+    let covered = 0;
+    for (const head of this.heads || []) {
+      const size = Number(head?.tree_size);
+      if (Number.isInteger(size) && size > covered) covered = size;
+    }
+    const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+    const maxAge = tailAnchorMaxAgeS();
+    let count = 0;
+    let oldest = null;
+    let undated = false;
+    for (const meta of this.meta || []) {
+      if (Number(meta?.index) < covered) continue;
+      count += 1;
+      const at = Date.parse(meta?.at || '');
+      if (!Number.isFinite(at)) {
+        undated = true;
+        continue;
+      }
+      if (oldest == null || at < oldest) oldest = at;
+    }
+    let lag = 0;
+    if (count > 0) {
+      if (Number.isFinite(oldest)) lag = Math.max(0, Math.floor((nowMs - oldest) / 1000));
+      if (undated) lag = Math.max(lag, maxAge + 1);
+    }
+    return {
+      unanchored_leaves: count,
+      anchor_lag_s: lag,
+      due: count > 0 && lag > maxAge,
+    };
+  }
+
+  /**
+   * Publish when the UTC day rolled or the uncovered tail is past the deadline.
+   * One serialized publishHead. A second call after that head covers the tail
+   * does not send again.
+   */
+  async tickAnchors({ now = null, send = null } = {}) {
+    const clock = now ? new Date(now) : this._now();
     const last = this.heads[this.heads.length - 1];
-    if (!dailyAnchorDue(last)) return null;
+    const tail = this.tailAnchorStatus(clock);
+    const daily = dailyAnchorDue(last, clock);
+    if (!daily && !tail.due) return null;
     if (this._dailyFollowUp) return this._dailyFollowUp;
     if (this._publishActive || this._publishQueued) {
       const waitFor = this._publishChain || Promise.resolve();
-      this._dailyFollowUp = waitFor.then(() => {
+      this._dailyFollowUp = waitFor.then(async () => {
         this._dailyFollowUp = null;
-        return this._maybePublishDaily();
-      }, () => {
+        return await this.tickAnchors({ now: clock, send });
+      }, async () => {
         this._dailyFollowUp = null;
-        return this._maybePublishDaily();
+        return await this.tickAnchors({ now: clock, send });
       });
       return this._dailyFollowUp;
     }
-    return this.publishHead({ force: true, recheckDaily: true }).catch(() => {});
+    const opts = { force: true, now: clock, send };
+    if (!tail.due) opts.recheckDaily = true;
+    return await this.publishHead(opts).then((head) => {
+      const base = head?.anchors?.base || head?.anchor || null;
+      if (base?.status === 'blocked') {
+        recordReceiptFailure({
+          stage: 'anchor',
+          reason: base.reason || 'anchor_blocked',
+          outcome: 'pending',
+          network: 'base',
+          tx: base.tx || null,
+        });
+      }
+      return head;
+    }, (err) => {
+      recordReceiptFailure({
+        stage: 'anchor',
+        reason: err?.code || 'anchor_failed',
+        outcome: 'pending',
+        network: 'base',
+      });
+      return null;
+    });
+  }
+
+  async _maybePublishDaily() {
+    return await this.tickAnchors();
+  }
+
+  /**
+   * Append a signed note for one quarantined head. The head row is not edited.
+   * Returns null when that root is not quarantined.
+   */
+  async acknowledgeQuarantinedHead(root) {
+    const want = String(root || '').replace(/^0x/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(want)) return null;
+    const row = (this.quarantinedHeads || []).find((head) => (
+      String(head.root || '').replace(/^0x/, '').toLowerCase() === want
+    ));
+    if (!row) return null;
+    if (row.acknowledged === true) return row;
+    const claims = {
+      schema: 'chit402.quarantine_ack.v1',
+      root: want,
+      epoch: Number(row.epoch),
+      tree_size: Number(row.tree_size),
+      prefix_size: Number(row.prefix_size),
+    };
+    const { jws, kid } = await signJwsAsync(claims, { typ: 'chit402-quarantine-ack+jwt' });
+    if (this.dir) {
+      appendJournal(this.dir, {
+        v: 1,
+        op: 'quarantine_ack',
+        ...claims,
+        issuer_signature: {
+          alg: 'ES256',
+          typ: 'chit402-quarantine-ack+jwt',
+          jws,
+          kid,
+        },
+      });
+    }
+    row.acknowledged = true;
+    return row;
   }
 
   latestHead() {
@@ -3005,11 +3355,11 @@ export class ReceiptMerkleTree {
    * Epoch 1 has no journal head; `signedClosedEpochHead` is that signature.
    * Signed claims only. A tracker-confirmed broadcast head is not substituted.
    */
-  _coveringHead(epoch, rootHex) {
+  async _coveringHead(epoch, rootHex) {
     const stored = epochHeadCovering(epoch.heads, epoch.leaves, rootHex);
     if (stored) return stored;
     if (epoch.status !== 'closed') return null;
-    const signed = this.signedClosedEpochHead(epoch.epoch);
+    const signed = await this.signedClosedEpochHead(epoch.epoch);
     if (!signed?.issuer_signature?.jws) return null;
     const root = String(signed.root || '').replace(/^0x/, '');
     if (root !== String(rootHex || '').replace(/^0x/, '')) return null;
@@ -3023,7 +3373,7 @@ export class ReceiptMerkleTree {
    * @param {number} epochNumber
    * @param {object|null} [pin]
    */
-  signedClosedEpochHead(epochNumber, pin = null) {
+  async signedClosedEpochHead(epochNumber, pin = null) {
     const wanted = Number(epochNumber);
     if (!Number.isInteger(wanted) || wanted < 1) return null;
     const closed = (this.closedEpochs || []).find((row) => Number(row.epoch) === wanted);
@@ -3036,7 +3386,7 @@ export class ReceiptMerkleTree {
     const source = pin || readReceiptLogPin();
     const pair = closedEpochAnchorPair(source, wanted, root, treeSize);
     if (!pair) return null;
-    const head = signPinnedClosedHead({
+    const head = await signPinnedClosedHead({
       epoch: wanted,
       root,
       treeSize,
@@ -3219,6 +3569,22 @@ function materializeEpoch(row) {
   };
 }
 
+let tailTimer = null;
+
+/** Unref'd tick so a quiet tail still anchors inside the deadline. */
+export function startTailAnchorTimer(treeOrFn, intervalMs = 60_000) {
+  if (tailTimer) return tailTimer;
+  const every = Number(intervalMs);
+  const timer = setInterval(async () => {
+    const tree = typeof treeOrFn === 'function' ? treeOrFn() : treeOrFn;
+    if (!tree || typeof tree.tickAnchors !== 'function') return;
+    Promise.resolve(await tree.tickAnchors()).catch(() => {});
+  }, Number.isFinite(every) && every >= 1000 ? every : 60_000);
+  if (typeof timer.unref === 'function') timer.unref();
+  tailTimer = timer;
+  return timer;
+}
+
 export function getReceiptMerkleTree() {
   if (!_tree) _tree = new ReceiptMerkleTree();
   return _tree;
@@ -3244,6 +3610,7 @@ function solanaFeePayerOrNull() {
  * flag is set and the directory has no journal.
  */
 export function bootReceiptLog(dir, opts = {}) {
+  assertAnchorFeeCaps();
   resolveAnchorSender();
   // A fee-payer env that disagrees with the Solana key refuses boot.
   // A missing or unparsable key stays pending until publish, as before.
@@ -3315,13 +3682,30 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
   const chainRpc = opts.baseRpc || process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || '';
   if (chainRpc) {
     try {
-      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request });
+      await assertBaseChainId({ rpcUrl: chainRpc, request: opts.request, timeoutMs: opts.timeoutMs });
     } catch (err) {
+      if (err?.code === 'anchor_rpc_unavailable') {
+        // Do not crash-loop the whole gateway on a slow RPC (systemd gives up
+        // after 5 starts in 60 s). Every send re-runs _gateAnchorChain, so no
+        // signed bytes go out until the chain id answers and matches.
+        tree.lastAnchorError = 'anchor_rpc_unavailable';
+        logger.warn({ err: err.message }, 'Base RPC unavailable at boot; anchoring paused until eth_chainId answers');
+        // The offline epoch gate still runs now. Reconcile and the latest
+        // Base anchor check run before the first send, under the send gate.
+        const allowNow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
+        if (!allowNow) gateEpochRecord(tree);
+        tree._deferredBoot = { ...opts, baseRpc: chainRpc };
+        return tree;
+      }
       tree.lastAnchorError = 'anchor_chain_mismatch';
       throw err;
     }
   }
-  const lookup = opts.lookup || ((intent) => lookupBaseTxByNonceOrHash({
+  return await finishReceiptLogBootChecks(tree, opts, chainRpc);
+}
+
+async function finishReceiptLogBootChecks(tree, opts, chainRpc) {
+  const lookup = opts.lookup || (async (intent) => await lookupBaseTxByNonceOrHash({
     rpcUrl: opts.baseRpc,
     txHash: intent?.tx,
     root: intent?.root,
@@ -3346,11 +3730,14 @@ export async function finishReceiptLogBoot(tree = getReceiptMerkleTree(), opts =
         }
       }
       : null);
-  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
+  // Integrity first: reconcile can rebroadcast stored signed raws, so it runs
+  // only after the journal is shown to hold the latest Base anchor.
   const allow = tree.allowFreshGenesis || opts.allowFreshGenesis === true || freshGenesisAllowed();
-  if (allow) return tree;
-  await assertLatestBaseAnchor(tree, opts);
-  gateEpochRecord(tree);
+  if (!allow) {
+    await assertLatestBaseAnchor(tree, opts);
+    gateEpochRecord(tree);
+  }
+  if (tree.dir) await tree.reconcileAnchorIntents({ lookup, rebroadcast, readBlockTs });
   return tree;
 }
 
@@ -3498,12 +3885,12 @@ function carryInclusion(leaf, leafHex, inclusion, head) {
   return { ok: true, leaf_index: index };
 }
 
-export function publicLogWitness(tree, taskId) {
+export async function publicLogWitness(tree, taskId) {
   if (!tree || taskId == null) return {};
   let inclusion = null;
   if (typeof tree.inclusion === 'function') {
     try {
-      inclusion = tree.inclusion(taskId);
+      inclusion = await tree.inclusion(taskId);
     } catch (err) {
       // The inclusion route stays a 400. A receipt read must not treat that
       // refusal as an included leaf, and must not throw it into the page.
@@ -3511,7 +3898,7 @@ export function publicLogWitness(tree, taskId) {
       throw err;
     }
   }
-  const carry = typeof tree.carryForwardFor === 'function' ? tree.carryForwardFor(taskId) : null;
+  const carry = typeof tree.carryForwardFor === 'function' ? await tree.carryForwardFor(taskId) : null;
   const out = {};
   if (inclusion) out.inclusion = inclusion;
   if (carry?.status === 'VERIFIED_CARRIED_FORWARD') {

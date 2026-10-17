@@ -1140,7 +1140,7 @@ let httpApp;
 
 before(async () => {
   setForeignIngestVerifyForTests(verifyOk);
-  httpApp = createApp();
+  httpApp = await createApp();
   await new Promise((resolve) => {
     server = httpApp.listen(0, () => {
       const { port } = server.address();
@@ -1285,7 +1285,7 @@ test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves 
   const tx = `0x${'cD'.repeat(32)}`;
   const payer = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
   const payee = '0x1111111111111111111111111111111111111111';
-  const built = buildForeignReceipt({
+  const built = await buildForeignReceipt({
     taskId: 'foreign-x402-by-tx',
     paymentRequired: {
       resource: `https://basescan.org/tx/${tx}`,
@@ -1297,7 +1297,7 @@ test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves 
     rail: 'usdc',
     agentId: 7,
   });
-  const appended = hooks.usageSettled.append(built, { payer, agentId: 7 });
+  const appended = await hooks.usageSettled.append(built, { payer, agentId: 7 });
   assert.equal(appended.ok, true, appended.reason);
 
   const canonical = `${base}/receipt/${built.task_id}`;
@@ -1340,7 +1340,7 @@ test('GET /receipt/by-tx redirects a stamped ledger row and /receipt/:id serves 
   assert.equal(JSON.stringify(published).toLowerCase().includes(payer.toLowerCase()), false);
   const { verifyReceiptEcdsa } = await import('../src/receipt.js');
   const { getJwks } = await import('../src/issuer-key.js');
-  const checked = verifyReceiptEcdsa(built, getJwks().keys[0]);
+  const checked = await verifyReceiptEcdsa(built, getJwks().keys[0]);
   assert.equal(checked.valid, true, checked.reason);
   assert.equal(checked.payload.claim_id, '7');
 });
@@ -1699,7 +1699,7 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
   const payee = '0x1111111111111111111111111111111111111111';
   const { ledger, identity } = setupDeps();
   const seat = String(identity.agent_id);
-  const receipt = buildForeignReceipt({
+  const receipt = await buildForeignReceipt({
     taskId: 'foreign-x402-jws',
     paymentRequired: {
       resource: `https://basescan.org/tx/${tx}`,
@@ -1713,7 +1713,7 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     agentId: identity.agent_id,
   });
   const key = getJwks().keys[0];
-  const checked = verifyReceiptEcdsa(receipt, key);
+  const checked = await verifyReceiptEcdsa(receipt, key);
   assert.equal(checked.valid, true, checked.reason);
   assert.equal(checked.payload.schema, 'chit402.foreign_payout.v1');
   assert.equal(checked.payload.payment.payee, payee);
@@ -1727,7 +1727,7 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
   const html = verifyIssuerForHtml(receipt);
   assert.equal(html.verified, true, html.reason);
 
-  const plain = buildForeignReceipt({
+  const plain = await buildForeignReceipt({
     taskId: 'foreign-x402-plain',
     paymentRequired: {
       resource: `https://basescan.org/tx/${tx}`,
@@ -1739,16 +1739,16 @@ test('a new foreign payout signs an issuer JWS the standard verifier accepts', a
     rail: 'usdc',
     agentId: identity.agent_id,
   });
-  const plainCheck = verifyReceiptEcdsa(plain, key);
+  const plainCheck = await verifyReceiptEcdsa(plain, key);
   assert.equal(plainCheck.valid, true, plainCheck.reason);
   assert.equal(plainCheck.payload.agent_record_entry, undefined);
 
-  const appended = ledger.append(receipt, { payer, agentId: identity.agent_id });
+  const appended = await ledger.append(receipt, { payer, agentId: identity.agent_id });
   assert.equal(appended.ok, true, appended.reason);
   const published = buildPublicForeignIngestReceipt(appended.entry.receipt_snapshot, {
     baseUrl: 'https://api.chit402.com',
   });
-  const publishedCheck = verifyReceiptEcdsa(published, key);
+  const publishedCheck = await verifyReceiptEcdsa(published, key);
   assert.equal(publishedCheck.valid, true, publishedCheck.reason);
   assert.equal(published.caller_binding.payer_wallet, payer);
   assert.equal(published.payment.payee, payee);

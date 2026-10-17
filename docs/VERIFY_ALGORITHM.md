@@ -176,7 +176,7 @@ Version **10** keeps the version 9 head binding and adds two claims:
 | `issuer_history` | `{ hash, version, seq }` of the issuer-history snapshot in effect at issuance. `hash` is SHA-256 of that snapshot's stored JCS bytes. Fetch it at `/.well-known/issuer-history.json?version=N` |
 | `payload_hash` | SHA-256 of the stored canonical object. The object is the public claims without `payload_hash`, JCS (RFC 8785), UTF-8, no trailing newline |
 
-`GET /receipt/:id/preimage` returns those stored bytes. `X-Chit-Hash-Alg` is `sha256`. SHA-256 of the body equals `payload_hash`. The object is not rebuilt on read. Version 9 receipts omit both claims and still verify. A version 10 receipt fails closed when the pinned snapshot is missing or its hash does not match, and when `iat` is outside `not_before` / `not_after` on the pinned entry.
+`GET /receipt/:id/preimage` returns those stored bytes. `X-Chit-Hash-Alg` is `sha256`. SHA-256 of the body equals `payload_hash`. The object is not rebuilt on read. Version 9 receipts omit both claims and still verify. A version 10 receipt fails closed when the pinned snapshot is missing or its hash does not match, and when `iat` is outside the earliest `not_before` start on the latest entry or the earliest `not_after` / `revoked_at` for that kid. A later active entry does not clear those end bounds. The version 10 pin is an exact match of that document. A later history file does not satisfy it.
 
 A settlement claim closes once. The book seat (`claim_id` equal to the agent
 id) is shared by every receipt in that book. Closing a different `claim_id`,
@@ -646,7 +646,7 @@ read it, and do not fail a signature because it is present or absent.
 
 | Field | Rule |
 |-------|------|
-| `settled_by` | `observed_transfer` when `--check-payer` confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
+| `settled_by` | `observed_transfer` when the CLI payer check confirms the USDC transfer (or the receipt carries arrival / foreign-ingest observation). The CLI runs that check by default. `receipt` when a **verified** issuer signature asserts `payment.ref` and no observation fired. `null` when unknown, including a reported OpenRouter row and an unsigned `payment.ref` |
 | `anchor_changed_since_binding` | true when `anchor_at_binding` and the current head (or `anchor_current`) differ in root, Base tx, or Solana signature. Null if either identity is missing |
 | `freeze` | true only when `book_seq` is set, `settled_by` is `receipt`, the anchor changed, and `settled` is false |
 | `ordering` | `seq + settled_by + (anchor_changed AND not settled)` |

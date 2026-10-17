@@ -312,7 +312,7 @@ function independentRoot(sortedHex) {
   return level[0];
 }
 
-test('flag off: receipt, refusal, and history bytes match the current golden', () => {
+test('flag off: receipt, refusal, and history bytes match the current golden', async () => {
   const prev = snapshotEnv();
   try {
     for (const key of ROOT_ENV) delete process.env[key];
@@ -322,8 +322,8 @@ test('flag off: receipt, refusal, and history bytes match the current golden', (
     resetIssuerHistoryStore();
     assert.equal(issuerRootActive(), false);
     assert.equal(RECEIPT_PAYLOAD_VERSION, 10);
-    const receipt = buildReceipt(paidTask('xfuel-canonical-golden'), { signingSecret: 'canonical-secret', agentId: 4 });
-    const again = buildReceipt(paidTask('xfuel-canonical-golden'), { signingSecret: 'canonical-secret', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-canonical-golden'), { signingSecret: 'canonical-secret', agentId: 4 });
+    const again = await buildReceipt(paidTask('xfuel-canonical-golden'), { signingSecret: 'canonical-secret', agentId: 4 });
     assert.equal(receipt.issuer_signature.canonical_preimage, again.issuer_signature.canonical_preimage);
     assert.equal(normalizeReceipt(receipt.issuer_signature.canonical_preimage), GOLDEN_RECEIPT);
     const claims = decodeReceiptClaims(receipt);
@@ -332,13 +332,13 @@ test('flag off: receipt, refusal, and history bytes match the current golden', (
     assert.equal(Object.prototype.hasOwnProperty.call(claims, 'issuer_root'), false);
     assert.equal(receipt.issuer_signature.canonical_preimage.includes('issuer_root'), false);
 
-    const refusal = issueRefusalReceipt(refusalRow('xfuel-canonical-golden'));
+    const refusal = await issueRefusalReceipt(refusalRow('xfuel-canonical-golden'));
     assert.equal(refusal.schema, REFUSAL_SCHEMA);
     assert.equal(refusal.payload_version, REFUSAL_PAYLOAD_VERSION);
     assert.equal(normalizeRefusal(refusal.canonical_preimage), GOLDEN_REFUSAL);
-    assert.equal(verifyRefusalReceipt(refusal).valid, true);
+    assert.equal((await verifyRefusalReceipt(refusal)).valid, true);
 
-    const hist = buildIssuerHistory({ version: 1, seq: 1 });
+    const hist = await buildIssuerHistory({ version: 1, seq: 1 });
     const verified = verifyJwsWithJwks(hist.issuer_signature.jws, getJwks());
     assert.deepEqual(Object.keys(verified.payload).sort(), ['entry_count', 'head_hash', 'payload_version', 'schema', 'seq', 'version']);
     assert.equal(verifyIssuerHistory(hist).valid, true);
@@ -354,19 +354,19 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     process.env.NODE_ENV = 'test';
     useStableKey();
     const issued = [];
-    const first = buildReceipt(paidTask('xfuel-cutover-a'), { signingSecret: 's', agentId: 4 });
+    const first = await buildReceipt(paidTask('xfuel-cutover-a'), { signingSecret: 's', agentId: 4 });
     issued.push(first.issuer_signature.payload_hash);
     assert.equal(decodeReceiptClaims(first).payload_version, 10);
     const jwsBefore = first.issuer_signature.jws;
 
     process.env.ISSUER_ROOT_CUTOVER = 'pause';
-    assert.throws(() => buildReceipt(paidTask('xfuel-cutover-b'), { signingSecret: 's', agentId: 4 }), (err) => {
+    await assert.rejects(async () => await buildReceipt(paidTask('xfuel-cutover-b'), { signingSecret: 's', agentId: 4 }), (err) => {
       assert.equal(err.code, 'issuer_root_cutover_pause');
       assert.ok(err instanceof IssuancePausedError);
       return true;
     });
-    assert.throws(() => issueRefusalReceipt(refusalRow('xfuel-cutover-b')), (err) => err.code === 'issuer_root_cutover_pause');
-    assert.throws(() => buildForeignReceipt({
+    await assert.rejects(async () => await issueRefusalReceipt(refusalRow('xfuel-cutover-b')), (err) => err.code === 'issuer_root_cutover_pause');
+    await assert.rejects(async () => await buildForeignReceipt({
       taskId: 'xfuel-cutover-foreign',
       paymentRequired: { resource: 'https://example.test/v1', amount: '1', payTo: '0x2222222222222222222222222222222222222222' },
       paymentResponse: { tx: `0x${'ab'.repeat(32)}`, payer: '0x1111111111111111111111111111111111111111', network: 'base' },
@@ -386,7 +386,7 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     await armStrict();
     process.env.ISSUER_ROOT_CUTOVER = 'pause';
     assert.equal(issuerRootActive(), true);
-    const resumed = buildReceipt(paidTask('xfuel-cutover-c'), { signingSecret: 's', agentId: 4 });
+    const resumed = await buildReceipt(paidTask('xfuel-cutover-c'), { signingSecret: 's', agentId: 4 });
     const resumedClaims = decodeReceiptClaims(resumed);
     issued.push(resumed.issuer_signature.payload_hash);
     assert.equal(resumedClaims.v, 11);
@@ -403,23 +403,23 @@ test('cutover pause signs nothing, then v11 resumes with no hash between the set
     assert.equal(v11.length, 1);
     assert.equal(issued.length, 2);
 
-    const replay = buildReceipt({ ...paidTask('xfuel-cutover-a'), issuerSignature: first.issuer_signature }, { signingSecret: 's', agentId: 4 });
+    const replay = await buildReceipt({ ...paidTask('xfuel-cutover-a'), issuerSignature: first.issuer_signature }, { signingSecret: 's', agentId: 4 });
     assert.equal(replay.issuer_signature.jws, jwsBefore);
     assert.equal(replay.issuer_signature.canonical_preimage, first.issuer_signature.canonical_preimage);
     assert.equal(treeHeadRestampAllowed(first), false);
     assert.equal(treeHeadRestampAllowed(resumed), false);
 
-    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-cutover-c'), request: clientRequest() });
+    const refusal = await issueRefusalReceipt({ ...refusalRow('xfuel-cutover-c'), request: clientRequest() });
     assert.equal(refusal.v, 11);
     assert.equal(refusal.reason, 'cap_exceeded');
-    assert.equal(verifyRefusalReceipt(refusal).valid, true);
+    assert.equal((await verifyRefusalReceipt(refusal)).valid, true);
     assert.equal(refusal.kid, refusal.issuer_signature.kid);
     const refusalPayload = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.equal(refusalPayload.kid, refusal.issuer_signature.kid);
     assert.equal(Object.prototype.hasOwnProperty.call(refusalPayload, 'issuer_root'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(refusalPayload, 'cap_atomic'), false);
 
-    const hist = JSON.parse(currentIssuerHistory().body);
+    const hist = JSON.parse((await currentIssuerHistory()).body);
     assert.equal(verifyIssuerHistory(hist).valid, true);
     const histPayload = verifyJwsWithJwks(hist.issuer_signature.jws, getJwks()).payload;
     assert.equal(histPayload.issuer_root.kid, hist.issuer_signature.kid);
@@ -463,7 +463,7 @@ test('strict startup rejects RPCs that are not two independent providers', async
         called += 1;
         throw new Error('rpc should not be called');
       };
-      await assert.rejects(() => assertIssuerRootStartup({ fetchImpl }), pattern);
+      await assert.rejects(async () => await assertIssuerRootStartup({ fetchImpl }), pattern);
       assert.equal(called, 0, `${left} vs ${right}`);
       assert.equal(readIssuerRootConfig().rpcIndependence.ok, false, `${left} vs ${right}`);
     }
@@ -504,26 +504,26 @@ test('startup reads two RPCs at one finalized block and signing does not call th
       agreed.seen.push('signing');
       throw new Error('rpc unreachable');
     };
-    const receipt = buildReceipt(paidTask('xfuel-rpc-down'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-rpc-down'), { signingSecret: 's', agentId: 4 });
     assert.equal(decodeReceiptClaims(receipt).v, 11);
     assert.equal(agreed.seen.length, callsAtStartup);
 
     const drifted = chainFetch({ disagreeUrl: 'http://rpc.provider-b.test:10' });
-    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: drifted.fetchImpl }), /disagree/);
+    await assert.rejects(async () => await assertIssuerRootStartup({ fetchImpl: drifted.fetchImpl }), /disagree/);
 
     enableRoot({ hash: `0x${'ef'.repeat(32)}`, seq: CHAIN.rootSeq, check: 'strict' });
     process.env.ISSUER_ROOT_REGISTRY = CHAIN.registry;
     process.env.ISSUER_ROOT_RPC_URL = 'http://rpc.provider-a.example:9';
     process.env.ISSUER_ROOT_RPC_URL_2 = 'http://rpc.provider-b.test:10';
     writeLegacyArtifact(CHAIN.legacy);
-    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl }), /hash mismatch/);
+    await assert.rejects(async () => await assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl }), /hash mismatch/);
 
     enableRoot({ check: 'strict' });
     delete process.env.ISSUER_ROOT_RPC_URL_2;
-    await assert.rejects(() => assertIssuerRootStartup({ fetchImpl: agreed.fetchImpl }), /two independent RPCs/);
+    await assert.rejects(async () => await assertIssuerRootStartup({ fetchImpl: agreed.fetchImpl }), /two independent RPCs/);
 
     enableRoot({ check: 'skip' });
-    await assert.rejects(() => assertIssuerRootStartup(), /I_UNDERSTAND/);
+    await assert.rejects(async () => await assertIssuerRootStartup(), /I_UNDERSTAND/);
     process.env.ISSUER_ROOT_ALLOW_SKIP = 'I_UNDERSTAND';
     const logs = [];
     let skipCalls = 0;
@@ -537,9 +537,9 @@ test('startup reads two RPCs at one finalized block and signing does not call th
     assert.equal(skipped.reason, 'skip');
     assert.equal(logs[0], SKIP_LOG);
     writeLegacyArtifact(CHAIN.legacy);
-    assert.throws(() => buildReceipt(paidTask('xfuel-rpc-skip'), { signingSecret: 's', agentId: 4 }), (err) => err.code === 'issuer_root_cutover_pause');
+    await assert.rejects(async () => await buildReceipt(paidTask('xfuel-rpc-skip'), { signingSecret: 's', agentId: 4 }), (err) => err.code === 'issuer_root_cutover_pause');
     process.env.ISSUER_ROOT_CHAIN_ID = 'eip155:8453';
-    assert.throws(() => buildReceipt(paidTask('xfuel-mainnet-skip'), { signingSecret: 's', agentId: 4 }), (err) => err.code === 'issuer_root_cutover_pause');
+    await assert.rejects(async () => await buildReceipt(paidTask('xfuel-mainnet-skip'), { signingSecret: 's', agentId: 4 }), (err) => err.code === 'issuer_root_cutover_pause');
     assert.equal(skipCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
@@ -547,7 +547,7 @@ test('startup reads two RPCs at one finalized block and signing does not call th
   }
 });
 
-test('an empty issuer key in production refuses to boot and signs nothing', () => {
+test('an empty issuer key in production refuses to boot and signs nothing', async () => {
   const prev = snapshotEnv();
   try {
     for (const key of ROOT_ENV) delete process.env[key];
@@ -557,8 +557,8 @@ test('an empty issuer key in production refuses to boot and signs nothing', () =
     process.env.ISSUER_ROOT_ALLOW_SKIP = 'I_UNDERSTAND';
     _resetIssuerKey();
     assert.throws(() => initIssuerKey(), (err) => err.code === 'issuer_key_missing');
-    assert.throws(
-      () => buildReceipt(paidTask('xfuel-empty-issuer-key'), { signingSecret: 's', agentId: 4 }),
+    await assert.rejects(
+      async () => await buildReceipt(paidTask('xfuel-empty-issuer-key'), { signingSecret: 's', agentId: 4 }),
       (err) => err.code === 'issuer_key_missing',
     );
   } finally {
@@ -577,7 +577,7 @@ test('enabled without a stable issuer key refuses to start', async () => {
     process.env.ISSUER_ROOT_HASH = `0x${'ab'.repeat(32)}`;
     process.env.ISSUER_ROOT_STARTUP_CHECK = 'skip';
     _resetIssuerKey();
-    await assert.rejects(() => assertIssuerRootStartup(), /ISSUER_PRIVATE_KEY/);
+    await assert.rejects(async () => await assertIssuerRootStartup(), /ISSUER_PRIVATE_KEY/);
     assert.throws(() => initIssuerKey(), /ephemeral issuer key/);
     assert.throws(() => assertIssuanceOpen(), /ISSUER_PRIVATE_KEY|ISSUER_ROOT_ENABLED|incomplete|requires/);
   } finally {
@@ -592,27 +592,27 @@ test('enabled without a legacy snapshot refuses to issue', async () => {
     enableRoot();
     delete process.env.ISSUER_ROOT_CUTOVER;
     delete process.env.ISSUER_ROOT_LEGACY_SET;
-    assert.throws(() => buildReceipt(paidTask('xfuel-no-snapshot'), { signingSecret: 's', agentId: 4 }), (err) => {
+    await assert.rejects(async () => await buildReceipt(paidTask('xfuel-no-snapshot'), { signingSecret: 's', agentId: 4 }), (err) => {
       assert.equal(err.code, 'issuer_root_cutover_pause');
       return true;
     });
     await armStrict();
-    const receipt = buildReceipt(paidTask('xfuel-after-snapshot'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-after-snapshot'), { signingSecret: 's', agentId: 4 });
     assert.equal(decodeReceiptClaims(receipt).v, 11);
   } finally {
     restoreEnv(prev);
   }
 });
 
-test('repeated history reads do not mint a version when the key set is unchanged', () => {
+test('repeated history reads do not mint a version when the key set is unchanged', async () => {
   const prev = snapshotEnv();
   try {
     useStableKey();
     enableRoot();
     resetIssuerHistoryStore();
-    const first = currentIssuerHistory();
-    const second = currentIssuerHistory();
-    const third = currentIssuerHistory();
+    const first = await currentIssuerHistory();
+    const second = await currentIssuerHistory();
+    const third = await currentIssuerHistory();
     assert.equal(second.version, first.version);
     assert.equal(third.version, first.version);
     assert.equal(second.hash, first.hash);
@@ -640,18 +640,18 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
       '7b2273223a225c745c6e5c7530303031f09f9880227d',
     );
     assert.equal(Buffer.byteLength(rfc, 'utf8'), 22);
-    const receipt = buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-v11-embed'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.v, 11);
     for (const key of ['canonicalization', 'policy', 'issuer_root', 'issuer_history', 'issuer_history_snapshot', 'provider', 'model']) {
       assert.equal(Object.hasOwn(claims, key), false, key);
     }
-    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
+    assert.equal((await verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk())).valid, true);
     const payloadText = Buffer.from(receipt.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8');
     assert.equal(payloadText, jcsRfc8785(JSON.parse(payloadText)));
-    const history = currentIssuerHistory();
+    const history = await currentIssuerHistory();
     const publishedEntries = JSON.parse(history.body).entries;
-    const snap = issuerHistorySnapshotClaim();
+    const snap = await issuerHistorySnapshotClaim();
     assert.equal(snap.schema, 'chit402.issuer_history_embed.v1');
     assert.equal(snap.snapshot_hash, history.entries_snapshot_hash);
     assert.equal(snap.snapshot_hash, historyEntriesSnapshotHash(publishedEntries));
@@ -667,14 +667,14 @@ test('v11 signs canonicalization and a history snapshot that checks offline', as
     assert.equal(verifyHistorySnapshotClaims(historyClaims, { publishedEntries }).ok, true);
 
     const boundRequest = clientRequest();
-    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-v11-embed'), request: boundRequest });
+    const refusal = await issueRefusalReceipt({ ...refusalRow('xfuel-v11-embed'), request: boundRequest });
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.equal(refusalClaims.v, 11);
     assert.equal(refusalClaims.reason, 'cap_exceeded');
     assert.equal(refusal.request_digest, requestDigest(boundRequest));
     assert.equal(JSON.stringify(refusal).includes(requestSalt(boundRequest)), false);
     assert.equal(Object.hasOwn(refusal, 'request_preimage'), false);
-    assert.equal(verifyRefusalReceipt(refusal).valid, true);
+    assert.equal((await verifyRefusalReceipt(refusal)).valid, true);
   } finally {
     restoreEnv(prev);
   }
@@ -685,13 +685,13 @@ test('a forged history embed cannot match snapshot_hash without changing the sig
   try {
     useStableKey();
     await armStrict();
-    const receipt = buildReceipt(paidTask('xfuel-snapshot-bind'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-snapshot-bind'), { signingSecret: 's', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(Object.hasOwn(claims, 'issuer_history'), false);
-    assert.equal(verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk()).valid, true);
-    const snap = issuerHistorySnapshotClaim();
+    assert.equal((await verifyReceiptEcdsa(receipt, getIssuerPublicKeyJwk())).valid, true);
+    const snap = await issuerHistorySnapshotClaim();
     const pin = snap.snapshot_hash;
-    const published = JSON.parse(currentIssuerHistory().body).entries;
+    const published = JSON.parse((await currentIssuerHistory()).body).entries;
     assert.equal(pin, historyEntriesSnapshotHash(published));
     const forged = {
       payload_version: 11,
@@ -713,13 +713,13 @@ test('a forged history embed cannot match snapshot_hash without changing the sig
     assert.equal(forged.issuer_history.hash, pin);
     assert.equal(verifyHistorySnapshotClaims(forged, { publishedEntries: published }).reason, 'snapshot_pin_mismatch');
 
-    const refusal = issueRefusalReceipt({ ...refusalRow('xfuel-snapshot-bind-refusal'), request: clientRequest() });
-    assert.equal(verifyRefusalReceipt(refusal).valid, true);
+    const refusal = await issueRefusalReceipt({ ...refusalRow('xfuel-snapshot-bind-refusal'), request: clientRequest() });
+    assert.equal((await verifyRefusalReceipt(refusal)).valid, true);
     const refusalClaims = JSON.parse(Buffer.from(refusal.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
     assert.equal(refusalClaims.v, 11);
     const bad = { ...refusalClaims, cap: '1' };
     const { jws } = signJws(bad, { typ: 'chit402-refusal+jwt' });
-    const checked = verifyRefusalReceipt({
+    const checked = await verifyRefusalReceipt({
       ...refusal,
       v: 11,
       issuer_signature: { ...refusal.issuer_signature, jws },
@@ -739,7 +739,7 @@ test('v11 seals controls as RFC 8785; a flag-off receipt keeps chit402-jcs-v1', 
     process.env.NODE_ENV = 'test';
     _resetIssuerKey();
     resetIssuerHistoryStore();
-    const off = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
+    const off = await buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
     const offText = off.issuer_signature.canonical_preimage;
     assert.equal(decodeReceiptClaims(off).payload_version, 10);
     assert.equal(offText, jcsCanonicalize(JSON.parse(offText)));
@@ -748,7 +748,7 @@ test('v11 seals controls as RFC 8785; a flag-off receipt keeps chit402-jcs-v1', 
 
     useStableKey();
     await armStrict();
-    const on = buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
+    const on = await buildReceipt(paidTask(taskId), { signingSecret: 's', agentId: 4 });
     const onText = Buffer.from(on.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8');
     assert.equal(decodeReceiptClaims(on).v, 11);
     assert.equal(onText, jcsRfc8785(JSON.parse(onText)));
@@ -768,7 +768,7 @@ test('a stored v11 JWS is unchanged across key rotation and a tree-head update',
     await armStrict();
     const taskId = 'xfuel-immutable-jws';
     const task = paidTask(taskId);
-    const receipt = buildReceipt(task, { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(task, { signingSecret: 's', agentId: 4 });
     const jws = receipt.issuer_signature.jws;
     const payloadHash = receipt.issuer_signature.payload_hash;
     const kid = receipt.issuer_signature.kid;
@@ -776,9 +776,9 @@ test('a stored v11 JWS is unchanged across key rotation and a tree-head update',
 
     useStableKey();
     assert.notEqual(getIssuerPublicKeyJwk().kid, kid);
-    getReceiptMerkleTree().appendReceipt(taskId, 'row-after-rotation');
+    await getReceiptMerkleTree().appendReceipt(taskId, 'row-after-rotation');
     const entry = { receipt_snapshot: { issuer_signature: { ...receipt.issuer_signature } } };
-    stampCoveringTreeHead(receipt);
+    await stampCoveringTreeHead(receipt);
     assert.equal(receipt.issuer_signature.jws, jws);
     assert.equal(receipt.issuer_signature.payload_hash, payloadHash);
     assert.equal(receipt.issuer_signature.kid, kid);
@@ -787,7 +787,7 @@ test('a stored v11 JWS is unchanged across key rotation and a tree-head update',
     assert.notEqual(receipt.covering_head.tree_head_hash, decodeReceiptClaims(receipt).tree_head_hash);
     assert.equal(JSON.parse(Buffer.from(jws.split('.')[1], 'base64url').toString('utf8')).tree_head_hash, decodeReceiptClaims(receipt).tree_head_hash);
 
-    const again = buildReceipt(task, { signingSecret: 's', agentId: 4, persistSignature: true });
+    const again = await buildReceipt(task, { signingSecret: 's', agentId: 4, persistSignature: true });
     assert.equal(again.issuer_signature.jws, jws);
     assert.equal(again.issuer_signature.payload_hash, payloadHash);
     assert.equal(task.issuerSignature.jws, jws);
@@ -803,7 +803,7 @@ test('explicit chain id and kid binding', async () => {
   try {
     useStableKey();
     await armStrict({ chainId: 'eip155:8453', chainHex: '0x2105' });
-    const receipt = buildReceipt(paidTask('xfuel-chain-explicit'), { signingSecret: 's', agentId: 4 });
+    const receipt = await buildReceipt(paidTask('xfuel-chain-explicit'), { signingSecret: 's', agentId: 4 });
     const jwk = getIssuerPublicKeyJwk();
     assert.equal(decodeReceiptClaims(receipt).v, 11);
     assert.equal(decodeReceiptClaims(receipt).chain, 'base');
@@ -812,7 +812,7 @@ test('explicit chain id and kid binding', async () => {
     assert.throws(() => bindIssuerRoot({ issuer_root: { kid: 'not-the-kid' } }, jwk.kid, jwk), /thumbprint/);
     delete process.env.ISSUER_ROOT_CHAIN_ID;
     process.env.ISSUER_ROOT_CHAIN_ID = 'eip155:1';
-    assert.throws(() => buildReceipt(paidTask('xfuel-bad-chain'), { signingSecret: 's', agentId: 4 }), /CHAIN_ID|incomplete|requires/);
+    await assert.rejects(async () => await buildReceipt(paidTask('xfuel-bad-chain'), { signingSecret: 's', agentId: 4 }), /CHAIN_ID|incomplete|requires/);
   } finally {
     restoreEnv(prev);
   }
@@ -928,7 +928,7 @@ test('legacy builder is read-only and fails closed without a stored hash', () =>
 test('freeze and legacy-proof routes are 404 until the flag is on', async () => {
   const prev = snapshotEnv();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'issuer-root-http-'));
-  const { server, port } = await listen(createApp());
+  const { server, port } = await listen(await createApp());
   try {
     for (const key of ['ISSUER_ROOT_ENABLED', 'ISSUER_ROOT_FREEZE_FILE', 'ISSUER_ROOT_LEGACY_SET']) {
       delete process.env[key];
@@ -974,10 +974,10 @@ test('freeze and legacy-proof routes are 404 until the flag is on', async () => 
     process.env.ISSUER_ROOT_RPC_URL = 'http://rpc.provider-a.example:9';
     process.env.ISSUER_ROOT_RPC_URL_2 = 'http://rpc.provider-b.test:10';
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl }),
+      async () => await assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl }),
       /does not match the Frozen log/,
     );
-    assert.equal(freezeDocumentFor(artifact.universe_id), null);
+    assert.equal(await freezeDocumentFor(artifact.universe_id), null);
     process.env.ISSUER_ROOT_FREEZE_FILE = freezeFile;
     await assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl });
 
@@ -1008,7 +1008,7 @@ test('freeze and legacy-proof routes are 404 until the flag is on', async () => 
     assert.equal(llmsOn.includes('legacy-proof'), true);
     const specOn = await (await fetch(`http://127.0.0.1:${port}/openapi.json`)).json();
     assert.ok(specOn.paths['/freeze/{universeId}']);
-    assert.equal(freezeDocumentFor('nope'), null);
+    assert.equal(await freezeDocumentFor('nope'), null);
     assert.equal(legacyProofForReceipt('xfuel-not-in-set'), null);
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -1041,7 +1041,7 @@ test('a Frozen log count other than one on both RPCs does not skip the dual-RPC 
       frozenLogsFor: (url) => (url === RPC_A ? [] : [CHAIN.frozen]),
     });
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: split.fetchImpl, log() {} }),
+      async () => await assertIssuerRootStartup({ fetchImpl: split.fetchImpl, log() {} }),
       /disagree on the legacy Frozen log/,
     );
     assert.equal(new Set(frozenLogCalls(split.calls).map((call) => call.url)).size, 2);
@@ -1052,7 +1052,7 @@ test('a Frozen log count other than one on both RPCs does not skip the dual-RPC 
       frozenLogsFor: (url) => (url === RPC_A ? [CHAIN.frozen, CHAIN.frozen] : [CHAIN.frozen]),
     });
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: oneSided.fetchImpl, log() {} }),
+      async () => await assertIssuerRootStartup({ fetchImpl: oneSided.fetchImpl, log() {} }),
       /disagree on the legacy Frozen log/,
     );
     assert.equal(new Set(frozenLogCalls(oneSided.calls).map((call) => call.url)).size, 2);
@@ -1062,7 +1062,7 @@ test('a Frozen log count other than one on both RPCs does not skip the dual-RPC 
       frozenLogsFor: () => [CHAIN.frozen, { ...CHAIN.frozen, logIndex: '0x1' }],
     });
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: doubled.fetchImpl, log() {} }),
+      async () => await assertIssuerRootStartup({ fetchImpl: doubled.fetchImpl, log() {} }),
       /not a single finalized log/,
     );
     assert.equal(new Set(frozenLogCalls(doubled.calls).map((call) => call.url)).size, 2);
@@ -1110,7 +1110,7 @@ test('legacy proofs are refused unless the artifact leaves are the sorted Frozen
     bad.leaves[0].index = 1;
     writeLegacyArtifact(bad);
     await assert.rejects(
-      () => assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl, log() {} }),
+      async () => await assertIssuerRootStartup({ fetchImpl: chainFetch().fetchImpl, log() {} }),
       /not in sorted canonical order/,
     );
     assert.equal(legacyProofForReceipt(bad.leaves[0].task_id), null);

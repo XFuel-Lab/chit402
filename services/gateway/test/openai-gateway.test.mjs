@@ -25,7 +25,7 @@ let base;
 before(async () => {
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       const { port } = server.address();
@@ -89,6 +89,9 @@ test('GET /openapi.json is public OpenAPI 3.1 with x-payment-info', async () => 
     '/v1/board/jobs/{id}/reveal',
     '/v1/board/inbound/completions',
     '/v1/agents/{agent_id}/record',
+    '/v1/receipts/check',
+    '/v1/receipts/feedback',
+    '/v1/receipts/check/stats',
     '/v1/receipts/tree/head',
     '/v1/receipts/tree/epoch/{epoch}/head',
     '/v1/receipts/tree/consistency',

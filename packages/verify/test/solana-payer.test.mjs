@@ -29,6 +29,7 @@ const SMOKE_SIG = '2SRc9yppZtsLBJMDEiTgSMs743ZCdWmZiL1hM5FFX9x98LkTDzUx84Sxomt6b
 const SMOKE_PAYER = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
 const SMOKE_REF = `solana:${SMOKE_SIG}`;
 const SMOKE_AMOUNT = '2000';
+const SMOKE_PAYEE = '58Qo8QTJ1Sd4aXSygwAeBLNL3VrXRmfUCceB6b5RJCx6';
 
 const smokeTx = JSON.parse(
   readFileSync(path.join(__dirname, 'fixtures/solana-smoke-tx.json'), 'utf8'),
@@ -66,6 +67,7 @@ describe('verifySolanaPayer', () => {
       paymentRef: SMOKE_REF,
       payerWallet: SMOKE_PAYER,
       grossAmount: SMOKE_AMOUNT,
+      payee: SMOKE_PAYEE,
       fetchTransaction: mockFetcher,
     });
     assert.equal(result.checked, true);
@@ -78,6 +80,7 @@ describe('verifySolanaPayer', () => {
       paymentRef: SMOKE_REF,
       payerWallet: '58Qo8QTJ1Sd4aXSygwAeBLNL3VrXRmfUCceB6b5RJCx6',
       grossAmount: SMOKE_AMOUNT,
+      payee: SMOKE_PAYEE,
       fetchTransaction: mockFetcher,
     });
     assert.equal(result.valid, false);
@@ -89,6 +92,7 @@ describe('verifySolanaPayer', () => {
       paymentRef: SMOKE_REF,
       payerWallet: SMOKE_PAYER,
       grossAmount: '999999',
+      payee: SMOKE_PAYEE,
       fetchTransaction: mockFetcher,
     });
     assert.equal(result.valid, false);
@@ -101,6 +105,7 @@ describe('verifySolanaPayer', () => {
       paymentRef: SMOKE_REF,
       payerWallet: SMOKE_PAYER,
       grossAmount: SMOKE_AMOUNT,
+      payee: SMOKE_PAYEE,
       fetchTransaction: async () => failedTx,
     });
     assert.equal(result.valid, false);
@@ -108,11 +113,62 @@ describe('verifySolanaPayer', () => {
   });
 });
 
+describe('verifySolanaPayer payee binding', () => {
+  const OTHER = 'Vote111111111111111111111111111111111111111';
+  test('a transfer from the payer to a different wallet is a payee mismatch', async () => {
+    const result = await verifySolanaPayer({
+      paymentRef: SMOKE_REF,
+      payerWallet: SMOKE_PAYER,
+      grossAmount: SMOKE_AMOUNT,
+      payee: OTHER,
+      fetchTransaction: mockFetcher,
+    });
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /^payee_mismatch:/);
+  });
+
+  test('a legacy transfer of another token does not count as USDC to the payee', async () => {
+    const junk = {
+      slot: 1,
+      meta: { err: null, preTokenBalances: [], postTokenBalances: [] },
+      transaction: {
+        signatures: [SMOKE_SIG],
+        message: {
+          accountKeys: [{ pubkey: SMOKE_PAYER, signer: true }],
+          instructions: [{ program: 'spl-token', parsed: { type: 'transfer', info: { authority: SMOKE_PAYER, source: OTHER, destination: OTHER, amount: SMOKE_AMOUNT } } }],
+        },
+      },
+    };
+    const result = await verifySolanaPayer({
+      paymentRef: SMOKE_REF,
+      payerWallet: SMOKE_PAYER,
+      grossAmount: SMOKE_AMOUNT,
+      payee: SMOKE_PAYEE,
+      fetchTransaction: async () => junk,
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /^payee_mismatch:/);
+  });
+
+  test('no signed payee is unchecked, never a pass', async () => {
+    const result = await verifySolanaPayer({
+      paymentRef: SMOKE_REF,
+      payerWallet: SMOKE_PAYER,
+      grossAmount: SMOKE_AMOUNT,
+      fetchTransaction: mockFetcher,
+    });
+    assert.equal(result.checked, false);
+    assert.equal(result.valid, false);
+    assert.equal(result.reason, 'no_payee');
+  });
+});
+
 describe('verifyPayerBinding', () => {
   test('routes solana payment.ref to Solana verifier', async () => {
     const result = await verifyPayerBinding(
       {
-        payment: { ref: SMOKE_REF, gross_amount: SMOKE_AMOUNT },
+        payment: { ref: SMOKE_REF, gross_amount: SMOKE_AMOUNT, payee: SMOKE_PAYEE },
         caller_binding: { payer_wallet: SMOKE_PAYER },
       },
       { fetchSolanaTransaction: mockFetcher },

@@ -112,7 +112,7 @@ let base;
 
 before(async () => {
   resetHubCatalogCache();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -174,7 +174,7 @@ test('unauth book still 401 empty', async () => {
   assert.equal(await emptyBody(postRes), '');
 });
 
-test('no cap → settle + book unchanged (unlimited)', () => {
+test('no cap → settle + book unchanged (unlimited)', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const receipt = {
@@ -187,12 +187,12 @@ test('no cap → settle + book unchanged (unlimited)', () => {
     },
     route: { model: 'akash/x', hub: 'akash' },
   };
-  const recorded = recordCollectedSpend(receipt, { ledger, registry });
+  const recorded = await recordCollectedSpend(receipt, { ledger, registry });
   assert.equal(recorded.ok, true);
   const identity = registry.get(recorded.agent_id);
   assert.equal(identity.budget, null);
 
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
     ledger,
     verify: bindBookVerifier(registry),
     registry,
@@ -214,10 +214,10 @@ test('no cap → settle + book unchanged (unlimited)', () => {
   assert.equal(checked.valid, true);
 });
 
-test('prepaid_ceiling: Y=2000, one $0.002 → remaining 0', () => {
+test('prepaid_ceiling: Y=2000, one $0.002 → remaining 0', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const recorded = recordCollectedSpend({
+  const recorded = await recordCollectedSpend({
     task_id: 'task-cap-1',
     payment: {
       rail: 'solana',
@@ -234,7 +234,7 @@ test('prepaid_ceiling: Y=2000, one $0.002 → remaining 0', () => {
   }, { registry, verify: bindBookVerifier(registry) });
   assert.equal(set.status, 200);
 
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session }, {
     ledger,
     verify: bindBookVerifier(registry),
     registry,
@@ -315,7 +315,7 @@ test('Y=2000 spent: next paid call fails closed — no second payment, refusal i
 test('demo key cannot bypass prepaid cap (must pay or hit budget gate)', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const recorded = recordCollectedSpend({
+  const recorded = await recordCollectedSpend({
     task_id: 'task-demo-cap',
     payment: {
       rail: 'usdc',

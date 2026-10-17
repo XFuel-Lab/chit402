@@ -1,10 +1,11 @@
 {
-  "name": "@xfuel/verify",
-  "version": "0.3.6",
+  "name": "chit402-verify",
+  "version": "0.4.4",
   "description": "Offline verification for Chit402 receipts — verify payment binding and output hash without calling the API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
+    "chit402-verify": "dist/cli.js",
     "xfuel-verify": "dist/cli.js"
   },
   "exports": {
@@ -14,6 +15,11 @@
       "require": "./dist/index.js"
     },
     "./cli": "./dist/cli.js",
+    "./check-input": {
+      "types": "./dist/check-input.d.ts",
+      "import": "./dist/check-input.js",
+      "require": "./dist/check-input.js"
+    },
     "./dist/cli.js": "./dist/cli.js"
   },
   "sideEffects": false,
@@ -22,11 +28,13 @@
   },
   "files": [
     "dist",
+    "issuer-history.snapshot.json",
     "README.md",
     "LICENSE"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "homepage": "https://github.com/XFuel-Lab/chit402/tree/main/packages/verify#readme",
   "bugs": {

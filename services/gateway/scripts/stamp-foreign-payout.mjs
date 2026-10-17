@@ -279,7 +279,7 @@ async function main() {
       return soleBaseUsdcTransfer(receipt);
     },
     verify,
-    confirmFingerprint: (fingerprint) => fingerprintIsOnRecord(recordHandle, fingerprint),
+    confirmFingerprint: async (fingerprint) => await fingerprintIsOnRecord(recordHandle, fingerprint),
     waiver: () => {
       for (const key of stampWaiverKeys(process.env)) {
         const peek = peekStampWaiver(key, process.env);
@@ -356,7 +356,7 @@ async function main() {
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (invoked) {
-  main().catch((err) => {
+  await main().catch((err) => {
     console.error(err.message || 'stamp failed');
     process.exit(1);
   });

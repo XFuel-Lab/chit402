@@ -326,8 +326,8 @@ export function scheduleBookWebhook(entry, { registry, baseUrl } = {}) {
   const envelope = buildBookWebhookEnvelope(entry, url);
   if (!envelope) return;
 
-  setImmediate(() => {
-    deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id)
+  setImmediate(async () => {
+    await deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id)
       .then((res) => {
         hook.deliveries += res.ok ? 1 : 0;
         hook.failures += res.ok ? 0 : 1;

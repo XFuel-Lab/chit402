@@ -37,12 +37,12 @@ function paid(over = {}) {
   };
 }
 
-function bookWith(n) {
+async function bookWith(n) {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   let recorded = null;
   for (let i = 0; i < n; i++) {
-    recorded = recordCollectedSpend(paid({
+    recorded = await recordCollectedSpend(paid({
       task_id: `cov-${i}`,
       ref: `base:0xcov${i}`,
       amount: String(1000 + i),
@@ -52,9 +52,9 @@ function bookWith(n) {
   return { ledger, registry, recorded };
 }
 
-test('a one-row export is a complete set and the hash matches the row', () => {
-  const { ledger, registry, recorded } = bookWith(1);
-  const result = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 50 }, {
+test('a one-row export is a complete set and the hash matches the row', async () => {
+  const { ledger, registry, recorded } = await bookWith(1);
+  const result = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 50 }, {
     ledger,
     verify: bindBookVerifier(registry),
     baseUrl: 'https://api.chit402.com',
@@ -75,9 +75,9 @@ test('a one-row export is a complete set and the hash matches the row', () => {
   assert.equal(verified.valid, true, verified.reason);
 });
 
-test('a short limit is a truncated export with a different enumerated hash', () => {
-  const { ledger, registry, recorded } = bookWith(3);
-  const result = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 1 }, {
+test('a short limit is a truncated export with a different enumerated hash', async () => {
+  const { ledger, registry, recorded } = await bookWith(3);
+  const result = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 1 }, {
     ledger,
     verify: bindBookVerifier(registry),
   });
@@ -91,9 +91,9 @@ test('a short limit is a truncated export with a different enumerated hash', () 
   assert.equal(verifyExportCoverage(coverage).valid, true);
 });
 
-test('empty by policy commits to the empty-set hash; empty by drain does not', () => {
-  const { ledger, registry, recorded } = bookWith(1);
-  const hidden = readAgentBook(recorded.agent_id, {
+test('empty by policy commits to the empty-set hash; empty by drain does not', async () => {
+  const { ledger, registry, recorded } = await bookWith(1);
+  const hidden = await readAgentBook(recorded.agent_id, {
     session: recorded.session,
     evidence: 'policy_blocked',
   }, { ledger, verify: bindBookVerifier(registry) });
@@ -119,9 +119,9 @@ test('empty by policy commits to the empty-set hash; empty by drain does not', (
   assert.notEqual(drained.universe_hash, hidden.body.coverage.universe_hash);
 });
 
-test('an unmetered row is omitted by policy and does not enter the universe', () => {
-  const { ledger, recorded } = bookWith(1);
-  ledger._index({
+test('an unmetered row is omitted by policy and does not enter the universe', async () => {
+  const { ledger, recorded } = await bookWith(1);
+  await ledger._index({
     task_id: 'demo-row',
     payment_ref: 'demo:1',
     agent_id: recorded.agent_id,
@@ -130,23 +130,23 @@ test('an unmetered row is omitted by policy and does not enter the universe', ()
     amount: '0',
     collected_at: new Date().toISOString(),
   });
-  const selected = selectBookWindow(ledger, recorded.agent_id, { limit: 50 });
+  const selected = await selectBookWindow(ledger, recorded.agent_id, { limit: 50 });
   assert.equal(selected.coverage.enumerated_count, 1);
   assert.equal(selected.coverage.omitted_by_policy_count, 1);
   assert.equal(selected.entries.some((row) => row.task_id === 'demo-row'), false);
 });
 
-test('csv and html exports carry the same signed universe hash', () => {
-  const { ledger, registry, recorded } = bookWith(1);
-  const csv = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'csv', limit: 50 }, {
+test('csv and html exports carry the same signed universe hash', async () => {
+  const { ledger, registry, recorded } = await bookWith(1);
+  const csv = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'csv', limit: 50 }, {
     ledger,
     verify: bindBookVerifier(registry),
   });
-  const html = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'html', limit: 50 }, {
+  const html = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'html', limit: 50 }, {
     ledger,
     verify: bindBookVerifier(registry),
   });
-  const json = exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 50 }, {
+  const json = await exportAgentBook(recorded.agent_id, { session: recorded.session, format: 'json', limit: 50 }, {
     ledger,
     verify: bindBookVerifier(registry),
   });
@@ -159,11 +159,11 @@ test('csv and html exports carry the same signed universe hash', () => {
   assert.match(renderCoverageSection(json.body.coverage), /complete/);
 });
 
-test('a time filter is inside the signed scope', () => {
-  const { ledger, registry, recorded } = bookWith(1);
+test('a time filter is inside the signed scope', async () => {
+  const { ledger, registry, recorded } = await bookWith(1);
   const row = ledger.findByTask('cov-0');
   const after = new Date(Date.parse(row.collected_at) + 60_000).toISOString();
-  const book = readAgentBook(recorded.agent_id, { session: recorded.session, from: after }, {
+  const book = await readAgentBook(recorded.agent_id, { session: recorded.session, from: after }, {
     ledger,
     verify: bindBookVerifier(registry),
   });

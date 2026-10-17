@@ -328,13 +328,13 @@ class AIListener {
       this.osmosisWs.on('close', () => {
         logger.warn('Osmosis WebSocket disconnected');
         if (this.isListening) {
-          this._reconnect('osmosis', () => this.connectOsmosisWebSocket());
+          this._reconnect('osmosis', async () => await this.connectOsmosisWebSocket());
         }
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to connect to Osmosis WebSocket');
       if (this.isListening) {
-        this._reconnect('osmosis', () => this.connectOsmosisWebSocket());
+        this._reconnect('osmosis', async () => await this.connectOsmosisWebSocket());
       }
     }
   }
@@ -418,13 +418,13 @@ class AIListener {
       this.akashWs.on('close', () => {
         logger.warn('Akash WebSocket disconnected');
         if (this.isListening) {
-          this._reconnect('akash', () => this.connectAkashWebSocket());
+          this._reconnect('akash', async () => await this.connectAkashWebSocket());
         }
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to connect to Akash WebSocket');
       if (this.isListening) {
-        this._reconnect('akash', () => this.connectAkashWebSocket());
+        this._reconnect('akash', async () => await this.connectAkashWebSocket());
       }
     }
   }

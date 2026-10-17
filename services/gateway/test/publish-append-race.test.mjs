@@ -32,19 +32,19 @@ test('append during the anchor await keeps tree_size equal to the root size', as
   try {
     const tree = new ReceiptMerkleTree();
     tree.dir = mkdtempSync(join(tmpdir(), 'chit-race-'));
-    for (const id of ['a', 'b', 'c']) tree.appendReceipt(id, `r${id}`, { publish: false });
+    for (const id of ['a', 'b', 'c']) await tree.appendReceipt(id, `r${id}`, { publish: false });
     const h4 = await tree.publishHead(opts('2026-10-08T05:32:00.000Z'));
     assert.equal(h4.tree_size, 4);
-    for (const id of ['d', 'e', 'f', 'g', 'h']) tree.appendReceipt(id, `r${id}`, { publish: false });
-    const raced = await tree.publishHead(opts('2026-10-09T10:23:55.000Z', () => {
-      tree.appendReceipt('late', 'rlate', { publish: false });
+    for (const id of ['d', 'e', 'f', 'g', 'h']) await tree.appendReceipt(id, `r${id}`, { publish: false });
+    const raced = await tree.publishHead(opts('2026-10-09T10:23:55.000Z', async () => {
+      await tree.appendReceipt('late', 'rlate', { publish: false });
     }));
     assert.equal(tree.leaves.length, 10);
     assert.equal(raced.tree_size, 9, 'head size is the size the root was computed over');
     assert.equal(verifyTreeHead(raced).valid, true);
     // Default inclusion uses the newest anchored head and must not 400.
-    assert.equal(tree.inclusion('b').status, 'anchored');
-    assert.equal(tree.inclusion('late').status, 'pending_anchor');
+    assert.equal((await tree.inclusion('b')).status, 'anchored');
+    assert.equal((await tree.inclusion('late')).status, 'pending_anchor');
     // A restart replays the journal and must not refuse the stored head.
     assert.doesNotThrow(() => readReceiptLog(tree.dir, { strict: true }));
   } finally {

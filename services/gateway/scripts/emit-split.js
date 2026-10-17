@@ -140,7 +140,7 @@ async function main() {
   log(`  mined in block ${receipt.blockNumber}. Set REVENUE_SPLIT_ADDRESS to the new Split.`);
 }
 
-main().catch((err) => {
+await main().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });

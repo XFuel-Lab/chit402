@@ -336,5 +336,5 @@ async function runCli(argv) {
 const isMain = process.argv[1]
   && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain) {
-  runCli(process.argv.slice(2)).then((code) => process.exit(code));
+  await runCli(process.argv.slice(2)).then((code) => process.exit(code));
 }

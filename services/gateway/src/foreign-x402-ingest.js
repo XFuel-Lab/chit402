@@ -23,7 +23,7 @@ import { STAMP_FEE_UNITS } from './pricing.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, networkFromPaymentRef, safeExplorerUrl } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
-import { getIssuerPublicKeyJwk, signJws } from './issuer-key.js';
+import { getIssuerPublicKeyJwk, signJwsAsync } from './issuer-key.js';
 import { assertIssuanceOpen, bindIssuerRoot, issuerRootActive, ISSUER_ROOT_PAYLOAD_VERSION } from './issuer-root.js';
 import { FOREIGN_CANONICAL_FIELDS, sealCanonicalObject } from './canonical-preimage.js';
 import { jcsRfc8785 } from './offer-receipt.js';
@@ -709,7 +709,7 @@ export function buildPublicForeignIngestReceipt(snapshot, { baseUrl = '', reqHos
  * @param {object} [params.routeOverride] - replaces hub/model after resource parsing
  * @returns {object} Receipt-like object for ledger append
  */
-export function buildForeignReceipt({
+export async function buildForeignReceipt({
   taskId,
   paymentRequired,
   paymentResponse,
@@ -815,7 +815,7 @@ export function buildForeignReceipt({
     taskId, paymentRequired, paymentResponse, fingerprint,
   });
   const claims = {
-    ...canonicalSignedClaims(receipt),
+    ...await canonicalSignedClaims(receipt),
     schema: payout.schema,
     chain: payout.chain,
     tx: payout.tx,
@@ -827,7 +827,11 @@ export function buildForeignReceipt({
   };
   const canonicalize = claims.payload_version === ISSUER_ROOT_PAYLOAD_VERSION ? jcsRfc8785 : undefined;
   const sealed = sealCanonicalObject(claims, FOREIGN_CANONICAL_FIELDS, canonicalize);
-  const { jws, kid } = signJws(sealed.claims, { jku: ISSUER_JWKS_URI });
+  const { jws, kid } = await signJwsAsync(sealed.claims, {
+    jku: ISSUER_JWKS_URI,
+    capKind: 'receipt',
+    receiptId: taskId,
+  });
   bindIssuerRoot(sealed.claims, kid, getIssuerPublicKeyJwk());
   receipt.issuer_signature = {
     alg: 'ES256',
@@ -950,7 +954,7 @@ export async function ingestForeignX402(body = {}, {
   }
 
   if (normalized.rail === 'nano') {
-    return ingestNanoPayment({
+    return await ingestNanoPayment({
       nano: normalized.nano,
       fulfillmentMeta: normalized.fulfillmentMeta || fulfillmentFieldsFromIngestBody(body),
       ledger,
@@ -1149,7 +1153,7 @@ export async function ingestForeignX402(body = {}, {
   const taskId = generateForeignTaskId();
 
   // Build the foreign receipt with correct rail for network
-  const receipt = buildForeignReceipt({
+  const receipt = await buildForeignReceipt({
     taskId,
     paymentRequired,
     paymentResponse,
@@ -1171,7 +1175,7 @@ export async function ingestForeignX402(body = {}, {
     };
   }
 
-  const appended = ledger.append(receipt, {
+  const appended = await ledger.append(receipt, {
     payer: onChainPayer,
     agentId: id,
     intentId: fulfillmentMeta.intentId || null,
@@ -1203,7 +1207,7 @@ export async function ingestForeignX402(body = {}, {
   }, 'foreign-x402: ingested');
 
   const verifyUrl = buildVerifyUrl(baseUrl, taskId, { reqHost });
-  const stampBook = bookIngestStamp(ledger, { agentId: id, foreignTaskId: taskId, stamp });
+  const stampBook = await bookIngestStamp(ledger, { agentId: id, foreignTaskId: taskId, stamp });
 
   return {
     ok: true,
@@ -1279,13 +1283,13 @@ async function collectIngestStamp(ensureStamp) {
   };
 }
 
-function bookIngestStamp(ledger, { agentId, foreignTaskId, stamp }) {
+async function bookIngestStamp(ledger, { agentId, foreignTaskId, stamp }) {
   const paymentRef = stamp?.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : null;
   if (!paymentRef || !ledger || typeof ledger.recordIngestStamp !== 'function') {
     return { booked: false, task_id: null };
   }
   const taskId = `ingest-stamp-${foreignTaskId}`;
-  const recorded = ledger.recordIngestStamp({
+  const recorded = await ledger.recordIngestStamp({
     agentId,
     taskId,
     paymentRef,
@@ -1369,7 +1373,7 @@ async function ingestNanoPayment({
   if (!stamp.ok) return stamp;
 
   const taskId = generateForeignTaskId();
-  const receipt = buildForeignReceipt({
+  const receipt = await buildForeignReceipt({
     taskId,
     paymentRequired: {
       resource: verified.explorer_url,
@@ -1409,7 +1413,7 @@ async function ingestNanoPayment({
   });
   receipt.stamp = stampFields(stamp);
 
-  return commitForeignRow({
+  return await commitForeignRow({
     receipt,
     ledger,
     agentId,
@@ -1461,7 +1465,7 @@ async function commitForeignRow({
     };
   }
 
-  const appended = ledger.append(receipt, {
+  const appended = await ledger.append(receipt, {
     payer,
     agentId,
     intentId: fulfillmentMeta?.intentId || null,
@@ -1481,7 +1485,7 @@ async function commitForeignRow({
   }
 
   const taskId = receipt.task_id;
-  const stampBook = bookIngestStamp(ledger, { agentId, foreignTaskId: taskId, stamp });
+  const stampBook = await bookIngestStamp(ledger, { agentId, foreignTaskId: taskId, stamp });
   logger.info({
     taskId,
     agentId,

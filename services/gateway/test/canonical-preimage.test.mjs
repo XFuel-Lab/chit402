@@ -77,12 +77,12 @@ function listen(app) {
   });
 }
 
-test('a new receipt stores the canonical object and does not rebuild it', () => {
+test('a new receipt stores the canonical object and does not rebuild it', async () => {
   const previous = process.env.ISSUER_KEY_NOT_BEFORE;
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
   resetIssuerHistoryStore();
   try {
-    const receipt = buildReceipt(paidTask(), { signingSecret: 'canonical-secret', agentId: 4 });
+    const receipt = await buildReceipt(paidTask(), { signingSecret: 'canonical-secret', agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.payload_version, RECEIPT_PAYLOAD_VERSION);
     assert.equal(RECEIPT_PAYLOAD_VERSION, 10);
@@ -93,7 +93,7 @@ test('a new receipt stores the canonical object and does not rebuild it', () => 
     assert.equal(sha256(bytes), claims.payload_hash);
     assert.equal(receipt.issuer_signature.payload_hash, claims.payload_hash);
     assert.equal(receipt.issuer_signature.hash_alg, 'sha256');
-    assert.equal(claims.issuer_history.hash, currentIssuerHistory().hash);
+    assert.equal(claims.issuer_history.hash, (await currentIssuerHistory()).hash);
     assert.equal(claims.issuer_history.version, claims.issuer_history.seq);
     assert.equal(bytes.includes('payload_hash'), false);
     assert.equal(bytes.includes('super-secret-prompt-text'), false);
@@ -122,8 +122,8 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
   const previous = process.env.ISSUER_KEY_NOT_BEFORE;
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
   resetIssuerHistoryStore();
-  const receipt = buildReceipt(paidTask({ taskId: 'xfuel-canonical-http' }), { agentId: 4 });
-  const refusal = issueRefusalReceipt({
+  const receipt = await buildReceipt(paidTask({ taskId: 'xfuel-canonical-http' }), { agentId: 4 });
+  const refusal = await issueRefusalReceipt({
     agent_id: 7,
     task_id: 'blocked-canonical',
     seq: 1,
@@ -133,7 +133,7 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
     reason: 'over the cap',
     collected_at: '2026-09-26T17:27:32Z',
   });
-  assert.equal(verifyRefusalReceipt(refusal).valid, true);
+  assert.equal((await verifyRefusalReceipt(refusal)).valid, true);
   assert.equal(sha256(refusal.canonical_preimage), refusal.payload_hash);
   const refusalKeys = Object.keys(JSON.parse(refusal.canonical_preimage));
   for (const key of refusalKeys) assert.ok(REFUSAL_CANONICAL_FIELDS.includes(key), key);
@@ -141,7 +141,7 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
   const app = express();
   app.get('/receipt/:id/preimage', (_req, res) => writeCanonicalPreimage(res, receipt, _req.query));
   app.get('/refusal/:id/preimage', (_req, res) => writeCanonicalPreimage(res, refusal, _req.query));
-  app.get('/.well-known/issuer-history.json', (req, res) => writeIssuerHistory(res, req.query));
+  app.get('/.well-known/issuer-history.json', async (req, res) => await writeIssuerHistory(res, req.query));
   const { server, port } = await listen(app);
   try {
     const bodyRes = await fetch(`http://127.0.0.1:${port}/receipt/xfuel-canonical-http/preimage`);
@@ -163,7 +163,7 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
 
     const historyRes = await fetch(`http://127.0.0.1:${port}/.well-known/issuer-history.json`);
     const historyBody = await historyRes.text();
-    const latest = currentIssuerHistory();
+    const latest = await currentIssuerHistory();
     assert.equal(historyBody, latest.body);
     assert.equal(sha256(historyBody), historyRes.headers.get('x-chit-history-hash'));
     assert.equal(historyRes.headers.get('x-chit-hash-alg'), 'sha256');
@@ -178,15 +178,15 @@ test('GET /preimage returns the stored bytes and names the hash algorithm', asyn
   }
 });
 
-test('issuer history keeps old versions and not_after comes from the pinned snapshot', () => {
+test('issuer history keeps old versions and refuses to rewrite a sealed entry', async () => {
   const previousBefore = process.env.ISSUER_KEY_NOT_BEFORE;
   const previousExtra = process.env.ISSUER_HISTORY_EXTRA;
   process.env.ISSUER_KEY_NOT_BEFORE = '2020-01-01T00:00:00Z';
   delete process.env.ISSUER_HISTORY_EXTRA;
   resetIssuerHistoryStore();
   try {
-    const v1 = currentIssuerHistory();
-    const receipt = buildReceipt(paidTask({ taskId: 'xfuel-pin-v1' }), { agentId: 4 });
+    const v1 = await currentIssuerHistory();
+    const receipt = await buildReceipt(paidTask({ taskId: 'xfuel-pin-v1' }), { agentId: 4 });
     const claims = decodeReceiptClaims(receipt);
     assert.equal(claims.issuer_history.version, v1.version);
     assert.equal(claims.issuer_history.hash, v1.hash);
@@ -208,17 +208,15 @@ test('issuer history keeps old versions and not_after comes from the pinned snap
       reason: 'rotated',
       custody: 'test custody sentence',
     }]);
-    const v2 = currentIssuerHistory();
-    assert.equal(v2.version, v1.version + 1);
-    assert.notEqual(v2.hash, v1.hash);
-    assert.equal(issuerHistoryRecord({ version: v1.version }).body, v1.body);
-    assert.equal(issuerHistoryRecord({ hash: v1.hash }).hash, v1.hash);
-    const later = JSON.parse(v2.body);
-    const retired = issuerKeyWindow(later, kid, claims.iat);
-    assert.equal(retired.ok, false);
-    assert.equal(retired.reason, 'issued_after_not_after');
-    const stillPinned = issuerKeyWindow(JSON.parse(issuerHistoryRecord({ version: 1 }).body), kid, claims.iat);
+    const kept = await currentIssuerHistory();
+    assert.equal(kept.body, v1.body);
+    const again = await buildReceipt(paidTask({ taskId: 'xfuel-pin-v1-again' }), { agentId: 4 });
+    assert.equal(decodeReceiptClaims(again).issuer_history.hash, v1.hash);
+    assert.equal((await issuerHistoryRecord({ version: v1.version })).body, v1.body);
+    assert.equal((await issuerHistoryRecord({ hash: v1.hash })).hash, v1.hash);
+    const stillPinned = issuerKeyWindow(JSON.parse((await issuerHistoryRecord({ version: 1 })).body), kid, claims.iat);
     assert.equal(stillPinned.ok, true, stillPinned.reason);
+    assert.equal(stillPinned.not_after, null);
   } finally {
     if (previousBefore == null) delete process.env.ISSUER_KEY_NOT_BEFORE;
     else process.env.ISSUER_KEY_NOT_BEFORE = previousBefore;

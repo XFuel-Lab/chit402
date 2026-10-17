@@ -160,7 +160,7 @@ test('wiring: prod-config boot with the memory store refuses v11 issuance', asyn
   delete process.env.RECEIPT_SALT_DIR;
   try {
     const { createApp } = await import('../src/server.js');
-    assert.throws(() => createApp(), /ISSUER_ROOT_ENABLED[\s\S]*memory-only/);
+    await assert.rejects(async () => await createApp(), /ISSUER_ROOT_ENABLED[\s\S]*memory-only/);
   } finally {
     if (prev == null) delete process.env.ISSUER_ROOT_ENABLED;
     else process.env.ISSUER_ROOT_ENABLED = prev;

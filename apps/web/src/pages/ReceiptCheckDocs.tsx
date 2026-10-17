@@ -12,9 +12,9 @@ curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preima
 # HTTP 404 preimage_unavailable — the canonical object was not stored with this
 # document, and the server does not rebuild it on read.
 curl -sS "${HISTORY}?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history-file issuer-history.json
+npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history issuer-history.json
 # After a receipt is issued with a stored object, /preimage returns 200.
-# Then: npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history-file issuer-history.json
+# Then: npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
 # sha256 of that body is payload_hash. X-Chit-Hash-Alg is sha256.`;
 
 export default function ReceiptCheckDocs() {
@@ -28,6 +28,10 @@ export default function ReceiptCheckDocs() {
             A receipt stores one canonical object. Hash those bytes and you have <code>payload_hash</code>. The
             issuer also pins the key-history snapshot that was current when it signed. <code>xfuel-verify</code>{' '}
             checks that pin, including <code>not_after</code> on the pinned entry.
+          </p>
+          <p>
+            <Link to="/check">Check a receipt</Link> in the browser. Paste the receipt JSON, or a receipt id or
+            URL. Free. No account.
           </p>
         </header>
 

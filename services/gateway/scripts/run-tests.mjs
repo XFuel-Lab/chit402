@@ -94,7 +94,13 @@ function main() {
       cwd: gatewayDir,
       timeout: 10 * 60 * 1000,
       killSignal: 'SIGKILL',
-      env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
+      env: {
+        ...process.env,
+        NODE_ENV: process.env.NODE_ENV || 'test',
+        // Ephemeral key resets in this process may drop an in-memory history
+        // chain. Production never reads this flag.
+        ISSUER_HISTORY_TEST_ROTATION: process.env.ISSUER_HISTORY_TEST_ROTATION || 'true',
+      },
     },
   );
 

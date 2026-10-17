@@ -24,7 +24,7 @@ let base;
 before(async () => {
   resetHubCatalogCache();
   await initAIListener();
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       base = `http://127.0.0.1:${server.address().port}`;

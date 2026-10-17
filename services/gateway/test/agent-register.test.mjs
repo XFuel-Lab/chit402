@@ -136,8 +136,8 @@ function slimCollectedTask(over = {}) {
   };
 }
 
-test('mergeReceiptView hydrates slim buildReceipt for ledger qualification', () => {
-  const slim = buildReceipt(slimCollectedTask(), {
+test('mergeReceiptView hydrates slim buildReceipt for ledger qualification', async () => {
+  const slim = await buildReceipt(slimCollectedTask(), {
     baseUrl: 'https://api.xfuel.app',
     signingSecret: VERIFY_KEY,
     persistSignature: true,
@@ -160,7 +160,7 @@ test('register accepts loadReceipt-shaped slim envelope after mergeReceiptView',
     taskId: 'task-slim-register',
     meta: { chain: 'base', provider: 'theta-edgecloud', payerWallet: WALLET },
   });
-  const slim = buildReceipt(task, {
+  const slim = await buildReceipt(task, {
     baseUrl: 'https://api.xfuel.app',
     signingSecret: VERIFY_KEY,
     persistSignature: true,
@@ -267,7 +267,7 @@ test('bindAgentWallet accepts a detectable EOA and still accepts smart accounts'
 test('plain EOA register requires a wallet signature; smart accounts do not', async () => {
   const signer = Wallet.createRandom();
   const receipt = collectedReceipt({ task_id: 'task-eoa-1', ref: 'base:0xeoa1', payer: signer.address });
-  const eoaBind = async (w) => bindAgentWallet(w, {
+  const eoaBind = async (w) => await bindAgentWallet(w, {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
   const bare = deps({ [receipt.task_id]: receipt }, { bindWallet: eoaBind });
@@ -306,7 +306,7 @@ test('plain EOA register requires a wallet signature; smart accounts do not', as
 
   const smartReceipt = collectedReceipt({ task_id: 'task-smart-1', ref: 'base:0xsmart1' });
   const smart = deps({ [smartReceipt.task_id]: smartReceipt }, {
-    bindWallet: async (w) => bindAgentWallet(w, {
+    bindWallet: async (w) => await bindAgentWallet(w, {
       inspect: async () => ({ kind: 'smart_account', official: false, eoa: false, code: '0x60016000' }),
     }),
   });
@@ -323,7 +323,7 @@ test('register claims an already-ledgered settle without re-append', async () =>
   const receipt = collectedReceipt({ task_id: 'task-pre', ref: 'base:0xpre' });
   const d = deps({ [receipt.task_id]: receipt });
   const pre = d.registry.allocate({ taskId: receipt.task_id, paymentRef: receipt.payment.ref });
-  const appended = d.ledger.append(receipt, { agentId: pre.agent_id });
+  const appended = await d.ledger.append(receipt, { agentId: pre.agent_id });
   assert.equal(appended.ok, true);
   assert.equal(d.ledger.entries.length, 1);
 
@@ -369,7 +369,7 @@ test('a stranger cannot register onto someone else\'s receipt', async () => {
   const victim = Wallet.createRandom();
   const attacker = Wallet.createRandom();
   const receipt = collectedReceipt({ task_id: 'task-takeover', ref: 'base:0xtakeover', payer: victim.address });
-  const eoaBind = async (w) => bindAgentWallet(w, {
+  const eoaBind = async (w) => await bindAgentWallet(w, {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
   const d = deps({ [receipt.task_id]: receipt }, { bindWallet: eoaBind, proveSmartControl: null });
@@ -449,7 +449,7 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
   const signer = Wallet.createRandom();
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = await signer.signMessage(canonicalRegisterPayMessage(signer.address, timestamp));
-  const eoaBind = async (w) => bindAgentWallet(w, {
+  const eoaBind = async (w) => await bindAgentWallet(w, {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
   let calls = 0;
@@ -546,7 +546,7 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
   assert.equal(stored[0].intent.paymentRef, 'base:0xregstamp');
   assert.equal(stored[0].intent.amount, '2000');
   assert.equal(stored[0].meta.payerWallet, signer.address);
-  const built = mergeReceiptView(buildReceipt(stored[0], { baseUrl: 'https://api.chit402.com' }));
+  const built = mergeReceiptView(await buildReceipt(stored[0], { baseUrl: 'https://api.chit402.com' }));
   assert.equal(built.task_id, result.body.task_id);
   assert.equal(built.payment.collected, true);
   assert.equal(built.payment.ref, 'base:0xregstamp');
@@ -562,12 +562,12 @@ test('a rejected bind does not write a replay onto another agent row', async () 
     ref: 'base:0xreplayvictim',
     payer: victim.address,
   });
-  const eoaBind = async (w) => bindAgentWallet(w, {
+  const eoaBind = async (w) => await bindAgentWallet(w, {
     inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
   });
   const d = deps({ [receipt.task_id]: receipt }, { bindWallet: eoaBind, proveSmartControl: null });
   const identity = d.registry.allocate({ taskId: receipt.task_id, paymentRef: receipt.payment.ref });
-  const appended = d.ledger.append(receipt, { payer: victim.address, agentId: identity.agent_id });
+  const appended = await d.ledger.append(receipt, { payer: victim.address, agentId: identity.agent_id });
   assert.equal(appended.ok, true);
   const timestamp = Math.floor(Date.now() / 1000);
   const attackerSig = await attacker.signMessage(
@@ -591,7 +591,7 @@ let server;
 let base;
 
 before(async () => {
-  const app = createApp();
+  const app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
       const { port } = server.address();

@@ -29,11 +29,11 @@ function paid(over = {}) {
   };
 }
 
-test('append assigns gapless seq and chains the previous hash', () => {
+test('append assigns gapless seq and chains the previous hash', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const first = recordCollectedSpend(paid({ task_id: 's1', ref: 'base:0xs1' }), { ledger, registry });
-  const second = recordCollectedSpend(paid({ task_id: 's2', ref: 'base:0xs2' }), {
+  const first = await recordCollectedSpend(paid({ task_id: 's1', ref: 'base:0xs1' }), { ledger, registry });
+  const second = await recordCollectedSpend(paid({ task_id: 's2', ref: 'base:0xs2' }), {
     ledger, registry, agentId: first.agent_id,
   });
   assert.equal(first.entry.seq, 1);
@@ -49,11 +49,11 @@ test('append assigns gapless seq and chains the previous hash', () => {
   assert.equal(report.next_seq, 3);
 });
 
-test('an idempotent replay does not consume a seq', () => {
+test('an idempotent replay does not consume a seq', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const first = recordCollectedSpend(paid({ task_id: 'once', ref: 'base:0xonce' }), { ledger, registry });
-  const again = recordCollectedSpend(paid({ task_id: 'once', ref: 'base:0xonce' }), {
+  const first = await recordCollectedSpend(paid({ task_id: 'once', ref: 'base:0xonce' }), { ledger, registry });
+  const again = await recordCollectedSpend(paid({ task_id: 'once', ref: 'base:0xonce' }), {
     ledger, registry, agentId: first.agent_id,
   });
   assert.equal(again.idempotent_replay, true);
@@ -65,19 +65,19 @@ test('an idempotent replay does not consume a seq', () => {
   assert.equal(ledger.entries.filter((e) => e.agent_id === first.agent_id).length, 1);
 });
 
-test('an inflow correction appends a new seq and leaves the original position', () => {
+test('an inflow correction appends a new seq and leaves the original position', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
   const verify = bindBookVerifier(registry);
-  const collected = recordCollectedSpend(paid({ task_id: 'host', ref: 'base:0xhost' }), { ledger, registry });
-  recordBookInflow(collected.agent_id, {
+  const collected = await recordCollectedSpend(paid({ task_id: 'host', ref: 'base:0xhost' }), { ledger, registry });
+  await recordBookInflow(collected.agent_id, {
     bucket: 'treasury',
     allocation: '10000',
     task_id: 'inflow-seq-1',
   }, { ledger, registry, verify, claim: { session: collected.session } });
   const original = ledger.findByTask('inflow-seq-1');
   const originalSeq = original.seq;
-  const corrected = correctBookInflow(collected.agent_id, {
+  const corrected = await correctBookInflow(collected.agent_id, {
     task_id: 'inflow-seq-1',
     bucket: 'treasury',
     allocation: '12000',
@@ -92,21 +92,21 @@ test('an inflow correction appends a new seq and leaves the original position', 
   assert.equal(ledger.seqReport(collected.agent_id).gapless, true);
 });
 
-test('the book view and the gaps helper report a hole', () => {
+test('the book view and the gaps helper report a hole', async () => {
   const ledger = new UsageSettledLedger();
   const registry = new AgentRegistry();
-  const first = recordCollectedSpend(paid({ task_id: 'g1', ref: 'base:0xg1' }), { ledger, registry });
-  recordCollectedSpend(paid({ task_id: 'g2', ref: 'base:0xg2' }), { ledger, registry, agentId: first.agent_id });
+  const first = await recordCollectedSpend(paid({ task_id: 'g1', ref: 'base:0xg1' }), { ledger, registry });
+  await recordCollectedSpend(paid({ task_id: 'g2', ref: 'base:0xg2' }), { ledger, registry, agentId: first.agent_id });
   const second = ledger.findByTask('g2');
   second.seq = 4;
   const report = analyzeSeq(ledger.entries.filter((e) => e.agent_id === first.agent_id));
   assert.equal(report.gapless, false);
   assert.deepEqual(report.gaps, [2, 3]);
-  const book = readAgentBook(first.agent_id, { session: first.session }, {
+  const book = await readAgentBook(first.agent_id, { session: first.session }, {
     ledger, verify: bindBookVerifier(registry),
   });
   assert.equal(book.body.entries[0].seq != null, true);
-  const exported = exportAgentBook(first.agent_id, { session: first.session, format: 'csv', limit: 50 }, {
+  const exported = await exportAgentBook(first.agent_id, { session: first.session, format: 'csv', limit: 50 }, {
     ledger, verify: bindBookVerifier(registry),
   });
   assert.match(exported.body, /,seq,prev_hash,row_hash/);
