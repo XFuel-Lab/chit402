@@ -112,7 +112,7 @@ function signCompact(claims, typ) {
   return `${input}.${sig.toString('base64url')}`;
 }
 
-const payment = { rail: 'usdc', network: 'base', gross_amount: 2000, settled_amount: 2000 };
+const payment = { rail: 'usdc', ref: 'base:0x' + '12'.repeat(32), gross_amount: 2000, settled_amount: 2000 };
 function receiptWith(claims, typ = 'chit402-receipt+jwt', outer = {}) {
   return {
     task_id: 'xfuel-00000000-0000-4000-8000-0000000000aa',
@@ -223,3 +223,145 @@ for (const [name, expected] of Object.entries(PREVIOUS)) {
     assert.deepEqual(got, expected);
   });
 }
+
+// --- header and payload edge cases (0.4.8 review follow-up).
+function signWithHeader(claims, extra) {
+  const h = { alg: 'ES256', kid, ...extra };
+  for (const key of Object.keys(h)) if (h[key] === undefined) delete h[key];
+  const input = `${Buffer.from(JSON.stringify(h)).toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}`;
+  const sig = sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  return `${input}.${sig.toString('base64url')}`;
+}
+function receiptWithHeader(claims, extra, outer = {}) {
+  return {
+    task_id: goodClaims.task_id,
+    payment,
+    ...outer,
+    issuer_signature: { alg: 'ES256', payload_version: 7, kid, jws: signWithHeader(claims, extra) },
+  };
+}
+const localOpts = { jwks: localJwks, trustedKids: [kid], fetchImpl: offline };
+const treeHeadClaims = { schema: 'chit402.tree_head.v2', payload_version: 2, tree_size: 3, root: 'a'.repeat(64) };
+
+for (const typ of ['CHIT402-RECEIPT+JWT', 'Chit402-Receipt+Jwt', 'jwt', ' chit402-receipt+jwt', 'chit402-receipt+jwt ', 'chit402-receipt+jwt\n', '']) {
+  test(`receipt slot refuses typ variant ${JSON.stringify(typ)}`, async () => {
+    const res = await verifyReceipt(receiptWithHeader(goodClaims, { typ }), localOpts);
+    assert.equal(res.overall, 'failed');
+    assert.equal(res.issuer_signature.reason, 'typ_mismatch');
+  });
+}
+
+for (const typ of [['chit402-receipt+jwt'], { v: 'chit402-receipt+jwt' }, 1, true]) {
+  test(`receipt slot refuses non-string typ ${JSON.stringify(typ)}`, async () => {
+    const res = await verifyReceipt(receiptWithHeader(goodClaims, { typ }), localOpts);
+    assert.equal(res.overall, 'failed');
+    assert.equal(res.issuer_signature.reason, 'typ_mismatch');
+  });
+}
+
+test('typ moved to cty: a tree-head payload with no typ is not a receipt', async () => {
+  const res = await verifyReceipt(
+    receiptWithHeader({ ...treeHeadClaims, task_id: goodClaims.task_id, payment }, { cty: 'chit402-tree-head+jwt' }),
+    localOpts,
+  );
+  assert.equal(res.overall, 'failed');
+});
+
+test('crit/b64 headers are refused in a typed slot', async () => {
+  for (const extra of [
+    { typ: 'chit402-receipt+jwt', crit: ['b64'], b64: false },
+    { typ: 'chit402-receipt+jwt', crit: ['b64'] },
+    { typ: 'chit402-receipt+jwt', b64: true },
+    { crit: ['exp'] },
+  ]) {
+    const res = await verifyReceipt(receiptWithHeader(goodClaims, extra), localOpts);
+    assert.equal(res.overall, 'failed', JSON.stringify(extra));
+    assert.equal(res.issuer_signature.valid, false);
+    const direct = verifyIssuerJws(signWithHeader(goodClaims, extra), localJwks.keys[0], { expectTyp: ISSUER_JWS_TYP.receipt });
+    assert.equal(direct.valid, false);
+    assert.ok(['unsupported_header', 'typ_mismatch'].includes(direct.reason), direct.reason);
+  }
+});
+
+test('signed payment {} does not verify against an outer payment', async () => {
+  const res = await verifyReceipt(receiptWith({ ...goodClaims, payment: {} }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.ok(res.errors.some((e) => /payment\.\w+ is not covered/.test(e)), res.errors.join('; '));
+});
+
+test('an outer economic payment field must be signed', async () => {
+  const outerPayment = { ...payment, payee: '0x' + '1'.repeat(40) };
+  const res = await verifyReceipt(receiptWith(goodClaims, 'chit402-receipt+jwt', { payment: outerPayment }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.ok(res.errors.some((e) => /payment\.payee is not covered/.test(e)), res.errors.join('; '));
+});
+
+test('signed payment fields compare canonically (key order does not matter, values do)', async () => {
+  const p = { rail: 'usdc', ref: 'base:0x' + 'ab'.repeat(32), gross_amount: 2000, accounting: { a: 1, b: [1, 2] } };
+  const signedSameDifferentOrder = { accounting: { b: [1, 2], a: 1 }, gross_amount: 2000, ref: p.ref, rail: 'usdc' };
+  const ok = await verifyReceipt(
+    receiptWith({ ...goodClaims, payment: signedSameDifferentOrder }, 'chit402-receipt+jwt', { payment: p }),
+    localOpts,
+  );
+  assert.equal(ok.overall, 'verified', ok.errors.join('; '));
+  const bad = await verifyReceipt(
+    receiptWith({ ...goodClaims, payment: { ...signedSameDifferentOrder, accounting: { a: 1, b: [2, 1] } } }, 'chit402-receipt+jwt', { payment: p }),
+    localOpts,
+  );
+  assert.equal(bad.overall, 'failed');
+});
+
+test('display-only outer payment fields that were never signed keep verifying', async () => {
+  const p = { ...payment, ref: 'base:0x' + 'cd'.repeat(32), network: 'base', explorer_url: 'https://basescan.org/tx/0x' + 'cd'.repeat(32), collected: true };
+  const signedPayment = { rail: p.rail, ref: p.ref, gross_amount: p.gross_amount, settled_amount: p.settled_amount, network: p.network };
+  const res = await verifyReceipt(receiptWith({ ...goodClaims, payment: signedPayment }, 'chit402-receipt+jwt', { payment: p }), localOpts);
+  assert.equal(res.overall, 'verified', res.errors.join('; '));
+});
+
+// Untyped x402 offer / receipt-extension payloads signed by the issuer key.
+const offerClaims = {
+  version: 1,
+  resourceUrl: 'https://api.chit402.com/v1/chat',
+  scheme: 'exact',
+  network: 'eip155:8453',
+  asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  payTo: '0x23f713411c30bbd9a989c9cbc22eb0b55f7f7334',
+  amount: '2000',
+  validUntil: 1792281677,
+};
+const x402ReceiptClaims = {
+  version: 1,
+  network: 'eip155:8453',
+  resourceUrl: 'https://api.chit402.com/v1/chat',
+  payer: '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52',
+  issuedAt: 1792281677,
+  transaction: '0x' + 'ef'.repeat(32),
+};
+for (const [name, claims] of [
+  ['offer payload', offerClaims],
+  ['offer payload with payload_version', { ...offerClaims, payload_version: 6 }],
+  ['x402 receipt-extension payload', x402ReceiptClaims],
+  ['x402 receipt-extension payload with payload_version and task_id', { ...x402ReceiptClaims, payload_version: 6, task_id: goodClaims.task_id }],
+]) {
+  for (const typ of [undefined, 'JWT']) {
+    test(`${name} (typ ${typ ?? 'none'}) is never a verified receipt`, async () => {
+      const res = await verifyReceipt(receiptWithHeader(claims, { typ }), localOpts);
+      assert.equal(res.overall, 'failed');
+      const up = await verifyReceiptUpToV10(receiptWithHeader(claims, { typ }), localOpts);
+      assert.notEqual(up.overall, 'verified');
+    });
+  }
+}
+
+test('CLI reports typ_mismatch for a non-receipt JWS in the receipt slot', () => {
+  for (const name of ['head-jws-receipt.json', 'head-jws-receipt-schema.json', 'head-jws-receipt-pinned.json']) {
+    const json = runCli([fixture(`slot-typing/${name}`), '--json']);
+    assert.equal(json.status, 1, json.stdout + json.stderr);
+    const out = JSON.parse(json.stdout);
+    assert.equal(out.result, 'invalid');
+    assert.equal(out.reason, 'typ_mismatch', name);
+    const human = runCli([fixture(`slot-typing/${name}`)]);
+    assert.equal(human.status, 1);
+    assert.doesNotMatch(human.stdout, /key that is not the issuer/);
+  }
+});

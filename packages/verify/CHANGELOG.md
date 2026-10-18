@@ -9,8 +9,12 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - **Each issuer-JWS slot checks its `typ`.** `verifyIssuerJws(jws, jwk, { expectTyp })` takes the accepted typ set for the slot; any other typ is `typ_mismatch`. Receipts accept `chit402-receipt+jwt`, plus the earlier `JWT` typ and a header with no typ. Tree heads, epochs, issuer history, refusals, freeze control records and anchor-wallet documents each accept only their own typ. The sets are exported as `ISSUER_JWS_TYP`. Calls without `expectTyp` behave as in 0.4.7.
 - **A receipt signature must cover the receipt.** `verifyReceipt` (and `verifyReceiptUpToV10`) reports `verified` only when the signed payload is a receipt object whose `task_id` equals the receipt's `task_id`, and whose `payment` block is present whenever the outer document has one. A signed tree-head, epoch, history or other non-receipt schema is `failed`.
 
+- **Signed payment coverage.** The signed `payment` must be non-empty, and each economic field on the outer payment (`rail`, `ref`, `asset`, `payee`, gross/net/fee amounts, platform fee, `accounting`) must be signed. Every field present on both sides compares by RFC 8785 canonical form. A signed `payment: {}` is `failed`. Display fields that were never signed (`network`, `explorer_url`, `collected`, ...) are unchanged.
+- **Typed slots refuse `crit` and `b64` headers** (`unsupported_header`). No issuer signer sets them.
+- **The receipt typ is checked before key lookup.** The CLI reports `typ_mismatch` (exit 1) instead of `key untrusted` for a JWS of another document type.
+
 ### Tests
-- Cross-typ JWS in the receipt slot is `failed` in the library and exit 1 `INVALID` in the CLI.
+- Cross-typ JWS in the receipt slot is `failed` in the library and exit 1 `INVALID` `typ_mismatch` in the CLI. Typ case and whitespace variants, non-string typ, cty, crit/b64, `payment: {}`, and untyped offer and x402 receipt-extension payloads are covered.
 - Issued receipts of payload v5, v6, v7, v8, v9, v10 and a v10 foreign payout keep their 0.4.7 verdicts. `BUILD_DIGEST.txt` moved because the verifier sources changed. Not published. No deploy.
 
 ## 0.4.7 — Public attestation fail-closed edges

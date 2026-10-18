@@ -11,6 +11,7 @@
  * See docs/specs/RECEIPT_V2_SEMANTICS.md for the verification algorithm.
  */
 
+import { jcsCanonicalize } from './jcs.js';
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
 import { boundRowHash } from './row-hash.js';
@@ -791,6 +792,11 @@ export function verifyIssuerSignatureWithJwks(
   const pinned = !!(embedded && isPinnedTrustedJwk(embedded, trustedKids));
 
   if (sig.jws) {
+    // The typ is checked before any key lookup: a JWS of another document
+    // type is never a receipt signature, whatever key signed it.
+    if (!receiptTypAccepted(sig.jws)) {
+      return { checked: true, valid: false, key_trusted: false, kid, reason: 'typ_mismatch' };
+    }
     const fromJwks = jwksCandidates(jwks, kid);
     for (const jwk of fromJwks) {
       const jwsResult = verifyIssuerJws(sig.jws, jwk, { expectTyp: ISSUER_JWS_TYP.receipt });
@@ -1624,6 +1630,25 @@ export async function verifyReceiptUpToV10(
 /** Signed schemas of issuer documents that are never payment receipts. */
 const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|public_receipt)\b/;
 
+/**
+ * Economic payment fields that, when on the outer receipt, are always in the
+ * signed payment of issued receipts. `settled_amount` is not listed: older
+ * payload versions show it on the outer receipt without signing it.
+ */
+const SIGNED_PAYMENT_ECONOMIC = [
+  'rail', 'ref', 'asset', 'payee', 'gross_amount', 'net_amount', 'fee_amount',
+  'protocol_fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
+] as const;
+
+function sameCanonical(a: unknown, b: unknown): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  try {
+    return jcsCanonicalize(a) === jcsCanonicalize(b);
+  } catch {
+    return false;
+  }
+}
+
 function signedReceiptBindingErrors(
   receipt: XFuelReceipt,
   claims: Record<string, unknown> | undefined,
@@ -1645,8 +1670,31 @@ function signedReceiptBindingErrors(
   const outerPayment = (receipt as { payment?: unknown }).payment;
   const hasOuterPayment = !!outerPayment && typeof outerPayment === 'object'
     && Object.keys(outerPayment as object).length > 0;
-  if (hasOuterPayment && (claims.payment == null || typeof claims.payment !== 'object')) {
-    errs.push('payment is not covered by the issuer signature');
+  if (hasOuterPayment) {
+    const signedPayment = claims.payment;
+    if (signedPayment == null || typeof signedPayment !== 'object' || Array.isArray(signedPayment)) {
+      errs.push('payment is not covered by the issuer signature');
+    } else {
+      const signed = signedPayment as Record<string, unknown>;
+      const outer = outerPayment as Record<string, unknown>;
+      if (Object.keys(signed).length === 0) {
+        errs.push('payment is not covered by the issuer signature');
+      }
+      // Economic fields on the outer payment must be signed with an equal value.
+      // Display fields (network, explorer_url, collected, ...) were never signed.
+      for (const key of SIGNED_PAYMENT_ECONOMIC) {
+        if (!Object.prototype.hasOwnProperty.call(outer, key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(signed, key)) {
+          errs.push(`payment.${key} is not covered by the issuer signature`);
+        }
+      }
+      // Any field present on both sides must be canonically equal.
+      for (const [key, value] of Object.entries(outer)) {
+        if (Object.prototype.hasOwnProperty.call(signed, key) && !sameCanonical(value, signed[key])) {
+          errs.push(`payment.${key} does not match the signed value`);
+        }
+      }
+    }
   }
   return errs;
 }

@@ -148,7 +148,7 @@ export function verifyIssuerJws(
   }
 
   const [headerB64, payloadB64, signatureB64] = parts;
-  let header: { alg?: string; kid?: string; typ?: string };
+  let header: { alg?: string; kid?: string; typ?: unknown };
   let payload: Record<string, unknown>;
   try {
     header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
@@ -164,6 +164,12 @@ export function verifyIssuerJws(
     return { valid: false, reason: 'typ_mismatch' };
   }
   if (options.expectTyp) {
+    // No issuer signer sets crit or b64. An unencoded or critical-extension
+    // JWS is not one of ours, so a typed slot refuses it (RFC 7515 §4.1.11).
+    const raw = header as Record<string, unknown>;
+    if (raw.crit !== undefined || raw.b64 !== undefined) {
+      return { valid: false, reason: 'unsupported_header' };
+    }
     const typ = header.typ === undefined ? null : header.typ;
     if (typeof typ !== 'string' && typ !== null) return { valid: false, reason: 'typ_mismatch' };
     if (!options.expectTyp.includes(typ)) return { valid: false, reason: 'typ_mismatch' };

@@ -79,6 +79,7 @@ const WINDOW_FAIL = new Set([
   'issuer_history_version_mismatch',
   'issuer_history_seq_mismatch',
   'signature_invalid',
+  'typ_mismatch',
   'key untrusted',
   'prev_hash_mismatch',
   'entry_hash_mismatch',
@@ -225,6 +226,12 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
     return {
       message: 'The on-chain payment could not be checked.',
       next_step: 'Check the RPC, then re-run.',
+    };
+  }
+  if (reason === 'typ_mismatch') {
+    return {
+      message: 'The signature is over a different document type, not a receipt.',
+      next_step: null,
     };
   }
   if (reason === 'key untrusted') {
@@ -424,7 +431,12 @@ function failReason(
     if (errors.includes('version_mismatch') || errors.includes('payload_version_mismatch')) return 'version_mismatch';
     return 'id_mismatch';
   }
-  if (failed.includes('signature')) return errors.find((err) => err === 'key untrusted') || 'signature_invalid';
+  if (failed.includes('signature')) {
+    // A JWS of another document type in the receipt slot is reported as such,
+    // not as a key or signature problem.
+    if (errors.some((err) => /\btyp_mismatch\b/.test(err))) return 'typ_mismatch';
+    return errors.find((err) => err === 'key untrusted') || 'signature_invalid';
+  }
   if (failed.includes('key_window')) return historyReason || 'key_window';
   if (failed.includes('payment_binding') || payment === 'fail') {
     if (claimMismatches > 0) return 'claim_mismatch';
@@ -465,6 +477,8 @@ export function overallLine(verdict: VerifyVerdict, legacyOverall?: string | nul
 /** Fragment for `https://chit402.com/docs/verify#`. Ids have no spaces. */
 export function verdictDocAnchor(reason: string): string {
   if (reason === 'key untrusted') return 'key_untrusted';
+  // Documented under the signature section of docs/verify.
+  if (reason === 'typ_mismatch') return 'signature_invalid';
   return reason;
 }
 
