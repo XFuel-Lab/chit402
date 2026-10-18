@@ -14,7 +14,7 @@ import {
 // The export reads money-flow fields from the signed claims only.
 function withSignedPayment(r) {
   const claims = { task_id: r.task_id, payment: r.payment, binding: r.binding ?? null };
-  const jws = `eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJ0ZXN0In0.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.bbb`;
+  const jws = `eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJ0ZXN0In0.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
   return { ...r, issuer_signature: { alg: 'ES256', kid: 'test', jws } };
 }
 

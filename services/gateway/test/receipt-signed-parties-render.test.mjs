@@ -18,7 +18,7 @@ function foreignReceipt() {
     payment: { rail: 'usdc', network: 'base', asset: 'USDC', gross_amount: '0.010000', payee: SIGNED_PAYEE },
     caller_binding: { payer_wallet: SIGNED_PAYER },
   };
-  const jws = `${b64({ alg: 'ES256', typ: 'chit402-receipt+jwt', kid: 'k' })}.${b64(claims)}.sig`;
+  const jws = `${b64({ alg: 'ES256', typ: 'chit402-receipt+jwt', kid: 'k' })}.${b64(claims)}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
   return {
     task_id: TASK,
     evidence: 'foreign_ingest',

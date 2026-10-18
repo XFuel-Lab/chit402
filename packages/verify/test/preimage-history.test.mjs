@@ -37,7 +37,7 @@ function b64url(obj) {
 function compactJws(payload) {
   const header = Buffer.from(JSON.stringify({ alg: 'ES256' })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${header}.${body}.sig`;
+  return `${header}.${body}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
 }
 
 test('a published row preimage must match, and a missing unsigned one does not fail', async () => {
