@@ -1190,6 +1190,18 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
     stamp: { fee_usd: '0.002', fee_units: '2000', waived: true, currency: 'USDC' },
     links: { self: 'https://api.chit402.com/receipt/foreign-x402-nano-1', explorer },
     verify_url: 'https://api.chit402.com/receipt/foreign-x402-nano-1',
+    // Parties and amounts render only from signed claims.
+    issuer_signature: {
+      jws: [
+        Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
+        Buffer.from(JSON.stringify({
+          task_id: 'foreign-x402-nano-1',
+          payer: sender,
+          payment: { gross_amount: '1000000000000000000000000000000', payee: recipient },
+        })).toString('base64url'),
+        'sig',
+      ].join('.'),
+    },
   });
   assert.match(html, /<!doctype html>/);
   assert.match(html, /Recorded/);
@@ -1233,6 +1245,18 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
     route: { model: 'other', provider: 'foreign', hub: 'foreign' },
     stamp: { fee_usd: '0.002', fee_units: '2000', waived: false, currency: 'USDC' },
     links: { self: 'https://api.chit402.com/receipt/foreign-x402-usdc-1', explorer },
+    // Parties and amounts render only from signed claims.
+    issuer_signature: {
+      jws: [
+        Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
+        Buffer.from(JSON.stringify({
+          task_id: 'foreign-x402-usdc-1',
+          payer: sender,
+          payment: { asset: 'USDC', gross_amount: '5000', payee: recipient },
+        })).toString('base64url'),
+        'sig',
+      ].join('.'),
+    },
   });
   assert.match(html, /<!doctype html>/);
   assert.match(html, /Recorded/);

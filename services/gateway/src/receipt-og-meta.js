@@ -127,15 +127,29 @@ export function buildReceiptOgImageUrl(receipt) {
   return `${self.replace(/\/$/, '')}/og.png`;
 }
 
+function signedGrossAmount(receipt) {
+  const jws = receipt?.issuer_signature?.jws;
+  if (typeof jws !== 'string') return null;
+  const parts = jws.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return claims?.payment?.gross_amount ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Open Graph title + description + image for a public receipt.
  * @param {object} receipt — buildReceipt() or foreign ingest snapshot
- * @param {object} [mergedView] — output of mergeReceiptView(receipt)
+ * @param {object} [mergedView] — output of displayReceiptView(receipt)
  */
 export function buildReceiptOgMeta(receipt, mergedView = null) {
   const view = mergedView || receipt;
   const p = view.payment || {};
-  const amountLabel = formatUsdcShareAmount(p.gross_amount, p.rail);
+  // Amount shown only as signed by the issuer; never the outer copy.
+  const amountLabel = formatUsdcShareAmount(signedGrossAmount(receipt), p.rail);
   const shortId = shortReceiptIdForShare(receipt.task_id || view.task_id);
 
   const title = p.rail === 'unmetered'
