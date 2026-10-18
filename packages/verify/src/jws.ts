@@ -50,18 +50,21 @@ export const PUBLIC_RECEIPT_TYP = 'chit402-public-receipt+jwt';
  * header is what separates them. A slot accepts only its own typ.
  *
  * Receipts: `chit402-receipt+jwt` since payload v5. Receipts issued before
- * that used the generic `JWT` typ, and some local or third-party signers omit
- * `typ`; the receipt slot alone keeps accepting those (`null` = no typ).
- * verifyReceipt still requires the signed payload to name this receipt.
+ * that used the generic `JWT` typ, which the receipt slot still accepts.
+ * No issued receipt lacks a typ; an untyped issuer JWS (for example an x402
+ * offer or receipt extension signed before those had their own typ) is
+ * refused. verifyReceipt still requires the signed payload to name this receipt.
  */
 export const ISSUER_JWS_TYP = {
-  receipt: ['chit402-receipt+jwt', 'JWT', null],
+  receipt: ['chit402-receipt+jwt', 'JWT'],
   treeHead: ['chit402-tree-head+jwt'],
   treeEpoch: ['chit402-tree-epoch+jwt'],
   issuerHistory: ['chit402-issuer-history+jwt'],
   refusal: ['chit402-refusal+jwt'],
   freeze: ['chit402-freeze+jwt'],
   anchorWallets: ['chit402-anchor-wallets+jwt'],
+  x402Offer: ['chit402-x402-offer+jwt'],
+  x402Receipt: ['chit402-x402-receipt+jwt'],
 } as const satisfies Record<string, readonly (string | null)[]>;
 
 export type IssuerJwsTyp = string | null;

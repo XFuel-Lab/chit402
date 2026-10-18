@@ -184,14 +184,22 @@ export function didHostFromRequest(req) {
   }
 }
 
-async function sign(payload, resourceUrl) {
+/**
+ * JWS typ for the x402 offer and receipt extensions. They are signed with the
+ * issuer key, so each carries its own typ and can never stand in for a
+ * Chit402 receipt, tree head, or other issuer document.
+ */
+export const X402_OFFER_JWT_TYP = 'chit402-x402-offer+jwt';
+export const X402_RECEIPT_JWT_TYP = 'chit402-x402-receipt+jwt';
+
+async function sign(payload, resourceUrl, typ) {
   const kid = kidFor(resourceUrl);
   if (!kid) throw new Error('offer-receipt: resourceUrl must be an absolute http(s) URL');
   const canonical = jcsCanonicalize(payload);
   // signJws JSON.stringifies the object. Parse the JCS text so key order and
   // number/string encoding are the canonical bytes (flat payloads round-trip).
   const parsed = JSON.parse(canonical);
-  const { jws } = await signJwsAsync(parsed, { typ: null, kid });
+  const { jws } = await signJwsAsync(parsed, { typ, kid });
   const payloadB64 = jws.split('.')[1];
   const signed = Buffer.from(payloadB64, 'base64url').toString('utf8');
   if (signed !== canonical) {
@@ -263,7 +271,7 @@ export async function buildOfferExtension(accepts, resourceUrl, { expiresAtMs = 
         payTo: a.payTo,
         amount: a.amount,
         validUntil,
-      }, resourceUrl),
+      }, resourceUrl, X402_OFFER_JWT_TYP),
     });
   }
   return {
@@ -291,7 +299,7 @@ export async function buildReceiptExtension({ network, resourceUrl, payer, trans
           payer,
           issuedAt: issuedAt ?? Math.floor(Date.now() / 1000),
           transaction: transaction || undefined,
-        }, resourceUrl),
+        }, resourceUrl, X402_RECEIPT_JWT_TYP),
       },
     },
     schema: RECEIPT_SCHEMA,

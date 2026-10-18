@@ -256,6 +256,33 @@ export function decodeReceiptClaims(receipt) {
  * Signed fields are taken from the JWS payload — never trust top-level copies on slim receipts.
  */
 export function mergeReceiptView(receipt) {
+  return withSignedParties(mergeReceiptViewInner(receipt), receipt);
+}
+
+/**
+ * Payee and payer shown on a receipt page come from the signed claims when
+ * the JWS carries them. Outer copies are display fallbacks only.
+ */
+function withSignedParties(view, receipt) {
+  if (!view || typeof view !== 'object') return view;
+  const claims = decodeReceiptClaims(receipt);
+  if (!claims || typeof claims !== 'object') return view;
+  let out = view;
+  const signedPayee = claims.payment && typeof claims.payment === 'object' ? claims.payment.payee : undefined;
+  if (typeof signedPayee === 'string' && signedPayee && out.payment && typeof out.payment === 'object'
+    && out.payment.payee !== signedPayee) {
+    out = { ...out, payment: { ...out.payment, payee: signedPayee } };
+  }
+  const signedPayer = claims.caller_binding && typeof claims.caller_binding === 'object'
+    ? claims.caller_binding.payer_wallet
+    : undefined;
+  if (typeof signedPayer === 'string' && signedPayer && out.caller_binding?.payer_wallet !== signedPayer) {
+    out = { ...out, caller_binding: { ...(out.caller_binding || {}), payer_wallet: signedPayer } };
+  }
+  return out;
+}
+
+function mergeReceiptViewInner(receipt) {
   if (receipt?.payment) {
     // OpenAI /v1 surface adds payment presentation fields. Signed session fields
     // always come from the JWS — never trust a mirrored outer session block.

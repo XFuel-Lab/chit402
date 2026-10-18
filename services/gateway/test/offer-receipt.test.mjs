@@ -108,7 +108,7 @@ test('signed offers for both live accepts[] entries verify and use second validU
     assert.equal(offer.payload, undefined);
     const header = extractJWSHeader(offer.signature);
     assert.equal(header.alg, 'ES256');
-    assert.equal(header.typ, undefined);
+    assert.equal(header.typ, 'chit402-x402-offer+jwt');
     assert.equal(header.kid, `${didWebFor(LIVE_RESOURCE)}#${getIssuerKid()}`);
     const raw = payloadBytes(offer.signature);
     const parsed = JSON.parse(raw);
@@ -214,7 +214,7 @@ test('receipt JWS verifies and the legacy settle fields stay put', async () => {
   assert.ok(payload.issuedAt < 1e11, 'issuedAt is unix seconds');
   const raw = payloadBytes(receipt.signature);
   assert.equal(raw, canonicalize(JSON.parse(raw)));
-  assert.equal(extractJWSHeader(receipt.signature).typ, undefined);
+  assert.equal(extractJWSHeader(receipt.signature).typ, 'chit402-x402-receipt+jwt');
 
   const direct = await buildReceiptExtension({
     network: 'eip155:8453',

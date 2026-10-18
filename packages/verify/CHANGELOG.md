@@ -3,6 +3,16 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased — Signed party binding
+
+### Changed
+- **Outer payTo and payer must match the signature.** On a receipt payment, an outer `payTo` must equal the signed payee and an outer `payer` the signed payer (EVM addresses compare without case). A missing signed counterpart is `failed`.
+- **Receipt slot drops the untyped form.** It accepts `chit402-receipt+jwt` and the earlier `JWT` typ. No issued receipt lacks a typ. The x402 offer and receipt extensions now carry their own typs (`chit402-x402-offer+jwt`, `chit402-x402-receipt+jwt`), listed in `ISSUER_JWS_TYP`.
+- **Reasons pass through.** A refused header (for example `unsupported_header`) is reported as such instead of `signature_invalid`.
+
+### Tests
+- payTo/payer binding, the untyped and x402 typs in the receipt slot, reason pass-through, and the public attestation header allowlist. Issued receipts keep their verdicts. Not published. No deploy.
+
 ## 0.4.8 — Issuer JWS slot typing
 
 ### Changed

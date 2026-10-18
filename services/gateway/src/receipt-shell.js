@@ -114,7 +114,11 @@ export function toPublicShell(receipt, { inclusion = null, signedHead = null } =
     payload_version: claims.payload_version ?? receipt?.issuer_signature?.payload_version ?? null,
     asset: claims?.payment?.asset || receipt?.payment?.asset || 'USDC',
     chain: chainOf(receipt, claims),
-    pay_to: claims?.payment?.payee || receipt?.payment?.payee || null,
+    // Signed payee only when the JWS signs a payment; the outer copy is used
+    // only for a receipt with no signed payment block.
+    pay_to: claims?.payment && typeof claims.payment === 'object'
+      ? (claims.payment.payee || null)
+      : (receipt?.payment?.payee || null),
     amount_gross: gross == null ? null : String(gross),
     amount_settled: settled == null ? null : String(settled),
     payment_tx: txOf(receipt, claims),

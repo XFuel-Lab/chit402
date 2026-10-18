@@ -162,7 +162,7 @@ for (const schema of ['chit402.tree_head.v2', 'chit402.tree_epoch.v1', 'chit402.
   });
 }
 
-for (const typ of ['chit402-tree-head+jwt', 'chit402-tree-epoch+jwt', 'chit402-issuer-history+jwt', 'chit402-refusal+jwt', 'chit402-anchor-wallets+jwt', 'chit402-freeze+jwt', 'something-else']) {
+for (const typ of ['chit402-tree-head+jwt', 'chit402-tree-epoch+jwt', 'chit402-issuer-history+jwt', 'chit402-refusal+jwt', 'chit402-anchor-wallets+jwt', 'chit402-freeze+jwt', 'chit402-x402-offer+jwt', 'chit402-x402-receipt+jwt', 'something-else']) {
   test(`receipt slot refuses typ ${typ}`, async () => {
     const res = await verifyReceipt(receiptWith(goodClaims, typ), { jwks: localJwks, trustedKids: [kid], fetchImpl: offline });
     assert.equal(res.overall, 'failed');
@@ -170,12 +170,16 @@ for (const typ of ['chit402-tree-head+jwt', 'chit402-tree-epoch+jwt', 'chit402-i
   });
 }
 
-for (const typ of ['JWT', undefined]) {
-  test(`legacy receipt typ ${typ ?? '(none)'} is still accepted when bound`, async () => {
-    const res = await verifyReceipt(receiptWith(goodClaims, typ), { jwks: localJwks, trustedKids: [kid], fetchImpl: offline });
-    assert.equal(res.overall, 'verified', res.errors.join('; '));
-  });
-}
+test('legacy receipt typ JWT is still accepted when bound', async () => {
+  const res = await verifyReceipt(receiptWith(goodClaims, 'JWT'), { jwks: localJwks, trustedKids: [kid], fetchImpl: offline });
+  assert.equal(res.overall, 'verified', res.errors.join('; '));
+});
+
+test('an untyped JWS is refused in the receipt slot (no issued receipt lacks a typ)', async () => {
+  const res = await verifyReceipt(receiptWithHeader(goodClaims, {}), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.equal(res.issuer_signature.reason, 'typ_mismatch');
+});
 
 test('each non-receipt slot accepts only its own typ', () => {
   const key = localJwks.keys[0];
@@ -186,6 +190,8 @@ test('each non-receipt slot accepts only its own typ', () => {
     refusal: 'chit402-refusal+jwt',
     freeze: 'chit402-freeze+jwt',
     anchorWallets: 'chit402-anchor-wallets+jwt',
+    x402Offer: 'chit402-x402-offer+jwt',
+    x402Receipt: 'chit402-x402-receipt+jwt',
   };
   for (const [slot, own] of Object.entries(slots)) {
     assert.equal(verifyIssuerJws(signCompact({ a: 1 }, own), key, { expectTyp: ISSUER_JWS_TYP[slot] }).valid, true, slot);
@@ -363,5 +369,56 @@ test('CLI reports typ_mismatch for a non-receipt JWS in the receipt slot', () =>
     const human = runCli([fixture(`slot-typing/${name}`)]);
     assert.equal(human.status, 1);
     assert.doesNotMatch(human.stdout, /key that is not the issuer/);
+  }
+});
+
+
+// --- signed party binding and reason pass-through.
+const PAYEE = '0x23f713411c30bbd9a989c9cbc22eb0b55f7f7334';
+const PAYER = '0x9f8951cb8b060f52fdf87297b3c5b00f7aa18f52';
+function foreignLike(outerExtra, signedExtra = {}) {
+  const signedPayment = { ...payment, payee: PAYEE };
+  const claims = { ...goodClaims, payment: signedPayment, payee: PAYEE, payer: PAYER, ...signedExtra };
+  return receiptWith(claims, 'chit402-receipt+jwt', { payment: { ...payment, payee: PAYEE, ...outerExtra } });
+}
+
+test('outer payTo and payer matching the signed payee and payer (any case) verify', async () => {
+  const res = await verifyReceipt(foreignLike({ payTo: PAYEE.toUpperCase().replace('0X', '0x'), payer: PAYER.toUpperCase().replace('0X', '0x') }), localOpts);
+  assert.equal(res.overall, 'verified', res.errors.join('; '));
+});
+
+test('an outer payTo that differs from the signed payee fails', async () => {
+  const res = await verifyReceipt(foreignLike({ payTo: '0x' + '1'.repeat(40) }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.ok(res.errors.some((e) => /payment\.payTo does not match/.test(e)), res.errors.join('; '));
+});
+
+test('an outer payer that differs from the signed payer fails', async () => {
+  const res = await verifyReceipt(foreignLike({ payer: '0x' + '2'.repeat(40) }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.ok(res.errors.some((e) => /payment\.payer does not match/.test(e)), res.errors.join('; '));
+});
+
+test('an outer payer with no signed payer fails', async () => {
+  const res = await verifyReceipt(foreignLike({ payer: PAYER }, { payer: undefined }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.ok(res.errors.some((e) => /payment\.payer is not covered/.test(e)), res.errors.join('; '));
+});
+
+test('a non-typ header refusal is reported with its own reason', async () => {
+  const res = await verifyReceipt(receiptWithHeader(goodClaims, { typ: 'chit402-receipt+jwt', crit: ['b64'], b64: false }), localOpts);
+  assert.equal(res.overall, 'failed');
+  assert.equal(res.issuer_signature.reason, 'unsupported_header');
+  assert.ok(res.errors.some((e) => /unsupported_header/.test(e)), res.errors.join('; '));
+});
+
+test('public attestation parser refuses crit and b64 headers (exact header keys)', async () => {
+  const { parsePublicAttestation } = await import('../dist/index.js');
+  const kid43 = 'A'.repeat(43);
+  for (const extra of [{ crit: ['b64'], b64: false }, { b64: true }, { crit: [] }]) {
+    const h = { alg: 'ES256', typ: 'chit402-public-receipt+jwt', kid: kid43, ...extra };
+    const jws = `${Buffer.from(JSON.stringify(h)).toString('base64url')}.${Buffer.from('chit402.public_receipt.v1\n{}').toString('base64url')}.${'A'.repeat(86)}`;
+    const parsed = parsePublicAttestation(jws);
+    assert.equal(parsed.ok, false, JSON.stringify(extra));
   }
 });
