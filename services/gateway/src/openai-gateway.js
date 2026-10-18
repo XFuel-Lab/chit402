@@ -1786,7 +1786,9 @@ async function buildReceipt({
       ...signed.proof,
       status: proofStatus, // pending | unavailable | gated | skipped
       ...(proofStatus === 'gated'
-        ? { note: 'On-chain proof is cost-gated for this key. Signed receipt above stands; request proving access to generate an SP1 settlement proof.' }
+        ? { note: settlementProofEnabled()
+          ? 'On-chain proof is cost-gated for this key. Signed receipt above stands; request proving access to generate an SP1 settlement proof.'
+          : 'Signed receipt above stands. The on-chain settlement proof add-on is coming soon.' }
         : {}),
       links: {
         status: `/task-status?task_id=${taskId}`,

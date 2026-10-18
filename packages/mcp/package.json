@@ -2,7 +2,7 @@
   "name": "xfuel-mcp",
   "version": "0.4.1",
   "mcpName": "io.github.XFuel-Lab/xfuel-mcp",
-  "description": "Official MCP server for Chit402 — chat completions (unmetered /v1), paid task submit, quotes, and settlement proofs. Runs over stdio or streamable HTTP.",
+  "description": "Official MCP server for Chit402 — chat completions (unmetered /v1), paid task submit, quotes, and signed receipts. Runs over stdio or streamable HTTP.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

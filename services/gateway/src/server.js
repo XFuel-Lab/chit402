@@ -392,7 +392,8 @@ function tier2Gate() {
     basis: cogsGate !== null ? 'provider_cogs' : 'settled_amount',
     min_cogs_usd: cogsGate,
     min_amount_usd: usd(vi.tier2Min),
-    opt_in_price_usd: Number(tier2ProofUnits()) / 1_000_000,
+    offered: settlementProofEnabled(),
+    opt_in_price_usd: settlementProofEnabled() ? Number(tier2ProofUnits()) / 1_000_000 : null,
   };
 }
 

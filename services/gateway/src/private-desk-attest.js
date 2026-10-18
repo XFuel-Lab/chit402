@@ -131,8 +131,11 @@ export function attestProofGateError(task, privacyCtx) {
     return {
       status: 503,
       code: 'attest_proof_incomplete',
-      message: 'Private + Attest could not produce a Tier-2 SP1 proof with payment_binding.in_proof. '
-        + 'No successful Attest receipt was issued.',
+      message: settlementProofEnabled()
+        ? 'Private + Attest could not produce a Tier-2 SP1 proof with payment_binding.in_proof. '
+          + 'No successful Attest receipt was issued.'
+        : 'Private + Attest needs the Tier-2 settlement proof add-on, which is not currently offered. '
+          + 'No successful Attest receipt was issued.',
     };
   }
   return null;

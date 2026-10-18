@@ -10,7 +10,7 @@ XFuel is the book. This agent spent Y on this job. You hold hub, model, and amou
 
 1. `POST /v1/chat/completions` — $0.01 USDC on Base and Solana  
 2. `GET|POST /v1/agents/:agent_id/book` — possession-gated last-N collected spend  
-3. Signed receipt is table stakes (HMAC); SP1 settlement proof is on demand  
+3. Signed receipt is table stakes (HMAC); the SP1 settlement proof add-on is coming soon (not currently offered)  
 4. Optional → A2A / swarm coordination  
 
 Skills never hold private keys. USDC payers are agent-side.
@@ -72,7 +72,9 @@ answered with a synthetic result, so a receipt always corresponds to work that r
 Skill / SDK payer path. Example: `examples/pay-with-usdc.ts`.  
 Reference: [`_shared/reference/payments-x402.md`](./_shared/reference/payments-x402.md).
 
-## Flow 3 — Verify settlement proof
+## Flow 3 — Verify settlement proof (historical tasks only)
+
+The Tier-2 settlement proof add-on is not currently offered; new tasks carry a signed receipt only.
 
 Skill: `xfuel-verify-proof`. Example: `examples/pay-prove-verify.ts`.  
 Checks proof outcome + payment binding; optional on-chain nullifier read.

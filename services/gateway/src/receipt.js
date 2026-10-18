@@ -163,13 +163,13 @@ export const USDC_ATOMIC_DECIMALS = 6;
 
 const PROOF_SCOPE_NOTE =
   'The SP1 proof attests settlement metadata (correct fee split, payment binding) ' +
-  'and a commitment to the output hash. The on-chain settlement proof is coming soon. ' +
+  'and a commitment to the output hash. It has not been verified on-chain. ' +
   'It does NOT attest that the provider computed the model correctly ' +
   '(that is Tier-2 proof-of-inference, roadmap).';
 
 const PROOF_SCOPE_NOTE_NO_BINDING =
   'The SP1 proof attests settlement metadata and a commitment to the output hash. ' +
-  'The on-chain settlement proof is coming soon. It does not include a payment-binding ' +
+  'It has not been verified on-chain. It does not include a payment-binding ' +
   'commitment. It does NOT attest that the provider computed the model correctly.';
 
 /** Normalize task timestamps to Unix seconds (JSON + JWS `iat`). */
@@ -2260,8 +2260,11 @@ export function privacyOf(task) {
   const notes =
     mode === 'vendor_blind'
       ? (attest === 'tier2'
-        ? 'Private + Attest: vendor-blind routing plus mandatory Tier-2 SP1 settlement proof (payment_binding.in_proof when live). '
-          + 'Third parties can verify spend facts without prompts or org topology. Not prompt-confidential; not trustless ZK for content.'
+        ? (settlementProofEnabled()
+          ? 'Private + Attest: vendor-blind routing plus mandatory Tier-2 SP1 settlement proof (payment_binding.in_proof when live). '
+            + 'Third parties can verify spend facts without prompts or org topology. Not prompt-confidential; not trustless ZK for content.'
+          : 'Private + Attest: vendor-blind routing. The Tier-2 settlement proof add-on is not currently offered. '
+            + 'Not prompt-confidential; not trustless ZK for content.')
         : 'Private Desk: buyer paid Chit; provider saw gateway-pooled credentials, not the end-customer identity. '
           + 'Tier-1 signed receipt only — gateway-trusted, not trustless. Does not encrypt prompts.')
       : mode === 'content_tee'
@@ -3280,7 +3283,9 @@ function proofWhyMissing(receipt) {
   if (pr?.has_proof) return '';
   const cogs = formatUsdc(receipt.provider_cogs?.actual);
   const bits = [
-    `On-chain SP1 proofs are opt-in ($${(Number(tier2ProofUnits()) / 1_000_000).toFixed(2)}) or automatic above $2.00 of provider cost.`,
+    settlementProofEnabled()
+      ? `On-chain SP1 proofs are opt-in ($${(Number(tier2ProofUnits()) / 1_000_000).toFixed(2)}) or automatic above $2.00 of provider cost.`
+      : 'The on-chain settlement proof add-on is coming soon.',
     cogs ? `This call cost ${cogs} to serve.` : null,
     'The signed receipt above does not depend on the prover.',
   ].filter(Boolean);

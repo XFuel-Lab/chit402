@@ -30,6 +30,7 @@
  */
 
 import logger from './logger.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 import { estimateTokens, messagesToText } from './usage.js';
 
 /** USDC has 6 decimals; rate-card entries are base units per 1,000,000 tokens. */
@@ -615,7 +616,8 @@ export function publishedPrice(modelId, providerRate, cfg = {}) {
     // Every call clears the floor, so on small calls this *is* the price and the
     // per-token rates never bind. Saying so here saves a buyer the surprise.
     min_charge_usd: usdNum(floor),
-    tier2_proof_usd: usdNum(tier2ProofUnits(cfg)),
+    // null while the add-on is off (SETTLEMENT_PROOF_ENABLED): nothing to price.
+    tier2_proof_usd: settlementProofEnabled() ? usdNum(tier2ProofUnits(cfg)) : null,
   };
 
   if (!costPlus) {
@@ -689,6 +691,12 @@ export function publishedPrice(modelId, providerRate, cfg = {}) {
  * Protocol-level pricing, for discovery surfaces that describe the whole
  * endpoint rather than one model (`/.well-known/x402`).
  */
+function tier2PricingSentence() {
+  return settlementProofEnabled()
+    ? 'Tier-2 SP1 settlement proofs are opt-in and charged flat on top.'
+    : 'The Tier-2 settlement proof add-on is coming soon and is not priced.';
+}
+
 export function describePricing(cfg = {}) {
   const costPlus = cfg.costPlus ?? costPlusEnabled();
   const floor = Math.max(
@@ -703,7 +711,8 @@ export function describePricing(cfg = {}) {
     min_charge_usd: usdNum(floor),
     // Opt-in and flat: a Succinct request costs the same whatever it proves, so
     // a percentage would misprice it in both directions. See ADR 0009.
-    tier2_proof_usd: usdNum(tier2ProofUnits(cfg)),
+    // null while the add-on is off (SETTLEMENT_PROOF_ENABLED): nothing to price.
+    tier2_proof_usd: settlementProofEnabled() ? usdNum(tier2ProofUnits(cfg)) : null,
     // Book ingest stamp. Same USDC scale as the hop floor (6 decimals).
     stamp_fee_usd: usdNum(STAMP_FEE_UNITS),
     stamp_fee_units: String(STAMP_FEE_UNITS),
@@ -712,9 +721,8 @@ export function describePricing(cfg = {}) {
     description: costPlus
       ? `Price is measured provider cost plus ${platformFeeBps(cfg) / 100}%, both itemised on `
         + 'the signed receipt, so a buyer can recompute the bill rather than trust a price '
-        + 'list. Tier-2 SP1 settlement proofs are opt-in and charged flat on top.'
-      : 'Metered against a retail rate card, floored per settlement. Tier-2 SP1 settlement '
-        + 'proofs are opt-in and charged flat on top.',
+        + 'list. ' + tier2PricingSentence()
+      : 'Metered against a retail rate card, floored per settlement. ' + tier2PricingSentence(),
   };
 }
 

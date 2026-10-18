@@ -58,7 +58,7 @@ Production: pass `{ baseUrl, apiKey }`. As-deployed: [../../docs/DEPLOYMENT.md](
 
 ## Proofs
 
-Settlement proofs attest fees / payment binding / output commitment — not black-box model correctness. Unmetered `/v1` receipts have no Base explorer ref. Use `getProof` + `XFuelOnChain.verifyProof` / `verifyPaymentBinding` on a paid task that actually proved.
+Settlement proofs attest fees / payment binding / output commitment — not black-box model correctness. Unmetered `/v1` receipts have no Base explorer ref. Use `getProof` + `XFuelOnChain.verifyProof` / `verifyPaymentBinding` on a historical paid task that actually proved. The Tier-2 settlement proof add-on is not currently offered.
 
 ## Docs
 

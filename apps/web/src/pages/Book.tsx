@@ -1039,7 +1039,7 @@ export default function Book() {
                   </summary>
                   <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
                     <label className="book-field">
-                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above</span>
+                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above. Tier-2 settlement proofs are temporarily unavailable; leave empty.</span>
                       <input
                         className="input"
                         type="text"

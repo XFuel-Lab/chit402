@@ -74,7 +74,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Escrow helper',
-    description: 'Ledger escrow beside the book — settlement proofs for high-value jobs.',
+    description: 'Ledger escrow beside the book for high-value jobs. Settlement-tier escrow is paused while settlement proofs are unavailable.',
     href: `${GITHUB}/docs/product/escrow-helper.md`,
     meta: 'book',
     external: true,
