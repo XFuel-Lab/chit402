@@ -1,6 +1,6 @@
 # Receipt hash preimages
 
-A stranger can recompute the public hashes on a receipt without asking us what bytes we hashed. `GET /receipt/:id?format=json` (schema `xfuel.receipt.v4`) adds an unsigned `preimages` block. `GET /receipt/:id/preimage` is the unsigned public shell, not the signed payload. `GET /receipt/:id/preimage/:field` is not served. A refusal (`chit402.refusal.v1`) serves the stored canonical object at `GET /refusal/:id`, `GET /refusal/:id/preimage`, and `GET /refusal/:id/preimage/:field`.
+Some hashes on a receipt can be recomputed without asking us what bytes we hashed. The public `GET /receipt/:id?format=json` is the unsigned shell (`chit402.receipt_shell.v1`). It does not carry a `preimages` block or the signed payload. `GET /receipt/:id/preimage` is the unsigned public shell, not the signed payload. `GET /receipt/:id/preimage/:field` is not served. The tables below give the rule for each hash; the bytes come from the owner copy (the saved receipt, or the owner view at `GET /v1/receipts/:receipt_id/owner`, which returns the original `jws`, `private_fields` and `row_hash`). A refusal (`chit402.refusal.v1`) serves the stored canonical object at `GET /refusal/:id`, `GET /refusal/:id/preimage`, and `GET /refusal/:id/preimage/:field`.
 
 ## Whole canonical object
 
@@ -28,9 +28,9 @@ Every key below may appear. A key that is absent is omitted. Wire order is the J
 
 Prompt text, model output text, API keys, private JWKs, weight shards, and possession-gated book rows are not in the object. `output.hash` and `caller_binding.api_key_hash` may appear, because those digests are already public claims. The per-field routes below stay as a convenience for one hash. They are not a substitute for the stored object.
 
-The block is not inside the payment JWS, the book-seq JWS, or the coverage JWS. Old signatures still verify.
+A saved receipt from an earlier response may carry an unsigned `preimages` block. That block is not inside the payment JWS, the book-seq JWS, or the coverage JWS, and no public route serves it now. Old signatures still verify.
 
-`xfuel-verify receipt.json` hashes each published preimage and exits 1 if a preimage is missing or does not match. A saved receipt from before this block still verifies in the library. The CLI requires the block when the receipt carries a hash this page lists as recomputable. `--no-preimage` skips that requirement.
+When a saved receipt has that block, `xfuel-verify receipt.json` hashes each preimage in it and exits 1 if a preimage is missing or does not match. A saved receipt from before this block still verifies in the library. The CLI requires the block when the receipt carries a hash this page lists as recomputable. `--no-preimage` skips that requirement.
 
 ## Canonicalization
 
@@ -49,11 +49,15 @@ The block is not inside the payment JWS, the book-seq JWS, or the coverage JWS. 
 | `book_chain.row_hash` | SHA-256 | UTF-8 `agent_id\|seq\|task_id\|prev_hash\|event`. `agent_id` is `book_id`. |
 | `book_row.row_hash` on a refusal | SHA-256 | The same line. `event` is `policy_blocked`. |
 | `inclusion.leaf` | SHA-256 | `0x00` ‖ UTF-8 `task_id\|row_hash`. `preimage_hex` is that whole input. |
-| `tree_head_hash` | SHA-256, RFC 6962 | This receipt's own leaf body (`leaf.preimage_utf8`) plus `audit_path`: `index`, `tree_size`, sibling hashes, and `root`. The root is the log prefix that ends at this receipt. Sibling entries are hashes. Other leaves' task ids and bodies are not in the public receipt. A saved response that still has the old `leaves` array verifies during the transition. |
+| `tree_head_hash` | SHA-256, RFC 6962 | This receipt's own leaf body `task_id\|row_hash` plus `audit_path`: `index`, `tree_size`, sibling hashes, and `root`. The root is the log prefix that ends at this receipt. Sibling entries are hashes. `row_hash` is owner-held (owner view), so only the owner can rebuild the leaf. The public shell gives the leaf hash and siblings, not the leaf body. Other leaves' task ids and bodies are not published. |
 | `binding.expected_commitment` | keccak256 | `abi.encodePacked(paymentRefHash, taskIdHash, rail, amount)`, or the inference form that also packs `modelCommitment` and `outputHash`, when that commitment is non-null. |
 | `coverage.universe_hash` | SHA-256 | Only for a finished empty set: SHA-256 of the empty string. `enumerated_hash` is the same bytes when the window is empty. |
 | `job_spec_hash` | SHA-256, `0x` prefix | `JSON.stringify({text, budget, deadline, acceptance})` with that key order. The board job publishes this. There is no separate award-object hash. |
 | `response_hash` on `POST /erc8004/validate` | keccak256 | UTF-8 of the canonical HMAC payload array (`JSON.stringify`, no extra space). That is the verdict object hash. |
+
+## Payment to log leaf
+
+On payload v10 and v11 receipts the link from the payment to the log leaf is issuer-asserted. The leaf body includes `row_hash`, which is owner-held, so a stranger cannot recompute the leaf from public data. The issuer signature ties the payment fields to the leaf. A public salted preimage commitment for this link is parked, not shipped.
 
 ## Not publicly recomputable
 
