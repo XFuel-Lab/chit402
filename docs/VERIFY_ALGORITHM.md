@@ -30,8 +30,9 @@ A signed Chit402 receipt attests:
 Live receipts carry two different signatures. They do **not** cover the same bytes:
 
 - `issuer_signature.jws` — primary public attestation. Compact ES256 JWS over a
-  JSON object (`canonicalSignedClaims`). Verify with a **trusted** key. This is
-  what `https://api.chit402.com/receipt/:id?format=json` returns today.
+  JSON object (`canonicalSignedClaims`). Verify with a **trusted** key. The JWS
+  is in the owner copy: the saved receipt, or the owner view at
+  `GET /v1/receipts/:receipt_id/owner`. It is not in the public response.
 - `hmac_attestation` — HMAC-SHA256 over the canonical array in section 3
   (`canonicalSignedPayload`). Shared-secret path for an attestor who holds the
   secret. Older receipts used `signature` / `co_signature` for this same HMAC.
@@ -39,6 +40,20 @@ Live receipts carry two different signatures. They do **not** cover the same byt
 Tampering with a covered field invalidates the signature that covers it. The
 unsigned outer `payment` and `caller_binding` copies are a display mirror.
 Quote facts from the verified JWS claims, and flag any mismatch with the outer copy.
+
+### What the public URL returns (payload v10)
+
+`GET https://api.chit402.com/receipt/:id?format=json` returns the unsigned
+public shell, `chit402.receipt_shell.v1`, not the signed receipt. Its top-level
+fields are `schema`, `receipt_id`, `task_id`, `payload_version`, `issued_at`,
+`amount_gross`, `amount_settled`, `asset`, `chain`, `pay_to`, `payment_tx`,
+`inclusion` (`leaf_hash`, `proof`, `signed_head`), `unsigned: true` and the
+advisory `verifier_min`. It carries no `issuer_signature`, no
+`hmac_attestation` and no `preimages` block. It does not carry `leaf_index`;
+`GET /v1/receipts/:receipt_id/inclusion` returns `leaf_index`, `tree_size` and
+the audit path. `?format=auditor` currently returns the same body as
+`?format=json`. A shell alone verifies as `COULD_NOT_CHECK` (exit 2): nothing
+in it is signed except the tree head.
 
 ## 2. Signature structure
 
@@ -404,7 +419,9 @@ still verify against a JWKS entry matched by `kid`.
 
 ### Verification steps
 
-1. Fetch the receipt: `GET https://api.chit402.com/receipt/:taskId?format=json`
+1. Take the owner copy of the receipt (the saved receipt, or
+   `GET /v1/receipts/:receipt_id/owner`). The public `?format=json` shell has no
+   signature (see section 1).
 2. Read `issuer_signature.jws`.
 3. Choose a trusted key:
    - JWKS file or `GET https://api.chit402.com/.well-known/jwks.json`, entry whose
@@ -491,9 +508,11 @@ process.exit(result.valid ? 0 : 1);
 
 ```javascript
 import { verifyReceiptEcdsaWithJwks } from 'xfuel-sdk';
+import { readFileSync } from 'node:fs';
 
-// Fetch receipt and JWKS
-const receipt = await fetch('https://api.chit402.com/receipt/chit-xxx?format=json').then(r => r.json());
+// The owner copy of the receipt (saved at purchase). The public ?format=json
+// shell is unsigned and does not verify here.
+const receipt = JSON.parse(readFileSync('receipt.json', 'utf8'));
 const jwks = await fetch('https://api.chit402.com/.well-known/jwks.json').then(r => r.json());
 
 const result = verifyReceiptEcdsaWithJwks(receipt, jwks);
@@ -670,8 +689,8 @@ Solana SessionAct in v1).
 
 ## 13. Public preimages and issuer key history
 
-`GET /receipt/:id?format=json` adds an unsigned `preimages` block. Each recomputable hash names the exact bytes, the encoding, and the algorithm. `GET /receipt/:id/preimage/:field` returns that one field. `xfuel-verify` hashes those bytes and fails if a preimage is missing or does not match. `output.hash` stays a private commitment. Coverage hashes over book rows stay off the public preimage. HMAC stays a keyed tag.
+The public v10 response has no `preimages` block, and `GET /receipt/:id/preimage/:field` is not served for receipts. `GET /receipt/:id/preimage` returns the unsigned shell, not the signed payload; `payload_hash` is over the owner-held bytes. The recompute rules are in receipt-preimage.md; the bytes come from the owner copy. A refusal serves its stored canonical object at `GET /refusal/:id/preimage`. `output.hash` stays a private commitment. HMAC stays a keyed tag.
 
-`GET /.well-known/issuer-history.json` is the signed key history. `xfuel-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. If the history cannot be fetched, the command warns. `--strict-issuer-history` fails closed instead.
+`GET /.well-known/issuer-history.json` is the signed key history. `chit402-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. The check is always on. If no live history verifies, the bundled snapshot is used.
 
 See [receipt-preimage.md](./product/receipt-preimage.md) and [issuer-key-history.md](./product/issuer-key-history.md).
