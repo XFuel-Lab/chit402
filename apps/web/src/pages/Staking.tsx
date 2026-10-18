@@ -180,7 +180,7 @@ export default function Staking() {
             </div>
             <div style={feeRow}>
               <span style={{ color: '#8a8a9a' }}>ZK Verified</span>
-              <span className="badge badge-green">SP1 Proof</span>
+              <span className="badge badge-green">SP1 Proof (coming soon)</span>
             </div>
 
             <button

@@ -88,7 +88,7 @@ Keep `@elizaos/plugin-openai` (or `@elizaos/plugin-ollama`) **below** Chit prior
 - **Demo / first hour:** no `CHIT_PAYER_PK` → `POST /v1/chat/completions` via `xfuel-sdk` `chatCompletions()` (signed receipt, unmetered with demo key).
 - **Production:** `CHIT_PAYER_PK` set → `submitInference()` + `createEip3009Payer()` (402 handshake, collected USDC row + `verify_url`).
 
-Tier-2 SP1 proofs are **not** enabled on every call (default signed receipts only).
+Tier-2 SP1 settlement proofs are **not currently offered** (signed receipts only).
 
 ## Design-partner demo path (door #4)
 

@@ -78,6 +78,12 @@ import {
 } from './session-act.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
+import {
+  refuseSettlementProofWhenOff,
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
@@ -386,7 +392,8 @@ function tier2Gate() {
     basis: cogsGate !== null ? 'provider_cogs' : 'settled_amount',
     min_cogs_usd: cogsGate,
     min_amount_usd: usd(vi.tier2Min),
-    opt_in_price_usd: Number(tier2ProofUnits()) / 1_000_000,
+    offered: settlementProofEnabled(),
+    opt_in_price_usd: settlementProofEnabled() ? Number(tier2ProofUnits()) / 1_000_000 : null,
   };
 }
 
@@ -440,7 +447,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /prove-result      : settlement proof add-on (coming soon, not active).
 - GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
 - GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
@@ -518,7 +525,7 @@ Receipts can carry two signatures: primary (signature) and co-signer (co_signatu
 Either validates the receipt. If Chit disappears, the co-signer's key still works.
 - docs/VERIFY_ALGORITHM.md : plain-language + runnable verify code (offline).
 - scripts/verify-receipt.mjs : standalone verification script.
-- binding.in_proof:true means the commitment is on-chain via SP1 (escape hatch).
+- binding.in_proof: the on-chain settlement proof add-on is coming soon and not active today.
 
 ## Issuer Signature (public-key verification)
 
@@ -1665,6 +1672,10 @@ export async function createApp() {
     req.id = crypto.randomUUID();
     next();
   });
+
+  // Settlement proof add-on: refused before any quote, 402 or settle unless
+  // SETTLEMENT_PROOF_ENABLED is exactly 'true'.
+  app.use(refuseSettlementProofWhenOff);
 
   // Request logging
   app.use((req, res, next) => {
@@ -5371,7 +5382,7 @@ export async function createApp() {
       if (!result.ok) {
         const status = result.reason?.includes('not found') ? 404 : 400;
         return res.status(status).json({
-          error: 'escrow_error',
+          error: result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'escrow_error',
           message: result.reason,
           existing: result.existing,
           checks: result.checks,
@@ -5473,7 +5484,7 @@ export async function createApp() {
       if (!result.ok) {
         const status = result.reason?.includes('not found') ? 404 : 400;
         return res.status(status).json({
-          error: 'a2a_escrow_error',
+          error: result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'a2a_escrow_error',
           message: result.reason,
           existing: result.existing,
           checks: result.checks,
@@ -5779,8 +5790,18 @@ function _findTaskByPaymentRef(aiListener, paymentRef) {
  *
  * @param {Object} msg  A2A message record
  */
-async function _generateA2AProof(msg) {
+export async function _generateA2AProof(msg) {
   try {
+    // Settlement proof add-on off: A2A registration requests no SP1 proof.
+    if (!settlementProofEnabled()) {
+      msg.sp1Proof = {
+        skipped: true,
+        reason: SETTLEMENT_PROOF_NOT_OFFERED,
+        note: SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+        timestamp: Date.now(),
+      };
+      return;
+    }
     const sp1Prover = getSP1Prover();
     if (!sp1Prover) {
       msg.sp1Proof = { error: 'SP1_PROVER_URL not set', timestamp: Date.now() };

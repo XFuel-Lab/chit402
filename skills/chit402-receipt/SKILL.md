@@ -18,8 +18,8 @@ and a public **`verify_url`** the principal can forward to finance or auditors.
 available when the 402 challenge lists it — prefer Base unless the user asks otherwise.
 
 **Do not default to SP1.** Signed receipts (Tier 1, ES256 JWS) are table stakes.
-Tier-2 settlement proofs are optional and cost extra — never request or wait for SP1
-unless the user explicitly asks for on-chain proof.
+Tier-2 settlement proofs are not currently offered — never request or wait for SP1;
+the gateway refuses `proof_tier: settlement` with 400 `settlement_proof_not_offered`.
 
 ## When to use
 

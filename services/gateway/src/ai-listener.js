@@ -6,6 +6,11 @@ import logger from './logger.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { getZkGPTProver, isZkGPTProverConfigured } from './zkgpt-prover-client.js';
 import { buildPaymentBinding, finalizePaymentBindingForProof } from './payment-binding.js';
+import {
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 import { proveGatedReason } from './prove-gate.js';
 import { createTaskStore } from './task-store.js';
 import { getFloatManager, normalizeProviderId } from './provider-float.js';
@@ -1357,7 +1362,7 @@ class AIListener {
       const requested = normalizeRequestedTier(task.intent?.proofTier);
       const cogs = measured ?? 0n;
       const quote = quoteFromCogs(cogs, {
-        tier2: requested?.tier === 'settlement',
+        tier2: requested?.tier === 'settlement' && settlementProofEnabled(),
       });
       task.intent = task.intent || {};
       task.intent.amount = quote.amount;
@@ -1377,7 +1382,7 @@ class AIListener {
     } else if (measured !== null && task.meta) {
       const requested = normalizeRequestedTier(task.intent?.proofTier);
       task.meta.pricing = quoteFromCogs(measured, {
-        tier2: requested?.tier === 'settlement',
+        tier2: requested?.tier === 'settlement' && settlementProofEnabled(),
       });
     }
 
@@ -1799,6 +1804,19 @@ class AIListener {
           timestamp: Date.now(),
         };
         logger.info({ taskId: task.taskId }, 'SP1 proof gated (cost control); signed receipt only');
+        return;
+      }
+
+      // Settlement proof add-on off (SETTLEMENT_PROOF_ENABLED): no proof is
+      // requested on any path, including chain intents where proveAllowed is unset.
+      if (!settlementProofEnabled()) {
+        task.sp1Proof = {
+          skipped: true,
+          reason: SETTLEMENT_PROOF_NOT_OFFERED,
+          note: SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+          timestamp: Date.now(),
+        };
+        logger.info({ taskId: task.taskId }, 'SP1 proof skipped: settlement proof add-on is off');
         return;
       }
 

@@ -467,7 +467,9 @@ test('X402_COST_PLUS actually changes the quote, not just the advertised price',
   assert.ok(cut > 0.4 && cut < 0.55, `expected a ~47% cut, got ${(cut * 100).toFixed(1)}%`);
 });
 
-test('an opt-in proof is charged for at quote time', async () => {
+test('an opt-in proof is charged for at quote time', async (t) => {
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  t.after(() => { delete process.env.SETTLEMENT_PROOF_ENABLED; });
   await primeCatalog();
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };
 
@@ -524,7 +526,9 @@ test('a cost-plus quote publishes a breakdown that rebuilds the price', async ()
   assert.equal(q.priced_model, 'akash/zai-org/GLM-5.2');
 });
 
-test('TEE / spot-check / zk-full do not add the $0.10 settlement-proof surcharge', async () => {
+test('TEE / spot-check / zk-full do not add the $0.10 settlement-proof surcharge', async (t) => {
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  t.after(() => { delete process.env.SETTLEMENT_PROOF_ENABLED; });
   await primeCatalog();
   const { priceUSDCResolved, wantsSettlementProof } = await import('../src/x402-server.js');
   const cfg = { usdcPriceDefault: '2000', usdcPrices: {} };

@@ -15,6 +15,11 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { CLAIM_TYPES, fileAndAdjudicate, OUTCOME_TYPES } from './book-dispute.js';
+import {
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 
 export const ESCROW_ACTIONS = {
   OPEN: 'open',
@@ -177,6 +182,13 @@ export function verifyEscrowRelease(escrow, receipt, entry) {
   const requiredTier = escrow.required?.proof_tier;
   if (requiredTier) {
     checks.proof_tier.checked = true;
+    // While the settlement proof add-on is off, an escrow that requires the
+    // settlement tier is held, never released on that tier.
+    if (String(requiredTier).toLowerCase() === 'settlement' && !settlementProofEnabled()) {
+      checks.proof_tier.valid = false;
+      checks.proof_tier.reason = 'settlement tier unavailable; escrow held';
+      return { ok: false, checks, reason: checks.proof_tier.reason };
+    }
     const actualTier = receipt?.proof?.tier
       || receipt?.proof?.zkp_tier
       || receipt?.verified_inference?.tier
@@ -251,6 +263,15 @@ export async function handleEscrowAction(input, deps = {}) {
     }
     if (required.proof_tier && !PROOF_TIERS.includes(String(required.proof_tier).toLowerCase())) {
       return { ok: false, reason: `invalid proof_tier: ${required.proof_tier}` };
+    }
+    // Add-on off: an escrow that requires the settlement tier could never
+    // release, so it is not opened (no hold is created).
+    if (String(required.proof_tier || '').toLowerCase() === 'settlement' && !settlementProofEnabled()) {
+      return {
+        ok: false,
+        code: SETTLEMENT_PROOF_NOT_OFFERED,
+        reason: `required.proof_tier 'settlement' is not offered. ${SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE}`,
+      };
     }
 
     const existing = store.getByTask(taskId);

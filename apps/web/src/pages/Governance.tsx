@@ -14,7 +14,7 @@ const mockProposals = [
     quorum: 1_000_000,
     endTime: '2d 14h remaining',
     author: '0xab12...ef34',
-    description: 'Deploy the Inference Router circuit on Bittensor EVM subnet to enable verified AI inference routing with SP1 proofs.',
+    description: 'Deploy the Inference Router circuit on Bittensor EVM subnet to enable verified AI inference routing with SP1 proofs (coming soon).',
   },
   {
     id: 'XIP-6',

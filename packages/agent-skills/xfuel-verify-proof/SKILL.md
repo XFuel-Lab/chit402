@@ -1,7 +1,9 @@
 ---
 name: xfuel-verify-proof
 description: >-
-  Retrieve and validate the SP1 settlement proof for a completed XFuel task,
+  Retrieve and validate the SP1 settlement proof for a historical XFuel task
+  (the Tier-2 settlement proof add-on is not currently offered; new tasks carry a
+  signed receipt only),
   confirm the result hash matches, check the nullifier for replay protection, and
   optionally verify on-chain settlement on Base. Use after submitting a task when
   the user asks "is this result actually proven?", "verify the proof", "show me
@@ -11,6 +13,8 @@ description: >-
 # XFuel: Verify Proof
 
 Confirm that an XFuel task produced a valid SP1 settlement proof and settled on-chain.
+The Tier-2 settlement proof add-on is not currently offered, so this applies to historical
+tasks only; new tasks return a signed receipt and `proof_outcome: not_applicable`.
 (Tier-2 attests settlement metadata + output commitment — not black-box model correctness.)
 
 ## Prerequisites

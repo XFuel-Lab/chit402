@@ -4,6 +4,7 @@
  */
 
 import { proveAllowedForKey } from './prove-gate.js';
+import { settlementProofEnabled, SETTLEMENT_PROOF_NOT_OFFERED } from './settlement-proof-flag.js';
 
 export const PRIVACY_PRODUCT_DESK = 'private_desk';
 export const PRIVACY_PRODUCT_ATTEST = 'private_attest';
@@ -91,6 +92,14 @@ export function bodyForPrivacyPricing(body = {}, privacyCtx) {
  */
 export function attestPreflightError(privacyCtx, { proverConfigured, apiKey }) {
   if (!privacyCtx?.privateAttest) return null;
+  if (!settlementProofEnabled()) {
+    return {
+      status: 400,
+      code: SETTLEMENT_PROOF_NOT_OFFERED,
+      message: 'Private + Attest needs the Tier-2 settlement proof add-on, which is not currently offered. '
+        + 'Retry as Private Desk (Tier-1 receipt only).',
+    };
+  }
   if (!proverConfigured) {
     return {
       status: 503,
@@ -122,8 +131,11 @@ export function attestProofGateError(task, privacyCtx) {
     return {
       status: 503,
       code: 'attest_proof_incomplete',
-      message: 'Private + Attest could not produce a Tier-2 SP1 proof with payment_binding.in_proof. '
-        + 'No successful Attest receipt was issued.',
+      message: settlementProofEnabled()
+        ? 'Private + Attest could not produce a Tier-2 SP1 proof with payment_binding.in_proof. '
+          + 'No successful Attest receipt was issued.'
+        : 'Private + Attest needs the Tier-2 settlement proof add-on, which is not currently offered. '
+          + 'No successful Attest receipt was issued.',
     };
   }
   return null;

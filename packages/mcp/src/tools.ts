@@ -437,8 +437,10 @@ is one of 'pending' | 'valid' | 'regenerable' | 'invalid'.`,
   server.registerTool(
     'get_proof',
     {
-      title: 'Get ZK settlement proof',
-      description: `Fetch the SP1 ZK settlement proof for a settled task.
+      title: 'Get task proof status',
+      description: `Fetch the proof status for a settled task. The on-chain settlement proof add-on is
+not currently offered, so new tasks report a signed receipt only (sp1_proof is skipped).
+Historical tasks that carry a proof still return it.
 
 Args:
   - task_id (string): from chat_completions (xfuel.task_id) or submit_inference
@@ -454,7 +456,7 @@ settled yet — poll get_task_status until proof_outcome is 'valid'.`,
         task_id: z.string().min(1).describe('Task id from chat_completions or submit_inference'),
       },
       annotations: {
-        title: 'Get ZK settlement proof',
+        title: 'Get task proof status',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -562,7 +564,7 @@ Unmetered chat_completions does not need this quote.`,
         messages: z.array(z.unknown()).optional().describe('Chat messages to forecast (same as the request you will submit)'),
         max_tokens: z.number().int().positive().optional().describe('Output budget to forecast'),
         tools: z.array(z.unknown()).optional().describe('Tool definitions (counted as prompt tokens)'),
-        proof_tier: z.string().optional().describe('Requested assurance tier (only `settlement` adds the SP1 surcharge)'),
+        proof_tier: z.string().optional().describe('Requested assurance tier. Omit it: `settlement` (and `inference`) are not currently offered and the server refuses them with 400 settlement_proof_not_offered'),
       },
       annotations: {
         title: 'Quote / price a task',
@@ -787,8 +789,8 @@ agent can shop on trust, not just cost. Combines quote_task pricing with Verifie
 (Tier-3) metadata: whether the model is registered on-chain for model-authenticity (PoMA)
 and which trust tiers apply. No side effects.
 
-Tiers: 'signed' (Tier-1 signed receipt) and 'settlement' (Tier-2 SP1 proof on Base) are
-always available; 'inference' (Tier-3 TEE / ZK proof-of-inference) is roadmap. When the
+Tiers: 'signed' (Tier-1 signed receipt) is available; 'settlement' (on-chain settlement
+proof add-on) is coming soon; 'inference' (Tier-3 TEE / ZK proof-of-inference) is roadmap. When the
 server has XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS, model_registered reflects the on-chain
 PoMA registry.
 
@@ -821,8 +823,9 @@ tiers_available, note } }.`,
           amount: args.amount,
         });
 
-        // Tier-1/Tier-2 are live for every Chit402 task; Tier-3 is roadmap.
-        const tiers_available = ['signed', 'settlement'];
+        // Tier-1 is live for every Chit402 task. The Tier-2 settlement proof add-on
+        // is not currently offered; Tier-3 is roadmap.
+        const tiers_available = ['signed'];
         let model_registered: boolean | null = null;
         let model_commitment: string | null = null;
 
@@ -847,7 +850,7 @@ tiers_available, note } }.`,
         }
 
         const note =
-          'signed + settlement are live on Base; inference (TEE/ZK proof-of-inference) is roadmap. ' +
+          'signed is live on Base; the settlement proof add-on is coming soon; inference (TEE/ZK proof-of-inference) is roadmap. ' +
           (model_registered === null
             ? 'Model-authenticity (PoMA) status unknown — configure XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS.'
             : model_registered

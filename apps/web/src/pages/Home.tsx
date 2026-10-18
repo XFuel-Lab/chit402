@@ -36,7 +36,7 @@ export default function Home() {
             <code>POST /v1/chat/completions</code> returns a signed receipt: hub, model, amount, verify_url.
             Cost-plus, quoted, receipted — pay USDC on Base or Solana.
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
-            On-chain SP1 proof on demand — not on every call.
+            The on-chain settlement proof add-on is coming soon.
             Drop-in model ids: <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the{' '}
             <code>/v1</code> door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed receipt.
           </p>

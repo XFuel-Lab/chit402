@@ -168,7 +168,8 @@ test('get_verified_quote returns pricing + tiers (PoMA unknown without registry)
   );
   const res = await handlers.get('get_verified_quote')!({ model: 'llama-3-70b:q4_k_m' });
   assert.equal(res.isError, undefined);
-  assert.match(res.content[0].text, /tiers=signed\/settlement/);
+  assert.match(res.content[0].text, /tiers=signed(;|$)/m);
+  assert.doesNotMatch(res.content[0].text, /tiers=[^;]*settlement/);
 });
 
 test('verify_model_commitment without RPC + registry returns a clear "not configured" error', async () => {

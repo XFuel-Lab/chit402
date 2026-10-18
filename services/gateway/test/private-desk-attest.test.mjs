@@ -1,4 +1,6 @@
 import { test } from 'node:test';
+// Existing behavior is the flag-on path; flag-off is covered in settlement-proof-flag.test.mjs.
+process.env.SETTLEMENT_PROOF_ENABLED = 'true';
 import assert from 'node:assert/strict';
 import {
   parsePrivacyProduct,

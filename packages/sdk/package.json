@@ -1,7 +1,7 @@
 {
   "name": "xfuel-sdk",
   "version": "0.6.0",
-  "description": "Chit402 SDK — USDC/x402 on Base, tiered receipts, SP1 proofs. Submit AI tasks, pay, prove, verify.",
+  "description": "Chit402 SDK — USDC/x402 on Base, signed receipts. Submit AI tasks, pay, verify.",
   "main": "./index.cjs",
   "types": "dist/index.d.ts",
   "exports": {
