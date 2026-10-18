@@ -54,14 +54,14 @@ test('display view and shell use signed values or null', () => {
   assert.deepEqual(signedParties({}), { payee: null, payer: null, gross_amount: null, settled_amount: null, net_amount: null, fee_amount: null, asset: null });
 });
 
-test('foreign payout asset label reads unsigned when the asset is not signed', () => {
+test('foreign payout asset label reads (asset not signed) when the asset is not signed', () => {
   const r = foreignReceipt();
   const parts = r.issuer_signature.jws.split('.');
   const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
   delete claims.payment.asset;
   r.issuer_signature.jws = `${parts[0]}.${b64(claims)}.${parts[2]}`;
   const html = renderReceiptHtml(r);
-  assert.match(html, /base \/ unsigned/);
+  assert.match(html, /base \(asset not signed\)/);
   assert.doesNotMatch(html, /base \/ USDC/);
   const signedHtml = renderReceiptHtml(foreignReceipt());
   assert.match(signedHtml, /base \/ USDC/);

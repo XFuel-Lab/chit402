@@ -6,11 +6,19 @@ import { buildReceiptOgMeta } from '../src/receipt-og-meta.js';
 import { toPublicShell, renderReceiptShellHtml } from '../src/receipt-shell.js';
 
 const FIX = new URL('../../../packages/verify/test/fixtures/public/', import.meta.url);
-const load = (name) => {
-  const o = JSON.parse(fs.readFileSync(new URL(name, FIX), 'utf8'));
-  return o.receipt && o.receipt.issuer_signature ? o.receipt : o;
+// Full receipt id -> fixture file holding that public receipt.
+const FIXTURE_FILE = {
+  'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96': 'chit-1ebc5616.json',
+  'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af': 'chit-39af100b.json',
+  'foreign-x402-muy1hh8y-66555d036df8': 'foreign-x402-muy1hh8y.json',
 };
-const REAL = ['chit-1ebc5616.json', 'chit-39af100b.json', 'foreign-x402-muy1hh8y.json'];
+const load = (id) => {
+  const o = JSON.parse(fs.readFileSync(new URL(FIXTURE_FILE[id], FIX), 'utf8'));
+  const r = o.receipt && o.receipt.issuer_signature ? o.receipt : o;
+  assert.equal(r.task_id, id);
+  return r;
+};
+const REAL = Object.keys(FIXTURE_FILE);
 const BAD_TX = `0x${'ee'.repeat(32)}`;
 const MARKERS = ['eeeeeeee', 'tfuel', 'ethereum', '4321', '4322', '333333', 'etherscan'];
 
@@ -63,13 +71,13 @@ for (const name of REAL) {
 }
 
 test('signed Base USDC contract renders as USDC without uppercasing', () => {
-  const html = renderReceiptHtml(load('foreign-x402-muy1hh8y.json'));
+  const html = renderReceiptHtml(load('foreign-x402-muy1hh8y-66555d036df8'));
   assert.match(html, /base \/ USDC/);
   assert.doesNotMatch(html, /0X833589FCD6EDB6E08F4C7C32D4F71B54BDA02913/);
 });
 
 test('auditor export reports unsigned when fee or rail is not signed', () => {
-  const r = load('chit-1ebc5616.json');
+  const r = load('xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96');
   const parts = r.issuer_signature.jws.split('.');
   const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
   delete claims.payment.protocol_fee_bps;

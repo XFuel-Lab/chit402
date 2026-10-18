@@ -48,6 +48,7 @@ function ogAssetLabel(asset, paymentRef) {
 function shareAmountLabel(grossAmount, rail, assetLabel) {
   if (rail === 'unmetered') return 'UNMETERED';
   if (grossAmount == null || grossAmount === '') return 'unsigned';
+  if (assetLabel === 'unsigned') return `${String(grossAmount)} (asset not signed)`;
   if (assetLabel === 'USDC') return formatUsdcShareAmount(grossAmount, rail);
   if (assetLabel === 'XNO' && /^[0-9]+$/.test(String(grossAmount))) {
     const d = String(grossAmount).replace(/^0+(?=\d)/, '').padStart(31, '0');
@@ -110,7 +111,8 @@ export function receiptOgRailLabel(view) {
   if (p.rail === 'unmetered') return 'UNMETERED';
   const asset = ogAssetLabel(p.asset, p.ref);
   if (p.rail === 'usdc' || String(p.rail).startsWith('solana')) {
-    return `${settlementNetworkLabel(p.ref)} ${asset}`;
+    const net = settlementNetworkLabel(p.ref);
+    return asset === 'unsigned' ? `${net} (asset not signed)` : `${net} ${asset}`;
   }
   return p.rail ? String(p.rail).toUpperCase() : 'unsigned';
 }

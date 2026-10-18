@@ -3028,8 +3028,10 @@ function foreignIngestPaymentSection(receipt, view) {
   const asset = signedAssetLabel(p.asset, p.network);
   const network = p.network || '';
   const railLabel = isNano
-    ? `Nano / ${asset}`
-    : (network ? `${network} / ${asset}` : asset);
+    ? (asset === 'unsigned' ? 'Nano (asset not signed)' : `Nano / ${asset}`)
+    : (asset === 'unsigned'
+      ? (network ? `${network} (asset not signed)` : 'asset not signed')
+      : (network ? `${network} / ${asset}` : asset));
   const amountHtml = isNano
     ? `${esc(xnoFromRaw(p.gross_amount) ?? 'unsigned')} <span class="muted">XNO</span>`
     : usdcCell(p.gross_amount);

@@ -326,7 +326,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     if (usdc) {
       totalHtml = `<div class="total"><span>$${esc(usdBody(card.amount_gross))} <small>USDC</small></span>${chainHtml}</div>`;
     } else {
-      const assetHtml = ` <small>${esc(card.asset ? shortForm(card.asset) : 'unsigned')}</small>`;
+      const assetHtml = ` <small>${esc(card.asset ? shortForm(card.asset) : '(asset not signed)')}</small>`;
       totalHtml = `<div class="total"><span>${esc(String(card.amount_gross))}${assetHtml}</span>${chainHtml}</div>`;
     }
   }
@@ -358,7 +358,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     }
   }
   const assetRow = card.asset == null
-    ? textRow('Asset', 'unsigned')
+    ? textRow('Asset', 'not signed')
     : textRow('Asset', usdc ? `USDC ${shortForm(card.asset)}` : shortForm(card.asset));
   const issued = card.issued_at == null ? '' : textRow('Issued', formatIssued(card.issued_at));
   const format = card.payload_version == null ? '' : textRow('Format', `payload v${card.payload_version}`);

@@ -397,8 +397,8 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
   const html = renderReceiptHtml(await buildReceipt(xfuelTask));
 
   // No signed asset on this fixture: the share card does not assume USDC.
-  assert.match(html, /<title>10000 unsigned · chit-247049dd…<\/title>/);
-  assert.match(html, /property="og:title" content="10000 unsigned · chit-247049dd…"/);
+  assert.match(html, /<title>10000 \(asset not signed\) · chit-247049dd…<\/title>/);
+  assert.match(html, /property="og:title" content="10000 \(asset not signed\) · chit-247049dd…"/);
   assert.match(html, /property="og:image" content="[^"]+\/og\.png"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
@@ -689,7 +689,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  assert.match(html, /<title>10000 unsigned · openai-aaaaaaaa-bbbb…<\/title>/);
+  assert.match(html, /<title>10000 \(asset not signed\) · openai-aaaaaaaa-bbbb…<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
