@@ -107,6 +107,24 @@ describe('Issuer Key Management', () => {
     assert.equal(valid, true);
   });
 
+  test('verifyWithJwk rejects non-canonical spellings of a valid signature', () => {
+    const message = 'test message';
+    const { value: sig } = signWithIssuerKey(message);
+    const { publicKeyJwk: jwk } = initIssuerKey();
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const trailing = `${sig.slice(0, -1)}${alphabet[alphabet.indexOf(sig.at(-1)) | 1]}`;
+    assert.notEqual(trailing, sig);
+    assert.deepEqual(Buffer.from(trailing, 'base64url'), Buffer.from(sig, 'base64url'));
+    for (const [name, v] of Object.entries({
+      'trailing bits': trailing,
+      '== padding': `${sig}==`,
+      'junk character': `${sig.slice(0, 10)}*${sig.slice(10)}`,
+    })) {
+      assert.equal(verifyWithJwk(message, v, jwk), false, name);
+    }
+    assert.equal(verifyWithJwk(message, sig, jwk), true);
+  });
+
   test('verifyWithJwk rejects wrong message', () => {
     const { value: sig } = signWithIssuerKey('original message');
     const { publicKeyJwk: jwk } = initIssuerKey();
