@@ -2,6 +2,7 @@ import axios from 'axios';
 import http from 'node:http';
 import https from 'node:https';
 import logger from './logger.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /**
  * Resolve the prover endpoint configuration from env.
@@ -1320,7 +1321,16 @@ export async function initSP1Prover() {
   }
   if (!sp1ProverClient) {
     sp1ProverClient = new SP1ProverClient();
-    
+
+    // Settlement proof add-on off: no proof is ever requested, so no health
+    // check, metrics or fallback polling and no dashboard either. The client
+    // object still exists (no I/O in the constructor), so prover-configured
+    // checks read as before.
+    if (!settlementProofEnabled()) {
+      logger.info('Settlement proof add-on off: prover health and metrics polling skipped');
+      return sp1ProverClient;
+    }
+
     const isHealthy = await sp1ProverClient.healthCheck();
     if (isHealthy) {
       logger.info(

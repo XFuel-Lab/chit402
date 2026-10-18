@@ -23,12 +23,13 @@ Actions: `open` | `release` | `clawback` | `status`
   "action": "open",
   "task_id": "task-abc",
   "required": {
-    "output_hash": "0x…",
-    "proof_tier": "settlement"
+    "output_hash": "0x…"
   },
   "expires_at": "2026-09-13T00:00:00.000Z"
 }
 ```
+
+`required.proof_tier: "settlement"` needs the Tier-2 settlement proof add-on, which is not currently offered. While it is off, `open` with that requirement returns `400 settlement_proof_not_offered`, and A2A escrow (which always requires it) refuses `open` and `fund`.
 
 ## Honest limits
 

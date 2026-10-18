@@ -8,6 +8,7 @@
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
 
 // Existing behavior is the flag-on path; flag-off is covered in settlement-proof-flag.test.mjs.
 process.env.SETTLEMENT_PROOF_ENABLED = 'true';
@@ -19,6 +20,9 @@ import {
   refreshProverProbe,
   resetProverProbe,
 } from '../src/prove-gate.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 beforeEach(() => {
   delete process.env.PROVER_ENABLED;

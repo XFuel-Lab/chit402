@@ -19,6 +19,10 @@ import {
   DEFAULT_PLATFORM_FEE_BPS,
   DEFAULT_TIER2_PROOF_UNITS,
 } from '../src/pricing.js';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 /** ~4 chars/token, so 4n characters is about n tokens. */
 const promptOf = (tokens) => [{ role: 'user', content: 'x'.repeat(tokens * 4) }];

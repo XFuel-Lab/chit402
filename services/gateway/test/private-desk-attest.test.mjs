@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
 // Existing behavior is the flag-on path; flag-off is covered in settlement-proof-flag.test.mjs.
 process.env.SETTLEMENT_PROOF_ENABLED = 'true';
 import assert from 'node:assert/strict';
@@ -17,6 +18,9 @@ import { quoteFromCogs } from '../src/pricing.js';
 import { privacyOf, buildReceipt } from '../src/receipt.js';
 import { finalizePaymentBindingForProof } from '../src/payment-binding.js';
 import { buildPaymentBinding } from '../src/payment-binding.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 test('parsePrivacyProduct: desk and attest wire ids', () => {
   assert.equal(parsePrivacyProduct({ xfuel: { privacy_product: 'private_desk' } }), PRIVACY_PRODUCT_DESK);

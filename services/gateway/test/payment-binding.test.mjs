@@ -17,6 +17,10 @@ import {
   buildPaymentBinding,
   finalizePaymentBindingForProof,
 } from '../src/payment-binding.js';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 const taskFixture = (over = {}) => ({
   taskId: 'task-abc',
