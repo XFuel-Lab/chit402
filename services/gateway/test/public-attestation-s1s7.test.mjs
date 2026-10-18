@@ -242,7 +242,7 @@ test('S3 a timed-out sign blocks the next sign until it settles; its late result
     calls.push({ payload, signal, resolve: () => realSign(payload).then(resolve), reject });
   });
   const store = new storeMod.PublicAttestationStore();
-  const worker = workerFor(store, { sign, now: () => t, extra: { signTimeoutMs: 20, stuckAfterMs: 30 }, alerts });
+  const worker = workerFor(store, { sign, now: () => t, extra: { signTimeoutMs: 20, signCeilingMs: 60_000 }, alerts });
   await worker.enqueue(entryFor());
   await worker.tick();
   assert.equal(calls.length, 1);
@@ -257,8 +257,7 @@ test('S3 a timed-out sign blocks the next sign until it settles; its late result
   await worker.tick();
   assert.equal(calls.length, 1, 'never two signs in flight');
   assert.ok(worker.stats().waited_on_inflight >= 2);
-  assert.ok(alerts.some((a) => a.event === 'public_attestation_sign_stuck'), 'a long outstanding sign alerts once');
-  assert.equal(alerts.filter((a) => a.event === 'public_attestation_sign_stuck').length, 1);
+  assert.equal(alerts.some((a) => a.event === 'public_attestation_sign_released'), false, 'below the ceiling the slot is kept');
 
   // The orphan settles late. Its JWS is not stored.
   calls[0].resolve();
