@@ -79,7 +79,7 @@ test('flag off: a settlement request is refused before the 402, with no settle a
       assert.equal(res.status, 400, `${name} (${value})`);
       assert.equal(res.headers.get('payment-required'), null, name);
       const json = await res.json();
-      assert.deepEqual(json, { error: { code: 'settlement_proof_not_offered', message: 'Tier-2 settlement proofs are temporarily unavailable.' } });
+      assert.deepEqual(json, { error: { code: 'settlement_proof_not_offered', message: 'Tier-2 settlement proofs are temporarily unavailable. Retry without proof_tier.' } });
     }
   }
   // A payment presented with the request is never verified or settled.
