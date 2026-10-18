@@ -253,7 +253,7 @@
         "nullifier": {
           "type": ["string", "null"],
           "pattern": "^0x[0-9a-fA-F]{64}$",
-          "description": "Single-use nullifier anchored on-chain. Frozen field when present.",
+          "description": "Settlement proof add-on (coming soon, not active). Frozen field when present.",
           "x-frozen": true
         },
         "proving_time_ms": {

@@ -340,26 +340,17 @@ function verifyPaymentBinding(receipt) {
 }
 ```
 
-## 7. On-chain verification (`in_proof: true`)
+## 7. On-chain settlement proof (`in_proof`), coming soon
 
-When `receipt.binding.in_proof === true`, the payment commitment is part of
-the SP1 proof's public values and anchored on-chain with a single-use
-nullifier. In this case:
-
-1. Fetch the on-chain proof using the `nullifier` from `receipt.proof.nullifier`
-2. Extract the `paymentCommitment` from the proof's public values
-3. Compare with `receipt.binding.expected_commitment`
-
-The SP1 verifier contract address is in `deploy/manifests/`. This is the
-**escape hatch**: even if Chit and all co-signers disappear, an `in_proof`
-receipt can be verified purely on-chain.
+The on-chain settlement proof add-on is coming soon and is not active today.
+Do not rely on `receipt.binding.in_proof` or `receipt.proof.nullifier`. This
+section will describe the on-chain check when the add-on ships.
 
 ## 8. Security notes
 
 - **Never reuse secrets** across different roles (primary / co-signer / webhook).
 - **Rotate secrets** by adding a new co-signer, then retiring the old primary.
 - **Constant-time compare** the HMAC digests to prevent timing attacks.
-- **Check `in_proof`** for highest assurance — it's the on-chain escape hatch.
 
 ## 9. What can be proven if Chit disappears
 
@@ -369,11 +360,6 @@ With this algorithm and either the primary or co-signer secret:
 2. **Payment moved on-chain** — verify `payment.ref` on a block explorer.
 3. **The output hash is committed** — `output.hash` was attested at serve time.
 4. **Cost is attested** — `provider_cogs.actual` is what we paid the provider.
-
-With `in_proof: true`, add:
-
-5. **Nullifier is anchored** — single-use, cannot be replayed.
-6. **Commitment is on-chain** — survives Chit entirely.
 
 ## 10. ECDSA issuer signature (public-key verification)
 

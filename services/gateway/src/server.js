@@ -440,7 +440,7 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /prove-result      : settlement proof add-on (coming soon, not active).
 - GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
 - GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
@@ -518,7 +518,7 @@ Receipts can carry two signatures: primary (signature) and co-signer (co_signatu
 Either validates the receipt. If Chit disappears, the co-signer's key still works.
 - docs/VERIFY_ALGORITHM.md : plain-language + runnable verify code (offline).
 - scripts/verify-receipt.mjs : standalone verification script.
-- binding.in_proof:true means the commitment is on-chain via SP1 (escape hatch).
+- binding.in_proof: the on-chain settlement proof add-on is coming soon and not active today.
 
 ## Issuer Signature (public-key verification)
 

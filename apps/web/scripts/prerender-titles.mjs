@@ -32,7 +32,7 @@ const ROUTE_CONTENT = {
     title: 'Products — Stamp, Private Desk, Attest | Chit402',
     h1: 'Three seats on the possession book.',
     lede:
-      'Book-first products: Stamp ($0.002 signed receipt every hop), Private Desk (vendor-blind routing cost + 1%), Private + Attest (Desk plus $0.10 mandatory Tier-2 SP1). Who paid which call; hold verify_url and book rows — not a router shop.',
+      'Book-first products: Stamp ($0.002 signed receipt every hop), Private Desk (vendor-blind routing cost + 1%), Private + Attest (Desk plus a settlement proof add-on, coming soon). Who paid which call; hold verify_url and book rows — not a router shop.',
   },
   '/docs/chit-in-15-lines': {
     title: 'Chat /v1 wire | Chit402',
@@ -144,7 +144,7 @@ const ROUTE_CONTENT = {
     title: 'Pricing — standard receipt $0.002 USDC | Chit402',
     h1: 'Pay for a collected hop.',
     lede:
-      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. Tier-2 proof $0.10 opt-in. USDC on Base and Solana; signed receipt and verify_url included.',
+      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. USDC on Base and Solana; signed receipt and verify_url included.',
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',

@@ -161,13 +161,13 @@ export const USDC_ATOMIC_DECIMALS = 6;
 
 const PROOF_SCOPE_NOTE =
   'The SP1 proof attests settlement metadata (correct fee split, payment binding) ' +
-  'and a commitment to the output hash — anchored on-chain with a single-use ' +
-  'nullifier. It does NOT attest that the provider computed the model correctly ' +
+  'and a commitment to the output hash. The on-chain settlement proof is coming soon. ' +
+  'It does NOT attest that the provider computed the model correctly ' +
   '(that is Tier-2 proof-of-inference, roadmap).';
 
 const PROOF_SCOPE_NOTE_NO_BINDING =
-  'The SP1 proof attests settlement metadata and a commitment to the output hash — ' +
-  'anchored on-chain with a single-use nullifier. It does not include a payment-binding ' +
+  'The SP1 proof attests settlement metadata and a commitment to the output hash. ' +
+  'The on-chain settlement proof is coming soon. It does not include a payment-binding ' +
   'commitment. It does NOT attest that the provider computed the model correctly.';
 
 /** Normalize task timestamps to Unix seconds (JSON + JWS `iat`). */

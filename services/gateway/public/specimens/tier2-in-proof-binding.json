@@ -30,7 +30,6 @@
   "smoke_doc": "docs/product/tier2-in-proof-binding-smoke.md",
   "ops_taps": [
     "Rebuild/redeploy SP1 prover image with guest v5.1",
-    "Register new programVKey on ZKVerifierSP1 (Base admin)",
     "SP1_PUBLIC_VALUES_V2=true on prover",
     "X402_PROOF_BINDING=true on gateway"
   ]

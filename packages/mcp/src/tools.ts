@@ -787,8 +787,8 @@ agent can shop on trust, not just cost. Combines quote_task pricing with Verifie
 (Tier-3) metadata: whether the model is registered on-chain for model-authenticity (PoMA)
 and which trust tiers apply. No side effects.
 
-Tiers: 'signed' (Tier-1 signed receipt) and 'settlement' (Tier-2 SP1 proof on Base) are
-always available; 'inference' (Tier-3 TEE / ZK proof-of-inference) is roadmap. When the
+Tiers: 'signed' (Tier-1 signed receipt) is available; 'settlement' (on-chain settlement
+proof add-on) is coming soon; 'inference' (Tier-3 TEE / ZK proof-of-inference) is roadmap. When the
 server has XFUEL_RPC_URL + MODEL_REGISTRY_ADDRESS, model_registered reflects the on-chain
 PoMA registry.
 

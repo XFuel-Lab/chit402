@@ -6,7 +6,7 @@ import { getApiV1 } from '../apiHost';
 const PRODUCTS_SEO = {
   title: 'Products — Stamp, Private Desk, Attest | Chit402',
   description:
-    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest (Desk + $0.10 Tier-2 SP1). Not a router — who paid which call.',
+    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest (Desk plus a settlement proof add-on, coming soon). Not a router — who paid which call.',
 };
 
 type ProductSeat = {
@@ -49,12 +49,12 @@ const seats: ProductSeat[] = [
   },
   {
     name: 'Private + Attest',
-    price: 'Desk routing + 1% + $0.10 Tier-2',
-    forWho: 'Teams that need Desk plus mandatory SP1 settlement proof — fail closed if proving is unavailable.',
+    price: 'Coming soon',
+    forWho: 'Teams that need Desk plus an on-chain settlement proof. Coming soon.',
     youHold:
-      'Desk receipt plus itemized tier2_proof on the receipt; verify offline or pin issuer JWKS.',
+      'Desk receipt; the settlement proof add-on is coming soon.',
     detail:
-      'Request with xfuel.privacy_product: private_attest. Tier-2 SP1 is required, not optional.',
+      'Coming soon.',
     primaryTo: '/docs/private-spend',
     primaryLabel: 'Private Spend docs',
     secondaryTo: '/trust',
@@ -112,8 +112,8 @@ export default function Products() {
             <strong style={{ color: '#d0d0dc' }}>Stamp</strong> is on every hop.{' '}
             <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> swaps the routing posture to
             vendor-blind at the same cost + 1% door.{' '}
-            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> adds mandatory Tier-2 SP1
-            (+$0.10) on top of Desk — the gateway fails closed if proof cannot be produced.
+            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> adds an on-chain settlement
+            proof on top of Desk; coming soon.
           </p>
           <p style={{ ...styles.muted, marginTop: '0.75rem' }}>
             Install wires (chat /v1, Eliza, ACP, MCP, frameworks) are not separate products — they

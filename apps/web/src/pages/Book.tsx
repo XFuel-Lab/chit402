@@ -1144,8 +1144,8 @@ export default function Book() {
             <p>
               <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
               that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
-              It does not prove the model computed the answer. SP1 is on demand at $0.10. That proof
-              covers settlement, not correctness.
+              It does not prove the model computed the answer. The settlement proof add-on is coming
+              soon, and it covers settlement, not correctness.
             </p>
             <p>
               <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the

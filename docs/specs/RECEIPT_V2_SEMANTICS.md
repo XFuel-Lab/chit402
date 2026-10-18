@@ -20,7 +20,7 @@ Frozen fields are immutable once set. A verifier checks these against on-chain d
 | **amount_usdc** | `payment.settled_amount` (v8) or `payment.gross_amount` | USDC atomic units the payee received when the receipt is settled (6 decimals; `2000` = $0.002). v8 `settled_amount` is that on-chain Transfer. `gross_amount` is the amount charged and, once settled, the same integer |
 | **tx** | `payment.ref` | Settlement reference (`network:txHash`), e.g. `base:0xabc...` |
 | **output_hash** | `output.hash` | Commitment to the model output (keccak256 or SHA-256) |
-| **nullifier** | `proof.nullifier` | Single-use nullifier anchored on-chain (when SP1 proof present) |
+| **nullifier** | `proof.nullifier` | Settlement proof add-on (coming soon, not active) |
 | **agent_id** | `agent_id` | Registered agent identity (when bound via `/v1/agents/register`) |
 
 ---
@@ -105,12 +105,10 @@ For `payment.rail === 'usdc'` with a `payment.ref`:
 
 `route_margin_bps` on v8 comes from live pricing (`platformFeeBps` in `services/gateway/src/pricing.js`, 100 bps unless the quote stamped another rate). It replaces `protocol_fee_bps`.
 
-### 2.4 Verify Nullifier (SP1 Proof)
+### 2.4 On-chain settlement proof (coming soon)
 
-When `proof.has_proof === true` and `proof.nullifier` is present:
-1. The nullifier is anchored on-chain by the SP1 verifier contract.
-2. Query `ZKVerifierSP1` on Base (`0x9373499645292715a2275A78eD65B14215C41c06`) for the nullifier.
-3. A registered nullifier proves the proof was verified on-chain.
+The on-chain settlement proof add-on is coming soon and is not active today.
+Do not rely on `proof.nullifier`.
 
 ---
 
@@ -119,10 +117,10 @@ When `proof.has_proof === true` and `proof.nullifier` is present:
 | Tier | `proof.tier` | What it attests | Verification |
 |------|--------------|-----------------|--------------|
 | **Tier-1: Signed** | `signed` | Tamper-evidence (HMAC) | Requires signing secret |
-| **Tier-2: Settlement** | `settlement` | Payment binding + output hash anchored on-chain via SP1 | Check nullifier on-chain |
+| **Tier-2: Settlement** | `settlement` | Coming soon | Not active |
 | **Tier-3: Inference** | `inference` | TEE attestation or ZK proof of correct model execution | Attestation / ZK verify |
 
-Most receipts are Tier-1 (HMAC) by default. Tier-2 SP1 proofs are opt-in ($0.10) or automatic above $2.00 COGS.
+Most receipts are Tier-1 (HMAC) by default. The Tier-2 settlement proof add-on is coming soon.
 
 ---
 
