@@ -1,7 +1,7 @@
 {
   "name": "chit402-verify",
   "version": "0.4.9",
-  "description": "Offline verification for Chit402 receipts — verify payment binding and output hash without calling the API",
+  "description": "Offline verification for Chit402 receipts \u2014 verify payment binding and output hash without calling the API",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -29,6 +29,7 @@
   "files": [
     "dist",
     "issuer-history.snapshot.json",
+    "issuer-history.v1.snapshot.json",
     "README.md",
     "LICENSE"
   ],

@@ -10,8 +10,11 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - **Receipt slot drops the untyped form.** It accepts `chit402-receipt+jwt` and the earlier `JWT` typ. No issued receipt lacks a typ. The x402 offer and receipt extensions now carry their own typs (`chit402-x402-offer+jwt`, `chit402-x402-receipt+jwt`), listed in `ISSUER_JWS_TYP`.
 - **Reasons pass through.** A refused header (for example `unsupported_header`) is reported as such instead of `signature_invalid`.
 
+- **Receipts pinned to an earlier sealed issuer-history snapshot check against the current history.** Payload v10 receipts pin the whole history document hash. A receipt pinned to the sealed v1 snapshot was reported `issuer_history_pin_mismatch` once the published history moved to v2. The v1 snapshot now ships in the package (`issuer-history.v1.snapshot.json`). A pin to it is accepted only when the shipped bytes match the pin exactly (hash, version and seq), the snapshot verifies under the issuer key, and the supplied current history is a later sealed version (higher version and seq) that verifies and extends it. An edited copy of the pinned version is still a mismatch. The key window is checked against both. Any other pin still fails. A history file older than the bundled snapshot is still refused.
+
 ### Tests
 - payTo/payer binding, the untyped and x402 typs in the receipt slot, reason pass-through, and the public attestation header allowlist. Issued receipts keep their verdicts. Not published. No deploy.
+- Sealed-snapshot pins: a v1 pin checks against v2; a changed hash, version or seq, a current body that does not verify, an early issue time, and a history or receipt under another key do not.
 
 ## 0.4.8 — Issuer JWS slot typing
 
