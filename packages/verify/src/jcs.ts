@@ -1,6 +1,11 @@
 /**
- * RFC 8785 JSON Canonicalization.
- * Same rules as `jcsCanonicalize` in services/gateway/src/offer-receipt.js.
+ * chit402-jcs-v1, our own JSON canonicalization. It is not RFC 8785.
+ * Same rules as `jcsCanonicalize` in services/gateway/src/offer-receipt.js:
+ * keys sorted by UTF-16 code unit, no insignificant whitespace, and every
+ * code unit U+0000 through U+001F (tab and newline included) written as
+ * lowercase `\u00xx`. RFC 8785 writes `\t`, `\n` and the other short escapes
+ * instead, so the bytes differ whenever a string holds those characters.
+ * Payload v11 and refusal v2 use RFC 8785; see v11-receipt.ts.
  * Issuer-history entry hashes and the receipt canonical object use this form.
  * Per-field receipt hashes keep the encoding they were signed with.
  */
