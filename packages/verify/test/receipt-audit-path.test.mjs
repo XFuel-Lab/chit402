@@ -144,7 +144,7 @@ function reason(result) {
 
 const bodies = [
   'genesis-body-not-this-receipt',
-  'xfuel-546baa6c|foreign-row',
+  'xfuel-other-payer-0002|foreign-row',
   'xfuel-other-payer|foreign-row-2',
   'xfuel-own|own-row',
 ];
@@ -236,7 +236,7 @@ function signedAuditReceipt() {
   const rowHash = '43651fc3fbc8c678bd41c40c6158be0878896c213e9b6809cbd4f4851c2c1835';
   const local = treeOf([
     'genesis-body-not-this-receipt',
-    'xfuel-546baa6c|foreign-row',
+    'xfuel-other-payer-0002|foreign-row',
     `${taskId}|${rowHash}`,
   ]);
   const field = auditField(local, 2, taskId);
@@ -299,7 +299,7 @@ function signedAuditReceipt() {
 
 test('a chit-1ebc5616 style receipt with an audit path verifies offline and with --rpc', async () => {
   const receipt = signedAuditReceipt();
-  assert.equal(JSON.stringify(receipt).includes('xfuel-546baa6c'), false);
+  assert.equal(JSON.stringify(receipt).includes('xfuel-other-payer-0002'), false);
   assert.equal(JSON.stringify(receipt).includes('genesis-body-not-this-receipt'), false);
   const checked = await verifyReceipt(receipt, {
     trustedKids: [receipt.issuer_signature.kid],

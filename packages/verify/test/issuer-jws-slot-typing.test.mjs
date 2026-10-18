@@ -17,6 +17,7 @@ import {
   verifyIssuerSignatureWithJwks,
   ISSUER_JWS_TYP,
 } from '../dist/index.js';
+import { syntheticIssuerKey } from './fixtures/slot-typing/synthetic-key.mjs';
 
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 const load = (name) => JSON.parse(readFileSync(fixture(name), 'utf8'));
@@ -213,7 +214,6 @@ const PREVIOUS = {
   'chit-5d775d12.v7.json': ['verified', 'verified', 'verified'],
   'chit-4d6e8331.json': ['verified', 'verified', 'verified'],
   'public/chit-39af100b.json': ['verified', 'verified', 'verified'],
-  'slot-typing/v10-xfuel-546baa6c.json': ['failed', 'verified', 'failed'],
   'public/foreign-x402-muy1hh8y.json': ['failed', 'verified', 'failed'],
 };
 
@@ -229,6 +229,30 @@ for (const [name, expected] of Object.entries(PREVIOUS)) {
     assert.deepEqual(got, expected);
   });
 }
+
+// A payload v10 receipt with the shape of an issued one (owner view, pinned
+// v1 issuer history, signed coverage and book-seq), signed by a synthetic test
+// key with its own v1 history. Same verdicts as an issued v10 receipt:
+// [jwks only, jwks + issuer history v1, no jwks].
+const synKey = syntheticIssuerKey();
+const synJwks = { keys: [synKey.publicJwk] };
+const synHistory = load('slot-typing/v10-synthetic-issuer-history-v1.json');
+
+test('synthetic v10 receipt keeps the issued v10 verdicts', async () => {
+  const r = unwrap(load('slot-typing/v10-synthetic.json'));
+  const h = header(r.issuer_signature.jws);
+  assert.equal(h.typ, 'chit402-receipt+jwt');
+  assert.equal(h.kid, synKey.kid);
+  const opts = { jwks: synJwks, trustedKids: [synKey.kid], fetchImpl: offline };
+  const got = [
+    (await verifyReceipt(structuredClone(r), opts)).overall,
+    (await verifyReceipt(structuredClone(r), { ...opts, issuerHistory: synHistory })).overall,
+    (await verifyReceipt(structuredClone(r), { fetchImpl: offline })).overall,
+  ];
+  assert.deepEqual(got, ['failed', 'verified', 'failed']);
+  // The production key does not verify it.
+  assert.equal((await verifyReceipt(structuredClone(r), { jwks, fetchImpl: offline, issuerHistory: synHistory })).overall, 'failed');
+});
 
 // --- header and payload edge cases (0.4.8 review follow-up).
 function signWithHeader(claims, extra) {
