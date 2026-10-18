@@ -30,12 +30,28 @@ function canonicalize(value) {
   return value;
 }
 
+// Receipt-slot typs, as the library's ISSUER_JWS_TYP.receipt.
+const RECEIPT_SLOT_TYPS = ['chit402-receipt+jwt', 'JWT'];
+const FOREIGN_PAYOUT_SCHEMA = 'chit402.foreign_payout.v1';
+
+/**
+ * Claims of a receipt-slot JWS, or null. Another issuer document (book-seq,
+ * tree head, x402, refusal...) has its own typ and is refused here, as are
+ * crit, b64 and claims that name another schema.
+ */
 export function decodeJwsPayload(jws) {
   if (!jws || typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
+    if (header.crit !== undefined || header.b64 !== undefined) return null;
+    if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return null;
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return null;
+    if (claims.schema != null && claims.schema !== FOREIGN_PAYOUT_SCHEMA) return null;
+    return claims;
   } catch {
     return null;
   }
@@ -106,7 +122,8 @@ export function toPublicShell(receipt, { inclusion = null, signedHead = null } =
   const claims = decoded || {};
   // A signed receipt's shell is built from its claims only; outer fields are
   // used only for a document with no issuer JWS.
-  const outer = decoded ? {} : (receipt || {});
+  // A JWS that is present but refused does not reopen the outer fields.
+  const outer = jws ? {} : (receipt || {});
   // A signed task_id always wins; a JWS without one (not a receipt claim set)
   // falls back to the document id.
   const receiptId = (typeof claims.task_id === 'string' && claims.task_id)

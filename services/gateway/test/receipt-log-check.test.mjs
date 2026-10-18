@@ -1,13 +1,13 @@
 /**
  * Page-side log check: tree head typ and signature, inclusion from the signed
- * task id, anchor from gateway records, the three-way outcome, and the
- * bounded anchor RPC cache.
+ * task id, anchor against gateway records (issuer_record, never checked
+ * on-chain here), and the three-way outcome.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
 import {
-  checkReceiptLog, checkTreeHeadJws, receiptOutcome, warmAnchorRpcCheck, resetAnchorRpcCache,
+  checkReceiptLog, checkTreeHeadJws, receiptOutcome,
 } from '../src/receipt-log-check.js';
 import { decodeReceiptClaims, renderReceiptHtml, buildAuditorExport, UNSIGNED_DETAILS_NOTE } from '../src/receipt.js';
 
@@ -23,13 +23,14 @@ const JWKS = { keys: [PROD_KEY] };
 const OK_RECORD = () => ({ source: 'anchor_state', tx: HEAD.anchors.base.tx, chain_id: 8453, confirmed: true });
 const claims = decodeReceiptClaims(RECEIPT);
 
-test('checked: signed head, leaf from the signed task id, gateway anchor record', () => {
+test('head and inclusion checked; a matching gateway record is issuer_record, counted as couldn\'t check', () => {
   const log = checkReceiptLog(RECEIPT, claims, { jwks: JWKS, treeHead: HEAD, anchorRecord: OK_RECORD });
   assert.equal(log.head.state, 'checked');
   assert.equal(log.inclusion.state, 'checked');
   assert.equal(log.inclusion.root, HEAD.root);
-  assert.equal(log.anchor.state, 'checked');
-  assert.equal(receiptOutcome({ verified: true, reason: 'verified' }, log), 'verified');
+  assert.equal(log.anchor.state, 'issuer_record');
+  assert.equal(log.anchor.tx, HEAD.anchors.base.tx);
+  assert.equal(receiptOutcome({ verified: true, reason: 'verified' }, log), 'couldnt_check');
 });
 
 test('tree head must carry typ chit402-tree-head+jwt and verify', () => {
@@ -42,6 +43,16 @@ test('tree head must carry typ chit402-tree-head+jwt and verify', () => {
   const forged = `${h}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${sig}`;
   assert.equal(checkTreeHeadJws(forged, JWKS).state, 'failed');
   assert.equal(checkTreeHeadJws(HEAD.issuer_signature.jws, { keys: [] }).state, 'couldnt_check');
+  const otherKid = { keys: [{ ...PROD_KEY, kid: 'another-kid' }] };
+  const wk = checkTreeHeadJws(HEAD.issuer_signature.jws, otherKid);
+  assert.equal(wk.state, 'failed');
+  assert.equal(wk.reason, 'kid_mismatch');
+  for (const extra of [{ crit: ['b64'] }, { b64: false }, { crit: ['b64'], b64: false }]) {
+    const h2 = Buffer.from(JSON.stringify({ ...header, ...extra })).toString('base64url');
+    const r = checkTreeHeadJws(`${h2}.${p}.${sig}`, JWKS);
+    assert.equal(r.state, 'failed');
+    assert.equal(r.reason, 'unsupported_header');
+  }
   assert.equal(checkTreeHeadJws(null, JWKS).state, 'couldnt_check');
 });
 
@@ -81,7 +92,8 @@ test('three-way outcome', () => {
 test('page and export show checked values only, plus the unsigned-details line', () => {
   const html = renderReceiptHtml(RECEIPT, { treeHead: HEAD, anchorRecord: OK_RECORD });
   assert.match(html, /data-log-part="inclusion" data-log-state="checked">checked</);
-  assert.match(html, /data-outcome="verified">Verified</);
+  assert.match(html, /data-log-part="anchor" data-log-state="issuer_record">matches issuer record, not checked on-chain</);
+  assert.equal(/data-outcome="verified"/.test(html), false, 'anchor is never checked in this build');
   assert.ok(html.includes(HEAD.anchors.base.tx));
   assert.ok(html.includes(UNSIGNED_DETAILS_NOTE.replace(/'/g, '&#39;')) || html.includes(UNSIGNED_DETAILS_NOTE));
   const bare = renderReceiptHtml(RECEIPT, { anchorRecord: () => null });
@@ -89,46 +101,7 @@ test('page and export show checked values only, plus the unsigned-details line',
   assert.equal(bare.includes(RECEIPT.inclusion.root), false, 'unchecked root is never shown');
   assert.equal(bare.includes(RECEIPT.inclusion.anchor_tx), false, 'unchecked anchor tx is never shown');
   const exp = buildAuditorExport(RECEIPT, { treeHead: HEAD, anchorRecord: OK_RECORD });
-  assert.equal(exp.proof_outcome, 'verified');
+  assert.equal(exp.proof_outcome, 'couldnt_check');
+  assert.equal(exp.log_check.anchor.state, 'issuer_record');
   assert.equal(exp.log_check.anchor.tx, HEAD.anchors.base.tx);
-});
-
-test('anchor RPC is opt-in, single-flight, bounded and cached', async () => {
-  resetAnchorRpcCache();
-  const root = HEAD.root;
-  const tx = HEAD.anchors.base.tx;
-  assert.equal(await warmAnchorRpcCheck(root, tx, {}), null, 'off without an RPC url');
-  let calls = 0;
-  const good = async () => {
-    calls += 1;
-    return { hash: tx, input: `0x${root}`, chainId: '0x2105', status: '0x1', blockNumber: '0x10', tipBlockNumber: '0x100' };
-  };
-  const [a, b] = await Promise.all([
-    warmAnchorRpcCheck(root, tx, { rpcUrl: 'http://rpc.test', fetchBaseTx: good }),
-    warmAnchorRpcCheck(root, tx, { rpcUrl: 'http://rpc.test', fetchBaseTx: good }),
-  ]);
-  assert.equal(a.state, 'checked');
-  assert.deepEqual(a, b);
-  await warmAnchorRpcCheck(root, tx, { rpcUrl: 'http://rpc.test', fetchBaseTx: good });
-  assert.equal(calls, 1, 'one lookup, then cache');
-  const log = checkReceiptLog(RECEIPT, claims, { jwks: JWKS, treeHead: HEAD, anchorRecord: () => null });
-  assert.equal(log.anchor.state, 'checked', 'render reads the warmed cache, no RPC');
-
-  resetAnchorRpcCache();
-  const hang = () => new Promise(() => {});
-  const started = Date.now();
-  const timed = await warmAnchorRpcCheck(root, tx, { rpcUrl: 'http://rpc.test', fetchBaseTx: hang });
-  assert.equal(timed.state, 'couldnt_check');
-  assert.ok(Date.now() - started < 6000, 'bounded by the timeout');
-
-  resetAnchorRpcCache();
-  const wrong = async () => ({ hash: tx, input: `0x${'dd'.repeat(32)}`, chainId: '0x2105', status: '0x1', blockNumber: '0x10', tipBlockNumber: '0x100' });
-  assert.equal((await warmAnchorRpcCheck(root, tx, { rpcUrl: 'http://rpc.test', fetchBaseTx: wrong })).state, 'failed');
-
-  resetAnchorRpcCache();
-  const slow = () => new Promise((r) => setTimeout(() => r(null), 50));
-  const txs = [1, 2, 3].map((n) => `0x${String(n).repeat(64)}`);
-  const res = await Promise.all(txs.map((t) => warmAnchorRpcCheck(root, t, { rpcUrl: 'http://rpc.test', fetchBaseTx: slow })));
-  assert.equal(res.filter((r) => r === null).length, 1, 'at most two lookups in flight');
-  resetAnchorRpcCache();
 });

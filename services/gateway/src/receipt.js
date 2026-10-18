@@ -245,8 +245,11 @@ export function decodeReceiptClaims(receipt) {
   if (!jws || typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
+  // Receipt slot only: another issuer document's JWS is not receipt claims.
+  if (receiptSlotRefusal(jws)) return null;
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return receiptClaimsRefusal(claims) ? null : claims;
   } catch {
     return null;
   }
@@ -377,8 +380,52 @@ function signedProviderCogs(claims) {
   return out;
 }
 
+/** Protected typ values the receipt slot accepts (library ISSUER_JWS_TYP.receipt). */
+export const RECEIPT_SLOT_TYPS = Object.freeze(['chit402-receipt+jwt', 'JWT']);
+
+/**
+ * Why a JWS may not sit in the receipt slot, or null. Another issuer document
+ * (book-seq, tree head, x402, refusal...) is signed by the same key, so the
+ * protected typ is what separates them. crit and b64 are never set by the
+ * issuer and are refused, as in the library.
+ */
+export function receiptSlotRefusal(jws) {
+  if (typeof jws !== 'string' || jws.split('.').length !== 3) return 'malformed_jws';
+  let header;
+  try {
+    header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8'));
+  } catch {
+    return 'malformed_jws';
+  }
+  if (!header || typeof header !== 'object' || Array.isArray(header)) return 'malformed_jws';
+  if (header.crit !== undefined || header.b64 !== undefined) return 'unsupported_header';
+  if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return 'typ_mismatch';
+  return null;
+}
+
+function rawJwsClaims(jws) {
+  try {
+    return JSON.parse(Buffer.from(String(jws).split('.')[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Claims that name another document schema are not a receipt. */
+export function receiptClaimsRefusal(claims) {
+  if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return 'claims_malformed';
+  if (claims.schema != null && claims.schema !== FOREIGN_PAYOUT_SCHEMA) return 'claims_schema_mismatch';
+  return null;
+}
+
 export function signedReceiptProjection(receipt) {
   if (!receipt || typeof receipt !== 'object') return receipt;
+  const slotJws = receipt.issuer_signature?.jws;
+  if (typeof slotJws === 'string' && slotJws
+    && (receiptSlotRefusal(slotJws) || receiptClaimsRefusal(rawJwsClaims(slotJws)))) {
+    // Not a receipt JWS: nothing from it, or from the holder copy, is shown.
+    return { task_id: null, issuer_signature: { jws: slotJws } };
+  }
   const claims = decodeReceiptClaims(receipt);
   if (!claims || typeof claims !== 'object') {
     const jws = receipt.issuer_signature?.jws;
@@ -3002,13 +3049,18 @@ function usdcCell(units) {
 
 export const UNSIGNED_DETAILS_NOTE = "Some details aren't part of the signed receipt and aren't shown.";
 
-const LOG_STATE_LABEL = { checked: 'checked', couldnt_check: "couldn't check", failed: 'failed' };
+const LOG_STATE_LABEL = {
+  checked: 'checked',
+  couldnt_check: "couldn't check",
+  failed: 'failed',
+  issuer_record: 'matches issuer record, not checked on-chain',
+};
 
 function logStateBadge(partName, p) {
   const st = p?.state || 'couldnt_check';
   const cls = st === LOG_CHECKED ? 'ok' : (st === LOG_FAILED ? 'bad' : 'pending');
   return `<span class="badge ${cls}" data-log-part="${partName}" data-log-state="${st}">${LOG_STATE_LABEL[st] || "couldn't check"}</span>`
-    + (st === LOG_CHECKED ? '' : ` <span class="muted"><code>${escHtml(p?.reason || 'not_checked')}</code></span>`);
+    + (st === LOG_CHECKED || st === 'issuer_record' ? '' : ` <span class="muted"><code>${escHtml(p?.reason || 'not_checked')}</code></span>`);
 }
 
 function escHtml(s) {
@@ -3028,8 +3080,8 @@ function renderLogCheckSection(log) {
       ${r('Inclusion', logStateBadge('inclusion', inc))}
       ${inc?.state === LOG_CHECKED ? r('Leaf', `<code>${escHtml(inc.leaf_index)}</code> of <code>${escHtml(inc.tree_size)}</code>`) : ''}
       ${r('Anchor', logStateBadge('anchor', anc))}
-      ${anc?.state === LOG_CHECKED ? r('Anchor tx', `<span class="muted">Base</span> <code>${escHtml(anc.tx)}</code>`) : ''}
-      <p class="muted" style="margin:8px 0 0;font-size:12px">The leaf is rebuilt from the signed task id and checked against an issuer-signed tree head. The anchor is checked against the gateway's anchor records for that signed root. It does not prove the payment.</p>
+      ${anc?.state === 'issuer_record' ? r('Anchor tx', `<span class="muted">Base, named by the signed head</span> <code>${escHtml(anc.tx)}</code>`) : ''}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">The leaf is rebuilt from the signed task id and checked against an issuer-signed tree head. The anchor is not checked on-chain here; it can only match the issuer's own record. It does not prove the payment.</p>
     </section>`;
 }
 
@@ -3270,6 +3322,10 @@ function claimIdRefusal(payload) {
 export function verifyIssuerForHtml(receipt) {
   const sig = receipt?.issuer_signature;
   const pinned = embeddedIssuerKeyIsPinned(receipt);
+  if (sig?.jws) {
+    const refused = receiptSlotRefusal(sig.jws) || receiptClaimsRefusal(rawJwsClaims(sig.jws));
+    if (refused) return { verified: false, reason: refused, pinned: false };
+  }
   if (!sig || !sig.jws || sig.alg !== 'ES256') {
     return { verified: false, reason: 'no_issuer_signature', pinned };
   }
@@ -3800,7 +3856,7 @@ function privacyVendorBlindCheck(view, pol) {
 function exportLogPart(p) {
   if (!p) return { state: 'couldnt_check', reason: 'not_checked' };
   const out = { state: p.state, reason: p.reason };
-  if (p.state === LOG_CHECKED) {
+  if (p.state === LOG_CHECKED || p.state === 'issuer_record') {
     for (const k of ['root', 'tree_size', 'leaf_index', 'chain', 'tx']) if (p[k] != null) out[k] = p[k];
   }
   return out;

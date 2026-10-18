@@ -8,17 +8,15 @@
  * check fails; if they are missing, it could not run. Each part is
  * 'checked', 'couldnt_check' or 'failed'.
  *
- * The anchor is checked against the gateway's own anchor records (tracker
- * and committed pin), cross-checked against the anchor the signed head names.
- * Live RPC is never made on render. An optional, bounded and cached Base
- * lookup can be warmed ahead of a render with `warmAnchorRpcCheck`.
+ * The anchor is never 'checked' here: this module makes no on-chain call.
+ * When the anchor tx the signed head names matches the gateway's own anchor
+ * record (tracker or committed pin), the state is 'issuer_record' ("matches
+ * issuer record, not checked on-chain"), which counts as couldn't check.
  */
 import {
   leafHash,
   normalizeRoot,
   verifyMerkleInclusion,
-  assessBaseAnchor,
-  fetchBaseAnchorTransaction,
 } from '../../../packages/verify/dist/anchor-witness.js';
 import { verifyJwsWithJwks, getJwks } from './issuer-key.js';
 import { getReceiptMerkleTree, closedEpochAnchorPair, readReceiptLogPin, TREE_HEAD_JWT_TYP } from './receipt-merkle.js';
@@ -26,6 +24,7 @@ import { getReceiptMerkleTree, closedEpochAnchorPair, readReceiptLogPin, TREE_HE
 export const LOG_CHECKED = 'checked';
 export const LOG_COULDNT_CHECK = 'couldnt_check';
 export const LOG_FAILED = 'failed';
+export const LOG_ISSUER_RECORD = 'issuer_record';
 export const BASE_ANCHOR_CHAIN = 8453;
 
 function part(state, reason, extra = {}) {
@@ -68,12 +67,14 @@ function headJwsOf(inclusion) {
 export function checkTreeHeadJws(jws, jwks) {
   if (!jws) return part(LOG_COULDNT_CHECK, 'no_tree_head');
   const header = readHeader(jws);
-  if (!header) return part(LOG_FAILED, 'tree_head_malformed');
+  if (!header || typeof header !== 'object' || Array.isArray(header)) return part(LOG_FAILED, 'tree_head_malformed');
+  // As the library: crit and b64 are never set by the issuer.
+  if (header.crit !== undefined || header.b64 !== undefined) return part(LOG_FAILED, 'unsupported_header');
   if (header.typ !== TREE_HEAD_JWT_TYP) return part(LOG_FAILED, 'tree_head_typ');
   if (header.alg !== 'ES256') return part(LOG_FAILED, 'tree_head_alg');
   if (!jwks || !Array.isArray(jwks.keys) || jwks.keys.length === 0) return part(LOG_COULDNT_CHECK, 'no_issuer_key');
   if (header.kid && !jwks.keys.some((k) => k && k.kid === header.kid)) {
-    return part(LOG_COULDNT_CHECK, 'tree_head_key_unknown');
+    return part(LOG_FAILED, 'kid_mismatch');
   }
   const res = verifyJwsWithJwks(jws, jwks);
   if (!res.valid) return part(LOG_FAILED, 'tree_head_signature');
@@ -130,109 +131,23 @@ function signedBaseTx(payload) {
   return b.tx;
 }
 
-// ── Bounded, cached Base RPC (opt-in; never called on render) ──────────────
-const RPC_CACHE_MAX = 512;
-const RPC_TTL_MS = 10 * 60 * 1000;
-const RPC_TTL_UNCHECKED_MS = 60 * 1000;
-const RPC_TIMEOUT_MS = 4_000;
-const RPC_MAX_INFLIGHT = 2;
-const rpcCache = new Map();
-const rpcInflight = new Map();
-
-function rpcKey(root, tx) {
-  return `${normalizeRoot(root)}:${String(tx).toLowerCase()}`;
-}
-
-function cacheGet(key, now = Date.now()) {
-  const hit = rpcCache.get(key);
-  if (!hit) return null;
-  if (hit.expires <= now) {
-    rpcCache.delete(key);
-    return null;
-  }
-  return hit.value;
-}
-
-function cachePut(key, value, ttl) {
-  if (rpcCache.has(key)) rpcCache.delete(key);
-  rpcCache.set(key, { value, expires: Date.now() + ttl });
-  while (rpcCache.size > RPC_CACHE_MAX) rpcCache.delete(rpcCache.keys().next().value);
-}
-
-/** Test hook. */
-export function resetAnchorRpcCache() {
-  rpcCache.clear();
-  rpcInflight.clear();
-}
-
-/**
- * Warm the anchor cache for one signed root and tx. Opt-in: a no-op unless
- * RECEIPT_PAGE_ANCHOR_RPC_URL (or opts.rpcUrl) is set. Single-flight per key,
- * at most RPC_MAX_INFLIGHT lookups at once (extra calls return without a
- * lookup), a hard timeout, and results cached with a TTL in a bounded map.
- */
-export async function warmAnchorRpcCheck(root, tx, opts = {}) {
-  const rpcUrl = opts.rpcUrl ?? process.env.RECEIPT_PAGE_ANCHOR_RPC_URL ?? null;
-  if (!rpcUrl || !normalizeRoot(root) || !/^0x[0-9a-fA-F]{64}$/.test(String(tx || ''))) return null;
-  const key = rpcKey(root, tx);
-  const cached = cacheGet(key);
-  if (cached) return cached;
-  if (rpcInflight.has(key)) return await rpcInflight.get(key);
-  if (rpcInflight.size >= RPC_MAX_INFLIGHT) return null;
-  const fetchTx = opts.fetchBaseTx || ((h, url) => fetchBaseAnchorTransaction(h, url, RPC_TIMEOUT_MS));
-  const run = (async () => {
-    let timer;
-    try {
-      const found = await Promise.race([
-        fetchTx(tx, rpcUrl),
-        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('base_rpc_timeout')), RPC_TIMEOUT_MS); }),
-      ]);
-      const assessed = assessBaseAnchor(found, BASE_ANCHOR_CHAIN);
-      let value;
-      if (!found) value = part(LOG_FAILED, 'anchor_tx_not_found');
-      else if (!assessed.ok) {
-        value = ['tx_reverted', 'chain_mismatch'].includes(assessed.reason)
-          ? part(LOG_FAILED, `anchor_${assessed.reason}`)
-          : part(LOG_COULDNT_CHECK, `anchor_${assessed.reason}`);
-      } else if (!String(found.input || '').toLowerCase().includes(normalizeRoot(root))) {
-        value = part(LOG_FAILED, 'anchor_calldata_mismatch');
-      } else value = part(LOG_CHECKED, 'anchor_rpc', { chain: 'base', tx });
-      cachePut(key, value, value.state === LOG_COULDNT_CHECK ? RPC_TTL_UNCHECKED_MS : RPC_TTL_MS);
-      return value;
-    } catch {
-      const value = part(LOG_COULDNT_CHECK, 'anchor_rpc_unavailable');
-      cachePut(key, value, RPC_TTL_UNCHECKED_MS);
-      return value;
-    } finally {
-      clearTimeout(timer);
-      rpcInflight.delete(key);
-    }
-  })();
-  rpcInflight.set(key, run);
-  return await run;
-}
-
 function checkAnchor(head, opts) {
   const root = head.root;
   const payload = head.payload;
   const signedTx = signedBaseTx(payload);
+  // A positive anchor result needs the tx the signed head names.
+  if (!signedTx) return part(LOG_COULDNT_CHECK, 'head_names_no_anchor');
   const lookup = typeof opts.anchorRecord === 'function'
     ? opts.anchorRecord
     : (r, p) => gatewayAnchorRecord(r, p);
   let rec = null;
   try { rec = lookup(root, payload); } catch { rec = null; }
-  if (rec) {
-    if (signedTx && !sameHex(rec.tx, signedTx)) return part(LOG_FAILED, 'anchor_mismatch');
-    if (rec.chain_id != null && Number(rec.chain_id) !== BASE_ANCHOR_CHAIN) return part(LOG_FAILED, 'anchor_chain_mismatch');
-    if (!rec.confirmed) return part(LOG_COULDNT_CHECK, 'anchor_unconfirmed');
-    return part(LOG_CHECKED, `anchor_${rec.source}`, { chain: 'base', tx: rec.tx });
-  }
-  if (signedTx) {
-    const cached = cacheGet(rpcKey(root, signedTx));
-    if (cached) return cached;
-    return part(LOG_COULDNT_CHECK, 'no_anchor_record');
-  }
-  return part(LOG_COULDNT_CHECK, 'not_anchored');
+  if (!rec) return part(LOG_COULDNT_CHECK, 'no_anchor_record');
+  if (!sameHex(rec.tx, signedTx)) return part(LOG_FAILED, 'anchor_mismatch');
+  if (rec.chain_id != null && Number(rec.chain_id) !== BASE_ANCHOR_CHAIN) return part(LOG_FAILED, 'anchor_chain_mismatch');
+  if (!rec.confirmed) return part(LOG_COULDNT_CHECK, 'anchor_unconfirmed');
+  // Matches our own record only; nobody else can reproduce this without our state.
+  return part(LOG_ISSUER_RECORD, `issuer_record_${rec.source}`, { chain: 'base', tx: signedTx });
 }
 
 /**
@@ -300,41 +215,14 @@ export function checkReceiptLog(receipt, claims, opts = {}) {
  * verifier reports it: 'verified', 'invalid', or 'couldnt_check'.
  */
 export function receiptOutcome(issuer, log) {
-  const sigInvalid = ['signature_invalid', 'task_id_mismatch', 'head_binding_mismatch', 'claim_id_missing']
+  const sigInvalid = ['signature_invalid', 'task_id_mismatch', 'head_binding_mismatch', 'claim_id_missing',
+    'typ_mismatch', 'unsupported_header', 'claims_schema_mismatch', 'malformed_jws', 'claims_malformed']
     .includes(issuer?.reason) || (issuer?.reason === 'no_issuer_signature' && issuer?.hasJws);
   if (sigInvalid) return 'invalid';
   const parts = [log?.head, log?.inclusion, log?.anchor].filter(Boolean);
   if (parts.some((p) => p.state === LOG_FAILED)) return 'invalid';
   if (!issuer?.verified) return 'couldnt_check';
+  // 'issuer_record' is not an independent check: it counts as couldn't check.
   if (parts.length === 3 && parts.every((p) => p.state === LOG_CHECKED)) return 'verified';
   return 'couldnt_check';
-}
-
-/**
- * Gather the gateway-side inputs for a page check: the stored signed head
- * at the proof's size, and the anchor record lookup. Reads the log's memory
- * and disk; makes no RPC. Optionally warms the bounded anchor RPC cache.
- */
-export async function prepareReceiptLogCheck(receipt, { tree = null, warmRpc = false } = {}) {
-  let t = tree;
-  if (!t) {
-    try { t = getReceiptMerkleTree(); } catch { t = null; }
-  }
-  const out = { anchorRecord: (root, payload) => gatewayAnchorRecord(root, payload, { tree: t }) };
-  const size = Number(receipt?.inclusion?.tree_size);
-  if (t && typeof t.signedHeadAt === 'function' && Number.isSafeInteger(size) && size > 0) {
-    try {
-      const head = await t.signedHeadAt(size);
-      if (head?.issuer_signature?.jws) out.treeHead = head;
-    } catch {
-      // No stored head at that size: the page reports couldn't check.
-    }
-  }
-  if (warmRpc && out.treeHead) {
-    const b = out.treeHead.anchors?.base;
-    if (b?.tx && !gatewayAnchorRecord(out.treeHead.root, out.treeHead, { tree: t })) {
-      await warmAnchorRpcCheck(out.treeHead.root, b.tx);
-    }
-  }
-  return out;
 }

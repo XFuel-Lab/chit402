@@ -146,21 +146,36 @@ export function buildReceiptOgImageUrl(receipt) {
 }
 
 const SIGNED_OG_KEYS = ['rail', 'ref', 'asset', 'gross_amount'];
+// Receipt-slot typs, as the library's ISSUER_JWS_TYP.receipt.
+const RECEIPT_SLOT_TYPS = ['chit402-receipt+jwt', 'JWT'];
+
+function receiptSlotClaims(jws) {
+  if (typeof jws !== 'string') return null;
+  const parts = jws.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
+    if (header.crit !== undefined || header.b64 !== undefined) return null;
+    if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return null;
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return null;
+    if (claims.schema != null && claims.schema !== 'chit402.foreign_payout.v1') return null;
+    return claims;
+  } catch {
+    return null;
+  }
+}
 
 /** Signed payment fields used on the share card (null when unsigned). */
 function signedOgPayment(receipt) {
   const out = Object.fromEntries(SIGNED_OG_KEYS.map((k) => [k, null]));
-  const jws = receipt?.issuer_signature?.jws;
-  if (typeof jws !== 'string') return out;
-  const parts = jws.split('.');
-  if (parts.length !== 3) return out;
-  try {
-    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    const pay = claims?.payment && typeof claims.payment === 'object' ? claims.payment : {};
-    for (const k of SIGNED_OG_KEYS) out[k] = pay[k] ?? null;
-  } catch {
-    // unsigned
-  }
+  // Receipt-slot rules: another issuer document's JWS (book-seq, tree head,
+  // x402...) or one with crit/b64 is not read.
+  const claims = receiptSlotClaims(receipt?.issuer_signature?.jws);
+  if (!claims) return out;
+  const pay = claims.payment && typeof claims.payment === 'object' ? claims.payment : {};
+  for (const k of SIGNED_OG_KEYS) out[k] = pay[k] ?? null;
   return out;
 }
 

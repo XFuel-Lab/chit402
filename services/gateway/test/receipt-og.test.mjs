@@ -57,7 +57,7 @@ test('buildReceiptOgMeta: foreign ingest includes third-party in description', (
     // Collection reads from the signed payment ref only.
     issuer_signature: {
       jws: [
-        Buffer.from(JSON.stringify({ alg: 'ES256' })).toString('base64url'),
+        Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
         Buffer.from(JSON.stringify({
           schema: 'chit402.foreign_payout.v1',
           task_id: 'xfuel-foreign-1',

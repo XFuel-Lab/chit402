@@ -1,7 +1,9 @@
 /**
  * Exhaustive outer-field tamper: for real public receipts, change every outer
- * leaf one at a time (strings, numbers, nulls, flipped booleans) and inject
- * absent keys that renderers have read. No rendered output may change:
+ * leaf one at a time and all at once (strings, numbers, nulls, flipped
+ * booleans) and inject absent keys. Injected key names are harvested, not
+ * hand-listed: every key in every verifier fixture and its decoded issuer
+ * claims, and every property name the gateway renderers read. No rendered output may change:
  * holder/foreign page, share meta, og card, shell JSON and HTML, auditor export
  * and its HTML. Only the issuer JWS is trusted.
  *
@@ -9,7 +11,13 @@
  * row hash and carry-forward) are checked by the page. A change to one of
  * them may only move a check to 'failed' or 'couldnt_check' (and the outcome
  * to 'invalid' or 'couldnt_check'); it may never produce a different positive
- * value, and nothing outside the checked parts may change.
+ * value, and nothing outside the checked parts may change. No anchor record
+ * is stubbed: the page uses the gateway's own lookup, which at most yields
+ * issuer_record (not checked on-chain).
+ *
+ * Swapped slots: another issuer document's JWS (book-seq, tree head) or one
+ * with crit/b64 in the receipt slot makes the outcome invalid with null
+ * totals; the wrong JWS in the tree-head slot makes the head failed.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -34,40 +42,64 @@ const RECEIPTS = {
   'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af': 'public/chit-39af100b.json',
 };
 
-// Absent keys that gateway renderers have read from outer blocks.
-const INJECT = {
-  payment: 'rail ref asset network chain explorer explorer_url explorer_link gross_amount settled_amount net_amount fee_amount fee_bps protocol_fee_bps platform_fee platform_fee_bps fee_units fee_usd amount amount_raw amount_xno usd_estimate payTo pay_to payee payer payer_wallet payer_address sender_address quoted_amount atomicAmount txHash tx paymentRef payment_ref payment_asset collected collects_on basis floor_applied tier2_proof accounting',
-  payment_meta: 'collected collects_on network chain asset ref explorer_url gross_amount payer payee basis floor_applied tier2_proof',
-  stamp: 'fee_usd fee_units waived amount network rail paid_by',
-  links: 'explorer self json',
-  settlement: 'ref network amount gross_amount',
-  caller_binding: 'payer_wallet agent_id',
-  provider_cogs: 'actual estimated basis provider float_id quoted',
-  fulfillment: 'authorization intent output_commitment',
-  route: 'model provider chain_id message_type hub',
-  route_meta: 'model provider chain_id message_type requested_model substituted',
-  output: 'hash kind',
-  book_chain: 'payment_ref seq act row_hash book_id',
-  proof: 'outcome tier has_proof',
-  binding: 'matches expected_commitment recomputed_commitment in_proof',
-  inclusion: 'root tree_size leaf_index proof status head anchor_tx anchors row_hash leaf',
-  carry_forward: 'status leaf_index logged_epoch',
-  '': 'status proof_outcome verify_url claim_id kind source evidence foreign_x402 verified_with privacy lineage refund attestation_note usage created_at receipt_id',
-};
+// Harvested key names (programmatic, no hand list).
+const SRC = new URL('../src/', import.meta.url);
+function walkKeys(o, acc, blocks, depth = 0) {
+  if (!o || typeof o !== 'object') return;
+  for (const [k, v] of Object.entries(o)) {
+    acc.add(k);
+    if (depth === 0 && v && typeof v === 'object' && !Array.isArray(v)) blocks.add(k);
+    walkKeys(v, acc, blocks, depth + 1);
+  }
+}
+function jwsClaimsIn(o, out = []) {
+  if (!o || typeof o !== 'object') return out;
+  for (const v of Object.values(o)) {
+    if (typeof v === 'string' && /^eyJ[\w-]*\.eyJ[\w-]*\.[\w-]+$/.test(v)) {
+      try { out.push(JSON.parse(Buffer.from(v.split('.')[1], 'base64url').toString('utf8'))); } catch { /* skip */ }
+    } else jwsClaimsIn(v, out);
+  }
+  return out;
+}
+function listJson(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const u = new URL(`${e.name}${e.isDirectory() ? '/' : ''}`, dir);
+    if (e.isDirectory()) listJson(u, out);
+    else if (e.name.endsWith('.json')) out.push(u);
+  }
+  return out;
+}
+const HARVEST = new Set();
+const BLOCKS = new Set();
+for (const u of listJson(FIX)) {
+  let o;
+  try { o = JSON.parse(fs.readFileSync(u, 'utf8')); } catch { continue; }
+  const r = o.receipt && typeof o.receipt === 'object' ? o.receipt : o;
+  walkKeys(r, HARVEST, BLOCKS);
+  for (const c of jwsClaimsIn(o)) walkKeys(c, HARVEST, new Set());
+}
+for (const f of ['receipt.js', 'receipt-shell.js', 'receipt-og.js', 'receipt-og-meta.js', 'receipt-log-check.js', 'owner-view.js']) {
+  const code = fs.readFileSync(new URL(f, SRC), 'utf8');
+  for (const m of code.matchAll(/\??\.([A-Za-z_][A-Za-z0-9_]*)\b/g)) HARVEST.add(m[1]);
+  for (const m of code.matchAll(/\[\s*'([A-Za-z_][A-Za-z0-9_]*)'\s*\]/g)) HARVEST.add(m[1]);
+}
+for (const k of ['__proto__', 'constructor', 'prototype']) HARVEST.delete(k);
+const INJECT_KEYS = [...HARVEST].sort();
+const INJECT_BLOCKS = ['', ...[...BLOCKS].filter((b) => b !== 'issuer_signature').sort()];
+const numericKey = (k) => /amount|bps|units|usd|actual|estimated|quoted|size|index|seq|epoch/i.test(k);
 
 // Production signed head (epoch 2, size 3) that covers the foreign receipt's leaf.
 const HEAD = JSON.parse(fs.readFileSync(new URL('pardal-head-honest.json', FIX), 'utf8'));
-const ANCHOR_OK = () => ({ source: 'anchor_state', tx: HEAD.anchors.base.tx, chain_id: 8453, confirmed: true });
 
-// Render cases: the gateway-supplied head and anchor records, the head the
-// served proof carries, and no gateway records at all.
+// Render cases: the gateway-supplied head, and the head the served proof
+// carries. No anchor stub anywhere: the gateway's own anchor lookup is used.
 const CASES = {
   'foreign-x402-muy1hh8y-66555d036df8': [
-    { name: 'gateway-head', opts: { treeHead: HEAD, anchorRecord: ANCHOR_OK } },
-    { name: 'embedded-head', opts: { anchorRecord: ANCHOR_OK }, embedHead: true },
+    { name: 'gateway-head', opts: { treeHead: HEAD } },
+    { name: 'embedded-head', opts: {}, embedHead: true },
   ],
 };
-const NO_RECORDS = { anchorRecord: () => null };
+const NO_RECORDS = {};
 
 const isProofPath = (p) => p[0] === 'inclusion' || p[0] === 'carry_forward' || p[0] === 'row_hash'
   || p.join('.') === 'book_chain.row_hash';
@@ -181,6 +213,7 @@ function proofMoveProblems(base, out) {
 const moves = { proofLeaves: 0, unchanged: 0, negative: 0 };
 let walked = 0;
 let injected = 0;
+let allAtOnce = 0;
 const runs = [];
 for (const id of Object.keys(RECEIPTS)) {
   for (const c of CASES[id] || [{ name: 'no-records', opts: NO_RECORDS }]) runs.push({ id, ...c });
@@ -195,8 +228,8 @@ for (const { id, name, opts, embedHead } of runs) {
       const st = split(base).st;
       assert.equal(st['page.head'], 'checked', `${name} head`);
       assert.equal(st['page.inclusion'], 'checked', `${name} inclusion`);
-      assert.equal(st['page.anchor'], 'checked', `${name} anchor`);
-      assert.equal(st['export.outcome'], 'verified', `${name} outcome`);
+      assert.ok(['couldnt_check', 'issuer_record'].includes(st['page.anchor']), `${name} anchor ${st['page.anchor']}`);
+      assert.equal(st['export.outcome'], 'couldnt_check', `${name} outcome`);
     }
     const leaks = [];
     const check = (label, r, p) => {
@@ -225,17 +258,42 @@ for (const { id, name, opts, embedHead } of runs) {
       delete r.inclusion;
       check('inclusion(removed)', r, ['inclusion']);
     }
-    let i = 0;
-    for (const [blk, keys] of Object.entries(INJECT)) {
-      for (const k of keys.split(' ')) {
+    // All leaves at once: non-proof leaves change nothing; with the proof
+    // leaves too, only negative moves.
+    {
+      const all = leaves(orig);
+      const r1 = structuredClone(orig);
+      all.forEach((p, i) => { if (!isProofPath(p)) setPath(r1, p, sentinel(getPath(orig, p), 50000 + i)); });
+      check('all-non-proof-leaves', r1, ['all']);
+      const r2 = structuredClone(orig);
+      all.forEach((p, i) => setPath(r2, p, sentinel(getPath(orig, p), 60000 + i)));
+      check('all-leaves', r2, ['inclusion', 'all']);
+      allAtOnce += 2;
+    }
+    // Harvested keys: each block gets every absent key at once; on a change,
+    // bisect to name the keys.
+    const injectInto = (blk, keys, label) => {
+      const r = structuredClone(orig);
+      if (blk && (r[blk] == null || typeof r[blk] !== 'object' || Array.isArray(r[blk]))) r[blk] = {};
+      let n = 0;
+      keys.forEach((k, j) => {
         const p = blk ? [blk, k] : [k];
-        if (getPath(orig, p) !== undefined) continue;
-        injected += 1; i += 1;
-        const r = structuredClone(orig);
-        if (blk && (r[blk] == null || typeof r[blk] !== 'object')) r[blk] = {};
-        setPath(r, p, sentinel(/amount|bps|units|usd|actual|estimated|quoted/.test(k) ? '1' : 's', 9000 + i));
-        check(`${p.join('.')}(inject)`, r, p);
-      }
+        if (getPath(orig, p) !== undefined) return;
+        setPath(r, p, sentinel(numericKey(k) ? '1' : 's', 9000 + j));
+        n += 1;
+      });
+      if (!n) return [];
+      injected += n;
+      const before = leaks.length;
+      check(label, r, blk ? [blk] : ['']);
+      const hit = leaks.splice(before);
+      if (!hit.length) return [];
+      if (keys.length === 1) return hit.map((h) => h.replace(label, `${blk ? `${blk}.` : ''}${keys[0]}(inject)`));
+      const mid = Math.ceil(keys.length / 2);
+      return [...injectInto(blk, keys.slice(0, mid), label), ...injectInto(blk, keys.slice(mid), label)];
+    };
+    for (const blk of INJECT_BLOCKS) {
+      leaks.push(...injectInto(blk, INJECT_KEYS, `${blk || '(top)'}.*(inject)`));
     }
     assert.deepEqual(leaks, [], `${id}: ${leaks.length} outer changes reached output`);
   });
@@ -243,7 +301,60 @@ for (const { id, name, opts, embedHead } of runs) {
 
 test('tamper walk covered every receipt', () => {
   assert.ok(walked > 500, `walked ${walked} leaves`);
-  assert.ok(injected > 100, `injected ${injected} keys`);
+  assert.ok(injected > 1000, `injected ${injected} keys`);
+  assert.ok(allAtOnce >= runs.length * 2, 'all-at-once passes ran');
   assert.ok(moves.negative > 0, 'some proof changes moved a check');
-  console.log(`# outer tamper: ${walked} leaves walked, ${injected} keys injected, ${runs.length} runs; proof/anchor inputs: ${moves.proofLeaves} (unchanged ${moves.unchanged}, moved negative ${moves.negative})`);
+  console.log(`# outer tamper: ${walked} leaves walked, ${injected} keys injected (${INJECT_KEYS.length} harvested names x ${INJECT_BLOCKS.length} blocks), ${allAtOnce} all-at-once passes, ${runs.length} runs; proof/anchor inputs: ${moves.proofLeaves} (unchanged ${moves.unchanged}, moved negative ${moves.negative})`);
+});
+
+// Swapped slots.
+const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function rehead(jws, extra) {
+  const [h, p, sg] = jws.split('.');
+  return `${b64u({ ...JSON.parse(Buffer.from(h, 'base64url').toString('utf8')), ...extra })}.${p}.${sg}`;
+}
+const FOREIGN_ID = 'foreign-x402-muy1hh8y-66555d036df8';
+for (const id of Object.keys(RECEIPTS)) {
+  test(`swapped receipt slot: ${id}`, () => {
+    const orig = load(id);
+    const bookSeq = orig.book_chain?.issuer_signature?.jws || load(FOREIGN_ID).book_chain.issuer_signature.jws;
+    const variants = {
+      book_seq: bookSeq,
+      tree_head: HEAD.issuer_signature.jws,
+      crit: rehead(orig.issuer_signature.jws, { crit: ['b64'] }),
+      b64_false: rehead(orig.issuer_signature.jws, { b64: false }),
+      typ_x402: rehead(orig.issuer_signature.jws, { typ: 'chit402-x402-receipt+jwt' }),
+    };
+    for (const [name, jws] of Object.entries(variants)) {
+      const r = structuredClone(orig);
+      r.issuer_signature = { ...r.issuer_signature, jws };
+      const out = render(r, CASES[id]?.[0]?.opts || NO_RECORDS);
+      for (const [k, v] of Object.entries(out)) assert.ok(!v.startsWith('ERR'), `${id} ${name} ${k} ${v}`);
+      const { st } = split(out);
+      assert.equal(st['page.outcome'], 'invalid', `${id} ${name} page outcome`);
+      assert.equal(st['export.outcome'], 'invalid', `${id} ${name} export outcome`);
+      const e = JSON.parse(out.export);
+      for (const [k, v] of Object.entries(e.totals || {})) assert.equal(v ?? null, null, `${id} ${name} totals.${k}`);
+      assert.equal(JSON.parse(out.shell).receipt_id ?? orig.task_id, orig.task_id);
+    }
+  });
+}
+
+test('swapped tree-head slot: the head check fails', () => {
+  const orig = load(FOREIGN_ID);
+  const variants = {
+    receipt_jws: orig.issuer_signature.jws,
+    book_seq: orig.book_chain.issuer_signature.jws,
+    crit: rehead(HEAD.issuer_signature.jws, { crit: ['b64'] }),
+    b64_false: rehead(HEAD.issuer_signature.jws, { b64: false }),
+    wrong_kid: rehead(HEAD.issuer_signature.jws, { kid: 'another-kid' }),
+  };
+  for (const [name, jws] of Object.entries(variants)) {
+    const r = structuredClone(orig);
+    r.inclusion.head = { signature: { jws } };
+    const { st } = split(render(r, {}));
+    assert.equal(st['page.head'], 'failed', `${name} head`);
+    assert.equal(st['page.outcome'], 'invalid', `${name} outcome`);
+    assert.equal(st['export.head'], 'failed', `${name} export head`);
+  }
 });

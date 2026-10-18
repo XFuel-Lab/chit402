@@ -38,7 +38,7 @@ function claimsReceipt(ref, stored) {
     status: 'completed',
     proof_outcome: 'signed',
     proof: { outcome: 'valid', tier: 'signed' },
-    issuer_signature: { alg: 'ES256', kid: 'test', jws: `aaa.${payload}.bbb` },
+    issuer_signature: { alg: 'ES256', kid: 'test', jws: `eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJ0ZXN0In0.${payload}.bbb` },
     payment_meta: { explorer_url: stored, collected: true },
     route: { model: 'llama-3-70b', provider: 'theta' },
   };
@@ -68,7 +68,7 @@ async function viewUrls(stored, ref) {
     route: { model: 'llama-3-70b', provider: 'theta' },
     // Pages render the ref only as signed.
     issuer_signature: {
-      jws: `aaa.${Buffer.from(JSON.stringify({ task_id: 'task-explorer-bearing', payment: { rail: 'usdc', ref, gross_amount: '1000000' } })).toString('base64url')}.bbb`,
+      jws: `eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJ0ZXN0In0.${Buffer.from(JSON.stringify({ task_id: 'task-explorer-bearing', payment: { rail: 'usdc', ref, gross_amount: '1000000' } })).toString('base64url')}.bbb`,
     },
   };
   const sealed = mergeReceiptView(bearing);
