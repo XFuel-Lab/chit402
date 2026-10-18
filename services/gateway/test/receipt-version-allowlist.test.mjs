@@ -96,12 +96,13 @@ test('P-GW builders emit allowlisted versions and junk is not treated as 11', as
   assert.equal(isV11Document({ issuer_signature: { jws: fakeJws({ payload_version: 11 }) } }), true);
   assert.equal(Boolean(isV11Document({ v: 12 })), false);
 
+  // Pinned here on purpose: raising the advisory minimum is a reviewed change.
   // 0.4.9 is the first release that verifies the v1-pinned receipts.
   assert.equal(VERIFIER_MIN, '0.4.9');
   const advisory = receiptPolicyAdvisory();
   assert.equal(advisory.unsigned, true);
   assert.equal(advisory.verifier_min, VERIFIER_MIN);
-  assert.ok(advisory.note.includes(`>= ${VERIFIER_MIN}.`));
+  assert.ok(advisory.note.includes(`chit402-verify ${VERIFIER_MIN} or newer: run npx chit402-verify@latest.`));
   const body = { ok: true };
   const wrapped = withVerifierAdvisory(body);
   assert.equal(wrapped.verifier_min, VERIFIER_MIN);
@@ -110,11 +111,17 @@ test('P-GW builders emit allowlisted versions and junk is not treated as 11', as
 
 test('the HTML hint and the note are built from VERIFIER_MIN', async () => {
   const { VERIFIER_MIN_NOTE, VERIFIER_MIN_HTML_HINT } = await import('../src/verifier-min.js');
-  assert.equal(VERIFIER_MIN_NOTE, `Receipts issued after 2026-10-08 require @xfuel/verify >= ${VERIFIER_MIN}. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned and is not checked.`);
-  assert.equal(VERIFIER_MIN_HTML_HINT, `Receipts issued after 2026-10-08 require @xfuel/verify &gt;= ${VERIFIER_MIN}. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.`);
+  const sentence = `Receipts issued after 2026-10-08 need chit402-verify ${VERIFIER_MIN} or newer: run npx chit402-verify@latest. Older versions may print VERIFIED for formats they do not understand.`;
+  assert.equal(VERIFIER_MIN_NOTE, `${sentence} This hint is unsigned and is not checked.`);
+  assert.equal(VERIFIER_MIN_HTML_HINT, `${sentence} This hint is unsigned.`);
+  // One package name in the upgrade text.
+  assert.equal(VERIFIER_MIN_NOTE.includes('@xfuel/verify'), false);
   const { readFileSync } = await import('node:fs');
-  for (const file of ['../src/refusal-receipt.js', '../src/v11-seal.js', '../src/verifier-min.js']) {
+  for (const file of ['../src/refusal-receipt.js', '../src/v11-seal.js', '../src/receipt.js', '../src/server.js', '../src/verifier-min.js']) {
     const src = readFileSync(new URL(file, import.meta.url), 'utf8');
     assert.equal(/@xfuel\/verify (?:>=|&gt;=) \d/.test(src), false, `${file} hardcodes a version`);
   }
+  // VERIFIER_MIN is the only literal for the advisory version in gateway code.
+  const vm = readFileSync(new URL('../src/verifier-min.js', import.meta.url), 'utf8');
+  assert.equal((vm.match(new RegExp(VERIFIER_MIN.replace(/\./g, '\\.'), 'g')) || []).length, 1);
 });
