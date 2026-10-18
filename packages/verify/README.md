@@ -144,7 +144,7 @@ These fields are immutable once set and verifiable by any third party:
 - `payment.gross_amount` — total charged in USDC atomic units
 - `payment.ref` — settlement reference (network:txHash)
 - `output.hash` — commitment to model output
-- `proof.nullifier` — settlement proof add-on (coming soon, not active)
+- `proof.nullifier`: settlement proof add-on (coming soon, not active)
 
 ## Verification Algorithm
 

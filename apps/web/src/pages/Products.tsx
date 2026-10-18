@@ -6,7 +6,7 @@ import { getApiV1 } from '../apiHost';
 const PRODUCTS_SEO = {
   title: 'Products — Stamp, Private Desk, Attest | Chit402',
   description:
-    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest (Desk plus a settlement proof add-on, coming soon). Not a router — who paid which call.',
+    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest. Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected. Not a router — who paid which call.',
 };
 
 type ProductSeat = {
@@ -49,12 +49,12 @@ const seats: ProductSeat[] = [
   },
   {
     name: 'Private + Attest',
-    price: 'Coming soon',
-    forWho: 'Teams that need Desk plus an on-chain settlement proof. Coming soon.',
+    price: 'Desk routing + 1%',
+    forWho: 'Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.',
     youHold:
-      'Desk receipt; the settlement proof add-on is coming soon.',
+      'Desk receipt; verify offline or pin issuer JWKS.',
     detail:
-      'Coming soon.',
+      'Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.',
     primaryTo: '/docs/private-spend',
     primaryLabel: 'Private Spend docs',
     secondaryTo: '/trust',
@@ -112,8 +112,7 @@ export default function Products() {
             <strong style={{ color: '#d0d0dc' }}>Stamp</strong> is on every hop.{' '}
             <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> swaps the routing posture to
             vendor-blind at the same cost + 1% door.{' '}
-            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> adds an on-chain settlement
-            proof on top of Desk; coming soon.
+            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
           </p>
           <p style={{ ...styles.muted, marginTop: '0.75rem' }}>
             Install wires (chat /v1, Eliza, ACP, MCP, frameworks) are not separate products — they

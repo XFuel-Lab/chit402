@@ -13,7 +13,7 @@ import { normalizeRequestedTier } from './tier-policy.js';
 
 export const SETTLEMENT_PROOF_FLAG = 'SETTLEMENT_PROOF_ENABLED';
 export const SETTLEMENT_PROOF_NOT_OFFERED = 'settlement_proof_not_offered';
-export const SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE = 'settlement proof is not currently offered';
+export const SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE = 'Tier-2 settlement proofs are temporarily unavailable.';
 
 export function settlementProofEnabled(env = process.env) {
   return env?.[SETTLEMENT_PROOF_FLAG] === 'true';

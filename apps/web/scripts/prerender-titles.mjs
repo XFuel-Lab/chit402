@@ -32,7 +32,7 @@ const ROUTE_CONTENT = {
     title: 'Products — Stamp, Private Desk, Attest | Chit402',
     h1: 'Three seats on the possession book.',
     lede:
-      'Book-first products: Stamp ($0.002 signed receipt every hop), Private Desk (vendor-blind routing cost + 1%), Private + Attest (Desk plus a settlement proof add-on, coming soon). Who paid which call; hold verify_url and book rows — not a router shop.',
+      'Book-first products: Stamp ($0.002 signed receipt every hop), Private Desk (vendor-blind routing cost + 1%), Private + Attest. Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected. Who paid which call; hold verify_url and book rows — not a router shop.',
   },
   '/docs/chit-in-15-lines': {
     title: 'Chat /v1 wire | Chit402',
