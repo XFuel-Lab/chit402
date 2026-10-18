@@ -15,6 +15,7 @@ const {
   checkReceiptIssuerHistory,
   sealedSnapshotForPin,
   sealedSuccessorExtends,
+  laterThanBundled,
   historyPrefixExtends,
   issuerHistoryEntryHash,
 } = await import('../dist/issuer-history.js');
@@ -239,4 +240,19 @@ test('the CLI does not verify against a v1 fork history file', async () => {
   });
   assert.notEqual(run.status, 0, run.stdout);
   assert.equal(JSON.parse(run.stdout).result, "invalid");
+});
+
+test('a history with the bundled v2 label and an extra entry is refused', () => {
+  const key = testKey();
+  const v1 = JSON.parse(v1Bytes);
+  const v2 = JSON.parse(v2Bytes);
+  const sameLabel = successor(v2Bytes, key, 2, 2).doc;
+  assert.equal(sealedSuccessorExtends(v1, sameLabel), false);
+  assert.equal(laterThanBundled(v2, sameLabel), false);
+  // Higher version but same seq, or the reverse, is still not later.
+  assert.equal(laterThanBundled(v2, successor(v2Bytes, key, 3, 2).doc), false);
+  assert.equal(laterThanBundled(v2, successor(v2Bytes, key, 2, 3).doc), false);
+  // The exact bundled document and a real v3 are fine.
+  assert.equal(laterThanBundled(v2, v2), true);
+  assert.equal(sealedSuccessorExtends(v1, successor(v2Bytes, key, 3, 3).doc), true);
 });

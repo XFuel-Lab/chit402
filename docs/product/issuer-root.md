@@ -279,6 +279,12 @@ These names are not the same. This document does not rename them.
 
 When `guardian_set_hash` and `retirement_block` are omitted, the snapshot vector still matches #484. A snapshot that includes either field will not recompute there until `historyEmbedEntry` keeps those keys.
 
+## Before flag-on
+
+`ISSUER_ROOT_ENABLED` stays off in production until each item below is done.
+
+- The v11 verifier path must enforce the key window, payer and asset checks, with the same results as the v10 path, before flag-on.
+
 ## Cutover pause
 
 Genesis needs every pre-v11 `payload_hash` in the freeze, and v11 needs that commit's `root_seq`. A receipt signed between the snapshot and v11 would be in neither set.

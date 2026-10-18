@@ -659,7 +659,18 @@ export function sealedSuccessorExtends(
   if (!grandfatheredRewrite(pinned, bundled)) return false;
   if (!verifyIssuerHistoryDocument(bundled, trust).valid) return false;
   if (current.head_hash === bundled.head_hash) return true;
+  if (!laterThanBundled(bundled, current)) return false;
   return entryPrefixExtends(bundled, current);
+}
+
+/**
+ * A history that is not the bundled snapshot must carry a strictly higher
+ * version and seq. Two different documents with the bundled label would be
+ * two different histories under one version number.
+ */
+export function laterThanBundled(bundled: IssuerHistoryDocument, current: IssuerHistoryDocument): boolean {
+  if (current?.head_hash === bundled?.head_hash) return true;
+  return Number(current?.version) > Number(bundled?.version) && Number(current?.seq) > Number(bundled?.seq);
 }
 
 /** Entry-by-entry prefix only. No recorded rewrite applies. */
@@ -801,7 +812,7 @@ export async function resolveIssuerHistory({
     }
     // A supplied file must extend the bundled chain. An older or forked file
     // could hide a later revocation (truncation rollback).
-    if (!historyPrefixExtends(bundled.document, doc)) {
+    if (!historyPrefixExtends(bundled.document, doc) || !laterThanBundled(bundled.document, doc)) {
       return resolvedFrom('file', doc, fileBytes, null, true, 'issuer_history_not_extension');
     }
     return resolvedFrom('file', doc, fileBytes, null, false, null);
@@ -824,7 +835,7 @@ export async function resolveIssuerHistory({
           const bytes = await res.text();
           const doc = JSON.parse(bytes) as IssuerHistoryDocument;
           const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
-          if (signed.valid && historyPrefixExtends(bundled.document, doc)) {
+          if (signed.valid && historyPrefixExtends(bundled.document, doc) && laterThanBundled(bundled.document, doc)) {
             return resolvedFrom('live', doc, bytes, null, false, null);
           }
         }

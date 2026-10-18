@@ -148,7 +148,8 @@ describe('verifySolanaPayer payee binding', () => {
       fetchTransaction: async () => junk,
     });
     assert.equal(result.valid, false);
-    assert.match(result.reason, /^payee_mismatch:/);
+    // The legacy transfer names no USDC account, so it is not a USDC transfer at all.
+    assert.match(result.reason, /^no_usdc_transfer_of_/);
   });
 
   test('no signed payee is unchecked, never a pass', async () => {
@@ -194,5 +195,113 @@ describe('receiptPayerClaimsFromEnvelope', () => {
     assert.equal(claims.payment.ref, SMOKE_REF);
     assert.equal(claims.payment.gross_amount, SMOKE_AMOUNT);
     assert.equal(claims.caller_binding.payer_wallet, SMOKE_PAYER);
+  });
+});
+
+describe('legacy transfer mint check', () => {
+  const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+  const FAKE_MINT = 'So11111111111111111111111111111111111111112';
+  const SRC = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+  const DST = '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R';
+
+  function legacyTx({ srcMint = USDC, dstMint = USDC, balances = true } = {}) {
+    const row = (accountIndex, mint, owner, amount) => ({ accountIndex, mint, owner, uiTokenAmount: { amount } });
+    return {
+      slot: 1,
+      meta: {
+        err: null,
+        preTokenBalances: balances ? [row(1, srcMint, SMOKE_PAYER, '5000'), row(2, dstMint, SMOKE_PAYEE, '0')] : [],
+        postTokenBalances: balances ? [row(1, srcMint, SMOKE_PAYER, '3000'), row(2, dstMint, SMOKE_PAYEE, SMOKE_AMOUNT)] : [],
+      },
+      transaction: {
+        signatures: [SMOKE_SIG],
+        message: {
+          accountKeys: [{ pubkey: SMOKE_PAYER, signer: false }, { pubkey: SRC }, { pubkey: DST }],
+          instructions: [{ program: 'spl-token', parsed: { type: 'transfer', info: { authority: SMOKE_PAYER, source: SRC, destination: DST, amount: SMOKE_AMOUNT } } }],
+        },
+      },
+    };
+  }
+
+  const run = (tx) => verifySolanaPayer({
+    paymentRef: SMOKE_REF,
+    payerWallet: SMOKE_PAYER,
+    grossAmount: SMOKE_AMOUNT,
+    payee: SMOKE_PAYEE,
+    fetchTransaction: async () => tx,
+  });
+
+  test('a legacy USDC transfer from the payer passes', async () => {
+    const result = await run(legacyTx());
+    assert.equal(result.valid, true, result.reason);
+    assert.equal(extractUsdcTransfersFromTx(legacyTx(), USDC).length, 1);
+  });
+
+  test('a legacy transfer whose source account holds another mint is not counted', async () => {
+    const tx = legacyTx({ srcMint: FAKE_MINT });
+    assert.equal(extractUsdcTransfersFromTx(tx, USDC).length, 0);
+  });
+
+  test('a legacy transfer whose destination holds another mint is not counted', async () => {
+    const tx = legacyTx({ dstMint: FAKE_MINT });
+    assert.equal(extractUsdcTransfersFromTx(tx, USDC).length, 0);
+  });
+
+  test('a legacy transfer with no readable mint is not counted and does not pass', async () => {
+    const tx = legacyTx({ balances: false });
+    assert.equal(extractUsdcTransfersFromTx(tx, USDC).length, 0);
+    const result = await run(tx);
+    assert.equal(result.valid, false);
+  });
+
+  function multisigTx(multisig) {
+    const tx = legacyTx();
+    const info = tx.transaction.message.instructions[0].parsed.info;
+    delete info.authority;
+    info.multisigAuthority = multisig;
+    info.signers = ['HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH', '7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2'];
+    return tx;
+  }
+
+  test('a legacy transfer whose multisig authority is the payer passes', async () => {
+    const tx = multisigTx(SMOKE_PAYER);
+    const parsed = extractUsdcTransfersFromTx(tx, USDC);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].authority, SMOKE_PAYER);
+    const result = await run(tx);
+    assert.equal(result.valid, true, result.reason);
+  });
+
+  test('a legacy transfer whose multisig authority is another account is not the payer', async () => {
+    const other = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    const tx = multisigTx(other);
+    // The payer is not a signer and owns no USDC account, so no fallback applies.
+    tx.meta.preTokenBalances[0].owner = other;
+    tx.meta.postTokenBalances[0].owner = other;
+    const result = await run(tx);
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /^payer_mismatch: authority HN7c/);
+  });
+
+  test('a multisig signer listed in signers does not stand in for the multisig', async () => {
+    const tx = multisigTx('HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH');
+    tx.transaction.message.instructions[0].parsed.info.signers = [SMOKE_PAYER];
+    tx.meta.preTokenBalances[0].owner = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    tx.meta.postTokenBalances[0].owner = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    const result = await run(tx);
+    assert.equal(result.valid, false);
+  });
+
+  test('a fake-mint legacy transfer with a USDC credit elsewhere does not satisfy the payer check', async () => {
+    // Payee is credited USDC by someone else; the payer only moved a fake token.
+    const tx = legacyTx({ srcMint: FAKE_MINT, dstMint: FAKE_MINT });
+    tx.meta.preTokenBalances.push({ accountIndex: 3, mint: USDC, owner: SMOKE_PAYEE, uiTokenAmount: { amount: '0' } });
+    tx.meta.postTokenBalances.push({ accountIndex: 3, mint: USDC, owner: SMOKE_PAYEE, uiTokenAmount: { amount: SMOKE_AMOUNT } });
+    tx.transaction.message.accountKeys.push({ pubkey: 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH' });
+    const result = await run(tx);
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /^no_usdc_transfer_of_/);
   });
 });
