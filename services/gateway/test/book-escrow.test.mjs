@@ -14,6 +14,10 @@ import {
 } from '../src/book-escrow.js';
 import { BookDisputeStore, resetBookDisputeStore } from '../src/book-dispute.js';
 import { UsageSettledLedger } from '../src/usage-settled.js';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 function ledgerWithEntry(over = {}) {
   const ledger = new UsageSettledLedger();

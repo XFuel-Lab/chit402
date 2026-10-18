@@ -23,6 +23,8 @@ process.env.TASK_STORE_PERSIST = 'false';
 process.env.RECEIPT_SIGNING_SECRET = 'test-book-ext-secret';
 
 const { AgentRegistry } = await import('../src/agent-registry.js');
+const { _allowSettlementProofForTests } = await import('../src/settlement-proof-flag.js');
+_allowSettlementProofForTests(true);
 const { UsageSettledLedger, recordCollectedSpend } = await import('../src/usage-settled.js');
 const { readAgentBook, bindBookVerifier, queryLineage, exportAgentBook, buildBookExportCsv, buildBookAuditPack } = await import('../src/agent-book.js');
 const {
@@ -259,14 +261,18 @@ describe('Caps as Rows', () => {
     assert.equal(blocked.code, 'payment_ref_required');
   });
 
-  test('set and get policy: tier2_above', () => {
+  test('set and get policy: tier2_above', (t) => {
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+    t.after(() => { delete process.env.SETTLEMENT_PROOF_ENABLED; });
     const policy = new BookPolicyStore();
     const result = policy.set(1, POLICY_TYPES.TIER2_ABOVE, '100000');
     assert.equal(result.ok, true);
     assert.equal(result.policy.tier2_above.threshold, '100000');
   });
 
-  test('enforcePolicy blocks tier2_above without proof_tier', () => {
+  test('enforcePolicy blocks tier2_above without proof_tier', (t) => {
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+    t.after(() => { delete process.env.SETTLEMENT_PROOF_ENABLED; });
     const policy = new BookPolicyStore();
     policy.set(1, POLICY_TYPES.TIER2_ABOVE, '50000');
 

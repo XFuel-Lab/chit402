@@ -16,6 +16,10 @@ import {
 import { BookEscrowStore, resetBookEscrowStore } from '../src/book-escrow.js';
 import { BookDisputeStore, resetBookDisputeStore } from '../src/book-dispute.js';
 import { UsageSettledLedger, BOOK_EVIDENCE } from '../src/usage-settled.js';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 const SPEC_HASH = '0x' + 'ab'.repeat(32);
 const OUTPUT_HASH = '0x' + 'cd'.repeat(32);
