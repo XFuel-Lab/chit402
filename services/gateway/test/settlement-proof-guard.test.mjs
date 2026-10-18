@@ -113,7 +113,7 @@ test('F2: an existing tier2_above names the exit instead of an unusable proof_ti
     const blocked = enforcePolicy(1, { amount: '60000', proof_tier }, { policy });
     assert.equal(blocked.allowed, false, String(proof_tier));
     assert.equal(blocked.code, 'tier2_unavailable');
-    assert.match(blocked.reason, /clear or raise tier2_above/);
+    assert.match(blocked.reason, /clear tier2_above/);
     assert.doesNotMatch(blocked.reason, /requires proof_tier/);
   }
   assert.equal(enforcePolicy(1, { amount: '40000' }, { policy }).allowed, true, 'below threshold unaffected');

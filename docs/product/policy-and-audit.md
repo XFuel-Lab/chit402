@@ -13,7 +13,7 @@ Possession-gated (same session as the book). Caps are limits set with the book s
 | `model_allowlist` | `string[]` | Reject models not in list |
 | `kill_switch` | `boolean` | Block all metered spend |
 | `require_payment_ref` | `boolean` | Pause spend when any collected ledger row lacks `payment.ref` |
-| `tier2_above` | USDC atomic string | At/above threshold, request must include `proof_tier: settlement` or `inference`. Not currently offered: while the settlement proof add-on is off, setting it returns `400 settlement_proof_not_offered`, and an existing one blocks spends at/above the threshold with `tier2_unavailable` until it is cleared (`value: null`) or raised |
+| `tier2_above` | USDC atomic string | At/above threshold, request must include `proof_tier: settlement` or `inference`. Not currently offered: while the settlement proof add-on is off, setting it returns `400 settlement_proof_not_offered`, and an existing one blocks spends at/above the threshold with `tier2_unavailable` until it is cleared (`value: null`) |
 
 Enforcement runs on the paid `POST /v1/chat/completions` path via `enforcePolicy` before x402 settle. When a possession session is active and the **next** hop would violate policy, the gateway:
 

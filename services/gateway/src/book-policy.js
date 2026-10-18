@@ -541,12 +541,12 @@ export function enforcePolicy(agentId, spend = {}, { policy, ledger } = {}) {
     const spendAmount = spend.amount ? BigInt(String(spend.amount)) : 0n;
     if (threshold > 0n && spendAmount >= threshold && !settlementProofEnabled()) {
       // Fail closed: the principal asked for a proof above this amount and none
-      // can be produced. Name the exit (clear or raise the policy) rather than
+      // can be produced. Name the exit (clear the policy) rather than
       // a proof_tier the gateway refuses.
       return {
         allowed: false,
         reason: `spend at or above ${threshold.toString()} is blocked by this book's tier2_above policy. `
-          + 'The Tier-2 settlement proof add-on is not currently offered; clear or raise tier2_above to spend above it.',
+          + 'The Tier-2 settlement proof add-on is not currently offered; clear tier2_above to spend above it.',
         code: 'tier2_unavailable',
         threshold: threshold.toString(),
         amount: spendAmount.toString(),
