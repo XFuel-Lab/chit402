@@ -25,6 +25,8 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener } = await import('../src/ai-listener.js');
 const { resetHubCatalogCache } = await import('../src/hub-catalog.js');
 const flag = await import('../src/settlement-proof-flag.js');
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+flag._allowSettlementProofForTests(true);
 const { buildPaymentBinding, finalizePaymentBindingForProof } = await import('../src/payment-binding.js');
 const { proveAllowedForKey, settlementProofAllowed } = await import('../src/prove-gate.js');
 

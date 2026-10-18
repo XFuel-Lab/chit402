@@ -21,6 +21,10 @@ import {
 } from '../src/receipt.js';
 import { computePaymentCommitment, computeInferenceBinding } from '../src/payment-binding.js';
 import crypto from 'crypto';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 const TASK_ID = 'task-abc123';
 

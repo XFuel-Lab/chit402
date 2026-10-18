@@ -9,6 +9,10 @@ import {
 } from '../src/x402-server.js';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 import { WebhookDispatcher } from '../src/webhooks.js';
+import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
+
+// The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
+_allowSettlementProofForTests(true);
 
 // cfg override so the loop runs against the mock facilitator without env coupling.
 function cfgFor(url, over = {}) {

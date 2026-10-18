@@ -1,5 +1,7 @@
 # Tier-2 in-proof payment binding (guest v5.1) — smoke
 
+> **Not currently offered.** The Tier-2 settlement proof add-on is off, and a request with `proof_tier` gets `400 settlement_proof_not_offered`. This page is a design and smoke reference for when it reopens. Do not run the steps below against production.
+
 Tier-2 SP1 proofs attest **settlement metadata** (fee, nullifier, optional x402 payment binding). They do **not** attest that a specific model weights file ran (that is Tier-3 / zkLLM scope).
 
 ## What the guest checks (v2)
@@ -39,7 +41,7 @@ Path when the add-on ships (coming soon):
 export CHIT402_BASE_URL=https://api.chit402.com
 export X_API_KEY=…   # your key — demo key is rate-limited
 
-# 1) Paid call with settlement proof opt-in
+# 1) Paid call with settlement proof opt-in (not offered today: returns 400)
 curl -sS -X POST "$CHIT402_BASE_URL/v1/chat/completions" \
   -H "Authorization: Bearer $X_API_KEY" \
   -H "Content-Type: application/json" \

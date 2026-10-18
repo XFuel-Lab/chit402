@@ -39,6 +39,8 @@ const { describePricing, publishedPrice } = await import('../src/pricing.js');
 const { proofAvailability } = await import('../src/prove-gate.js');
 const { attestPreflightError, attestProofGateError } = await import('../src/private-desk-attest.js');
 const flag = await import('../src/settlement-proof-flag.js');
+// The code guard stays false; flag-on controls below need the test override.
+flag._allowSettlementProofForTests(true);
 
 const Listener = listenerMod.default;
 await initSP1Prover();

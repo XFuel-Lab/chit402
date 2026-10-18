@@ -81,6 +81,7 @@ import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import {
   refuseSettlementProofWhenOff,
   settlementProofEnabled,
+  warnIfSettlementProofIgnored,
   SETTLEMENT_PROOF_NOT_OFFERED,
   SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
 } from './settlement-proof-flag.js';
@@ -1674,7 +1675,8 @@ export async function createApp() {
   });
 
   // Settlement proof add-on: refused before any quote, 402 or settle unless
-  // SETTLEMENT_PROOF_ENABLED is exactly 'true'.
+  // settlementProofEnabled() (env 'true' AND the SETTLEMENT_TIER_CLAIMS_SIGNED
+  // code guard in settlement-proof-flag.js).
   app.use(refuseSettlementProofWhenOff);
 
   // Request logging
@@ -4338,7 +4340,8 @@ export async function createApp() {
   function collectHouseMetrics() {
     let aiStatus = null;
     try { aiStatus = getAIListener().getStatus(); } catch { /* not initialised */ }
-    refreshProverProbe(getSP1Prover());
+    // Add-on off: no prover health probe. proofAvailability reports it unavailable.
+    refreshProverProbe(settlementProofEnabled() ? getSP1Prover() : null);
     const tasks = snapshotTasks();
     const now = Date.now();
     const stats = computeUsageStats(tasks, { now });
@@ -4980,7 +4983,8 @@ export async function createApp() {
 
       const result = bookPolicy.set(id, policy_type, value);
       if (!result.ok) {
-        return res.status(400).json({ error: 'policy_error', message: result.reason });
+        const error = result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'policy_error';
+        return res.status(400).json({ error, message: result.reason });
       }
       return res.json({ agent_id: id, policy: result.policy });
     } catch (err) {
@@ -5919,6 +5923,7 @@ export async function startServer() {
   // Initialise the SP1 prover so /task-request tasks get settlement proofs.
   // Non-fatal + skipped when SP1_PROVER_URL/ZAN_PROVER_URL are unset (zkGPT-only
   // or proofless dev). The bridge entrypoint (index.js) inits its own instance.
+  warnIfSettlementProofIgnored();
   if (!getSP1Prover()) {
     try {
       await initSP1Prover();

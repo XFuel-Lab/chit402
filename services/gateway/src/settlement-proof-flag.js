@@ -1,22 +1,70 @@
 /**
  * Server switch for the on-chain settlement proof add-on.
  *
- * SETTLEMENT_PROOF_ENABLED must be exactly the string 'true' to turn it on.
+ * SETTLEMENT_PROOF_ENABLED must be exactly the string 'true' to ask for it.
  * Unset, empty or any other value means off. Off means:
  *   - a request that asks for a settlement proof is refused before any quote,
  *     402 challenge, settle or receipt;
  *   - no settlement proof is requested from the prover;
  *   - payment_binding.in_proof is never set true.
- * Reopening is a config change and a restart.
+ *
+ * Reopening is NOT a config change. The env var alone cannot turn the add-on
+ * on: SETTLEMENT_TIER_CLAIMS_SIGNED below must also be true, and it is a code
+ * constant. Change it only in the same release that ships both of:
+ *   - proof.tier and payment_binding.in_proof signed into the issuer claims
+ *     under a new payload version, so neither can change without breaking the
+ *     signature;
+ *   - an offline verifier rule: tier 'settlement' requires in_proof true and a
+ *     matching non-zero v2 payment commitment, and anything else fails.
+ * Until then SETTLEMENT_PROOF_ENABLED=true logs a warning and stays off.
  */
 import { normalizeRequestedTier } from './tier-policy.js';
+import logger from './logger.js';
 
 export const SETTLEMENT_PROOF_FLAG = 'SETTLEMENT_PROOF_ENABLED';
 export const SETTLEMENT_PROOF_NOT_OFFERED = 'settlement_proof_not_offered';
 export const SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE = 'Tier-2 settlement proofs are temporarily unavailable. Retry without proof_tier.';
 
-export function settlementProofEnabled(env = process.env) {
+/**
+ * Code guard for the add-on (see the header). Not read from the environment.
+ * Flip to true only with signed tier/in_proof claims and the verifier rule.
+ */
+export const SETTLEMENT_TIER_CLAIMS_SIGNED = false;
+
+// Tests exercise the flag-on paths; nothing outside NODE_ENV=test can do this.
+let _testOverride = false;
+export function _allowSettlementProofForTests(on = true) {
+  if (process.env.NODE_ENV !== 'test') {
+    throw new Error('_allowSettlementProofForTests is test-only');
+  }
+  _testOverride = !!on;
+}
+
+let _warned = false;
+
+/** The env var asks for the add-on (exactly 'true'). Not the same as enabled. */
+export function settlementProofRequestedByEnv(env = process.env) {
   return env?.[SETTLEMENT_PROOF_FLAG] === 'true';
+}
+
+export function settlementProofEnabled(env = process.env) {
+  if (!settlementProofRequestedByEnv(env)) return false;
+  if (SETTLEMENT_TIER_CLAIMS_SIGNED || _testOverride) return true;
+  if (!_warned) {
+    _warned = true;
+    logger.warn(
+      { flag: SETTLEMENT_PROOF_FLAG },
+      'SETTLEMENT_PROOF_ENABLED=true is ignored: the settlement proof add-on stays off until '
+        + 'proof.tier and payment_binding.in_proof are signed and the offline verifier enforces them '
+        + '(SETTLEMENT_TIER_CLAIMS_SIGNED in settlement-proof-flag.js)',
+    );
+  }
+  return false;
+}
+
+/** Log the guard once at boot, so the warning does not wait for the first request. */
+export function warnIfSettlementProofIgnored(env = process.env) {
+  settlementProofEnabled(env);
 }
 
 /**

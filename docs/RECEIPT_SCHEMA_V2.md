@@ -86,7 +86,7 @@ When Private Desk / Private Spend is active, receipts may include:
 }
 ```
 
-Private + Attest adds `"product": "private_attest"`, `"label": "Private + Attest"`, `"attest": "tier2"`, and itemized `payment.tier2_proof` ($0.10). See [ADR 0010](./adr/0010-private-desk-attest.md).
+Private + Attest adds `"product": "private_attest"`, `"label": "Private + Attest"`, `"attest": "tier2"`, and an itemized `payment.tier2_proof`. Private + Attest needs the Tier-2 settlement proof add-on, which is not currently offered, so new receipts do not carry these fields. See [ADR 0010](./adr/0010-private-desk-attest.md).
 
 This does **not** mean prompts are encrypted. See [ADR 0010](./adr/0010-private-desk-attest.md).
 

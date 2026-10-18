@@ -118,7 +118,7 @@ Docs: https://www.chit402.com/docs/cloudflare-x402
 
 ## Do not
 
-- Default to SP1 / Tier-2 proofs unless explicitly asked
+- Request SP1 / Tier-2 proofs (`proof_tier`): the settlement proof add-on is not currently offered and returns `400 settlement_proof_not_offered`
 - Lead with cheapest-call pricing — product is the receipt, not discount inference
 - Store private keys in the skill file
 
