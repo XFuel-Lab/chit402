@@ -103,8 +103,8 @@ export function toPublicShell(receipt, { inclusion = null, signedHead = null } =
   const jws = receipt?.issuer_signature?.jws || null;
   const claims = decodeJwsPayload(jws) || {};
   const receiptId = receipt?.task_id || claims.task_id || receipt?.receipt_id || null;
-  const gross = claims?.payment?.gross_amount ?? receipt?.payment?.gross_amount ?? null;
-  const settled = claims?.payment?.settled_amount ?? receipt?.payment?.settled_amount ?? null;
+  const gross = claims?.payment?.gross_amount ?? null;
+  const settled = claims?.payment?.settled_amount ?? null;
   const issued = minuteIso(claims.iat ?? receipt?.created_at ?? receipt?.issued_at ?? null);
   return {
     schema: SHELL_SCHEMA,
@@ -112,9 +112,10 @@ export function toPublicShell(receipt, { inclusion = null, signedHead = null } =
     receipt_id: receiptId,
     task_id: receiptId,
     payload_version: claims.payload_version ?? receipt?.issuer_signature?.payload_version ?? null,
-    asset: claims?.payment?.asset || receipt?.payment?.asset || 'USDC',
+    asset: claims?.payment?.asset ?? null,
     chain: chainOf(receipt, claims),
-    pay_to: claims?.payment?.payee || receipt?.payment?.payee || null,
+    // Parties and amounts are shown only as signed; null when unsigned.
+    pay_to: claims?.payment?.payee ?? null,
     amount_gross: gross == null ? null : String(gross),
     amount_settled: settled == null ? null : String(settled),
     payment_tx: txOf(receipt, claims),

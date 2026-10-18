@@ -257,7 +257,7 @@ function signedPayerOf(receipt) {
   const fromJws = claims?.caller_binding?.payer_wallet || null;
   const outer = receipt?.caller_binding?.payer_wallet || null;
   if (fromJws && outer && !samePayer(fromJws, outer)) return { conflict: true, payer: null };
-  return { conflict: false, payer: fromJws || outer || null };
+  return { conflict: false, payer: fromJws };
 }
 
 function signedAgentOf(receipt, ledgerRow) {

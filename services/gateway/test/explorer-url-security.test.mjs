@@ -271,6 +271,18 @@ test('T11 devnet receipt HTML links the signature and names Solana Devnet on the
     },
     caller_binding: { payer_wallet: PAYER },
     route: { model: 'llama-3-70b', provider: 'theta' },
+    // Parties and amounts render only from signed claims.
+    issuer_signature: {
+      jws: [
+        Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
+        Buffer.from(JSON.stringify({
+          task_id: 'task-devnet-link',
+          payment: { gross_amount: '1000000', asset: DEVNET_USDC },
+          caller_binding: { payer_wallet: PAYER },
+        })).toString('base64url'),
+        'sig',
+      ].join('.'),
+    },
   });
   assert.equal(html.includes(`href="${DEVNET}"`), true);
   assert.match(html, /USDC on Solana Devnet/);

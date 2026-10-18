@@ -256,6 +256,49 @@ export function decodeReceiptClaims(receipt) {
  * Signed fields are taken from the JWS payload — never trust top-level copies on slim receipts.
  */
 export function mergeReceiptView(receipt) {
+  return mergeReceiptViewInner(receipt);
+}
+
+const SIGNED_AMOUNT_KEYS = ['gross_amount', 'settled_amount', 'net_amount', 'fee_amount', 'asset'];
+
+/**
+ * Parties and amounts as signed by the issuer. Values absent from the signed
+ * claims are null; outer receipt copies are never used.
+ */
+export function signedParties(claims) {
+  const c = claims && typeof claims === 'object' ? claims : {};
+  const pay = c.payment && typeof c.payment === 'object' ? c.payment : {};
+  const binding = c.caller_binding && typeof c.caller_binding === 'object' ? c.caller_binding : {};
+  const out = {
+    payee: pay.payee ?? c.payee ?? null,
+    payer: c.payer ?? binding.payer_wallet ?? null,
+  };
+  for (const k of SIGNED_AMOUNT_KEYS) out[k] = pay[k] ?? null;
+  return out;
+}
+
+/**
+ * View used by rendered pages: parties and amounts come only from the signed
+ * claims (null when unsigned).
+ */
+export function displayReceiptView(receipt) {
+  const view = mergeReceiptViewInner(receipt);
+  if (!view || typeof view !== 'object') return view;
+  const sp = signedParties(decodeReceiptClaims(receipt));
+  const payment = view.payment && typeof view.payment === 'object' ? { ...view.payment } : null;
+  if (payment) {
+    for (const k of SIGNED_AMOUNT_KEYS) payment[k] = sp[k];
+    payment.payee = sp.payee;
+    payment.payTo = sp.payee;
+    payment.payer = sp.payer;
+  }
+  const binding = view.caller_binding && typeof view.caller_binding === 'object'
+    ? { ...view.caller_binding, payer_wallet: sp.payer }
+    : view.caller_binding;
+  return { ...view, payment, caller_binding: binding };
+}
+
+function mergeReceiptViewInner(receipt) {
   if (receipt?.payment) {
     // OpenAI /v1 surface adds payment presentation fields. Signed session fields
     // always come from the JWS — never trust a mirrored outer session block.
@@ -275,7 +318,7 @@ export function mergeReceiptView(receipt) {
       settlement: claims.settlement ?? receipt.settlement ?? null,
       target_agent: claims.target_agent ?? receipt.target_agent ?? null,
       session_act: claims.session_act ?? receipt.session_act ?? null,
-      caller_binding: receipt.caller_binding ?? claims.caller_binding ?? null,
+      caller_binding: claims.caller_binding ?? receipt.caller_binding ?? null,
       ...(Object.prototype.hasOwnProperty.call(claims, 'claim_id')
         ? { claim_id: claims.claim_id ?? null }
         : {}),
@@ -2960,8 +3003,8 @@ function foreignIngestPaymentSection(receipt, view) {
     ? `${esc(p.amount_xno ?? '—')} <span class="muted">XNO</span>`
     : usdcCell(p.gross_amount);
   const usd = formatUsdEstimateLabel(p.usd_estimate);
-  const sender = p.payer || null;
-  const recipient = p.payTo || p.payee || null;
+  const sender = p.payer ?? null;
+  const recipient = p.payee ?? null;
   const explorer = safeExplorerUrl(p.explorer_url, p.ref)
     || safeExplorerUrl(receipt.links?.explorer, p.ref);
   const feeLabel = stamp.fee_usd != null && stamp.fee_usd !== ''
@@ -3114,7 +3157,7 @@ export function verifyIssuerForHtml(receipt) {
 export function renderReceiptHtml(receipt) {
   if (isV11Document(receipt)) return renderV11ReceiptHtml(receipt);
   receipt = redactPublicReceipt(receipt);
-  const view = mergeReceiptView(receipt);
+  const view = displayReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};
   const route = view.route || {};

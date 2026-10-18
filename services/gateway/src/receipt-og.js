@@ -1,7 +1,7 @@
 /**
  * Per-receipt Open Graph share card images (1200×630 PNG).
  */
-import { mergeReceiptView, redactPublicReceipt } from './receipt.js';
+import { displayReceiptView, redactPublicReceipt } from './receipt.js';
 import {
   buildReceiptOgMeta,
   capText,
@@ -21,7 +21,7 @@ function escSvg(text) {
 
 /** SVG share card (1200×630) — rasterized to PNG for crawlers. */
 export function buildReceiptOgSvg(receipt) {
-  const view = mergeReceiptView(redactPublicReceipt(receipt));
+  const view = displayReceiptView(redactPublicReceipt(receipt));
   const meta = buildReceiptOgMeta(receipt, view);
   const displayId = displayTaskIdForShare(receipt.task_id || view.task_id);
   // Caps keep a hostile or huge field from growing the SVG. Ellipsis counts.

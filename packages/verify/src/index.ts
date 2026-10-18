@@ -798,8 +798,10 @@ export function verifyIssuerSignatureWithJwks(
       return { checked: true, valid: false, key_trusted: false, kid, reason: 'typ_mismatch' };
     }
     const fromJwks = jwksCandidates(jwks, kid);
+    let lastReason = 'signature_invalid';
     for (const jwk of fromJwks) {
       const jwsResult = verifyIssuerJws(sig.jws, jwk, { expectTyp: ISSUER_JWS_TYP.receipt });
+      if (!jwsResult.valid && jwsResult.reason) lastReason = jwsResult.reason;
       if (jwsResult.valid) {
         return {
           checked: true,
@@ -858,7 +860,7 @@ export function verifyIssuerSignatureWithJwks(
       valid: false,
       key_trusted: fromJwks.length > 0 || pinned,
       kid,
-      reason: receiptTypAccepted(sig.jws) ? 'signature_invalid' : 'typ_mismatch',
+      reason: lastReason,
     };
   }
 
@@ -1640,6 +1642,19 @@ const SIGNED_PAYMENT_ECONOMIC = [
   'protocol_fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
 ] as const;
 
+const EVM_ADDRESS_EXACT = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Exact comparison, except two EVM hex addresses compare without case.
+ * No Unicode folding: base58 and other strings are case-sensitive.
+ */
+function samePartyAddress(outer: unknown, signed: string): boolean {
+  if (typeof outer !== 'string') return false;
+  if (outer === signed) return true;
+  return EVM_ADDRESS_EXACT.test(outer) && EVM_ADDRESS_EXACT.test(signed)
+    && outer.toLowerCase() === signed.toLowerCase();
+}
+
 function sameCanonical(a: unknown, b: unknown): boolean {
   if (a === undefined || b === undefined) return a === b;
   try {
@@ -1693,6 +1708,27 @@ function signedReceiptBindingErrors(
         if (Object.prototype.hasOwnProperty.call(signed, key) && !sameCanonical(value, signed[key])) {
           errs.push(`payment.${key} does not match the signed value`);
         }
+      }
+    }
+  }
+  // Outer payTo / payer on a payment (foreign payouts) must name the signed
+  // payee / payer. Exact, except 0x-hex EVM addresses compare without case.
+  if (hasOuterPayment) {
+    const outer = outerPayment as Record<string, unknown>;
+    const signedPay = (claims.payment && typeof claims.payment === 'object' ? claims.payment : {}) as Record<string, unknown>;
+    const binding = (claims.caller_binding && typeof claims.caller_binding === 'object' ? claims.caller_binding : {}) as Record<string, unknown>;
+    const parties: Array<[string, unknown[]]> = [
+      ['payTo', [signedPay.payee, claims.payee]],
+      ['payer', [claims.payer, signedPay.payer, binding.payer_wallet]],
+    ];
+    for (const [key, candidates] of parties) {
+      if (!Object.prototype.hasOwnProperty.call(outer, key)) continue;
+      const value = outer[key];
+      const signedValue = candidates.find((c) => typeof c === 'string' && c.length > 0) as string | undefined;
+      if (signedValue === undefined) {
+        errs.push(`payment.${key} is not covered by the issuer signature`);
+      } else if (!samePartyAddress(value, signedValue)) {
+        errs.push(`payment.${key} does not match the signed value`);
       }
     }
   }
