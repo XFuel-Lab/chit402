@@ -17,6 +17,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 - **Compact JWS must be canonical base64url.** `verifyIssuerJws` refuses a JWS unless every segment uses only the URL alphabet (`A–Z a–z 0–9 - _`), has no padding, re-encodes to the same text (zero trailing bits), and the signature is exactly 64 bytes; anything else is `malformed_jws`. `readJwsHeader` returns null for a non-canonical header. A hand-edited, padded or standard-alphabet copy of a JWS that used to verify is now refused. Every JWS the issuer has published is canonical.
 - **Sealed history label floor.** A history with the bundled entries must carry at least the bundled version and seq; a lower label is refused.
+- **Advisory minimum is 0.4.9.** `VERIFIER_MIN` (printed by `--version` and `--help`, exported from the package) is now 0.4.9: "Use chit402-verify 0.4.9 or later." The gateway's live `verifier_min` stays 0.3.5 until this release is published.
 
 ### Tests
 - Canonical JWS: trailing-bit, `+`/`/`, `==` padding, junk-character, 63/65-byte signature and empty-segment variants, a re-signed non-canonical header or payload, and a guard that every compact JWS in the repo is canonical. Sealed history: the bundled entries under a lower label.
