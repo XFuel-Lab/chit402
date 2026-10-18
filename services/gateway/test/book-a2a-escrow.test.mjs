@@ -114,7 +114,7 @@ describe('A2A escrow job flow', () => {
     assert.equal(submitted.ok, true);
     assert.equal(submitted.job.status, A2A_JOB_STATUS.SUBMITTED);
 
-    const released = await handleA2aJobAction({
+    const release = () => handleA2aJobAction({
       action: A2A_JOB_ACTIONS.RELEASE,
       agent_id: 7,
       job_id: opened.job.job_id,
@@ -128,6 +128,22 @@ describe('A2A escrow job flow', () => {
       verifyReceipt: () => ({ valid: true }),
       baseUrl: 'https://api.chit402.com',
     });
+
+    // The job requires the settlement tier. With SETTLEMENT_PROOF_ENABLED off
+    // the escrow is held, not released.
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+    const held = await release();
+    assert.equal(held.ok, false);
+    assert.match(String(held.reason), /settlement tier unavailable; escrow held/);
+    assert.equal(jobs.get?.(opened.job.job_id)?.status ?? A2A_JOB_STATUS.SUBMITTED, A2A_JOB_STATUS.SUBMITTED);
+
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+    let released;
+    try {
+      released = await release();
+    } finally {
+      delete process.env.SETTLEMENT_PROOF_ENABLED;
+    }
 
     assert.equal(released.ok, true);
     assert.equal(released.job.status, A2A_JOB_STATUS.RELEASED);

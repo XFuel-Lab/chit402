@@ -121,3 +121,48 @@ test('flag off: no proof is requested and in_proof cannot be set true', () => {
   assert.equal(finalizePaymentBindingForProof(binding, proof).in_proof, true, 'flag on keeps the old path');
   assert.equal(settlementProofAllowed({ proofTier: 'settlement' }), process.env.PROVER_ENABLED !== 'false');
 });
+
+const { verifyEscrowRelease } = await import('../src/book-escrow.js');
+
+test('flag on: in_proof fails closed on a missing, zero or mismatched commitment and needs explicit v2', () => {
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  const binding = buildPaymentBinding({
+    taskId: 't2',
+    intent: { amount: '2000', paymentRef: 'base:0xabc', paymentRail: 'usdc' },
+    meta: {},
+  }, { proofBinding: true });
+  const cases = {
+    'no commitment echoed': { publicValuesVersion: 2 },
+    'zero commitment': { publicValuesVersion: 2, paymentCommitment: `0x${'0'.repeat(64)}` },
+    'other commitment': { publicValuesVersion: 2, paymentCommitment: `0x${'12'.repeat(32)}` },
+    'ABI string only, no version': { aiPublicValuesAbi: '0xdeadbeef', paymentCommitment: binding.commitment },
+    'version 1': { publicValuesVersion: 1, paymentCommitment: binding.commitment },
+  };
+  for (const [name, proof] of Object.entries(cases)) {
+    assert.equal(finalizePaymentBindingForProof(binding, proof).in_proof, false, name);
+  }
+  assert.equal(finalizePaymentBindingForProof(binding, { publicValuesVersion: 2, paymentCommitment: binding.commitment }).in_proof, true);
+});
+
+test('escrow requiring the settlement tier is held while the flag is off', () => {
+  const entry = { collected: true, amount: '2000' };
+  const settlementReceipt = { proof: { tier: 'settlement' } };
+  const inferenceReceipt = { proof: { tier: 'inference' } };
+  const settlementEscrow = { required: { proof_tier: 'settlement' } };
+  for (const value of [undefined, 'TRUE', '1']) {
+    if (value === undefined) delete process.env.SETTLEMENT_PROOF_ENABLED;
+    else process.env.SETTLEMENT_PROOF_ENABLED = value;
+    for (const receipt of [settlementReceipt, inferenceReceipt]) {
+      const r = verifyEscrowRelease(settlementEscrow, receipt, entry);
+      assert.equal(r.ok, false, String(value));
+      assert.equal(r.reason, 'settlement tier unavailable; escrow held');
+    }
+  }
+  // Other requirements are unchanged.
+  delete process.env.SETTLEMENT_PROOF_ENABLED;
+  const inf = verifyEscrowRelease({ required: { proof_tier: 'inference' } }, inferenceReceipt, entry);
+  assert.notEqual(inf.reason, 'settlement tier unavailable; escrow held');
+  // Flag on: the existing tier check decides.
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  assert.equal(verifyEscrowRelease(settlementEscrow, settlementReceipt, entry).checks.proof_tier.valid, true);
+});

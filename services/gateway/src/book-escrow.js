@@ -15,6 +15,7 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { CLAIM_TYPES, fileAndAdjudicate, OUTCOME_TYPES } from './book-dispute.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 export const ESCROW_ACTIONS = {
   OPEN: 'open',
@@ -177,6 +178,13 @@ export function verifyEscrowRelease(escrow, receipt, entry) {
   const requiredTier = escrow.required?.proof_tier;
   if (requiredTier) {
     checks.proof_tier.checked = true;
+    // While the settlement proof add-on is off, an escrow that requires the
+    // settlement tier is held, never released on that tier.
+    if (String(requiredTier).toLowerCase() === 'settlement' && !settlementProofEnabled()) {
+      checks.proof_tier.valid = false;
+      checks.proof_tier.reason = 'settlement tier unavailable; escrow held';
+      return { ok: false, checks, reason: checks.proof_tier.reason };
+    }
     const actualTier = receipt?.proof?.tier
       || receipt?.proof?.zkp_tier
       || receipt?.verified_inference?.tier

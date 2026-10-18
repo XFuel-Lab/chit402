@@ -75,6 +75,7 @@ import {
   publicV11Receipt,
   renderV11ReceiptHtml,
 } from './v11-seal.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -636,7 +637,6 @@ export function proofScopeOf(task, vi, outcome) {
   const tier = vi?.tier || proofTierOf(task);
   const hasProof = !!task.sp1Proof?.proof;
   const nullifier = task.sp1Proof?.nullifier || null;
-  const settlementProof = hasSettlementProof(task);
   return {
     system: task.intent?.proofSystem || 'sp1',
     tier,
@@ -644,14 +644,14 @@ export function proofScopeOf(task, vi, outcome) {
     outcome,
     has_proof: hasProof,
     nullifier,
-    nullifier_enforced: !!(nullifier && settlementProof),
+    nullifier_enforced: !!(nullifier && verifiedSettlementProof(task)),
     proving_time_ms: task.sp1Proof?.provingTimeMs || null,
     attestation_scope: {
       settlement_metadata: hasProof || tier === 'settlement',
       output_hash_commitment: true,
       payment_binding: paymentBindingInScope(task),
       model_computation: tier === 'inference',
-      on_chain_nullifier: !!(nullifier && settlementProof),
+      on_chain_nullifier: !!(nullifier && verifiedSettlementProof(task)),
     },
   };
 }
@@ -931,7 +931,7 @@ function sealReceiptExplorer(receipt) {
 export function proofTierOf(task) {
   if (task.verifiedInference?.tier) return task.verifiedInference.tier;
   if (task.verifiedInference?.mechanism) return 'inference';
-  if (task.sp1Proof?.proof && !task.sp1Proof?.error) return 'settlement';
+  if (verifiedSettlementProof(task)) return 'settlement';
   return 'signed';
 }
 
@@ -996,6 +996,18 @@ export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
 export function hasSettlementProof(task) {
   const p = task?.sp1Proof;
   return !!(p && p.proof && !p.error && !p.skipped);
+}
+
+/**
+ * A settlement proof counts only when it is verified: the add-on is on
+ * (SETTLEMENT_PROOF_ENABLED), proof bytes are present without error or skip,
+ * and the payment binding came back in_proof (commitment matched, fail closed).
+ * Proof bytes alone are not enough for tier 'settlement' or nullifier_enforced.
+ */
+export function verifiedSettlementProof(task) {
+  if (!settlementProofEnabled()) return false;
+  if (!hasSettlementProof(task)) return false;
+  return task.sp1Proof?.paymentBinding?.in_proof === true;
 }
 
 /** True when this task inherits settlement from a parent (child handoff). No SP1 run. */

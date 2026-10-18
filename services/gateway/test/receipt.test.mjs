@@ -140,7 +140,8 @@ test('buildReceipt: USDC task is proven, priced, and independently binding-verif
   assert.equal(r.proof.has_proof, true);
   assert.equal(r.proof.attestation_scope.model_computation, false);
   assert.equal(r.proof.attestation_scope.payment_binding, true, 'commitment present → payment_binding');
-  assert.equal(r.proof.nullifier_enforced, true);
+  // Proof bytes without a verified binding (in_proof false here) do not enforce a nullifier.
+  assert.equal(r.proof.nullifier_enforced, false);
   assert.equal(!('attests' in r.proof), true, 'JSON proof omits prose attests');
 
   // The independent re-derivation must match the stored commitment.
@@ -469,10 +470,26 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
 
 // ── Phase 2 — Verified Inference fields (PoMA + PBR + signature) ────────────────
 
-test('buildReceipt: proof.tier is "settlement" with a proof, "signed" without', async () => {
-  assert.equal((await buildReceipt(usdcTask())).proof.tier, 'settlement');
+test('buildReceipt: proof.tier is "settlement" only for a verified proof', async () => {
+  // Proof bytes alone are not a verified proof.
+  assert.equal((await buildReceipt(usdcTask())).proof.tier, 'signed');
   const pending = usdcTask({ status: 'routing', sp1Proof: null, result: null });
   assert.equal((await buildReceipt(pending)).proof.tier, 'signed');
+  const verified = usdcTask();
+  verified.sp1Proof.paymentBinding = { ...(verified.sp1Proof.paymentBinding || {}), in_proof: true };
+  // Flag off: still not settlement, and no nullifier enforcement claim.
+  delete process.env.SETTLEMENT_PROOF_ENABLED;
+  const off = await buildReceipt(verified);
+  assert.equal(off.proof.tier, 'signed');
+  assert.equal(off.proof.nullifier_enforced, false);
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  try {
+    const on = await buildReceipt(verified);
+    assert.equal(on.proof.tier, 'settlement');
+    assert.equal(on.proof.nullifier_enforced, !!verified.sp1Proof.nullifier);
+  } finally {
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+  }
 });
 
 test('buildReceipt: binding.covers reports payment/settlement by default', async () => {
