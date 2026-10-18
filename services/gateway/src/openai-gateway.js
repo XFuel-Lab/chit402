@@ -6,6 +6,7 @@ import { applyRequestSaltHeader, bindRequestSalt, clientRequestForRefusal, isReq
 import { getAIListener } from './ai-listener.js';
 import { getSP1Prover } from './sp1-prover-client.js';
 import { settlementProofAllowed } from './prove-gate.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 import {
   buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView, privacyOf,
 } from './receipt.js';
@@ -1400,6 +1401,8 @@ async function startTaskProof(task, proveAllowed) {
 /** Private + Attest: prove synchronously and fail closed without in_proof. */
 async function ensureAttestProof(task, privacyCtx) {
   if (!privacyCtx?.privateAttest || !task) return null;
+  // Add-on off: never start an Attest proof; the gate below fails closed.
+  if (!settlementProofEnabled()) return attestProofGateError(task, privacyCtx);
   task.intent = task.intent || {};
   task.intent.proveAllowed = true;
   task.intent.proofTier = 'settlement';
@@ -2841,7 +2844,7 @@ export function registerOpenAIRoutes(app, {
       openrouterApiKey: orAccess.apiKey,
     });
     if (freeBucket) recordFreeSpend(freeBucket, cogs);
-    const proveAllowed = privacyCtx.privateAttest || settlementProofAllowed({
+    const proveAllowed = (privacyCtx.privateAttest && settlementProofEnabled()) || settlementProofAllowed({
       apiKey,
       cogs,
       proofTier: req.body?.proof_tier ?? req.body?.xfuel?.proof_tier ?? (privacyCtx.privateAttest ? 'settlement' : null),

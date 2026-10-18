@@ -78,7 +78,12 @@ import {
 } from './session-act.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
-import { refuseSettlementProofWhenOff } from './settlement-proof-flag.js';
+import {
+  refuseSettlementProofWhenOff,
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
@@ -5784,8 +5789,18 @@ function _findTaskByPaymentRef(aiListener, paymentRef) {
  *
  * @param {Object} msg  A2A message record
  */
-async function _generateA2AProof(msg) {
+export async function _generateA2AProof(msg) {
   try {
+    // Settlement proof add-on off: A2A registration requests no SP1 proof.
+    if (!settlementProofEnabled()) {
+      msg.sp1Proof = {
+        skipped: true,
+        reason: SETTLEMENT_PROOF_NOT_OFFERED,
+        note: SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+        timestamp: Date.now(),
+      };
+      return;
+    }
     const sp1Prover = getSP1Prover();
     if (!sp1Prover) {
       msg.sp1Proof = { error: 'SP1_PROVER_URL not set', timestamp: Date.now() };
