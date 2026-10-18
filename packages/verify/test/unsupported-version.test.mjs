@@ -249,7 +249,7 @@ test('supported versions are exported and printed', () => {
   assert.match(help.stdout, /11 only with a signed issuer_root/);
   const version = runCli(['--version'], 8000);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /chit402-verify 0\.4\.8/);
+  assert.match(version.stdout, /chit402-verify 0\.4\.9/);
   assert.match(version.stdout, /v: 11/);
   assert.match(version.stdout, /unsupported_version, exit 2/);
   assert.match(version.stdout, /require chit402-verify >= 0\.3\.5/);

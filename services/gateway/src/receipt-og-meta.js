@@ -37,10 +37,27 @@ export function capText(value, max) {
 
 function ogAssetLabel(asset, paymentRef) {
   const network = networkFromPaymentRef(paymentRef);
+  if (asset == null || asset === '') return 'unsigned';
   if (isKnownUsdcAsset(network, asset)) return 'USDC';
-  const raw = asset == null || asset === '' ? 'USDC' : String(asset);
+  const raw = String(asset);
   if (raw.toUpperCase() === 'USDC') return 'USDC';
   return shortForm(raw);
+}
+
+/** Share-card amount from signed values: dollars only for a known USDC asset. */
+function shareAmountLabel(grossAmount, rail, assetLabel) {
+  if (rail === 'unmetered') return 'UNMETERED';
+  if (grossAmount == null || grossAmount === '') return 'unsigned';
+  if (assetLabel === 'unsigned') return `${String(grossAmount)} (asset not signed)`;
+  if (assetLabel === 'USDC') return formatUsdcShareAmount(grossAmount, rail);
+  if (assetLabel === 'XNO' && /^[0-9]+$/.test(String(grossAmount))) {
+    const d = String(grossAmount).replace(/^0+(?=\d)/, '').padStart(31, '0');
+    const int = d.slice(0, -30).replace(/^0+(?=\d)/, '');
+    const frac = d.slice(-30).replace(/0+$/, '');
+    return `${frac ? `${int}.${frac}` : int} XNO`;
+  }
+  if (grossAmount == null || grossAmount === '') return 'unsigned';
+  return `${String(grossAmount)} ${assetLabel}`;
 }
 
 /** Display task id with chit- prefix for share copy. */
@@ -85,7 +102,7 @@ function settlementNetworkLabel(paymentRef) {
   if (network === 'base') return 'Base';
   if (network === 'base-sepolia') return 'Base Sepolia';
   if (network) return String(network);
-  return 'Base';
+  return 'unsigned';
 }
 
 export function receiptOgRailLabel(view) {
@@ -94,9 +111,10 @@ export function receiptOgRailLabel(view) {
   if (p.rail === 'unmetered') return 'UNMETERED';
   const asset = ogAssetLabel(p.asset, p.ref);
   if (p.rail === 'usdc' || String(p.rail).startsWith('solana')) {
-    return `${settlementNetworkLabel(p.ref)} ${asset}`;
+    const net = settlementNetworkLabel(p.ref);
+    return asset === 'unsigned' ? `${net} (asset not signed)` : `${net} ${asset}`;
   }
-  return String(p.rail || '').toUpperCase() || null;
+  return p.rail ? String(p.rail).toUpperCase() : 'unsigned';
 }
 
 export function receiptOgCollectionLabel(view) {
@@ -104,9 +122,9 @@ export function receiptOgCollectionLabel(view) {
   if (!p) return null;
   if (p.rail === 'unmetered') return 'not charged';
   if (p.rail === 'reported') return 'reported';
-  if (p.collected) return 'collected';
-  if (p.collects_on === 'next_request') return 'bill pending';
-  return 'not collected';
+  // Collection is shown only when a signed settlement ref exists.
+  if (p.collected && p.ref) return 'collected';
+  return 'collection not signed';
 }
 
 export function receiptOgEvidenceLabel(receipt) {
@@ -127,17 +145,38 @@ export function buildReceiptOgImageUrl(receipt) {
   return `${self.replace(/\/$/, '')}/og.png`;
 }
 
-function signedGrossAmount(receipt) {
-  const jws = receipt?.issuer_signature?.jws;
+const SIGNED_OG_KEYS = ['rail', 'ref', 'asset', 'gross_amount'];
+// Receipt-slot typs, as the library's ISSUER_JWS_TYP.receipt.
+const RECEIPT_SLOT_TYPS = ['chit402-receipt+jwt', 'JWT'];
+
+function receiptSlotClaims(jws) {
   if (typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
+    if (header.crit !== undefined || header.b64 !== undefined) return null;
+    if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return null;
     const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    return claims?.payment?.gross_amount ?? null;
+    if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return null;
+    if (claims.schema != null && claims.schema !== 'chit402.foreign_payout.v1') return null;
+    return claims;
   } catch {
     return null;
   }
+}
+
+/** Signed payment fields used on the share card (null when unsigned). */
+function signedOgPayment(receipt) {
+  const out = Object.fromEntries(SIGNED_OG_KEYS.map((k) => [k, null]));
+  // Receipt-slot rules: another issuer document's JWS (book-seq, tree head,
+  // x402...) or one with crit/b64 is not read.
+  const claims = receiptSlotClaims(receipt?.issuer_signature?.jws);
+  if (!claims) return out;
+  const pay = claims.payment && typeof claims.payment === 'object' ? claims.payment : {};
+  for (const k of SIGNED_OG_KEYS) out[k] = pay[k] ?? null;
+  return out;
 }
 
 /**
@@ -147,9 +186,12 @@ function signedGrossAmount(receipt) {
  */
 export function buildReceiptOgMeta(receipt, mergedView = null) {
   const view = mergedView || receipt;
-  const p = view.payment || {};
-  // Amount shown only as signed by the issuer; never the outer copy.
-  const amountLabel = formatUsdcShareAmount(signedGrossAmount(receipt), p.rail);
+  const outerPay = view.payment || {};
+  // Rail, ref, asset and amount shown only as signed by the issuer; never the outer copy.
+  const sp = signedOgPayment(receipt);
+  const p = { ...outerPay, ...sp };
+  const signedView = { ...view, payment: view.payment ? p : view.payment };
+  const amountLabel = shareAmountLabel(sp.gross_amount, sp.rail, ogAssetLabel(sp.asset, sp.ref));
   const shortId = shortReceiptIdForShare(receipt.task_id || view.task_id);
 
   const title = p.rail === 'unmetered'
@@ -157,8 +199,8 @@ export function buildReceiptOgMeta(receipt, mergedView = null) {
     : `${amountLabel} · ${shortId}`;
 
   const descParts = [
-    receiptOgRailLabel(view),
-    receiptOgCollectionLabel(view),
+    receiptOgRailLabel(signedView),
+    receiptOgCollectionLabel(signedView),
     receiptOgEvidenceLabel(receipt),
   ].filter(Boolean);
 

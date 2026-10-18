@@ -354,12 +354,11 @@ describe('renderReceiptHtml with handoff', () => {
       },
     }, {});
 
+    // The handoff block is not in the signed claims, so the public page does not render it.
+    assert.ok(receipt.handoff);
     const html = renderReceiptHtml(receipt);
-    assert.ok(html.includes('Handoff'));
-    assert.ok(html.includes('wallet-move delegation'));
-    assert.ok(html.includes('pending destination ack') || html.includes('pending'));
-    assert.ok(html.includes('Origin'));
-    assert.ok(html.includes('Destination'));
+    assert.equal(html.includes('wallet-move delegation'), false);
+    assert.equal(html.includes('0xABCDEF0123456789ABCDEF0123456789ABCDEF01'), false);
   });
 
   test('HTML shows complete handoff section', async () => {
@@ -385,10 +384,10 @@ describe('renderReceiptHtml with handoff', () => {
       },
     }, {});
 
+    assert.ok(receipt.handoff);
     const html = renderReceiptHtml(receipt);
-    assert.ok(html.includes('Handoff'));
-    assert.ok(html.includes('complete') || html.includes('Complete'));
-    assert.ok(html.includes('Acknowledged'));
+    assert.equal(html.includes('Acknowledged'), false);
+    assert.equal(html.includes('0xdestsig'), false);
   });
 
   test('HTML escapes hostile input in handoff addresses', async () => {
@@ -410,7 +409,7 @@ describe('renderReceiptHtml with handoff', () => {
 
     const html = renderReceiptHtml(receipt);
     assert.ok(!html.includes('<script>alert(1)</script>'));
-    assert.ok(html.includes('&lt;script&gt;'));
+    assert.ok(!html.includes('&lt;script&gt;alert'));
   });
 });
 

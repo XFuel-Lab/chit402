@@ -137,12 +137,13 @@ test('buildAuditorExport: redacts content; reports policy', async () => {
   const exp = buildAuditorExport(receipt);
   assert.equal(exp.schema, 'xfuel.auditor_export.v1');
   assert.equal(exp.in_policy, true);
-  assert.equal(exp.checks.privacy_vendor_blind, true);
+  // Privacy mode is not in the signed claims; the export does not carry it.
+  assert.equal(exp.checks.privacy_vendor_blind, 'no_policy');
   assert.equal(exp.checks.binding_ok, 'no_policy');
   assert.equal(exp.totals.fee_bps, 100);
   assert.equal(exp.totals.route_margin_bps, 100);
   assert.equal(exp.checks.fee_bps_within_cap, true);
   assert.ok(exp.redacted.includes('prompts'));
   assert.ok(!JSON.stringify(exp).includes('should never appear'));
-  assert.equal(exp.privacy.mode, 'vendor_blind');
+  assert.equal(exp.privacy, null);
 });

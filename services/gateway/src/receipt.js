@@ -34,12 +34,13 @@ import {
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 import { claimIdFromView } from './claim-id.js';
-import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
+import { buildReceiptOgMeta, buildReceiptOgImageUrl, isKnownUsdcAsset } from './receipt-og-meta.js';
 import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 import { renderCoverageSection } from './export-coverage.js';
 import { renderBookSeqSection } from './book-seq.js';
 import { renderSupersessionSection } from './supersession-fork.js';
 import { renderInclusionSection, getReceiptMerkleTree } from './receipt-merkle.js';
+import { checkReceiptLog, receiptOutcome, LOG_CHECKED, LOG_FAILED } from './receipt-log-check.js';
 import {
   headBindingClaims,
   headBindingVerdict,
@@ -244,8 +245,11 @@ export function decodeReceiptClaims(receipt) {
   if (!jws || typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
+  // Receipt slot only: another issuer document's JWS is not receipt claims.
+  if (receiptSlotRefusal(jws)) return null;
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return receiptClaimsRefusal(claims) ? null : claims;
   } catch {
     return null;
   }
@@ -260,6 +264,20 @@ export function mergeReceiptView(receipt) {
 }
 
 const SIGNED_AMOUNT_KEYS = ['gross_amount', 'settled_amount', 'net_amount', 'fee_amount', 'asset'];
+/** Payment keys rendered only as signed (null when the claims do not carry them). */
+const SIGNED_DISPLAY_KEYS = [
+  ...SIGNED_AMOUNT_KEYS,
+  'rail', 'ref', 'protocol_fee_bps', 'fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
+];
+
+/** Display label for a signed asset: known USDC contract -> 'USDC', null -> 'unsigned', addresses keep their case. */
+export function signedAssetLabel(asset, network) {
+  if (asset == null || asset === '') return 'unsigned';
+  const raw = String(asset);
+  if (isKnownUsdcAsset(network, raw)) return 'USDC';
+  if (/^0x[0-9a-fA-F]{40}$/.test(raw) || raw.length > 12) return raw;
+  return raw.toUpperCase();
+}
 
 /**
  * Parties and amounts as signed by the issuer. Values absent from the signed
@@ -284,10 +302,16 @@ export function signedParties(claims) {
 export function displayReceiptView(receipt) {
   const view = mergeReceiptViewInner(receipt);
   if (!view || typeof view !== 'object') return view;
-  const sp = signedParties(decodeReceiptClaims(receipt));
+  const claims = decodeReceiptClaims(receipt);
+  const sp = signedParties(claims);
+  const signedPay = claims?.payment && typeof claims.payment === 'object' ? claims.payment : {};
   const payment = view.payment && typeof view.payment === 'object' ? { ...view.payment } : null;
   if (payment) {
-    for (const k of SIGNED_AMOUNT_KEYS) payment[k] = sp[k];
+    for (const k of SIGNED_DISPLAY_KEYS) payment[k] = k in sp ? sp[k] : (signedPay[k] ?? null);
+    const network = signedPay.network ?? networkFromPaymentRef(payment.ref) ?? null;
+    payment.network = network;
+    payment.chain = signedPay.chain ?? null;
+    payment.explorer_url = safeExplorerUrl(null, payment.ref);
     payment.payee = sp.payee;
     payment.payTo = sp.payee;
     payment.payer = sp.payer;
@@ -296,6 +320,149 @@ export function displayReceiptView(receipt) {
     ? { ...view.caller_binding, payer_wallet: sp.payer }
     : view.caller_binding;
   return { ...view, payment, caller_binding: binding };
+}
+
+const FOREIGN_PAYOUT_SCHEMA = 'chit402.foreign_payout.v1';
+const PUBLIC_RECEIPT_BASE = 'https://api.chit402.com';
+
+/**
+ * The receipt as rendered: only what the issuer signed. Every outer field of the
+ * holder document is dropped; links are rebuilt from the signed task id.
+ * A document with no decodable issuer JWS keeps only its task id.
+ */
+// Public production issuer key (matches PRODUCTION_TRUSTED_ISSUER_KID by RFC 7638 thumbprint).
+const PRODUCTION_ISSUER_PUBLIC_JWK = Object.freeze({
+  kty: 'EC',
+  crv: 'P-256',
+  x: '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk',
+  y: 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34',
+  kid: 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q',
+  alg: 'ES256',
+  use: 'sig',
+});
+
+/** alg/kid come from the JWS protected header; the key comes from the pin, never the holder copy. */
+function signedIssuerSignature(jws, claims) {
+  let header = {};
+  try {
+    header = JSON.parse(Buffer.from(String(jws).split('.')[0], 'base64url').toString('utf8')) || {};
+  } catch {
+    header = {};
+  }
+  const sig = { jws, payload_version: claims.payload_version ?? null };
+  if (typeof header.alg === 'string') sig.alg = header.alg;
+  if (typeof header.kid === 'string') sig.kid = header.kid;
+  if (sig.kid === PRODUCTION_ISSUER_PUBLIC_JWK.kid) {
+    sig.issuer_jwk = { ...PRODUCTION_ISSUER_PUBLIC_JWK };
+  } else if (sig.kid) {
+    try {
+      const published = (getJwks()?.keys || []).find((k) => k && k.kid === sig.kid);
+      if (published?.kty === 'EC' && published.crv === 'P-256') {
+        sig.issuer_jwk = { kty: 'EC', crv: 'P-256', x: published.x, y: published.y, kid: published.kid, alg: 'ES256', use: 'sig' };
+      }
+    } catch {
+      // No published key here; the page reports the signature as not verified.
+    }
+  }
+  if (typeof header.jku === 'string' && /^https:\/\//.test(header.jku)) sig.jku = header.jku;
+  return sig;
+}
+
+/** Provider cost from the signed claims; a signed OpenRouter block supplies the reported cost and label. */
+function signedProviderCogs(claims) {
+  const base = claims.provider_cogs && typeof claims.provider_cogs === 'object' ? claims.provider_cogs : null;
+  const or = claims.openrouter && typeof claims.openrouter === 'object' ? claims.openrouter : null;
+  if (!or) return base && base.actual != null ? base : null;
+  const out = { ...(base || {}) };
+  if (out.provider == null && claims.route?.provider) out.provider = claims.route.provider;
+  if (or.label != null) out.label = or.label;
+  if (or.reported_cost_usd != null) out.reported_cost_usd = or.reported_cost_usd;
+  return out;
+}
+
+/** Protected typ values the receipt slot accepts (library ISSUER_JWS_TYP.receipt). */
+export const RECEIPT_SLOT_TYPS = Object.freeze(['chit402-receipt+jwt', 'JWT']);
+
+/**
+ * Why a JWS may not sit in the receipt slot, or null. Another issuer document
+ * (book-seq, tree head, x402, refusal...) is signed by the same key, so the
+ * protected typ is what separates them. crit and b64 are never set by the
+ * issuer and are refused, as in the library.
+ */
+export function receiptSlotRefusal(jws) {
+  if (typeof jws !== 'string' || jws.split('.').length !== 3) return 'malformed_jws';
+  let header;
+  try {
+    header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8'));
+  } catch {
+    return 'malformed_jws';
+  }
+  if (!header || typeof header !== 'object' || Array.isArray(header)) return 'malformed_jws';
+  if (header.crit !== undefined || header.b64 !== undefined) return 'unsupported_header';
+  if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return 'typ_mismatch';
+  return null;
+}
+
+function rawJwsClaims(jws) {
+  try {
+    return JSON.parse(Buffer.from(String(jws).split('.')[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Claims that name another document schema are not a receipt. */
+export function receiptClaimsRefusal(claims) {
+  if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return 'claims_malformed';
+  if (claims.schema != null && claims.schema !== FOREIGN_PAYOUT_SCHEMA) return 'claims_schema_mismatch';
+  return null;
+}
+
+export function signedReceiptProjection(receipt) {
+  if (!receipt || typeof receipt !== 'object') return receipt;
+  const slotJws = receipt.issuer_signature?.jws;
+  if (typeof slotJws === 'string' && slotJws
+    && (receiptSlotRefusal(slotJws) || receiptClaimsRefusal(rawJwsClaims(slotJws)))) {
+    // Not a receipt JWS: nothing from it, or from the holder copy, is shown.
+    return { task_id: null, issuer_signature: { jws: slotJws } };
+  }
+  const claims = decodeReceiptClaims(receipt);
+  if (!claims || typeof claims !== 'object') {
+    const jws = receipt.issuer_signature?.jws;
+    return {
+      task_id: typeof receipt.task_id === 'string' ? receipt.task_id : null,
+      // An unreadable signature still renders as "not verified", never as unsigned.
+      ...(typeof jws === 'string' && jws ? { issuer_signature: { jws } } : {}),
+    };
+  }
+  const taskId = typeof claims.task_id === 'string' ? claims.task_id : null;
+  const displayId = taskId && taskId.startsWith('xfuel-') ? `chit-${taskId.slice(6)}` : taskId;
+  const self = displayId ? `${PUBLIC_RECEIPT_BASE}/receipt/${encodeURIComponent(displayId)}` : null;
+  const foreign = claims.schema === FOREIGN_PAYOUT_SCHEMA;
+  const issuerSig = signedIssuerSignature(receipt.issuer_signature.jws, claims);
+  const out = {
+    task_id: taskId,
+    issuer_signature: issuerSig,
+    ...(issuerSig.jku ? { verification: { jwks_uri: issuerSig.jku } } : {}),
+    provider_cogs: signedProviderCogs(claims),
+    ...(claims.openrouter && typeof claims.openrouter === 'object' ? { openrouter: claims.openrouter } : {}),
+    binding: claims.binding?.expected_commitment ? claims.binding : null,
+    verify_url: self,
+    links: self
+      ? (foreign
+        ? { self }
+        : {
+            self,
+            json: `${self}?format=json`,
+            status: `${PUBLIC_RECEIPT_BASE}/task-status?task_id=${encodeURIComponent(taskId)}`,
+            proof: `${PUBLIC_RECEIPT_BASE}/prove-result?task_id=${encodeURIComponent(taskId)}`,
+          })
+      : {},
+  };
+  if (foreign) Object.assign(out, { foreign_x402: true, source: 'foreign_ingest', evidence: 'foreign_ingest' });
+  if (claims.kind != null) out.kind = claims.kind;
+  if (claims.stamp && typeof claims.stamp === 'object' && !Array.isArray(claims.stamp)) out.stamp = claims.stamp;
+  return out;
 }
 
 function mergeReceiptViewInner(receipt) {
@@ -2880,6 +3047,51 @@ function usdcCell(units) {
   return `${esc(pretty)} <span class="muted">${esc(units)}</span>`;
 }
 
+export const UNSIGNED_DETAILS_NOTE = "Some details aren't part of the signed receipt and aren't shown.";
+
+const LOG_STATE_LABEL = {
+  checked: 'checked',
+  couldnt_check: "couldn't check",
+  failed: 'failed',
+  issuer_record: 'matches issuer record, not checked on-chain',
+};
+
+function logStateBadge(partName, p) {
+  const st = p?.state || 'couldnt_check';
+  const cls = st === LOG_CHECKED ? 'ok' : (st === LOG_FAILED ? 'bad' : 'pending');
+  return `<span class="badge ${cls}" data-log-part="${partName}" data-log-state="${st}">${LOG_STATE_LABEL[st] || "couldn't check"}</span>`
+    + (st === LOG_CHECKED || st === 'issuer_record' ? '' : ` <span class="muted"><code>${escHtml(p?.reason || 'not_checked')}</code></span>`);
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Outside witness, as this page checked it. Never shows a value it did not check. */
+function renderLogCheckSection(log) {
+  const inc = log?.inclusion;
+  const head = log?.head;
+  const anc = log?.anchor;
+  const r = (k, v) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  return `<section class="card">
+      <h2>Outside witness <span class="scope">checked by this page</span></h2>
+      ${r('Tree head', logStateBadge('head', head))}
+      ${head?.state === LOG_CHECKED ? r('Root', `<code>${escHtml(head.root)}</code> <span class="muted">size ${escHtml(head.tree_size)}</span>`) : ''}
+      ${r('Inclusion', logStateBadge('inclusion', inc))}
+      ${inc?.state === LOG_CHECKED ? r('Leaf', `<code>${escHtml(inc.leaf_index)}</code> of <code>${escHtml(inc.tree_size)}</code>`) : ''}
+      ${r('Anchor', logStateBadge('anchor', anc))}
+      ${anc?.state === 'issuer_record' ? r('Anchor tx', `<span class="muted">Base, named by the signed head</span> <code>${escHtml(anc.tx)}</code>`) : ''}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">The leaf is rebuilt from the signed task id and checked against an issuer-signed tree head. The anchor is not checked on-chain here; it can only match the issuer's own record. It does not prove the payment.</p>
+    </section>`;
+}
+
+const OUTCOME_LABEL = { verified: 'Verified', invalid: 'Invalid', couldnt_check: "Couldn't check" };
+
+function outcomeBadge(outcome) {
+  const cls = outcome === 'verified' ? 'ok' : (outcome === 'invalid' ? 'bad' : 'pending');
+  return `<span class="badge ${cls}" data-outcome="${outcome}">${OUTCOME_LABEL[outcome] || "Couldn't check"}</span>`;
+}
+
 function badge(outcome, bindingMatches) {
   if (outcome === 'valid') {
     const bind = bindingMatches === false ? ' · binding mismatch' : bindingMatches ? ' · binding verified' : '';
@@ -2966,9 +3178,10 @@ function reportedOpenRouterSection(receipt, view) {
   const mismatchFields = receipt.verification?.status === 'mismatch' && Array.isArray(receipt.verification.fields)
     ? receipt.verification.fields.map((field) => String(field)).join(', ')
     : '';
-  const stampHtml = stamp.waived === true
-    ? '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">pilot, not charged</span>'
-    : '$0.002 <span class="muted">USDC recorded</span> <span class="badge pending">not charged</span>';
+  const stampFee = stamp.fee_usd != null && stamp.fee_usd !== '' ? `$${stamp.fee_usd}` : formatUsdc(stamp.fee_units);
+  const stampHtml = stampFee && typeof stamp.waived === 'boolean'
+    ? `${esc(stampFee)} <span class="muted">USDC recorded</span> <span class="badge pending">${stamp.waived ? 'pilot, not charged' : 'not charged'}</span>`
+    : null;
   const note = receipt.attestation_note || (verified ? VERIFIED_OPENROUTER_NOTE : REPORTED_ATTESTATION_NOTE);
   return `<section class="card">
       <h2>Reported spend <span class="scope">${verified
@@ -2984,38 +3197,41 @@ function reportedOpenRouterSection(receipt, view) {
       ${usd('Total cost', reported.total_cost_usd)}
       ${row('Model', esc(view.route?.model || '—'))}
       ${provider ? row('Provider', esc(provider)) : ''}
-      ${row('Stamp fee', stampHtml)}
+      ${stampHtml ? row('Stamp fee', stampHtml) : ''}
       <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(note)}</p>
     </section>`;
 }
 
+/** Signed raw Nano amount (10^30 raw per XNO) as a plain decimal, or null. */
+function xnoFromRaw(raw) {
+  if (raw == null || !/^[0-9]+$/.test(String(raw))) return null;
+  const s = String(raw).replace(/^0+(?=\d)/, '').padStart(31, '0');
+  const int = s.slice(0, -30).replace(/^0+(?=\d)/, '');
+  const frac = s.slice(-30).replace(/0+$/, '');
+  return frac ? `${int}.${frac}` : int;
+}
+
 function foreignIngestPaymentSection(receipt, view) {
   const p = view.payment || {};
-  const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
   const rail = String(p.rail || '').toLowerCase();
-  const isNano = rail === 'nano' || p.chain === 'nano';
-  const asset = String(p.asset || (isNano ? 'XNO' : 'USDC')).toUpperCase();
-  const network = p.network || (isNano ? 'nano' : '');
+  // p comes from displayReceiptView: rail, ref and network are signed or null.
+  const isNano = rail === 'nano' || p.network === 'nano';
+  // Asset label is shown only as signed; no hard-coded default.
+  const asset = signedAssetLabel(p.asset, p.network);
+  const network = p.network || '';
   const railLabel = isNano
-    ? 'Nano / XNO'
-    : (network ? `${network} / ${asset}` : asset);
+    ? (asset === 'unsigned' ? 'Nano (asset not signed)' : `Nano / ${asset}`)
+    : (asset === 'unsigned'
+      ? (network ? `${network} (asset not signed)` : 'asset not signed')
+      : (network ? `${network} / ${asset}` : asset));
   const amountHtml = isNano
-    ? `${esc(p.amount_xno ?? '—')} <span class="muted">XNO</span>`
+    ? `${esc(xnoFromRaw(p.gross_amount) ?? 'unsigned')} <span class="muted">XNO</span>`
     : usdcCell(p.gross_amount);
   const usd = formatUsdEstimateLabel(p.usd_estimate);
   const sender = p.payer ?? null;
   const recipient = p.payee ?? null;
-  const explorer = safeExplorerUrl(p.explorer_url, p.ref)
-    || safeExplorerUrl(receipt.links?.explorer, p.ref);
-  const feeLabel = stamp.fee_usd != null && stamp.fee_usd !== ''
-    ? `$${stamp.fee_usd}`
-    : formatUsdc(stamp.fee_units);
-  const waived = stamp.waived === true;
-  const stampHtml = `${esc(feeLabel || '$0.002')} <span class="muted">USDC</span> ${
-    waived
-      ? '<span class="badge pending">waived</span>'
-      : '<span class="badge ok">paid</span>'
-  }`;
+  const explorer = safeExplorerUrl(null, p.ref);
+  // The foreign stamp fee is not shown on the page.
 
   return `<section class="card">
       <h2>Foreign payment <span class="scope">recorded, not executed here</span></h2>
@@ -3026,7 +3242,6 @@ function foreignIngestPaymentSection(receipt, view) {
       ${recipient ? row('Recipient', `<code>${esc(recipient)}</code>`) : ''}
       ${p.ref ? row('Payment ref', `<code>${esc(p.ref)}</code>`) : ''}
       ${explorer ? row('Explorer', `<a href="${esc(explorer)}" target="_blank" rel="noopener">${esc(explorer)} ↗</a>`) : ''}
-      ${row('Stamp fee', stampHtml)}
       <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(receipt.attestation_note || 'Chit402 verified and recorded this payment. It did not execute the spend.')}</p>
     </section>`;
 }
@@ -3107,6 +3322,10 @@ function claimIdRefusal(payload) {
 export function verifyIssuerForHtml(receipt) {
   const sig = receipt?.issuer_signature;
   const pinned = embeddedIssuerKeyIsPinned(receipt);
+  if (sig?.jws) {
+    const refused = receiptSlotRefusal(sig.jws) || receiptClaimsRefusal(rawJwsClaims(sig.jws));
+    if (refused) return { verified: false, reason: refused, pinned: false };
+  }
   if (!sig || !sig.jws || sig.alg !== 'ES256') {
     return { verified: false, reason: 'no_issuer_signature', pinned };
   }
@@ -3154,9 +3373,13 @@ export function verifyIssuerForHtml(receipt) {
 }
 
 /** Render a clean, standalone, shareable HTML receipt page. */
-export function renderReceiptHtml(receipt) {
+export function renderReceiptHtml(receipt, opts = {}) {
   if (isV11Document(receipt)) return renderV11ReceiptHtml(receipt);
-  receipt = redactPublicReceipt(receipt);
+  // Render only what the issuer signed; outer holder fields never reach the page.
+  // Inclusion, tree head and anchor are shown only as this page checks them.
+  const served = redactPublicReceipt(receipt);
+  receipt = signedReceiptProjection(served);
+  const logCheck = checkReceiptLog(served, decodeReceiptClaims(receipt), { extraKeys: [PRODUCTION_ISSUER_PUBLIC_JWK], ...opts });
   const view = displayReceiptView(receipt);
   const p = view.payment || {};
   const pr = view.proof || {};
@@ -3189,6 +3412,7 @@ export function renderReceiptHtml(receipt) {
 
   const issuerSig = receipt.issuer_signature;
   const issuerVerified = verifyIssuerForHtml(receipt);
+  const outcome = receiptOutcome({ ...issuerVerified, hasJws: !!receipt.issuer_signature?.jws }, logCheck);
   const jwksUri = receipt.verification?.jwks_uri || null;
   const jwksUrl = jwksUri?.startsWith('http')
     ? jwksUri
@@ -3209,12 +3433,14 @@ export function renderReceiptHtml(receipt) {
     ? ''
     : b
     ? `<section class="card">
-        <h2>Payment binding <span class="scope">independent re-derivation</span></h2>
-        ${row('In proof', b.in_proof ? '<span class="badge ok">yes</span>' : '<span class="badge pending">server-attested</span>')}
-        ${row('Rail / amount', `${esc((b.rail || '').toUpperCase())} · ${esc(b.amount)}`)}
+        <h2>Payment binding <span class="scope">signed expected commitment</span></h2>
+        ${typeof b.in_proof === 'boolean' ? row('In proof', b.in_proof ? '<span class="badge ok">yes</span>' : '<span class="badge pending">server-attested</span>') : ''}
+        ${b.rail || b.amount ? row('Rail / amount', `${esc((b.rail || '').toUpperCase())} · ${esc(b.amount)}`) : ''}
         ${row('Expected commitment', `<code>${esc(shortHash(b.expected_commitment, 12, 10))}</code>`)}
-        ${row('Recomputed commitment', `<code>${esc(shortHash(b.recomputed_commitment, 12, 10))}</code>`)}
-        ${row('Match', b.matches ? '<span class="badge ok">✓ matches</span>' : '<span class="badge bad">✗ mismatch</span>')}
+        ${b.recomputed_commitment ? row('Recomputed commitment', `<code>${esc(shortHash(b.recomputed_commitment, 12, 10))}</code>`) : ''}
+        ${typeof b.matches === 'boolean'
+          ? row('Match', b.matches ? '<span class="badge ok">✓ matches</span>' : '<span class="badge bad">✗ mismatch</span>')
+          : row('Match', "<span class=\"badge pending\">couldn't check</span>")}
       </section>`
     : (view.caller_binding?.payer_wallet
         ? `<section class="card">
@@ -3254,7 +3480,6 @@ export function renderReceiptHtml(receipt) {
           ? row('Upstream inference', esc(`$${cogs.openrouter_generation.upstream_inference_cost}`))
           : ''}
         ${callerPaidOpenRouter ? row('Paid by', esc(OPENROUTER_CALLER_PAID_LABEL)) : ''}
-        ${cogs.estimated != null && cogs.estimated !== cogs.actual ? row('Quoted estimate', usdcCell(cogs.estimated)) : ''}
         ${cogs.basis ? row('Basis', esc(cogs.basis)) : ''}
         ${cogs.below_low_water ? row('Float', '<span class="badge pending">at/below low water — refill</span>') : ''}
         <p class="muted" style="margin:8px 0 0;font-size:12px">${callerPaidOpenRouter
@@ -3414,8 +3639,8 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
       <div>${reported
         ? openRouterStatusBadge(receipt)
         : (foreign
-          ? '<span class="badge ok">Recorded</span>'
-          : badge(pr.outcome, b ? b.matches : undefined))}</div>
+          ? `<span class="badge ok">Recorded</span> ${outcomeBadge(outcome)}`
+          : outcomeBadge(outcome))}</div>
     </header>
 
     <div class="share-row">
@@ -3431,7 +3656,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
 
     ${reported ? reportedOpenRouterSection(receipt, view) : (foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
       <h2>Payment</h2>
-      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc((p.rail || '').toUpperCase())}</span>`)}
+      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail ? String(p.rail).toUpperCase() : 'unsigned')}</span>`)}
       ${row('Settlement', refund?.refund_status === 'owed'
         ? '<span class="badge bad">refund owed</span>'
         : (view.settlement?.kind === SETTLEMENT_KIND_INHERITED
@@ -3458,7 +3683,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : ''}
     </section>`) }
 
-    ${renderInclusionSection(receipt.inclusion, receipt.carry_forward, issuerVerified.verified)}
+    ${renderLogCheckSection(logCheck)}
     ${renderBookSeqSection(receipt.book_chain, receipt.receipt_lane)}
     ${renderSupersessionSection(receipt.supersession)}
     ${renderCoverageSection(receipt.coverage)}
@@ -3470,20 +3695,20 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
         : (issuerSig?.jws ? '<span class="badge bad">not verified</span>' : '<span class="muted">unsigned</span>'))}
       ${issuerSig?.alg ? row('Algorithm', `<code>${esc(issuerSig.alg)}</code>`) : ''}
       ${issuerSig?.kid ? row('Key ID', `<code>${esc(shortHash(issuerSig.kid, 8, 6))}</code>`) : ''}
-      ${embeddedIssuerKeyIsPinned(receipt) ? row('Offline key', '<span class="badge ok">pinned in receipt</span>') : ''}
+      ${issuerVerified.verified && embeddedIssuerKeyIsPinned(receipt) ? row('Offline key', '<span class="badge ok">pinned in receipt</span>') : ''}
       ${jwksUrl ? row('JWKS', `<a href="${esc(jwksUrl)}" target="_blank" rel="noopener">${esc(jwksUri)} ↗</a> <span class="muted">live convenience</span>`) : ''}
-      ${receipt.hmac_attestation?.value ? row('HMAC attestation', `<span class="badge pending">${esc(receipt.hmac_attestation.alg || 'HMAC-SHA256')}</span> <span class="muted">secondary</span>`) : ''}
       ${row('On-chain SP1', pr.has_proof ? '<span class="badge ok">yes</span>' : '<span class="muted">not on this call</span>')}
       ${pr.nullifier ? row('Nullifier', `<code>${esc(shortHash(pr.nullifier, 12, 10))}</code>`) : ''}
       ${pr.proving_time_ms != null ? row('Proving time', `${esc(pr.proving_time_ms)} ms`) : ''}
       ${foreign
         ? '<p class="muted" style="margin:8px 0 0;font-size:12px">Foreign ingest has no on-chain SP1 proof. The recorded payment is the evidence.</p>'
         : (pr.has_proof ? `<div class="scopebox">${esc(pr.attestation_scope?.payment_binding ? PROOF_SCOPE_NOTE : PROOF_SCOPE_NOTE_NO_BINDING)}</div>` : `<p class="muted" style="margin:8px 0 0;font-size:12px">${esc(proofWhyMissing(view))}</p>`)}
+      <p class="muted" style="margin:8px 0 0;font-size:12px">${esc(UNSIGNED_DETAILS_NOTE)}</p>
     </section>
 
     <section class="card secondary">
       <h2>Route details</h2>
-      ${row('Status', esc(view.status))}
+      ${view.status ? row('Status', esc(view.status)) : ''}
       ${row('Model', esc(routeModelLabel) || '<span class="muted">—</span>')}
       ${route.requested && route.requested !== route.model ? row('Requested', `<code>${esc(route.requested)}</code>`) : ''}
       ${row('Provider', esc(routeProviderLabel) || '<span class="muted">—</span>')}
@@ -3591,9 +3816,13 @@ export const AUDITOR_NO_POLICY = 'no_policy';
  * @param {Array<boolean|string|null>} values
  * @returns {boolean|string}
  */
+export const AUDITOR_UNSIGNED = 'unsigned';
+
 export function rollupInPolicy(values) {
   const applicable = values.filter((v) => v != null && v !== AUDITOR_NO_POLICY);
   if (applicable.length === 0) return AUDITOR_NO_POLICY;
+  if (applicable.some((v) => v === false)) return false;
+  if (applicable.some((v) => v === AUDITOR_UNSIGNED)) return AUDITOR_UNSIGNED;
   return applicable.every((v) => v === true);
 }
 
@@ -3624,13 +3853,29 @@ function privacyVendorBlindCheck(view, pol) {
  * @param {object} receipt  full public receipt from buildReceipt
  * @param {{ policy?: object }} [opts]
  */
-export function buildAuditorExport(receipt, { policy = null } = {}) {
+function exportLogPart(p) {
+  if (!p) return { state: 'couldnt_check', reason: 'not_checked' };
+  const out = { state: p.state, reason: p.reason };
+  if (p.state === LOG_CHECKED || p.state === 'issuer_record') {
+    for (const k of ['root', 'tree_size', 'leaf_index', 'chain', 'tx']) if (p[k] != null) out[k] = p[k];
+  }
+  return out;
+}
+
+export function buildAuditorExport(receipt, { policy = null, ...logOpts } = {}) {
   if (isV11Document(receipt)) return receipt;
   if (!receipt || !receipt.task_id) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
-  const source = redactPublicReceipt(receipt);
-  const view = mergeReceiptView(source);
+  // Export only what the issuer signed; outer holder fields are dropped.
+  const served = redactPublicReceipt(receipt);
+  const source = signedReceiptProjection(served);
+  const logCheck = checkReceiptLog(served, decodeReceiptClaims(source), { extraKeys: [PRODUCTION_ISSUER_PUBLIC_JWK], ...logOpts });
+  const issuerCheck = verifyIssuerForHtml(source);
+  const outcome = receiptOutcome({ ...issuerCheck, hasJws: !!source.issuer_signature?.jws }, logCheck);
+  // Money-flow fields come from the signed view only (null when unsigned).
+  const view = displayReceiptView(source);
+  const signed = signedParties(decodeReceiptClaims(source));
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],
@@ -3639,19 +3884,21 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   };
   const pol = policy || defaultPolicy;
   const breakdown = view.payment?.accounting?.internal_breakdown || null;
-  const feeBps = Number(
-    breakdown?.route_margin_bps
+  const feeRaw = breakdown?.route_margin_bps
     ?? view.payment?.protocol_fee_bps
     ?? view.payment?.fee_bps
-    ?? 0,
-  );
-  const rail = (view.payment?.rail || '').toLowerCase();
+    ?? null;
+  const rail = view.payment?.rail == null ? null : String(view.payment.rail).toLowerCase();
   const checks = {
-    fee_bps_within_cap: feeBps <= Number(pol.max_fee_bps ?? 100),
-    rail_allowed: Array.isArray(pol.allowed_rails)
-      ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
-      : true,
-    binding_ok: view.binding == null ? AUDITOR_NO_POLICY : view.binding.matches === true,
+    fee_bps_within_cap: feeRaw == null ? AUDITOR_UNSIGNED : Number(feeRaw) <= Number(pol.max_fee_bps ?? 100),
+    rail_allowed: rail == null
+      ? AUDITOR_UNSIGNED
+      : (Array.isArray(pol.allowed_rails)
+        ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
+        : true),
+    binding_ok: view.binding == null
+      ? AUDITOR_NO_POLICY
+      : (typeof view.binding.matches === 'boolean' ? view.binding.matches : AUDITOR_UNSIGNED),
     privacy_vendor_blind: privacyVendorBlindCheck(view, pol),
   };
   const in_policy = rollupInPolicy(Object.values(checks));
@@ -3659,26 +3906,31 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   return {
     schema: 'xfuel.auditor_export.v1',
     generated_at: new Date().toISOString(),
-    task_id: receipt.task_id,
-    status: receipt.status,
-    proof_outcome: receipt.proof_outcome,
-    verify_url: receipt.verify_url,
+    task_id: source.task_id,
+    status: source.status,
+    proof_outcome: outcome,
+    log_check: {
+      head: exportLogPart(logCheck.head),
+      inclusion: exportLogPart(logCheck.inclusion),
+      anchor: exportLogPart(logCheck.anchor),
+    },
+    verify_url: source.verify_url,
     policy: pol,
     checks,
     in_policy,
     totals: {
       rail: view.payment?.rail || null,
-      gross_amount: view.payment?.gross_amount || null,
-      settled_amount: view.payment?.settled_amount || null,
-      fee_amount: view.payment?.fee_amount || null,
-      net_amount: view.payment?.net_amount || null,
+      gross_amount: signed.gross_amount,
+      settled_amount: signed.settled_amount,
+      fee_amount: signed.fee_amount,
+      net_amount: signed.net_amount,
       fee_bps: breakdown?.route_margin_bps ?? view.payment?.fee_bps ?? view.payment?.protocol_fee_bps ?? null,
       route_margin_bps: breakdown?.route_margin_bps ?? null,
       route_margin_amount: breakdown?.route_margin_amount ?? null,
       receipt_floor_amount: breakdown?.receipt_floor_amount ?? null,
       provider_cogs_amount: breakdown?.provider_cogs_amount ?? null,
       payment_ref: view.payment?.ref || null,
-      explorer_url: safeExplorerUrl(view.payment?.explorer_url, view.payment?.ref),
+      explorer_url: safeExplorerUrl(null, view.payment?.ref),
     },
     route_summary: {
       message_type: view.route?.message_type || null,
@@ -3697,14 +3949,14 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     },
     binding: view.binding
       ? {
-          matches: receipt.binding.matches,
-          in_proof: receipt.binding.in_proof,
-          expected_commitment: receipt.binding.expected_commitment,
-          recomputed_commitment: receipt.binding.recomputed_commitment,
+          matches: source.binding.matches,
+          in_proof: source.binding.in_proof,
+          expected_commitment: source.binding.expected_commitment,
+          recomputed_commitment: source.binding.recomputed_commitment,
         }
       : null,
-    privacy: receipt.privacy || null,
-    lineage: receipt.lineage || null,
+    privacy: source.privacy || null,
+    lineage: source.lineage || null,
     output_hash: view.output?.hash || null,
     redacted: [
       'prompts',
@@ -3715,8 +3967,8 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
       'provider_credentials',
     ],
     links: {
-      full_json: receipt.links?.json || null,
-      self: receipt.links?.self || null,
+      full_json: source.links?.json || null,
+      self: source.links?.self || null,
     },
   };
 }
@@ -3764,8 +4016,9 @@ export function renderAuditorHtml(exportDoc) {
     <section class="card">
       <h2>Task</h2>
       ${row('Task id', `<code>${esc(displayTaskId(e.task_id))}</code>`)}
-      ${row('Status', esc(e.status))}
-      ${row('Proof outcome', esc(e.proof_outcome))}
+      ${row('Status', esc(e.status ?? 'not signed'))}
+      ${row('Proof outcome', esc(e.proof_outcome ?? 'couldnt_check'))}
+      ${e.log_check ? row('Inclusion', esc(e.log_check.inclusion?.state)) + row('Tree head', esc(e.log_check.head?.state)) + row('Anchor', esc(e.log_check.anchor?.state)) : ''}
     </section>
     <section class="card">
       <h2>Totals</h2>

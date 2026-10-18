@@ -54,6 +54,18 @@ test('buildReceiptOgMeta: foreign ingest includes third-party in description', (
     payment: { rail: 'usdc', gross_amount: '5000', collected: true, ref: 'base:0xab', asset: 'USDC' },
     foreign_x402: true,
     evidence: 'foreign_ingest',
+    // Collection reads from the signed payment ref only.
+    issuer_signature: {
+      jws: [
+        Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
+        Buffer.from(JSON.stringify({
+          schema: 'chit402.foreign_payout.v1',
+          task_id: 'xfuel-foreign-1',
+          payment: { rail: 'usdc', gross_amount: '5000', ref: 'base:0xab', asset: 'USDC' },
+        })).toString('base64url'),
+        'sig',
+      ].join('.'),
+    },
   };
   const meta = buildReceiptOgMeta(receipt);
   assert.match(meta.description, /third-party/);

@@ -11,8 +11,15 @@ import {
   rollupInPolicy,
 } from '../src/receipt.js';
 
+// The export reads money-flow fields from the signed claims only.
+function withSignedPayment(r) {
+  const claims = { task_id: r.task_id, payment: r.payment, binding: r.binding ?? null };
+  const jws = `eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QiLCJraWQiOiJ0ZXN0In0.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.bbb`;
+  return { ...r, issuer_signature: { alg: 'ES256', kid: 'test', jws } };
+}
+
 function paidReceipt(over = {}) {
-  return {
+  return withSignedPayment({
     task_id: 'xfuel-aud-normal',
     status: 'completed',
     proof_outcome: 'not_applicable',
@@ -30,7 +37,7 @@ function paidReceipt(over = {}) {
     binding: null,
     privacy: null,
     ...over,
-  };
+  });
 }
 
 test('rollup treats no_policy and null as not a failure', () => {
@@ -88,8 +95,9 @@ test('privacy fails only when a privacy rule applies', () => {
       private_spend_ok: false,
     },
   });
-  assert.equal(forbidden.checks.privacy_vendor_blind, false);
-  assert.equal(forbidden.in_policy, false);
+  // Privacy mode is not in the signed claims, so an outer privacy block cannot fail or pass a policy.
+  assert.equal(forbidden.checks.privacy_vendor_blind, 'no_policy');
+  assert.equal(forbidden.privacy, null);
 
   const required = buildAuditorExport(paidReceipt(), {
     policy: {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { renderReceiptHtml, signedParties, displayReceiptView } from '../src/receipt.js';
+import { renderReceiptHtml, signedParties, displayReceiptView, buildAuditorExport } from '../src/receipt.js';
 import { toPublicShell } from '../src/receipt-shell.js';
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -12,6 +12,7 @@ const TASK = 'chit-0000000000000000000000000000000000000000000000000000000000000
 
 function foreignReceipt() {
   const claims = {
+    schema: 'chit402.foreign_payout.v1',
     task_id: TASK,
     payload_version: 6,
     payment: { rail: 'usdc', network: 'base', asset: 'USDC', gross_amount: '0.010000', payee: SIGNED_PAYEE },
@@ -52,4 +53,30 @@ test('display view and shell use signed values or null', () => {
   assert.equal(shell.amount_gross, '0.010000');
   assert.equal(shell.amount_settled, null);
   assert.deepEqual(signedParties({}), { payee: null, payer: null, gross_amount: null, settled_amount: null, net_amount: null, fee_amount: null, asset: null });
+});
+
+test('foreign payout asset label reads (asset not signed) when the asset is not signed', () => {
+  const r = foreignReceipt();
+  const parts = r.issuer_signature.jws.split('.');
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  delete claims.payment.asset;
+  r.issuer_signature.jws = `${parts[0]}.${b64(claims)}.${parts[2]}`;
+  const html = renderReceiptHtml(r);
+  assert.match(html, /base \(asset not signed\)/);
+  assert.doesNotMatch(html, /base \/ USDC/);
+  const signedHtml = renderReceiptHtml(foreignReceipt());
+  assert.match(signedHtml, /base \/ USDC/);
+});
+
+test('auditor export totals use signed amounts only', () => {
+  const r = foreignReceipt();
+  r.payment.fee_amount = '555';
+  r.payment.net_amount = '444';
+  const totals = buildAuditorExport(r).totals;
+  assert.equal(totals.gross_amount, '0.010000');
+  assert.equal(totals.settled_amount, null);
+  assert.equal(totals.fee_amount, null);
+  assert.equal(totals.net_amount, null);
+  const none = buildAuditorExport({ ...r, issuer_signature: undefined }).totals;
+  assert.equal(none.gross_amount, null);
 });

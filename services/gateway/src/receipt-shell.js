@@ -30,12 +30,28 @@ function canonicalize(value) {
   return value;
 }
 
+// Receipt-slot typs, as the library's ISSUER_JWS_TYP.receipt.
+const RECEIPT_SLOT_TYPS = ['chit402-receipt+jwt', 'JWT'];
+const FOREIGN_PAYOUT_SCHEMA = 'chit402.foreign_payout.v1';
+
+/**
+ * Claims of a receipt-slot JWS, or null. Another issuer document (book-seq,
+ * tree head, x402, refusal...) has its own typ and is refused here, as are
+ * crit, b64 and claims that name another schema.
+ */
 export function decodeJwsPayload(jws) {
   if (!jws || typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!header || typeof header !== 'object' || Array.isArray(header)) return null;
+    if (header.crit !== undefined || header.b64 !== undefined) return null;
+    if (!RECEIPT_SLOT_TYPS.includes(header.typ)) return null;
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (!claims || typeof claims !== 'object' || Array.isArray(claims)) return null;
+    if (claims.schema != null && claims.schema !== FOREIGN_PAYOUT_SCHEMA) return null;
+    return claims;
   } catch {
     return null;
   }
@@ -52,16 +68,17 @@ function minuteIso(value) {
   return date.toISOString();
 }
 
+// Ref and chain come from the signed claims only (null when unsigned).
 function paymentRefOf(receipt, claims) {
-  return claims?.payment?.ref || receipt?.payment?.ref || null;
+  return claims?.payment?.ref || null;
 }
 
 function chainOf(receipt, claims) {
-  const network = receipt?.payment?.network || receipt?.payment_meta?.network || claims?.payment?.network;
+  const network = claims?.payment?.network;
   if (network) return String(network);
   const ref = String(paymentRefOf(receipt, claims) || '');
   const prefix = ref.split(':')[0];
-  if (prefix === 'base' || prefix === 'solana') return prefix;
+  if (['base', 'base-sepolia', 'solana', 'solana-devnet', 'nano'].includes(prefix)) return prefix;
   return null;
 }
 
@@ -101,17 +118,26 @@ function shellInclusion(inclusion, signedHead) {
  */
 export function toPublicShell(receipt, { inclusion = null, signedHead = null } = {}) {
   const jws = receipt?.issuer_signature?.jws || null;
-  const claims = decodeJwsPayload(jws) || {};
-  const receiptId = receipt?.task_id || claims.task_id || receipt?.receipt_id || null;
+  const decoded = decodeJwsPayload(jws);
+  const claims = decoded || {};
+  // A signed receipt's shell is built from its claims only; outer fields are
+  // used only for a document with no issuer JWS.
+  // A JWS that is present but refused does not reopen the outer fields.
+  const outer = jws ? {} : (receipt || {});
+  // A signed task_id always wins; a JWS without one (not a receipt claim set)
+  // falls back to the document id.
+  const receiptId = (typeof claims.task_id === 'string' && claims.task_id)
+    ? claims.task_id
+    : (receipt?.task_id || receipt?.receipt_id || null);
   const gross = claims?.payment?.gross_amount ?? null;
   const settled = claims?.payment?.settled_amount ?? null;
-  const issued = minuteIso(claims.iat ?? receipt?.created_at ?? receipt?.issued_at ?? null);
+  const issued = minuteIso(claims.iat ?? outer.created_at ?? outer.issued_at ?? null);
   return {
     schema: SHELL_SCHEMA,
     unsigned: true,
     receipt_id: receiptId,
     task_id: receiptId,
-    payload_version: claims.payload_version ?? receipt?.issuer_signature?.payload_version ?? null,
+    payload_version: claims.payload_version ?? outer.issuer_signature?.payload_version ?? null,
     asset: claims?.payment?.asset ?? null,
     chain: chainOf(receipt, claims),
     // Parties and amounts are shown only as signed; null when unsigned.
@@ -318,14 +344,14 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
   const image = `${canonical}/og.png`;
   const usdc = isKnownUsdcAsset(card.chain, card.asset) && usdBody(card.amount_gross) != null;
   const chainText = chainLabel(card.chain);
-  const chainHtml = chainText ? `<small>${esc(chainText)}</small>` : '';
+  const chainHtml = `<small>${esc(chainText || 'unsigned')}</small>`;
 
   let totalHtml = '';
   if (card.amount_gross != null) {
     if (usdc) {
       totalHtml = `<div class="total"><span>$${esc(usdBody(card.amount_gross))} <small>USDC</small></span>${chainHtml}</div>`;
     } else {
-      const assetHtml = card.asset ? ` <small>${esc(shortForm(card.asset))}</small>` : '';
+      const assetHtml = ` <small>${esc(card.asset ? shortForm(card.asset) : '(asset not signed)')}</small>`;
       totalHtml = `<div class="total"><span>${esc(String(card.amount_gross))}${assetHtml}</span>${chainHtml}</div>`;
     }
   }
@@ -357,7 +383,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     }
   }
   const assetRow = card.asset == null
-    ? ''
+    ? textRow('Asset', 'not signed')
     : textRow('Asset', usdc ? `USDC ${shortForm(card.asset)}` : shortForm(card.asset));
   const issued = card.issued_at == null ? '' : textRow('Issued', formatIssued(card.issued_at));
   const format = card.payload_version == null ? '' : textRow('Format', `payload v${card.payload_version}`);

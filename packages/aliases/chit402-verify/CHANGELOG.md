@@ -5,6 +5,11 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
 
+## 0.4.9 — Pin chit402-verify 0.4.9
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.9`: outer payTo and payer must match the signed parties, and the receipt slot drops the untyped form. Not published. No deploy.
+
 ## 0.4.8 — Pin chit402-verify 0.4.8
 
 ### Changed

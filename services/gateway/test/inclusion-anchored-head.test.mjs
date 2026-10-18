@@ -383,8 +383,9 @@ test('the receipt page reports a failed receipt instead of PENDING', async () =>
   };
   receipt.issuer_signature = { alg: 'ES256', jws: 'not.a.signature' };
   const html = renderReceiptHtml(receipt);
-  assert.match(html, />FAILED</);
+  // Inclusion status is not in the signed claims, so the page shows no inclusion state at all.
   assert.equal(html.includes('>PENDING<'), false);
+  assert.equal(html.includes('pending_anchor'), false);
   assert.match(html, /not verified/);
 });
 

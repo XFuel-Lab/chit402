@@ -338,15 +338,19 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   const html = renderReceiptHtml(await buildReceipt(task));
   assert.match(html, /<!doctype html>/i);
   assert.ok(html.includes(TASK_ID));
-  assert.match(html, /Proven/);
+  // Proof outcome is not a signed claim; the header badge reflects the issuer signature.
+  // Header outcome is the three-way result of the signature plus the log check.
+  assert.match(html, /data-outcome="(verified|invalid|couldnt_check)"/);
+  assert.equal(html.includes('Proven'), false);
   assert.match(html, /og:title/);
   assert.match(html, /property="og:title" content="1\.00 USDC · task-abc123"/);
   assert.match(html, /property="og:description" content="Base Sepolia USDC · collected"/);
-  assert.match(html, /property="og:image" content="\/receipt\/[^"]+\/og\.png"/);
+  // Links are rebuilt from the signed task id on the public base.
+  assert.match(html, /property="og:image" content="https:\/\/api\.chit402\.com\/receipt\/[^"]+\/og\.png"/);
   assert.match(html, /property="og:image:width" content="1200"/);
   assert.match(html, /property="og:image:height" content="630"/);
   assert.match(html, /name="twitter:card" content="summary_large_image"/);
-  assert.match(html, /name="twitter:image" content="\/receipt\/[^"]+\/og\.png"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/api\.chit402\.com\/receipt\/[^"]+\/og\.png"/);
   // The injected script tag must be escaped, not rendered.
   assert.ok(!html.includes('<script>alert(1)</script>'));
   assert.ok(html.includes('&lt;script&gt;'));
@@ -396,8 +400,9 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
   };
   const html = renderReceiptHtml(await buildReceipt(xfuelTask));
 
-  assert.match(html, /<title>0\.01 USDC · chit-247049dd…<\/title>/);
-  assert.match(html, /property="og:title" content="0\.01 USDC · chit-247049dd…"/);
+  // No signed asset on this fixture: the share card does not assume USDC.
+  assert.match(html, /<title>10000 \(asset not signed\) · chit-247049dd…<\/title>/);
+  assert.match(html, /property="og:title" content="10000 \(asset not signed\) · chit-247049dd…"/);
   assert.match(html, /property="og:image" content="[^"]+\/og\.png"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
@@ -450,7 +455,9 @@ test('buildReceipt: rolling first call is pending, not a legacy rail, and carrie
 
   const html = renderReceiptHtml(r);
   assert.ok(!html.includes('legacy rail'));
-  assert.match(html, /bill pending/);
+  // collects_on is not signed and no payment ref is signed, so collection reads as not signed.
+  assert.equal(html.includes('bill pending'), false);
+  assert.match(html, /collection not signed/);
   assert.equal(html.includes('12→8'), false);
   assert.equal(html.includes('prompt_tokens'), false);
   assert.equal(r.usage.prompt_tokens, 12);
@@ -688,7 +695,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  assert.match(html, /<title>0\.01 USDC · openai-aaaaaaaa-bbbb…<\/title>/);
+  assert.match(html, /<title>10000 \(asset not signed\) · openai-aaaaaaaa-bbbb…<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
@@ -838,9 +845,17 @@ test('renderReceiptHtml: tampered receipt shows "not verified" badge (truthful)'
   const r = await buildReceipt(usdcTask(), { baseUrl: 'https://api.chit402.com', agentId: 7 });
   assert.ok(r.issuer_signature?.jws, 'issuer_signature.jws must be present before tampering');
   
-  // Tamper with a canonically signed field AFTER the signature was computed
-  r.task_id = 'tampered-task-id';
-  
+  // An outer task_id edit is ignored: the page renders the signed id only.
+  const outerEdit = { ...r, task_id: 'tampered-task-id' };
+  const outerHtml = renderReceiptHtml(outerEdit);
+  assert.equal(outerHtml.includes('tampered-task-id'), false);
+
+  // Tamper with the signed payload AFTER the signature was computed
+  const [h, p, sig] = r.issuer_signature.jws.split('.');
+  const claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+  claims.task_id = 'tampered-task-id';
+  r.issuer_signature = { ...r.issuer_signature, jws: `${h}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.${sig}` };
+
   const html = renderReceiptHtml(r);
   assert.match(html, /<span class="badge bad">not verified<\/span>/, 'not verified badge must appear for tampered receipt');
   assert.ok(!html.includes('badge ok">verified'), 'must NOT show "verified" badge for tampered receipt');
@@ -1086,7 +1101,7 @@ test('renderReceiptHtml: shows settle bind rows when present', async () => {
   const payer = '0x1111111111111111111111111111111111111111';
   const payee = '0x2222222222222222222222222222222222222222';
   const task = usdcTask({ meta: { payerWallet: payer, payTo: payee } });
-  const html = renderReceiptHtml(await buildReceipt(task, { payerWallet: payer, payTo: payee }));
+  const html = renderReceiptHtml(await buildReceipt(task, { payerWallet: payer, payTo: payee, agentId: 7 }));
   assert.match(html, /Payer/);
   assert.match(html, /Payee/);
   assert.match(html, /Asset/);
@@ -1123,9 +1138,10 @@ test('verifyIssuerForHtml: published JWKS verifies; embedded key is pinned only 
   assert.equal(swappedCheck.verified, true, 'the real JWS still verifies against the published JWKS');
   assert.equal(swappedCheck.trust, 'jwks');
   assert.equal(swappedCheck.pinned, false);
+  // The page takes the key from the published JWKS, so a swapped holder key changes nothing.
   const swappedHtml = renderReceiptHtml(swapped);
   assert.match(swappedHtml, /badge ok">verified/);
-  assert.doesNotMatch(swappedHtml, /pinned in receipt/);
+  assert.equal(swappedHtml, renderReceiptHtml(receipt));
 
   const claims = decodeReceiptClaims(receipt);
   claims.payment.gross_amount = '2000000';
@@ -1195,9 +1211,10 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
       jws: [
         Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
         Buffer.from(JSON.stringify({
+          schema: 'chit402.foreign_payout.v1',
           task_id: 'foreign-x402-nano-1',
           payer: sender,
-          payment: { gross_amount: '1000000000000000000000000000000', payee: recipient },
+          payment: { rail: 'nano', ref: `nano:${hash}`, asset: 'XNO', gross_amount: '1000000000000000000000000000000', payee: recipient },
         })).toString('base64url'),
         'sig',
       ].join('.'),
@@ -1207,14 +1224,14 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
   assert.match(html, /Recorded/);
   assert.match(html, /Nano \/ XNO/);
   assert.match(html, /1 <span class="muted">XNO/);
-  assert.match(html, /\$0\.82/);
-  assert.match(html, /estimate/);
+  // USD estimate and stamp are not signed here, so they are not shown.
+  assert.doesNotMatch(html, /\$0\.82/);
   assert.match(html, new RegExp(sender));
   assert.match(html, new RegExp(recipient));
   assert.match(html, new RegExp(`href="${explorer}"`));
   assert.match(html, new RegExp(`nano:${hash}`));
-  assert.match(html, /\$0\.002/);
-  assert.match(html, /waived/);
+  assert.doesNotMatch(html, /\$0\.002/);
+  assert.doesNotMatch(html, /waived/);
   assert.doesNotMatch(html, /class="badge bad">Invalid/);
 });
 
@@ -1250,9 +1267,12 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
       jws: [
         Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
         Buffer.from(JSON.stringify({
+          schema: 'chit402.foreign_payout.v1',
           task_id: 'foreign-x402-usdc-1',
           payer: sender,
-          payment: { asset: 'USDC', gross_amount: '5000', payee: recipient },
+          payment: { rail: 'usdc', ref: `base:${tx}`, asset: 'USDC', gross_amount: '5000', payee: recipient },
+          // Signed stamp: the fee row renders from this copy only.
+          stamp: { fee_usd: '0.002', fee_units: '2000', waived: false, currency: 'USDC' },
         })).toString('base64url'),
         'sig',
       ].join('.'),
@@ -1266,8 +1286,8 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
   assert.match(html, new RegExp(recipient));
   assert.match(html, new RegExp(`base:${tx}`));
   assert.match(html, new RegExp(`href="${explorer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  assert.match(html, /\$0\.002/);
-  assert.match(html, /paid/);
+  // The foreign stamp fee stays hidden, even when signed.
+  assert.doesNotMatch(html, /Stamp fee/);
   assert.doesNotMatch(html, /waived/);
   assert.doesNotMatch(html, /class="badge bad">Invalid/);
 });
