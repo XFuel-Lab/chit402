@@ -81,6 +81,7 @@ import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
 import {
   refuseSettlementProofWhenOff,
   settlementProofEnabled,
+  warnIfSettlementProofIgnored,
   SETTLEMENT_PROOF_NOT_OFFERED,
   SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
 } from './settlement-proof-flag.js';
@@ -1674,7 +1675,8 @@ export async function createApp() {
   });
 
   // Settlement proof add-on: refused before any quote, 402 or settle unless
-  // SETTLEMENT_PROOF_ENABLED is exactly 'true'.
+  // settlementProofEnabled() (env 'true' AND the SETTLEMENT_TIER_CLAIMS_SIGNED
+  // code guard in settlement-proof-flag.js).
   app.use(refuseSettlementProofWhenOff);
 
   // Request logging
@@ -5919,6 +5921,7 @@ export async function startServer() {
   // Initialise the SP1 prover so /task-request tasks get settlement proofs.
   // Non-fatal + skipped when SP1_PROVER_URL/ZAN_PROVER_URL are unset (zkGPT-only
   // or proofless dev). The bridge entrypoint (index.js) inits its own instance.
+  warnIfSettlementProofIgnored();
   if (!getSP1Prover()) {
     try {
       await initSP1Prover();
