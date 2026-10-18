@@ -5381,7 +5381,7 @@ export async function createApp() {
       if (!result.ok) {
         const status = result.reason?.includes('not found') ? 404 : 400;
         return res.status(status).json({
-          error: 'escrow_error',
+          error: result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'escrow_error',
           message: result.reason,
           existing: result.existing,
           checks: result.checks,
@@ -5483,7 +5483,7 @@ export async function createApp() {
       if (!result.ok) {
         const status = result.reason?.includes('not found') ? 404 : 400;
         return res.status(status).json({
-          error: 'a2a_escrow_error',
+          error: result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'a2a_escrow_error',
           message: result.reason,
           existing: result.existing,
           checks: result.checks,

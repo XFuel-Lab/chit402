@@ -15,7 +15,11 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { CLAIM_TYPES, fileAndAdjudicate, OUTCOME_TYPES } from './book-dispute.js';
-import { settlementProofEnabled } from './settlement-proof-flag.js';
+import {
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 
 export const ESCROW_ACTIONS = {
   OPEN: 'open',
@@ -259,6 +263,15 @@ export async function handleEscrowAction(input, deps = {}) {
     }
     if (required.proof_tier && !PROOF_TIERS.includes(String(required.proof_tier).toLowerCase())) {
       return { ok: false, reason: `invalid proof_tier: ${required.proof_tier}` };
+    }
+    // Add-on off: an escrow that requires the settlement tier could never
+    // release, so it is not opened (no hold is created).
+    if (String(required.proof_tier || '').toLowerCase() === 'settlement' && !settlementProofEnabled()) {
+      return {
+        ok: false,
+        code: SETTLEMENT_PROOF_NOT_OFFERED,
+        reason: `required.proof_tier 'settlement' is not offered. ${SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE}`,
+      };
     }
 
     const existing = store.getByTask(taskId);
