@@ -13,13 +13,13 @@ Possession-gated (same session as the book). Caps are limits set with the book s
 | `model_allowlist` | `string[]` | Reject models not in list |
 | `kill_switch` | `boolean` | Block all metered spend |
 | `require_payment_ref` | `boolean` | Pause spend when any collected ledger row lacks `payment.ref` |
-| `tier2_above` | USDC atomic string | At/above threshold, request must include `proof_tier: settlement` or `inference` |
+| `tier2_above` | USDC atomic string | At/above threshold, request must include `proof_tier: settlement` or `inference`. Not currently offered: while the settlement proof add-on is off, setting it returns `400 settlement_proof_not_offered`, and an existing one blocks spends at/above the threshold with `tier2_unavailable` until it is cleared (`value: null`) or raised |
 
 Enforcement runs on the paid `POST /v1/chat/completions` path via `enforcePolicy` before x402 settle. When a possession session is active and the **next** hop would violate policy, the gateway:
 
 1. **Does not settle** USDC (no charge).
 2. Appends a **`policy_blocked`** row to the book (`event: policy_blocked`, `collected: false`).
-3. Returns `403` with `type: policy_blocked` and `code` (`kill_switch`, `daily_cap_exceeded`, `hourly_cap_exceeded`, `model_not_allowed`, `payment_ref_required`, `tier2_required`).
+3. Returns `403` with `type: policy_blocked` and `code` (`kill_switch`, `daily_cap_exceeded`, `hourly_cap_exceeded`, `model_not_allowed`, `payment_ref_required`, `tier2_required`, `tier2_unavailable`).
 
 The principal sees the block on `GET|POST /v1/agents/:agent_id/book` and `/book` — no SSH or PID required.
 

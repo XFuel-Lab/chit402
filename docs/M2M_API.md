@@ -110,7 +110,7 @@ would be a signed receipt for an inference that never ran.
 
 ### GET /prove-result
 
-`GET /prove-result?task_id=<id>` — Tier-2 SP1 settlement proof when available.
+`GET /prove-result?task_id=<id>` — Tier-2 SP1 settlement proof status. The settlement proof add-on is not currently offered, so new tasks have no proof.
 
 ### GET /receipt/:taskId
 
