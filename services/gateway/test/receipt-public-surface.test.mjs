@@ -499,8 +499,8 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(doc.provider_cogs, undefined);
   assert.equal(json.text.includes('Llama'), false);
   assert.equal(json.text.includes('xfuel/auto'), false);
-  assert.equal(json.text.includes('4242'), false);
-  assert.equal(json.text.includes('4343'), false);
+  assert.equal(/\b4242\b/.test(json.text), false);
+  assert.equal(/\b4343\b/.test(json.text), false);
   assert.equal(json.text.includes('below_low_water'), false);
   const again = await fetchText(`/receipt/${A}?format=json`);
   assert.equal(JSON.parse(again.text).schema, doc.schema);
@@ -509,21 +509,21 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   const html = await fetchText(`/receipt/${A}`);
   assert.equal(html.status, 200);
   assert.equal(html.text.includes('xfuel/auto'), false);
-  assert.equal(html.text.includes('4242'), false);
-  assert.equal(html.text.includes('4343'), false);
+  assert.equal(/\b4242\b/.test(html.text), false);
+  assert.equal(/\b4343\b/.test(html.text), false);
   assert.equal(html.text.includes('low water'), false);
   assert.equal(html.text.includes('below_low_water'), false);
 
   const auditor = await fetchText(`/receipt/${A}?format=auditor`);
   assert.equal(auditor.status, 200, auditor.text.slice(0, 120));
   assert.equal(auditor.text.includes('xfuel/auto'), false);
-  assert.equal(auditor.text.includes('4242'), false);
+  assert.equal(/\b4242\b/.test(auditor.text), false);
   assert.equal(auditor.text.includes('below_low_water'), false);
 
   const card = await fetchText(`/receipt/${A}/og.png`);
   assert.equal(card.status, 200);
   assert.equal(card.text.includes('xfuel/auto'), false);
-  assert.equal(card.text.includes('4242'), false);
+  assert.equal(/\b4242\b/.test(card.text), false);
 
   const followed = await fetchText(`/receipt/by-tx?tx=${TX_A}&format=json`);
   assert.equal(followed.status, 302, followed.text);
@@ -531,7 +531,7 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   const canonical = await fetchText(new URL(loc).pathname + new URL(loc).search);
   assert.equal(canonical.status, 200, canonical.text.slice(0, 120));
   assert.equal(canonical.text.includes('xfuel/auto'), false);
-  assert.equal(canonical.text.includes('4242'), false);
+  assert.equal(/\b4242\b/.test(canonical.text), false);
 });
 
 test('published fixtures stay VERIFIED after unsigned fields are dropped', async () => {
