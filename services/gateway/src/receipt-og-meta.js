@@ -122,9 +122,9 @@ export function receiptOgCollectionLabel(view) {
   if (!p) return null;
   if (p.rail === 'unmetered') return 'not charged';
   if (p.rail === 'reported') return 'reported';
-  if (p.collected) return 'collected';
-  if (p.collects_on === 'next_request') return 'bill pending';
-  return 'not collected';
+  // Collection is shown only when a signed settlement ref exists.
+  if (p.collected && p.ref) return 'collected';
+  return 'collection not signed';
 }
 
 export function receiptOgEvidenceLabel(receipt) {

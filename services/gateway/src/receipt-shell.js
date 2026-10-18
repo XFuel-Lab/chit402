@@ -102,17 +102,25 @@ function shellInclusion(inclusion, signedHead) {
  */
 export function toPublicShell(receipt, { inclusion = null, signedHead = null } = {}) {
   const jws = receipt?.issuer_signature?.jws || null;
-  const claims = decodeJwsPayload(jws) || {};
-  const receiptId = receipt?.task_id || claims.task_id || receipt?.receipt_id || null;
+  const decoded = decodeJwsPayload(jws);
+  const claims = decoded || {};
+  // A signed receipt's shell is built from its claims only; outer fields are
+  // used only for a document with no issuer JWS.
+  const outer = decoded ? {} : (receipt || {});
+  // A signed task_id always wins; a JWS without one (not a receipt claim set)
+  // falls back to the document id.
+  const receiptId = (typeof claims.task_id === 'string' && claims.task_id)
+    ? claims.task_id
+    : (receipt?.task_id || receipt?.receipt_id || null);
   const gross = claims?.payment?.gross_amount ?? null;
   const settled = claims?.payment?.settled_amount ?? null;
-  const issued = minuteIso(claims.iat ?? receipt?.created_at ?? receipt?.issued_at ?? null);
+  const issued = minuteIso(claims.iat ?? outer.created_at ?? outer.issued_at ?? null);
   return {
     schema: SHELL_SCHEMA,
     unsigned: true,
     receipt_id: receiptId,
     task_id: receiptId,
-    payload_version: claims.payload_version ?? receipt?.issuer_signature?.payload_version ?? null,
+    payload_version: claims.payload_version ?? outer.issuer_signature?.payload_version ?? null,
     asset: claims?.payment?.asset ?? null,
     chain: chainOf(receipt, claims),
     // Parties and amounts are shown only as signed; null when unsigned.

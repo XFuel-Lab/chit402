@@ -12,6 +12,7 @@ const TASK = 'chit-0000000000000000000000000000000000000000000000000000000000000
 
 function foreignReceipt() {
   const claims = {
+    schema: 'chit402.foreign_payout.v1',
     task_id: TASK,
     payload_version: 6,
     payment: { rail: 'usdc', network: 'base', asset: 'USDC', gross_amount: '0.010000', payee: SIGNED_PAYEE },
