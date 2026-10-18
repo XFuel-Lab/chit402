@@ -77,6 +77,7 @@ import {
   isPinnedTrustedJwk,
   readJwsHeader,
   jwksHostAllowed,
+  isCanonicalEs256Signature,
 } from './jws.js';
 import {
   headBindingVerdict,
@@ -734,6 +735,9 @@ export function verifyIssuerSignature(
   try {
     const jwkInput = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } as const;
     const publicKey: KeyObject = createPublicKey({ key: jwkInput, format: 'jwk' });
+    if (!isCanonicalEs256Signature(sig.value)) {
+      return { checked: true, valid: false, kid: sig.kid, reason: 'malformed_signature' };
+    }
     const signature = Buffer.from(sig.value, 'base64url');
     const payload = canonicalIssuerPayload(receipt);
     const valid = verify('sha256', Buffer.from(payload, 'utf8'), {

@@ -3,6 +3,7 @@
  */
 
 import { verifyBasePayer, type BasePayerVerification, type BaseReceiptFetcher } from './base-payer.js';
+import { isCanonicalCompactEs256 } from './jws.js';
 import {
   verifySolanaPayer,
   type SolanaPayerVerification,
@@ -45,6 +46,8 @@ export interface VerifyPayerBindingOptions {
 
 /** Decode the payload segment of a compact JWS (no signature check). */
 export function decodeJwsPayload(jws: string): Record<string, unknown> | null {
+  // A JWS the verifier would refuse as malformed_jws yields no claims.
+  if (!isCanonicalCompactEs256(jws)) return null;
   const parts = jws.split('.');
   if (parts.length < 2) return null;
   try {

@@ -433,7 +433,9 @@ still verify against a JWKS entry matched by `kid`.
 4. Check the compact JWS is canonical: three segments, each only the base64url
    alphabet (`A–Z a–z 0–9 - _`) with no padding, each decoding and re-encoding
    to exactly the same text, and a signature that decodes to exactly 64 bytes.
-   Anything else is `malformed_jws`.
+   Anything else is `malformed_jws`. Compact JWS longer than 65536 characters
+   is refused the same way. The same rule covers public attestations, the
+   legacy detached signature and the pin self-signature.
 5. ES256-verify the compact JWS (signing input is `header.payload`, raw R||S).
 6. Read amount, payer, payee, asset, and tx from the verified claims. If the
    unsigned outer `payment` / `caller_binding` disagree, the receipt fails.
