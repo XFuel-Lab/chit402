@@ -5,8 +5,10 @@
  * at least BASE_ANCHOR_MIN_CONFIRMATIONS blocks of depth, and exactly one
  * Transfer log from the signed asset contract to the signed payee, with an
  * amount equal to the signed settled_amount. Zero or two such logs is a
- * mismatch. The sender is reported as a chain fact; it is not signed and is
- * not a payer claim.
+ * mismatch; other Transfers in the same tx (fee splits) are ignored. The
+ * sender is the token sender (topics[1]), not tx.from, reported as a chain
+ * fact; it is not signed and is not a payer claim. A receipt with a removed
+ * log is could_not_check.
  *
  * An RPC that does not answer, errors, or returns null is could_not_check.
  */
@@ -29,7 +31,7 @@ export interface PublicPaymentOutcome {
   from: string | null;
 }
 
-type RpcLog = { address?: string; topics?: string[]; data?: string };
+type RpcLog = { address?: string; topics?: string[]; data?: string; removed?: boolean };
 type RpcReceipt = { transactionHash?: string; status?: string; blockNumber?: string; logs?: RpcLog[] };
 
 function hexToBigInt(value: unknown): bigint | null {
@@ -82,9 +84,15 @@ export async function verifyPublicBasePayment(input: PublicPaymentInput): Promis
   if (head < block || head - block < BigInt(BASE_ANCHOR_MIN_CONFIRMATIONS)) {
     return { state: 'could_not_check', reason: 'payer_unchecked', from: null };
   }
+  const logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  // A removed log is a reorg in flight: the chain cannot confirm the transfer
+  // right now. Could-not-check (exit 2), never a pass.
+  if (logs.some((log) => log?.removed === true)) {
+    return { state: 'could_not_check', reason: 'payer_unchecked', from: null };
+  }
   const asset = input.asset.toLowerCase();
   const payee = input.payee.toLowerCase();
-  const transfers = (Array.isArray(receipt.logs) ? receipt.logs : []).filter((log) => (
+  const transfers = logs.filter((log) => (
     typeof log?.address === 'string'
     && log.address.toLowerCase() === asset
     && Array.isArray(log.topics)

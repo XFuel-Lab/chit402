@@ -908,8 +908,11 @@ function signedLeafReason(
   head: AnchorHead,
 ): string | null {
   const servedEpoch = (inclusion as { epoch?: unknown }).epoch;
-  if (servedEpoch != null && Number(servedEpoch) !== signed.epoch) return 'log_epoch_mismatch';
   const headEpoch = (head as { epoch?: unknown } | null)?.epoch;
+  // The signed epoch is proven or the result is could-not-check: a log that
+  // serves no epoch at all cannot confirm it (exit 2, never a pass).
+  if (servedEpoch == null && headEpoch == null) return 'log_epoch_mismatch';
+  if (servedEpoch != null && Number(servedEpoch) !== signed.epoch) return 'log_epoch_mismatch';
   if (headEpoch != null && Number(headEpoch) !== signed.epoch) return 'log_epoch_mismatch';
   if (typeof inclusion.leaf === 'string' && inclusion.leaf.toLowerCase() !== signed.leaf_hash) return 'leaf_not_bound';
   if (inclusion.leaf_index != null && Number(inclusion.leaf_index) !== signed.leaf_index) return 'leaf_index_mismatch';

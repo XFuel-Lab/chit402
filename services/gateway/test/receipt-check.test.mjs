@@ -197,7 +197,7 @@ test('anonymous counts do not keep the pasted input', async () => {
     assert.equal(dumped.includes(MARKER), false);
     assert.equal(dumped.includes('aaa.bbb.ccc'), false);
     assert.ok(state.counts.invalid >= 1);
-    assert.deepEqual(Object.keys(state.counts).sort(), ['could_not_check', 'invalid', 'rejected', 'verified']);
+    assert.deepEqual(Object.keys(state.counts).sort(), ['could_not_check', 'invalid', 'rejected', 'verified', 'verified_public']);
   } finally {
     await new Promise((resolve) => local.close(resolve));
   }

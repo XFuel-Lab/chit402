@@ -539,3 +539,99 @@ test('Base only: a signed Solana attestation is exit 2, a forged one exit 1', as
   expectExit(v, 2, 'public_rail_unsupported');
   expectExit(await run({ ...shellFor(attest(stranger, sol)) }), 1, 'key untrusted');
 });
+
+test('0.4.7 S5 the signed epoch must be served: no epoch on inclusion or head is exit 2', async () => {
+  resetWorld();
+  const jws = attest(key, baseClaims());
+  assert.equal(world.head.epoch, undefined, 'the fixture head carries no epoch');
+  const { epoch: _drop, ...noEpoch } = goodInclusion;
+  world.inclusion = noEpoch;
+  expectExit(await run(shellFor(jws)), 2, 'log_epoch_mismatch');
+  // The same world with the epoch served passes.
+  resetWorld();
+  expectExit(await run(shellFor(jws)), 0, null);
+});
+
+test('0.4.7 S6 on-chain edges: chainId, 11 vs 12 blocks, relayer sender, extra Transfer, removed log', async () => {
+  const jws = attest(key, baseClaims());
+  const RELAYER = '0x2222222222222222222222222222222222222222';
+  const OTHER = '0x3333333333333333333333333333333333333333';
+  const transfer = (over = {}) => ({ address: USDC, topics: [TRANSFER, topic(PAYER), topic(PAYEE)], data: amountHex(2000), ...over });
+
+  // Wrong chain: exit 1, never a pass. The anchor check sees it first
+  // (chain_mismatch); the payment check on its own is transfer_mismatch.
+  const { verifyPublicBasePayment } = await import('../dist/public-payment.js');
+  const payment = { ref: `base:${PAY_TX}`, asset: USDC, payee: PAYEE, settledAmount: '2000', rpcUrl: `${origin}/rpc` };
+  for (const chainId of ['0x1', '0x14a34', '0x2106']) {
+    resetWorld();
+    world.chainId = chainId;
+    const v = await run(shellFor(jws));
+    expectExit(v, 1);
+    assert.ok(['chain_mismatch', 'transfer_mismatch'].includes(v.reason), v.reason);
+    assert.deepEqual(await verifyPublicBasePayment(payment), { state: 'fail', reason: 'transfer_mismatch', from: null });
+  }
+  resetWorld();
+  assert.equal((await verifyPublicBasePayment(payment)).state, 'pass');
+
+  // Depth boundary: block 0x64 (100). Tip 111 is 11 deep: exit 2. Tip 112 is 12 deep: pass.
+  // The fixture anchor sits in the same block, so the shell result can stop
+  // at the anchor depth first; the payment check is asserted on its own too.
+  const unchecked = { state: 'could_not_check', reason: 'payer_unchecked', from: null };
+  resetWorld();
+  world.tip = `0x${(100 + 11).toString(16)}`;
+  expectExit(await run(shellFor(jws)), 2);
+  assert.deepEqual(await verifyPublicBasePayment(payment), unchecked);
+  resetWorld();
+  world.tip = `0x${(100 + 12).toString(16)}`;
+  expectExit(await run(shellFor(jws)), 0, null);
+  assert.equal((await verifyPublicBasePayment(payment)).state, 'pass');
+  // A tip below the block (a lagging node) is exit 2.
+  resetWorld();
+  world.tip = '0x63';
+  expectExit(await run(shellFor(jws)), 2);
+  assert.deepEqual(await verifyPublicBasePayment(payment), unchecked);
+
+  // Relayed settlement: tx.from is the relayer. The reported sender is the
+  // token sender (topics[1]), and the payer is still not claimed.
+  resetWorld();
+  world.payReceipt = { ...world.payReceipt, from: RELAYER, to: USDC };
+  const relayed = await run(shellFor(jws));
+  expectExit(relayed, 0, null);
+  assert.equal(relayed.public.chain_from, '0x1111…1111');
+  assert.equal(JSON.stringify(relayed).includes(RELAYER.slice(2, 10)), false, 'tx.from is not reported');
+  assert.equal(relayed.checks.payer, 'not_claimed');
+
+  // One payee Transfer plus a non-payee Transfer (a fee split): passes.
+  resetWorld();
+  world.payReceipt = {
+    ...world.payReceipt,
+    logs: [transfer(), transfer({ topics: [TRANSFER, topic(PAYER), topic(OTHER)], data: amountHex(10) })],
+  };
+  expectExit(await run(shellFor(jws)), 0, null);
+  // A non-USDC Transfer to the payee is also ignored.
+  resetWorld();
+  world.payReceipt = { ...world.payReceipt, logs: [transfer({ address: OTHER }), transfer()] };
+  expectExit(await run(shellFor(jws)), 0, null);
+
+  // A removed log (reorg in flight) is exit 2, on the payee log or any other.
+  resetWorld();
+  world.payReceipt = { ...world.payReceipt, logs: [transfer({ removed: true })] };
+  expectExit(await run(shellFor(jws)), 2, 'payer_unchecked');
+  resetWorld();
+  world.payReceipt = {
+    ...world.payReceipt,
+    logs: [transfer(), transfer({ topics: [TRANSFER, topic(PAYER), topic(OTHER)], removed: true })],
+  };
+  expectExit(await run(shellFor(jws)), 2, 'payer_unchecked');
+  // removed: false is an ordinary log.
+  resetWorld();
+  world.payReceipt = { ...world.payReceipt, logs: [transfer({ removed: false })] };
+  expectExit(await run(shellFor(jws)), 0, null);
+});
+
+test('0.4.7 verdict copy names the settled amount', async () => {
+  resetWorld();
+  const v = await run(shellFor(attest(key, baseClaims())));
+  assert.match(v.message, /settled amount, payee, tx, and log position/);
+  assert.ok(humanVerdictLines(v).some((l) => /settled amount, payee, tx, log position/.test(l)));
+});

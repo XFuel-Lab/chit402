@@ -128,9 +128,9 @@ before(() => {
 test('allowlist: the signed public claims are exactly the allowlist and leak nothing private', async () => {
   const holder = holderJwsFor(issuer);
   const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
-  const row = store.get(TASK);
+  const row = await store.get(TASK);
   assert.equal(row.state, 'signed', JSON.stringify(row));
   const [h, p] = row.jws.split('.');
   assert.deepEqual(JSON.parse(Buffer.from(h, 'base64url').toString()), { alg: 'ES256', typ: pa.PUBLIC_RECEIPT_TYP, kid: issuer.kid });
@@ -160,9 +160,9 @@ test('allowlist: the signed public claims are exactly the allowlist and leak not
 
 test('the gateway output parses and verifies in the 0.4.6 verifier and is refused by verifyIssuerJws', async () => {
   const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer) });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
-  const jws = store.get(TASK).jws;
+  const jws = (await store.get(TASK)).jws;
   const parsed = verifier.parsePublicAttestation(jws);
   assert.equal(parsed.ok, true, parsed.detail);
   const trust = verifier.verifyPublicAttestationTrust(parsed, historyFor(issuer));
@@ -176,13 +176,13 @@ test('M4 a stored leaf that is not SHA256(0x00 || task_id|row_hash) is never sig
   const alerts = [];
   const before = signLog.length;
   const { store, worker } = setup({ tree: treeWith(TASK, 'another-row'), holder: holderJwsFor(issuer), alerts });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
-  assert.equal(store.get(TASK).state, 'failed');
-  assert.equal(store.get(TASK).last_error, 'leaf_mismatch');
+  assert.equal((await store.get(TASK)).state, 'failed');
+  assert.equal((await store.get(TASK)).last_error, 'leaf_mismatch');
   assert.equal(signLog.length, before);
   assert.ok(alerts.some((a) => a.event === 'public_attestation_failed'));
-  assert.equal(store.servedAttestation(TASK), null);
+  assert.equal(await store.servedAttestation(TASK), null);
 });
 
 test('M2 no leaf yet: retried with backoff, never signed before the leaf exists', async () => {
@@ -190,15 +190,15 @@ test('M2 no leaf yet: retried with backoff, never signed before the leaf exists'
   const before = signLog.length;
   const tree = { _locate: () => null };
   const { store, worker } = setup({ tree, holder: holderJwsFor(issuer), now: () => t });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
-  const row = store.get(TASK);
+  const row = await store.get(TASK);
   assert.equal(row.state, 'pending');
   assert.equal(row.attempts, 1);
   assert.equal(row.last_error, 'not_in_log');
   assert.equal(row.next_at, t + 30_000);
   assert.equal(signLog.length, before);
-  assert.deepEqual(store.servedAttestation(TASK), { status: 'pending' });
+  assert.deepEqual(await store.servedAttestation(TASK), { status: 'pending' });
 });
 
 test('M2 eligibility: only collected native Base USDC with a positive settled amount', () => {
@@ -230,40 +230,40 @@ test('M7 signer outage: bounded backoff, then failed plus an alert; never parks 
   let calls = 0;
   const sign = async () => { calls += 1; const e = new Error('kms down'); e.code = 'kms_unavailable'; throw e; };
   const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer), now: () => t, sign, alerts, extra: { maxAttempts: 5 } });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   const delays = [];
   for (let i = 0; i < 10; i += 1) {
-    const prev = store.get(TASK).next_at;
+    const prev = (await store.get(TASK)).next_at;
     t = Math.max(t, prev);
     await worker.tick();
-    const row = store.get(TASK);
+    const row = await store.get(TASK);
     if (row.state !== 'pending') break;
     delays.push(row.next_at - t);
     t += 60 * 60_000; // refill the rate bucket
   }
   assert.deepEqual(delays, [30_000, 60_000, 120_000, 240_000]);
-  assert.equal(store.get(TASK).state, 'failed');
-  assert.equal(store.get(TASK).last_error, 'kms_unavailable');
+  assert.equal((await store.get(TASK)).state, 'failed');
+  assert.equal((await store.get(TASK)).last_error, 'kms_unavailable');
   assert.equal(calls, 5);
   assert.ok(alerts.some((a) => a.event === 'public_attestation_failed'));
-  assert.equal(store.servedAttestation(TASK), null);
+  assert.equal(await store.servedAttestation(TASK), null);
   // Backoff is capped at 30 minutes.
   const capped = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer), now: () => t, sign, extra: { maxAttempts: 50 } });
-  capped.worker.enqueue(entryFor());
+  await capped.worker.enqueue(entryFor());
   for (let i = 0; i < 12; i += 1) {
-    t = Math.max(t, capped.store.get(TASK).next_at) + 60 * 60_000;
+    t = Math.max(t, (await capped.store.get(TASK)).next_at) + 60 * 60_000;
     await capped.worker.tick();
   }
-  assert.equal(capped.store.get(TASK).next_at - t, 30 * 60_000);
+  assert.equal((await capped.store.get(TASK)).next_at - t, 30 * 60_000);
 });
 
 test('M7 a hung signer times out and is retried', async () => {
   const sign = () => new Promise(() => {});
   const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer), sign, extra: { signTimeoutMs: 20 } });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
-  assert.equal(store.get(TASK).state, 'pending');
-  assert.equal(store.get(TASK).last_error, 'sign_timeout');
+  assert.equal((await store.get(TASK)).state, 'pending');
+  assert.equal((await store.get(TASK)).last_error, 'sign_timeout');
   assert.ok(worker.stats().sign_ms.le_50 >= 1);
 });
 
@@ -295,7 +295,7 @@ test('M7 rate cap and one sign at a time', async () => {
     env: { PUBLIC_ATTESTATION_SIGNS_PER_MIN: '2' },
     sign,
   });
-  for (const id of many) worker.enqueue(entryFor({ task_id: id, payment_ref: `base:0x${String(trees.get(id)).repeat(64)}` }));
+  for (const id of many) await worker.enqueue(entryFor({ task_id: id, payment_ref: `base:0x${String(trees.get(id)).repeat(64)}` }));
   await Promise.all([worker.tick(), worker.tick(), worker.tick()]);
   assert.equal(store.counts().signed, 2);
   assert.equal(store.counts().pending, 3);
@@ -312,9 +312,9 @@ test('M7 attestation signing never consumes or waits on the receipt issuance cap
     const usage = readCapUsage();
     assert.equal(usage.hour_used, 1);
     const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer) });
-    worker.enqueue(entryFor());
+    await worker.enqueue(entryFor());
     await worker.tick();
-    assert.equal(store.get(TASK).state, 'signed');
+    assert.equal((await store.get(TASK)).state, 'signed');
     assert.deepEqual(readCapUsage(), usage);
   } finally {
     if (saved.h === undefined) delete process.env.ISSUER_CAP_RECEIPTS_PER_HOUR; else process.env.ISSUER_CAP_RECEIPTS_PER_HOUR = saved.h;
@@ -324,34 +324,39 @@ test('M7 attestation signing never consumes or waits on the receipt issuance cap
 
 test('one attestation per task and per payment ref; a second different JWS is refused', async () => {
   const alerts = [];
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chit-pa046-store-')), 'public-attestations.jsonl');
-  const store = new storeMod.PublicAttestationStore({ file, alert: (e) => alerts.push(e) });
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'chit-pa046-store-')), 'public-attestations');
+  const store = new storeMod.PublicAttestationStore({ dir, alert: (e) => alerts.push(e) });
   const ref = `base:${TX}`;
-  assert.equal(store.enqueue({ taskId: TASK, ref }).ok, true);
-  assert.equal(store.enqueue({ taskId: TASK, ref }).duplicate, true);
-  const twin = store.enqueue({ taskId: 'xfuel-11111111-4e5f-4a6b-8c7d-9e0f1a2b3c4d', ref });
+  assert.equal((await store.enqueue({ taskId: TASK, ref })).ok, true);
+  assert.equal((await store.enqueue({ taskId: TASK, ref })).duplicate, true);
+  const twin = await store.enqueue({ taskId: 'xfuel-11111111-4e5f-4a6b-8c7d-9e0f1a2b3c4d', ref });
   assert.equal(twin.ok, false);
   assert.equal(twin.reason, 'duplicate_ref');
   assert.ok(alerts.some((a) => a.event === 'public_attestation_duplicate_ref'));
-  assert.deepEqual(store.markSigned(TASK, { jws: 'a.b.c', kid: 'k' }), { ok: true, duplicate: false });
-  assert.deepEqual(store.markSigned(TASK, { jws: 'a.b.c', kid: 'k' }), { ok: true, duplicate: true });
-  assert.deepEqual(store.markSigned(TASK, { jws: 'x.y.z', kid: 'k' }), { ok: false, reason: 'conflict' });
+  assert.deepEqual(await store.markSigned(TASK, { jws: 'a.b.c', kid: 'k' }), { ok: true, duplicate: false });
+  assert.deepEqual(await store.markSigned(TASK, { jws: 'a.b.c', kid: 'k' }), { ok: true, duplicate: true });
+  assert.deepEqual(await store.markSigned(TASK, { jws: 'x.y.z', kid: 'k' }), { ok: false, reason: 'conflict' });
   assert.ok(alerts.some((a) => a.event === 'public_attestation_conflict'));
-  assert.equal(store.get(TASK).jws, 'a.b.c');
-  // Durable: an append-only journal, one line per change. A reload sees the
-  // same rows, ignores a torn last line, and never lets a later line replace
-  // a signed JWS.
-  const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
-  assert.equal(lines.length, 3, 'pending, skipped twin, signed');
-  fs.appendFileSync(file, `${JSON.stringify({ task_id: TASK, state: 'signed', jws: 'evil.j.ws' })}\n{"task_id":"tor`);
-  const reloaded = new storeMod.PublicAttestationStore({ file });
-  assert.deepEqual(reloaded.servedAttestation(TASK), { jws: 'a.b.c' });
-  assert.equal(reloaded.taskForRef(ref), TASK);
-  assert.equal(reloaded.get('xfuel-11111111-4e5f-4a6b-8c7d-9e0f1a2b3c4d').state, 'skipped');
-  assert.deepEqual(fs.readdirSync(path.dirname(file)), ['public-attestations.jsonl']);
+  assert.equal((await store.get(TASK)).jws, 'a.b.c');
+  // Durable on disk: a reload sees the same rows. The signed row is created
+  // once and the pending row is gone. No temp file is left.
+  const reloaded = new storeMod.PublicAttestationStore({ dir });
+  assert.deepEqual(await reloaded.servedAttestation(TASK), { jws: 'a.b.c' });
+  assert.equal(await reloaded.taskForRef(ref), TASK);
+  assert.equal((await reloaded.get('xfuel-11111111-4e5f-4a6b-8c7d-9e0f1a2b3c4d')).state, 'skipped');
+  assert.equal(reloaded.counts().pending, 0);
+  const all = [];
+  const walk = (d) => { for (const n of fs.readdirSync(d)) { const f = path.join(d, n); if (fs.statSync(f).isDirectory()) walk(f); else all.push(path.relative(dir, f)); } };
+  walk(dir);
+  assert.equal(all.filter((f) => f.endsWith('.tmp')).length, 0);
+  assert.deepEqual(all.filter((f) => f.startsWith('pending')), []);
+  assert.equal(all.filter((f) => f.startsWith('done')).length, 2);
+  assert.equal(all.filter((f) => f.startsWith('refs')).length, 1);
+  // File names never carry the task id or ref.
+  assert.equal(all.some((f) => f.includes(TASK) || f.includes(TX.slice(2))), false);
   // Worker on a signed row is a no-op.
   const { worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer) });
-  assert.equal(worker.enqueue(entryFor()).duplicate, false);
+  assert.equal((await worker.enqueue(entryFor())).duplicate, false);
 });
 
 test('flags default off', () => {
@@ -384,7 +389,7 @@ test('read paths import no signer, and enqueue never signs inline', async () => 
   let signs = 0;
   const { worker } = setup({ tree: treeWith(TASK, ROW), holder: holderJwsFor(issuer), sign: async () => { signs += 1; throw new Error('x'); } });
   worker.stop();
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   assert.equal(signs, 0);
 });
 
@@ -448,7 +453,7 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
   const unknown = await readShell();
   assert.equal('public_attestation' in JSON.parse(unknown.text), false, 'no row: 0.4.5 shell');
 
-  store.enqueue({ taskId: TASK_APP, ref: `base:${TX}` });
+  await store.enqueue({ taskId: TASK_APP, ref: `base:${TX}` });
   const pending = await readShell();
   assert.deepEqual(JSON.parse(pending.text).public_attestation, { status: 'pending' });
   const page = await readShell('html');
@@ -474,7 +479,7 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
     return `${input}.${crypto.sign('sha256', Buffer.from(input), { key: issuer.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
   };
   const goodJws = signedFor();
-  store.markSigned(TASK_APP, { jws: goodJws, kid: issuer.kid });
+  await store.markSigned(TASK_APP, { jws: goodJws, kid: issuer.kid });
   const a = await readShell();
   const b = await readShell();
   assert.equal(a.text, b.text, 'identical repeat reads');
@@ -485,22 +490,20 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
   assert.doesNotMatch(signedPage.text, /VERIFIED/);
 
   // No read created a row or signed an attestation.
-  assert.equal(store.rows.size, 1);
+  assert.deepEqual([store.counts().pending, store.counts().signed], [0, 1]);
   await readShell();
   await readShell('html');
   assert.equal(publicSignCount(), signsBefore, 'a GET never signs an attestation');
 
   // A stored attestation that no longer matches the shell is withheld, not served.
   const drifted = signedFor({ payment: { ...pa.attestationClaims(goodJws).payment, gross_amount: '1' } });
-  store.rows.get(TASK_APP).jws = drifted;
+  store._cacheSet(TASK_APP, { jws: drifted });
   assert.equal('public_attestation' in JSON.parse((await readShell()).text), false);
   assert.equal(pa.attestationShellDrift(drifted, shellNow), 'amount_gross');
   assert.equal(pa.attestationShellDrift(goodJws, shellNow), null);
-  store.rows.get(TASK_APP).jws = goodJws;
-
-  // Failed rows are not served.
-  store.rows.get(TASK_APP).state = 'failed';
-  assert.equal('public_attestation' in JSON.parse((await readShell()).text), false);
+  store._cacheSet(TASK_APP, { jws: goodJws });
+  assert.deepEqual(JSON.parse((await readShell()).text).public_attestation, { jws: goodJws });
+  assert.deepEqual([store.counts().pending, store.counts().signed], [0, 1], 'reads created no row');
 });
 
 test('a gateway shell plus its attestation passes the verifier field binding (no claim_mismatch)', async () => {
@@ -508,14 +511,14 @@ test('a gateway shell plus its attestation passes the verifier field binding (no
   const { verifyPublicShell } = await import(path.join(verifyDist, 'check-input.js'));
   const holder = holderJwsFor(issuer);
   const { store, worker } = setup({ tree: treeWith(TASK, ROW), holder });
-  worker.enqueue(entryFor());
+  await worker.enqueue(entryFor());
   await worker.tick();
   const leafHex = pa.leafHashOf(TASK, ROW);
   const shell = toPublicShell(
     { task_id: TASK, payment: { network: 'base' }, issuer_signature: { jws: holder } },
     { inclusion: { leaf: leafHex, root: 'f'.repeat(64), tree_size: 4, proof: [] }, signedHead: null },
   );
-  shell.public_attestation = store.servedAttestation(TASK);
+  shell.public_attestation = await store.servedAttestation(TASK);
   const verdict = await verifyPublicShell(shell, {
     history: historyFor(issuer),
     requestedId: TASK.replace('xfuel-', 'chit-'),

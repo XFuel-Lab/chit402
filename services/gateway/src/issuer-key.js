@@ -264,7 +264,8 @@ export function signJws(payload, { jku = null, typ = 'chit402-receipt+jwt', kid:
  * Async JWS. Header and payload bytes match signJws. Receipt signs pass
  * capKind:'receipt'. The cap update finishes before signer.sign is awaited.
  * @param {object} payload
- * @param {{ jku?: string|null, typ?: string|null, kid?: string|null, payloadUtf8?: string|null, capKind?: string|null, receiptId?: string|null, parkLate?: boolean }} [opts]
+ * `signal` (optional) aborts an outstanding remote sign; the KMS signer honors it.
+ * @param {{ jku?: string|null, typ?: string|null, kid?: string|null, payloadUtf8?: string|null, capKind?: string|null, receiptId?: string|null, parkLate?: boolean, signal?: AbortSignal|null }} [opts]
  */
 export async function signJwsAsync(payload, {
   jku = null,
@@ -274,6 +275,7 @@ export async function signJwsAsync(payload, {
   capKind = null,
   receiptId = null,
   parkLate = true,
+  signal = null,
 } = {}) {
   if (capKind === 'receipt') {
     const { consumeReceiptSlot } = await import('./issuance-cap.js');
@@ -322,7 +324,14 @@ export async function signJwsAsync(payload, {
   const signer = peekIssuerSigner() || await initIssuerSigner();
   const kid = kidOverride || signer.kid;
   const signingInput = jwsSigningInput(payload, { jku, typ, kid, payloadUtf8 });
-  const signature = await signer.sign(Buffer.from(signingInput, 'utf8'));
+  if (signal?.aborted) {
+    const err = new Error('issuer sign aborted');
+    err.code = 'issuer_sign_aborted';
+    throw err;
+  }
+  const signature = signal
+    ? await signer.sign(Buffer.from(signingInput, 'utf8'), { signal })
+    : await signer.sign(Buffer.from(signingInput, 'utf8'));
   if (!Buffer.isBuffer(signature) || signature.length !== 64) {
     const err = new Error('issuer sign invalid');
     err.code = 'issuer_sign_invalid';

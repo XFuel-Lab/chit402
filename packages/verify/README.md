@@ -177,7 +177,7 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 | Code | Meaning |
 |------|---------|
 | 0 | `VERIFIED`. Every check passed, including the on-chain payer check |
-| 0 | `VERIFIED_PUBLIC` (0.4.6). A public shell's attestation verified. Scope: amount, payee, tx, log position. The payer and fulfillment are not claimed |
+| 0 | `VERIFIED_PUBLIC` (0.4.6). A public shell's attestation verified. Scope: settled amount, payee, tx, log position. The payer and fulfillment are not claimed |
 | 1 | `INVALID`. Tamper, a bad signature, a revoked key, a payer mismatch, `NOT_IN_LOG` |
 | 2 | `COULD_NOT_CHECK`. The log, the anchor, or the payer was not checked. An RPC timeout, a null or error result, a missing payer field, an unsigned public shell, or an unsupported rail is this code |
 
@@ -193,8 +193,8 @@ A public shell may carry `public_attestation: { "jws": "..." }`, or `{ "status":
 - The JWS parses to that exact shape, with canonical claim bytes.
 - The kid is a verified issuer-history key, its JWK thumbprint is the kid, the signature verifies, and the key is active and never revoked for the whole `attested_at` minute.
 - The id you asked for, and every outer shell field, equals the signed value. A swapped id is exit 1 `claim_mismatch`.
-- A fresh inclusion proof for the signed leaf hash at the signed index reaches a trusted, anchored head. A different leaf is exit 1 `leaf_not_bound`. A different index is exit 1. A different epoch is exit 2.
-- The Base receipt is on chain 8453, succeeded, is at least 12 blocks deep, and holds exactly one USDC Transfer to the signed payee for the signed `settled_amount`. Zero or two is exit 1 `transfer_mismatch`. An RPC that does not answer is exit 2.
+- A fresh inclusion proof for the signed leaf hash at the signed index reaches a trusted, anchored head. A different leaf is exit 1 `leaf_not_bound`. A different index is exit 1. A different epoch, or (0.4.7) a log that serves no epoch, is exit 2.
+- The Base receipt is on chain 8453, succeeded, is at least 12 blocks deep, and holds exactly one USDC Transfer to the signed payee for the signed `settled_amount`. Other Transfers in the same tx are ignored; zero or two to the payee is exit 1 `transfer_mismatch`. The reported sender is the token sender, not `tx.from`. An RPC that does not answer, fewer than 12 blocks, or (0.4.7) a log marked `removed` is exit 2. Only the settled amount is checked on chain.
 
 A malformed or invalid attestation is exit 1. It never falls back to `signed_receipt_unavailable`. A pending one is exit 2. Base only; Solana is a later release. Every published verifier from 0.3.0 to 0.4.5 rejects the tagged payload. `verifyIssuerJws` refuses this typ, so the attestation cannot stand in for a receipt, tree head, epoch, refusal, or history signature.
 

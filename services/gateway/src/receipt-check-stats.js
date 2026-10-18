@@ -4,7 +4,8 @@
  */
 import Database from 'better-sqlite3';
 
-export const CHECK_RESULTS = ['VERIFIED', 'INVALID', 'COULD_NOT_CHECK'];
+// VERIFIED_PUBLIC (0.4.6) has its own bucket: the public scope is never counted as a holder VERIFIED.
+export const CHECK_RESULTS = ['VERIFIED', 'VERIFIED_PUBLIC', 'INVALID', 'COULD_NOT_CHECK'];
 export const STATS_MAX_HOURS = 168;
 export const STATS_DEFAULT_HOURS = 24;
 export const ALERT_MIN_CHECKS = 20;
@@ -30,8 +31,10 @@ export function normalizeClient(value) {
 }
 
 export function resultOfOverall(overall) {
-  // VERIFIED_PUBLIC (0.4.6) is exit 0. It counts with VERIFIED, not as a could-not-check.
-  if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return 'VERIFIED';
+  // VERIFIED_PUBLIC (0.4.6) is exit 0 with a narrower scope. Its own bucket,
+  // neither a holder VERIFIED nor a could-not-check.
+  if (overall === 'VERIFIED') return 'VERIFIED';
+  if (overall === 'VERIFIED_PUBLIC') return 'VERIFIED_PUBLIC';
   if (overall === 'INVALID' || overall === 'NOT_IN_LOG') return 'INVALID';
   return 'COULD_NOT_CHECK';
 }
@@ -114,6 +117,7 @@ export function maskCount(n) {
 function maskTrio(row) {
   return {
     verified: maskCount(row?.verified),
+    verified_public: maskCount(row?.verified_public),
     invalid: maskCount(row?.invalid),
     could_not_check: maskCount(row?.could_not_check),
   };
@@ -154,16 +158,18 @@ export function bucketRows(rows) {
     byHour.get(hour).push(row);
   }
   return [...byHour.entries()].sort((a, b) => a[0] - b[0]).map(([hour, list]) => {
-    const empty = () => ({ verified: 0, invalid: 0, could_not_check: 0 });
+    const empty = () => ({ verified: 0, verified_public: 0, invalid: 0, could_not_check: 0 });
     const byClient = { web: empty(), api: empty() };
     const byReason = [];
     for (const row of list) {
       const count = Number(row.n) || 0;
       const key = row.result === 'VERIFIED'
         ? 'verified'
-        : row.result === 'INVALID'
-          ? 'invalid'
-          : 'could_not_check';
+        : row.result === 'VERIFIED_PUBLIC'
+          ? 'verified_public'
+          : row.result === 'INVALID'
+            ? 'invalid'
+            : 'could_not_check';
       const client = normalizeClient(row.client);
       byClient[client][key] += count;
       byReason.push({
@@ -176,6 +182,7 @@ export function bucketRows(rows) {
     return {
       hour: new Date(hour).toISOString(),
       verified: byClient.web.verified + byClient.api.verified,
+      verified_public: byClient.web.verified_public + byClient.api.verified_public,
       invalid: byClient.web.invalid + byClient.api.invalid,
       could_not_check: byClient.web.could_not_check + byClient.api.could_not_check,
       by_client: byClient,
@@ -254,7 +261,7 @@ export function evaluateCheckAlert(rows, now = Date.now()) {
 
   const byReason = new Map();
   for (const row of chosen.list) {
-    if (row.result === 'VERIFIED') continue;
+    if (row.result === 'VERIFIED' || row.result === 'VERIFIED_PUBLIC') continue;
     byReason.set(row.reason, (byReason.get(row.reason) || 0) + (Number(row.n) || 0));
   }
   let top = null;

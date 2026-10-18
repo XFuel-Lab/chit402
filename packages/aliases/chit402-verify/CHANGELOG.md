@@ -5,6 +5,11 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
 
+## 0.4.7 — Pin chit402-verify 0.4.7
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.7`: a public attestation whose log serves no epoch, or whose Base receipt carries a removed log, is exit 2. Not published. No deploy.
+
 ## 0.4.6 — Pin chit402-verify 0.4.6
 
 ### Changed

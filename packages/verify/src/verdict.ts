@@ -9,7 +9,7 @@ export type CheckState = 'pass' | 'fail' | 'could_not_check';
 
 /**
  * `verified_public` is the public-attestation result (0.4.6). It is exit 0,
- * but its scope is the signed public fields only: amount, payee, tx, and log
+ * but its scope is the signed public fields only: settled amount, payee, tx, and log
  * position. It does not claim the payer or fulfillment.
  */
 export type VerdictResult = 'verified' | 'verified_public' | 'invalid' | 'could_not_check';
@@ -92,7 +92,7 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
   if (result === 'verified') return { message: 'Every check passed.', next_step: null };
   if (result === 'verified_public') {
     return {
-      message: 'The public attestation verified: amount, payee, tx, and log position. The link from this id to the log leaf rests on the issuer signature. The payer and fulfillment are not claimed.',
+      message: 'The public attestation verified: settled amount, payee, tx, and log position. The link from this id to the log leaf rests on the issuer signature. The payer and fulfillment are not claimed.',
       next_step: null,
     };
   }
@@ -481,7 +481,7 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
     lines.push('The receipt could not be checked.');
   }
   if (verdict.result === 'verified_public') {
-    lines.push('Scope: public fields only (amount, payee, tx, log position). Payer: not claimed.');
+    lines.push('Scope: public fields only (settled amount, payee, tx, log position). Payer: not claimed.');
     if (verdict.public?.chain_from) lines.push(`On-chain sender (chain fact, not signed): ${verdict.public.chain_from}`);
     lines.push('Details: https://chit402.com/docs/verify#verified_public');
   }
