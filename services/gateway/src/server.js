@@ -4340,7 +4340,8 @@ export async function createApp() {
   function collectHouseMetrics() {
     let aiStatus = null;
     try { aiStatus = getAIListener().getStatus(); } catch { /* not initialised */ }
-    refreshProverProbe(getSP1Prover());
+    // Add-on off: no prover health probe. proofAvailability reports it unavailable.
+    refreshProverProbe(settlementProofEnabled() ? getSP1Prover() : null);
     const tasks = snapshotTasks();
     const now = Date.now();
     const stats = computeUsageStats(tasks, { now });
