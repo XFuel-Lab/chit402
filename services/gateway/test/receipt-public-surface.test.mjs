@@ -37,6 +37,31 @@ const TX_B = `0x${'b2'.repeat(32)}`;
 const REF_A = `base:${TX_A}`;
 const REF_B = `base:${TX_B}`;
 
+// Leak matcher for the usage sentinels (4242, 4343). Hash-like runs are
+// removed first: 0x hex, bare hex of 16+ and base64url of 24+ (JWS segments,
+// log roots, ids), so a hash that happens to contain the digits is not a leak.
+// What is left is matched on digit boundaries only, so letters, underscores and
+// suffixes glued to the number still count, plus the grouped (4,242 / 4 242)
+// and exponent (4.242e3) forms.
+function stripHashLike(text) {
+  return String(text)
+    .replace(/0x[0-9a-fA-F]+/g, ' ')
+    .replace(/[0-9a-fA-F]{16,}/g, ' ')
+    .replace(/[A-Za-z0-9_-]{24,}/g, ' ');
+}
+function leaksNumber(text, n) {
+  const d = String(n);
+  const head = d.slice(0, d.length - 3);
+  const tail = d.slice(-3);
+  const forms = [
+    `(?<![0-9])${d}(?![0-9])`,
+    `(?<![0-9])${head}[,\u00a0\u202f ]${tail}(?![0-9])`,
+    `(?<![0-9])${d[0]}\\.${d.slice(1)}0*[eE]\\+?${d.length - 1}(?![0-9])`,
+  ];
+  const clean = stripHashLike(text);
+  return forms.some((f) => new RegExp(f).test(clean));
+}
+
 let server;
 let base;
 let httpApp;
@@ -465,6 +490,32 @@ test('a public shell preimage is not publicly cacheable', async () => {
   assert.equal((leafed.headers.get('cache-control') || '').includes('max-age=300'), false);
 });
 
+test('leak matcher: catches glued and formatted sentinels, ignores hashes', () => {
+  const caught = [
+    '4242', '"prompt_tokens":4242', '4242.00', '0.4242', 'id-4242-x',
+    'amt4242usd', 'tok4242', '_4242_', '4242n', '4,242', '4 242', '4.242e3', '4.242E+3',
+    '<td>4242</td>', 'tokens=4242&x=1',
+  ];
+  for (const plant of caught) {
+    assert.equal(leaksNumber(`before ${plant} after`, 4242), true, `missed ${plant}`);
+  }
+  assert.equal(leaksNumber('x4343y', 4343), true);
+  assert.equal(leaksNumber('4,343', 4343), true);
+  const clean = [
+    '42420', '14242', '424.2', '0.004242e9',
+    // Hash-like runs that contain the digits are not leaks.
+    `root ${'54dfe1b5ca3419b1642425d3'}${'0'.repeat(40)}`,
+    `0x${'ab'.repeat(10)}4242${'cd'.repeat(10)}`,
+    `chit-${'f'.repeat(12)}4242${'e'.repeat(12)}`,
+    `eyJhbGciOiJFUzI1NiJ9.eyJ2IjoxMSwiYW1vdW50Ijo${'4242'}xQnZ9.sig${'A'.repeat(40)}`,
+  ];
+  for (const text of clean) {
+    assert.equal(leaksNumber(text, 4242), false, `false positive on ${text}`);
+  }
+  // A leak next to a hash is still caught.
+  assert.equal(leaksNumber(`${'a1'.repeat(32)} amt4242usd`, 4242), true);
+});
+
 test('public receipt views drop unsigned token, route, stamp, and float fields', async () => {
   const { redactPublicReceipt } = await import('../src/receipt.js');
   const stamped = redactPublicReceipt({
@@ -499,8 +550,8 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(doc.provider_cogs, undefined);
   assert.equal(json.text.includes('Llama'), false);
   assert.equal(json.text.includes('xfuel/auto'), false);
-  assert.equal(json.text.includes('4242'), false);
-  assert.equal(json.text.includes('4343'), false);
+  assert.equal(leaksNumber(json.text, 4242), false);
+  assert.equal(leaksNumber(json.text, 4343), false);
   assert.equal(json.text.includes('below_low_water'), false);
   const again = await fetchText(`/receipt/${A}?format=json`);
   assert.equal(JSON.parse(again.text).schema, doc.schema);
@@ -509,21 +560,21 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   const html = await fetchText(`/receipt/${A}`);
   assert.equal(html.status, 200);
   assert.equal(html.text.includes('xfuel/auto'), false);
-  assert.equal(html.text.includes('4242'), false);
-  assert.equal(html.text.includes('4343'), false);
+  assert.equal(leaksNumber(html.text, 4242), false);
+  assert.equal(leaksNumber(html.text, 4343), false);
   assert.equal(html.text.includes('low water'), false);
   assert.equal(html.text.includes('below_low_water'), false);
 
   const auditor = await fetchText(`/receipt/${A}?format=auditor`);
   assert.equal(auditor.status, 200, auditor.text.slice(0, 120));
   assert.equal(auditor.text.includes('xfuel/auto'), false);
-  assert.equal(auditor.text.includes('4242'), false);
+  assert.equal(leaksNumber(auditor.text, 4242), false);
   assert.equal(auditor.text.includes('below_low_water'), false);
 
   const card = await fetchText(`/receipt/${A}/og.png`);
   assert.equal(card.status, 200);
   assert.equal(card.text.includes('xfuel/auto'), false);
-  assert.equal(card.text.includes('4242'), false);
+  assert.equal(leaksNumber(card.text, 4242), false);
 
   const followed = await fetchText(`/receipt/by-tx?tx=${TX_A}&format=json`);
   assert.equal(followed.status, 302, followed.text);
@@ -531,7 +582,7 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   const canonical = await fetchText(new URL(loc).pathname + new URL(loc).search);
   assert.equal(canonical.status, 200, canonical.text.slice(0, 120));
   assert.equal(canonical.text.includes('xfuel/auto'), false);
-  assert.equal(canonical.text.includes('4242'), false);
+  assert.equal(leaksNumber(canonical.text, 4242), false);
 });
 
 test('published fixtures stay VERIFIED after unsigned fields are dropped', async () => {
