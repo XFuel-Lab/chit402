@@ -34,7 +34,7 @@ import {
 } from './session-act.js';
 import { buildFulfillmentEnvelope, OUTPUT_COMMITMENT_STATUS } from './fulfillment-receipt.js';
 import { claimIdFromView } from './claim-id.js';
-import { buildReceiptOgMeta, buildReceiptOgImageUrl } from './receipt-og-meta.js';
+import { buildReceiptOgMeta, buildReceiptOgImageUrl, isKnownUsdcAsset } from './receipt-og-meta.js';
 import { tier2ProofUnits, internalSettlementAccounting } from './pricing.js';
 import { renderCoverageSection } from './export-coverage.js';
 import { renderBookSeqSection } from './book-seq.js';
@@ -260,6 +260,20 @@ export function mergeReceiptView(receipt) {
 }
 
 const SIGNED_AMOUNT_KEYS = ['gross_amount', 'settled_amount', 'net_amount', 'fee_amount', 'asset'];
+/** Payment keys rendered only as signed (null when the claims do not carry them). */
+const SIGNED_DISPLAY_KEYS = [
+  ...SIGNED_AMOUNT_KEYS,
+  'rail', 'ref', 'protocol_fee_bps', 'fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
+];
+
+/** Display label for a signed asset: known USDC contract -> 'USDC', null -> 'unsigned', addresses keep their case. */
+export function signedAssetLabel(asset, network) {
+  if (asset == null || asset === '') return 'unsigned';
+  const raw = String(asset);
+  if (isKnownUsdcAsset(network, raw)) return 'USDC';
+  if (/^0x[0-9a-fA-F]{40}$/.test(raw) || raw.length > 12) return raw;
+  return raw.toUpperCase();
+}
 
 /**
  * Parties and amounts as signed by the issuer. Values absent from the signed
@@ -284,10 +298,16 @@ export function signedParties(claims) {
 export function displayReceiptView(receipt) {
   const view = mergeReceiptViewInner(receipt);
   if (!view || typeof view !== 'object') return view;
-  const sp = signedParties(decodeReceiptClaims(receipt));
+  const claims = decodeReceiptClaims(receipt);
+  const sp = signedParties(claims);
+  const signedPay = claims?.payment && typeof claims.payment === 'object' ? claims.payment : {};
   const payment = view.payment && typeof view.payment === 'object' ? { ...view.payment } : null;
   if (payment) {
-    for (const k of SIGNED_AMOUNT_KEYS) payment[k] = sp[k];
+    for (const k of SIGNED_DISPLAY_KEYS) payment[k] = k in sp ? sp[k] : (signedPay[k] ?? null);
+    const network = signedPay.network ?? networkFromPaymentRef(payment.ref) ?? null;
+    payment.network = network;
+    payment.chain = signedPay.chain ?? null;
+    payment.explorer_url = safeExplorerUrl(null, payment.ref);
     payment.payee = sp.payee;
     payment.payTo = sp.payee;
     payment.payer = sp.payer;
@@ -2989,25 +3009,34 @@ function reportedOpenRouterSection(receipt, view) {
     </section>`;
 }
 
+/** Signed raw Nano amount (10^30 raw per XNO) as a plain decimal, or null. */
+function xnoFromRaw(raw) {
+  if (raw == null || !/^[0-9]+$/.test(String(raw))) return null;
+  const s = String(raw).replace(/^0+(?=\d)/, '').padStart(31, '0');
+  const int = s.slice(0, -30).replace(/^0+(?=\d)/, '');
+  const frac = s.slice(-30).replace(/0+$/, '');
+  return frac ? `${int}.${frac}` : int;
+}
+
 function foreignIngestPaymentSection(receipt, view) {
   const p = view.payment || {};
   const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
   const rail = String(p.rail || '').toLowerCase();
-  const isNano = rail === 'nano' || p.chain === 'nano';
+  // p comes from displayReceiptView: rail, ref and network are signed or null.
+  const isNano = rail === 'nano' || p.network === 'nano';
   // Asset label is shown only as signed; no hard-coded default.
-  const asset = p.asset ? String(p.asset).toUpperCase() : 'unsigned';
-  const network = p.network || (isNano ? 'nano' : '');
+  const asset = signedAssetLabel(p.asset, p.network);
+  const network = p.network || '';
   const railLabel = isNano
-    ? 'Nano / XNO'
+    ? `Nano / ${asset}`
     : (network ? `${network} / ${asset}` : asset);
   const amountHtml = isNano
-    ? `${esc(p.amount_xno ?? '—')} <span class="muted">XNO</span>`
+    ? `${esc(xnoFromRaw(p.gross_amount) ?? 'unsigned')} <span class="muted">XNO</span>`
     : usdcCell(p.gross_amount);
   const usd = formatUsdEstimateLabel(p.usd_estimate);
   const sender = p.payer ?? null;
   const recipient = p.payee ?? null;
-  const explorer = safeExplorerUrl(p.explorer_url, p.ref)
-    || safeExplorerUrl(receipt.links?.explorer, p.ref);
+  const explorer = safeExplorerUrl(null, p.ref);
   const feeLabel = stamp.fee_usd != null && stamp.fee_usd !== ''
     ? `$${stamp.fee_usd}`
     : formatUsdc(stamp.fee_units);
@@ -3432,7 +3461,7 @@ ${pageUrl ? `<meta property="og:url" content="${esc(pageUrl)}" />\n` : ''}<meta 
 
     ${reported ? reportedOpenRouterSection(receipt, view) : (foreign ? foreignIngestPaymentSection(receipt, view) : `<section class="card">
       <h2>Payment</h2>
-      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc((p.rail || '').toUpperCase())}</span>`)}
+      ${row('Rail', `<span class="badge ${p.rail === 'usdc' ? 'ok' : 'pending'}">${esc(p.rail ? String(p.rail).toUpperCase() : 'unsigned')}</span>`)}
       ${row('Settlement', refund?.refund_status === 'owed'
         ? '<span class="badge bad">refund owed</span>'
         : (view.settlement?.kind === SETTLEMENT_KIND_INHERITED
@@ -3592,9 +3621,13 @@ export const AUDITOR_NO_POLICY = 'no_policy';
  * @param {Array<boolean|string|null>} values
  * @returns {boolean|string}
  */
+export const AUDITOR_UNSIGNED = 'unsigned';
+
 export function rollupInPolicy(values) {
   const applicable = values.filter((v) => v != null && v !== AUDITOR_NO_POLICY);
   if (applicable.length === 0) return AUDITOR_NO_POLICY;
+  if (applicable.some((v) => v === false)) return false;
+  if (applicable.some((v) => v === AUDITOR_UNSIGNED)) return AUDITOR_UNSIGNED;
   return applicable.every((v) => v === true);
 }
 
@@ -3631,8 +3664,8 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     throw new Error('buildAuditorExport: receipt with task_id required');
   }
   const source = redactPublicReceipt(receipt);
-  const view = mergeReceiptView(source);
-  // Totals come from signed amounts only (null when unsigned).
+  // Money-flow fields come from the signed view only (null when unsigned).
+  const view = displayReceiptView(source);
   const signed = signedParties(decodeReceiptClaims(source));
   const defaultPolicy = {
     max_fee_bps: 100,
@@ -3642,18 +3675,18 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   };
   const pol = policy || defaultPolicy;
   const breakdown = view.payment?.accounting?.internal_breakdown || null;
-  const feeBps = Number(
-    breakdown?.route_margin_bps
+  const feeRaw = breakdown?.route_margin_bps
     ?? view.payment?.protocol_fee_bps
     ?? view.payment?.fee_bps
-    ?? 0,
-  );
-  const rail = (view.payment?.rail || '').toLowerCase();
+    ?? null;
+  const rail = view.payment?.rail == null ? null : String(view.payment.rail).toLowerCase();
   const checks = {
-    fee_bps_within_cap: feeBps <= Number(pol.max_fee_bps ?? 100),
-    rail_allowed: Array.isArray(pol.allowed_rails)
-      ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
-      : true,
+    fee_bps_within_cap: feeRaw == null ? AUDITOR_UNSIGNED : Number(feeRaw) <= Number(pol.max_fee_bps ?? 100),
+    rail_allowed: rail == null
+      ? AUDITOR_UNSIGNED
+      : (Array.isArray(pol.allowed_rails)
+        ? pol.allowed_rails.map((r) => String(r).toLowerCase()).includes(rail)
+        : true),
     binding_ok: view.binding == null ? AUDITOR_NO_POLICY : view.binding.matches === true,
     privacy_vendor_blind: privacyVendorBlindCheck(view, pol),
   };
@@ -3681,7 +3714,7 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
       receipt_floor_amount: breakdown?.receipt_floor_amount ?? null,
       provider_cogs_amount: breakdown?.provider_cogs_amount ?? null,
       payment_ref: view.payment?.ref || null,
-      explorer_url: safeExplorerUrl(view.payment?.explorer_url, view.payment?.ref),
+      explorer_url: safeExplorerUrl(null, view.payment?.ref),
     },
     route_summary: {
       message_type: view.route?.message_type || null,

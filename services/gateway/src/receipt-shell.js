@@ -52,16 +52,17 @@ function minuteIso(value) {
   return date.toISOString();
 }
 
+// Ref and chain come from the signed claims only (null when unsigned).
 function paymentRefOf(receipt, claims) {
-  return claims?.payment?.ref || receipt?.payment?.ref || null;
+  return claims?.payment?.ref || null;
 }
 
 function chainOf(receipt, claims) {
-  const network = receipt?.payment?.network || receipt?.payment_meta?.network || claims?.payment?.network;
+  const network = claims?.payment?.network;
   if (network) return String(network);
   const ref = String(paymentRefOf(receipt, claims) || '');
   const prefix = ref.split(':')[0];
-  if (prefix === 'base' || prefix === 'solana') return prefix;
+  if (['base', 'base-sepolia', 'solana', 'solana-devnet', 'nano'].includes(prefix)) return prefix;
   return null;
 }
 
@@ -318,14 +319,14 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
   const image = `${canonical}/og.png`;
   const usdc = isKnownUsdcAsset(card.chain, card.asset) && usdBody(card.amount_gross) != null;
   const chainText = chainLabel(card.chain);
-  const chainHtml = chainText ? `<small>${esc(chainText)}</small>` : '';
+  const chainHtml = `<small>${esc(chainText || 'unsigned')}</small>`;
 
   let totalHtml = '';
   if (card.amount_gross != null) {
     if (usdc) {
       totalHtml = `<div class="total"><span>$${esc(usdBody(card.amount_gross))} <small>USDC</small></span>${chainHtml}</div>`;
     } else {
-      const assetHtml = card.asset ? ` <small>${esc(shortForm(card.asset))}</small>` : '';
+      const assetHtml = ` <small>${esc(card.asset ? shortForm(card.asset) : 'unsigned')}</small>`;
       totalHtml = `<div class="total"><span>${esc(String(card.amount_gross))}${assetHtml}</span>${chainHtml}</div>`;
     }
   }
@@ -357,7 +358,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     }
   }
   const assetRow = card.asset == null
-    ? ''
+    ? textRow('Asset', 'unsigned')
     : textRow('Asset', usdc ? `USDC ${shortForm(card.asset)}` : shortForm(card.asset));
   const issued = card.issued_at == null ? '' : textRow('Issued', formatIssued(card.issued_at));
   const format = card.payload_version == null ? '' : textRow('Format', `payload v${card.payload_version}`);

@@ -396,8 +396,9 @@ test('renderReceiptHtml: og:title includes amount and short id; xfuel- prefix be
   };
   const html = renderReceiptHtml(await buildReceipt(xfuelTask));
 
-  assert.match(html, /<title>0\.01 USDC · chit-247049dd…<\/title>/);
-  assert.match(html, /property="og:title" content="0\.01 USDC · chit-247049dd…"/);
+  // No signed asset on this fixture: the share card does not assume USDC.
+  assert.match(html, /<title>10000 unsigned · chit-247049dd…<\/title>/);
+  assert.match(html, /property="og:title" content="10000 unsigned · chit-247049dd…"/);
   assert.match(html, /property="og:image" content="[^"]+\/og\.png"/);
 
   // The displayed task ID should have the xfuel- prefix rewritten to chit-
@@ -688,7 +689,7 @@ test('renderReceiptHtml: historical openai-* task ids still render (no prefix st
     result: { provider: 'theta-edgecloud' },
     sp1Proof: null,
   }));
-  assert.match(html, /<title>0\.01 USDC · openai-aaaaaaaa-bbbb…<\/title>/);
+  assert.match(html, /<title>10000 unsigned · openai-aaaaaaaa-bbbb…<\/title>/);
   // openai-* prefix is NOT stripped (only xfuel- is)
   assert.match(html, new RegExp(`class="taskid">${taskId}<`));
 });
@@ -1197,7 +1198,7 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
         Buffer.from(JSON.stringify({
           task_id: 'foreign-x402-nano-1',
           payer: sender,
-          payment: { gross_amount: '1000000000000000000000000000000', payee: recipient },
+          payment: { rail: 'nano', ref: `nano:${hash}`, asset: 'XNO', gross_amount: '1000000000000000000000000000000', payee: recipient },
         })).toString('base64url'),
         'sig',
       ].join('.'),
@@ -1252,7 +1253,7 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
         Buffer.from(JSON.stringify({
           task_id: 'foreign-x402-usdc-1',
           payer: sender,
-          payment: { asset: 'USDC', gross_amount: '5000', payee: recipient },
+          payment: { rail: 'usdc', ref: `base:${tx}`, asset: 'USDC', gross_amount: '5000', payee: recipient },
         })).toString('base64url'),
         'sig',
       ].join('.'),

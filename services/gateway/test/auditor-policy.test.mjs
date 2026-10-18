@@ -11,8 +11,15 @@ import {
   rollupInPolicy,
 } from '../src/receipt.js';
 
+// The export reads money-flow fields from the signed claims only.
+function withSignedPayment(r) {
+  const claims = { task_id: r.task_id, payment: r.payment };
+  const jws = `aaa.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.bbb`;
+  return { ...r, issuer_signature: { alg: 'ES256', kid: 'test', jws } };
+}
+
 function paidReceipt(over = {}) {
-  return {
+  return withSignedPayment({
     task_id: 'xfuel-aud-normal',
     status: 'completed',
     proof_outcome: 'not_applicable',
@@ -30,7 +37,7 @@ function paidReceipt(over = {}) {
     binding: null,
     privacy: null,
     ...over,
-  };
+  });
 }
 
 test('rollup treats no_policy and null as not a failure', () => {

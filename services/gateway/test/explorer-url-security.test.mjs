@@ -66,6 +66,10 @@ async function viewUrls(stored, ref) {
     },
     links: { explorer: stored },
     route: { model: 'llama-3-70b', provider: 'theta' },
+    // Pages render the ref only as signed.
+    issuer_signature: {
+      jws: `aaa.${Buffer.from(JSON.stringify({ task_id: 'task-explorer-bearing', payment: { rail: 'usdc', ref, gross_amount: '1000000' } })).toString('base64url')}.bbb`,
+    },
   };
   const sealed = mergeReceiptView(bearing);
   const foreignHtml = renderReceiptHtml(bearing);
@@ -241,12 +245,14 @@ test('T7 and T8 every view takes the signed ref, and hostile stored URLs become 
   const mainnetFallback = await viewUrls(MAINNET, invalid);
   assert.equal(mainnetFallback.claims, MAINNET);
   assert.equal(mainnetFallback.json, MAINNET);
-  assert.equal(mainnetFallback.auditor, MAINNET);
+  // Auditor export links only from the signed ref; no stored fallback.
+  assert.equal(mainnetFallback.auditor, null);
   assert.equal(mainnetFallback.sealed, MAINNET);
   assert.equal(mainnetFallback.book, MAINNET);
   assert.equal(mainnetFallback.ingest, MAINNET);
   assert.equal(mainnetFallback.noClaims, MAINNET);
-  assert.equal(mainnetFallback.html.includes(`href="${MAINNET}"`), true);
+  // Rendered page links only from the signed ref; no stored fallback.
+  assert.equal(mainnetFallback.html.includes(`href="${MAINNET}"`), false);
   assert.equal(mainnetFallback.html.includes('?cluster=devnet'), false);
 
   const safeStored = `https://basescan.org/tx/0x${'ab'.repeat(32)}`;
@@ -277,7 +283,7 @@ test('T11 devnet receipt HTML links the signature and names Solana Devnet on the
         Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'chit402-receipt+jwt' })).toString('base64url'),
         Buffer.from(JSON.stringify({
           task_id: 'task-devnet-link',
-          payment: { gross_amount: '1000000', asset: DEVNET_USDC },
+          payment: { rail: 'usdc', ref: `solana-devnet:${SIG88}`, gross_amount: '1000000', asset: DEVNET_USDC },
           caller_binding: { payer_wallet: PAYER },
         })).toString('base64url'),
         'sig',

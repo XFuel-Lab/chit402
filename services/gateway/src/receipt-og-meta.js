@@ -37,10 +37,26 @@ export function capText(value, max) {
 
 function ogAssetLabel(asset, paymentRef) {
   const network = networkFromPaymentRef(paymentRef);
+  if (asset == null || asset === '') return 'unsigned';
   if (isKnownUsdcAsset(network, asset)) return 'USDC';
-  const raw = asset == null || asset === '' ? 'USDC' : String(asset);
+  const raw = String(asset);
   if (raw.toUpperCase() === 'USDC') return 'USDC';
   return shortForm(raw);
+}
+
+/** Share-card amount from signed values: dollars only for a known USDC asset. */
+function shareAmountLabel(grossAmount, rail, assetLabel) {
+  if (rail === 'unmetered') return 'UNMETERED';
+  if (grossAmount == null || grossAmount === '') return 'unsigned';
+  if (assetLabel === 'USDC') return formatUsdcShareAmount(grossAmount, rail);
+  if (assetLabel === 'XNO' && /^[0-9]+$/.test(String(grossAmount))) {
+    const d = String(grossAmount).replace(/^0+(?=\d)/, '').padStart(31, '0');
+    const int = d.slice(0, -30).replace(/^0+(?=\d)/, '');
+    const frac = d.slice(-30).replace(/0+$/, '');
+    return `${frac ? `${int}.${frac}` : int} XNO`;
+  }
+  if (grossAmount == null || grossAmount === '') return 'unsigned';
+  return `${String(grossAmount)} ${assetLabel}`;
 }
 
 /** Display task id with chit- prefix for share copy. */
@@ -85,7 +101,7 @@ function settlementNetworkLabel(paymentRef) {
   if (network === 'base') return 'Base';
   if (network === 'base-sepolia') return 'Base Sepolia';
   if (network) return String(network);
-  return 'Base';
+  return 'unsigned';
 }
 
 export function receiptOgRailLabel(view) {
@@ -96,7 +112,7 @@ export function receiptOgRailLabel(view) {
   if (p.rail === 'usdc' || String(p.rail).startsWith('solana')) {
     return `${settlementNetworkLabel(p.ref)} ${asset}`;
   }
-  return String(p.rail || '').toUpperCase() || null;
+  return p.rail ? String(p.rail).toUpperCase() : 'unsigned';
 }
 
 export function receiptOgCollectionLabel(view) {
@@ -127,17 +143,23 @@ export function buildReceiptOgImageUrl(receipt) {
   return `${self.replace(/\/$/, '')}/og.png`;
 }
 
-function signedGrossAmount(receipt) {
+const SIGNED_OG_KEYS = ['rail', 'ref', 'asset', 'gross_amount'];
+
+/** Signed payment fields used on the share card (null when unsigned). */
+function signedOgPayment(receipt) {
+  const out = Object.fromEntries(SIGNED_OG_KEYS.map((k) => [k, null]));
   const jws = receipt?.issuer_signature?.jws;
-  if (typeof jws !== 'string') return null;
+  if (typeof jws !== 'string') return out;
   const parts = jws.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 3) return out;
   try {
     const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    return claims?.payment?.gross_amount ?? null;
+    const pay = claims?.payment && typeof claims.payment === 'object' ? claims.payment : {};
+    for (const k of SIGNED_OG_KEYS) out[k] = pay[k] ?? null;
   } catch {
-    return null;
+    // unsigned
   }
+  return out;
 }
 
 /**
@@ -147,9 +169,12 @@ function signedGrossAmount(receipt) {
  */
 export function buildReceiptOgMeta(receipt, mergedView = null) {
   const view = mergedView || receipt;
-  const p = view.payment || {};
-  // Amount shown only as signed by the issuer; never the outer copy.
-  const amountLabel = formatUsdcShareAmount(signedGrossAmount(receipt), p.rail);
+  const outerPay = view.payment || {};
+  // Rail, ref, asset and amount shown only as signed by the issuer; never the outer copy.
+  const sp = signedOgPayment(receipt);
+  const p = { ...outerPay, ...sp };
+  const signedView = { ...view, payment: view.payment ? p : view.payment };
+  const amountLabel = shareAmountLabel(sp.gross_amount, sp.rail, ogAssetLabel(sp.asset, sp.ref));
   const shortId = shortReceiptIdForShare(receipt.task_id || view.task_id);
 
   const title = p.rail === 'unmetered'
@@ -157,8 +182,8 @@ export function buildReceiptOgMeta(receipt, mergedView = null) {
     : `${amountLabel} · ${shortId}`;
 
   const descParts = [
-    receiptOgRailLabel(view),
-    receiptOgCollectionLabel(view),
+    receiptOgRailLabel(signedView),
+    receiptOgCollectionLabel(signedView),
     receiptOgEvidenceLabel(receipt),
   ].filter(Boolean);
 
