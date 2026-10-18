@@ -339,7 +339,8 @@ test('renderReceiptHtml: shareable page includes key fields + escapes hostile in
   assert.match(html, /<!doctype html>/i);
   assert.ok(html.includes(TASK_ID));
   // Proof outcome is not a signed claim; the header badge reflects the issuer signature.
-  assert.match(html, /<span class="badge (ok|pending)">(Signed|Signature not verified)<\/span>/);
+  // Header outcome is the three-way result of the signature plus the log check.
+  assert.match(html, /data-outcome="(verified|invalid|couldnt_check)"/);
   assert.equal(html.includes('Proven'), false);
   assert.match(html, /og:title/);
   assert.match(html, /property="og:title" content="1\.00 USDC · task-abc123"/);
@@ -1285,8 +1286,8 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
   assert.match(html, new RegExp(recipient));
   assert.match(html, new RegExp(`base:${tx}`));
   assert.match(html, new RegExp(`href="${explorer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
-  assert.match(html, /\$0\.002/);
-  assert.match(html, /paid/);
+  // The foreign stamp fee stays hidden, even when signed.
+  assert.doesNotMatch(html, /Stamp fee/);
   assert.doesNotMatch(html, /waived/);
   assert.doesNotMatch(html, /class="badge bad">Invalid/);
 });
