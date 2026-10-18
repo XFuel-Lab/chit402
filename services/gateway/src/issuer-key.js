@@ -21,6 +21,9 @@
 import crypto from 'crypto';
 import { peekIssuerSigner, resetIssuerSigner } from './issuer-signer-state.js';
 import { lowS } from './ecdsa-der.js';
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
+
+export { isCanonicalCompactEs256 };
 
 let _privateKey = null;
 let _publicKeyJwk = null;
@@ -357,7 +360,7 @@ export function verifyJws(jws, jwk) {
   }
   
   const parts = jws.split('.');
-  if (parts.length !== 3) {
+  if (parts.length !== 3 || !isCanonicalCompactEs256(jws)) {
     return { valid: false, reason: 'malformed_jws' };
   }
   
@@ -414,7 +417,7 @@ export function verifyJwsWithJwks(jws, jwks) {
   }
   
   const parts = jws.split('.');
-  if (parts.length !== 3) {
+  if (parts.length !== 3 || !isCanonicalCompactEs256(jws)) {
     return { valid: false, reason: 'malformed_jws' };
   }
   

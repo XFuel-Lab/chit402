@@ -658,9 +658,18 @@ export function sealedSuccessorExtends(
   }
   if (!grandfatheredRewrite(pinned, bundled)) return false;
   if (!verifyIssuerHistoryDocument(bundled, trust).valid) return false;
-  if (current.head_hash === bundled.head_hash) return true;
+  if (current.head_hash === bundled.head_hash) return notBelowBundled(bundled, current);
   if (!laterThanBundled(bundled, current)) return false;
   return entryPrefixExtends(bundled, current);
+}
+
+/**
+ * The bundled entries under another label: version and seq must be at least
+ * the bundled values. A lower label would present the same chain as an
+ * older document.
+ */
+function notBelowBundled(bundled: IssuerHistoryDocument, current: IssuerHistoryDocument): boolean {
+  return Number(current?.version) >= Number(bundled?.version) && Number(current?.seq) >= Number(bundled?.seq);
 }
 
 /**
@@ -669,7 +678,7 @@ export function sealedSuccessorExtends(
  * two different histories under one version number.
  */
 export function laterThanBundled(bundled: IssuerHistoryDocument, current: IssuerHistoryDocument): boolean {
-  if (current?.head_hash === bundled?.head_hash) return true;
+  if (current?.head_hash === bundled?.head_hash) return notBelowBundled(bundled, current);
   return Number(current?.version) > Number(bundled?.version) && Number(current?.seq) > Number(bundled?.seq);
 }
 

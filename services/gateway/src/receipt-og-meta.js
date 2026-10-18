@@ -1,6 +1,7 @@
 /**
  * Per-receipt Open Graph title/description/image URLs (no receipt.js import — avoids cycles).
  */
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
 
 /** Known USDC contracts. Dollar labels are allowed only for the contract on that chain. */
 export const KNOWN_USDC_BY_CHAIN = {
@@ -150,7 +151,7 @@ const SIGNED_OG_KEYS = ['rail', 'ref', 'asset', 'gross_amount'];
 const RECEIPT_SLOT_TYPS = ['chit402-receipt+jwt', 'JWT'];
 
 function receiptSlotClaims(jws) {
-  if (typeof jws !== 'string') return null;
+  if (typeof jws !== 'string' || !isCanonicalCompactEs256(jws)) return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {

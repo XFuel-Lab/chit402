@@ -256,3 +256,14 @@ test('a history with the bundled v2 label and an extra entry is refused', () => 
   assert.equal(laterThanBundled(v2, v2), true);
   assert.equal(sealedSuccessorExtends(v1, successor(v2Bytes, key, 3, 3).doc), true);
 });
+
+test('the bundled entries under a lower label are refused', () => {
+  const v1 = JSON.parse(v1Bytes);
+  const v2 = JSON.parse(v2Bytes);
+  for (const [version, seq] of [[1, 2], [2, 1], [1, 1]]) {
+    const relabeled = { ...JSON.parse(v2Bytes), version, seq };
+    assert.equal(laterThanBundled(v2, relabeled), false, `${version}/${seq}`);
+    assert.equal(sealedSuccessorExtends(v1, relabeled), false, `${version}/${seq}`);
+  }
+  assert.equal(laterThanBundled(v2, { ...JSON.parse(v2Bytes), version: 3, seq: 3 }), true);
+});

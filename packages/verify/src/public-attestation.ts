@@ -15,7 +15,7 @@
 
 import { createPublicKey, verify, type KeyObject } from 'node:crypto';
 import { jcsCanonicalize } from './jcs.js';
-import { jwkThumbprint, isEs256PublicJwk, PUBLIC_RECEIPT_TYP, type Es256Jwk } from './jws.js';
+import { isCanonicalCompactEs256, jwkThumbprint, isEs256PublicJwk, PUBLIC_RECEIPT_TYP, type Es256Jwk } from './jws.js';
 import { epochHistoryKeyAllowed, type IssuerHistoryDocument } from './issuer-history.js';
 import { USDC_ADDRESSES } from './base-payer.js';
 
@@ -150,6 +150,7 @@ export function publicReceiptPayload(claims: PublicReceiptClaims): string {
  */
 export function parsePublicAttestation(jws: unknown): ParsedPublicAttestation {
   if (typeof jws !== 'string' || jws.length === 0 || jws.length > 8192) return fail('invalid_jws', 'not a jws string');
+  if (!isCanonicalCompactEs256(jws)) return fail('invalid_jws', 'not a canonical compact jws');
   const parts = jws.split('.');
   if (parts.length !== 3 || !parts.every((part) => B64URL.test(part))) return fail('invalid_jws', 'not three base64url parts');
   const [headerB64, payloadB64, signatureB64] = parts;

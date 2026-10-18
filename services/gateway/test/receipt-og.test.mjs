@@ -63,7 +63,7 @@ test('buildReceiptOgMeta: foreign ingest includes third-party in description', (
           task_id: 'xfuel-foreign-1',
           payment: { rail: 'usdc', gross_amount: '5000', ref: 'base:0xab', asset: 'USDC' },
         })).toString('base64url'),
-        'sig',
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       ].join('.'),
     },
   };

@@ -12,7 +12,7 @@
  * previous pin key (`purpose: citizen_issuer_key`), not an edited file.
  */
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
-import { isEs256PublicJwk, jwkThumbprint, readJwsHeader, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
+import { isCanonicalEs256Signature, isEs256PublicJwk, jwkThumbprint, readJwsHeader, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
 
 /** The pin check reads either a receipt JWS or a tree-head JWS. */
 const RECEIPT_OR_HEAD_TYP = [...ISSUER_JWS_TYP.receipt, ...ISSUER_JWS_TYP.treeHead] as const;
@@ -248,6 +248,7 @@ export function verifyRegistrationSignature(pin: IssuerKeyPin): { ok: boolean; c
     return { ok: true, code: null };
   }
   const kid = pin.jwk.kid || jwkThumbprint(pin.jwk);
+  if (!isCanonicalEs256Signature(pin.self_signature)) return { ok: false, code: ISSUER_SELF_SIG_INVALID };
   const message = registrationPreimage({ kid, createdAt: pin.created_at, jwk: pin.jwk });
   try {
     const valid = verify(
