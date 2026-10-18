@@ -87,7 +87,7 @@
     "@jest/globals": "^30.4.1",
     "@types/jest": "^30.0.0",
     "ethers": "^6.16.0",
-    "jest": "^30.4.2",
+    "jest": "^30.5.2",
     "ts-jest": "^29.4.12",
     "typescript": "^5.9.3"
   },
