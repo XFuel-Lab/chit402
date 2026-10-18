@@ -63,6 +63,14 @@ function signRaw(privateKey, message) {
   }).toString('base64url');
 }
 
+/** XOR one bit of decoded byte `index`. The bytes always change. */
+function flipSignatureByte(signature, index) {
+  const bytes = Buffer.from(signature, 'base64url');
+  assert.equal(bytes.length, 64, 'P-256 raw R||S');
+  bytes[index] ^= 0x01;
+  return bytes.toString('base64url');
+}
+
 function pinDoc(key, { createdAt = CREATED, selfSignature = undefined, control = null, chainId = ISSUER_PIN_CHAIN_ID } = {}) {
   const signature = selfSignature === undefined
     ? signRaw(key.privateKey, registrationPreimage({ kid: key.kid, createdAt, jwk: key.jwk }))
@@ -537,15 +545,26 @@ test('a self-signature for another key or a flipped byte fails', () => {
     required: true,
   }).code, ISSUER_SELF_SIG_INVALID);
 
-  const honest = JSON.parse(pinBytes(key));
-  honest.self_signature = `${honest.self_signature.slice(0, -2)}aa`;
-  const flipped = serializeIssuerPin(honest);
-  assert.equal(assessIssuerPin({
-    receipt: { issuer_signature: { kid: key.kid, issuer_jwk: key.jwk }, issuer_key_pin: { era: 1 } },
-    pinBytes: flipped,
-    ref: refFor(flipped),
-    required: true,
-  }).code, ISSUER_SELF_SIG_INVALID);
+  // Flip one bit in the decoded signature bytes: byte 5 is inside r, byte 37
+  // inside s. Editing base64url text is not enough: the last character of an
+  // 86-character P-256 signature carries 4 padding bits, so a text edit there
+  // can decode to the same bytes and still verify (about 1 run in 256).
+  for (const index of [5, 37]) {
+    const honest = JSON.parse(pinBytes(key));
+    const original = honest.self_signature;
+    honest.self_signature = flipSignatureByte(original, index);
+    assert.notDeepEqual(
+      Buffer.from(honest.self_signature, 'base64url'),
+      Buffer.from(original, 'base64url'),
+    );
+    const flipped = serializeIssuerPin(honest);
+    assert.equal(assessIssuerPin({
+      receipt: { issuer_signature: { kid: key.kid, issuer_jwk: key.jwk }, issuer_key_pin: { era: 1 } },
+      pinBytes: flipped,
+      ref: refFor(flipped),
+      required: true,
+    }).code, ISSUER_SELF_SIG_INVALID, `byte ${index}`);
+  }
 });
 
 test('a missing self-signature stays unchecked and a missing pin on a non-era receipt is legacy', () => {
