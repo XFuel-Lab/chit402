@@ -19,7 +19,11 @@ export function settlementProofEnabled(env = process.env) {
   return env?.[SETTLEMENT_PROOF_FLAG] === 'true';
 }
 
-/** Body asks for a settlement proof: proof_tier in any spelling we read, or Private + Attest. */
+/**
+ * Body asks for a settlement proof: proof_tier in any spelling we read, or Private + Attest.
+ * proof_tier 'inference' (and its tee / zk-* aliases) counts too: with no Tier-3
+ * mechanism the tier engine falls back to 'settlement', and it is a proof request.
+ */
 export function requestsSettlementProof(body) {
   if (!body || typeof body !== 'object') return false;
   const xf = body.xfuel && typeof body.xfuel === 'object' ? body.xfuel : {};
@@ -31,7 +35,11 @@ export function requestsSettlementProof(body) {
     body.proof_tier, body.proofTier, body.intent?.proofTier, body.intent?.proof_tier,
     xf.proof_tier, xf.proofTier,
   ];
-  return tiers.some((t) => t != null && normalizeRequestedTier(t)?.tier === 'settlement');
+  return tiers.some((t) => {
+    if (t == null) return false;
+    const tier = normalizeRequestedTier(t)?.tier;
+    return tier === 'settlement' || tier === 'inference';
+  });
 }
 
 export function settlementProofRefusalBody() {

@@ -638,7 +638,7 @@ function paymentBindingInScope(task) {
 
 /** Machine-readable proof scope flags (JSON). Prose lives on HTML only. Unsigned. */
 export function proofScopeOf(task, vi, outcome) {
-  const tier = vi?.tier || proofTierOf(task);
+  const tier = settlementTierGate(vi?.tier || proofTierOf(task), task);
   const hasProof = !!task.sp1Proof?.proof;
   const nullifier = task.sp1Proof?.nullifier || null;
   return {
@@ -933,10 +933,20 @@ function sealReceiptExplorer(receipt) {
  * reported separately via `binding.covers`.
  */
 export function proofTierOf(task) {
-  if (task.verifiedInference?.tier) return task.verifiedInference.tier;
+  if (task.verifiedInference?.tier) return settlementTierGate(task.verifiedInference.tier, task);
   if (task.verifiedInference?.mechanism) return 'inference';
   if (verifiedSettlementProof(task)) return 'settlement';
   return 'signed';
+}
+
+/**
+ * 'settlement' is reported only for a verified settlement proof. Whatever picked
+ * it (the tier engine's value floor, its Tier-3 fallback, a stored tier), without
+ * `verifiedSettlementProof` the tier degrades to 'signed'. Other tiers pass through.
+ */
+export function settlementTierGate(tier, task) {
+  if (tier === 'settlement' && !verifiedSettlementProof(task)) return 'signed';
+  return tier;
 }
 
 /**
@@ -951,11 +961,14 @@ export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
   if (!viPolicy || !viPolicy.enabled) return null;
 
   const sel = selectTier(task, viPolicy);
+  // The engine may pick 'settlement' from the value floor or as the Tier-3
+  // fallback without any proof. Only a verified settlement proof keeps it.
+  const unproven = sel.tier === 'settlement' && !verifiedSettlementProof(task);
   const block = {
-    tier: sel.tier,
+    tier: unproven ? 'signed' : sel.tier,
     mechanism: sel.mechanism,
-    reason: sel.reason,
-    degraded: sel.degraded,
+    reason: unproven ? 'settlement proof not verified — signed' : sel.reason,
+    degraded: unproven ? true : sel.degraded,
     attestation: null,
     spot_check: null,
   };
