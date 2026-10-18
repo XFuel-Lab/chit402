@@ -9,6 +9,7 @@
  * payload_version and no v: the version is the tag line.
  */
 import crypto from 'node:crypto';
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
 
 export const PUBLIC_RECEIPT_TAG = 'chit402.public_receipt.v1';
 export const PUBLIC_RECEIPT_PREFIX = `${PUBLIC_RECEIPT_TAG}\n`;
@@ -179,6 +180,7 @@ export function publicPayloadUtf8(claims) {
 
 /** ES256 check of a public attestation against a public JWK (self-verify). */
 export function verifyPublicAttestationJws(jws, publicJwk) {
+  if (!isCanonicalCompactEs256(jws)) return false;
   try {
     const [h, p, s] = String(jws).split('.');
     const header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8'));

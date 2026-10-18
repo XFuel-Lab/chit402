@@ -26,6 +26,7 @@
  * short settled amount is payment_unbound and is not signed.
  */
 
+import { VERIFIER_MIN_HTML_HINT } from './verifier-min.js';
 import crypto from 'crypto';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { isJsonInteger } from './receipt-version-allowlist.js';
@@ -558,7 +559,7 @@ export function renderV11ReceiptHtml(receipt) {
     + `<h1>Chit402 receipt</h1>`
     + `<p>Receipt ${id}</p>`
     + `<p>Issued ${when}</p>`
-    + `<p>Receipts issued after 2026-10-08 require @xfuel/verify &gt;= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.</p>`
+    + `<p>${VERIFIER_MIN_HTML_HINT}</p>`
     + (verify ? `<p><a href="${verify}">Verify</a></p>` : '')
     + `</body></html>`;
 }

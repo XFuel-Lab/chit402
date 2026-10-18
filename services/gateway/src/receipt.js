@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
 import { verifyMessage, getAddress, keccak256, toUtf8Bytes } from 'ethers';
 import { decodeBase58, encodeBase58, isSolanaSignature } from './payment-ref.js';
 import { computePaymentCommitment, computeInferenceBinding } from './payment-binding.js';
@@ -244,6 +245,7 @@ export function resolvePinnedIssuerJwk(receipt) {
 export function decodeReceiptClaims(receipt) {
   const jws = receipt?.issuer_signature?.jws;
   if (!jws || typeof jws !== 'string') return null;
+  if (!isCanonicalCompactEs256(jws)) return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   // Receipt slot only: another issuer document's JWS is not receipt claims.
@@ -345,6 +347,7 @@ const PRODUCTION_ISSUER_PUBLIC_JWK = Object.freeze({
 /** alg/kid come from the JWS protected header; the key comes from the pin, never the holder copy. */
 function signedIssuerSignature(jws, claims) {
   let header = {};
+  if (!isCanonicalCompactEs256(jws)) jws = '';
   try {
     header = JSON.parse(Buffer.from(String(jws).split('.')[0], 'base64url').toString('utf8')) || {};
   } catch {
@@ -391,7 +394,7 @@ export const RECEIPT_SLOT_TYPS = Object.freeze(['chit402-receipt+jwt', 'JWT']);
  * issuer and are refused, as in the library.
  */
 export function receiptSlotRefusal(jws) {
-  if (typeof jws !== 'string' || jws.split('.').length !== 3) return 'malformed_jws';
+  if (!isCanonicalCompactEs256(jws)) return 'malformed_jws';
   let header;
   try {
     header = JSON.parse(Buffer.from(jws.split('.')[0], 'base64url').toString('utf8'));
@@ -405,6 +408,7 @@ export function receiptSlotRefusal(jws) {
 }
 
 function rawJwsClaims(jws) {
+  if (!isCanonicalCompactEs256(jws)) return null;
   try {
     return JSON.parse(Buffer.from(String(jws).split('.')[1], 'base64url').toString('utf8'));
   } catch {

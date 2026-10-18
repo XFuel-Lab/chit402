@@ -416,10 +416,16 @@ still verify against a JWKS entry matched by `kid`.
      kid or a kid in the verified issuer history, or
    - library or manual path only: the entry of a JWKS you trust whose `kid`
      equals the JWS header `kid`. The CLI does not fetch a JWKS.
-4. ES256-verify the compact JWS (signing input is `header.payload`, raw R||S).
-5. Read amount, payer, payee, asset, and tx from the verified claims. If the
+4. Check the compact JWS is canonical: three segments, each only the base64url
+   alphabet (`A–Z a–z 0–9 - _`) with no padding, each decoding and re-encoding
+   to exactly the same text, and a signature that decodes to exactly 64 bytes.
+   Anything else is `malformed_jws`. Compact JWS longer than 65536 characters
+   is refused the same way. The same rule covers public attestations, the
+   legacy detached signature and the pin self-signature.
+5. ES256-verify the compact JWS (signing input is `header.payload`, raw R||S).
+6. Read amount, payer, payee, asset, and tx from the verified claims. If the
    unsigned outer `payment` / `caller_binding` disagree, the receipt fails.
-6. Optional Base check: the tx's USDC `Transfer` must be from
+7. Optional Base check: the tx's USDC `Transfer` must be from
    `caller_binding.payer_wallet`, to `payment.payee`, of token `payment.asset`
    (Base USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`), for at least
    `payment.gross_amount`.
@@ -548,7 +554,9 @@ Agent verify steps:
 
    **Solana** (`solana:<sig>`): fetch the settled tx via Solana RPC
    (`getTransaction`, jsonParsed). The tx must not have failed. Then:
-   - Payer: an SPL token instruction moves at least `payment.gross_amount` of
+   - Scope: top-level classic Token-program instructions only (no Token-2022
+     or CPI). Inner (CPI) instructions are not read.
+   - Payer: one of those instructions moves at least `payment.gross_amount` of
      USDC (`EPjFWdd5…` mint, 6 dp) with `caller_binding.payer_wallet` as the
      authority. On `transferChecked` the instruction's mint must be USDC. On a
      legacy `transfer`, which names no mint, the source and destination token
@@ -690,6 +698,6 @@ Solana SessionAct in v1).
 
 The public v10 response has no `preimages` block, and `GET /receipt/:id/preimage/:field` is not served for receipts. `GET /receipt/:id/preimage` returns the unsigned shell, not the signed payload; `payload_hash` is over the owner-held bytes. The recompute rules are in receipt-preimage.md; the bytes come from the owner copy. A refusal serves its stored canonical object at `GET /refusal/:id/preimage`. `output.hash` stays a private commitment. HMAC stays a keyed tag.
 
-`GET /.well-known/issuer-history.json` is the signed key history. `chit402-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. The check is always on. `--issuer-history <file>` supplies the history; that file must verify under a trusted key and extend the bundled snapshot, or the result fails (a file that does not verify is refused, not replaced by the bundled copy). With no file, the CLI tries the live document on `api.chit402.com`; if it does not verify or does not extend the bundled snapshot, the bundled snapshot is used. A payload v10 receipt pins the history document; a pin that matches neither the history in use nor a sealed earlier snapshot it continues fails as `issuer_history_pin_mismatch`.
+`GET /.well-known/issuer-history.json` is the signed key history. `chit402-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. The check is always on. `--issuer-history <file>` supplies the history; that file must verify under a trusted key and extend the bundled snapshot, or the result fails. A history other than the bundled snapshot must carry a strictly higher `version` and `seq` than the bundled copy; a document with the bundled entries under another label must carry at least the bundled `version` and `seq` (a file that does not verify is refused, not replaced by the bundled copy). With no file, the CLI tries the live document on `api.chit402.com`; if it does not verify, does not extend the bundled snapshot, or fails the version rule, the bundled snapshot is used. A payload v10 receipt pins the history document; a pin that matches neither the history in use nor a sealed earlier snapshot it continues fails as `issuer_history_pin_mismatch`.
 
 See [receipt-preimage.md](./product/receipt-preimage.md) and [issuer-key-history.md](./product/issuer-key-history.md).

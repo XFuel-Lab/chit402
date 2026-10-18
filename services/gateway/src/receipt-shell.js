@@ -3,6 +3,7 @@
  * This module does not import the receipt issuer signer.
  */
 import crypto from 'node:crypto';
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
 import { explorerUrlForRef } from './receipt.js';
 import {
   displayTaskIdForShare,
@@ -41,6 +42,8 @@ const FOREIGN_PAYOUT_SCHEMA = 'chit402.foreign_payout.v1';
  */
 export function decodeJwsPayload(jws) {
   if (!jws || typeof jws !== 'string') return null;
+  // A JWS the verifier would refuse as malformed_jws shows no claims.
+  if (!isCanonicalCompactEs256(jws)) return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {

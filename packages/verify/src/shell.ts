@@ -8,6 +8,7 @@
  * is not a trust root.
  */
 import crypto from 'node:crypto';
+import { isCanonicalCompactEs256 } from './jws.js';
 
 export const SHELL_SCHEMA = 'chit402.receipt_shell.v1';
 export const INCLUDED_SHELL_LINE = 'INCLUDED_SHELL: signature requires owner view';
@@ -35,7 +36,7 @@ function canonicalize(value: unknown): unknown {
 }
 
 export function decodeJwsPayload(jws: unknown): Record<string, unknown> | null {
-  if (typeof jws !== 'string') return null;
+  if (typeof jws !== 'string' || !isCanonicalCompactEs256(jws)) return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {

@@ -96,12 +96,25 @@ test('P-GW builders emit allowlisted versions and junk is not treated as 11', as
   assert.equal(isV11Document({ issuer_signature: { jws: fakeJws({ payload_version: 11 }) } }), true);
   assert.equal(Boolean(isV11Document({ v: 12 })), false);
 
+  // The live minimum stays 0.3.5 until chit402-verify 0.4.9 is published.
   assert.equal(VERIFIER_MIN, '0.3.5');
   const advisory = receiptPolicyAdvisory();
   assert.equal(advisory.unsigned, true);
-  assert.equal(advisory.verifier_min, '0.3.5');
+  assert.equal(advisory.verifier_min, VERIFIER_MIN);
+  assert.ok(advisory.note.includes(`>= ${VERIFIER_MIN}.`));
   const body = { ok: true };
   const wrapped = withVerifierAdvisory(body);
-  assert.equal(wrapped.verifier_min, '0.3.5');
+  assert.equal(wrapped.verifier_min, VERIFIER_MIN);
   assert.equal(body.verifier_min, undefined);
+});
+
+test('the HTML hint and the note are built from VERIFIER_MIN', async () => {
+  const { VERIFIER_MIN_NOTE, VERIFIER_MIN_HTML_HINT } = await import('../src/verifier-min.js');
+  assert.equal(VERIFIER_MIN_NOTE, `Receipts issued after 2026-10-08 require @xfuel/verify >= ${VERIFIER_MIN}. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned and is not checked.`);
+  assert.equal(VERIFIER_MIN_HTML_HINT, `Receipts issued after 2026-10-08 require @xfuel/verify &gt;= ${VERIFIER_MIN}. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.`);
+  const { readFileSync } = await import('node:fs');
+  for (const file of ['../src/refusal-receipt.js', '../src/v11-seal.js', '../src/verifier-min.js']) {
+    const src = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.equal(/@xfuel\/verify (?:>=|&gt;=) \d/.test(src), false, `${file} hardcodes a version`);
+  }
 });
