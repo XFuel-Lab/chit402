@@ -33,7 +33,7 @@ const cliPath = fileURLToPath(new URL('../../../packages/verify/dist/cli.js', im
 const SPECIMEN = 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
 const FOREIGN = [
   'xfuel-other-payer-0001',
-  'xfuel-546baa6c',
+  'xfuel-other-payer-0002',
   'xfuel-other-payer-0003',
   'xfuel-other-payer-0005',
   'xfuel-other-payer-0006',

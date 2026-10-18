@@ -1,11 +1,14 @@
 /**
- * Exhaustive outer-field tamper: for real public receipts, change every outer
+ * Exhaustive outer-field tamper: for public receipts, change every outer
  * leaf one at a time and all at once (strings, numbers, nulls, flipped
  * booleans) and inject absent keys. Injected key names are harvested, not
  * hand-listed: every key in every verifier fixture and its decoded issuer
  * claims, and every property name the gateway renderers read. No rendered output may change:
  * holder/foreign page, share meta, og card, shell JSON and HTML, auditor export
  * and its HTML. Only the issuer JWS is trusted.
+ *
+ * The payload v10 owner-view receipt is synthetic, signed by a test key that
+ * synthetic-issuer-key-env.mjs makes the gateway's active issuer key.
  *
  * Proof and anchor inputs (the served inclusion proof, its tree head, the
  * row hash and carry-forward) are checked by the page. A change to one of
@@ -19,6 +22,7 @@
  * with crit/b64 in the receipt slot makes the outcome invalid with null
  * totals; the wrong JWS in the tree-head slot makes the head failed.
  */
+import './synthetic-issuer-key-env.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
@@ -38,7 +42,7 @@ const RECEIPTS = {
   'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96': 'public/chit-1ebc5616.json',
   'xfuel-5d775d12-f43a-460f-8b4a-9299b4eedf20': 'chit-5d775d12.v7.json',
   'xfuel-c5a3860d-df26-490d-ab92-8f3069dac8c8': 'slot-typing/v5-xfuel-c5a3860d.json',
-  'xfuel-546baa6c-0959-4c3c-9732-4b72bdad144b': 'slot-typing/v10-xfuel-546baa6c.json',
+  'xfuel-5e7a1c00-0000-4000-8000-00000000f10a': 'slot-typing/v10-synthetic.json',
   'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af': 'public/chit-39af100b.json',
 };
 
