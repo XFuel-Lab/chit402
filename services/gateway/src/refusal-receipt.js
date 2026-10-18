@@ -538,7 +538,7 @@ export function renderRefusalHtml(doc) {
   <h2>What this does not prove</h2>
   <ul>${limits}</ul>
   <p class="muted">Verify the ES256 JWS against <a href="/.well-known/jwks.json">/.well-known/jwks.json</a>. <code>xfuel-verify</code> accepts this schema. payload_version must be the JSON integer 1, 2, or 3.</p>
-  <p class="muted">Use @xfuel/verify 0.4.8 or later. Older versions may print VERIFIED for documents they should refuse. This hint is unsigned.</p>
+  <p class="muted">Receipts issued after 2026-10-08 require @xfuel/verify &gt;= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned.</p>
 </body>
 </html>`;
 }

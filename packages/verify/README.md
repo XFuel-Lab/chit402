@@ -211,7 +211,7 @@ The signed JWS payload is the version. It is an exact JSON number. Strings, bool
 
 An outer `v` or `issuer_signature.payload_version` that differs in value or type is `version_mismatch`. A `v` or `payload_version` in the JWS protected header is ignored.
 
-Receipts issued after 2026-10-08 require `@xfuel/verify` >= 0.3.5. Older versions may print VERIFIED for formats they do not understand. `--help` and `--version` print this list.
+Use `@xfuel/verify` 0.4.9 or later. Older versions may print VERIFIED for formats or documents they should refuse. `--help` and `--version` print this list.
 
 ## API Reference
 

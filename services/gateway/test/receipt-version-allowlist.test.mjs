@@ -96,12 +96,12 @@ test('P-GW builders emit allowlisted versions and junk is not treated as 11', as
   assert.equal(isV11Document({ issuer_signature: { jws: fakeJws({ payload_version: 11 }) } }), true);
   assert.equal(Boolean(isV11Document({ v: 12 })), false);
 
-  assert.equal(VERIFIER_MIN, '0.4.8');
+  assert.equal(VERIFIER_MIN, '0.3.5');
   const advisory = receiptPolicyAdvisory();
   assert.equal(advisory.unsigned, true);
-  assert.equal(advisory.verifier_min, '0.4.8');
+  assert.equal(advisory.verifier_min, '0.3.5');
   const body = { ok: true };
   const wrapped = withVerifierAdvisory(body);
-  assert.equal(wrapped.verifier_min, '0.4.8');
+  assert.equal(wrapped.verifier_min, '0.3.5');
   assert.equal(body.verifier_min, undefined);
 });

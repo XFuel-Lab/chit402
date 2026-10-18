@@ -242,7 +242,7 @@ function assertPaths(receipt, reason, { history = false, ownerJws = true } = {})
 test('supported versions are exported and printed', () => {
   assert.deepEqual(SUPPORTED_RECEIPT_VERSIONS.v, [11]);
   assert.deepEqual([...SUPPORTED_RECEIPT_VERSIONS.payload_version].slice(0, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  assert.equal(VERIFIER_MIN, '0.3.5');
+  assert.equal(VERIFIER_MIN, '0.4.9');
   const help = runCli(['--help'], 8000);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /payload_version: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/);
@@ -252,7 +252,7 @@ test('supported versions are exported and printed', () => {
   assert.match(version.stdout, /chit402-verify 0\.4\.9/);
   assert.match(version.stdout, /v: 11/);
   assert.match(version.stdout, /unsupported_version, exit 2/);
-  assert.match(version.stdout, /require chit402-verify >= 0\.3\.5/);
+  assert.match(version.stdout, /Use chit402-verify 0\.4\.9 or later/);
   assert.doesNotMatch(version.stdout, /@xfuel\/verify/);
   assert.doesNotMatch(version.stdout, /unsupported_version, exit 1/);
 });

@@ -403,12 +403,14 @@ the HMAC array from section 3.
 `issuer_jwk` is a convenience copy of the public key. It is **not** a trust
 root. A signature is valid only when the verifying key is trusted:
 
-1. It is the JWKS entry with the same `kid` (a JWKS file you supply, or a JWKS
-   fetched from the issuer `jwks_uri` on an allowlisted host such as
-   `api.chit402.com`), or
-2. Its RFC 7638 thumbprint equals a pinned trusted kid. The default offline pin
-   is the current production kid
-   `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` (overridable).
+1. Its RFC 7638 thumbprint equals a pinned trusted kid. The default pin is the
+   current production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`, or
+2. That kid is in a verified issuer-history snapshot.
+
+The `chit402-verify` CLI uses only these two rules. It does not download a JWKS,
+does not match `issuer_signature.kid` against `jwks.keys[].kid`, and has no
+`--jwks-file` flag. A library caller may also pass a JWKS (`jwks` option);
+then the entry with the same `kid` is trusted.
 
 Otherwise the verifier reports `key untrusted`, even if the bytes verify under
 the embedded key. Re-signing a receipt with an arbitrary P-256 key and embedding
@@ -424,9 +426,10 @@ still verify against a JWKS entry matched by `kid`.
    signature (see section 1).
 2. Read `issuer_signature.jws`.
 3. Choose a trusted key:
-   - JWKS file or `GET https://api.chit402.com/.well-known/jwks.json`, entry whose
-     `kid` equals the JWS header `kid`, or
-   - embedded `issuer_jwk` only when `thumbprint(jwk)` equals a pinned trusted kid.
+   - embedded `issuer_jwk` only when `thumbprint(jwk)` equals a pinned trusted
+     kid or a kid in the verified issuer history, or
+   - library or manual path only: the entry of a JWKS you trust whose `kid`
+     equals the JWS header `kid`. The CLI does not fetch a JWKS.
 4. ES256-verify the compact JWS (signing input is `header.payload`, raw R||S).
 5. Read amount, payer, payee, asset, and tx from the verified claims. If the
    unsigned outer `payment` / `caller_binding` disagree, the receipt fails.
@@ -557,12 +560,22 @@ Agent verify steps:
    amount must be ≥ `payment.gross_amount` (atomic, 6 dp). EIP-3009
    `transferWithAuthorization` records the authorizing wallet as `from`.
 
-   **Solana** (`solana:<sig>`): fetch the settled tx via Solana RPC (or
-   Solscan). Confirm a USDC SPL transfer (`EPjFWdd5…` mint, 6 dp) of
-   `payment.gross_amount` where `caller_binding.payer_wallet` is the
-   `authority` on `transferChecked` (x402 exact-svm). The payer may also
-   co-sign the versioned tx; balance deltas on their USDC ATA are accepted
-   as a fallback. Set `SOLANA_RPC_URL` to override the default public RPC
+   **Solana** (`solana:<sig>`): fetch the settled tx via Solana RPC
+   (`getTransaction`, jsonParsed). The tx must not have failed. Then:
+   - Payer: an SPL token instruction moves at least `payment.gross_amount` of
+     USDC (`EPjFWdd5…` mint, 6 dp) with `caller_binding.payer_wallet` as the
+     authority. On `transferChecked` the instruction's mint must be USDC. On a
+     legacy `transfer`, which names no mint, the source and destination token
+     accounts must both show the USDC mint in the tx token balances; an
+     unreadable mint does not count. For an SPL multisig the parsed
+     `multisigAuthority` is the authority; a member signer does not count.
+   - Fallback (x402 exact-svm): if no such instruction exists, the payer must
+     be a signer of the tx and the USDC token accounts it owns must fall by at
+     least `payment.gross_amount` (pre/post token balances).
+   - Payee: USDC token accounts owned by the signed payee must rise by at least
+     `payment.gross_amount`. A payee without a signed wallet is not checked
+     (`no_payee`), never a pass.
+   Set `SOLANA_RPC_URL` to override the default public RPC
    (`https://api.mainnet-beta.solana.com`).
 3. If `session` is present: `iat` must fall in `valid_after`..`session_expiry`.
    No new payer signature is required.
@@ -691,6 +704,6 @@ Solana SessionAct in v1).
 
 The public v10 response has no `preimages` block, and `GET /receipt/:id/preimage/:field` is not served for receipts. `GET /receipt/:id/preimage` returns the unsigned shell, not the signed payload; `payload_hash` is over the owner-held bytes. The recompute rules are in receipt-preimage.md; the bytes come from the owner copy. A refusal serves its stored canonical object at `GET /refusal/:id/preimage`. `output.hash` stays a private commitment. HMAC stays a keyed tag.
 
-`GET /.well-known/issuer-history.json` is the signed key history. `chit402-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. The check is always on. If no live history verifies, the bundled snapshot is used.
+`GET /.well-known/issuer-history.json` is the signed key history. `chit402-verify` checks that `iat` falls inside that kid's window and that the kid was not revoked before issuance. The check is always on. `--issuer-history <file>` supplies the history; that file must verify under a trusted key and extend the bundled snapshot, or the result fails (a file that does not verify is refused, not replaced by the bundled copy). With no file, the CLI tries the live document on `api.chit402.com`; if it does not verify or does not extend the bundled snapshot, the bundled snapshot is used. A payload v10 receipt pins the history document; a pin that matches neither the history in use nor a sealed earlier snapshot it continues fails as `issuer_history_pin_mismatch`.
 
 See [receipt-preimage.md](./product/receipt-preimage.md) and [issuer-key-history.md](./product/issuer-key-history.md).
