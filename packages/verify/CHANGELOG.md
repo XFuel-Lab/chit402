@@ -12,10 +12,12 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 - **Anchor `proves` names only the chains that passed.** A Base-only head no longer lists the Solana memo statement, a Solana-only head no longer lists the Base statement, and a head with both sides pending lists neither. `ANCHOR_PROVES` is still exported as the full two-chain list; `anchorProves({ solana, base })` builds the per-result list.
 - **Legacy SPL `transfer` checks the mint.** The instruction names no mint, so the source and destination token accounts must both show the expected mint in the transaction's token balances. An account whose mint cannot be read does not count.
+- **Receipts pinned to an earlier sealed issuer-history snapshot check against the current history.** Payload v10 receipts pin the whole history document hash. A receipt pinned to the sealed v1 snapshot was reported `issuer_history_pin_mismatch` once the published history moved to v2. The v1 snapshot now ships in the package (`issuer-history.v1.snapshot.json`). A pin to it is accepted only when the shipped bytes match the pin exactly (hash, version and seq), the snapshot verifies under the issuer key, and the supplied current history is a later sealed version (higher version and seq) that verifies and extends it. An edited copy of the pinned version is still a mismatch. The key window is checked against both. Any other pin still fails. A history file older than the bundled snapshot is still refused.
 
 ### Tests
 - Anchor proves text for Base-only, Solana-only, both-pending and missing-Base heads. Legacy transfers with a foreign source mint, a foreign destination mint, no readable mint, and a fake-mint transfer beside an unrelated USDC credit.
 - payTo/payer binding, the untyped and x402 typs in the receipt slot, reason pass-through, and the public attestation header allowlist. Issued receipts keep their verdicts. Not published. No deploy.
+- Sealed-snapshot pins: a v1 pin checks against v2; a changed hash, version or seq, a current body that does not verify, an early issue time, and a history or receipt under another key do not.
 
 ## 0.4.8 — Issuer JWS slot typing
 
