@@ -64,13 +64,38 @@ export const ANCHOR_RPC_TIMEOUT_MS = 8_000;
  */
 export const SOLANA_ANCHOR_RPC_TIMEOUT_MS = 30_000;
 
+const ANCHOR_PROVES_LEAF = 'This receipt leaf is inside the tree of the stated size, under the stated root.';
+const ANCHOR_PROVES_HEAD = 'The tree head carries a valid ES256 issuer signature. The kid is trusted by the production pin, issuer history, or JWKS, and the signed root, size, epoch, and anchors match the head.';
+const ANCHOR_PROVES_SOLANA = 'The Solana transaction memo contains that root, its fee payer is the signed fee payer, the transaction is finalized, and the RPC genesis hash is the cluster named on the head.';
+const ANCHOR_PROVES_BASE = `The Base transaction receipt succeeded, its block is at least ${BASE_ANCHOR_MIN_CONFIRMATIONS} blocks below the tip, its calldata is that same root, on chain id 8453, and its sender is the signed anchor wallet.`;
+const ANCHOR_PROVES_WALLETS = 'Those wallets are on the issuer anchor-wallet list: the package pin, or a signed well-known or issuer-history list.';
+
+/**
+ * Every statement a fully anchored (Solana and Base) head can support.
+ * A result's `proves` uses {@link anchorProves}, which names only the chains
+ * that were checked and passed.
+ */
 export const ANCHOR_PROVES = [
-  'This receipt leaf is inside the tree of the stated size, under the stated root.',
-  'The tree head carries a valid ES256 issuer signature. The kid is trusted by the production pin, issuer history, or JWKS, and the signed root, size, epoch, and anchors match the head.',
-  'The Solana transaction memo contains that root, its fee payer is the signed fee payer, the transaction is finalized, and the RPC genesis hash is the cluster named on the head.',
-  `The Base transaction receipt succeeded, its block is at least ${BASE_ANCHOR_MIN_CONFIRMATIONS} blocks below the tip, its calldata is that same root, on chain id 8453, and its sender is the signed anchor wallet.`,
-  'Those wallets are on the issuer anchor-wallet list: the package pin, or a signed well-known or issuer-history list.',
+  ANCHOR_PROVES_LEAF,
+  ANCHOR_PROVES_HEAD,
+  ANCHOR_PROVES_SOLANA,
+  ANCHOR_PROVES_BASE,
+  ANCHOR_PROVES_WALLETS,
 ];
+
+/**
+ * `proves` for a verified or partial anchor result. A chain line appears only
+ * when that chain was checked and its transaction passed, so a Base-only head
+ * never claims a Solana memo, and the reverse. With no chain verified, only
+ * the leaf and head statements remain.
+ */
+export function anchorProves(chains: { solana: boolean; base: boolean }): string[] {
+  const out = [ANCHOR_PROVES_LEAF, ANCHOR_PROVES_HEAD];
+  if (chains.solana) out.push(ANCHOR_PROVES_SOLANA);
+  if (chains.base) out.push(ANCHOR_PROVES_BASE);
+  if (chains.solana || chains.base) out.push(ANCHOR_PROVES_WALLETS);
+  return out;
+}
 
 export const ANCHOR_DOES_NOT_PROVE = [
   'It does not prove the payment, the payer, the payee, or the model output.',
@@ -1338,7 +1363,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     proves: overall === 'pending'
       ? ['This leaf is past the anchored tree size. It waits for the next anchor.']
       : overall === 'verified' || overall === 'partial'
-        ? ANCHOR_PROVES
+        ? anchorProves({
+          solana: solana.checked && solana.valid,
+          base: base.checked && base.valid,
+        })
         : [],
     does_not_prove: doesNotProve,
     errors,

@@ -469,3 +469,75 @@ test('an inclusion endpoint 404 body is not_in_tree', async () => {
   assert.equal(result.errors.includes('bad_root'), false);
   assert.deepEqual(fetched.calls, []);
 });
+
+const SOLANA_LINE = /Solana/;
+const BASE_LINE = /Base transaction/;
+
+test('a Base-only head proves the Base anchor and never mentions Solana', async () => {
+  const fx = fixture();
+  fx.head.anchors.solana = { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: fx.memo, fee_payer: null };
+  fx.head = sealHead(fx.head, fx.key);
+  const fetched = fetchers(fx);
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: fx.trustedKids,
+    ...fetched,
+  });
+  assert.ok(['verified', 'partial'].includes(result.overall), result.errors.join(','));
+  assert.equal(result.base.valid, true);
+  assert.ok(result.proves.some((line) => BASE_LINE.test(line)));
+  assert.equal(result.proves.some((line) => SOLANA_LINE.test(line)), false);
+  assert.notDeepEqual(result.proves, ANCHOR_PROVES);
+});
+
+test('a Solana-only head proves the Solana anchor and never mentions Base', async () => {
+  const fx = fixture();
+  fx.head.anchors.base = { status: 'pending', tx: null, calldata: `0x${fx.root}`, chain_id: 8453, from: null };
+  fx.head = sealHead(fx.head, fx.key);
+  const fetched = fetchers(fx);
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: fx.trustedKids,
+    ...fetched,
+  });
+  assert.ok(['verified', 'partial'].includes(result.overall), result.errors.join(','));
+  assert.equal(result.solana.valid, true);
+  assert.ok(result.proves.some((line) => SOLANA_LINE.test(line)));
+  assert.equal(result.proves.some((line) => BASE_LINE.test(line)), false);
+});
+
+test('with both anchors pending, proves names no chain', async () => {
+  const fx = fixture();
+  fx.head.anchors.solana = { status: 'pending', signature: null, slot: null, cluster: 'devnet', memo: fx.memo, fee_payer: null };
+  fx.head.anchors.base = { status: 'pending', tx: null, calldata: `0x${fx.root}`, chain_id: 8453, from: null };
+  fx.head = sealHead(fx.head, fx.key);
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: fx.trustedKids,
+    ...fetchers(fx),
+  });
+  assert.equal(result.overall, 'partial');
+  assert.equal(result.proves.some((line) => SOLANA_LINE.test(line) || BASE_LINE.test(line)), false);
+  assert.equal(result.proves.some((line) => /anchor-wallet list/.test(line)), false);
+});
+
+test('a missing Base transaction never puts Base in proves', async () => {
+  const fx = fixture();
+  const fetched = fetchers(fx, { baseTx: null });
+  const result = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: fx.trustedKids,
+    ...fetched,
+  });
+  assert.notEqual(result.overall, 'verified');
+  if (result.overall !== 'partial') assert.deepEqual(result.proves, []);
+  assert.equal(result.proves.some((line) => BASE_LINE.test(line)), false);
+});

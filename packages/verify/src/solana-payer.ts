@@ -102,6 +102,22 @@ function isSigner(key: { pubkey: string; signer?: boolean } | string): boolean {
 }
 
 /**
+ * Mint of the token account `address`, from the transaction's pre or post
+ * token balances. Null when the account is not listed or the rows disagree.
+ */
+function tokenAccountMint(tx: SolanaRpcGetTransactionResult, address: string): string | null {
+  if (!address) return null;
+  const keys = tx.transaction?.message?.accountKeys || [];
+  const index = keys.findIndex((k) => accountPubkey(k) === address);
+  if (index < 0) return null;
+  const rows = [...(tx.meta?.preTokenBalances || []), ...(tx.meta?.postTokenBalances || [])]
+    .filter((row) => row.accountIndex === index);
+  if (rows.length === 0) return null;
+  const mints = new Set(rows.map((row) => row.mint));
+  return mints.size === 1 ? rows[0].mint : null;
+}
+
+/**
  * Parse USDC transfer instructions from a jsonParsed getTransaction result.
  */
 export function extractUsdcTransfersFromTx(
@@ -134,11 +150,19 @@ export function extractUsdcTransfersFromTx(
     }
 
     if (type === 'transfer') {
-      // Legacy transfer ix — confirm mint via token balance owner match when possible.
-      const authority = String(info.authority || info.source || '');
+      // Legacy transfer ix names no mint. Take it from the token balances of
+      // the source and destination accounts; both must be the expected mint.
+      // An account whose mint cannot be read does not count as a match.
+      const source = String(info.source || '');
+      const destination = String(info.destination || '');
+      const sourceMint = tokenAccountMint(tx, source);
+      if (sourceMint !== mint) continue;
+      const destinationMint = tokenAccountMint(tx, destination);
+      if (destinationMint !== mint) continue;
+      const authority = String(info.authority || info.multisigAuthority || '');
       const raw = (info.tokenAmount as { amount?: string } | undefined)?.amount ?? info.amount;
       if (!authority || raw == null) continue;
-      transfers.push({ authority, amount: BigInt(String(raw)), mint });
+      transfers.push({ authority, amount: BigInt(String(raw)), mint: sourceMint });
     }
   }
 

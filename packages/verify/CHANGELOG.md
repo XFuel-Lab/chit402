@@ -10,7 +10,11 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 - **Receipt slot drops the untyped form.** It accepts `chit402-receipt+jwt` and the earlier `JWT` typ. No issued receipt lacks a typ. The x402 offer and receipt extensions now carry their own typs (`chit402-x402-offer+jwt`, `chit402-x402-receipt+jwt`), listed in `ISSUER_JWS_TYP`.
 - **Reasons pass through.** A refused header (for example `unsupported_header`) is reported as such instead of `signature_invalid`.
 
+- **Anchor `proves` names only the chains that passed.** A Base-only head no longer lists the Solana memo statement, a Solana-only head no longer lists the Base statement, and a head with both sides pending lists neither. `ANCHOR_PROVES` is still exported as the full two-chain list; `anchorProves({ solana, base })` builds the per-result list.
+- **Legacy SPL `transfer` checks the mint.** The instruction names no mint, so the source and destination token accounts must both show the expected mint in the transaction's token balances. An account whose mint cannot be read does not count.
+
 ### Tests
+- Anchor proves text for Base-only, Solana-only, both-pending and missing-Base heads. Legacy transfers with a foreign source mint, a foreign destination mint, no readable mint, and a fake-mint transfer beside an unrelated USDC credit.
 - payTo/payer binding, the untyped and x402 typs in the receipt slot, reason pass-through, and the public attestation header allowlist. Issued receipts keep their verdicts. Not published. No deploy.
 
 ## 0.4.8 — Issuer JWS slot typing
