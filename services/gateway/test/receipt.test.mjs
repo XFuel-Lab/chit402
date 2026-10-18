@@ -1216,7 +1216,7 @@ test('renderReceiptHtml: foreign-ingest Nano receipt renders without a proof obj
           payer: sender,
           payment: { rail: 'nano', ref: `nano:${hash}`, asset: 'XNO', gross_amount: '1000000000000000000000000000000', payee: recipient },
         })).toString('base64url'),
-        'sig',
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       ].join('.'),
     },
   });
@@ -1274,7 +1274,7 @@ test('renderReceiptHtml: foreign-ingest USDC receipt renders without a proof obj
           // Signed stamp: the fee row renders from this copy only.
           stamp: { fee_usd: '0.002', fee_units: '2000', waived: false, currency: 'USDC' },
         })).toString('base64url'),
-        'sig',
+        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
       ].join('.'),
     },
   });
