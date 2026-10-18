@@ -14,6 +14,8 @@ const { jcsCanonicalize } = await import('../dist/jcs.js');
 const {
   checkReceiptIssuerHistory,
   sealedSnapshotForPin,
+  sealedSuccessorExtends,
+  historyPrefixExtends,
   issuerHistoryEntryHash,
 } = await import('../dist/issuer-history.js');
 const { verifyReceipt } = await import('../dist/index.js');
@@ -148,4 +150,93 @@ test('another key cannot use the sealed path', async () => {
   };
   const res = await verifyReceipt(receipt, { ...own, issuerHistory: JSON.parse(v2Bytes), issuerHistoryBytes: v2Bytes, fetchImpl: async () => new Response('nf', { status: 404 }) });
   assert.notEqual(res.overall, 'verified');
+});
+
+// A synthetic next release signed by a caller-trusted test key stands in for
+// an issuer-published history. The production entries are copied unchanged.
+function successor(baseBytes, key, version, seq) {
+  const base = JSON.parse(baseBytes);
+  const prev = base.entries[base.entries.length - 1].entry_hash;
+  const body = {
+    kid: key.kid, jwk: key.publicJwk, alg: 'ES256', not_before: '2026-10-16T00:00:00Z', not_after: null,
+    status: 'active', revoked_at: null, reason: null, prev_hash: prev,
+  };
+  const entry = { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  const entries = [...base.entries, entry];
+  const claims = { schema: 'chit402.issuer_history.v1', payload_version: 1, entry_count: entries.length, head_hash: entry.entry_hash, version, seq };
+  const doc = JSON.parse(jcsCanonicalize({
+    ...base, version, seq, entries, head_hash: entry.entry_hash,
+    issuer_signature: { alg: 'ES256', typ: 'chit402-issuer-history+jwt', payload_version: 1, jws: signJws(claims, key, 'chit402-issuer-history+jwt'), kid: key.kid, issuer_jwk: key.publicJwk },
+  }));
+  return { doc, bytes: JSON.stringify(doc) };
+}
+
+function trustWith(key) {
+  const prod = JSON.parse(v2Bytes).entries[0].jwk;
+  return { trustedKids: [PRODUCTION_KID, key.kid], jwks: { keys: [prod, key.publicJwk] } };
+}
+
+// The history signer must be the genesis key, which a test does not hold,
+// so the full path cannot take a synthetic v3. The continuation rule is
+// tested directly, and the signed path is tested for the refusals.
+test('a v3 that appends one entry to v2 continues the v1 snapshot', () => {
+  const key = testKey();
+  const v1 = JSON.parse(v1Bytes);
+  const { doc } = successor(v2Bytes, key, 3, 3);
+  assert.equal(sealedSuccessorExtends(v1, doc), true);
+  assert.equal(sealedSuccessorExtends(v1, JSON.parse(v2Bytes)), true);
+  // Before this rule, the plain prefix check refused it.
+  assert.equal(historyPrefixExtends(v1, doc), false);
+});
+
+test('a v3 that extends v1 but forks from v2 does not continue v1', async () => {
+  const key = testKey();
+  const v1 = JSON.parse(v1Bytes);
+  const { doc, bytes } = successor(v1Bytes, key, 3, 3);
+  assert.equal(historyPrefixExtends(v1, doc), true);
+  assert.equal(sealedSuccessorExtends(v1, doc), false);
+  const trust = trustWith(key);
+  assert.equal(sealedSnapshotForPin(V1_PIN, doc, trust), null);
+  const got = await check({ document: doc, documentBytes: bytes, ...trust });
+  assert.equal(got.ok, false);
+  assert.equal(got.reason, 'issuer_history_pin_mismatch');
+});
+
+test('a v3 that rewrites a v2 entry does not continue v1', () => {
+  const key = testKey();
+  const { doc } = successor(v2Bytes, key, 3, 3);
+  doc.entries[0] = { ...doc.entries[0], entry_hash: 'ab'.repeat(32) };
+  assert.equal(sealedSuccessorExtends(JSON.parse(v1Bytes), doc), false);
+  const short = JSON.parse(v2Bytes);
+  short.head_hash = 'cd'.repeat(32);
+  short.entries = [];
+  assert.equal(sealedSuccessorExtends(JSON.parse(v1Bytes), short), false);
+});
+
+test('the CLI history resolver refuses a v1 fork', async () => {
+  const { resolveIssuerHistory } = await import('../dist/issuer-history.js');
+  const key = testKey();
+  const fork = successor(v1Bytes, key, 3, 3);
+  const forked = await resolveIssuerHistory({ fileBytes: fork.bytes, ...trustWith(key), fetchImpl: async () => { throw new Error('no network'); } });
+  assert.equal(forked.invalid, true);
+  // The resolver's extension rule, which also applies to a fork the issuer
+  // key did sign: it does not extend the bundled v2.
+  assert.equal(historyPrefixExtends(JSON.parse(v2Bytes), fork.doc), false);
+});
+
+test('the CLI does not verify against a v1 fork history file', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'v1-fork-'));
+  const forkPath = join(dir, 'history.json');
+  writeFileSync(forkPath, successor(v1Bytes, testKey(), 3, 3).bytes);
+  const receiptPath = fileURLToPath(new URL('./fixtures/chit-5d775d12.v7.json', import.meta.url));
+  const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
+  const run = spawnSync(process.execPath, [cli, receiptPath, '--issuer-history', forkPath, '--json'], {
+    encoding: 'utf8', timeout: 20000, env: { ...process.env, CHIT402_OFFLINE: '1' },
+  });
+  assert.notEqual(run.status, 0, run.stdout);
+  assert.equal(JSON.parse(run.stdout).result, "invalid");
 });
