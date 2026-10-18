@@ -407,11 +407,11 @@ const LLMS_TXT = `# Chit402 — treasury desk for agent spend
 
 - Issuer trust (pin JWKS + kid): https://www.chit402.com/trust
 - Issuer key history: GET /.well-known/issuer-history.json — signed, append-only, kid window. Old snapshots stay at ?version=N or ?hash=. https://www.chit402.com/docs/receipt-check
-- POST /v1/receipts/check : free receipt check (not x402). Paste a receipt JSON document, a receipt id, or a receipt URL. Verdicts match chit402-verify. No wallet lookup. No account. https://www.chit402.com/check
+- POST /v1/receipts/check : free receipt check (not x402). The body must be JSON with a string input field: {"input": "<string>"}. A body without it is refused. input is one string: a receipt JSON document (as text), a chit- or xfuel- receipt id, or a receipt verify URL. Verdicts match chit402-verify. No wallet lookup. No account. https://www.chit402.com/check
 - POST /v1/receipts/feedback : optional note about a check. The pasted receipt is attached only when asked. Off when CHECK_FEEDBACK_GITHUB_TOKEN is unset.
 - GET /v1/receipts/check/stats?hours=N : anonymous hourly counts (N capped at 168) and an alert. No receipt input.
 - Receipt policy history: GET /.well-known/receipt-policy-history.json — append-only announced terms. A v11 receipt's signed policy governs that receipt.
-- Public receipt shell: GET /receipt/:id/preimage is the unsigned public shell (JCS). commits_to is null. It is not the signed payload. payload_hash is over the owner-held bytes. The holder signature is on the owner view. output.hash stays private.
+- Public receipt shell: GET /receipt/:id/preimage is the unsigned public shell (JCS). commits_to is the X-Chit-Commits-To response header (value null), not a body field. It is not the signed payload. payload_hash is over the owner-held bytes. The holder signature is on the owner view. output.hash stays private.
 - Live receipt shell: https://api.chit402.com/receipt/xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944 — public page is the shell. Full verify needs the payer wallet or the agent key.
 - Signed refusal (schema chit402.refusal.v1): GET /refusal/:refusal_id — public, no auth, ?format=json. Same issuer ES256 key as receipts. Verify against /.well-known/jwks.json or xfuel-verify.
 - Thread: https://x.com/chit402/status/2096153417588588555
