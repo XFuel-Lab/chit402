@@ -78,6 +78,7 @@ import {
 } from './session-act.js';
 import { buildValidationRecord } from './erc8004.js';
 import { buildX402Manifest, buildOpenApiSpec } from './x402-discovery.js';
+import { refuseSettlementProofWhenOff } from './settlement-proof-flag.js';
 import { buildPaymentChallenge } from './x402-adapter.js';
 import { CHIT402_ICON_SVG, XFUEL_ICON_SVG } from './xfuel-icon.js';
 import { buildAgentCard } from './agent-card.js';
@@ -1665,6 +1666,10 @@ export async function createApp() {
     req.id = crypto.randomUUID();
     next();
   });
+
+  // Settlement proof add-on: refused before any quote, 402 or settle unless
+  // SETTLEMENT_PROOF_ENABLED is exactly 'true'.
+  app.use(refuseSettlementProofWhenOff);
 
   // Request logging
   app.use((req, res, next) => {

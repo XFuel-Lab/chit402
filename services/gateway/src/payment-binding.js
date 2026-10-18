@@ -20,6 +20,7 @@
  * guest activation.
  */
 import { keccak256, toUtf8Bytes, solidityPacked } from 'ethers';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /** Payment-rail discriminant — must match the Solidity `paymentRail` arg. */
 export const PAYMENT_RAIL = Object.freeze({ usdc: 1, tfuel: 2 });
@@ -177,6 +178,7 @@ function normHex32(h) {
  */
 export function finalizePaymentBindingForProof(binding, proofResult) {
   if (!binding) return null;
+  if (!settlementProofEnabled()) return { ...binding, in_proof: false };
   if (!proofResult) return { ...binding, in_proof: false };
 
   const pv = proofResult.publicValuesVersion ?? proofResult.public_values_version ?? null;

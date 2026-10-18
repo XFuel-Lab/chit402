@@ -22,6 +22,7 @@
  */
 
 import { normalizeRequestedTier } from './tier-policy.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 function parseKeys(csv) {
   return String(csv || '')
@@ -36,6 +37,8 @@ function parseKeys(csv) {
  * @returns {boolean}
  */
 export function proveAllowedForKey(apiKey) {
+  // Every proof this gateway requests is an SP1 settlement proof.
+  if (!settlementProofEnabled()) return false;
   const allow = parseKeys(process.env.PROVER_ALLOW_KEYS);
   const enabled = process.env.PROVER_ENABLED !== 'false';
 

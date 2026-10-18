@@ -5,6 +5,8 @@
  * buildPaymentBinding. Parity with the Solidity SP1ProofHooks.computePaymentCommitment
  * is separately guarded by test/security/SP1ProofHooksHarness.test.cjs.
  */
+// Existing behavior is the flag-on path; flag-off is covered in settlement-proof-flag.test.mjs.
+process.env.SETTLEMENT_PROOF_ENABLED = 'true';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { keccak256, toUtf8Bytes, solidityPacked } from 'ethers';
