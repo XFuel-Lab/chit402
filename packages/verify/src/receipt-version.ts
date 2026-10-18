@@ -27,7 +27,7 @@ export const VERIFIER_MIN = '0.4.9';
 export const UNSUPPORTED_VERSION = 'unsupported_version';
 export const VERSION_MISMATCH = 'version_mismatch';
 export const INVALID_JWS = 'invalid_jws';
-export const UPGRADE_HINT = 'this receipt requires @xfuel/verify 0.4.9 or newer';
+export const UPGRADE_HINT = 'this receipt requires a verifier newer than @xfuel/verify 0.3.5';
 
 /** Named claims on the Sep 4–5 object JWS (payload v4/v5), without a signed version. */
 const UNVERSIONED_TOP = new Set([
