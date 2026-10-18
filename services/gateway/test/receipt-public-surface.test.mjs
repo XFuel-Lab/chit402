@@ -25,6 +25,7 @@ const {
 } = await import('../src/receipt-log-epoch.js');
 const { signJws } = await import('../src/issuer-key.js');
 const { preimageField } = await import('../src/receipt-preimage.js');
+const { PINNED_BASE_ANCHOR_WALLET } = await import('../src/anchor-wallets.js');
 
 const A = 'xfuel-pub-a-11111111-1111-4111-8111-111111111111';
 const B = 'xfuel-pub-b-22222222-2222-4222-8222-222222222222';
@@ -35,6 +36,17 @@ const WALLET_B = '0xB0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0B0';
 const TX_A = `0x${'a1'.repeat(32)}`;
 const TX_B = `0x${'b2'.repeat(32)}`;
 const REF_A = `base:${TX_A}`;
+// Private sentinels planted on A. None of them is a public field.
+const WALLET_A = '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52';
+const AGENT_PUBKEY_A = '0xA9e9A9e9A9e9A9e9A9e9A9e9A9e9A9e9A9e9A9e9';
+const API_KEY_RAW = 'sk-probe-raw-api-key-quokka';
+const API_KEY_HASH = `${'7e'.repeat(31)}5a`;
+const EMAIL = 'leak-probe@example.invalid';
+const PROMPT_TEXT = 'prompt-probe-text-wombat';
+const OUTPUT_TEXT = 'output-probe-text-numbat';
+// Public by design: the payee and asset on every paid receipt.
+const PAY_TO = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
+const ASSET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const REF_B = `base:${TX_B}`;
 
 // Leak matcher for the usage sentinels (4242, 4343). Hash-like runs are
@@ -62,6 +74,66 @@ function leaksNumber(text, n) {
   return forms.some((f) => new RegExp(f).test(clean));
 }
 
+// Text plus the decoded payload of any compact JWS in it, so a value inside a
+// signed segment is scanned too (stripHashLike drops base64url runs).
+function withDecodedJws(text) {
+  const parts = [String(text)];
+  for (const m of String(text).matchAll(/[A-Za-z0-9_-]{8,}\.([A-Za-z0-9_-]{8,})\.[A-Za-z0-9_-]{8,}/g)) {
+    try { parts.push(Buffer.from(m[1], 'base64url').toString('utf8')); } catch { /* not base64url */ }
+  }
+  return parts.join('\n');
+}
+
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/;
+
+/**
+ * Private values that no public receipt view may carry. Public by design and
+ * allowed: the payee, the asset contract, this receipt's own payment tx (it is
+ * on chain and linked to the explorer), public log anchor txs, and log hashes.
+ */
+// Log anchor txs on a log document (anchor_tx, base_tx ...): public on chain.
+function logAnchorTxs(text) {
+  const out = [];
+  const walk = (v) => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (!v || typeof v !== 'object') return;
+    for (const [k, x] of Object.entries(v)) {
+      if (/(?:^|_)tx$/.test(k) && typeof x === 'string') out.push(x);
+      else walk(x);
+    }
+  };
+  try { walk(JSON.parse(text)); } catch { /* not JSON */ }
+  return out;
+}
+
+function assertNoPrivate(text, label, { allowTx = [TX_A] } = {}) {
+  const hay = withDecodedJws(text);
+  const lower = hay.toLowerCase();
+  for (const n of [4242, 4343, 8585]) {
+    assert.equal(leaksNumber(hay, n), false, `${label} carries usage ${n}`);
+  }
+  assert.equal(lower.includes(WALLET_A.toLowerCase()), false, `${label} carries the payer wallet`);
+  assert.equal(lower.includes(`${WALLET_A.slice(0, 6)}…${WALLET_A.slice(-4)}`.toLowerCase()), false, `${label} carries the short payer wallet`);
+  assert.equal(lower.includes(AGENT_PUBKEY_A.toLowerCase()), false, `${label} carries the agent key`);
+  assert.equal(hay.includes(API_KEY_RAW), false, `${label} carries the raw API key`);
+  assert.equal(hay.includes(API_KEY_HASH), false, `${label} carries the API key hash`);
+  assert.equal(EMAIL_RE.test(hay), false, `${label} carries an email address`);
+  assert.equal(hay.includes(PROMPT_TEXT), false, `${label} carries prompt text`);
+  assert.equal(hay.includes(OUTPUT_TEXT), false, `${label} carries output text`);
+  for (const key of ['caller_binding', 'payer_wallet', 'agent_pubkey', 'api_key_hash', 'prompt_tokens', 'total_tokens']) {
+    assert.equal(hay.includes(key), false, `${label} names ${key}`);
+  }
+  // Every 32-byte 0x value must be an allowed tx; every 20-byte one the payee or asset.
+  const txs = new Set(allowTx.filter(Boolean).map((t) => t.toLowerCase()));
+  for (const m of hay.matchAll(/0x[0-9a-fA-F]{64}(?![0-9a-fA-F])/g)) {
+    assert.equal(txs.has(m[0].toLowerCase()), true, `${label} carries tx ${m[0].slice(0, 10)}…`);
+  }
+  const addrs = new Set([PAY_TO, ASSET, PINNED_BASE_ANCHOR_WALLET].map((a) => a.toLowerCase()));
+  for (const m of hay.matchAll(/(?<![0-9a-fA-Fx])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g)) {
+    assert.equal(addrs.has(m[0].toLowerCase()), true, `${label} carries address ${m[0].slice(0, 8)}…`);
+  }
+}
+
 let server;
 let base;
 let httpApp;
@@ -86,8 +158,8 @@ function paidTask(taskId, ref, agentId, wallet) {
     },
     meta: {
       payerWallet: wallet,
-      payTo: '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334',
-      paymentAsset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo: PAY_TO,
+      paymentAsset: ASSET,
       provider: 'akash-network',
       chain: 'base',
       agentId,
@@ -111,13 +183,22 @@ before(async () => {
     store.set(taskId, paidTask(taskId, ref, agentId, wallet));
     planted.push(taskId);
   };
-  await plant(A, 'row-own-a', REF_A, 187, '0x9F8951CB8b060f52fdf87297b3c5B00f7aa18f52');
+  await plant(A, 'row-own-a', REF_A, 187, WALLET_A);
   await plant(B, ROW_B, REF_B, AGENT_B, WALLET_B);
   store.set(PRE, paidTask(PRE, `base:0x${'c3'.repeat(32)}`, 188, '0x1111111111111111111111111111111111111111'));
   planted.push(PRE);
   const taskA = store.get(A);
   taskA.usage = { prompt_tokens: 4242, completion_tokens: 4343, total_tokens: 8585, source: 'provider' };
   taskA.meta.requestedModel = 'xfuel/auto';
+  taskA.meta.agentPubkey = AGENT_PUBKEY_A;
+  taskA.meta.apiKey = API_KEY_RAW;
+  taskA.meta.apiKeyHash = API_KEY_HASH;
+  taskA.meta.email = EMAIL;
+  taskA.intent.prompt = PROMPT_TEXT;
+  taskA.intent.messages = [{ role: 'user', content: PROMPT_TEXT }];
+  taskA.request = { messages: [{ role: 'user', content: PROMPT_TEXT }] };
+  taskA.result.output = OUTPUT_TEXT;
+  taskA.result.content = OUTPUT_TEXT;
   taskA.meta.modelSubstituted = true;
   taskA.meta.providerCogs = {
     provider: 'akash-network',
@@ -514,6 +595,11 @@ test('leak matcher: catches glued and formatted sentinels, ignores hashes', () =
   }
   // A leak next to a hash is still caught.
   assert.equal(leaksNumber(`${'a1'.repeat(32)} amt4242usd`, 4242), true);
+  // A value inside a JWS payload segment is scanned after decoding.
+  const seg = Buffer.from(JSON.stringify({ caller_binding: { payer_wallet: WALLET_A } })).toString('base64url');
+  const inJws = `eyJhbGciOiJFUzI1NiJ9.${seg}.${'S'.repeat(86)}`;
+  assert.equal(inJws.toLowerCase().includes(WALLET_A.toLowerCase()), false);
+  assert.throws(() => assertNoPrivate(inJws, 'jws'), /payer wallet/);
 });
 
 test('public receipt views drop unsigned token, route, stamp, and float fields', async () => {
@@ -552,6 +638,7 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(json.text.includes('xfuel/auto'), false);
   assert.equal(leaksNumber(json.text, 4242), false);
   assert.equal(leaksNumber(json.text, 4343), false);
+  assert.equal(leaksNumber(json.text, 8585), false);
   assert.equal(json.text.includes('below_low_water'), false);
   const again = await fetchText(`/receipt/${A}?format=json`);
   assert.equal(JSON.parse(again.text).schema, doc.schema);
@@ -562,6 +649,7 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(html.text.includes('xfuel/auto'), false);
   assert.equal(leaksNumber(html.text, 4242), false);
   assert.equal(leaksNumber(html.text, 4343), false);
+  assert.equal(leaksNumber(html.text, 8585), false);
   assert.equal(html.text.includes('low water'), false);
   assert.equal(html.text.includes('below_low_water'), false);
 
@@ -569,12 +657,16 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(auditor.status, 200, auditor.text.slice(0, 120));
   assert.equal(auditor.text.includes('xfuel/auto'), false);
   assert.equal(leaksNumber(auditor.text, 4242), false);
+  assert.equal(leaksNumber(auditor.text, 4343), false);
+  assert.equal(leaksNumber(auditor.text, 8585), false);
   assert.equal(auditor.text.includes('below_low_water'), false);
 
   const card = await fetchText(`/receipt/${A}/og.png`);
   assert.equal(card.status, 200);
   assert.equal(card.text.includes('xfuel/auto'), false);
   assert.equal(leaksNumber(card.text, 4242), false);
+  assert.equal(leaksNumber(card.text, 4343), false);
+  assert.equal(leaksNumber(card.text, 8585), false);
 
   const followed = await fetchText(`/receipt/by-tx?tx=${TX_A}&format=json`);
   assert.equal(followed.status, 302, followed.text);
@@ -583,6 +675,105 @@ test('public receipt views drop unsigned token, route, stamp, and float fields',
   assert.equal(canonical.status, 200, canonical.text.slice(0, 120));
   assert.equal(canonical.text.includes('xfuel/auto'), false);
   assert.equal(leaksNumber(canonical.text, 4242), false);
+  assert.equal(leaksNumber(canonical.text, 4343), false);
+  assert.equal(leaksNumber(canonical.text, 8585), false);
+});
+
+test('the planted private values reach the owner receipt (the public checks are not vacuous)', async () => {
+  const { buildReceipt } = await import('../src/receipt.js');
+  const receipt = await buildReceipt(getAIListener().activeTasks.get(A), { baseUrl: base, readOnly: true });
+  const owner = JSON.stringify(receipt).toLowerCase();
+  assert.equal(owner.includes(WALLET_A.toLowerCase()), true, 'payer wallet');
+  assert.equal(owner.includes(AGENT_PUBKEY_A.toLowerCase()), true, 'agent key');
+  assert.equal(owner.includes(API_KEY_HASH), true, 'api key hash');
+  assert.equal(owner.includes('caller_binding'), true, 'caller_binding');
+  assert.equal(leaksNumber(owner, 4242), true, 'usage');
+  // Raw keys, emails, prompts and output never enter a receipt at all.
+  assert.equal(owner.includes(API_KEY_RAW.toLowerCase()), false);
+  assert.equal(owner.includes(EMAIL), false);
+  assert.equal(owner.includes(PROMPT_TEXT), false);
+  assert.equal(owner.includes(OUTPUT_TEXT), false);
+});
+
+test('public receipt views carry no usage, wallet, key, email, prompt, binding or foreign tx', async () => {
+  const paths = [
+    `/receipt/${A}`,
+    `/receipt/${A}?format=json`,
+    `/receipt/${A}?format=html`,
+    `/receipt/${A}?format=auditor`,
+    `/receipt/${A}?format=audit`,
+    `/receipt/${A}?format=auditor&view=html`,
+    `/receipt/${A}.json`,
+    `/receipt/${A}/preimage`,
+    `/receipt/${A}/preimage?meta=1`,
+    `/receipt/${A}/preimage?raw=1`,
+    `/v1/receipts/${A}/inclusion`,
+    '/v1/receipts/tree/head',
+    '/v1/receipts/tree/epoch',
+  ];
+  const accepts = [undefined, 'text/html', 'application/json'];
+  for (const path of paths) {
+    for (const accept of accepts) {
+      const res = await fetchText(path, accept ? { Accept: accept } : {});
+      const label = `${path} accept=${accept || 'none'}`;
+      assert.ok(res.status < 500, `${label} ${res.status}`);
+      const logPage = path.startsWith('/v1/receipts/');
+      assertNoPrivate(res.text, label, { allowTx: [TX_A, ...(logPage ? logAnchorTxs(res.text) : [])] });
+    }
+  }
+
+  // by-tx lands on the canonical page; both forms are checked after the redirect.
+  for (const q of ['', '&format=json']) {
+    const hop = await fetchText(`/receipt/by-tx?tx=${TX_A}${q}`);
+    assert.equal(hop.status, 302, hop.text);
+    assertNoPrivate(hop.text, `by-tx redirect${q}`);
+    const loc = new URL(hop.headers.get('location') || '', base);
+    const canonical = await fetchText(loc.pathname + loc.search);
+    assert.equal(canonical.status, 200, canonical.text.slice(0, 120));
+    assertNoPrivate(canonical.text, `by-tx canonical${q}`);
+  }
+
+  // og.png is pixels: check the SVG text the route rasterizes, from the same input.
+  const { buildReceipt, redactPublicReceipt } = await import('../src/receipt.js');
+  const { buildReceiptOgSvg } = await import('../src/receipt-og.js');
+  const receipt = await buildReceipt(getAIListener().activeTasks.get(A), { baseUrl: base, readOnly: true });
+  const svg = buildReceiptOgSvg(redactPublicReceipt(receipt));
+  assert.match(svg, /<svg /);
+  assertNoPrivate(svg, 'og svg');
+  const png = await fetchText(`/receipt/${A}/og.png`);
+  assert.equal(png.status, 200);
+  assertNoPrivate(png.text, 'og png bytes');
+});
+
+test('a shell with a public attestation shows only public claims and the advisory minimum', async () => {
+  const { buildReceipt } = await import('../src/receipt.js');
+  const { toPublicShell, renderReceiptShellHtml } = await import('../src/receipt-shell.js');
+  const pa = await import('../src/public-attestation.js');
+  const { VERIFIER_MIN } = await import('../src/verifier-min.js');
+  const receipt = await buildReceipt(getAIListener().activeTasks.get(A), { baseUrl: base, readOnly: true });
+  const shell = toPublicShell(receipt, { inclusion: null, signedHead: null });
+  const claims = {
+    attested_at: '2026-10-17T18:30:00.000Z',
+    iss: 'chit402',
+    issued_at: shell.issued_at,
+    log: { epoch: 1, leaf_hash: leafHash(`${A}|row-own-a`), leaf_index: 0 },
+    payment: { asset: ASSET, gross_amount: '2000', payee: PAY_TO, rail: 'usdc', ref: REF_A, settled_amount: '2000' },
+    task_id: A,
+  };
+  const b64 = (v) => Buffer.from(v).toString('base64url');
+  const jws = `${b64(JSON.stringify({ alg: 'ES256', typ: pa.PUBLIC_RECEIPT_TYP, kid: 'k' }))}.${b64(pa.publicPayloadUtf8(claims))}.${b64('s'.repeat(64))}`;
+  shell.public_attestation = { jws };
+  const json = JSON.stringify(shell);
+  const html = renderReceiptShellHtml(shell);
+  assertNoPrivate(json, 'attested shell json');
+  assertNoPrivate(html, 'attested shell html');
+  assert.ok(html.includes(`Signed. Check it with chit402-verify ${VERIFIER_MIN} or later: run npx chit402-verify@latest.`), 'attestation row names the minimum');
+  assert.doesNotMatch(html, /0\.4\.6 or later|0\.4\.2 or later/);
+  // The served shell is a fixed key list. Each key here is public by design.
+  assert.deepEqual(Object.keys(shell).sort(), [
+    'amount_gross', 'amount_settled', 'asset', 'chain', 'inclusion', 'issued_at', 'pay_to',
+    'payload_version', 'payment_tx', 'public_attestation', 'receipt_id', 'schema', 'task_id', 'unsigned',
+  ]);
 });
 
 test('published fixtures stay VERIFIED after unsigned fields are dropped', async () => {
