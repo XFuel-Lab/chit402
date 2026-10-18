@@ -34,7 +34,7 @@ import { BASE_RPC_URL } from './base-payer.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
 import { payerCheckOutcome } from './payer.js';
 import { type EpochRecord } from './epoch.js';
-import { jwkThumbprint, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import { jwkThumbprint, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
   humanVerdictLines,
@@ -270,7 +270,7 @@ export function epochRecordSignatureOk(
     keys.push(jwk);
   }
   for (const key of keys) {
-    const verified = verifyIssuerJws(jws, key);
+    const verified = verifyIssuerJws(jws, key, { expectTyp: ISSUER_JWS_TYP.treeEpoch });
     if (!verified.valid || !verified.payload) continue;
     const payload = verified.payload;
     if (JSON.stringify(payload.epochs ?? null) !== JSON.stringify(record.epochs ?? null)) continue;

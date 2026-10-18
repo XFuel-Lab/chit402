@@ -3,6 +3,16 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.8 — Issuer JWS slot typing
+
+### Changed
+- **Each issuer-JWS slot checks its `typ`.** `verifyIssuerJws(jws, jwk, { expectTyp })` takes the accepted typ set for the slot; any other typ is `typ_mismatch`. Receipts accept `chit402-receipt+jwt`, plus the earlier `JWT` typ and a header with no typ. Tree heads, epochs, issuer history, refusals, freeze control records and anchor-wallet documents each accept only their own typ. The sets are exported as `ISSUER_JWS_TYP`. Calls without `expectTyp` behave as in 0.4.7.
+- **A receipt signature must cover the receipt.** `verifyReceipt` (and `verifyReceiptUpToV10`) reports `verified` only when the signed payload is a receipt object whose `task_id` equals the receipt's `task_id`, and whose `payment` block is present whenever the outer document has one. A signed tree-head, epoch, history or other non-receipt schema is `failed`.
+
+### Tests
+- Cross-typ JWS in the receipt slot is `failed` in the library and exit 1 `INVALID` in the CLI.
+- Issued receipts of payload v5, v6, v7, v8, v9, v10 and a v10 foreign payout keep their 0.4.7 verdicts. `BUILD_DIGEST.txt` moved because the verifier sources changed. Not published. No deploy.
+
 ## 0.4.7 — Public attestation fail-closed edges
 
 ### Changed

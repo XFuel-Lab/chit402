@@ -17,6 +17,7 @@ import {
   readJwsHeader,
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
   type Es256Jwk,
 } from './jws.js';
 
@@ -130,11 +131,11 @@ function verifyHeadJws(
   const pinned = !!(embedded && isPinnedTrustedJwk(embedded, trustedKids));
   const candidates = jwksCandidates(options.jwks, kid);
   for (const jwk of candidates) {
-    const result = verifyIssuerJws(jws, jwk);
+    const result = verifyIssuerJws(jws, jwk, { expectTyp: ISSUER_JWS_TYP.treeHead });
     if (result.valid && result.payload) return { ok: true, payload: result.payload };
   }
   if (pinned && embedded) {
-    const result = verifyIssuerJws(jws, embedded);
+    const result = verifyIssuerJws(jws, embedded, { expectTyp: ISSUER_JWS_TYP.treeHead });
     if (result.valid && result.payload) return { ok: true, payload: result.payload };
   }
   return { ok: false, reason: 'signature_invalid' };

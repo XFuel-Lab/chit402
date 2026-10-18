@@ -249,7 +249,7 @@ test('supported versions are exported and printed', () => {
   assert.match(help.stdout, /11 only with a signed issuer_root/);
   const version = runCli(['--version'], 8000);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /chit402-verify 0\.4\.7/);
+  assert.match(version.stdout, /chit402-verify 0\.4\.8/);
   assert.match(version.stdout, /v: 11/);
   assert.match(version.stdout, /unsupported_version, exit 2/);
   assert.match(version.stdout, /require chit402-verify >= 0\.3\.5/);
@@ -524,7 +524,8 @@ test('T-REFUSAL refusal versions use the exact-type rule', async () => {
       claims.v = version.v;
       claims.reason = 'cap_exceeded';
     }
-    const jws = signClaims(claims);
+    // Refusals are issued with the refusal typ; the refusal slot accepts only that.
+    const jws = signClaims(claims, { typ: 'chit402-refusal+jwt' });
     return {
       ...claims,
       payload_version: outerVersion,

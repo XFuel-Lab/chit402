@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { jcsCanonicalize } from './jcs.js';
 import {
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
   jwkThumbprint,
   isPinnedTrustedJwk,
   DEFAULT_TRUSTED_ISSUER_KIDS,
@@ -154,7 +155,7 @@ export function verifyIssuerHistoryDocument(
   }
   if (!candidates.length) return { valid: false, reason: 'key untrusted' };
   for (const jwk of candidates) {
-    const result = verifyIssuerJws(jws, jwk);
+    const result = verifyIssuerJws(jws, jwk, { expectTyp: ISSUER_JWS_TYP.issuerHistory });
     if (!result.valid) continue;
     const payload = result.payload || {};
     if (payload.schema !== ISSUER_HISTORY_SCHEMA) return { valid: false, reason: 'schema_mismatch' };

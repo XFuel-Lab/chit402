@@ -12,7 +12,10 @@
  * previous pin key (`purpose: citizen_issuer_key`), not an edited file.
  */
 import { createHash, createPublicKey, verify, type KeyObject } from 'node:crypto';
-import { isEs256PublicJwk, jwkThumbprint, readJwsHeader, verifyIssuerJws, type Es256Jwk } from './jws.js';
+import { isEs256PublicJwk, jwkThumbprint, readJwsHeader, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
+
+/** The pin check reads either a receipt JWS or a tree-head JWS. */
+const RECEIPT_OR_HEAD_TYP = [...ISSUER_JWS_TYP.receipt, ...ISSUER_JWS_TYP.treeHead] as const;
 
 export const ISSUER_REGISTRATION_CONTEXT = 'chit402-issuer-registration-v1';
 export const ISSUER_ROTATION_CONTEXT = 'chit402-issuer-rotation-v1';
@@ -326,7 +329,7 @@ function receiptKids(
     return { ok: true, kids: [], issuerRoot: null };
   }
 
-  const verified = verifyIssuerJws(jws, pin);
+  const verified = verifyIssuerJws(jws, pin, { expectTyp: RECEIPT_OR_HEAD_TYP });
   if (!verified.valid || !verified.payload) return { ok: false, code: ISSUER_PIN_MISMATCH };
   const header = readJwsHeader(jws);
   const signedKid = typeof header?.kid === 'string' && header.kid ? header.kid : pinKid;
@@ -362,7 +365,7 @@ export function verifyCitizenRotation(input: {
   if (!COMMIT_SHA.test(input.nextCommit) || !FILE_SHA.test(input.nextHash)) {
     return { ok: false, code: ISSUER_PIN_MUTABLE_REF };
   }
-  const verified = verifyIssuerJws(input.controlJws, input.prior.jwk);
+  const verified = verifyIssuerJws(input.controlJws, input.prior.jwk, { expectTyp: ISSUER_JWS_TYP.freeze });
   if (!verified.valid || !verified.payload) return { ok: false, code: ISSUER_ROTATION_UNCONTROLLED };
   const payload = verified.payload;
   if (payload.chain_id != null && payload.chain_id !== ISSUER_PIN_CHAIN_ID) {
