@@ -21,7 +21,7 @@
 import crypto from 'crypto';
 import { peekIssuerSigner, resetIssuerSigner } from './issuer-signer-state.js';
 import { lowS } from './ecdsa-der.js';
-import { isCanonicalCompactEs256 } from './jws-canonical.js';
+import { isCanonicalCompactEs256, isCanonicalEs256Signature } from './jws-canonical.js';
 
 export { isCanonicalCompactEs256 };
 
@@ -467,6 +467,8 @@ export function verifyWithJwk(message, signatureB64url, jwk) {
   if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') {
     return false;
   }
+  // Same canonical rule as the verifier: base64url, exact round-trip, 64 bytes.
+  if (!isCanonicalEs256Signature(signatureB64url)) return false;
   try {
     const publicKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
     const signature = Buffer.from(signatureB64url, 'base64url');
