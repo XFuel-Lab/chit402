@@ -358,5 +358,7 @@ test('a kms gateway signs a receipt and a head that verify', async () => {
   const headRun = spawnSync(process.execPath, [cli, headPath, '--json'], { encoding: 'utf8' });
   const headText = `${headRun.stdout || ''}\n${headRun.stderr || ''}`;
   assert.equal(headRun.status, 1, headText);
-  assert.match(headText, /key untrusted/);
+  // A tree head is not a receipt: since 0.4.8 the receipt slot refuses its typ
+  // before any key lookup.
+  assert.match(headText, /typ_mismatch/);
 });
