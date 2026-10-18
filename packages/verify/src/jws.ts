@@ -117,9 +117,31 @@ export function sameEs256Key(a: Es256Jwk, b: Es256Jwk): boolean {
   return a.x === b.x && a.y === b.y && a.crv === b.crv && a.kty === b.kty;
 }
 
+const BASE64URL_SEGMENT = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * One canonical base64url segment (RFC 7515 §2, RFC 4648 §5): only the URL
+ * alphabet, no padding, and decoding then re-encoding gives the same text, so
+ * the unused trailing bits are zero. Lenient decoders accept other spellings
+ * of the same bytes; this does not.
+ */
+export function isCanonicalBase64url(segment: string): boolean {
+  if (typeof segment !== 'string' || !BASE64URL_SEGMENT.test(segment)) return false;
+  return Buffer.from(segment, 'base64url').toString('base64url') === segment;
+}
+
+/** Three canonical segments and a 64-byte (raw R||S) signature. */
+export function isCanonicalCompactEs256(jws: string): boolean {
+  if (typeof jws !== 'string') return false;
+  const parts = jws.split('.');
+  if (parts.length !== 3 || !parts.every(isCanonicalBase64url)) return false;
+  return Buffer.from(parts[2], 'base64url').length === 64;
+}
+
 export function readJwsHeader(jws: string): { alg?: string; kid?: string; jku?: string } | null {
+  if (typeof jws !== 'string') return null;
   const headerB64 = jws.split('.')[0];
-  if (!headerB64) return null;
+  if (!headerB64 || !isCanonicalBase64url(headerB64)) return null;
   try {
     return JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
   } catch {
@@ -146,7 +168,7 @@ export function verifyIssuerJws(
     return { valid: false, reason: 'invalid_jws' };
   }
   const parts = jws.split('.');
-  if (parts.length !== 3) {
+  if (parts.length !== 3 || !isCanonicalCompactEs256(jws)) {
     return { valid: false, reason: 'malformed_jws' };
   }
 

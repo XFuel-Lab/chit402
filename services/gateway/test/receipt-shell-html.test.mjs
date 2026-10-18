@@ -2,6 +2,7 @@
  * Public receipt card. T1–T17 from the receipt-page design review.
  * JSON shells, preimages, and inclusion bodies keep the stored xfuel- id.
  */
+import { VERIFIER_MIN } from '../src/verifier-min.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -671,7 +672,7 @@ test('T17 verifier accepts the public shell as INCLUDED_SHELL', () => {
   assert.equal(built.status, 0, built.stderr);
   const receipt = JSON.parse(readFileSync(fileURLToPath(new URL('../../../packages/verify/test/fixtures/public/chit-39af100b.json', import.meta.url)), 'utf8'));
   const shell = toPublicShell(receipt);
-  shell.verifier_min = '0.3.5';
+  shell.verifier_min = VERIFIER_MIN;
   const dir = mkdtempSync(join(tmpdir(), 'chit-shell-'));
   const file = join(dir, 'shell.json');
   writeFileSync(file, JSON.stringify(shell));

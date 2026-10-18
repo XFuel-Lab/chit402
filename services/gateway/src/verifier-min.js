@@ -5,7 +5,10 @@
  */
 export const VERIFIER_MIN = '0.3.5';
 export const VERIFIER_MIN_HEADER = 'X-Chit-Verifier-Min';
-export const VERIFIER_MIN_NOTE = 'Receipts issued after 2026-10-08 require @xfuel/verify >= 0.3.5. Older versions may print VERIFIED for formats they do not understand. This hint is unsigned and is not checked.';
+const VERIFIER_MIN_SENTENCE = `Receipts issued after 2026-10-08 require @xfuel/verify >= ${VERIFIER_MIN}. Older versions may print VERIFIED for formats they do not understand.`;
+export const VERIFIER_MIN_NOTE = `${VERIFIER_MIN_SENTENCE} This hint is unsigned and is not checked.`;
+/** Same sentence for HTML pages, already escaped. */
+export const VERIFIER_MIN_HTML_HINT = `${VERIFIER_MIN_SENTENCE.replace('>=', '&gt;=')} This hint is unsigned.`;
 
 export function withVerifierAdvisory(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
