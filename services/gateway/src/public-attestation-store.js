@@ -84,8 +84,24 @@ async function fsyncDir(dir) {
   }
 }
 
+/**
+ * mkdir -p, then fsync the parent of every directory it created, so a new
+ * shard directory's own entry survives a crash (the file inside is synced
+ * by the caller's fsyncDir of its directory).
+ */
+async function ensureDir(dir) {
+  const created = await fsp.mkdir(dir, { recursive: true });
+  if (!created) return;
+  const chain = [];
+  for (let d = dir; ; d = path.dirname(d)) {
+    chain.push(d);
+    if (d === created || path.dirname(d) === d) break;
+  }
+  for (const d of chain.reverse()) await fsyncDir(path.dirname(d));
+}
+
 async function writeTmp(file, data) {
-  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await ensureDir(path.dirname(file));
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   const handle = await fsp.open(tmp, 'wx', 0o600);
   try {
@@ -276,17 +292,37 @@ export class PublicAttestationStore {
 
   /** Boot: read pending rows only. A pending row whose terminal row exists is stale. */
   load() {
+    this._leftoverTmp = [];
     this.pending.clear();
     this.heap = new DueHeap();
     this.scheduled.clear();
     for (const file of this.backend.listSync(path.join(this.dir, 'pending'))) {
-      if (!file.endsWith('.json')) continue; // a .tmp from a crash mid-write
+      if (!file.endsWith('.json')) {
+        // A .tmp left by a crash mid-write: never read, removed in the background.
+        if (file.endsWith('.tmp')) this._leftoverTmp.push(file);
+        continue;
+      }
       const row = parseRow(this.backend.readSync(file));
       if (!row || row.state !== 'pending') continue;
       if (this.backend.readSync(this._doneFile(row.task_id)) != null) continue;
       this.pending.set(row.task_id, row);
       this._schedule(row.task_id, Number(row.next_at || 0));
     }
+    this.tmpCleanup = this._removeLeftoverTmp(this._leftoverTmp);
+  }
+
+  /** Best effort, async: boot never waits on it. Resolves to the count removed. */
+  async _removeLeftoverTmp(files) {
+    let removed = 0;
+    for (const file of files) {
+      try {
+        await this.backend.unlink(file);
+        removed += 1;
+      } catch {
+        /* left for the next boot */
+      }
+    }
+    return removed;
   }
 
   async _locked(key, fn) {
@@ -460,10 +496,16 @@ export class PublicAttestationStore {
     await this.backend.unlink(this._pendingFile(id)).catch(() => {});
     if (releaseRef && stored?.state !== 'signed' && row.ref) {
       // Under the ref lock, so a concurrent enqueue that takes over the claim
-      // can never have its new claim removed here.
-      await this._locked(`r:${row.ref}`, async () => {
-        if ((await this.taskForRef(row.ref)) === id) await this.backend.unlink(this._refFile(row.ref)).catch(() => {});
-      });
+      // can never have its new claim removed here. The terminal row is already
+      // durable: a failed release is its own alert, not persist_failed. A
+      // claim left behind is treated as stale by the next enqueue.
+      try {
+        await this._locked(`r:${row.ref}`, async () => {
+          if ((await this.taskForRef(row.ref)) === id) await this.backend.unlink(this._refFile(row.ref));
+        });
+      } catch (err) {
+        this.alert({ event: 'public_attestation_ref_release_failed', task_id: id, error: String(err?.code || err?.message || err).slice(0, 80) });
+      }
     }
     this._cacheSet(id, stored?.state === 'signed' && typeof stored.jws === 'string' ? { jws: stored.jws } : null);
     return { ok: true, created: made.created, stored };
@@ -597,6 +639,19 @@ export class PublicAttestationStore {
     return served;
   }
 
+  /**
+   * Hold a pending row in memory: it is not signed, retried, or written again
+   * until restart, and it is served as pending. Used when a sign was abandoned
+   * after the hard ceiling, so its late result can never be stored.
+   */
+  hold(taskId) {
+    const id = String(taskId);
+    if (!this.pending.has(id)) return false;
+    this.held.add(id);
+    return true;
+  }
+
+  /** Process-local counters: `totals` restart at zero on boot. */
   counts() {
     return {
       pending: this.pending.size,

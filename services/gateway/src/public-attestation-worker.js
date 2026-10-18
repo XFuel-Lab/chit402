@@ -3,7 +3,8 @@
  *
  * Runs after the log leaf exists, never on the paid path and never on a
  * read. One sign in flight at a time (a timed-out sign still counts until it
- * settles), a per-minute rate cap, a sign timeout, bounded
+ * settles or passes a hard ceiling, after which its row is held and its late
+ * result dropped), a per-minute rate cap, a sign timeout, bounded
  * retries with backoff, then `failed` plus an alert. It does not consume an
  * issuance-cap slot and never parks a late submission, so it cannot take a
  * slot from receipt signing.
@@ -29,8 +30,9 @@ export const PUBLIC_ATTESTATION_DEFAULTS = Object.freeze({
   maxDelayMs: 30 * 60_000,
   signTimeoutMs: 3_000,
   tickMs: 15_000,
-  // A sign still outstanding this long after it started raises one alert.
-  stuckAfterMs: 60_000,
+  // Hard ceiling for a sign that never settles: 10x the timeout. After it the
+  // slot is released and that row is held, so its late result is never stored.
+  signCeilingMs: 30_000,
 });
 
 const SIGN_BUCKETS_MS = [50, 100, 250, 500, 1000, 2500, 5000, 10000];
@@ -91,8 +93,13 @@ export function createPublicAttestationWorker(deps) {
     maxDelayMs: positiveInt(deps.maxDelayMs, PUBLIC_ATTESTATION_DEFAULTS.maxDelayMs),
     signTimeoutMs: positiveInt(deps.signTimeoutMs, PUBLIC_ATTESTATION_DEFAULTS.signTimeoutMs),
     tickMs: positiveInt(deps.tickMs, PUBLIC_ATTESTATION_DEFAULTS.tickMs),
-    stuckAfterMs: positiveInt(deps.stuckAfterMs, PUBLIC_ATTESTATION_DEFAULTS.stuckAfterMs),
+    signCeilingMs: 0,
   };
+  // Never below the timeout: a sign is abandoned only after its wait is over.
+  cfg.signCeilingMs = Math.max(
+    positiveInt(deps.signCeilingMs, cfg.signTimeoutMs * 10),
+    cfg.signTimeoutMs,
+  );
   const sign = deps.sign || defaultSign;
   const publicJwk = deps.publicJwk || defaultPublicJwk;
   const now = deps.now || (() => Date.now());
@@ -107,6 +114,7 @@ export function createPublicAttestationWorker(deps) {
     throttled: 0,
     timed_out: 0,
     waited_on_inflight: 0,
+    released_after_ceiling: 0,
     sign_ms: Object.fromEntries([...SIGN_BUCKETS_MS.map((b) => [`le_${b}`, 0]), ['gt_10000', 0]]),
   };
   let tokens = cfg.ratePerMinute;
@@ -116,7 +124,10 @@ export function createPublicAttestationWorker(deps) {
   // sign starts until it settles, so at most one Sign is ever in flight (S3).
   let inflight = null;
   let inflightSince = 0;
-  let stuckAlerted = false;
+  let inflightTask = null;
+  // Tasks whose sign was abandoned at the ceiling. Their late results are
+  // dropped, and the store holds the row so nothing else can sign it.
+  const abandoned = new Set();
   let timer = null;
   let interval = null;
 
@@ -149,17 +160,21 @@ export function createPublicAttestationWorker(deps) {
   }
 
   /** Start one sign. The timeout rejects the wait, not the sign; `inflight` holds until it settles. */
-  function startSign(payload) {
+  function startSign(payload, taskId) {
     const controller = new AbortController();
     const attempt = Promise.resolve().then(() => sign(payload, { signal: controller.signal }));
     const tracked = attempt.then(() => {}, () => {}).finally(() => {
       if (inflight === tracked) inflight = null;
+      if (inflightTask === taskId && inflight == null) inflightTask = null;
     });
     inflight = tracked;
     inflightSince = Date.now();
-    stuckAlerted = false;
+    inflightTask = taskId;
     const settledHere = () => {
-      if (inflight === tracked) inflight = null;
+      if (inflight === tracked) {
+        inflight = null;
+        inflightTask = null;
+      }
     };
     return withTimeout(attempt, cfg.signTimeoutMs).then((value) => {
       settledHere(); // the sign itself finished: free the slot now
@@ -207,10 +222,11 @@ export function createPublicAttestationWorker(deps) {
     const started = Date.now();
     let signed;
     try {
-      signed = await startSign(payload);
+      signed = await startSign(payload, row.task_id);
     } finally {
       observe(Date.now() - started);
     }
+    if (abandoned.has(row.task_id)) return; // released at the ceiling: never stored
     const jwk = publicJwk();
     if (!jwk || !verifyPublicAttestationJws(signed?.jws, jwk)) {
       await store.markFailed(row.task_id, { error: 'self_verify_failed' });
@@ -228,13 +244,24 @@ export function createPublicAttestationWorker(deps) {
       refill();
       for (;;) {
         if (inflight) {
-          // A timed-out sign is still outstanding. Wait for a later tick.
-          stats.waited_on_inflight += 1;
-          if (!stuckAlerted && Date.now() - inflightSince >= cfg.stuckAfterMs) {
-            stuckAlerted = true;
-            alert({ event: 'public_attestation_sign_stuck', outstanding_ms: Date.now() - inflightSince });
+          const outstanding = Date.now() - inflightSince;
+          if (outstanding < cfg.signCeilingMs) {
+            // A timed-out sign is still outstanding. Wait for a later tick.
+            stats.waited_on_inflight += 1;
+            break;
           }
-          break;
+          // Past the hard ceiling: hold that row first, then free the slot.
+          // Its late result is dropped and the held row cannot be signed
+          // again until restart, so at most one sign can still be stored.
+          const taskId = inflightTask;
+          if (taskId) {
+            abandoned.add(taskId);
+            store.hold(taskId);
+          }
+          inflight = null;
+          inflightTask = null;
+          stats.released_after_ceiling += 1;
+          alert({ event: 'public_attestation_sign_released', task_id: taskId, outstanding_ms: outstanding });
         }
         if (!store.hasDue(now())) break;
         if (tokens < 1) {
@@ -266,7 +293,7 @@ export function createPublicAttestationWorker(deps) {
 
   return {
     config: cfg,
-    stats: () => ({ ...stats, sign_ms: { ...stats.sign_ms }, tokens, inflight: Boolean(inflight), rows: store.counts() }),
+    stats: () => ({ ...stats, sign_ms: { ...stats.sign_ms }, tokens, inflight: Boolean(inflight), abandoned: abandoned.size, rows: store.counts() }),
     /**
      * Queue a book row after its leaf append succeeded. Cheap: no sign here.
      * Rows that are plainly not collected native Base USDC are not queued.
