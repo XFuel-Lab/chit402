@@ -36,8 +36,8 @@ export default function Security() {
           </span>
           <h1 style={styles.h1}>Security &amp; transparency</h1>
           <p style={styles.lead}>
-            USDC settles on <strong>Base and Solana</strong>. SP1 proofs settle on <strong>Base</strong>. Trust is tiered: signed receipts by default, on-chain SP1
-            settlement proofs on demand. See our{' '}
+            USDC settles on <strong>Base and Solana</strong>. Trust starts with signed receipts. On-chain
+            settlement proofs are coming soon. See our{' '}
             <a href={positioning} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               positioning
             </a>{' '}
@@ -79,9 +79,9 @@ export default function Security() {
           <p style={{ ...styles.p, marginBottom: '1rem' }}>
             Verify the address on Basescan before relying on it.
           </p>
-          {row('ZKVerifierSP1 (Base mainnet)', baseVerifier, true)}
+          {row('ZKVerifierSP1 (Base mainnet, not active)', baseVerifier, true)}
           <a href={`${BASESCAN}/address/${baseVerifier}`} target="_blank" rel="noreferrer" style={{ display: 'block', fontSize: '0.82rem', color: '#00d4ff', marginTop: '0.35rem', marginBottom: '0.75rem' }}>
-            Basescan → ZKVerifierSP1
+            Basescan → ZKVerifierSP1 (not active)
           </a>
           {row('Fee sink', 'X402_PAY_TO / protocol Safe · Splits v2 (USDC on Base)', false)}
           {row('Solana USDC', 'Pay rail and daily receipt-root anchor. No verifier contract on this page.', false)}

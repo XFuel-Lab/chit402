@@ -17,6 +17,11 @@ import {
 } from './book-escrow.js';
 import { CLAIM_TYPES, fileAndAdjudicate } from './book-dispute.js';
 import { DEFAULT_FLOOR_UNITS } from './pricing.js';
+import {
+  settlementProofEnabled,
+  SETTLEMENT_PROOF_NOT_OFFERED,
+  SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE,
+} from './settlement-proof-flag.js';
 
 export const A2A_JOB_ACTIONS = {
   OPEN: 'open',
@@ -171,6 +176,21 @@ function packJobView(job, baseUrl = '') {
  *   baseUrl?: string,
  * }} deps
  */
+
+/**
+ * A2A escrow always requires the settlement tier (FUND opens the escrow with
+ * required.proof_tier 'settlement'). While the add-on is off that escrow could
+ * never release, so OPEN and FUND are refused up front instead of funding a hold.
+ */
+function a2aSettlementRefusal() {
+  if (settlementProofEnabled()) return null;
+  return {
+    ok: false,
+    code: SETTLEMENT_PROOF_NOT_OFFERED,
+    reason: `A2A escrow requires a settlement proof. ${SETTLEMENT_PROOF_NOT_OFFERED_MESSAGE}`,
+  };
+}
+
 export async function handleA2aJobAction(input, deps = {}) {
   const {
     jobs,
@@ -202,6 +222,8 @@ export async function handleA2aJobAction(input, deps = {}) {
   }
 
   if (action === A2A_JOB_ACTIONS.OPEN) {
+    const refusal = a2aSettlementRefusal();
+    if (refusal) return refusal;
     const specHash = normalizeHash(input.job_spec_hash);
     if (!specHash) return { ok: false, reason: 'job_spec_hash required (32-byte hex)' };
     const amount = input.amount != null ? String(input.amount).trim() : '';
@@ -281,6 +303,8 @@ export async function handleA2aJobAction(input, deps = {}) {
   }
 
   if (action === A2A_JOB_ACTIONS.FUND) {
+    const refusal = a2aSettlementRefusal();
+    if (refusal) return refusal;
     if (job.status !== A2A_JOB_STATUS.OPENED) {
       return { ok: false, reason: `fund requires opened status (got ${job.status})` };
     }

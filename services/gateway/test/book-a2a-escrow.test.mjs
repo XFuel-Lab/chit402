@@ -2,7 +2,7 @@
  * A2A escrow + machine dispute v1 — open → fund → submit → release
  * and fund → clawback smoke paths with exportable book rows.
  */
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -64,10 +64,16 @@ function recordBookRowFactory(ledger) {
 }
 
 describe('A2A escrow job flow', () => {
+  // A2A escrow requires the settlement tier, so OPEN/FUND need the add-on on.
+  // Tests that check the off path turn it off themselves.
   beforeEach(() => {
     resetBookA2aJobStore();
     resetBookEscrowStore();
     resetBookDisputeStore();
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  });
+  afterEach(() => {
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
   });
 
   test('open → fund → submit → release leaves holdable rows and verify_url', async () => {
@@ -114,7 +120,7 @@ describe('A2A escrow job flow', () => {
     assert.equal(submitted.ok, true);
     assert.equal(submitted.job.status, A2A_JOB_STATUS.SUBMITTED);
 
-    const released = await handleA2aJobAction({
+    const release = () => handleA2aJobAction({
       action: A2A_JOB_ACTIONS.RELEASE,
       agent_id: 7,
       job_id: opened.job.job_id,
@@ -128,6 +134,22 @@ describe('A2A escrow job flow', () => {
       verifyReceipt: () => ({ valid: true }),
       baseUrl: 'https://api.chit402.com',
     });
+
+    // The job requires the settlement tier. With SETTLEMENT_PROOF_ENABLED off
+    // the escrow is held, not released.
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+    const held = await release();
+    assert.equal(held.ok, false);
+    assert.match(String(held.reason), /settlement tier unavailable; escrow held/);
+    assert.equal(jobs.get?.(opened.job.job_id)?.status ?? A2A_JOB_STATUS.SUBMITTED, A2A_JOB_STATUS.SUBMITTED);
+
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+    let released;
+    try {
+      released = await release();
+    } finally {
+      delete process.env.SETTLEMENT_PROOF_ENABLED;
+    }
 
     assert.equal(released.ok, true);
     assert.equal(released.job.status, A2A_JOB_STATUS.RELEASED);
@@ -230,5 +252,53 @@ describe('A2A escrow job flow', () => {
 
     assert.equal(exhausted.ok, false);
     assert.match(exhausted.reason, /meter exhausted/);
+  });
+
+  test('flag off: A2A OPEN is refused with settlement_proof_not_offered and creates no job', async () => {
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+    const jobs = new BookA2aJobStore();
+    const escrows = new BookEscrowStore();
+    const disputes = new BookDisputeStore();
+    const { ledger } = ledgerWithEntry();
+    const opened = await handleA2aJobAction({
+      action: A2A_JOB_ACTIONS.OPEN,
+      agent_id: 7,
+      job_spec_hash: SPEC_HASH,
+      amount: '50000',
+      parties: { principal_agent_id: 7, counterparty_agent_id: 99 },
+    }, { jobs, escrows, disputes, ledger, recordBookRow: recordBookRowFactory(ledger), baseUrl: 'https://api.chit402.com' });
+    assert.equal(opened.ok, false);
+    assert.equal(opened.code, 'settlement_proof_not_offered');
+    assert.match(opened.reason, /Retry without proof_tier/);
+    assert.equal(jobs.bySpec.size, 0);
+    assert.equal(ledger.entries.filter((e) => e.evidence === BOOK_EVIDENCE.A2A_ESCROW).length, 0);
+  });
+
+  test('flag off: FUND of an already-opened job is refused before any escrow is opened', async () => {
+    const jobs = new BookA2aJobStore();
+    const escrows = new BookEscrowStore();
+    const disputes = new BookDisputeStore();
+    const { ledger } = ledgerWithEntry();
+    const recordBookRow = recordBookRowFactory(ledger);
+    const opened = await handleA2aJobAction({
+      action: A2A_JOB_ACTIONS.OPEN,
+      agent_id: 7,
+      job_spec_hash: SPEC_HASH,
+      amount: '50000',
+      parties: { principal_agent_id: 7, counterparty_agent_id: 99 },
+    }, { jobs, escrows, disputes, ledger, recordBookRow, baseUrl: 'https://api.chit402.com' });
+    assert.equal(opened.ok, true);
+
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+    const funded = await handleA2aJobAction({
+      action: A2A_JOB_ACTIONS.FUND,
+      agent_id: 7,
+      job_id: opened.job.job_id,
+      task_id: 'task-a2a-pay-1',
+    }, { jobs, escrows, disputes, ledger, recordBookRow, baseUrl: 'https://api.chit402.com' });
+    assert.equal(funded.ok, false);
+    assert.equal(funded.code, 'settlement_proof_not_offered');
+    assert.equal(jobs.get(opened.job.job_id).status, A2A_JOB_STATUS.OPENED);
+    assert.equal(escrows.escrows.size, 0);
   });
 });

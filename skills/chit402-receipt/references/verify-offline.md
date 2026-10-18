@@ -66,7 +66,7 @@ for this link is parked, not shipped.
 
 ## What not to default to
 
-- **SP1 / `binding.in_proof`** — optional Tier-2; extra cost and latency.
+- **SP1 / `binding.in_proof`** — Tier-2 settlement proof add-on, not currently offered.
 - **HMAC shared secret** — treasury/auditor path; public verify uses ES256/JWS.
 
 ## Payer bind algorithm (Base)

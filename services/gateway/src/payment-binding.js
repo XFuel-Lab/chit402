@@ -20,6 +20,7 @@
  * guest activation.
  */
 import { keccak256, toUtf8Bytes, solidityPacked } from 'ethers';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /** Payment-rail discriminant — must match the Solidity `paymentRail` arg. */
 export const PAYMENT_RAIL = Object.freeze({ usdc: 1, tfuel: 2 });
@@ -177,16 +178,14 @@ function normHex32(h) {
  */
 export function finalizePaymentBindingForProof(binding, proofResult) {
   if (!binding) return null;
+  if (!settlementProofEnabled()) return { ...binding, in_proof: false };
   if (!proofResult) return { ...binding, in_proof: false };
 
   const pv = proofResult.publicValuesVersion ?? proofResult.public_values_version ?? null;
-  const abi = proofResult.aiPublicValuesAbi ?? proofResult.ai_public_values_abi ?? null;
   const payCommit = proofResult.paymentCommitment ?? proofResult.payment_commitment ?? null;
 
-  const v2Layout =
-    pv === 2 ||
-    pv === '2' ||
-    (abi != null && String(abi).replace(/^0x/i, '').length > 0);
+  // Only an explicit v2 public-values version counts. A non-empty ABI string alone does not.
+  const v2Layout = pv === 2 || pv === '2';
 
   if (!v2Layout) return { ...binding, in_proof: false };
 
@@ -195,9 +194,10 @@ export function finalizePaymentBindingForProof(binding, proofResult) {
     return { ...binding, in_proof: false };
   }
 
+  // Fail closed: the prover must echo a non-zero commitment equal to ours.
   const expected = normHex32(binding.commitment);
   const got = normHex32(payCommit);
-  if (got && expected && got !== expected && got !== ZERO32_NORM) {
+  if (!got || !expected || got === ZERO32_NORM || got !== expected) {
     return { ...binding, in_proof: false };
   }
 

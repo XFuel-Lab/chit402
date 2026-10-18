@@ -400,7 +400,9 @@ test('the rate card publishes our price only, because it does not track cost', (
   assert.match(p.note, /max_tokens/);
 });
 
-test('every published price names the floor and the Tier-2 surcharge', () => {
+test('every published price names the floor and the Tier-2 surcharge', (t) => {
+  process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  t.after(() => { delete process.env.SETTLEMENT_PROOF_ENABLED; });
   for (const costPlus of [true, false]) {
     const p = publishedPrice('akash/zai-org/GLM-5.2', GLM_RATE, { costPlus });
     assert.equal(p.min_charge_usd, 0.002, `costPlus=${costPlus}`);

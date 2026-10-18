@@ -35,6 +35,7 @@ import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 import { canonicalPaidRoute } from './paid-route.js';
 import { readHeadBlock } from './x402-chain.js';
 import { capGate } from './issuance-cap.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /**
  * Server-side x402 handshake glue for POST /task-request.
@@ -236,6 +237,8 @@ export async function quoteResolved(body = {}, cfg = config.x402, opts = {}) {
  * on a cheap call is a $0.050 cost against a few cents of fee.
  */
 export function wantsSettlementProof(body = {}) {
+  // Add-on off: never priced (+$0.10), even if a body slipped past the refusal.
+  if (!settlementProofEnabled()) return false;
   if (parsePrivacyProduct(body) === PRIVACY_PRODUCT_ATTEST) return true;
   const requested = normalizeRequestedTier(
     body?.proof_tier ?? body?.proofTier ?? body?.intent?.proofTier ?? body?.intent?.proof_tier ?? null,

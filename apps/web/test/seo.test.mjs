@@ -505,7 +505,8 @@ test('Products page surfaces three book-first seats', () => {
   assert.match(products, /name: 'Private Desk'/, 'Products includes Private Desk seat');
   assert.match(products, /cost \+ 1%|100 bps/, 'Products states Desk routing fee');
   assert.match(products, /name: 'Private \+ Attest'/, 'Products includes Private + Attest seat');
-  assert.match(products, /\$0\.10/, 'Products states Tier-2 add-on');
+  assert.match(products, /Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system\. Standard receipts at \$0\.002 are unaffected\./, 'Products carries the Tier-2 notice');
+  assert.doesNotMatch(products, /\$0\.10/, 'Products shows no Tier-2 price');
   assert.doesNotMatch(products, /\bOpenAI\b/i, 'Products must not name OpenAI');
   assert.match(pricing, /to="\/products"/, 'Pricing links to products');
 });

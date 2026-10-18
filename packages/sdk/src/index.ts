@@ -855,7 +855,7 @@ export class XFuelClient {
       subnet_id?: number;
       memo?: string;
       proof_system?: 'sp1' | 'zkgpt';
-      /** Raise assurance: `settlement` requests an on-chain SP1 proof (+$0.10). */
+      /** Assurance tier. The `settlement` add-on is coming soon. */
       proof_tier?: string;
       callback_url?: string;
       callback_secret?: string;

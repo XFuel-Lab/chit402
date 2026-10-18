@@ -1,7 +1,7 @@
 /**
  * Book Escrow Helper — state machine unit tests.
  */
-import { test, describe, beforeEach } from 'node:test';
+import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -47,9 +47,42 @@ function receiptFor(over = {}) {
 }
 
 describe('Book Escrow state machine', () => {
+  // Settlement-tier escrows need the add-on on; the off path is tested below.
   beforeEach(() => {
     resetBookEscrowStore();
     resetBookDisputeStore();
+    process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+  });
+  afterEach(() => {
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+  });
+
+  test('flag off: open with required.proof_tier settlement is refused; output_hash-only still opens', async () => {
+    delete process.env.SETTLEMENT_PROOF_ENABLED;
+    const store = new BookEscrowStore();
+    const disputes = new BookDisputeStore();
+    const { ledger } = ledgerWithEntry();
+    for (const tier of ['settlement', 'SETTLEMENT']) {
+      const refused = await handleEscrowAction({
+        action: ESCROW_ACTIONS.OPEN,
+        agent_id: 7,
+        task_id: 'task-escrow-1',
+        amount: '50000',
+        required: { output_hash: '0x' + 'cd'.repeat(32), proof_tier: tier },
+      }, { store, ledger, disputes, baseUrl: 'https://api.chit402.com' });
+      assert.equal(refused.ok, false);
+      assert.equal(refused.code, 'settlement_proof_not_offered');
+      assert.match(refused.reason, /Retry without proof_tier/);
+      assert.equal(store.escrows.size, 0);
+    }
+    const opened = await handleEscrowAction({
+      action: ESCROW_ACTIONS.OPEN,
+      agent_id: 7,
+      task_id: 'task-escrow-1',
+      amount: '50000',
+      required: { output_hash: '0x' + 'cd'.repeat(32) },
+    }, { store, ledger, disputes, baseUrl: 'https://api.chit402.com' });
+    assert.equal(opened.ok, true);
   });
 
   test('open requires task on book with required hash or tier', async () => {

@@ -9,6 +9,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+// Existing behavior is the flag-on path; flag-off is covered in settlement-proof-flag.test.mjs.
+process.env.SETTLEMENT_PROOF_ENABLED = 'true';
+
 import {
   proveAllowedForKey,
   settlementProofAllowed,

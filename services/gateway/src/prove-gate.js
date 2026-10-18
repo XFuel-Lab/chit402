@@ -22,6 +22,7 @@
  */
 
 import { normalizeRequestedTier } from './tier-policy.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 function parseKeys(csv) {
   return String(csv || '')
@@ -36,6 +37,8 @@ function parseKeys(csv) {
  * @returns {boolean}
  */
 export function proveAllowedForKey(apiKey) {
+  // Every proof this gateway requests is an SP1 settlement proof.
+  if (!settlementProofEnabled()) return false;
   const allow = parseKeys(process.env.PROVER_ALLOW_KEYS);
   const enabled = process.env.PROVER_ENABLED !== 'false';
 
@@ -156,6 +159,21 @@ export function proofAvailability(proverConfigured, { tier2 = null } = {}) {
   const enabled = process.env.PROVER_ENABLED !== 'false';
   const gated = !enabled || allow.length > 0;
   const reachable = _probe.reachable;
+
+  // Add-on off (SETTLEMENT_PROOF_ENABLED): never report the proof path as open.
+  if (!settlementProofEnabled()) {
+    return {
+      signed_receipts: 'always',
+      settlement_proof: 'unavailable',
+      prover_configured: !!proverConfigured,
+      prover_reachable: reachable,
+      prover_checked_at: _probe.at ? new Date(_probe.at).toISOString() : null,
+      allow_list_size: allow.length,
+      ...(tier2 ? { tier2 } : {}),
+      note: 'The Tier-2 settlement proof add-on is not currently offered. '
+        + 'Inference and signed receipts are unaffected.',
+    };
+  }
 
   // Only claim the proof path is open once something has actually answered.
   const settlement = !proverConfigured || reachable === false

@@ -1,6 +1,6 @@
 # ADR 0010 — Private Desk and Private + Attest
 
-Status: accepted (2026-09-21)  
+Status: superseded for Private + Attest (the settlement proof add-on is coming soon; 2026-10-18). Accepted 2026-09-21.  
 Related: [POSITIONING.md](../POSITIONING.md).
 
 ## Context
@@ -14,7 +14,7 @@ Two named SKUs on the live `/v1` door (and task meta on `/task-request`):
 | SKU | Wire `xfuel.privacy_product` | Price | Proof |
 |-----|------------------------------|-------|-------|
 | **Private Desk** | `private_desk` | cost + 1% (same `fee_bps` 100 door) | Tier-1 JWS only |
-| **Private + Attest** | `private_attest` | cost + 1% + **$0.10** Tier-2 (`tier2_proof` on quote/receipt) | Tier-2 SP1 required |
+| **Private + Attest** | `private_attest` | coming soon | Tier-2 SP1 required |
 
 Receipt fields:
 

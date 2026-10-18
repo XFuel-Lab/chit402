@@ -48,7 +48,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /prove-result      : settlement proof add-on (coming soon, not active).
 - GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
 - GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
@@ -172,7 +172,7 @@ const XFUEL_LLMS = `# XFuel Protocol
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : SP1 settlement proof when requested / above COGS gate.
+- GET  /prove-result      : settlement proof add-on (coming soon, not active).
 - GET  /health            : status, demo limits, floats. Token buckets with null
   addresses are post-TGE, not live.
 - GET  /stats             : public-safe usage.

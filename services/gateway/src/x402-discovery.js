@@ -969,7 +969,7 @@ export function buildX402Manifest(baseUrl = '') {
         description:
           'Signed spend receipt / x402 payment receipt for an M2M paid task — public verify_url (who paid which job). '
           + 'Cost-plus, quoted, receipted — pay USDC on Base or Solana (x402 exact scheme). '
-          + 'Returns task_id + verify_url; poll /task-status and /prove-result for SP1 proof when requested.',
+          + 'Returns task_id + verify_url; poll /task-status. The on-chain settlement proof add-on is coming soon.',
         accepts,
         input: TASK_REQUEST_INPUT_SCHEMA,
         outputSchema: TASK_REQUEST_OUTPUT_SCHEMA,
@@ -2493,6 +2493,7 @@ export function buildOpenApiSpec(baseUrl = '') {
           description:
             'Public chit402.tier2_in_proof_binding.v1 specimen describing Tier-2 SP1 payment-binding '
             + 'and settlement metadata — not zkML or Tier-3 verified inference. '
+            + 'Design reference only: the Tier-2 settlement proof add-on is not currently offered. '
             + 'See docs/product/tier2-in-proof-binding-smoke.md.',
           tags: ['Specimens'],
           responses: {

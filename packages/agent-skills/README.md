@@ -1,6 +1,6 @@
 # Chit402 Agent Skills
 
-Chit402 is the book. This agent spent Y on this job. You hold hub, model, and amount. Installable skills so agents can submit inference, read the possession-gated book, verify settlement proofs, pay USDC via x402, and coordinate A2A / swarms.
+Chit402 is the book. This agent spent Y on this job. You hold hub, model, and amount. Installable skills so agents can submit inference, read the possession-gated book, verify receipts, pay USDC via x402, and coordinate A2A / swarms.
 
 Start here: [AGENT_PLAYBOOK.md](./AGENT_PLAYBOOK.md).  
 Protocol map: [AGENTS.md](../../AGENTS.md).  
@@ -13,7 +13,7 @@ Chat completions drop-in: point `baseURL` at `${XFUEL_API_URL}/v1` — see [docs
 | Skill | Purpose |
 |-------|---------|
 | `xfuel-submit-inference` | Submit task and wait for receipt / proof |
-| `xfuel-verify-proof` | Fetch and validate SP1 settlement proof |
+| `xfuel-verify-proof` | Validate a historical SP1 settlement proof (add-on not currently offered) |
 | `xfuel-a2a-bid` | Bid / delegate / settle 1:1 |
 | `xfuel-swarm-coordinate` | Swarm lifecycle (up to 18) |
 | `xfuel-route-compute` | Router / provider availability |

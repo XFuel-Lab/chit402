@@ -1039,7 +1039,7 @@ export default function Book() {
                   </summary>
                   <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
                     <label className="book-field">
-                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above</span>
+                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above. Tier-2 settlement proofs are temporarily unavailable; leave empty.</span>
                       <input
                         className="input"
                         type="text"
@@ -1144,8 +1144,8 @@ export default function Book() {
             <p>
               <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
               that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
-              It does not prove the model computed the answer. SP1 is on demand at $0.10. That proof
-              covers settlement, not correctness.
+              It does not prove the model computed the answer. The settlement proof add-on is coming
+              soon, and it covers settlement, not correctness.
             </p>
             <p>
               <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the

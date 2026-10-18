@@ -76,6 +76,7 @@ import {
   publicV11Receipt,
   renderV11ReceiptHtml,
 } from './v11-seal.js';
+import { settlementProofEnabled } from './settlement-proof-flag.js';
 
 /** Legacy site-wide OG asset (marketing pages only — receipt HTML uses per-receipt /og.png). */
 export const CHIT402_OG_IMAGE_URL = 'https://www.chit402.com/og-image.png';
@@ -162,13 +163,13 @@ export const USDC_ATOMIC_DECIMALS = 6;
 
 const PROOF_SCOPE_NOTE =
   'The SP1 proof attests settlement metadata (correct fee split, payment binding) ' +
-  'and a commitment to the output hash — anchored on-chain with a single-use ' +
-  'nullifier. It does NOT attest that the provider computed the model correctly ' +
+  'and a commitment to the output hash. It has not been verified on-chain. ' +
+  'It does NOT attest that the provider computed the model correctly ' +
   '(that is Tier-2 proof-of-inference, roadmap).';
 
 const PROOF_SCOPE_NOTE_NO_BINDING =
-  'The SP1 proof attests settlement metadata and a commitment to the output hash — ' +
-  'anchored on-chain with a single-use nullifier. It does not include a payment-binding ' +
+  'The SP1 proof attests settlement metadata and a commitment to the output hash. ' +
+  'It has not been verified on-chain. It does not include a payment-binding ' +
   'commitment. It does NOT attest that the provider computed the model correctly.';
 
 /** Normalize task timestamps to Unix seconds (JSON + JWS `iat`). */
@@ -637,10 +638,9 @@ function paymentBindingInScope(task) {
 
 /** Machine-readable proof scope flags (JSON). Prose lives on HTML only. Unsigned. */
 export function proofScopeOf(task, vi, outcome) {
-  const tier = vi?.tier || proofTierOf(task);
+  const tier = settlementTierGate(vi?.tier || proofTierOf(task), task);
   const hasProof = !!task.sp1Proof?.proof;
   const nullifier = task.sp1Proof?.nullifier || null;
-  const settlementProof = hasSettlementProof(task);
   return {
     system: task.intent?.proofSystem || 'sp1',
     tier,
@@ -648,14 +648,14 @@ export function proofScopeOf(task, vi, outcome) {
     outcome,
     has_proof: hasProof,
     nullifier,
-    nullifier_enforced: !!(nullifier && settlementProof),
+    nullifier_enforced: !!(nullifier && verifiedSettlementProof(task)),
     proving_time_ms: task.sp1Proof?.provingTimeMs || null,
     attestation_scope: {
       settlement_metadata: hasProof || tier === 'settlement',
       output_hash_commitment: true,
       payment_binding: paymentBindingInScope(task),
       model_computation: tier === 'inference',
-      on_chain_nullifier: !!(nullifier && settlementProof),
+      on_chain_nullifier: !!(nullifier && verifiedSettlementProof(task)),
     },
   };
 }
@@ -933,10 +933,20 @@ function sealReceiptExplorer(receipt) {
  * reported separately via `binding.covers`.
  */
 export function proofTierOf(task) {
-  if (task.verifiedInference?.tier) return task.verifiedInference.tier;
+  if (task.verifiedInference?.tier) return settlementTierGate(task.verifiedInference.tier, task);
   if (task.verifiedInference?.mechanism) return 'inference';
-  if (task.sp1Proof?.proof && !task.sp1Proof?.error) return 'settlement';
+  if (verifiedSettlementProof(task)) return 'settlement';
   return 'signed';
+}
+
+/**
+ * 'settlement' is reported only for a verified settlement proof. Whatever picked
+ * it (the tier engine's value floor, its Tier-3 fallback, a stored tier), without
+ * `verifiedSettlementProof` the tier degrades to 'signed'. Other tiers pass through.
+ */
+export function settlementTierGate(tier, task) {
+  if (tier === 'settlement' && !verifiedSettlementProof(task)) return 'signed';
+  return tier;
 }
 
 /**
@@ -951,11 +961,14 @@ export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
   if (!viPolicy || !viPolicy.enabled) return null;
 
   const sel = selectTier(task, viPolicy);
+  // The engine may pick 'settlement' from the value floor or as the Tier-3
+  // fallback without any proof. Only a verified settlement proof keeps it.
+  const unproven = sel.tier === 'settlement' && !verifiedSettlementProof(task);
   const block = {
-    tier: sel.tier,
+    tier: unproven ? 'signed' : sel.tier,
     mechanism: sel.mechanism,
-    reason: sel.reason,
-    degraded: sel.degraded,
+    reason: unproven ? 'settlement proof not verified — signed' : sel.reason,
+    degraded: unproven ? true : sel.degraded,
     attestation: null,
     spot_check: null,
   };
@@ -1000,6 +1013,18 @@ export function verifiedInferenceOf(task, viPolicy, ctx = {}) {
 export function hasSettlementProof(task) {
   const p = task?.sp1Proof;
   return !!(p && p.proof && !p.error && !p.skipped);
+}
+
+/**
+ * A settlement proof counts only when it is verified: the add-on is on
+ * (SETTLEMENT_PROOF_ENABLED), proof bytes are present without error or skip,
+ * and the payment binding came back in_proof (commitment matched, fail closed).
+ * Proof bytes alone are not enough for tier 'settlement' or nullifier_enforced.
+ */
+export function verifiedSettlementProof(task) {
+  if (!settlementProofEnabled()) return false;
+  if (!hasSettlementProof(task)) return false;
+  return task.sp1Proof?.paymentBinding?.in_proof === true;
 }
 
 /** True when this task inherits settlement from a parent (child handoff). No SP1 run. */
@@ -2235,8 +2260,11 @@ export function privacyOf(task) {
   const notes =
     mode === 'vendor_blind'
       ? (attest === 'tier2'
-        ? 'Private + Attest: vendor-blind routing plus mandatory Tier-2 SP1 settlement proof (payment_binding.in_proof when live). '
-          + 'Third parties can verify spend facts without prompts or org topology. Not prompt-confidential; not trustless ZK for content.'
+        ? (settlementProofEnabled()
+          ? 'Private + Attest: vendor-blind routing plus mandatory Tier-2 SP1 settlement proof (payment_binding.in_proof when live). '
+            + 'Third parties can verify spend facts without prompts or org topology. Not prompt-confidential; not trustless ZK for content.'
+          : 'Private + Attest: vendor-blind routing. The Tier-2 settlement proof add-on is not currently offered. '
+            + 'Not prompt-confidential; not trustless ZK for content.')
         : 'Private Desk: buyer paid Chit; provider saw gateway-pooled credentials, not the end-customer identity. '
           + 'Tier-1 signed receipt only — gateway-trusted, not trustless. Does not encrypt prompts.')
       : mode === 'content_tee'
@@ -3255,7 +3283,9 @@ function proofWhyMissing(receipt) {
   if (pr?.has_proof) return '';
   const cogs = formatUsdc(receipt.provider_cogs?.actual);
   const bits = [
-    `On-chain SP1 proofs are opt-in ($${(Number(tier2ProofUnits()) / 1_000_000).toFixed(2)}) or automatic above $2.00 of provider cost.`,
+    settlementProofEnabled()
+      ? `On-chain SP1 proofs are opt-in ($${(Number(tier2ProofUnits()) / 1_000_000).toFixed(2)}) or automatic above $2.00 of provider cost.`
+      : 'The on-chain settlement proof add-on is coming soon.',
     cogs ? `This call cost ${cogs} to serve.` : null,
     'The signed receipt above does not depend on the prover.',
   ].filter(Boolean);

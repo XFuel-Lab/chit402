@@ -68,11 +68,8 @@ export default function Pricing() {
             allowlist).
           </p>
           <p style={styles.clarityBody}>
-            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private + Attest</strong> — Desk plus
-            mandatory Tier-2 SP1 at <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>+$0.10</strong>{' '}
-            (<code>tier2_proof</code> itemized on the receipt). Request with{' '}
-            <code>xfuel.privacy_product: private_attest</code>. Proving may be allowlist-gated in
-            production — the API fails closed if Tier-2 is unavailable.
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private + Attest</strong>:{' '}
+            Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
           </p>
         </section>
 
@@ -118,16 +115,14 @@ export default function Pricing() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Value-add (optional)</h2>
           <ul style={styles.list}>
             <li>
-              <strong style={{ color: '#d0d0dc' }}>Tier-2 SP1 proof</strong> — $0.10 per proof (on
-              demand; required for Private + Attest)
+              Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
             </li>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> — cost + 1% vendor-blind routing
               (allowlist / explicit product; not the default public door)
             </li>
             <li>
-              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong> — Desk + $0.10 Tier-2
-              (fail closed if proving unavailable)
+              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
             </li>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available
