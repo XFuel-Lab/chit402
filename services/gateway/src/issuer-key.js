@@ -21,6 +21,9 @@
 import crypto from 'crypto';
 import { peekIssuerSigner, resetIssuerSigner } from './issuer-signer-state.js';
 import { lowS } from './ecdsa-der.js';
+import { isCanonicalCompactEs256 } from './jws-canonical.js';
+
+export { isCanonicalCompactEs256 };
 
 let _privateKey = null;
 let _publicKeyJwk = null;
@@ -348,22 +351,6 @@ export async function signJwsAsync(payload, {
  * @param {object} jwk - JWK with kty: 'EC', crv: 'P-256', x, y
  * @returns {{ valid: boolean, payload?: object, header?: object, reason?: string }}
  */
-/**
- * Canonical compact ES256 JWS: three segments in the base64url alphabet with
- * no padding, each re-encoding to the same text (zero trailing bits), and a
- * 64-byte raw R||S signature. Same rule as chit402-verify.
- */
-export function isCanonicalCompactEs256(jws) {
-  if (typeof jws !== 'string') return false;
-  const parts = jws.split('.');
-  if (parts.length !== 3) return false;
-  for (const part of parts) {
-    if (!/^[A-Za-z0-9_-]+$/.test(part)) return false;
-    if (Buffer.from(part, 'base64url').toString('base64url') !== part) return false;
-  }
-  return Buffer.from(parts[2], 'base64url').length === 64;
-}
-
 export function verifyJws(jws, jwk) {
   if (!jws || typeof jws !== 'string') {
     return { valid: false, reason: 'invalid_jws' };

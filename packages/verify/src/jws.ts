@@ -131,8 +131,15 @@ export function isCanonicalBase64url(segment: string): boolean {
 }
 
 /** Three canonical segments and a 64-byte (raw R||S) signature. */
+export const MAX_COMPACT_JWS_LENGTH = 65536;
+
+/** A detached raw ES256 signature: canonical base64url of exactly 64 bytes. */
+export function isCanonicalEs256Signature(value: unknown): boolean {
+  return typeof value === 'string' && isCanonicalBase64url(value) && Buffer.from(value, 'base64url').length === 64;
+}
+
 export function isCanonicalCompactEs256(jws: string): boolean {
-  if (typeof jws !== 'string') return false;
+  if (typeof jws !== 'string' || jws.length > MAX_COMPACT_JWS_LENGTH) return false;
   const parts = jws.split('.');
   if (parts.length !== 3 || !parts.every(isCanonicalBase64url)) return false;
   return Buffer.from(parts[2], 'base64url').length === 64;
