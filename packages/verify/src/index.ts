@@ -2320,7 +2320,9 @@ export {
   extractMemos,
   parseAnchorMemo,
   leafHash,
+  // Reference text for a two-chain head. Show result.proves, not this.
   ANCHOR_PROVES,
+  anchorProves,
   ANCHOR_DOES_NOT_PROVE,
   SOLANA_GENESIS,
   BASE_MAINNET_CHAIN_ID,
