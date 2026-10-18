@@ -72,8 +72,11 @@ const ANCHOR_PROVES_WALLETS = 'Those wallets are on the issuer anchor-wallet lis
 
 /**
  * Every statement a fully anchored (Solana and Base) head can support.
- * A result's `proves` uses {@link anchorProves}, which names only the chains
- * that were checked and passed.
+ * Reference text only: it is not what any particular result proves. A
+ * consumer that shows what a check proved must use the result's own
+ * `proves` array (built by {@link anchorProves}), which names only the
+ * chains that were checked and passed. Showing this list for a Base-only
+ * or partial result overstates it.
  */
 export const ANCHOR_PROVES = [
   ANCHOR_PROVES_LEAF,

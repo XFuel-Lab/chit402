@@ -254,6 +254,45 @@ describe('legacy transfer mint check', () => {
     assert.equal(result.valid, false);
   });
 
+  function multisigTx(multisig) {
+    const tx = legacyTx();
+    const info = tx.transaction.message.instructions[0].parsed.info;
+    delete info.authority;
+    info.multisigAuthority = multisig;
+    info.signers = ['HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH', '7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2'];
+    return tx;
+  }
+
+  test('a legacy transfer whose multisig authority is the payer passes', async () => {
+    const tx = multisigTx(SMOKE_PAYER);
+    const parsed = extractUsdcTransfersFromTx(tx, USDC);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].authority, SMOKE_PAYER);
+    const result = await run(tx);
+    assert.equal(result.valid, true, result.reason);
+  });
+
+  test('a legacy transfer whose multisig authority is another account is not the payer', async () => {
+    const other = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    const tx = multisigTx(other);
+    // The payer is not a signer and owns no USDC account, so no fallback applies.
+    tx.meta.preTokenBalances[0].owner = other;
+    tx.meta.postTokenBalances[0].owner = other;
+    const result = await run(tx);
+    assert.equal(result.checked, true);
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /^payer_mismatch: authority HN7c/);
+  });
+
+  test('a multisig signer listed in signers does not stand in for the multisig', async () => {
+    const tx = multisigTx('HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH');
+    tx.transaction.message.instructions[0].parsed.info.signers = [SMOKE_PAYER];
+    tx.meta.preTokenBalances[0].owner = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    tx.meta.postTokenBalances[0].owner = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH';
+    const result = await run(tx);
+    assert.equal(result.valid, false);
+  });
+
   test('a fake-mint legacy transfer with a USDC credit elsewhere does not satisfy the payer check', async () => {
     // Payee is credited USDC by someone else; the payer only moved a fake token.
     const tx = legacyTx({ srcMint: FAKE_MINT, dstMint: FAKE_MINT });
