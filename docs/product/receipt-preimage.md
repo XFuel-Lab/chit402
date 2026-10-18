@@ -4,7 +4,7 @@ Some hashes on a receipt can be recomputed without asking us what bytes we hashe
 
 ## Whole canonical object
 
-`GET /refusal/:id/preimage` returns the exact UTF-8 bytes stored at issuance. Those bytes are JCS (RFC 8785): object keys sorted by UTF-16 code unit, no insignificant whitespace, no trailing newline. SHA-256 of the body is `payload_hash` inside the signed JWS. The response sets `X-Chit-Hash-Alg: sha256`, `X-Chit-Payload-Hash` to that digest, and `X-Chit-Canonicalization: jcs-rfc8785`. `?meta=1` returns the algorithm and the hash without the body.
+`GET /refusal/:id/preimage` returns the exact UTF-8 bytes stored at issuance. Through payload v10 (and refusal v1) those bytes are chit402-jcs-v1, our own canonicalization: object keys sorted by UTF-16 code unit, no insignificant whitespace, no trailing newline, and every code unit U+0000 through U+001F written as lowercase `\u00xx`, tab and newline included. That last rule differs from RFC 8785, which writes `\t`, `\n`, `\b`, `\f` and `\r`, so chit402-jcs-v1 is not RFC 8785. Payload v11 and refusal v2 use RFC 8785 (see [issuer-root.md](issuer-root.md)). SHA-256 of the body is `payload_hash` inside the signed JWS. The response sets `X-Chit-Hash-Alg: sha256`, `X-Chit-Payload-Hash` to that digest, and `X-Chit-Canonicalization: jcs-rfc8785`. That header value is a fixed legacy label and does not mean the v10 bytes are RFC 8785; the payload version decides the canonicalizer. `?meta=1` returns the algorithm and the hash without the body.
 
 `GET /receipt/:id/preimage` returns the unsigned public shell, not that canonical object. Nothing committed hashes to the shell. `payload_hash` is over the owner-held bytes. The body stays the shell bytes. The response sets `X-Chit-Commits-To: null` and `X-Chit-Preimage-Note`.
 
@@ -40,7 +40,7 @@ When a saved receipt has that block, `xfuel-verify receipt.json` hashes each pre
 | SHA-256 | Lowercase hex. A `0x` prefix is present only when the published hash uses one. |
 | keccak256 | `keccak256` of the `preimage_hex` bytes. Those bytes are `abi.encodePacked` as named in the field's `rule`. |
 | Merkle | RFC 6962, same as the receipt tree. Leaf = SHA-256(`0x00` ‖ body). Node = SHA-256(`0x01` ‖ left ‖ right). A trailing odd node is promoted. `preimage_utf8` on a tree leaf is the body. The domain byte is added before hashing. |
-| JCS | Issuer-history entry hashes, the sealed history document, and the whole receipt or refusal canonical object use JCS (RFC 8785). Per-field receipt hashes keep the encoding they were signed with. |
+| JCS | Issuer-history entry hashes, the sealed history document, and the whole receipt or refusal canonical object through payload v10 use chit402-jcs-v1 (our own canonicalization, not RFC 8785; see above). Payload v11 and refusal v2 use RFC 8785. Per-field receipt hashes keep the encoding they were signed with. |
 
 ## Recomputable
 
