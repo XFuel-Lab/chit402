@@ -628,8 +628,60 @@ export function sealedSnapshotForPin(
   // version is still a mismatch.
   if (!(Number(current?.version) > pin.version) || !(Number(current?.seq) > pin.seq)) return null;
   if (!verifyIssuerHistoryDocument(current, { jwks, trustedKids }).valid) return null;
-  if (!historyPrefixExtends(loaded.document, current)) return null;
+  if (!sealedSuccessorExtends(loaded.document, current, { jwks, trustedKids })) return null;
   return loaded.document;
+}
+
+/**
+ * Does `current` continue the sealed snapshot `pinned`?
+ *
+ * When a rewrite from `pinned` to the bundled snapshot is recorded, the
+ * bundled snapshot is the only continuation: `current` must be it, or must
+ * extend it by appended entries, and the bundled snapshot must verify. A
+ * history that extends `pinned` directly but forks away from the bundled
+ * snapshot is refused, the same rule the CLI applies. With no recorded
+ * rewrite, `current` must extend `pinned` entry by entry. `current`'s own
+ * signature is checked by the caller, not here. Exported for tests.
+ */
+export function sealedSuccessorExtends(
+  pinned: IssuerHistoryDocument,
+  current: IssuerHistoryDocument,
+  trust: { jwks?: HistoryJwks; trustedKids?: readonly string[] },
+): boolean {
+  const rewritten = GRANDFATHERED_HISTORY_REWRITES.some((row) => row.from === pinned.head_hash);
+  if (!rewritten) return historyPrefixExtends(pinned, current);
+  let bundled: IssuerHistoryDocument;
+  try {
+    bundled = loadBundledIssuerHistory().document;
+  } catch {
+    return false;
+  }
+  if (!grandfatheredRewrite(pinned, bundled)) return false;
+  if (!verifyIssuerHistoryDocument(bundled, trust).valid) return false;
+  if (current.head_hash === bundled.head_hash) return true;
+  if (!laterThanBundled(bundled, current)) return false;
+  return entryPrefixExtends(bundled, current);
+}
+
+/**
+ * A history that is not the bundled snapshot must carry a strictly higher
+ * version and seq. Two different documents with the bundled label would be
+ * two different histories under one version number.
+ */
+export function laterThanBundled(bundled: IssuerHistoryDocument, current: IssuerHistoryDocument): boolean {
+  if (current?.head_hash === bundled?.head_hash) return true;
+  return Number(current?.version) > Number(bundled?.version) && Number(current?.seq) > Number(bundled?.seq);
+}
+
+/** Entry-by-entry prefix only. No recorded rewrite applies. */
+function entryPrefixExtends(base: IssuerHistoryDocument, next: IssuerHistoryDocument): boolean {
+  const left = base?.entries || [];
+  const right = next?.entries || [];
+  if (!left.length || right.length < left.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (!left[i]?.entry_hash || right[i]?.entry_hash !== left[i]?.entry_hash) return false;
+  }
+  return true;
 }
 
 function rawPinReason(
@@ -760,7 +812,7 @@ export async function resolveIssuerHistory({
     }
     // A supplied file must extend the bundled chain. An older or forked file
     // could hide a later revocation (truncation rollback).
-    if (!historyPrefixExtends(bundled.document, doc)) {
+    if (!historyPrefixExtends(bundled.document, doc) || !laterThanBundled(bundled.document, doc)) {
       return resolvedFrom('file', doc, fileBytes, null, true, 'issuer_history_not_extension');
     }
     return resolvedFrom('file', doc, fileBytes, null, false, null);
@@ -783,7 +835,7 @@ export async function resolveIssuerHistory({
           const bytes = await res.text();
           const doc = JSON.parse(bytes) as IssuerHistoryDocument;
           const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
-          if (signed.valid && historyPrefixExtends(bundled.document, doc)) {
+          if (signed.valid && historyPrefixExtends(bundled.document, doc) && laterThanBundled(bundled.document, doc)) {
             return resolvedFrom('live', doc, bytes, null, false, null);
           }
         }
