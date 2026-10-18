@@ -13,13 +13,17 @@
  * record (tracker or committed pin), the state is 'issuer_record' ("matches
  * issuer record, not checked on-chain"), which counts as couldn't check.
  */
-import {
-  leafHash,
-  normalizeRoot,
-  verifyMerkleInclusion,
-} from '../../../packages/verify/dist/anchor-witness.js';
 import { verifyJwsWithJwks, getJwks } from './issuer-key.js';
-import { getReceiptMerkleTree, closedEpochAnchorPair, readReceiptLogPin, TREE_HEAD_JWT_TYP } from './receipt-merkle.js';
+import {
+  getReceiptMerkleTree, closedEpochAnchorPair, readReceiptLogPin, TREE_HEAD_JWT_TYP,
+  leafHash, verifyInclusion as verifyMerkleInclusion,
+} from './receipt-merkle.js';
+
+// Same as normalizeRoot in @xfuel/verify anchor-witness (no prebuilt dist needed).
+function normalizeRoot(root) {
+  const hex = String(root || '').replace(/^0x/, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hex) ? hex : null;
+}
 
 export const LOG_CHECKED = 'checked';
 export const LOG_COULDNT_CHECK = 'couldnt_check';
