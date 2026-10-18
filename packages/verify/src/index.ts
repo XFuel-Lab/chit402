@@ -1642,6 +1642,19 @@ const SIGNED_PAYMENT_ECONOMIC = [
   'protocol_fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
 ] as const;
 
+const EVM_ADDRESS_EXACT = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Exact comparison, except two EVM hex addresses compare without case.
+ * No Unicode folding: base58 and other strings are case-sensitive.
+ */
+function samePartyAddress(outer: unknown, signed: string): boolean {
+  if (typeof outer !== 'string') return false;
+  if (outer === signed) return true;
+  return EVM_ADDRESS_EXACT.test(outer) && EVM_ADDRESS_EXACT.test(signed)
+    && outer.toLowerCase() === signed.toLowerCase();
+}
+
 function sameCanonical(a: unknown, b: unknown): boolean {
   if (a === undefined || b === undefined) return a === b;
   try {
@@ -1699,7 +1712,7 @@ function signedReceiptBindingErrors(
     }
   }
   // Outer payTo / payer on a payment (foreign payouts) must name the signed
-  // payee / payer. EVM addresses compare without case.
+  // payee / payer. Exact, except 0x-hex EVM addresses compare without case.
   if (hasOuterPayment) {
     const outer = outerPayment as Record<string, unknown>;
     const signedPay = (claims.payment && typeof claims.payment === 'object' ? claims.payment : {}) as Record<string, unknown>;
@@ -1714,7 +1727,7 @@ function signedReceiptBindingErrors(
       const signedValue = candidates.find((c) => typeof c === 'string' && c.length > 0) as string | undefined;
       if (signedValue === undefined) {
         errs.push(`payment.${key} is not covered by the issuer signature`);
-      } else if (typeof value !== 'string' || value.toLowerCase() !== signedValue.toLowerCase()) {
+      } else if (!samePartyAddress(value, signedValue)) {
         errs.push(`payment.${key} does not match the signed value`);
       }
     }

@@ -422,3 +422,23 @@ test('public attestation parser refuses crit and b64 headers (exact header keys)
     assert.equal(parsed.ok, false, JSON.stringify(extra));
   }
 });
+
+test('payTo/payer compare exactly except 0x-hex EVM addresses', async () => {
+  const SOL = '8ef3GtYNuQ6P2ANxLMPUXTAo9BhfJKwq3dZcRk1mVpA2';
+  const flip = (s, i) => s.slice(0, i) + (s[i] === s[i].toLowerCase() ? s[i].toUpperCase() : s[i].toLowerCase()) + s.slice(i + 1);
+  const cases = [
+    ['solana payTo case flip', { payTo: flip(SOL, 1) }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'failed'],
+    ['solana payer case flip', { payer: flip(SOL, 5) }, { payer: SOL }, 'failed'],
+    ['solana exact', { payTo: SOL, payer: PAYER }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'verified'],
+    ['kelvin sign K', { payTo: SOL.replace('K', '\u212A') }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'failed'],
+    ['0X prefix', { payTo: '0X' + PAYEE.slice(2) }, {}, 'failed'],
+    ['non-address case', { payer: 'Alice-Wallet' }, { payer: 'alice-wallet' }, 'failed'],
+    ['evm mixed case', { payTo: '0x' + PAYEE.slice(2).toUpperCase() }, {}, 'verified'],
+  ];
+  for (const [name, outer, signed, want] of cases) {
+    const claims = { ...goodClaims, payment: { ...payment, payee: PAYEE }, payee: PAYEE, payer: PAYER, ...signed };
+    const r = receiptWith(claims, 'chit402-receipt+jwt', { payment: { ...payment, payee: claims.payment.payee, ...outer } });
+    const res = await verifyReceipt(r, localOpts);
+    assert.equal(res.overall, want, `${name}: ${res.errors.join('; ')}`);
+  }
+});
