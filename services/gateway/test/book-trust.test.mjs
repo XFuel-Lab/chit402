@@ -312,7 +312,7 @@ describe('in_proof / nullifier Path', () => {
     assert.equal('binding' in receipt, false);
   });
 
-  test('receipt.proof.tier is settlement when has_proof is true', async () => {
+  test('receipt.proof.tier is signed when proof bytes are not a verified proof', async () => {
     const task = {
       taskId: 'tier-1',
       status: 'completed',
@@ -326,8 +326,10 @@ describe('in_proof / nullifier Path', () => {
     };
 
     const receipt = await buildReceipt(task, {});
-    assert.equal(receipt.proof.tier, 'settlement');
+    // Proof bytes alone, with no in_proof binding, are not tier settlement.
+    assert.equal(receipt.proof.tier, 'signed');
     assert.equal(receipt.proof.has_proof, true);
+    assert.equal(receipt.proof.nullifier_enforced, false);
   });
 
   test('receipt.proof.tier is signed when no proof', async () => {
