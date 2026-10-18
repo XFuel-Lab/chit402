@@ -11,6 +11,7 @@
  * See docs/specs/RECEIPT_V2_SEMANTICS.md for the verification algorithm.
  */
 
+import { jcsCanonicalize } from './jcs.js';
 import { JsonRpcProvider, Contract, keccak256, toUtf8Bytes } from 'ethers';
 import { leafHash, verifyMerkleInclusion, type InclusionStep } from './anchor-witness.js';
 import { boundRowHash } from './row-hash.js';
@@ -67,6 +68,7 @@ import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } f
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   DEFAULT_TRUSTED_JWKS_HOSTS,
   KEY_UNTRUSTED,
@@ -767,6 +769,12 @@ function jwksCandidates(jwks: Jwks | undefined, kid: string | undefined): Es256J
  *
  * An embedded key that merely verifies the bytes is `key untrusted`.
  */
+function receiptTypAccepted(jws: string): boolean {
+  const header = readJwsHeader(jws) as { typ?: unknown } | null;
+  const typ = header?.typ === undefined ? null : header.typ;
+  return (ISSUER_JWS_TYP.receipt as readonly unknown[]).includes(typ);
+}
+
 export function verifyIssuerSignatureWithJwks(
   receipt: XFuelReceipt,
   jwks?: Jwks,
@@ -784,9 +792,14 @@ export function verifyIssuerSignatureWithJwks(
   const pinned = !!(embedded && isPinnedTrustedJwk(embedded, trustedKids));
 
   if (sig.jws) {
+    // The typ is checked before any key lookup: a JWS of another document
+    // type is never a receipt signature, whatever key signed it.
+    if (!receiptTypAccepted(sig.jws)) {
+      return { checked: true, valid: false, key_trusted: false, kid, reason: 'typ_mismatch' };
+    }
     const fromJwks = jwksCandidates(jwks, kid);
     for (const jwk of fromJwks) {
-      const jwsResult = verifyIssuerJws(sig.jws, jwk);
+      const jwsResult = verifyIssuerJws(sig.jws, jwk, { expectTyp: ISSUER_JWS_TYP.receipt });
       if (jwsResult.valid) {
         return {
           checked: true,
@@ -800,7 +813,7 @@ export function verifyIssuerSignatureWithJwks(
     }
 
     if (pinned && embedded) {
-      const pinResult = verifyIssuerJws(sig.jws, embedded);
+      const pinResult = verifyIssuerJws(sig.jws, embedded, { expectTyp: ISSUER_JWS_TYP.receipt });
       if (pinResult.valid) {
         return {
           checked: true,
@@ -820,7 +833,7 @@ export function verifyIssuerSignatureWithJwks(
       };
     }
 
-    if (embedded && verifyIssuerJws(sig.jws, embedded).valid) {
+    if (embedded && verifyIssuerJws(sig.jws, embedded, { expectTyp: ISSUER_JWS_TYP.receipt }).valid) {
       return {
         checked: true,
         valid: false,
@@ -845,7 +858,7 @@ export function verifyIssuerSignatureWithJwks(
       valid: false,
       key_trusted: fromJwks.length > 0 || pinned,
       kid,
-      reason: 'signature_invalid',
+      reason: receiptTypAccepted(sig.jws) ? 'signature_invalid' : 'typ_mismatch',
     };
   }
 
@@ -1614,6 +1627,78 @@ export async function verifyReceiptUpToV10(
   return verifyReceiptUpToV10Impl(receipt, options, verifyReceipt);
 }
 
+/** Signed schemas of issuer documents that are never payment receipts. */
+const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|public_receipt)\b/;
+
+/**
+ * Economic payment fields that, when on the outer receipt, are always in the
+ * signed payment of issued receipts. `settled_amount` is not listed: older
+ * payload versions show it on the outer receipt without signing it.
+ */
+const SIGNED_PAYMENT_ECONOMIC = [
+  'rail', 'ref', 'asset', 'payee', 'gross_amount', 'net_amount', 'fee_amount',
+  'protocol_fee_bps', 'platform_fee', 'platform_fee_bps', 'accounting',
+] as const;
+
+function sameCanonical(a: unknown, b: unknown): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  try {
+    return jcsCanonicalize(a) === jcsCanonicalize(b);
+  } catch {
+    return false;
+  }
+}
+
+function signedReceiptBindingErrors(
+  receipt: XFuelReceipt,
+  claims: Record<string, unknown> | undefined,
+): string[] {
+  if (!claims || typeof claims !== 'object' || Array.isArray(claims)) {
+    return ['signed payload is not a receipt'];
+  }
+  const schema = typeof claims.schema === 'string' ? claims.schema : null;
+  if (schema && NON_RECEIPT_SIGNED_SCHEMA.test(schema)) {
+    return [`signed payload is not a receipt (schema ${schema})`];
+  }
+  const errs: string[] = [];
+  const outerTask = (receipt as { task_id?: unknown }).task_id;
+  if (typeof claims.task_id !== 'string' || !claims.task_id) {
+    errs.push('signed payload has no task_id');
+  } else if (claims.task_id !== outerTask) {
+    errs.push('signed task_id does not match receipt');
+  }
+  const outerPayment = (receipt as { payment?: unknown }).payment;
+  const hasOuterPayment = !!outerPayment && typeof outerPayment === 'object'
+    && Object.keys(outerPayment as object).length > 0;
+  if (hasOuterPayment) {
+    const signedPayment = claims.payment;
+    if (signedPayment == null || typeof signedPayment !== 'object' || Array.isArray(signedPayment)) {
+      errs.push('payment is not covered by the issuer signature');
+    } else {
+      const signed = signedPayment as Record<string, unknown>;
+      const outer = outerPayment as Record<string, unknown>;
+      if (Object.keys(signed).length === 0) {
+        errs.push('payment is not covered by the issuer signature');
+      }
+      // Economic fields on the outer payment must be signed with an equal value.
+      // Display fields (network, explorer_url, collected, ...) were never signed.
+      for (const key of SIGNED_PAYMENT_ECONOMIC) {
+        if (!Object.prototype.hasOwnProperty.call(outer, key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(signed, key)) {
+          errs.push(`payment.${key} is not covered by the issuer signature`);
+        }
+      }
+      // Any field present on both sides must be canonically equal.
+      for (const [key, value] of Object.entries(outer)) {
+        if (Object.prototype.hasOwnProperty.call(signed, key) && !sameCanonical(value, signed[key])) {
+          errs.push(`payment.${key} does not match the signed value`);
+        }
+      }
+    }
+  }
+  return errs;
+}
+
 export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
@@ -1982,6 +2067,21 @@ export async function verifyReceipt(
     overall = 'partial';
   }
 
+  // A valid issuer signature counts only when it is over this receipt: the
+  // signed payload must be a receipt-shaped object, name the same task_id,
+  // and carry the payment block whenever the outer document has one. Other
+  // issuer documents (tree heads, epochs, history) share the key and never
+  // stand in for a receipt signature.
+  // The detached `value` form signs a payload rebuilt from the receipt's own
+  // fields, so it is bound by construction.
+  if (issuer_signature.valid && receipt.issuer_signature?.jws) {
+    const bindingErrors = signedReceiptBindingErrors(receipt, verifiedClaims);
+    if (bindingErrors.length) {
+      errors.push(...bindingErrors);
+      overall = 'failed';
+    }
+  }
+
   // A refusal is a different document. Recognition uses the signed JWS
   // schema, not only the unsigned outer schema. A valid issuer signature
   // here must not be reported as a verified payment.
@@ -2080,6 +2180,9 @@ export async function verifyReceipt(
 export {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
+  type IssuerJwsTyp,
+  type VerifyIssuerJwsOptions,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   DEFAULT_TRUSTED_JWKS_HOSTS,
   KEY_UNTRUSTED,

@@ -43,6 +43,38 @@ export const KEY_UNTRUSTED = 'key untrusted';
 /** JWS typ of the 0.4.6 public receipt attestation. Only public-attestation.ts accepts it. */
 export const PUBLIC_RECEIPT_TYP = 'chit402-public-receipt+jwt';
 
+/**
+ * Expected JWS `typ` per issuer-signed document slot.
+ *
+ * Every issuer document is signed by the same key, so the protected `typ`
+ * header is what separates them. A slot accepts only its own typ.
+ *
+ * Receipts: `chit402-receipt+jwt` since payload v5. Receipts issued before
+ * that used the generic `JWT` typ, and some local or third-party signers omit
+ * `typ`; the receipt slot alone keeps accepting those (`null` = no typ).
+ * verifyReceipt still requires the signed payload to name this receipt.
+ */
+export const ISSUER_JWS_TYP = {
+  receipt: ['chit402-receipt+jwt', 'JWT', null],
+  treeHead: ['chit402-tree-head+jwt'],
+  treeEpoch: ['chit402-tree-epoch+jwt'],
+  issuerHistory: ['chit402-issuer-history+jwt'],
+  refusal: ['chit402-refusal+jwt'],
+  freeze: ['chit402-freeze+jwt'],
+  anchorWallets: ['chit402-anchor-wallets+jwt'],
+} as const satisfies Record<string, readonly (string | null)[]>;
+
+export type IssuerJwsTyp = string | null;
+
+export interface VerifyIssuerJwsOptions {
+  /**
+   * Accepted `typ` values for this slot (`null` accepts a header with no typ).
+   * Any other typ is `typ_mismatch`. When omitted, only the public
+   * attestation typ is refused (pre-0.4.8 behaviour for direct callers).
+   */
+  expectTyp?: readonly IssuerJwsTyp[];
+}
+
 export function resolvePinnedIssuerJwk(receipt: ReceiptWithIssuerJwk): Es256Jwk | null {
   const jwk = receipt.issuer_signature?.issuer_jwk as Es256Jwk | undefined;
   if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256' || !jwk.x || !jwk.y) return null;
@@ -105,6 +137,7 @@ export function jwksHostAllowed(uri: string, hosts: readonly string[]): boolean 
 export function verifyIssuerJws(
   jws: string,
   jwk: Es256Jwk,
+  options: VerifyIssuerJwsOptions = {},
 ): { valid: boolean; payload?: Record<string, unknown>; reason?: string } {
   if (!jws || typeof jws !== 'string') {
     return { valid: false, reason: 'invalid_jws' };
@@ -115,7 +148,7 @@ export function verifyIssuerJws(
   }
 
   const [headerB64, payloadB64, signatureB64] = parts;
-  let header: { alg?: string; kid?: string; typ?: string };
+  let header: { alg?: string; kid?: string; typ?: unknown };
   let payload: Record<string, unknown>;
   try {
     header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
@@ -124,8 +157,22 @@ export function verifyIssuerJws(
   }
   // A public attestation is never a receipt, head, epoch, refusal, or history
   // document. Its payload is tagged, not JSON, so it also fails the parse below.
-  if (header && typeof header === 'object' && header.typ === PUBLIC_RECEIPT_TYP) {
+  if (!header || typeof header !== 'object' || Array.isArray(header)) {
+    return { valid: false, reason: 'json_parse_error' };
+  }
+  if (header.typ === PUBLIC_RECEIPT_TYP) {
     return { valid: false, reason: 'typ_mismatch' };
+  }
+  if (options.expectTyp) {
+    // No issuer signer sets crit or b64. An unencoded or critical-extension
+    // JWS is not one of ours, so a typed slot refuses it (RFC 7515 §4.1.11).
+    const raw = header as Record<string, unknown>;
+    if (raw.crit !== undefined || raw.b64 !== undefined) {
+      return { valid: false, reason: 'unsupported_header' };
+    }
+    const typ = header.typ === undefined ? null : header.typ;
+    if (typeof typ !== 'string' && typ !== null) return { valid: false, reason: 'typ_mismatch' };
+    if (!options.expectTyp.includes(typ)) return { valid: false, reason: 'typ_mismatch' };
   }
   try {
     payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));

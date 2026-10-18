@@ -6,6 +6,7 @@
  */
 import {
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
   resolvePinnedIssuerJwk,
   isPinnedTrustedJwk,
   DEFAULT_TRUSTED_ISSUER_KIDS,
@@ -208,7 +209,7 @@ export function verifyRefusal(
   let trusted = false;
   let reason = 'signature_invalid';
   for (const jwk of fromJwks) {
-    const result = verifyIssuerJws(jws, jwk);
+    const result = verifyIssuerJws(jws, jwk, { expectTyp: ISSUER_JWS_TYP.refusal });
     if (result.valid && result.payload) {
       payload = result.payload;
       trusted = true;
@@ -217,7 +218,7 @@ export function verifyRefusal(
     reason = result.reason || 'signature_invalid';
   }
   if (!payload && pinned && embedded) {
-    const result = verifyIssuerJws(jws, embedded);
+    const result = verifyIssuerJws(jws, embedded, { expectTyp: ISSUER_JWS_TYP.refusal });
     if (result.valid && result.payload) {
       payload = result.payload;
       trusted = true;
@@ -225,7 +226,7 @@ export function verifyRefusal(
       reason = result.reason || 'signature_invalid';
     }
   }
-  if (!payload && embedded && verifyIssuerJws(jws, embedded).valid && !pinned && fromJwks.length === 0) {
+  if (!payload && embedded && verifyIssuerJws(jws, embedded, { expectTyp: ISSUER_JWS_TYP.refusal }).valid && !pinned && fromJwks.length === 0) {
     return failed(KEY_UNTRUSTED, { kid: kid || null });
   }
   if (!payload) {

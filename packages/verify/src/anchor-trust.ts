@@ -26,6 +26,8 @@ import {
   KEY_UNTRUSTED,
   readJwsHeader,
   verifyIssuerJws,
+  ISSUER_JWS_TYP,
+  type IssuerJwsTyp,
   type Es256Jwk,
 } from './jws.js';
 import {
@@ -155,19 +157,20 @@ function trustCompactJws(
   embedded: Es256Jwk | undefined,
   jwks: JwksLike | undefined,
   trustedKids: readonly string[],
+  expectTyp: readonly IssuerJwsTyp[],
 ): { ok: boolean; trust: 'jwks' | 'pinned_kid' | null; kid: string | null; payload: Record<string, unknown> | null; reason: string } {
   const header = readJwsHeader(jws);
   const kid = header?.kid || embedded?.kid || null;
   const fromJwks = jwksCandidates(jwks, kid || undefined);
   for (const key of fromJwks) {
-    const verified = verifyIssuerJws(jws, key);
+    const verified = verifyIssuerJws(jws, key, { expectTyp });
     if (verified.valid && verified.payload) {
       return { ok: true, trust: 'jwks', kid: key.kid || kid, payload: verified.payload, reason: '' };
     }
   }
   const pinned = !!(embedded && isPinnedTrustedJwk(embedded, trustedKids));
   if (pinned && embedded) {
-    const verified = verifyIssuerJws(jws, embedded);
+    const verified = verifyIssuerJws(jws, embedded, { expectTyp });
     if (verified.valid && verified.payload) {
       return {
         ok: true,
@@ -179,7 +182,7 @@ function trustCompactJws(
     }
     return { ok: false, trust: 'pinned_kid', kid, payload: null, reason: verified.reason || 'head_signature_invalid' };
   }
-  if (embedded && verifyIssuerJws(jws, embedded).valid) {
+  if (embedded && verifyIssuerJws(jws, embedded, { expectTyp }).valid) {
     return { ok: false, trust: null, kid: embedded.kid || kid, payload: null, reason: KEY_UNTRUSTED };
   }
   if (fromJwks.length === 0 && !pinned) {
@@ -311,7 +314,7 @@ export function verifyTreeHeadTrust(
   if (!jws) return fail('head_signature_missing');
   const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const embedded = head?.issuer_signature?.issuer_jwk;
-  const direct = trustCompactJws(jws, embedded, jwks, pins);
+  const direct = trustCompactJws(jws, embedded, jwks, pins, ISSUER_JWS_TYP.treeHead);
   let trust: HeadTrustResult['trust'] = direct.trust;
   let payload = direct.payload;
   let kid = direct.kid;
@@ -328,7 +331,7 @@ export function verifyTreeHeadTrust(
       const headerKid = readJwsHeader(jws)?.kid || head?.issuer_signature?.kid || null;
       const entryKey = historyEntryKey(issuerHistory, headerKid);
       if (entryKey) {
-        const checked = verifyIssuerJws(jws, entryKey);
+        const checked = verifyIssuerJws(jws, entryKey, { expectTyp: ISSUER_JWS_TYP.treeHead });
         if (checked.valid && checked.payload) {
           trust = 'issuer_history';
           payload = checked.payload;
@@ -398,7 +401,7 @@ export function headTrustedFromInclusion(
   const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
   const embedded = sig?.issuer_jwk;
   const pinnedJwk = embedded && isPinnedTrustedJwk(embedded, pins) ? embedded : undefined;
-  const trusted = trustCompactJws(jws, pinnedJwk, jwks, pins);
+  const trusted = trustCompactJws(jws, pinnedJwk, jwks, pins, ISSUER_JWS_TYP.treeHead);
   if (!trusted.ok || !trusted.payload) return null;
   const payload = trusted.payload;
   const summaryRoot = normalizeRoot(row.root);
@@ -469,7 +472,7 @@ export function verifyAnchorWalletDocument(
     return { ok: false, reason: 'anchor_wallets_invalid' };
   }
   const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
-  const trusted = trustCompactJws(jws, doc.issuer_signature?.issuer_jwk, jwks, pins);
+  const trusted = trustCompactJws(jws, doc.issuer_signature?.issuer_jwk, jwks, pins, ISSUER_JWS_TYP.anchorWallets);
   if (!trusted.ok || !trusted.payload) return { ok: false, reason: 'anchor_wallets_invalid' };
   if (trusted.payload.schema !== ANCHOR_WALLETS_SCHEMA) return { ok: false, reason: 'anchor_wallets_invalid' };
   const base = asAddressList(trusted.payload.base, 'base');
