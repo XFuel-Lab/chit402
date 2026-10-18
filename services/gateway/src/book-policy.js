@@ -24,6 +24,7 @@ import fs from 'fs';
 import path from 'path';
 import { persistFailed } from './persist-error.js';
 import { normalizeSessionActAction } from './session-act.js';
+import { settlementProofEnabled, SETTLEMENT_PROOF_NOT_OFFERED } from './settlement-proof-flag.js';
 
 export const POLICY_TYPES = {
   DAILY_CAP: 'daily_cap',
@@ -171,6 +172,15 @@ export class BookPolicyStore {
       } else if (policyType === POLICY_TYPES.REQUIRE_PAYMENT_REF) {
         policy[policyType] = !!value;
       } else if (policyType === POLICY_TYPES.TIER2_ABOVE) {
+        // The add-on is the only way to satisfy this policy. While it is off a
+        // new tier2_above would only block spends; clearing (null) still works.
+        if (!settlementProofEnabled()) {
+          return {
+            ok: false,
+            code: SETTLEMENT_PROOF_NOT_OFFERED,
+            reason: 'tier2_above needs the Tier-2 settlement proof add-on, which is not currently offered.',
+          };
+        }
         let threshold;
         try {
           threshold = BigInt(String(value).trim());
@@ -529,6 +539,19 @@ export function enforcePolicy(agentId, spend = {}, { policy, ledger } = {}) {
     const tierCfg = p[POLICY_TYPES.TIER2_ABOVE];
     const threshold = BigInt(tierCfg.threshold);
     const spendAmount = spend.amount ? BigInt(String(spend.amount)) : 0n;
+    if (threshold > 0n && spendAmount >= threshold && !settlementProofEnabled()) {
+      // Fail closed: the principal asked for a proof above this amount and none
+      // can be produced. Name the exit (clear or raise the policy) rather than
+      // a proof_tier the gateway refuses.
+      return {
+        allowed: false,
+        reason: `spend at or above ${threshold.toString()} is blocked by this book's tier2_above policy. `
+          + 'The Tier-2 settlement proof add-on is not currently offered; clear or raise tier2_above to spend above it.',
+        code: 'tier2_unavailable',
+        threshold: threshold.toString(),
+        amount: spendAmount.toString(),
+      };
+    }
     if (threshold > 0n && spendAmount >= threshold && !tier2ProofRequested(spend.proof_tier)) {
       return {
         allowed: false,

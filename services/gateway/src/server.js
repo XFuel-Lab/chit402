@@ -4982,7 +4982,8 @@ export async function createApp() {
 
       const result = bookPolicy.set(id, policy_type, value);
       if (!result.ok) {
-        return res.status(400).json({ error: 'policy_error', message: result.reason });
+        const error = result.code === SETTLEMENT_PROOF_NOT_OFFERED ? SETTLEMENT_PROOF_NOT_OFFERED : 'policy_error';
+        return res.status(400).json({ error, message: result.reason });
       }
       return res.json({ agent_id: id, policy: result.policy });
     } catch (err) {
