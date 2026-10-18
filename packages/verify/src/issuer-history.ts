@@ -530,7 +530,14 @@ export async function checkReceiptIssuerHistory(
   // A body that fails the pin or the signature must not become a trust root.
   // `loaded` stays true so offline head trust fails closed instead of
   // falling through to the production pin alone.
-  const pinOk = !doc || !pinned || !pin || historyPinMatches(doc, loadedBody.raw, pin);
+  const exactPin = !doc || !pinned || !pin || historyPinMatches(doc, loadedBody.raw, pin);
+  // A receipt that pins an earlier sealed snapshot still checks when that
+  // snapshot ships in this package and the supplied body extends it. The
+  // key window is then checked against both, so a later revoke still holds.
+  const sealed = doc && !exactPin && pin
+    ? sealedSnapshotForPin(pin, doc, { jwks, trustedKids })
+    : null;
+  const pinOk = exactPin || sealed != null;
   const signed = doc && pinOk
     ? verifyIssuerHistoryDocument(doc, { jwks, trustedKids })
     : null;
@@ -573,7 +580,56 @@ export async function checkReceiptIssuerHistory(
   if (!window.ok) {
     return { ...base, checked: true, ok: false, reason: window.reason, document: usable, loaded: true };
   }
+  if (sealed) {
+    const pinnedWindow = issuerKeyWindow(sealed, kid, issuedAt);
+    if (!pinnedWindow.ok) {
+      return { ...base, checked: true, ok: false, reason: pinnedWindow.reason, document: usable, loaded: true };
+    }
+  }
   return { ...base, checked: true, ok: true, document: usable, loaded: true };
+}
+
+/**
+ * Sealed issuer-history snapshots that receipts were issued against. Each
+ * ships in this package as the exact bytes the receipt pin hashes. Only a
+ * release adds a row; a caller cannot supply one.
+ */
+const SEALED_HISTORY_SNAPSHOTS = [
+  { file: '../issuer-history.v1.snapshot.json', hash: 'e20d606904df1fe71ab96d8f71100d50ce1a3686fa099b3af3d92b8d8b79f1e8', version: 1, seq: 1 },
+] as const;
+
+function loadSealedSnapshot(file: string): { document: IssuerHistoryDocument; bytes: string } | null {
+  try {
+    const require = createRequire(__filename);
+    const bytes = readFileSync(require.resolve(file), 'utf8');
+    return { document: JSON.parse(bytes) as IssuerHistoryDocument, bytes };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The pinned snapshot, when it is a sealed snapshot in this package that
+ * matches the pin exactly (bytes, JCS hash, version and seq), verifies under
+ * the issuer key, and is extended by `current`, a later sealed version.
+ * Otherwise null, and the pin mismatch stands.
+ */
+export function sealedSnapshotForPin(
+  pin: IssuerHistoryPin,
+  current: IssuerHistoryDocument,
+  { jwks, trustedKids }: { jwks?: HistoryJwks; trustedKids?: readonly string[] } = {},
+): IssuerHistoryDocument | null {
+  const row = SEALED_HISTORY_SNAPSHOTS.find((item) => item.hash === pin.hash);
+  if (!row || row.version !== pin.version || row.seq !== pin.seq) return null;
+  const loaded = loadSealedSnapshot(row.file);
+  if (!loaded || !historyPinMatches(loaded.document, loaded.bytes, pin)) return null;
+  if (!verifyIssuerHistoryDocument(loaded.document, { jwks, trustedKids }).valid) return null;
+  // Only a later sealed version may stand in. An edited copy of the pinned
+  // version is still a mismatch.
+  if (!(Number(current?.version) > pin.version) || !(Number(current?.seq) > pin.seq)) return null;
+  if (!verifyIssuerHistoryDocument(current, { jwks, trustedKids }).valid) return null;
+  if (!historyPrefixExtends(loaded.document, current)) return null;
+  return loaded.document;
 }
 
 function rawPinReason(
