@@ -96,8 +96,8 @@ test('P-GW builders emit allowlisted versions and junk is not treated as 11', as
   assert.equal(isV11Document({ issuer_signature: { jws: fakeJws({ payload_version: 11 }) } }), true);
   assert.equal(Boolean(isV11Document({ v: 12 })), false);
 
-  // The live minimum stays 0.3.5 until chit402-verify 0.4.9 is published.
-  assert.equal(VERIFIER_MIN, '0.3.5');
+  // 0.4.9 is the first release that verifies the v1-pinned receipts.
+  assert.equal(VERIFIER_MIN, '0.4.9');
   const advisory = receiptPolicyAdvisory();
   assert.equal(advisory.unsigned, true);
   assert.equal(advisory.verifier_min, VERIFIER_MIN);
