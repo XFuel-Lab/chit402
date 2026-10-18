@@ -2994,7 +2994,8 @@ function foreignIngestPaymentSection(receipt, view) {
   const stamp = receipt.stamp && typeof receipt.stamp === 'object' ? receipt.stamp : {};
   const rail = String(p.rail || '').toLowerCase();
   const isNano = rail === 'nano' || p.chain === 'nano';
-  const asset = String(p.asset || (isNano ? 'XNO' : 'USDC')).toUpperCase();
+  // Asset label is shown only as signed; no hard-coded default.
+  const asset = p.asset ? String(p.asset).toUpperCase() : 'unsigned';
   const network = p.network || (isNano ? 'nano' : '');
   const railLabel = isNano
     ? 'Nano / XNO'
@@ -3631,6 +3632,8 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
   }
   const source = redactPublicReceipt(receipt);
   const view = mergeReceiptView(source);
+  // Totals come from signed amounts only (null when unsigned).
+  const signed = signedParties(decodeReceiptClaims(source));
   const defaultPolicy = {
     max_fee_bps: 100,
     allowed_rails: ['usdc', 'tfuel', 'unmetered'],
@@ -3668,10 +3671,10 @@ export function buildAuditorExport(receipt, { policy = null } = {}) {
     in_policy,
     totals: {
       rail: view.payment?.rail || null,
-      gross_amount: view.payment?.gross_amount || null,
-      settled_amount: view.payment?.settled_amount || null,
-      fee_amount: view.payment?.fee_amount || null,
-      net_amount: view.payment?.net_amount || null,
+      gross_amount: signed.gross_amount,
+      settled_amount: signed.settled_amount,
+      fee_amount: signed.fee_amount,
+      net_amount: signed.net_amount,
       fee_bps: breakdown?.route_margin_bps ?? view.payment?.fee_bps ?? view.payment?.protocol_fee_bps ?? null,
       route_margin_bps: breakdown?.route_margin_bps ?? null,
       route_margin_amount: breakdown?.route_margin_amount ?? null,
