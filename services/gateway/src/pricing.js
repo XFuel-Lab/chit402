@@ -719,9 +719,10 @@ export function describePricing(cfg = {}) {
     per_model_rates: '/v1/models',
     quote_endpoint: 'POST /task-quote',
     description: costPlus
-      ? `Price is measured provider cost plus ${platformFeeBps(cfg) / 100}%, both itemised on `
-        + 'the signed receipt, so a buyer can recompute the bill rather than trust a price '
-        + 'list. ' + tier2PricingSentence()
+      ? 'Flat $0.002 per signed receipt. Bring-your-own-key routes pay only that. House-routed '
+        + `inference is measured provider cost plus ${platformFeeBps(cfg) / 100}% when that is higher than `
+        + '$0.002, both itemised on the signed receipt, so a buyer can recompute the bill rather than '
+        + 'trust a price list. ' + tier2PricingSentence()
       : 'Metered against a retail rate card, floored per settlement. ' + tier2PricingSentence(),
   };
 }

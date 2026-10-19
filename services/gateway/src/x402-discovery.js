@@ -834,11 +834,11 @@ export function buildX402Manifest(baseUrl = '') {
     ? 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
       + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base and Solana. Each call returns a signed receipt: '
-      + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.'
+      + 'hub, model, amount, verify_url. $0.002 per signed receipt. Real mainnet USDC.'
     : 'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
       + 'Treasury desk and possession book for agent spend — export, policy, evidence. '
       + 'POST /v1/chat/completions is the x402 USDC door on Base. Each call returns a signed receipt: '
-      + 'hub, model, amount, verify_url. Cost-plus, quoted, receipted. Real mainnet USDC.';
+      + 'hub, model, amount, verify_url. $0.002 per signed receipt. Real mainnet USDC.';
 
   // Per CDP Bazaar spec: tags ≤5. Per naming law: Chit402 is the public/searchable name.
   const serviceName = 'Chit402';
@@ -858,8 +858,8 @@ export function buildX402Manifest(baseUrl = '') {
       mimeType: 'application/json',
       extra: { name, version, challengeRequired: true },
       description:
-        'Minimum per settlement. Fetch a live 402 first. The charged amount is metered per request — '
-        + 'see `pricing` on this manifest and POST /task-quote for an exact figure.',
+        '$0.002 per signed receipt. House-routed inference is quoted at provider cost + 1% when that is '
+        + 'higher. Fetch a live 402 first — see `pricing` on this manifest and POST /task-quote for an exact figure.',
     },
   ];
 
@@ -876,7 +876,7 @@ export function buildX402Manifest(baseUrl = '') {
       mimeType: 'application/json',
       extra: { feePayer: solUsdcInfo.feePayer || PAYAI_DEFAULT_FEE_PAYER, challengeRequired: true },
       description:
-        'Solana USDC payment via PayAI facilitator. Fetch a live 402 first. Same cost-plus pricing as Base.',
+        'Solana USDC payment via PayAI facilitator. Fetch a live 402 first. Same pricing as Base.',
     });
   }
 
@@ -919,7 +919,7 @@ export function buildX402Manifest(baseUrl = '') {
         iconUrl,
         description:
           'Signed spend receipt / x402 payment receipt on every call — hub, model, amount, public verify_url '
-          + '(who paid which call, verifiable by a third party). Chat completions door. Cost-plus, quoted, receipted — '
+          + '(who paid which call, verifiable by a third party). Chat completions door. $0.002 per signed receipt — '
           + 'pay USDC on Base or Solana (x402 exact scheme). Returns completion + signed Chit receipt. '
           + 'You hold hub, model, and amount. OpenAI-compatible wire.',
         accepts,
@@ -968,7 +968,7 @@ export function buildX402Manifest(baseUrl = '') {
         iconUrl,
         description:
           'Signed spend receipt / x402 payment receipt for an M2M paid task — public verify_url (who paid which job). '
-          + 'Cost-plus, quoted, receipted — pay USDC on Base or Solana (x402 exact scheme). '
+          + '$0.002 per signed receipt — pay USDC on Base or Solana (x402 exact scheme). '
           + 'Returns task_id + verify_url; poll /task-status. The on-chain settlement proof add-on is coming soon.',
         accepts,
         input: TASK_REQUEST_INPUT_SCHEMA,

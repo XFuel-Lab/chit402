@@ -302,3 +302,24 @@ test('buildOpenApiSpec: book ingest documents fulfillment_invoice + job_kind', (
   const specStr = JSON.stringify(spec);
   assert.match(specStr, /missing_deliverable_at_stamp|output_commitment/);
 });
+
+test('manifest pricing copy leads with the flat $0.002 receipt and keeps the amounts', () => {
+  const m = buildX402Manifest('https://api.xfuel.app');
+  assert.match(m.description, /\$0\.002 per signed receipt/);
+  assert.doesNotMatch(m.description, /cost-plus/i);
+  for (const r of m.resources) {
+    assert.doesNotMatch(r.description, /cost-plus/i, r.resource);
+    for (const a of r.accepts) {
+      assert.doesNotMatch(a.description, /cost-plus/i, r.resource);
+      assert.doesNotMatch(a.description, /^Minimum per settlement/, r.resource);
+      assert.equal(a.scheme, 'exact');
+      assert.equal(a.amount, '2000', 'copy change must not move the atomic amount');
+      assert.equal(a.amount, a.maxAmountRequired);
+    }
+  }
+  if (m.pricing.basis === 'cost_plus') {
+    assert.match(m.pricing.description, /^Flat \$0\.002 per signed receipt/);
+    // House routing is still provider cost + 1%; the copy must not hide it.
+    assert.match(m.pricing.description, /provider cost plus 1%/);
+  }
+});
