@@ -420,6 +420,8 @@ test('the manifest describes the basis in force, not the one we prefer', () => {
   assert.equal(plus.basis, 'cost_plus');
   assert.equal(plus.platform_fee_bps, DEFAULT_PLATFORM_FEE_BPS);
   assert.match(plus.description, /recompute the bill/);
+  assert.match(plus.description, /^Flat \$0\.002 per signed receipt\./);
+  assert.match(plus.description, /Bring-your-own-key routes pay only that/);
 
   const card = describePricing({ costPlus: false });
   assert.equal(card.basis, 'rate_card');
