@@ -15,7 +15,8 @@ If your book only exists when traffic goes through `api.chit402.com`, any provid
 - `amount` — USDC cost (atomic, 6 decimals)
 - `output_hash` — commitment to the response
 - `payment_ref` — x402 transaction binding (if present)
-- `verify_url` — works even if Chit402 did not run the model
+
+Sidecar receipts are client-recorded: the sidecar writes them on your side of the call, and they are never shown or described as VERIFIED.
 
 ## Install
 
