@@ -692,7 +692,8 @@ test('T18 shell footer points at the primary verifier package', () => {
   const receipt = JSON.parse(readFileSync(fileURLToPath(new URL('../../../packages/verify/test/fixtures/public/chit-39af100b.json', import.meta.url)), 'utf8'));
   const shell = toPublicShell(receipt);
   const html = renderReceiptShellHtml(shell);
-  assert.match(html, /Check it with <code>npx chit402-verify<\/code> \(0\.4\.2 or later\)\./);
+  assert.ok(html.includes(`Check it with chit402-verify ${VERIFIER_MIN} or later: <code>run npx chit402-verify@latest</code>.`), 'footer names the advisory minimum');
+  assert.doesNotMatch(html, /0\.4\.2 or later/);
   assert.match(html, /only it can verify/);
   assert.doesNotMatch(html, /@xfuel\/verify<\/code> 0\.3\.5 or later/);
 });
