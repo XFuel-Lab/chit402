@@ -25,7 +25,7 @@ const {
 } = await import('../src/receipt-log-epoch.js');
 const { signJws } = await import('../src/issuer-key.js');
 const { preimageField } = await import('../src/receipt-preimage.js');
-const { PINNED_BASE_ANCHOR_WALLET } = await import('../src/anchor-wallets.js');
+const { PINNED_BASE_ANCHOR_WALLET, PINNED_SOLANA_ANCHOR_FEE_PAYERS } = await import('../src/anchor-wallets.js');
 
 const A = 'xfuel-pub-a-11111111-1111-4111-8111-111111111111';
 const B = 'xfuel-pub-b-22222222-2222-4222-8222-222222222222';
@@ -48,6 +48,9 @@ const OUTPUT_TEXT = 'output-probe-text-numbat';
 const PAY_TO = '0x23f713411c30BBd9A989c9cbC22EB0b55F7f7334';
 const ASSET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const REF_B = `base:${TX_B}`;
+// Solana-shaped probes (base58): an address and a signature that are not ours.
+const SOL_ADDR_PROBE = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU';
+const SOL_SIG_PROBE = '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW';
 
 // Leak matcher for the usage sentinels (4242, 4343). Hash-like runs are
 // removed first: 0x hex, bare hex of 16+ and base64url of 24+ (JWS segments,
@@ -88,49 +91,126 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{
 
 /**
  * Private values that no public receipt view may carry. Public by design and
- * allowed: the payee, the asset contract, this receipt's own payment tx (it is
- * on chain and linked to the explorer), public log anchor txs, and log hashes.
+ * allowed: this receipt's own signed payee, asset and payment tx, Merkle nodes
+ * of the seeded log, and on log pages the signed epoch record's values and the
+ * pinned anchor wallets. ALLOW is filled in before() from those signed inputs
+ * only, never from the response under test, so a value planted in a body
+ * cannot allow itself.
  */
-// Log anchor txs on a log document (anchor_tx, base_tx ...): public on chain.
-function logAnchorTxs(text) {
+const ALLOW = {
+  receipt: { tx: new Set(), addr: new Set(), hash: new Set(), b58: new Set() },
+  log: { tx: new Set(), addr: new Set(), hash: new Set(), b58: new Set() },
+};
+
+// Any 32- or 20-byte hex run, with or without 0x / 0X, on hex boundaries.
+const HEX64_RE = /(?<![0-9a-fA-F])(?:0[xX])?[0-9a-fA-F]{64}(?![0-9a-fA-F])/g;
+const HEX40_RE = /(?<![0-9a-fA-F])(?:0[xX])?[0-9a-fA-F]{40}(?![0-9a-fA-F])/g;
+// Shortened addresses: 0x1234…abcd or 0x1234...abcd.
+const SHORT_ADDR_RE = /0[xX]([0-9a-fA-F]{4})(?:\u2026|\.{2,3})([0-9a-fA-F]{4})(?![0-9a-fA-F])/g;
+const hexNorm = (v) => String(v).replace(/^0[xX]/, '').toLowerCase();
+
+// Solana addresses (32-44) and signatures (64-88) in base58. Compact JWS are
+// scanned through their decoded payloads, so the segments themselves are
+// dropped first; hex-only runs are checked as hex above.
+function base58Runs(text) {
+  const noJws = String(text).replace(/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, ' ');
   const out = [];
-  const walk = (v) => {
-    if (Array.isArray(v)) { v.forEach(walk); return; }
-    if (!v || typeof v !== 'object') return;
-    for (const [k, x] of Object.entries(v)) {
-      if (/(?:^|_)tx$/.test(k) && typeof x === 'string') out.push(x);
-      else walk(x);
-    }
-  };
-  try { walk(JSON.parse(text)); } catch { /* not JSON */ }
+  for (const m of noJws.matchAll(/[A-Za-z0-9_-]+/g)) {
+    const t = m[0];
+    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(t) || /^[0-9a-fA-F]+$/.test(t)) continue;
+    if ((t.length >= 32 && t.length <= 44) || (t.length >= 64 && t.length <= 88)) out.push(t);
+  }
   return out;
 }
 
-function assertNoPrivate(text, label, { allowTx = [TX_A] } = {}) {
+// RFC 6962 node hashes over every contiguous range of the seeded leaf hashes:
+// a superset of every leaf, sibling, root and consistency node the log serves.
+function merkleNodes(leaves) {
+  const node = (l, r) => createHash('sha256').update(Buffer.concat([Buffer.from([0x01]), l, r])).digest();
+  const memo = new Map();
+  const mth = (a, b) => {
+    const key = `${a}:${b}`;
+    if (memo.has(key)) return memo.get(key);
+    let h;
+    if (b - a === 1) h = Buffer.from(leaves[a]);
+    else {
+      let k = 1;
+      while (k * 2 < b - a) k *= 2;
+      h = node(mth(a, a + k), mth(a + k, b));
+    }
+    memo.set(key, h);
+    return h;
+  };
+  const out = new Set();
+  for (let a = 0; a < leaves.length; a++) {
+    for (let b = a + 1; b <= leaves.length; b++) out.add(mth(a, b).toString('hex'));
+  }
+  return out;
+}
+
+function collectHex(value, allow) {
+  const walk = (v) => {
+    if (Array.isArray(v)) { v.forEach(walk); return; }
+    if (v && typeof v === 'object') { Object.values(v).forEach(walk); return; }
+    if (typeof v !== 'string') return;
+    for (const m of v.matchAll(HEX64_RE)) allow.hash.add(hexNorm(m[0]));
+    for (const m of v.matchAll(HEX40_RE)) allow.addr.add(hexNorm(m[0]));
+  };
+  walk(value);
+}
+
+// The payer wallet, agent key, raw key and planted texts of receipt A, plus
+// receipt B's values. Checked on every public route, including static ones.
+function assertNoSentinels(text, label) {
   const hay = withDecodedJws(text);
   const lower = hay.toLowerCase();
   for (const n of [4242, 4343, 8585]) {
     assert.equal(leaksNumber(hay, n), false, `${label} carries usage ${n}`);
   }
-  assert.equal(lower.includes(WALLET_A.toLowerCase()), false, `${label} carries the payer wallet`);
-  assert.equal(lower.includes(`${WALLET_A.slice(0, 6)}…${WALLET_A.slice(-4)}`.toLowerCase()), false, `${label} carries the short payer wallet`);
-  assert.equal(lower.includes(AGENT_PUBKEY_A.toLowerCase()), false, `${label} carries the agent key`);
+  assert.equal(lower.includes(hexNorm(WALLET_A)), false, `${label} carries the payer wallet`);
+  for (const [, a, b] of hay.matchAll(SHORT_ADDR_RE)) {
+    const short = `${a}${b}`.toLowerCase();
+    assert.notEqual(short, `${hexNorm(WALLET_A).slice(0, 4)}${hexNorm(WALLET_A).slice(-4)}`, `${label} carries the short payer wallet`);
+  }
+  assert.equal(lower.includes(hexNorm(AGENT_PUBKEY_A)), false, `${label} carries the agent key`);
   assert.equal(hay.includes(API_KEY_RAW), false, `${label} carries the raw API key`);
-  assert.equal(hay.includes(API_KEY_HASH), false, `${label} carries the API key hash`);
-  assert.equal(EMAIL_RE.test(hay), false, `${label} carries an email address`);
+  assert.equal(lower.includes(API_KEY_HASH), false, `${label} carries the API key hash`);
+  assert.equal(hay.includes(EMAIL), false, `${label} carries the planted email`);
   assert.equal(hay.includes(PROMPT_TEXT), false, `${label} carries prompt text`);
   assert.equal(hay.includes(OUTPUT_TEXT), false, `${label} carries output text`);
-  for (const key of ['caller_binding', 'payer_wallet', 'agent_pubkey', 'api_key_hash', 'prompt_tokens', 'total_tokens']) {
+  assert.equal(hay.includes(B), false, `${label} names the other task`);
+  assert.equal(hay.includes(ROW_B), false, `${label} names the other row`);
+  assert.equal(lower.includes(hexNorm(WALLET_B)), false, `${label} names the other wallet`);
+  assert.equal(lower.includes(hexNorm(TX_B)), false, `${label} names the other payment`);
+}
+
+function assertNoPrivate(text, label, { scope = 'receipt' } = {}) {
+  const allow = ALLOW[scope];
+  assert.ok(allow && allow.tx.size > 0 && allow.addr.size > 0 && allow.hash.size > 0, `${label}: allow list not built`);
+  assertNoSentinels(text, label);
+  const hay = withDecodedJws(text);
+  assert.equal(EMAIL_RE.test(hay), false, `${label} carries an email address`);
+  assert.equal(/\b[A-Za-z0-9._%+-]+\s*(?:\(at\)|\[at\]|\sat\s)\s*[A-Za-z0-9-]+\s*(?:\(dot\)|\[dot\]|\sdot\s)\s*[A-Za-z]{2,}\b/i.test(hay), false, `${label} carries a spelled-out email`);
+  assert.equal(/\bsk-[A-Za-z0-9_-]{12,}/.test(hay), false, `${label} carries an API key`);
+  for (const key of ['caller_binding', 'payer_wallet', 'agent_pubkey', 'api_key_hash', 'prompt_tokens', 'total_tokens',
+    'callerBinding', 'payerWallet', 'agentPubkey', 'apiKeyHash', 'apiKey', 'promptTokens', 'totalTokens', 'desk_']) {
     assert.equal(hay.includes(key), false, `${label} names ${key}`);
   }
-  // Every 32-byte 0x value must be an allowed tx; every 20-byte one the payee or asset.
-  const txs = new Set(allowTx.filter(Boolean).map((t) => t.toLowerCase()));
-  for (const m of hay.matchAll(/0x[0-9a-fA-F]{64}(?![0-9a-fA-F])/g)) {
-    assert.equal(txs.has(m[0].toLowerCase()), true, `${label} carries tx ${m[0].slice(0, 10)}…`);
+  // Every 32-byte value must be an allowed tx or log hash; every 20-byte one an allowed address.
+  for (const m of hay.matchAll(HEX64_RE)) {
+    const v = hexNorm(m[0]);
+    assert.equal(allow.tx.has(v) || allow.hash.has(v), true, `${label} carries 32-byte value ${m[0].slice(0, 10)}…`);
   }
-  const addrs = new Set([PAY_TO, ASSET, PINNED_BASE_ANCHOR_WALLET].map((a) => a.toLowerCase()));
-  for (const m of hay.matchAll(/(?<![0-9a-fA-Fx])0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/g)) {
-    assert.equal(addrs.has(m[0].toLowerCase()), true, `${label} carries address ${m[0].slice(0, 8)}…`);
+  for (const m of hay.matchAll(HEX40_RE)) {
+    assert.equal(allow.addr.has(hexNorm(m[0])), true, `${label} carries address ${m[0].slice(0, 8)}…`);
+  }
+  // The page shortens its own payee, asset and tx for display; nothing else.
+  const shorts = new Set([...allow.addr, ...allow.tx].map((a) => `${a.slice(0, 4)}${a.slice(-4)}`));
+  for (const [whole, a, b] of hay.matchAll(SHORT_ADDR_RE)) {
+    assert.equal(shorts.has(`${a}${b}`.toLowerCase()), true, `${label} carries short address ${whole}`);
+  }
+  for (const t of base58Runs(hay)) {
+    assert.equal(allow.b58.has(t), true, `${label} carries base58 value ${t.slice(0, 6)}…`);
   }
 }
 
@@ -226,6 +306,24 @@ before(async () => {
       resolve();
     });
   });
+
+  // Allow lists from signed inputs only (see ALLOW).
+  const { buildReceipt } = await import('../src/receipt.js');
+  const ownerA = await buildReceipt(store.get(A), { baseUrl: base, readOnly: true });
+  const signedA = JSON.parse(Buffer.from(ownerA.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const r = ALLOW.receipt;
+  r.tx.add(hexNorm(String(signedA.payment.ref).replace(/^base:/, '')));
+  r.addr.add(hexNorm(signedA.payment.payee));
+  r.addr.add(hexNorm(signedA.payment.asset));
+  for (const h of merkleNodes(tree.leaves)) r.hash.add(h);
+  r.b58.add(ownerA.issuer_signature.kid);
+  r.b58.add(kid);
+  const l = ALLOW.log;
+  for (const k of Object.keys(r)) for (const v of r[k]) l[k].add(v);
+  const signedEpoch = JSON.parse(Buffer.from(jws.split('.')[1], 'base64url').toString('utf8'));
+  collectHex(signedEpoch, l);
+  l.addr.add(hexNorm(PINNED_BASE_ANCHOR_WALLET));
+  for (const p of PINNED_SOLANA_ANCHOR_FEE_PAYERS) l.b58.add(p);
 });
 
 after(async () => {
@@ -602,6 +700,48 @@ test('leak matcher: catches glued and formatted sentinels, ignores hashes', () =
   assert.throws(() => assertNoPrivate(inJws, 'jws'), /payer wallet/);
 });
 
+test('allow lists come from signed inputs, and each value class is caught', () => {
+  const other40 = 'c4'.repeat(20);
+  const other64 = 'e6'.repeat(32);
+  const throwsOn = (text, scope, re, what) => assert.throws(() => assertNoPrivate(text, 'probe', { scope }), re, `missed ${what}`);
+  // Clean: this receipt's signed payee, asset and tx, their display forms, and log nodes.
+  const root = [...ALLOW.receipt.hash][0];
+  const clean = JSON.stringify({ pay_to: PAY_TO, asset: ASSET, payment_tx: TX_A, root, short: `${PAY_TO.slice(0, 6)}…${PAY_TO.slice(-4)}`, txs: `${TX_A.slice(0, 6)}...${TX_A.slice(-4)}` });
+  assertNoPrivate(clean, 'clean');
+  assertNoPrivate(`${clean} ${TX_A.slice(2).toUpperCase()} ${PAY_TO.slice(2)} 0X${ASSET.slice(2).toUpperCase()}`, 'clean case and prefix forms');
+  // F2: bare and 0X hex.
+  throwsOn(`x 0X${other40.toUpperCase()} y`, 'receipt', /carries address/, '0X upper address');
+  throwsOn(`"a":"${other40}"`, 'receipt', /carries address/, 'bare 40-hex');
+  throwsOn(`"a":"${other64}"`, 'receipt', /32-byte value/, 'bare 64-hex');
+  throwsOn(`"a":"0X${other64.toUpperCase()}"`, 'receipt', /32-byte value/, '0X 64-hex');
+  throwsOn(`"a":"${WALLET_A.slice(2)}"`, 'receipt', /payer wallet/, 'bare payer wallet');
+  throwsOn(`"a":"0x${'0'.repeat(24)}${WALLET_A.slice(2)}"`, 'receipt', /payer wallet/, 'zero-padded payer wallet');
+  throwsOn(`paid by ${WALLET_A.slice(0, 6)}...${WALLET_A.slice(-4)}`, 'receipt', /short payer wallet/, 'ASCII-dot short payer');
+  throwsOn(`paid by 0x${other40.slice(0, 4)}…${other40.slice(-4)}`, 'receipt', /short address/, 'short other address');
+  // F3: Solana.
+  throwsOn(`"payer":"${SOL_ADDR_PROBE}"`, 'receipt', /base58/, 'Solana address');
+  throwsOn(`"sig":"${SOL_SIG_PROBE}"`, 'log', /base58/, 'Solana signature');
+  assertNoPrivate(`"fee_payer":"${PINNED_SOLANA_ANCHOR_FEE_PAYERS[0]}"`, 'pinned fee payer on a log page', { scope: 'log' });
+  throwsOn(`"fee_payer":"${PINNED_SOLANA_ANCHOR_FEE_PAYERS[0]}"`, 'receipt', /base58/, 'fee payer outside the log');
+  // F1: a tx under an anchor key does not allow itself.
+  for (const key of ['anchor_tx', 'base_tx', 'payment_tx', 'last_anchored_tx']) {
+    throwsOn(JSON.stringify({ [key]: `0x${other64}` }), 'log', /32-byte value/, `foreign ${key}`);
+  }
+  // F4: the payee is this receipt's signed payee, not any constant.
+  throwsOn(JSON.stringify({ pay_to: `0x${other40}` }), 'receipt', /carries address/, 'other payee');
+  throwsOn(JSON.stringify({ pay_to: PINNED_BASE_ANCHOR_WALLET }), 'receipt', /carries address/, 'anchor wallet as payee');
+  assertNoPrivate(JSON.stringify({ wallet: PINNED_BASE_ANCHOR_WALLET }), 'anchor wallet on a log page', { scope: 'log' });
+  // Names, keys and spelled-out emails.
+  throwsOn('{"callerBinding":{}}', 'receipt', /callerBinding/, 'callerBinding');
+  throwsOn('{"desk_notes":"x"}', 'receipt', /desk_/, 'desk_notes');
+  throwsOn('reach ops at example dot com', 'receipt', /spelled-out email/, 'spelled-out email');
+  throwsOn('key sk-live-abcdef0123456789', 'receipt', /API key/, 'other API key');
+  // JWS segments and kids are not Solana values.
+  const seg = Buffer.from('{"a":1}').toString('base64url');
+  assertNoPrivate(`eyJhbGciOiJFUzI1NiJ9.${seg}.${'S'.repeat(86)}`, 'jws segment');
+  assertNoPrivate(`"receipt_id":"${A}"`, 'receipt id');
+});
+
 test('public receipt views drop unsigned token, route, stamp, and float fields', async () => {
   const { redactPublicReceipt } = await import('../src/receipt.js');
   const stamped = redactPublicReceipt({
@@ -709,7 +849,16 @@ test('public receipt views carry no usage, wallet, key, email, prompt, binding o
     `/receipt/${A}/preimage?raw=1`,
     `/v1/receipts/${A}/inclusion`,
     '/v1/receipts/tree/head',
+    '/v1/receipts/tree/head?tree_size=3',
     '/v1/receipts/tree/epoch',
+    `/receipt/${A}/legacy-proof`,
+    `/receipt/${A}/preimage/payload_hash`,
+    `/receipt/${A}/preimage/task_id`,
+    '/v1/receipts/tree/consistency?first=1&second=2',
+    '/v1/receipts/tree/consistency?first=2&second=3',
+    '/v1/receipts/tree/consistency?first=1&second=3&epoch=1',
+    '/v1/receipts/tree/epoch/1/head',
+    '/v1/receipts/tree/epoch/2/head',
   ];
   const accepts = [undefined, 'text/html', 'application/json'];
   for (const path of paths) {
@@ -717,9 +866,26 @@ test('public receipt views carry no usage, wallet, key, email, prompt, binding o
       const res = await fetchText(path, accept ? { Accept: accept } : {});
       const label = `${path} accept=${accept || 'none'}`;
       assert.ok(res.status < 500, `${label} ${res.status}`);
-      const logPage = path.startsWith('/v1/receipts/');
-      assertNoPrivate(res.text, label, { allowTx: [TX_A, ...(logPage ? logAnchorTxs(res.text) : [])] });
+      const logPage = path.startsWith('/v1/receipts/tree/');
+      assertNoPrivate(res.text, label, { scope: logPage ? 'log' : 'receipt' });
     }
+  }
+
+  // Static public routes carry their own redacted specimens, so only receipt
+  // A's private values and receipt B are checked there.
+  const staticPaths = [
+    '/public/specimens/hemei-stranger-export.csv',
+    '/public/specimens/hemei-stranger-export.json',
+    '/public/specimens/hemei-path-rotate-observe.json',
+    '/public/specimens/tier2-in-proof-binding.json',
+    '/public/specimens/fulfillment-foreign-research.json',
+    '/public/export/hemei-treasury',
+    '/public/export/hemei-treasury?format=csv',
+  ];
+  for (const path of staticPaths) {
+    const res = await fetchText(path);
+    assert.ok(res.status < 500, `${path} ${res.status}`);
+    assertNoSentinels(res.text, path);
   }
 
   // by-tx lands on the canonical page; both forms are checked after the redirect.
