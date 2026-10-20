@@ -147,6 +147,7 @@ import {
   renderReceiptShellHtml,
   renderReceiptShellMissing,
   shellPreimageBytes,
+  withPreLogNote,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
@@ -3051,7 +3052,7 @@ export async function createApp() {
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
-    if (wantsJson) return res.json(withVerifierAdvisory(shell));
+    if (wantsJson) return res.json(withVerifierAdvisory(withPreLogNote(shell)));
     res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
     return res.type('html').send(renderReceiptShellHtml(shell, {
       publicBaseUrl: config.service.publicBaseUrl || '',

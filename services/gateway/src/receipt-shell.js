@@ -276,6 +276,39 @@ function httpBase(value) {
   }
 }
 
+/**
+ * Start of the public receipt log. Source: the first receipt leaf of epoch 1
+ * (leaf_index 1, after the genesis leaf) is EPOCH1_ANCHOR_TASK
+ * xfuel-39af100b-23dd-4d86-a16b-4556ca6796af, issued 2026-10-02T17:30:00Z.
+ * Epoch records carry roots and sizes, not times, so the time is pinned here.
+ * Every earlier Base receipt has no leaf; every later one has a leaf.
+ */
+export const PUBLIC_LOG_START = '2026-10-02T17:30:00.000Z';
+
+/** Plain copy for a Base receipt issued before the public log. Same text on the page and in the JSON. */
+export const PRE_LOG_NOTE = 'Issued before the public log began on Oct 2, 2026. No public log entry covers this receipt, so the public check cannot confirm it, and chit402-verify reports NOT_IN_LOG (exit 1). Anyone can still look up the payment tx on Base. The owner can check the issuer signature and the payment details on their signed receipt with npx chit402-verify@latest, which still exits 1 because no log entry exists.';
+
+/**
+ * A Base shell with no log leaf, issued before PUBLIC_LOG_START.
+ * A missing leaf on a later receipt is not this case.
+ */
+export function isPreLogBaseShell(shell) {
+  if (!shell || typeof shell !== 'object' || Array.isArray(shell)) return false;
+  if (own(shell, 'schema') !== 'chit402.receipt_shell.v1' || own(shell, 'unsigned') !== true) return false;
+  if (own(shell, 'chain') !== 'base') return false;
+  const inc = own(shell, 'inclusion');
+  if (inc && typeof inc === 'object' && own(inc, 'leaf_hash') != null) return false;
+  const issued = own(shell, 'issued_at');
+  if (typeof issued !== 'string') return false;
+  const t = Date.parse(issued);
+  return Number.isFinite(t) && t < Date.parse(PUBLIC_LOG_START);
+}
+
+/** Response body for the public shell JSON: adds `log_note` for a pre-log Base shell. The shell bytes are unchanged. */
+export function withPreLogNote(shell) {
+  return isPreLogBaseShell(shell) ? { ...shell, log_note: PRE_LOG_NOTE } : shell;
+}
+
 /** Plain copy for a Base receipt with no public attestation on record. */
 export const PRE_ATTESTATION_NOTE = 'Issued without a public attestation. The owner can still check its signature, payment tx and log inclusion with npx chit402-verify@latest and their signed receipt.';
 
@@ -441,8 +474,13 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
   // public attestation signer, or its attestation is stored as failed or
   // skipped (the store serves only signed rows). The page says no public
   // attestation exists instead of pointing at the verifier. Copy only: no verdict.
-  const preSigner = isPreAttestationBaseShell(shell, card, noAttestation);
-  const noteHtml = preSigner
+  // A receipt from before the public log gets the pre-log note instead: the
+  // attestation note promises a log inclusion check that cannot pass for it.
+  const preLog = isPreLogBaseShell(shell);
+  const preSigner = !preLog && isPreAttestationBaseShell(shell, card, noAttestation);
+  const noteHtml = preLog
+    ? `<p class="note">${esc(PRE_LOG_NOTE)}</p>`
+    : preSigner
     ? `<p class="note">${esc(PRE_ATTESTATION_NOTE)}</p>`
     : `<p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Check it with chit402-verify ${VERIFIER_MIN} or later: <code>${VERIFIER_UPGRADE_HINT}</code>.</p>`;
 

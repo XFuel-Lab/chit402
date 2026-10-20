@@ -407,8 +407,9 @@ before(async () => {
   getAIListener().activeTasks.set(TASK_APP, {
     taskId: TASK_APP,
     status: 'completed',
-    createdAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_000_000,
+    // After the public log began (Oct 2, 2026), so the pre-log note does not apply.
+    createdAt: 1_792_000_000_000,
+    updatedAt: 1_792_000_000_000,
     intent: { type: 'inference_request', amount: '2000', paymentRail: 'usdc', paymentRef: `base:${TX}`, model: MODEL },
     meta: { payerWallet: PAYER, agentId: 4, provider: 'hidden-provider', payTo: PAYEE },
     outputHash: `0x${'cd'.repeat(32)}`,
@@ -545,4 +546,26 @@ test('a gateway shell plus its attestation passes the verifier field binding (no
   assert.notEqual(verdict.reason, 'claim_mismatch');
   assert.notEqual(verdict.reason, 'leaf_not_bound');
   assert.equal(verdict.exit_code, 2, verdict.reason);
+});
+
+test('pre-log Base receipt: the page and the JSON carry the same pre-log note', async () => {
+  const { PRE_LOG_NOTE } = await import('../src/receipt-shell.js');
+  const { getAIListener } = await import('../src/ai-listener.js');
+  const PRE = 'xfuel-0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c99';
+  getAIListener().activeTasks.set(PRE, {
+    taskId: PRE, status: 'completed',
+    createdAt: Date.parse('2026-09-26T17:27:00.000Z'), updatedAt: Date.parse('2026-09-26T17:27:00.000Z'),
+    intent: { type: 'inference_request', amount: '2000', paymentRail: 'usdc', paymentRef: `base:0x${'ef'.repeat(32)}`, model: MODEL },
+    meta: { payerWallet: PAYER, agentId: 4, provider: 'hidden-provider', payTo: PAYEE },
+    outputHash: `0x${'cd'.repeat(32)}`,
+  });
+  const json = await (await fetch(`${base}/receipt/${PRE}?format=json`)).json();
+  if (json.chain !== 'base' || json.inclusion?.leaf_hash != null || !(Date.parse(json.issued_at) < Date.parse('2026-10-02T17:30:00Z'))) {
+    assert.fail(`fixture is not a pre-log Base shell: ${JSON.stringify({ chain: json.chain, issued_at: json.issued_at, leaf: json.inclusion?.leaf_hash })}`);
+  }
+  assert.equal(json.log_note, PRE_LOG_NOTE);
+  const page = await (await fetch(`${base}/receipt/${PRE}`, { headers: { accept: 'text/html' } })).text();
+  assert.ok(page.includes(`<p class="note">${json.log_note}</p>`), 'page text equals the JSON log_note');
+  const later = await (await fetch(`${base}/receipt/${TASK_APP}?format=json`)).json();
+  assert.equal('log_note' in later, false, 'a receipt after the log began has no log_note');
 });
