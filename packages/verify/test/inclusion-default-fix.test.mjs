@@ -155,8 +155,8 @@ const bodies = Array.from({ length: 11 }, (_, i) => `t${i}|r${i}`);
 const leaves = bodies.map((body) => sha256(Buffer.concat([Buffer.from([0x00]), Buffer.from(body)])));
 const root4 = rootOf(leaves.slice(0, 4)).toString('hex');
 const root11 = rootOf(leaves).toString('hex');
-const head4 = makeHead(root4, 4, key, `0x${'ab'.repeat(32)}`, 'sig-size-4');
-const head11 = makeHead(root11, 11, key, `0x${'cd'.repeat(32)}`, 'sig-size-11');
+const head4 = makeHead(root4, 4, key, `0x${'ab'.repeat(32)}`, '3VU9jcQYw48AeD3hk5yFPcCSnKmCRG1zXXrA3L74jun5hRD2TJypPApBoTMpqmYANFJjVWeJP1aarxoaxybC72Ct');
+const head11 = makeHead(root11, 11, key, `0x${'cd'.repeat(32)}`, '5gJVi1TP8FqaKxsfxAEdJB7deyTA1bYGdsEJn6WU2iCsnJXVBLhRtrMdrpxrqehGPvKrKHTK8dTANC5higMJtLDn');
 
 function proofInclusion(size) {
   const slice = leaves.slice(0, size);

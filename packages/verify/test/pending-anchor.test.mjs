@@ -143,7 +143,7 @@ function epoch2Fixture() {
       },
       solana: {
         status: 'anchored',
-        signature: 'sig-anchored-4',
+        signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA',
         slot: 99,
         cluster: 'devnet',
         memo,
@@ -186,7 +186,7 @@ function fetchers(fx, newestRoot = fx.root) {
       blockNumber: '0x64',
       tipBlockNumber: '0x70',
     }),
-    fetchNewestAnchor: async () => ({ root: newestRoot, signature: 'sig-anchored-4' }),
+    fetchNewestAnchor: async () => ({ root: newestRoot, signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA' }),
   };
 }
 
@@ -555,7 +555,7 @@ test('a missing fee payer fails closed and another listed payer cannot force sta
     checkNewestAnchor: true,
     fetchNewestAnchor: async () => {
       scanned += 1;
-      return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
+      return { root: fx.root, signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA', slot: 99 };
     },
     fetchBaseTx: async () => ({
       hash: fx.head.anchors.base.tx,
@@ -600,8 +600,8 @@ test('a missing fee payer fails closed and another listed payer cannot force sta
     ...fetchers(fx),
     fetchNewestAnchor: async (payer) => {
       asked.push(payer);
-      if (payer === altPayer) return { root: newer, signature: 'sig-alt', slot: 200 };
-      return { root: fx.root, signature: 'sig-anchored-4', slot: 99 };
+      if (payer === altPayer) return { root: newer, signature: '27SNgGaQh9gyvampp37r9dfCeR83pjAKgViJgxJWfmynsviAc9KiQPJh2gRb55KKX3h4QzjTkg6admxmGfSuSzeD', slot: 200 };
+      return { root: fx.root, signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA', slot: 99 };
     },
   });
   assert.deepEqual(asked, [PINNED_SOLANA_ANCHOR_FEE_PAYER]);
@@ -617,14 +617,14 @@ test('a foreign-payer memo with a newer root does not force stale_head', async (
   const rpc = jsonRpc((msg) => {
     if (msg.method === 'getSignaturesForAddress') {
       return [
-        { signature: 'sig-foreign', err: null, slot: 500, blockTime: 500 },
-        { signature: 'sig-anchored-4', err: null, slot: 99, blockTime: 99 },
+        { signature: 'RiHzgfWvrgruMTDDoX3yoXwRF1WPUEaoN7hXyBzD1vTudBw4oSn1dKcGZSQ4eyUoVhPJgi1mzrC4uzXA7C5Zqc1', err: null, slot: 500, blockTime: 500 },
+        { signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA', err: null, slot: 99, blockTime: 99 },
       ];
     }
     if (msg.method === 'getTransaction') {
       const opts = msg.params && msg.params[1];
       if (!opts || opts.commitment !== 'finalized') return null;
-      if (msg.params[0] === 'sig-foreign') return solanaTx(foreignMemo, stranger);
+      if (msg.params[0] === 'RiHzgfWvrgruMTDDoX3yoXwRF1WPUEaoN7hXyBzD1vTudBw4oSn1dKcGZSQ4eyUoVhPJgi1mzrC4uzXA7C5Zqc1') return solanaTx(foreignMemo, stranger);
       return solanaTx(fx.memo);
     }
     if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
@@ -648,7 +648,7 @@ test('a foreign-payer memo with a newer root does not force stale_head', async (
   try {
     const found = await fetchNewestSolanaAnchorRoot(PINNED_SOLANA_ANCHOR_FEE_PAYER, url);
     assert.equal(found.root, fx.root);
-    assert.equal(found.signature, 'sig-anchored-4');
+    assert.equal(found.signature, '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA');
     const inclusion = {
       task_id: 'a',
       status: 'anchored',
@@ -772,12 +772,12 @@ test('a null or thrown transaction fails the memo scan and does not keep an olde
   const nullRpc = jsonRpc((msg) => {
     if (msg.method === 'getSignaturesForAddress') {
       return [
-        { signature: 'sig-gone', err: null, slot: 300 },
-        { signature: 'sig-anchored-4', err: null, slot: 99 },
+        { signature: '4vDAwWebZThWMon1wUyHYRcpeLiPLwtxjrMdzBsryh6eSz1gJjTxY4XXAo5xjwzEuCHzV7aLvWHTJY97w8GQPbzc', err: null, slot: 300 },
+        { signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA', err: null, slot: 99 },
       ];
     }
     if (msg.method === 'getTransaction') {
-      if (msg.params[0] === 'sig-gone') return null;
+      if (msg.params[0] === '4vDAwWebZThWMon1wUyHYRcpeLiPLwtxjrMdzBsryh6eSz1gJjTxY4XXAo5xjwzEuCHzV7aLvWHTJY97w8GQPbzc') return null;
       return solanaTx(fx.memo);
     }
     if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
@@ -813,7 +813,7 @@ test('a null or thrown transaction fails the memo scan and does not keep an olde
 
   const throwRpc = jsonRpc((msg) => {
     if (msg.method === 'getSignaturesForAddress') {
-      return [{ signature: 'sig-anchored-4', err: null, slot: 99 }];
+      return [{ signature: '5pNPPYxqGFfjz1QqBGUDA49MYJpNahWFyPtvnu4UUWMKH3MkGSmcEDWLQazbegm81f45Zzcx3hMhc9B1krTX93dA', err: null, slot: 99 }];
     }
     if (msg.method === 'getTransaction') return { error: { message: 'rpc blew up' } };
     return null;
@@ -836,7 +836,7 @@ test('the memo scan pages with before and fails closed at the page cap', async (
   const pageRpc = jsonRpc((msg) => {
     if (msg.method !== 'getSignaturesForAddress') {
       const signature = msg.params?.[0];
-      if (signature === 'memo-sig') return solanaTx(fx.memo);
+      if (signature === '2L5yFyYivsVuyCAcwnJpFXEfR4MYdpXAyrqaDQ7y1hTuz5Lch7x9yhRyN9wNXoUb2jyCEHN6US5BUh98b4U6Z19m') return solanaTx(fx.memo);
       return { slot: 1, meta: { err: null }, transaction: { message: { instructions: [] } } };
     }
     const before = msg.params[1]?.before || null;
@@ -844,7 +844,7 @@ test('the memo scan pages with before and fails closed at the page cap', async (
     if (!before) {
       return Array.from({ length: limit }, (_, i) => ({ signature: `pad-${i}`, err: null, slot: 1000 - i }));
     }
-    return [{ signature: 'memo-sig', err: null, slot: 1 }];
+    return [{ signature: '2L5yFyYivsVuyCAcwnJpFXEfR4MYdpXAyrqaDQ7y1hTuz5Lch7x9yhRyN9wNXoUb2jyCEHN6US5BUh98b4U6Z19m', err: null, slot: 1 }];
   });
   const pagePort = await listen(pageRpc);
   try {

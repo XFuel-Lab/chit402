@@ -5,6 +5,11 @@ All notable changes to the Chit402 verifier alias are documented here. This proj
 
 The package re-exports `chit402-verify` and forwards CLI arguments to that verifier.
 
+## 0.4.10 — Pin chit402-verify 0.4.10
+
+### Changed
+- Depends on exactly `chit402-verify` `0.4.10`: one confirmed anchor is enough when the other chain's RPC lookup failed, and anchor lookups retry over a public fallback list. Not published. No deploy.
+
 ## 0.4.9 — Pin chit402-verify 0.4.9
 
 ### Changed
