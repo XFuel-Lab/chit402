@@ -697,3 +697,74 @@ test('T18 shell footer points at the primary verifier package', () => {
   assert.match(html, /only it can verify/);
   assert.doesNotMatch(html, /@xfuel\/verify<\/code> 0\.3\.5 or later/);
 });
+
+// Pre-attestation copy. Copy only: none of these change a verdict.
+const preShellReceipt = () => JSON.parse(readFileSync(fileURLToPath(new URL('../../../packages/verify/test/fixtures/public/chit-39af100b.json', import.meta.url)), 'utf8'));
+const { PRE_ATTESTATION_NOTE, isPreAttestationBaseShell } = await import('../src/receipt-shell.js');
+
+test('T19 a Base shell with no attestation on record says it was issued without a public attestation', () => {
+  const shell = toPublicShell(preShellReceipt());
+  assert.equal(shell.chain, 'base');
+  const html = renderReceiptShellHtml(shell, { noAttestation: true });
+  assert.ok(html.includes(`<p class="note">${PRE_ATTESTATION_NOTE.replace(/'/g, '&#39;')}</p>`) || html.includes(PRE_ATTESTATION_NOTE), 'pre-attestation note shown');
+  assert.match(html, /Issued without a public attestation\./);
+  assert.doesNotMatch(html, /only it can verify/);
+  assert.doesNotMatch(html, /or later: <code>/);
+  assert.doesNotMatch(html, /Public attestation/);
+  assert.doesNotMatch(html, /VERIFIED/);
+});
+
+test('T20 without the server lookup the generic note stays (flag off, or attestation withheld)', () => {
+  const shell = toPublicShell(preShellReceipt());
+  for (const opts of [undefined, {}, { noAttestation: false }, { noAttestation: 'true' }, { noAttestation: 1 }]) {
+    const html = renderReceiptShellHtml(shell, opts);
+    assert.match(html, /only it can verify/);
+    assert.doesNotMatch(html, /Issued without a public attestation/);
+  }
+});
+
+test('T21 attested and pending shells keep their copy even if noAttestation is passed', () => {
+  for (const att of [{ jws: 'eyJhbGciOiJFUzI1NiJ9.e30.sig' }, { status: 'pending' }]) {
+    const shell = { ...toPublicShell(preShellReceipt()), public_attestation: att };
+    const html = renderReceiptShellHtml(shell, { noAttestation: true });
+    assert.doesNotMatch(html, /Issued without a public attestation/);
+    assert.match(html, /only it can verify/);
+    assert.match(html, /Public attestation/);
+  }
+});
+
+test('T22 non-Base chains, signed shells, and non-shells never get the pre-attestation note', () => {
+  const base = toPublicShell(preShellReceipt());
+  for (const chain of ['solana', 'base-sepolia', '', null, 'BASE']) {
+    const html = renderReceiptShellHtml({ ...base, chain }, { noAttestation: true });
+    assert.doesNotMatch(html, /Issued without a public attestation/, String(chain));
+  }
+  assert.equal(isPreAttestationBaseShell({ ...base, issuer_signature: 'x' }, null, true), false);
+  assert.equal(isPreAttestationBaseShell({ ...base, unsigned: false }, null, true), false);
+  assert.equal(isPreAttestationBaseShell({ ...base, schema: 'other' }, null, true), false);
+  assert.equal(isPreAttestationBaseShell(Object.create({ chain: 'base', unsigned: true, schema: base.schema }), null, true), false);
+  assert.equal(isPreAttestationBaseShell(base, null, true), true);
+});
+
+test('T23 pre-attestation page leaks nothing beyond the public card', () => {
+  const receipt = preShellReceipt();
+  const SENT = ['SENTINEL_PROMPT_9f1', 'sk-live-SENTINEL', 'sentinel@example.invalid', '0xSENTINELWALLET'];
+  receipt.output = { text: SENT[0] };
+  receipt.caller_binding = { email: SENT[2], wallet: SENT[3] };
+  receipt.route = { key: SENT[1] };
+  const shell = toPublicShell(receipt);
+  const html = renderReceiptShellHtml(shell, { noAttestation: true });
+  assert.match(html, /Issued without a public attestation/);
+  for (const s of SENT) assert.ok(!html.includes(s), `leaked ${s}`);
+  for (const k of ['caller_binding', 'provider_cogs', 'issuer_signature', 'claim_id', 'fulfillment', 'tolerance']) assert.ok(!html.includes(k), `field ${k}`);
+});
+
+test('T24 failed and skipped attestation rows serve as none, so the page gets the no-attestation note', async () => {
+  const { PublicAttestationStore } = await import('../src/public-attestation-store.js');
+  for (const state of ['failed', 'skipped']) {
+    const fake = { pending: new Map(), cache: new Map(), _cacheSet(k, v) { this.cache.set(k, v); }, async _readDone() { return { state, reason: 'x' }; } };
+    assert.equal(await PublicAttestationStore.prototype.servedAttestation.call(fake, 'chit-x'), null, state);
+  }
+  const html = renderReceiptShellHtml(toPublicShell(preShellReceipt()), { noAttestation: true });
+  assert.match(html, /Issued without a public attestation\./);
+});

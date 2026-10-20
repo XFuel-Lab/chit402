@@ -3034,6 +3034,8 @@ export async function createApp() {
 
   async function sendPublicShell(res, receipt, { wantsJson, taskId, attestation = false }) {
     const { shell, inclusion } = await shellFor(receipt, taskId);
+    // True only when the store was asked and holds nothing for this receipt.
+    let noAttestation = false;
     // Read only: a stored attestation or a pending marker. Never signs.
     if (attestation && publicAttestationServeEnabled()) {
       const served = await publicAttestations.servedAttestation(shell.task_id || taskId);
@@ -3042,6 +3044,8 @@ export async function createApp() {
         logger.error({ taskId: shell.task_id, field: drift }, 'public attestation withheld: shell differs from signed claims');
       } else if (served) {
         shell.public_attestation = served;
+      } else {
+        noAttestation = true;
       }
     }
     res.vary('Accept');
@@ -3052,6 +3056,7 @@ export async function createApp() {
     return res.type('html').send(renderReceiptShellHtml(shell, {
       publicBaseUrl: config.service.publicBaseUrl || '',
       inclusion,
+      noAttestation,
     }));
   }
 
