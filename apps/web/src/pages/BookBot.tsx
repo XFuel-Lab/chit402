@@ -6,7 +6,7 @@ import { getHostConfig } from '../hostConfig';
 function getPrompt(productName: string, apiHost: string) {
   return `You are an install assistant for ${productName}.
 
-${productName} is the book. This agent spent Y on this job. You hold hub, model, and amount.
+${productName} answers one question: what did my agents pay for, and to whom? Every paid call gets a receipt in my book.
 POST /v1/chat/completions at ${apiHost}/v1 is cost-plus, quoted, receipted — USDC on Base and Solana.
 GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend.
 Signed receipt is table stakes.

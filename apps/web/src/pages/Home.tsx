@@ -33,14 +33,7 @@ export default function Home() {
             Chit puts a receipt on every payment and keeps it in your book, not theirs. Open it any time and check each line. $0.002 a receipt.
           </p>
           <p style={styles.heroDescription}>
-            No account. No API key. A wallet that can pay the 402 is enough.
-            Register is only to hold the book after a collected receipt.
-            <code>POST /v1/chat/completions</code> returns a signed receipt: hub, model, amount, verify_url.
-            Cost-plus, quoted, receipted — pay USDC on Base or Solana.
-            <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
-            The on-chain settlement proof add-on is coming soon.
-            Drop-in model ids: <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the{' '}
-            <code>/v1</code> door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed receipt.
+            No account, no API key. A wallet that can pay is enough.
           </p>
           <div style={styles.heroCta}>
             <a href={HERO_RECEIPT_URL} className="btn btn-primary">See what your agent spent</a>
@@ -74,7 +67,7 @@ export default function Home() {
               <span style={styles.moneyLinkMeta}>/agent-shop</span>
             </Link>
             <Link to="/book" style={styles.moneyLink}>
-              <span style={styles.moneyLinkTitle}>This agent spent Y on this job.</span>
+              <span style={styles.moneyLinkTitle}>Which agent paid for this job, and how much?</span>
               <span style={styles.moneyLinkMeta}>/book</span>
             </Link>
             <Link to="/v1" style={styles.moneyLink}>
@@ -98,7 +91,7 @@ export default function Home() {
             </div>
             <div className="card">
               <h3>GET|POST /v1/agents/:agent_id/book</h3>
-              <p>This agent spent Y on this job. You hold hub, model, and amount. Possession-gated (register session or HMAC). Not a public index. Signed receipt is table stakes.</p>
+              <p>Who paid, which model ran, and what did it cost? Every paid call lands in your book. Only you can open it (register session or HMAC). It is not a public index.</p>
             </div>
           </div>
         </div>

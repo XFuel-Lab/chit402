@@ -86,8 +86,14 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
     assert.doesNotMatch(source, /Base \(primary\)/i, `${label} must not rank Base as primary`);
     assert.doesNotMatch(source, /\$0\.01/, `${label} must not lead with $0.01 price`);
     assert.match(source, /USDC on Base (and|or) Solana/i, `${label} names USDC rails`);
-    assert.match(source, /cost-plus.*quoted.*receipted/i, `${label} uses cost-plus language`);
   }
+  // Layout banner and Home use plain words; the cost-plus detail lives on Pricing and Docs.
+  assert.match(pricing, /cost-plus.*quoted.*receipted/i, 'Pricing uses cost-plus language');
+  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  assert.match(docs, /cost-plus, quoted, receipted/, 'Docs keeps cost-plus detail');
+  assert.doesNotMatch(layout, /cost-plus|This agent spent Y|You hold hub/i, 'banner drops jargon');
+  assert.match(layout, /real mainnet USDC/, 'banner keeps mainnet warning');
+  assert.doesNotMatch(home, /This agent spent Y/, 'home drops old line');
   assert.match(pricing, /\$0\.002/, 'Pricing page states standard receipt');
   assert.match(pricing, /cost \+ 1%/, 'Pricing page states routing cost + 1%');
   assert.match(pricing, /api\.chit402\.com|getApiV1/, 'Pricing names Chit public door');

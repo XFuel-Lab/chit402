@@ -101,11 +101,9 @@ export default function Layout() {
             borderBottom: '1px solid rgba(245,158,11,0.25)',
           }}
         >
-          XFuel is the book. This agent spent Y on this job. You hold hub, model, and amount.
+          What did your agents pay for, and to whom? Every payment here gets a receipt.
           {' '}The API is <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>api.chit402.com</code>.
-          {' '}<code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78em' }}>POST /v1/chat/completions</code>
-          {' '}is <strong>cost-plus, quoted, receipted</strong> — USDC on Base and Solana.
-          {' '}Paying this host moves real mainnet USDC. Do not send funds unless you mean to.
+          {' '}Paying this host moves real mainnet USDC on Base and Solana. Do not send funds unless you mean to.
         </div>
       )}
 
