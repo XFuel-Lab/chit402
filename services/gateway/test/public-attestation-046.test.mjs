@@ -447,17 +447,25 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
   assert.equal('public_attestation' in JSON.parse(off.text), false);
   const offCache = off.res.headers.get('cache-control');
   const offVary = off.res.headers.get('vary');
+  const offPage = await readShell('html');
+  assert.match(offPage.text, /only it can verify/, 'flag off: generic note');
+  assert.doesNotMatch(offPage.text, /Stranger verification/, 'flag off: absence is not evidence');
 
   process.env.PUBLIC_ATTESTATION_SERVE = 'true';
   const signsBefore = publicSignCount();
   const unknown = await readShell();
   assert.equal('public_attestation' in JSON.parse(unknown.text), false, 'no row: 0.4.5 shell');
+  const unknownPage = await readShell('html');
+  assert.match(unknownPage.text, /Stranger verification is not available for this receipt/, 'no row: pre-attestation copy');
+  assert.doesNotMatch(unknownPage.text, /only it can verify/);
+  assert.equal(JSON.parse((await readShell()).text).unsigned, true, 'JSON unchanged by the copy');
 
   await store.enqueue({ taskId: TASK_APP, ref: `base:${TX}` });
   const pending = await readShell();
   assert.deepEqual(JSON.parse(pending.text).public_attestation, { status: 'pending' });
   const page = await readShell('html');
   assert.match(page.text, /Public attestation pending/);
+  assert.doesNotMatch(page.text, /Stranger verification/, 'pending keeps its copy');
   assert.doesNotMatch(page.text, /VERIFIED/);
 
   const shellNow = JSON.parse(off.text);

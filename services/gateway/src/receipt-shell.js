@@ -276,6 +276,23 @@ function httpBase(value) {
   }
 }
 
+/** Plain copy for a Base receipt issued before public attestations. */
+export const PRE_ATTESTATION_NOTE = 'This public page shows payment and log facts only. It is not signed. Stranger verification is not available for this receipt: it was issued without a public attestation, so this page and its JSON carry nothing a stranger can check. The owner\'s signed receipt still verifies.';
+
+/**
+ * An unsigned Base shell with no public_attestation and no issuer_signature,
+ * for which the server looked and found no attestation (`noAttestation`).
+ * Absence alone is not enough: the serve flag may be off, or a drifting
+ * attestation withheld. A pending attestation is not this case either.
+ */
+export function isPreAttestationBaseShell(shell, card, noAttestation = false) {
+  if (noAttestation !== true) return false;
+  if (!shell || typeof shell !== 'object' || Array.isArray(shell)) return false;
+  if (own(shell, 'schema') !== 'chit402.receipt_shell.v1' || own(shell, 'unsigned') !== true) return false;
+  if (own(shell, 'public_attestation') != null || own(shell, 'issuer_signature') != null) return false;
+  return (card ? card.chain : own(shell, 'chain')) === 'base';
+}
+
 function chainLabel(chain) {
   if (chain == null || chain === '') return '';
   if (chain === 'base') return 'Base';
@@ -336,7 +353,7 @@ export function shellProofLinks(storedId, inclusion) {
   return { inclusion: inclusionHref, head: headHref };
 }
 
-export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = null } = {}) {
+export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = null, noAttestation = false } = {}) {
   const card = takePublicCard(shell);
   const storedId = card.receipt_id == null ? '' : String(card.receipt_id);
   const displayId = displayTaskIdForShare(storedId);
@@ -420,6 +437,14 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     }
   }
 
+  // A Base shell with no public attestation was issued before the public
+  // attestation signer. Nothing on it can be checked by a stranger, so the
+  // page says so instead of pointing at the verifier. Copy only: no verdict.
+  const preSigner = isPreAttestationBaseShell(shell, card, noAttestation);
+  const noteHtml = preSigner
+    ? `<p class="note">${esc(PRE_ATTESTATION_NOTE)}</p>`
+    : `<p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Check it with chit402-verify ${VERIFIER_MIN} or later: <code>${VERIFIER_UPGRADE_HINT}</code>.</p>`;
+
   const links = [anchor('?format=json', 'JSON')];
   const pair = shellProofLinks(storedId, inclusion);
   if (card.leaf_hash != null && storedId && pair.inclusion) {
@@ -495,7 +520,7 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     <hr />
     ${logHtml}${attestationHtml ? `\n    ${attestationHtml}` : ''}
     <hr />
-    <p class="note">This public page shows payment and log facts only. It is not signed. The signed receipt is on the owner view, and only it can verify. Check it with chit402-verify ${VERIFIER_MIN} or later: <code>${VERIFIER_UPGRADE_HINT}</code>.</p>
+    ${noteHtml}
     <div class="links">
       ${links.join('\n      ')}
     </div>
