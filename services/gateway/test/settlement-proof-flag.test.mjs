@@ -7,6 +7,7 @@ import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0xtreasury';
@@ -90,7 +91,7 @@ test('flag off: a settlement request is refused before the 402, with no settle a
   assert.equal(challenge.status, 402, 'a plain request still gets the normal challenge');
   const nonce = (await challenge.json()).accepts[0].extra.nonce;
   const settledBefore = fac.server.settleCount;
-  const res = await post({ ...chat, proof_tier: 'settlement' }, { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': nonce });
+  const res = await post({ ...chat, proof_tier: 'settlement' }, { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': nonce });
   assert.equal(res.status, 400);
   const json = await res.json();
   assert.equal(json.error.code, 'settlement_proof_not_offered');

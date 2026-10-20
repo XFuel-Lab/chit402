@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-intent-policy-'));
 
 process.env.RECEIPT_SIGNING_SECRET = 'test-intent-policy-secret';
@@ -153,7 +154,7 @@ async function settlePaid(headers = {}, body = chatBody) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
+      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
       'x-payment-nonce': nonce,
       ...headers,
     },
@@ -298,7 +299,7 @@ describe('policy_blocked mid-burn', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-payment': 'PAYMENT-BLOB',
+        'x-payment': evmAuthHeader('PAYMENT-BLOB'),
         'x-payment-nonce': await issueChallenge(),
         'x-xfuel-session': session,
         'x-xfuel-intent': 'intent-kill-test',

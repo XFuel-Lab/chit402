@@ -520,6 +520,10 @@ describe('XFuelClient', () => {
         from: '0xAgent',
         mock: true,
       });
+      expect(decoded.authorization.message).toMatchObject({ from: '0xAgent', to: '0xTreasury', value: '50000' });
+      expect(decoded.authorization.message.nonce).toMatch(/^0x[0-9a-f]{64}$/);
+      const second = JSON.parse(Buffer.from((await payer(challenge)).header, 'base64').toString('utf8'));
+      expect(second.authorization.message.nonce).not.toBe(decoded.authorization.message.nonce);
     });
 
     it('createSignerPayer envelopes the caller-signed authorization', async () => {

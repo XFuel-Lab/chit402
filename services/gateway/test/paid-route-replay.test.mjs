@@ -8,6 +8,7 @@ import express from 'express';
 import { Wallet } from 'ethers';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0x1111111111111111111111111111111111111111';
@@ -99,7 +100,7 @@ function nonceOf(body) {
  * closed routes expect 409. stored routes expect the original bytes.
  */
 async function replayRoute({
-  url, body, headers = {}, payment = 'PAYMENT-BLOB', okStatus, stored = false, sideEffect = null,
+  url, body, headers = {}, payment = evmAuthHeader('PAYMENT-BLOB'), okStatus, stored = false, sideEffect = null,
 }) {
   const open = await post(url, { headers, body });
   assert.equal(open.status, 402, open.raw);
@@ -232,14 +233,14 @@ test('POST /v1/agents/:agent_id/book/ingest exact replay is 409 and does not ing
   const settlesBefore = facServer.settleCount;
   const first = await post(url, {
     body: invoice(`0x${'a1'.repeat(32)}`),
-    payment: 'PAYMENT-BLOB',
+    payment: evmAuthHeader('PAYMENT-BLOB'),
     nonce,
   });
   assert.equal(first.status, 201, first.raw);
   const rows = ledger.entries.length;
   const second = await post(url, {
     body: invoice(`0x${'b2'.repeat(32)}`),
-    payment: 'PAYMENT-BLOB',
+    payment: evmAuthHeader('PAYMENT-BLOB'),
     nonce,
   });
   assert.equal(second.status, 409, second.raw);

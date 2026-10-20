@@ -307,3 +307,33 @@ test('evmAuthKey: canonical keys equal the keys earlier releases stored', async 
   // A stored key from a malformed nonce keeps its old form, so it still matches.
   assert.equal(evmAuthKey('base', USDC, PAYER, 'XYZ'), legacy('base', USDC, PAYER, 'XYZ'));
 });
+
+// Review MEDIUM 1: EVM payments need a decodable EIP-3009 authorization.
+const opaqueHeader = () => 'PAYMENT-BLOB-OPAQUE';
+const permit2Header = ({ from = PAYER } = {}) => Buffer.from(JSON.stringify({
+  x402Version: 2,
+  accepted: { scheme: 'exact', network: 'eip155:8453', amount: '2000', asset: USDC, payTo: HOUSE, extra: { assetTransferMethod: 'permit2' } },
+  payload: {
+    signature: `0x${'11'.repeat(65)}`,
+    permit2Authorization: { from, permitted: { token: USDC, amount: '2000' }, spender: HOUSE, nonce: '1', deadline: '9999999999', witness: { to: HOUSE } },
+  },
+})).toString('base64');
+
+for (const [name, headerFn] of [['opaque', opaqueHeader], ['Permit2-shaped', permit2Header]]) {
+  test(`settle: ${name} EVM header refuses before the facilitator and holds nothing`, async () => {
+    const store = new ChallengeStore();
+    setActiveChallengeStore(store);
+    const fac = await listenFac({ tx: TX1 });
+    const challengeNonce = `0x${(name === 'opaque' ? 'f1' : 'f2').repeat(32)}`;
+    const out = await oneSettle({ store, fac, challengeNonce, headerFn });
+    await fac.close();
+    assert.equal(out.kind, 'failed', JSON.stringify(out));
+    assert.equal(out.reason || out.code, 'settle_unconfirmed');
+    assert.equal(fac.hits.settle, 0, 'facilitator settle not called');
+    assert.equal(fac.hits.verify, 0, 'facilitator verify not called');
+    assert.equal(store.pending.length, 0, 'no pending hold row');
+    assert.equal(store.late.length, 0, 'no late-issue row');
+    assert.equal(store.txReserved.size, 0);
+    assert.equal(store.spent.size, 0);
+  });
+}

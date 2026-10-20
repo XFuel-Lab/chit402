@@ -446,7 +446,7 @@ export async function settleBoundPayment({
   // A decoded EVM authorization must carry its EIP-3009 nonce as exactly
   // 0x plus 64 hex. Chain confirmation binds the transfer by that nonce, so
   // anything else is refused here, before the facilitator is called.
-  if (!solana && authEarly && !canonicalAuthNonce(authEarly.nonce)) {
+  if (!solana && (!authEarly || !canonicalAuthNonce(authEarly.nonce))) {
     return refused(req, 'settle_unconfirmed', { preSettle: true });
   }
   const authKeyEarly = !solana

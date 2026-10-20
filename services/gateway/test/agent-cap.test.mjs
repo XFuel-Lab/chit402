@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-agent-cap-'));
 
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret-cap';
@@ -151,7 +152,7 @@ async function settlePaid(path = '/v1/chat/completions', headers = {}) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
+      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
       'x-payment-nonce': nonce,
       ...headers,
     },
@@ -276,7 +277,7 @@ test('Y=2000 spent: next paid call fails closed — no second payment, refusal i
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
+      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
       'x-payment-nonce': nonce,
       'x-xfuel-session': session,
     },

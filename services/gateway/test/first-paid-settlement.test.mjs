@@ -7,6 +7,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0xtreasury';
@@ -59,7 +60,7 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function paidChat(reuseNonce = null, paymentHeader = 'PAYMENT-BLOB') {
+async function paidChat(reuseNonce = null, paymentHeader = evmAuthHeader('PAYMENT-BLOB')) {
   let nonce = reuseNonce;
   if (!nonce) {
     const challenge = await fetch(`${base}/v1/chat/completions`, {
