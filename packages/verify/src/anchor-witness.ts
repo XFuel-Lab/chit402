@@ -476,15 +476,35 @@ export function extractMemos(tx: SolanaAnchorTx | null | undefined): string[] {
   return found;
 }
 
-function anchorRpcError(err: unknown): Error {
-  if (rpcFailureReason(err) === 'rpc_timeout') return new Error('rpc_timeout');
+/**
+ * Anchor RPC error classes (0.4.10):
+ * - `rpc_timeout` and `rpc_transport` (network failure, HTTP status) are the
+ *   only failures the other chain may cover.
+ * - `rpc_invalid_params` (JSON-RPC -32602 / -32600) means the node refused
+ *   the anchor reference itself: a bad anchor.
+ * - `rpc_rejected` is everything else (JSON-RPC error object, a body that is
+ *   not JSON, a refused redirect, a bad URL, a code exception). Not covered.
+ */
+export type AnchorRpcClass = 'rpc_timeout' | 'rpc_transport' | 'rpc_invalid_params' | 'rpc_rejected';
+
+const TRANSPORT_MESSAGE = /^(rpc_http_\d{3}|rpc_network(:.*)?|HTTP \d{3})$|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN|ENOTFOUND|connection reset/i;
+
+export function classifyAnchorRpcError(err: unknown): AnchorRpcClass {
   const message = err instanceof Error ? err.message : String(err);
-  if (message.startsWith('rpc_error:')) {
-    const detail = message.slice('rpc_error:'.length).trim();
-    return new Error(detail || 'rpc_error');
-  }
-  if (message.startsWith('rpc_http_')) return new Error(`HTTP ${message.slice('rpc_http_'.length)}`);
-  return err instanceof Error ? err : new Error(message);
+  if (message === 'rpc_timeout' || /^(base|solana)_rpc_timeout$/.test(message)) return 'rpc_timeout';
+  if (message === 'rpc_transport' || /^(base|solana)_rpc_error$/.test(message)) return 'rpc_transport';
+  if (message === 'rpc_invalid_params' || message === 'anchor_ref_invalid') return 'rpc_invalid_params';
+  if (message === 'rpc_rejected' || /^(base|solana)_rpc_rejected$/.test(message)) return 'rpc_rejected';
+  const code = (err as { rpcCode?: unknown } | null)?.rpcCode;
+  if (code === -32602 || code === -32600) return 'rpc_invalid_params';
+  if (code !== undefined) return 'rpc_rejected';
+  if (rpcFailureReason(err) === 'rpc_timeout') return 'rpc_timeout';
+  if (TRANSPORT_MESSAGE.test(message)) return 'rpc_transport';
+  return 'rpc_rejected';
+}
+
+function anchorRpcError(err: unknown): Error {
+  return new Error(classifyAnchorRpcError(err));
 }
 
 /**
@@ -558,6 +578,8 @@ export const ANCHOR_UNCHECKED_REASONS: readonly string[] = Object.freeze([
   'solana_rpc_null',
   'solana_rpc_error',
   'solana_rpc_timeout',
+  'base_rpc_rejected',
+  'solana_rpc_rejected',
   'anchor_inconsistent',
 ]);
 
@@ -617,10 +639,41 @@ export function assessBaseAnchor(tx: BaseAnchorTx | null, expectedChain: number)
 
 function mapAnchorRpcError(err: unknown, side: 'base' | 'solana'): string {
   const message = err instanceof Error ? err.message : '';
-  if (message === 'rpc_timeout' || message === `${side}_rpc_timeout`) return `${side}_rpc_timeout`;
-  if (message === `${side}_rpc_null` || message === `${side}_rpc_error`) return message;
+  if (message === `${side}_rpc_null`) return message;
   if (side === 'solana' && (message === 'no_genesis' || message === 'not_finalized')) return message;
-  return `${side}_rpc_error`;
+  const kind = classifyAnchorRpcError(err);
+  if (kind === 'rpc_timeout') return `${side}_rpc_timeout`;
+  if (kind === 'rpc_transport') return `${side}_rpc_error`;
+  if (kind === 'rpc_invalid_params') return 'anchor_ref_invalid';
+  return `${side}_rpc_rejected`;
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+/** Decoded byte length of a base58 string, or null when it is not base58. */
+function base58Length(value: string): number | null {
+  if (value.length === 0 || value.length > 100) return null;
+  let n = 0n;
+  for (const ch of value) {
+    const digit = BASE58_ALPHABET.indexOf(ch);
+    if (digit < 0) return null;
+    n = n * 58n + BigInt(digit);
+  }
+  let zeros = 0;
+  while (zeros < value.length && value[zeros] === '1') zeros += 1;
+  let bytes = 0;
+  while (n > 0n) { n >>= 8n; bytes += 1; }
+  return zeros + bytes;
+}
+
+/** A Solana transaction signature: base58 of exactly 64 bytes. */
+export function isSolanaSignatureRef(value: unknown): boolean {
+  return typeof value === 'string' && base58Length(value) === 64;
+}
+
+/** A Base transaction hash: 0x and 64 hex digits. */
+export function isBaseTxHashRef(value: unknown): boolean {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
 }
 
 /** Public fallback lists. The first entry is the 0.4.9 default. */
@@ -637,6 +690,8 @@ export const SOLANA_ANCHOR_RPC_FALLBACKS: readonly string[] = Object.freeze([
 export const ANCHOR_RPC_ATTEMPTS_PER_URL = 2;
 /** Backoff before retry n (0-based) is `base * 2^n`. No jitter, so tests are exact. */
 export const ANCHOR_RPC_BACKOFF_MS = 400;
+/** Upper bound for `CHIT402_RPC_BACKOFF_MS` and for any backoff step. */
+export const ANCHOR_RPC_BACKOFF_MAX_MS = 5_000;
 /** No new attempt starts after this much time on one chain. */
 export const ANCHOR_RPC_BUDGET_MS: Record<'base' | 'solana', number> = { base: 30_000, solana: 45_000 };
 
@@ -666,7 +721,7 @@ export function isRpcLookupFailure(reason: string | null | undefined): boolean {
 
 function defaultBackoffMs(): number {
   const raw = process.env.CHIT402_RPC_BACKOFF_MS;
-  if (raw != null && /^\d+$/.test(raw)) return Number(raw);
+  if (raw != null && /^\d{1,6}$/.test(raw)) return Math.min(Number(raw), ANCHOR_RPC_BACKOFF_MAX_MS);
   return ANCHOR_RPC_BACKOFF_MS;
 }
 
@@ -682,7 +737,7 @@ export async function runAnchorSide(
   run: (url: string) => Promise<string | undefined>,
 ): Promise<{ attempts: number; url: string | undefined; reason: string | undefined }> {
   const perUrl = Math.max(1, Math.min(5, policy.attemptsPerUrl ?? ANCHOR_RPC_ATTEMPTS_PER_URL));
-  const backoff = Math.max(0, policy.backoffMs ?? defaultBackoffMs());
+  const backoff = Math.min(ANCHOR_RPC_BACKOFF_MAX_MS, Math.max(0, policy.backoffMs ?? defaultBackoffMs()));
   const budget = policy.budgetMs ?? ANCHOR_RPC_BUDGET_MS[side];
   const sleep = policy.sleep || ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = policy.now || Date.now;
@@ -693,7 +748,7 @@ export async function runAnchorSide(
   for (const url of urls.slice(0, 4)) {
     for (let i = 0; i < perUrl; i += 1) {
       if (attempts > 0 && now() - started >= budget) return { attempts, url: used, reason };
-      if (i > 0 && backoff > 0) await sleep(backoff * 2 ** (i - 1));
+      if (i > 0 && backoff > 0) await sleep(Math.min(ANCHOR_RPC_BACKOFF_MAX_MS, backoff * 2 ** (i - 1)));
       attempts += 1;
       used = url;
       reason = await run(url);
@@ -707,6 +762,12 @@ export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
   const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], SOLANA_ANCHOR_RPC_TIMEOUT_MS);
   if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
   return result;
+}
+
+const BASE_FAILURE_RANK = ['anchor_ref_invalid', 'base_rpc_rejected', 'base_rpc_null', 'base_rpc_timeout', 'base_rpc_error'];
+function worstBaseFailure(codes: string[]): string {
+  for (const code of BASE_FAILURE_RANK) if (codes.includes(code)) return code;
+  return codes[0];
 }
 
 /**
@@ -733,13 +794,39 @@ export async function fetchBaseAnchorTransaction(
   } | null;
   let chainHex: string | null;
   let tipHex: string | null;
-  try {
-    tx = await defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash], timeoutMs) as typeof tx;
-    receipt = await defaultRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash], timeoutMs) as typeof receipt;
-    chainHex = await defaultRpc(rpcUrl, 'eth_chainId', [], timeoutMs) as string | null;
-    tipHex = await defaultRpc(rpcUrl, 'eth_blockNumber', [], timeoutMs) as string | null;
-  } catch (err) {
-    throw new Error(mapAnchorRpcError(err, 'base'));
+  // All four reads run together. A failed side read (chain id, tip) keeps the
+  // transaction already in hand, so its calldata, sender, and status are still
+  // compared. The failure is carried as `rpcCode`.
+  const settled = await Promise.allSettled([
+    defaultRpc(rpcUrl, 'eth_getTransactionByHash', [txHash], timeoutMs),
+    defaultRpc(rpcUrl, 'eth_getTransactionReceipt', [txHash], timeoutMs),
+    defaultRpc(rpcUrl, 'eth_chainId', [], timeoutMs),
+    defaultRpc(rpcUrl, 'eth_blockNumber', [], timeoutMs),
+  ]);
+  const failures = settled
+    .filter((row): row is PromiseRejectedResult => row.status === 'rejected')
+    .map((row) => mapAnchorRpcError(row.reason, 'base'));
+  const worst = failures.length === 0 ? null : worstBaseFailure(failures);
+  if (settled[0].status === 'rejected' && settled[1].status === 'rejected') throw new Error(worst as string);
+  const value = (i: number) => (settled[i].status === 'fulfilled' ? (settled[i] as PromiseFulfilledResult<unknown>).value : null);
+  tx = value(0) as typeof tx;
+  receipt = value(1) as typeof receipt;
+  chainHex = value(2) as string | null;
+  tipHex = value(3) as string | null;
+  if (tx != null && typeof tx !== 'object') throw new Error('base_rpc_rejected');
+  if (receipt != null && typeof receipt !== 'object') throw new Error('base_rpc_rejected');
+  if (worst) {
+    return {
+      hash: tx?.hash || receipt?.transactionHash || txHash,
+      input: tx?.input,
+      from: receipt?.from || tx?.from,
+      chainId: chainHex == null || chainHex === '' ? null : chainHex,
+      txChainId: tx?.chainId ?? null,
+      status: receipt == null ? null : (receipt.status ?? null),
+      blockNumber: receipt == null ? null : (receipt.blockNumber ?? null),
+      tipBlockNumber: tipHex == null || tipHex === '' ? null : tipHex,
+      rpcCode: worst,
+    };
   }
   const chainMissing = chainHex == null || chainHex === '';
   const tipMissing = tipHex == null || tipHex === '';
@@ -818,7 +905,7 @@ export async function fetchSolanaAnchorTransaction(
     throw new Error(mapAnchorRpcError(err, 'solana'));
   }
   if (result == null) return null;
-  if (typeof result !== 'object') throw new Error('solana_rpc_error');
+  if (typeof result !== 'object') throw new Error('solana_rpc_rejected');
   return result as SolanaAnchorTx;
 }
 
@@ -964,6 +1051,27 @@ function anchoredChainsVerified(head: AnchorHead, solanaValid: boolean, baseVali
   if (solanaOn && !solanaValid) return false;
   if (baseOn && !baseValid) return false;
   return true;
+}
+
+/** Content mismatch on a Base tx in hand, or null. Never reads the network. */
+function baseContentMismatch(
+  tx: BaseAnchorTx,
+  txHash: string,
+  root: string,
+  signedFrom: string,
+  expectedChain: number,
+): string | null {
+  if (tx.hash && tx.hash.toLowerCase() !== txHash.toLowerCase()) return 'tx_hash_mismatch';
+  if (tx.status != null && tx.status !== '' && parseReceiptStatus(tx.status) === 0) return 'tx_reverted';
+  if (tx.txChainId != null && tx.txChainId !== '') {
+    const embedded = parseQuantity(tx.txChainId);
+    if (embedded == null || embedded !== Number(expectedChain)) return 'chain_mismatch';
+  }
+  if (typeof tx.input === 'string') {
+    if (tx.input.toLowerCase().replace(/^0x/, '') !== root) return 'calldata_mismatch';
+  }
+  if (tx.from && !sameBaseAddress(tx.from, signedFrom)) return 'sender_mismatch';
+  return null;
 }
 
 function solanaSignature(head: AnchorHead): string | null {
@@ -1260,6 +1368,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     } else if (!signedPayer) {
       solana.reason = 'fee_payer_missing';
       errors.push('fee_payer_missing');
+    } else if (!isSolanaSignatureRef(signature)) {
+      solana.checked = true;
+      solana.reason = 'anchor_ref_invalid';
+      errors.push('solana:anchor_ref_invalid');
     } else {
       solana.checked = true;
       const solanaRun = await runAnchorSide('solana', solanaRpcs, retry, async (solanaRpc) => {
@@ -1290,13 +1402,11 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
           });
           const cluster = input.head.anchors?.solana?.cluster || null;
           const expectedGenesis = cluster ? SOLANA_GENESIS[cluster] : null;
+          // Every check on the transaction itself runs before the genesis
+          // read, so a failed genesis call cannot hide a mismatch.
           if (matched.length === 0) solana.reason = 'memo_mismatch';
           else if (!cluster) solana.reason = 'no_cluster';
           else if (!expectedGenesis) solana.reason = 'unknown_cluster';
-          else {
-            const genesis = await fetchGenesis(solanaRpc);
-            if (genesis !== expectedGenesis) solana.reason = 'cluster_mismatch';
-          }
           const headSlot = input.head.anchors?.solana?.slot;
           if (!solana.reason && headSlot != null && tx.slot != null && Number(tx.slot) !== Number(headSlot)) {
             solana.reason = 'slot_mismatch';
@@ -1304,6 +1414,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
           const payer = solanaFeePayer(tx);
           if (!solana.reason && payer !== signedPayer) {
             solana.reason = 'fee_payer_mismatch';
+          }
+          if (!solana.reason && expectedGenesis) {
+            const genesis = await fetchGenesis(solanaRpc);
+            if (genesis !== expectedGenesis) solana.reason = 'cluster_mismatch';
           }
           if (!solana.reason) {
             solana.valid = true;
@@ -1327,6 +1441,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     } else if (!signedFrom) {
       base.reason = 'anchor_sender_missing';
       errors.push('anchor_sender_missing');
+    } else if (!isBaseTxHashRef(txHash)) {
+      base.checked = true;
+      base.reason = 'anchor_ref_invalid';
+      errors.push('base:anchor_ref_invalid');
     } else {
       base.checked = true;
       const baseRun = await runAnchorSide('base', baseRpcs, retry, async (baseRpc) => {
@@ -1338,7 +1456,14 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
           input.head.anchors?.base?.chain_id || input.head.anchor?.chain_id || BASE_MAINNET_CHAIN_ID,
         );
         const assessed = assessBaseAnchor(tx, expectedChain);
-        if (!assessed.ok) {
+        // A mismatch seen on the transaction outranks a side read (chain id,
+        // tip) that failed or came back short.
+        const content = tx && tx.rpcCode !== 'anchor_inconsistent'
+          ? baseContentMismatch(tx, txHash, root as string, signedFrom, expectedChain)
+          : null;
+        if (!assessed.ok && content && isUncheckedAnchorReason(assessed.reason)) {
+          base.reason = content;
+        } else if (!assessed.ok) {
           base.reason = assessed.reason;
           if (assessed.chainId != null) base.chain_id = assessed.chainId;
         } else if (tx?.hash && tx.hash.toLowerCase() !== txHash.toLowerCase()) {

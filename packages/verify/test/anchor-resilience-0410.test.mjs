@@ -29,6 +29,7 @@ const { jwkThumbprint } = await import('../dist/jws.js');
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
 const { verifyPublicShell } = await import('../dist/check-input.js');
+const { humanVerdictLines } = await import('../dist/verdict.js');
 
 const b64 = (v) => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url');
 const sha = (buf) => createHash('sha256').update(buf).digest();
@@ -63,7 +64,7 @@ const sibling = leafOf('genesis');
 const root = nodeOf(sibling, leaf).toString('hex');
 const memo = `chit402:root:v1:global:2026-10-20:${root}:${'0'.repeat(64)}`;
 const ANCHOR_TX = `0x${'ab'.repeat(32)}`;
-const SIG = 'sig0410';
+const SIG = '3C9CBiYwx5zN2w3HierQ6vVhMWNonZi4N1brzq183wxDZGjBMTArGNAvvh3DJoLqQc4LU7e54eQdBFCQKT9VLssE';
 const head = sealHead({
   schema: 'chit402.tree_head.v1',
   payload_version: 1,
@@ -250,6 +251,193 @@ test('a hung loopback Base RPC is a bounded timeout, then covered by Solana', as
   }
 });
 
+
+// ---- PR review regressions (H1, H2, M1, L1, L2) ----
+
+function headWith(anchors) {
+  return sealHead({ schema: 'chit402.tree_head.v1', payload_version: 1, root, tree_size: 2, anchors }, key);
+}
+const baseAnchor = { status: 'anchored', tx: ANCHOR_TX, calldata: `0x${root}`, chain_id: 8453, from: PINNED_BASE_ANCHOR_WALLET };
+const solanaAnchor = { status: 'anchored', signature: SIG, slot: 99, cluster: 'devnet', memo, fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER };
+const invalidParams = () => Object.assign(new Error('rpc_error: Invalid params'), { rpcCode: -32602 });
+
+/** Loopback JSON-RPC. `handler(msg)` returns { status, body } or a result value. */
+async function rpcServer(handler) {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      let msg = {};
+      try { msg = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { /* raw */ }
+      seen.push(msg.method);
+      const out = handler(msg, req);
+      if (out && out.raw !== undefined) {
+        res.writeHead(out.httpStatus || 200, { 'content-type': out.type || 'application/json', ...(out.headers || {}) });
+        return res.end(out.raw);
+      }
+      if (out && out.httpStatus) {
+        res.writeHead(out.httpStatus, { 'content-type': 'application/json', ...(out.headers || {}) });
+        return res.end(JSON.stringify(out.body ?? {}));
+      }
+      if (out && out.rpcError) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: out.rpcError }));
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: out === undefined ? null : out }));
+    });
+  });
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  return { url: `http://127.0.0.1:${srv.address().port}`, seen, close: () => new Promise((r) => { srv.closeAllConnections?.(); srv.close(r); }) };
+}
+
+function baseRpcFor({ input = `0x${root}`, status = '0x1', chainId = '0x2105', tip = '0x80', override = {} } = {}) {
+  return (msg) => {
+    if (override[msg.method]) return override[msg.method](msg);
+    if (msg.method === 'eth_getTransactionByHash') return { hash: ANCHOR_TX, input, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase(), blockNumber: '0x64', chainId: '0x2105' };
+    if (msg.method === 'eth_getTransactionReceipt') return { transactionHash: ANCHOR_TX, status, blockNumber: '0x64', from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
+    if (msg.method === 'eth_chainId') return chainId;
+    if (msg.method === 'eth_blockNumber') return tip;
+    return null;
+  };
+}
+function solanaRpcFor({ tx = solanaTx(), override = {} } = {}) {
+  return (msg) => {
+    if (override[msg.method]) return override[msg.method](msg);
+    if (msg.method === 'getTransaction') return tx;
+    if (msg.method === 'getGenesisHash') return SOLANA_GENESIS.devnet;
+    return null;
+  };
+}
+
+/** Real fetchers against loopback servers; no injected hooks. */
+async function live({ base, solana, head: h = head } = {}) {
+  const b = await rpcServer(base || baseRpcFor());
+  const s = await rpcServer(solana || solanaRpcFor());
+  try {
+    return await verifyAnchoredRoot({
+      receipt: { task_id: TASK, row_hash: ROW }, inclusion, head: h, trustedKids: [key.kid],
+      baseRpcUrls: [b.url], solanaRpcUrls: [s.url], rpcRetry: noSleep,
+    });
+  } finally { await b.close(); await s.close(); }
+}
+
+test('H1 a malformed Solana signature in the signed head is a bad anchor, not covered by Base', async () => {
+  let called = 0;
+  const r = await anchored({
+    head: headWith({ base: baseAnchor, solana: { ...solanaAnchor, signature: 'not-a-signature' } }),
+    fetchSolanaTx: async () => { called += 1; throw invalidParams(); },
+  });
+  assert.notEqual(r.overall, 'verified');
+  assert.equal(r.overall, 'failed');
+  assert.equal(r.solana.reason, 'anchor_ref_invalid');
+  assert.equal(called, 0, 'no RPC call for a malformed reference');
+  assert.equal(r.anchor_warnings, undefined);
+});
+
+test('H1 a malformed Base tx hash in the signed head is a bad anchor, not covered by Solana', async () => {
+  const r = await anchored({
+    head: headWith({ base: { ...baseAnchor, tx: '0x1234' }, solana: solanaAnchor }),
+    fetchBaseTx: async () => { throw invalidParams(); },
+  });
+  assert.equal(r.overall, 'failed');
+  assert.equal(r.base.reason, 'anchor_ref_invalid');
+});
+
+test('H1 a JSON-RPC -32602 from a real node is a bad anchor on either chain', async () => {
+  const sol = await live({ solana: solanaRpcFor({ override: { getTransaction: () => ({ rpcError: { code: -32602, message: 'Invalid param: Invalid' } }) } }) });
+  assert.equal(sol.overall, 'failed');
+  assert.equal(sol.solana.reason, 'anchor_ref_invalid');
+  const bas = await live({ base: baseRpcFor({ override: { eth_getTransactionByHash: () => ({ rpcError: { code: -32602, message: 'invalid argument 0' } }), eth_getTransactionReceipt: () => ({ rpcError: { code: -32602, message: 'invalid argument 0' } }) } }) });
+  assert.equal(bas.overall, 'failed');
+  assert.equal(bas.base.reason, 'anchor_ref_invalid');
+});
+
+test('H2 Base calldata mismatch stays failed when eth_blockNumber is null or 429', async () => {
+  const nullTip = await live({ base: baseRpcFor({ input: `0x${'e'.repeat(64)}`, tip: null }) });
+  assert.equal(nullTip.overall, 'failed');
+  assert.equal(nullTip.base.reason, 'calldata_mismatch');
+  const limited = await live({ base: baseRpcFor({ input: `0x${'e'.repeat(64)}`, override: { eth_blockNumber: () => ({ httpStatus: 429, body: { error: 'rate limited' } }) } }) });
+  assert.equal(limited.overall, 'failed');
+  assert.equal(limited.base.reason, 'calldata_mismatch');
+});
+
+test('H2 a reverted Base anchor stays failed when eth_chainId errors', async () => {
+  const r = await live({ base: baseRpcFor({ status: '0x0', override: { eth_chainId: () => ({ rpcError: { code: -32000, message: 'boom' } }) } }) });
+  assert.equal(r.overall, 'failed');
+  assert.equal(r.base.reason, 'tx_reverted');
+});
+
+test('H2 Solana fee payer or slot mismatch stays failed when getGenesisHash errors', async () => {
+  const otherPayer = solanaTx();
+  otherPayer.transaction.message.accountKeys = [{ pubkey: '11111111111111111111111111111111', signer: true, writable: true }];
+  const payer = await live({ solana: solanaRpcFor({ tx: otherPayer, override: { getGenesisHash: () => ({ rpcError: { code: -32000, message: 'boom' } }) } }) });
+  assert.equal(payer.overall, 'failed');
+  assert.equal(payer.solana.reason, 'fee_payer_mismatch');
+  const slot = await live({ solana: solanaRpcFor({ tx: { ...solanaTx(), slot: 100 }, override: { getGenesisHash: () => ({ httpStatus: 429, body: {} }) } }) });
+  assert.equal(slot.overall, 'failed');
+  assert.equal(slot.solana.reason, 'slot_mismatch');
+});
+
+test('M1 a body that is not a JSON-RPC answer is not an RPC failure the other chain can cover', async () => {
+  const cases = [
+    ['truncated JSON', () => ({ raw: '{"jsonrpc":"2.0","res' })],
+    ['HTML body', () => ({ raw: '<html>hi</html>', type: 'text/html' })],
+    ['string result', () => 'not a transaction'],
+    ['JSON-RPC error', () => ({ rpcError: { code: -32005, message: 'node is behind' } })],
+  ];
+  for (const [label, getTransaction] of cases) {
+    const r = await live({ solana: solanaRpcFor({ override: { getTransaction } }) });
+    assert.notEqual(r.overall, 'verified', label);
+    assert.equal(r.anchor_warnings, undefined, label);
+    assert.equal(r.solana.reason, 'solana_rpc_rejected', label);
+  }
+});
+
+test('M1 a code exception on a malformed tx shape is not covered by Base', async () => {
+  const bad = solanaTx(memo.replace(root, 'e'.repeat(64)));
+  bad.transaction.message.instructions = 7;
+  bad.meta.innerInstructions = 7;
+  const r = await live({ solana: solanaRpcFor({ tx: bad }) });
+  assert.notEqual(r.overall, 'verified');
+  assert.equal(r.anchor_warnings, undefined);
+});
+
+test('M1 a malformed Solana RPC URL is not covered by Base', async () => {
+  const r = await anchored({ solanaRpcUrls: ['http://[::1'], fetchSolanaTx: undefined, fetchGenesis: undefined });
+  assert.notEqual(r.overall, 'verified');
+  assert.equal(r.solana.reason, 'solana_rpc_rejected');
+});
+
+test('M1 transport failures stay coverable: HTTP 429/503, connection refused, timeout', async () => {
+  for (const status of [429, 503]) {
+    const r = await live({ solana: solanaRpcFor({ override: { getTransaction: () => ({ httpStatus: status, body: {} }) } }) });
+    assert.equal(r.overall, 'verified', String(status));
+    assert.deepEqual(r.anchor_warnings, ['solana:solana_rpc_error']);
+  }
+  const refused = await anchored({ solanaRpcUrls: ['http://127.0.0.1:9/'], fetchSolanaTx: undefined, fetchGenesis: undefined });
+  assert.equal(refused.overall, 'verified');
+  assert.deepEqual(refused.anchor_warnings, ['solana:solana_rpc_error']);
+});
+
+test('L1 a redirect is not followed and is not covered', async () => {
+  const target = await rpcServer(solanaRpcFor());
+  const redirector = await rpcServer(() => ({ httpStatus: 307, headers: { location: target.url }, body: {} }));
+  try {
+    const r = await anchored({ solanaRpcUrls: [redirector.url], fetchSolanaTx: undefined, fetchGenesis: undefined });
+    assert.equal(target.seen.length, 0, 'the POST was not replayed');
+    assert.equal(r.solana.valid, false);
+    assert.notEqual(r.overall, 'verified');
+  } finally { await target.close(); await redirector.close(); }
+});
+
+test('L2 backoff is capped', async () => {
+  const slept = [];
+  await runAnchorSide('solana', ['u1'], { attemptsPerUrl: 3, backoffMs: 600000, sleep: async (ms) => { slept.push(ms); } }, async () => 'solana_rpc_error');
+  assert.ok(slept.length === 2 && slept.every((ms) => ms <= 5000), JSON.stringify(slept));
+});
+
 // ---- end to end: public shell, local log, separate Base and Solana RPCs ----
 
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -410,4 +598,20 @@ test('E2E: Base calldata mismatch with Solana confirmed is exit 1', async () => 
   world.baseMode = 'mismatch';
   const v = await verifyShell();
   assert.equal(v.exit_code, 1, `${v.result} ${v.reason}`);
+});
+
+test('M2 a Solana lookup that did not answer is printed and marked partial', async () => {
+  reset();
+  world.solanaMode = 'error';
+  const v = await verifyShell();
+  assert.equal(v.exit_code, 0);
+  assert.equal(v.log.partial, true);
+  assert.deepEqual(v.log.unchecked_anchors, ['solana']);
+  const lines = humanVerdictLines(v);
+  assert.ok(lines.some((l) => /^Solana not checked\b/.test(l) && /Base only/.test(l)), lines.join('\n'));
+  assert.equal(lines.some((l) => /invalid/i.test(l)), false);
+  reset();
+  const full = await verifyShell();
+  assert.equal(full.log.partial, undefined);
+  assert.equal(humanVerdictLines(full).some((l) => /not checked/.test(l)), false);
 });

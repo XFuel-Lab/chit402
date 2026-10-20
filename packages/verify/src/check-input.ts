@@ -402,7 +402,13 @@ export async function freshPublicLog(
             solana: result.solana.signature,
           },
           ...(result.anchor_warnings && result.anchor_warnings.length > 0
-            ? { warnings: [...result.anchor_warnings] }
+            ? {
+              warnings: [...result.anchor_warnings],
+              partial: true,
+              unchecked_anchors: result.anchor_warnings
+                .map((code) => code.split(':')[0])
+                .filter((chain): chain is 'base' | 'solana' => chain === 'base' || chain === 'solana'),
+            }
             : {}),
         },
       };

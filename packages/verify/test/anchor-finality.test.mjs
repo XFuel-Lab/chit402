@@ -98,7 +98,7 @@ function fixture(feePayer = PINNED_SOLANA_ANCHOR_FEE_PAYER) {
       },
       solana: {
         status: 'anchored',
-        signature: 'sig1',
+        signature: '2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX',
         slot: 99,
         cluster: 'devnet',
         memo,
@@ -111,7 +111,7 @@ function fixture(feePayer = PINNED_SOLANA_ANCHOR_FEE_PAYER) {
     confirmationStatus: 'finalized',
     meta: { err: null },
     transaction: {
-      signatures: ['sig1'],
+      signatures: ['2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX'],
       message: {
         accountKeys: [{ pubkey: feePayer, signer: true, writable: true }],
         instructions: [{
@@ -543,7 +543,7 @@ test('a thrown Solana RPC is covered by a confirmed Base anchor (0.4.10); a time
   const port = await listen(hang);
   try {
     await assert.rejects(
-      () => fetchSolanaAnchorTransaction('sig1', `http://127.0.0.1:${port}`, 50),
+      () => fetchSolanaAnchorTransaction('2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX', `http://127.0.0.1:${port}`, 50),
       (err) => err instanceof Error && err.message === 'solana_rpc_timeout',
     );
   } finally {

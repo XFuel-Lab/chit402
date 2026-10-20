@@ -74,15 +74,31 @@ export async function jsonRpc(
   assertHermeticRpc(url);
   const owned = signal ? null : openRpcDeadline(timeoutMs);
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      signal: signal ?? owned?.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: signal ?? owned?.signal,
+        // A redirect is not followed: the POST is never replayed to another host.
+        redirect: 'error',
+      });
+    } catch (err) {
+      const cause = (err as { cause?: { message?: string; code?: string } } | null)?.cause;
+      if (/redirect/i.test(String(cause?.message || ''))) {
+        throw Object.assign(new Error('rpc_error: redirect refused'), { rpcCode: 'redirect' });
+      }
+      if (err instanceof TypeError && err.message === 'fetch failed') {
+        throw new Error(`rpc_network${cause?.code ? `: ${cause.code}` : ''}`);
+      }
+      throw err;
+    }
     if (!res.ok) throw new Error(`rpc_http_${res.status}`);
-    const json = await res.json() as { result?: unknown; error?: { message?: string } | null };
-    if (json.error) throw new Error(`rpc_error: ${json.error.message || 'unknown'}`);
+    const json = await res.json() as { result?: unknown; error?: { message?: string; code?: unknown } | null };
+    if (json.error) {
+      throw Object.assign(new Error(`rpc_error: ${json.error.message || 'unknown'}`), { rpcCode: json.error.code ?? null });
+    }
     return json.result ?? null;
   } finally {
     owned?.cancel();
