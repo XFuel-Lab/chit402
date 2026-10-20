@@ -255,9 +255,12 @@ export function confirmEvmReceipt(receipt, {
     }
   }
   if (matches.length !== 1) return { ok: false, code: 'settle_unconfirmed' };
+  // EIP-3009 nonce is required. Without it, any AuthorizationUsed by the payer
+  // would match, and a different transfer could confirm this payment.
   const authNonce = authorization?.nonce ? String(authorization.nonce).toLowerCase() : null;
+  if (!authNonce) return { ok: false, code: 'settle_unconfirmed' };
   const authOk = auths.some((a) => a.authorizer && sameEvmAddress(a.authorizer, wantPayer));
-  const nonceOk = !authNonce || auths.some((a) => {
+  const nonceOk = auths.some((a) => {
     if (!a.authorizer || !sameEvmAddress(a.authorizer, wantPayer) || !a.nonce) return false;
     const raw = authNonce.startsWith('0x') ? authNonce : `0x${authNonce}`;
     const want = ethers.zeroPadValue(raw, 32).toLowerCase();

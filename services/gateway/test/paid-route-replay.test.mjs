@@ -191,7 +191,7 @@ test('POST /v1/agents/register exact replay is 409 and does not register again',
     network: 'base-sepolia',
     payload: {
       signature: `0x${'11'.repeat(65)}`,
-      authorization: { from: signer.address, to: config.x402.payTo, value: '2000' },
+      authorization: { from: signer.address, to: config.x402.payTo, value: '2000', nonce: `0x${'ab'.repeat(32)}` },
     },
   }), 'utf8').toString('base64');
   const ledger = app.locals.__test.usageSettled;

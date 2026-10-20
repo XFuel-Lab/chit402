@@ -443,6 +443,12 @@ export async function settleBoundPayment({
     if (replay) return replay;
     return refused(req, 'payment_replayed', { preSettle: true });
   }
+  // A decoded EVM authorization must carry its EIP-3009 nonce. Without it the
+  // auth spend key is empty and chain confirmation cannot bind the transfer.
+  // Opaque headers that do not decode stay on the existing path.
+  if (!solana && authEarly && !authEarly.nonce) {
+    return refused(req, 'settle_unconfirmed', { preSettle: true });
+  }
   const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
     ? `${canonicalNetwork(challenge.network)}|${String(challenge.asset || '').toLowerCase()}|${String(authEarly.from).toLowerCase()}|${String(authEarly.nonce).toLowerCase()}`
     : null;
