@@ -569,3 +569,131 @@ test('pre-log Base receipt: the page and the JSON carry the same pre-log note', 
   const later = await (await fetch(`${base}/receipt/${TASK_APP}?format=json`)).json();
   assert.equal('log_note' in later, false, 'a receipt after the log began has no log_note');
 });
+
+// --- #609 review: pre-log note only where the verifier really gives exit 1 not_in_log ---
+
+const PRE_ATT = 'xfuel-0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c98';
+const PRE_ISSUED = '2026-09-26T17:27:00.000Z';
+
+function seedPreLog(taskId, paymentRef) {
+  return import('../src/ai-listener.js').then(({ getAIListener }) => {
+    getAIListener().activeTasks.set(taskId, {
+      taskId, status: 'completed',
+      createdAt: Date.parse(PRE_ISSUED), updatedAt: Date.parse(PRE_ISSUED),
+      intent: { type: 'inference_request', amount: '2000', paymentRail: 'usdc', paymentRef, model: MODEL },
+      meta: { payerWallet: PAYER, agentId: 4, provider: 'hidden-provider', payTo: PAYEE },
+      outputHash: `0x${'cd'.repeat(32)}`,
+    });
+  });
+}
+
+async function readBoth(taskId) {
+  const json = await (await fetch(`${base}/receipt/${taskId}?format=json`)).json();
+  const page = await (await fetch(`${base}/receipt/${taskId}`, { headers: { accept: 'text/html' } })).text();
+  return { json, page };
+}
+
+function assertPreLogShape(json, chain) {
+  if (json.chain !== chain || json.inclusion?.leaf_hash != null || !(Date.parse(json.issued_at) < Date.parse('2026-10-02T17:30:00Z'))) {
+    assert.fail(`fixture is not a pre-log ${chain} shell: ${JSON.stringify({ chain: json.chain, issued_at: json.issued_at, leaf: json.inclusion?.leaf_hash })}`);
+  }
+}
+
+test('#609 pre-log note: attested, pending and drifted attestations get no note, page or JSON', async () => {
+  const { PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA } = await import('../src/receipt-shell.js');
+  const store = app.locals.__test.publicAttestations;
+  const PRE_TX = `0x${'e7'.repeat(32)}`;
+  await seedPreLog(PRE_ATT, `base:${PRE_TX}`);
+  process.env.PUBLIC_ATTESTATION_SERVE = 'true';
+  try {
+    const none = await readBoth(PRE_ATT);
+    assertPreLogShape(none.json, 'base');
+    assert.equal(none.json.log_note, PRE_LOG_NOTE, 'no attestation row: note');
+    assert.ok(none.page.includes(`<p class="note">${PRE_LOG_NOTE}</p>`));
+
+    await store.enqueue({ taskId: PRE_ATT, ref: `base:${PRE_TX}` });
+    const pending = await readBoth(PRE_ATT);
+    assert.deepEqual(pending.json.public_attestation, { status: 'pending' });
+    assert.equal('log_note' in pending.json, false, 'pending: no log_note');
+    for (const n of [PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA]) assert.ok(!pending.page.includes(n), 'pending: no note on the page');
+
+    const shell = none.json;
+    const sign = (over = {}) => {
+      const claims = {
+        attested_at: '2026-10-17T18:30:00.000Z', iss: 'chit402', issued_at: shell.issued_at,
+        log: { epoch: 1, leaf_hash: 'ab'.repeat(32), leaf_index: 0 },
+        payment: {
+          asset: pa.BASE_USDC, gross_amount: String(shell.amount_gross ?? '2000'), payee: PAYEE, rail: 'usdc',
+          ref: `base:${PRE_TX}`, settled_amount: String(shell.amount_settled ?? '2000'),
+        },
+        task_id: PRE_ATT,
+        ...over,
+      };
+      const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const input = `${b({ alg: 'ES256', typ: pa.PUBLIC_RECEIPT_TYP, kid: issuer.kid })}.${Buffer.from(pa.publicPayloadUtf8(claims)).toString('base64url')}`;
+      return `${input}.${crypto.sign('sha256', Buffer.from(input), { key: issuer.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
+    };
+    const good = sign();
+    assert.equal(pa.attestationShellDrift(good, shell), null);
+    await store.markSigned(PRE_ATT, { jws: good, kid: issuer.kid });
+    const attested = await readBoth(PRE_ATT);
+    assert.deepEqual(attested.json.public_attestation, { jws: good });
+    assert.equal('log_note' in attested.json, false, 'attested: no log_note');
+    assert.ok(!attested.page.includes(PRE_LOG_NOTE), 'attested: no note on the page');
+
+    const drifted = sign({ payment: { ...pa.attestationClaims(good).payment, gross_amount: '1' } });
+    assert.equal(pa.attestationShellDrift(drifted, shell), 'amount_gross');
+    store._cacheSet(PRE_ATT, { jws: drifted });
+    const withheld = await readBoth(PRE_ATT);
+    assert.equal('public_attestation' in withheld.json, false, 'drift: attestation withheld');
+    assert.equal('log_note' in withheld.json, false, 'drift: no log_note');
+    assert.ok(!withheld.page.includes(PRE_LOG_NOTE), 'drift: no note on the page');
+  } finally {
+    delete process.env.PUBLIC_ATTESTATION_SERVE;
+  }
+});
+
+test('#609 pre-log Solana receipt gets the Solana wording through the server', async () => {
+  const { PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA } = await import('../src/receipt-shell.js');
+  const SOL = 'xfuel-0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c97';
+  await seedPreLog(SOL, 'solana:3fxfGwu3BeQFcMjKg7QJ7r5DHqG5T2Rwavswf35THwmhZzP7iCgh44w1DseAZxLLngNaL1LbZrwuNKeoxP6vwnHq');
+  const { json, page } = await readBoth(SOL);
+  assertPreLogShape(json, 'solana');
+  assert.equal(json.log_note, PRE_LOG_NOTE_SOLANA);
+  assert.match(json.log_note, /look up the payment tx on Solana\./);
+  assert.doesNotMatch(json.log_note, /\bBase\b/);
+  assert.ok(page.includes(`<p class="note">${PRE_LOG_NOTE_SOLANA}</p>`));
+  assert.ok(!page.includes(PRE_LOG_NOTE));
+});
+
+test('#609 pre-log foreign rows (verifier exit 2) get no pre-log note through the server', async (t) => {
+  const { PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA } = await import('../src/receipt-shell.js');
+  const { buildForeignReceipt } = await import('../src/foreign-x402-ingest.js');
+  const FTX = `0x${'f1'.repeat(32)}`;
+  // Same day and payload era as foreign-x402-muq262x0 and muq264r9 (2026-10-01 21:40 UTC).
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-01T21:40:00.000Z') });
+  let built;
+  try {
+    built = await buildForeignReceipt({
+      taskId: 'foreign-x402-muq2pre0-1467b076fc62',
+      paymentRequired: { resource: `https://basescan.org/tx/${FTX}`, amount: '1000000', payTo: '0x1111111111111111111111111111111111111111', network: 'base' },
+      paymentResponse: { tx: FTX, payer: '0x2222222222222222222222222222222222222222', network: 'base' },
+      rail: 'usdc',
+      agentId: 77,
+    });
+  } finally {
+    t.mock.timers.reset();
+  }
+  // Prod's pre-log foreign rows never got a leaf: the log did not exist yet. Keep
+  // this row out of the local tree the same way. Last test in the file, so no
+  // later test needs the hook.
+  const { setBookRowWrittenHook } = await import('../src/usage-settled.js');
+  setBookRowWrittenHook(null);
+  const appended = await app.locals.__test.usageSettled.append(built, { payer: '0x2222222222222222222222222222222222222222', agentId: 77 });
+  assert.equal(appended.ok, true, appended.reason);
+  const { json, page } = await readBoth(built.task_id);
+  assert.match(json.task_id, /^foreign-x402-/);
+  assertPreLogShape(json, 'base');
+  assert.equal('log_note' in json, false, 'foreign row: no log_note');
+  for (const n of [PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA]) assert.ok(!page.includes(n), 'foreign row: no note on the page');
+});
