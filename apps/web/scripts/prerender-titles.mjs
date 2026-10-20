@@ -164,7 +164,7 @@ const ROUTE_CONTENT = {
   '/v1': {
     title: 'Pay /v1/chat/completions | Chit',
     h1: 'Bot drop-in. Wallet pays. You hold the book.',
-    lede: 'Possession book stamps spend from the public /v1 wire (baseURL https://api.chit402.com/v1). POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a partner key, the gateway returns HTTP 402.',
+    lede: 'Possession book stamps spend from the public /v1 wire (baseURL https://api.chit402.com/v1). POST /v1/chat/completions charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Without payment or a partner key, the gateway returns HTTP 402.',
   },
 };
 

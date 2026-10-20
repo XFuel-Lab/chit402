@@ -17,6 +17,8 @@ const FETCH = `const res = await fetch('${API_V1}/chat/completions', {
 });
 // 402 until X-PAYMENT / x402 settle — use chit402-sdk or wallet payer`;
 
+const HERO_RECEIPT_URL = 'https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15'
+
 export default function Home() {
   return (
     <div className="page">
@@ -26,22 +28,16 @@ export default function Home() {
             <span className="badge badge-cyan">Live paid</span>
             <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>USDC receipts on Base</span>
           </div>
-          <h1 style={styles.heroTitle}>Chit402 is the book.</h1>
+          <h1 style={styles.heroTitle}>Your agents spent $400 this week. On what, and with whom?</h1>
           <p style={styles.heroSubtitle}>
-            This agent spent Y on this job. You hold hub, model, and amount.
+            Chit puts a receipt on every payment and keeps it in your book, not theirs. Open it any time and check each line. $0.002 a receipt.
           </p>
           <p style={styles.heroDescription}>
-            No account. No API key. A wallet that can pay the 402 is enough.
-            Register is only to hold the book after a collected receipt.
-            <code>POST /v1/chat/completions</code> returns a signed receipt: hub, model, amount, verify_url.
-            Cost-plus, quoted, receipted — pay USDC on Base or Solana.
-            <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected spend.
-            The on-chain settlement proof add-on is coming soon.
-            Drop-in model ids: <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the{' '}
-            <code>/v1</code> door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed receipt.
+            No account, no API key. A wallet that can pay is enough.
           </p>
           <div style={styles.heroCta}>
-            <Link to="/v1" className="btn btn-primary">Try /v1</Link>
+            <a href={HERO_RECEIPT_URL} className="btn btn-primary">See what your agent spent</a>
+            <Link to="/v1" className="btn btn-secondary">Try /v1</Link>
             <Link to="/pricing" className="btn btn-secondary">Pricing</Link>
             <Link to="/book-bot" className="btn btn-secondary">Book bot</Link>
             <a href="https://github.com/XFuel-Lab/xfuel-protocol" className="btn btn-secondary" target="_blank" rel="noreferrer">
@@ -71,7 +67,7 @@ export default function Home() {
               <span style={styles.moneyLinkMeta}>/agent-shop</span>
             </Link>
             <Link to="/book" style={styles.moneyLink}>
-              <span style={styles.moneyLinkTitle}>This agent spent Y on this job.</span>
+              <span style={styles.moneyLinkTitle}>Which agent paid for this job, and how much?</span>
               <span style={styles.moneyLinkMeta}>/book</span>
             </Link>
             <Link to="/v1" style={styles.moneyLink}>
@@ -95,7 +91,7 @@ export default function Home() {
             </div>
             <div className="card">
               <h3>GET|POST /v1/agents/:agent_id/book</h3>
-              <p>This agent spent Y on this job. You hold hub, model, and amount. Possession-gated (register session or HMAC). Not a public index. Signed receipt is table stakes.</p>
+              <p>Who paid, which model ran, and what did it cost? Every paid call lands in your book. Only you can open it (register session or HMAC). It is not a public index.</p>
             </div>
           </div>
         </div>
