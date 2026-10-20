@@ -87,10 +87,10 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
     assert.doesNotMatch(source, /\$0\.01/, `${label} must not lead with $0.01 price`);
     assert.match(source, /USDC on Base (and|or) Solana/i, `${label} names USDC rails`);
   }
-  // Layout banner and Home use plain words; the cost-plus detail lives on Pricing and Docs.
-  assert.match(pricing, /cost-plus.*quoted.*receipted/i, 'Pricing uses cost-plus language');
+  // Plain pricing wording everywhere; Pricing keeps the $0.002 and cost + 1% figures.
+  assert.match(pricing, /charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana\./, 'Pricing uses plain wording');
   const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
-  assert.match(docs, /cost-plus, quoted, receipted/, 'Docs keeps cost-plus detail');
+  assert.match(docs, /is charged a quoted price and gets a receipt, paid in USDC on Base or Solana\./, 'Docs uses plain wording');
   assert.doesNotMatch(layout, /cost-plus|This agent spent Y|You hold hub/i, 'banner drops jargon');
   assert.match(layout, /real mainnet USDC/, 'banner keeps mainnet warning');
   assert.doesNotMatch(home, /This agent spent Y/, 'home drops old line');
@@ -716,4 +716,29 @@ test('BookBot price line and footer use plain words', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /Your book: who paid, for what, and how much\. Apache-2\.0\./);
   assert.doesNotMatch(layout, /The book: hub, model, amount/);
+});
+
+test('old pricing jargon and "table stakes" are gone from web pages and prerender', () => {
+  for (const rel of ['src/pages/ThetaAI.tsx', 'src/pages/AgentShop.tsx', 'src/pages/Products.tsx', 'src/pages/Pricing.tsx', 'src/pages/Docs.tsx', 'src/pages/OpenClawDocs.tsx', 'scripts/prerender-titles.mjs']) {
+    const src = readFileSync(join(root, rel), 'utf8');
+    assert.doesNotMatch(src, /cost-plus, quoted, receipted/i, rel);
+    assert.doesNotMatch(src, /table stakes/i, rel);
+  }
+  assert.match(readFileSync(join(root, 'src/pages/AgentShop.tsx'), 'utf8'), /issuer-signed \(ES256\)/);
+  assert.match(readFileSync(join(root, 'src/pages/OpenClawDocs.tsx'), 'utf8'), /signed ES256 receipt/);
+});
+
+test('XFuel host description and Pricing footnote use plain wording', () => {
+  const host = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
+  assert.equal((host.match(/XFuel keeps your book: who paid, for what, and how much\. Every paid call gets a signed receipt with a link \(verify_url\) to check it, at a price based on our cost\. USDC on Base and Solana\./g) || []).length, 2);
+  assert.doesNotMatch(host, /the book: hub, model, and amount/);
+  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  assert.match(pricing, /fee based on our cost plus a margin/);
+  assert.doesNotMatch(pricing, /cost-plus fee basis/);
+});
+
+test('/v1 middleware lede uses plain wording', () => {
+  const mw = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  assert.equal((mw.match(/POST \/v1\/chat\/completions: you see the price first, it\\?'s based on our cost, and every paid call gets a signed receipt\. USDC on Base and Solana\./g) || []).length, 1);
+  assert.doesNotMatch(mw, /POST \/v1\/chat\/completions is cost-plus, quoted, receipted/);
 });

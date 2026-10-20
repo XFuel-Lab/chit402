@@ -765,6 +765,11 @@ test('T24 failed and skipped attestation rows serve as none, so the page gets th
     const fake = { pending: new Map(), cache: new Map(), _cacheSet(k, v) { this.cache.set(k, v); }, async _readDone() { return { state, reason: 'x' }; } };
     assert.equal(await PublicAttestationStore.prototype.servedAttestation.call(fake, 'chit-x'), null, state);
   }
+  // A signed row with no JWS string is served as none too.
+  for (const done of [{ state: 'signed' }, { state: 'signed', jws: null }, { state: 'signed', jws: 42 }]) {
+    const fake = { pending: new Map(), cache: new Map(), _cacheSet(k, v) { this.cache.set(k, v); }, async _readDone() { return done; } };
+    assert.equal(await PublicAttestationStore.prototype.servedAttestation.call(fake, 'chit-x'), null, JSON.stringify(done));
+  }
   const html = renderReceiptShellHtml(toPublicShell(preShellReceipt()), { noAttestation: true });
   assert.match(html, /Issued without a public attestation\./);
 });
