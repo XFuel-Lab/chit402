@@ -43,7 +43,7 @@ interface SeoConfig {
 const CHIT_HOME_SEO: SeoConfig = {
   ...CHIT_SEO,
   h1: 'Chit402 — treasury desk for agent spend',
-  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1.',
+  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. You see the price first, it\'s based on our cost, and you pay in USDC on Base and Solana. The wire is api.chit402.com/v1.',
 };
 
 const CHIT_V1_SEO_FULL: SeoConfig = {
