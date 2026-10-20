@@ -3109,7 +3109,8 @@ export async function createApp() {
   // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
   function publicFormat(v) {
     const f = typeof v === 'string' ? v.toLowerCase() : '';
-    return f === 'json' || f === 'html' ? f : '';
+    // auditor is the selective-disclosure view of /receipt/:id (SDK, www, docs).
+    return f === 'json' || f === 'html' || f === 'auditor' ? f : '';
   }
 
   function isStampRow(row) {
@@ -3170,7 +3171,7 @@ export async function createApp() {
         ? null
         : usageSettled.findByPaymentQuery(tx, { chain: req.query.chain });
       const taskId = task?.taskId || ledgerRow?.task_id || null;
-      // Only json and html are carried into a redirect. Anything else is dropped.
+      // Only json, html and auditor are carried into a redirect. Anything else is dropped.
       const fmt = publicFormat(req.query.format);
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 

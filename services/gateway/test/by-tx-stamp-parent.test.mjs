@@ -161,13 +161,22 @@ test('a stamp for a taken-down or hidden post is a 404', async () => {
   }
 });
 
-test('?format= carries only json or html into a redirect', async () => {
+test('?format= carries only json, html or auditor into a redirect', async () => {
   const loc = async (tx, f) => (await fetch(`${base}/receipt/by-tx?tx=${tx}&format=${encodeURIComponent(f)}`, { redirect: 'manual' })).headers.get('location');
   assert.equal(await loc(TX.ingestStamp, 'json'), `${base}/receipt/${foreignTaskId}?format=json`);
   assert.equal(await loc(TX.ingestStamp, 'HTML'), `${base}/receipt/${foreignTaskId}?format=html`);
-  for (const f of ['x&y=1', 'json#a', '<b>', 'auditor%0d%0a', 'xml']) {
+  assert.equal(await loc(TX.foreign, 'auditor'), `${base}/receipt/${foreignTaskId}?format=auditor`);
+  assert.equal(await loc(TX.foreign, 'Auditor'), `${base}/receipt/${foreignTaskId}?format=auditor`);
+  for (const f of ['x&y=1', 'json#a', '<b>', 'auditor%0d%0a', 'auditor&x=1', 'audit', 'xml']) {
     assert.equal(await loc(TX.ingestStamp, f), `${base}/receipt/${foreignTaskId}`, f);
     assert.equal(await loc(TX.foreign, f), `${base}/receipt/${foreignTaskId}`, f);
   }
   assert.equal(await loc(TX.postStamp, 'evil'), `${base}/v1/board/posts/${POST_ID}`);
+});
+
+test('by-tx ?format=auditor lands on the auditor export', async () => {
+  const res = await fetch(`${base}/receipt/by-tx?tx=${TX.foreign}&format=auditor`);
+  assert.equal(res.redirected, true);
+  assert.match(res.url, /\?format=auditor$/);
+  assert.equal(res.status, 200);
 });
