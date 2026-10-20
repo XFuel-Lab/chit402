@@ -110,6 +110,17 @@ export default function VerifyDocs() {
           </p>
         </div>
 
+        <div className="docs-panel" id="merkle-hashing">
+          <h2>Merkle hashing</h2>
+          <p>
+            The log follows RFC 6962. <code>leaf_hash</code> is already the leaf hash:
+            SHA-256(<code>0x00</code> ‖ <code>task_id|row_hash</code>). Do not add the <code>0x00</code> prefix
+            again. An interior node is SHA-256(<code>0x01</code> ‖ left ‖ right). An odd last node is promoted
+            unchanged. Fold the inclusion proof from <code>leaf_hash</code>, taking each sibling's side from the
+            proof, and the result is the signed root.
+          </p>
+        </div>
+
         <div className="docs-panel">
           <h2>Reasons</h2>
           {REASONS.map((row) => (

@@ -463,6 +463,8 @@ POST /v1/chat/completions is bait. A holder can prove: lineage, policy, assignme
 - Signed refusal: a policy or cap refusal (policy_blocked, budget_exhausted, approval_ttl_expired) returns schema chit402.refusal.v1 in the response and at GET /refusal/:refusal_id (public, no auth, ?format=json). ES256 JWS from the same issuer key as a receipt. It signs chain_id, the Base anchor (block number, block hash, and state_root when the RPC returned one, or status UNAVAILABLE), refusal_code, nonce, timestamp, agent/book id, requested amount when known, and the policy_blocked row seq. charged is false. It proves the issuer refused, at that anchor, for that code. It does not prove a payment, that the block still stands, or that the rule was the correct one. It is not a payment receipt. xfuel-verify accepts this schema and does not treat it as spend. Docs: docs/product/refusal-receipt.md
 - Intent grouping: pass X-XFuel-Intent (or body intent_id) + X-XFuel-Attempt on chat/completions so retries share one intent bill.
 - GET|POST /v1/agents/:agent_id/book/export : possession-gated CSV / JSON audit pack / print HTML. format=csv|json|html.
+- GET /public/export/:slug : public signed pull-export (slug hemei-treasury, redacted specimen; format=json|csv). No session. Verify issuer_signature.jws against /.well-known/jwks.json. docs/product/public-pull-export.md
+- Export coverage universe_hash: per row SHA-256 hex (lowercase) of task_id|evidence|amount|payment_ref|collected_at (null is empty string). Sort rows by collected_at + TAB + task_id as a plain string compare, join the row hashes with LF (no trailing LF), SHA-256 that. Empty set: SHA-256 of empty string. null when the scan did not finish. docs/product/export-coverage.md
 - GET|POST /v1/agents/:agent_id/book/assign : grant read/collect of a slice to another owner.
 - GET /v1/book/slice?token= : read a slice by assignment token (no possession needed).
 - POST /v1/agents/:agent_id/book/dispute : file a dispute. claim_type: output_missing, wrong_model, double_charge.
@@ -544,6 +546,9 @@ JWS. The HMAC array does not include it. A receipt that carries claim_id and a
 payment.ref with claim_id null fails verification. Older v8 receipts that omit
 the key still verify (claim_id: not_present_legacy). The book seat is shared
 across receipts. A one-shot settlement claim closes once (claim_already_settled).
+**Merkle hashing (RFC 6962)**: leaf_hash is already the leaf hash, SHA-256(0x00 || task_id|row_hash). Do not prefix it again.
+An interior node is SHA-256(0x01 || left || right). An odd last node is promoted unchanged.
+Fold the inclusion proof from leaf_hash, taking each sibling's side from the proof, to reach the signed root.
 **Head binding**: payload version 9 and later sign tree_head_hash and tolerance
 inside the JWS. tree_head_hash is the log prefix that ends at this receipt, so
 that root proves inclusion. A later head verifies when its inclusion proof
