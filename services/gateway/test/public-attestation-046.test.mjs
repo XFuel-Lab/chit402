@@ -457,6 +457,8 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
   assert.equal('public_attestation' in JSON.parse(unknown.text), false, 'no row: 0.4.5 shell');
   const unknownPage = await readShell('html');
   assert.match(unknownPage.text, /Issued without a public attestation\./, 'no row: pre-attestation copy');
+  const { PRE_ATTESTATION_NOTE } = await import('../src/receipt-shell.js');
+  assert.ok(unknownPage.text.includes(PRE_ATTESTATION_NOTE), 'served page carries the exact note text the shell module defines');
   assert.doesNotMatch(unknownPage.text, /only it can verify/);
   assert.equal(JSON.parse((await readShell()).text).unsigned, true, 'JSON unchanged by the copy');
 
@@ -508,6 +510,10 @@ test('serve flag off: no field; on: the stored JWS or pending; reads never sign'
   store._cacheSet(TASK_APP, { jws: drifted });
   assert.equal('public_attestation' in JSON.parse((await readShell()).text), false);
   assert.equal(pa.attestationShellDrift(drifted, shellNow), 'amount_gross');
+  const driftPage = await readShell('html');
+  assert.doesNotMatch(driftPage.text, /Issued without a public attestation/, 'drift: withheld, not reported as absent');
+  assert.ok(!driftPage.text.includes(PRE_ATTESTATION_NOTE), 'drift: exact note absent');
+  assert.match(driftPage.text, /only it can verify/, 'drift: old note kept on the page');
   assert.equal(pa.attestationShellDrift(goodJws, shellNow), null);
   store._cacheSet(TASK_APP, { jws: goodJws });
   assert.deepEqual(JSON.parse((await readShell()).text).public_attestation, { jws: goodJws });
