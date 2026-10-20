@@ -147,6 +147,7 @@ import {
   renderReceiptShellHtml,
   renderReceiptShellMissing,
   shellPreimageBytes,
+  withPreLogNote,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
@@ -3036,12 +3037,15 @@ export async function createApp() {
     const { shell, inclusion } = await shellFor(receipt, taskId);
     // True only when the store was asked and holds nothing for this receipt.
     let noAttestation = false;
+    // A drifted attestation is withheld; the receipt still has one, so no pre-log note.
+    let attestationWithheld = false;
     // Read only: a stored attestation or a pending marker. Never signs.
     if (attestation && publicAttestationServeEnabled()) {
       const served = await publicAttestations.servedAttestation(shell.task_id || taskId);
       const drift = served?.jws ? attestationShellDrift(served.jws, shell) : null;
       if (drift) {
         logger.error({ taskId: shell.task_id, field: drift }, 'public attestation withheld: shell differs from signed claims');
+        attestationWithheld = true;
       } else if (served) {
         shell.public_attestation = served;
       } else {
@@ -3051,12 +3055,13 @@ export async function createApp() {
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
-    if (wantsJson) return res.json(withVerifierAdvisory(shell));
+    if (wantsJson) return res.json(withVerifierAdvisory(withPreLogNote(shell, { attestationWithheld })));
     res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
     return res.type('html').send(renderReceiptShellHtml(shell, {
       publicBaseUrl: config.service.publicBaseUrl || '',
       inclusion,
       noAttestation,
+      attestationWithheld,
     }));
   }
 

@@ -773,3 +773,81 @@ test('T24 failed and skipped attestation rows serve as none, so the page gets th
   const html = renderReceiptShellHtml(toPublicShell(preShellReceipt()), { noAttestation: true });
   assert.match(html, /Issued without a public attestation\./);
 });
+
+// Pre-log note: Base receipts issued before the public log began.
+const { PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA, PUBLIC_LOG_START, isPreLogBaseShell, preLogNoteFor, withPreLogNote } = await import('../src/receipt-shell.js');
+const preLogReceipt = () => JSON.parse(readFileSync(fileURLToPath(new URL('../../../packages/verify/test/fixtures/chit-5d775d12.v7.json', import.meta.url)), 'utf8'));
+
+test('T30 a pre-log Base receipt gets the pre-log note on the page and in the JSON', () => {
+  const shell = toPublicShell(preLogReceipt());
+  assert.equal(shell.chain, 'base');
+  assert.equal(shell.inclusion.leaf_hash, null);
+  assert.ok(Date.parse(shell.issued_at) < Date.parse(PUBLIC_LOG_START));
+  assert.equal(isPreLogBaseShell(shell), true);
+  const html = renderReceiptShellHtml(shell, { noAttestation: true });
+  assert.ok(html.includes(`<p class="note">${PRE_LOG_NOTE}</p>`), 'page shows the exact note');
+  assert.doesNotMatch(html, /Issued without a public attestation/, 'attestation note does not promise a log check');
+  const body = withPreLogNote(shell);
+  assert.equal(body.log_note, PRE_LOG_NOTE, 'JSON carries the same text');
+  assert.equal('log_note' in shell, false, 'shell object itself is unchanged');
+});
+
+test('T31 the pre-log note text is plain and makes no green claim', () => {
+  for (const note of [PRE_LOG_NOTE, PRE_LOG_NOTE_SOLANA]) {
+    assert.match(note, /^Issued before the public log began on Oct 2, 2026\./);
+    assert.match(note, /NOT_IN_LOG \(exit 1\)/);
+    assert.doesNotMatch(note, /\u2014|VERIFIED|verifies|still verif/);
+  }
+  assert.match(PRE_LOG_NOTE, /payment tx on Base\./);
+  assert.match(PRE_LOG_NOTE_SOLANA, /payment tx on Solana\./);
+  assert.doesNotMatch(PRE_LOG_NOTE_SOLANA, /\bBase\b/);
+  assert.equal(PUBLIC_LOG_START, '2026-10-02T17:30:00.000Z');
+});
+
+test('T32 logged receipts and later receipts never get the pre-log note', () => {
+  const pre = toPublicShell(preLogReceipt());
+  const logged = { ...pre, inclusion: { ...pre.inclusion, leaf_hash: 'ab'.repeat(32) } };
+  assert.equal(isPreLogBaseShell(logged), false);
+  assert.ok(!renderReceiptShellHtml(logged, {}).includes(PRE_LOG_NOTE));
+  assert.equal('log_note' in withPreLogNote(logged), false);
+  const after = toPublicShell(preShellReceipt()); // chit-39af100b, Oct 2, first logged receipt
+  assert.equal(isPreLogBaseShell(after), false);
+  assert.ok(!renderReceiptShellHtml(after, { noAttestation: true }).includes(PRE_LOG_NOTE));
+  for (const chain of ['base-sepolia', 'solana-devnet', 'nano', null]) assert.equal(isPreLogBaseShell({ ...pre, chain }), false, String(chain));
+  assert.equal(preLogNoteFor({ ...pre, chain: 'solana' }), PRE_LOG_NOTE_SOLANA);
+  assert.equal(isPreLogBaseShell({ ...pre, issued_at: null }), false);
+  assert.equal(isPreLogBaseShell({ ...pre, issued_at: 'not a date' }), false);
+  assert.equal(isPreLogBaseShell({ ...pre, issued_at: PUBLIC_LOG_START }), false);
+});
+
+test('T33 the server sends the pre-log note through the public shell JSON', () => {
+  const src = readFileSync(fileURLToPath(new URL('../src/server.js', import.meta.url)), 'utf8');
+  assert.match(src, /res\.json\(withVerifierAdvisory\(withPreLogNote\(shell, \{ attestationWithheld \}\)\)\)/);
+});
+
+test('T34 #609 review: only log-checked ids get the note; foreign and register rows are exit 2', () => {
+  const pre = toPublicShell(preLogReceipt());
+  assert.equal(preLogNoteFor(pre), PRE_LOG_NOTE);
+  // chit402-verify 0.4.10 gives exit 2 signed_receipt_unavailable for these, not exit 1 not_in_log.
+  for (const id of ['foreign-x402-muq262x0-1467b076fc62', 'foreign-x402-muq264r9-69896464bb19', 'register-f79c8294773597c843c5acc5bdc8b01f', null, '']) {
+    const shell = { ...pre, task_id: id, issued_at: '2026-10-01T21:40:00.000Z' };
+    assert.equal(preLogNoteFor(shell), null, String(id));
+    assert.equal('log_note' in withPreLogNote(shell), false, String(id));
+    assert.ok(!renderReceiptShellHtml(shell, {}).includes(PRE_LOG_NOTE), String(id));
+  }
+  assert.equal(preLogNoteFor({ ...pre, task_id: pre.task_id.replace(/^xfuel-/, 'chit-') }), PRE_LOG_NOTE);
+});
+
+test('T35 #609 review: attested, pending and withheld attestations get no pre-log note', () => {
+  const pre = toPublicShell(preLogReceipt());
+  for (const att of [{ jws: 'a.b.c' }, { status: 'pending' }]) {
+    const shell = { ...pre, public_attestation: att };
+    assert.equal(preLogNoteFor(shell), null, JSON.stringify(att));
+    assert.equal('log_note' in withPreLogNote(shell), false);
+    assert.ok(!renderReceiptShellHtml(shell, {}).includes(PRE_LOG_NOTE));
+  }
+  assert.equal(preLogNoteFor(pre, { attestationWithheld: true }), null);
+  assert.equal('log_note' in withPreLogNote(pre, { attestationWithheld: true }), false);
+  assert.ok(!renderReceiptShellHtml(pre, { attestationWithheld: true }).includes(PRE_LOG_NOTE));
+  assert.ok(renderReceiptShellHtml(pre, {}).includes(PRE_LOG_NOTE), 'control: same shell, no attestation, gets the note');
+});
