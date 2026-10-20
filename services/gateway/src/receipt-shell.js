@@ -276,8 +276,8 @@ function httpBase(value) {
   }
 }
 
-/** Plain copy for a Base receipt issued before public attestations. */
-export const PRE_ATTESTATION_NOTE = 'This public page shows payment and log facts only. It is not signed. Stranger verification is not available for this receipt: it was issued without a public attestation, so this page and its JSON carry nothing a stranger can check. The owner\'s signed receipt still verifies.';
+/** Plain copy for a Base receipt with no public attestation on record. */
+export const PRE_ATTESTATION_NOTE = 'Issued without a public attestation. The owner can still check its signature, payment tx and log inclusion with npx chit402-verify@latest and their signed receipt.';
 
 /**
  * An unsigned Base shell with no public_attestation and no issuer_signature,
@@ -437,9 +437,10 @@ export function renderReceiptShellHtml(shell, { publicBaseUrl = '', inclusion = 
     }
   }
 
-  // A Base shell with no public attestation was issued before the public
-  // attestation signer. Nothing on it can be checked by a stranger, so the
-  // page says so instead of pointing at the verifier. Copy only: no verdict.
+  // A Base shell with no public attestation on record: issued before the
+  // public attestation signer, or its attestation is stored as failed or
+  // skipped (the store serves only signed rows). The page says no public
+  // attestation exists instead of pointing at the verifier. Copy only: no verdict.
   const preSigner = isPreAttestationBaseShell(shell, card, noAttestation);
   const noteHtml = preSigner
     ? `<p class="note">${esc(PRE_ATTESTATION_NOTE)}</p>`
