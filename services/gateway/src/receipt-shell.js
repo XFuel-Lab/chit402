@@ -292,7 +292,7 @@ export const PUBLIC_LOG_START = '2026-10-02T17:30:00.000Z';
  */
 export const PRE_LOG_NOTE = 'Issued before the public log began on Oct 2, 2026. No public log entry covers this receipt, so the public check cannot confirm it, and chit402-verify reports NOT_IN_LOG (exit 1). Anyone can still look up the payment tx on Base. The owner can check the issuer signature and the payment details on their signed receipt with npx chit402-verify@latest, which still exits 1 because no log entry exists.';
 
-export const PRE_LOG_NOTE_SOLANA = 'Issued before the public log began on Oct 2, 2026. No public log entry covers this receipt, so the public check cannot confirm it, and chit402-verify reports NOT_IN_LOG (exit 1). Anyone can still look up the payment tx on Solana. The owner can check the issuer signature on their signed receipt with npx chit402-verify@latest, which still exits 1 because no log entry exists.';
+export const PRE_LOG_NOTE_SOLANA = 'Issued before the public log began on Oct 2, 2026. No public log entry covers this receipt, so the public check cannot confirm it, and chit402-verify reports NOT_IN_LOG (exit 1). Anyone can still look up the payment tx on Solana.';
 
 const PRE_LOG_NOTES = Object.freeze({ base: PRE_LOG_NOTE, solana: PRE_LOG_NOTE_SOLANA });
 
