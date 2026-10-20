@@ -140,7 +140,7 @@ test('a replay without the original payment proof is 409 and leaks no wallet or 
     network: 'base-sepolia',
     payload: {
       signature: `0x${'22'.repeat(65)}`,
-      authorization: { from: payer, to: '0xtreasury', value: '2000' },
+      authorization: { from: payer, to: '0xtreasury', value: '2000', nonce: '0x' + 'cd'.repeat(32) },
     },
   }), 'utf8').toString('base64');
   const cases = [

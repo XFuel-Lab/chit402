@@ -170,7 +170,7 @@ function evmPaymentHeader() {
     x402Version: 1,
     scheme: 'exact',
     network: 'base',
-    payload: { authorization: { from: EVM_PAYER } },
+    payload: { authorization: { from: EVM_PAYER, nonce: '0x' + 'ab'.repeat(32) } },
   }), 'utf8').toString('base64');
 }
 
