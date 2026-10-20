@@ -1,4 +1,5 @@
 import logger from './logger.js';
+import { arcNetwork, arcCaip } from './arc-rail.js';
 import { getAddress } from 'ethers';
 import { resolveFacilitatorBearer } from './cdp-jwt.js';
 
@@ -129,6 +130,8 @@ export function facilitatorNetwork(network) {
   if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return 'unknown-network';
   if (nLower === 'base' || nLower === 'eip155:8453') return 'base';
   if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'base-sepolia';
+  const arc = arcNetwork(nLower);
+  if (arc) return arc;
   if (ownValue(SOLANA_NETWORKS, nLower) != null) return nLower;
   const fromCaip = ownValue(SOLANA_CAIP2_TO_SHORT, n) ?? ownValue(SOLANA_CAIP2_TO_SHORT, nLower);
   if (typeof fromCaip === 'string') return fromCaip;
@@ -159,6 +162,7 @@ export function isEvmNetwork(network) {
   const n = String(network || '').toLowerCase();
   if (n.startsWith('eip155:')) return true;
   if (n === 'base' || n === 'base-sepolia') return true;
+  if (arcNetwork(n)) return true;
   return false;
 }
 
@@ -343,6 +347,8 @@ export function toCaip2Network(network) {
   // EVM networks (lowercase compare)
   if (nLower === 'base' || nLower === 'eip155:8453') return 'eip155:8453';
   if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'eip155:84532';
+  const arc = arcCaip(nLower);
+  if (arc) return arc;
   // Solana networks: short name → CAIP-2
   const sol = ownValue(SOLANA_NETWORKS, nLower);
   if (typeof sol === 'string') return sol;
@@ -360,6 +366,8 @@ export function fromCaip2Network(network) {
   // EVM networks (lowercase compare)
   if (nLower === 'eip155:8453' || nLower === 'base') return 'base';
   if (nLower === 'eip155:84532' || nLower === 'base-sepolia') return 'base-sepolia';
+  const arcShort = arcNetwork(nLower);
+  if (arcShort) return arcShort;
   // Solana networks: CAIP-2 → short name
   const exact = ownValue(SOLANA_CAIP2_TO_SHORT, n);
   if (typeof exact === 'string') return exact;

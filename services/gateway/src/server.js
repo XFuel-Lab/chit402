@@ -23,6 +23,7 @@ import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boo
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { readHeadBlock, probeConfiguredSettlementRpcs, startSettlementRpcRecheck } from './x402-chain.js';
+import { evmRpcUrlFor } from './arc-rail.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -1797,7 +1798,7 @@ export async function createApp() {
   async function publicTaskRequestChallenge(req) {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
-    const issueBlock = await readHeadBlock(x.baseRpcUrl || x.rpcUrl || null, 250);
+    const issueBlock = await readHeadBlock(evmRpcUrlFor(x.network, x), 250);
     const { body, headers } = await buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
       maxAmountRequired: String(x.usdcPriceDefault || '10000'),

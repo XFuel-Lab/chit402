@@ -70,6 +70,8 @@ const config = {
     baseRpcUrl: process.env.BASE_RPC_URL || process.env.SETTLEMENT_RPC_URL || null,
     // Server-only Solana RPC for settlement confirmation. Never taken from a client.
     solanaRpcUrl: process.env.SOLANA_RPC_URL || null,
+    // Server-only Arc RPC. Read only when ARC_RAIL_ENABLED is on.
+    arcRpcUrl: process.env.ARC_RPC_URL || null,
     solanaFinalizeWaitMs: (() => {
       const n = parseInt(process.env.X402_SOLANA_FINALIZE_WAIT_MS, 10);
       return Number.isFinite(n) && n >= 0 ? n : 30000;
