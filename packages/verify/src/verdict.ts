@@ -22,6 +22,8 @@ export interface VerdictLog {
     base: string | null;
     solana: string | null;
   };
+  /** 0.4.10: an anchor lookup that failed while another chain confirmed. JSON only. */
+  warnings?: string[];
 }
 
 export interface VerifyVerdict {

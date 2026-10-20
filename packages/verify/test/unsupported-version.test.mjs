@@ -42,7 +42,7 @@ fs.writeFileSync(historyPath, '{}');
 fs.writeFileSync(inclusionPath, '{}');
 fs.writeFileSync(headPath, '{}');
 
-const HINT = 'this receipt requires a verifier newer than @xfuel/verify 0.3.5';
+const HINT = 'this receipt requires a newer verifier (minimum @xfuel/verify 0.4.9); run npx chit402-verify@latest';
 const VERSION_REASONS = new Set(['unsupported_version', 'version_mismatch']);
 
 function signText(payloadText, headerExtra = {}) {

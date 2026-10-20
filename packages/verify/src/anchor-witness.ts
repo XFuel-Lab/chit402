@@ -239,6 +239,10 @@ export interface AnchorWitnessResult {
     memo: string | null;
     fee_payer: string | null;
     reason?: string;
+    /** RPC attempts made for this side, across the fallback list. */
+    attempts?: number;
+    /** Endpoint that gave the last answer. */
+    rpc?: string;
   };
   base: {
     checked: boolean;
@@ -247,7 +251,15 @@ export interface AnchorWitnessResult {
     chain_id: number | null;
     from: string | null;
     reason?: string;
+    attempts?: number;
+    rpc?: string;
   };
+  /**
+   * 0.4.10: a chain whose RPC lookup failed (error, timeout, null) while the
+   * other claimed chain confirmed the root. The result stays verified and the
+   * failed lookup is reported here, as `solana:solana_rpc_error` and similar.
+   */
+  anchor_warnings?: string[];
   head_signature: {
     checked: boolean;
     valid: boolean;
@@ -611,6 +623,86 @@ function mapAnchorRpcError(err: unknown, side: 'base' | 'solana'): string {
   return `${side}_rpc_error`;
 }
 
+/** Public fallback lists. The first entry is the 0.4.9 default. */
+export const BASE_ANCHOR_RPC_FALLBACKS: readonly string[] = Object.freeze([
+  BASE_RPC_URL,
+  'https://base-rpc.publicnode.com',
+  'https://1rpc.io/base',
+]);
+export const SOLANA_ANCHOR_RPC_FALLBACKS: readonly string[] = Object.freeze([
+  SOLANA_RPC_URL,
+  'https://solana-rpc.publicnode.com',
+]);
+/** Attempts per endpoint before moving to the next one. */
+export const ANCHOR_RPC_ATTEMPTS_PER_URL = 2;
+/** Backoff before retry n (0-based) is `base * 2^n`. No jitter, so tests are exact. */
+export const ANCHOR_RPC_BACKOFF_MS = 400;
+/** No new attempt starts after this much time on one chain. */
+export const ANCHOR_RPC_BUDGET_MS: Record<'base' | 'solana', number> = { base: 30_000, solana: 45_000 };
+
+export interface AnchorRetryPolicy {
+  attemptsPerUrl?: number;
+  backoffMs?: number;
+  budgetMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * The anchor RPC list. `BASE_RPC_URL` / `SOLANA_RPC_URL` set by the caller
+ * replace the public list with that one endpoint (still retried). Unset is
+ * the public list.
+ */
+export function anchorRpcUrls(side: 'base' | 'solana', env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = side === 'base' ? env.BASE_RPC_URL : env.SOLANA_RPC_URL;
+  if (typeof raw === 'string' && raw.trim() !== '') return [raw.trim()];
+  return [...(side === 'base' ? BASE_ANCHOR_RPC_FALLBACKS : SOLANA_ANCHOR_RPC_FALLBACKS)];
+}
+
+/** Only an RPC that did not answer is retried, or covered by the other chain. */
+export function isRpcLookupFailure(reason: string | null | undefined): boolean {
+  return typeof reason === 'string' && /^(base|solana)_rpc_(error|timeout|null)$/.test(reason);
+}
+
+function defaultBackoffMs(): number {
+  const raw = process.env.CHIT402_RPC_BACKOFF_MS;
+  if (raw != null && /^\d+$/.test(raw)) return Number(raw);
+  return ANCHOR_RPC_BACKOFF_MS;
+}
+
+/**
+ * Run one chain's anchor check against each endpoint in order, with bounded
+ * retries. Stops at the first answer that is not an RPC failure (a confirm,
+ * a mismatch, or any other reason). The last reason stands when all fail.
+ */
+export async function runAnchorSide(
+  side: 'base' | 'solana',
+  urls: readonly string[],
+  policy: AnchorRetryPolicy,
+  run: (url: string) => Promise<string | undefined>,
+): Promise<{ attempts: number; url: string | undefined; reason: string | undefined }> {
+  const perUrl = Math.max(1, Math.min(5, policy.attemptsPerUrl ?? ANCHOR_RPC_ATTEMPTS_PER_URL));
+  const backoff = Math.max(0, policy.backoffMs ?? defaultBackoffMs());
+  const budget = policy.budgetMs ?? ANCHOR_RPC_BUDGET_MS[side];
+  const sleep = policy.sleep || ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = policy.now || Date.now;
+  const started = now();
+  let attempts = 0;
+  let reason: string | undefined;
+  let used: string | undefined;
+  for (const url of urls.slice(0, 4)) {
+    for (let i = 0; i < perUrl; i += 1) {
+      if (attempts > 0 && now() - started >= budget) return { attempts, url: used, reason };
+      if (i > 0 && backoff > 0) await sleep(backoff * 2 ** (i - 1));
+      attempts += 1;
+      used = url;
+      reason = await run(url);
+      if (!isRpcLookupFailure(reason)) return { attempts, url: used, reason };
+    }
+  }
+  return { attempts, url: used, reason };
+}
+
 export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {
   const result = await defaultRpc(rpcUrl, 'getGenesisHash', [], SOLANA_ANCHOR_RPC_TIMEOUT_MS);
   if (typeof result !== 'string' || result.length === 0) throw new Error('no_genesis');
@@ -892,6 +984,12 @@ export interface VerifyAnchoredRootInput {
   head: AnchorHead;
   baseRpcUrl?: string;
   solanaRpcUrl?: string;
+  /** Ordered fallback list. Wins over `baseRpcUrl`. */
+  baseRpcUrls?: readonly string[];
+  /** Ordered fallback list. Wins over `solanaRpcUrl`. */
+  solanaRpcUrls?: readonly string[];
+  /** Retry policy for anchor lookups. Tests pass a fake sleep and clock. */
+  rpcRetry?: AnchorRetryPolicy;
   fetchSolanaTx?: (signature: string, rpcUrl: string) => Promise<SolanaAnchorTx | null>;
   fetchGenesis?: (rpcUrl: string) => Promise<string>;
   fetchBaseTx?: (txHash: string, rpcUrl: string) => Promise<BaseAnchorTx | null>;
@@ -1088,8 +1186,14 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
   });
   const anchorWalletsInvalid = errors.includes('anchor_wallets_invalid');
 
-  const solanaRpc = input.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL;
-  const baseRpc = input.baseRpcUrl || BASE_RPC_URL;
+  const solanaRpcs = input.solanaRpcUrls && input.solanaRpcUrls.length > 0
+    ? [...input.solanaRpcUrls]
+    : input.solanaRpcUrl ? [input.solanaRpcUrl] : anchorRpcUrls('solana');
+  const baseRpcs = input.baseRpcUrls && input.baseRpcUrls.length > 0
+    ? [...input.baseRpcUrls]
+    : input.baseRpcUrl ? [input.baseRpcUrl] : anchorRpcUrls('base');
+  const solanaRpc = solanaRpcs[0];
+  const retry = input.rpcRetry || {};
   const signature = root && inclusionValid ? solanaSignature(input.head) : null;
   const txHash = root && inclusionValid ? baseTxHash(input.head) : null;
 
@@ -1102,6 +1206,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     memo: input.head?.anchors?.solana?.memo ?? null,
     fee_payer: input.head?.anchors?.solana?.fee_payer ?? null,
     reason: undefined as string | undefined,
+    attempts: undefined as number | undefined,
+    rpc: undefined as string | undefined,
   };
   const base = {
     checked: false,
@@ -1110,6 +1216,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     chain_id: input.head?.anchors?.base?.chain_id ?? input.head?.anchor?.chain_id ?? null,
     from: input.head?.anchors?.base?.from ?? null,
     reason: undefined as string | undefined,
+    attempts: undefined as number | undefined,
+    rpc: undefined as string | undefined,
   };
 
   const signedFrom = input.head?.anchors?.base?.from || null;
@@ -1154,6 +1262,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       errors.push('fee_payer_missing');
     } else {
       solana.checked = true;
+      const solanaRun = await runAnchorSide('solana', solanaRpcs, retry, async (solanaRpc) => {
+      solana.reason = undefined;
       try {
         const fetchTx = input.fetchSolanaTx || ((sig, url) => fetchSolanaAnchorTransaction(sig, url));
         const fetchGenesis = input.fetchGenesis || fetchSolanaGenesisHash;
@@ -1204,6 +1314,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       } catch (err) {
         solana.reason = mapAnchorRpcError(err, 'solana');
       }
+      return solana.valid ? undefined : solana.reason;
+      });
+      solana.attempts = solanaRun.attempts;
+      solana.rpc = solanaRun.url;
       if (!solana.valid && solana.reason) errors.push(`solana:${solana.reason}`);
     }
 
@@ -1215,6 +1329,8 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       errors.push('anchor_sender_missing');
     } else {
       base.checked = true;
+      const baseRun = await runAnchorSide('base', baseRpcs, retry, async (baseRpc) => {
+      base.reason = undefined;
       try {
         const fetchBase = input.fetchBaseTx || fetchBaseAnchorTransaction;
         const tx = await fetchBase(txHash, baseRpc);
@@ -1241,6 +1357,10 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
       } catch (err) {
         base.reason = mapAnchorRpcError(err, 'base');
       }
+      return base.valid ? undefined : base.reason;
+      });
+      base.attempts = baseRun.attempts;
+      base.rpc = baseRun.url;
       if (!base.valid && base.reason) errors.push(`base:${base.reason}`);
     }
   }
@@ -1284,7 +1404,18 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     && reason !== 'pending_anchor'
     && !isUncheckedAnchorReason(reason)
   ));
-  const anchorUnchecked = isUncheckedAnchorReason(solana.reason) || isUncheckedAnchorReason(base.reason);
+  // 0.4.10: one confirmed chain is enough when the other chain's lookup only
+  // failed at the RPC (error, timeout, null). A positive mismatch on either
+  // chain is still failed above, and is never outvoted by the other chain.
+  const solanaLookupFailed = solana.checked && !solana.valid && isRpcLookupFailure(solana.reason);
+  const baseLookupFailed = base.checked && !base.valid && isRpcLookupFailure(base.reason);
+  const solanaCovered = solana.valid || (solanaLookupFailed && base.checked && base.valid);
+  const baseCovered = base.valid || (baseLookupFailed && solana.checked && solana.valid);
+  const anchorWarnings: string[] = [];
+  if (solanaLookupFailed && solanaCovered) anchorWarnings.push(`solana:${solana.reason}`);
+  if (baseLookupFailed && baseCovered) anchorWarnings.push(`base:${base.reason}`);
+  const anchorUnchecked = (isUncheckedAnchorReason(solana.reason) && !solanaCovered)
+    || (isUncheckedAnchorReason(base.reason) && !baseCovered);
   const pendingOk = pendingLeaf
     && inclusionReason === 'pending_anchor'
     && headTrust.ok
@@ -1326,7 +1457,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
     || pinFailed
   ) overall = 'failed';
   else if (anchorUnchecked) overall = 'could_not_check';
-  else if (anchoredChainsVerified(input.head, solana.valid, base.valid)) overall = 'verified';
+  else if (anchoredChainsVerified(input.head, solanaCovered, baseCovered)) overall = 'verified';
   else overall = 'partial';
 
   let unloggedReason: string | undefined;
@@ -1373,6 +1504,7 @@ export async function verifyAnchoredRoot(input: VerifyAnchoredRootInput): Promis
         : [],
     does_not_prove: doesNotProve,
     errors,
+    ...(overall === 'verified' && anchorWarnings.length > 0 ? { anchor_warnings: anchorWarnings } : {}),
     issuer_pin: issuerPin,
   };
 }

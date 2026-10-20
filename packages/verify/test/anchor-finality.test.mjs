@@ -298,7 +298,7 @@ test('a null chain id is could_not_check and a wrong chain id fails', async () =
   assert.notEqual(disagreed.overall, 'verified');
 });
 
-test('a null, thrown, or timed-out Base RPC fails closed and does not verify', async () => {
+test('a null, thrown, or timed-out Base RPC is covered by a confirmed Solana anchor (0.4.10), and fails closed alone', async () => {
   const fx = fixture();
   const nulled = await run(fx, { baseTx: null });
   assert.equal(nulled.overall, 'could_not_check');
@@ -312,13 +312,28 @@ test('a null, thrown, or timed-out Base RPC fails closed and does not verify', a
     fetchSolanaTx: async () => fx.solanaTx,
     fetchGenesis: async () => SOLANA_GENESIS.devnet,
     fetchBaseTx: async () => { throw new Error('socket hang up'); },
+    rpcRetry: { backoffMs: 0 },
   });
-  assert.equal(thrown.overall, 'could_not_check');
+  // 0.4.10: Solana confirmed the root, so the Base RPC failure is a warning.
+  assert.equal(thrown.overall, 'verified');
   assert.equal(thrown.base.reason, 'base_rpc_error');
-  assert.notEqual(thrown.overall, 'verified');
+  assert.deepEqual(thrown.anchor_warnings, ['base:base_rpc_error']);
+  const bothDown = await verifyAnchoredRoot({
+    receipt: fx.receipt,
+    inclusion: fx.inclusion,
+    head: fx.head,
+    trustedKids: [fx.key.kid],
+    fetchSolanaTx: async () => { throw new Error('connection reset'); },
+    fetchGenesis: async () => SOLANA_GENESIS.devnet,
+    fetchBaseTx: async () => { throw new Error('socket hang up'); },
+    rpcRetry: { backoffMs: 0 },
+  });
+  assert.equal(bothDown.overall, 'could_not_check');
+  assert.equal(bothDown.anchor_warnings, undefined);
 
   const coded = await run(fx, { baseTx: { ...fx.baseTx, rpcCode: 'base_rpc_null' } });
-  assert.equal(coded.overall, 'could_not_check');
+  assert.equal(coded.overall, 'verified');
+  assert.deepEqual(coded.anchor_warnings, ['base:base_rpc_null']);
   assert.equal(coded.base.reason, 'base_rpc_null');
 
   const hang = http.createServer(() => {});
@@ -336,10 +351,11 @@ test('a null, thrown, or timed-out Base RPC fails closed and does not verify', a
       fetchSolanaTx: async () => fx.solanaTx,
       fetchGenesis: async () => SOLANA_GENESIS.devnet,
       fetchBaseTx: () => fetchBaseAnchorTransaction(fx.tx, `http://127.0.0.1:${port}`, 50),
+      rpcRetry: { backoffMs: 0 },
     });
-    assert.equal(timed.overall, 'could_not_check');
+    assert.equal(timed.overall, 'verified');
     assert.equal(timed.base.reason, 'base_rpc_timeout');
-    assert.notEqual(timed.overall, 'verified');
+    assert.deepEqual(timed.anchor_warnings, ['base:base_rpc_timeout']);
   } finally {
     await new Promise((resolve) => hang.close(resolve));
   }
@@ -362,9 +378,22 @@ test('a Base RPC that answers null for every method is base_rpc_null', async () 
       baseRpcUrl: `http://127.0.0.1:${port}`,
       fetchSolanaTx: async () => fx.solanaTx,
       fetchGenesis: async () => SOLANA_GENESIS.devnet,
+      rpcRetry: { backoffMs: 0 },
     });
-    assert.equal(result.overall, 'could_not_check');
+    assert.equal(result.overall, 'verified');
     assert.equal(result.base.reason, 'base_rpc_null');
+    assert.equal(result.base.attempts, 2);
+    const alone = await verifyAnchoredRoot({
+      receipt: fx.receipt,
+      inclusion: fx.inclusion,
+      head: fx.head,
+      trustedKids: [fx.key.kid],
+      baseRpcUrl: `http://127.0.0.1:${port}`,
+      fetchSolanaTx: async () => null,
+      fetchGenesis: async () => SOLANA_GENESIS.devnet,
+      rpcRetry: { backoffMs: 0 },
+    });
+    assert.equal(alone.overall, 'could_not_check');
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
   }
@@ -494,7 +523,7 @@ test('a finalized Solana transaction with meta.err fails', async () => {
   assert.notEqual(result.overall, 'verified');
 });
 
-test('a thrown or timed-out Solana RPC fails closed', async () => {
+test('a thrown Solana RPC is covered by a confirmed Base anchor (0.4.10); a timed-out fetch still maps', async () => {
   const fx = fixture();
   const thrown = await verifyAnchoredRoot({
     receipt: fx.receipt,
@@ -504,10 +533,11 @@ test('a thrown or timed-out Solana RPC fails closed', async () => {
     fetchSolanaTx: async () => { throw new Error('connection reset'); },
     fetchGenesis: async () => SOLANA_GENESIS.devnet,
     fetchBaseTx: async () => fx.baseTx,
+    rpcRetry: { backoffMs: 0 },
   });
-  assert.equal(thrown.overall, 'could_not_check');
+  assert.equal(thrown.overall, 'verified');
   assert.equal(thrown.solana.reason, 'solana_rpc_error');
-  assert.notEqual(thrown.overall, 'verified');
+  assert.deepEqual(thrown.anchor_warnings, ['solana:solana_rpc_error']);
 
   const hang = http.createServer(() => {});
   const port = await listen(hang);

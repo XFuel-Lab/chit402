@@ -3,6 +3,14 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.10 — Anchor lookup resilience
+
+### Changed
+- **One confirmed anchor is enough.** A head that claims both Base and Solana used to be `COULD_NOT_CHECK` (exit 2) whenever either chain's RPC lookup failed, even when the other chain confirmed the root. A stranger on the public Solana RPC saw that on about half of runs. Now, when one chain confirms and the other chain's lookup failed only at the RPC (`*_rpc_error`, `*_rpc_timeout`, `*_rpc_null`), the anchor check passes, `proves` names only the chain that confirmed, and `--json` lists the failed lookup in `log.warnings`. The anchor result carries it as `anchor_warnings`. A positive mismatch on either chain is still `failed` (exit 1) and is never outvoted. Other unchecked reasons (not finalized, too shallow, not found, inconsistent) are not covered. No chain confirmed is still exit 2.
+- **Anchor lookups retry over a fallback list.** Two attempts per endpoint, backoff 400 ms then doubling, no jitter, at most four endpoints, and no new attempt after 30 s (Base) or 45 s (Solana). Defaults: Base `mainnet.base.org`, `base-rpc.publicnode.com`, `1rpc.io/base`; Solana `api.mainnet-beta.solana.com`, `solana-rpc.publicnode.com`. Only RPC failures are retried; a mismatch or any other answer stops at once. The genesis check uses the endpoint that served the transaction. `BASE_RPC_URL` / `SOLANA_RPC_URL` replace that chain's list. `CHIT402_RPC_BACKOFF_MS` overrides the backoff. Payer reads and the `--rpc` newest-anchor scan are unchanged.
+- **Upgrade hint names the current minimum.** `unsupported_version` now ends with `this receipt requires a newer verifier (minimum @xfuel/verify 0.4.9); run npx chit402-verify@latest`, built from `VERIFIER_MIN`. It used to name 0.3.5.
+- Exit codes 0, 1, 2 and the flags `--issuer-history` and `--json` are unchanged. `BUILD_DIGEST.txt` moved because `src/anchor-witness.ts`, `src/check-input.ts`, `src/verdict.ts` and `src/receipt-version.ts` changed. The pinned epoch genesis digests did not. `@xfuel/verify` 0.4.10 depends on exactly `"chit402-verify": "0.4.10"`. Not published. No deploy.
+
 ## 0.4.9 — Signed party binding
 
 ### Changed
