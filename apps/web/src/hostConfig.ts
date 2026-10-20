@@ -63,9 +63,9 @@ const XFUEL_CONFIG: HostConfig = {
   publicContactEmail: 'security@xfuel.app',
   seo: {
     title: 'XFuel — the book. Hub, model, amount.',
-    description: 'XFuel is the book: hub, model, and amount. Signed receipt, verify_url, cost-plus. USDC on Base and Solana.',
+    description: 'XFuel keeps your book: who paid, for what, and how much. Every paid call gets a signed receipt with a link (verify_url) to check it, at a price based on our cost. USDC on Base and Solana.',
     ogTitle: 'XFuel — the book. Hub, model, amount.',
-    ogDescription: 'XFuel is the book: hub, model, and amount. Signed receipt, verify_url, cost-plus. USDC on Base and Solana.',
+    ogDescription: 'XFuel keeps your book: who paid, for what, and how much. Every paid call gets a signed receipt with a link (verify_url) to check it, at a price based on our cost. USDC on Base and Solana.',
   },
 };
 

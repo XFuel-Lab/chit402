@@ -162,7 +162,7 @@ export default function Pricing() {
         </div>
 
         <p style={styles.footnote}>
-          Legacy measured-task wire (<code>/task-request</code>) uses the same cost-plus fee basis on
+          Legacy measured-task wire (<code>/task-request</code>) works the same way, with the fee based on our cost plus a margin, on
           a different path — prefer <code>{apiV1}</code> for new installs.
         </p>
       </div>

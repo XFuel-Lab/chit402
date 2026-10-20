@@ -727,3 +727,12 @@ test('old pricing jargon and "table stakes" are gone from web pages and prerende
   assert.match(readFileSync(join(root, 'src/pages/AgentShop.tsx'), 'utf8'), /issuer-signed \(ES256\)/);
   assert.match(readFileSync(join(root, 'src/pages/OpenClawDocs.tsx'), 'utf8'), /signed ES256 receipt/);
 });
+
+test('XFuel host description and Pricing footnote use plain wording', () => {
+  const host = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
+  assert.equal((host.match(/XFuel keeps your book: who paid, for what, and how much\. Every paid call gets a signed receipt with a link \(verify_url\) to check it, at a price based on our cost\. USDC on Base and Solana\./g) || []).length, 2);
+  assert.doesNotMatch(host, /the book: hub, model, and amount/);
+  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  assert.match(pricing, /fee based on our cost plus a margin/);
+  assert.doesNotMatch(pricing, /cost-plus fee basis/);
+});
