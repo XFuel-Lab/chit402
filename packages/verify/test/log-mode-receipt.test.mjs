@@ -95,7 +95,7 @@ function fixture() {
       },
       solana: {
         status: 'anchored',
-        signature: 'sig-log-mode',
+        signature: '5AJWNP2hfZiD511rpFenjZXqZACyYp8RjadatEzGJ84YdQSQyVVbYyHJLa2hqco67oD3xZrYMDDvySoN7zAXNrCr',
         slot: 99,
         cluster: 'devnet',
         memo,
@@ -140,7 +140,7 @@ function rpcServer(fx) {
       else if (msg.method === 'eth_getTransactionByHash') {
         result = { hash: fx.baseTx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
       } else if (msg.method === 'getSignaturesForAddress') {
-        result = [{ signature: 'sig-log-mode', err: null }];
+        result = [{ signature: '5AJWNP2hfZiD511rpFenjZXqZACyYp8RjadatEzGJ84YdQSQyVVbYyHJLa2hqco67oD3xZrYMDDvySoN7zAXNrCr', err: null }];
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: 99,

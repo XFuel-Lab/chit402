@@ -3,6 +3,21 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.10 — Anchor lookup resilience
+
+### Changed
+- **One confirmed anchor is enough.** A head that claims both Base and Solana used to be `COULD_NOT_CHECK` (exit 2) whenever either chain's RPC lookup failed, even when the other chain confirmed the root. A stranger on the public Solana RPC saw that on about half of runs. Now, when one chain confirms and the other chain's lookup failed only at the RPC (`*_rpc_error`, `*_rpc_timeout`, `*_rpc_null`), the anchor check passes, `proves` names only the chain that confirmed, and `--json` lists the failed lookup in `log.warnings`. The anchor result carries it as `anchor_warnings`. A positive mismatch on either chain is still `failed` (exit 1) and is never outvoted. Other unchecked reasons (not finalized, too shallow, not found, inconsistent) are not covered. No chain confirmed is still exit 2.
+- **Anchor lookups retry over a fallback list.** Two attempts per endpoint, backoff 400 ms then doubling, no jitter, at most four endpoints, and no new attempt after 30 s (Base) or 45 s (Solana). Defaults: Base `mainnet.base.org`, `base-rpc.publicnode.com`, `1rpc.io/base`; Solana `api.mainnet-beta.solana.com`, `solana-rpc.publicnode.com`. Only RPC failures are retried; a mismatch or any other answer stops at once. The genesis check uses the endpoint that served the transaction. `BASE_RPC_URL` / `SOLANA_RPC_URL` replace that chain's list. `CHIT402_RPC_BACKOFF_MS` overrides the backoff. Payer reads and the `--rpc` newest-anchor scan are unchanged.
+- **Only transport failures are covered.** Network errors, timeouts and HTTP error statuses are `*_rpc_error` / `*_rpc_timeout` and may be covered. A JSON-RPC error object, a non-JSON or non-object body, a refused redirect, a bad RPC URL, or an exception on a malformed transaction is `*_rpc_rejected`: exit 2 and never covered. JSON-RPC -32602/-32600 on a well-formed reference is that endpoint rejecting the call: the next endpoint is asked, a rejecting endpoint is not retried, and a rejection is not turned into a coverable failure by a later transport error.
+- **Anchor references are format-checked before any call.** A Solana signature must be base58 of exactly 64 bytes and a Base tx hash `0x` + 64 hex; otherwise `anchor_ref_invalid`, exit 1 end to end (it is a hard log reason in the CLI), with no RPC call.
+- **Content checks come before side reads.** Base reads the tx, receipt, chain id and tip together; a calldata, sender, revert, embedded chain id or hash mismatch on the tx in hand is reported even when the chain id or tip read failed. Solana checks memo, slot and fee payer before reading the genesis hash.
+- **A partial anchor run is visible.** Human output prints `<Chain> not checked: its anchor RPC did not answer. The anchor was confirmed on <other> only.` `--json` sets `log.partial: true` and `log.unchecked_anchors`.
+- **The RPC deadline covers the body.** A response that sends headers and then stalls is `*_rpc_timeout` at the call's budget (8 s Base, 30 s Solana), not a five-minute wait.
+- **Not in this release: endpoint cross-check.** The first endpoint that answers is trusted, as in 0.4.9. An opt-in cross-check is planned for 0.4.11.
+- **RPC calls do not follow redirects** (`redirect: 'error'`, also for payer reads). `CHIT402_RPC_BACKOFF_MS` and every backoff step are capped at 5 s.
+- **Upgrade hint names the current minimum.** `unsupported_version` now ends with `this receipt requires a newer verifier (minimum @xfuel/verify 0.4.9); run npx chit402-verify@latest`, built from `VERIFIER_MIN`. It used to name 0.3.5.
+- Exit codes 0, 1, 2 and the flags `--issuer-history` and `--json` are unchanged. `BUILD_DIGEST.txt` moved because `src/anchor-witness.ts`, `src/check-input.ts`, `src/verdict.ts`, `src/rpc-deadline.ts` and `src/receipt-version.ts` changed. Test fixtures now use well-formed Solana signatures. The pinned epoch genesis digests did not. `@xfuel/verify` 0.4.10 depends on exactly `"chit402-verify": "0.4.10"`. Not published. No deploy.
+
 ## 0.4.9 — Signed party binding
 
 ### Changed

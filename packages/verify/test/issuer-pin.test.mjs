@@ -833,7 +833,7 @@ test('anchor mode does not fetch an unsigned head and still refuses an unsigned 
       tree_size: 1,
       anchors: {
         base: { status: 'anchored', tx: `0x${'ab'.repeat(32)}`, calldata: `0x${root}`, chain_id: 8453 },
-        solana: { status: 'anchored', signature: 'sig1', slot: 99, cluster: 'devnet', memo },
+        solana: { status: 'anchored', signature: '2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX', slot: 99, cluster: 'devnet', memo },
       },
     },
     issuerPin: { pinBytes: bytes, ref, witnesses: { kid: key.kid }, anchorToPublished: false },

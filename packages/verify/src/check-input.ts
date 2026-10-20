@@ -22,6 +22,7 @@ import {
   type AnchorInclusion,
   type AnchorReceipt,
   type AnchorWitnessResult,
+  anchorRpcUrls,
 } from './anchor-witness.js';
 import { isReceiptShell } from './shell.js';
 import {
@@ -203,7 +204,7 @@ function hardLogReason(result: AnchorWitnessResult): string | null {
     return inclusionReason;
   }
   const mismatch = (result.errors || []).find((err) => (
-    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf/.test(err)
+    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf|anchor_ref_invalid/.test(err)
   ));
   return mismatch ? mismatch.replace(/^(solana|base):/, '') : null;
 }
@@ -364,8 +365,8 @@ export async function freshPublicLog(
       receipt: receipt as AnchorReceipt,
       inclusion,
       head,
-      baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
-      solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
+      baseRpcUrls: anchorRpcUrls('base'),
+      solanaRpcUrls: anchorRpcUrls('solana'),
       checkNewestAnchor: false,
       signedLeaf: options.signedLeaf ?? null,
       issuerHistory: history,
@@ -400,6 +401,15 @@ export async function freshPublicLog(
             base: result.base.tx,
             solana: result.solana.signature,
           },
+          ...(result.anchor_warnings && result.anchor_warnings.length > 0
+            ? {
+              warnings: [...result.anchor_warnings],
+              partial: true,
+              unchecked_anchors: result.anchor_warnings
+                .map((code) => code.split(':')[0])
+                .filter((chain): chain is 'base' | 'solana' => chain === 'base' || chain === 'solana'),
+            }
+            : {}),
         },
       };
     }
@@ -430,7 +440,7 @@ export async function freshPublicLog(
     }
     if (result.overall === 'failed') {
       const definitive = [result.base.reason, result.solana.reason].find((code) => (
-        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch'
+        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch' || code === 'anchor_ref_invalid'
       ));
       if (definitive) {
         return { logInclusion: 'pass', anchor: 'fail', logReason: definitive, log: null };
