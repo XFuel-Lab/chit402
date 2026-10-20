@@ -185,6 +185,13 @@ function topicAddress(topic) {
   return ethers.getAddress(`0x${topic.slice(-40)}`);
 }
 
+const AUTH_NONCE_RE = /^0x[0-9a-fA-F]{64}$/;
+
+/** EIP-3009 nonce as lowercase bytes32, or null when it is not exactly 0x plus 64 hex. */
+export function canonicalAuthNonce(nonce) {
+  return typeof nonce === 'string' && AUTH_NONCE_RE.test(nonce) ? nonce.toLowerCase() : null;
+}
+
 export function readEvmAuthorization(paymentHeader) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return null;
@@ -257,15 +264,11 @@ export function confirmEvmReceipt(receipt, {
   if (matches.length !== 1) return { ok: false, code: 'settle_unconfirmed' };
   // EIP-3009 nonce is required. Without it, any AuthorizationUsed by the payer
   // would match, and a different transfer could confirm this payment.
-  const authNonce = authorization?.nonce ? String(authorization.nonce).toLowerCase() : null;
+  const authNonce = canonicalAuthNonce(authorization?.nonce);
   if (!authNonce) return { ok: false, code: 'settle_unconfirmed' };
   const authOk = auths.some((a) => a.authorizer && sameEvmAddress(a.authorizer, wantPayer));
-  const nonceOk = auths.some((a) => {
-    if (!a.authorizer || !sameEvmAddress(a.authorizer, wantPayer) || !a.nonce) return false;
-    const raw = authNonce.startsWith('0x') ? authNonce : `0x${authNonce}`;
-    const want = ethers.zeroPadValue(raw, 32).toLowerCase();
-    return String(a.nonce).toLowerCase() === want;
-  });
+  const nonceOk = auths.some((a) => a.authorizer && sameEvmAddress(a.authorizer, wantPayer)
+    && a.nonce && String(a.nonce).toLowerCase() === authNonce);
   if (!authOk || !nonceOk) return { ok: false, code: 'settle_unconfirmed' };
 
   const min = BigInt(String(challenge.amount));

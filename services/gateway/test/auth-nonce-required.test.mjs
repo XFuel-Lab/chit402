@@ -250,3 +250,60 @@ test('settle: matching auth nonce then a no-nonce claim of the same tx refuses w
   assert.equal(second.reason || second.code, 'settle_unconfirmed');
   assert.equal(fac.hits.settle, before, 'no-nonce path must not call settle again');
 });
+
+// Review LOW 2: the nonce must be exactly 0x plus 64 hex before the facilitator.
+test('settle: malformed auth nonces refuse before the facilitator', async () => {
+  const bad = ['0x0', '0x', '0x11', ` ${N1}`, `${N1}\n`, N1.slice(2), `0x${'11'.repeat(31)}`, `0x${'11'.repeat(33)}`, `0x${'zz'.repeat(32)}`, 17, { n: N1 }, [N1]];
+  let i = 0;
+  for (const authNonce of bad) {
+    const store = new ChallengeStore();
+    setActiveChallengeStore(store);
+    const fac = await listenFac({ tx: TX1 });
+    i += 1;
+    const out = await oneSettle({ store, fac, challengeNonce: `0x${String(i).padStart(2, '0').repeat(32)}`, authNonce });
+    await fac.close();
+    assert.equal(out.kind, 'failed', JSON.stringify(authNonce));
+    assert.equal(out.reason || out.code, 'settle_unconfirmed', JSON.stringify(authNonce));
+    assert.equal(fac.hits.settle, 0, `facilitator not called for ${JSON.stringify(authNonce)}`);
+    assert.equal(fac.hits.verify, 0);
+  }
+});
+
+test('confirmEvmReceipt: only a bytes32 nonce matches; short or bare aliases do not', () => {
+  const opts = (nonce) => ({ challenge: { asset: USDC, amount: '2000', network: 'base' }, expectedPayTo: HOUSE, authorization: { from: PAYER, nonce } });
+  assert.equal(confirmEvmReceipt(receipt({ nonce: pad('0x11') }), opts('0x11')).ok, false);
+  assert.equal(confirmEvmReceipt(receipt({ nonce: `0x${'00'.repeat(32)}` }), opts('0x')).ok, false);
+  assert.equal(confirmEvmReceipt(receipt({ nonce: N1 }), opts(N1.slice(2))).ok, false);
+  assert.equal(confirmEvmReceipt(receipt({ nonce: N1 }), opts([N1])).ok, false);
+  assert.equal(confirmEvmReceipt(receipt({ nonce: N1 }), opts(N1.toUpperCase().replace('0X', '0x'))).ok, true);
+});
+
+// Review LOW 3: one (payer, nonce) is one key, whatever the case.
+test('settle: an alias of a spent nonce on another tx never settles a second claim', async () => {
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  const NA = `0x${'ab'.repeat(32)}`;
+  const f1 = await listenFac({ tx: TX1 });
+  const first = await oneSettle({ store, fac: f1, challengeNonce: `0x${'e1'.repeat(32)}`, authNonce: NA, txReceiptNonce: NA });
+  await f1.close();
+  const f2 = await listenFac({ tx: TX2 });
+  const upper = await oneSettle({ store, fac: f2, challengeNonce: `0x${'e2'.repeat(32)}`, authNonce: `0x${'AB'.repeat(32)}`, txReceiptNonce: NA });
+  const bare = await oneSettle({ store, fac: f2, challengeNonce: `0x${'e3'.repeat(32)}`, authNonce: NA.slice(2), txReceiptNonce: NA });
+  await f2.close();
+  assert.equal(first.kind, 'settled', JSON.stringify(first));
+  assert.equal(upper.kind, 'failed');
+  assert.equal(upper.reason || upper.code, 'payment_replayed');
+  assert.equal(bare.kind, 'failed', JSON.stringify(bare));
+  assert.equal(f2.hits.settle, 0, 'no second facilitator settle');
+});
+
+test('evmAuthKey: canonical keys equal the keys earlier releases stored', async () => {
+  const { evmAuthKey } = await import('../src/late-issue.js');
+  const legacy = (net, asset, from, nonce) => `${net}|${String(asset).toLowerCase()}|${String(from).toLowerCase()}|${String(nonce).toLowerCase()}`;
+  for (const n of [N1, `0x${'AbCd'.repeat(16)}`, `0x${'00'.repeat(32)}`]) {
+    assert.equal(evmAuthKey('base', USDC, PAYER, n), legacy('base', USDC, PAYER, n));
+  }
+  assert.equal(evmAuthKey('base', USDC, PAYER, `0x${'AB'.repeat(32)}`), evmAuthKey('base', USDC, PAYER, `0x${'ab'.repeat(32)}`));
+  // A stored key from a malformed nonce keeps its old form, so it still matches.
+  assert.equal(evmAuthKey('base', USDC, PAYER, 'XYZ'), legacy('base', USDC, PAYER, 'XYZ'));
+});
