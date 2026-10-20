@@ -7,12 +7,14 @@ Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_d
 
 ## Recompute an inclusion proof
 
-This is the full recipe. It matches `services/gateway/src/receipt-merkle.js` (`verifyInclusion`) and `@xfuel/verify`.
+This is the full recipe. It matches `services/gateway/src/receipt-merkle.js` (`verifyInclusion`) and `chit402-verify`.
+
+Receipts issued before the public log started (Oct 2, 2026) have no leaf. Their inclusion request returns `404 {"error":"not_in_tree"}`.
 
 ### Leaf bytes
 
 - A receipt leaf body is the UTF-8 string `task_id|row_hash`: the receipt's `task_id` exactly as the inclusion response names it (for example `xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15`; a `chit-` receipt id resolves to its `xfuel-` task id), one ASCII `|` (0x7c), then `row_hash` as 64 lowercase hex characters with no `0x`. No JSON, no quotes, no whitespace, no trailing newline. A missing `row_hash` is the empty string.
-- Leaf 0 of an epoch is the genesis body, the compact JSON `{"schema":"chit402.tree_genesis.v1","payload_version":1,"verifier_binary_build_digest":"<digest>"}` in that key order.
+- Leaf 0 of an epoch is the genesis body, the compact JSON `{"schema":"chit402.tree_genesis.v1","payload_version":1,"verifier_binary_build_digest":"<digest>"}` in that key order. The digest is 64 hex characters, or JSON `null` (unquoted) when none was published at that genesis.
 - `row_hash` is owner-held (see [receipt-preimage.md](./receipt-preimage.md)). A stranger starts from the published leaf hash (`leaf` on the inclusion response, `inclusion.leaf_hash` on the public shell). The owner can check that step too.
 
 ### Hashes
@@ -58,7 +60,7 @@ Leaf-body check, with made-up values: the body `example-task|abab…ab` (64 hex 
 
 ### Script
 
-[`examples/verify-inclusion.mjs`](./examples/verify-inclusion.mjs) needs Node 18 or later and no dependencies. It fetches the public shell and the inclusion proof with GET only, checks that the two leaf hashes agree, and recomputes the root:
+[`examples/verify-inclusion.mjs`](./examples/verify-inclusion.mjs) needs Node 18 or later and no dependencies. It fetches the public shell and the inclusion proof with GET only, checks that the two leaf hashes agree, and recomputes the root. It also refuses a `leaf_index` outside `0..tree_size-1`, any hash that is not 64 lowercase hex characters, a shell with no `leaf_hash`, and proof steps left over after the root level. It prints one JSON line and exits 0 only when `ok` is true. A failure prints `{"id":…,"ok":false,"reason":…}` and exits 1. `reason` is the server's error (`not_in_tree`, `pending_anchor`, …) or the check that failed:
 
 ```bash
 node docs/product/examples/verify-inclusion.mjs xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15
