@@ -192,6 +192,51 @@ export function canonicalAuthNonce(nonce) {
   return typeof nonce === 'string' && AUTH_NONCE_RE.test(nonce) ? nonce.toLowerCase() : null;
 }
 
+const UINT_RE = /^[0-9]{1,78}$/;
+const SIGNATURE_RE = /^0x[0-9a-fA-F]{128,}$/;
+
+function nonEmptyString(v) {
+  return typeof v === 'string' && v.trim() !== '';
+}
+
+function uintField(v) {
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return String(v);
+  return typeof v === 'string' && UINT_RE.test(v) ? v : null;
+}
+
+/**
+ * True when a decoded header is a transfer method other than EIP-3009
+ * transferWithAuthorization (Permit2, a different x402 scheme, and so on).
+ */
+function otherPaymentScheme(decoded) {
+  const p = decoded?.payload;
+  if (p && typeof p === 'object' && (p.permit2Authorization || p.permit2 || p.permit)) return true;
+  const method = decoded?.accepted?.extra?.assetTransferMethod ?? decoded?.extra?.assetTransferMethod;
+  if (method != null && String(method).toLowerCase() !== 'eip3009') return true;
+  const scheme = decoded?.accepted?.scheme ?? decoded?.scheme;
+  if (scheme != null && String(scheme) !== 'exact') return true;
+  return false;
+}
+
+/**
+ * Why an EVM payment header is refused before the facilitator, or null when
+ * it carries a complete EIP-3009 authorization: from, to, value, validBefore,
+ * a bytes32 nonce, and a signature. Other transfer methods get their own code.
+ */
+export function evmAuthorizationRefusal(paymentHeader) {
+  const decoded = decodePaymentHeader(paymentHeader);
+  if (decoded && otherPaymentScheme(decoded)) return 'payment_scheme_unsupported';
+  const a = readEvmAuthorization(paymentHeader);
+  if (!a) return 'settle_unconfirmed';
+  // from and to must be present here. The payee and payer checks that follow
+  // bind them to the challenge and the facilitator result.
+  if (!nonEmptyString(a.from) || !nonEmptyString(a.to)) return 'settle_unconfirmed';
+  if (!uintField(a.value) || !uintField(a.validBefore)) return 'settle_unconfirmed';
+  if (!canonicalAuthNonce(a.nonce)) return 'settle_unconfirmed';
+  if (!(typeof a.signature === 'string' && SIGNATURE_RE.test(a.signature))) return 'settle_unconfirmed';
+  return null;
+}
+
 export function readEvmAuthorization(paymentHeader) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return null;
@@ -203,6 +248,8 @@ export function readEvmAuthorization(paymentHeader) {
     to: auth.to || null,
     value: auth.value != null ? String(auth.value) : null,
     nonce: auth.nonce || null,
+    validAfter: auth.validAfter != null ? auth.validAfter : null,
+    validBefore: auth.validBefore != null ? auth.validBefore : null,
     signature: typeof signature === 'string' ? signature : null,
   };
 }

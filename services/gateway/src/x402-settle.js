@@ -17,7 +17,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { canonicalAuthNonce, confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusal, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
@@ -446,12 +446,23 @@ export async function settleBoundPayment({
   // A decoded EVM authorization must carry its EIP-3009 nonce as exactly
   // 0x plus 64 hex. Chain confirmation binds the transfer by that nonce, so
   // anything else is refused here, before the facilitator is called.
-  if (!solana && (!authEarly || !canonicalAuthNonce(authEarly.nonce))) {
-    return refused(req, 'settle_unconfirmed', { preSettle: true });
+  // The same check requires from, to, value, validBefore and a signature, and
+  // gives Permit2 and other transfer methods their own code.
+  if (!solana) {
+    const authRefusal = evmAuthorizationRefusal(paymentHeader);
+    if (authRefusal) return refused(req, authRefusal, { preSettle: true });
+    if (!authEarly || !canonicalAuthNonce(authEarly.nonce)) {
+      return refused(req, 'settle_unconfirmed', { preSettle: true });
+    }
   }
   const authKeyEarly = !solana
     ? evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce)
     : null;
+  // Every EVM payment needs a replay key. Without one, isAuthSpent cannot
+  // stop the same authorization from settling twice.
+  if (!solana && !authKeyEarly) {
+    return refused(req, 'settle_unconfirmed', { preSettle: true });
+  }
   if (authKeyEarly && active.isAuthSpent(authKeyEarly)) {
     return refused(req, 'payment_replayed', { preSettle: true });
   }
@@ -773,6 +784,9 @@ export async function settleBoundPayment({
   const authKey = !solana
     ? evmAuthKey(norm.network, challenge.asset, auth?.from, auth?.nonce)
     : null;
+  if (!solana && !authKey) {
+    return await hold('missing_replay_key', 'settle_unconfirmed');
+  }
   if (authKey && active.isAuthSpent(authKey)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
     return refused(req, 'payment_replayed');
@@ -941,7 +955,7 @@ export async function settleBoundPayment({
 }
 
 function refused(req, reason, extra = {}) {
-  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref'].includes(reason)
+  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref', 'payment_scheme_unsupported'].includes(reason)
     ? reason
     : clientPaymentCode(reason);
   if (extra.capture !== false) {

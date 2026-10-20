@@ -328,7 +328,7 @@ for (const [name, headerFn] of [['opaque', opaqueHeader], ['Permit2-shaped', per
     const out = await oneSettle({ store, fac, challengeNonce, headerFn });
     await fac.close();
     assert.equal(out.kind, 'failed', JSON.stringify(out));
-    assert.equal(out.reason || out.code, 'settle_unconfirmed');
+    assert.equal(out.reason || out.code, name === 'opaque' ? 'settle_unconfirmed' : 'payment_scheme_unsupported');
     assert.equal(fac.hits.settle, 0, 'facilitator settle not called');
     assert.equal(fac.hits.verify, 0, 'facilitator verify not called');
     assert.equal(store.pending.length, 0, 'no pending hold row');
@@ -337,3 +337,80 @@ for (const [name, headerFn] of [['opaque', opaqueHeader], ['Permit2-shaped', per
     assert.equal(store.spent.size, 0);
   });
 }
+
+// Follow-up LOWs: complete authorization up front, a replay key always, and a
+// distinct code for other transfer methods.
+function fullHeader(mutate) {
+  const auth = { from: PAYER, to: HOUSE, value: '2000', validAfter: '0', validBefore: String(Math.floor(Date.now() / 1000) + 3600), nonce: N1 };
+  const payload = { signature: `0x${'11'.repeat(65)}`, authorization: auth };
+  const body = { x402Version: 2, accepted: { scheme: 'exact', network: 'eip155:8453', amount: '2000', asset: USDC, payTo: HOUSE }, payload };
+  mutate(body, auth, payload);
+  return () => Buffer.from(JSON.stringify(body)).toString('base64');
+}
+
+const incomplete = [
+  ['no from (no replay key)', (b, a) => { delete a.from; }],
+  ['empty from (no replay key)', (b, a) => { a.from = ''; }],
+  ['no to', (b, a) => { delete a.to; }],
+  ['no value', (b, a) => { delete a.value; }],
+  ['non-integer value', (b, a) => { a.value = '2e3'; }],
+  ['no validBefore', (b, a) => { delete a.validBefore; }],
+  ['non-integer validBefore', (b, a) => { a.validBefore = 'soon'; }],
+  ['no signature', (b, a, p) => { delete p.signature; }],
+  ['short signature', (b, a, p) => { p.signature = '0x11'; }],
+];
+let k = 0;
+for (const [name, mutate] of incomplete) {
+  test(`settle: authorization with ${name} refuses before the facilitator`, async () => {
+    const store = new ChallengeStore();
+    setActiveChallengeStore(store);
+    const fac = await listenFac({ tx: TX1 });
+    k += 1;
+    const out = await oneSettle({ store, fac, challengeNonce: `0x${(0x40 + k).toString(16).repeat(32)}`, headerFn: fullHeader(mutate) });
+    await fac.close();
+    assert.equal(out.kind, 'failed', JSON.stringify(out));
+    // A bad value is already caught by the amount binding (challenge_mismatch).
+    assert.ok(['settle_unconfirmed', 'challenge_mismatch'].includes(out.reason || out.code), JSON.stringify(out));
+    assert.equal(fac.hits.verify, 0);
+    assert.equal(fac.hits.settle, 0);
+    assert.equal(store.pending.length, 0);
+  });
+}
+
+test('settle: a complete authorization still settles', async () => {
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  const fac = await listenFac({ tx: TX1 });
+  const out = await oneSettle({ store, fac, challengeNonce: `0x${'5e'.repeat(32)}`, headerFn: fullHeader(() => {}) });
+  await fac.close();
+  assert.equal(out.kind, 'settled', JSON.stringify(out));
+});
+
+for (const [name, mutate] of [
+  ['assetTransferMethod permit2', (b) => { b.accepted.extra = { assetTransferMethod: 'permit2' }; }],
+  ['scheme upto', (b) => { b.accepted.scheme = 'upto'; }],
+]) {
+  test(`settle: ${name} is payment_scheme_unsupported before the facilitator`, async () => {
+    const store = new ChallengeStore();
+    setActiveChallengeStore(store);
+    const fac = await listenFac({ tx: TX1 });
+    const out = await oneSettle({ store, fac, challengeNonce: `0x${(name.length % 2 ? '6a' : '6b').repeat(32)}`, headerFn: fullHeader(mutate) });
+    await fac.close();
+    assert.equal(out.reason || out.code, 'payment_scheme_unsupported');
+    assert.equal(fac.hits.settle, 0);
+  });
+}
+
+test('payment_scheme_unsupported is a closed client code and a 402', async () => {
+  const { PAYMENT_ERROR_CODES, paymentErrorBody, paymentErrorStatus } = await import('../src/x402-flags.js');
+  assert.ok(PAYMENT_ERROR_CODES.includes('payment_scheme_unsupported'));
+  assert.equal(paymentErrorBody('payment_scheme_unsupported').code, 'payment_scheme_unsupported');
+  assert.equal(paymentErrorStatus('payment_scheme_unsupported'), 402);
+});
+
+test('test helper evmAuthHeader carries from and to', async () => {
+  const { evmAuthHeader } = await import('./helpers/evm-auth-header.mjs');
+  const a = readEvmAuthorization(evmAuthHeader('HELPER', { to: HOUSE }));
+  assert.ok(a.from);
+  assert.equal(a.to, HOUSE);
+});

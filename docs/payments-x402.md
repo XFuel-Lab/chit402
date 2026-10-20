@@ -5,6 +5,7 @@ Settlement requirements come from a server-issued challenge. Clients sign that c
 ## Retry
 
 - On a 402 with code `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry.
+- On `payment_scheme_unsupported`, the gateway accepts only EIP-3009 `transferWithAuthorization` on EVM (not Permit2). A `settle_unconfirmed` before settle means the authorization was incomplete: it needs `from`, `to`, `value`, `validBefore`, a bytes32 `nonce`, and a signature.
 - On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. A new signature would pay twice.
 - `submitTaskWithPayment` throws on a second 402. Automatic retry is a separate SDK change.
 
