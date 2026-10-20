@@ -22,6 +22,12 @@ export interface VerdictLog {
     base: string | null;
     solana: string | null;
   };
+  /** 0.4.10: an anchor lookup that failed while another chain confirmed. */
+  warnings?: string[];
+  /** 0.4.10: true when a claimed anchor chain was not checked this run. */
+  partial?: true;
+  /** 0.4.10: the claimed chains this run did not check. */
+  unchecked_anchors?: ('base' | 'solana')[];
 }
 
 export interface VerifyVerdict {
@@ -482,6 +488,21 @@ export function verdictDocAnchor(reason: string): string {
   return reason;
 }
 
+const CHAIN_LABEL: Record<'base' | 'solana', string> = { base: 'Base', solana: 'Solana' };
+
+/** One line per claimed anchor chain this run did not check (0.4.10). */
+export function uncheckedAnchorLines(verdict: VerifyVerdict): string[] {
+  const unchecked = verdict.log?.unchecked_anchors || [];
+  if (unchecked.length === 0) return [];
+  const checked = (['base', 'solana'] as const).filter((chain) => !unchecked.includes(chain));
+  return unchecked.map((chain) => {
+    const other = checked.length > 0 ? checked.map((c) => CHAIN_LABEL[c]).join(' and ') : null;
+    return other
+      ? `${CHAIN_LABEL[chain]} not checked: its anchor RPC did not answer. The anchor was confirmed on ${other} only.`
+      : `${CHAIN_LABEL[chain]} not checked: its anchor RPC did not answer.`;
+  });
+}
+
 /**
  * Human lines. COULD_NOT_CHECK says the receipt could not be checked.
  * The message line is `verdict.message`, the same string `--json` prints.
@@ -499,6 +520,7 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
     if (verdict.public?.chain_from) lines.push(`On-chain sender (chain fact, not signed): ${verdict.public.chain_from}`);
     lines.push('Details: https://chit402.com/docs/verify#verified_public');
   }
+  for (const line of uncheckedAnchorLines(verdict)) lines.push(line);
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
     lines.push(`Issuer history: as of ${verdict.history.as_of}`);

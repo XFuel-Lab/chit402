@@ -337,7 +337,7 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
     tree_size: 4,
     anchors: {
       base: { from: PINNED_BASE_ANCHOR_WALLET, tx: `0x${'11'.repeat(32)}` },
-      solana: { fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER, signature: 'sig-pre-log' },
+      solana: { fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER, signature: '4myzwAPfSJk2RZMje77WVcmzhHMhNtaZDextSgNLo6tSYPi45fC1ABJuVgzE7eBH6V5ZzpUC8xRoQoZCrhAYDBaD' },
     },
   };
   const dir = mkdtempSync(join(tmpdir(), 'chit-pre-log-'));
