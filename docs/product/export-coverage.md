@@ -28,6 +28,18 @@ task_id|evidence|amount|payment_ref|collected_at
 
 The empty set hashes to SHA-256 of the empty string. That value is `universe_hash` when a finished scan found nothing.
 
+### Exact `universe_hash` rule
+
+Source: `services/gateway/src/export-coverage.js` (`rowCommitment`, `sortForCoverage`, `hashOrderedCommitments`).
+
+1. For each row, build `task_id|evidence|amount|payment_ref|collected_at`. A null or missing field is the empty string. The gateway reads `payment.amount` / `payment.ref` when the flat field is absent, `recorded_at` when `collected_at` is absent, and derives `evidence` from the row when it is empty. Export rows already carry the flat fields.
+2. The row commitment is the lowercase hex SHA-256 of that UTF-8 line.
+3. Sort rows by the string `collected_at + TAB + task_id`, compared as plain strings (code-unit order, not parsed time).
+4. Join the row commitments with `\n`. There is no trailing newline.
+5. `universe_hash` is the lowercase hex SHA-256 of that string. `enumerated_hash` is the same over the rows in the document.
+
+`universe_hash` is null when the scan did not finish (`hash_covers: unavailable`). A holder can recompute `universe_hash` from the document only when `complete` is true. Gateway test: `services/gateway/test/export-universe-hash-recompute.test.mjs`.
+
 ## Empty by policy and empty by drain
 
 Both can show `enumerated_count: 0`. They are not the same statement.

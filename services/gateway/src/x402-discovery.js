@@ -2331,7 +2331,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptInclusion',
           summary: 'Inclusion proof for one receipt',
-          description: 'Public. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the smallest later anchored signed head that contains the leaf (epoch, tree_size, root, inclusion_url, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored.',
+          description: 'Public. Merkle hashing is RFC 6962: leaf_hash is already SHA-256(0x00 || task_id|row_hash) and must not be prefixed again; an interior node is SHA-256(0x01 || left || right); an odd last node is promoted. Fold the proof from leaf_hash using each sibling side to reach the signed root. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the smallest later anchored signed head that contains the leaf (epoch, tree_size, root, inclusion_url, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored.',
           tags: ['Receipts'],
           parameters: [
             { name: 'task_id', in: 'path', required: true, schema: { type: 'string' } },
@@ -2525,7 +2525,10 @@ export function buildOpenApiSpec(baseUrl = '') {
             'Stranger-GET signed envelope for next-wake treasury pull (hemei test3). '
             + 'Document matches /v1/agents/{agent_id}/book/export columns. '
             + 'Verify issuer_signature.jws against GET /.well-known/jwks.json (re-fetch ~2h). '
-            + 'Possession-gated /book/export unchanged. See docs/product/public-pull-export.md.',
+            + 'Possession-gated /book/export unchanged. See docs/product/public-pull-export.md. '
+            + 'coverage.universe_hash: SHA-256 over the lowercase hex row commitments SHA-256(task_id|evidence|amount|payment_ref|collected_at), null as empty string, '
+            + 'rows sorted by the string collected_at + TAB + task_id, joined with LF and no trailing LF. Empty set is SHA-256 of the empty string; null when the scan did not finish. '
+            + 'See docs/product/export-coverage.md.',
           tags: ['Specimens'],
           parameters: [
             {
