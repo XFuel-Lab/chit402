@@ -742,3 +742,9 @@ test('/v1 middleware lede uses plain wording', () => {
   assert.equal((mw.match(/POST \/v1\/chat\/completions: you see the price first, it\\?'s based on our cost, and every paid call gets a signed receipt\. USDC on Base and Solana\./g) || []).length, 1);
   assert.doesNotMatch(mw, /POST \/v1\/chat\/completions is cost-plus, quoted, receipted/);
 });
+
+test('middleware ledes drop the old cost-plus phrase', () => {
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  assert.doesNotMatch(middleware, /cost-plus, quoted, receipted/i);
+  assert.match(middleware, /You see the price first, it\\'s based on our cost, and you pay in USDC on Base and Solana\./);
+});
