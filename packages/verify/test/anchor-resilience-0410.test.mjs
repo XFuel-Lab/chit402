@@ -16,6 +16,7 @@ execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
 
 const {
   verifyAnchoredRoot,
+  fetchSolanaAnchorTransaction,
   runAnchorSide,
   anchorRpcUrls,
   isRpcLookupFailure,
@@ -345,13 +346,53 @@ test('H1 a malformed Base tx hash in the signed head is a bad anchor, not covere
   assert.equal(r.base.reason, 'anchor_ref_invalid');
 });
 
-test('H1 a JSON-RPC -32602 from a real node is a bad anchor on either chain', async () => {
+test('H1/MED a -32602 on a well-formed ref is that endpoint rejecting: not covered, and not anchor_ref_invalid', async () => {
   const sol = await live({ solana: solanaRpcFor({ override: { getTransaction: () => ({ rpcError: { code: -32602, message: 'Invalid param: Invalid' } }) } }) });
-  assert.equal(sol.overall, 'failed');
-  assert.equal(sol.solana.reason, 'anchor_ref_invalid');
-  const bas = await live({ base: baseRpcFor({ override: { eth_getTransactionByHash: () => ({ rpcError: { code: -32602, message: 'invalid argument 0' } }), eth_getTransactionReceipt: () => ({ rpcError: { code: -32602, message: 'invalid argument 0' } }) } }) });
-  assert.equal(bas.overall, 'failed');
-  assert.equal(bas.base.reason, 'anchor_ref_invalid');
+  assert.notEqual(sol.overall, 'verified');
+  assert.equal(sol.solana.reason, 'solana_rpc_rejected');
+  assert.equal(sol.anchor_warnings, undefined);
+  const refuse = () => ({ rpcError: { code: -32602, message: 'Archive requests require a personal token' } });
+  const bas = await live({ base: baseRpcFor({ override: { eth_getTransactionByHash: refuse, eth_getTransactionReceipt: refuse } }) });
+  assert.notEqual(bas.overall, 'verified');
+  assert.equal(bas.base.reason, 'base_rpc_rejected');
+});
+
+test('MED a -32602 from endpoint 1 on a well-formed ref falls back to endpoint 2', async () => {
+  const refuse = () => ({ rpcError: { code: -32602, message: 'Archive requests require a personal token' } });
+  const b1 = await rpcServer(baseRpcFor({ override: { eth_getTransactionByHash: refuse, eth_getTransactionReceipt: refuse } }));
+  const b2 = await rpcServer(baseRpcFor());
+  const s1 = await rpcServer(solanaRpcFor({ override: { getTransaction: () => ({ rpcError: { code: -32602, message: 'Invalid params' } }) } }));
+  const s2 = await rpcServer(solanaRpcFor());
+  try {
+    const r = await verifyAnchoredRoot({
+      receipt: { task_id: TASK, row_hash: ROW }, inclusion, head, trustedKids: [key.kid],
+      baseRpcUrls: [b1.url, b2.url], solanaRpcUrls: [s1.url, s2.url], rpcRetry: noSleep,
+    });
+    assert.equal(r.overall, 'verified');
+    assert.equal(r.base.rpc, b2.url);
+    assert.equal(r.solana.rpc, s2.url);
+    assert.equal(r.base.attempts, 2, 'a rejecting endpoint is not retried');
+    assert.equal(r.anchor_warnings, undefined);
+  } finally { await b1.close(); await b2.close(); await s1.close(); await s2.close(); }
+});
+
+test('MED a rejection stays the result when a later endpoint only fails at transport', async () => {
+  const out = await runAnchorSide('solana', ['a', 'b'], { backoffMs: 0 }, async (u) => (u === 'a' ? 'solana_rpc_rejected' : 'solana_rpc_error'));
+  assert.equal(out.reason, 'solana_rpc_rejected');
+});
+
+test('HIGH a body that stalls after the headers is a timeout at the real budget, not a 300 s hang', { timeout: 40_000 }, async () => {
+  const srv = http.createServer((req, res) => { req.resume(); res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"jsonrpc":"2.0","res'); });
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  try {
+    const started = Date.now();
+    await assert.rejects(
+      () => fetchSolanaAnchorTransaction(SIG, `http://127.0.0.1:${srv.address().port}`, 12_000),
+      (err) => err instanceof Error && err.message === 'solana_rpc_timeout',
+    );
+    const took = Date.now() - started;
+    assert.ok(took >= 11_500 && took < 16_000, `took ${took} ms`);
+  } finally { srv.closeAllConnections?.(); await new Promise((r) => srv.close(r)); }
 });
 
 test('H2 Base calldata mismatch stays failed when eth_blockNumber is null or 429', async () => {
@@ -481,6 +522,7 @@ function reset() {
   world.solanaMode = 'ok'; // ok | error | flaky | mismatch
   world.solanaCalls = 0;
   world.baseMode = 'ok'; // ok | error | mismatch
+  world.head = null;
 }
 reset();
 
@@ -527,7 +569,7 @@ before(async () => {
       return;
     }
     if (req.url.startsWith(`/v1/receipts/${TASK}/inclusion`)) return send(200, inclusion);
-    if (req.url.startsWith('/v1/receipts/tree/head')) return send(200, head);
+    if (req.url.startsWith('/v1/receipts/tree/head')) return send(200, world.head || head);
     return send(404, { error: 'not_found' });
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -614,4 +656,18 @@ test('M2 a Solana lookup that did not answer is printed and marked partial', asy
   const full = await verifyShell();
   assert.equal(full.log.partial, undefined);
   assert.equal(humanVerdictLines(full).some((l) => /not checked/.test(l)), false);
+});
+
+test('MED a malformed anchor ref in the signed head is exit 1 anchor_ref_invalid end to end', async () => {
+  for (const anchors of [
+    { base: baseAnchor, solana: { ...solanaAnchor, signature: 'not-a-signature' } },
+    { base: { ...baseAnchor, tx: '0x1234' }, solana: solanaAnchor },
+  ]) {
+    reset();
+    world.head = headWith(anchors);
+    const v = await verifyShell();
+    assert.equal(v.exit_code, 1, `${v.result} ${v.reason}`);
+    assert.equal(v.reason, 'anchor_ref_invalid');
+  }
+  reset();
 });

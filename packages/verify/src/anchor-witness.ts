@@ -480,8 +480,9 @@ export function extractMemos(tx: SolanaAnchorTx | null | undefined): string[] {
  * Anchor RPC error classes (0.4.10):
  * - `rpc_timeout` and `rpc_transport` (network failure, HTTP status) are the
  *   only failures the other chain may cover.
- * - `rpc_invalid_params` (JSON-RPC -32602 / -32600) means the node refused
- *   the anchor reference itself: a bad anchor.
+ * - `rpc_invalid_params` (JSON-RPC -32602 / -32600): that endpoint refused
+ *   a well-formed ref. Treated as the endpoint rejecting the call; the next
+ *   endpoint is asked. Only the format check yields `anchor_ref_invalid`.
  * - `rpc_rejected` is everything else (JSON-RPC error object, a body that is
  *   not JSON, a refused redirect, a bad URL, a code exception). Not covered.
  */
@@ -644,7 +645,9 @@ function mapAnchorRpcError(err: unknown, side: 'base' | 'solana'): string {
   const kind = classifyAnchorRpcError(err);
   if (kind === 'rpc_timeout') return `${side}_rpc_timeout`;
   if (kind === 'rpc_transport') return `${side}_rpc_error`;
-  if (kind === 'rpc_invalid_params') return 'anchor_ref_invalid';
+  // A node refusing a well-formed ref (-32602/-32600) is that endpoint
+  // rejecting the call, not proof the ref is bad: only the format check
+  // before any call yields anchor_ref_invalid.
   return `${side}_rpc_rejected`;
 }
 
@@ -745,17 +748,27 @@ export async function runAnchorSide(
   let attempts = 0;
   let reason: string | undefined;
   let used: string | undefined;
+  // An endpoint that rejected the call (JSON-RPC error, odd body) is not
+  // retried; the next endpoint is asked. The rejection stays the result
+  // unless a later endpoint gives a definite answer, so a transport failure
+  // on a later endpoint never turns it into something the other chain covers.
+  let rejected: string | undefined;
+  const done = () => ({ attempts, url: used, reason: rejected && isRpcLookupFailure(reason) ? rejected : reason });
   for (const url of urls.slice(0, 4)) {
     for (let i = 0; i < perUrl; i += 1) {
-      if (attempts > 0 && now() - started >= budget) return { attempts, url: used, reason };
+      if (attempts > 0 && now() - started >= budget) return done();
       if (i > 0 && backoff > 0) await sleep(Math.min(ANCHOR_RPC_BACKOFF_MAX_MS, backoff * 2 ** (i - 1)));
       attempts += 1;
       used = url;
       reason = await run(url);
+      if (reason === `${side}_rpc_rejected`) {
+        rejected = reason;
+        break;
+      }
       if (!isRpcLookupFailure(reason)) return { attempts, url: used, reason };
     }
   }
-  return { attempts, url: used, reason };
+  return done();
 }
 
 export async function fetchSolanaGenesisHash(rpcUrl: string): Promise<string> {

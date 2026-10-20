@@ -204,7 +204,7 @@ function hardLogReason(result: AnchorWitnessResult): string | null {
     return inclusionReason;
   }
   const mismatch = (result.errors || []).find((err) => (
-    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf/.test(err)
+    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf|anchor_ref_invalid/.test(err)
   ));
   return mismatch ? mismatch.replace(/^(solana|base):/, '') : null;
 }
@@ -440,7 +440,7 @@ export async function freshPublicLog(
     }
     if (result.overall === 'failed') {
       const definitive = [result.base.reason, result.solana.reason].find((code) => (
-        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch'
+        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch' || code === 'anchor_ref_invalid'
       ));
       if (definitive) {
         return { logInclusion: 'pass', anchor: 'fail', logReason: definitive, log: null };
