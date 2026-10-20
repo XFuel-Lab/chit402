@@ -129,6 +129,13 @@ export default function Doors() {
             <code>verify_url</code>, and a row after you register. Pay per call with x402, or use a
             partner API key. The key is supported. It is not required.
           </p>
+          <p>
+            No account and no API key are needed: a wallet that can pay the 402 is enough. Register
+            is only to hold the book after a collected receipt. Drop-in model ids:{' '}
+            <code>GET /v1/models</code> lists wire hubs (Theta, Akash) behind the <code>/v1</code>{' '}
+            door. <code>xfuel/auto</code> picks a hub for fulfillment — the product is the signed
+            receipt.
+          </p>
         </header>
 
         <nav className="docs-rail" aria-label="Quick links">
