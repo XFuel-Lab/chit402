@@ -12,7 +12,7 @@
  */
 import crypto from 'node:crypto';
 import logger from './logger.js';
-import { confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
+import { canonicalAuthNonce, confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
 import { samePayee, truncateWallet } from './x402-flags.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import { canonicalNetwork, normalizePaymentRef, sameNetwork } from './payment-ref.js';
@@ -51,7 +51,10 @@ export function lateIssueShadow(cfg = {}) {
 
 export function evmAuthKey(network, asset, from, nonce) {
   if (!from || !nonce) return null;
-  return `${canonicalNetwork(network)}|${String(asset || '').toLowerCase()}|${String(from).toLowerCase()}|${String(nonce).toLowerCase()}`;
+  // A well-formed nonce keys as lowercase bytes32, the same string earlier
+  // releases stored. Anything else keeps its old lowercased form.
+  const n = canonicalAuthNonce(nonce) || String(nonce).toLowerCase();
+  return `${canonicalNetwork(network)}|${String(asset || '').toLowerCase()}|${String(from).toLowerCase()}|${n}`;
 }
 
 function nowMs(deps, cfg) {
