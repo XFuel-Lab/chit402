@@ -34,6 +34,7 @@ import { getActiveChallengeStore } from './x402-durable-store.js';
 import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 import { canonicalPaidRoute } from './paid-route.js';
 import { readHeadBlock } from './x402-chain.js';
+import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { capGate } from './issuance-cap.js';
 import { settlementProofEnabled } from './settlement-proof-flag.js';
 
@@ -429,6 +430,7 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
   if (evmOnly && isSolanaNetwork(pinned.network)) {
     return preSettleFail('register_base_only');
   }
+  if (arcRefused(pinned.network)) return preSettleFail('network_not_accepted');
   const allowed = configuredShortNetworks(cfg);
   if (!allowed.includes(fromCaip2Network(pinned.network))) {
     return preSettleFail('network_not_accepted');
@@ -445,6 +447,10 @@ function challengeBindingRefusal(pinned, paymentHeader, cfg, { evmOnly = false, 
   }
   const pinnedAsset = evmAssetAddress(pinned.asset);
   if (asset && pinnedAsset && asset !== pinnedAsset) {
+    return preSettleFail('network_not_accepted');
+  }
+  if (isArcId(pinned.network)
+    && (!arcAssetAllowed(pinned.network, pinnedAsset) || (asset && !arcAssetAllowed(pinned.network, asset)))) {
     return preSettleFail('network_not_accepted');
   }
   const solana = isSolanaNetwork(pinned.network);
@@ -556,7 +562,7 @@ export async function runX402Handshake(req, {
       };
     }
     const activeStore = store || getActiveChallengeStore() || challengeStore;
-    const issueBlock = await readHeadBlock(cfg.baseRpcUrl || cfg.rpcUrl || null, 250);
+    const issueBlock = await readHeadBlock(evmRpcUrlFor(cfg.network, cfg), 250);
     const { body: challengeBody } = await buildPaymentChallenge(
       {
         taskId,
