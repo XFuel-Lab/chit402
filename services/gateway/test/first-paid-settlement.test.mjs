@@ -3,7 +3,7 @@
  * The settle-time book row is written before the response is labeled;
  * that same-call close is not an idempotent replay of itself.
  */
-import { test, before, after } from 'node:test';
+import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
@@ -60,7 +60,11 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-async function paidChat(reuseNonce = null, paymentHeader = evmAuthHeader('PAYMENT-BLOB')) {
+// One payment per test: a test's resends share it, other tests do not.
+let testPayment = evmAuthHeader();
+beforeEach(() => { testPayment = evmAuthHeader(); });
+
+async function paidChat(reuseNonce = null, paymentHeader = testPayment) {
   let nonce = reuseNonce;
   if (!nonce) {
     const challenge = await fetch(`${base}/v1/chat/completions`, {
@@ -141,7 +145,7 @@ test('a replay without the original payment proof is 409 and leaks no wallet or 
     network: 'base-sepolia',
     payload: {
       signature: `0x${'22'.repeat(65)}`,
-      authorization: { from: payer, to: '0xtreasury', value: '2000', nonce: '0x' + 'cd'.repeat(32) },
+      authorization: { from: payer, to: '0xtreasury', value: '2000', validBefore: '9999999999', nonce: '0x' + 'cd'.repeat(32) },
     },
   }), 'utf8').toString('base64');
   const cases = [

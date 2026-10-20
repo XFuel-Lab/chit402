@@ -10,7 +10,10 @@ import crypto from 'node:crypto';
 
 export const FIXTURE_FROM = `0x${'5a'.repeat(20)}`;
 
-export function evmAuthHeader(label = 'PAYMENT-BLOB', { value = '1000000000000', version = 1, from = FIXTURE_FROM, to = process.env.X402_PAY_TO || '0xtreasury' } = {}) {
+let seq = 0;
+
+// No label: a fresh authorization per call. Pass a label to resend the same bytes.
+export function evmAuthHeader(label = `PAYMENT-BLOB-${++seq}`, { value = '1000000000000', version = 1, from = FIXTURE_FROM, to = process.env.X402_PAY_TO || '0xtreasury' } = {}) {
   const nonce = `0x${crypto.createHash('sha256').update(`chit402-fixture:${label}`).digest('hex')}`;
   const authorization = { from, to, value, validAfter: '0', validBefore: '9999999999', nonce };
   const body = version === 2

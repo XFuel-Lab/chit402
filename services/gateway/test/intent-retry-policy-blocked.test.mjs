@@ -154,7 +154,7 @@ async function settlePaid(headers = {}, body = chatBody) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
+      'x-payment': evmAuthHeader('PAYMENT-BLOB-1', { from: '0xmockpayer' }),
       'x-payment-nonce': nonce,
       ...headers,
     },
@@ -299,7 +299,7 @@ describe('policy_blocked mid-burn', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-payment': evmAuthHeader('PAYMENT-BLOB'),
+        'x-payment': evmAuthHeader('PAYMENT-BLOB-2', { from: '0xmockpayer' }),
         'x-payment-nonce': await issueChallenge(),
         'x-xfuel-session': session,
         'x-xfuel-intent': 'intent-kill-test',

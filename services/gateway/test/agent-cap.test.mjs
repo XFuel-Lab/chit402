@@ -152,7 +152,7 @@ async function settlePaid(path = '/v1/chat/completions', headers = {}) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
+      'x-payment': evmAuthHeader('PAYMENT-BLOB-1', { from: '0xmockpayer' }),
       'x-payment-nonce': nonce,
       ...headers,
     },
@@ -277,7 +277,7 @@ test('Y=2000 spent: next paid call fails closed — no second payment, refusal i
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': evmAuthHeader('PAYMENT-BLOB'),
+      'x-payment': evmAuthHeader('PAYMENT-BLOB-2', { from: '0xmockpayer' }),
       'x-payment-nonce': nonce,
       'x-xfuel-session': session,
     },

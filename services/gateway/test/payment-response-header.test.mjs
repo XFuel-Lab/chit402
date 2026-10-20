@@ -171,7 +171,10 @@ function evmPaymentHeader() {
     x402Version: 1,
     scheme: 'exact',
     network: 'base',
-    payload: { authorization: { from: EVM_PAYER, nonce: '0x' + crypto.randomBytes(32).toString('hex') } },
+    payload: {
+      signature: `0x${'11'.repeat(65)}`,
+      authorization: { from: EVM_PAYER, to: process.env.X402_PAY_TO || '0xtreasury', value: '2000', validBefore: '9999999999', nonce: '0x' + crypto.randomBytes(32).toString('hex') },
+    },
   }), 'utf8').toString('base64');
 }
 
