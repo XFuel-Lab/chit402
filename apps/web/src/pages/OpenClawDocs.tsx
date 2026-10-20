@@ -18,7 +18,7 @@ export default function OpenClawDocs() {
 - Partner key, still supported: CHIT_API_KEY or X-API-Key
 - Caps: CHIT_MAX_USD_PER_CALL, CHIT_MAX_USD_SESSION
 - After every paid call, return verify_url to the principal
-- Do not default to SP1 — signed ES256 receipt is table stakes`;
+- Do not default to SP1 — every paid call already gets a signed ES256 receipt`;
 
   return (
     <div className="page docs-page">

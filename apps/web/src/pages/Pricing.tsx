@@ -6,7 +6,7 @@ import { getApiV1 } from '../apiHost';
 const PRICING_SEO = {
   title: 'Pricing — standard receipt $0.002 USDC | Chit402',
   description:
-    'Cost-plus, quoted, receipted on POST /v1/chat/completions. Standard signed receipt $0.002 USDC every hop; provider routing is cost + 1%. USDC on Base and Solana.',
+    'POST /v1/chat/completions charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Standard signed receipt $0.002 USDC every hop; provider routing is cost + 1%.',
 };
 
 export default function Pricing() {
@@ -162,7 +162,7 @@ export default function Pricing() {
         </div>
 
         <p style={styles.footnote}>
-          Legacy measured-task wire (<code>/task-request</code>) uses the same cost-plus fee basis on
+          Legacy measured-task wire (<code>/task-request</code>) works the same way, with the fee based on our cost plus a margin, on
           a different path — prefer <code>{apiV1}</code> for new installs.
         </p>
       </div>
