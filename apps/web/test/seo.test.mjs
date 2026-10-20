@@ -736,3 +736,9 @@ test('XFuel host description and Pricing footnote use plain wording', () => {
   assert.match(pricing, /fee based on our cost plus a margin/);
   assert.doesNotMatch(pricing, /cost-plus fee basis/);
 });
+
+test('/v1 middleware lede uses plain wording', () => {
+  const mw = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  assert.equal((mw.match(/POST \/v1\/chat\/completions: you see the price first, it\\?'s based on our cost, and every paid call gets a signed receipt\. USDC on Base and Solana\./g) || []).length, 1);
+  assert.doesNotMatch(mw, /POST \/v1\/chat\/completions is cost-plus, quoted, receipted/);
+});
