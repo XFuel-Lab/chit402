@@ -282,8 +282,8 @@ export default function Docs() {
             that served plus the OpenRouter-reported cost, labelled paid-by-caller-to-OpenRouter.
           </p>
           <p>
-            Each signed receipt carries hub, model, amount, and <code>verify_url</code>. Pricing is
-            cost-plus, quoted, receipted — pay USDC on Base or Solana.{' '}
+            Each signed receipt carries hub, model, amount, and <code>verify_url</code>. Each call
+            is charged a quoted price and gets a receipt, paid in USDC on Base or Solana.{' '}
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected
             spend. The on-chain settlement proof add-on is coming soon.
           </p>

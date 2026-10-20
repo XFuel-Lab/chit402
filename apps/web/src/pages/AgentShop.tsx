@@ -42,8 +42,8 @@ export default function AgentShop() {
           <p>
             {productName} is the till for an agent shop. POST to{' '}
             <a href={apiV1}>{apiV1}/chat/completions</a>, pay the HTTP 402 in USDC
-            on Base or Solana (cost-plus, quoted, receipted), and you hold the book. We are the till, not the Chief of SEO.
-            Show the client the book, not a screenshot. Issuer-signed receipts (ES256) are table stakes.
+            on Base or Solana (a quoted price and a receipt for every call), and you hold the book. We are the till, not the Chief of SEO.
+            Show the client the book, not a screenshot. Every receipt is issuer-signed (ES256).
             The signature does not prove USDC moved.
             Book is possession-gated <code>GET|POST /v1/agents/:agent_id/book</code>.
           </p>

@@ -6,7 +6,7 @@ import { getApiV1 } from '../apiHost';
 const PRICING_SEO = {
   title: 'Pricing — standard receipt $0.002 USDC | Chit402',
   description:
-    'Cost-plus, quoted, receipted on POST /v1/chat/completions. Standard signed receipt $0.002 USDC every hop; provider routing is cost + 1%. USDC on Base and Solana.',
+    'POST /v1/chat/completions charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Standard signed receipt $0.002 USDC every hop; provider routing is cost + 1%.',
 };
 
 export default function Pricing() {

@@ -15,7 +15,7 @@ const ROUTE_CONTENT = {
   '/agent-shop': {
     title: 'The till for an agent shop | Chit',
     h1: 'Your SEO bot spent it. You hold the book.',
-    lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (cost-plus, quoted, receipted) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
+    lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (a quoted price and a receipt for every call) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/docs': {
     title: 'Chit402 — treasury desk for agent spend',
@@ -144,7 +144,7 @@ const ROUTE_CONTENT = {
     title: 'Pricing — standard receipt $0.002 USDC | Chit402',
     h1: 'Pay for a collected hop.',
     lede:
-      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. USDC on Base and Solana; signed receipt and verify_url included.',
+      'POST /v1/chat/completions at api.chit402.com charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. Signed receipt and verify_url included.',
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
