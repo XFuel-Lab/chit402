@@ -9,7 +9,6 @@ function getPrompt(productName: string, apiHost: string) {
 ${productName} answers one question: what did my agents pay for, and to whom? Every paid call gets a receipt in my book.
 POST /v1/chat/completions at ${apiHost}/v1 charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana.
 GET|POST /v1/agents/:agent_id/book is possession-gated last-N collected spend.
-Signed receipt is table stakes.
 
 Interview me once about my stack:
 1. What language/framework does your agent use? (Python, TypeScript, Rust, etc.)

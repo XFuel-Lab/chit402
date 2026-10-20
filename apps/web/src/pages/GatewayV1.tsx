@@ -60,7 +60,7 @@ export default function GatewayV1() {
         <section className="docs-section">
           <h2>How does HTTP 402 / x402 work on {apiDomain}?</h2>
           <p style={{ color: '#8a8a9a', lineHeight: 1.7 }}>
-            POST <code>/v1/chat/completions</code> is cost-plus, quoted, receipted — USDC on Base and Solana. Without
+            POST <code>/v1/chat/completions</code> charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Without
             x402 payment, the gateway returns HTTP 402 Payment Required. Pay the 402
             with a wallet that holds USDC on Base or Solana. Paying this host moves real mainnet USDC.
             There is no public demo key.

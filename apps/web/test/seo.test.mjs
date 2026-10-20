@@ -707,6 +707,12 @@ test('BookBot price line and footer use plain words', () => {
   const bookBot = readFileSync(join(root, 'src/pages/BookBot.tsx'), 'utf8');
   assert.match(bookBot, /charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana\./);
   assert.doesNotMatch(bookBot, /is cost-plus, quoted, receipted/);
+  assert.doesNotMatch(bookBot, /table stakes/);
+  for (const rel of ['src/pages/GatewayV1.tsx', 'scripts/prerender-titles.mjs']) {
+    const src = readFileSync(join(root, rel), 'utf8');
+    assert.match(src, /charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana\./, rel);
+    assert.doesNotMatch(src, /is cost-plus, quoted, receipted/, rel);
+  }
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   assert.match(layout, /Your book: who paid, for what, and how much\. Apache-2\.0\./);
   assert.doesNotMatch(layout, /The book: hub, model, amount/);
