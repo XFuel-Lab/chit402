@@ -130,9 +130,11 @@ test('homepage title and hero lead with treasury desk, not wallet-move', () => {
   assert.doesNotMatch(title, /best available provider/i);
 
   const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
-  assert.match(home, /Chit402 is the book/);
-  assert.match(home, /This agent spent Y on this job/);
-  assert.match(home, /You hold hub, model, and amount/);
+  assert.match(home, /Your agents spent \$400 this week\. On what, and with whom\?/);
+  assert.match(home, /Chit puts a receipt on every payment and keeps it in your book, not theirs\. Open it any time and check each line\. \$0\.002 a receipt\./);
+  assert.match(home, /See what your agent spent/);
+  assert.match(home, /https:\/\/api\.chit402\.com\/receipt\/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15/);
+  assert.doesNotMatch(home, /customer data/i, 'illustrative $400 must not be labelled customer data');
   assert.doesNotMatch(home, /Not a smart router/);
   assert.doesNotMatch(home, /Not a model shop/);
   assert.doesNotMatch(home, /best available provider/i);
