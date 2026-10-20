@@ -44,7 +44,7 @@ export const RECEIPT_CHECK_MAX_BYTES = 65_536;
 export const RECEIPT_CHECK_WINDOW_MS = 60_000;
 export const RECEIPT_CHECK_MAX_HITS = 30;
 export const RECEIPT_CHECK_ACCEPTED = ['receipt JSON', 'a chit- id', 'a verify link'];
-export const RECEIPT_CHECK_EXAMPLE = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
+export const RECEIPT_CHECK_EXAMPLE = 'xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15';
 export const RECEIPT_CHECK_INPUT_HINT = 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.';
 
 const ENVELOPE_BYTES = 64;

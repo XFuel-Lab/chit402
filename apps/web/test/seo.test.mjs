@@ -200,9 +200,9 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /Who paid which call — and you still hold it\./, 'ChitHome leads principal-first');
   assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
   assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
-  assert.match(liveSpecimen, /xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944/, 'Live receipt specimen id locked');
-  assert.match(liveSpecimen, /2026-10-10T00:17:00\.000Z/, 'Live receipt time is the public issued_at');
-  assert.match(liveSpecimen, /0x923bf06d920f2886d28c07202fe6b58fc30cb119169dd39e749f822ca6a0ac48/, 'Live receipt payment tx is the public shell tx');
+  assert.match(liveSpecimen, /xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15/, 'Live receipt specimen id locked');
+  assert.match(liveSpecimen, /2026-10-19T02:23:00\.000Z/, 'Live receipt time is the public issued_at');
+  assert.match(liveSpecimen, /0x731e4fdc70a8dba370c579c23e8520d2edcde052f28abaf3ed26c95c8603116f/, 'Live receipt payment tx is the public shell tx');
   assert.doesNotMatch(liveSpecimen, /akash-network|Llama-3\.3|0x2536|0xf63e/, 'Live receipt specimen does not keep the previous receipt route or payer');
   assert.match(receiptCard, /owner view/, 'Live receipt card points hub and model at the owner view');
   assert.doesNotMatch(receiptCard, /LIVE_RECEIPT_HUB/, 'Live receipt card does not publish the hub');
@@ -537,7 +537,7 @@ test('false claims called out in the site alignment stay fixed', () => {
   assert.doesNotMatch(security, /ZKVerifierSP1 \(env\)/);
   assert.match(security, /Base and Solana/);
   assert.doesNotMatch(receipt, /Publish <code>@xfuel\/verify<\/code> before/);
-  assert.match(receipt, /xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944/);
+  assert.match(receipt, /xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15/);
   assert.doesNotMatch(receipt, /chit-1e57cdd7/);
   assert.doesNotMatch(middleware, /or a demo key/);
 });
