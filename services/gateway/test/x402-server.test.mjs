@@ -11,6 +11,7 @@ import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 import { WebhookDispatcher } from '../src/webhooks.js';
 import { _allowSettlementProofForTests } from '../src/settlement-proof-flag.js';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 // The add-on's code guard stays false; tests flip it to exercise the flag-on paths.
 _allowSettlementProofForTests(true);
 
@@ -85,7 +86,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
     assert.equal(accept.maxAmountRequired, '2000', 'challenge priced at $0.002');
 
     const settled = await runX402Handshake({
-      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
+      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': accept.extra.nonce },
       // Inflated declaration + a different maxAmount on the retry.
       body: { payment: { rail: 'usdc', maxAmount: '1000000' }, amount: '1000000' },
     }, { taskId: 'x402-integrity', cfg });
@@ -109,7 +110,7 @@ test('handshake amount override prices the challenge, not the current body', asy
     assert.equal(accept.maxAmountRequired, '20240');
 
     const settled = await runX402Handshake({
-      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': accept.extra.nonce },
+      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': accept.extra.nonce },
       body: { payment: { rail: 'usdc' } },
     }, { taskId: 'x402-rolling', cfg, amount: '20240' });
     assert.equal(settled.kind, 'settled', settled.reason || settled.code);
@@ -190,7 +191,7 @@ test('full 402 loop against mock facilitator: challenge, settle, then replay is 
 
     // Step 2: retry with X-PAYMENT + nonce ? verify + settle
     const reqPay = {
-      headers: { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': nonce },
+      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
     };
     const settled = await runX402Handshake(reqPay, { taskId: 'x402-req-1', cfg });
@@ -228,7 +229,7 @@ test('full 402 loop against mock facilitator (v2 PAYMENT-SIGNATURE): CDP-native 
 
     // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle (v2 path)
     const reqPayV2 = {
-      headers: { 'payment-signature': 'CDP-V2-PAYMENT-BLOB', 'payment-nonce': nonce },
+      headers: { 'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }), 'payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
     };
     const settled = await runX402Handshake(reqPayV2, { taskId: 'x402-v2-1', cfg });
@@ -263,7 +264,7 @@ test('v2 PAYMENT-SIGNATURE retry is seen as a payment, not re-challenged as unpa
 
     // A v2 client sends PAYMENT-SIGNATURE, not X-PAYMENT
     const v2Pay = {
-      headers: { 'payment-signature': 'SIGNED-PAYMENT', 'payment-nonce': nonce },
+      headers: { 'payment-signature': evmAuthHeader('SIGNED-PAYMENT', { version: 2 }), 'payment-nonce': nonce },
       body: { payment: { rail: 'usdc' } },
     };
     const result = await runX402Handshake(v2Pay, { taskId: 'x402-bankr', cfg });
@@ -320,7 +321,7 @@ test('handshake surfaces facilitator rejection (→ caller falls back to TFUEL)'
     const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' } } };
     const challenge = await runX402Handshake(reqNoPay, { taskId: 't', cfg });
     const nonce = challenge.body.accepts[0].extra.nonce;
-    const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': nonce }, body: {} };
+    const reqPay = { headers: { 'x-payment': evmAuthHeader('BLOB'), 'x-payment-nonce': nonce }, body: {} };
     const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
     assert.equal(decision.kind, 'failed');
     assert.equal(decision.reason, 'verify_failed');
@@ -340,7 +341,7 @@ test('gateway_not_configured is reported (→ caller returns 503)', async () => 
   assert.equal(challenge.kind, 'challenge', 'should get 402 challenge first');
   const nonce = challenge.body.accepts[0].extra.nonce;
 
-  const reqPay = { headers: { 'x-payment': 'BLOB', 'x-payment-nonce': nonce }, body: {} };
+  const reqPay = { headers: { 'x-payment': evmAuthHeader('BLOB'), 'x-payment-nonce': nonce }, body: {} };
   const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
   assert.equal(decision.kind, 'failed');
   assert.equal(decision.reason, 'gateway_not_configured');

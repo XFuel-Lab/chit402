@@ -127,7 +127,7 @@ test('an EVM payment from another address is rejected before settle', async () =
       'payment-signature': paymentHeader({
         x402Version: 2,
         accepted: { network: 'eip155:8453' },
-        payload: { authorization: { from: other.address } },
+        payload: { authorization: { from: other.address, nonce: '0x' + 'ab'.repeat(32) } },
       }),
     },
     body: JSON.stringify(await signedBody(signer)),

@@ -7,6 +7,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0xtreasury';
@@ -66,7 +67,7 @@ test('unknown model is 400 model_not_routable and never settles', async () => {
       messages: [{ role: 'user', content: 'charge me for nothing' }],
       max_tokens: 16,
     },
-    { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': `0x${'ab'.repeat(32)}` },
+    { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': `0x${'ab'.repeat(32)}` },
   );
   assert.equal(res.status, 400);
   const body = await res.json();
@@ -102,7 +103,7 @@ test('specific models we do not serve 400 before verify/settle', async () => {
         messages: [{ role: 'user', content: 'do not charge' }],
         max_tokens: 16,
       },
-      { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': `0x${'cd'.repeat(32)}` },
+      { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': `0x${'cd'.repeat(32)}` },
     );
     assert.equal(res.status, 400, model);
     const body = await res.json();
@@ -164,7 +165,7 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
       messages: [{ role: 'user', content: 'hello after alias' }],
       max_tokens: 16,
     },
-    { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': nonce },
+    { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': nonce },
   );
   assert.ok(facServer.settleCount > settlesBefore, 'alias is routable, so settle runs');
   assert.notEqual(res.status, 500);
@@ -235,14 +236,14 @@ test('strict mode refuses an alias before verify/settle', async () => {
     {
       headers: {
         'x-chit-strict-model': 'True',
-        'x-payment': 'PAYMENT-BLOB',
+        'x-payment': evmAuthHeader('PAYMENT-BLOB'),
         'x-payment-nonce': `0x${'11'.repeat(32)}`,
       },
       body: { model: 'gpt-4o-mini' },
     },
     {
       headers: {
-        'x-payment': 'PAYMENT-BLOB',
+        'x-payment': evmAuthHeader('PAYMENT-BLOB'),
         'x-payment-nonce': `0x${'22'.repeat(32)}`,
       },
       body: { model: 'claude-sonnet-4', chit_strict_model: true },

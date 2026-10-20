@@ -17,7 +17,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { canonicalAuthNonce, confirmSettlement, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
@@ -443,8 +443,14 @@ export async function settleBoundPayment({
     if (replay) return replay;
     return refused(req, 'payment_replayed', { preSettle: true });
   }
-  const authKeyEarly = !solana && authEarly?.from && authEarly?.nonce
-    ? `${canonicalNetwork(challenge.network)}|${String(challenge.asset || '').toLowerCase()}|${String(authEarly.from).toLowerCase()}|${String(authEarly.nonce).toLowerCase()}`
+  // A decoded EVM authorization must carry its EIP-3009 nonce as exactly
+  // 0x plus 64 hex. Chain confirmation binds the transfer by that nonce, so
+  // anything else is refused here, before the facilitator is called.
+  if (!solana && (!authEarly || !canonicalAuthNonce(authEarly.nonce))) {
+    return refused(req, 'settle_unconfirmed', { preSettle: true });
+  }
+  const authKeyEarly = !solana
+    ? evmAuthKey(challenge.network, challenge.asset, authEarly?.from, authEarly?.nonce)
     : null;
   if (authKeyEarly && active.isAuthSpent(authKeyEarly)) {
     return refused(req, 'payment_replayed', { preSettle: true });
@@ -764,8 +770,8 @@ export async function settleBoundPayment({
     active.markSpent(nonce, { txRef: norm.key, replay: true });
     return refused(req, 'payment_replayed');
   }
-  const authKey = !solana && auth?.from && auth?.nonce
-    ? `${norm.network}|${String(challenge.asset || '').toLowerCase()}|${String(auth.from).toLowerCase()}|${String(auth.nonce).toLowerCase()}`
+  const authKey = !solana
+    ? evmAuthKey(norm.network, challenge.asset, auth?.from, auth?.nonce)
     : null;
   if (authKey && active.isAuthSpent(authKey)) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });

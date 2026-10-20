@@ -5,6 +5,7 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import http from 'node:http';
 
 const EVM_PAYER = '0x1234567890123456789012345678901234567890';
@@ -170,7 +171,7 @@ function evmPaymentHeader() {
     x402Version: 1,
     scheme: 'exact',
     network: 'base',
-    payload: { authorization: { from: EVM_PAYER } },
+    payload: { authorization: { from: EVM_PAYER, nonce: '0x' + crypto.randomBytes(32).toString('hex') } },
   }), 'utf8').toString('base64');
 }
 
