@@ -51,7 +51,7 @@ accept iff sn == 0 and r == root
 | proof[1] (left) | `2e53dd841cdfc4ac45bce676aa72646826d8c906807a46018fc09926df5d718f` |
 
 1. fn=34, sn=34. fn == sn, so the sibling is on the left: SHA-256(`01` ‖ `850004bd…` ‖ `dbb7229f…`) = `b5f1878abb0fc84f2f1cdf0c42076e93726f8782be3ce20cb6346fea3e3683a7`. fn is even, so shift to fn=17, sn=17, then shift again to fn=8, sn=8.
-2. fn == sn, so the sibling is on the left: SHA-256(`01` ‖ `2e53dd84…` ‖ `b5f1878a…`) = `344cfd286fbc7b90a16b38cd126911c46e835a3396d3bd976f8ddd6c04ea8b35`. Shift to fn=4, sn=4, then shift again to sn=0.
+2. fn == sn, so the sibling is on the left: SHA-256(`01` ‖ `2e53dd84…` ‖ `b5f1878a…`) = `344cfd286fbc7b90a16b38cd126911c46e835a3396d3bd976f8ddd6c04ea8b35`. fn is even, so shift while it stays even and non-zero: 4, 2, 1 (sn the same). The final shift gives fn=0, sn=0.
 3. sn = 0 and the result equals `root` (`344cfd28…`), which is the calldata of Base tx `0xa3d40f9937b48b56631dedb28b8337fc4f8a8ebf74c563d3c835fddd71a24a5c`.
 
 Leaf-body check, with made-up values: the body `example-task|abab…ab` (64 hex characters) hashes to SHA-256(`00` ‖ body) = `bad0a9d071071740f8051214a7638bbe1b19ec690ca842c6ca66da42892b5177`.
