@@ -8,7 +8,7 @@ const shell = await get(`/receipt/${id}?format=json`);
 const inc = await get(`/v1/receipts/${id}/inclusion`);
 if (inc.status !== 'anchored' && !inc.proof) throw new Error(`no proof: ${inc.status}`);
 if (shell.inclusion?.leaf_hash && shell.inclusion.leaf_hash !== inc.leaf) throw new Error('shell leaf != inclusion leaf');
-let h = Buffer.from(inc.leaf, 'hex'), fn = inc.leaf_index, sn = inc.tree_size - 1; // RFC 9162 2.1.3.2
+let h = Buffer.from(inc.leaf, 'hex'), fn = inc.leaf_index, sn = inc.tree_size - 1; // RFC 9162 inclusion check
 for (const s of inc.proof) {
   const left = fn % 2 === 1 || fn === sn, sib = Buffer.from(s.hash, 'hex');
   if (s.position !== (left ? 'left' : 'right')) throw new Error('position label disagrees with index');
