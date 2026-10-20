@@ -69,6 +69,10 @@ When `NODE_ENV` is production in any casing, the gateway refuses to boot and ref
 
 If the gateway refuses to boot with `persist_failed` on `book-policy.json` or `identities.json`, restore that file from the latest backup and restart. Never delete it to get past the error, because that wipes caps and reissues agent ids.
 
+## Release checklist
+
+- When a change starts storing something (a receipt, a snapshot, a field on a book row), backfill it for the rows already on the book in the same release, or write down why those rows are left as they are. Check that `GET /receipt/by-tx` for an existing paid row still lands on a 200.
+
 ## Verify
 
 ```bash

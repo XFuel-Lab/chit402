@@ -134,7 +134,7 @@ import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
 import { BookA2aJobStore, handleA2aJobAction } from './book-a2a-escrow.js';
 import { BoardPostStore } from './board-posts.js';
 import { BoardJobStore, getAgentRecord } from './board-jobs.js';
-import { houseAgentIdsFromEnv } from './board-posts.js';
+import { houseAgentIdsFromEnv, getBoardPost } from './board-posts.js';
 import { registerBoardRoutes } from './board-routes.js';
 import { registerBoardJobRoutes } from './board-job-routes.js';
 import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
@@ -3108,6 +3108,35 @@ export async function createApp() {
   // GET /receipt/by-tx?tx=<signature> — lookup by payment ref.
   // Task store first (native receipts). Foreign-ingest and stamped payouts
   // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
+  function isStampRow(row) {
+    if (!row) return false;
+    const kind = row.event || row.evidence;
+    return kind === 'board_stamp' || kind === 'ingest_stamp';
+  }
+
+  // Parent of a stamp row, or null when it has none that resolves (a true orphan).
+  // Board post, comment and flag stamps go to the public post (it carries its comments);
+  // an ingest stamp goes to the foreign receipt it stamped.
+  function stampParentPath(row) {
+    const kind = row.event || row.evidence;
+    if (kind === 'board_stamp') {
+      const postId = row.board?.post_id;
+      if (!postId) return null;
+      const view = getBoardPost(String(postId), { posts: boardPosts });
+      if (view?.status !== 200) return null;
+      const id = encodeURIComponent(String(postId));
+      return /^(comment|comment_flag)$/.test(String(row.board?.purpose || ''))
+        ? `/v1/board/posts/${id}/comments`
+        : `/v1/board/posts/${id}`;
+    }
+    if (kind === 'ingest_stamp') {
+      const parent = row.parent_ref ? String(row.parent_ref) : '';
+      if (!parent || !usageSettled.findByTask(parent)) return null;
+      return `/receipt/${encodeURIComponent(parent)}`;
+    }
+    return null;
+  }
+
   app.get('/receipt/by-tx', rateLimit, (req, res) => {
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
@@ -3135,9 +3164,16 @@ export async function createApp() {
 
       if (!taskId) return sendPublicMissing(res, wantsJson);
 
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      // A stamp row has no receipt page of its own. Send it to what it paid for.
+      if (!task && isStampRow(ledgerRow)) {
+        const parentPath = stampParentPath(ledgerRow);
+        if (!parentPath) return sendPublicMissing(res, wantsJson);
+        return res.redirect(302, `${baseUrl}${parentPath}${fmt ? `?format=${fmt}` : ''}`);
+      }
+
       // Redirect to canonical verify_url so the URL shape is consistent.
       // GET /receipt/:id rebuilds a foreign row from its snapshot, including the issuer JWS.
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const canonicalUrl = `${baseUrl}/receipt/${taskId}${fmt ? `?format=${fmt}` : ''}`;
       return res.redirect(302, canonicalUrl);
     } catch (err) {
