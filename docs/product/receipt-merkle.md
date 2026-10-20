@@ -4,6 +4,68 @@ Receipts are leaves in an append-only Merkle tree. The hash is RFC 6962-style: a
 
 Leaf 0 is genesis (`chit402.tree_genesis.v1`). It names `verifier_binary_build_digest` from [verifier-digest.md](./verifier-digest.md) when that file has been published. Later leaves are `task_id|row_hash`. The digest is a hash of the verifier sources, not a bit-reproducible compiler binary.
 
+
+## Recompute an inclusion proof
+
+This is the full recipe. It matches `services/gateway/src/receipt-merkle.js` (`verifyInclusion`) and `@xfuel/verify`.
+
+### Leaf bytes
+
+- A receipt leaf body is the UTF-8 string `task_id|row_hash`: the receipt's `task_id` exactly as the inclusion response names it (for example `xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15`; a `chit-` receipt id resolves to its `xfuel-` task id), one ASCII `|` (0x7c), then `row_hash` as 64 lowercase hex characters with no `0x`. No JSON, no quotes, no whitespace, no trailing newline. A missing `row_hash` is the empty string.
+- Leaf 0 of an epoch is the genesis body, the compact JSON `{"schema":"chit402.tree_genesis.v1","payload_version":1,"verifier_binary_build_digest":"<digest>"}` in that key order.
+- `row_hash` is owner-held (see [receipt-preimage.md](./receipt-preimage.md)). A stranger starts from the published leaf hash (`leaf` on the inclusion response, `inclusion.leaf_hash` on the public shell). The owner can check that step too.
+
+### Hashes
+
+- Leaf hash = SHA-256(`0x00` ‖ leaf body).
+- Node hash = SHA-256(`0x01` ‖ left ‖ right), where left and right are the raw 32-byte hashes, not hex text.
+- Leaves are paired left to right at each level. A trailing odd node is promoted unchanged to the next level. It is not hashed with itself. This gives the same root as the RFC 6962 split at the largest power of two.
+
+### Sibling order and direction
+
+`proof` is ordered from the leaf up to the root. Each entry is `{ hash, position }`. `position: "left"` means the sibling is the left input, so the step is node(sibling, current). `"right"` means node(current, sibling). A promoted level has no entry.
+
+The side is fixed by `leaf_index` and `tree_size` (RFC 9162 §2.1.3.2), and `position` must agree with it:
+
+```
+fn = leaf_index; sn = tree_size - 1; r = leaf
+for each sibling p:
+  if fn is odd or fn == sn:            # sibling on the left
+    r = node(p, r)
+    if fn is even: while fn is even and fn != 0: fn >>= 1; sn >>= 1
+  else:                                # sibling on the right
+    r = node(r, p)
+  fn >>= 1; sn >>= 1
+accept iff sn == 0 and r == root
+```
+
+### Worked example
+
+`xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15`, from `GET /v1/receipts/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15/inclusion`:
+
+| | Value |
+|---|---|
+| `leaf_index` / `tree_size` | 34 / 35 |
+| `leaf` | `dbb7229f29b2fafc9bd4699dea8c8dcdac226e26ddad948d9312a0d12d99a006` |
+| proof[0] (left) | `850004bd8b6e743da4aa4fcae21aee02c2e16ae313e3cb534a177da0222c4de8` |
+| proof[1] (left) | `2e53dd841cdfc4ac45bce676aa72646826d8c906807a46018fc09926df5d718f` |
+
+1. fn=34, sn=34. fn == sn, so the sibling is on the left: SHA-256(`01` ‖ `850004bd…` ‖ `dbb7229f…`) = `b5f1878abb0fc84f2f1cdf0c42076e93726f8782be3ce20cb6346fea3e3683a7`. fn is even, so shift to fn=17, sn=17, then shift again to fn=8, sn=8.
+2. fn == sn, so the sibling is on the left: SHA-256(`01` ‖ `2e53dd84…` ‖ `b5f1878a…`) = `344cfd286fbc7b90a16b38cd126911c46e835a3396d3bd976f8ddd6c04ea8b35`. Shift to fn=4, sn=4, then shift again to sn=0.
+3. sn = 0 and the result equals `root` (`344cfd28…`), which is the calldata of Base tx `0xa3d40f9937b48b56631dedb28b8337fc4f8a8ebf74c563d3c835fddd71a24a5c`.
+
+Leaf-body check, with made-up values: the body `example-task|abab…ab` (64 hex characters) hashes to SHA-256(`00` ‖ body) = `bad0a9d071071740f8051214a7638bbe1b19ec690ca842c6ca66da42892b5177`.
+
+### Script
+
+[`examples/verify-inclusion.mjs`](./examples/verify-inclusion.mjs) needs Node 18 or later and no dependencies. It fetches the public shell and the inclusion proof with GET only, checks that the two leaf hashes agree, and recomputes the root:
+
+```bash
+node docs/product/examples/verify-inclusion.mjs xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15
+```
+
+It does not check the head signature or the anchor transactions. `chit402-verify` does those.
+
 ## What a holder gets
 
 | Endpoint | Returns |
