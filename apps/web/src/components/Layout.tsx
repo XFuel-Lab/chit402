@@ -116,7 +116,7 @@ export default function Layout() {
           <div style={styles.footerBrand}>
             <strong style={{ color: '#f0f0f5' }}>{config.name}</strong>
             <span style={{ color: '#55556a', fontSize: '0.85rem' }}>
-              {isChit ? 'Treasury desk for agent spend.' : 'The book: hub, model, amount. Apache-2.0.'}
+              {isChit ? 'Treasury desk for agent spend.' : 'Your book: who paid, for what, and how much. Apache-2.0.'}
             </span>
             {isChit && (
               <span style={{ color: '#8a8a9a', fontSize: '0.85rem' }}>

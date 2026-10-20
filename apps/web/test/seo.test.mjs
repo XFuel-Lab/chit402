@@ -702,3 +702,12 @@ test('chit402 listing assets are the black/white/blue receipt, rasterized as PNG
 
   assert.match(html, /rel="apple-touch-icon" href="\/apple-touch-icon\.png"/);
 });
+
+test('BookBot price line and footer use plain words', () => {
+  const bookBot = readFileSync(join(root, 'src/pages/BookBot.tsx'), 'utf8');
+  assert.match(bookBot, /charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana\./);
+  assert.doesNotMatch(bookBot, /is cost-plus, quoted, receipted/);
+  const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
+  assert.match(layout, /Your book: who paid, for what, and how much\. Apache-2\.0\./);
+  assert.doesNotMatch(layout, /The book: hub, model, amount/);
+});
