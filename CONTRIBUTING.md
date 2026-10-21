@@ -62,6 +62,8 @@ Local hook: set `GIT_COMMIT_CONFIRMED=YES` for non-interactive commits (see [AGE
 
 Report vulnerabilities privately — [SECURITY.md](SECURITY.md), [docs/bug-bounty.md](docs/bug-bounty.md).
 
+Security fixes enter a changelog only after they ship.
+
 ## Docs style
 
 Canonical docs use plain headings, short paragraphs, and link lists (see [README.md](README.md) and [docs/README.md](docs/README.md)). Prefer satellites for depth; keep front doors lean. Narrative: Base settlement, USDC/x402, token-light fees, tiered proofs, provider-agnostic routing.
