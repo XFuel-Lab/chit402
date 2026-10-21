@@ -18,6 +18,7 @@ import {
   ISSUER_JWS_TYP,
 } from '../dist/index.js';
 import { syntheticIssuerKey } from './fixtures/slot-typing/synthetic-key.mjs';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 const load = (name) => JSON.parse(readFileSync(fixture(name), 'utf8'));
@@ -131,7 +132,7 @@ const goodClaims = {
 test('control: a bound receipt-typ payload verifies under a trusted key', async () => {
   const res = await verifyReceipt(receiptWith(goodClaims), { jwks: localJwks, trustedKids: [kid], fetchImpl: offline });
   assert.equal(res.issuer_signature.valid, true);
-  assert.equal(res.overall, 'verified', res.errors.join('; '));
+  assertLibraryPass(res, res.errors.join('; '));
 });
 
 test('signed task_id must match the receipt', async () => {
@@ -173,7 +174,7 @@ for (const typ of ['chit402-tree-head+jwt', 'chit402-tree-epoch+jwt', 'chit402-i
 
 test('legacy receipt typ JWT is still accepted when bound', async () => {
   const res = await verifyReceipt(receiptWith(goodClaims, 'JWT'), { jwks: localJwks, trustedKids: [kid], fetchImpl: offline });
-  assert.equal(res.overall, 'verified', res.errors.join('; '));
+  assertLibraryPass(res, res.errors.join('; '));
 });
 
 test('an untyped JWS is refused in the receipt slot (no issued receipt lacks a typ)', async () => {
@@ -208,13 +209,16 @@ test('each non-receipt slot accepts only its own typ', () => {
 
 // --- real issued receipts keep their pre-0.4.8 verdicts.
 // [jwks only, jwks + issuer history v1, no jwks] as returned by 0.4.7.
+// 0.4.11: `overall` comes from the shared verdict, so a library pass that
+// did not fetch the log is `partial` (verdict exit 2), not `verified`.
 const PREVIOUS = {
-  'slot-typing/v5-xfuel-c5a3860d.json': ['verified', 'verified', 'failed'],
-  'public/chit-1ebc5616.json': ['verified', 'verified', 'verified'],
-  'chit-5d775d12.v7.json': ['verified', 'verified', 'verified'],
-  'chit-4d6e8331.json': ['verified', 'verified', 'verified'],
-  'public/chit-39af100b.json': ['verified', 'verified', 'verified'],
-  'public/foreign-x402-muy1hh8y.json': ['failed', 'verified', 'failed'],
+  'slot-typing/v5-xfuel-c5a3860d.json': ['partial', 'partial', 'failed'],
+  'public/chit-1ebc5616.json': ['partial', 'partial', 'partial'],
+  'chit-5d775d12.v7.json': ['partial', 'partial', 'partial'],
+  'chit-4d6e8331.json': ['partial', 'partial', 'partial'],
+  'public/chit-39af100b.json': ['partial', 'partial', 'partial'],
+  // 0.4.11: an unreachable pinned history (offline here) is could not check.
+  'public/foreign-x402-muy1hh8y.json': ['partial', 'partial', 'partial'],
 };
 
 for (const [name, expected] of Object.entries(PREVIOUS)) {
@@ -249,7 +253,8 @@ test('synthetic v10 receipt keeps the issued v10 verdicts', async () => {
     (await verifyReceipt(structuredClone(r), { ...opts, issuerHistory: synHistory })).overall,
     (await verifyReceipt(structuredClone(r), { fetchImpl: offline })).overall,
   ];
-  assert.deepEqual(got, ['failed', 'verified', 'failed']);
+  // 0.4.11: jwks only, the pinned history is unreachable offline: could not check.
+  assert.deepEqual(got, ['partial', 'partial', 'failed']);
   // The production key does not verify it.
   assert.equal((await verifyReceipt(structuredClone(r), { jwks, fetchImpl: offline, issuerHistory: synHistory })).overall, 'failed');
 });
@@ -333,7 +338,7 @@ test('signed payment fields compare canonically (key order does not matter, valu
     receiptWith({ ...goodClaims, payment: signedSameDifferentOrder }, 'chit402-receipt+jwt', { payment: p }),
     localOpts,
   );
-  assert.equal(ok.overall, 'verified', ok.errors.join('; '));
+  assertLibraryPass(ok, ok.errors.join('; '));
   const bad = await verifyReceipt(
     receiptWith({ ...goodClaims, payment: { ...signedSameDifferentOrder, accounting: { a: 1, b: [2, 1] } } }, 'chit402-receipt+jwt', { payment: p }),
     localOpts,
@@ -345,7 +350,7 @@ test('display-only outer payment fields that were never signed keep verifying', 
   const p = { ...payment, ref: 'base:0x' + 'cd'.repeat(32), network: 'base', explorer_url: 'https://basescan.org/tx/0x' + 'cd'.repeat(32), collected: true };
   const signedPayment = { rail: p.rail, ref: p.ref, gross_amount: p.gross_amount, settled_amount: p.settled_amount, network: p.network };
   const res = await verifyReceipt(receiptWith({ ...goodClaims, payment: signedPayment }, 'chit402-receipt+jwt', { payment: p }), localOpts);
-  assert.equal(res.overall, 'verified', res.errors.join('; '));
+  assertLibraryPass(res, res.errors.join('; '));
 });
 
 // Untyped x402 offer / receipt-extension payloads signed by the issuer key.
@@ -408,7 +413,7 @@ function foreignLike(outerExtra, signedExtra = {}) {
 
 test('outer payTo and payer matching the signed payee and payer (any case) verify', async () => {
   const res = await verifyReceipt(foreignLike({ payTo: PAYEE.toUpperCase().replace('0X', '0x'), payer: PAYER.toUpperCase().replace('0X', '0x') }), localOpts);
-  assert.equal(res.overall, 'verified', res.errors.join('; '));
+  assertLibraryPass(res, res.errors.join('; '));
 });
 
 test('an outer payTo that differs from the signed payee fails', async () => {
@@ -453,11 +458,11 @@ test('payTo/payer compare exactly except 0x-hex EVM addresses', async () => {
   const cases = [
     ['solana payTo case flip', { payTo: flip(SOL, 1) }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'failed'],
     ['solana payer case flip', { payer: flip(SOL, 5) }, { payer: SOL }, 'failed'],
-    ['solana exact', { payTo: SOL, payer: PAYER }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'verified'],
+    ['solana exact', { payTo: SOL, payer: PAYER }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'partial'],
     ['kelvin sign K', { payTo: SOL.replace('K', '\u212A') }, { payee: SOL, payment: { ...payment, payee: SOL } }, 'failed'],
     ['0X prefix', { payTo: '0X' + PAYEE.slice(2) }, {}, 'failed'],
     ['non-address case', { payer: 'Alice-Wallet' }, { payer: 'alice-wallet' }, 'failed'],
-    ['evm mixed case', { payTo: '0x' + PAYEE.slice(2).toUpperCase() }, {}, 'verified'],
+    ['evm mixed case', { payTo: '0x' + PAYEE.slice(2).toUpperCase() }, {}, 'partial'],
   ];
   for (const [name, outer, signed, want] of cases) {
     const claims = { ...goodClaims, payment: { ...payment, payee: PAYEE }, payee: PAYEE, payer: PAYER, ...signed };

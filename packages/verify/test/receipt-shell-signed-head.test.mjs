@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -73,7 +74,7 @@ const trust = {
 
 test('a signed head plus inclusion verifies in the library; --jws is removed', async () => {
   const lib = await verifyReceipt(holder, { ...trust, head: signedHead, inclusion });
-  assert.equal(lib.overall, 'verified', (lib.errors || []).join('; '));
+  assertLibraryPass(lib, (lib.errors || []).join('; '));
   const owner = { jws: holderJws, salt: null, private_fields: {}, row_hash: row };
   const ownerLib = await verifyReceipt(owner, {
     ...trust,
