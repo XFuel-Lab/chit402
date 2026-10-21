@@ -191,8 +191,8 @@ export function canonicalAuthNonce(nonce) {
 }
 
 const UINT_RE = /^[0-9]{1,78}$/;
-// Integer-equivalent decimal ("2000.0"). normalizeAuthorizationPayload sends it
-// to the facilitator as "2000", so it is the same uint.
+// Integer-equivalent decimal ("2000.0"). toPaymentPayload sends it to the
+// facilitator as "2000" on every EVM path, so it is the same uint.
 const UINT_DOT_ZERO_RE = /^([0-9]{1,78})\.0+$/;
 const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 // Whole bytes only: 0x plus an even number of hex digits.
@@ -213,7 +213,7 @@ export const EVM_SIGNATURE_MAX_BYTES = 8 * 1024;
 export const EVM_AUTH_MAX_WINDOW_S = 3600;
 /** Client clock allowance for validAfter and the validBefore upper bound. */
 export const EVM_AUTH_CLOCK_SKEW_S = 60;
-/** validBefore must leave at least this long for the facilitator to land the tx. */
+/** validBefore must be more than this many seconds away, so the facilitator can land the tx. */
 export const EVM_AUTH_MIN_REMAINING_S = 6;
 
 function isPlainObject(v) {
@@ -224,12 +224,24 @@ function evmAddress(v) {
   return typeof v === 'string' && EVM_ADDRESS_RE.test(v);
 }
 
+/** Largest EIP-3009 uint256 field (value, validAfter, validBefore). */
+export const UINT256_MAX = (1n << 256n) - 1n;
+
+/**
+ * A uint256 field as a decimal string, or null. "2000.0" reads as "2000".
+ * Anything above 2^256 - 1 is null: the token contract cannot take it.
+ */
 function uintField(v) {
   if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return String(v);
   if (typeof v !== 'string') return null;
-  if (UINT_RE.test(v)) return v;
-  const m = UINT_DOT_ZERO_RE.exec(v);
-  return m ? m[1] : null;
+  let digits = null;
+  if (UINT_RE.test(v)) digits = v;
+  else {
+    const m = UINT_DOT_ZERO_RE.exec(v);
+    if (m) digits = m[1];
+  }
+  if (digits == null || BigInt(digits) > UINT256_MAX) return null;
+  return digits;
 }
 
 /**
@@ -276,7 +288,7 @@ function singleAuthorization(decoded) {
  * it carries one well-formed EIP-3009 authorization:
  * - header at most PAYMENT_HEADER_MAX_CHARS;
  * - from and to are 20-byte hex addresses; no fields beyond the six EIP-3009 ones;
- * - value, validAfter (optional, 0) and validBefore are uints;
+ * - value, validAfter (optional, 0) and validBefore are uints, at most 2^256 - 1;
  * - validAfter <= now + skew, and now + EVM_AUTH_MIN_REMAINING_S < validBefore
  *   <= now + max(maxTimeoutSeconds, EVM_AUTH_MAX_WINDOW_S) + skew;
  * - a bytes32 nonce;
