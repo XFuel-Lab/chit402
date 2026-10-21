@@ -35,11 +35,14 @@ import { BASE_RPC_URL } from './base-payer.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
 import { payerCheckOutcome } from './payer.js';
 import { type EpochRecord } from './epoch.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import { jwkThumbprint, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
   humanVerdictLines,
+  unsignedDocumentVerdict,
   verdictCopy,
+  verdictFromVerification,
   type CheckState,
   type VerifyVerdict,
 } from './verdict.js';
@@ -171,7 +174,7 @@ async function absenceAgainstSignedHead(
   history: IssuerHistoryDocument | null,
 ): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
   try {
-    const res = await fetch(`${origin}/v1/receipts/tree/head`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/tree/head`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -217,7 +220,7 @@ async function publicShellAbsence(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return false;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -313,7 +316,7 @@ export async function freshPublicLog(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return missed;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -336,7 +339,7 @@ export async function freshPublicLog(
     };
     const headUrl = inclusionHeadUrl(origin, inclusion);
     if (!headUrl) return missed;
-    const headRes = await fetch(headUrl, {
+    const headRes = await fetchNoRedirect(headUrl, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -347,7 +350,7 @@ export async function freshPublicLog(
     const headSchema = (head as { schema?: string }).schema;
     if (headEpoch != null || headSchema === 'chit402.tree_head.v2') {
       try {
-        const epochRes = await fetch(`${origin}/v1/receipts/tree/epoch`, {
+        const epochRes = await fetchNoRedirect(`${origin}/v1/receipts/tree/epoch`, {
           headers: { accept: 'application/json' },
           signal: AbortSignal.timeout(LOG_FETCH_MS),
         });
@@ -942,23 +945,17 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
         logReason = 'not_in_log';
       }
     }
-    const notInLog = logReason === 'not_in_log';
-    const verdict = buildVerifyVerdict({
+    const verdict = unsignedDocumentVerdict({
       version: packageVersion(),
-      receiptId: null,
-      displayId: null,
-      payloadVersion: null,
-      historySource: resolved.source,
-      historyHead: resolved.headHash,
-      historyCount: resolved.entryCount,
-      historyAsOf: resolved.asOf,
-      signatureChecked: false,
-      historyReason: notInLog ? null : 'signed_receipt_unavailable',
-      historyMissing: false,
-      errors: [],
+      history: {
+        source: resolved.source,
+        headHash: resolved.headHash,
+        entryCount: resolved.entryCount,
+        asOf: resolved.asOf,
+      },
       logInclusion,
       anchor: anchorState,
-      logReason: notInLog ? 'not_in_log' : null,
+      notInLog: logReason === 'not_in_log',
     });
     return linesOutcome(verdict);
   }
@@ -990,29 +987,19 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   const signedId = result.issuer_signature.valid === true
     ? signedReceiptId(result.issuer_signature.payload)
     : null;
-  const verdict = buildVerifyVerdict({
+  const verdict = verdictFromVerification(result, {
     version: packageVersion(),
     receiptId: signedId,
-    displayId: signedId,
-    payloadVersion: result.receipt_version ?? null,
-    historySource: resolved.source,
-    historyHead: resolved.headHash,
-    historyCount: resolved.entryCount,
-    historyAsOf: resolved.asOf,
-    signatureValid: unsupported ? null : result.issuer_signature.valid === true,
-    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
-    historyChecked: unsupported ? false : (resolved.invalid || result.issuer_history.checked),
-    historyOk: unsupported ? false : (resolved.invalid ? false : result.issuer_history.ok),
-    historyReason: resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason,
-    historyMissing: unsupported ? true : (resolved.document == null && !resolved.invalid),
-    bindingExpected: !!result.binding.expected,
-    bindingMatches: result.binding.matches,
-    claimMismatches: result.claim_mismatches.length,
-    payerChecked: result.payer.checked,
-    payerValid: result.payer.valid,
+    history: {
+      source: resolved.source,
+      headHash: resolved.headHash,
+      entryCount: resolved.entryCount,
+      asOf: resolved.asOf,
+      invalid: resolved.invalid,
+      reason: resolved.reason,
+      documentPresent: resolved.document != null,
+    },
     payerRequired: checkPayer,
-    payerOutcome: checkPayer ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
-    errors: result.errors,
     logInclusion,
     anchor: anchorState,
     logReason,

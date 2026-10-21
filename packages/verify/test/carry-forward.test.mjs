@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const {
   verifyReceipt,
@@ -113,6 +114,30 @@ function treeHead(leaves, index, epoch, publishedAt, keys) {
   return { head, inclusion, root };
 }
 
+function signReceipt(receipt, keys) {
+  // A receipt verifies only under a trusted issuer signature, so the fixture
+  // signs its own fields with the throwaway test key.
+  const claims = {
+    payload_version: 8,
+    task_id: receipt.task_id,
+    payment: receipt.payment,
+    binding: receipt.binding,
+    book_chain: receipt.book_chain,
+  };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: keys.kid };
+  const signingInput = `${b64url(header)}.${b64url(claims)}`;
+  const signature = sign('sha256', Buffer.from(signingInput), { key: keys.privateKey, dsaEncoding: 'ieee-p1363' });
+  return {
+    ...receipt,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: `${signingInput}.${signature.toString('base64url')}`,
+      kid: keys.kid,
+      issuer_jwk: keys.publicJwk,
+    },
+  };
+}
+
 function receiptFor(taskId) {
   const paymentRef = `base:0x${'ab'.repeat(32)}`;
   const amount = '10000';
@@ -146,7 +171,7 @@ function carryFixture() {
     receiptLeaf,
     old,
     current,
-    receipt: receiptFor(taskId),
+    receipt: signReceipt(receiptFor(taskId), keys),
   };
 }
 
@@ -176,7 +201,7 @@ test('pinned anchor epochs are 1 and 2', () => {
 test('a receipt in the current epoch stays verified', async () => {
   const fx = carryFixture();
   const plain = await verifyReceipt(fx.receipt, { trustedKids: [fx.keys.kid] });
-  assert.equal(plain.overall, 'verified');
+  assertLibraryPass(plain);
   assert.equal(plain.carry_forward, undefined);
   assert.equal(JSON.stringify(plain).includes('VERIFIED_CARRIED_FORWARD'), false);
 
@@ -191,7 +216,7 @@ test('a receipt in the current epoch stays verified', async () => {
     trustedKids: [fx.keys.kid],
     carry: carryOf(fx, { oldHead: sameEpoch.head, oldInclusion: sameEpoch.inclusion }),
   });
-  assert.equal(current.overall, 'verified');
+  assertLibraryPass(current);
   assert.equal(current.carry_forward, undefined);
 });
 
@@ -201,7 +226,9 @@ test('a carried-forward receipt is dated from the signed heads', async () => {
     trustedKids: [fx.keys.kid],
     carry: carryOf(fx),
   });
-  assert.equal(result.overall, 'verified_carried_forward');
+  // 0.4.11: `overall` follows the shared verdict (the library did not fetch
+  // the log), so the carry-forward view is the signal, not `overall`.
+  assertLibraryPass(result);
   assert.equal(result.carry_forward.status, 'VERIFIED_CARRIED_FORWARD');
   assert.equal(result.carry_forward.issued_at, ISSUED_AT);
   assert.equal(result.carry_forward.issued_epoch, 1);

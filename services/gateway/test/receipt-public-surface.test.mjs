@@ -942,7 +942,7 @@ test('a shell with a public attestation shows only public claims and the advisor
   ]);
 });
 
-test('published fixtures stay VERIFIED after unsigned fields are dropped', async () => {
+test('published fixtures keep their verdict after unsigned fields are dropped', async () => {
   const { readFileSync } = await import('node:fs');
   const { redactPublicReceipt } = await import('../src/receipt.js');
   const { verifyReceipt } = await import('../../../packages/verify/dist/index.js');
@@ -961,8 +961,12 @@ test('published fixtures stay VERIFIED after unsigned fields are dropped', async
     assert.equal(original.issuer_signature.jws, jws, name);
     const before = await verifyReceipt(original, {});
     const after = await verifyReceipt(redacted, {});
-    assert.equal(before.overall, 'verified', name);
-    assert.equal(after.overall, 'verified', name);
+    // chit402-verify 0.4.11: overall follows the shared verdict; the library
+    // does not fetch the log, so a full library pass is partial (exit 2).
+    assert.equal(before.overall, 'partial', name);
+    assert.equal(after.overall, 'partial', name);
+    assert.deepEqual(after.verdict, before.verdict, name);
+    assert.equal(after.verdict.checks.signature, 'pass', name);
     assert.equal(before.issuer_signature.valid, true, name);
     assert.equal(after.issuer_signature.valid, true, name);
   }

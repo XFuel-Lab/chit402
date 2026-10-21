@@ -3,6 +3,22 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.11: Library verdict matches the CLI
+
+### Changed
+- **The library verdict is never more generous than the CLI.** `verifyReceipt` reports `verified` only under a trusted issuer signature. A document without one is `partial`. Unsigned claims are not trusted.
+- **`overall` comes from the shared verdict.** `overall` is `verified` only when `verdict.exit_code` is 0, `failed` when it is 1, and `partial` when it is 2. The library does not fetch the public log or the anchors, so a receipt whose library checks all pass is now `partial` with `verdict.exit_code` 2 (log and anchor could_not_check), where 0.4.10 said `verified`. `verified_carried_forward` follows the same rule; the `carry_forward` view is still set. Use `checkReceiptInput` (`chit402-verify/check-input`) for the full verdict.
+- **A detached legacy `issuer_signature.value` is trusted only under a kid pinned in issuer history.** The key comes from the history entry: the bundled signed snapshot, or a supplied `issuerHistory` / `issuerHistoryBytes` that verifies under the pinned kids alone and extends the bundled snapshot (the `--issuer-history` rule). A caller JWKS key that verifies the bytes but is not that entry is `key untrusted` (`failed`). No key at all is `kid_not_in_history` (not checked).
+- **Follow-up reads never follow a redirect.** Issuer history, JWKS, published preimages, and the CLI's inclusion, tree head and epoch reads use `redirect: 'error'`; a 3xx from a custom `fetchImpl` is refused too. A refused redirect is unreachable, so the check it feeds is could_not_check (exit 2). An unreachable issuer history in the library (`strictIssuerHistory`, or a pinned payload v10 history that could not be fetched) is now could_not_check (`partial`) instead of `failed`. An unreachable preimage is could_not_check for payment binding. The receipt fetch itself is unchanged (it already refuses redirects in `publicInput` mode).
+- **Binding, nullifier and payer facts come from signed claims only.** Without a trusted issuer signature the binding is reported as not checked. `nullifier` reads the signed `proof.nullifier`; an outer value the signature does not cover is not checked or reported, and `checkNullifier` on such a receipt is `partial`.
+- **One verdict mapping.** `verdictFromVerification` maps a check to VERIFIED, INVALID or COULD_NOT_CHECK (exit 0, 1, 2). The CLI and `verifyReceipt` both use it. `verifyReceipt` adds `verdict` (`result`, `exit_code`, `reason`, `checks`) for the checks it ran.
+- **Not in this release: endpoint cross-check.** It moves to a later release.
+- CLI exit codes, reasons and flags are unchanged for receipts that do not hit a redirect. `BUILD_DIGEST.txt` moved because `src/index.ts`, `src/check-input.ts`, `src/verdict.ts`, `src/issuer-history.ts`, `src/preimage.ts` and the new `src/fetch-guard.ts` changed. `@xfuel/verify` 0.4.11 depends on exactly `"chit402-verify": "0.4.11"`. Not published. No deploy.
+
+### Tests
+- An unsigned document with a self-computed binding, a signed receipt with its signature removed (with and without a recomputed binding), and a signed receipt with a different outer nullifier are not verified. Every receipt fixture keeps `overall` and `verdict` in step (0 verified, 1 failed, 2 partial). Fixtures that expected `verified` without a signature now sign with a throwaway test key.
+- A detached signature under a caller key, under a caller key that claims the production kid, and with a supplied history that does not verify is not trusted. A redirected inclusion and tree head (CLI) and a redirected issuer history (library) are not followed. Assertions that expected library `verified` now expect `partial` with every library check passing (`test/library-pass.mjs`). Two gateway tests that call the library (`receipt-audit-path`, `receipt-public-surface`) expect the same.
+
 ## 0.4.10 — Anchor lookup resilience
 
 ### Changed

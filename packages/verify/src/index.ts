@@ -22,6 +22,7 @@ import {
   type CarryInclusion,
 } from './carry-forward.js';
 import { createPublicKey, verify, type KeyObject } from 'node:crypto';
+import { createRequire } from 'node:module';
 import {
   computePaymentCommitment,
   computeInferenceBinding,
@@ -91,14 +92,24 @@ import {
 } from './receipt-lane.js';
 import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import {
   checkReceiptIssuerHistory,
+  historyPrefixExtends,
+  laterThanBundled,
+  loadBundledIssuerHistory,
   readIssuerHistoryPin,
+  verifyIssuerHistoryDocument,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
+import {
+  unsignedDocumentVerdict,
+  verdictFromVerification,
+  type VerifyVerdict,
+} from './verdict.js';
 
 export {
   computePaymentCommitment,
@@ -347,6 +358,8 @@ export interface PayerVerification {
   amount?: string | null;
 }
 
+export type LibraryVerdict = Pick<VerifyVerdict, 'result' | 'exit_code' | 'reason' | 'checks'>;
+
 export interface ReceiptVerification {
   /**
    * Verified signed `task_id`, or signed `receipt_id` when that payload has
@@ -406,6 +419,12 @@ export interface ReceiptVerification {
    */
   carry_forward?: CarryForwardView | null;
   overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
+  /**
+   * The shared CLI mapping for the checks this call ran: exit 0 VERIFIED,
+   * 1 INVALID, 2 COULD_NOT_CHECK. Set by `verifyReceipt`. The library does
+   * not fetch the log or the anchors, so those are could_not_check here.
+   */
+  verdict?: LibraryVerdict;
   errors: string[];
   /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
   receipt_version?: number | null;
@@ -779,10 +798,100 @@ function receiptTypAccepted(jws: string): boolean {
   return (ISSUER_JWS_TYP.receipt as readonly unknown[]).includes(typ);
 }
 
+/**
+ * The issuer history a detached legacy `issuer_signature.value` is checked
+ * against: a supplied history that verifies under the pinned kids alone and
+ * extends the bundled snapshot (the `--issuer-history` rule), else the
+ * bundled signed snapshot. Caller JWKS keys never sign this history.
+ */
+export function pinnedLegacyHistory(options: {
+  issuerHistory?: IssuerHistoryDocument | null;
+  issuerHistoryBytes?: string | null;
+  trustedKids?: readonly string[];
+} = {}): IssuerHistoryDocument | null {
+  const pins = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  let bundled: IssuerHistoryDocument | null = null;
+  try {
+    bundled = loadBundledIssuerHistory().document;
+  } catch {
+    bundled = null;
+  }
+  let supplied = options.issuerHistory ?? null;
+  if (!supplied && typeof options.issuerHistoryBytes === 'string') {
+    try {
+      supplied = JSON.parse(options.issuerHistoryBytes) as IssuerHistoryDocument;
+    } catch {
+      supplied = null;
+    }
+  }
+  if (
+    supplied
+    && bundled
+    && verifyIssuerHistoryDocument(supplied, { trustedKids: pins }).valid
+    && historyPrefixExtends(bundled, supplied)
+    && laterThanBundled(bundled, supplied)
+  ) {
+    return supplied;
+  }
+  if (bundled && verifyIssuerHistoryDocument(bundled, { trustedKids: pins }).valid) return bundled;
+  return null;
+}
+
+/**
+ * A detached legacy `value` signature is trusted only under a key whose kid
+ * is pinned in issuer history. The key material comes from the history
+ * entry. A caller JWKS key that verifies the bytes but is not that entry is
+ * `key untrusted`.
+ */
+function verifyLegacyValueSignature(
+  receipt: XFuelReceipt,
+  jwks: Jwks | undefined,
+  history: IssuerHistoryDocument | null,
+): IssuerSignatureVerification {
+  const sig = receipt.issuer_signature!;
+  const entries = (history?.entries || []).filter((entry) => (
+    entry?.jwk
+    && (entry.alg || 'ES256') === 'ES256'
+    && (!sig.kid || entry.kid === sig.kid)
+  ));
+  for (const entry of entries) {
+    const key: Es256Jwk = { ...entry.jwk, kid: entry.kid, alg: 'ES256' };
+    const result = verifyIssuerSignature(receipt, key);
+    if (result.valid) {
+      return { ...result, key_trusted: true, trust: 'pinned_kid', kid: entry.kid };
+    }
+  }
+  const callerKeys = Array.isArray(jwks?.keys)
+    ? jwks!.keys.filter((k) => k.alg === 'ES256' && (!sig.kid || k.kid === sig.kid))
+    : [];
+  for (const jwk of callerKeys) {
+    if (verifyIssuerSignature(receipt, jwk).valid) {
+      return { checked: true, valid: false, key_trusted: false, kid: jwk.kid || sig.kid, reason: KEY_UNTRUSTED };
+    }
+  }
+  if (entries.length) {
+    return { checked: true, valid: false, key_trusted: true, kid: sig.kid, reason: 'signature_invalid' };
+  }
+  return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'kid_not_in_history' };
+}
+
 export function verifyIssuerSignatureWithJwks(
   receipt: XFuelReceipt,
   jwks?: Jwks,
   options: { trustedKids?: readonly string[] } = {},
+): IssuerSignatureVerification {
+  return verifyIssuerSignatureTrusted(receipt, jwks, {
+    trustedKids: options.trustedKids,
+    legacyHistory: receipt.issuer_signature?.value && !receipt.issuer_signature?.jws
+      ? pinnedLegacyHistory({ trustedKids: options.trustedKids })
+      : null,
+  });
+}
+
+function verifyIssuerSignatureTrusted(
+  receipt: XFuelReceipt,
+  jwks: Jwks | undefined,
+  options: { trustedKids?: readonly string[]; legacyHistory: IssuerHistoryDocument | null },
 ): IssuerSignatureVerification {
   const sig = receipt.issuer_signature;
   if (!sig) {
@@ -871,35 +980,7 @@ export function verifyIssuerSignatureWithJwks(
   if (!sig.value) {
     return { checked: false, valid: false, key_trusted: false, reason: 'no_issuer_signature' };
   }
-  if (!jwks || !Array.isArray(jwks.keys)) {
-    return {
-      checked: false,
-      valid: false,
-      key_trusted: false,
-      kid: sig.kid,
-      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
-    };
-  }
-  if (jwks.keys.length === 0) {
-    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'empty_jwks' };
-  }
-
-  // Find matching key by kid, or try all ES256 keys if no kid on signature
-  const candidates = sig.kid
-    ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
-    : jwks.keys.filter(k => k.alg === 'ES256');
-
-  if (candidates.length === 0) {
-    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'no_matching_key' };
-  }
-
-  for (const jwk of candidates) {
-    const result = verifyIssuerSignature(receipt, jwk);
-    if (result.valid) {
-      return { ...result, key_trusted: true, trust: 'jwks', kid: jwk.kid || sig.kid };
-    }
-  }
-  return { checked: true, valid: false, key_trusted: true, kid: sig.kid, reason: 'signature_invalid' };
+  return verifyLegacyValueSignature(receipt, jwks, options.legacyHistory);
 }
 
 /**
@@ -1409,7 +1490,7 @@ export async function fetchIssuerJwks(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<Jwks> {
   if (!httpsUrl(uri)) throw new Error('jwks_uri must be https');
-  const res = await fetchImpl(uri);
+  const res = await fetchNoRedirect(uri, {}, fetchImpl);
   if (!res.ok) throw new Error(`jwks_fetch_failed: ${res.status}`);
   const body = await res.json() as Jwks;
   if (!body || !Array.isArray(body.keys)) throw new Error('jwks_malformed');
@@ -1739,7 +1820,73 @@ function signedReceiptBindingErrors(
   return errs;
 }
 
+/**
+ * Verify a receipt. `overall` is never more generous than the CLI:
+ * `verified` needs a trusted issuer signature, and a result the shared
+ * verdict maps to INVALID (exit 1) is always `failed`. `verdict` carries that
+ * mapping (0 / 1 / 2) for the checks this call ran. The library does not
+ * fetch the public log or the anchors, so a check that did not run is
+ * could_not_check; use `checkReceiptInput` from `chit402-verify/check-input`
+ * for the full CLI verdict.
+ */
 export async function verifyReceipt(
+  receipt: XFuelReceipt,
+  options: VerifyReceiptOptions = {},
+): Promise<ReceiptVerification> {
+  const result = await verifyReceiptChecks(receipt, options);
+  return withLibraryVerdict(receipt, result);
+}
+
+function hasCompactJws(receipt: XFuelReceipt | null | undefined): boolean {
+  const jws = receipt?.issuer_signature?.jws;
+  return typeof jws === 'string' && jws.length > 0;
+}
+
+function withLibraryVerdict(receipt: XFuelReceipt, result: ReceiptVerification): ReceiptVerification {
+  const trusted = result.issuer_signature.valid === true && result.issuer_signature.key_trusted !== false;
+  const failed = result.overall === 'failed';
+  // A failure the library found outside the six named checks (offline
+  // inclusion, head trust, preimages, refusal) still maps to exit 1.
+  const failureReason = failed ? 'invalid' : null;
+  // A trusted detached legacy signature is still a signature check. A
+  // document with neither is the CLI's unsigned path.
+  const full = hasCompactJws(receipt) || trusted
+    ? verdictFromVerification(result, {
+      version: verifierPackageVersion(),
+      receiptId: result.receipt_id,
+      payerRequired: true,
+      failureReason,
+    })
+    : unsignedDocumentVerdict({ version: verifierPackageVersion(), failureReason });
+  // `overall` is read from the shared verdict. Only exit 0 is verified.
+  // Exit 1 is failed. Exit 2 is partial: some check did not run.
+  if (full.exit_code === 0) {
+    if (result.overall !== 'verified' && result.overall !== 'verified_carried_forward') result.overall = 'verified';
+  } else if (full.exit_code === 1) {
+    result.overall = 'failed';
+  } else {
+    result.overall = 'partial';
+  }
+  result.verdict = {
+    result: full.result,
+    exit_code: full.exit_code,
+    reason: full.reason,
+    checks: full.checks,
+  };
+  return result;
+}
+
+function verifierPackageVersion(): string {
+  try {
+    // dist/index.js sits one level below package.json.
+    const pkg = createRequire(__filename)('../package.json') as { version?: string };
+    return pkg.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+async function verifyReceiptChecks(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
@@ -1779,7 +1926,16 @@ export async function verifyReceipt(
 
   let issuer_signature: IssuerSignatureVerification;
   if (receipt.issuer_signature?.jws || receipt.issuer_signature?.value) {
-    issuer_signature = verifyIssuerSignatureWithJwks(receipt, jwks, { trustedKids });
+    issuer_signature = verifyIssuerSignatureTrusted(receipt, jwks, {
+      trustedKids,
+      legacyHistory: receipt.issuer_signature?.jws
+        ? null
+        : pinnedLegacyHistory({
+          issuerHistory: options.issuerHistory ?? null,
+          issuerHistoryBytes: options.issuerHistoryBytes ?? null,
+          trustedKids,
+        }),
+    });
     if (issuer_signature.checked && !issuer_signature.valid) {
       errors.push(issuer_signature.reason === KEY_UNTRUSTED
         ? KEY_UNTRUSTED
@@ -1923,6 +2079,7 @@ export async function verifyReceipt(
     }
   }
 
+  const trustedSignature = issuer_signature.valid === true && issuer_signature.key_trusted !== false;
   let binding: BindingVerification;
   if (receipt.issuer_signature?.jws) {
     if (verifiedClaims) {
@@ -1939,8 +2096,21 @@ export async function verifyReceipt(
           : 'Binding not checked — issuer signature not verified',
       };
     }
-  } else {
+  } else if (trustedSignature) {
+    // Detached legacy signature: it signs a payload rebuilt from these outer
+    // fields, expected_commitment included, so the binding is covered.
     binding = verifyBinding(receipt);
+  } else {
+    // No trusted signature: a binding the document computed over its own
+    // fields proves only that it agrees with itself.
+    binding = {
+      verified: false,
+      expected: null,
+      recomputed: null,
+      matches: false,
+      covers: [],
+      reason: 'Binding not checked: no trusted issuer signature',
+    };
   }
   if (!binding.matches && binding.expected) {
     errors.push('Payment binding mismatch');
@@ -2010,9 +2180,14 @@ export async function verifyReceipt(
     };
   }
 
+  // The nullifier is read from verified signed claims only. An outer
+  // proof.nullifier the signature does not cover is not checked or reported.
+  const signedNullifier = claimString(asRecord(verifiedClaims?.proof)?.nullifier);
+  const outerNullifier = claimString(receipt.proof?.nullifier);
+  const nullifierUnsigned = !!outerNullifier && !signedNullifier;
   let nullifier: NullifierVerification;
-  if (options.checkNullifier && receipt.proof?.nullifier) {
-    nullifier = await verifyNullifier(receipt, {
+  if (options.checkNullifier && signedNullifier) {
+    nullifier = await verifyNullifier({ proof: { nullifier: signedNullifier } } as XFuelReceipt, {
       rpcUrl: options.rpcUrl,
       verifierAddress: options.verifierAddress,
     });
@@ -2022,11 +2197,13 @@ export async function verifyReceipt(
   } else {
     nullifier = {
       verified: false,
-      nullifier: receipt.proof?.nullifier ?? null,
+      nullifier: signedNullifier,
       anchored: null,
-      reason: options.checkNullifier
-        ? 'No nullifier present'
-        : 'On-chain check not requested',
+      reason: nullifierUnsigned
+        ? 'Nullifier is not in the signed claims; not checked'
+        : options.checkNullifier
+          ? 'No nullifier present'
+          : 'On-chain check not requested',
     };
   }
 
@@ -2063,8 +2240,13 @@ export async function verifyReceipt(
   }
 
   if (issuer_history.warning) warnings.push(issuer_history.warning);
-  if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
+  // An unreachable history (including a refused redirect) is could not
+  // check, not a failure.
+  if (issuer_history.checked && !issuer_history.ok && issuer_history.reason && !issuer_history.unreachable) {
     errors.push(`issuer history: ${issuer_history.reason}`);
+  }
+  if (preimages.unreachable?.length) {
+    warnings.push(`preimage not checked: ${preimages.unreachable.join(', ')}`);
   }
 
   const hasIssuerSig = !!receipt.issuer_signature;
@@ -2082,25 +2264,26 @@ export async function verifyReceipt(
   const payerFailed = options.checkPayer === true && payer.outcome === 'fail';
   const nullifierFailed = !!(
     options.checkNullifier
-    && receipt.proof?.nullifier
+    && signedNullifier
     && nullifier.anchored === false
   );
   const signatureUnchecked = hasIssuerSig && !issuer_signature.checked;
 
   let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
-  const historyFailed = issuer_history.checked && !issuer_history.ok;
+  const historyFailed = issuer_history.checked && !issuer_history.ok && !issuer_history.unreachable;
   if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || sizeMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {
     overall = 'partial';
-  } else if (!binding.expected && !hasIssuerSig && !options.checkPayer) {
+  } else if (!trustedSignature) {
+    // No trusted issuer signature is never verified, whatever the unsigned
+    // fields say. The CLI gives the same document exit 2.
     overall = 'partial';
   } else if (
     (binding.matches || !binding.expected)
     && (!options.checkPayer || payer.outcome === 'pass')
-    && (!options.checkNullifier || !receipt.proof?.nullifier || nullifier.anchored === true)
-    && (issuer_signature.valid || !hasIssuerSig)
+    && (!options.checkNullifier || (signedNullifier ? nullifier.anchored === true : !nullifierUnsigned))
   ) {
     overall = 'verified';
   } else {
@@ -2448,6 +2631,16 @@ export {
   type PublicReceiptClaims,
 } from './public-attestation.js';
 export { verifyPublicBasePayment } from './public-payment.js';
+export {
+  buildVerifyVerdict,
+  verdictFromVerification,
+  unsignedDocumentVerdict,
+  type VerifyVerdict,
+  type VerdictResult,
+  type CheckState,
+  type VerificationVerdictSource,
+  type VerificationVerdictContext,
+} from './verdict.js';
 
 export default {
   verifyBinding,

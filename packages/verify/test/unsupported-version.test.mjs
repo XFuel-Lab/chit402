@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -312,7 +313,7 @@ test('T-VNUMFORM raw JSON 11.0 and 1.1e1 are the number 11', async () => {
       },
     });
     assert.notEqual(result.errors[0], 'unsupported_version', result.errors.join(','));
-    assert.equal(result.overall, 'verified', result.errors.join(','));
+    assertLibraryPass(result, result.errors.join(','));
     assert.equal(result.receipt_version, 11);
     assert.equal(result.version_source, 'signed');
   }
@@ -400,7 +401,7 @@ test('T-PVMISSING unversioned receipts follow the v4/v5 outer rule', async () =>
     const receipt = receiptFor(claims, { outerPv: outer });
     const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
     assert.notEqual(result.errors[0], 'unsupported_version', result.errors.join('; '));
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.version_source, 'inferred');
     assert.equal(result.receipt_version, outer);
   }
@@ -445,7 +446,7 @@ test('T-MM-HDR a version on the JWS header is ignored', async () => {
   const claims = legacyClaims(8);
   const receipt = receiptFor(claims, { header: { v: 12, payload_version: 12 } });
   const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
-  assert.equal(result.overall, 'verified', result.errors.join('; '));
+  assertLibraryPass(result, result.errors.join('; '));
   assert.equal(result.receipt_version, 8);
   const receiptPath = writeJson('hdr-receipt.json', receipt);
   const proc = runCli([receiptPath, '--json']);
@@ -722,7 +723,7 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
     }
     const receipt = receiptFor(claims);
     const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid], skipIssuerHistory: true });
-    assert.equal(result.overall, 'verified', `pv ${version}: ${result.errors.join('; ')}`);
+    assertLibraryPass(result, `pv ${version}: ${result.errors.join('; ')}`);
     assert.equal(result.receipt_version, version);
     assert.equal(result.version_source, 'signed');
     assert.equal(result.errors.includes('unsupported_version'), false);
@@ -731,13 +732,13 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
   const parsed = JSON.parse(eight);
   const decimal = receiptFor(parsed, { raw: eight });
   const decimalResult = await verifyReceipt(decimal, { jwks, trustedKids: [kid] });
-  assert.equal(decimalResult.overall, 'verified', decimalResult.errors.join('; '));
+  assertLibraryPass(decimalResult, decimalResult.errors.join('; '));
   assert.equal(decimalResult.receipt_version, 8);
 
   const hmac = receiptFor(legacyClaims(6));
   hmac.hmac_attestation = { payload_version: 8 };
   const hmacResult = await verifyReceipt(hmac, { jwks, trustedKids: [kid] });
-  assert.equal(hmacResult.overall, 'verified', hmacResult.errors.join('; '));
+  assertLibraryPass(hmacResult, hmacResult.errors.join('; '));
   assert.notEqual(hmacResult.errors[0], 'version_mismatch');
 
   const fixtures = [
@@ -751,7 +752,7 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
     const result = await verifyReceipt(receipt, {});
     assert.notEqual(result.errors[0], 'unsupported_version', name);
     assert.notEqual(result.errors[0], 'version_mismatch', name);
-    if (mustVerify) assert.equal(result.overall, 'verified', `${name}: ${result.errors.join('; ')}`);
+    if (mustVerify) assertLibraryPass(result, `${name}: ${result.errors.join('; ')}`);
   }
 });
 
@@ -781,7 +782,7 @@ test('P-CTL-V11 a signed v11 receipt verifies and UpToV10 refuses it', async () 
       routing: '{"provider":"p","model":"m"}',
     },
   });
-  assert.equal(opened.overall, 'verified', opened.errors.join(','));
+  assertLibraryPass(opened, opened.errors.join(','));
   const old = await verifyReceiptUpToV10(receipt, { jwks, trustedKids: [] });
   assert.equal(old.errors[0], 'unsupported_version');
   const shellPath = writeJson('v11-shell.json', {

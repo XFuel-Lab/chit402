@@ -8,6 +8,7 @@ import { keccak256 } from 'ethers';
 import { inclusionRoot } from './anchor-witness.js';
 import { decodeJwsPayload } from './payer.js';
 import { boundRowHash } from './row-hash.js';
+import { fetchNoRedirect, isRedirectRefused } from './fetch-guard.js';
 
 export interface PreimageLeaf {
   preimage_utf8?: string;
@@ -55,6 +56,8 @@ export interface PreimageCheck {
   ok: boolean;
   errors: string[];
   fields: { field: string; ok: boolean; reason?: string }[];
+  /** Fields whose published bytes could not be read (a refused redirect). Could not check, not a failure. */
+  unreachable?: string[];
 }
 
 const ALWAYS_REQUIRED = [
@@ -347,7 +350,7 @@ async function loadRemote(entry: PreimageEntry, fetchImpl: typeof fetch, hosts: 
   if (url.protocol !== 'https:' || !hosts.some((host) => host.toLowerCase() === url.hostname.toLowerCase())) {
     return null;
   }
-  const res = await fetchImpl(entry.url);
+  const res = await fetchNoRedirect(entry.url, {}, fetchImpl);
   if (!res.ok) return null;
   const body = await res.json() as PreimageEntry;
   return body && typeof body === 'object' ? { ...entry, ...body } : null;
@@ -374,6 +377,7 @@ export async function verifyPublishedPreimages(
     return { checked: true, ok: true, errors: [], fields: [] };
   }
   const errors: string[] = [];
+  const unreachable: string[] = [];
   const fields: PreimageCheck['fields'] = [];
   const published = block?.fields || {};
   const targets = new Set<string>([...required, ...Object.keys(published)]);
@@ -399,7 +403,12 @@ export async function verifyPublishedPreimages(
       try {
         const remote = await loadRemote(entry, fetchImpl, trustedHosts);
         if (remote) entry = remote;
-      } catch {
+      } catch (err) {
+        if (isRedirectRefused(err)) {
+          unreachable.push(field);
+          fields.push({ field, ok: false, reason: 'preimage_unreachable' });
+          continue;
+        }
         /* fall through to missing */
       }
     }
@@ -423,5 +432,5 @@ export async function verifyPublishedPreimages(
     }
     fields.push({ field, ok: true });
   }
-  return { checked: true, ok: errors.length === 0, errors, fields };
+  return { checked: true, ok: errors.length === 0, errors, fields, ...(unreachable.length ? { unreachable } : {}) };
 }
