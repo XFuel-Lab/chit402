@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
@@ -586,7 +587,8 @@ test('T23 only a matching inclusion and head can verify', async () => {
       head: head11,
       inclusion: inc11,
     });
-    assert.equal(proved.overall, 'verified', (proved.errors || []).join(','));
+    // 0.4.11: overall follows the shared verdict; the library did not fetch the anchors.
+    assertLibraryPass(proved, (proved.errors || []).join(','));
   } finally {
     await new Promise((resolve) => rpc.close(resolve));
     rmSync(dir, { recursive: true, force: true });

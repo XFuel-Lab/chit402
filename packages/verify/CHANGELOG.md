@@ -17,7 +17,7 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 ### Tests
 - An unsigned document with a self-computed binding, a signed receipt with its signature removed (with and without a recomputed binding), and a signed receipt with a different outer nullifier are not verified. Every receipt fixture keeps `overall` and `verdict` in step (0 verified, 1 failed, 2 partial). Fixtures that expected `verified` without a signature now sign with a throwaway test key.
-- A detached signature under a caller key, under a caller key that claims the production kid, and with a supplied history that does not verify is not trusted. A redirected inclusion and tree head (CLI) and a redirected issuer history (library) are not followed. Assertions that expected library `verified` now expect `partial` with every library check passing (`test/library-pass.mjs`).
+- A detached signature under a caller key, under a caller key that claims the production kid, and with a supplied history that does not verify is not trusted. A redirected inclusion and tree head (CLI) and a redirected issuer history (library) are not followed. Assertions that expected library `verified` now expect `partial` with every library check passing (`test/library-pass.mjs`). Two gateway tests that call the library (`receipt-audit-path`, `receipt-public-surface`) expect the same.
 
 ## 0.4.10 — Anchor lookup resilience
 
