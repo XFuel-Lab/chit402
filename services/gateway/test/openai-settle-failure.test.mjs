@@ -11,7 +11,7 @@ import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base-sepolia';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';

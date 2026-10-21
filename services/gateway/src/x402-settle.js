@@ -458,10 +458,12 @@ export async function settleBoundPayment({
   // A decoded EVM authorization must carry its EIP-3009 nonce as exactly
   // 0x plus 64 hex. Chain confirmation binds the transfer by that nonce, so
   // anything else is refused here, before the facilitator is called.
-  // The same check requires from, to, value, validBefore and a signature, and
-  // gives Permit2 and other transfer methods their own code.
+  // The same check requires address-shaped from and to, uint value and
+  // validity bounds inside the window, and a signature within its size range,
+  // and gives Permit2 and other transfer methods their own code. It also caps
+  // the header size.
   if (!solana) {
-    const authRefusal = evmAuthorizationRefusal(paymentHeader);
+    const authRefusal = evmAuthorizationRefusal(paymentHeader, { maxTimeoutSeconds: challenge.maxTimeoutSeconds });
     if (authRefusal) return refused(req, authRefusal, { preSettle: true });
     if (!authEarly || !canonicalAuthNonce(authEarly.nonce)) {
       return refused(req, 'settle_unconfirmed', { preSettle: true });

@@ -23,7 +23,7 @@ function cfgFor(url, over = {}) {
     fallbackToTfuel: true,
     gatewayUrl: url,
     apiKey: 'testkey',
-    payTo: '0xtreasury',
+    payTo: '0x7000000000000000000000000000000000000001',
     network: 'base',
     asset: 'USDC',
     challengeTtlMs: 120000,
@@ -183,7 +183,7 @@ test('full 402 loop against mock facilitator: challenge, settle, then replay is 
     assert.equal(challenge.body.x402Version, 2);
     assert.equal(accept.amount, '50000');
     assert.equal(accept.maxAmountRequired, '50000');
-    assert.equal(accept.payTo, '0xtreasury');
+    assert.equal(accept.payTo, '0x7000000000000000000000000000000000000001');
     assert.equal(accept.network, 'eip155:8453');
     const nonce = accept.extra.nonce;
     // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.

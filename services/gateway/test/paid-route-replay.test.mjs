@@ -9,6 +9,9 @@ import { Wallet } from 'ethers';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
 import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
+
+// An hour out: inside the gateway's validBefore window.
+const VALID_BEFORE = String(Math.floor(Date.now() / 1000) + 3600);
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_PAY_TO = '0x1111111111111111111111111111111111111111';
@@ -192,7 +195,7 @@ test('POST /v1/agents/register exact replay is 409 and does not register again',
     network: 'base-sepolia',
     payload: {
       signature: `0x${'11'.repeat(65)}`,
-      authorization: { from: signer.address, to: config.x402.payTo, value: '2000', validBefore: '9999999999', nonce: `0x${'ab'.repeat(32)}` },
+      authorization: { from: signer.address, to: config.x402.payTo, value: '2000', validBefore: VALID_BEFORE, nonce: `0x${'ab'.repeat(32)}` },
     },
   }), 'utf8').toString('base64');
   const ledger = app.locals.__test.usageSettled;

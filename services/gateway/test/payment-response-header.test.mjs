@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import http from 'node:http';
 
+// An hour out: inside the gateway's validBefore window.
+const VALID_BEFORE = String(Math.floor(Date.now() / 1000) + 3600);
+
 const EVM_PAYER = '0x1234567890123456789012345678901234567890';
 const EVM_TX = '0x' + 'ab'.repeat(32);
 let evmSeq = 0;
@@ -31,7 +34,7 @@ function decodePaymentResponseHeader(header) {
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
@@ -173,7 +176,7 @@ function evmPaymentHeader() {
     network: 'base',
     payload: {
       signature: `0x${'11'.repeat(65)}`,
-      authorization: { from: EVM_PAYER, to: process.env.X402_PAY_TO || '0xtreasury', value: '2000', validBefore: '9999999999', nonce: '0x' + crypto.randomBytes(32).toString('hex') },
+      authorization: { from: EVM_PAYER, to: process.env.X402_PAY_TO || '0x7000000000000000000000000000000000000001', value: '2000', validBefore: VALID_BEFORE, nonce: '0x' + crypto.randomBytes(32).toString('hex') },
     },
   }), 'utf8').toString('base64');
 }

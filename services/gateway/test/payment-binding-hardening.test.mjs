@@ -46,6 +46,9 @@ import { BoardPostStore } from '../src/board-posts.js';
 import config from '../src/config.js';
 import logger from '../src/logger.js';
 
+// An hour out: inside the gateway's validBefore window.
+const VALID_BEFORE = String(Math.floor(Date.now() / 1000) + 3600);
+
 const HOUSE = `0x${'11'.repeat(20)}`;
 const PAYER = `0x${'55'.repeat(20)}`;
 const ATTACKER = `0x${'22'.repeat(20)}`;
@@ -441,7 +444,7 @@ test('PT7 client facilitator URLs are ignored', async () => {
       payload: {
         signature: `0x${'11'.repeat(65)}`,
         authorization: {
-          from: PAYER, to: HOUSE, value: '2000', validAfter: '0', validBefore: '9999999999', nonce: AUTH_NONCE,
+          from: PAYER, to: HOUSE, value: '2000', validAfter: '0', validBefore: VALID_BEFORE, nonce: AUTH_NONCE,
         },
       },
     };

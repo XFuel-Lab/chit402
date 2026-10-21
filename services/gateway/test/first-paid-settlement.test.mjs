@@ -8,9 +8,12 @@ import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
 import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
+
+// An hour out: inside the gateway's validBefore window.
+const VALID_BEFORE = String(Math.floor(Date.now() / 1000) + 3600);
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base-sepolia';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
@@ -145,7 +148,7 @@ test('a replay without the original payment proof is 409 and leaks no wallet or 
     network: 'base-sepolia',
     payload: {
       signature: `0x${'22'.repeat(65)}`,
-      authorization: { from: payer, to: '0xtreasury', value: '2000', validBefore: '9999999999', nonce: '0x' + 'cd'.repeat(32) },
+      authorization: { from: payer, to: '0x7000000000000000000000000000000000000001', value: '2000', validBefore: VALID_BEFORE, nonce: '0x' + 'cd'.repeat(32) },
     },
   }), 'utf8').toString('base64');
   const cases = [
