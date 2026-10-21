@@ -2,7 +2,7 @@
 
 Shipped changes to Chit402 receipts, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). A line is listed only once it runs in production or is published to npm. Dates are US Eastern.
 
-The earlier, longer changelog is archived at [docs/_archive/CHANGELOG-legacy.md](docs/_archive/CHANGELOG-legacy.md).
+Earlier changelog entries are kept in the git history.
 
 Package changelogs: [verify](packages/verify/CHANGELOG.md), [sdk](packages/sdk/CHANGELOG.md), [mcp](packages/mcp/CHANGELOG.md), [sidecar](packages/sidecar/CHANGELOG.md), [plugin-elizaos](packages/plugin-elizaos/CHANGELOG.md).
 
