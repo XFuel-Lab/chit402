@@ -156,6 +156,16 @@ function sdkBody(mutate = () => {}) {
 
 // (a) uint256 cap
 
+test('uint field: JSON numbers must be safe non-negative integers', () => {
+  for (const field of ['value', 'validAfter', 'validBefore']) {
+    for (const bad of [2000.5, -2000, 1e30, 9007199254740993]) {
+      const body = x402Body((b, a) => { a[field] = bad; });
+      assert.equal(evmAuthorizationRefusal(b64(body)), 'settle_unconfirmed', `${field}=${bad}`);
+    }
+  }
+  assert.equal(evmAuthorizationRefusal(b64(x402Body((b, a) => { a.value = 2000; }))), null);
+});
+
 test('uint256 cap: value, validAfter and validBefore above 2^256 - 1 are refused', () => {
   assert.equal(OVER_UINT256.length, 78);
   assert.equal(evmAuthorizationRefusal(b64(x402Body((b, a) => { a.value = OVER_UINT256; }))), 'settle_unconfirmed');
