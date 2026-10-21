@@ -1,91 +1,110 @@
 /**
- * verify_receipt MCP tool — offline receipt verification via @xfuel/verify.
+ * verify_receipt MCP tool: the chit402-verify CLI verdict for one receipt.
+ *
+ * The receipt is fetched only from the issuer host. Any other verify_url host,
+ * a redirect, credentials in the URL, an IP literal, a port, or a non-https
+ * URL is refused before any request. The answer is the CLI's three-way
+ * verdict: VERIFIED (exit 0), INVALID (exit 1), COULD_NOT_CHECK (exit 2).
  */
-import { verifyReceipt, type Jwks, type XFuelReceipt } from '@xfuel/verify';
+import { checkReceiptInput } from 'chit402-verify/check-input';
 import type { XFuelClient } from 'xfuel-sdk';
 import type { McpConfig } from './config.js';
-import { receiptUrlFor, withReceiptFields } from './receipt-fields.js';
 import { ok, fail, describeError } from './format.js';
 
 export interface VerifyReceiptArgs {
   task_id?: string;
   verify_url?: string;
-  fetch_jwks?: boolean;
-  check_payer?: boolean;
-  check_nullifier?: boolean;
 }
 
-async function loadReceiptJson(
-  client: XFuelClient,
-  config: McpConfig,
-  args: VerifyReceiptArgs,
-): Promise<{ receipt: XFuelReceipt; verify_url: string } | ReturnType<typeof fail>> {
-  if (!args.task_id && !args.verify_url) {
-    return fail('verify_receipt requires task_id or verify_url');
-  }
+/**
+ * Hosts that serve issuer receipts. `api.xfuel.app` is an alias of the same
+ * gateway; a URL on it is fetched from the canonical host, which is the one
+ * the verifier trusts for the signed log and issuer history.
+ */
+export const ISSUER_RECEIPT_HOSTS = ['api.chit402.com', 'api.xfuel.app'] as const;
+export const CANONICAL_ISSUER_ORIGIN = 'https://api.chit402.com';
 
-  if (args.task_id) {
-    const receipt = (await client.getReceipt(args.task_id)) as XFuelReceipt;
-    const verify_url =
-      receipt.verify_url
-      || args.verify_url
-      || receiptUrlFor(config.apiUrl, args.task_id);
-    return { receipt, verify_url };
-  }
+/** Receipt ids the gateway issues. No path separators, dots, or escapes. */
+const RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
+export type VerifyResultLabel = 'VERIFIED' | 'INVALID' | 'COULD_NOT_CHECK';
+
+export type ReceiptTarget =
+  | { ok: true; id: string; url: string }
+  | { ok: false; reason: string };
+
+/**
+ * Turn task_id or verify_url into the one URL this tool will fetch:
+ * `https://api.chit402.com/receipt/<id>`. Never throws.
+ */
+export function receiptTarget(args: VerifyReceiptArgs): ReceiptTarget {
+  if (args.task_id != null && args.task_id !== '') {
+    const id = String(args.task_id);
+    if (!RECEIPT_ID.test(id)) return { ok: false, reason: 'task_id is not a receipt id' };
+    return { ok: true, id, url: `${CANONICAL_ISSUER_ORIGIN}/receipt/${id}` };
+  }
+  if (args.verify_url == null || args.verify_url === '') {
+    return { ok: false, reason: 'verify_receipt requires task_id or verify_url' };
+  }
   const raw = String(args.verify_url);
-  const url = raw.includes('format=') ? raw : `${raw}${raw.includes('?') ? '&' : '?'}format=json`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    return fail(`verify_receipt fetch HTTP ${res.status} — check verify_url or task_id`);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, reason: 'verify_url is not a URL' };
   }
-  const receipt = (await res.json()) as XFuelReceipt;
-  const verify_url = receipt.verify_url || raw.split('?')[0];
-  return { receipt, verify_url };
+  if (url.protocol !== 'https:') return { ok: false, reason: 'verify_url must be https' };
+  if (url.username || url.password) return { ok: false, reason: 'verify_url must not carry credentials' };
+  if (url.port !== '') return { ok: false, reason: 'verify_url must not name a port' };
+  const host = url.hostname.toLowerCase();
+  if (!(ISSUER_RECEIPT_HOSTS as readonly string[]).includes(host)) {
+    return { ok: false, reason: 'verify_url host is not an issuer host' };
+  }
+  const match = /^\/receipt\/([^/]+?)(?:\.json)?\/?$/.exec(url.pathname);
+  if (!match || !RECEIPT_ID.test(match[1])) {
+    return { ok: false, reason: 'verify_url is not a receipt URL' };
+  }
+  const id = match[1];
+  return { ok: true, id, url: `${CANONICAL_ISSUER_ORIGIN}/receipt/${id}` };
 }
 
-async function loadJwks(apiUrl: string): Promise<Jwks | undefined> {
-  const url = `${apiUrl.replace(/\/$/, '')}/.well-known/jwks.json`;
-  const res = await fetch(url);
-  if (!res.ok) return undefined;
-  return (await res.json()) as Jwks;
+function label(exitCode: number): VerifyResultLabel {
+  if (exitCode === 0) return 'VERIFIED';
+  if (exitCode === 1) return 'INVALID';
+  return 'COULD_NOT_CHECK';
 }
 
 export async function runVerifyReceipt(
-  client: XFuelClient,
-  config: McpConfig,
+  _client: XFuelClient,
+  _config: McpConfig,
   args: VerifyReceiptArgs,
 ): Promise<ReturnType<typeof ok> | ReturnType<typeof fail>> {
+  const target = receiptTarget(args);
+  if (!target.ok) return fail(target.reason);
   try {
-    const loaded = await loadReceiptJson(client, config, args);
-    if ('isError' in loaded && loaded.isError) return loaded;
-
-    const { receipt, verify_url } = loaded as { receipt: XFuelReceipt; verify_url: string };
-    const jwks =
-      args.fetch_jwks !== false ? await loadJwks(config.apiUrl) : undefined;
-
-    const verification = await verifyReceipt(receipt, {
-      jwks,
-      checkPayer: args.check_payer === true,
-      checkNullifier: args.check_nullifier === true,
-      rpcUrl: config.rpcUrl,
-      verifierAddress: config.zkVerifierAddress,
-    });
-
-    const structured = withReceiptFields(
-      {
-        verify_url,
-        receipt,
-        verification,
-      },
-      config.apiUrl,
-    );
-
+    // publicInput: fetch only from the verifier's trusted host, no redirects,
+    // no files or stdin. The CLI's own path and verdict mapping.
+    const outcome = await checkReceiptInput(target.url, { publicInput: true });
+    const verdict = outcome.verdict;
+    const exit_code = outcome.report === 'stderr' ? 1 : verdict.exit_code;
+    const reason = outcome.report === 'stderr' ? (outcome.reason || 'unreadable') : verdict.reason;
+    const result = label(exit_code);
+    const structured: Record<string, unknown> = {
+      result,
+      exit_code,
+      reason,
+      message: outcome.report === 'stderr' ? (outcome.message || verdict.message) : verdict.message,
+      scope: verdict.result === 'verified_public' ? 'public' : (exit_code === 0 ? 'full' : null),
+      receipt_id: verdict.receipt_id,
+      task_id: target.id,
+      verify_url: `${CANONICAL_ISSUER_ORIGIN}/receipt/${target.id}`,
+      checks: verdict.checks,
+      verifier: verdict.verifier,
+    };
     const summary =
-      `verify_receipt(${receipt.task_id}): overall=${verification.overall}` +
-      (verification.errors.length ? ` — ${verification.errors.join('; ')}` : '') +
-      `\nVerify/share: ${verify_url}`;
-
+      `verify_receipt(${target.id}): ${result} (exit ${exit_code})` +
+      (reason ? `, reason ${reason}` : '') +
+      (verdict.result === 'verified_public' ? ', public scope: amount, payee, tx, log position; payer not claimed' : '');
     return ok(structured, summary);
   } catch (err) {
     return fail(describeError(err));

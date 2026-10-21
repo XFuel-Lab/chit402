@@ -20,7 +20,7 @@ const TOOLS: Array<{ name: string; description: string }> = [
   { name: 'register_agent', description: 'POST /v1/agents/register. Pay the $0.002 stamp from a wallet with USDC, or cite a collected receipt that wallet paid. EOA personal_sign.' },
   { name: 'get_agent_book', description: 'Possession-gated last-N collected spend for one agent_id. Not a public index.' },
   { name: 'get_book', description: 'Alias of get_agent_book — possession-gated spend book.' },
-  { name: 'verify_receipt', description: 'Offline receipt verify (binding + optional JWKS). Default prove-it path.' },
+  { name: 'verify_receipt', description: 'chit402-verify verdict for one receipt (VERIFIED, INVALID, COULD_NOT_CHECK). Issuer host only. Default prove-it path.' },
   { name: 'get_task_status', description: 'Poll a task (from chat_completions or submit_inference) to a terminal status.' },
   { name: 'get_proof', description: 'Proof status for a settled task. The Tier-2 settlement proof add-on is not currently offered.' },
   { name: 'verify_proof', description: 'Verify a historical SP1 proof + payment binding. The Tier-2 settlement proof add-on is not currently offered.' },
