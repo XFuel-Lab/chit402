@@ -52,6 +52,8 @@ To move real funds: `createEip3009Payer(wallet)` from `xfuel-sdk/onchain`. That 
 
 A 402 from `submitTask` is an `XFuelApiError` with `error.challenge.accepts` (the x402 handshake). Or use `submitTaskWithPayment`.
 
+EVM payments must carry a complete EIP-3009 authorization: `from`, `to`, `value`, `validBefore`, a bytes32 `nonce`, and a signature. A header missing any of them is refused with `402 settle_unconfirmed` before the facilitator runs, so no funds move. Permit2 and other transfer methods are refused with `402 payment_scheme_unsupported`; sign an EIP-3009 `transferWithAuthorization` instead.
+
 On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate change.
 
 Production: pass `{ baseUrl, apiKey }`. As-deployed: [../../docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md).

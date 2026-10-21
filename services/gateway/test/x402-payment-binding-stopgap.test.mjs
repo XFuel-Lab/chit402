@@ -507,7 +507,7 @@ test('Solana client amount label cannot raise settledAmount above the quote', as
   }
 });
 
-test('Base unsigned authorization copy cannot raise settledAmount', async () => {
+test('Base unsigned authorization copy cannot raise settledAmount (two authorizations refuse before the facilitator)', async () => {
   const mock = await startMock();
   try {
     const cfg = cfgFor(mock.url);
@@ -549,10 +549,13 @@ test('Base unsigned authorization copy cannot raise settledAmount', async () => 
       headers: { 'x-payment': header, 'x-payment-nonce': nonce },
       body: {},
     }, { taskId: 'stopgap-decoy', cfg, amount: '2000' });
-    assert.equal(decision.kind, 'settled');
-    assert.equal(decision.settledAmount, '2000');
-    assert.notEqual(decision.settledAmount, '999999999000');
-    assert.equal(decision.payTo, HOUSE);
+    // A header that carries both the XFuel SDK authorization and a payload
+    // copy is ambiguous, so it never reaches the facilitator.
+    assert.notEqual(decision.kind, 'settled');
+    assert.equal(decision.code, 'settle_unconfirmed');
+    assert.equal(decision.settledAmount, undefined);
+    assert.equal(mock.counts.verify, 0);
+    assert.equal(mock.counts.settle, 0);
   } finally {
     await mock.close();
   }

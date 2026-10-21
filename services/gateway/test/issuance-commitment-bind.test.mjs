@@ -21,7 +21,7 @@ const USDC_SEPOLIA = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const CONTENT_A = '0x' + 'aa'.repeat(32);
 const CONTENT_B = '0x' + 'bb'.repeat(32);
 
-function makePaymentHeader({ nonce, chainId = 84532, payTo = '0xtreasury' }) {
+function makePaymentHeader({ nonce, chainId = 84532, payTo = '0x7000000000000000000000000000000000000001' }) {
   const now = Math.floor(Date.now() / 1000);
   const blob = {
     x402Version: 1,
@@ -54,7 +54,7 @@ function makeExactEvmV2PaymentHeader({
   chainId = 84532,
   network = 'eip155:84532',
   amount = '50000',
-  payTo = '0xtreasury',
+  payTo = '0x7000000000000000000000000000000000000001',
   asset = USDC_SEPOLIA,
   from = '0x1111111111111111111111111111111111111111',
 } = {}) {
@@ -133,7 +133,7 @@ before(async () => {
     enabled: true,
     facilitatorProvider: 'x402',
     facilitatorUrl: mockUrl,
-    payTo: '0xtreasury',
+    payTo: '0x7000000000000000000000000000000000000001',
     network: 'base-sepolia',
     asset: USDC_SEPOLIA,
     issuanceDisputeWindowSec: 3600,

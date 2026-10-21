@@ -24,6 +24,7 @@ export const PAYMENT_ERROR_CODES = Object.freeze([
   'owner_proof_unavailable',
   'invalid_payment_ref',
   'stamp_underpaid',
+  'payment_scheme_unsupported',
   'gateway_not_configured',
 ]);
 

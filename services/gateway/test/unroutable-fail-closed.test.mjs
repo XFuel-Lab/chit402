@@ -7,10 +7,10 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockFacilitator } from '../src/x402-mock-facilitator.js';
 
-import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
+import { FIXTURE_FROM, evmAuthHeader } from './helpers/evm-auth-header.mjs';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base-sepolia';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
@@ -195,7 +195,9 @@ test('gpt-4o-mini aliases to gpt-oss; a post-settle miss is refund owed', async 
   const published = JSON.stringify(publicReceipt);
   assert.equal(published.includes('gpt-4o-mini'), false);
   assert.equal(published.includes('gpt-oss-120b'), false);
-  assert.equal(publicReceipt.pay_to, null);
+  // The only party a public shell names is the signed house payee, never the payer.
+  assert.equal(publicReceipt.pay_to, process.env.X402_PAY_TO);
+  assert.equal(published.toLowerCase().includes(FIXTURE_FROM.toLowerCase().slice(2)), false);
 
   const statusRes = await fetch(`${base}/task-status?task_id=${encodeURIComponent(taskId)}`);
   assert.equal(statusRes.status, 200);

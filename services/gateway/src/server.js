@@ -2959,7 +2959,7 @@ export async function createApp() {
       let raw = req.params.refusalId;
       const jsonSuffix = raw && raw.endsWith('.json');
       if (jsonSuffix) raw = raw.slice(0, -5);
-      const fmt = String(req.query.format || '').toLowerCase();
+      const fmt = publicFormat(req.query.format);
       const wantsJson = jsonSuffix
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
@@ -3113,6 +3113,12 @@ export async function createApp() {
   // GET /receipt/by-tx?tx=<signature> — lookup by payment ref.
   // Task store first (native receipts). Foreign-ingest and stamped payouts
   // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
+  function publicFormat(v) {
+    const f = typeof v === 'string' ? v.toLowerCase() : '';
+    // auditor is the selective-disclosure view of /receipt/:id (SDK, www, docs).
+    return f === 'json' || f === 'html' || f === 'auditor' ? f : '';
+  }
+
   function isStampRow(row) {
     if (!row) return false;
     const kind = row.event || row.evidence;
@@ -3129,6 +3135,9 @@ export async function createApp() {
       if (!postId) return null;
       const view = getBoardPost(String(postId), { posts: boardPosts });
       if (view?.status !== 200) return null;
+      // A taken-down or hidden post is not a page to send a payer to.
+      const st = view.body?.post?.status;
+      if (st === 'taken_down' || st === 'hidden') return null;
       const id = encodeURIComponent(String(postId));
       return /^(comment|comment_flag)$/.test(String(row.board?.purpose || ''))
         ? `/v1/board/posts/${id}/comments`
@@ -3136,7 +3145,11 @@ export async function createApp() {
     }
     if (kind === 'ingest_stamp') {
       const parent = row.parent_ref ? String(row.parent_ref) : '';
-      if (!parent || !usageSettled.findByTask(parent)) return null;
+      if (!parent) return null;
+      // The parent must be a receipt row, not another stamp or a refusal.
+      const parentRow = usageSettled.findByTask(parent);
+      if (!parentRow || isStampRow(parentRow) || parentRow.refusal) return null;
+      if (String(parentRow.task_id || '') !== parent) return null;
       return `/receipt/${encodeURIComponent(parent)}`;
     }
     return null;
@@ -3164,7 +3177,8 @@ export async function createApp() {
         ? null
         : usageSettled.findByPaymentQuery(tx, { chain: req.query.chain });
       const taskId = task?.taskId || ledgerRow?.task_id || null;
-      const fmt = String(req.query.format || '').toLowerCase();
+      // Only json, html and auditor are carried into a redirect. Anything else is dropped.
+      const fmt = publicFormat(req.query.format);
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 
       if (!taskId) return sendPublicMissing(res, wantsJson);

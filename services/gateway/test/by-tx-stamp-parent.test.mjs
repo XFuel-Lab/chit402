@@ -26,7 +26,12 @@ const TX = {
   orphanBoard: txOf('b1'),
   orphanIngest: txOf('b2'),
   hiddenPost: txOf('b3'),
+  takenDownPost: txOf('b4'),
+  stampParentIngest: txOf('b5'),
+  refusalParentIngest: txOf('b6'),
+  aliasParentIngest: txOf('b7'),
 };
+const TAKEN_ID = 'rpt_00112233aabbccdd';
 const POST_ID = 'rpt_0123456789abcdef';
 const HIDDEN_ID = 'rpt_fedcba9876543210';
 
@@ -86,10 +91,32 @@ before(async () => {
   // True orphans: no parent that resolves.
   await stamp('board-stamp-race-00000001', TX.orphanBoard, { postId: null, purpose: 'post' });
   await stamp(`board-stamp-${HIDDEN_ID}`, TX.hiddenPost, { postId: HIDDEN_ID, purpose: 'post' });
+  hooks.boardPosts.insert({ ...post(TAKEN_ID, 'taken_down'), taken_down_at: new Date().toISOString() });
+  await stamp(`board-stamp-${TAKEN_ID}`, TX.takenDownPost, { postId: TAKEN_ID, purpose: 'post' });
+  // An ingest stamp whose parent is another stamp row, not a receipt.
+  const viaStamp = await hooks.usageSettled.recordIngestStamp({
+    agentId: AGENT, taskId: 'ingest-stamp-via-stamp', paymentRef: `base:${TX.stampParentIngest}`, amount: '2000', parentRef: `board-stamp-${POST_ID}`,
+  });
+  assert.equal(viaStamp.ok, true, viaStamp.reason);
   const orphan = await hooks.usageSettled.recordIngestStamp({
     agentId: AGENT, taskId: 'ingest-stamp-foreign-x402-gone', paymentRef: `base:${TX.orphanIngest}`, amount: '2000', parentRef: 'foreign-x402-gone',
   });
   assert.equal(orphan.ok, true, orphan.reason);
+  // An ingest stamp whose parent is a policy refusal row, not a receipt.
+  const blocked = await hooks.usageSettled.recordPolicyBlocked({
+    agentId: AGENT, taskId: 'policy-blocked-bytx-parent', policyCode: 'daily_cap', reason: 'cap reached',
+  });
+  assert.equal(blocked.ok, true, blocked.reason);
+  assert.ok(blocked.entry.refusal, 'policy row carries a refusal');
+  const viaRefusal = await hooks.usageSettled.recordIngestStamp({
+    agentId: AGENT, taskId: 'ingest-stamp-via-refusal', paymentRef: `base:${TX.refusalParentIngest}`, amount: '2000', parentRef: 'policy-blocked-bytx-parent',
+  });
+  assert.equal(viaRefusal.ok, true, viaRefusal.reason);
+  // An ingest stamp whose parent key would only resolve through an alias.
+  const viaAlias = await hooks.usageSettled.recordIngestStamp({
+    agentId: AGENT, taskId: 'ingest-stamp-via-alias', paymentRef: `base:${TX.aliasParentIngest}`, amount: '2000', parentRef: 'foreign-x402-alias',
+  });
+  assert.equal(viaAlias.ok, true, viaAlias.reason);
 });
 
 after(async () => {
@@ -125,7 +152,7 @@ test('a stamp with no resolvable parent stays a 404', async () => {
 });
 
 test('every paid book row resolves through by-tx to a 200, redirect followed', async () => {
-  const orphans = new Set([TX.orphanBoard, TX.orphanIngest, TX.hiddenPost].map((t) => `base:${t}`));
+  const orphans = new Set([TX.orphanBoard, TX.orphanIngest, TX.hiddenPost, TX.takenDownPost, TX.stampParentIngest, TX.refusalParentIngest, TX.aliasParentIngest].map((t) => `base:${t}`));
   const rows = hooks.usageSettled.listByAgent(AGENT, { limit: 500 })
     .filter((r) => r.payment_ref && !String(r.payment_ref).startsWith('waiver:') && !orphans.has(r.payment_ref));
   assert.ok(rows.length >= 5, `paid rows seen: ${rows.length}`);
@@ -135,4 +162,62 @@ test('every paid book row resolves through by-tx to a 200, redirect followed', a
     assert.equal(res.status, 200, `${row.task_id} → ${res.url}`);
     assert.equal(res.redirected, true, row.task_id);
   }
+});
+
+test('an ingest stamp whose parent is not a receipt row is a 404', async () => {
+  const res = await byTx(TX.stampParentIngest, { headers: { Accept: 'application/json' } });
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get('location'), null);
+});
+
+test('an ingest stamp whose parent is a policy refusal row is a 404', async () => {
+  const res = await byTx(TX.refusalParentIngest, { headers: { Accept: 'application/json' } });
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get('location'), null);
+});
+
+test('an ingest stamp redirects only when the parent row carries that exact task_id', async () => {
+  const ledger = hooks.usageSettled;
+  const real = ledger.findByTask;
+  // A lookup that answers for a key other than the row's own task_id (an
+  // alias) must not send a payer to a receipt page under that key.
+  ledger.findByTask = function findByTask(taskId) {
+    if (String(taskId) === 'foreign-x402-alias') return real.call(this, foreignTaskId);
+    return real.call(this, taskId);
+  };
+  try {
+    const res = await byTx(TX.aliasParentIngest, { headers: { Accept: 'application/json' } });
+    assert.equal(res.status, 404);
+    assert.equal(res.headers.get('location'), null);
+  } finally {
+    ledger.findByTask = real;
+  }
+});
+
+test('a stamp for a taken-down or hidden post is a 404', async () => {
+  for (const tx of [TX.takenDownPost, TX.hiddenPost]) {
+    const res = await byTx(tx, { headers: { Accept: 'application/json' } });
+    assert.equal(res.status, 404, tx);
+    assert.equal(res.headers.get('location'), null, tx);
+  }
+});
+
+test('?format= carries only json, html or auditor into a redirect', async () => {
+  const loc = async (tx, f) => (await fetch(`${base}/receipt/by-tx?tx=${tx}&format=${encodeURIComponent(f)}`, { redirect: 'manual' })).headers.get('location');
+  assert.equal(await loc(TX.ingestStamp, 'json'), `${base}/receipt/${foreignTaskId}?format=json`);
+  assert.equal(await loc(TX.ingestStamp, 'HTML'), `${base}/receipt/${foreignTaskId}?format=html`);
+  assert.equal(await loc(TX.foreign, 'auditor'), `${base}/receipt/${foreignTaskId}?format=auditor`);
+  assert.equal(await loc(TX.foreign, 'Auditor'), `${base}/receipt/${foreignTaskId}?format=auditor`);
+  for (const f of ['x&y=1', 'json#a', '<b>', 'auditor%0d%0a', 'auditor&x=1', 'audit', 'xml']) {
+    assert.equal(await loc(TX.ingestStamp, f), `${base}/receipt/${foreignTaskId}`, f);
+    assert.equal(await loc(TX.foreign, f), `${base}/receipt/${foreignTaskId}`, f);
+  }
+  assert.equal(await loc(TX.postStamp, 'evil'), `${base}/v1/board/posts/${POST_ID}`);
+});
+
+test('by-tx ?format=auditor lands on the auditor export', async () => {
+  const res = await fetch(`${base}/receipt/by-tx?tx=${TX.foreign}&format=auditor`);
+  assert.equal(res.redirected, true);
+  assert.match(res.url, /\?format=auditor$/);
+  assert.equal(res.status, 200);
 });

@@ -70,6 +70,7 @@ function evmHeader({
     payTo: to,
     note,
     payload: {
+      signature: `0x${'11'.repeat(65)}`,
       authorization: {
         from,
         to,

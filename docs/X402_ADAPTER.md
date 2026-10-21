@@ -86,6 +86,8 @@ A retry must resend the exact payment header from the first attempt, including t
 
 If the first attempt is still writing the response, the resend waits up to 60 seconds, then `402 payment_in_flight` with `Retry-After`. Resend the same header.
 
+EVM payments must carry a complete EIP-3009 authorization: `from`, `to`, `value`, `validBefore`, a bytes32 `nonce`, and a signature. A header missing any of them is refused with `402 settle_unconfirmed` before the facilitator runs, so no funds move. Permit2 and other transfer methods are refused with `402 payment_scheme_unsupported`; sign an EIP-3009 `transferWithAuthorization` instead.
+
 If that first attempt is pending or fails confirmation, the challenge stays `settle_unconfirmed` until reconcile runs. The client does not get a new challenge for that nonce, and a retry does not settle a second time.
 
 Payment binding into the SP1 proof is flag-gated (`X402_PROOF_BINDING`); in-proof field activates on SP1 guest v2.

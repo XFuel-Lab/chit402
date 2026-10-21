@@ -190,6 +190,136 @@ export function canonicalAuthNonce(nonce) {
   return typeof nonce === 'string' && AUTH_NONCE_RE.test(nonce) ? nonce.toLowerCase() : null;
 }
 
+const UINT_RE = /^[0-9]{1,78}$/;
+// Integer-equivalent decimal ("2000.0"). normalizeAuthorizationPayload sends it
+// to the facilitator as "2000", so it is the same uint.
+const UINT_DOT_ZERO_RE = /^([0-9]{1,78})\.0+$/;
+const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+// Whole bytes only: 0x plus an even number of hex digits.
+const SIGNATURE_RE = /^0x(?:[0-9a-fA-F]{2})+$/;
+const AUTH_FIELDS = new Set(['from', 'to', 'value', 'validAfter', 'validBefore', 'nonce']);
+
+/** Largest payment header accepted, in characters (raw JSON or base64). */
+export const PAYMENT_HEADER_MAX_CHARS = 64 * 1024;
+/** An ECDSA signature is 65 bytes. Smart wallets (ERC-1271, ERC-6492) are longer. */
+export const EVM_SIGNATURE_MIN_BYTES = 65;
+/** Room for an ERC-6492 wrapper: factory, deploy calldata, inner signature, magic suffix. */
+export const EVM_SIGNATURE_MAX_BYTES = 8 * 1024;
+/**
+ * Longest validBefore window accepted, from now. The challenge advertises
+ * maxTimeoutSeconds (120 by default), but the SDKs in this repo sign
+ * validBefore = now + 3600, so the window is the larger of the two.
+ */
+export const EVM_AUTH_MAX_WINDOW_S = 3600;
+/** Client clock allowance for validAfter and the validBefore upper bound. */
+export const EVM_AUTH_CLOCK_SKEW_S = 60;
+/** validBefore must leave at least this long for the facilitator to land the tx. */
+export const EVM_AUTH_MIN_REMAINING_S = 6;
+
+function isPlainObject(v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function evmAddress(v) {
+  return typeof v === 'string' && EVM_ADDRESS_RE.test(v);
+}
+
+function uintField(v) {
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return String(v);
+  if (typeof v !== 'string') return null;
+  if (UINT_RE.test(v)) return v;
+  const m = UINT_DOT_ZERO_RE.exec(v);
+  return m ? m[1] : null;
+}
+
+/**
+ * True when a decoded header is a transfer method other than EIP-3009
+ * transferWithAuthorization (Permit2, a different x402 scheme, and so on).
+ */
+function otherPaymentScheme(decoded) {
+  const p = decoded?.payload;
+  if (p && typeof p === 'object' && (p.permit2Authorization || p.permit2 || p.permit)) return true;
+  const method = decoded?.accepted?.extra?.assetTransferMethod ?? decoded?.extra?.assetTransferMethod;
+  if (method != null && String(method).toLowerCase() !== 'eip3009') return true;
+  const scheme = decoded?.accepted?.scheme ?? decoded?.scheme;
+  if (scheme != null && String(scheme) !== 'exact') return true;
+  return false;
+}
+
+/**
+ * The one authorization a header carries, or null when there is none or more
+ * than one. Two shapes are accepted, the same two toPaymentPayload forwards:
+ * x402 `payload: { authorization, signature }`, and the XFuel SDK
+ * `authorization: { message, signature }`. A header with both, a bare
+ * top-level authorization without `message`, or a stray top-level signature
+ * is refused, so the facilitator never sees a different authorization than
+ * the one checked here.
+ */
+function singleAuthorization(decoded) {
+  const p = decoded.payload;
+  const inPayload = isPlainObject(p) && p.authorization != null;
+  const top = decoded.authorization;
+  if (inPayload) {
+    if (top != null || decoded.signature != null) return null;
+    if (!isPlainObject(p.authorization)) return null;
+    return { auth: p.authorization, signature: p.signature };
+  }
+  if (top == null) return null;
+  if (!isPlainObject(top) || !isPlainObject(top.message)) return null;
+  if (decoded.signature != null) return null;
+  if (isPlainObject(p) && p.signature != null) return null;
+  return { auth: top.message, signature: top.signature };
+}
+
+/**
+ * Why an EVM payment header is refused before the facilitator, or null when
+ * it carries one well-formed EIP-3009 authorization:
+ * - header at most PAYMENT_HEADER_MAX_CHARS;
+ * - from and to are 20-byte hex addresses; no fields beyond the six EIP-3009 ones;
+ * - value, validAfter (optional, 0) and validBefore are uints;
+ * - validAfter <= now + skew, and now + EVM_AUTH_MIN_REMAINING_S < validBefore
+ *   <= now + max(maxTimeoutSeconds, EVM_AUTH_MAX_WINDOW_S) + skew;
+ * - a bytes32 nonce;
+ * - a signature of whole bytes, EVM_SIGNATURE_MIN_BYTES to EVM_SIGNATURE_MAX_BYTES.
+ * Other transfer methods get payment_scheme_unsupported. Every other refusal
+ * is settle_unconfirmed.
+ * @param {string} paymentHeader
+ * @param {{ nowSec?: number, maxTimeoutSeconds?: number }} [opts]
+ */
+export function evmAuthorizationRefusal(paymentHeader, { nowSec, maxTimeoutSeconds } = {}) {
+  if (typeof paymentHeader === 'string' && paymentHeader.length > PAYMENT_HEADER_MAX_CHARS) {
+    return 'settle_unconfirmed';
+  }
+  const decoded = decodePaymentHeader(paymentHeader);
+  if (decoded && otherPaymentScheme(decoded)) return 'payment_scheme_unsupported';
+  if (!isPlainObject(decoded)) return 'settle_unconfirmed';
+  const one = singleAuthorization(decoded);
+  if (!one) return 'settle_unconfirmed';
+  const { auth, signature } = one;
+  for (const key of Object.keys(auth)) {
+    if (!AUTH_FIELDS.has(key)) return 'settle_unconfirmed';
+  }
+  // from and to must be addresses here. The payee and payer checks that
+  // follow bind them to the challenge and the facilitator result.
+  if (!evmAddress(auth.from) || !evmAddress(auth.to)) return 'settle_unconfirmed';
+  const value = uintField(auth.value);
+  const validAfter = auth.validAfter == null ? '0' : uintField(auth.validAfter);
+  const validBefore = uintField(auth.validBefore);
+  if (!value || !validAfter || !validBefore) return 'settle_unconfirmed';
+  const now = BigInt(Number.isSafeInteger(nowSec) ? nowSec : Math.floor(Date.now() / 1000));
+  const advertised = Number.isSafeInteger(maxTimeoutSeconds) && maxTimeoutSeconds > 0 ? maxTimeoutSeconds : 0;
+  const windowS = BigInt(Math.max(advertised, EVM_AUTH_MAX_WINDOW_S));
+  const skew = BigInt(EVM_AUTH_CLOCK_SKEW_S);
+  if (BigInt(validAfter) > now + skew) return 'settle_unconfirmed';
+  if (BigInt(validBefore) <= now + BigInt(EVM_AUTH_MIN_REMAINING_S)) return 'settle_unconfirmed';
+  if (BigInt(validBefore) > now + windowS + skew) return 'settle_unconfirmed';
+  if (!canonicalAuthNonce(auth.nonce)) return 'settle_unconfirmed';
+  if (typeof signature !== 'string' || !SIGNATURE_RE.test(signature)) return 'settle_unconfirmed';
+  const sigBytes = (signature.length - 2) / 2;
+  if (sigBytes < EVM_SIGNATURE_MIN_BYTES || sigBytes > EVM_SIGNATURE_MAX_BYTES) return 'settle_unconfirmed';
+  return null;
+}
+
 export function readEvmAuthorization(paymentHeader) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return null;
@@ -201,6 +331,8 @@ export function readEvmAuthorization(paymentHeader) {
     to: auth.to || null,
     value: auth.value != null ? String(auth.value) : null,
     nonce: auth.nonce || null,
+    validAfter: auth.validAfter != null ? auth.validAfter : null,
+    validBefore: auth.validBefore != null ? auth.validBefore : null,
     signature: typeof signature === 'string' ? signature : null,
   };
 }

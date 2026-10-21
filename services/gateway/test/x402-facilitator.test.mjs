@@ -130,6 +130,11 @@ test('payerFromPaymentHeader: v1 authorization.message.from', () => {
   );
 });
 
+// The handshake tests settle through settleBoundPayment, which needs
+// address-shaped from and to.
+const HS_PAY_TO = '0x7000000000000000000000000000000000000001';
+const HS_FROM = `0x${'2a'.repeat(20)}`;
+
 function cfgX402(url, over = {}) {
   return {
     enabled: true,
@@ -697,7 +702,7 @@ test('verifyViaFacilitator surfaces facilitator rejection', async () => {
 test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge, settle, then replay is refused', async () => {
   const { url, close, server } = await startMockFacilitator();
   try {
-    const cfg = cfgX402(url);
+    const cfg = cfgX402(url, { payTo: HS_PAY_TO });
 
     // Step 1: no X-PAYMENT → 402 challenge on Base Sepolia.
     const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
@@ -711,7 +716,7 @@ test('full x402 handshake via the standard facilitator (v1 X-PAYMENT): challenge
     const nonce = accept.extra.nonce;
 
     // Step 2: retry with a real-shaped X-PAYMENT + nonce → verify + settle via facilitator.
-    const header = makePaymentHeader({ nonce });
+    const header = makePaymentHeader({ nonce, payTo: HS_PAY_TO, from: HS_FROM });
     const reqPay = {
       headers: { 'x-payment': header, 'x-payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
@@ -735,7 +740,7 @@ test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): s
   // CDP-native buyers like Bankr send PAYMENT-SIGNATURE header.
   const { url, close, server } = await startMockFacilitator();
   try {
-    const cfg = cfgX402(url);
+    const cfg = cfgX402(url, { payTo: HS_PAY_TO });
 
     // Step 1: no payment header → 402 challenge
     const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
@@ -745,7 +750,7 @@ test('full x402 handshake via the standard facilitator (v2 PAYMENT-SIGNATURE): s
     const nonce = challenge.body.accepts[0].extra.nonce;
 
     // Step 2: retry with PAYMENT-SIGNATURE + PAYMENT-NONCE → verify + settle via facilitator
-    const header = makePaymentHeader({ nonce, authNonce: '0x' + 'ef'.repeat(32) });
+    const header = makePaymentHeader({ nonce, authNonce: '0x' + 'ef'.repeat(32), payTo: HS_PAY_TO, from: HS_FROM });
     const reqPayV2 = {
       headers: { 'payment-signature': header, 'payment-nonce': nonce },
       body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' },
@@ -785,7 +790,7 @@ test('full x402 handshake with CDP-native v2 PaymentPayload shape (Bankr fix)', 
   // not the XFuel SDK shape { authorization: { message, signature } }.
   const { url, close } = await startMockFacilitator();
   try {
-    const cfg = cfgX402(url);
+    const cfg = cfgX402(url, { payTo: HS_PAY_TO });
 
     // Step 1: get a challenge
     const reqNoPay = { headers: {}, body: { payment: { rail: 'usdc' }, model_id: 'llama-3-70b' } };
@@ -796,7 +801,8 @@ test('full x402 handshake with CDP-native v2 PaymentPayload shape (Bankr fix)', 
     // Step 2: retry with a CDP-native v2 PaymentPayload (the shape Bankr sends)
     const header = makeCdpNativePaymentHeader({
       nonce: '0x' + challengeNonce.replace(/^0x/, '').padStart(64, '0'),
-      from: '0xbankrwallet',
+      from: HS_FROM,
+      payTo: HS_PAY_TO,
     });
     const reqPayV2 = {
       headers: { 'payment-signature': header, 'payment-nonce': challengeNonce },

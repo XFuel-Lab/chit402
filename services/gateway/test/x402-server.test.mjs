@@ -23,7 +23,7 @@ function cfgFor(url, over = {}) {
     fallbackToTfuel: true,
     gatewayUrl: url,
     apiKey: 'testkey',
-    payTo: '0xtreasury',
+    payTo: '0x7000000000000000000000000000000000000001',
     network: 'base',
     asset: 'USDC',
     challengeTtlMs: 120000,
@@ -86,7 +86,7 @@ test('settled gross cannot be restated by the paid retry (receipt integrity)', a
     assert.equal(accept.maxAmountRequired, '2000', 'challenge priced at $0.002');
 
     const settled = await runX402Handshake({
-      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': accept.extra.nonce },
+      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB-OVERRIDE'), 'x-payment-nonce': accept.extra.nonce },
       // Inflated declaration + a different maxAmount on the retry.
       body: { payment: { rail: 'usdc', maxAmount: '1000000' }, amount: '1000000' },
     }, { taskId: 'x402-integrity', cfg });
@@ -110,7 +110,7 @@ test('handshake amount override prices the challenge, not the current body', asy
     assert.equal(accept.maxAmountRequired, '20240');
 
     const settled = await runX402Handshake({
-      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': accept.extra.nonce },
+      headers: { 'x-payment': evmAuthHeader('PAYMENT-BLOB-OVERRIDE-2'), 'x-payment-nonce': accept.extra.nonce },
       body: { payment: { rail: 'usdc' } },
     }, { taskId: 'x402-rolling', cfg, amount: '20240' });
     assert.equal(settled.kind, 'settled', settled.reason || settled.code);
@@ -183,7 +183,7 @@ test('full 402 loop against mock facilitator: challenge, settle, then replay is 
     assert.equal(challenge.body.x402Version, 2);
     assert.equal(accept.amount, '50000');
     assert.equal(accept.maxAmountRequired, '50000');
-    assert.equal(accept.payTo, '0xtreasury');
+    assert.equal(accept.payTo, '0x7000000000000000000000000000000000000001');
     assert.equal(accept.network, 'eip155:8453');
     const nonce = accept.extra.nonce;
     // EIP-3009 nonce must be bytes32: 0x + 64 hex chars. Per Section 3.5.
@@ -341,7 +341,7 @@ test('gateway_not_configured is reported (→ caller returns 503)', async () => 
   assert.equal(challenge.kind, 'challenge', 'should get 402 challenge first');
   const nonce = challenge.body.accepts[0].extra.nonce;
 
-  const reqPay = { headers: { 'x-payment': evmAuthHeader('BLOB'), 'x-payment-nonce': nonce }, body: {} };
+  const reqPay = { headers: { 'x-payment': evmAuthHeader('BLOB-2'), 'x-payment-nonce': nonce }, body: {} };
   const decision = await runX402Handshake(reqPay, { taskId: 't', cfg });
   assert.equal(decision.kind, 'failed');
   assert.equal(decision.reason, 'gateway_not_configured');

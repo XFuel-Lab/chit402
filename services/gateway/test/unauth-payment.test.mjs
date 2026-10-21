@@ -30,7 +30,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_ROLLING_SETTLEMENT = 'true';
 process.env.X402_COST_PLUS = 'true';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base';
 process.env.X402_FACILITATOR_API_KEY = 'testkey';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
@@ -238,7 +238,7 @@ test('unauth + PAYMENT-SIGNATURE → handshake runs and settles (CDP Bankr case)
   const nonce = challenge.accepts[0].extra.nonce;
 
   const paidRes = await post({}, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-1', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -270,7 +270,7 @@ test('unauth + X-PAYMENT → same behavior as PAYMENT-SIGNATURE (XFuel SDK case)
   const nonce = challenge.accepts[0].extra.nonce;
 
   const paidRes = await post({}, {
-    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB'),
+    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB-2', { from: `0x${'55'.repeat(20)}` }),
     'x-payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -315,7 +315,7 @@ test('keyed rolling hasPayment sees PAYMENT-SIGNATURE (v2)', async () => {
 
   const paidRes = await post({}, {
     'x-api-key': 'keyed-caller-2',
-    'payment-signature': evmAuthHeader('V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('V2-PAYMENT-BLOB-3', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -340,7 +340,7 @@ test('keyed rolling hasPayment sees X-PAYMENT (v1)', async () => {
 
   const paidRes = await post({}, {
     'x-api-key': 'keyed-caller-1',
-    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB'),
+    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB-4', { from: `0x${'55'.repeat(20)}` }),
     'x-payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -360,7 +360,7 @@ test('payment header prevents discovery 402 early return (handshake runs)', asyn
   const nonce = challenge.accepts[0].extra.nonce;
 
   const paidRes = await post({}, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-5', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -382,7 +382,7 @@ test('unauth first paid call collects for the current request, not fronted', asy
   const nonce = challenge.accepts[0].extra.nonce;
 
   const paidRes = await post({}, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-6', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const paid = await paidRes.json();
@@ -423,7 +423,7 @@ test('REGRESSION: unauth + PAYMENT-SIGNATURE + empty body → 400 WITHOUT settle
 
   // Now send the request with a payment header but EMPTY body
   const res = await postRaw({}, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-7', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const body = await res.json();
@@ -456,7 +456,7 @@ test('REGRESSION: unauth + X-PAYMENT + empty body → 400 WITHOUT settle (v1 var
 
   // Now send the request with a v1 payment header but EMPTY body
   const res = await postRaw({}, {
-    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB'),
+    'x-payment': evmAuthHeader('V1-PAYMENT-BLOB-8', { from: `0x${'55'.repeat(20)}` }),
     'x-payment-nonce': nonce,
   });
   const body = await res.json();
@@ -486,7 +486,7 @@ test('REGRESSION: unauth + PAYMENT-SIGNATURE + missing required fields → 400 W
   };
 
   const res = await postRaw(invalidBody, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-9', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const body = await res.json();
@@ -514,7 +514,7 @@ test('REGRESSION: keyed + PAYMENT-SIGNATURE + empty body → 400 WITHOUT settle'
 
   const res = await postRaw({}, {
     'x-api-key': 'keyed-caller-1',
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-10', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const body = await res.json();
@@ -551,7 +551,7 @@ test('REGRESSION: valid body + payment header → handshake still runs (positive
 
   // Valid body with all required fields
   const paidRes = await post({}, {
-    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB', { version: 2 }),
+    'payment-signature': evmAuthHeader('CDP-V2-PAYMENT-BLOB-11', { version: 2, from: `0x${'55'.repeat(20)}` }),
     'payment-nonce': nonce,
   });
   const paid = await paidRes.json();
