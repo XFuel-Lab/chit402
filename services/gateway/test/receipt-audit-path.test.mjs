@@ -267,7 +267,13 @@ test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does n
     requirePreimages: true,
     rpcUrl: 'http://127.0.0.1:9',
   });
-  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  // chit402-verify 0.4.11: overall follows the shared verdict. The library
+  // does not fetch the log or the anchors, so every library check passing is
+  // partial with verdict exit 2.
+  assert.equal(checked.overall, 'partial', checked.errors.join('; '));
+  assert.equal(checked.verdict.exit_code, 2);
+  assert.equal(checked.verdict.checks.signature, 'pass');
+  assert.equal(checked.verdict.checks.payment_binding !== 'fail', true);
   assert.equal(checked.issuer_history.checked, true);
   assert.equal(checked.issuer_history.ok, true, checked.issuer_history.reason || checked.issuer_history.warning);
   assert.equal(checked.preimages.ok, true);
