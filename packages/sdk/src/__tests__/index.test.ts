@@ -526,6 +526,14 @@ describe('XFuelClient', () => {
       expect(second.authorization.message.nonce).not.toBe(decoded.authorization.message.nonce);
     });
 
+    it('createMockPayer defaults from to a 20-byte address', async () => {
+      const { header } = await createMockPayer()(challenge);
+      const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+      expect(decoded.from).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      expect(decoded.authorization.message.from).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      expect(decoded.authorization.message.from).toBe(decoded.from);
+    });
+
     it('createSignerPayer envelopes the caller-signed authorization', async () => {
       const signAuthorization = jest.fn(async () => ({ sig: '0xdeadbeef', v: 27 }));
       const payer = createSignerPayer(signAuthorization as any);

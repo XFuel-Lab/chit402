@@ -258,6 +258,15 @@ export function normalizeIntegerString(value, fieldName) {
 }
 
 /**
+ * An authorization uint for the v1 and SDK wire shape. A missing field stays
+ * missing (String(undefined)), as before; the facilitator refuses it.
+ */
+function wireUint(value, fieldName) {
+  if (value === null || value === undefined) return String(value);
+  return normalizeIntegerString(value, fieldName).value;
+}
+
+/**
  * Normalize an EIP-3009 nonce to a 0x-prefixed 64-character hex string (bytes32).
  *
  * - 64 hex without 0x → prefix 0x
@@ -743,12 +752,15 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
     network: network || accepted.network || decoded.network,
     payload: {
       signature,
+      // Same integer forms as the CDP-native v2 path: "2000.0" goes out as
+      // "2000", a JSON number as its integer string, and a nonzero fraction
+      // throws before the facilitator is called.
       authorization: {
         from: msg.from,
         to: msg.to,
-        value: String(msg.value),
-        validAfter: String(msg.validAfter ?? 0),
-        validBefore: String(msg.validBefore),
+        value: wireUint(msg.value, 'value'),
+        validAfter: normalizeIntegerString(msg.validAfter ?? 0, 'validAfter').value,
+        validBefore: wireUint(msg.validBefore, 'validBefore'),
         nonce: msg.nonce,
       },
     },
