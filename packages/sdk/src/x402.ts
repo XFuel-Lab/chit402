@@ -116,11 +116,18 @@ function catalogEcho(challenge: X402Challenge, accept: X402Accept): Record<strin
  * Use `createEip3009Payer` from `xfuel-sdk/onchain` only when you intend to
  * spend real USDC.
  */
+/**
+ * Default `from` for createMockPayer: a 20-byte address ("MockPayer" in ASCII,
+ * zero padded). Gateways refuse a `from` that is not an address before the
+ * facilitator, so the default has to be address-shaped. No key controls it.
+ */
+export const MOCK_PAYER_ADDRESS = '0x4d6f636b50617965720000000000000000000000';
+
 export function createMockPayer(opts: { from?: string } = {}): X402Payer {
   return async (challenge) => {
     const a = selectAccept(challenge);
     const nonce = a.extra?.nonce;
-    const from = opts.from ?? '0xMockPayer';
+    const from = opts.from ?? MOCK_PAYER_ADDRESS;
     const amount = acceptAmount(a);
     // EIP-3009-shaped, unsigned. The gateway refuses EVM payments that do not
     // decode to an authorization with a bytes32 nonce, mock or not.
