@@ -3,7 +3,7 @@
  *
  * First-hour path: chat_completions (unmetered POST /v1/chat/completions).
  * Book path: register_agent → get_book / get_agent_book (possession-gated).
- * Receipt path: verify_receipt (offline binding) or verify_proof (SP1 settlement).
+ * Receipt path: verify_receipt (chit402-verify verdict) or verify_proof (SP1 settlement).
  * Each tool wraps official `xfuel-sdk` where applicable.
  */
 import { z } from 'zod';
@@ -130,7 +130,7 @@ Args:
   - max_tokens, temperature (optional)
 
 Returns the completion plus top-level task_id and verify_url (also under xfuel).
-proof_outcome may still be pending — use verify_receipt for offline binding checks.
+proof_outcome may still be pending; use verify_receipt for the receipt verdict.
 Do not wait in this tool.`,
       inputSchema: {
         messages: z
@@ -346,41 +346,31 @@ Returns agent_id (required later by POST /erc8004/validate) and validate_score.`
     handleAgentBook,
   );
 
-  // ── verify_receipt (offline binding; default path) ───────────────────────
+  // verify_receipt: the chit402-verify CLI verdict (default prove-it path)
   server.registerTool(
     'verify_receipt',
     {
-      title: 'Verify receipt offline',
-      description: `Fetch GET /receipt/:task_id?format=json and verify payment binding locally
-via @xfuel/verify — no trust in HTML, no private keys. This is the default "prove it"
-path for agents holding hub, model, amount, verify_url.
+      title: 'Verify receipt',
+      description: `Check one receipt with chit402-verify, the same check the CLI runs
+(signature, key window, payment and payer, public log, anchor). The receipt is
+fetched only from the issuer host (api.chit402.com; api.xfuel.app URLs are read
+from api.chit402.com). Any other host, a redirect, credentials, an IP address,
+a port or a non-https URL is refused before any request.
 
 Args:
-  - task_id (preferred) or verify_url — one required
-  - fetch_jwks (default true): load /.well-known/jwks.json for issuer signature check
-  - check_payer (default false): on-chain USDC payer match (Base or Solana RPC)
-  - check_nullifier (default false): SP1 nullifier anchor read (optional Tier-2)
+  - task_id (preferred) or verify_url: one required. verify_url must be
+    https://api.chit402.com/receipt/<id> or https://api.xfuel.app/receipt/<id>.
 
-Returns { verify_url, receipt, verification: { overall, binding, issuer_signature, … } }.
-overall is verified | partial | failed. Unmetered demo receipts may be partial (no binding).`,
+Returns { result, exit_code, reason, message, scope, receipt_id, checks, verify_url }.
+result is VERIFIED (exit 0), INVALID (exit 1) or COULD_NOT_CHECK (exit 2).
+scope "public" means the public attestation verified: amount, payee, tx and log
+position; the payer is not claimed.`,
       inputSchema: {
-        task_id: z.string().min(1).optional().describe('Task id from chat_completions or a paid call'),
-        verify_url: z.string().url().optional().describe('Public receipt URL (alternative to task_id)'),
-        fetch_jwks: z
-          .boolean()
-          .default(true)
-          .describe('Fetch issuer JWKS from the API for ES256 signature verification'),
-        check_payer: z
-          .boolean()
-          .default(false)
-          .describe('Confirm caller_binding.payer_wallet on-chain (needs RPC)'),
-        check_nullifier: z
-          .boolean()
-          .default(false)
-          .describe('Check SP1 nullifier on-chain (needs XFUEL_RPC_URL + ZK_VERIFIER_ADDRESS)'),
+        task_id: z.string().min(1).optional().describe('Receipt id from chat_completions or a paid call'),
+        verify_url: z.string().url().optional().describe('Issuer receipt URL (alternative to task_id)'),
       },
       annotations: {
-        title: 'Verify receipt offline',
+        title: 'Verify receipt',
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,

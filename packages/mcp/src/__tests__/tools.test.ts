@@ -204,33 +204,33 @@ test('verify_receipt requires task_id or verify_url', async () => {
   assert.match(res.content[0].text, /task_id or verify_url/);
 });
 
-test('verify_receipt loads receipt via task_id', async () => {
+test('verify_receipt reads task_id from the issuer host, not the configured API', async () => {
+  let clientCalled = false;
   const handlers = captureTools(
-    {},
+    { apiUrl: 'https://gateway.example' },
     {
-      getReceipt: async () =>
-        ({
-          task_id: 'paid-1',
-          status: 'fee_collected',
-          verify_url: 'https://api.xfuel.app/receipt/paid-1',
-        }) as never,
+      getReceipt: async () => {
+        clientCalled = true;
+        return {} as never;
+      },
     },
   );
   const originalFetch = globalThis.fetch;
+  const hosts: string[] = [];
   globalThis.fetch = (async (url: string | URL) => {
-    if (String(url).includes('jwks.json')) {
-      return new Response(JSON.stringify({ keys: [] }), { status: 200 });
-    }
-    throw new Error(`unexpected fetch: ${url}`);
+    hosts.push(new URL(String(url)).hostname);
+    return new Response('{}', { status: 404 });
   }) as typeof fetch;
   try {
-    const res = await handlers.get('verify_receipt')!({ task_id: 'paid-1', fetch_jwks: true });
+    const res = await handlers.get('verify_receipt')!({ task_id: 'paid-1' });
     assert.equal(res.isError, undefined);
-    assert.match(res.content[0].text, /overall=/);
+    assert.match(res.content[0].text, /verify_receipt\(paid-1\): COULD_NOT_CHECK \(exit 2\)/);
     assert.equal(
       (res.structuredContent as { verify_url?: string }).verify_url,
-      'https://api.xfuel.app/receipt/paid-1',
+      'https://api.chit402.com/receipt/paid-1',
     );
+    assert.equal(clientCalled, false);
+    assert.deepEqual([...new Set(hosts)], ['api.chit402.com']);
   } finally {
     globalThis.fetch = originalFetch;
   }

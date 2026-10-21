@@ -10,7 +10,7 @@ export const SERVER_NAME = 'xfuel-mcp-server';
 // Keep in lockstep with package.json / server.json (registry listing) so the
 // version reported over MCP, on /health, and in the static server card matches
 // the published npm package.
-export const SERVER_VERSION = '0.4.1';
+export const SERVER_VERSION = '0.5.0';
 
 /** Handshake text so a first-hour client does not need GitHub. */
 export const SERVER_INSTRUCTIONS = `Chit402: call list_models, then chat_completions (POST /v1/chat/completions). Default model xfuel/auto. Hosted gateway is live paid — satisfy HTTP 402 (x402 USDC) or set a partner API key.
@@ -21,7 +21,7 @@ register_agent is POST /v1/agents/register. A wallet with USDC can pay the $0.00
 
 get_book / get_agent_book is GET|POST /v1/agents/:agent_id/book. Possession-gated last-N collected spend for that agent_id. Not a public index. Do not paste a human private key.
 
-verify_receipt fetches /receipt/:task_id?format=json and checks binding offline (@xfuel/verify). Prefer this over get_proof for the default "prove it" flow. get_proof / verify_proof are optional Tier-2 SP1 settlement checks.
+verify_receipt returns the chit402-verify verdict for one receipt: VERIFIED (exit 0), INVALID (exit 1) or COULD_NOT_CHECK (exit 2), with a reason. It fetches only from the issuer host. Prefer this over get_proof for the default "prove it" flow. get_proof / verify_proof are optional Tier-2 SP1 settlement checks.
 
 Amounts are USDC 6 decimals (2000 = $0.002), not wei. api.chit402.com is the public beta; paying it moves mainnet USDC.`;
 
