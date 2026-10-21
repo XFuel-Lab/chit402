@@ -39,7 +39,9 @@ import { jwkThumbprint, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from '.
 import {
   buildVerifyVerdict,
   humanVerdictLines,
+  unsignedDocumentVerdict,
   verdictCopy,
+  verdictFromVerification,
   type CheckState,
   type VerifyVerdict,
 } from './verdict.js';
@@ -942,23 +944,17 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
         logReason = 'not_in_log';
       }
     }
-    const notInLog = logReason === 'not_in_log';
-    const verdict = buildVerifyVerdict({
+    const verdict = unsignedDocumentVerdict({
       version: packageVersion(),
-      receiptId: null,
-      displayId: null,
-      payloadVersion: null,
-      historySource: resolved.source,
-      historyHead: resolved.headHash,
-      historyCount: resolved.entryCount,
-      historyAsOf: resolved.asOf,
-      signatureChecked: false,
-      historyReason: notInLog ? null : 'signed_receipt_unavailable',
-      historyMissing: false,
-      errors: [],
+      history: {
+        source: resolved.source,
+        headHash: resolved.headHash,
+        entryCount: resolved.entryCount,
+        asOf: resolved.asOf,
+      },
       logInclusion,
       anchor: anchorState,
-      logReason: notInLog ? 'not_in_log' : null,
+      notInLog: logReason === 'not_in_log',
     });
     return linesOutcome(verdict);
   }
@@ -990,29 +986,19 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   const signedId = result.issuer_signature.valid === true
     ? signedReceiptId(result.issuer_signature.payload)
     : null;
-  const verdict = buildVerifyVerdict({
+  const verdict = verdictFromVerification(result, {
     version: packageVersion(),
     receiptId: signedId,
-    displayId: signedId,
-    payloadVersion: result.receipt_version ?? null,
-    historySource: resolved.source,
-    historyHead: resolved.headHash,
-    historyCount: resolved.entryCount,
-    historyAsOf: resolved.asOf,
-    signatureValid: unsupported ? null : result.issuer_signature.valid === true,
-    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
-    historyChecked: unsupported ? false : (resolved.invalid || result.issuer_history.checked),
-    historyOk: unsupported ? false : (resolved.invalid ? false : result.issuer_history.ok),
-    historyReason: resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason,
-    historyMissing: unsupported ? true : (resolved.document == null && !resolved.invalid),
-    bindingExpected: !!result.binding.expected,
-    bindingMatches: result.binding.matches,
-    claimMismatches: result.claim_mismatches.length,
-    payerChecked: result.payer.checked,
-    payerValid: result.payer.valid,
+    history: {
+      source: resolved.source,
+      headHash: resolved.headHash,
+      entryCount: resolved.entryCount,
+      asOf: resolved.asOf,
+      invalid: resolved.invalid,
+      reason: resolved.reason,
+      documentPresent: resolved.document != null,
+    },
     payerRequired: checkPayer,
-    payerOutcome: checkPayer ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
-    errors: result.errors,
     logInclusion,
     anchor: anchorState,
     logReason,

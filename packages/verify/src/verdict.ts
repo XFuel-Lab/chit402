@@ -5,6 +5,8 @@
  * COULD_NOT_CHECK do not contain the words invalid or INVALID.
  */
 
+import { payerCheckOutcome } from './payer.js';
+
 export type CheckState = 'pass' | 'fail' | 'could_not_check';
 
 /**
@@ -297,6 +299,12 @@ export interface VerdictInput {
    * is the reason. History and payment defaults must not run.
    */
   absentReason?: string | null;
+  /**
+   * A failure found outside the six named checks (for example an offline
+   * inclusion proof the library rejected). When set and no named check
+   * failed, the result is `invalid` with this reason. The CLI does not set it.
+   */
+  failureReason?: string | null;
 }
 
 function claimed(state: CheckState | 'unclaimed' | undefined): CheckState {
@@ -363,6 +371,9 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   if (failed.length) {
     result = 'invalid';
     reason = failReason(failed, historyReason, input.logReason || null, errors, payment, input.claimMismatches || 0);
+  } else if (input.failureReason) {
+    result = 'invalid';
+    reason = input.failureReason;
   } else if (unchecked.length) {
     result = 'could_not_check';
     reason = uncheckedReason(unchecked, historyReason, input.logReason || null, errors);
@@ -389,6 +400,130 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
     log: input.log ?? null,
     verifier: { name: 'chit402-verify', version: input.version },
   };
+}
+
+/** The parts of a library `ReceiptVerification` the verdict reads. */
+export interface VerificationVerdictSource {
+  errors: string[];
+  receipt_version?: number | null;
+  issuer_signature: { valid: boolean; checked: boolean; key_trusted?: boolean };
+  issuer_history: { checked: boolean; ok: boolean; reason: string | null; document?: unknown };
+  binding: { expected: string | null; matches: boolean };
+  claim_mismatches: unknown[];
+  payer: { checked: boolean; valid: boolean; reason?: string; outcome?: 'pass' | 'fail' | 'unchecked' };
+}
+
+export interface VerificationVerdictContext {
+  version: string;
+  receiptId?: string | null;
+  /** Resolved issuer history. Omitted means only what the result itself loaded. */
+  history?: {
+    source: 'file' | 'live' | 'bundled' | null;
+    headHash: string | null;
+    entryCount: number | null;
+    asOf: string | null;
+    invalid: boolean;
+    reason: string | null;
+    documentPresent: boolean;
+  };
+  /** Exit 0 requires the on-chain payer check. The CLI and the library both pass true. */
+  payerRequired: boolean;
+  logInclusion?: CheckState | 'unclaimed';
+  anchor?: CheckState | 'unclaimed';
+  logReason?: string | null;
+  log?: VerdictLog | null;
+  failureReason?: string | null;
+}
+
+/**
+ * The one mapping from a signed-receipt check to VERIFIED / INVALID /
+ * COULD_NOT_CHECK (exit 0 / 1 / 2). The CLI and `verifyReceipt` both call it.
+ * A check that did not run is could_not_check, never a pass.
+ */
+export function verdictFromVerification(
+  result: VerificationVerdictSource,
+  ctx: VerificationVerdictContext,
+): VerifyVerdict {
+  const unsupported = (result.errors || []).includes('unsupported_version');
+  const history = ctx.history ?? {
+    source: null,
+    headHash: null,
+    entryCount: null,
+    asOf: null,
+    invalid: false,
+    reason: null,
+    documentPresent: result.issuer_history.document != null,
+  };
+  const signatureValid = result.issuer_signature.valid === true
+    && result.issuer_signature.key_trusted !== false;
+  return buildVerifyVerdict({
+    version: ctx.version,
+    receiptId: ctx.receiptId ?? null,
+    displayId: ctx.receiptId ?? null,
+    payloadVersion: result.receipt_version ?? null,
+    historySource: history.source,
+    historyHead: history.headHash,
+    historyCount: history.entryCount,
+    historyAsOf: history.asOf,
+    signatureValid: unsupported ? null : signatureValid,
+    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
+    historyChecked: unsupported ? false : (history.invalid || result.issuer_history.checked),
+    historyOk: unsupported ? false : (history.invalid ? false : result.issuer_history.ok),
+    historyReason: history.invalid ? (history.reason || result.issuer_history.reason) : result.issuer_history.reason,
+    historyMissing: unsupported ? true : (!history.documentPresent && !history.invalid),
+    bindingExpected: !!result.binding.expected,
+    bindingMatches: result.binding.matches,
+    claimMismatches: result.claim_mismatches.length,
+    payerChecked: result.payer.checked,
+    payerValid: result.payer.valid,
+    payerRequired: ctx.payerRequired,
+    payerOutcome: ctx.payerRequired ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
+    errors: result.errors,
+    logInclusion: ctx.logInclusion ?? 'unclaimed',
+    anchor: ctx.anchor ?? 'unclaimed',
+    logReason: ctx.logReason ?? null,
+    log: ctx.log ?? null,
+    failureReason: ctx.failureReason ?? null,
+  });
+}
+
+/**
+ * A document with no compact issuer JWS. The CLI and the library give the
+ * same verdict: the signature was not checked, so this is COULD_NOT_CHECK
+ * (exit 2) unless a log check proved it absent (NOT_IN_LOG, exit 1).
+ */
+export function unsignedDocumentVerdict(ctx: {
+  version: string;
+  history?: {
+    source: 'file' | 'live' | 'bundled' | null;
+    headHash: string | null;
+    entryCount: number | null;
+    asOf: string | null;
+  };
+  logInclusion?: CheckState | 'unclaimed';
+  anchor?: CheckState | 'unclaimed';
+  notInLog?: boolean;
+  failureReason?: string | null;
+}): VerifyVerdict {
+  const notInLog = ctx.notInLog === true;
+  return buildVerifyVerdict({
+    version: ctx.version,
+    receiptId: null,
+    displayId: null,
+    payloadVersion: null,
+    historySource: ctx.history?.source ?? null,
+    historyHead: ctx.history?.headHash ?? null,
+    historyCount: ctx.history?.entryCount ?? null,
+    historyAsOf: ctx.history?.asOf ?? null,
+    signatureChecked: false,
+    historyReason: notInLog ? null : 'signed_receipt_unavailable',
+    historyMissing: false,
+    errors: [],
+    logInclusion: ctx.logInclusion ?? 'unclaimed',
+    anchor: ctx.anchor ?? 'unclaimed',
+    logReason: notInLog ? 'not_in_log' : null,
+    failureReason: ctx.failureReason ?? null,
+  });
 }
 
 function absentReceiptVerdict(input: VerdictInput): VerifyVerdict {

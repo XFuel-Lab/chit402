@@ -113,6 +113,30 @@ function treeHead(leaves, index, epoch, publishedAt, keys) {
   return { head, inclusion, root };
 }
 
+function signReceipt(receipt, keys) {
+  // A receipt verifies only under a trusted issuer signature, so the fixture
+  // signs its own fields with the throwaway test key.
+  const claims = {
+    payload_version: 8,
+    task_id: receipt.task_id,
+    payment: receipt.payment,
+    binding: receipt.binding,
+    book_chain: receipt.book_chain,
+  };
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: keys.kid };
+  const signingInput = `${b64url(header)}.${b64url(claims)}`;
+  const signature = sign('sha256', Buffer.from(signingInput), { key: keys.privateKey, dsaEncoding: 'ieee-p1363' });
+  return {
+    ...receipt,
+    issuer_signature: {
+      alg: 'ES256',
+      jws: `${signingInput}.${signature.toString('base64url')}`,
+      kid: keys.kid,
+      issuer_jwk: keys.publicJwk,
+    },
+  };
+}
+
 function receiptFor(taskId) {
   const paymentRef = `base:0x${'ab'.repeat(32)}`;
   const amount = '10000';
@@ -146,7 +170,7 @@ function carryFixture() {
     receiptLeaf,
     old,
     current,
-    receipt: receiptFor(taskId),
+    receipt: signReceipt(receiptFor(taskId), keys),
   };
 }
 

@@ -248,7 +248,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.result === 'verified', false);
   assert.equal(body.verifier.name, 'chit402-verify');
-  assert.equal(body.verifier.version, '0.4.10');
+  assert.equal(body.verifier.version, '0.4.11');
   assert.equal(body.history.source, 'bundled');
   assert.equal(body.history.as_of, '2026-10-14');
   assert.doesNotMatch(run.stdout, /verified_no_key_window/);

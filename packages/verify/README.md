@@ -24,11 +24,19 @@ const receipt = { /* Chit402 receipt JSON */ };
 const result = verifyBinding(receipt);
 console.log(result.matches); // true if binding verified
 
-// Full verification including on-chain nullifier check
-const fullResult = await verifyReceipt(receipt, { checkNullifier: true });
+// Signature, binding and signed claims. `verified` needs a trusted issuer signature.
+const fullResult = await verifyReceipt(receipt);
 console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
+console.log(fullResult.verdict); // { result, exit_code: 0 | 1 | 2, reason, checks }
 console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overall
+
+// The same verdict the CLI prints, including the log, anchor and payer checks.
+import { checkReceiptInput } from 'chit402-verify/check-input';
+const { verdict } = await checkReceiptInput('xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15', { publicInput: true });
+console.log(verdict.result, verdict.exit_code);
 ```
+
+Since 0.4.11 the library is never more generous than the CLI. A document without a trusted issuer signature is `partial`, with `verdict.exit_code` 2 (`signed_receipt_unavailable`). Binding, nullifier and payer facts come only from verified signed claims. `verdict` uses the CLI's mapping for the checks `verifyReceipt` ran; it does not fetch the public log or the anchors, so those checks are `could_not_check` there and `verdict.exit_code` is 1 or 2. Use `checkReceiptInput` for exit 0.
 
 ### CLI
 
@@ -284,6 +292,7 @@ Full verification combining binding and optional nullifier check.
   amount_usdc: string | null;
   tx: string | null;
   overall: 'verified' | 'partial' | 'failed';
+  verdict: { result: string; exit_code: 0 | 1 | 2; reason: string | null; checks: object };
   errors: string[];
 }
 ```

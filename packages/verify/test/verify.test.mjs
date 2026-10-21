@@ -720,7 +720,7 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.overall, 'failed');
   });
 
-  test('overall=verified when unsigned receipt has valid binding', async () => {
+  test('overall=partial when an unsigned receipt carries a self-consistent binding', async () => {
     const taskId = 'task-unsigned';
     const paymentRef = 'base:0x' + 'ab'.repeat(32);
     const amount = '10000';
@@ -742,7 +742,12 @@ describe('verifyReceipt overall status semantics', () => {
 
     const result = await verifyReceipt(receipt, {});
 
-    assert.equal(result.overall, 'verified');
+    // The binding only shows the document agrees with itself. Without a
+    // trusted issuer signature this is could_not_check, the same as the CLI.
+    assert.equal(result.overall, 'partial');
+    assert.equal(result.binding.matches, false);
+    assert.equal(result.verdict.exit_code, 2);
+    assert.equal(result.verdict.reason, 'signed_receipt_unavailable');
   });
 
   test('overall=verified when signed receipt with valid JWKS and binding', async () => {

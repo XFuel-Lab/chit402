@@ -3,6 +3,18 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.4.11: Library verdict matches the CLI
+
+### Changed
+- **The library verdict is never more generous than the CLI.** `verifyReceipt` reports `verified` only under a trusted issuer signature. A document without one is `partial`. Unsigned claims are not trusted.
+- **Binding, nullifier and payer facts come from signed claims only.** Without a trusted issuer signature the binding is reported as not checked. `nullifier` reads the signed `proof.nullifier`; an outer value the signature does not cover is not checked or reported, and `checkNullifier` on such a receipt is `partial`.
+- **One verdict mapping.** `verdictFromVerification` maps a check to VERIFIED, INVALID or COULD_NOT_CHECK (exit 0, 1, 2). The CLI and `verifyReceipt` both use it. `verifyReceipt` adds `verdict` (`result`, `exit_code`, `reason`, `checks`) for the checks it ran. It does not fetch the public log or the anchors, so those are could_not_check there. A result that maps to exit 1 is always `overall: 'failed'`. `checkReceiptInput` (`chit402-verify/check-input`) still gives the full CLI verdict.
+- **Not in this release: endpoint cross-check.** It moves to a later release.
+- CLI exit codes, reasons and flags are unchanged. `BUILD_DIGEST.txt` moved because `src/index.ts`, `src/check-input.ts` and `src/verdict.ts` changed. `@xfuel/verify` 0.4.11 depends on exactly `"chit402-verify": "0.4.11"`. Not published. No deploy.
+
+### Tests
+- An unsigned document with a self-computed binding, a signed receipt with its signature removed (with and without a recomputed binding), and a signed receipt with a different outer nullifier are not verified. Every receipt fixture keeps `overall` and `verdict` in step. Fixtures that expected `verified` without a signature now sign with a throwaway test key.
+
 ## 0.4.10 — Anchor lookup resilience
 
 ### Changed
