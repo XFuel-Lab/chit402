@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyReceipt, verifyReceiptUpToV10 } from '../dist/index.js';
 import { v11SaltRejection } from '../dist/v11-receipt.js';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
@@ -100,7 +101,7 @@ test('deploy gate: publish the v11 verifier before the gateway issues v11', asyn
       routing: '{"provider":"p","model":"m"}',
     },
   });
-  assert.equal(opened.overall, 'verified', opened.errors.join(','));
+  assertLibraryPass(opened, opened.errors.join(','));
 });
 
 test('malformed salts and a wrong salt fail with distinct reasons', async () => {

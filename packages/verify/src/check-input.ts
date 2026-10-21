@@ -35,6 +35,7 @@ import { BASE_RPC_URL } from './base-payer.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
 import { payerCheckOutcome } from './payer.js';
 import { type EpochRecord } from './epoch.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import { jwkThumbprint, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
@@ -173,7 +174,7 @@ async function absenceAgainstSignedHead(
   history: IssuerHistoryDocument | null,
 ): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
   try {
-    const res = await fetch(`${origin}/v1/receipts/tree/head`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/tree/head`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -219,7 +220,7 @@ async function publicShellAbsence(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return false;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -315,7 +316,7 @@ export async function freshPublicLog(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return missed;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -338,7 +339,7 @@ export async function freshPublicLog(
     };
     const headUrl = inclusionHeadUrl(origin, inclusion);
     if (!headUrl) return missed;
-    const headRes = await fetch(headUrl, {
+    const headRes = await fetchNoRedirect(headUrl, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -349,7 +350,7 @@ export async function freshPublicLog(
     const headSchema = (head as { schema?: string }).schema;
     if (headEpoch != null || headSchema === 'chit402.tree_head.v2') {
       try {
-        const epochRes = await fetch(`${origin}/v1/receipts/tree/epoch`, {
+        const epochRes = await fetchNoRedirect(`${origin}/v1/receipts/tree/epoch`, {
           headers: { accept: 'application/json' },
           signal: AbortSignal.timeout(LOG_FETCH_MS),
         });

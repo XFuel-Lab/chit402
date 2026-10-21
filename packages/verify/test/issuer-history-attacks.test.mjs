@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { jcsCanonicalize } = await import('../dist/jcs.js');
@@ -208,7 +209,7 @@ test('a payload v10 receipt verifies only against the exact history file', async
   }));
   const opts = { jwks: { keys: [key.publicJwk] }, trustedKids: [key.kid] };
   const exact = await verifyReceipt(receipt, { ...opts, issuerHistory: v1.doc, issuerHistoryBytes: v1.bytes });
-  assert.equal(exact.overall, 'verified', exact.errors.join('; '));
+  assertLibraryPass(exact, exact.errors.join('; '));
   const moved = await verifyReceipt(receipt, { ...opts, issuerHistory: later.doc, issuerHistoryBytes: later.bytes });
   assert.equal(moved.overall, 'failed');
   assert.equal(moved.issuer_history.reason, 'issuer_history_pin_mismatch');

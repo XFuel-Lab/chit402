@@ -276,6 +276,10 @@ export interface VerdictInput {
   historyReason?: string | null;
   /** Resolver found no document that covers this kid. */
   historyMissing?: boolean;
+  /** The history read did not complete (for example a refused redirect). */
+  historyUnreachable?: boolean;
+  /** Published preimage bytes could not be read (for example a refused redirect). */
+  paymentUnreachable?: boolean;
   bindingExpected?: boolean;
   bindingMatches?: boolean | null;
   claimMismatches?: number;
@@ -334,7 +338,7 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
 
   const historyReason = input.historyReason || null;
   let keyWindow: CheckState = 'could_not_check';
-  if (input.historyMissing || historyReason === 'kid_not_in_history') keyWindow = 'could_not_check';
+  if (input.historyMissing || historyReason === 'kid_not_in_history' || input.historyUnreachable) keyWindow = 'could_not_check';
   else if (input.historyChecked && input.historyOk) keyWindow = 'pass';
   else if (input.historyChecked && historyReason && WINDOW_FAIL.has(historyReason)) keyWindow = 'fail';
   else if (input.historyChecked && input.historyOk === false) keyWindow = 'fail';
@@ -349,6 +353,7 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
     else if (input.payerRequired && input.payerOutcome !== 'pass') payment = 'could_not_check';
     else if (!input.payerRequired && input.payerChecked && input.payerValid === false) payment = 'fail';
     else if (input.bindingExpected && input.bindingMatches !== true && !unsupported) payment = 'could_not_check';
+    else if (input.paymentUnreachable) payment = 'could_not_check';
   }
 
   const logInclusion = claimed(input.logInclusion);
@@ -407,7 +412,8 @@ export interface VerificationVerdictSource {
   errors: string[];
   receipt_version?: number | null;
   issuer_signature: { valid: boolean; checked: boolean; key_trusted?: boolean };
-  issuer_history: { checked: boolean; ok: boolean; reason: string | null; document?: unknown };
+  issuer_history: { checked: boolean; ok: boolean; reason: string | null; document?: unknown; unreachable?: boolean };
+  preimages?: { unreachable?: string[] };
   binding: { expected: string | null; matches: boolean };
   claim_mismatches: unknown[];
   payer: { checked: boolean; valid: boolean; reason?: string; outcome?: 'pass' | 'fail' | 'unchecked' };
@@ -471,6 +477,8 @@ export function verdictFromVerification(
     historyOk: unsupported ? false : (history.invalid ? false : result.issuer_history.ok),
     historyReason: history.invalid ? (history.reason || result.issuer_history.reason) : result.issuer_history.reason,
     historyMissing: unsupported ? true : (!history.documentPresent && !history.invalid),
+    historyUnreachable: !history.invalid && result.issuer_history.unreachable === true,
+    paymentUnreachable: (result.preimages?.unreachable?.length ?? 0) > 0,
     bindingExpected: !!result.binding.expected,
     bindingMatches: result.binding.matches,
     claimMismatches: result.claim_mismatches.length,

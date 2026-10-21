@@ -24,9 +24,9 @@ const receipt = { /* Chit402 receipt JSON */ };
 const result = verifyBinding(receipt);
 console.log(result.matches); // true if binding verified
 
-// Signature, binding and signed claims. `verified` needs a trusted issuer signature.
+// Signature, binding and signed claims. `overall` follows `verdict.exit_code`.
 const fullResult = await verifyReceipt(receipt);
-console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
+console.log(fullResult.overall); // 'partial' (exit 2) | 'failed' (exit 1); 'verified' only at exit 0
 console.log(fullResult.verdict); // { result, exit_code: 0 | 1 | 2, reason, checks }
 console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overall
 
@@ -36,7 +36,7 @@ const { verdict } = await checkReceiptInput('xfuel-3155b7d8-4315-44bc-bfdc-bf6b7
 console.log(verdict.result, verdict.exit_code);
 ```
 
-Since 0.4.11 the library is never more generous than the CLI. A document without a trusted issuer signature is `partial`, with `verdict.exit_code` 2 (`signed_receipt_unavailable`). Binding, nullifier and payer facts come only from verified signed claims. `verdict` uses the CLI's mapping for the checks `verifyReceipt` ran; it does not fetch the public log or the anchors, so those checks are `could_not_check` there and `verdict.exit_code` is 1 or 2. Use `checkReceiptInput` for exit 0.
+Since 0.4.11 the library is never more generous than the CLI. `overall` comes from the shared verdict: `verified` only at `verdict.exit_code` 0, `failed` at 1, `partial` at 2. `verifyReceipt` does not fetch the public log or the anchors, so those checks are `could_not_check` there and a receipt whose library checks all pass is `partial` (exit 2). Use `checkReceiptInput` for exit 0. A document without a trusted issuer signature is `partial` (`signed_receipt_unavailable`). Binding, nullifier and payer facts come only from verified signed claims. A detached legacy `issuer_signature.value` is trusted only under a kid pinned in issuer history (the bundled snapshot or a supplied history that extends it), never under a caller JWKS key alone. Follow-up reads (issuer history, JWKS, preimages, inclusion, tree head, epoch) refuse redirects; a refused redirect is could_not_check.
 
 ### CLI
 

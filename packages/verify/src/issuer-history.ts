@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { jcsCanonicalize } from './jcs.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import {
   verifyIssuerJws,
   ISSUER_JWS_TYP,
@@ -454,7 +455,7 @@ async function loadIssuerHistoryBody({
     };
   }
   try {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(4000) });
+    const res = await fetchNoRedirect(url, { signal: AbortSignal.timeout(4000) }, fetchImpl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     raw = await res.text();
     doc = JSON.parse(raw) as IssuerHistoryDocument;
@@ -839,7 +840,7 @@ export async function resolveIssuerHistory({
     }
     if (hostOk) {
       try {
-        const res = await fetchImpl(liveUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetchNoRedirect(liveUrl, { signal: AbortSignal.timeout(timeoutMs) }, fetchImpl);
         if (res.ok) {
           const bytes = await res.text();
           const doc = JSON.parse(bytes) as IssuerHistoryDocument;

@@ -92,9 +92,14 @@ import {
 } from './receipt-lane.js';
 import { isRefusalDocument, REFUSAL_SCHEMA } from './refusal.js';
 import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import {
   checkReceiptIssuerHistory,
+  historyPrefixExtends,
+  laterThanBundled,
+  loadBundledIssuerHistory,
   readIssuerHistoryPin,
+  verifyIssuerHistoryDocument,
   type IssuerHistoryCheck,
   type IssuerHistoryDocument,
 } from './issuer-history.js';
@@ -793,10 +798,100 @@ function receiptTypAccepted(jws: string): boolean {
   return (ISSUER_JWS_TYP.receipt as readonly unknown[]).includes(typ);
 }
 
+/**
+ * The issuer history a detached legacy `issuer_signature.value` is checked
+ * against: a supplied history that verifies under the pinned kids alone and
+ * extends the bundled snapshot (the `--issuer-history` rule), else the
+ * bundled signed snapshot. Caller JWKS keys never sign this history.
+ */
+export function pinnedLegacyHistory(options: {
+  issuerHistory?: IssuerHistoryDocument | null;
+  issuerHistoryBytes?: string | null;
+  trustedKids?: readonly string[];
+} = {}): IssuerHistoryDocument | null {
+  const pins = options.trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
+  let bundled: IssuerHistoryDocument | null = null;
+  try {
+    bundled = loadBundledIssuerHistory().document;
+  } catch {
+    bundled = null;
+  }
+  let supplied = options.issuerHistory ?? null;
+  if (!supplied && typeof options.issuerHistoryBytes === 'string') {
+    try {
+      supplied = JSON.parse(options.issuerHistoryBytes) as IssuerHistoryDocument;
+    } catch {
+      supplied = null;
+    }
+  }
+  if (
+    supplied
+    && bundled
+    && verifyIssuerHistoryDocument(supplied, { trustedKids: pins }).valid
+    && historyPrefixExtends(bundled, supplied)
+    && laterThanBundled(bundled, supplied)
+  ) {
+    return supplied;
+  }
+  if (bundled && verifyIssuerHistoryDocument(bundled, { trustedKids: pins }).valid) return bundled;
+  return null;
+}
+
+/**
+ * A detached legacy `value` signature is trusted only under a key whose kid
+ * is pinned in issuer history. The key material comes from the history
+ * entry. A caller JWKS key that verifies the bytes but is not that entry is
+ * `key untrusted`.
+ */
+function verifyLegacyValueSignature(
+  receipt: XFuelReceipt,
+  jwks: Jwks | undefined,
+  history: IssuerHistoryDocument | null,
+): IssuerSignatureVerification {
+  const sig = receipt.issuer_signature!;
+  const entries = (history?.entries || []).filter((entry) => (
+    entry?.jwk
+    && (entry.alg || 'ES256') === 'ES256'
+    && (!sig.kid || entry.kid === sig.kid)
+  ));
+  for (const entry of entries) {
+    const key: Es256Jwk = { ...entry.jwk, kid: entry.kid, alg: 'ES256' };
+    const result = verifyIssuerSignature(receipt, key);
+    if (result.valid) {
+      return { ...result, key_trusted: true, trust: 'pinned_kid', kid: entry.kid };
+    }
+  }
+  const callerKeys = Array.isArray(jwks?.keys)
+    ? jwks!.keys.filter((k) => k.alg === 'ES256' && (!sig.kid || k.kid === sig.kid))
+    : [];
+  for (const jwk of callerKeys) {
+    if (verifyIssuerSignature(receipt, jwk).valid) {
+      return { checked: true, valid: false, key_trusted: false, kid: jwk.kid || sig.kid, reason: KEY_UNTRUSTED };
+    }
+  }
+  if (entries.length) {
+    return { checked: true, valid: false, key_trusted: true, kid: sig.kid, reason: 'signature_invalid' };
+  }
+  return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'kid_not_in_history' };
+}
+
 export function verifyIssuerSignatureWithJwks(
   receipt: XFuelReceipt,
   jwks?: Jwks,
   options: { trustedKids?: readonly string[] } = {},
+): IssuerSignatureVerification {
+  return verifyIssuerSignatureTrusted(receipt, jwks, {
+    trustedKids: options.trustedKids,
+    legacyHistory: receipt.issuer_signature?.value && !receipt.issuer_signature?.jws
+      ? pinnedLegacyHistory({ trustedKids: options.trustedKids })
+      : null,
+  });
+}
+
+function verifyIssuerSignatureTrusted(
+  receipt: XFuelReceipt,
+  jwks: Jwks | undefined,
+  options: { trustedKids?: readonly string[]; legacyHistory: IssuerHistoryDocument | null },
 ): IssuerSignatureVerification {
   const sig = receipt.issuer_signature;
   if (!sig) {
@@ -885,35 +980,7 @@ export function verifyIssuerSignatureWithJwks(
   if (!sig.value) {
     return { checked: false, valid: false, key_trusted: false, reason: 'no_issuer_signature' };
   }
-  if (!jwks || !Array.isArray(jwks.keys)) {
-    return {
-      checked: false,
-      valid: false,
-      key_trusted: false,
-      kid: sig.kid,
-      reason: 'JWKS not provided — pass jwks option to verify issuer signature',
-    };
-  }
-  if (jwks.keys.length === 0) {
-    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'empty_jwks' };
-  }
-
-  // Find matching key by kid, or try all ES256 keys if no kid on signature
-  const candidates = sig.kid
-    ? jwks.keys.filter(k => k.kid === sig.kid && k.alg === 'ES256')
-    : jwks.keys.filter(k => k.alg === 'ES256');
-
-  if (candidates.length === 0) {
-    return { checked: false, valid: false, key_trusted: false, kid: sig.kid, reason: 'no_matching_key' };
-  }
-
-  for (const jwk of candidates) {
-    const result = verifyIssuerSignature(receipt, jwk);
-    if (result.valid) {
-      return { ...result, key_trusted: true, trust: 'jwks', kid: jwk.kid || sig.kid };
-    }
-  }
-  return { checked: true, valid: false, key_trusted: true, kid: sig.kid, reason: 'signature_invalid' };
+  return verifyLegacyValueSignature(receipt, jwks, options.legacyHistory);
 }
 
 /**
@@ -1423,7 +1490,7 @@ export async function fetchIssuerJwks(
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<Jwks> {
   if (!httpsUrl(uri)) throw new Error('jwks_uri must be https');
-  const res = await fetchImpl(uri);
+  const res = await fetchNoRedirect(uri, {}, fetchImpl);
   if (!res.ok) throw new Error(`jwks_fetch_failed: ${res.status}`);
   const body = await res.json() as Jwks;
   if (!body || !Array.isArray(body.keys)) throw new Error('jwks_malformed');
@@ -1791,10 +1858,13 @@ function withLibraryVerdict(receipt: XFuelReceipt, result: ReceiptVerification):
       failureReason,
     })
     : unsignedDocumentVerdict({ version: verifierPackageVersion(), failureReason });
-  if (full.exit_code === 1 && !failed) {
+  // `overall` is read from the shared verdict. Only exit 0 is verified.
+  // Exit 1 is failed. Exit 2 is partial: some check did not run.
+  if (full.exit_code === 0) {
+    if (result.overall !== 'verified' && result.overall !== 'verified_carried_forward') result.overall = 'verified';
+  } else if (full.exit_code === 1) {
     result.overall = 'failed';
-    if (result.errors.length === 0 && full.reason) result.errors.push(full.reason);
-  } else if (!trusted && (result.overall === 'verified' || result.overall === 'verified_carried_forward')) {
+  } else {
     result.overall = 'partial';
   }
   result.verdict = {
@@ -1856,7 +1926,16 @@ async function verifyReceiptChecks(
 
   let issuer_signature: IssuerSignatureVerification;
   if (receipt.issuer_signature?.jws || receipt.issuer_signature?.value) {
-    issuer_signature = verifyIssuerSignatureWithJwks(receipt, jwks, { trustedKids });
+    issuer_signature = verifyIssuerSignatureTrusted(receipt, jwks, {
+      trustedKids,
+      legacyHistory: receipt.issuer_signature?.jws
+        ? null
+        : pinnedLegacyHistory({
+          issuerHistory: options.issuerHistory ?? null,
+          issuerHistoryBytes: options.issuerHistoryBytes ?? null,
+          trustedKids,
+        }),
+    });
     if (issuer_signature.checked && !issuer_signature.valid) {
       errors.push(issuer_signature.reason === KEY_UNTRUSTED
         ? KEY_UNTRUSTED
@@ -2161,8 +2240,13 @@ async function verifyReceiptChecks(
   }
 
   if (issuer_history.warning) warnings.push(issuer_history.warning);
-  if (issuer_history.checked && !issuer_history.ok && issuer_history.reason) {
+  // An unreachable history (including a refused redirect) is could not
+  // check, not a failure.
+  if (issuer_history.checked && !issuer_history.ok && issuer_history.reason && !issuer_history.unreachable) {
     errors.push(`issuer history: ${issuer_history.reason}`);
+  }
+  if (preimages.unreachable?.length) {
+    warnings.push(`preimage not checked: ${preimages.unreachable.join(', ')}`);
   }
 
   const hasIssuerSig = !!receipt.issuer_signature;
@@ -2187,7 +2271,7 @@ async function verifyReceiptChecks(
 
   let overall: 'verified' | 'partial' | 'failed' | 'verified_carried_forward';
   const preimageFailed = !preimages.ok;
-  const historyFailed = issuer_history.checked && !issuer_history.ok;
+  const historyFailed = issuer_history.checked && !issuer_history.ok && !issuer_history.unreachable;
   if (signatureFailed || mismatchFailed || bindingFailed || payerFailed || nullifierFailed || claimRefused || headMissing || headMismatch || sizeMismatch || headTrustFailed || inclusionFailed || preimageFailed || historyFailed || canonicalPreimageFailed) {
     overall = 'failed';
   } else if (signatureUnchecked) {

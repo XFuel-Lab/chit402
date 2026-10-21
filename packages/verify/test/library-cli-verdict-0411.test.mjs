@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const lib = await import('../dist/index.js');
 const { verifyReceipt, computePaymentCommitment, verdictFromVerification, unsignedDocumentVerdict } = lib;
@@ -94,11 +95,11 @@ test('real receipt with its signature removed is not verified', async () => {
   assert.equal(plain.verdict.exit_code, 2);
 });
 
-test('the signed receipt itself still verifies', async () => {
+test('the signed receipt itself still passes every library check', async () => {
   const result = await verifyReceipt(REAL, { jwks: JWKS });
-  assert.equal(result.overall, 'verified');
-  assert.equal(result.verdict.checks.signature, 'pass');
-  assert.notEqual(result.verdict.exit_code, 1);
+  // The library does not fetch the log, so `overall` follows verdict exit 2.
+  assertLibraryPass(result);
+  assert.equal(result.issuer_signature.valid, true);
 });
 
 async function withNullifierRpc(fn) {
@@ -176,11 +177,10 @@ test('overall and the shared verdict agree on every receipt fixture', async () =
   for (const [name, doc] of docs) {
     for (const opts of [{}, { jwks: JWKS }]) {
       const result = await verifyReceipt(doc, opts);
-      if (result.overall === 'verified' || result.overall === 'verified_carried_forward') {
-        assert.equal(result.verdict.checks.signature, 'pass', `${name} verified without a signature pass`);
-        assert.equal(result.issuer_signature.valid, true, name);
-      }
-      assert.equal(result.verdict.exit_code === 1, result.overall === 'failed', `${name}: exit ${result.verdict.exit_code} vs ${result.overall}`);
+      const label = `${name}: exit ${result.verdict.exit_code} vs ${result.overall}`;
+      assert.equal(result.verdict.exit_code === 0, result.overall === 'verified' || result.overall === 'verified_carried_forward', label);
+      assert.equal(result.verdict.exit_code === 1, result.overall === 'failed', label);
+      assert.equal(result.verdict.exit_code === 2, result.overall === 'partial', label);
     }
   }
 });

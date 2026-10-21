@@ -13,6 +13,7 @@ import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -324,7 +325,7 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
   const receiptPath = fileURLToPath(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url));
   const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   const payment = await verifyReceipt(receipt, {});
-  assert.equal(payment.overall, 'verified', payment.errors.join('; '));
+  assertLibraryPass(payment, payment.errors.join('; '));
 
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const exported = publicKey.export({ format: 'jwk' });

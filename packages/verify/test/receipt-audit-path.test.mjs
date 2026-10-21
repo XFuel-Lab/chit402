@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const { verifyPublishedPreimages } = await import('../dist/preimage.js');
 const { verifyReceipt } = await import('../dist/index.js');
@@ -306,7 +307,7 @@ test('a chit-1ebc5616 style receipt with an audit path verifies offline and with
     skipIssuerHistory: true,
     requirePreimages: true,
   });
-  assert.equal(checked.overall, 'verified', checked.errors.join('; '));
+  assertLibraryPass(checked, checked.errors.join('; '));
   assert.equal(checked.preimages.ok, true);
 
   const dir = mkdtempSync(join(tmpdir(), 'chit-audit-'));
