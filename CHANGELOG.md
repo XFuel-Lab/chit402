@@ -115,4 +115,4 @@ Merged to main, not yet in production.
 - chit402-verify 0.1.0: offline receipt verifier on npm.
 - chit402-verify 0.1.1: pinned issuer key first, offline.
 
-The same verifier versions are also published as `@xfuel/verify`.
+From 0.3.4 on, each chit402-verify version is also published as `@xfuel/verify`.
