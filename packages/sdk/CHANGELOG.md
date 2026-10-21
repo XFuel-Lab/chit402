@@ -3,6 +3,11 @@
 All notable changes to the Chit402 SDK are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased: mock payer address
+
+### Fixed
+- `createMockPayer()` without `from` now signs as `0x4d6f636b50617965720000000000000000000000`, a 20-byte address, instead of `'0xMockPayer'`. Gateways refuse a `from` that is not an address before the facilitator, so keyless examples against a local gateway were refused with `settle_unconfirmed`. Still local-mock only. Not published yet.
+
 ## Unreleased — default host
 
 ### Changed
