@@ -16,6 +16,9 @@ import {
   installEchoChainReader,
 } from './x402-chain-hook.js';
 import { withRpcTimeout } from './receipt-log-anchor.js';
+import {
+  ARC_CHAINS, arcNetwork, evmRpcUrlFor, evmSettlementSide, isArcSystemLog, lateIssueWindow,
+} from './arc-rail.js';
 
 export {
   setChainReaderForTests,
@@ -27,14 +30,9 @@ export {
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
-/** Public Base RPCs reject eth_getLogs ranges above this. */
-const LOG_CHUNK_BLOCKS = 2000n;
-/** One resolve scans at most this many chunks, then stops. */
-const LOG_CHUNK_CAP = 2n;
-/** Blocks before the later of the issue anchor and the validAfter anchor. */
-const LOG_SEARCH_MARGIN = 64n;
-/** Base block time used only to turn a unix time into a block estimate. */
-const BASE_BLOCK_SECONDS = 2n;
+// Late-issue search window (chunk size, chunk cap, margin, block time) is per
+// chain: see lateIssueWindow in arc-rail.js. Base keeps 2,000 x 2 chunks, a
+// 64-block margin and 2 s blocks.
 /** Head block stamped on a new challenge. A miss leaves issue_block empty. */
 const HEAD_BLOCK_TTL_MS = 2000;
 let headBlockCache = { url: null, block: null, at: 0 };
@@ -268,6 +266,9 @@ export function confirmEvmReceipt(receipt, {
   if (receipt.status !== 1 && receipt.status !== '0x1') return { ok: false, code: 'settle_unconfirmed' };
   const asset = String(challenge?.asset || '').toLowerCase();
   if (!asset) return { ok: false, code: 'settle_unconfirmed' };
+  // Arc mirrors each USDC move from 0xff..fe in 18-decimal units. That emitter
+  // is never the payment asset.
+  if (isArcSystemLog({ address: asset })) return { ok: false, code: 'settle_unconfirmed' };
 
   let wrapped = null;
   if (authorization?.signature) {
@@ -291,6 +292,7 @@ export function confirmEvmReceipt(receipt, {
   const auths = [];
   for (let i = 0; i < (receipt.logs || []).length; i += 1) {
     const log = receipt.logs[i];
+    if (isArcSystemLog(log)) continue;
     const addr = String(log.address || '').toLowerCase();
     if (addr !== asset) continue;
     const topic0 = String(log.topics?.[0] || '').toLowerCase();
@@ -325,6 +327,7 @@ export function confirmEvmReceipt(receipt, {
   // safe/finalized block at or above blockNumber, before treating this as
   // final. Solana already requires finalized. Do not implement that here.
   const matchedLog = (receipt.logs || []).find((log) => {
+    if (isArcSystemLog(log)) return false;
     const addr = String(log.address || '').toLowerCase();
     return addr === asset && String(log.topics?.[0] || '').toLowerCase() === TRANSFER_TOPIC.toLowerCase();
   });
@@ -518,7 +521,7 @@ function hexBlock(n) {
   return `0x${n.toString(16)}`;
 }
 
-function timeAnchor(tipNumber, tipTimestamp, unixSec) {
+function timeAnchor(tipNumber, tipTimestamp, unixSec, blockMs = 2000n) {
   if (unixSec == null || unixSec === '' || tipTimestamp == null) return null;
   let tipTs;
   let unix;
@@ -529,7 +532,7 @@ function timeAnchor(tipNumber, tipTimestamp, unixSec) {
     return null;
   }
   if (unix <= 0n || tipTs <= 0n) return null;
-  const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
+  const delta = tipTs > unix ? ((tipTs - unix) * 1000n) / blockMs : 0n;
   return tipNumber > delta ? tipNumber - delta : 0n;
 }
 
@@ -539,7 +542,7 @@ function timeAnchor(tipNumber, tipTimestamp, unixSec) {
  * challenge issued-at when that block was not stored. validAfter alone
  * never opens a scan from genesis.
  */
-function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}) {
+function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}, win = lateIssueWindow(null)) {
   const anchors = [];
   let issued = null;
   if (issueBlock != null && issueBlock !== '') {
@@ -551,15 +554,15 @@ function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedA
   if (issued == null) {
     const ms = Number(issuedAtMs);
     if (Number.isFinite(ms) && ms > 0) {
-      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000));
+      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000), win.blockMs);
     }
   }
   if (issued != null) anchors.push(issued);
-  const after = timeAnchor(tipNumber, tipTimestamp, validAfter);
+  const after = timeAnchor(tipNumber, tipTimestamp, validAfter, win.blockMs);
   if (after != null) anchors.push(after);
   if (anchors.length === 0) return null;
   let start = anchors.reduce((hi, n) => (n > hi ? n : hi));
-  start = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
+  start = start > win.marginBlocks ? start - win.marginBlocks : 0n;
   if (start > tipNumber) start = tipNumber;
   if (start < 0n) start = 0n;
   return start;
@@ -625,8 +628,10 @@ export async function findAuthorizationTx(rpcUrl, {
   issuedAtMs = null,
   scannedTo = null,
   meter = null,
+  network = null,
 } = {}) {
   if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
+  const win = lateIssueWindow(network);
   let topic1;
   let topic2;
   try {
@@ -642,7 +647,7 @@ export async function findAuthorizationTx(rpcUrl, {
     const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
     if (!tip?.number) return { ok: false, pending: true };
     const tipN = BigInt(tip.number);
-    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
+    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs }, win);
     if (anchor == null) return { ok: false, pending: true };
     let start = anchor;
     if (cursorIn != null) {
@@ -650,12 +655,12 @@ export async function findAuthorizationTx(rpcUrl, {
       if (next > start) start = next;
     }
     if (start > tipN) return { ok: false, pending: true, scannedTo: cursorIn };
-    const capEnd = start + (LOG_CHUNK_BLOCKS * LOG_CHUNK_CAP) - 1n;
+    const capEnd = start + (win.chunkBlocks * win.chunkCap) - 1n;
     const windowEnd = capEnd < tipN ? capEnd : tipN;
     const logs = [];
     let covered = start - 1n;
     for (let cursor = start; cursor <= windowEnd;) {
-      const end = cursor + LOG_CHUNK_BLOCKS - 1n > windowEnd ? windowEnd : cursor + LOG_CHUNK_BLOCKS - 1n;
+      const end = cursor + win.chunkBlocks - 1n > windowEnd ? windowEnd : cursor + win.chunkBlocks - 1n;
       if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
       const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
         address: asset,
@@ -791,7 +796,7 @@ export async function confirmSettlement({
         signature: sig,
       });
     }
-    const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+    const url = evmRpcUrlFor(challenge?.network, cfg);
     if (!url) return { ok: false, code: 'settle_unconfirmed', pending: true };
     const txHash = facilitator.transaction || facilitator.txRef;
     const receipt = await readEvmReceipt(url, txHash, cfg.rpcMeter || null);
@@ -859,6 +864,7 @@ function freshSettlementRow() {
 const settlementRpc = {
   base: freshSettlementRow(),
   solana: freshSettlementRow(),
+  arc: freshSettlementRow(),
 };
 
 let settlementTimer = null;
@@ -875,6 +881,13 @@ export function expectedBaseChainId(network) {
   if (n === 'base' || n === 'eip155:8453') return BASE_MAINNET_CHAIN_ID;
   if (n === 'base-sepolia' || n === 'eip155:84532') return BASE_SEPOLIA_CHAIN_ID;
   return null;
+}
+
+/** eth_chainId an EVM settlement RPC must report. Arc only when its rail is live. */
+export function expectedEvmChainId(network) {
+  const arc = arcNetwork(network);
+  if (arc) return ARC_CHAINS[arc].chainId;
+  return expectedBaseChainId(network);
 }
 
 export function expectedSolanaGenesis(network) {
@@ -902,7 +915,7 @@ function chainIdEquals(chainId, expected) {
 
 function settlementSide(network) {
   if (!network) return null;
-  return isSolanaNetwork(network) ? 'solana' : 'base';
+  return isSolanaNetwork(network) ? 'solana' : evmSettlementSide(network);
 }
 
 export function settlementRpcState(side) {
@@ -919,6 +932,7 @@ export function settlementRpcState(side) {
 export function resetSettlementRpcForTests() {
   settlementRpc.base = freshSettlementRow();
   settlementRpc.solana = freshSettlementRow();
+  settlementRpc.arc = freshSettlementRow();
   if (settlementTimer) {
     clearInterval(settlementTimer);
     settlementTimer = null;
@@ -1046,11 +1060,26 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
       warn: opts.warn,
     }));
   }
+  // Arc row: probed only while the rail is live and ARC_RPC_URL is set.
+  const arcUrl = cfg.arcRpcUrl || null;
+  const arcExpected = arcNetwork('arc-testnet') ? ARC_CHAINS['arc-testnet'].chainId : null;
+  if (arcUrl && arcExpected != null) {
+    jobs.push(await probeSettlementSide({
+      side: 'arc',
+      url: arcUrl,
+      expected: arcExpected,
+      request: opts.request,
+      timeoutMs: opts.timeoutMs,
+      now: opts.now,
+    }));
+  }
   await Promise.all(jobs);
-  return {
+  const out = {
     base: settlementRpcState('base'),
     solana: settlementRpcState('solana'),
   };
+  if (arcExpected != null) out.arc = settlementRpcState('arc');
+  return out;
 }
 
 export function startSettlementRpcRecheck(cfg = {}, { intervalMs } = {}) {

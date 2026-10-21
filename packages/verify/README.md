@@ -191,6 +191,26 @@ The payer check on a public shell reads the payment from Base. So when Base is u
 
 The verifier trusts the endpoint it reads, as in 0.4.9: a confirmation from the first endpoint that answers is not cross-checked against a second endpoint. An opt-in cross-check (ask two endpoints and require agreement) is planned for 0.4.11. A mismatch on either chain (memo, calldata, sender, fee payer, cluster, slot, reverted or failed tx) is still exit 1 and is never outvoted by the other chain. Any other unchecked state (not finalized, too shallow, not found) is not covered by the other chain. No chain confirmed is still exit 2. The epoch record is trusted only for a history key that was active at the verified head's `published_at` and was never revoked. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
 
+## Receipts issued before the public log (Oct 2, 2026)
+
+The public receipt log began on Oct 2, 2026. Its first receipt leaf (epoch 1, leaf index 1, after the genesis leaf) is `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, issued 2026-10-02 17:30 UTC. Receipts issued before that have no log leaf, and their public shell shows `inclusion.leaf_hash: null`. The gateway pins that start time as `PUBLIC_LOG_START` in `services/gateway/src/receipt-shell.js`, because the epoch records carry roots and sizes, not times.
+
+For those receipts the verifier gives exit 1 `NOT_IN_LOG`, on Base and on Solana alike. That is the documented result for a receipt with no log leaf, and this release does not change it.
+
+This applies only to receipt ids of the form `chit-<uuid>` or `xfuel-<uuid>`. For other pre-log rows, such as foreign ingest receipts (`foreign-x402-...`) and register receipts (`register-...`), the verifier stops earlier and gives exit 2 `signed_receipt_unavailable`, so the note below does not apply to them.
+
+What it means: no public log entry covers the receipt, so the log cannot show that the issuer committed to it, and a third party cannot confirm it from the log.
+
+What it does not mean: it is not evidence of tampering or a forged signature. A receipt that predates the log fails the log check whether it is genuine or not, so exit 1 here does not tell those apart.
+
+What can still be checked:
+- Anyone can read the payment tx on its chain (Base or Solana) and see whether a USDC transfer of the stated amount went to the stated payee.
+- The owner can run `npx chit402-verify@latest` on their signed receipt. In `--json`, `checks.signature`, `checks.key_window` and `checks.payment_binding` still report pass or fail. The overall result stays exit 1, because `checks.log_inclusion` is `fail`.
+
+A public shell alone (no signed receipt) cannot check the signature or the payer: those checks are `could_not_check`.
+
+The public shell JSON for such a receipt carries a `log_note` with the same plain text the receipt page shows, worded for its chain. A receipt with a public attestation (signed, pending, or withheld because it no longer matches the shell) gets no `log_note`. The verifier ignores it, and the verdict is the same with or without it.
+
 ## Public receipt attestation (0.4.6)
 
 A public shell may carry `public_attestation: { "jws": "..." }`, or `{ "status": "pending" }` while it is being signed. The JWS typ is `chit402-public-receipt+jwt`. Its payload is not JSON: it is the line `chit402.public_receipt.v1` and a newline, then the RFC 8785 canonical claims. The claims are exactly `task_id`, `iss`, `issued_at` (minute), `attested_at` (minute), `payment` {`rail`, `ref`, `asset`, `payee`, `gross_amount`, `settled_amount`}, and `log` {`epoch`, `leaf_index`, `leaf_hash`}. `payload_version` and `v` are not allowed. The full-receipt hash is not part of it.

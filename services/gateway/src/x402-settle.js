@@ -19,6 +19,7 @@ import {
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
 import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusal, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure } from './receipt-failures.js';
+import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
   verifyIssuanceBindAtSettle,
@@ -84,6 +85,8 @@ function housePayee(cfg, network, payToOverride) {
 
 function networkAllowed(network, cfg) {
   if (!network) return false;
+  // Arc ids are refused unless ARC_RAIL_ENABLED is on and the chain is enabled.
+  if (arcRefused(network)) return false;
   const allowed = [cfg.network, cfg.solana?.enabled ? cfg.solana.network : null].filter(Boolean);
   return allowed.some((n) => sameNetwork(n, network));
 }
@@ -364,6 +367,15 @@ export async function settleBoundPayment({
     if (declaredAsset && pinnedAsset && declaredAsset !== pinnedAsset) {
       return refused(req, 'network_not_accepted', { preSettle: true });
     }
+    // Arc: only the chain's own USDC contract, never 0xff..fe or another token.
+    if (isArcId(challenge.network)) {
+      if (!arcAssetAllowed(challenge.network, pinnedAsset)) {
+        return refused(req, 'network_not_accepted', { preSettle: true });
+      }
+      if (declaredAsset && !arcAssetAllowed(challenge.network, declaredAsset)) {
+        return refused(req, 'network_not_accepted', { preSettle: true });
+      }
+    }
   }
   // NEW-3: the challenge is bound to this route, the price it was quoted at, and
   // this payee. A missing route fails closed. A body-hash match does not keep a
@@ -472,7 +484,7 @@ export async function settleBoundPayment({
   const injectedReader = cfg.chainReader || getChainReaderForTests();
   const rpcForNet = solana
     ? (cfg.solanaRpcUrl || cfg.solana?.rpcUrl)
-    : (cfg.baseRpcUrl || cfg.rpcUrl);
+    : evmRpcUrlFor(challenge.network, cfg);
   if (!injectedReader && !rpcForNet) return fail('gateway_not_configured');
 
   const owner = `${taskId}:${nonce}`;
