@@ -223,15 +223,19 @@ export async function buildSynthetic(dir) {
   // a gate start by one changes one side of a pair, and the corpus fails.
   {
     const base = { ...signedClaimsOf(v10), iat: T_OCT22 };
+    // Signed time inside each version's validity window (version-windows.json in #625),
+    // so the gate decides these cases and not the window. Up to v10 the window
+    // has no lower bound; pv8 closes 2026-10-05T14:50:24Z, pv9 2026-10-08T08:49:28Z.
+    const IN_WINDOW_IAT = { 8: Date.parse('2026-09-29T12:00:00Z') / 1000, 9: Date.parse('2026-10-04T12:00:00Z') / 1000, 10: T_OCT22 };
     // Gate 10: the signed issuer-history pin is required from v10.
     for (const pv of [9, 10]) {
-      const claims = { ...base, payload_version: pv, task_id: `xfuel-corpus-0000-gate10-pv${pv}-no-pin` };
+      const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate10-pv${pv}-no-pin` };
       delete claims.issuer_history;
       add({ id: `gate10-pv${pv}-no-history-pin`, class: 'gate', gate: 10, spec: '§5.2 registry; canonical_preimage gate', target: pv >= 10 ? 'exit 1 (pin required from v10)' : 'unchanged (no pin before v10)', expect: { library: pv >= 10 ? 'issuer_history_pin_missing' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
     }
     // Gate 9: the signed head binding (tree_head_hash + tolerance) is required from v9.
     for (const pv of [8, 9]) {
-      const claims = { ...base, payload_version: pv, task_id: `xfuel-corpus-0000-gate9-pv${pv}-no-head` };
+      const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate9-pv${pv}-no-head` };
       delete claims.tree_head_hash;
       delete claims.tolerance;
       add({ id: `gate9-pv${pv}-no-head-binding`, class: 'gate', gate: 9, spec: '§5.2 registry; head_binding gate', target: pv >= 9 ? 'exit 1 (head binding required from v9)' : 'unchanged (no head binding before v9)', expect: { library: pv >= 9 ? 'requires tree_head_hash and tolerance' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
