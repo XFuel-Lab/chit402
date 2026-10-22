@@ -1,7 +1,7 @@
 /**
  * PROPOSED pre-bond register (chit402.pre_bond_register.v0): shape, the
- * domain-separated hash, ack cross-checks, the bond-start rule, and the
- * four-part head identity. Throwaway keys only, no network.
+ * domain-separated hash, ack cross-checks, the bond-start rule, the single
+ * frontier entry, and the four-part head identity. Throwaway keys only, no network.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 const {
   PRE_BOND_REGISTER_DOMAIN,
+  headAfterBondStart,
   inclusionEvidenceAllowed,
+  isFrontierHead,
+  registerFrontier,
   preBondRegisterHash,
   registerExcludes,
   registerLists,
@@ -80,25 +83,32 @@ function registerFor(signer, ackDoc) {
     issuer_kid: signer.kid,
     heads: [
       { epoch: 2, tree_size: 11, root: prefixRoot, head_jws_sha256: RACED_JWS_SHA, status: 'excluded', ack_sha256: quarantineAckDocumentHash(ackDoc) },
-      { epoch: 2, tree_size: 11, root: goodRoot, head_jws_sha256: GOOD_JWS_SHA, status: 'good', ack_sha256: null },
+      { epoch: 2, tree_size: 11, root: goodRoot, head_jws_sha256: GOOD_JWS_SHA, status: 'frontier', ack_sha256: null },
     ].sort((a, b) => (a.root < b.root ? -1 : 1)),
   };
 }
 
-test('the committed example register has the proposed shape once its placeholders are filled', () => {
+test('the committed example register has the decided shape once its placeholders are filled', () => {
   const example = JSON.parse(fs.readFileSync(examplePath, 'utf8'));
   assert.equal(example.schema, 'chit402.pre_bond_register.v0');
-  assert.equal(example.heads.length, 1);
-  const [entry] = example.heads;
+  assert.equal(example.as_of, 'SET_AT_BOND_DEPLOY', 'as_of is set at bond deploy, not committed now');
+  assert.equal(example.heads.length, 2);
+  const [entry, frontier] = example.heads;
   assert.deepEqual(
     { epoch: entry.epoch, tree_size: entry.tree_size, root: entry.root, status: entry.status },
     { epoch: 2, tree_size: 11, root: 'cf9f998f969c8c7c3b969b0b636a4b7bf6424ebcaf746790b33c38e168c54341', status: 'excluded' },
   );
+  assert.equal(frontier.status, 'frontier');
+  assert.equal(frontier.ack_sha256, null);
+  for (const k of ['epoch', 'tree_size', 'root', 'head_jws_sha256']) assert.equal(frontier[k], 'SET_AT_BOND_DEPLOY', k);
   assert.equal(validatePreBondRegister(example).ok, false);
   const filled = {
     ...example,
     as_of: BOND_START,
-    heads: [{ ...entry, head_jws_sha256: 'a'.repeat(64), ack_sha256: 'b'.repeat(64) }],
+    heads: [
+      { ...entry, head_jws_sha256: 'a'.repeat(64), ack_sha256: 'b'.repeat(64) },
+      { ...frontier, epoch: 2, tree_size: 14, root: 'c'.repeat(64), head_jws_sha256: 'd'.repeat(64) },
+    ],
   };
   assert.deepEqual(validatePreBondRegister(filled), { ok: true, errors: [] });
 });
@@ -192,10 +202,58 @@ test('shape rules: keys, status, ack pointer, order and duplicates', async () =>
   assert.equal(bad((r) => { r.as_of = '2026-11-01T00:00:00.000Z'; }), false);
   assert.equal(bad((r) => { r.heads = []; }), false);
   assert.equal(bad((r) => { r.heads[0].status = 'pending'; }), false);
-  assert.equal(bad((r) => { const g = r.heads.find((e) => e.status === 'good'); g.ack_sha256 = 'a'.repeat(64); }), false);
+  assert.equal(bad((r) => { r.heads.find((e) => e.status === 'frontier').status = 'good'; }), false, 'good is not a status');
+  assert.equal(bad((r) => { const g = r.heads.find((e) => e.status === 'frontier'); g.ack_sha256 = 'a'.repeat(64); }), false);
   assert.equal(bad((r) => { const x = r.heads.find((e) => e.status === 'excluded'); x.ack_sha256 = null; }), false);
   assert.equal(bad((r) => { r.heads.reverse(); }), false);
   assert.equal(bad((r) => { r.heads.push({ ...r.heads[r.heads.length - 1] }); }), false);
   assert.equal(bad((r) => { r.heads[0].root = r.heads[0].root.toUpperCase(); }), false);
   assert.equal(bad((r) => { delete r.heads[0].head_jws_sha256; }), false);
+});
+
+test('exactly one frontier entry is required', async () => {
+  const signer = throwawaySigner();
+  const reg = registerFor(signer, await signedAck(signer));
+  const noFrontier = { ...reg, heads: reg.heads.filter((e) => e.status !== 'frontier') };
+  const res0 = validatePreBondRegister(noFrontier);
+  assert.equal(res0.ok, false);
+  assert.match(res0.errors.join(';'), /exactly one frontier entry \(found 0\)/);
+  const two = JSON.parse(JSON.stringify(reg));
+  two.heads.push({ epoch: 3, tree_size: 2, root: 'c'.repeat(64), head_jws_sha256: 'd'.repeat(64), status: 'frontier', ack_sha256: null });
+  const res2 = validatePreBondRegister(two);
+  assert.equal(res2.ok, false);
+  assert.match(res2.errors.join(';'), /exactly one frontier entry \(found 2\)/);
+  assert.equal(registerFrontier(two), null);
+  const onlyFrontier = { ...reg, heads: reg.heads.filter((e) => e.status === 'frontier') };
+  assert.deepEqual(validatePreBondRegister(onlyFrontier), { ok: true, errors: [] }, 'no exclusions is allowed');
+});
+
+test('the frontier needs no ack, even when acks are checked', async () => {
+  const signer = throwawaySigner();
+  const keys = [{ ...signer.publicJwk, kid: signer.kid }];
+  const reg = registerFor(signer, await signedAck(signer));
+  const onlyFrontier = { ...reg, heads: reg.heads.filter((e) => e.status === 'frontier') };
+  assert.deepEqual(validatePreBondRegister(onlyFrontier, { acks: [], keys }), { ok: true, errors: [] });
+});
+
+test('after bond start is decided against the frontier by (epoch, tree_size)', async () => {
+  const signer = throwawaySigner();
+  const reg = registerFor(signer, await signedAck(signer));
+  const frontier = { epoch: 2, tree_size: 11, root: goodRoot, head_jws_sha256: GOOD_JWS_SHA };
+  assert.deepEqual(registerFrontier(reg), { ...frontier, status: 'frontier', ack_sha256: null });
+  assert.equal(isFrontierHead(reg, frontier), true);
+  assert.equal(isFrontierHead(reg, { root: goodRoot }), false, 'root alone is never the frontier');
+  assert.equal(isFrontierHead(reg, { epoch: 2, tree_size: 11, root: prefixRoot, head_jws_sha256: RACED_JWS_SHA }), false);
+  assert.equal(registerLists(reg, frontier), true);
+  assert.equal(registerExcludes(reg, frontier), false);
+  const other = { root: 'c'.repeat(64), head_jws_sha256: 'd'.repeat(64) };
+  assert.equal(headAfterBondStart(reg, frontier), false, 'the frontier itself is pre-bond');
+  assert.equal(headAfterBondStart(reg, { epoch: 2, tree_size: 11, root: prefixRoot, head_jws_sha256: RACED_JWS_SHA }), false);
+  assert.equal(headAfterBondStart(reg, { epoch: 2, tree_size: 10, ...other }), false);
+  assert.equal(headAfterBondStart(reg, { epoch: 1, tree_size: 99, ...other }), false);
+  assert.equal(headAfterBondStart(reg, { epoch: 2, tree_size: 12, ...other }), true);
+  assert.equal(headAfterBondStart(reg, { epoch: 3, tree_size: 1, ...other }), true);
+  assert.equal(headAfterBondStart(reg, { epoch: 3, tree_size: 1, root: other.root }), false, 'missing identity part');
+  const noFrontier = { ...reg, heads: reg.heads.filter((e) => e.status !== 'frontier') };
+  assert.equal(headAfterBondStart(noFrontier, { epoch: 3, tree_size: 1, ...other }), false, 'no frontier, no answer');
 });

@@ -1,11 +1,14 @@
 /**
  * PROPOSED pre-bond register (chit402.pre_bond_register.v0).
  *
- * Every signed log head as of bond start, each marked `good` or
- * `excluded`. An excluded entry points to a public quarantine ack by the
- * SHA-256 of that ack document. The register hash below is what the bond
- * pins at deploy; that pinned hash, not any later file, decides which heads
- * are excluded.
+ * The excluded pre-bond heads, plus exactly one `frontier` entry: the
+ * newest good anchored head at `as_of` (the bond deploy block time). An
+ * excluded entry points to a public quarantine ack by the SHA-256 of that
+ * ack document. The frontier gives "after bond start" a fixed reference: a
+ * head is post-bond only if it is past the frontier by (epoch, tree_size).
+ * Good pre-bond heads are not listed. The register hash below is a flat
+ * hash (no Merkle root) that the bond pins at deploy; that pinned hash, not
+ * any later file, decides which heads are excluded.
  *
  * Status: proposed. Not used by the gateway. Node built-ins only.
  */
@@ -83,6 +86,8 @@ export function validatePreBondRegister(register, { acks = null, keys = null } =
     errors.push('heads: must be a non-empty array');
     return { ok: false, errors };
   }
+  const frontiers = register.heads.filter((e) => isObject(e) && e.status === 'frontier').length;
+  if (frontiers !== 1) errors.push(`heads: must have exactly one frontier entry (found ${frontiers})`);
   register.heads.forEach((e, i) => {
     const p = `heads[${i}]`;
     if (!sameKeys(e, ENTRY_KEYS)) {
@@ -93,12 +98,12 @@ export function validatePreBondRegister(register, { acks = null, keys = null } =
     if (!posInt(e.tree_size)) errors.push(`${p}.tree_size: must be a positive integer`);
     if (!HEX64.test(String(e.root))) errors.push(`${p}.root: must be 64 lowercase hex`);
     if (!HEX64.test(String(e.head_jws_sha256))) errors.push(`${p}.head_jws_sha256: must be 64 lowercase hex`);
-    if (e.status === 'good') {
-      if (e.ack_sha256 !== null) errors.push(`${p}.ack_sha256: must be null for a good head`);
+    if (e.status === 'frontier') {
+      if (e.ack_sha256 !== null) errors.push(`${p}.ack_sha256: must be null for the frontier head`);
     } else if (e.status === 'excluded') {
       if (!HEX64.test(String(e.ack_sha256))) errors.push(`${p}.ack_sha256: must be 64 lowercase hex for an excluded head`);
     } else {
-      errors.push(`${p}.status: must be good or excluded`);
+      errors.push(`${p}.status: must be excluded or frontier`);
     }
     if (i > 0 && sameKeys(register.heads[i - 1], ENTRY_KEYS) && entryOrder(register.heads[i - 1], e) >= 0) {
       errors.push(`${p}: entries must be strictly sorted by (epoch, tree_size, root, head_jws_sha256) with no duplicates`);
@@ -132,7 +137,7 @@ export function validatePreBondRegister(register, { acks = null, keys = null } =
 /**
  * Is this signed head excluded by the register? Lookup is by all four parts.
  * A head given by root alone, or with any part missing, is never excluded.
- * A head not on the register is not excluded (it counts as post-bond).
+ * A head not on the register is never excluded.
  */
 export function registerExcludes(register, head) {
   const id = headIdentity(head);
@@ -140,11 +145,41 @@ export function registerExcludes(register, head) {
   return register.heads.some((e) => e.status === 'excluded' && sameHeadIdentity(headIdentity(e), id));
 }
 
-/** Is this signed head on the register at all (good or excluded)? Same four-part lookup. */
+/** Is this signed head on the register at all (excluded or frontier)? Same four-part lookup. */
 export function registerLists(register, head) {
   const id = headIdentity(head);
   if (!id || !isObject(register) || !Array.isArray(register.heads)) return false;
   return register.heads.some((e) => sameHeadIdentity(headIdentity(e), id));
+}
+
+/** The single frontier entry, or null if the register does not have exactly one. */
+export function registerFrontier(register) {
+  if (!isObject(register) || !Array.isArray(register.heads)) return null;
+  const found = register.heads.filter((e) => isObject(e) && e.status === 'frontier');
+  return found.length === 1 ? found[0] : null;
+}
+
+/** Is this signed head the frontier head? Four-part lookup. */
+export function isFrontierHead(register, head) {
+  const id = headIdentity(head);
+  const frontier = registerFrontier(register);
+  if (!id || !frontier) return false;
+  return sameHeadIdentity(headIdentity(frontier), id);
+}
+
+/**
+ * Is this signed head after bond start? True only if it is strictly past
+ * the frontier by (epoch, tree_size). A head at or before the frontier
+ * position, a head with any identity part missing, or a register without
+ * exactly one frontier gives false. This says nothing about whether the
+ * head is honest; the normal checks still apply.
+ */
+export function headAfterBondStart(register, head) {
+  const id = headIdentity(head);
+  const frontier = registerFrontier(register);
+  if (!id || !frontier) return false;
+  if (id.epoch !== frontier.epoch) return id.epoch > frontier.epoch;
+  return id.tree_size > frontier.tree_size;
 }
 
 /**
