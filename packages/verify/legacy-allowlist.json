@@ -1,0 +1,6 @@
+{
+ "schema": "chit402.legacy_allowlist.v1",
+ "status": "placeholder",
+ "note": "PLACEHOLDER. Closed list of the real v4/v5 (version not signed) and detached receipts. Empty until the production export is reviewed. Each entry is an exact receipt fingerprint; nothing else can be added later. Not enforced in this release.",
+ "entries": []
+}

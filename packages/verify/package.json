@@ -30,6 +30,7 @@
     "dist",
     "issuer-history.snapshot.json",
     "issuer-history.v1.snapshot.json",
+    "legacy-allowlist.json",
     "README.md",
     "LICENSE"
   ],

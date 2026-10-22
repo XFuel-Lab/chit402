@@ -7,7 +7,10 @@
  * `services/gateway/src/receipt-head-binding.js`.
  */
 
-export const HEAD_BINDING_PAYLOAD_VERSION = 9;
+import { FEATURE_FIRST_VERSION } from './version-registry.js';
+
+/** First version with the signed head pair. From the version registry. */
+export const HEAD_BINDING_PAYLOAD_VERSION: number = FEATURE_FIRST_VERSION.head_binding;
 
 export type HeadBindingVerdict = 'not_present_legacy' | 'missing' | 'ok';
 
