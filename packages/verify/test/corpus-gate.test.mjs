@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -22,12 +22,16 @@ const read = (rel) => JSON.parse(readFileSync(join(pkg, rel.replace(/^packages\/
 const baseline = read(BASELINE);
 const changes = read(CHANGES);
 const registry = read(REGISTRY_PIN);
+const pin = read(DECLARATIONS_PIN);
+// A pin that declares nothing, matching baseCases: {} below.
+const EMPTY_PIN = { format: DECLARATIONS_FORMAT, declarations: [], deferred: [], reason_allowed: [] };
 const REAL = 'id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli';
 const SYN = 'version-l1-v4-not-allowlisted|library';
 const clone = (v) => JSON.parse(JSON.stringify(v));
 // changedFiles: [] is a change that touches no verifier file; baseCases: {}
-// declares no case expectations (the declared-rule tests pass their own).
-const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, changedFiles: [], baseCases: {}, ...over });
+// with an empty pin on both sides declares no case expectations (the
+// declared-rule tests pass the real pin and declarations).
+const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, changedFiles: [], baseCases: {}, basePin: EMPTY_PIN, headPin: EMPTY_PIN, headDecls: new Map(), ...over });
 const entry = (key, to, extra = {}) => ({ case: key.split('|')[0], path: key.split('|')[1], to, pr: 'test', spec: 'test', ...extra });
 const withEntries = (...e) => ({ ...changes, changes: [...changes.changes, ...e] });
 
@@ -348,6 +352,8 @@ test('review M1: an export swapped under GITHUB_JOB=corpus-inputs is rejected wh
 // ---------- the merge base's declared rule for a case ----------
 
 const decls = caseDeclarations(headInputs);
+// The real pin on both sides, with the merge-base and head declarations of `inputs`.
+const pinned = (inputs = headInputs) => ({ baseCases: decls, basePin: pin, headPin: pin, headDecls: exportDeclarations(inputs) });
 const fixEntries = (keys, rows, digest, kind = 'corpus_fix') => keys.map((k) => entry(k, rows[k], { kind, note: 'fixture tidy', input_digest: digest }));
 
 test('declared rule: the M1 swap is rejected without any src change', async () => {
@@ -359,7 +365,7 @@ test('declared rule: the M1 swap is rejected without any src change', async () =
   const problems = run({
     headBaseline: { ...baseline, ...rows },
     headChanges: withEntries(...fixEntries(keys, rows, headDigests[V13])),
-    baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls,
+    baseDigests: inputDigests(headInputs), headDigests, baseOnHead, ...pinned(swapped),
     changedFiles: ['packages/verify/test/corpus/synthetic.mjs'],
   });
   assert.equal(decls[V13].expect.library, 'unsupported_version');
@@ -371,7 +377,7 @@ test('declared rule: the M1 swap is rejected without any src change', async () =
 test('declared rule: the two-PR split (neuter first, loosen later) stops at the first PR; the second has nothing to bless', async () => {
   // PR-1 is the neuter: rejected above whatever lands next. PR-2 alone (a
   // src change with no corpus correction) carries no corpus_fix to check.
-  assert.deepEqual(run({ baseCases: decls, changedFiles: [SRC] }), []);
+  assert.deepEqual(run({ ...pinned(), changedFiles: [SRC] }), []);
   // Concurrent PRs: each is judged against the merge base's declaration,
   // so the neuter is rejected whether or not the src PR is in its base.
   const swapped = swappedInputs();
@@ -379,7 +385,7 @@ test('declared rule: the two-PR split (neuter first, loosen later) stops at the 
   const baseOnHead = await baseOutcomes(pkg, swapped, [key]);
   const headDigests = inputDigests(swapped);
   for (const changedFiles of [['packages/verify/test/corpus/synthetic.mjs'], ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/changes.json']]) {
-    const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls, changedFiles });
+    const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, ...pinned(swapped), changedFiles });
     assert.ok(problems.some((p) => p.includes('not the merge-base declared "unsupported_version"')), problems.join('; '));
   }
 });
@@ -388,9 +394,9 @@ test('declared rule: an input fix that keeps the declared cause is accepted', as
   const tidy = withCase(headInputs, V13, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
   const key = `${V13}|library`;
   const baseOnHead = await baseOutcomes(pkg, tidy, [key]);
-  assert.ok(String(baseOnHead[key].cause ?? baseOnHead[key].reason).includes('unsupported_version'));
+  assert.equal(String(baseOnHead[key].cause ?? baseOnHead[key].reason), 'unsupported_version');
   const headDigests = inputDigests(tidy);
-  const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls });
+  const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, ...pinned(tidy) });
   // `to` carries no cause; the row is the merge-base outcome.
   assert.deepEqual(problems.filter((p) => !p.includes("is not the changes.json entry's")), []);
 });
@@ -405,14 +411,25 @@ test('declared rule: an undeclared path of a rule case needs corpus_fix_reason, 
   const lib = `${U}|library`;
   const baseOnHead = await baseOutcomes(pkg, tidy, [cli, lib]);
   const headDigests = inputDigests(tidy);
-  const common = { baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls };
+  const common = { baseDigests: inputDigests(headInputs), headDigests, baseOnHead, ...pinned(tidy) };
   const pick = (k) => ({ [k]: { exit: baseOnHead[k].exit, result: baseOnHead[k].result, reason: baseOnHead[k].reason, checks: baseOnHead[k].checks, ...(baseOnHead[k].overall !== undefined ? { overall: baseOnHead[k].overall } : {}) } });
   const asFix = run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U])), ...common });
   assert.ok(asFix.some((p) => p.includes('use kind corpus_fix_reason')), asFix.join('; '));
   const asReason = run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U], 'corpus_fix_reason')), ...common });
   assert.deepEqual(asReason, []);
+  // The library path declares log_unreachable, which is not its rule: it is
+  // deferred, and takes no correction of either kind.
+  for (const kind of ['corpus_fix', 'corpus_fix_reason']) {
+    const deferred = run({ headBaseline: { ...baseline, ...pick(lib) }, headChanges: withEntries(...fixEntries([lib], pick(lib), headDigests[U], kind)), ...common });
+    assert.ok(deferred.some((p) => p.includes('is deferred in declarations.frozen.json')), `${kind}: ${deferred.join('; ')}`);
+  }
   // corpus_fix_reason on a declared path is refused.
-  const wrongKind = run({ headBaseline: { ...baseline, ...pick(lib) }, headChanges: withEntries(...fixEntries([lib], pick(lib), headDigests[U], 'corpus_fix_reason')), ...common });
+  const V = 'version-l1-v4-not-allowlisted';
+  const tidyV = withCase(headInputs, V, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
+  const vlib = `${V}|library`;
+  const oV = await baseOutcomes(pkg, tidyV, [vlib]);
+  const rowV = { [vlib]: { exit: oV[vlib].exit, result: oV[vlib].result, reason: oV[vlib].reason, checks: oV[vlib].checks, overall: oV[vlib].overall } };
+  const wrongKind = run({ headBaseline: { ...baseline, ...rowV }, headChanges: withEntries(...fixEntries([vlib], rowV, inputDigests(tidyV)[V], 'corpus_fix_reason')), baseDigests: inputDigests(headInputs), headDigests: inputDigests(tidyV), baseOnHead: oV, ...pinned(tidyV) });
   assert.ok(wrongKind.some((p) => p.includes('corpus_fix_reason is only for a case path with no declared expectation')), wrongKind.join('; '));
   // corpus_fix_reason keeps every other corpus_fix rule: the src rule, the note.
   assert.ok(run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U], 'corpus_fix_reason')), ...common, changedFiles: [SRC] }).some((p) => p.includes(SAME_CHANGE)));
@@ -422,6 +439,176 @@ test('declared rule: an undeclared path of a rule case needs corpus_fix_reason, 
 
 test('declared rule: no merge-base declarations fails closed', () => {
   assert.ok(run({ ...fixScenario(), baseCases: null }).some((p) => p.includes('needs the merge-base case declarations')));
+});
+
+// ---------- pinned declarations (declarations.frozen.json) ----------
+// Protocol Review's ways around the merge-base `expect` (pr629-review.md
+// section 3), each as one PR and as two PRs where PR-1 merges first. PR-2's
+// merge base then has PR-1's synthetic.mjs; the pin cannot have moved,
+// since PR-1 changing it fails the append-only rule (tested below).
+
+const K13 = [`${V13}|library`, `${V13}|cli`];
+const withExpect = (inputs, id, expect) => withCase(inputs, id, (c) => { if (expect === undefined) delete c.expect; else c.expect = expect; return c; });
+const withoutCase = (inputs, id) => ({ ...inputs, cases: inputs.cases.filter((c) => c.id !== id) });
+const rowOf = (o) => ({ exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}) });
+const DRIFT_HEAD = 'synthetic.mjs (head) and declarations.frozen.json (head) differ';
+const DRIFT_BASE = 'corpus corrections are refused while synthetic.mjs and declarations.frozen.json differ at the merge base';
+const has = (problems, text) => problems.some((p) => p.includes(text));
+
+// The neuter of section 3: the v13 case input becomes the control v10
+// document, and the rows are what the merge-base verifier gives on it.
+async function neuter(inputs, kind = 'corpus_fix') {
+  const neutered = withCase(inputs, V13, (c) => { const control = headInputs.cases.find((x) => x.id === 'control-test-key-v10'); return { ...c, doc: control.doc, history: control.history, jwks: control.jwks }; });
+  const baseOnHead = await baseOutcomes(pkg, neutered, K13);
+  const rows = Object.fromEntries(K13.map((k) => [k, rowOf(baseOnHead[k])]));
+  const headDigests = inputDigests(neutered);
+  return {
+    inputs: neutered,
+    over: {
+      headBaseline: { ...baseline, ...rows },
+      headChanges: withEntries(...K13.map((k) => entry(k, rows[k], { kind, note: 'fixture tidy', input_digest: headDigests[V13] }))),
+      baseDigests: inputDigests(headInputs), headDigests, baseOnHead,
+      changedFiles: ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/baseline.json', 'packages/verify/test/corpus/changes.json'],
+    },
+  };
+}
+
+test('pin: synthetic.mjs expect values equal declarations.frozen.json exactly', () => {
+  assert.deepEqual(exportDeclarations(headInputs).size, pin.declarations.length + pin.deferred.length);
+  assert.deepEqual(run({ ...pinned() }), []);
+  assert.equal(isVerifierPath(DECLARATIONS_PIN), true);
+  assert.deepEqual(pin.deferred.map((e) => `${e.case}|${e.path}`), ['version-v10-claims-signed-as-v6-after-window|library', 'timing-l5-backdated-iat|library']);
+  assert.deepEqual(pin.reason_allowed.map((e) => `${e.case}|${e.path}`), ['version-v10-claims-signed-as-v6-after-window|cli', 'version-l1-detached-not-allowlisted|cli', 'timing-detached-created-at-moved|cli', 'timing-l5-backdated-iat|cli']);
+});
+
+test('A, one PR: weaken the v13 expect to "un" and neuter the case: rejected', async () => {
+  const weak = withExpect(headInputs, V13, { library: 'un', cli: 'un' });
+  const { inputs, over } = await neuter(weak);
+  const problems = run({ ...over, ...pinned(inputs) });
+  assert.ok(has(problems, `${DRIFT_HEAD}: ${V13}|library is "un"`), problems.join('; '));
+  for (const k of K13) assert.ok(problems.some((p) => p.startsWith(`${k}: corpus_fix: the merge-base verifier on the head input is decided by`) && p.includes('"unsupported_version"')), `${k}: ${problems.join('; ')}`);
+  // Weakening the pin in the same PR as well: append-only, and the pin is a
+  // verifier path, so it cannot ride with a correction.
+  const weakPin = clone(pin);
+  for (const e of weakPin.declarations) if (e.case === V13) e.expect = 'un';
+  const both = run({ ...over, ...pinned(inputs), headPin: weakPin, changedFiles: [...over.changedFiles, DECLARATIONS_PIN] });
+  assert.ok(has(both, 'declarations.frozen.json is append-only: declarations entry'), both.join('; '));
+  assert.ok(has(both, SAME_CHANGE), both.join('; '));
+  assert.ok(has(both, 'not the merge-base declared "unsupported_version"'), both.join('; '));
+});
+
+test('A, two PRs: PR-1 (expect "un", no correction) is rejected; if merged, PR-2 (plain corpus_fix neuter) is rejected', async () => {
+  const pr1 = withExpect(headInputs, V13, { library: 'un', cli: 'un' });
+  const first = run({ ...pinned(pr1) });
+  assert.ok(has(first, `${DRIFT_HEAD}: ${V13}|cli is "un"`), first.join('; '));
+  const pr1Pin = clone(pin);
+  for (const e of pr1Pin.declarations) if (e.case === V13) e.expect = 'un';
+  assert.ok(has(run({ ...pinned(pr1), headPin: pr1Pin }), 'append-only'));
+  // PR-1 merged anyway: PR-2's merge base has the weakened synthetic.mjs and the unchanged pin.
+  const { inputs, over } = await neuter(pr1);
+  const second = run({ ...over, ...pinned(inputs), baseCases: caseDeclarations(pr1) });
+  assert.ok(has(second, DRIFT_BASE), second.join('; '));
+  for (const k of K13) assert.ok(second.some((p) => p.startsWith(`${k}: corpus_fix: the merge-base verifier on the head input is decided by`) && p.includes('"unsupported_version"')), `${k}: ${second.join('; ')}`);
+});
+
+test('B, one PR: delete the v13 declarations and neuter as corpus_fix_reason: rejected', async () => {
+  const bare = withExpect(headInputs, V13, undefined);
+  const { inputs, over } = await neuter(bare, 'corpus_fix_reason');
+  const problems = run({ ...over, ...pinned(inputs) });
+  assert.ok(has(problems, `${DRIFT_HEAD}: ${V13}|library is pinned "unsupported_version" but not declared in synthetic.mjs`), problems.join('; '));
+  for (const k of K13) {
+    assert.ok(has(problems, `${k}: corpus_fix_reason is only for a case path with no declared expectation`), `${k}: ${problems.join('; ')}`);
+    assert.ok(has(problems, `${k}: corpus_fix: the merge-base verifier on the head input is decided by`), `${k}: ${problems.join('; ')}`);
+  }
+});
+
+test('B, two PRs: PR-1 (declarations deleted) is rejected; if merged, PR-2 (corpus_fix_reason neuter) is rejected', async () => {
+  const pr1 = withExpect(headInputs, V13, undefined);
+  assert.ok(has(run({ ...pinned(pr1) }), DRIFT_HEAD));
+  const { inputs, over } = await neuter(pr1, 'corpus_fix_reason');
+  const second = run({ ...over, ...pinned(inputs), baseCases: caseDeclarations(pr1) });
+  assert.ok(has(second, DRIFT_BASE), second.join('; '));
+  for (const k of K13) assert.ok(has(second, `${k}: corpus_fix_reason is only for a case path with no declared expectation`), `${k}: ${second.join('; ')}`);
+  // The plain kind is rejected too: the pin, not synthetic.mjs, decides.
+  const plain = await neuter(pr1);
+  const asFix = run({ ...plain.over, ...pinned(plain.inputs), baseCases: caseDeclarations(pr1) });
+  assert.ok(has(asFix, 'not the merge-base declared "unsupported_version"'), asFix.join('; '));
+});
+
+const removeV13 = () => {
+  const head = clone(baseline);
+  for (const k of K13) delete head[k];
+  return { headBaseline: head, headChanges: withEntries(...K13.map((k) => entry(k, null, { kind: 'corpus_fix', note: 'case retired' }))), changedFiles: ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/baseline.json', 'packages/verify/test/corpus/changes.json'] };
+};
+
+test('C, one PR: drop the declared v13 case with to: null: rejected', () => {
+  const gone = withoutCase(headInputs, V13);
+  const problems = run({ ...removeV13(), ...pinned(gone) });
+  for (const k of K13) assert.ok(has(problems, `${k}: a case path pinned in declarations.frozen.json may not be removed`), `${k}: ${problems.join('; ')}`);
+  assert.ok(has(problems, DRIFT_HEAD), problems.join('; '));
+  // Unpinning in the same PR: append-only.
+  const smaller = { ...clone(pin), declarations: pin.declarations.filter((e) => e.case !== V13) };
+  const both = run({ ...removeV13(), ...pinned(gone), headPin: smaller });
+  assert.ok(has(both, 'append-only'), both.join('; '));
+  for (const k of K13) assert.ok(has(both, `${k}: a case path pinned in declarations.frozen.json may not be removed`), both.join('; '));
+});
+
+test('C, two PRs: PR-1 (declarations deleted) is rejected; if merged, PR-2 (case dropped with to: null) is rejected', () => {
+  const pr1 = withExpect(headInputs, V13, undefined);
+  assert.ok(has(run({ ...pinned(pr1) }), DRIFT_HEAD));
+  const second = run({ ...removeV13(), ...pinned(withoutCase(pr1, V13)), baseCases: caseDeclarations(pr1) });
+  assert.ok(has(second, DRIFT_BASE), second.join('; '));
+  for (const k of K13) assert.ok(has(second, `${k}: a case path pinned in declarations.frozen.json may not be removed`), `${k}: ${second.join('; ')}`);
+});
+
+test('pin: a legitimate append passes; an edit, a removal or a reason_allowed entry for a declared path does not', () => {
+  // A new case path, declared in synthetic.mjs and appended to the pin together.
+  const newCase = { ...clone(headInputs.cases.find((c) => c.id === V13)), id: 'version-v14-unknown', expect: { library: 'unsupported_version', cli: 'unsupported_version' } };
+  const grownInputs = { ...headInputs, cases: [...headInputs.cases, newCase] };
+  const grown = clone(pin);
+  grown.declarations.push({ case: 'version-v14-unknown', path: 'library', expect: 'unsupported_version' }, { case: 'version-v14-unknown', path: 'cli', expect: 'unsupported_version' });
+  assert.deepEqual(run({ ...pinned(grownInputs), headPin: grown }), []);
+  // The same synthetic.mjs change without the pin append is drift.
+  assert.ok(has(run({ ...pinned(grownInputs) }), `${DRIFT_HEAD}: version-v14-unknown|library is declared in synthetic.mjs ("unsupported_version") but not pinned`));
+  // A deferred path gets its rule declared by an append (the data PR, once enforced).
+  const U = 'version-v10-claims-signed-as-v6-after-window';
+  const enforced = withExpect(headInputs, U, { library: 'version_window_closed' });
+  const declaredU = clone(pin);
+  declaredU.declarations.push({ case: U, path: 'library', expect: 'version_window_closed' });
+  assert.deepEqual(run({ ...pinned(enforced), headPin: declaredU }), []);
+  // Declared twice, edited, removed, deleted.
+  const twice = clone(declaredU);
+  twice.declarations.push({ case: U, path: 'library', expect: 'log_unreachable' });
+  assert.ok(has(run({ ...pinned(enforced), basePin: declaredU, headPin: twice }), 'is already declared'));
+  const edited = clone(pin);
+  edited.declarations[0].expect = 'other';
+  assert.ok(has(run({ ...pinned(), headPin: edited }), 'append-only: declarations entry 0'));
+  const dropped = { ...clone(pin), reason_allowed: pin.reason_allowed.slice(1) };
+  assert.ok(has(run({ ...pinned(), headPin: dropped }), 'append-only: reason_allowed entry 0'));
+  assert.ok(has(run({ ...pinned(), headPin: null }), 'declarations.frozen.json: removed'));
+  // A reason_allowed entry may only name a path that was never declared.
+  const widened = clone(pin);
+  widened.reason_allowed.push({ case: V13, path: 'library' });
+  assert.ok(has(run({ ...pinned(), headPin: widened }), `reason_allowed entry ${V13}|library names a declared path`));
+});
+
+test('pin: corpus_fix_reason only on the frozen reason_allowed list; corrections need the merge-base pin', async () => {
+  // label-v6-outer-stamp-10 is a label case (not a rule class) with no
+  // declaration and not on the list: corpus_fix_reason is refused there.
+  const L = 'label-v6-outer-stamp-10';
+  const tidy = withCase(headInputs, L, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
+  const key = `${L}|cli`;
+  const o = await baseOutcomes(pkg, tidy, [key]);
+  const row = { [key]: rowOf(o[key]) };
+  const over = { headBaseline: { ...baseline, ...row }, baseDigests: inputDigests(headInputs), headDigests: inputDigests(tidy), baseOnHead: o, ...pinned(tidy) };
+  const asReason = run({ ...over, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L], 'corpus_fix_reason')) });
+  assert.ok(has(asReason, 'corpus_fix_reason is only for the paths listed in reason_allowed'), asReason.join('; '));
+  assert.deepEqual(run({ ...over, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) }), []);
+  // No pin at the merge base: corrections fail closed.
+  const noPin = run({ ...over, basePin: null, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) });
+  assert.ok(has(noPin, 'corpus corrections need packages/verify/test/corpus/declarations.frozen.json at the merge base'), noPin.join('; '));
+  // No head declarations: fail closed.
+  assert.ok(has(run({ ...over, headDecls: null, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) }), 'need the head case declarations'));
 });
 
 test('removing a real receipt case fails; changes.json is append-only', () => {
@@ -457,7 +644,7 @@ function repoWith(edit, baseEdit = () => {}) {
     return r.stdout.trim();
   };
   git('init', '-q');
-  for (const rel of [BASELINE, CHANGES, REGISTRY_PIN]) {
+  for (const rel of [BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN]) {
     mkdirSync(dirname(join(root, rel)), { recursive: true });
     writeFileSync(join(root, rel), readFileSync(join(pkg, rel.replace(/^packages\/verify\//, ''))));
   }

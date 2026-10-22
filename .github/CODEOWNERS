@@ -4,6 +4,8 @@
 # Golden corpus for chit402-verify: baseline, changes.json, tape, runners.
 /packages/verify/test/corpus/** @XFuel-Lab
 /packages/verify/test/golden-corpus.test.mjs @XFuel-Lab
+# Pinned synthetic case expectations (append-only against main).
+/packages/verify/test/corpus/declarations.frozen.json @XFuel-Lab
 # Merge-base gate for the corpus and the frozen registry, and its tests.
 /packages/verify/scripts/corpus-gate.mjs @XFuel-Lab
 /packages/verify/test/corpus-gate.test.mjs @XFuel-Lab

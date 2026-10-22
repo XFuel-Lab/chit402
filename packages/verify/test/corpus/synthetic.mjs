@@ -54,6 +54,11 @@ let testHistoryPin = null;
  * passed and the offline tape answered the log read: the rule named in the
  * case's target is not enforced yet, and the PR that adds it moves the case
  * through changes.json.
+ *
+ * Every `expect` value (these and the per-case cli/signature ones below) is
+ * pinned in declarations.frozen.json, compared exactly. The pin is
+ * append-only and the corpus gate refuses corrections while this file and
+ * the pin disagree.
  */
 export const LIBRARY_CAUSE = Object.freeze({
   'label-v4v5-conflicting-stamps': 'unsupported_version',
@@ -239,14 +244,14 @@ export async function buildSynthetic(dir) {
     for (const pv of [9, 10]) {
       const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate10-pv${pv}-no-pin` };
       delete claims.issuer_history;
-      add({ id: `gate10-pv${pv}-no-history-pin`, class: 'gate', gate: 10, spec: '§5.2 registry; canonical_preimage gate', target: pv >= 10 ? 'exit 1 (pin required from v10)' : 'unchanged (no pin before v10)', expect: { library: pv >= 10 ? 'issuer_history_pin_missing' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
+      add({ id: `gate10-pv${pv}-no-history-pin`, class: 'gate', gate: 10, spec: '§5.2 registry; canonical_preimage gate', target: pv >= 10 ? 'exit 1 (pin required from v10)' : 'unchanged (no pin before v10)', expect: { library: pv >= 10 ? 'issuer history: issuer_history_pin_missing' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
     }
     // Gate 9: the signed head binding (tree_head_hash + tolerance) is required from v9.
     for (const pv of [8, 9]) {
       const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate9-pv${pv}-no-head` };
       delete claims.tree_head_hash;
       delete claims.tolerance;
-      add({ id: `gate9-pv${pv}-no-head-binding`, class: 'gate', gate: 9, spec: '§5.2 registry; head_binding gate', target: pv >= 9 ? 'exit 1 (head binding required from v9)' : 'unchanged (no head binding before v9)', expect: { library: pv >= 9 ? 'requires tree_head_hash and tolerance' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
+      add({ id: `gate9-pv${pv}-no-head-binding`, class: 'gate', gate: 9, spec: '§5.2 registry; head_binding gate', target: pv >= 9 ? 'exit 1 (head binding required from v9)' : 'unchanged (no head binding before v9)', expect: { library: pv >= 9 ? `payload v${pv} requires tree_head_hash and tolerance inside signed claims` : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
     }
   }
 

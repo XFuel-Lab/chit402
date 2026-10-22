@@ -84,23 +84,44 @@ It fails when:
   So a corpus_fix covers only an outcome the input change alone explains.
   A corpus_fix whose row does not move (an input change with the same
   outcome) gets the same checks;
-- a `corpus_fix` row is not decided by the expectation the merge base
-  declares for that case and path (`expect` in the merge-base
-  `synthetic.mjs`): the merge-base verifier on the head input must still
-  fail on the declared cause. The declaration is read from the merge-base
-  tree, never from the head, so a PR cannot loosen it and use it in the
-  same change. A case path of a rule class (version, gate, timing) with no
-  declared expectation needs kind `corpus_fix_reason` instead, which keeps
-  every other corpus_fix rule and marks the row for a closer review;
-  `corpus_fix_reason` on a declared path is refused. If the merge-base
-  declarations cannot be read, the gate fails closed;
+- a `corpus_fix` row is not decided by the expectation pinned for that
+  case and path in the merge-base `test/corpus/declarations.frozen.json`:
+  the merge-base verifier on the head input must give exactly the pinned
+  value as its `cause` (or `reason` when it has no cause). There is no
+  substring match. The pin is read from the merge-base tree with `git
+  show`, never from the head, so a PR cannot loosen it and use it in the
+  same change;
+- `synthetic.mjs` and `declarations.frozen.json` differ. Every `expect`
+  value in `synthetic.mjs` must equal the pinned one for that case and path
+  (a `deferred` entry, overridden by a later `declarations` entry), with
+  none missing and none extra. The head pair is checked on every change. A
+  change with a `corpus_fix`, a `corpus_fix_reason` or a removed baseline
+  row is also refused while the merge-base pair differs, so a change that
+  edits `synthetic.mjs` alone cannot be merged first and used after;
+- `declarations.frozen.json` is removed or edited other than by appending.
+  It has three append-only lists: `declarations` (the per-rule cause of a
+  case path), `deferred` (a case path whose own rule is not reached yet;
+  its expectation is pinned but a correction on it is refused until a
+  declaration is appended) and `reason_allowed`. An appended declaration
+  may not declare a path twice, and an appended `reason_allowed` entry may
+  not name a declared or deferred path. The pin is a verifier path, so a
+  pin change cannot carry a correction;
+- a `corpus_fix_reason` entry is for a path not on the merge-base
+  `reason_allowed` list. That list holds the rule-class case paths
+  (version, gate, timing) that were never declared. On those paths a plain
+  `corpus_fix` is refused and `corpus_fix_reason`, which keeps every other
+  corpus_fix rule, marks the row for a closer review. If the merge-base pin
+  or the head declarations cannot be read, the gate fails closed;
+- a baseline row of a pinned case path is removed (`to: null`), or a
+  pinned case path is removed from the baseline at all;
 - a `corpus_fix` or `corpus_fix_reason` entry, or a removed baseline row
-  (`to: null`), is in a change that also touches a verifier path. Under
+  (`to: null`) of an unpinned path, is in a change that also touches a verifier path. Under
   `packages/verify/` every path is a verifier path by default, except
   `test/**`, `*.md` and `LICENSE` (`.md`, `.txt`). Inside `test/`, the
   corpus runners and recorders (`test/corpus/lib.mjs`, `run-*.mjs`,
   `tape-*.mjs`, `record*.mjs`), the tapes (`test/corpus/tapes/`) and
-  `test/history-file.mjs` count as verifier paths too. So do everything
+  `test/history-file.mjs` and `test/corpus/declarations.frozen.json` count
+  as verifier paths too. So do everything
   under `packages/aliases/chit402-verify/` except `*.md`, and any `dist/`
   output. Paths are compared after NFKC normalization and lowercasing, and
   any path with a non-ASCII or control character counts as a verifier
@@ -124,6 +145,12 @@ built):
     node scripts/corpus-gate.mjs export . > /tmp/head-inputs.json
     node scripts/corpus-gate.mjs --base origin/main --root ../.. \
       --base-tree <base>/packages/verify --head-inputs /tmp/head-inputs.json
+
+Deferred: `version-v10-claims-signed-as-v6-after-window|library` and
+`timing-l5-backdated-iat|library` declare `log_unreachable` today, which is
+not their own rule (the offline tape has no chain RPC). They are pinned as
+`deferred`. A change that makes them reach their rule appends a
+declaration for them in the same change as the `synthetic.mjs` update.
 
 Every RPC entry on a tape (public, and the local tier's when set) must be an
 error entry, and every GET entry an https URL on an allowed host

@@ -1,0 +1,153 @@
+{
+  "format": "chit402.corpus-declarations.v1",
+  "note": "Append-only (corpus-gate.mjs). declarations: the exact cause (library, signature) or reason (cli) each case path is decided by; synthetic.mjs `expect` must equal declarations plus deferred exactly. deferred: declared today but not by the case rule; no corpus correction until a declaration for the path is appended. reason_allowed: rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
+  "declarations": [
+    {
+      "case": "label-v4v5-conflicting-stamps",
+      "path": "library",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-v13-unknown",
+      "path": "cli",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-v13-unknown",
+      "path": "library",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-v12-shape-no-version",
+      "path": "cli",
+      "expect": "id_prefix_version_mismatch"
+    },
+    {
+      "case": "version-v12-shape-no-version",
+      "path": "library",
+      "expect": "id_prefix_version_mismatch"
+    },
+    {
+      "case": "version-v12-shape-no-version-plain-id",
+      "path": "cli",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-v12-shape-no-version-plain-id",
+      "path": "library",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-unversioned-object-no-stamp",
+      "path": "cli",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-unversioned-object-no-stamp",
+      "path": "library",
+      "expect": "unsupported_version"
+    },
+    {
+      "case": "version-l1-v4-not-allowlisted",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "version-l1-v4-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "version-l1-v5-not-allowlisted",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "version-l1-v5-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "version-l1-v4-production-kid",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "version-l1-detached-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "timing-detached-created-at-moved",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted"
+    },
+    {
+      "case": "gate10-pv9-no-history-pin",
+      "path": "library",
+      "expect": "log_unreachable"
+    },
+    {
+      "case": "gate10-pv10-no-history-pin",
+      "path": "library",
+      "expect": "issuer history: issuer_history_pin_missing"
+    },
+    {
+      "case": "gate9-pv8-no-head-binding",
+      "path": "library",
+      "expect": "log_unreachable"
+    },
+    {
+      "case": "gate9-pv9-no-head-binding",
+      "path": "library",
+      "expect": "payload v9 requires tree_head_hash and tolerance inside signed claims"
+    },
+    {
+      "case": "gate8-detached-pv7",
+      "path": "signature",
+      "expect": "signature_valid"
+    },
+    {
+      "case": "gate8-detached-pv8",
+      "path": "signature",
+      "expect": "signature_valid"
+    },
+    {
+      "case": "control-test-key-v10",
+      "path": "library",
+      "expect": "log_unreachable"
+    }
+  ],
+  "deferred": [
+    {
+      "case": "version-v10-claims-signed-as-v6-after-window",
+      "path": "library",
+      "expect": "log_unreachable",
+      "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
+    },
+    {
+      "case": "timing-l5-backdated-iat",
+      "path": "library",
+      "expect": "log_unreachable",
+      "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
+    }
+  ],
+  "reason_allowed": [
+    {
+      "case": "version-v10-claims-signed-as-v6-after-window",
+      "path": "cli"
+    },
+    {
+      "case": "version-l1-detached-not-allowlisted",
+      "path": "cli"
+    },
+    {
+      "case": "timing-detached-created-at-moved",
+      "path": "cli"
+    },
+    {
+      "case": "timing-l5-backdated-iat",
+      "path": "cli"
+    }
+  ]
+}
