@@ -28,6 +28,10 @@
  *     MERGE-BASE verifier gives on the HEAD input. A corpus_fix is only for
  *     a case whose input changed, and the change must be explained by the
  *     input alone, never by a verifier change in the same PR.
+ *   - an added corpus_fix entry, or a removed baseline row, is in a change
+ *     that also touches the verifier (packages/verify/src/**, a JSON file at
+ *     the package root such as package.json, BUILD_DIGEST.txt, or any
+ *     dist/ output), from `git diff --name-only <base> HEAD`;
  *   - a real receipt case is removed from the baseline;
  *   - changes.json is not append-only (an existing entry is edited or
  *     dropped);
@@ -264,6 +268,29 @@ function digestProblems(ch, baseDigests, headDigests) {
   return p;
 }
 
+/**
+ * Paths whose change can move a verifier outcome: the source, the package
+ * manifest, lockfile and TypeScript config, the bundled data files at the
+ * package root (issuer history snapshots, legacy allowlist, version
+ * windows), the build digest, and any dist/ output.
+ */
+export function isVerifierPath(path) {
+  return /^packages\/verify\/src\//.test(path)
+    || /^packages\/verify\/[^/]+\.json$/.test(path)
+    || path === 'packages/verify/BUILD_DIGEST.txt'
+    || /(^|\/)dist\//.test(path);
+}
+
+/** Files a change touches against the merge base, from git (data only). */
+export function changedFilesOf(root, base, rev = 'HEAD') {
+  try {
+    const out = execFileSync('git', ['-C', root, 'diff', '--name-only', '--no-renames', '-z', base, rev], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 });
+    return out.split('\0').filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
 /** A corpus_fix `to` must be what the merge-base verifier gives on the head input. */
 function baseOnHeadProblems(key, ch, baseOnHead) {
   if (!baseOnHead) return ['corpus_fix needs the merge-base verifier outcomes on the head input (--base-tree, --head-inputs)'];
@@ -279,7 +306,7 @@ function baseOnHeadProblems(key, ch, baseOnHead) {
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null }) {
   const problems = [];
   const bEntries = baseChanges?.changes ?? [];
   const hEntries = headChanges?.changes ?? [];
@@ -302,6 +329,40 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
 
   const base = baseBaseline ?? {};
   const head = headBaseline ?? {};
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+  // A corpus correction (corpus_fix entry, or a baseline row removed) may
+  // not share a change with a verifier change: the verifier would be
+  // judged against inputs and rows edited in the same breath.
+  const corrections = [
+    ...[...addedFor].filter(([, ch]) => ch.kind === 'corpus_fix').map(([key]) => key),
+    ...Object.keys(base).filter((key) => !has(head, key) && !(addedFor.get(key)?.kind === 'corpus_fix')),
+  ];
+  if (corrections.length) {
+    if (!Array.isArray(changedFiles)) {
+      problems.push('corpus corrections need the list of files this change touches (git diff against the merge base)');
+    } else {
+      const touched = changedFiles.filter(isVerifierPath);
+      if (touched.length) {
+        const shown = touched.slice(0, 3).join(', ') + (touched.length > 3 ? `, and ${touched.length - 3} more` : '');
+        for (const key of corrections) {
+          problems.push(`${key}: corpus_fix or baseline removal in the same change as a verifier change (${shown}); land them in separate changes`);
+        }
+      }
+    }
+  }
+
+  const checked = new Set();
+  const checkCorpusFix = (key, ch, now) => {
+    checked.add(key);
+    if (isReal(key)) problems.push(`${key}: corpus_fix is only for synthetic cases`);
+    if (!ch.note) problems.push(`${key}: corpus_fix needs a note`);
+    if (now && (now.exit === 0 || resultRank(now.result) === 2)) problems.push(`${key}: corpus_fix may not move a case to exit 0`);
+    if (ch.to === null) return;
+    for (const p of digestProblems(ch, baseDigests, headDigests)) problems.push(`${key}: ${p}`);
+    for (const p of baseOnHeadProblems(key, ch, baseOnHead)) problems.push(`${key}: ${p}`);
+  };
+
   for (const key of Object.keys(base)) {
     const was = base[key];
     const now = Object.prototype.hasOwnProperty.call(head, key) ? head[key] : undefined;
@@ -310,6 +371,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     if (now === undefined) {
       if (isReal(key)) problems.push(`${key}: a real receipt case was removed from the baseline`);
       else if (!ch || ch.kind !== 'corpus_fix' || ch.to !== null || !ch.note) problems.push(`${key}: removed without a corpus_fix entry (to: null, with a note)`);
+      if (ch?.kind === 'corpus_fix') checked.add(key);
       continue;
     }
     if (!ch) { problems.push(`${key}: baseline changed with no changes.json entry added in this change`); continue; }
@@ -318,12 +380,18 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     if (ch.kind === 'tighten') {
       for (const p of looser(was, now)) problems.push(`${key}: more permissive than the merge base: ${p}`);
     } else if (ch.kind === 'corpus_fix') {
-      if (isReal(key)) problems.push(`${key}: corpus_fix is only for synthetic cases`);
-      if (!ch.note) problems.push(`${key}: corpus_fix needs a note`);
-      if (now.exit === 0 || resultRank(now.result) === 2) problems.push(`${key}: corpus_fix may not move a case to exit 0`);
-      for (const p of digestProblems(ch, baseDigests, headDigests)) problems.push(`${key}: ${p}`);
-      for (const p of baseOnHeadProblems(key, ch, baseOnHead)) problems.push(`${key}: ${p}`);
+      checkCorpusFix(key, ch, now);
     }
+  }
+  // A corpus_fix whose row did not move (an input change with the same
+  // outcome) or that names a new row gets the same checks, and its `to`
+  // must be the head row.
+  for (const [key, ch] of addedFor) {
+    if (ch.kind !== 'corpus_fix' || checked.has(key)) continue;
+    const now = has(head, key) ? head[key] : undefined;
+    if (now === undefined) continue;
+    if (!same(ch.to, now)) problems.push(`${key}: baseline value is not the changes.json entry's \`to\``);
+    checkCorpusFix(key, ch, now);
   }
   for (const key of addedFor.keys()) {
     if (!Object.prototype.hasOwnProperty.call(base, key) && !Object.prototype.hasOwnProperty.call(head, key)) {
@@ -438,7 +506,7 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headRegistry: readHead(root, REGISTRY_PIN),
   };
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
-  const extra = { baseDigests: null, headDigests: null, baseOnHead: null };
+  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
   if (fixKeys.length && baseTree && headInputs) {
     const bad = inputsProblems(headInputs);

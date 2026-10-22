@@ -9,12 +9,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -25,7 +25,8 @@ const registry = read(REGISTRY_PIN);
 const REAL = 'id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli';
 const SYN = 'version-l1-v4-not-allowlisted|library';
 const clone = (v) => JSON.parse(JSON.stringify(v));
-const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, ...over });
+// changedFiles: [] is a change that touches no verifier file.
+const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, changedFiles: [], ...over });
 const entry = (key, to, extra = {}) => ({ case: key.split('|')[0], path: key.split('|')[1], to, pr: 'test', spec: 'test', ...extra });
 const withEntries = (...e) => ({ ...changes, changes: [...changes.changes, ...e] });
 
@@ -221,6 +222,97 @@ test('the merge-base runner leaves out a path it does not have', async () => {
   assert.deepEqual(o, {});
 });
 
+// ---------- corpus corrections and verifier changes stay apart ----------
+
+const SRC = 'packages/verify/src/receipt-version.ts';
+const TEST_ONLY = ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/baseline.json', 'packages/verify/test/corpus/changes.json'];
+
+test('verifier paths: src, root JSON files, BUILD_DIGEST.txt and dist/ output', () => {
+  for (const p of [SRC, 'packages/verify/src/a/b.ts', 'packages/verify/package.json', 'packages/verify/package-lock.json', 'packages/verify/tsconfig.json',
+    'packages/verify/legacy-allowlist.json', 'packages/verify/version-windows.json', 'packages/verify/BUILD_DIGEST.txt', 'packages/verify/dist/index.js', 'dist/x.js', 'packages/other/dist/y.js']) {
+    assert.equal(isVerifierPath(p), true, p);
+  }
+  for (const p of [...TEST_ONLY, 'packages/verify/test/fixtures/version-registry.frozen.json', 'packages/verify/README.md', 'packages/verify/CHANGELOG.md', '.github/workflows/test.yml', 'packages/verify/scripts/corpus-gate.mjs', 'packages/verify/srcx/a.ts', 'packages/verify/distro/a']) {
+    assert.equal(isVerifierPath(p), false, p);
+  }
+});
+
+const fixScenario = () => {
+  const was = { ...baseline[SYN], exit: 1, result: 'invalid', reason: 'unsupported_version', overall: 'failed' };
+  const to = { ...baseline[SYN], exit: 2, result: 'could_not_check', reason: 'log_unreachable', overall: 'partial' };
+  return {
+    baseBaseline: { ...baseline, [SYN]: was },
+    headBaseline: { ...baseline, [SYN]: to },
+    headChanges: withEntries(entry(SYN, to, { kind: 'corpus_fix', note: 'x', input_digest: D_HEAD })),
+    ...digests(synId, D_BASE, D_HEAD),
+    baseOnHead: { [SYN]: clone(to) },
+  };
+};
+const SAME_CHANGE = 'in the same change as a verifier change';
+
+test('corpus_fix alone is accepted; with a src change it is rejected', () => {
+  assert.deepEqual(run({ ...fixScenario(), changedFiles: TEST_ONLY }), []);
+  const problems = run({ ...fixScenario(), changedFiles: [...TEST_ONLY, SRC] });
+  assert.ok(problems.some((p) => p.startsWith(`${SYN}: corpus_fix or baseline removal ${SAME_CHANGE} (${SRC})`)), problems.join('; '));
+  // Without the file list the gate fails closed.
+  assert.ok(run({ ...fixScenario(), changedFiles: null }).some((p) => p.includes('need the list of files this change touches')));
+});
+
+test('a baseline removal with a package.json change is rejected', () => {
+  const head = clone(baseline);
+  delete head[SYN];
+  const removal = withEntries(entry(SYN, null, { kind: 'corpus_fix', note: 'case retired' }));
+  assert.deepEqual(run({ headBaseline: head, headChanges: removal, changedFiles: TEST_ONLY }), []);
+  const problems = run({ headBaseline: head, headChanges: removal, changedFiles: [...TEST_ONLY, 'packages/verify/package.json'] });
+  assert.ok(problems.some((p) => p.includes(`${SYN}: corpus_fix or baseline removal ${SAME_CHANGE} (packages/verify/package.json)`)), problems.join('; '));
+  // A removal without an entry is rejected on both counts.
+  const bare = run({ headBaseline: head, changedFiles: ['packages/verify/dist/index.js'] });
+  assert.ok(bare.some((p) => p.includes('removed without a corpus_fix entry')) && bare.some((p) => p.includes(SAME_CHANGE)), bare.join('; '));
+});
+
+test('a corpus_fix on a row that does not move gets the same checks', () => {
+  const now = baseline[SYN];
+  const fix = (to, extra = {}) => withEntries(entry(SYN, to, { kind: 'corpus_fix', note: 'input moved inside its window', input_digest: D_HEAD, ...extra }));
+  assert.deepEqual(run({ headChanges: fix(now), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: clone(now) } }), []);
+  assert.ok(run({ headChanges: fix(now), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: { ...now, reason: 'other' } } }).some((p) => p.includes('is not what the merge-base verifier gives')));
+  assert.ok(run({ headChanges: fix({ ...now, reason: 'other' }), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: clone(now) } }).some((p) => p.includes("is not the changes.json entry's `to`")));
+  assert.ok(run({ headChanges: fix(now, { input_digest: D_BASE }), ...digests(synId, D_BASE, D_BASE), baseOnHead: { [SYN]: clone(now) } }).some((p) => p.includes('unchanged from the merge base')));
+  assert.ok(run({ headChanges: fix(now), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: clone(now) }, changedFiles: [SRC] }).some((p) => p.includes(SAME_CHANGE)));
+});
+
+// Review M1: synthetic.mjs swaps the exported v13 input for the control
+// case's input only when GITHUB_JOB is corpus-inputs, so the merge-base
+// verifier on the export agrees with the looser rows while the head tests
+// see the real v13 input. With src touched in the same change the gate
+// rejects it whatever the export says.
+const M1_SYNTHETIC = `// test input only, never run by the gate
+if (process.env.GITHUB_JOB === 'corpus-inputs') { /* export the control case input as version-v13-unknown */ }
+`;
+const swappedInputs = () => {
+  const control = headInputs.cases.find((c) => c.id === 'control-test-key-v10');
+  return withCase(headInputs, V13, (c) => ({ ...c, doc: control.doc, history: control.history, jwks: control.jwks }));
+};
+
+test('review M1: an export swapped under GITHUB_JOB=corpus-inputs is rejected when src is touched', async () => {
+  const swapped = swappedInputs();
+  const keys = [`${V13}|library`, `${V13}|cli`];
+  const baseOnHead = await baseOutcomes(pkg, swapped, keys);
+  const rows = Object.fromEntries(keys.map((k) => [k, baseOnHead[k]]));
+  const headDigests = inputDigests(swapped);
+  const over = {
+    headBaseline: { ...baseline, ...rows },
+    headChanges: withEntries(...keys.map((k) => entry(k, rows[k], { kind: 'corpus_fix', note: 'fixture tidy', input_digest: headDigests[V13] }))),
+    baseDigests: inputDigests(headInputs),
+    headDigests,
+    baseOnHead,
+  };
+  // The export alone fools the (A) and digest rules ...
+  assert.deepEqual(run({ ...over, changedFiles: ['packages/verify/test/corpus/synthetic.mjs'] }), []);
+  // ... but not with the src change it needs to matter.
+  const problems = run({ ...over, changedFiles: ['packages/verify/test/corpus/synthetic.mjs', SRC] });
+  for (const k of keys) assert.ok(problems.some((p) => p.startsWith(`${k}: corpus_fix or baseline removal ${SAME_CHANGE}`)), `${k}: ${problems.join('; ')}`);
+});
+
 test('removing a real receipt case fails; changes.json is append-only', () => {
   const head = clone(baseline);
   delete head[REAL];
@@ -346,6 +438,38 @@ test('end to end: the review case fails the gate script', { skip: !gitOk }, () =
   assert.equal(res.status, 1, res.stdout);
   assert.match(res.stderr, /version-v13-unknown\|library: corpus_fix: `to` is not what the merge-base verifier gives on the head input/);
   assert.match(res.stderr, /version-v13-unknown\|cli: corpus_fix: `to` is not what the merge-base verifier gives on the head input/);
+});
+
+test('end to end: review M1 with a src change fails the gate script, which runs no head code', { skip: !gitOk }, async () => {
+  const swapped = swappedInputs();
+  const keys = [`${V13}|library`, `${V13}|cli`];
+  const baseOnHead = await baseOutcomes(pkg, swapped, keys);
+  const digest = inputDigests(swapped)[V13];
+  const marker = join(mkdtempSync(join(tmpdir(), 'corpus-m1-')), 'ran');
+  const srcFile = 'packages/verify/src/receipt-version.ts';
+  const synthFile = 'packages/verify/test/corpus/synthetic.mjs';
+  const r = repoWith((root) => {
+    writeFileSync(join(root, srcFile), 'export const LEGACY = [4, 5, 13];\n');
+    // If anything imported this head file, the marker would appear.
+    writeFileSync(join(root, synthFile), `${M1_SYNTHETIC}import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'x');\n`);
+    const p = join(root, BASELINE);
+    const b = JSON.parse(readFileSync(p, 'utf8'));
+    for (const k of keys) b[k] = baseOnHead[k];
+    writeFileSync(p, JSON.stringify(b, null, 1));
+    const cp = join(root, CHANGES);
+    const c = JSON.parse(readFileSync(cp, 'utf8'));
+    c.changes.push(...keys.map((k) => entry(k, baseOnHead[k], { kind: 'corpus_fix', note: 'fixture tidy', input_digest: digest })));
+    writeFileSync(cp, JSON.stringify(c, null, 1));
+  }, (root) => {
+    mkdirSync(dirname(join(root, srcFile)), { recursive: true });
+    writeFileSync(join(root, srcFile), 'export const LEGACY = [4, 5];\n');
+    mkdirSync(dirname(join(root, synthFile)), { recursive: true });
+    writeFileSync(join(root, synthFile), '// base\n');
+  });
+  const res = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'swapped.json', swapped)]);
+  assert.equal(res.status, 1, res.stdout);
+  for (const k of keys) assert.ok(res.stderr.includes(`${k}: corpus_fix or baseline removal ${SAME_CHANGE} (${srcFile})`), res.stderr);
+  assert.equal(existsSync(marker), false, 'the gate ran a head file');
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {

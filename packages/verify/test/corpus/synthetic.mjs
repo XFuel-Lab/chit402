@@ -231,7 +231,7 @@ export async function buildSynthetic(dir) {
   // a gate start by one changes one side of a pair, and the corpus fails.
   {
     const base = { ...signedClaimsOf(v10), iat: T_OCT22 };
-    // Signed time inside each version's validity window (version-windows.json),
+    // Signed time inside each version's validity window (version-windows.json in #625),
     // so the gate decides these cases and not the window. Up to v10 the window
     // has no lower bound; pv8 closes 2026-10-05T14:50:24Z, pv9 2026-10-08T08:49:28Z.
     const IN_WINDOW_IAT = { 8: Date.parse('2026-09-29T12:00:00Z') / 1000, 9: Date.parse('2026-10-04T12:00:00Z') / 1000, 10: T_OCT22 };

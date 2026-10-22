@@ -81,7 +81,17 @@ It fails when:
   `input_digest` (the head digest, which must differ from the merge-base
   digest), or its `to` is not exactly the outcome (exit, result, reason,
   checks, overall) that the merge-base verifier gives on the head input.
-  So a corpus_fix covers only an outcome the input change alone explains;
+  So a corpus_fix covers only an outcome the input change alone explains.
+  A corpus_fix whose row does not move (an input change with the same
+  outcome) gets the same checks;
+- a `corpus_fix` entry or a removed baseline row (`to: null`) is in a
+  change that also touches the verifier: `packages/verify/src/**`, a JSON
+  file at the package root (package.json, package-lock.json, tsconfig.json,
+  the bundled snapshots, allowlist and windows), `BUILD_DIGEST.txt`, or any
+  `dist/` output. The gate reads this from `git diff --name-only` against
+  the merge base, as data. Land corpus corrections and verifier changes in
+  separate PRs: the verifier change is then checked against corrected
+  inputs that are already on main;
 - a real receipt case is removed;
 - `changes.json` or `test/fixtures/version-registry.frozen.json` is edited
   other than by appending (an appended registry entry needs a `registry`
