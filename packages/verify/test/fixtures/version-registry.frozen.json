@@ -1,0 +1,80 @@
+{
+ "note": "Frozen rule sets. Append only: an entry here never changes. A rule change is a new version with a new rule_set id.",
+ "entries": [
+  {
+   "id": "pv1",
+   "rule_set": "rs-pv1-1",
+   "rule_set_digest": "c564485e0051157209367b819da1be226a4670d64ad10311e93a8263ca96c6a9"
+  },
+  {
+   "id": "pv2",
+   "rule_set": "rs-pv2-1",
+   "rule_set_digest": "ca7420d3aef80918e4c681572a298b30a74ed8a585398d22da484bfe2e6b0e37"
+  },
+  {
+   "id": "pv3",
+   "rule_set": "rs-pv3-1",
+   "rule_set_digest": "e9a4a500a3946f191a3731e79fb17c8a33a99caabf27198f4cc8becb06bab0c7"
+  },
+  {
+   "id": "pv4",
+   "rule_set": "rs-pv4-1",
+   "rule_set_digest": "3c24b6a9df51abf516df39f87f81a8c569bba3c426162b441e014dffc3eed507"
+  },
+  {
+   "id": "pv5",
+   "rule_set": "rs-pv5-1",
+   "rule_set_digest": "2c65cba0db6567d3bec5941c889647fc5241a6faa5e3ebf7a3eacfd4d3bca7fe"
+  },
+  {
+   "id": "pv6",
+   "rule_set": "rs-pv6-1",
+   "rule_set_digest": "55734074e17618e4acb4d69cecc173d5239669520e8bba3eef122195a6cd48fd"
+  },
+  {
+   "id": "pv7",
+   "rule_set": "rs-pv7-1",
+   "rule_set_digest": "5da413adbe9308561e6a46a6c2679f614a91648a1e1aa020336ec1b83d120df2"
+  },
+  {
+   "id": "pv8",
+   "rule_set": "rs-pv8-1",
+   "rule_set_digest": "4864b11781edfeb71e39e30cd6c086702c603726ff35280b7a46bc7d60c781b6"
+  },
+  {
+   "id": "pv9",
+   "rule_set": "rs-pv9-1",
+   "rule_set_digest": "b6d239093cfa1380a669d469028b45126c8199742629d6cde00dcc10303c1c8e"
+  },
+  {
+   "id": "pv10",
+   "rule_set": "rs-pv10-1",
+   "rule_set_digest": "10297c4cc5f9d8f45b0c14445566d981472e76e9dbfd0f350727aac34115d373"
+  },
+  {
+   "id": "pv11-issuer-root",
+   "rule_set": "rs-pv11-issuer-root-1",
+   "rule_set_digest": "de53cacd28ef7c06b4f22686fda85a7ef7f801aafdc8327fa3b1db9cdb7ecfb9"
+  },
+  {
+   "id": "v11",
+   "rule_set": "rs-v11-1",
+   "rule_set_digest": "7d371f8c541d8a625efdc0f09f6ec6d6ec502aa8cd767e9e65b9bd58fed60c1b"
+  },
+  {
+   "id": "legacy-v4",
+   "rule_set": "rs-legacy-v4-1",
+   "rule_set_digest": "bab359d909f305aa287b143ac5d9b076bf3ec108d6f2d1c6bef2a0a7fed1457d"
+  },
+  {
+   "id": "legacy-v5",
+   "rule_set": "rs-legacy-v5-1",
+   "rule_set_digest": "e8d0850197dae60af801cb0aff1e494e731a84b75cb5774009cc1d5ba7b20ec4"
+  },
+  {
+   "id": "detached",
+   "rule_set": "rs-detached-1",
+   "rule_set_digest": "0a90030cf3af5cbebf12a0ede6ca5c58588970ea64f16d90e55ff8718af61743"
+  }
+ ]
+}
