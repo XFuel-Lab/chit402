@@ -1,4 +1,105 @@
 {
  "note": "Recorded changes to the golden corpus baseline. Each entry names the case and path, the new pinned outcome, the PR, and the spec section. An entry may only make a result stricter, unless the spec explicitly says otherwise. Real receipts never change through this file without a spec section that names the change.",
- "changes": []
+ "changes": [
+  {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  }
+ ]
 }
