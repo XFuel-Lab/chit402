@@ -5,6 +5,8 @@ name: Publish verifier
 # cannot exchange that token and fail the registry PUT with E404.
 # setup-node registry-url writes an _authToken line. npm sends that token and
 # skips the OIDC exchange. This job leaves registry auth unset.
+# The job runs in the npm-publish environment. Its required reviewer must
+# approve each run before any step starts, and its branch rule allows main only.
 on:
   workflow_dispatch:
 
@@ -16,7 +18,17 @@ jobs:
   publish:
     name: Publish chit402-verify and the @xfuel/verify alias
     runs-on: ubuntu-latest
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/chit402-verify
     steps:
+      - name: Publish from main only
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "publish runs from refs/heads/main only, got ${GITHUB_REF}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
