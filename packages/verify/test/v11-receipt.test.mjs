@@ -51,7 +51,7 @@ function baseClaims(salt) {
     receipt_id: 'xfuel-v11-test',
     iss: 'chit402',
     kid: 'test-kid',
-    issued_at: '2026-09-26T17:27Z',
+    issued_at: '2026-10-09T17:27Z',
     asset: 'USDC',
     chain: 'base',
     pay_to: '0x2222222222222222222222222222222222222222',

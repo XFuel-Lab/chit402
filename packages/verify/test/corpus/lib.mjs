@@ -34,6 +34,8 @@ function childEnv(tape) {
     CHIT_CORPUS_MODE: process.env.CHIT_CORPUS_MODE === 'record' ? 'record' : 'replay',
     CHIT_CORPUS_APPEND: '1',
     CHIT_CORPUS_TAPE: tape,
+    // Chain reads are recorded only by record-chain.mjs (read methods, public RPC hosts).
+    ...(process.env.CHIT_CORPUS_MODE === 'record' && process.env.CHIT_CORPUS_RPC === '1' ? { CHIT_CORPUS_RPC: '1' } : {}),
     // The tape preload replaces fetch for every host, so a chain read is
     // answered from the tape; the hermetic guard would refuse it earlier.
     CHIT402_ALLOW_PUBLIC_RPC: '1',

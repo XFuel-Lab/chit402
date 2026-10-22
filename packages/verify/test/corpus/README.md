@@ -17,10 +17,18 @@ recorded entry.
 
 Every child process loads `tape-preload.mjs`, which answers each fetch from
 `tapes/public.json` and fixes the clock to the recording time. A request not
-on the tape fails like a network error and is counted. Chain JSON-RPC was
-not recorded (recording is GET-only), so layer B and the anchor read as
-could_not_check here; exit 0 for a real receipt needs live chain reads and is
-not part of the offline corpus.
+on the tape fails like a network error and is counted. Chain JSON-RPC is
+not on this tape (recording is GET-only), so layer B and the anchor read as
+could_not_check here.
+
+## Chain tier
+
+`tapes/public-chain.json` is the same GET entries plus read-only JSON-RPC
+answers from public Base and Solana RPCs (`record-chain.mjs`), so layer B
+and the anchor run offline and the reference receipt is exit 0.
+`baseline-chain.json` is what 0.4.11 returns on that tape. The same rule
+applies. Payment senders not already in `test/fixtures` are replaced with
+a placeholder.
 
 ## The rule
 
@@ -47,7 +55,11 @@ off the repo. With a recorded local tier:
 
     npm run build
     node test/corpus/record.mjs
+    CHIT_CORPUS_RPC=1 node test/corpus/record-chain.mjs   # chain tier tape only
 
-GET to the public receipt hosts only; nothing is posted. Recording replaces
+`record.mjs`: GET to the public receipt hosts only; nothing is posted.
+`record-chain.mjs`: adds read-only JSON-RPC calls (an allowlist of read
+methods) to public Base and Solana RPC hosts only, no keys and no paid
+endpoints, never a transaction. It never writes the baseline. Recording replaces
 the baseline. Do it only when the spec records a change, never to make a
 failing corpus pass.

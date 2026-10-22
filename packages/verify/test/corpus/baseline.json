@@ -1248,6 +1248,84 @@
    "shape": "could_not_check"
   }
  },
+ "id-url-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-mun7ofgh-254760bcb731|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq262x0-1467b076fc62|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq264r9-69896464bb19|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-musbd035-3f1fb99ba601|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-bare-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unreadable",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
  "file-chit-1ebc5616|cli": {
   "exit": 1,
   "result": "invalid",

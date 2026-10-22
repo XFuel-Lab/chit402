@@ -26,7 +26,9 @@ const {
   signedClaimsOnAllowlist,
   SUPPORTED_RECEIPT_VERSIONS,
   VERIFIER_MIN,
+  legacyReceiptFingerprint,
 } = await import('../dist/index.js');
+const { TEST_SNAPSHOT, parseLegacyAllowlistForTest } = await import('../dist/internal/test-seam.js');
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const exported = publicKey.export({ format: 'jwk' });
@@ -69,7 +71,7 @@ function v11ish(v) {
     receipt_id: 'xfuel-v11-m10',
     iss: 'chit402',
     kid,
-    issued_at: '2026-09-26T17:27Z',
+    issued_at: '2026-10-09T17:27Z',
     asset: 'USDC',
     chain: 'base',
     pay_to: `0x${'22'.repeat(20)}`,
@@ -399,7 +401,14 @@ test('T-PVMISSING unversioned receipts follow the v4/v5 outer rule', async () =>
       caller_binding: { payer_wallet: `0x${'11'.repeat(20)}` },
     };
     const receipt = receiptFor(claims, { outerPv: outer });
-    const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
+    // L1: the bundled list is empty, so the form has no path.
+    const refused = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
+    assert.equal(refused.overall, 'failed');
+    assert.deepEqual(refused.errors, ['legacy_form_not_allowlisted']);
+    // Admitted only by its exact fingerprint on a (test) list.
+    const fp = legacyReceiptFingerprint(receipt);
+    const list = parseLegacyAllowlistForTest(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'final', note: '', entries: [fp] }), { unpinnedForTest: true });
+    const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid], [TEST_SNAPSHOT]: { legacyAllowlist: list } });
     assert.notEqual(result.errors[0], 'unsupported_version', result.errors.join('; '));
     assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.version_source, 'inferred');

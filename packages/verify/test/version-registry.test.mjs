@@ -14,9 +14,15 @@ const lib = await import('../dist/index.js');
 const {
   VERSION_REGISTRY, FEATURE_FIRST_VERSION, ruleSetDigest, registeredPayloadVersion, registeredVersion, versionHasFeature,
   SUPPORTED_RECEIPT_VERSIONS, HEAD_BINDING_PAYLOAD_VERSION, CANONICAL_PAYLOAD_VERSION,
-  LEGACY_ALLOWLIST_SHA256, parseLegacyAllowlist, loadBundledLegacyAllowlist, onLegacyAllowlist,
+  LEGACY_ALLOWLIST_SHA256, onLegacyAllowlist,
   legacyReceiptFingerprint, canonicalIssuerPayload,
 } = lib;
+// Internal module: the loader and the list-taking matcher are not package API.
+const {
+  parseLegacyAllowlistInternal, loadBundledLegacyAllowlistInternal, onLegacyAllowlistInternal, lowSSignature,
+} = await import('../dist/legacy-allowlist.js');
+const parseLegacyAllowlist = (bytes, pinned = true) => parseLegacyAllowlistInternal(bytes, { unpinnedForTest: !pinned });
+const onList = onLegacyAllowlistInternal;
 
 const frozen = JSON.parse(readFileSync(new URL('./fixtures/version-registry.frozen.json', import.meta.url), 'utf8'));
 const listPath = fileURLToPath(new URL('../legacy-allowlist.json', import.meta.url));
@@ -94,32 +100,32 @@ function detached(createdAt) {
   const value = sign('sha256', Buffer.from(canonicalIssuerPayload(doc), 'utf8'), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   return { ...doc, issuer_signature: { alg: 'ES256', kid: 'k', value } };
 }
-const finalList = (entries) => parseLegacyAllowlist(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'final', note: '', entries }), null);
+const finalList = (entries) => parseLegacyAllowlist(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'final', note: '', entries }), false);
 
-test('the bundled list is the pinned empty placeholder', () => {
-  const list = loadBundledLegacyAllowlist();
+test('the bundled list is the pinned, final, empty list', () => {
+  const list = loadBundledLegacyAllowlistInternal();
   assert.equal(list.ok, true);
-  assert.equal(list.status, 'placeholder');
+  assert.equal(list.status, 'final');
   assert.deepEqual([...list.entries], []);
   const bytes = readFileSync(listPath, 'utf8').replace(/\r\n/g, '\n');
   assert.equal(createHash('sha256').update(bytes).digest('hex'), LEGACY_ALLOWLIST_SHA256);
-  assert.ok(JSON.parse(bytes).note.startsWith('PLACEHOLDER'));
+  assert.match(JSON.parse(bytes).note, /107 task files, 6 book rows/);
   assert.equal(onLegacyAllowlist(legacyReceiptFingerprint(v4Receipt())), false);
 });
 
 test('the loader fails closed', () => {
   const bytes = readFileSync(listPath, 'utf8');
   assert.equal(parseLegacyAllowlist(bytes.replace('"entries": []', '"entries": [ ]')).reason, 'legacy_allowlist_digest_mismatch');
-  assert.equal(parseLegacyAllowlist('{', null).reason, 'legacy_allowlist_unreadable');
-  assert.equal(parseLegacyAllowlist(JSON.stringify({ schema: 'x', status: 'final', entries: [] }), null).reason, 'legacy_allowlist_schema');
+  assert.equal(parseLegacyAllowlist('{', false).reason, 'legacy_allowlist_unreadable');
+  assert.equal(parseLegacyAllowlist(JSON.stringify({ schema: 'x', status: 'final', entries: [] }), false).reason, 'legacy_allowlist_schema');
   const fp = legacyReceiptFingerprint(v4Receipt());
-  assert.equal(parseLegacyAllowlist(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'placeholder', entries: [fp] }), null).reason, 'legacy_allowlist_status');
+  assert.equal(parseLegacyAllowlist(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'placeholder', entries: [fp] }), false).reason, 'legacy_allowlist_status');
   assert.equal(finalList([{ ...fp, extra: 1 }]).reason, 'legacy_allowlist_entry');
   assert.equal(finalList([{ ...fp, payload_sha256: 'AB'.repeat(32) }]).reason, 'legacy_allowlist_entry');
   assert.equal(finalList([{ ...fp, form: 'pv6' }]).reason, 'legacy_allowlist_entry');
   assert.equal(finalList([fp, fp]).reason, 'legacy_allowlist_duplicate');
   const bad = finalList([{ ...fp, extra: 1 }]);
-  assert.equal(onLegacyAllowlist(fp, bad), false);
+  assert.equal(onList(fp, bad), false);
 });
 
 test('only the exact listed receipt matches', () => {
@@ -129,17 +135,17 @@ test('only the exact listed receipt matches', () => {
   assert.equal(fp.row_hash, 'ab'.repeat(32));
   const list = finalList([fp]);
   assert.equal(list.ok, true);
-  assert.equal(onLegacyAllowlist(fp, list), true);
+  assert.equal(onList(fp, list), true);
   // Same claims signed again (new signature bytes): not listed.
-  assert.equal(onLegacyAllowlist(legacyReceiptFingerprint(v4Receipt()), list), false);
+  assert.equal(onList(legacyReceiptFingerprint(v4Receipt()), list), false);
   // Another task id, another row hash, the other outer version: not listed.
-  assert.equal(onLegacyAllowlist({ ...fp, task_id: 'xfuel-l1-0002' }, list), false);
-  assert.equal(onLegacyAllowlist({ ...fp, row_hash: 'cd'.repeat(32) }, list), false);
-  assert.equal(onLegacyAllowlist({ ...fp, form: 'legacy-v5' }, list), false);
+  assert.equal(onList({ ...fp, task_id: 'xfuel-l1-0002' }, list), false);
+  assert.equal(onList({ ...fp, row_hash: 'cd'.repeat(32) }, list), false);
+  assert.equal(onList({ ...fp, form: 'legacy-v5' }, list), false);
   // An entry without a row hash still binds payload and signature.
   const loose = finalList([{ ...fp, row_hash: null }]);
-  assert.equal(onLegacyAllowlist({ ...fp, row_hash: null }, loose), true);
-  assert.equal(onLegacyAllowlist({ ...fp, signature_sha256: 'ee'.repeat(32) }, loose), false);
+  assert.equal(onList({ ...fp, row_hash: null }, loose), true);
+  assert.equal(onList({ ...fp, signature_sha256: 'ee'.repeat(32) }, loose), false);
 });
 
 test('fingerprints: forms, and why no date is used for detached', () => {
@@ -155,4 +161,33 @@ test('fingerprints: forms, and why no date is used for detached', () => {
   // the fingerprint, and the signature, unchanged.
   const moved = { ...a, created_at: '2026-09-04T06:00:00.000Z' };
   assert.deepEqual(legacyReceiptFingerprint(moved), fp);
+});
+
+test('the allowlist API: no unpinned parser, loader or caller list is exported', () => {
+  for (const name of ['parseLegacyAllowlist', 'loadBundledLegacyAllowlist', 'parseLegacyAllowlistInternal', 'loadBundledLegacyAllowlistInternal', 'onLegacyAllowlistInternal']) {
+    assert.equal(name in lib, false, name);
+  }
+  assert.equal(onLegacyAllowlist.length, 1);
+  // A caller-supplied second argument is ignored: only the bundled (empty) list counts.
+  const fp = legacyReceiptFingerprint(v4Receipt());
+  assert.equal(onLegacyAllowlist(fp, finalList([fp])), false);
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(Object.keys(pkg.exports).some((k) => /allowlist|internal/.test(k)), false);
+});
+
+test('low-S: both encodings of one signature share a fingerprint; one entry per signed payload', () => {
+  const N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
+  const receipt = v4Receipt();
+  const parts = receipt.issuer_signature.jws.split('.');
+  const sig = Buffer.from(parts[2], 'base64url');
+  const s = BigInt(`0x${sig.subarray(32).toString('hex')}`);
+  const flipped = Buffer.concat([sig.subarray(0, 32), Buffer.from((N - s).toString(16).padStart(64, '0'), 'hex')]);
+  const other = { ...receipt, issuer_signature: { ...receipt.issuer_signature, jws: `${parts[0]}.${parts[1]}.${flipped.toString('base64url')}` } };
+  const a = legacyReceiptFingerprint(receipt);
+  const b = legacyReceiptFingerprint(other);
+  assert.deepEqual(a, b);
+  assert.ok(BigInt(`0x${lowSSignature(flipped).subarray(32).toString('hex')}`) <= N >> 1n);
+  assert.deepEqual(lowSSignature(lowSSignature(sig)), lowSSignature(sig));
+  // Two entries for the same (form, task_id, payload) are refused, whatever the signature.
+  assert.equal(finalList([a, { ...a, signature_sha256: 'ee'.repeat(32) }]).reason, 'legacy_allowlist_duplicate');
 });

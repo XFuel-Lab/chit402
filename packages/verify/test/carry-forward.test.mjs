@@ -119,6 +119,8 @@ function signReceipt(receipt, keys) {
   // signs its own fields with the throwaway test key.
   const claims = {
     payload_version: 8,
+    // Inside the v8 validity window (version-windows.json).
+    iat: 1790812800,
     task_id: receipt.task_id,
     payment: receipt.payment,
     binding: receipt.binding,

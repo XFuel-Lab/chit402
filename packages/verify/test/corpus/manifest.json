@@ -564,6 +564,43 @@
    "id": "id-xfuel-1a422eaa-38c8-48e8-bc40-875e8c099b4a",
    "input": "xfuel-1a422eaa-38c8-48e8-bc40-875e8c099b4a",
    "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-url-foreign-x402-muh526gf-4cf984953f98",
+   "input": "https://api.chit402.com/receipt/foreign-x402-muh526gf-4cf984953f98",
+   "source": "prod-foreign-ingest",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-url-foreign-x402-mun7ofgh-254760bcb731",
+   "input": "https://api.chit402.com/receipt/foreign-x402-mun7ofgh-254760bcb731",
+   "source": "prod-foreign-ingest",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-url-foreign-x402-muq262x0-1467b076fc62",
+   "input": "https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62",
+   "source": "prod-foreign-ingest",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-url-foreign-x402-muq264r9-69896464bb19",
+   "input": "https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19",
+   "source": "prod-foreign-ingest",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-url-foreign-x402-musbd035-3f1fb99ba601",
+   "input": "https://api.chit402.com/receipt/foreign-x402-musbd035-3f1fb99ba601",
+   "source": "prod-foreign-ingest",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-bare-foreign-x402-muh526gf-4cf984953f98",
+   "input": "foreign-x402-muh526gf-4cf984953f98",
+   "source": "prod-foreign-ingest",
+   "live_0411": "1 unreadable (bare foreign id is not fetched)",
+   "spec_target": "later PR (input handling): fetch a bare foreign-x402 id like the full URL; expected 2 signed_receipt_unavailable. Not changed in PR3: 1 to 2 is more permissive."
   }
  ],
  "files": [

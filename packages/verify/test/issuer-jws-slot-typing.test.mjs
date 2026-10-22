@@ -126,6 +126,8 @@ function receiptWith(claims, typ = 'chit402-receipt+jwt', outer = {}) {
 const goodClaims = {
   task_id: 'xfuel-00000000-0000-4000-8000-0000000000aa',
   payload_version: 7,
+  // Inside the v7 validity window (version-windows.json).
+  iat: 1789862400,
   payment,
 };
 

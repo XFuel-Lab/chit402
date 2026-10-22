@@ -10,8 +10,21 @@
  * detached form signs no time field.
  *
  * The list ships in the package (legacy-allowlist.json) and its SHA-256 is
- * pinned here, so the list is part of the source digest. It is a placeholder
- * until the production export is reviewed, and is not enforced yet.
+ * pinned here, so the list is part of the source digest. The list is final
+ * and empty: the 2026-10-22 production export found no receipt in these
+ * forms. The version gate (index.ts) refuses any receipt in these forms that
+ * is not listed: legacy_form_not_allowlisted.
+ *
+ * The list only narrows. A listed receipt still has to pass the normal
+ * signature verification; the list never stands in for it (the fingerprint
+ * does not cover the JWS header, so it must not). Signatures are fingerprinted
+ * in low-S form, so the second valid encoding of an ECDSA signature has the
+ * same fingerprint, and the list admits at most one entry per
+ * (form, task_id, payload_sha256).
+ *
+ * Public API: the pinned digest, the schema, and onLegacyAllowlist(fp)
+ * against the bundled list. The parser and loader are internal; only the
+ * test snapshot seam (internal/test-seam.ts) passes another list.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -19,7 +32,7 @@ import { createRequire } from 'node:module';
 
 export const LEGACY_ALLOWLIST_SCHEMA = 'chit402.legacy_allowlist.v1';
 /** SHA-256 of legacy-allowlist.json (LF newlines). Changes only with the list. */
-export const LEGACY_ALLOWLIST_SHA256 = 'e71ab66447bdd79a98b3345931d4a5319e582858e1c5487e1dcbeb5098a67267';
+export const LEGACY_ALLOWLIST_SHA256 = 'ee1498f90cc098b62fdd54dc4378b63d8951366dd9810295f9db8f964d10f3e9';
 
 export type LegacyForm = 'legacy-v4' | 'legacy-v5' | 'detached';
 
@@ -30,7 +43,7 @@ export interface LegacyFingerprint {
   row_hash: string | null;
   /** SHA-256 of the signed payload bytes (JWS payload, or the detached canonical payload). */
   payload_sha256: string;
-  /** SHA-256 of the signature bytes. */
+  /** SHA-256 of the signature bytes in low-S form. */
   signature_sha256: string;
 }
 
@@ -42,6 +55,21 @@ export interface LegacyAllowlist {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
+// P-256 group order and half order, for low-S normalization.
+const P256_N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
+const P256_HALF_N = P256_N >> 1n;
+
+/**
+ * Low-S form of a 64-byte P-256 (R || S) signature. Any other length is
+ * returned unchanged; it does not verify as ES256 anyway.
+ */
+export function lowSSignature(signature: Buffer): Buffer {
+  if (signature.length !== 64) return signature;
+  const s = BigInt(`0x${signature.subarray(32).toString('hex') || '0'}`);
+  if (s <= P256_HALF_N) return signature;
+  const low = (P256_N - s).toString(16).padStart(64, '0');
+  return Buffer.concat([signature.subarray(0, 32), Buffer.from(low, 'hex')]);
+}
 const FORMS = new Set<LegacyForm>(['legacy-v4', 'legacy-v5', 'detached']);
 
 function sha256(bytes: Buffer | string): string {
@@ -65,13 +93,13 @@ function failed(reason: string): LegacyAllowlist {
 }
 
 /**
- * Parse list bytes. `expectedSha256` defaults to the pinned digest; a
- * mismatch, a bad schema or any malformed entry gives an empty list
- * (fail closed).
+ * Parse list bytes. Internal: the bundled loader passes the pinned digest;
+ * only the test seam passes `unpinnedForTest`. A digest mismatch, a bad
+ * schema or any malformed entry gives an empty list (fail closed).
  */
-export function parseLegacyAllowlist(bytes: string, expectedSha256: string | null = LEGACY_ALLOWLIST_SHA256): LegacyAllowlist {
+export function parseLegacyAllowlistInternal(bytes: string, { unpinnedForTest = false }: { unpinnedForTest?: boolean } = {}): LegacyAllowlist {
   const normalized = bytes.replace(/\r\n/g, '\n');
-  if (expectedSha256 !== null && sha256(normalized) !== expectedSha256) return failed('legacy_allowlist_digest_mismatch');
+  if (!unpinnedForTest && sha256(normalized) !== LEGACY_ALLOWLIST_SHA256) return failed('legacy_allowlist_digest_mismatch');
   let doc: unknown;
   try {
     doc = JSON.parse(normalized);
@@ -86,7 +114,8 @@ export function parseLegacyAllowlist(bytes: string, expectedSha256: string | nul
   if (d.status === 'placeholder' && d.entries.length > 0) return failed('legacy_allowlist_status');
   const seen = new Set<string>();
   for (const e of d.entries as LegacyFingerprint[]) {
-    const k = `${e.form}|${e.task_id}|${e.payload_sha256}|${e.signature_sha256}`;
+    // One entry per signed payload: a second signature over the same bytes is not a second receipt.
+    const k = `${e.form}|${e.task_id}|${e.payload_sha256}`;
     if (seen.has(k)) return failed('legacy_allowlist_duplicate');
     seen.add(k);
   }
@@ -96,12 +125,12 @@ export function parseLegacyAllowlist(bytes: string, expectedSha256: string | nul
 
 let bundled: LegacyAllowlist | null = null;
 
-/** The list bundled with this package. */
-export function loadBundledLegacyAllowlist(): LegacyAllowlist {
+/** The list bundled with this package (internal). */
+export function loadBundledLegacyAllowlistInternal(): LegacyAllowlist {
   if (bundled) return bundled;
   try {
     const require = createRequire(__filename);
-    bundled = parseLegacyAllowlist(readFileSync(require.resolve('../legacy-allowlist.json'), 'utf8'));
+    bundled = parseLegacyAllowlistInternal(readFileSync(require.resolve('../legacy-allowlist.json'), 'utf8'));
   } catch {
     bundled = failed('legacy_allowlist_unreadable');
   }
@@ -141,6 +170,7 @@ export function legacyFingerprint(
     signature = b64urlBytes(parts[2]);
   }
   if (!payload || !signature || signature.length === 0) return null;
+  signature = lowSSignature(signature);
   return {
     form,
     task_id: receipt.task_id,
@@ -150,8 +180,13 @@ export function legacyFingerprint(
   };
 }
 
-/** True only for an exact match on the list. A list that failed to load admits nothing. */
-export function onLegacyAllowlist(fp: LegacyFingerprint | null, list: LegacyAllowlist = loadBundledLegacyAllowlist()): boolean {
+/** True only for an exact match on the bundled list. */
+export function onLegacyAllowlist(fp: LegacyFingerprint | null): boolean {
+  return onLegacyAllowlistInternal(fp, loadBundledLegacyAllowlistInternal());
+}
+
+/** Internal: match against a given list (the bundled one, or the test seam's). A list that failed to load admits nothing. */
+export function onLegacyAllowlistInternal(fp: LegacyFingerprint | null, list: LegacyAllowlist): boolean {
   if (!fp || !list.ok) return false;
   return list.entries.some((e) => e.form === fp.form
     && e.task_id === fp.task_id

@@ -47,6 +47,9 @@ import {
   type VerifyVerdict,
 } from './verdict.js';
 import { verifyTreeHeadTrust } from './anchor-trust.js';
+import { loadBundledVersionWindows } from './version-windows.js';
+import { logTimeReason } from './log-time.js';
+import { carryTestSnapshot, readTestSnapshot } from './internal/test-seam.js';
 import {
   parsePublicAttestation,
   sameReceiptId,
@@ -151,6 +154,8 @@ type FreshLog = {
   anchor: CheckState;
   logReason: string | null;
   log: VerifyVerdict['log'];
+  /** Set on a pass: the head the inclusion proof verified against, for the L5 log time. */
+  verified?: { origin: string; head: AnchorHead; leafIndex: number | null };
 };
 
 function inclusionHeadUrl(
@@ -392,10 +397,12 @@ export async function freshPublicLog(
       return missedLog('log_epoch_mismatch');
     }
     if (result.overall === 'verified') {
+      const leafIndex = Number(inclusion.leaf_index);
       return {
         logInclusion: 'pass',
         anchor: 'pass',
         logReason: null,
+        verified: { origin, head, leafIndex: Number.isSafeInteger(leafIndex) ? leafIndex : null },
         log: {
           leaf_index: inclusion.leaf_index ?? null,
           tree_size: inclusion.tree_size ?? null,
@@ -801,6 +808,33 @@ function linesOutcome(verdict: VerifyVerdict): CheckReceiptOutcome {
  * Same check the CLI runs for one id, URL, file, or pasted receipt JSON.
  * `publicInput` accepts only JSON, an id, or an allowed URL.
  */
+/** L5 wiring: the decision is in log-time.ts. */
+async function logTimeCheck(
+  result: Awaited<ReturnType<typeof verifyReceipt>>,
+  verified: NonNullable<FreshLog['verified']>,
+  history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
+  options: CheckReceiptOptions,
+): Promise<'log_time_after_window' | 'log_time_unavailable' | null> {
+  return logTimeReason({
+    claims: (result.issuer_signature.payload || {}) as Record<string, unknown>,
+    windows: readTestSnapshot(options)?.versionWindows ?? loadBundledVersionWindows(),
+    origin: verified.origin,
+    leafIndex: verified.leafIndex,
+    verifiedHead: verified.head as never,
+    history,
+    trustedKids,
+    solanaRpcUrls: anchorRpcUrls('solana'),
+    getJson: async (url) => {
+      const res = await fetchNoRedirect(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(LOG_FETCH_MS),
+      });
+      return res.json().catch(() => null);
+    },
+  });
+}
+
 export async function checkReceiptInput(raw: string, options: CheckReceiptOptions = {}): Promise<CheckReceiptOutcome> {
   const publicInput = options.publicInput === true;
   const target = publicInput ? String(raw ?? '').trim() : String(raw ?? '');
@@ -868,6 +902,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
       && typeof receipt.verify_url !== 'string'
       && Object.prototype.hasOwnProperty.call(receipt, 'public_attestation');
     resolved = await resolveIssuerHistory({
+      bundledOverride: readTestSnapshot(options)?.issuerHistory ?? null,
       fileBytes: options.issuerHistoryBytes ?? null,
       receipt: shellOrigin ? { ...receipt, verify_url: `${receiptOrigin}/receipt/` } : receipt,
       trustedKids,
@@ -960,14 +995,14 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     return linesOutcome(verdict);
   }
 
-  const result = await verifyReceipt(receipt, {
+  const result = await verifyReceipt(receipt, carryTestSnapshot(options, {
     trustedKids,
     requirePreimages: true,
     checkPayer,
     rpcUrl: options.rpcUrl || process.env.BASE_RPC_URL || BASE_RPC_URL,
     solanaRpcUrl: options.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
     ...historyOptions(resolved),
-  });
+  }));
 
   const unsupported = (result.errors || []).includes('unsupported_version');
   let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
@@ -982,6 +1017,18 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     anchorState = fresh.anchor;
     logReason = fresh.logReason;
     log = fresh.log;
+    if (fresh.logInclusion === 'pass' && fresh.verified) {
+      const reason = await logTimeCheck(result, fresh.verified, resolved.document, trustedKids, options);
+      if (reason) {
+        result.issuer_history = {
+          ...result.issuer_history,
+          checked: true,
+          ok: false,
+          unreachable: reason === 'log_time_unavailable',
+          reason,
+        };
+      }
+    }
   }
 
   const signedId = result.issuer_signature.valid === true

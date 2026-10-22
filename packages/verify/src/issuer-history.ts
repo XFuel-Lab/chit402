@@ -794,6 +794,7 @@ function resolvedFrom(
  * bundled snapshot. A file that does not verify is invalid and is not replaced.
  */
 export async function resolveIssuerHistory({
+  bundledOverride = null,
   fileBytes = null,
   receipt = {},
   fetchImpl = globalThis.fetch,
@@ -801,6 +802,8 @@ export async function resolveIssuerHistory({
   trustedKids,
   timeoutMs = 800,
 }: {
+  /** Test seam only (internal/test-seam.ts): replaces the bundled snapshot. */
+  bundledOverride?: { document: IssuerHistoryDocument; bytes: string } | null;
   fileBytes?: string | null;
   receipt?: { verification?: { jwks_uri?: string }; verify_url?: string };
   fetchImpl?: typeof fetch;
@@ -808,7 +811,7 @@ export async function resolveIssuerHistory({
   trustedKids?: readonly string[];
   timeoutMs?: number;
 } = {}): Promise<ResolvedIssuerHistory> {
-  const bundled = loadBundledIssuerHistory();
+  const bundled = bundledOverride ?? loadBundledIssuerHistory();
   if (fileBytes != null) {
     let doc: IssuerHistoryDocument;
     try {

@@ -1,4 +1,5 @@
 import express from 'express';
+import { versionWindowsBytes } from './version-windows-doc.js';
 import crypto from 'crypto';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -4301,6 +4302,15 @@ export async function createApp() {
       logger.error({ err, reqId: req.id }, 'GET receipt-policy-history error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
+  });
+
+  // Signed receipt version windows (the verifier's bundled copy is authoritative).
+  app.get('/.well-known/version-windows.json', (_req, res) => {
+    const bytes = versionWindowsBytes();
+    if (!bytes) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'public, max-age=300');
+    res.type('application/json');
+    return res.send(bytes);
   });
 
   // Anchor wallets the verifier accepts besides the package pin.

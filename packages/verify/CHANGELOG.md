@@ -3,6 +3,21 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 0.5.0-pre.0: Version validity windows (pre-release)
+
+Not published. The bundled `version-windows.json` is test-signed in this build; `prepublishOnly` and `scripts/check-verify-publish.mjs` refuse to publish until the signing ceremony replaces it with the production signature. The version moved off 0.4.11 so no build of this code can be published under that number.
+
+### Changed
+- **Signed validity window per receipt version.** Each payload version opens at the GitHub merge time of the PR that shipped it and, once the next version shipped, closes at that version's merge time plus 72 h. A receipt whose signed `iat` is after its version's close is `version_window_closed` (key_window fail, exit 1). A closed version with no signed `iat` is `issued_at_missing`. v10 is open. The lower bound is enforced only for v11 and later (`version_window_not_open`): up to v10 the issuer re-signed a stored receipt on read with its original `iat`. Windows ship in `version-windows.json`, sha-pinned in source, signed by the issuer key (a companion document, not issuer-history entries, so 0.4.x clients are unaffected).
+- **Log time (L5).** For a receipt in the public log whose version has closed, the chain time of the earliest anchored signed head that covers its leaf must be at most 14 days after the close: `log_time_after_window` (exit 1). If that time cannot be read, `log_time_unavailable` (exit 2). Open versions are not probed. Receipts with no log entry get the signed-time check only.
+- **The legacy list is final and empty, and enforced.** A JWS receipt whose version is not signed (outer 4/5) or a detached `issuer_signature.value` is admitted only by exact fingerprint on the bundled list; the 2026-10-22 production export found none, so these forms are refused: `legacy_form_not_allowlisted` (shape fail, exit 1). A listed receipt still needs a valid signature. Fingerprints use the low-S form of the signature, and the list allows one entry per (form, task_id, payload).
+- **Allowlist API narrowed.** `parseLegacyAllowlist` and `loadBundledLegacyAllowlist` are no longer exported, and `onLegacyAllowlist(fp)` checks the bundled list only. There is no unpinned path in the public API.
+- New verdict reasons with docs anchors: `version_window_closed`, `version_window_not_open`, `version_window_missing`, `log_time_after_window`, `log_time_unavailable`, `legacy_form_not_allowlisted`.
+
+### Tests
+- Window values against the merge times, the c5a3860d upper-bound sanity check, parser fail-closed cases, signer status, the publish check, the L1 list with an alg:none header and a second key, low-S fingerprints, the L5 earliest-head probe and decision, and the library-only test snapshot seam (not exported, no CLI flag).
+- The golden corpus now replays recorded read-only chain replies from the public Base and Solana RPCs, so xfuel-3155b7d8 is exit 0 offline.
+
 ## 0.4.11: Library verdict matches the CLI
 
 ### Changed

@@ -108,14 +108,14 @@ test('offline COULD_NOT_CHECK human text and JSON message do not say invalid', (
     log: null,
     verifier: {
       name: 'chit402-verify',
-      version: '0.4.11',
+      version: '0.5.0-pre.0',
     },
   });
   for (const name of CHECKS) assert.equal(body.checks[name], 'could_not_check', name);
 
   const version = runCli(['--version']);
   assert.equal(version.status, 0, version.text);
-  assert.match(version.stdout, /^chit402-verify 0\.4\.11\n/);
+  assert.match(version.stdout, /^chit402-verify 0\.5\.0-pre\.0\n/);
 
   const removed = runCli(['--strict', '--json']);
   assert.equal(removed.status, 1, removed.text);
@@ -150,7 +150,7 @@ test('a local receipt whose log was not checked does not print invalid', () => {
   assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.checks.log_inclusion, 'could_not_check');
   assert.equal(body.checks.anchor, 'could_not_check');
-  assert.equal(body.verifier.version, '0.4.11');
+  assert.equal(body.verifier.version, '0.5.0-pre.0');
   assert.equal(/invalid/i.test(body.message), false);
   assert.equal(body.message, 'The receipt log or anchor could not be fetched.');
 });

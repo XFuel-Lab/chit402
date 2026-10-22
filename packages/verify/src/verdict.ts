@@ -72,6 +72,13 @@ export interface VerifyVerdict {
   };
 }
 
+const VERSION_WINDOW_FAIL = new Set([
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
+]);
+
 const WINDOW_FAIL = new Set([
   'kid_revoked_before_issuance',
   'issued_before_not_before',
@@ -95,6 +102,10 @@ const WINDOW_FAIL = new Set([
   'introduced_key_signature',
   'inherited_key_window',
   'issuer_history_not_extension',
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
 ]);
 
 export function verdictCopy(reason: string | null, result: VerdictResult): { message: string; next_step: string | null } {
@@ -187,6 +198,30 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
     return {
       message: 'The leaf is past the anchored tree. The anchor is not in yet.',
       next_step: 'Re-run when the anchor for this leaf is published.',
+    };
+  }
+  if (reason === 'version_window_closed' || reason === 'version_window_not_open' || reason === 'version_window_missing') {
+    return {
+      message: 'The receipt was signed outside the window of its receipt version.',
+      next_step: null,
+    };
+  }
+  if (reason === 'log_time_after_window') {
+    return {
+      message: 'The receipt entered the public log after its receipt version closed.',
+      next_step: null,
+    };
+  }
+  if (reason === 'log_time_unavailable') {
+    return {
+      message: 'The log time of this receipt could not be read from the chain. Its version has closed, so it is needed.',
+      next_step: 'Re-run when the chain RPC answers.',
+    };
+  }
+  if (reason === 'legacy_form_not_allowlisted') {
+    return {
+      message: 'This receipt form (version not signed, or a detached signature) is accepted only for listed receipts, and it is not listed.',
+      next_step: null,
     };
   }
   if (reason === 'kid_status_regression') {
@@ -324,9 +359,10 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   const idMismatch = errors.includes('id_mismatch') || errors.includes('task_id_mismatch') || errors.includes('receipt_id_mismatch');
   const idPrefix = errors.includes('id_prefix_version_mismatch');
   const intentLegacy = errors.includes('intent_on_legacy_version');
+  const legacyForm = errors.includes('legacy_form_not_allowlisted');
 
   let shape: CheckState = 'pass';
-  if (idPrefix || intentLegacy) shape = 'fail';
+  if (idPrefix || intentLegacy || legacyForm) shape = 'fail';
   else if (unsupported) shape = 'could_not_check';
   else if (versionMismatch || idMismatch) shape = 'fail';
 
@@ -338,7 +374,9 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
 
   const historyReason = input.historyReason || null;
   let keyWindow: CheckState = 'could_not_check';
-  if (input.historyMissing || historyReason === 'kid_not_in_history' || input.historyUnreachable) keyWindow = 'could_not_check';
+  // A version window refusal does not depend on the history document.
+  if (input.historyChecked && historyReason && VERSION_WINDOW_FAIL.has(historyReason) && !input.historyUnreachable) keyWindow = 'fail';
+  else if (input.historyMissing || historyReason === 'kid_not_in_history' || input.historyUnreachable) keyWindow = 'could_not_check';
   else if (input.historyChecked && input.historyOk) keyWindow = 'pass';
   else if (input.historyChecked && historyReason && WINDOW_FAIL.has(historyReason)) keyWindow = 'fail';
   else if (input.historyChecked && input.historyOk === false) keyWindow = 'fail';
@@ -575,6 +613,7 @@ function failReason(
   claimMismatches = 0,
 ): string {
   if (failed.includes('shape')) {
+    if (errors.includes('legacy_form_not_allowlisted')) return 'legacy_form_not_allowlisted';
     if (errors.includes('id_prefix_version_mismatch')) return 'id_prefix_version_mismatch';
     if (errors.includes('intent_on_legacy_version')) return 'intent_on_legacy_version';
     if (errors.includes('version_mismatch') || errors.includes('payload_version_mismatch')) return 'version_mismatch';
@@ -735,4 +774,10 @@ export const VERDICT_DOC_ANCHORS = [
   'log_epoch_mismatch',
   'transfer_mismatch',
   'public_rail_unsupported',
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
+  'log_time_unavailable',
+  'legacy_form_not_allowlisted',
 ] as const;
