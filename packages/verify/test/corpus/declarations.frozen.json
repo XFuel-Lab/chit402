@@ -1,6 +1,6 @@
 {
   "format": "chit402.corpus-declarations.v1",
-  "note": "Append-only (corpus-gate.mjs). declarations: the exact cause (library, signature) or reason (cli) each case path is decided by; synthetic.mjs `expect` must equal declarations plus deferred exactly. deferred: declared today but not by the case rule; no corpus correction until a declaration for the path is appended. reason_allowed: rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
+  "note": "Append-only (corpus-gate.mjs). Every synthetic case path is in exactly one list. declarations: the exact cause (library, signature) or reason (cli) each case path is decided by; an appended declaration must be a real decision, never a cause that decides nothing (log_unreachable, key untrusted, signed_receipt_unavailable and the like). synthetic.mjs `expect` must equal declarations plus deferred exactly. deferred: declared today but not by a case rule; no corpus correction until a declaration with a real decision for the path is appended. reason_allowed: frozen; rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
   "declarations": [
     {
       "case": "label-v4v5-conflicting-stamps",
@@ -116,6 +116,21 @@
       "case": "control-test-key-v10",
       "path": "library",
       "expect": "log_unreachable"
+    },
+    {
+      "case": "label-v10-outer-stamp-6",
+      "path": "cli",
+      "expect": "version_mismatch"
+    },
+    {
+      "case": "label-v6-outer-stamp-10",
+      "path": "cli",
+      "expect": "version_mismatch"
+    },
+    {
+      "case": "label-v4v5-conflicting-stamps",
+      "path": "cli",
+      "expect": "unsupported_version"
     }
   ],
   "deferred": [
@@ -130,6 +145,18 @@
       "path": "library",
       "expect": "log_unreachable",
       "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
+    },
+    {
+      "case": "control-test-key-v10",
+      "path": "cli",
+      "expect": "key untrusted",
+      "note": "control case; the CLI's production key set rejects the test key before any rule, so key untrusted is not a decision by a case rule; no correction until a declaration with a real decision is appended"
+    },
+    {
+      "case": "control-unsigned-document",
+      "path": "cli",
+      "expect": "signed_receipt_unavailable",
+      "note": "control case; signed_receipt_unavailable is a could-not-check cause, not a decision by a case rule; no correction until a declaration with a real decision is appended"
     }
   ],
   "reason_allowed": [

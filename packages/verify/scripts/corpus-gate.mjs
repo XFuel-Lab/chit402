@@ -39,9 +39,14 @@
  *     no added `registry` changes.json entry;
  *   - declarations.frozen.json is not append-only or not well formed, or the
  *     head synthetic.mjs `expect` values (from the head export) differ from
- *     the head pin; a corpus correction also needs the merge-base pin, and
- *     the merge-base synthetic.mjs `expect` values equal to it (see
- *     declaredProblems for what the pin allows);
+ *     the head pin, or a head case path is not classified by the head pin
+ *     (declared, deferred or reason_allowed); reason_allowed is frozen; an
+ *     appended declaration must be a real decision (not the deferred value
+ *     and not a cause that decides nothing, see isNonDecision); an added
+ *     deferred entry may not name a declared or reason_allowed path; a
+ *     corpus correction also needs the merge-base pin, and the merge-base
+ *     synthetic.mjs `expect` values equal to it (see declaredProblems for
+ *     what the pin allows);
  *   - the chain tier breaks its rules (gateChain below).
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
@@ -265,7 +270,7 @@ export async function baseOutcomes(baseTree, headInputs, keys) {
 export const FIX_KINDS = Object.freeze(['corpus_fix', 'corpus_fix_reason']);
 const isFixKind = (kind) => FIX_KINDS.includes(kind);
 // Classes whose cases each test one rule; a fix there must keep the rule.
-const RULE_CLASSES = new Set(['version', 'gate', 'timing']);
+const RULE_CLASSES = new Set(['label', 'version', 'gate', 'timing']);
 
 // ---------- pinned case declarations (declarations.frozen.json) ----------
 
@@ -274,9 +279,29 @@ const PIN_LISTS = ['declarations', 'deferred', 'reason_allowed'];
 const pinKey = (e) => `${e?.case}|${e?.path}`;
 
 /**
+ * Causes and reasons that make no decision by a case rule: the verifier
+ * stopped because something was not reachable, not available, not checked
+ * or not trusted, or gave only the generic result (from the 0.5.0-pre.0
+ * verifier cause set: log_unreachable, anchor_unreachable,
+ * issuer_history_unavailable, receipt_unavailable,
+ * signed_receipt_unavailable, log_time_unavailable, base_rpc_error,
+ * rpc_timeout, pending_anchor, payer_unchecked, signature_unchecked,
+ * key untrusted, head_key_untrusted, could_not_check, invalid, unreadable).
+ * Matched by pattern as well, so a new cause of the same kind is covered.
+ * An appended declaration may not take one of these: a path leaves
+ * `deferred` only with a real decision.
+ */
+const NON_DECISION = new Set(['', 'invalid', 'could_not_check', 'unreadable', 'unchecked', 'pending', 'key untrusted', 'key_untrusted', 'head_key_untrusted']);
+export function isNonDecision(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (NON_DECISION.has(v)) return true;
+  return /(unreachable|unavailable|rpc_error|rpc_timeout|timeout|unchecked|pending|untrusted)/.test(v);
+}
+
+/**
  * The pin as maps. `declared`: exact expected cause or reason per
  * case|path. `deferred`: declared in synthetic.mjs today but not by the
- * case rule (an appended declaration for the same path supersedes it).
+ * case rule (an appended declaration with a real decision supersedes it).
  * `effective`: what synthetic.mjs `expect` must equal. `reasonAllowed`:
  * the never-declared paths where corpus_fix_reason is accepted.
  * `pinned`: every case|path the pin names. `cases`: every case id it names.
@@ -317,21 +342,36 @@ export function pinProblems(basePin, headPin) {
       if (!same(b[i], h[i])) p.push(`${name} is append-only: ${list} entry ${i} (${pinKey(b[i])}) was edited or removed`);
     }
   }
-  // A path on the corpus_fix_reason list must never have been declared, so
-  // an appended reason_allowed entry may not name a declared or deferred path.
   const head = pinMaps(headPin);
-  const baseReason = new Set((Array.isArray(basePin?.reason_allowed) ? basePin.reason_allowed : []).map(pinKey));
-  for (const e of Array.isArray(headPin.reason_allowed) ? headPin.reason_allowed : []) {
+  // An added deferred entry is for a path that is not declared and not on
+  // the corpus_fix_reason list. (A merge-base deferred entry stays when a
+  // later declaration supersedes it; the pin is append-only.)
+  const baseDeferredCount = Array.isArray(basePin?.deferred) ? basePin.deferred.length : 0;
+  for (const e of Array.isArray(headPin.deferred) ? headPin.deferred.slice(baseDeferredCount) : []) {
     const k = pinKey(e);
-    if (baseReason.has(k)) continue;
-    if (head.declared.has(k) || head.deferred.has(k)) p.push(`${name}: reason_allowed entry ${k} names a declared path`);
+    if (head.declared.has(k)) p.push(`${name}: deferred entry ${k} names a declared path`);
+    if (head.reasonAllowed.has(k)) p.push(`${name}: deferred entry ${k} names a reason_allowed path`);
   }
-  if (basePin) {
-    const base = pinMaps(basePin);
-    // A declaration may supersede a deferred entry; it may not be declared twice.
-    for (const e of Array.isArray(headPin.declarations) ? headPin.declarations.slice((basePin.declarations ?? []).length) : []) {
-      if (base.declared.has(pinKey(e))) p.push(`${name}: ${pinKey(e)} is already declared`);
+  if (!basePin) {
+    // First pin: a reason_allowed path must never have been declared.
+    for (const e of Array.isArray(headPin.reason_allowed) ? headPin.reason_allowed : []) {
+      const k = pinKey(e);
+      if (head.declared.has(k) || head.deferred.has(k)) p.push(`${name}: reason_allowed entry ${k} names a declared path`);
     }
+    return p;
+  }
+  const base = pinMaps(basePin);
+  // reason_allowed is frozen: exactly the merge-base list, nothing appended.
+  const baseReason = Array.isArray(basePin.reason_allowed) ? basePin.reason_allowed : [];
+  const headReason = Array.isArray(headPin.reason_allowed) ? headPin.reason_allowed : [];
+  for (const e of headReason.slice(baseReason.length)) p.push(`${name}: reason_allowed is frozen; ${pinKey(e)} may not be added`);
+  // An appended declaration is a real decision: never declared before, not
+  // the deferred value it replaces, and not a cause that decides nothing.
+  for (const e of Array.isArray(headPin.declarations) ? headPin.declarations.slice((basePin.declarations ?? []).length) : []) {
+    const k = pinKey(e);
+    if (base.declared.has(k)) p.push(`${name}: ${k} is already declared`);
+    if (base.deferred.has(k) && e?.expect === base.deferred.get(k)) p.push(`${name}: ${k} is deferred as ${JSON.stringify(base.deferred.get(k))}; a declaration for it must name a real decision, not the deferred value`);
+    if (typeof e?.expect === 'string' && isNonDecision(e.expect)) p.push(`${name}: ${k} may not be declared ${JSON.stringify(e.expect)}, which makes no decision by the case rule`);
   }
   return p;
 }
@@ -346,6 +386,22 @@ export function exportDeclarations(casesOrInputs) {
     if (expect == null) continue;
     if (typeof expect !== 'object' || Array.isArray(expect)) { out.set(`${id}|*`, expect); continue; }
     for (const [path, v] of Object.entries(expect)) out.set(`${id}|${path}`, v);
+  }
+  return out;
+}
+
+/**
+ * Case paths of an export (`cases`: id and paths) that the pin does not
+ * classify: every case path is declared, deferred or on reason_allowed.
+ */
+export function unclassifiedPaths(cases, pin) {
+  const { pinned } = pinMaps(pin);
+  const out = [];
+  for (const c of Array.isArray(cases) ? cases : []) {
+    for (const path of Array.isArray(c?.paths) ? c.paths : []) {
+      const k = `${c.id}|${path}`;
+      if (!pinned.has(k)) out.push(k);
+    }
   }
   return out;
 }
@@ -493,12 +549,14 @@ function baseOnHeadProblems(key, ch, baseOnHead) {
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null }) {
   const problems = [];
   // Pinned declarations: append-only, and the head synthetic.mjs must agree
   // with the head pin whenever the head export is given.
   problems.push(...pinProblems(basePin, headPin));
   if (headDecls && headPin) for (const d of declarationDrift(headDecls, headPin)) problems.push(`synthetic.mjs (head) and declarations.frozen.json (head) differ: ${d}`);
+  // Every head case path is classified by the head pin.
+  if (headCases && headPin) for (const k of unclassifiedPaths(headCases, headPin)) problems.push(`${k}: case path in synthetic.mjs (head) is not in declarations.frozen.json (head); declare it, or defer it with its current expect`);
   const basePinMaps = basePin ? pinMaps(basePin) : null;
   const headPinMaps = headPin ? pinMaps(headPin) : null;
   const bEntries = baseChanges?.changes ?? [];
@@ -721,10 +779,13 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headPin: readHead(root, DECLARATIONS_PIN),
   };
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
-  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, changedFiles: changedFilesOf(root, base) };
+  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
   const corrections = fixKeys.length > 0 || Object.keys(files.baseBaseline ?? {}).some((k) => !Object.prototype.hasOwnProperty.call(files.headBaseline ?? {}, k));
-  if (headInputs && inputsProblems(headInputs).length === 0) extra.headDecls = exportDeclarations(headInputs);
+  if (headInputs && inputsProblems(headInputs).length === 0) {
+    extra.headDecls = exportDeclarations(headInputs);
+    extra.headCases = headInputs.cases.map((c) => ({ id: c.id, paths: c.paths }));
+  }
   if (corrections && baseTree && !fixKeys.length) {
     try { extra.baseCases = caseDeclarations(await exportInputs(baseTree)); } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
   }

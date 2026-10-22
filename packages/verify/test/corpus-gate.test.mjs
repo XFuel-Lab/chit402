@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinProblems, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -353,7 +353,8 @@ test('review M1: an export swapped under GITHUB_JOB=corpus-inputs is rejected wh
 
 const decls = caseDeclarations(headInputs);
 // The real pin on both sides, with the merge-base and head declarations of `inputs`.
-const pinned = (inputs = headInputs) => ({ baseCases: decls, basePin: pin, headPin: pin, headDecls: exportDeclarations(inputs) });
+const casesOf = (inputs) => inputs.cases.map((c) => ({ id: c.id, paths: c.paths }));
+const pinned = (inputs = headInputs) => ({ baseCases: decls, basePin: pin, headPin: pin, headDecls: exportDeclarations(inputs), headCases: casesOf(inputs) });
 const fixEntries = (keys, rows, digest, kind = 'corpus_fix') => keys.map((k) => entry(k, rows[k], { kind, note: 'fixture tidy', input_digest: digest }));
 
 test('declared rule: the M1 swap is rejected without any src change', async () => {
@@ -454,6 +455,7 @@ const rowOf = (o) => ({ exit: o.exit, result: o.result, reason: o.reason, checks
 const DRIFT_HEAD = 'synthetic.mjs (head) and declarations.frozen.json (head) differ';
 const DRIFT_BASE = 'corpus corrections are refused while synthetic.mjs and declarations.frozen.json differ at the merge base';
 const has = (problems, text) => problems.some((p) => p.includes(text));
+const pinKeyOf = (e) => `${e.case}|${e.path}`;
 
 // The neuter of section 3: the v13 case input becomes the control v10
 // document, and the rows are what the merge-base verifier gives on it.
@@ -477,7 +479,7 @@ test('pin: synthetic.mjs expect values equal declarations.frozen.json exactly', 
   assert.deepEqual(exportDeclarations(headInputs).size, pin.declarations.length + pin.deferred.length);
   assert.deepEqual(run({ ...pinned() }), []);
   assert.equal(isVerifierPath(DECLARATIONS_PIN), true);
-  assert.deepEqual(pin.deferred.map((e) => `${e.case}|${e.path}`), ['version-v10-claims-signed-as-v6-after-window|library', 'timing-l5-backdated-iat|library']);
+  assert.deepEqual(pin.deferred.map((e) => `${e.case}|${e.path}`), ['version-v10-claims-signed-as-v6-after-window|library', 'timing-l5-backdated-iat|library', 'control-test-key-v10|cli', 'control-unsigned-document|cli']);
   assert.deepEqual(pin.reason_allowed.map((e) => `${e.case}|${e.path}`), ['version-v10-claims-signed-as-v6-after-window|cli', 'version-l1-detached-not-allowlisted|cli', 'timing-detached-created-at-moved|cli', 'timing-l5-backdated-iat|cli']);
 });
 
@@ -586,15 +588,17 @@ test('pin: a legitimate append passes; an edit, a removal or a reason_allowed en
   const dropped = { ...clone(pin), reason_allowed: pin.reason_allowed.slice(1) };
   assert.ok(has(run({ ...pinned(), headPin: dropped }), 'append-only: reason_allowed entry 0'));
   assert.ok(has(run({ ...pinned(), headPin: null }), 'declarations.frozen.json: removed'));
-  // A reason_allowed entry may only name a path that was never declared.
+  // reason_allowed is frozen against the merge base; on the first pin
+  // (no merge-base pin) an entry may only name a path that was never declared.
   const widened = clone(pin);
   widened.reason_allowed.push({ case: V13, path: 'library' });
-  assert.ok(has(run({ ...pinned(), headPin: widened }), `reason_allowed entry ${V13}|library names a declared path`));
+  assert.ok(has(run({ ...pinned(), headPin: widened }), `reason_allowed is frozen; ${V13}|library may not be added`));
+  assert.ok(has(pinProblems(null, widened), `reason_allowed entry ${V13}|library names a declared path`));
 });
 
 test('pin: corpus_fix_reason only on the frozen reason_allowed list; corrections need the merge-base pin', async () => {
-  // label-v6-outer-stamp-10 is a label case (not a rule class) with no
-  // declaration and not on the list: corpus_fix_reason is refused there.
+  // label-v6-outer-stamp-10|cli is declared version_mismatch: an input tidy
+  // that keeps that reason passes as corpus_fix, never as corpus_fix_reason.
   const L = 'label-v6-outer-stamp-10';
   const tidy = withCase(headInputs, L, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
   const key = `${L}|cli`;
@@ -602,13 +606,223 @@ test('pin: corpus_fix_reason only on the frozen reason_allowed list; corrections
   const row = { [key]: rowOf(o[key]) };
   const over = { headBaseline: { ...baseline, ...row }, baseDigests: inputDigests(headInputs), headDigests: inputDigests(tidy), baseOnHead: o, ...pinned(tidy) };
   const asReason = run({ ...over, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L], 'corpus_fix_reason')) });
-  assert.ok(has(asReason, 'corpus_fix_reason is only for the paths listed in reason_allowed'), asReason.join('; '));
+  assert.ok(has(asReason, 'corpus_fix_reason is only for a case path with no declared expectation'), asReason.join('; '));
+  // A path that is neither declared nor on the list (a case the pin does
+  // not classify) takes no corpus_fix_reason either, and is unclassified.
+  const unpinnedPin = { ...clone(pin), declarations: pin.declarations.filter((e) => pinKeyOf(e) !== key) };
+  const unpinnedInputs = withExpect(tidy, L, undefined);
+  const unpinned = run({ ...over, ...pinned(unpinnedInputs), basePin: unpinnedPin, headPin: unpinnedPin, baseCases: caseDeclarations(withExpect(headInputs, L, undefined)), headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L], 'corpus_fix_reason')) });
+  assert.ok(has(unpinned, 'corpus_fix_reason is only for the paths listed in reason_allowed'), unpinned.join('; '));
+  assert.ok(has(unpinned, `${key}: case path in synthetic.mjs (head) is not in declarations.frozen.json (head)`), unpinned.join('; '));
   assert.deepEqual(run({ ...over, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) }), []);
   // No pin at the merge base: corrections fail closed.
   const noPin = run({ ...over, basePin: null, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) });
   assert.ok(has(noPin, 'corpus corrections need packages/verify/test/corpus/declarations.frozen.json at the merge base'), noPin.join('; '));
   // No head declarations: fail closed.
   assert.ok(has(run({ ...over, headDecls: null, headChanges: withEntries(...fixEntries([key], row, inputDigests(tidy)[L])) }), 'need the head case declarations'));
+});
+
+// ---------- Protocol Review re-check of 9f912f22 ----------
+// The label class, the deferred unlock (P6), reason_allowed appends (P8),
+// deferred entries on declared paths (P5), and case paths the pin does not
+// classify. Each correction as one PR and as two PRs where PR-1 merges first.
+
+const LABELS = ['label-v10-outer-stamp-6', 'label-v6-outer-stamp-10'];
+const cliKey = (id) => `${id}|cli`;
+const declaredValue = (key) => pin.declarations.find((e) => pinKeyOf(e) === key)?.expect;
+
+// A label case input becomes the control v10 document (cli: key untrusted).
+async function neuterLabel(inputs, id, kind = 'corpus_fix') {
+  const control = headInputs.cases.find((x) => x.id === 'control-test-key-v10');
+  const neutered = withCase(inputs, id, (c) => ({ ...c, doc: control.doc, history: control.history, jwks: control.jwks }));
+  const key = cliKey(id);
+  const baseOnHead = await baseOutcomes(pkg, neutered, [key]);
+  const row = rowOf(baseOnHead[key]);
+  const headDigests = inputDigests(neutered);
+  return {
+    inputs: neutered,
+    row,
+    over: {
+      headBaseline: { ...baseline, [key]: row },
+      headChanges: withEntries(entry(key, row, { kind, note: 'fixture tidy', input_digest: headDigests[id] })),
+      baseDigests: inputDigests(headInputs), headDigests, baseOnHead, changedFiles: [...TEST_ONLY],
+    },
+  };
+}
+const dropLabel = (id) => {
+  const key = cliKey(id);
+  const head = clone(baseline);
+  delete head[key];
+  return { headBaseline: head, headChanges: withEntries(entry(key, null, { kind: 'corpus_fix', note: 'case retired' })), changedFiles: [...TEST_ONLY] };
+};
+const LABEL_MISMATCH = (key) => `${key}: corpus_fix: the merge-base verifier on the head input is decided by "key untrusted", not the merge-base declared "version_mismatch"`;
+
+test('label: the cli paths are pinned at the reasons main\'s verifier gives', () => {
+  for (const id of LABELS) {
+    assert.equal(declaredValue(cliKey(id)), 'version_mismatch', id);
+    assert.equal(baseline[cliKey(id)].reason, 'version_mismatch', id);
+    assert.equal(decls[id].class, 'label');
+  }
+  // label-v4v5 cli is decided by the conflicting stamps (the same document
+  // without hmac_attestation is legacy_form_not_allowlisted), so it is declared.
+  assert.equal(declaredValue('label-v4v5-conflicting-stamps|cli'), 'unsupported_version');
+  assert.equal(baseline['label-v4v5-conflicting-stamps|cli'].reason, 'unsupported_version');
+});
+
+test('label: a stamp-free label-v4v5 document is decided by another rule, so the cli declaration tests the stamps', async () => {
+  const L = 'label-v4v5-conflicting-stamps';
+  const key = cliKey(L);
+  const noHmac = withCase(headInputs, L, (c) => { const d = JSON.parse(c.doc); delete d.hmac_attestation; c.doc = JSON.stringify(d); return c; });
+  const o = await baseOutcomes(pkg, noHmac, [key]);
+  assert.equal(o[key].reason, 'legacy_form_not_allowlisted');
+  const row = rowOf(o[key]);
+  const problems = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(...fixEntries([key], { [key]: row }, inputDigests(noHmac)[L])), baseDigests: inputDigests(headInputs), headDigests: inputDigests(noHmac), baseOnHead: o, ...pinned(noHmac) });
+  assert.ok(has(problems, `${key}: corpus_fix: the merge-base verifier on the head input is decided by "legacy_form_not_allowlisted", not the merge-base declared "unsupported_version"`), problems.join('; '));
+});
+
+test('label, one PR: a corpus_fix neuter of either outer-stamp case is rejected, of either kind', async () => {
+  for (const id of LABELS) {
+    for (const kind of ['corpus_fix', 'corpus_fix_reason']) {
+      const { inputs, over } = await neuterLabel(headInputs, id, kind);
+      const problems = run({ ...over, ...pinned(inputs) });
+      assert.ok(has(problems, LABEL_MISMATCH(cliKey(id))), `${id} ${kind}: ${problems.join('; ')}`);
+      if (kind === 'corpus_fix_reason') assert.ok(has(problems, 'corpus_fix_reason is only for a case path with no declared expectation'), problems.join('; '));
+    }
+  }
+});
+
+test('label, one PR: dropping either outer-stamp case with to: null is rejected', () => {
+  for (const id of LABELS) {
+    const problems = run({ ...dropLabel(id), ...pinned(withoutCase(headInputs, id)) });
+    assert.ok(has(problems, `${cliKey(id)}: a case path pinned in declarations.frozen.json may not be removed`), `${id}: ${problems.join('; ')}`);
+    assert.ok(has(problems, `${DRIFT_HEAD}: ${cliKey(id)} is pinned "version_mismatch" but not declared in synthetic.mjs`), problems.join('; '));
+    // to: null with the row kept is refused too.
+    const keep = run({ headChanges: withEntries(entry(cliKey(id), null, { kind: 'corpus_fix', note: 'x' })), ...pinned() });
+    assert.ok(has(keep, `${cliKey(id)}: to: null on a case path pinned`), keep.join('; '));
+  }
+});
+
+test('label, two PRs: PR-1 (expect weakened or deleted) is rejected; if merged, the PR-2 neuter and the PR-2 drop are rejected', async () => {
+  for (const id of LABELS) {
+    for (const weak of [undefined, { cli: 'version' }, { cli: 'key untrusted' }]) {
+      const pr1 = withExpect(headInputs, id, weak);
+      assert.ok(has(run({ ...pinned(pr1) }), DRIFT_HEAD), `${id} PR-1`);
+      const { inputs, over } = await neuterLabel(pr1, id);
+      const second = run({ ...over, ...pinned(inputs), baseCases: caseDeclarations(pr1) });
+      assert.ok(has(second, DRIFT_BASE), second.join('; '));
+      assert.ok(has(second, LABEL_MISMATCH(cliKey(id))), `${id}: ${second.join('; ')}`);
+      const drop = run({ ...dropLabel(id), ...pinned(withoutCase(pr1, id)), baseCases: caseDeclarations(pr1) });
+      assert.ok(has(drop, DRIFT_BASE), drop.join('; '));
+      assert.ok(has(drop, `${cliKey(id)}: a case path pinned in declarations.frozen.json may not be removed`), drop.join('; '));
+    }
+  }
+});
+
+test('label is a rule class: with no pin entry, a label neuter still needs a declaration', async () => {
+  const id = LABELS[1];
+  const key = cliKey(id);
+  const bare = { ...clone(pin), declarations: pin.declarations.filter((e) => pinKeyOf(e) !== key) };
+  const pr1 = withExpect(headInputs, id, undefined);
+  const { inputs, over } = await neuterLabel(pr1, id);
+  const problems = run({ ...over, ...pinned(inputs), basePin: bare, headPin: bare, baseCases: caseDeclarations(pr1) });
+  assert.ok(has(problems, `${key}: corpus_fix: rule case path that is neither declared nor in reason_allowed at the merge base`), problems.join('; '));
+});
+
+const U6 = 'version-v10-claims-signed-as-v6-after-window';
+const U6LIB = `${U6}|library`;
+
+test('deferred unlock, PR-1: an appended declaration equal to the deferred value, or to any cause that decides nothing, is rejected', () => {
+  for (const value of ['log_unreachable', 'key untrusted', 'signed_receipt_unavailable', 'receipt_unavailable', 'could_not_check', 'anchor_unreachable', 'base_rpc_error', 'rpc_timeout', 'issuer_history_unavailable', 'invalid']) {
+    const p1 = clone(pin);
+    p1.declarations.push({ case: U6, path: 'library', expect: value });
+    const inputs = value === 'log_unreachable' ? headInputs : withExpect(headInputs, U6, { library: value });
+    const first = run({ ...pinned(inputs), headPin: p1 });
+    assert.ok(has(first, `${U6LIB} may not be declared ${JSON.stringify(value)}, which makes no decision by the case rule`), `${value}: ${first.join('; ')}`);
+    if (value === 'log_unreachable') assert.ok(has(first, `${U6LIB} is deferred as "log_unreachable"`), first.join('; '));
+  }
+  // The same on the other deferred paths.
+  for (const [c, path] of [['timing-l5-backdated-iat', 'library'], ['control-test-key-v10', 'cli'], ['control-unsigned-document', 'cli']]) {
+    const want = pin.deferred.find((e) => e.case === c && e.path === path).expect;
+    const p1 = clone(pin);
+    p1.declarations.push({ case: c, path, expect: want });
+    assert.ok(pinProblems(pin, p1).some((p) => p.includes('a declaration for it must name a real decision')), `${c}|${path}`);
+  }
+  // A real decision still moves the path out of deferred.
+  const p1 = clone(pin);
+  p1.declarations.push({ case: U6, path: 'library', expect: 'version_window_closed' });
+  assert.deepEqual(pinProblems(pin, p1), []);
+});
+
+test('deferred unlock, two PRs: PR-1 (declare log_unreachable) is rejected; PR-2 (neuter to log_unreachable) is rejected on the deferred path', async () => {
+  const p1 = clone(pin);
+  p1.declarations.push({ case: U6, path: 'library', expect: 'log_unreachable' });
+  assert.ok(pinProblems(pin, p1).length > 0);
+  // PR-2 on the real merge base: the control document gives log_unreachable on the library path.
+  const control = headInputs.cases.find((x) => x.id === 'control-test-key-v10');
+  const neutered = withCase(headInputs, U6, (c) => ({ ...c, doc: control.doc, history: control.history, jwks: control.jwks }));
+  const o = await baseOutcomes(pkg, neutered, [U6LIB]);
+  assert.equal(o[U6LIB].cause, 'log_unreachable');
+  const row = { [U6LIB]: rowOf(o[U6LIB]) };
+  for (const kind of ['corpus_fix', 'corpus_fix_reason']) {
+    const second = run({ headBaseline: { ...baseline, ...row }, headChanges: withEntries(...fixEntries([U6LIB], row, inputDigests(neutered)[U6], kind)), baseDigests: inputDigests(headInputs), headDigests: inputDigests(neutered), baseOnHead: o, ...pinned(neutered) });
+    assert.ok(has(second, `${U6LIB}: corpus_fix: ${U6LIB} is deferred in declarations.frozen.json`), `${kind}: ${second.join('; ')}`);
+  }
+});
+
+test('reason_allowed is frozen: an append for a future path, a label path or any other path is rejected', () => {
+  for (const e of [{ case: 'version-v14-future', path: 'cli' }, { case: 'label-v6-outer-stamp-10', path: 'library' }, { case: 'control-unsigned-document', path: 'library' }]) {
+    const h = clone(pin);
+    h.reason_allowed.push(e);
+    assert.ok(has(run({ ...pinned(), headPin: h }), `reason_allowed is frozen; ${pinKeyOf(e)} may not be added`), pinKeyOf(e));
+  }
+  // Edits and removals are append-only problems; the unchanged list passes.
+  const moved = clone(pin);
+  moved.reason_allowed.reverse();
+  assert.ok(has(pinProblems(pin, moved), 'append-only: reason_allowed entry 0'));
+  assert.deepEqual(pinProblems(pin, clone(pin)), []);
+});
+
+test('deferred: an added entry naming a declared or reason_allowed path is rejected', () => {
+  const onDeclared = clone(pin);
+  onDeclared.deferred.push({ case: V13, path: 'library', expect: 'log_unreachable' });
+  assert.ok(has(pinProblems(pin, onDeclared), `deferred entry ${V13}|library names a declared path`));
+  assert.ok(has(pinProblems(null, onDeclared), `deferred entry ${V13}|library names a declared path`));
+  const onReason = clone(pin);
+  onReason.deferred.push({ case: U6, path: 'cli', expect: 'key untrusted' });
+  assert.ok(has(pinProblems(pin, onReason), `deferred entry ${U6}|cli names a reason_allowed path`));
+  // A merge-base deferred entry superseded by an appended declaration stays.
+  const superseded = clone(pin);
+  superseded.declarations.push({ case: U6, path: 'library', expect: 'version_window_closed' });
+  assert.deepEqual(pinProblems(superseded, clone(superseded)), []);
+});
+
+test('every synthetic case path is classified by the pin, in exactly one list', () => {
+  const all = headInputs.cases.flatMap((c) => c.paths.map((p) => `${c.id}|${p}`));
+  assert.deepEqual(unclassifiedPaths(casesOf(headInputs), pin), []);
+  const lists = ['declarations', 'deferred', 'reason_allowed'].map((l) => new Set(pin[l].map(pinKeyOf)));
+  for (const k of all) assert.equal(lists.filter((s) => s.has(k)).length, 1, k);
+  assert.equal(all.length, lists.reduce((n, s) => n + s.size, 0));
+  // The new declarations are real decisions; the deferred values are not.
+  for (const e of pin.declarations.slice(23)) assert.equal(isNonDecision(e.expect), false, pinKeyOf(e));
+  for (const e of pin.deferred) assert.equal(isNonDecision(e.expect), true, pinKeyOf(e));
+});
+
+test('unclassified case path: a new case without a pin entry is rejected by the gate', () => {
+  const newCase = { ...clone(headInputs.cases.find((c) => c.id === V13)), id: 'version-v14-unknown', expect: null };
+  const grown = { ...headInputs, cases: [...headInputs.cases, newCase] };
+  const problems = run({ ...pinned(grown) });
+  for (const path of ['cli', 'library']) assert.ok(has(problems, `version-v14-unknown|${path}: case path in synthetic.mjs (head) is not in declarations.frozen.json (head)`), problems.join('; '));
+  // One path declared, the other left out: only the other is reported.
+  const half = { ...headInputs, cases: [...headInputs.cases, { ...newCase, expect: { library: 'unsupported_version' } }] };
+  const halfPin = clone(pin);
+  halfPin.declarations.push({ case: 'version-v14-unknown', path: 'library', expect: 'unsupported_version' });
+  const halfProblems = run({ ...pinned(half), headPin: halfPin });
+  assert.deepEqual(halfProblems, ['version-v14-unknown|cli: case path in synthetic.mjs (head) is not in declarations.frozen.json (head); declare it, or defer it with its current expect']);
+  // Deferring it with its current expect classifies it.
+  const full = { ...headInputs, cases: [...headInputs.cases, { ...newCase, expect: { library: 'unsupported_version', cli: 'key untrusted' } }] };
+  const fullPin = clone(halfPin);
+  fullPin.deferred.push({ case: 'version-v14-unknown', path: 'cli', expect: 'key untrusted' });
+  assert.deepEqual(run({ ...pinned(full), headPin: fullPin }), []);
 });
 
 test('removing a real receipt case fails; changes.json is append-only', () => {
@@ -791,6 +1005,17 @@ test('end to end: the gate reads the declared rule from the merge base, not from
   const res = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'lying.json', lying)]);
   assert.equal(res.status, 1, res.stdout);
   assert.match(res.stderr, /version-v13-unknown\|library: corpus_fix: the merge-base verifier on the head input is decided by .* not the merge-base declared "unsupported_version"/);
+});
+
+test('end to end: a case path the pin does not classify fails the gate script', { skip: !gitOk }, () => {
+  const extra = { ...clone(headInputs.cases.find((c) => c.id === V13)), id: 'version-v14-unknown', expect: null };
+  const grown = { ...headInputs, cases: [...headInputs.cases, extra] };
+  const r = repoWith(() => {});
+  const ok = gateCli(r.root, r.base, ['--head-inputs', writeInputs(r.root, 'inputs.json', headInputs)]);
+  assert.equal(ok.status, 0, ok.stderr);
+  const bad = gateCli(r.root, r.base, ['--head-inputs', writeInputs(r.root, 'grown.json', grown)]);
+  assert.equal(bad.status, 1, bad.stdout);
+  assert.match(bad.stderr, /version-v14-unknown\|cli: case path in synthetic\.mjs \(head\) is not in declarations\.frozen\.json/);
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {

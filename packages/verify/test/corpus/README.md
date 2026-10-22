@@ -99,16 +99,29 @@ It fails when:
   row is also refused while the merge-base pair differs, so a change that
   edits `synthetic.mjs` alone cannot be merged first and used after;
 - `declarations.frozen.json` is removed or edited other than by appending.
-  It has three append-only lists: `declarations` (the per-rule cause of a
-  case path), `deferred` (a case path whose own rule is not reached yet;
-  its expectation is pinned but a correction on it is refused until a
-  declaration is appended) and `reason_allowed`. An appended declaration
-  may not declare a path twice, and an appended `reason_allowed` entry may
-  not name a declared or deferred path. The pin is a verifier path, so a
-  pin change cannot carry a correction;
+  It has three lists: `declarations` (the per-rule cause of a case path),
+  `deferred` (a case path whose own rule is not reached yet; its
+  expectation is pinned but a correction on it is refused until a
+  declaration is appended) and `reason_allowed`. `declarations` and
+  `deferred` are append-only; `reason_allowed` is frozen and must equal the
+  merge-base list exactly. An appended declaration may not declare a path
+  twice, may not equal the `deferred` value it replaces, and may not be a
+  cause that makes no decision by a case rule (`log_unreachable`,
+  `key untrusted`, `signed_receipt_unavailable`, `receipt_unavailable`,
+  `could_not_check`, a generic `invalid`, and any `*_unreachable`,
+  `*_unavailable`, `*rpc_error`, `*timeout`, `*unchecked`, `*pending` or
+  `*untrusted` cause; `isNonDecision` in `corpus-gate.mjs`). So a path
+  leaves `deferred` only with a real decision. An added `deferred` entry
+  may not name a declared or `reason_allowed` path. The pin is a verifier
+  path, so a pin change cannot carry a correction;
+- a case path of the head export is not classified by the head pin. Every
+  synthetic case path is in exactly one list: declared, deferred or
+  `reason_allowed`. A new case appends a declaration for each path (or a
+  deferred entry with its current `expect`, when its own rule is not
+  reached yet) in the same change;
 - a `corpus_fix_reason` entry is for a path not on the merge-base
   `reason_allowed` list. That list holds the rule-class case paths
-  (version, gate, timing) that were never declared. On those paths a plain
+  (label, version, gate, timing) that were never declared. On those paths a plain
   `corpus_fix` is refused and `corpus_fix_reason`, which keeps every other
   corpus_fix rule, marks the row for a closer review. If the merge-base pin
   or the head declarations cannot be read, the gate fails closed;
@@ -150,7 +163,23 @@ Deferred: `version-v10-claims-signed-as-v6-after-window|library` and
 `timing-l5-backdated-iat|library` declare `log_unreachable` today, which is
 not their own rule (the offline tape has no chain RPC). They are pinned as
 `deferred`. A change that makes them reach their rule appends a
-declaration for them in the same change as the `synthetic.mjs` update.
+declaration with the new cause in the same change as the `synthetic.mjs`
+update. The two control cli paths are deferred too:
+`control-test-key-v10|cli` (`key untrusted`: the CLI's production key set
+rejects the test key before any rule) and `control-unsigned-document|cli`
+(`signed_receipt_unavailable`). Neither can take a declaration while its
+outcome makes no decision, so neither takes a correction.
+
+Label cases: `label-v10-outer-stamp-6|cli` and `label-v6-outer-stamp-10|cli`
+are declared `version_mismatch`, and `label-v4v5-conflicting-stamps|cli`
+is declared `unsupported_version`. The last is decided by the conflicting
+stamps: the same document without `hmac_attestation`, or with a matching
+v4 one, is decided by `legacy_form_not_allowlisted` instead.
+
+Who reviews pin appends: `.github/CODEOWNERS` names the shared project
+account, and code-owner review is not enforced, so an append to
+`declarations.frozen.json` has no non-agent reviewer today. A human
+maintainer reviews each pin append before merge.
 
 Every RPC entry on a tape (public, and the local tier's when set) must be an
 error entry, and every GET entry an https URL on an allowed host

@@ -134,6 +134,10 @@ test('each synthetic case is decided by its own rule', async () => {
   const declared = new Map();
   for (const c of synthetic) for (const [path, want] of Object.entries(c.expect || {})) declared.set(`${c.id}|${path}`, want);
   assert.deepEqual(Object.fromEntries([...declared].sort()), Object.fromEntries([...pinned].sort()), 'synthetic.mjs expect values differ from declarations.frozen.json');
+  // Every case path is classified: declared, deferred or reason_allowed.
+  const reasonAllowed = new Set(pinFile.reason_allowed.map((e) => `${e.case}|${e.path}`));
+  const unclassified = synthetic.flatMap((c) => c.paths.map((path) => `${c.id}|${path}`)).filter((k) => !pinned.has(k) && !reasonAllowed.has(k));
+  assert.deepEqual(unclassified, [], 'case paths not classified by declarations.frozen.json');
   let asserted = 0;
   for (const c of synthetic) {
     for (const path of c.paths) {

@@ -154,18 +154,21 @@ export async function buildSynthetic(dir) {
   {
     const doc = structuredClone(v10);
     doc.issuer_signature.payload_version = 6;
-    add({ id: 'label-v10-outer-stamp-6', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'exit != 0; version taken from the signed claims only', paths: ['cli'] }, doc);
+    add({ id: 'label-v10-outer-stamp-6', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'exit != 0; version taken from the signed claims only', expect: { cli: 'version_mismatch' }, paths: ['cli'] }, doc);
   }
   const v6 = readFixture('public/chit-1ebc5616.json');
   {
     const doc = structuredClone(v6);
     doc.issuer_signature.payload_version = 10;
-    add({ id: 'label-v6-outer-stamp-10', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'never better than the unmodified v6 receipt (exit 1 NOT_IN_LOG)', paths: ['cli'] }, doc);
+    add({ id: 'label-v6-outer-stamp-10', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'never better than the unmodified v6 receipt (exit 1 NOT_IN_LOG)', expect: { cli: 'version_mismatch' }, paths: ['cli'] }, doc);
   }
   {
     const doc = docFor(key, unversionedClaims('xfuel-corpus-0000-label-4v5', T_SEP05), { outerPv: 4 });
+    // The cli outcome is decided by the conflicting stamps: the same
+    // document without hmac_attestation, or with a matching v4 one, is
+    // decided by legacy_form_not_allowlisted instead.
     doc.hmac_attestation = { payload_version: 5 };
-    add({ id: 'label-v4v5-conflicting-stamps', class: 'label', spec: '§5.1 relabel; L1', target: 'exit != 0 (stamps disagree: no inferred version)' }, doc);
+    add({ id: 'label-v4v5-conflicting-stamps', class: 'label', spec: '§5.1 relabel; L1', target: 'exit != 0 (stamps disagree: no inferred version)', expect: { cli: 'unsupported_version' } }, doc);
   }
 
   // --- version: the signed version is older, newer, or missing ---
@@ -279,11 +282,11 @@ export async function buildSynthetic(dir) {
   // --- control: a current-version receipt under the test key ---
   {
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'xfuel-corpus-0000-control-v10' };
-    add({ id: 'control-test-key-v10', class: 'control', spec: '§5.1', target: 'unchanged (detects over-tightening)' }, docFor(key, claims, { outerPv: 10 }));
+    add({ id: 'control-test-key-v10', class: 'control', spec: '§5.1', target: 'unchanged (detects over-tightening)', expect: { cli: 'key untrusted' } }, docFor(key, claims, { outerPv: 10 }));
   }
   {
     const doc = readFixture('unsigned-self-binding.json');
-    add({ id: 'control-unsigned-document', class: 'control', spec: '§3', target: 'exit 2 signed_receipt_unavailable', paths: ['cli'] }, doc);
+    add({ id: 'control-unsigned-document', class: 'control', spec: '§3', target: 'exit 2 signed_receipt_unavailable', expect: { cli: 'signed_receipt_unavailable' }, paths: ['cli'] }, doc);
   }
   return out;
 }
