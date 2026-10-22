@@ -13,8 +13,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -982,12 +982,27 @@ const flipDocSig = (inputs, id) => withCase(inputs, id, (c) => {
 });
 const flipHistorySig = (inputs, id) => withCase(inputs, id, (c) => { const h = JSON.parse(c.history); h.issuer_signature.jws = flipJws(h.issuer_signature.jws); c.history = JSON.stringify(h); return c; });
 
-test('signature state: every head case signature verifies, and is part of the digest', () => {
+test('signature state: every head case signature verifies, and is part of the digest', async () => {
+  // Every case signature verifies under the history key filed under its kid,
+  // except the three documents signed under the production kid with their own
+  // embedded key (the verifier finds no trusted key for them), and the unsigned control.
+  const OWN_KEY = new Set(['label-v10-outer-stamp-6', 'label-v6-outer-stamp-10', 'version-l1-v4-production-kid']);
+  const DETACHED = new Set(['version-l1-detached-not-allowlisted', 'timing-detached-created-at-moved', 'gate8-detached-pv7', 'gate8-detached-pv8']);
   for (const c of headInputs.cases) {
     const f = signatureForm(c);
-    assert.equal(f.history, 'valid', c.id);
-    assert.equal(f.doc, c.id === 'control-unsigned-document' ? 'absent' : 'valid', c.id);
+    assert.equal(f.history, 'valid:corpus-test-kid:history[0]', c.id);
+    assert.equal(f.history_key, 'trusted:history[0]', c.id);
+    if (c.id === 'control-unsigned-document') { assert.equal(f.doc, 'absent'); continue; }
+    if (OWN_KEY.has(c.id)) {
+      assert.match(f.doc, /^valid_untrusted:IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q:doc\.issuer_jwk:/, c.id);
+      assert.match(f.doc_key, /^other:/, c.id);
+      continue;
+    }
+    assert.equal(f.doc, 'valid:corpus-test-kid:history[0]', c.id);
+    assert.equal(f.doc_key, DETACHED.has(c.id) ? 'absent' : 'trusted:history[0]', c.id);
   }
+  // The same on a second, independent build (throwaway keys differ).
+  assert.deepEqual(inputDigests(await exportInputs(pkg)), D);
   // A flipped byte in the document signature (JWS or detached) or the history signature moves the digest.
   for (const id of ['gate10-pv10-no-history-pin', 'label-v10-outer-stamp-6', 'gate8-detached-pv8', 'version-l1-detached-not-allowlisted']) {
     const flipped = flipDocSig(headInputs, id);
@@ -1019,6 +1034,95 @@ test('DG2t: a signature flip on gate10-pv10 with a tighten row and a golden-corp
   assert.ok(has(run({ ...pinned(flipped) }), `${key}: the head input digest differs`));
   const rowOnly = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), ...pinned() });
   assert.ok(has(rowOnly, `${key}: the cause of a declared path may not change`), rowOnly.join('; '));
+});
+
+// Re-sign a case document under a fresh key, as the review's KS1 does.
+const freshKey = () => { const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' }); return { privateKey, jwk: publicKey.export({ format: 'jwk' }) }; };
+const resignDoc = (inputs, id, { jwk = (k, orig) => ({ ...orig, x: k.jwk.x, y: k.jwk.y }), header = (h) => h, docEdit = () => {}, historyEdit = null, jwksEdit = null } = {}) => {
+  const k = freshKey();
+  return { key: k, inputs: withCase(inputs, id, (c) => {
+    const d = JSON.parse(c.doc);
+    const [h64, p64] = d.issuer_signature.jws.split('.');
+    const h2 = Buffer.from(JSON.stringify(header(JSON.parse(Buffer.from(h64, 'base64url').toString('utf8'))))).toString('base64url');
+    const input = `${h2}.${p64}`;
+    d.issuer_signature.jws = `${input}.${cryptoSign('sha256', Buffer.from(input), { key: k.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
+    const j = jwk(k, d.issuer_signature.issuer_jwk);
+    if (j === undefined) delete d.issuer_signature.issuer_jwk; else d.issuer_signature.issuer_jwk = j;
+    docEdit(d);
+    c.doc = JSON.stringify(d, null, 2);
+    if (historyEdit) { const hh = JSON.parse(c.history); historyEdit(hh, k); c.history = JSON.stringify(hh, null, 2); }
+    if (jwksEdit) { const jj = JSON.parse(c.jwks); jwksEdit(jj, k); c.jwks = JSON.stringify(jj, null, 2); }
+    return c;
+  }) };
+};
+const KS_ID = 'gate10-pv10-no-history-pin';
+const ksCase = (inputs) => inputs.cases.find((c) => c.id === KS_ID);
+// The review's KS1g: synthetic.mjs re-signs the case, golden-corpus.test.mjs is edited, rows stay stale.
+const KS_FILES = [GOLDEN_FILE, 'packages/verify/test/corpus/synthetic.mjs'];
+
+test('KS1g: gate10-pv10 re-signed under an injected issuer_jwk, with a golden edit and stale rows, is rejected', async () => {
+  const { inputs } = resignDoc(headInputs, KS_ID);
+  const f = signatureForm(ksCase(inputs));
+  assert.equal(f.doc, 'valid_untrusted:corpus-test-kid:doc.issuer_jwk:corpus-test-kid:false');
+  assert.equal(f.doc_key, 'other:corpus-test-kid:false');
+  // The earlier form did not see it; the new one does.
+  assert.equal(caseDigest(ksCase(inputs), { signatures: false }), caseDigest(ksCase(headInputs), { signatures: false }));
+  assert.notEqual(inputDigests(inputs)[KS_ID], D[KS_ID]);
+  // On the merge-base verifier the case is now decided by the untrusted key.
+  const key = `${KS_ID}|library`;
+  const o = await baseOutcomes(pkg, inputs, [key]);
+  assert.notEqual(String(o[key].cause ?? o[key].reason), declaredValue(key));
+  const problems = run({ ...pinned(inputs), changedFiles: KS_FILES });
+  assert.ok(has(problems, `${key}: the head input digest differs`), problems.join('; '));
+});
+
+test('KS1 variants: x/y dropped, a kid collision, a key in the document only, a second history or JWKS key: each moves the digest and is rejected', () => {
+  const variants = {
+    // Re-signed under a fresh key; the embedded key loses x and y.
+    'resigned, x/y dropped': resignDoc(headInputs, KS_ID, { jwk: (k) => ({ kty: 'EC', crv: 'P-256', kid: 'corpus-test-kid' }) }),
+    // The original signature kept; only the embedded key loses x and y.
+    'x/y dropped only': { inputs: withCase(headInputs, KS_ID, (c) => { const d = JSON.parse(c.doc); const { x: _x, y: _y, ...rest } = d.issuer_signature.issuer_jwk; d.issuer_signature.issuer_jwk = rest; c.doc = JSON.stringify(d, null, 2); return c; }) },
+    // The injected key carries the trusted kid and the header kid is unchanged.
+    'kid collision': resignDoc(headInputs, KS_ID, { jwk: (k) => ({ ...k.jwk, kid: 'corpus-test-kid', alg: 'ES256', use: 'sig' }) }),
+    // The header names a kid the history does not have, and the doc carries the key.
+    'key in the document, not in the history': resignDoc(headInputs, KS_ID, { header: (h) => ({ ...h, kid: 'injected-kid' }), jwk: (k) => ({ ...k.jwk, kid: 'injected-kid' }) }),
+    // The embedded key removed, the signature by a fresh key.
+    'no embedded key': resignDoc(headInputs, KS_ID, { jwk: () => undefined }),
+    // The fresh key filed in the JWKS under another kid.
+    'JWKS key under another kid': resignDoc(headInputs, KS_ID, { jwksEdit: (j, k) => { j.keys.push({ ...k.jwk, kid: 'other-kid' }); } }),
+    // The fresh key filed as a second history entry under the same kid.
+    'second history entry, same kid': resignDoc(headInputs, KS_ID, { historyEdit: (h, k) => { h.entries.push({ ...h.entries[0], jwk: { ...k.jwk, kid: 'corpus-test-kid' } }); } }),
+  };
+  const states = new Set([stable(signatureForm(ksCase(headInputs)))]);
+  for (const [name, v] of Object.entries(variants)) {
+    const f = signatureForm(ksCase(v.inputs));
+    assert.ok(!states.has(stable(f)), `${name}: ${stable(f)}`);
+    states.add(stable(f));
+    assert.notEqual(inputDigests(v.inputs)[KS_ID], D[KS_ID], name);
+    const problems = run({ ...pinned(v.inputs), changedFiles: KS_FILES });
+    assert.ok(has(problems, `${KS_ID}|library: the head input digest differs`), `${name}: ${problems.join('; ')}`);
+  }
+  assert.match(signatureForm(ksCase(variants['resigned, x/y dropped'].inputs)).doc, /^invalid:/);
+  assert.equal(signatureForm(ksCase(variants['x/y dropped only'].inputs)).doc_key, 'no_key');
+  assert.equal(signatureForm(ksCase(variants['key in the document, not in the history'].inputs)).doc, 'valid_untrusted:injected-kid:doc.issuer_jwk:injected-kid:false');
+  assert.equal(signatureForm(ksCase(variants['JWKS key under another kid'].inputs)).doc, 'valid_untrusted:corpus-test-kid:jwks[1]:other-kid:false');
+  assert.equal(signatureForm(ksCase(variants['second history entry, same kid'].inputs)).doc, 'valid:corpus-test-kid:history[1]');
+});
+
+test('merge-base pin: unparseable always fails; missing fails once the merge-base gate reads it; the first pin is the only exemption', () => {
+  assert.deepEqual(basePinStateProblems('ok', true), []);
+  assert.deepEqual(basePinStateProblems('missing', false), []);
+  assert.deepEqual(basePinStateProblems(null, true), []);
+  assert.ok(has(basePinStateProblems('missing', true), 'is missing at the merge base'));
+  assert.ok(has(basePinStateProblems('unparseable', false), 'is not valid JSON'));
+  assert.ok(has(basePinStateProblems('unparseable', true), 'is not valid JSON'));
+  // In the gate: a lost pin is not read as a first pin (T1 on top of it is rejected by the state check).
+  const key = 'label-v10-outer-stamp-6|cli';
+  const row = { ...baseline[key], reason: 'key untrusted' };
+  const t1 = run({ ...pinned(), basePin: null, basePinState: 'missing', basePinRequired: true, headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })) });
+  assert.ok(has(t1, 'is missing at the merge base'), t1.join('; '));
+  assert.ok(has(run({ ...pinned(), basePin: null, basePinState: 'unparseable', basePinRequired: false }), 'is not valid JSON'));
+  assert.deepEqual(run({ ...pinned(), basePin: null, basePinState: 'missing', basePinRequired: false }), []);
 });
 
 test('T1: a src change moving the declared label-v10 cli reason at the same exit is rejected, with or without a golden edit', () => {
@@ -1525,6 +1629,39 @@ test('end to end: a reviewed re-pin passes with identical outcomes on the merge-
   const bad = gateCli(s.root, s.base, ['--base-tree', pkg, '--head-inputs', writeInputs(s.root, 'swapped.json', swapped)]);
   assert.equal(bad.status, 1, bad.stdout);
   assert.match(bad.stderr, /re-pin: control-unsigned-document\|cli: the merge-base verifier gives a different outcome on the head input/);
+  assert.match(bad.stderr, /re-pin: control-unsigned-document: the case document changed/);
+  // A wholesale swap with matching outcomes (label-v10 takes label-v6's input): rejected as a document change.
+  const [target, source] = SWAPS[0];
+  const lab = swapInto(target, source);
+  const l = repo(target, inputDigests(lab)[target]);
+  const labRes = gateCli(l.root, l.base, ['--base-tree', pkg, '--head-inputs', writeInputs(l.root, 'swap.json', lab)]);
+  assert.equal(labRes.status, 1, labRes.stdout);
+  assert.match(labRes.stderr, /re-pin: label-v10-outer-stamp-6: the case document changed/);
+  assert.match(labRes.stderr, /re-pin: label-v10-outer-stamp-6: the re-pinned document is the document of label-v6-outer-stamp-10/);
+  assert.doesNotMatch(labRes.stderr, /different outcome/);
+});
+
+test('end to end: a merge-base pin that is missing (under a gate that reads it) or not valid JSON fails the gate script', { skip: !gitOk }, () => {
+  const gateRel = 'packages/verify/scripts/corpus-gate.mjs';
+  const withGate = (root) => { mkdirSync(dirname(join(root, gateRel)), { recursive: true }); writeFileSync(join(root, gateRel), readFileSync(script)); };
+  // The change that adds the pin: the merge base has neither the pin nor a gate that reads it.
+  const pinText = readFileSync(join(pkg, DECLARATIONS_PIN.replace(/^packages\/verify\//, '')));
+  const restorePin = (root) => writeFileSync(join(root, DECLARATIONS_PIN), pinText);
+  const first = repoWith(restorePin, (root) => { spawnSync('rm', [join(root, DECLARATIONS_PIN)]); });
+  const okFirst = gateCli(first.root, first.base);
+  assert.equal(okFirst.status, 0, okFirst.stderr);
+  // The pin lost on main while main's gate reads it.
+  const lost = repoWith(restorePin, (root) => { withGate(root); spawnSync('rm', [join(root, DECLARATIONS_PIN)]); });
+  const r1 = gateCli(lost.root, lost.base);
+  assert.equal(r1.status, 1, r1.stdout);
+  assert.match(r1.stderr, /declarations\.frozen\.json is missing at the merge base/);
+  // A corrupted pin on main, with or without the gate there.
+  for (const g of [true, false]) {
+    const bad = repoWith(restorePin, (root) => { if (g) withGate(root); writeFileSync(join(root, DECLARATIONS_PIN), '{ not json'); });
+    const r2 = gateCli(bad.root, bad.base);
+    assert.equal(r2.status, 1, r2.stdout);
+    assert.match(r2.stderr, /declarations\.frozen\.json at the merge base is not valid JSON/);
+  }
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {
