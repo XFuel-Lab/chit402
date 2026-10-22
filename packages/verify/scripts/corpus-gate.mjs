@@ -36,7 +36,8 @@
  *   - changes.json is not append-only (an existing entry is edited or
  *     dropped);
  *   - the frozen registry file is not append-only, or an appended entry has
- *     no added `registry` changes.json entry.
+ *     no added `registry` changes.json entry;
+ *   - the chain tier breaks its rules (gateChain below).
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
  * base, so a change cannot loosen the gate that checks it.
@@ -52,6 +53,8 @@ import { pathToFileURL } from 'node:url';
 export const BASELINE = 'packages/verify/test/corpus/baseline.json';
 export const CHANGES = 'packages/verify/test/corpus/changes.json';
 export const REGISTRY_PIN = 'packages/verify/test/fixtures/version-registry.frozen.json';
+export const CHAIN_BASELINE = 'packages/verify/test/corpus/baseline-chain.json';
+export const CHAIN_TAPE = 'packages/verify/test/corpus/tapes/public-chain.json';
 
 const exitRank = (e) => (e === 0 ? 2 : e === 2 ? 1 : 0);
 const resultRank = (r) => (r === 'verified' || r === 'signature_valid' ? 2 : r === 'could_not_check' || r === 'partial' ? 1 : 0);
@@ -415,6 +418,59 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   return problems;
 }
 
+/**
+ * Chain tier (baseline-chain.json and tapes/public-chain.json), once the
+ * merge base has them:
+ *   - the chain tape is append-only: every merge-base entry is still there,
+ *     byte for byte as JSON, and `recorded_at` is unchanged (chain answers are
+ *     unsigned, so an edited answer could move a verdict);
+ *   - a chain baseline row is never removed (a synthetic one only with a
+ *     corpus_fix entry, to: null), and a changed row needs a changes.json
+ *     entry added in the same change and must not be more permissive than
+ *     the merge-base row (exit, result, overall, every check), and keeps
+ *     its `result_detail`;
+ *   - every row is well formed.
+ */
+export function gateChain({ baseChainBaseline, headChainBaseline, baseChainTape, headChainTape, baseChanges, headChanges }) {
+  const problems = [];
+  const added = (headChanges?.changes ?? []).slice((baseChanges?.changes ?? []).length);
+  const addedFor = new Map(added.filter((c) => c && c.case && c.path).map((c) => [`${c.case}|${c.path}`, { ...c, kind: c.kind ?? 'tighten' }]));
+  if (baseChainTape) {
+    if (!headChainTape) problems.push('public-chain.json: removed');
+    else {
+      if (headChainTape.recorded_at !== baseChainTape.recorded_at) problems.push('public-chain.json: recorded_at changed');
+      const b = baseChainTape.entries ?? {};
+      const h = headChainTape.entries ?? {};
+      for (const k of Object.keys(b)) {
+        if (!Object.prototype.hasOwnProperty.call(h, k)) problems.push(`public-chain.json is append-only: entry ${k.slice(0, 80)} removed`);
+        else if (!same(b[k], h[k])) problems.push(`public-chain.json is append-only: entry ${k.slice(0, 80)} edited`);
+      }
+    }
+  }
+  if (baseChainBaseline) {
+    const head = headChainBaseline ?? {};
+    for (const [key, was] of Object.entries(baseChainBaseline)) {
+      const now = Object.prototype.hasOwnProperty.call(head, key) ? head[key] : undefined;
+      if (now !== undefined && same(was, now)) continue;
+      const ch = addedFor.get(key);
+      if (now === undefined) {
+        if (isReal(key)) problems.push(`chain ${key}: a real receipt case was removed from the chain baseline`);
+        else if (!ch || ch.kind !== 'corpus_fix' || ch.to !== null || !ch.note) problems.push(`chain ${key}: removed without a corpus_fix entry (to: null, with a note)`);
+        continue;
+      }
+      if (!ch) { problems.push(`chain ${key}: chain baseline changed with no changes.json entry added in this change`); continue; }
+      for (const p of wellFormed(now)) problems.push(`chain ${key}: ${p}`);
+      for (const p of looser(was, now)) problems.push(`chain ${key}: more permissive than the merge base: ${p}`);
+      if ((was.result_detail ?? null) !== (now.result_detail ?? null)) problems.push(`chain ${key}: result_detail changed`);
+    }
+  }
+  for (const [key, now] of Object.entries(headChainBaseline ?? {})) {
+    if (baseChainBaseline && Object.prototype.hasOwnProperty.call(baseChainBaseline, key)) continue;
+    for (const p of wellFormed(now)) problems.push(`chain ${key} (new case): ${p}`);
+  }
+  return problems;
+}
+
 function gitShow(root, rev, path) {
   try {
     return JSON.parse(execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 }));
@@ -461,7 +517,15 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
       extra.baseOnHead = await baseOutcomes(baseTree, headInputs, fixKeys);
     }
   }
-  return [...problems, ...gate({ ...files, ...extra })];
+  const chain = gateChain({
+    baseChainBaseline: gitShow(root, base, CHAIN_BASELINE),
+    headChainBaseline: readHead(root, CHAIN_BASELINE),
+    baseChainTape: gitShow(root, base, CHAIN_TAPE),
+    headChainTape: readHead(root, CHAIN_TAPE),
+    baseChanges: files.baseChanges,
+    headChanges: files.headChanges,
+  });
+  return [...problems, ...gate({ ...files, ...extra }), ...chain];
 }
 
 const isMain = !!process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;

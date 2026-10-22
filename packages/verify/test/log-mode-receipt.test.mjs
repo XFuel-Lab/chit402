@@ -209,7 +209,8 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
   partial.issuer_signature = { alg: 'ES256', value: 'dummy', kid: 'not-checked' };
   const partialResult = await verifyReceipt(partial, { ...trust, jwks: undefined });
   assert.notEqual(partialResult.overall, 'verified');
-  assert.match(partialResult.issuer_signature.reason, /kid_not_in_history/);
+  // Detached form: refused by the empty L1 list before any key lookup.
+  assert.match(partialResult.issuer_signature.reason, /legacy_form_not_allowlisted/);
 
   const tampered = JSON.parse(JSON.stringify(fx.receipt));
   tampered.payment.gross_amount = '100000';

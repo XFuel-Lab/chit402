@@ -675,7 +675,7 @@ describe('canonicalIssuerPayload with fee/COGS fields', () => {
 });
 
 describe('verifyReceipt overall status semantics', () => {
-  test('overall=partial when receipt has issuer_signature but no JWKS provided', async () => {
+  test('a detached signature with no JWKS is refused by the empty L1 list', async () => {
     const receipt = {
       task_id: 'task-sig-no-jwks',
       status: 'completed',
@@ -685,9 +685,9 @@ describe('verifyReceipt overall status semantics', () => {
 
     const result = await verifyReceipt(receipt, {}); // No JWKS
 
-    assert.equal(result.overall, 'partial');
-    assert.equal(result.issuer_signature.checked, false);
-    assert.equal(result.issuer_signature.reason, 'kid_not_in_history');
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.reason, 'legacy_form_not_allowlisted');
   });
 
   test('overall=failed when JWKS provided but signature invalid', async () => {
@@ -784,7 +784,8 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.overall, 'failed');
     assert.equal(result.issuer_signature.valid, false);
     assert.equal(result.issuer_signature.key_trusted, false);
-    assert.equal(result.issuer_signature.reason, 'key untrusted');
+    // L1: the detached form is refused before any key lookup.
+    assert.equal(result.issuer_signature.reason, 'legacy_form_not_allowlisted');
     assert.equal(result.binding.matches, false);
     assert.equal(result.verdict.exit_code, 1);
   });
@@ -1181,7 +1182,9 @@ describe('Base payer confirms payee and asset', () => {
   });
 });
 
-function signClaims(payload) {
+function signClaims(input) {
+  // Inside the v8 validity window (version-windows.json) unless the test sets iat.
+  const payload = 'iat' in input ? input : { iat: 1790812800, ...input };
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwkExport = publicKey.export({ format: 'jwk' });
   const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });

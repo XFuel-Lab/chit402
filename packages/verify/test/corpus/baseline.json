@@ -1248,6 +1248,84 @@
    "shape": "could_not_check"
   }
  },
+ "id-url-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-mun7ofgh-254760bcb731|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq262x0-1467b076fc62|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq264r9-69896464bb19|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-musbd035-3f1fb99ba601|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-bare-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unreadable",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
  "file-chit-1ebc5616|cli": {
   "exit": 1,
   "result": "invalid",
@@ -1517,56 +1595,69 @@
  "version-l1-v4-not-allowlisted|cli": {
   "exit": 1,
   "result": "invalid",
-  "reason": "key untrusted",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
    "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   }
  },
  "version-l1-v4-not-allowlisted|library": {
-  "exit": 2,
-  "result": "could_not_check",
-  "reason": "log_unreachable",
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
-   "signature": "pass",
-   "key_window": "pass",
+   "signature": "fail",
+   "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   },
-  "overall": "partial"
+  "overall": "failed"
  },
  "version-l1-v5-not-allowlisted|cli": {
   "exit": 1,
   "result": "invalid",
-  "reason": "key untrusted",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
    "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   }
  },
  "version-l1-v5-not-allowlisted|library": {
-  "exit": 2,
-  "result": "could_not_check",
-  "reason": "log_unreachable",
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
-   "signature": "pass",
-   "key_window": "pass",
+   "signature": "fail",
+   "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   },
-  "overall": "partial"
+  "overall": "failed"
+ },
+ "version-l1-v4-production-kid|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
  },
  "version-l1-detached-not-allowlisted|cli": {
   "exit": 2,

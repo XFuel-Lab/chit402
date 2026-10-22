@@ -62,10 +62,10 @@ export const LIBRARY_CAUSE = Object.freeze({
   'version-v12-shape-no-version': 'id_prefix_version_mismatch',
   'version-v12-shape-no-version-plain-id': 'unsupported_version',
   'version-unversioned-object-no-stamp': 'unsupported_version',
-  'version-l1-v4-not-allowlisted': 'log_unreachable',
-  'version-l1-v5-not-allowlisted': 'log_unreachable',
-  'version-l1-detached-not-allowlisted': 'key untrusted',
-  'timing-detached-created-at-moved': 'key untrusted',
+  'version-l1-v4-not-allowlisted': 'legacy_form_not_allowlisted',
+  'version-l1-v5-not-allowlisted': 'legacy_form_not_allowlisted',
+  'version-l1-detached-not-allowlisted': 'legacy_form_not_allowlisted',
+  'timing-detached-created-at-moved': 'legacy_form_not_allowlisted',
   'timing-l5-backdated-iat': 'log_unreachable',
   'control-test-key-v10': 'log_unreachable',
 });
@@ -140,7 +140,7 @@ export async function buildSynthetic(dir) {
     const file = join(dir, `${c.id}.json`);
     writeFileSync(file, JSON.stringify(doc));
     const entry = { kind: 'synthetic', paths: ['cli', 'library'], file, historyFile, jwksFile, ...c };
-    if (!entry.expect && LIBRARY_CAUSE[c.id]) entry.expect = { library: LIBRARY_CAUSE[c.id] };
+    if (LIBRARY_CAUSE[c.id]) entry.expect = { library: LIBRARY_CAUSE[c.id], ...(entry.expect || {}) };
     out.push(entry);
   };
 
@@ -195,7 +195,15 @@ export async function buildSynthetic(dir) {
   // not cover created_at.
   for (const pv of [4, 5]) {
     const claims = unversionedClaims(`xfuel-corpus-0000-version-v${pv}-new`, T_OCT22);
-    add({ id: `version-l1-v${pv}-not-allowlisted`, class: 'version', spec: 'L1; §5.2 registry allowlist', target: 'exit != 0 (fingerprint not on the bundled L1 list)' }, docFor(key, claims, { outerPv: pv }));
+    add({ id: `version-l1-v${pv}-not-allowlisted`, class: 'version', spec: 'L1; §5.2 registry allowlist', target: 'exit != 0 (fingerprint not on the bundled L1 list)', expect: { cli: 'legacy_form_not_allowlisted' } }, docFor(key, claims, { outerPv: pv }));
+  }
+  {
+    // CLI path not decided by key trust: the header names the production kid,
+    // which the CLI trusts, so "key untrusted" cannot decide it. The bundled
+    // L1 list decides it before the signature is read.
+    const prodKid = testKey('IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q');
+    const claims = unversionedClaims('xfuel-corpus-0000-version-v4-production-kid', T_OCT22);
+    add({ id: 'version-l1-v4-production-kid', class: 'version', spec: 'L1; §5.2 registry allowlist', target: 'exit 1 legacy_form_not_allowlisted, decided before key trust', expect: { cli: 'legacy_form_not_allowlisted' }, paths: ['cli'] }, docFor(prodKid, claims, { outerPv: 4 }));
   }
   {
     const { canonicalIssuerPayload } = await import('../../dist/index.js');

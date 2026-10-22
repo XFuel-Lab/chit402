@@ -105,7 +105,19 @@ import {
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
 import { versionHasFeature } from './version-registry.js';
-import { legacyFingerprint, type LegacyFingerprint } from './legacy-allowlist.js';
+import {
+  legacyFingerprint,
+  loadBundledLegacyAllowlistInternal,
+  onLegacyAllowlistInternal,
+  type LegacyFingerprint,
+} from './legacy-allowlist.js';
+import {
+  checkSignedTime,
+  activeVersionWindows,
+  windowIdForPayloadVersion,
+  type VersionWindows,
+} from './version-windows.js';
+import { readTestSnapshot } from './internal/test-seam.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
   unsignedDocumentVerdict,
@@ -1891,6 +1903,22 @@ function verifierPackageVersion(): string {
   }
 }
 
+/** L1 closed list refusal reason. */
+export const LEGACY_FORM_NOT_ALLOWLISTED = 'legacy_form_not_allowlisted';
+
+/** Mark a result refused by its version window. Same shape as a key-window failure. */
+function applyVersionWindowFailure(result: ReceiptVerification, reason: string): void {
+  result.issuer_history = {
+    ...result.issuer_history,
+    checked: true,
+    ok: false,
+    unreachable: false,
+    reason,
+  };
+  if (!result.errors.includes(`issuer history: ${reason}`)) result.errors.push(`issuer history: ${reason}`);
+  result.overall = 'failed';
+}
+
 async function verifyReceiptChecks(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
@@ -1908,8 +1936,28 @@ async function verifyReceiptChecks(
   if (!gate.ok) {
     return rejectReceiptVersion(receipt, gate.errors, gate.reason);
   }
+  const snapshot = readTestSnapshot(options);
+  // L1: a v4/v5 receipt whose version is not signed, or a detached
+  // signature, is admitted only by exact fingerprint on the bundled closed
+  // list. The list is empty, so these forms have no path. A listed receipt
+  // continues to the signature check below; the list never replaces it.
+  const detachedForm = gate.family === 'unsigned'
+    && !receipt.issuer_signature?.jws
+    && typeof receipt.issuer_signature?.value === 'string';
+  const inferredForm = gate.family === 'legacy' && gate.version_source === 'inferred';
+  if ((detachedForm || inferredForm)
+    && !onLegacyAllowlistInternal(legacyReceiptFingerprint(receipt), snapshot?.legacyAllowlist ?? loadBundledLegacyAllowlistInternal())) {
+    return rejectReceiptVersion(receipt, [LEGACY_FORM_NOT_ALLOWLISTED], LEGACY_FORM_NOT_ALLOWLISTED);
+  }
+  // Null when no production-signed windows are bundled: no window check runs.
+  const versionWindows = activeVersionWindows(snapshot?.versionWindows);
   if (gate.family === 'v11') {
     const v11 = await verifyV11Receipt(receipt, options);
+    if (versionWindows && v11.issuer_signature?.valid === true) {
+      const issued = (v11.issuer_signature.payload as Record<string, unknown> | undefined)?.issued_at;
+      const window = checkSignedTime('v11', issued, versionWindows);
+      if (!window.ok) applyVersionWindowFailure(v11, window.reason);
+    }
     return Object.assign(v11, { receipt_version: 11, version_source: 'signed' as const });
   }
   const versionStamp = gate.family === 'legacy'
@@ -2027,7 +2075,7 @@ async function verifyReceiptChecks(
     || options.issuerHistoryUrl
     || historyPin
   ));
-  const issuer_history = historyAsked
+  let issuer_history: IssuerHistoryCheck = historyAsked
     ? await checkReceiptIssuerHistory(receipt, {
       document: options.issuerHistory ?? null,
       documentBytes: options.issuerHistoryBytes ?? null,
@@ -2054,6 +2102,19 @@ async function verifyReceiptChecks(
       loaded: false,
     };
 
+  // Signed-time window (rule #1a): the signed iat must be inside the
+  // version's window. Checked only on a valid signature, so an unsigned or
+  // badly signed receipt keeps its existing reason.
+  // L1 forms (admitted above only by exact fingerprint) have no window.
+  if (versionWindows && issuer_signature.valid && verifiedClaims && !options.skipIssuerHistory && !inferredForm && !detachedForm) {
+    const version = Number((verifiedClaims as Record<string, unknown>).payload_version);
+    const root = (verifiedClaims as Record<string, unknown>).issuer_root;
+    const id = windowIdForPayloadVersion(version, root != null && typeof root === 'object');
+    const window = checkSignedTime(id, (verifiedClaims as Record<string, unknown>).iat, versionWindows);
+    if (!window.ok && !(issuer_history.checked && !issuer_history.ok)) {
+      issuer_history = { ...issuer_history, checked: true, ok: false, unreachable: false, reason: window.reason };
+    }
+  }
   // Offline: a tree-head witness is trusted only when its ES256 signature
   // covers the outer size, root, and the other fields anchor mode already
   // compares. A missing signature is head_signature_missing. The history
@@ -2688,11 +2749,9 @@ export type { RegisteredVersion, VersionRule, VersionFeature } from './version-r
 export {
   LEGACY_ALLOWLIST_SCHEMA,
   LEGACY_ALLOWLIST_SHA256,
-  parseLegacyAllowlist,
-  loadBundledLegacyAllowlist,
   onLegacyAllowlist,
 } from './legacy-allowlist.js';
-export type { LegacyFingerprint, LegacyAllowlist, LegacyForm } from './legacy-allowlist.js';
+export type { LegacyFingerprint, LegacyForm } from './legacy-allowlist.js';
 
 /**
  * L1 fingerprint of a receipt in a grandfathered form, or null. The detached

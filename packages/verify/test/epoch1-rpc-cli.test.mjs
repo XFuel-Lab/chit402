@@ -290,7 +290,7 @@ test('--version prints the package version', () => {
   const cli = join(pkgDir, 'dist', 'cli.js');
   const run = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^chit402-verify \d+\.\d+\.\d+\n/);
+  assert.match(run.stdout, /^chit402-verify \d+\.\d+\.\d+(-[0-9A-Za-z.]+)?\n/);
   const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
   assert.equal(run.stdout.split('\n')[0], `chit402-verify ${pkg.version}`);
   assert.match(run.stdout, /payload_version: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/);

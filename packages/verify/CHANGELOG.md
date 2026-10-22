@@ -3,10 +3,28 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.5.0-pre.0: Version validity windows (pre-release)
 
-### Fixed
+Not published. The bundled `version-windows.json` is test-signed in this build; `prepublishOnly` and `scripts/check-verify-publish.mjs` refuse to publish until the signing ceremony replaces it with the production signature. The version moved off 0.4.11 so no build of this code can be published under that number.
+
+**Enforcement follows the signature.** The windows (signed-time check, v11 lower bound, L5 log time) are enforced only when the bundled document carries a valid production-kid signature under the bundled issuer history. With the test-signed document in this build they are not enforced, so no receipt changes outcome because of them. A test-signed document is accepted only through the library-only test option. The L1 legacy list is separate and is enforced in this build.
+
+**Known limit of this pre-release (L5).** The earliest-head probe does not check an inclusion proof for the receipt's leaf at the probed tree_size, and does not require the probed head to be in the same epoch as the verified head. A trusted signed head of an unrelated log that was anchored early can therefore set the log time. Before 0.5.0 final the probe is tied to the leaf: inclusion proof at tree_size=k, same epoch. A test records the current behaviour and is marked to change.
+
+### Changed
+- **Signed validity window per receipt version.** Each payload version opens at the GitHub merge time of the PR that shipped it and, once the next version shipped, closes at that version's merge time plus 72 h. A receipt whose signed `iat` is after its version's close is `version_window_closed` (key_window fail, exit 1). A closed version with no signed `iat` is `issued_at_missing`. v10 is open. The lower bound is enforced only for v11 and later (`version_window_not_open`): up to v10 the issuer re-signed a stored receipt on read with its original `iat`. Windows ship in `version-windows.json`, sha-pinned in source, signed by the issuer key (a companion document, not issuer-history entries, so 0.4.x clients are unaffected).
+- **Log time (L5).** (Pre-release limit above.) For a receipt in the public log whose version has closed, the chain time of the earliest anchored signed head that covers its leaf must be at most 14 days after the close: `log_time_after_window` (exit 1). If that time cannot be read, `log_time_unavailable` (exit 2). Open versions are not probed. Receipts with no log entry get the signed-time check only.
+- **The legacy list is final and empty, and enforced.** A JWS receipt whose version is not signed (outer 4/5) or a detached `issuer_signature.value` is admitted only by exact fingerprint on the bundled list; the 2026-10-22 production export found none, so these forms are refused: `legacy_form_not_allowlisted` (shape fail, exit 1). A listed receipt still needs a valid signature. Fingerprints use the low-S form of the signature, and the list allows one entry per (form, task_id, payload).
+- **Allowlist API narrowed.** `parseLegacyAllowlist` and `loadBundledLegacyAllowlist` are no longer exported, and `onLegacyAllowlist(fp)` checks the bundled list only. There is no unpinned path in the public API.
+- New verdict reasons with docs anchors: `version_window_closed`, `version_window_not_open`, `version_window_missing`, `log_time_after_window`, `log_time_unavailable`, `legacy_form_not_allowlisted`.
+
+### Fixed (from #621)
 - **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
+
+### Tests
+- Window values against the merge times, the c5a3860d upper-bound sanity check, parser fail-closed cases, signer status, the publish check, the L1 list with an alg:none header and a second key, low-S fingerprints, the L5 earliest-head probe and decision, and the library-only test snapshot seam (not exported, no CLI flag).
+- Enforcement tests: a test-signed bundled document is not enforced outside tests; a production-signed one is.
+- The golden corpus gains a chain tier: a second tape with recorded read-only replies from the public Base and Solana RPCs, where xfuel-3155b7d8 is exit 0 offline (`verified_public`, pinned in data as `result: verified` with `result_detail`). The corpus gate checks it: the chain tape is append-only and the chain baseline is never more permissive than the merge base. The PR3 tightenings are written into both baselines.
 
 ## 0.4.11: Library verdict matches the CLI
 

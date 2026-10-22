@@ -6,11 +6,14 @@
  * network error and is listed on stderr, so nothing leaves the machine.
  * The clock is fixed to the tape's recorded time.
  *
- * CHIT_CORPUS_MODE=record: used only by scripts/record (never in CI).
+ * CHIT_CORPUS_MODE=record: used only by the record scripts (never in CI).
  * GET to the public receipt hosts is passed through and written to the tape.
  * Redirects are never followed: a 3xx is stored as an error entry.
- * Nothing else is sent: any other method or host, including chain JSON-RPC,
- * is recorded as a network error, so replay answers it the same way.
+ * Chain JSON-RPC is sent only when CHIT_CORPUS_RPC=1, only to the public
+ * Base and Solana RPC hosts below, and only for the read methods below; it
+ * never sends a transaction. Anything else (another method, host or RPC
+ * method, or any RPC while a local test port is set) is recorded as a
+ * network error, so replay answers it the same way.
  * The first answer to a request is reused for the whole session, so every
  * case sees one consistent snapshot of the log.
  */
@@ -21,6 +24,18 @@ const MODE = process.env.CHIT_CORPUS_MODE || 'replay';
 const TAPE = process.env.CHIT_CORPUS_TAPE || '';
 const realFetch = globalThis.fetch.bind(globalThis);
 
+
+// Public, keyless RPC endpoints (the verifier's defaults). Never a paid or XFuel host.
+const RPC_HOSTS = new Set([
+  'mainnet.base.org', 'base-rpc.publicnode.com', '1rpc.io',
+  'api.mainnet-beta.solana.com', 'solana-rpc.publicnode.com',
+]);
+// Read methods only.
+const RPC_METHODS = new Set([
+  'eth_chainId', 'eth_blockNumber', 'eth_getTransactionByHash', 'eth_getTransactionReceipt',
+  'eth_getBlockByNumber', 'eth_call', 'eth_getLogs',
+  'getTransaction', 'getSignatureStatuses', 'getGenesisHash', 'getSignaturesForAddress', 'getSlot', 'getBlockTime',
+]);
 
 // Tests of the recorder point it at a local server instead of the public
 // hosts: CHIT_CORPUS_RECORD_LOCAL_PORT allows http://127.0.0.1:<port> only.
@@ -118,13 +133,33 @@ if (MODE === 'replay') {
     return { status: res.status, contentType: res.headers.get('content-type') || '', body: await res.text() };
   }
 
+  async function rpcText(req) {
+    const url = new URL(req.url);
+    if (LOCAL_PORT || url.protocol !== 'https:' || !RPC_HOSTS.has(url.hostname)) return { error: `rpc host not recorded: ${url.hostname}` };
+    if (!RPC_METHODS.has(req.rpc.method)) return { error: `rpc method not recorded: ${req.rpc.method}` };
+    const res = await realFetch(url.href, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: req.rpc.method, params: req.rpc.params }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.status >= 300 && res.status < 400) {
+      try { await res.body?.cancel(); } catch { /* nothing to drain */ }
+      return { error: `redirect not followed: ${res.status}`, status: res.status, location: null };
+    }
+    return { status: res.status, contentType: res.headers.get('content-type') || '', body: await res.text() };
+  }
+
   globalThis.fetch = async (input, init = {}) => {
     const req = requestOf(input, init);
     const key = tapeKey(req);
     if (tape.entries[key]) return respond(tape.entries[key]);
     let entry;
     try {
-      if (req.rpc) {
+      if (req.rpc && process.env.CHIT_CORPUS_RPC === '1') {
+        entry = await rpcText(req);
+      } else if (req.rpc) {
         entry = { error: 'chain read not recorded: recording is GET-only' };
       } else if (req.method === 'GET') {
         entry = await getText(req.url);

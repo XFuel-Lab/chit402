@@ -1,0 +1,96 @@
+{
+ "schema": "chit402.version_windows.v1",
+ "note": "Validity window per receipt version on the issuer clock. not_before is the GitHub merge time of the PR that shipped the version (at most minutes before the deploy); not_after is the next version merge time plus a 72 h deploy grace, or null while issued. floor=false: iat before not_before is not refused (receipts up to v10 were re-signed on read with their original iat). log_grace_seconds: the L5 log time may be at most this long after not_after.",
+ "log_grace_seconds": 1209600,
+ "windows": [
+  {
+   "id": "pv1",
+   "not_before": "2026-09-04T08:52:05Z",
+   "not_after": "2026-09-04T08:52:05Z",
+   "floor": false,
+   "basis": "never issued as a signed payload_version 1; closed when the issuer key opened (#293 merge)"
+  },
+  {
+   "id": "pv2",
+   "not_before": "2026-09-04T08:52:05Z",
+   "not_after": "2026-09-04T08:52:05Z",
+   "floor": false,
+   "basis": "never issued as a signed payload_version 2; closed when the issuer key opened (#293 merge)"
+  },
+  {
+   "id": "pv3",
+   "not_before": "2026-09-04T08:52:05Z",
+   "not_after": "2026-09-04T08:52:05Z",
+   "floor": false,
+   "basis": "never issued as a signed payload_version 3; closed when the issuer key opened (#293 merge)"
+  },
+  {
+   "id": "pv4",
+   "not_before": "2026-09-04T08:52:05Z",
+   "not_after": "2026-09-04T08:52:05Z",
+   "floor": false,
+   "basis": "never issued as a signed payload_version 4; closed when the issuer key opened (#293 merge)"
+  },
+  {
+   "id": "pv5",
+   "not_before": "2026-09-04T08:52:05Z",
+   "not_after": "2026-09-08T15:59:45Z",
+   "floor": false,
+   "basis": "opens at #293 merge; closes at #314 merge + 72 h deploy grace"
+  },
+  {
+   "id": "pv6",
+   "not_before": "2026-09-05T15:59:45Z",
+   "not_after": "2026-09-16T15:11:38Z",
+   "floor": false,
+   "basis": "opens at #314 merge; closes at #359 merge + 72 h deploy grace"
+  },
+  {
+   "id": "pv7",
+   "not_before": "2026-09-13T15:11:38Z",
+   "not_after": "2026-09-30T12:49:47Z",
+   "floor": false,
+   "basis": "opens at #359 merge; closes at #429 merge + 72 h deploy grace"
+  },
+  {
+   "id": "pv8",
+   "not_before": "2026-09-27T12:49:47Z",
+   "not_after": "2026-10-05T14:50:24Z",
+   "floor": false,
+   "basis": "opens at #429 merge; closes at #468 merge + 72 h deploy grace"
+  },
+  {
+   "id": "pv9",
+   "not_before": "2026-10-02T14:50:24Z",
+   "not_after": "2026-10-08T08:49:28Z",
+   "floor": false,
+   "basis": "opens at #468 merge; closes at #473 merge + 72 h deploy grace"
+  },
+  {
+   "id": "pv10",
+   "not_before": "2026-10-05T08:49:28Z",
+   "not_after": null,
+   "floor": false,
+   "basis": "opens at #473 merge; still issued"
+  },
+  {
+   "id": "pv11-issuer-root",
+   "not_before": "2026-10-08T20:40:53Z",
+   "not_after": null,
+   "floor": true,
+   "basis": "opens at #483 merge; not issued while the flag is off"
+  },
+  {
+   "id": "v11",
+   "not_before": "2026-10-08T20:40:53Z",
+   "not_after": null,
+   "floor": true,
+   "basis": "opens at #483 merge; not issued while the flag is off"
+  }
+ ],
+ "issuer_signature": {
+  "alg": "ES256",
+  "kid": "test-version-windows-5cYMZo4mwD73UNyK",
+  "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItdmVyc2lvbi13aW5kb3dzK2p3dCIsImtpZCI6InRlc3QtdmVyc2lvbi13aW5kb3dzLTVjWU1abzRtd0Q3M1VOeUsifQ.eyJzY2hlbWEiOiJjaGl0NDAyLnZlcnNpb25fd2luZG93cy52MSIsImJvZHlfc2hhMjU2IjoiYzIzZjZjNTNkNTg4YTRkYzdlMDM0NDBmN2NhNjQ0Mjg4MWYwNjQ0YjUyMDMzMDJkMzEyYzRjMGM5MjE1OTI2MiIsImlhdCI6MTc5MjY3NDAwMH0.q1U8HBQffOOb1p73TbkYbyFsvEHHzs1mRpoyN39Ey4GgSRr1MuEdvpdA3Ua_5JolgZbpMwLmX4qRcRTuItQSkA"
+ }
+}

@@ -56,6 +56,23 @@ test('corpus inventory: every case has a baseline, no blocked receipt', () => {
   }
 });
 
+test('corpus covers signed v6 to v10 receipts and v6 to v10 receipt ids', () => {
+  const signedVersion = (file) => {
+    const m = readFileSync(file, 'utf8').match(/"(?:jws|value)":\s*"(ey[^"]+\.[^"]+\.[^"]+)"/);
+    return m ? JSON.parse(Buffer.from(m[1].split('.')[1], 'base64url')).payload_version : null;
+  };
+  const signed = new Set(manifest.files.map((c) => signedVersion(join(fixtures, c.fixture))));
+  const tape = readJson(publicTape);
+  const shells = new Set();
+  for (const e of Object.values(tape.entries)) {
+    try { const b = JSON.parse(e.body); if (b && b.receipt_id) shells.add(b.payload_version); } catch { /* not JSON */ }
+  }
+  for (const v of [6, 7, 8, 9, 10]) {
+    assert.ok(signed.has(v), `no signed v${v} receipt file in the corpus`);
+    assert.ok(shells.has(v), `no v${v} receipt id in the corpus`);
+  }
+});
+
 test('corpus: no outcome is more permissive than, or different from, the baseline', async (t) => {
   await runAll;
   const problems = [];
@@ -85,7 +102,7 @@ test('L3 and reference receipts hold offline', async () => {
     assert.equal(r.reason, 'not_in_log', key);
     assert.equal(r.checks.log_inclusion, 'fail', key);
   }
-  // Exit 0 needs live chain reads. Offline, everything before the chain passes.
+  // Exit 0 needs chain reads; the GET-only tape has none. The chain tier below covers exit 0.
   const ref = results.get('id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15|cli');
   assert.equal(ref.checks.signature, 'pass');
   assert.equal(ref.checks.key_window, 'pass');
@@ -139,6 +156,43 @@ test('every version gate is pinned on both sides of its boundary', async () => {
       assert.notEqual(before.exit, at.exit, `gate ${gate}: the two sides must differ`);
       assert.equal(at.exit, 1, `gate ${gate}: the gated rule applies from v${gate}`);
     }
+  }
+});
+
+// Chain tier: the same cases on a second tape that also carries read-only JSON-RPC answers from
+// public Base and Solana RPCs (record-chain.mjs). Its baseline is 0.4.11 on that tape; the rule is
+// the same (never more permissive, exactly equal unless changes.json records it).
+// The comparison is the shared lib.mjs one, unchanged. It does not know the
+// public-scope result `verified_public` (exit 0), so the chain baseline pins
+// such a row as `result: verified` plus `result_detail: verified_public`, and
+// an outcome is mapped to `verified` only when its result equals the pinned
+// `result_detail` exactly. Any other verified_public stays unknown and fails.
+const chainTape = join(corpusDir, 'tapes', 'public-chain.json');
+const chainBaseline = readJson(join(corpusDir, 'baseline-chain.json'));
+test('chain tier: no outcome is more permissive than, or different from, its baseline', async (t) => {
+  await runAll;
+  const chainResults = new Map();
+  await pool(jobs, 4, async (job) => { chainResults.set(job.key, await runPathAsync(job.c, job.path, chainTape)); });
+  const problems = [];
+  let misses = 0;
+  for (const job of jobs) {
+    const actual = chainResults.get(job.key);
+    misses += actual.misses.length;
+    const base = chainBaseline[job.key];
+    assert.ok(base, `no chain baseline for ${job.key}`);
+    const mapped = base.result_detail && actual.result === base.result_detail && base.result === 'verified' && actual.exit === 0
+      ? { ...actual, result: 'verified' }
+      : actual;
+    for (const p of compare(base, mapped, changeFor(job.key))) problems.push(`${job.key}: ${p}`);
+  }
+  t.diagnostic(`${jobs.length} case paths; ${misses} requests not on the chain tape`);
+  assert.deepEqual(problems, []);
+  const ref = chainResults.get('id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15|cli');
+  assert.equal(ref.exit, 0);
+  assert.equal(ref.result, 'verified_public');
+  for (const key of ['id-chit-43c98110-8ad4-4a65-8fa7-fa3a04424c0e|cli', 'id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli']) {
+    assert.equal(chainResults.get(key).exit, 1, key);
+    assert.equal(chainResults.get(key).reason, 'not_in_log', key);
   }
 });
 
