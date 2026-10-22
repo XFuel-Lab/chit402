@@ -65,7 +65,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
-import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors } from './receipt-version.js';
+import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors, unversionedOuterVersion } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
   verifyIssuerJws,
@@ -104,6 +104,8 @@ import {
   type IssuerHistoryDocument,
 } from './issuer-history.js';
 import { verifyCanonicalPreimageBytes, CANONICAL_PAYLOAD_VERSION } from './canonical-preimage.js';
+import { versionHasFeature } from './version-registry.js';
+import { legacyFingerprint, type LegacyFingerprint } from './legacy-allowlist.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
   unsignedDocumentVerdict,
@@ -504,7 +506,7 @@ function canonicalFieldsV8(receipt: XFuelReceipt): unknown[] {
  * v7 and earlier stay on the historical 15-field list so old signatures verify.
  */
 export function canonicalIssuerPayload(receipt: XFuelReceipt): string {
-  const fields = canonicalPayloadVersion(receipt) >= 8
+  const fields = versionHasFeature(canonicalPayloadVersion(receipt), 'v8_fields')
     ? canonicalFieldsV8(receipt)
     : canonicalFieldsV7(receipt);
   return JSON.stringify(fields);
@@ -654,7 +656,7 @@ export function reconcileSettledTransfer(
   const payee = payment.payee ?? null;
   let signed_field: SettledAmountReconciliation['signed_field'] = null;
   let signed_amount: string | null = null;
-  if (version >= 8) {
+  if (versionHasFeature(version, 'v8_fields')) {
     if (payment.settled_amount != null && payment.settled_amount !== '') {
       signed_field = 'settled_amount';
       signed_amount = String(payment.settled_amount);
@@ -2669,3 +2671,46 @@ export default {
   BASE_SEPOLIA_RPC_URL,
   SOLANA_RPC_URL,
 };
+
+export {
+  VERSION_REGISTRY,
+  FEATURE_FIRST_VERSION,
+  registeredPayloadVersion,
+  registeredVersion,
+  ruleSetDigest,
+  versionHasFeature,
+} from './version-registry.js';
+export type { RegisteredVersion, VersionRule, VersionFeature } from './version-registry.js';
+
+export {
+  LEGACY_ALLOWLIST_SCHEMA,
+  LEGACY_ALLOWLIST_SHA256,
+  parseLegacyAllowlist,
+  loadBundledLegacyAllowlist,
+  onLegacyAllowlist,
+} from './legacy-allowlist.js';
+export type { LegacyFingerprint, LegacyAllowlist, LegacyForm } from './legacy-allowlist.js';
+
+/**
+ * L1 fingerprint of a receipt in a grandfathered form, or null. The detached
+ * form is fingerprinted over the canonical payload its signature covers.
+ */
+export function legacyReceiptFingerprint(receipt: XFuelReceipt): LegacyFingerprint | null {
+  const doc = receipt as unknown as Record<string, unknown>;
+  const sig = receipt?.issuer_signature as Record<string, unknown> | undefined;
+  if (!sig || typeof sig !== 'object') return null;
+  if (typeof sig.jws !== 'string' && typeof sig.value === 'string') {
+    return legacyFingerprint(doc, 'detached', canonicalIssuerPayload(receipt));
+  }
+  if (typeof sig.jws !== 'string') return null;
+  let claims: Record<string, unknown>;
+  try {
+    claims = JSON.parse(Buffer.from(sig.jws.split('.')[1] ?? '', 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!claims || typeof claims !== 'object' || Array.isArray(claims) || 'payload_version' in claims || 'v' in claims) return null;
+  const outer = unversionedOuterVersion(doc);
+  if (outer !== 4 && outer !== 5) return null;
+  return legacyFingerprint(doc, outer === 4 ? 'legacy-v4' : 'legacy-v5');
+}
