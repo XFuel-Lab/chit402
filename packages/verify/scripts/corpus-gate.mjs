@@ -58,11 +58,17 @@
  *     cause without a strictly tighter exit (declarationRowProblems);
  *   - a pinned baseline row changes in a change that touches
  *     test/golden-corpus.test.mjs (goldenEditProblems);
+ *   - declarations.frozen.json at the merge base is not valid JSON, or is
+ *     missing while the merge-base corpus-gate.mjs reads it
+ *     (basePinStateProblems; only the change that adds the pin runs
+ *     without one);
  *   - the chain tier breaks its rules (gateChain below).
  *
  * The input digest (caseDigest) includes the signature state of the case
- * document and the issuer history (signatureForm): valid under a key the
- * case carries, or invalid with the raw signature bytes.
+ * document and the issuer history (signatureForm): valid under the history
+ * or JWKS key filed under the signature kid, valid only under another
+ * carried key (named by role), or invalid with the raw signature bytes;
+ * and how each embedded issuer_jwk relates to that trusted key.
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
  * base, so a change cannot loosen the gate that checks it.
@@ -223,42 +229,53 @@ function detachedFieldsV8(r) {
     c?.payer_wallet ?? null, c?.agent_pubkey ?? null, c?.api_key_hash ?? null];
 }
 
-const jwkId = (j) => sha256(stable({ kty: j?.kty ?? null, crv: j?.crv ?? null, x: j?.x ?? null, y: j?.y ?? null }));
-
-/** The keys a case carries: the document's and the history's issuer_jwk, the history entries' jwk and the JWKS. */
-function caseKeys(doc, history, jwks) {
-  const all = [doc?.issuer_signature?.issuer_jwk, history?.issuer_signature?.issuer_jwk,
-    ...(Array.isArray(history?.entries) ? history.entries.map((e) => e?.jwk) : []), ...(Array.isArray(jwks?.keys) ? jwks.keys : [])];
-  const out = [];
-  const seen = new Set();
-  for (const j of all) {
-    if (!j || typeof j !== 'object' || j.kty !== 'EC' || j.crv !== 'P-256' || typeof j.x !== 'string' || typeof j.y !== 'string') continue;
-    const id = jwkId(j);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    try { out.push({ id, key: createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: j.x, y: j.y }, format: 'jwk' }) }); } catch { /* not a key */ }
-  }
-  return out;
-}
+const isEcKey = (j) => !!j && typeof j === 'object' && j.kty === 'EC' && j.crv === 'P-256' && typeof j.x === 'string' && typeof j.y === 'string';
+/** RFC 7638 JWK thumbprint of an EC P-256 key. */
+const thumbprint = (j) => createHash('sha256').update(`{"crv":"P-256","kty":"EC","x":"${j.x}","y":"${j.y}"}`).digest('base64url');
+const toKey = (j) => { try { return createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: j.x, y: j.y }, format: 'jwk' }); } catch { return null; } };
 
 /**
- * One signature: `valid` (verifies under a key the case carries),
- * `invalid:<sha256 of the raw signature>`, or `absent`. Signatures and
- * keys made with a throwaway key change on every run, so only validity is
- * kept for a valid one; any byte change to the signed bytes or the
- * signature turns `valid` into `invalid`, and an invalid one is kept byte
- * for byte.
+ * The keys a case carries, each with its role: `history[i]` (an issuer
+ * history entry), `jwks[i]`, `doc.issuer_jwk` and `history.issuer_jwk`,
+ * with the kid it is filed under. Only a history entry or a JWKS key filed
+ * under the signature's kid is trusted for that signature; the document's
+ * and the history's own issuer_jwk never are.
  */
-function sigState(messages, sigText, keys) {
+function caseKeys(doc, history, jwks) {
+  const out = [];
+  const add = (role, j, filed) => { if (isEcKey(j)) { const key = toKey(j); if (key) out.push({ role, kid: filed ?? null, jwk: j, key }); } };
+  (Array.isArray(history?.entries) ? history.entries : []).forEach((e, i) => add(`history[${i}]`, e?.jwk, e?.kid ?? e?.jwk?.kid));
+  (Array.isArray(jwks?.keys) ? jwks.keys : []).forEach((k, i) => add(`jwks[${i}]`, k, k?.kid));
+  add('doc.issuer_jwk', doc?.issuer_signature?.issuer_jwk, doc?.issuer_signature?.issuer_jwk?.kid);
+  add('history.issuer_jwk', history?.issuer_signature?.issuer_jwk, history?.issuer_signature?.issuer_jwk?.kid);
+  return out;
+}
+const trustedFor = (k, kid) => typeof kid === 'string' && k.kid === kid && /^(history|jwks)\[\d+\]$/.test(k.role);
+
+/**
+ * One signature, with its key relation:
+ *   - `valid:<kid>:<role>`: verifies under the history entry or JWKS key
+ *     filed under its kid (the first such role, history before JWKS);
+ *   - `valid_untrusted:<kid>:<role>:<kid filed>:<thumbprint is kid>`:
+ *     verifies only under some other key the case carries (the document's
+ *     or history's issuer_jwk, or a key filed under another kid). Whether
+ *     the key's RFC 7638 thumbprint equals the signature kid is kept;
+ *     throwaway key bytes are not, so the form is the same on every run;
+ *   - `invalid:<sha256 of the raw signature>`; `absent`.
+ * Any byte change to the signed bytes or the signature, or a re-sign
+ * under a key that is not the trusted one for the kid, moves the state.
+ */
+function sigState(messages, sigText, kid, keys) {
   if (typeof sigText !== 'string' || !sigText) return 'absent';
   const sig = Buffer.from(sigText, 'base64url');
-  for (const k of keys) {
-    for (const m of messages) {
-      let ok = false;
-      try { ok = cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { ok = false; }
-      if (ok) return 'valid';
-    }
-  }
+  const verifies = (k) => messages.some((m) => {
+    try { return cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { return false; }
+  });
+  const k = String(kid ?? '');
+  const trusted = keys.find((x) => trustedFor(x, kid) && verifies(x));
+  if (trusted) return `valid:${k}:${trusted.role}`;
+  const other = keys.find((x) => verifies(x));
+  if (other) return `valid_untrusted:${k}:${other.role}:${other.kid ?? ''}:${thumbprint(other.jwk) === k}`;
   return `invalid:${sha256(sigText)}`;
 }
 
@@ -268,10 +285,27 @@ function jwsState(jws, keys) {
   if (parts.length !== 3) return `malformed:${sha256(jws)}`;
   const header = b64json(parts[0]);
   if (!header || header.alg !== 'ES256') return `alg:${sha256(jws)}`;
-  return sigState([`${parts[0]}.${parts[1]}`], parts[2], keys);
+  return sigState([`${parts[0]}.${parts[1]}`], parts[2], header.kid, keys);
 }
 
-/** Signature state of a case: the document (JWS or detached) and the issuer history. */
+/**
+ * How an embedded issuer_jwk relates to the trusted key for a kid:
+ * `absent`, `no_key` (not an EC P-256 key with x and y, for example x/y
+ * dropped), `trusted:<role>` (same key bytes as the history entry or JWKS
+ * key filed under the kid), or `other:<its kid>:<thumbprint is kid>`.
+ */
+function keyRelation(jwk, kid, keys) {
+  if (jwk === undefined || jwk === null) return 'absent';
+  if (!isEcKey(jwk)) return 'no_key';
+  const same = keys.find((x) => trustedFor(x, kid) && x.jwk.x === jwk.x && x.jwk.y === jwk.y);
+  if (same) return `trusted:${same.role}`;
+  return `other:${jwk.kid ?? ''}:${thumbprint(jwk) === String(kid ?? '')}`;
+}
+
+/**
+ * Signature state of a case: the document (JWS or detached) and the issuer
+ * history, each with its key relation (sigState, keyRelation).
+ */
 export function signatureForm(c) {
   const doc = parse(c.doc);
   const history = parse(c.history);
@@ -279,15 +313,25 @@ export function signatureForm(c) {
   const keys = caseKeys(doc, history, jwks);
   const ds = doc && typeof doc === 'object' ? doc.issuer_signature : null;
   let docState = 'absent';
+  let docKid = null;
   if (ds && typeof ds === 'object') {
-    if (typeof ds.jws === 'string') docState = jwsState(ds.jws, keys);
-    else if (typeof ds.value === 'string') {
+    if (typeof ds.jws === 'string') {
+      docKid = b64json(ds.jws.split('.')[0])?.kid ?? null;
+      docState = jwsState(ds.jws, keys);
+    } else if (typeof ds.value === 'string') {
+      docKid = ds.kid ?? null;
       const { issuer_signature: _omit, ...rest } = doc;
-      docState = sigState([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, keys);
+      docState = sigState([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, docKid, keys);
     }
   }
   const hs = history && typeof history === 'object' ? history.issuer_signature : null;
-  return { doc: docState, history: hs && typeof hs === 'object' ? jwsState(hs.jws, keys) : 'absent' };
+  const histKid = hs && typeof hs.jws === 'string' ? b64json(hs.jws.split('.')[0])?.kid ?? null : null;
+  return {
+    doc: docState,
+    doc_key: ds && typeof ds === 'object' ? keyRelation(ds.issuer_jwk, docKid, keys) : 'absent',
+    history: hs && typeof hs === 'object' ? jwsState(hs.jws, keys) : 'absent',
+    history_key: hs && typeof hs === 'object' ? keyRelation(hs.issuer_jwk, histKid, keys) : 'absent',
+  };
 }
 
 /**
@@ -772,11 +816,26 @@ export function goldenEditProblems(base, head, changedFiles, basePinMaps, headPi
 }
 
 /**
+ * State of the merge-base pin (`ok`, `missing`, `unparseable`, or null
+ * when not read). `required`: the merge-base corpus-gate.mjs reads
+ * declarations.frozen.json, so main has had a pin and must still have it.
+ */
+export function basePinStateProblems(state, required) {
+  if (state === 'unparseable') return [`${DECLARATIONS_PIN} at the merge base is not valid JSON; the gate fails closed`];
+  if (state === 'missing' && required) return [`${DECLARATIONS_PIN} is missing at the merge base, whose gate reads it; the gate fails closed`];
+  return [];
+}
+
+/**
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null, basePinState = null, basePinRequired = false }) {
   const problems = [];
+  // The merge-base pin, read as data: an unparseable one always fails, and
+  // a missing one fails once the merge-base gate knows the pin (only the
+  // change that adds the pin runs without one).
+  problems.push(...basePinStateProblems(basePinState, basePinRequired));
   // Pinned declarations: append-only, and the head synthetic.mjs must agree
   // with the head pin whenever the head export is given.
   problems.push(...pinProblems(basePin, headPin));
@@ -985,6 +1044,21 @@ function gitShow(root, rev, path) {
   }
 }
 
+/** A merge-base file as `{ state: 'ok' | 'missing' | 'unparseable', value, text }`. */
+function gitShowState(root, rev, path) {
+  let text;
+  try {
+    text = execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 });
+  } catch {
+    return { state: 'missing', value: null, text: null };
+  }
+  try { return { state: 'ok', value: JSON.parse(text), text }; } catch { return { state: 'unparseable', value: null, text }; }
+}
+
+function gitShowText(root, rev, path) {
+  try { return execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 }); } catch { return null; }
+}
+
 function readHead(root, path) {
   const p = join(root, path);
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
@@ -1003,6 +1077,8 @@ export function addedCorpusFixKeys(baseChanges, headChanges) {
  * parsed export of the head tree. Both are needed for a corpus_fix.
  */
 export async function gateRepo(root, base, { baseTree = null, headInputs = null } = {}) {
+  const pinAtBase = gitShowState(root, base, DECLARATIONS_PIN);
+  const baseGate = gitShowText(root, base, 'packages/verify/scripts/corpus-gate.mjs');
   const files = {
     baseBaseline: gitShow(root, base, BASELINE),
     headBaseline: readHead(root, BASELINE),
@@ -1010,7 +1086,9 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headChanges: readHead(root, CHANGES),
     baseRegistry: gitShow(root, base, REGISTRY_PIN),
     headRegistry: readHead(root, REGISTRY_PIN),
-    basePin: gitShow(root, base, DECLARATIONS_PIN),
+    basePin: pinAtBase.value,
+    basePinState: pinAtBase.state,
+    basePinRequired: typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json'),
     headPin: readHead(root, DECLARATIONS_PIN),
   };
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);

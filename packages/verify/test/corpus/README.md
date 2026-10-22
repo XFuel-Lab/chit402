@@ -131,14 +131,24 @@ It fails when:
   a change that touches `test/golden-corpus.test.mjs`;
 - a head case input digest differs from the `input_digest` pinned for any
   of its declared or deferred paths. The digest includes the signature
-  state of the case document and of the issuer history: `valid` under a
-  key the case carries, or `invalid` with the raw signature bytes. Valid
-  signatures by the throwaway test key change on every run, so only their
-  validity is kept; any byte change to a signed part or a signature moves
-  the digest. An input is never changed under a
+  state of the case document and of the issuer history, with its key
+  relation: `valid:<kid>:<role>` only under the issuer history entry or
+  JWKS key filed under the signature's kid; `valid_untrusted:...` naming
+  the role of the other key it verifies under (the document's or the
+  history's own `issuer_jwk`, or a key filed under another kid) and
+  whether that key's RFC 7638 thumbprint is the kid; or `invalid` with the
+  raw signature bytes. Each embedded `issuer_jwk` is recorded as `absent`,
+  `no_key` (for example x and y dropped), `trusted:<role>` (the same key as
+  the trusted one) or `other:...`. Throwaway test key bytes change on
+  every run, so roles are kept rather than key bytes; any byte change to a
+  signed part or a signature, or a re-sign under any key other than the
+  trusted one for the kid, moves the digest. An input is never changed under a
   pinned path, whatever the outcome: a changed input is a new case with
   new pin entries. In practice this means no current synthetic case takes
   a `corpus_fix` or `corpus_fix_reason`;
+- `declarations.frozen.json` at the merge base is not valid JSON, or is
+  missing while the merge-base `corpus-gate.mjs` reads it. Only the change
+  that adds the pin (main's gate does not know it yet) runs without one;
 - a case path of the head export is not classified by the head pin. Every
   synthetic case path is in exactly one list: declared, deferred or
   `reason_allowed`. A new case appends a declaration for each path (or a
