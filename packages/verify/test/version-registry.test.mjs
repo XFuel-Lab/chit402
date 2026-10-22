@@ -36,6 +36,10 @@ test('every frozen rule set is unchanged and the registry only appends', () => {
     assert.equal(r.rule_set_digest, f.rule_set_digest, `${f.id} rule set edited: add a new version instead`);
     assert.equal(ruleSetDigest(r), r.rule_set_digest);
   });
+  // Exactly the frozen entries: an entry added to the registry without being
+  // frozen here (and recorded in changes.json, see scripts/corpus-gate.mjs)
+  // fails.
+  assert.equal(VERSION_REGISTRY.length, frozen.entries.length, 'registry and frozen file differ in length');
   assert.equal(new Set(VERSION_REGISTRY.map((r) => r.id)).size, VERSION_REGISTRY.length);
   assert.equal(new Set(VERSION_REGISTRY.map((r) => r.rule_set)).size, VERSION_REGISTRY.length);
 });

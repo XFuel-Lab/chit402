@@ -162,10 +162,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history, so the corpus gate can read the merge base.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
+
+      # Compares the corpus baseline, changes.json and the frozen registry
+      # with the merge base. Runs the merge base's copy of the gate when it
+      # has one, so a change cannot loosen the gate that checks it.
+      - name: Corpus baseline gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base=$(git merge-base HEAD "origin/$BASE_REF")
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
+          gate=packages/verify/scripts/corpus-gate.mjs
+          if git cat-file -e "$base:$gate" 2>/dev/null; then
+            git show "$base:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
+            echo "corpus gate: merge-base copy from $base"
+          else
+            cp "$gate" "$RUNNER_TEMP/corpus-gate.mjs"
+            echo "::notice::No corpus gate at $base; running this change's copy"
+          fi
+          node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE"
 
       - name: Test chit402-verify
         working-directory: packages/verify
