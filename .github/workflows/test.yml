@@ -10,8 +10,10 @@ on:
     # cursor/gateway-v11-issuer-root-5306 is the base of stacked draft #499.
     # cursor/verify-head-issuer-bind-ce2e was the #492 stack. The filter matches
     # those bases so Verify package (Windows) runs.
+    # verify/redesign-* is the stacked verifier redesign (each PR is based on
+    # the previous one).
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e]
+    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e, 'verify/redesign-*']
 
 jobs:
   public-identifiers:
