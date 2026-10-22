@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -25,8 +25,9 @@ const registry = read(REGISTRY_PIN);
 const REAL = 'id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli';
 const SYN = 'version-l1-v4-not-allowlisted|library';
 const clone = (v) => JSON.parse(JSON.stringify(v));
-// changedFiles: [] is a change that touches no verifier file.
-const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, changedFiles: [], ...over });
+// changedFiles: [] is a change that touches no verifier file; baseCases: {}
+// declares no case expectations (the declared-rule tests pass their own).
+const run = (over = {}) => gate({ baseBaseline: baseline, headBaseline: baseline, baseChanges: changes, headChanges: changes, baseRegistry: registry, headRegistry: registry, changedFiles: [], baseCases: {}, ...over });
 const entry = (key, to, extra = {}) => ({ case: key.split('|')[0], path: key.split('|')[1], to, pr: 'test', spec: 'test', ...extra });
 const withEntries = (...e) => ({ ...changes, changes: [...changes.changes, ...e] });
 
@@ -227,14 +228,45 @@ test('the merge-base runner leaves out a path it does not have', async () => {
 const SRC = 'packages/verify/src/receipt-version.ts';
 const TEST_ONLY = ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/baseline.json', 'packages/verify/test/corpus/changes.json'];
 
-test('verifier paths: src, root JSON files, BUILD_DIGEST.txt and dist/ output', () => {
-  for (const p of [SRC, 'packages/verify/src/a/b.ts', 'packages/verify/package.json', 'packages/verify/package-lock.json', 'packages/verify/tsconfig.json',
-    'packages/verify/legacy-allowlist.json', 'packages/verify/version-windows.json', 'packages/verify/BUILD_DIGEST.txt', 'packages/verify/dist/index.js', 'dist/x.js', 'packages/other/dist/y.js']) {
-    assert.equal(isVerifierPath(p), true, p);
+test('verifier paths: default deny under packages/verify, plus the alias and dist/', () => {
+  const deny = [
+    SRC, 'packages/verify/src/a/b.ts', 'packages/verify/package.json', 'packages/verify/package-lock.json', 'packages/verify/tsconfig.json',
+    'packages/verify/legacy-allowlist.json', 'packages/verify/version-windows.json', 'packages/verify/BUILD_DIGEST.txt',
+    'packages/verify/dist/index.js', 'dist/x.js', 'packages/other/dist/y.js',
+    // L1: case variants, look-alikes and anything new under packages/verify.
+    'packages/verify/SRC/verdict.ts', 'Packages/Verify/src/verdict.ts', 'packages/verify/package.JSON', 'packages/verify/Package.Json',
+    'packages/verify/\u0455rc/a.ts', 'packages/verify/src\u200b/a.ts', 'packages/verify/\uff53rc/a.ts',
+    'packages/verify/foo.yaml', 'packages/verify/data/x.json', 'packages/verify/.npmrc', 'packages/verify/scripts/build-digest.mjs',
+    'packages/verify/scripts/corpus-gate.mjs', 'packages/verify/srcx/a.ts', 'packages/verify/distro/a', 'packages/verify/LICENSE.js',
+    'packages/verify/src/notes.md',
+    // L2: corpus infrastructure.
+    'packages/verify/test/corpus/lib.mjs', 'packages/verify/test/corpus/run-library.mjs', 'packages/verify/test/corpus/run-signature.mjs',
+    'packages/verify/test/corpus/tape-preload.mjs', 'packages/verify/test/corpus/tape-hosts.mjs', 'packages/verify/test/corpus/record.mjs',
+    'packages/verify/test/corpus/record-chain.mjs', 'packages/verify/test/corpus/tapes/public.json', 'packages/verify/test/corpus/tapes/new/x.json',
+    'packages/verify/test/history-file.mjs', 'packages/verify/test/corpus/LIB.mjs', 'packages/verify/test/History-File.mjs',
+    // L3: the @xfuel/verify alias.
+    'packages/aliases/chit402-verify/cli.js', 'packages/aliases/chit402-verify/index.cjs', 'packages/aliases/chit402-verify/package.json',
+  ];
+  for (const p of deny) assert.equal(isVerifierPath(p), true, p);
+  const allow = [
+    ...TEST_ONLY, 'packages/verify/test/fixtures/version-registry.frozen.json', 'packages/verify/test/corpus/manifest.json',
+    'packages/verify/test/corpus/baseline-chain.json', 'packages/verify/test/corpus/README.md', 'packages/verify/test/verify.test.mjs',
+    'packages/verify/README.md', 'packages/verify/CHANGELOG.md', 'packages/verify/LICENSE', 'packages/verify/license.txt',
+    'packages/aliases/chit402-verify/README.md', 'packages/aliases/chit402-verify/CHANGELOG.md',
+    '.github/workflows/test.yml', 'services/gateway/src/server.js', 'package.json', 'packages/verifyx/src/a.ts',
+  ];
+  for (const p of allow) assert.equal(isVerifierPath(p), false, p);
+  // Any non-ASCII path counts, wherever it is.
+  assert.equal(isVerifierPath('docs/caf\u00e9.md'), true);
+  assert.equal(isVerifierPath(''), true);
+});
+
+test('L1: a corpus_fix next to a look-alike or new verifier path is rejected', () => {
+  for (const extra of ['packages/verify/SRC/verdict.ts', 'packages/verify/\u0455rc/a.ts', 'packages/verify/package.JSON', 'packages/verify/foo.yaml', 'packages/verify/test/corpus/lib.mjs', 'packages/aliases/chit402-verify/cli.js']) {
+    assert.ok(run({ ...fixScenario(), changedFiles: [...TEST_ONLY, extra] }).some((p) => p.includes(SAME_CHANGE)), extra);
   }
-  for (const p of [...TEST_ONLY, 'packages/verify/test/fixtures/version-registry.frozen.json', 'packages/verify/README.md', 'packages/verify/CHANGELOG.md', '.github/workflows/test.yml', 'packages/verify/scripts/corpus-gate.mjs', 'packages/verify/srcx/a.ts', 'packages/verify/distro/a']) {
-    assert.equal(isVerifierPath(p), false, p);
-  }
+  // A test or markdown change next to it stays allowed.
+  assert.deepEqual(run({ ...fixScenario(), changedFiles: [...TEST_ONLY, 'packages/verify/test/verify.test.mjs', 'packages/verify/README.md'] }), []);
 });
 
 const fixScenario = () => {
@@ -311,6 +343,85 @@ test('review M1: an export swapped under GITHUB_JOB=corpus-inputs is rejected wh
   // ... but not with the src change it needs to matter.
   const problems = run({ ...over, changedFiles: ['packages/verify/test/corpus/synthetic.mjs', SRC] });
   for (const k of keys) assert.ok(problems.some((p) => p.startsWith(`${k}: corpus_fix or baseline removal ${SAME_CHANGE}`)), `${k}: ${problems.join('; ')}`);
+});
+
+// ---------- the merge base's declared rule for a case ----------
+
+const decls = caseDeclarations(headInputs);
+const fixEntries = (keys, rows, digest, kind = 'corpus_fix') => keys.map((k) => entry(k, rows[k], { kind, note: 'fixture tidy', input_digest: digest }));
+
+test('declared rule: the M1 swap is rejected without any src change', async () => {
+  const swapped = swappedInputs();
+  const keys = [`${V13}|library`, `${V13}|cli`];
+  const baseOnHead = await baseOutcomes(pkg, swapped, keys);
+  const rows = Object.fromEntries(keys.map((k) => [k, baseOnHead[k]]));
+  const headDigests = inputDigests(swapped);
+  const problems = run({
+    headBaseline: { ...baseline, ...rows },
+    headChanges: withEntries(...fixEntries(keys, rows, headDigests[V13])),
+    baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls,
+    changedFiles: ['packages/verify/test/corpus/synthetic.mjs'],
+  });
+  assert.equal(decls[V13].expect.library, 'unsupported_version');
+  assert.ok(problems.some((p) => p.startsWith(`${V13}|library: corpus_fix: the merge-base verifier on the head input is decided by`) && p.includes('"unsupported_version"')), problems.join('; '));
+  assert.equal(decls[V13].expect.cli, 'unsupported_version');
+  assert.ok(problems.some((p) => p.startsWith(`${V13}|cli: corpus_fix: the merge-base verifier on the head input is decided by`) && p.includes('"unsupported_version"')), problems.join('; '));
+});
+
+test('declared rule: the two-PR split (neuter first, loosen later) stops at the first PR; the second has nothing to bless', async () => {
+  // PR-1 is the neuter: rejected above whatever lands next. PR-2 alone (a
+  // src change with no corpus correction) carries no corpus_fix to check.
+  assert.deepEqual(run({ baseCases: decls, changedFiles: [SRC] }), []);
+  // Concurrent PRs: each is judged against the merge base's declaration,
+  // so the neuter is rejected whether or not the src PR is in its base.
+  const swapped = swappedInputs();
+  const key = `${V13}|library`;
+  const baseOnHead = await baseOutcomes(pkg, swapped, [key]);
+  const headDigests = inputDigests(swapped);
+  for (const changedFiles of [['packages/verify/test/corpus/synthetic.mjs'], ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/changes.json']]) {
+    const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls, changedFiles });
+    assert.ok(problems.some((p) => p.includes('not the merge-base declared "unsupported_version"')), problems.join('; '));
+  }
+});
+
+test('declared rule: an input fix that keeps the declared cause is accepted', async () => {
+  const tidy = withCase(headInputs, V13, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
+  const key = `${V13}|library`;
+  const baseOnHead = await baseOutcomes(pkg, tidy, [key]);
+  assert.ok(String(baseOnHead[key].cause ?? baseOnHead[key].reason).includes('unsupported_version'));
+  const headDigests = inputDigests(tidy);
+  const problems = run({ headBaseline: { ...baseline, [key]: baseOnHead[key] }, headChanges: withEntries(...fixEntries([key], { [key]: baseOnHead[key] }, headDigests[V13])), baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls });
+  // `to` carries no cause; the row is the merge-base outcome.
+  assert.deepEqual(problems.filter((p) => !p.includes("is not the changes.json entry's")), []);
+});
+
+test('declared rule: an undeclared path of a rule case needs corpus_fix_reason, and only there', async () => {
+  // A version case whose cli path is decided before the version rule, so
+  // main declares no cli expectation for it.
+  const U = 'version-v10-claims-signed-as-v6-after-window';
+  assert.equal(decls[U].expect.cli, undefined);
+  const tidy = withCase(headInputs, U, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input tidy'; c.doc = JSON.stringify(d); return c; });
+  const cli = `${U}|cli`;
+  const lib = `${U}|library`;
+  const baseOnHead = await baseOutcomes(pkg, tidy, [cli, lib]);
+  const headDigests = inputDigests(tidy);
+  const common = { baseDigests: inputDigests(headInputs), headDigests, baseOnHead, baseCases: decls };
+  const pick = (k) => ({ [k]: { exit: baseOnHead[k].exit, result: baseOnHead[k].result, reason: baseOnHead[k].reason, checks: baseOnHead[k].checks, ...(baseOnHead[k].overall !== undefined ? { overall: baseOnHead[k].overall } : {}) } });
+  const asFix = run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U])), ...common });
+  assert.ok(asFix.some((p) => p.includes('use kind corpus_fix_reason')), asFix.join('; '));
+  const asReason = run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U], 'corpus_fix_reason')), ...common });
+  assert.deepEqual(asReason, []);
+  // corpus_fix_reason on a declared path is refused.
+  const wrongKind = run({ headBaseline: { ...baseline, ...pick(lib) }, headChanges: withEntries(...fixEntries([lib], pick(lib), headDigests[U], 'corpus_fix_reason')), ...common });
+  assert.ok(wrongKind.some((p) => p.includes('corpus_fix_reason is only for a case path with no declared expectation')), wrongKind.join('; '));
+  // corpus_fix_reason keeps every other corpus_fix rule: the src rule, the note.
+  assert.ok(run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: withEntries(...fixEntries([cli], pick(cli), headDigests[U], 'corpus_fix_reason')), ...common, changedFiles: [SRC] }).some((p) => p.includes(SAME_CHANGE)));
+  const noNote = withEntries(entry(cli, pick(cli)[cli], { kind: 'corpus_fix_reason', input_digest: headDigests[U] }));
+  assert.ok(run({ headBaseline: { ...baseline, ...pick(cli) }, headChanges: noNote, ...common }).some((p) => p.includes('corpus_fix needs a note')));
+});
+
+test('declared rule: no merge-base declarations fails closed', () => {
+  assert.ok(run({ ...fixScenario(), baseCases: null }).some((p) => p.includes('needs the merge-base case declarations')));
 });
 
 test('removing a real receipt case fails; changes.json is append-only', () => {
@@ -470,6 +581,29 @@ test('end to end: review M1 with a src change fails the gate script, which runs 
   assert.equal(res.status, 1, res.stdout);
   for (const k of keys) assert.ok(res.stderr.includes(`${k}: corpus_fix or baseline removal ${SAME_CHANGE} (${srcFile})`), res.stderr);
   assert.equal(existsSync(marker), false, 'the gate ran a head file');
+});
+
+test('end to end: the gate reads the declared rule from the merge base, not from the head export', { skip: !gitOk }, async () => {
+  const swapped = swappedInputs();
+  // The head export claims the case is a control case declared log_unreachable.
+  const lying = withCase(swapped, V13, (c) => ({ ...c, class: 'control', expect: { library: 'log_unreachable', cli: 'key untrusted' } }));
+  const key = `${V13}|library`;
+  const baseOnHead = await baseOutcomes(pkg, lying, [key]);
+  const row = { exit: baseOnHead[key].exit, result: baseOnHead[key].result, reason: baseOnHead[key].reason, checks: baseOnHead[key].checks, overall: baseOnHead[key].overall };
+  const digest = inputDigests(lying)[V13];
+  const r = repoWith((root) => {
+    const p = join(root, BASELINE);
+    const b = JSON.parse(readFileSync(p, 'utf8'));
+    b[key] = row;
+    writeFileSync(p, JSON.stringify(b, null, 1));
+    const cp = join(root, CHANGES);
+    const c = JSON.parse(readFileSync(cp, 'utf8'));
+    c.changes.push(entry(key, row, { kind: 'corpus_fix', note: 'fixture tidy', input_digest: digest }));
+    writeFileSync(cp, JSON.stringify(c, null, 1));
+  });
+  const res = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'lying.json', lying)]);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /version-v13-unknown\|library: corpus_fix: the merge-base verifier on the head input is decided by .* not the merge-base declared "unsupported_version"/);
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {

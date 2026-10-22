@@ -84,12 +84,28 @@ It fails when:
   So a corpus_fix covers only an outcome the input change alone explains.
   A corpus_fix whose row does not move (an input change with the same
   outcome) gets the same checks;
-- a `corpus_fix` entry or a removed baseline row (`to: null`) is in a
-  change that also touches the verifier: `packages/verify/src/**`, a JSON
-  file at the package root (package.json, package-lock.json, tsconfig.json,
-  the bundled snapshots, allowlist and windows), `BUILD_DIGEST.txt`, or any
-  `dist/` output. The gate reads this from `git diff --name-only` against
-  the merge base, as data. Land corpus corrections and verifier changes in
+- a `corpus_fix` row is not decided by the expectation the merge base
+  declares for that case and path (`expect` in the merge-base
+  `synthetic.mjs`): the merge-base verifier on the head input must still
+  fail on the declared cause. The declaration is read from the merge-base
+  tree, never from the head, so a PR cannot loosen it and use it in the
+  same change. A case path of a rule class (version, gate, timing) with no
+  declared expectation needs kind `corpus_fix_reason` instead, which keeps
+  every other corpus_fix rule and marks the row for a closer review;
+  `corpus_fix_reason` on a declared path is refused. If the merge-base
+  declarations cannot be read, the gate fails closed;
+- a `corpus_fix` or `corpus_fix_reason` entry, or a removed baseline row
+  (`to: null`), is in a change that also touches a verifier path. Under
+  `packages/verify/` every path is a verifier path by default, except
+  `test/**`, `*.md` and `LICENSE` (`.md`, `.txt`). Inside `test/`, the
+  corpus runners and recorders (`test/corpus/lib.mjs`, `run-*.mjs`,
+  `tape-*.mjs`, `record*.mjs`), the tapes (`test/corpus/tapes/`) and
+  `test/history-file.mjs` count as verifier paths too. So do everything
+  under `packages/aliases/chit402-verify/` except `*.md`, and any `dist/`
+  output. Paths are compared after NFKC normalization and lowercasing, and
+  any path with a non-ASCII or control character counts as a verifier
+  path. The gate reads the changed paths from `git diff --name-only`
+  against the merge base, as data. Land corpus corrections and verifier changes in
   separate PRs: the verifier change is then checked against corrected
   inputs that are already on main;
 - a real receipt case is removed;

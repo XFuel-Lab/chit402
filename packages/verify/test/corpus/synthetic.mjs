@@ -170,23 +170,23 @@ export async function buildSynthetic(dir) {
   }
   {
     const claims = { ...signedClaimsOf(v10), payload_version: 13, iat: T_OCT22, task_id: 'xfuel-corpus-0000-version-v13' };
-    add({ id: 'version-v13-unknown', class: 'version', spec: '§5.1; §2 unknown version', target: 'exit 2 unsupported_version' }, docFor(key, claims, { outerPv: 13 }));
+    add({ id: 'version-v13-unknown', class: 'version', spec: '§5.1; §2 unknown version', target: 'exit 2 unsupported_version', expect: { cli: 'unsupported_version' } }, docFor(key, claims, { outerPv: 13 }));
   }
   {
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'chit-c0c0c0c0-0000-4000-8000-000000000012' };
     delete claims.payload_version;
-    add({ id: 'version-v12-shape-no-version', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)' }, docFor(key, claims));
+    add({ id: 'version-v12-shape-no-version', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)', expect: { cli: 'id_prefix_version_mismatch' } }, docFor(key, claims));
   }
   {
     // Same shape with a non-uuid task id, so the id-prefix rule does not
     // decide it first: the missing signed version does.
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'xfuel-corpus-0000-version-v12-plain-id' };
     delete claims.payload_version;
-    add({ id: 'version-v12-shape-no-version-plain-id', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)' }, docFor(key, claims));
+    add({ id: 'version-v12-shape-no-version-plain-id', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)', expect: { cli: 'unsupported_version' } }, docFor(key, claims));
   }
   {
     const claims = unversionedClaims('xfuel-corpus-0000-version-unstamped', T_OCT22);
-    add({ id: 'version-unversioned-object-no-stamp', class: 'version', spec: '§2 missing version; L1', target: 'exit != 0' }, docFor(key, claims));
+    add({ id: 'version-unversioned-object-no-stamp', class: 'version', spec: '§2 missing version; L1', target: 'exit != 0', expect: { cli: 'unsupported_version' } }, docFor(key, claims));
   }
 
   // --- version: L1 closed allowlist. v4/v5 and detached receipts pass only

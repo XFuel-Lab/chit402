@@ -209,7 +209,10 @@ export async function exportInputs(pkgDir) {
   const text = (f) => (f ? readFileSync(f, 'utf8') : '');
   return {
     format: INPUTS_FORMAT,
-    cases: cases.map((c) => ({ id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile) })),
+    cases: cases.map((c) => ({
+      id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile),
+      class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null,
+    })),
   };
 }
 
@@ -248,9 +251,50 @@ export async function baseOutcomes(baseTree, headInputs, keys) {
     writeFileSync(historyFile, c.history);
     writeFileSync(jwksFile, c.jwks);
     const o = await lib.runPathAsync({ id, file, historyFile, jwksFile }, path, tape);
-    out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}) };
+    out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}), cause: o.cause ?? null };
   }
   return out;
+}
+
+export const FIX_KINDS = Object.freeze(['corpus_fix', 'corpus_fix_reason']);
+const isFixKind = (kind) => FIX_KINDS.includes(kind);
+// Classes whose cases each test one rule; a fix there must keep the rule.
+const RULE_CLASSES = new Set(['version', 'gate', 'timing']);
+
+/**
+ * A corpus correction must keep the case decided by the rule the MERGE BASE
+ * declares for it (synthetic.mjs `expect`, read from the merge-base tree):
+ * the merge-base verifier's cause (else reason) on the head input must
+ * contain it. So a
+ * case cannot be neutered in one PR and its rule loosened in a later one.
+ * A rule-class case path with no declared expectation needs the separate
+ * kind `corpus_fix_reason` (and its note) to be visible as such.
+ */
+function declaredProblems(key, ch, baseCases, baseOnHead) {
+  const [id, path] = key.split('|');
+  if (!baseCases) return ['corpus_fix needs the merge-base case declarations (--base-tree)'];
+  const decl = baseCases[id];
+  if (!decl) return [];
+  const want = decl.expect && typeof decl.expect === 'object' ? decl.expect[path] : undefined;
+  if (typeof want === 'string' && want) {
+    // Same reading as the golden corpus test: the cause, else the reason.
+    const o = baseOnHead?.[key];
+    const got = String(o?.cause ?? o?.reason ?? '');
+    if (!got.includes(want)) {
+      return [`corpus_fix: the merge-base verifier on the head input is decided by ${JSON.stringify(got)}, not the merge-base declared ${JSON.stringify(want)}`];
+    }
+    if (ch.kind === 'corpus_fix_reason') return ['corpus_fix_reason is only for a case path with no declared expectation; use corpus_fix'];
+    return [];
+  }
+  if (RULE_CLASSES.has(String(decl.class)) && ch.kind !== 'corpus_fix_reason') {
+    return [`corpus_fix: ${decl.class} case with no declared ${path} expectation at the merge base; use kind corpus_fix_reason with a note`];
+  }
+  return [];
+}
+
+/** Merge-base case declarations by id: class, target, expect. */
+export function caseDeclarations(inputs) {
+  return Object.fromEntries((inputs?.cases ?? []).map((c) => [c.id, { class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null }]));
 }
 
 /** A corpus_fix must name a case whose input digest changed in this PR. */
@@ -268,17 +312,48 @@ function digestProblems(ch, baseDigests, headDigests) {
   return p;
 }
 
+// Corpus infrastructure under packages/verify/test/: what the corpus
+// observes and how it runs. synthetic.mjs, baseline*.json, changes.json and
+// manifest.json stay allowed next to a corpus_fix.
+const CORPUS_INFRA = [
+  /^test\/corpus\/lib\.mjs$/,
+  /^test\/corpus\/run-[^/]*\.mjs$/,
+  /^test\/corpus\/tape-[^/]*\.mjs$/,
+  /^test\/corpus\/record[^/]*\.mjs$/,
+  /^test\/corpus\/tapes\//,
+  /^test\/history-file\.mjs$/,
+];
+
 /**
- * Paths whose change can move a verifier outcome: the source, the package
- * manifest, lockfile and TypeScript config, the bundled data files at the
- * package root (issuer history snapshots, legacy allowlist, version
- * windows), the build digest, and any dist/ output.
+ * Paths whose change can move a verifier outcome, or what the corpus
+ * observes of it. Default deny under packages/verify/: everything counts
+ * except test/** (minus the corpus infrastructure above), *.md and
+ * LICENSE. Also the @xfuel/verify alias (packages/aliases/chit402-verify/,
+ * minus *.md) and any dist/ output anywhere.
+ *
+ * Matching is on the NFKC form in lower case, and a path with any
+ * character outside printable ASCII counts as a verifier path outright, so
+ * `SRC/`, `package.JSON` or a look-alike `ѕrc/` cannot pass as something
+ * else.
  */
 export function isVerifierPath(path) {
-  return /^packages\/verify\/src\//.test(path)
-    || /^packages\/verify\/[^/]+\.json$/.test(path)
-    || path === 'packages/verify/BUILD_DIGEST.txt'
-    || /(^|\/)dist\//.test(path);
+  const raw = String(path ?? '');
+  if (!/^[\x20-\x7e]+$/.test(raw)) return true;
+  const p = raw.normalize('NFKC').toLowerCase();
+  if (/(^|\/)dist\//.test(p)) return true;
+  const VERIFY = 'packages/verify/';
+  if (p.startsWith(VERIFY)) {
+    const rest = p.slice(VERIFY.length);
+    if (rest.startsWith('src/')) return true;
+    if (CORPUS_INFRA.some((re) => re.test(rest))) return true;
+    if (rest.startsWith('test/')) return false;
+    if (/^license(\.(md|txt))?$/.test(rest)) return false;
+    if (rest.endsWith('.md')) return false;
+    return true;
+  }
+  const ALIAS = 'packages/aliases/chit402-verify/';
+  if (p.startsWith(ALIAS)) return !p.endsWith('.md');
+  return false;
 }
 
 /** Files a change touches against the merge base, from git (data only). */
@@ -306,7 +381,7 @@ function baseOnHeadProblems(key, ch, baseOnHead) {
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null }) {
   const problems = [];
   const bEntries = baseChanges?.changes ?? [];
   const hEntries = headChanges?.changes ?? [];
@@ -318,7 +393,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   const addedFor = new Map();
   for (const ch of added) {
     const kind = ch?.kind ?? 'tighten';
-    if (!['tighten', 'corpus_fix', 'registry'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
+    if (!['tighten', 'corpus_fix', 'corpus_fix_reason', 'registry'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
     if (!ch.pr || !ch.spec) problems.push(`changes.json: entry without pr and spec: ${JSON.stringify(ch).slice(0, 120)}`);
     if (kind === 'registry') continue;
     if (!ch.case || !ch.path) { problems.push(`changes.json: entry without case and path: ${JSON.stringify(ch).slice(0, 120)}`); continue; }
@@ -335,8 +410,8 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   // not share a change with a verifier change: the verifier would be
   // judged against inputs and rows edited in the same breath.
   const corrections = [
-    ...[...addedFor].filter(([, ch]) => ch.kind === 'corpus_fix').map(([key]) => key),
-    ...Object.keys(base).filter((key) => !has(head, key) && !(addedFor.get(key)?.kind === 'corpus_fix')),
+    ...[...addedFor].filter(([, ch]) => isFixKind(ch.kind)).map(([key]) => key),
+    ...Object.keys(base).filter((key) => !has(head, key) && !isFixKind(addedFor.get(key)?.kind)),
   ];
   if (corrections.length) {
     if (!Array.isArray(changedFiles)) {
@@ -361,6 +436,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     if (ch.to === null) return;
     for (const p of digestProblems(ch, baseDigests, headDigests)) problems.push(`${key}: ${p}`);
     for (const p of baseOnHeadProblems(key, ch, baseOnHead)) problems.push(`${key}: ${p}`);
+    for (const p of declaredProblems(key, ch, baseCases, baseOnHead)) problems.push(`${key}: ${p}`);
   };
 
   for (const key of Object.keys(base)) {
@@ -371,7 +447,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     if (now === undefined) {
       if (isReal(key)) problems.push(`${key}: a real receipt case was removed from the baseline`);
       else if (!ch || ch.kind !== 'corpus_fix' || ch.to !== null || !ch.note) problems.push(`${key}: removed without a corpus_fix entry (to: null, with a note)`);
-      if (ch?.kind === 'corpus_fix') checked.add(key);
+      if (isFixKind(ch?.kind)) checked.add(key);
       continue;
     }
     if (!ch) { problems.push(`${key}: baseline changed with no changes.json entry added in this change`); continue; }
@@ -379,7 +455,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     for (const p of wellFormed(now)) problems.push(`${key}: ${p}`);
     if (ch.kind === 'tighten') {
       for (const p of looser(was, now)) problems.push(`${key}: more permissive than the merge base: ${p}`);
-    } else if (ch.kind === 'corpus_fix') {
+    } else if (isFixKind(ch.kind)) {
       checkCorpusFix(key, ch, now);
     }
   }
@@ -387,7 +463,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   // outcome) or that names a new row gets the same checks, and its `to`
   // must be the head row.
   for (const [key, ch] of addedFor) {
-    if (ch.kind !== 'corpus_fix' || checked.has(key)) continue;
+    if (!isFixKind(ch.kind) || checked.has(key)) continue;
     const now = has(head, key) ? head[key] : undefined;
     if (now === undefined) continue;
     if (!same(ch.to, now)) problems.push(`${key}: baseline value is not the changes.json entry's \`to\``);
@@ -488,7 +564,7 @@ function readHead(root, path) {
 export function addedCorpusFixKeys(baseChanges, headChanges) {
   const b = baseChanges?.changes ?? [];
   const h = Array.isArray(headChanges?.changes) ? headChanges.changes : [];
-  return h.slice(b.length).filter((c) => c?.kind === 'corpus_fix' && c.case && c.path).map((c) => `${c.case}|${c.path}`);
+  return h.slice(b.length).filter((c) => isFixKind(c?.kind) && c.case && c.path).map((c) => `${c.case}|${c.path}`);
 }
 
 /**
@@ -506,14 +582,18 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headRegistry: readHead(root, REGISTRY_PIN),
   };
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
-  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, changedFiles: changedFilesOf(root, base) };
+  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
   if (fixKeys.length && baseTree && headInputs) {
     const bad = inputsProblems(headInputs);
     if (bad.length) problems.push(...bad);
     else {
       extra.headDigests = inputDigests(headInputs);
-      try { extra.baseDigests = inputDigests(await exportInputs(baseTree)); } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
+      try {
+        const baseInputs = await exportInputs(baseTree);
+        extra.baseDigests = inputDigests(baseInputs);
+        extra.baseCases = caseDeclarations(baseInputs);
+      } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
       extra.baseOnHead = await baseOutcomes(baseTree, headInputs, fixKeys);
     }
   }

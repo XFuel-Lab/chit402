@@ -52,7 +52,7 @@ test('corpus inventory: every case has a baseline, no blocked receipt', () => {
   for (const ch of changes) {
     if (ch.kind === 'registry') { assert.ok(ch.entry && ch.pr && ch.spec, `incomplete registry entry ${JSON.stringify(ch)}`); continue; }
     assert.ok(ch.case && ch.path && ch.to !== undefined && ch.pr && ch.spec, `incomplete change entry ${JSON.stringify(ch)}`);
-    assert.ok([undefined, 'tighten', 'corpus_fix'].includes(ch.kind), `unknown kind ${ch.kind}`);
+    assert.ok([undefined, 'tighten', 'corpus_fix', 'corpus_fix_reason'].includes(ch.kind), `unknown kind ${ch.kind}`);
   }
 });
 
