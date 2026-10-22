@@ -18,15 +18,12 @@
  * case sees one consistent snapshot of the log.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+import { GET_HOSTS } from './tape-hosts.mjs';
 
 const MODE = process.env.CHIT_CORPUS_MODE || 'replay';
 const TAPE = process.env.CHIT_CORPUS_TAPE || '';
 const realFetch = globalThis.fetch.bind(globalThis);
 
-const GET_HOSTS = new Set([
-  'api.chit402.com', 'chit402.com', 'www.chit402.com',
-  'api.xfuel.app', 'xfuel.app', 'www.xfuel.app',
-]);
 
 // Public, keyless RPC endpoints (the verifier's defaults). Never a paid or XFuel host.
 const RPC_HOSTS = new Set([
