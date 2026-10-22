@@ -8,6 +8,7 @@
  *
  * CHIT_CORPUS_MODE=record: used only by scripts/record (never in CI).
  * GET to the public receipt hosts is passed through and written to the tape.
+ * Redirects are never followed: a 3xx is stored as an error entry.
  * Nothing else is sent: any other method or host, including chain JSON-RPC,
  * is recorded as a network error, so replay answers it the same way.
  * The first answer to a request is reused for the whole session, so every
@@ -23,6 +24,16 @@ const GET_HOSTS = new Set([
   'api.chit402.com', 'chit402.com', 'www.chit402.com',
   'api.xfuel.app', 'xfuel.app', 'www.xfuel.app',
 ]);
+
+// Tests of the recorder point it at a local server instead of the public
+// hosts: CHIT_CORPUS_RECORD_LOCAL_PORT allows http://127.0.0.1:<port> only.
+const LOCAL_PORT = /^\d{2,5}$/.test(process.env.CHIT_CORPUS_RECORD_LOCAL_PORT || '') ? process.env.CHIT_CORPUS_RECORD_LOCAL_PORT : null;
+
+function recordHostAllowed(url) {
+  const u = new URL(url);
+  if (LOCAL_PORT) return u.protocol === 'http:' && u.hostname === '127.0.0.1' && u.port === LOCAL_PORT;
+  return u.protocol === 'https:' && GET_HOSTS.has(u.hostname);
+}
 
 function requestOf(input, init = {}) {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : String(input?.url || '');
@@ -54,8 +65,10 @@ function networkError(why) {
   return err;
 }
 
-function respond(entry) {
+export function respond(entry) {
   if (entry.error) throw networkError(entry.error);
+  // An older tape could hold a 3xx answer. Replay never hands one back.
+  if (entry.status >= 300 && entry.status < 400) throw networkError(`redirect not followed: ${entry.status}`);
   return new Response(entry.body, {
     status: entry.status,
     headers: { 'content-type': entry.contentType || 'application/json' },
@@ -94,19 +107,18 @@ if (MODE === 'replay') {
   const save = () => { if (TAPE) writeFileSync(TAPE, `${JSON.stringify(tape, null, 1)}\n`); };
   process.on('exit', save);
 
+  // A redirect is never followed. It is stored as an error entry, so replay
+  // fails the read the same way a fetch with redirect: 'error' does.
   async function getText(url) {
-    let current = url;
-    for (let hop = 0; hop < 3; hop += 1) {
-      const host = new URL(current).hostname;
-      if (!GET_HOSTS.has(host)) return { error: `host not recorded: ${host}` };
-      const res = await realFetch(current, { method: 'GET', redirect: 'manual', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
-      if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
-        current = new URL(res.headers.get('location'), current).href;
-        continue;
-      }
-      return { status: res.status, contentType: res.headers.get('content-type') || '', body: await res.text() };
+    const host = new URL(url).hostname;
+    if (!recordHostAllowed(url)) return { error: `host not recorded: ${host}` };
+    const res = await realFetch(url, { method: 'GET', redirect: 'manual', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      try { await res.body?.cancel(); } catch { /* nothing to drain */ }
+      return { error: `redirect not followed: ${res.status}${location ? ` to ${location}` : ''}`, status: res.status, location: location || null };
     }
-    return { error: 'too many redirects' };
+    return { status: res.status, contentType: res.headers.get('content-type') || '', body: await res.text() };
   }
 
   globalThis.fetch = async (input, init = {}) => {

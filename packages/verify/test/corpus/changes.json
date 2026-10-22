@@ -1,4 +1,135 @@
 {
- "note": "Recorded changes to the golden corpus baseline. Each entry names the case and path, the new pinned outcome, the PR, and the spec section. An entry may only make a result stricter, unless the spec explicitly says otherwise. Real receipts never change through this file without a spec section that names the change.",
- "changes": []
+ "note": "Recorded changes to the golden corpus baseline, append-only. Each entry names the case and path, the new pinned outcome (`to`), the PR, and the spec section. kind `tighten` (default): the new outcome must be at least as strict as the merge-base outcome. kind `corpus_fix`: a synthetic case was built wrong and is corrected; needs a note, never for a real receipt, never to exit 0. kind `registry`: names a version appended to the frozen registry (`entry`). scripts/corpus-gate.mjs checks all of this against the merge base in CI.",
+ "changes": [
+  {
+   "kind": "corpus_fix",
+   "case": "version-v10-claims-signed-as-v6-after-window",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "The case copied the production issuer-history pin into claims signed by the test key, so the library path stopped at issuer_history_pin_mismatch before the version rule. The pin now names the covering test history. The v6 window is not enforced yet (PR3 target), so the case reaches the log read."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "control-test-key-v10",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same pin fix as the v6 case. The control now passes every check before the log, which is what a control is for."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "The v4/v5 claims carried payment.payee, which no v4/v5 receipt signed, so they were rejected as unsupported_version instead of being read as v4/v5. Without it they are read as v4 and reach the log read: the L1 allowlist is not enforced yet (PR3 target)."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix as the v4 case."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "cli",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "key untrusted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    }
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix. The CLI now reads the claims as v4 and rejects the test key (key untrusted) instead of stopping at unsupported_version."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "cli",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "key untrusted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    }
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix as the v4 CLI case."
+  }
+ ]
 }

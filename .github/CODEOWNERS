@@ -1,0 +1,16 @@
+# Code owners. Takes effect for review only when branch protection on main
+# turns on "Require review from Code Owners".
+
+# Golden corpus for chit402-verify: baseline, changes.json, tape, runners.
+/packages/verify/test/corpus/** @XFuel-Lab
+/packages/verify/test/golden-corpus.test.mjs @XFuel-Lab
+# Merge-base gate for the corpus and the frozen registry, and its tests.
+/packages/verify/scripts/corpus-gate.mjs @XFuel-Lab
+/packages/verify/test/corpus-gate.test.mjs @XFuel-Lab
+/packages/verify/test/corpus-recorder.test.mjs @XFuel-Lab
+# Frozen version registry pin and its test.
+/packages/verify/test/fixtures/version-registry.frozen.json @XFuel-Lab
+/packages/verify/test/version-registry.test.mjs @XFuel-Lab
+# The workflow that runs the gate, and this file.
+/.github/workflows/test.yml @XFuel-Lab
+/.github/CODEOWNERS @XFuel-Lab
