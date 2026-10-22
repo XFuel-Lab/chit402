@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, REPIN_FILES, declarationRowProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -1114,9 +1114,11 @@ test('frozen registry: append-only, appended entries recorded', () => {
 const SYNTH_FILE = 'packages/verify/test/corpus/synthetic.mjs';
 const HISTORY_FILE = 'packages/verify/test/history-file.mjs';
 const REPIN_SCOPE = [SYNTH_FILE, DECLARATIONS_PIN, CHANGES];
-// A builder tidy: one more field in the case document. Every outcome stays.
+// A builder tidy: one more top-level field in the case JWKS. The document and
+// every outcome stay. (A document change is a new case, not a re-pin.)
+const tidyJwks = (c) => { const j = JSON.parse(c.jwks); j.corpus_note = 'builder tidy'; c.jwks = JSON.stringify(j, null, 2); return c; };
 const tidyDoc = (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'builder tidy'; c.doc = JSON.stringify(d, null, 2); return c; };
-const tidyOf = (ids) => ids.reduce((acc, id) => withCase(acc, id, tidyDoc), headInputs);
+const tidyOf = (ids, edit = tidyJwks) => ids.reduce((acc, id) => withCase(acc, id, edit), headInputs);
 const keysOf = (inputs) => inputs.cases.flatMap((c) => c.paths.map((x) => `${c.id}|${x}`));
 const BASE_DIGESTS = inputDigests(headInputs);
 const repinOf = (id, to, extra = {}) => ({ case: id, from_digest: BASE_DIGESTS[id], to_digest: to, pr: 'test', note: 'builder tidy', ...extra });
@@ -1125,14 +1127,29 @@ const withRepins = (...r) => ({ ...clone(pin), repins: r });
 const onBaseAll = await baseOutcomes(pkg, headInputs, keysOf(headInputs));
 const TIDY = tidyOf([V13]);
 const onTidy = { ...onBaseAll, ...(await baseOutcomes(pkg, TIDY, keysOf(TIDY).filter((k) => k.startsWith(`${V13}|`)))) };
+const BASE_FORMS = repinFormsOf(headInputs);
 const repinRun = (over = {}) => run({
   ...pinned(TIDY),
   headPin: withRepins(repinOf(V13, inputDigests(TIDY)[V13])),
   headChanges: withEntries(repinChange(V13)),
   changedFiles: REPIN_SCOPE,
   repinOutcomes: { keys: keysOf(headInputs), onHead: onTidy, onBase: onBaseAll },
+  repinForms: { base: BASE_FORMS, head: repinFormsOf(TIDY) },
   ...over,
 });
+// A full re-pin of one case to `inputs`, with outcomes read off the merge-base verifier.
+const repinTo = async (inputs, id) => {
+  const k = keysOf(inputs).filter((x) => x.startsWith(`${id}|`));
+  const onHead = { ...onBaseAll, ...(await baseOutcomes(pkg, inputs, k)) };
+  return run({
+    ...pinned(inputs),
+    headPin: withRepins(repinOf(id, inputDigests(inputs)[id])),
+    headChanges: withEntries(repinChange(id)),
+    changedFiles: REPIN_SCOPE,
+    repinOutcomes: { keys: keysOf(headInputs), onHead, onBase: onBaseAll },
+    repinForms: { base: BASE_FORMS, head: repinFormsOf(inputs) },
+  });
+};
 
 test('re-pin: the effective digest is the last repin of a case; a moved input with no repin is still rejected', () => {
   const to1 = 'c'.repeat(64);
@@ -1254,6 +1271,45 @@ test('re-pin: any change in the full outcome on the merge-base verifier is rejec
     repinOutcomes: { keys: keysOf(headInputs), onHead: onSwap, onBase: onBaseAll },
   });
   assert.ok(sw.some((p) => p.startsWith(`re-pin: ${id}|`) && p.includes('different outcome')), sw.join('; '));
+});
+
+// The six wholesale swaps from the review: the target case takes the source
+// case's document, history and JWKS. Outcomes match, the case does not.
+const SWAPS = [
+  ['label-v10-outer-stamp-6', 'label-v6-outer-stamp-10'],
+  ['gate10-pv9-no-history-pin', 'control-test-key-v10'],
+  ['gate9-pv8-no-head-binding', 'control-test-key-v10'],
+  ['version-l1-v5-not-allowlisted', 'version-l1-v4-not-allowlisted'],
+  ['version-v12-shape-no-version-plain-id', 'version-unversioned-object-no-stamp'],
+  [V13, 'version-v12-shape-no-version-plain-id'],
+];
+const swapInto = (target, source) => withCase(headInputs, target, (c) => { const s = headInputs.cases.find((x) => x.id === source); return { ...c, doc: s.doc, history: s.history, jwks: s.jwks }; });
+
+test('re-pin: each of the six wholesale input swaps from the review is rejected as a document change', async () => {
+  for (const [target, source] of SWAPS) {
+    const problems = await repinTo(swapInto(target, source), target);
+    assert.ok(has(problems, `re-pin: ${target}: the case document changed`), `${target} <- ${source}: ${problems.join('; ')}`);
+    assert.ok(has(problems, `re-pin: ${target}: the re-pinned document is the document of ${source}`), `${target} <- ${source}: ${problems.join('; ')}`);
+  }
+});
+
+test('re-pin: a document change is a new case; a document signature or key change is rejected even with the same document form', async () => {
+  // One more field in the v13 document (the earlier re-pin fixture): same outcomes, rejected.
+  const docTidy = tidyOf([V13], tidyDoc);
+  const p1 = await repinTo(docTidy, V13);
+  assert.ok(has(p1, `re-pin: ${V13}: the case document changed`), p1.join('; '));
+  assert.ok(!p1.some((x) => x.includes('different outcome')), p1.join('; '));
+  // Re-signed under an injected key: the document form is the same, the signature state is not.
+  const { inputs } = resignDoc(headInputs, KS_ID);
+  assert.equal(repinFormsOf(inputs)[KS_ID].doc, BASE_FORMS[KS_ID].doc);
+  const p2 = await repinTo(inputs, KS_ID);
+  assert.ok(has(p2, `re-pin: ${KS_ID}: the document signature state or key relation changed`), p2.join('; '));
+  // The embedded key loses x and y: same document form, a different key relation.
+  const xy = withCase(headInputs, KS_ID, (c) => { const d = JSON.parse(c.doc); const { x: _x, y: _y, ...rest } = d.issuer_signature.issuer_jwk; d.issuer_signature.issuer_jwk = rest; c.doc = JSON.stringify(d, null, 2); return c; });
+  const p3 = await repinTo(xy, KS_ID);
+  assert.ok(has(p3, `re-pin: ${KS_ID}: the document signature state or key relation changed`), p3.join('; '));
+  // Without the document forms the re-pin fails closed.
+  assert.ok(has(repinRun({ repinForms: null }), 'needs the merge-base and head case documents'));
 });
 
 test('re-pin: fails closed without merge-base outcomes or digests', () => {

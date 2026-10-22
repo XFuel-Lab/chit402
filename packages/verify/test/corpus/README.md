@@ -212,9 +212,11 @@ v4 one, is decided by `legacy_form_not_allowlisted` instead.
 
 ## Reviewed re-pin
 
-A change to how `synthetic.mjs` (or `test/history-file.mjs`) builds a case
-can move its input digest without moving any outcome. Such a change
-re-pins the moved cases instead of adding new ones. It is its own PR kind:
+A change to how `synthetic.mjs` (or `test/history-file.mjs`) builds a
+case's issuer history or JWKS can move its input digest without moving any
+outcome. Such a change re-pins the moved cases instead of adding new ones.
+A change to a case document is never a re-pin: it is a new case. It is its
+own PR kind:
 
 - it touches only `test/corpus/synthetic.mjs`, `test/history-file.mjs`,
   `test/corpus/declarations.frozen.json` and `test/corpus/changes.json`
@@ -230,6 +232,12 @@ re-pins the moved cases instead of adding new ones. It is its own PR kind:
   the head digest, no unmoved case is re-pinned, the merge-base input of a
   re-pinned case is its merge-base effective digest, and the case set does
   not change;
+- each moved case keeps its document: the document form (version, shape,
+  payload and every field, as `docForm` reads it) and the document's
+  signature state and key relation (`signatureForm`) equal the merge base,
+  and the re-pinned document is not the document of another case. Only the
+  issuer history and the JWKS may move. So a wholesale swap of one case's
+  input for another's is refused even when the outcomes match;
 - no baseline row changes, and `changes.json` gets only one
   `{kind: "repin", case, pr, spec}` entry (no `path`) per appended repin;
 - on the MERGE-BASE verifier, every case path has the same full outcome
