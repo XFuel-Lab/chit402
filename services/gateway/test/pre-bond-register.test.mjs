@@ -11,7 +11,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const {
+  BOND_DEPLOY_WINDOW_S,
   PRE_BOND_REGISTER_DOMAIN,
+  bondDeployTimeAllowed,
+  frontierAnchoredBeforeAsOf,
   headAfterBondStart,
   inclusionEvidenceAllowed,
   isFrontierHead,
@@ -91,7 +94,7 @@ function registerFor(signer, ackDoc) {
 test('the committed example register has the decided shape once its placeholders are filled', () => {
   const example = JSON.parse(fs.readFileSync(examplePath, 'utf8'));
   assert.equal(example.schema, 'chit402.pre_bond_register.v0');
-  assert.equal(example.as_of, 'SET_AT_BOND_DEPLOY', 'as_of is set at bond deploy, not committed now');
+  assert.equal(example.as_of, 'PLANNED_BOND_START_UTC', 'as_of is a planned bond start, committed before deploy');
   assert.equal(example.heads.length, 2);
   const [entry, frontier] = example.heads;
   assert.deepEqual(
@@ -100,7 +103,7 @@ test('the committed example register has the decided shape once its placeholders
   );
   assert.equal(frontier.status, 'frontier');
   assert.equal(frontier.ack_sha256, null);
-  for (const k of ['epoch', 'tree_size', 'root', 'head_jws_sha256']) assert.equal(frontier[k], 'SET_AT_BOND_DEPLOY', k);
+  for (const k of ['epoch', 'tree_size', 'root', 'head_jws_sha256']) assert.equal(frontier[k], 'FILL_BEFORE_DEPLOY', k);
   assert.equal(validatePreBondRegister(example).ok, false);
   const filled = {
     ...example,
@@ -256,4 +259,68 @@ test('after bond start is decided against the frontier by (epoch, tree_size)', a
   assert.equal(headAfterBondStart(reg, { epoch: 3, tree_size: 1, root: other.root }), false, 'missing identity part');
   const noFrontier = { ...reg, heads: reg.heads.filter((e) => e.status !== 'frontier') };
   assert.equal(headAfterBondStart(noFrontier, { epoch: 3, tree_size: 1, ...other }), false, 'no frontier, no answer');
+});
+
+test('every excluded entry sits at or before the frontier by (epoch, tree_size)', async () => {
+  const signer = throwawaySigner();
+  const keys = [{ ...signer.publicJwk, kid: signer.kid }];
+  const ack = await signedAck(signer);
+  const ackHash = quarantineAckDocumentHash(ack);
+  const excluded = { epoch: 2, tree_size: 11, root: prefixRoot, head_jws_sha256: RACED_JWS_SHA, status: 'excluded', ack_sha256: ackHash };
+  const withFrontier = (f) => ({
+    schema: 'chit402.pre_bond_register.v0',
+    as_of: BOND_START,
+    issuer_kid: signer.kid,
+    heads: [excluded, { root: 'c'.repeat(64), head_jws_sha256: 'd'.repeat(64), status: 'frontier', ack_sha256: null, ...f }]
+      .sort((a, b) => (a.epoch - b.epoch) || (a.tree_size - b.tree_size) || (a.root < b.root ? -1 : 1)),
+  });
+  // At the frontier position (same epoch and tree_size).
+  assert.deepEqual(validatePreBondRegister(withFrontier({ epoch: 2, tree_size: 11 }), { acks: [ack], keys }), { ok: true, errors: [] });
+  // Before the frontier: lower tree_size in the same epoch, or a later epoch.
+  assert.deepEqual(validatePreBondRegister(withFrontier({ epoch: 2, tree_size: 12 })), { ok: true, errors: [] });
+  assert.deepEqual(validatePreBondRegister(withFrontier({ epoch: 3, tree_size: 1 })), { ok: true, errors: [] });
+  // After the frontier: rejected.
+  for (const f of [{ epoch: 2, tree_size: 10 }, { epoch: 1, tree_size: 50 }]) {
+    const res = validatePreBondRegister(withFrontier(f));
+    assert.equal(res.ok, false, JSON.stringify(f));
+    assert.match(res.errors.join(';'), /excluded head must sit at or before the frontier/);
+  }
+});
+
+test('the deploy block time must be within [as_of, as_of + 24h]', async () => {
+  const signer = throwawaySigner();
+  const reg = registerFor(signer, await signedAck(signer));
+  assert.equal(BOND_DEPLOY_WINDOW_S, 86400);
+  assert.equal(bondDeployTimeAllowed(reg, BOND_START_S), true);
+  assert.equal(bondDeployTimeAllowed(reg, BOND_START_S + 3600), true);
+  assert.equal(bondDeployTimeAllowed(reg, BOND_START_S + 86400), true);
+  assert.equal(bondDeployTimeAllowed(reg, BOND_START_S - 1), false);
+  assert.equal(bondDeployTimeAllowed(reg, BOND_START_S + 86401), false);
+  assert.equal(bondDeployTimeAllowed(reg, String(BOND_START_S)), false, 'integers only');
+  assert.equal(bondDeployTimeAllowed({ ...reg, as_of: 'PLANNED_BOND_START_UTC' }, BOND_START_S), false);
+  assert.deepEqual(validatePreBondRegister(reg, { deployBlockTimestamp: BOND_START_S + 60 }), { ok: true, errors: [] });
+  assert.match(validatePreBondRegister(reg, { deployBlockTimestamp: BOND_START_S + 86401 }).errors.join(';'), /block timestamp must be within/);
+});
+
+test('the frontier must be anchored strictly before as_of', async () => {
+  const signer = throwawaySigner();
+  const reg = registerFor(signer, await signedAck(signer));
+  assert.equal(frontierAnchoredBeforeAsOf(reg, BOND_START_S - 1), true);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, '2026-10-31T23:59:59Z'), true);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, '2026-10-31T23:59:59.999Z'), true);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, BOND_START_S), false, 'anchor at as_of is rejected');
+  assert.equal(frontierAnchoredBeforeAsOf(reg, BOND_START), false);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, BOND_START_S + 1), false);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, 'yesterday'), false);
+  assert.equal(frontierAnchoredBeforeAsOf(reg, null), false);
+  assert.deepEqual(validatePreBondRegister(reg, { frontierAnchorTime: BOND_START_S - 600 }), { ok: true, errors: [] });
+  assert.match(validatePreBondRegister(reg, { frontierAnchorTime: BOND_START_S }).errors.join(';'), /anchor time must be strictly before as_of/);
+});
+
+test('a register with the as_of placeholder does not validate', async () => {
+  const signer = throwawaySigner();
+  const reg = registerFor(signer, await signedAck(signer));
+  const res = validatePreBondRegister({ ...reg, as_of: 'PLANNED_BOND_START_UTC' });
+  assert.equal(res.ok, false);
+  assert.match(res.errors.join(';'), /as_of: must be the planned bond start/);
 });

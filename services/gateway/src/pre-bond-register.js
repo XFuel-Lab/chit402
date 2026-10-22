@@ -2,7 +2,10 @@
  * PROPOSED pre-bond register (chit402.pre_bond_register.v0).
  *
  * The excluded pre-bond heads, plus exactly one `frontier` entry: the
- * newest good anchored head at `as_of` (the bond deploy block time). An
+ * newest good anchored head at `as_of`. `as_of` is the planned bond start,
+ * chosen and committed in the register before deploy; the bond constructor
+ * requires as_of <= block.timestamp <= as_of + 24h. Every excluded entry
+ * sits at or before the frontier by (epoch, tree_size). An
  * excluded entry points to a public quarantine ack by the SHA-256 of that
  * ack document. The frontier gives "after bond start" a fixed reference: a
  * head is post-bond only if it is past the frontier by (epoch, tree_size).
@@ -31,6 +34,8 @@ const KID = /^[A-Za-z0-9_-]{43}$/;
 const ISO_S = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const TOP_KEYS = ['as_of', 'heads', 'issuer_kid', 'schema'];
 const ENTRY_KEYS = ['ack_sha256', 'epoch', 'head_jws_sha256', 'root', 'status', 'tree_size'];
+/** The bond constructor accepts a deploy block time in [as_of, as_of + 24h]. */
+export const BOND_DEPLOY_WINDOW_S = 86400;
 
 function isObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -44,6 +49,29 @@ function sameKeys(obj, keys) {
 
 function posInt(v) {
   return Number.isSafeInteger(v) && v >= 1;
+}
+
+function asOfSeconds(register) {
+  if (!isObject(register) || !ISO_S.test(String(register.as_of))) return null;
+  const ms = Date.parse(register.as_of);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}
+
+/** Unix seconds from an integer or a `YYYY-MM-DDTHH:MM:SS(.sss)Z` string, else null. */
+function toUnixSeconds(t) {
+  if (Number.isSafeInteger(t) && t >= 0) return t;
+  if (typeof t === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(t)) {
+    const ms = Date.parse(t);
+    if (!Number.isNaN(ms)) return ms / 1000;
+  }
+  return null;
+}
+
+/** -1, 0 or 1 comparing (epoch, tree_size) only. */
+function positionOrder(a, b) {
+  if (a.epoch !== b.epoch) return a.epoch < b.epoch ? -1 : 1;
+  if (a.tree_size !== b.tree_size) return a.tree_size < b.tree_size ? -1 : 1;
+  return 0;
 }
 
 function entryOrder(a, b) {
@@ -70,16 +98,23 @@ export function preBondRegisterHash(register) {
  * each excluded entry: the ack's document hash is `ack_sha256`, it verifies
  * under `keys`, it names this exact head by all four parts, and its `iat`
  * is before `as_of` (bond start).
+ *
+ * Optional deploy checks: `frontierAnchorTime` (unix seconds or ISO UTC
+ * string; the frontier's anchor time is not a register field) must be
+ * strictly before `as_of`, and `deployBlockTimestamp` (unix seconds) must
+ * be within [as_of, as_of + 24h].
  * @param {object} register
- * @param {{ acks?: object[], keys?: object[] }} [opts]
+ * @param {{ acks?: object[], keys?: object[], frontierAnchorTime?: number|string, deployBlockTimestamp?: number }} [opts]
  * @returns {{ ok: boolean, errors: string[] }}
  */
-export function validatePreBondRegister(register, { acks = null, keys = null } = {}) {
+export function validatePreBondRegister(register, {
+  acks = null, keys = null, frontierAnchorTime = undefined, deployBlockTimestamp = undefined,
+} = {}) {
   const errors = [];
   if (!sameKeys(register, TOP_KEYS)) return { ok: false, errors: [`register: keys must be exactly ${TOP_KEYS.join(',')}`] };
   if (register.schema !== PRE_BOND_REGISTER_SCHEMA) errors.push(`schema: must be ${PRE_BOND_REGISTER_SCHEMA}`);
   if (!ISO_S.test(String(register.as_of)) || Number.isNaN(Date.parse(register.as_of))) {
-    errors.push('as_of: must be bond start as YYYY-MM-DDTHH:MM:SSZ');
+    errors.push('as_of: must be the planned bond start as YYYY-MM-DDTHH:MM:SSZ');
   }
   if (!KID.test(String(register.issuer_kid))) errors.push('issuer_kid: must be a 43-character base64url kid');
   if (!Array.isArray(register.heads) || register.heads.length === 0) {
@@ -109,6 +144,20 @@ export function validatePreBondRegister(register, { acks = null, keys = null } =
       errors.push(`${p}: entries must be strictly sorted by (epoch, tree_size, root, head_jws_sha256) with no duplicates`);
     }
   });
+  if (errors.length) return { ok: false, errors };
+
+  const frontier = register.heads.find((e) => e.status === 'frontier');
+  register.heads.forEach((e, i) => {
+    if (e.status === 'excluded' && positionOrder(e, frontier) > 0) {
+      errors.push(`heads[${i}]: excluded head must sit at or before the frontier by (epoch, tree_size)`);
+    }
+  });
+  if (frontierAnchorTime !== undefined && !frontierAnchoredBeforeAsOf(register, frontierAnchorTime)) {
+    errors.push('frontier: anchor time must be strictly before as_of');
+  }
+  if (deployBlockTimestamp !== undefined && !bondDeployTimeAllowed(register, deployBlockTimestamp)) {
+    errors.push(`deploy: block timestamp must be within [as_of, as_of + ${BOND_DEPLOY_WINDOW_S}]`);
+  }
   if (errors.length) return { ok: false, errors };
 
   if (acks !== null || keys !== null) {
@@ -150,6 +199,29 @@ export function registerLists(register, head) {
   const id = headIdentity(head);
   if (!id || !isObject(register) || !Array.isArray(register.heads)) return false;
   return register.heads.some((e) => sameHeadIdentity(headIdentity(e), id));
+}
+
+/**
+ * The bond constructor rule, mirrored off chain:
+ * as_of <= blockTimestamp <= as_of + 86400 (unix seconds, integers).
+ */
+export function bondDeployTimeAllowed(register, blockTimestamp) {
+  const asOf = asOfSeconds(register);
+  if (asOf === null || !Number.isSafeInteger(blockTimestamp)) return false;
+  return blockTimestamp >= asOf && blockTimestamp <= asOf + BOND_DEPLOY_WINDOW_S;
+}
+
+/**
+ * Was the frontier head anchored before as_of? `anchorTime` is the anchor's
+ * block time (unix seconds or ISO UTC string). The register does not carry
+ * it, so the deploy paste supplies it from the anchor transaction.
+ * anchorTime >= as_of, or an unreadable time, gives false.
+ */
+export function frontierAnchoredBeforeAsOf(register, anchorTime) {
+  const asOf = asOfSeconds(register);
+  const t = toUnixSeconds(anchorTime);
+  if (asOf === null || t === null) return false;
+  return t < asOf;
 }
 
 /** The single frontier entry, or null if the register does not have exactly one. */

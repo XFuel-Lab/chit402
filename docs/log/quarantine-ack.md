@@ -88,7 +88,7 @@ The key words MUST, MUST NOT and SHOULD are used as in RFC 2119.
 ### R1. The pinned register is the authority
 - The pre-bond register hash pinned when the bond is deployed is the only authority on which heads are excluded. A note, a served file, a `/health` flag or a later register does not change it.
 - A note excuses a head only if the head's entry on the pinned register has `status: "excluded"` and an `ack_sha256` equal to the SHA-256 of the JCS bytes of that note.
-- The note's signed `iat` MUST be strictly before bond start (the register's `as_of`). A note signed at or after bond start excuses nothing, even if it is otherwise valid.
+- The note's signed `iat` MUST be strictly before bond start (the register's `as_of`, a planned time committed before deploy; the constructor requires `as_of <= block.timestamp <= as_of + 86400`). A note signed at or after bond start excuses nothing, even if it is otherwise valid.
 - A head that is not on the pinned register is never excused. Whether a head is after bond start is decided by the register's single `frontier` entry (the newest good anchored head at `as_of`): a head is post-bond only if it is past the frontier by `(epoch, tree_size)`.
 
 ### R2. A head is identified by four parts
