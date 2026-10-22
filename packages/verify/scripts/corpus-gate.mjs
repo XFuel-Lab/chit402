@@ -67,16 +67,22 @@
  *     the merge-base input (repinProblems). Effective pinned digests follow
  *     the last repin of each case;
  *   - declarations.frozen.json at the merge base is not valid JSON, or is
- *     missing while the merge-base corpus-gate.mjs reads it
- *     (basePinStateProblems; only the change that adds the pin runs
- *     without one);
+ *     missing while it has existed on the merge base's history or the
+ *     merge-base corpus-gate.mjs reads it (basePinStateProblems; only the
+ *     change that adds the first pin runs without one); a head JSON file
+ *     is not valid JSON;
+ *   - a pinned baseline row moves in a change that also edits a case input
+ *     builder (synthetic.mjs, test/history-file.mjs, test/fixtures/**;
+ *     builderRowProblems);
  *   - the chain tier breaks its rules (gateChain below).
  *
  * The input digest (caseDigest) includes the signature state of the case
  * document and the issuer history (signatureForm): valid under the history
  * or JWKS key filed under the signature kid, valid only under another
  * carried key (named by role), or invalid with the raw signature bytes;
- * and how each embedded issuer_jwk relates to that trusted key.
+ * how each embedded issuer_jwk relates to that trusted key; and, for every
+ * carried key, whether it verifies the signature and which roles hold the
+ * same key bytes (keyStates).
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
  * base, so a change cannot loosen the gate that checks it.
@@ -311,8 +317,31 @@ function keyRelation(jwk, kid, keys) {
 }
 
 /**
+ * Every carried key against one signature: `<role>|<kid filed>|<verifies
+ * 1/0>|<bytes class>`, in role order (history entries, JWKS, then the
+ * document's and the history's issuer_jwk). The bytes class is the index
+ * of the first role with the same RFC 7638 thumbprint, so whether two
+ * roles hold the same key is recorded without the throwaway key bytes.
+ * A key swapped under a kid, a second key under a kid, or reordered keys
+ * all move it, whichever key the verifier reads.
+ */
+function keyStates(messages, sigText, keys) {
+  if (typeof sigText !== 'string' || !sigText) return [];
+  const sig = Buffer.from(sigText, 'base64url');
+  const cls = new Map();
+  return keys.map((k) => {
+    const t = thumbprint(k.jwk);
+    if (!cls.has(t)) cls.set(t, cls.size);
+    const v = messages.some((m) => { try { return cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { return false; } });
+    return `${k.role}|${k.kid ?? ''}|${v ? 1 : 0}|${cls.get(t)}`;
+  });
+}
+const jwsParts = (jws) => { const p = typeof jws === 'string' ? jws.split('.') : []; return p.length === 3 ? { messages: [`${p[0]}.${p[1]}`], sig: p[2] } : { messages: [], sig: null }; };
+
+/**
  * Signature state of a case: the document (JWS or detached) and the issuer
- * history, each with its key relation (sigState, keyRelation).
+ * history, each with its key relation (sigState, keyRelation) and the state
+ * of every carried key against it (keyStates).
  */
 export function signatureForm(c) {
   const doc = parse(c.doc);
@@ -332,6 +361,12 @@ export function signatureForm(c) {
       docState = sigState([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, docKid, keys);
     }
   }
+  let docKeys = [];
+  if (ds && typeof ds === 'object') {
+    if (typeof ds.jws === 'string') { const j = jwsParts(ds.jws); docKeys = keyStates(j.messages, j.sig, keys); }
+    else if (typeof ds.value === 'string') { const { issuer_signature: _omit, ...rest } = doc; docKeys = keyStates([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, keys); }
+  }
+  const hj = jwsParts(history?.issuer_signature?.jws);
   const hs = history && typeof history === 'object' ? history.issuer_signature : null;
   const histKid = hs && typeof hs.jws === 'string' ? b64json(hs.jws.split('.')[0])?.kid ?? null : null;
   return {
@@ -339,6 +374,8 @@ export function signatureForm(c) {
     doc_key: ds && typeof ds === 'object' ? keyRelation(ds.issuer_jwk, docKid, keys) : 'absent',
     history: hs && typeof hs === 'object' ? jwsState(hs.jws, keys) : 'absent',
     history_key: hs && typeof hs === 'object' ? keyRelation(hs.issuer_jwk, histKid, keys) : 'absent',
+    doc_keys: docKeys,
+    history_keys: keyStates(hj.messages, hj.sig, keys),
   };
 }
 
@@ -1022,6 +1059,35 @@ export function declarationRowProblems(base, head, basePinMaps, headPinMaps) {
 
 const GOLDEN = 'packages/verify/test/golden-corpus.test.mjs';
 
+/** Files that build case inputs: synthetic.mjs, the covering history writer and the test fixtures. */
+export function isBuilderPath(path) {
+  const raw = String(path ?? '');
+  if (!/^[\x20-\x7e]+$/.test(raw)) return true;
+  const p = raw.normalize('NFKC').toLowerCase();
+  return p === 'packages/verify/test/corpus/synthetic.mjs' || p === 'packages/verify/test/history-file.mjs' || p.startsWith('packages/verify/test/fixtures/');
+}
+
+/**
+ * Once the merge base has a pin, a pinned baseline row may not move (change,
+ * removal, or an added changes.json entry for it, tighten included) in a
+ * change that also edits a case input builder. A builder change lands alone,
+ * or as a reviewed re-pin, which moves no row.
+ */
+export function builderRowProblems(base, head, addedFor, changedFiles, basePinMaps, headPinMaps) {
+  if (!basePinMaps || !Array.isArray(changedFiles)) return [];
+  const builders = changedFiles.filter(isBuilderPath);
+  if (!builders.length) return [];
+  const pinned = new Set([...(basePinMaps?.pinned ?? []), ...(headPinMaps?.pinned ?? [])]);
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const shown = builders.slice(0, 2).join(', ') + (builders.length > 2 ? `, and ${builders.length - 2} more` : '');
+  const p = [];
+  for (const key of pinned) {
+    const moved = (has(base, key) && (!has(head, key) || !same(base[key], head[key]))) || (addedFor.has(key) && !['registry', 'repin'].includes(addedFor.get(key)?.kind));
+    if (moved) p.push(`${key}: a pinned baseline row may not move in the same change as a case input builder (${shown}); land the builder change alone or as a reviewed re-pin`);
+  }
+  return p;
+}
+
 /** A change that touches golden-corpus.test.mjs may not change any pinned baseline row (once the merge base has a pin). */
 export function goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps) {
   if (!basePinMaps) return [];
@@ -1037,12 +1103,13 @@ export function goldenEditProblems(base, head, changedFiles, basePinMaps, headPi
 
 /**
  * State of the merge-base pin (`ok`, `missing`, `unparseable`, or null
- * when not read). `required`: the merge-base corpus-gate.mjs reads
+ * when not read). `required`: the pin existed on the merge base's history,
+ * or the merge-base corpus-gate.mjs reads
  * declarations.frozen.json, so main has had a pin and must still have it.
  */
 export function basePinStateProblems(state, required) {
   if (state === 'unparseable') return [`${DECLARATIONS_PIN} at the merge base is not valid JSON; the gate fails closed`];
-  if (state === 'missing' && required) return [`${DECLARATIONS_PIN} is missing at the merge base, whose gate reads it; the gate fails closed`];
+  if (state === 'missing' && required) return [`${DECLARATIONS_PIN} is missing at the merge base, whose history has had it (or whose gate reads it); the gate fails closed`];
   return [];
 }
 
@@ -1134,6 +1201,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   if (basePinMaps || headPinMaps) {
     problems.push(...declarationRowProblems(base, head, basePinMaps, headPinMaps));
     problems.push(...goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps));
+    problems.push(...builderRowProblems(base, head, addedFor, changedFiles, basePinMaps, headPinMaps));
   }
 
   const checked = new Set();
@@ -1282,9 +1350,24 @@ function gitShowText(root, rev, path) {
   try { return execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 }); } catch { return null; }
 }
 
+// Head JSON files that could not be parsed in this run (gateRepo reports them).
+let headParseProblems = [];
 function readHead(root, path) {
   const p = join(root, path);
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch {
+    headParseProblems.push(`${path} at the head is not valid JSON; the gate fails closed`);
+    return null;
+  }
+}
+
+/** Whether `path` existed in any commit reachable from `rev` (git history, as data). */
+function everInHistory(root, rev, path) {
+  try {
+    return execFileSync('git', ['-C', root, 'rev-list', '-1', rev, '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== '';
+  } catch {
+    return true;
+  }
 }
 
 /** Added corpus_fix keys of a changes.json pair. */
@@ -1300,6 +1383,7 @@ export function addedCorpusFixKeys(baseChanges, headChanges) {
  * parsed export of the head tree. Both are needed for a corpus_fix.
  */
 export async function gateRepo(root, base, { baseTree = null, headInputs = null } = {}) {
+  headParseProblems = [];
   const pinAtBase = gitShowState(root, base, DECLARATIONS_PIN);
   const baseGate = gitShowText(root, base, 'packages/verify/scripts/corpus-gate.mjs');
   const files = {
@@ -1311,9 +1395,13 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headRegistry: readHead(root, REGISTRY_PIN),
     basePin: pinAtBase.value,
     basePinState: pinAtBase.state,
-    basePinRequired: typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json'),
+    // The pin is required once it has ever existed on the merge base's
+    // history, or the merge-base gate reads it. Only the change that adds
+    // the first pin (to a main that never had one) runs without it.
+    basePinRequired: everInHistory(root, base, DECLARATIONS_PIN) || (typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json')),
     headPin: readHead(root, DECLARATIONS_PIN),
   };
+  if (headParseProblems.length) return [...headParseProblems];
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
   const appendKeys = appendedPinEntries(files.basePin, files.headPin).map(pinKey);
   const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, repinOutcomes: null, repinForms: null, changedFiles: changedFilesOf(root, base) };

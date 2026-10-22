@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths, builderRowProblems, isBuilderPath } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -1109,6 +1109,85 @@ test('KS1 variants: x/y dropped, a kid collision, a key in the document only, a 
   assert.equal(signatureForm(ksCase(variants['second history entry, same kid'].inputs)).doc, 'valid:corpus-test-kid:history[1]');
 });
 
+// ---------- JWKS key bytes (review JK-l5) ----------
+
+const L5 = 'timing-l5-backdated-iat';
+const V10A6 = 'version-v10-claims-signed-as-v6-after-window';
+const editJwks = (inputs, id, edit) => withCase(inputs, id, (c) => { const j = JSON.parse(c.jwks); edit(j); c.jwks = JSON.stringify(j, null, 2); return c; });
+const freshUnder = (kid, base) => ({ ...base, ...(({ x, y }) => ({ x, y }))(freshKey().jwk), kid });
+const swapJwksKey = (inputs, id) => editJwks(inputs, id, (j) => { j.keys[0] = freshUnder(j.keys[0].kid, j.keys[0]); });
+const SRC_TOUCH = 'packages/verify/src/cli.ts';
+const JK_FILES = ['packages/verify/test/corpus/synthetic.mjs', BASELINE, CHANGES];
+
+for (const id of [L5, V10A6]) {
+  test(`JK: ${id}: the JWKS key swapped under corpus-test-kid plus a deferred tighten to the new outcome is rejected`, async () => {
+    const key = `${id}|library`;
+    const swapped = swapJwksKey(headInputs, id);
+    // The earlier forms did not see it: key bytes are outside docForm, historyForm and jwksForm.
+    assert.equal(caseDigest(swapped.cases.find((c) => c.id === id), { signatures: false }), caseDigest(headInputs.cases.find((c) => c.id === id), { signatures: false }));
+    assert.notEqual(inputDigests(swapped)[id], D[id]);
+    const f = signatureForm(swapped.cases.find((c) => c.id === id));
+    assert.ok(f.doc_keys.includes('jwks[0]|corpus-test-kid|0|1'), stable(f.doc_keys));
+    // Main's verifier reads the JWKS key: 2 log_unreachable becomes 1 key untrusted.
+    const o = await baseOutcomes(pkg, swapped, [key]);
+    assert.equal(baseline[key].exit, 2);
+    assert.equal(o[key].exit, 1, JSON.stringify(o[key]));
+    const row = { ...rowOf(o[key]), cause: o[key].cause ?? null };
+    for (const files of [JK_FILES, [...JK_FILES, SRC_TOUCH]]) {
+      const problems = run({ ...pinned(swapped), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: files });
+      assert.ok(has(problems, `${key}: the head input digest differs`), problems.join('; '));
+      assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder`), problems.join('; '));
+    }
+    // The tighten alone, without the builder edit and the swap, is still the allowed verifier-first flow.
+    assert.deepEqual(run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })) }), []);
+  });
+}
+
+test('JK variants: a second JWKS key under the same kid, a key byte change, and reordered keys each move the digest', () => {
+  const id = L5;
+  const second = editJwks(headInputs, id, (j) => { j.keys.push(freshUnder(j.keys[0].kid, j.keys[0])); });
+  const reordered = editJwks(second, id, (j) => { j.keys.reverse(); });
+  const bytes = swapJwksKey(headInputs, id);
+  const histSwap = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries[0].jwk = freshUnder(h.entries[0].kid, h.entries[0].jwk); c.history = JSON.stringify(h); return c; });
+  const digests = [D[id], inputDigests(second)[id], inputDigests(reordered)[id], inputDigests(bytes)[id], inputDigests(histSwap)[id]];
+  assert.equal(new Set(digests).size, digests.length, digests.join(' '));
+  for (const v of [second, reordered, bytes, histSwap]) {
+    assert.ok(has(run({ ...pinned(v), changedFiles: ['packages/verify/test/corpus/synthetic.mjs'] }), `${id}|library: the head input digest differs`));
+  }
+  // The same structure on a second build gives the same form.
+  assert.equal(stable(signatureForm(headInputs.cases.find((c) => c.id === id)).doc_keys), stable(['history[0]|corpus-test-kid|1|0', 'jwks[0]|corpus-test-kid|1|0', 'doc.issuer_jwk|corpus-test-kid|1|0', 'history.issuer_jwk|corpus-test-kid|1|0']));
+});
+
+test('builder edits: a pinned row may not move in the same change as synthetic.mjs, history-file.mjs or a fixture', () => {
+  const key = `${L5}|library`;
+  const row = { ...baseline[key], exit: 1, result: 'invalid', reason: 'key untrusted', cause: 'key untrusted', overall: 'failed' };
+  const tight = (files, over = {}) => run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: files, ...over });
+  for (const f of ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/history-file.mjs', 'packages/verify/test/fixtures/x.json', 'packages/verify/test/corpus/SYNTHETIC.mjs', 'packages/verify/test/ѕynthetic.mjs']) {
+    assert.ok(has(tight([f]), `${key}: a pinned baseline row may not move in the same change as a case input builder`), f);
+  }
+  assert.deepEqual(tight([]), []);
+  assert.deepEqual(tight(['packages/verify/test/corpus/README.md']), []);
+  // Not on the first pin (the bootstrap records causes next to its own synthetic.mjs edit).
+  assert.ok(!has(tight(['packages/verify/test/corpus/synthetic.mjs'], { basePin: null }), 'case input builder'));
+  // A real receipt row is not pinned; its tighten next to a fixture edit is not this rule's concern.
+  const realRow = { ...baseline[REAL], checks: Object.fromEntries(Object.keys(baseline[REAL].checks).map((k) => [k, 'fail'])) };
+  assert.ok(!has(run({ ...pinned(), headBaseline: { ...baseline, [REAL]: realRow }, headChanges: withEntries(entry(REAL, realRow)), changedFiles: ['packages/verify/test/fixtures/x.json'] }), 'case input builder'));
+  // A changes.json entry for a pinned path counts as a move, even with the row unchanged.
+  assert.ok(has(builderRowProblems(baseline, baseline, new Map([[key, { kind: 'tighten' }]]), ['packages/verify/test/corpus/synthetic.mjs'], pinMaps(pin), pinMaps(pin)), 'case input builder'));
+  assert.equal(isBuilderPath('packages/verify/test/corpus/lib.mjs'), false);
+});
+
+test('Hrev-g10: a revoked entry added to gate10-pv10\'s history with a same-exit row move is rejected by the builder rule and the digest, not only the frozen cause', () => {
+  const id = 'gate10-pv10-no-history-pin';
+  const hrev = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries.push({ ...h.entries[0], status: 'revoked', revoked_at: '2020-01-01T00:00:00.000Z' }); c.history = JSON.stringify(h); return c; });
+  for (const key of [`${id}|library`]) {
+    const row = { ...baseline[key], reason: 'kid_revoked_before_issuance', cause: 'kid_revoked_before_issuance' };
+    const problems = run({ ...pinned(hrev), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: ['packages/verify/test/history-file.mjs', 'packages/verify/test/corpus/synthetic.mjs', SRC_TOUCH] });
+    assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder`), problems.join('; '));
+    assert.ok(has(problems, `${id}|library: the head input digest differs`), problems.join('; '));
+  }
+});
+
 test('merge-base pin: unparseable always fails; missing fails once the merge-base gate reads it; the first pin is the only exemption', () => {
   assert.deepEqual(basePinStateProblems('ok', true), []);
   assert.deepEqual(basePinStateProblems('missing', false), []);
@@ -1661,6 +1740,40 @@ test('end to end: a merge-base pin that is missing (under a gate that reads it) 
     const r2 = gateCli(bad.root, bad.base);
     assert.equal(r2.status, 1, r2.stdout);
     assert.match(r2.stderr, /declarations\.frozen\.json at the merge base is not valid JSON/);
+  }
+});
+
+test('end to end: a pin that ever existed on the merge base history is required, even with the gate literal edited out', { skip: !gitOk }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'corpus-gate-hist-'));
+  const git = (...a) => { const r = spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git('init', '-q');
+  for (const rel of [BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN]) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), readFileSync(join(pkg, rel.replace(/^packages\/verify\//, '')))); }
+  // Main once had the pin and a gate that reads it.
+  const gateRel = 'packages/verify/scripts/corpus-gate.mjs';
+  mkdirSync(dirname(join(root, gateRel)), { recursive: true });
+  writeFileSync(join(root, gateRel), readFileSync(script));
+  git('add', '-A'); git('commit', '-q', '-m', 'pin');
+  // G4: a one-line gate edit that breaks the literal; G5: the pin deleted.
+  writeFileSync(join(root, gateRel), readFileSync(script, 'utf8').replaceAll('declarations.frozen.json', 'declarations.frozen.js0n'));
+  assert.ok(!readFileSync(join(root, gateRel), 'utf8').includes('declarations.frozen.json'));
+  git('commit', '-q', '-am', 'gate edit');
+  git('rm', '-q', DECLARATIONS_PIN); git('commit', '-q', '-m', 'pin deleted');
+  const base = git('rev-parse', 'HEAD');
+  // G6: a head that restores the pin as if it were the first one.
+  writeFileSync(join(root, DECLARATIONS_PIN), readFileSync(join(pkg, DECLARATIONS_PIN.replace(/^packages\/verify\//, ''))));
+  git('add', '-A'); git('commit', '-q', '-m', 'head');
+  const res = gateCli(root, base);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /declarations\.frozen\.json is missing at the merge base, whose history has had it/);
+});
+
+test('end to end: an unparseable head pin fails closed with a message, not a crash', { skip: !gitOk }, () => {
+  for (const rel of [DECLARATIONS_PIN, BASELINE, CHANGES]) {
+    const r = repoWith((root) => writeFileSync(join(root, rel), '{ not json'));
+    const res = gateCli(r.root, r.base);
+    assert.equal(res.status, 1, res.stdout);
+    assert.ok(res.stderr.includes(`corpus-gate: ${rel} at the head is not valid JSON; the gate fails closed`), res.stderr);
+    assert.doesNotMatch(res.stderr, /SyntaxError|\n\s+at /);
   }
 });
 
