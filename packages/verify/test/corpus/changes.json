@@ -2,6 +2,106 @@
  "note": "Recorded changes to the golden corpus baseline, append-only. Each entry names the case and path, the new pinned outcome (`to`), the PR, and the spec section. kind `tighten` (default): the new outcome must be at least as strict as the merge-base outcome. kind `corpus_fix`: a synthetic case was built wrong and is corrected; needs a note, never for a real receipt, never to exit 0. kind `registry`: names a version appended to the frozen registry (`entry`). scripts/corpus-gate.mjs checks all of this against the merge base in CI.",
  "changes": [
   {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
    "kind": "corpus_fix",
    "case": "version-v10-claims-signed-as-v6-after-window",
    "path": "library",
