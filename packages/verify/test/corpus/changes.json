@@ -1,0 +1,4 @@
+{
+ "note": "Recorded changes to the golden corpus baseline. Each entry names the case and path, the new pinned outcome, the PR, and the spec section. An entry may only make a result stricter, unless the spec explicitly says otherwise. Real receipts never change through this file without a spec section that names the change.",
+ "changes": []
+}

@@ -1,0 +1,606 @@
+{
+ "note": "Public tier. ids: 81 Base receipt ids (2026-10-20 inventory) plus reference and inventory task ids. files: fixtures already public in this repo. live_0411: CLI result on 2026-10-21 with live chain reads (informational, not replayed).",
+ "ids": [
+  {
+   "id": "id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15",
+   "input": "xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15",
+   "source": "reference",
+   "invariant": "exit 0 VERIFIED (live)"
+  },
+  {
+   "id": "id-chit-43c98110-8ad4-4a65-8fa7-fa3a04424c0e",
+   "input": "chit-43c98110-8ad4-4a65-8fa7-fa3a04424c0e",
+   "source": "reference",
+   "invariant": "exit 1 NOT_IN_LOG (L3)"
+  },
+  {
+   "id": "id-chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+   "input": "chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+   "source": "demo",
+   "invariant": "exit 1 NOT_IN_LOG (L3)"
+  },
+  {
+   "id": "id-register-f79c8294773597c843c5acc5bdc8b01f",
+   "input": "register-f79c8294773597c843c5acc5bdc8b01f",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid unreadable"
+  },
+  {
+   "id": "id-xfuel-00eb2124-012c-4fb3-b3f8-9d62031c4cdc",
+   "input": "xfuel-00eb2124-012c-4fb3-b3f8-9d62031c4cdc",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-02a4b779-2215-450e-8c5d-ff8edae8167f",
+   "input": "xfuel-02a4b779-2215-450e-8c5d-ff8edae8167f",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-07bf6d57-49a2-43aa-89ce-bf1b93a3c480",
+   "input": "xfuel-07bf6d57-49a2-43aa-89ce-bf1b93a3c480",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-088d4ba1-0cad-4525-832b-3f50962a7d22",
+   "input": "xfuel-088d4ba1-0cad-4525-832b-3f50962a7d22",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-0e99960a-9940-47f1-a562-dc63c868b4e6",
+   "input": "xfuel-0e99960a-9940-47f1-a562-dc63c868b4e6",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-124415ab-733b-45f3-97fd-d358bfc1fba4",
+   "input": "xfuel-124415ab-733b-45f3-97fd-d358bfc1fba4",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-18048416-ed15-4fc4-a3f6-6d50da7467c4",
+   "input": "xfuel-18048416-ed15-4fc4-a3f6-6d50da7467c4",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-1a5def32-c76a-4180-a626-c5aaf4420d09",
+   "input": "xfuel-1a5def32-c76a-4180-a626-c5aaf4420d09",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-1b7ac401-b449-49a0-9f99-d79ed6c90c20",
+   "input": "xfuel-1b7ac401-b449-49a0-9f99-d79ed6c90c20",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-1d22e03b-7d1b-4138-9c6e-4af770db983b",
+   "input": "xfuel-1d22e03b-7d1b-4138-9c6e-4af770db983b",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-1d5fd982-25df-46e5-83ea-afb1f945d39c",
+   "input": "xfuel-1d5fd982-25df-46e5-83ea-afb1f945d39c",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-1e847c02-6ecc-48b4-b6d9-0b5934828e07",
+   "input": "xfuel-1e847c02-6ecc-48b4-b6d9-0b5934828e07",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+   "input": "xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-23938f81-7b9c-4fd6-b03c-074a34af5e70",
+   "input": "xfuel-23938f81-7b9c-4fd6-b03c-074a34af5e70",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-2514c283-a5fb-4152-ab73-db206d7e69fc",
+   "input": "xfuel-2514c283-a5fb-4152-ab73-db206d7e69fc",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-2bda0411-f993-4b06-9a0e-047aa7b327f3",
+   "input": "xfuel-2bda0411-f993-4b06-9a0e-047aa7b327f3",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-2c61e265-d05f-4dc2-bd43-46ff30d484e6",
+   "input": "xfuel-2c61e265-d05f-4dc2-bd43-46ff30d484e6",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-2f10cec0-a0a2-48b2-a6f8-e256c2e18a79",
+   "input": "xfuel-2f10cec0-a0a2-48b2-a6f8-e256c2e18a79",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-2f2c809a-a147-484e-9652-9ac0a0ccc340",
+   "input": "xfuel-2f2c809a-a147-484e-9652-9ac0a0ccc340",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-2f9b9b20-2b16-42d3-a39e-8d4632481772",
+   "input": "xfuel-2f9b9b20-2b16-42d3-a39e-8d4632481772",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-30ff44c4-330a-48a1-ae06-9070cef5c603",
+   "input": "xfuel-30ff44c4-330a-48a1-ae06-9070cef5c603",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-325320fa-ca59-457f-9a23-91f76aa4f2a7",
+   "input": "xfuel-325320fa-ca59-457f-9a23-91f76aa4f2a7",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-354e1cc9-475f-4304-b3e0-6766c0893402",
+   "input": "xfuel-354e1cc9-475f-4304-b3e0-6766c0893402",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-39af100b-23dd-4d86-a16b-4556ca6796af",
+   "input": "xfuel-39af100b-23dd-4d86-a16b-4556ca6796af",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-43c98110-8ad4-4a65-8fa7-fa3a04424c0e",
+   "input": "xfuel-43c98110-8ad4-4a65-8fa7-fa3a04424c0e",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-45218c6d-f5da-4e07-8071-3fb1c4caec6b",
+   "input": "xfuel-45218c6d-f5da-4e07-8071-3fb1c4caec6b",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-45423051-fa1c-40e0-9ca1-9609eb270d01",
+   "input": "xfuel-45423051-fa1c-40e0-9ca1-9609eb270d01",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-468eadd1-11cf-4e50-9e06-c8c8e8ef5c33",
+   "input": "xfuel-468eadd1-11cf-4e50-9e06-c8c8e8ef5c33",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-4a560055-fd31-421c-8ac7-34db7cab247b",
+   "input": "xfuel-4a560055-fd31-421c-8ac7-34db7cab247b",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-4afc71b6-cc09-4e2a-8cdd-69c409a20d48",
+   "input": "xfuel-4afc71b6-cc09-4e2a-8cdd-69c409a20d48",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-4d6e8331-c30f-400d-a76e-fcce0cfde209",
+   "input": "xfuel-4d6e8331-c30f-400d-a76e-fcce0cfde209",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-5365dd64-9af3-4019-9532-59abbf585d4e",
+   "input": "xfuel-5365dd64-9af3-4019-9532-59abbf585d4e",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-53e6207e-b77b-40d8-b3c7-d9264c4c7030",
+   "input": "xfuel-53e6207e-b77b-40d8-b3c7-d9264c4c7030",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-546baa6c-0959-4c3c-9732-4b72bdad144b",
+   "input": "xfuel-546baa6c-0959-4c3c-9732-4b72bdad144b",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-56e3ee6d-2acb-4cab-8fa4-dfd5f9f31e6f",
+   "input": "xfuel-56e3ee6d-2acb-4cab-8fa4-dfd5f9f31e6f",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-5bc98516-9a1f-4290-afde-6c5d9a7cb883",
+   "input": "xfuel-5bc98516-9a1f-4290-afde-6c5d9a7cb883",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-5d775d12-f43a-460f-8b4a-9299b4eedf20",
+   "input": "xfuel-5d775d12-f43a-460f-8b4a-9299b4eedf20",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-64100c67-2ebe-4fe8-b3af-72862c01cb88",
+   "input": "xfuel-64100c67-2ebe-4fe8-b3af-72862c01cb88",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-65089684-ba9c-423a-af41-57e8d70e7e61",
+   "input": "xfuel-65089684-ba9c-423a-af41-57e8d70e7e61",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944",
+   "input": "xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-66ca86e4-601a-4c44-92c7-4cfb9213fcd6",
+   "input": "xfuel-66ca86e4-601a-4c44-92c7-4cfb9213fcd6",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-6815f055-06f1-4280-bcb1-2e5cb1b035cb",
+   "input": "xfuel-6815f055-06f1-4280-bcb1-2e5cb1b035cb",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-6f436fdf-6315-47d4-be77-8ca7f997b46d",
+   "input": "xfuel-6f436fdf-6315-47d4-be77-8ca7f997b46d",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-74e65107-3064-4b8f-8770-1268bd61cba2",
+   "input": "xfuel-74e65107-3064-4b8f-8770-1268bd61cba2",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-78e23bf3-474e-4553-922c-eb5bb7c527dd",
+   "input": "xfuel-78e23bf3-474e-4553-922c-eb5bb7c527dd",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-82c2563e-ca04-4780-a657-97b3b1b33ee9",
+   "input": "xfuel-82c2563e-ca04-4780-a657-97b3b1b33ee9",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-8967e31d-5a75-4c0f-8ad5-64bd2b3d5a60",
+   "input": "xfuel-8967e31d-5a75-4c0f-8ad5-64bd2b3d5a60",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-8a08fa44-bfc0-490c-a657-d509bb258a4d",
+   "input": "xfuel-8a08fa44-bfc0-490c-a657-d509bb258a4d",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-9a50d058-e66d-49af-b301-c27e2d5763d2",
+   "input": "xfuel-9a50d058-e66d-49af-b301-c27e2d5763d2",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-9bd2be7f-3d31-4221-9feb-58746be551be",
+   "input": "xfuel-9bd2be7f-3d31-4221-9feb-58746be551be",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-a9437fe0-7d5d-4bea-8ec5-1f9a9bade0ae",
+   "input": "xfuel-a9437fe0-7d5d-4bea-8ec5-1f9a9bade0ae",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-ad06b438-7c33-424f-b566-952586d0b2cc",
+   "input": "xfuel-ad06b438-7c33-424f-b566-952586d0b2cc",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-addada4d-1ad4-4f53-81c1-41c60e0cf322",
+   "input": "xfuel-addada4d-1ad4-4f53-81c1-41c60e0cf322",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-ae85c0eb-0564-4372-b0bc-20b69701395a",
+   "input": "xfuel-ae85c0eb-0564-4372-b0bc-20b69701395a",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-aee034c2-56fd-4489-b164-b11ccc715442",
+   "input": "xfuel-aee034c2-56fd-4489-b164-b11ccc715442",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-af1cf6e5-5da7-4a85-9197-134f96da77f0",
+   "input": "xfuel-af1cf6e5-5da7-4a85-9197-134f96da77f0",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-b0f2ba93-025a-4658-8962-7bbabe021b0c",
+   "input": "xfuel-b0f2ba93-025a-4658-8962-7bbabe021b0c",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-b4751e25-6e38-49c1-9ecb-8aa5d1d8d774",
+   "input": "xfuel-b4751e25-6e38-49c1-9ecb-8aa5d1d8d774",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-b8dc8457-c2a1-4926-8803-9ed50d601093",
+   "input": "xfuel-b8dc8457-c2a1-4926-8803-9ed50d601093",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-ba49491e-aa17-43a9-8947-e146405ddd49",
+   "input": "xfuel-ba49491e-aa17-43a9-8947-e146405ddd49",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-babdad43-be59-4bec-a8a2-80335007a1f1",
+   "input": "xfuel-babdad43-be59-4bec-a8a2-80335007a1f1",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-bf112b22-6258-425c-9ea5-d7086dfaa487",
+   "input": "xfuel-bf112b22-6258-425c-9ea5-d7086dfaa487",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-c57e1e72-eed2-489a-82ee-38fb740a3b9f",
+   "input": "xfuel-c57e1e72-eed2-489a-82ee-38fb740a3b9f",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-c7a04833-7bbd-4192-aa85-f1d44cdbf139",
+   "input": "xfuel-c7a04833-7bbd-4192-aa85-f1d44cdbf139",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-cbf48330-ed22-4c57-bdb8-848eb36cafa3",
+   "input": "xfuel-cbf48330-ed22-4c57-bdb8-848eb36cafa3",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-cc7f9762-eb7e-4f3d-9bae-2730831870e0",
+   "input": "xfuel-cc7f9762-eb7e-4f3d-9bae-2730831870e0",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-d0e1f963-dc24-4eb2-aa64-cda0e1851f75",
+   "input": "xfuel-d0e1f963-dc24-4eb2-aa64-cda0e1851f75",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-d0f72014-100d-471d-be5f-3b5bbc8982cb",
+   "input": "xfuel-d0f72014-100d-471d-be5f-3b5bbc8982cb",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-d2d0916a-045c-4a65-8604-2ccd740b69f1",
+   "input": "xfuel-d2d0916a-045c-4a65-8604-2ccd740b69f1",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-d329f32f-e5c7-4d45-b3e0-e8b41229cca7",
+   "input": "xfuel-d329f32f-e5c7-4d45-b3e0-e8b41229cca7",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-dc712c9f-8190-41b9-9499-6b6893c255a6",
+   "input": "xfuel-dc712c9f-8190-41b9-9499-6b6893c255a6",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-dffd7731-3d22-49a5-b2f2-0399ee2de4c4",
+   "input": "xfuel-dffd7731-3d22-49a5-b2f2-0399ee2de4c4",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-e2313661-183b-4f85-a39c-322bcd196b1b",
+   "input": "xfuel-e2313661-183b-4f85-a39c-322bcd196b1b",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-e4b92496-d10d-4339-aeae-3a9b310ba504",
+   "input": "xfuel-e4b92496-d10d-4339-aeae-3a9b310ba504",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-e665c92d-0a79-480a-b573-839498f6eec3",
+   "input": "xfuel-e665c92d-0a79-480a-b573-839498f6eec3",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-e88ce2d1-a9c1-40c3-af1a-39ed950e4418",
+   "input": "xfuel-e88ce2d1-a9c1-40c3-af1a-39ed950e4418",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-ea05dd04-e503-467f-8da0-d8384d5a228b",
+   "input": "xfuel-ea05dd04-e503-467f-8da0-d8384d5a228b",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-f845a057-3fa5-4715-929b-29c4c0423b8b",
+   "input": "xfuel-f845a057-3fa5-4715-929b-29c4c0423b8b",
+   "source": "base-ids-81",
+   "live_0411": "2 could_not_check signed_receipt_unavailable"
+  },
+  {
+   "id": "id-xfuel-faa40e5e-8f62-4f5d-bb5a-6a0c6f25681f",
+   "input": "xfuel-faa40e5e-8f62-4f5d-bb5a-6a0c6f25681f",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-fb977f14-d229-4295-875f-153715bc54a3",
+   "input": "xfuel-fb977f14-d229-4295-875f-153715bc54a3",
+   "source": "base-ids-81",
+   "live_0411": "1 invalid not_in_log"
+  },
+  {
+   "id": "id-xfuel-c5a3860d-df26-490d-ab92-8f3069dac8c8",
+   "input": "xfuel-c5a3860d-df26-490d-ab92-8f3069dac8c8",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-628dc1ad-103e-4bdd-b0d7-afdc86a06984",
+   "input": "xfuel-628dc1ad-103e-4bdd-b0d7-afdc86a06984",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-01d71cd9-57a9-4d0f-84bb-66fe72df9d37",
+   "input": "xfuel-01d71cd9-57a9-4d0f-84bb-66fe72df9d37",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-12bae4a5-0e75-488a-9871-2ca224b30511",
+   "input": "xfuel-12bae4a5-0e75-488a-9871-2ca224b30511",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-228feb6c-ffd3-47f2-9a3e-5f84b4be7e6a",
+   "input": "xfuel-228feb6c-ffd3-47f2-9a3e-5f84b4be7e6a",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-597825b6-e72f-4f22-98ed-a27c4c868493",
+   "input": "xfuel-597825b6-e72f-4f22-98ed-a27c4c868493",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-7c4a2c20-57b6-4009-9cef-061efff24c6a",
+   "input": "xfuel-7c4a2c20-57b6-4009-9cef-061efff24c6a",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-b596d578-b2cf-450a-90b2-4f17dc409835",
+   "input": "xfuel-b596d578-b2cf-450a-90b2-4f17dc409835",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-d5c0ed06-6980-41d1-9019-e15831a1d986",
+   "input": "xfuel-d5c0ed06-6980-41d1-9019-e15831a1d986",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-fe7a5b21-f34f-4830-bb71-bf0db4ca85b7",
+   "input": "xfuel-fe7a5b21-f34f-4830-bb71-bf0db4ca85b7",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-a05caa88-6dc0-4515-b539-3d6a46047458",
+   "input": "xfuel-a05caa88-6dc0-4515-b539-3d6a46047458",
+   "source": "inventory-54-task-id"
+  },
+  {
+   "id": "id-xfuel-1a422eaa-38c8-48e8-bc40-875e8c099b4a",
+   "input": "xfuel-1a422eaa-38c8-48e8-bc40-875e8c099b4a",
+   "source": "inventory-54-task-id"
+  }
+ ],
+ "files": [
+  {
+   "id": "file-chit-1ebc5616",
+   "fixture": "public/chit-1ebc5616.json",
+   "source": "inventory-54",
+   "live_0411": "1 invalid not_in_log",
+   "invariant": "exit 1 NOT_IN_LOG (L3)"
+  },
+  {
+   "id": "file-chit-39af100b",
+   "fixture": "public/chit-39af100b.json",
+   "source": "inventory-54",
+   "live_0411": "2 could_not_check log_unreachable"
+  },
+  {
+   "id": "file-foreign-x402-muy1hh8y",
+   "fixture": "public/foreign-x402-muy1hh8y.json",
+   "source": "inventory-54",
+   "live_0411": "0 verified None"
+  },
+  {
+   "id": "file-chit-43c98110-prelog-shell",
+   "fixture": "public/chit-43c98110-prelog-shell.json",
+   "source": "repo-fixture",
+   "invariant": "exit 1 NOT_IN_LOG (L3)"
+  },
+  {
+   "id": "file-chit-4d6e8331",
+   "fixture": "chit-4d6e8331.json",
+   "source": "repo-fixture"
+  },
+  {
+   "id": "file-chit-5d775d12.v7",
+   "fixture": "chit-5d775d12.v7.json",
+   "source": "repo-fixture"
+  }
+ ]
+}
