@@ -1646,6 +1646,19 @@
   },
   "overall": "partial"
  },
+ "version-l1-v4-production-kid|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
  "version-l1-detached-not-allowlisted|cli": {
   "exit": 2,
   "result": "could_not_check",

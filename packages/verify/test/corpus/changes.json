@@ -354,6 +354,26 @@
    },
    "pr": "PR3 verify/redesign-3-windows",
    "spec": "L1: unversioned v5 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v4-production-kid",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS under the production kid is refused by the bundled legacy list (empty per the 2026-10-22 production export) before key trust, legacy_form_not_allowlisted"
   }
  ]
 }
