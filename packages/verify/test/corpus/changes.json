@@ -230,6 +230,130 @@
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "Same claims fix as the v4 CLI case."
+  },
+  {
+   "case": "version-v12-shape-no-version-plain-id",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows (records #621 on the case #623 added)",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version), as #621 for the other unversioned library cases; exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v10-claims-signed-as-v6-after-window",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "version_window_closed",
+    "checks": {
+     "signature": "pass",
+     "key_window": "fail",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "PR3 signed validity windows (L5 §5.3): signed iat after the v6 window closes, version_window_closed"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v5 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v5 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
   }
  ]
 }

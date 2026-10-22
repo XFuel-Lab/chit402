@@ -26,13 +26,14 @@ export function exitRank(exit) {
  * `verified` result can never be pinned or reached behind a non-zero exit.
  */
 export function resultRank(result) {
-  if (result === 'verified' || result === 'signature_valid') return 2;
+  // verified_public (0.4.6) and verified_carried_forward are exit 0 results too.
+  if (result === 'verified' || result === 'verified_public' || result === 'verified_carried_forward' || result === 'signature_valid') return 2;
   if (result === 'could_not_check' || result === 'partial') return 1;
   return 0;
 }
 
 /** The exit each result must come with. */
-const RESULT_EXIT = Object.freeze({ verified: 0, signature_valid: 0, could_not_check: 2, partial: 2, invalid: 1, signature_invalid: 1 });
+const RESULT_EXIT = Object.freeze({ verified: 0, verified_public: 0, verified_carried_forward: 0, signature_valid: 0, could_not_check: 2, partial: 2, invalid: 1, signature_invalid: 1 });
 
 /** Problems inside one outcome, before any comparison with a baseline. */
 export function consistency(o) {
