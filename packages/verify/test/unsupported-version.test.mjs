@@ -163,6 +163,9 @@ async function assertApi(receipt, reason) {
   assert.equal(fetches, 0, 'RPC before the version gate');
   assert.equal(result.overall, 'failed');
   assert.equal(result.errors[0], reason);
+  // The library verdict names the same reason as errors[0] and stays exit 1.
+  assert.equal(result.verdict.reason, reason);
+  assert.equal(result.verdict.exit_code, 1);
   assert.equal(result.issuer_signature.valid, false);
   assert.equal(result.amount_usdc, null);
   assert.equal(result.tx, null);
