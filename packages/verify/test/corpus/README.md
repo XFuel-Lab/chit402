@@ -239,8 +239,9 @@ v4 one, is decided by `legacy_form_not_allowlisted` instead.
 ## Reviewed re-pin
 
 A change to how `synthetic.mjs` (or `test/history-file.mjs`) builds a
-case's issuer history or JWKS can move its input digest without moving any
-outcome. Such a change re-pins the moved cases instead of adding new ones.
+case's inputs can move its input digest without moving anything the
+verifier reads (for example a field outside the JWKS keys or the history
+entries). Such a change re-pins the moved cases instead of adding new ones.
 A change to a case document is never a re-pin: it is a new case. It is its
 own PR kind:
 
@@ -258,12 +259,25 @@ own PR kind:
   the head digest, no unmoved case is re-pinned, the merge-base input of a
   re-pinned case is its merge-base effective digest, and the case set does
   not change;
-- each moved case keeps its document: the document form (version, shape,
-  payload and every field, as `docForm` reads it) and the document's
-  signature state and key relation (`signatureForm`) equal the merge base,
-  and the re-pinned document is not the document of another case. Only the
-  issuer history and the JWKS may move. So a wholesale swap of one case's
-  input for another's is refused even when the outcomes match;
+- each moved case keeps what the verifier's rules read: the document form
+  (version, shape, payload and every field, as `docForm` reads it), every
+  signature state, key relation and carried-key state of the document and
+  the issuer history (`signatureForm`: which key verifies, which roles hold
+  the same key bytes), and the issuer history entries (kid, key form,
+  validity window, status, revocation) equal the merge base. The
+  re-pinned document is not the document of another case. Only the rest of
+  the JWKS and history forms may move (for example a field outside the keys
+  and entries). So a wholesale swap of one case's input for another's is
+  refused even when the outcomes match;
+- a JWKS-only change that changes key bytes under a kid is refused by the
+  carried-key state whatever the outcome. Where the verifier reads that
+  key, the outcome check would usually catch it too; where the case is
+  decided before the signature check, the outcome stays the same but the
+  input no longer holds the key the case was pinned with, so a later
+  verifier change could reach the signature check with a different key.
+  The same holds for an added, removed or reordered key, and for a history
+  entry that is added, revoked or moved (it can change which rule is next
+  in line behind the case's own rule);
 - no baseline row changes, and `changes.json` gets only one
   `{kind: "repin", case, pr, spec}` entry (no `path`) per appended repin;
 - on the MERGE-BASE verifier, every case path has the same full outcome

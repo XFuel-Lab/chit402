@@ -858,11 +858,16 @@ export function repinListProblems(basePin, headPin) {
   return p;
 }
 
-/** Per case: the document form and the document signature state with its key relation, as strings. */
+/** Per case, as strings: the document form, the full signature form (states, key relations, carried-key states) and the issuer history entries. */
 export function repinFormsOf(inputs) {
   return Object.fromEntries((inputs?.cases ?? []).map((c) => {
-    const sf = signatureForm(c);
-    return [c.id, { doc: stable(docForm(c.doc, c.history)), signature: stable({ doc: sf.doc, doc_key: sf.doc_key ?? null }) }];
+    const h = historyForm(c.history);
+    return [c.id, {
+      doc: stable(docForm(c.doc, c.history)),
+      // Every signature state, key relation and carried-key state (signatureForm).
+      signature: stable(signatureForm(c)),
+      history: stable(h && typeof h === 'object' && !Array.isArray(h) ? h.entries ?? null : h),
+    }];
   }));
 }
 
@@ -890,9 +895,9 @@ const sameFullOutcome = (a, b) => {
  *   - re-pin each case whose input digest moved, from its merge-base
  *     effective digest (equal to the merge-base input) to the head digest,
  *     with the case set unchanged;
- *   - keep each moved case's document: the document form and its signature
- *     state and key relation equal the merge base, and the document is not
- *     another case's (only the issuer history and JWKS may move);
+ *   - keep each moved case's document form, every signature state, key
+ *     relation and carried-key state, and the issuer history entries as at
+ *     the merge base, and not take another case's document;
  *   - give the same full outcome (exit, result, reason, cause, every check
  *     including signature, overall) on every case path when the MERGE-BASE
  *     verifier runs the head input and the merge-base input.
@@ -953,10 +958,14 @@ export function repinProblems({ basePin, headPin, baseBaseline, headBaseline, ad
       if (baseDigests[id] !== undefined && baseDigests[id] === headDigests[id]) p.push(`${label}: ${id}: re-pinned, but its input digest did not change`);
     }
   }
-  // Case identity: a re-pin keeps the document. The document form (version,
-  // shape, payload, every field) and its signature state and key relation
-  // are those of the merge base; only the issuer history and JWKS may move.
-  // A re-pinned input also may not take another case's document.
+  // Case identity: a re-pin keeps everything the verifier's rules read. The
+  // document form (version, shape, payload, every field), every signature
+  // state, key relation and carried-key state (which key verifies, which
+  // roles share key bytes), and the issuer history entries (kid, key form,
+  // window, status, revocation) are those of the merge base. What may move
+  // is the rest of the JWKS and history forms (for example a field outside
+  // the keys and entries). A re-pinned input also may not take another
+  // case's document.
   const reIds = new Set(added.map((r) => r?.case).filter((c) => typeof c === 'string'));
   if (baseDigests && headDigests) for (const id of Object.keys(headDigests)) if (baseDigests[id] !== undefined && baseDigests[id] !== headDigests[id]) reIds.add(id);
   if (!repinForms?.base || !repinForms?.head) p.push(`${label}: needs the merge-base and head case documents (--base-tree, --head-inputs)`);
@@ -966,7 +975,8 @@ export function repinProblems({ basePin, headPin, baseBaseline, headBaseline, ad
       const h = repinForms.head[id];
       if (!b || !h) { p.push(`${label}: ${id}: no merge-base or head case document`); continue; }
       if (b.doc !== h.doc) p.push(`${label}: ${id}: the case document changed; a re-pin keeps the document form (a changed document is a new case)`);
-      if (b.signature !== h.signature) p.push(`${label}: ${id}: the document signature state or key relation changed (${b.signature} -> ${h.signature})`);
+      if (b.signature !== h.signature) p.push(`${label}: ${id}: a signature state, key relation or carried-key state changed (document or issuer history); a re-pin keeps every key the verifier can read`);
+      if (b.history !== h.history) p.push(`${label}: ${id}: the issuer history entries changed; a re-pin keeps every history key, kid, window, status and revocation`);
       for (const [other, f] of Object.entries(repinForms.base)) {
         if (other !== id && f.doc === h.doc) p.push(`${label}: ${id}: the re-pinned document is the document of ${other}`);
       }

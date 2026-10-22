@@ -1486,13 +1486,43 @@ test('re-pin: a document change is a new case; a document signature or key chang
   const { inputs } = resignDoc(headInputs, KS_ID);
   assert.equal(repinFormsOf(inputs)[KS_ID].doc, BASE_FORMS[KS_ID].doc);
   const p2 = await repinTo(inputs, KS_ID);
-  assert.ok(has(p2, `re-pin: ${KS_ID}: the document signature state or key relation changed`), p2.join('; '));
+  assert.ok(has(p2, `re-pin: ${KS_ID}: a signature state, key relation or carried-key state changed`), p2.join('; '));
   // The embedded key loses x and y: same document form, a different key relation.
   const xy = withCase(headInputs, KS_ID, (c) => { const d = JSON.parse(c.doc); const { x: _x, y: _y, ...rest } = d.issuer_signature.issuer_jwk; d.issuer_signature.issuer_jwk = rest; c.doc = JSON.stringify(d, null, 2); return c; });
   const p3 = await repinTo(xy, KS_ID);
-  assert.ok(has(p3, `re-pin: ${KS_ID}: the document signature state or key relation changed`), p3.join('; '));
+  assert.ok(has(p3, `re-pin: ${KS_ID}: a signature state, key relation or carried-key state changed`), p3.join('; '));
   // Without the document forms the re-pin fails closed.
   assert.ok(has(repinRun({ repinForms: null }), 'needs the merge-base and head case documents'));
+});
+
+// A JWKS-only change that changes key bytes under the case kid. Where the
+// verifier reads the key (L5) the outcome moves too; where the case is
+// decided before the signature check (v13) it does not, so the outcome check
+// alone would let the case take a different key. The carried-key state
+// rejects both: a re-pin keeps every key the verifier can read.
+const KEY_MSG = 'a signature state, key relation or carried-key state changed';
+test('re-pin: a JWKS key swap under the kid is rejected by the carried-key state, whether or not the outcome moves', async () => {
+  const l5 = swapJwksKey(headInputs, L5);
+  const p1 = await repinTo(l5, L5);
+  assert.ok(has(p1, `re-pin: ${L5}: ${KEY_MSG}`), p1.join('; '));
+  assert.ok(p1.some((x) => x.startsWith(`re-pin: ${L5}|library`) && x.includes('different outcome')), p1.join('; '));
+  for (const v of [swapJwksKey(headInputs, V13), editJwks(headInputs, V13, (j) => { j.keys.push(freshUnder(j.keys[0].kid, j.keys[0])); }), editJwks(headInputs, V13, (j) => { j.keys.unshift(freshUnder('other-kid', j.keys[0])); })]) {
+    const p = await repinTo(v, V13);
+    assert.ok(has(p, `re-pin: ${V13}: ${KEY_MSG}`), p.join('; '));
+    assert.ok(!p.some((x) => x.includes('different outcome')), p.join('; '));
+    assert.ok(!has(p, 'the case document changed'), p.join('; '));
+  }
+  // The JWKS change that keeps every key (a field outside the keys) still re-pins.
+  assert.deepEqual(await repinTo(TIDY, V13), []);
+});
+
+test('re-pin: Hrev-g10 as a re-pin (a revoked entry added to the issuer history) is rejected by the history entries and key states', async () => {
+  const id = 'gate10-pv10-no-history-pin';
+  const hrev = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries.push({ ...h.entries[0], status: 'revoked', revoked_at: '2020-01-01T00:00:00.000Z' }); c.history = JSON.stringify(h); return c; });
+  const p = await repinTo(hrev, id);
+  assert.ok(has(p, `re-pin: ${id}: the issuer history entries changed`), p.join('; '));
+  assert.ok(has(p, `re-pin: ${id}: ${KEY_MSG}`), p.join('; '));
+  assert.ok(!has(p, 'the case document changed'), p.join('; '));
 });
 
 test('re-pin: fails closed without merge-base outcomes or digests', () => {
