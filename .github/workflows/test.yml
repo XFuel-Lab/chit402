@@ -157,10 +157,118 @@ jobs:
   # Two tests fail only on Windows (ESM file URL for --import, and process
   # exit while undici sockets are closing). Publish is workflow_dispatch in
   # publish-verify.yml and runs this suite before npm publish --provenance.
+  # Corpus gate, in three parts so no head code runs where the gate runs:
+  #  1. corpus-inputs runs the head tree's synthetic cases and uploads them as
+  #     data (one JSON file). Nothing else leaves this job.
+  #  2. corpus-gate checks out the merge base as a worktree, builds only that
+  #     tree, and runs the merge base's copy of the gate. It reads the head
+  #     baseline, changes.json and registry pin through git as data, digests
+  #     the head inputs itself, and runs the merge-base verifier on them for
+  #     each added corpus_fix entry.
+  #  3. Verify package (Linux) needs corpus-gate and fails unless it passed,
+  #     so the required check cannot go green without the gate.
+  corpus-inputs:
+    name: Corpus inputs (head)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Export synthetic case inputs
+        working-directory: packages/verify
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx tsc
+          node scripts/corpus-gate.mjs export . > "$RUNNER_TEMP/corpus-inputs.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: corpus-inputs
+          path: ${{ runner.temp }}/corpus-inputs.json
+          if-no-files-found: error
+          retention-days: 5
+
+  corpus-gate:
+    name: Corpus baseline gate
+    needs: corpus-inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, so the gate can read the merge base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: corpus-inputs
+          path: ${{ runner.temp }}/head-inputs
+
+      - name: Corpus baseline gate (merge-base code only)
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base=$(git merge-base HEAD "origin/$BASE_REF")
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
+          gate=packages/verify/scripts/corpus-gate.mjs
+          if git cat-file -e "$base:$gate" 2>/dev/null; then
+            git show "$base:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
+            echo "corpus gate: merge-base copy from $base"
+          else
+            # Only the change that adds the gate takes this branch.
+            git show "HEAD:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
+            echo "::notice::No corpus gate at $base; running this change's copy"
+          fi
+          # Build the merge-base tree only. No npm ci, tsc or script from the
+          # head tree runs in this job.
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          basepkg="$RUNNER_TEMP/base/packages/verify"
+          if [ -f "$basepkg/package-lock.json" ]; then
+            (cd "$basepkg" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
+          fi
+          cd "$RUNNER_TEMP"
+          node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE" \
+            --base-tree "$basepkg" --head-inputs "$RUNNER_TEMP/head-inputs/corpus-inputs.json"
+
   verify-linux:
     name: Verify package (Linux)
+    needs: corpus-gate
+    # Runs (and reports) even when the gate failed or was skipped, so the
+    # required check is red, not skipped.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Corpus baseline gate passed
+        env:
+          GATE_RESULT: ${{ needs.corpus-gate.result }}
+        run: |
+          if [ "$GATE_RESULT" != "success" ]; then
+            echo "::error::Corpus baseline gate result: $GATE_RESULT"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7

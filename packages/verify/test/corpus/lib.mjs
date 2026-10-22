@@ -9,12 +9,41 @@ export const corpusDir = fileURLToPath(new URL('.', import.meta.url));
 const preload = pathToFileURL(fileURLToPath(new URL('./tape-preload.mjs', import.meta.url))).href;
 const cli = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
 const libraryRunner = fileURLToPath(new URL('./run-library.mjs', import.meta.url));
+const signatureRunner = fileURLToPath(new URL('./run-signature.mjs', import.meta.url));
+
+/** The only exit codes a verifier path may return. Anything else is a failure. */
+export const VALID_EXITS = Object.freeze([0, 1, 2]);
 
 /** Higher is more permissive. VERIFIED > COULD_NOT_CHECK > INVALID. */
 export function exitRank(exit) {
   if (exit === 0) return 2;
   if (exit === 2) return 1;
   return 0;
+}
+
+/**
+ * Higher is more permissive. Ranked separately from the exit code, so a
+ * `verified` result can never be pinned or reached behind a non-zero exit.
+ */
+export function resultRank(result) {
+  if (result === 'verified' || result === 'signature_valid') return 2;
+  if (result === 'could_not_check' || result === 'partial') return 1;
+  return 0;
+}
+
+/** The exit each result must come with. */
+const RESULT_EXIT = Object.freeze({ verified: 0, signature_valid: 0, could_not_check: 2, partial: 2, invalid: 1, signature_invalid: 1 });
+
+/** Problems inside one outcome, before any comparison with a baseline. */
+export function consistency(o) {
+  const problems = [];
+  if (!VALID_EXITS.includes(o.exit)) problems.push(`exit ${o.exit} is outside 0/1/2`);
+  if (o.json_exit != null && o.json_exit !== o.exit) problems.push(`--json exit_code ${o.json_exit} differs from process exit ${o.exit}`);
+  const want = RESULT_EXIT[o.result];
+  if (want === undefined) problems.push(`unknown result ${JSON.stringify(o.result)}`);
+  else if (want !== o.exit) problems.push(`result ${o.result} with exit ${o.exit}`);
+  if (/^verified/.test(String(o.overall || '')) && o.exit !== 0) problems.push(`overall ${o.overall} with exit ${o.exit}`);
+  return problems;
 }
 
 /** Per-check rank. pass > anything that is not a decision > fail. */
@@ -56,16 +85,19 @@ function summarize(proc) {
     };
   }
   if (parsed && typeof parsed === 'object' && 'overall' in parsed) {
-    return { exit: parsed.exit, json_exit: parsed.exit, result: parsed.result, reason: parsed.reason, overall: parsed.overall, checks: parsed.checks, misses };
+    return { exit: parsed.exit, json_exit: parsed.exit, result: parsed.result, reason: parsed.reason, overall: parsed.overall, checks: parsed.checks, cause: parsed.cause ?? null, misses };
+  }
+  if (parsed && typeof parsed === 'object' && 'cause' in parsed) {
+    return { exit: parsed.exit, json_exit: parsed.exit, result: parsed.result, reason: parsed.reason, checks: parsed.checks, cause: parsed.cause, misses };
   }
   const first = (proc.stderr || '').split('\n').find((l) => l && !l.startsWith('corpus-tape-miss ')) || '';
   return { exit: proc.status, json_exit: null, result: null, reason: `stderr: ${first.slice(0, 80)}`, checks: null, misses };
 }
 
 function argsFor(c, path) {
-  return path === 'library'
-    ? ['--import', preload, libraryRunner, c.file, c.jwksFile, c.historyFile]
-    : ['--import', preload, cli, c.file || c.input, '--json'];
+  if (path === 'library') return ['--import', preload, libraryRunner, c.file, c.jwksFile, c.historyFile];
+  if (path === 'signature') return ['--import', preload, signatureRunner, c.file, c.jwksFile];
+  return ['--import', preload, cli, c.file || c.input, '--json'];
 }
 
 /** Async run of one case on one path (replay only). */
@@ -107,16 +139,22 @@ export function pinned(o) {
 
 /**
  * Compare an outcome to its baseline. Returns a list of problems.
- * - never more permissive: exit rank and every check rank stay at or below
- *   the baseline (every case);
+ * - well formed: exit in 0/1/2, result and exit agree (consistency());
+ * - never more permissive: exit rank, result rank and every check rank stay
+ *   at or below the baseline, and every check the baseline has is still
+ *   reported (a dropped check is not a pass);
  * - exact: exit, result, reason and checks equal the baseline unless a
  *   recorded change in changes.json names this case and path.
  */
 export function compare(baseline, actual, change) {
-  const problems = [];
+  const problems = consistency(actual).map((p) => `malformed outcome: ${p}`);
+  if (!baseline) return [...problems, 'no baseline'];
   const expected = change ? change.to : baseline;
   if (exitRank(actual.exit) > exitRank(baseline.exit)) {
     problems.push(`more permissive: exit ${baseline.exit} -> ${actual.exit}`);
+  }
+  if (resultRank(actual.result) > resultRank(baseline.result)) {
+    problems.push(`more permissive: result ${baseline.result} -> ${actual.result}`);
   }
   if (baseline.overall === 'failed' && actual.overall && actual.overall !== 'failed') {
     problems.push(`more permissive: overall failed -> ${actual.overall}`);
@@ -126,15 +164,34 @@ export function compare(baseline, actual, change) {
   }
   for (const [name, value] of Object.entries(baseline.checks || {})) {
     const now = actual.checks ? actual.checks[name] : undefined;
-    if (now !== undefined && checkRank(now) > checkRank(value)) {
+    if (now === undefined) {
+      problems.push(`missing check: checks.${name} (baseline ${value})`);
+    } else if (checkRank(now) > checkRank(value)) {
       problems.push(`more permissive: checks.${name} ${value} -> ${now}`);
     }
   }
-  if (change && exitRank(change.to.exit) > exitRank(baseline.exit)) {
-    problems.push('changes.json entry is more permissive than the baseline');
+  if (change) {
+    for (const p of stricterProblems(baseline, change.to)) problems.push(`changes.json entry: ${p}`);
   }
   const a = JSON.stringify(pinned(actual));
   const e = JSON.stringify(pinned(expected));
   if (a !== e) problems.push(`changed: expected ${e} got ${a}${change ? '' : ' (no changes.json entry)'}`);
+  return problems;
+}
+
+/**
+ * Why `to` is not at least as strict as `from` (empty when it is). Used for
+ * changes.json entries and for the baseline gate against the merge base.
+ */
+export function stricterProblems(from, to) {
+  const problems = consistency({ ...to, json_exit: null }).map((p) => `malformed: ${p}`);
+  if (exitRank(to.exit) > exitRank(from.exit)) problems.push(`more permissive than the baseline: exit ${from.exit} -> ${to.exit}`);
+  if (resultRank(to.result) > resultRank(from.result)) problems.push(`more permissive than the baseline: result ${from.result} -> ${to.result}`);
+  if (from.overall === 'failed' && to.overall && to.overall !== 'failed') problems.push(`more permissive than the baseline: overall failed -> ${to.overall}`);
+  for (const [name, value] of Object.entries(from.checks || {})) {
+    const now = to.checks ? to.checks[name] : undefined;
+    if (now === undefined) problems.push(`drops check ${name}`);
+    else if (checkRank(now) > checkRank(value)) problems.push(`more permissive than the baseline: checks.${name} ${value} -> ${now}`);
+  }
   return problems;
 }

@@ -1368,7 +1368,7 @@
  "label-v4v5-conflicting-stamps|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1393,18 +1393,18 @@
   }
  },
  "version-v10-claims-signed-as-v6-after-window|library": {
-  "exit": 1,
-  "result": "invalid",
-  "reason": "invalid",
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
   "checks": {
    "signature": "pass",
-   "key_window": "could_not_check",
+   "key_window": "pass",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
    "shape": "pass"
   },
-  "overall": "failed"
+  "overall": "partial"
  },
  "version-v13-unknown|cli": {
   "exit": 2,
@@ -1422,7 +1422,7 @@
  "version-v13-unknown|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1460,6 +1460,33 @@
   },
   "overall": "failed"
  },
+ "version-v12-shape-no-version-plain-id|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "version-v12-shape-no-version-plain-id|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  },
+  "overall": "failed"
+ },
  "version-unversioned-object-no-stamp|cli": {
   "exit": 2,
   "result": "could_not_check",
@@ -1476,7 +1503,7 @@
  "version-unversioned-object-no-stamp|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1488,58 +1515,58 @@
   "overall": "failed"
  },
  "version-l1-v4-not-allowlisted|cli": {
-  "exit": 2,
-  "result": "could_not_check",
-  "reason": "unsupported_version",
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
   "checks": {
-   "signature": "could_not_check",
+   "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "could_not_check"
+   "shape": "pass"
   }
  },
  "version-l1-v4-not-allowlisted|library": {
-  "exit": 1,
-  "result": "invalid",
-  "reason": "invalid",
-  "checks": {
-   "signature": "could_not_check",
-   "key_window": "could_not_check",
-   "payment_binding": "could_not_check",
-   "log_inclusion": "could_not_check",
-   "anchor": "could_not_check",
-   "shape": "could_not_check"
-  },
-  "overall": "failed"
- },
- "version-l1-v5-not-allowlisted|cli": {
   "exit": 2,
   "result": "could_not_check",
-  "reason": "unsupported_version",
+  "reason": "log_unreachable",
   "checks": {
-   "signature": "could_not_check",
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial"
+ },
+ "version-l1-v5-not-allowlisted|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
+  "checks": {
+   "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "could_not_check"
+   "shape": "pass"
   }
  },
  "version-l1-v5-not-allowlisted|library": {
-  "exit": 1,
-  "result": "invalid",
-  "reason": "invalid",
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
   "checks": {
-   "signature": "could_not_check",
-   "key_window": "could_not_check",
+   "signature": "pass",
+   "key_window": "pass",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "could_not_check"
+   "shape": "pass"
   },
-  "overall": "failed"
+  "overall": "partial"
  },
  "version-l1-detached-not-allowlisted|cli": {
   "exit": 2,
@@ -1622,6 +1649,78 @@
   },
   "overall": "partial"
  },
+ "gate10-pv9-no-history-pin|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial"
+ },
+ "gate10-pv10-no-history-pin|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "pass",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed"
+ },
+ "gate9-pv8-no-head-binding|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial"
+ },
+ "gate9-pv9-no-head-binding|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed"
+ },
+ "gate8-detached-pv7|signature": {
+  "exit": 0,
+  "result": "signature_valid",
+  "reason": null,
+  "checks": {
+   "signature": "pass"
+  }
+ },
+ "gate8-detached-pv8|signature": {
+  "exit": 0,
+  "result": "signature_valid",
+  "reason": null,
+  "checks": {
+   "signature": "pass"
+  }
+ },
  "control-test-key-v10|cli": {
   "exit": 1,
   "result": "invalid",
@@ -1636,18 +1735,18 @@
   }
  },
  "control-test-key-v10|library": {
-  "exit": 1,
-  "result": "invalid",
-  "reason": "invalid",
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
   "checks": {
    "signature": "pass",
-   "key_window": "could_not_check",
+   "key_window": "pass",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
    "shape": "pass"
   },
-  "overall": "failed"
+  "overall": "partial"
  },
  "control-unsigned-document|cli": {
   "exit": 2,
