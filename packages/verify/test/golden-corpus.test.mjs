@@ -162,6 +162,11 @@ test('every version gate is pinned on both sides of its boundary', async () => {
 // Chain tier: the same cases on a second tape that also carries read-only JSON-RPC answers from
 // public Base and Solana RPCs (record-chain.mjs). Its baseline is 0.4.11 on that tape; the rule is
 // the same (never more permissive, exactly equal unless changes.json records it).
+// The comparison is the shared lib.mjs one, unchanged. It does not know the
+// public-scope result `verified_public` (exit 0), so the chain baseline pins
+// such a row as `result: verified` plus `result_detail: verified_public`, and
+// an outcome is mapped to `verified` only when its result equals the pinned
+// `result_detail` exactly. Any other verified_public stays unknown and fails.
 const chainTape = join(corpusDir, 'tapes', 'public-chain.json');
 const chainBaseline = readJson(join(corpusDir, 'baseline-chain.json'));
 test('chain tier: no outcome is more permissive than, or different from, its baseline', async (t) => {
@@ -173,13 +178,18 @@ test('chain tier: no outcome is more permissive than, or different from, its bas
   for (const job of jobs) {
     const actual = chainResults.get(job.key);
     misses += actual.misses.length;
-    assert.ok(chainBaseline[job.key], `no chain baseline for ${job.key}`);
-    for (const p of compare(chainBaseline[job.key], actual, changeFor(job.key))) problems.push(`${job.key}: ${p}`);
+    const base = chainBaseline[job.key];
+    assert.ok(base, `no chain baseline for ${job.key}`);
+    const mapped = base.result_detail && actual.result === base.result_detail && base.result === 'verified' && actual.exit === 0
+      ? { ...actual, result: 'verified' }
+      : actual;
+    for (const p of compare(base, mapped, changeFor(job.key))) problems.push(`${job.key}: ${p}`);
   }
   t.diagnostic(`${jobs.length} case paths; ${misses} requests not on the chain tape`);
   assert.deepEqual(problems, []);
   const ref = chainResults.get('id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15|cli');
   assert.equal(ref.exit, 0);
+  assert.equal(ref.result, 'verified_public');
   for (const key of ['id-chit-43c98110-8ad4-4a65-8fa7-fa3a04424c0e|cli', 'id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli']) {
     assert.equal(chainResults.get(key).exit, 1, key);
     assert.equal(chainResults.get(key).reason, 'not_in_log', key);

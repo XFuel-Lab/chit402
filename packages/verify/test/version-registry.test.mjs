@@ -195,3 +195,27 @@ test('low-S: both encodings of one signature share a fingerprint; one entry per 
   // Two entries for the same (form, task_id, payload) are refused, whatever the signature.
   assert.equal(finalList([a, { ...a, signature_sha256: 'ee'.repeat(32) }]).reason, 'legacy_allowlist_duplicate');
 });
+
+test('low-S: r and s must be inside 0 < x < n; anything else has no fingerprint', () => {
+  const N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
+  const receipt = v4Receipt();
+  const parts = receipt.issuer_signature.jws.split('.');
+  const sig = Buffer.from(parts[2], 'base64url');
+  const hex = (v) => Buffer.from(v.toString(16).padStart(64, '0'), 'hex');
+  const r = sig.subarray(0, 32);
+  const s = sig.subarray(32);
+  const cases = [
+    Buffer.concat([r, hex(0n)]),
+    Buffer.concat([r, hex(N)]),
+    Buffer.concat([r, hex(N + 5n)]),
+    Buffer.concat([hex(0n), s]),
+    Buffer.concat([hex(N), s]),
+    sig.subarray(0, 63),
+  ];
+  for (const bad of cases) {
+    assert.equal(lowSSignature(bad), null);
+    const copy = { ...receipt, issuer_signature: { ...receipt.issuer_signature, jws: `${parts[0]}.${parts[1]}.${bad.toString('base64url')}` } };
+    assert.equal(legacyReceiptFingerprint(copy), null);
+  }
+  assert.equal(lowSSignature(Buffer.concat([r, hex(N - 1n)])).length, 64);
+});

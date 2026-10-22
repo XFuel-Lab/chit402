@@ -113,7 +113,7 @@ import {
 } from './legacy-allowlist.js';
 import {
   checkSignedTime,
-  loadBundledVersionWindows,
+  activeVersionWindows,
   windowIdForPayloadVersion,
   type VersionWindows,
 } from './version-windows.js';
@@ -1949,10 +1949,11 @@ async function verifyReceiptChecks(
     && !onLegacyAllowlistInternal(legacyReceiptFingerprint(receipt), snapshot?.legacyAllowlist ?? loadBundledLegacyAllowlistInternal())) {
     return rejectReceiptVersion(receipt, [LEGACY_FORM_NOT_ALLOWLISTED], LEGACY_FORM_NOT_ALLOWLISTED);
   }
-  const versionWindows = snapshot?.versionWindows ?? loadBundledVersionWindows();
+  // Null when no production-signed windows are bundled: no window check runs.
+  const versionWindows = activeVersionWindows(snapshot?.versionWindows);
   if (gate.family === 'v11') {
     const v11 = await verifyV11Receipt(receipt, options);
-    if (v11.issuer_signature?.valid === true) {
+    if (versionWindows && v11.issuer_signature?.valid === true) {
       const issued = (v11.issuer_signature.payload as Record<string, unknown> | undefined)?.issued_at;
       const window = checkSignedTime('v11', issued, versionWindows);
       if (!window.ok) applyVersionWindowFailure(v11, window.reason);
@@ -2105,7 +2106,7 @@ async function verifyReceiptChecks(
   // version's window. Checked only on a valid signature, so an unsigned or
   // badly signed receipt keeps its existing reason.
   // L1 forms (admitted above only by exact fingerprint) have no window.
-  if (issuer_signature.valid && verifiedClaims && !options.skipIssuerHistory && !inferredForm && !detachedForm) {
+  if (versionWindows && issuer_signature.valid && verifiedClaims && !options.skipIssuerHistory && !inferredForm && !detachedForm) {
     const version = Number((verifiedClaims as Record<string, unknown>).payload_version);
     const root = (verifiedClaims as Record<string, unknown>).issuer_root;
     const id = windowIdForPayloadVersion(version, root != null && typeof root === 'object');

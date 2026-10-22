@@ -57,7 +57,7 @@ let testHistoryPin = null;
  */
 export const LIBRARY_CAUSE = Object.freeze({
   'label-v4v5-conflicting-stamps': 'unsupported_version',
-  'version-v10-claims-signed-as-v6-after-window': 'version_window_closed',
+  'version-v10-claims-signed-as-v6-after-window': 'log_unreachable',
   'version-v13-unknown': 'unsupported_version',
   'version-v12-shape-no-version': 'id_prefix_version_mismatch',
   'version-v12-shape-no-version-plain-id': 'unsupported_version',

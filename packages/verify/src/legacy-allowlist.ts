@@ -60,12 +60,15 @@ const P256_N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac
 const P256_HALF_N = P256_N >> 1n;
 
 /**
- * Low-S form of a 64-byte P-256 (R || S) signature. Any other length is
- * returned unchanged; it does not verify as ES256 anyway.
+ * Low-S form of a 64-byte P-256 (R || S) signature, or null when it is not
+ * one: any other length, or r or s outside 0 < x < n. A null fingerprint is
+ * on no list, so such a signature is refused.
  */
-export function lowSSignature(signature: Buffer): Buffer {
-  if (signature.length !== 64) return signature;
-  const s = BigInt(`0x${signature.subarray(32).toString('hex') || '0'}`);
+export function lowSSignature(signature: Buffer): Buffer | null {
+  if (signature.length !== 64) return null;
+  const r = BigInt(`0x${signature.subarray(0, 32).toString('hex')}`);
+  const s = BigInt(`0x${signature.subarray(32).toString('hex')}`);
+  if (r <= 0n || r >= P256_N || s <= 0n || s >= P256_N) return null;
   if (s <= P256_HALF_N) return signature;
   const low = (P256_N - s).toString(16).padStart(64, '0');
   return Buffer.concat([signature.subarray(0, 32), Buffer.from(low, 'hex')]);
@@ -171,6 +174,7 @@ export function legacyFingerprint(
   }
   if (!payload || !signature || signature.length === 0) return null;
   signature = lowSSignature(signature);
+  if (!signature) return null;
   return {
     form,
     task_id: receipt.task_id,

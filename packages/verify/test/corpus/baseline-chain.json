@@ -1,7 +1,8 @@
 {
  "id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15|cli": {
   "exit": 0,
-  "result": "verified_public",
+  "result": "verified",
+  "result_detail": "verified_public",
   "reason": null,
   "checks": {
    "signature": "pass",
@@ -1595,68 +1596,68 @@
  "version-l1-v4-not-allowlisted|cli": {
   "exit": 1,
   "result": "invalid",
-  "reason": "key untrusted",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
    "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   }
  },
  "version-l1-v4-not-allowlisted|library": {
-  "exit": 2,
-  "result": "could_not_check",
-  "reason": "log_unreachable",
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
-   "signature": "pass",
-   "key_window": "pass",
+   "signature": "fail",
+   "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   },
-  "overall": "partial"
+  "overall": "failed"
  },
  "version-l1-v5-not-allowlisted|cli": {
   "exit": 1,
   "result": "invalid",
-  "reason": "key untrusted",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
    "signature": "fail",
    "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   }
  },
  "version-l1-v5-not-allowlisted|library": {
-  "exit": 2,
-  "result": "could_not_check",
-  "reason": "log_unreachable",
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
-   "signature": "pass",
-   "key_window": "pass",
+   "signature": "fail",
+   "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   },
-  "overall": "partial"
+  "overall": "failed"
  },
  "version-l1-v4-production-kid|cli": {
   "exit": 1,
   "result": "invalid",
-  "reason": "key untrusted",
+  "reason": "legacy_form_not_allowlisted",
   "checks": {
    "signature": "fail",
-   "key_window": "pass",
+   "key_window": "could_not_check",
    "payment_binding": "could_not_check",
    "log_inclusion": "could_not_check",
    "anchor": "could_not_check",
-   "shape": "pass"
+   "shape": "fail"
   }
  },
  "version-l1-detached-not-allowlisted|cli": {

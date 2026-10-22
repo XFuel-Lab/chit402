@@ -298,27 +298,6 @@
    "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
   },
   {
-   "case": "version-v10-claims-signed-as-v6-after-window",
-   "path": "library",
-   "kind": "tighten",
-   "to": {
-    "exit": 1,
-    "result": "invalid",
-    "reason": "version_window_closed",
-    "checks": {
-     "signature": "pass",
-     "key_window": "fail",
-     "payment_binding": "could_not_check",
-     "log_inclusion": "could_not_check",
-     "anchor": "could_not_check",
-     "shape": "pass"
-    },
-    "overall": "failed"
-   },
-   "pr": "PR3 verify/redesign-3-windows",
-   "spec": "PR3 signed validity windows (L5 §5.3): signed iat after the v6 window closes, version_window_closed"
-  },
-  {
    "case": "version-l1-v4-not-allowlisted",
    "path": "cli",
    "kind": "tighten",
@@ -438,10 +417,10 @@
     },
     "overall": "partial"
    },
-   "input_digest": "397594c3bb4e9c4beca6ac9b9a3b0a05c483815c2573626cdf8c96863fff3ab1",
+   "input_digest": "e13e993a3a7a3a73bb6639e0a7d60e84eef298cd71ee49884877e0e0013185f2",
    "pr": "PR3 verify/redesign-3-windows",
    "spec": "§5.2 registry gates; PR3 validity windows",
-   "note": "The case signed iat 2026-10-22, after its version window closed, so once PR3 enforces windows the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
   },
   {
    "case": "gate9-pv8-no-head-binding",
@@ -461,10 +440,10 @@
     },
     "overall": "partial"
    },
-   "input_digest": "d22884aa50db1365079a9937276c466b75abb4c6bfcc133a4b10b41ceb10f0ce",
+   "input_digest": "f66c8ecd609f76d65c462ad4a18837941f0b4a7b3536d6d2ed0091b35de343f4",
    "pr": "PR3 verify/redesign-3-windows",
    "spec": "§5.2 registry gates; PR3 validity windows",
-   "note": "The case signed iat 2026-10-22, after its version window closed, so once PR3 enforces windows the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
   },
   {
    "case": "gate9-pv9-no-head-binding",
@@ -484,10 +463,10 @@
     },
     "overall": "failed"
    },
-   "input_digest": "2a57b3290da0498cc612d2a2ed6453a547bd70e4b5f56cec8aed503e80c65437",
+   "input_digest": "f9e001a4a9b01f9bbb1a2e07b27c2e8ebbb76b21f5e4ddc3a993357fac3742f4",
    "pr": "PR3 verify/redesign-3-windows",
    "spec": "§5.2 registry gates; PR3 validity windows",
-   "note": "The case signed iat 2026-10-22, after its version window closed, so once PR3 enforces windows the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
   }
  ]
 }

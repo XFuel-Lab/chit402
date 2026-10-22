@@ -20,6 +20,8 @@ const {
   VERSION_WINDOWS_SHA256,
   VERSION_WINDOWS_PRODUCTION_KID,
   loadBundledVersionWindows,
+  activeVersionWindows,
+  enforceableVersionWindows,
   parseVersionWindows,
   versionWindowsBodyHash,
   checkSignedTime,
@@ -198,9 +200,43 @@ function signedReceipt(claims) {
 const payment = { rail: 'usdc', ref: `base:0x${'12'.repeat(32)}`, gross_amount: '2000', settled_amount: '2000' };
 const trust = { jwks: { keys: [kp.jwk] }, trustedKids: [kp.kid] };
 
-test('library: a v7 receipt signed after v7 closed is refused (key_window, exit 1)', async () => {
-  const late = signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c1', payload_version: 7, iat: Date.parse('2026-10-20T00:00:00Z') / 1000, payment });
+// The bundled document is test-signed in this build, so outside tests it is
+// not enforced. These cases pass windows through the library-only test seam.
+const seamOpts = (windows) => ({ ...trust, [TEST_SNAPSHOT]: { versionWindows: windows } });
+
+test('outside tests a test-signed bundled document is not enforced: no new refusal', async () => {
+  assert.equal(loadBundledVersionWindows().signature, 'not_production');
+  assert.equal(activeVersionWindows(), null);
+  const late = signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c4', payload_version: 7, iat: Date.parse('2026-10-20T00:00:00Z') / 1000, payment });
   const res = await verifyReceipt(late, trust);
+  assert.equal(res.issuer_signature.valid, true);
+  assert.equal(res.errors.some((e) => /version_window|issued_at_missing/.test(e)), false, res.errors.join('; '));
+  const noIat = await verifyReceipt(signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c5', payload_version: 9, payment }), trust);
+  assert.equal(noIat.errors.some((e) => /version_window|issued_at_missing/.test(e)), false);
+});
+
+test('enforcement: production-signed is enforced, test-signed only through the test option, a failed parse never', () => {
+  const body = bundledBody();
+  const k = keyPair();
+  const prod = parseVersionWindows(signWindows(body, k, VERSION_WINDOWS_PRODUCTION_KID), { expectedSha256: null, keys: [{ kid: VERSION_WINDOWS_PRODUCTION_KID, jwk: k.jwk }] });
+  assert.equal(prod.signature, 'production');
+  assert.equal(enforceableVersionWindows(prod), prod);
+  const test = parseVersionWindows(signWindows(body, k), { expectedSha256: null, keys: [{ kid: k.kid, jwk: k.jwk }] });
+  assert.equal(test.signature, 'not_production');
+  assert.equal(enforceableVersionWindows(test), null);
+  assert.equal(enforceableVersionWindows(test, true), test);
+  const wrongKey = parseVersionWindows(signWindows(body, k, VERSION_WINDOWS_PRODUCTION_KID), { expectedSha256: null, keys: [{ kid: VERSION_WINDOWS_PRODUCTION_KID, jwk: keyPair().jwk }] });
+  assert.equal(wrongKey.signature, 'invalid');
+  assert.equal(enforceableVersionWindows(wrongKey), null);
+  assert.equal(enforceableVersionWindows(parseVersionWindows('{', { expectedSha256: null })), null);
+  assert.equal(enforceableVersionWindows(parseVersionWindows('{', { expectedSha256: null }), true), null);
+  assert.equal(activeVersionWindows(test), test);
+});
+
+test('library (enforced windows): a v7 receipt signed after v7 closed is refused (key_window, exit 1)', async () => {
+  const windows = loadBundledVersionWindows();
+  const late = signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c1', payload_version: 7, iat: Date.parse('2026-10-20T00:00:00Z') / 1000, payment });
+  const res = await verifyReceipt(late, seamOpts(windows));
   assert.equal(res.issuer_signature.valid, true);
   assert.equal(res.overall, 'failed');
   assert.equal(res.issuer_history.reason, 'version_window_closed');
@@ -209,12 +245,21 @@ test('library: a v7 receipt signed after v7 closed is refused (key_window, exit 
   assert.equal(res.verdict.checks.key_window, 'fail');
   assert.equal(res.verdict.reason, 'version_window_closed');
   const inside = signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c2', payload_version: 7, iat: Date.parse('2026-09-20T00:00:00Z') / 1000, payment });
-  const ok = await verifyReceipt(inside, trust);
+  const ok = await verifyReceipt(inside, seamOpts(windows));
   assert.equal(ok.errors.some((e) => /version_window/.test(e)), false, ok.errors.join('; '));
 });
 
-test('library: a closed-version receipt with no iat is refused', async () => {
-  const res = await verifyReceipt(signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c3', payload_version: 9, payment }), trust);
+test('library (enforced windows, production-signed): the same refusal holds for a production-status document', async () => {
+  const k = keyPair();
+  const prod = parseVersionWindows(signWindows(bundledBody(), k, VERSION_WINDOWS_PRODUCTION_KID), { expectedSha256: null, keys: [{ kid: VERSION_WINDOWS_PRODUCTION_KID, jwk: k.jwk }] });
+  const late = signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c6', payload_version: 6, iat: Date.parse('2026-10-20T00:00:00Z') / 1000, payment });
+  const res = await verifyReceipt(late, seamOpts(prod));
+  assert.equal(res.issuer_history.reason, 'version_window_closed');
+  assert.equal(res.verdict.exit_code, 1);
+});
+
+test('library (enforced windows): a closed-version receipt with no iat is refused', async () => {
+  const res = await verifyReceipt(signedReceipt({ task_id: 'xfuel-00000000-0000-4000-8000-0000000000c3', payload_version: 9, payment }), seamOpts(loadBundledVersionWindows()));
   assert.equal(res.overall, 'failed');
   assert.equal(res.issuer_history.reason, 'issued_at_missing');
 });
@@ -258,8 +303,8 @@ test('L1: a listed receipt still needs a valid signature (the list never replace
   assert.equal(refused.overall, 'failed');
   assert.notDeepEqual(refused.errors, ['legacy_form_not_allowlisted']);
   // Signed by another key: same payload, other signature, not listed.
-  const stranger = keyPair();
-  const other = await verifyReceipt(l1Receipt(4, compact({ alg: 'ES256', typ: 'chit402-receipt+jwt', kid: kp.kid }, l1Claims, stranger)), opts);
+  const secondKey = keyPair();
+  const other = await verifyReceipt(l1Receipt(4, compact({ alg: 'ES256', typ: 'chit402-receipt+jwt', kid: kp.kid }, l1Claims, secondKey)), opts);
   assert.deepEqual(other.errors, ['legacy_form_not_allowlisted']);
 });
 
@@ -317,10 +362,10 @@ test('L5 log time: the earliest anchored signed head that covers the leaf', asyn
 
 test('L5 log time: unsigned, foreign-key, wrong-root or failed heads are skipped; the verified head is the fallback', async () => {
   const t37 = Date.parse('2026-10-21T00:00:00Z') / 1000;
-  const stranger = keyPair();
+  const secondKey = keyPair();
   const unsigned = { ...head(35) };
   delete unsigned.issuer_signature;
-  const { input } = logInput({ heads: { 35: unsigned, 36: head(36, stranger) }, times: { 35: { t: 1 }, 36: { t: 1 }, 37: { t: t37 } } });
+  const { input } = logInput({ heads: { 35: unsigned, 36: head(36, secondKey) }, times: { 35: { t: 1 }, 36: { t: 1 }, 37: { t: t37 } } });
   assert.deepEqual(await earliestLogTime(input), { ok: true, ms: t37 * 1000, tree_size: 37, source: 'verified_head' });
   const wrongRoot = logInput({ heads: { 35: head(35) }, times: { 35: { t: 1, root: 'ab'.repeat(32) }, 37: { t: t37 } } });
   assert.equal((await earliestLogTime(wrongRoot.input)).source, 'verified_head');
@@ -328,6 +373,28 @@ test('L5 log time: unsigned, foreign-key, wrong-root or failed heads are skipped
   assert.equal((await earliestLogTime(failedTx.input)).source, 'verified_head');
   const none = logInput({ heads: {}, times: {} });
   assert.deepEqual(await earliestLogTime(none.input), { ok: false, reason: 'log_time_unavailable' });
+});
+
+// KNOWN LIMIT of 0.5.0-pre, EXPECTED TO CHANGE before 0.5.0 final: the probe
+// does not fetch an inclusion proof for the leaf at tree_size=k and does not
+// require the probed head to be in the verified head's epoch. A trusted signed
+// head for an unrelated log (other root, epoch 1) that was anchored early can
+// therefore set the log time. When the inclusion proof and same-epoch rule
+// land, flip the expectation below to 'log_time_after_window'.
+test('known limit (expected to change before 0.5.0): an unrelated epoch-1 head anchored early sets the log time', async () => {
+  const pv9Close = Date.parse('2026-10-08T08:49:28Z') / 1000;
+  const late = pv9Close + 14 * 86400 + 3600;
+  const unrelatedRoot = 'cd'.repeat(32);
+  const unrelated = signHead({
+    schema: 'chit402.tree_head.v2', payload_version: 2, epoch: 1, root: unrelatedRoot, tree_size: 35,
+    published_at: '2026-10-01T00:00:00.000Z', anchors: { solana: { signature: 'sig-35' } },
+  }, kp);
+  const windows = loadBundledVersionWindows();
+  const baseline = logInput({ heads: {}, times: { 37: { t: late } } });
+  assert.equal(await logTimeReason({ ...baseline.input, claims: { payload_version: 9 }, windows }), 'log_time_after_window');
+  const { input } = logInput({ heads: { 35: unrelated }, times: { 35: { t: Date.parse('2026-10-01T00:00:00Z') / 1000, root: unrelatedRoot }, 37: { t: late } } });
+  const r = await logTimeReason({ ...input, claims: { payload_version: 9 }, windows });
+  assert.equal(r, null, 'known limit: expected to become log_time_after_window once inclusion at tree_size=k and same epoch are required');
 });
 
 test('L5 decision: open versions are not probed; closed versions need a log time inside close + grace', async () => {
@@ -380,7 +447,7 @@ test('the test seam swaps the windows for one call', async () => {
   const windows = parseVersionWindows(JSON.stringify(body), { expectedSha256: null });
   const swapped = await verifyReceipt(late, { ...trust, [TEST_SNAPSHOT]: { versionWindows: windows } });
   assert.equal(swapped.errors.some((e) => /version_window/.test(e)), false, swapped.errors.join('; '));
-  const normal = await verifyReceipt(late, trust);
+  const normal = await verifyReceipt(late, { ...trust, [TEST_SNAPSHOT]: { versionWindows: loadBundledVersionWindows() } });
   assert.equal(normal.issuer_history.reason, 'version_window_closed');
 });
 

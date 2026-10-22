@@ -199,6 +199,29 @@ export function loadBundledVersionWindows(): VersionWindows {
   return bundled;
 }
 
+/**
+ * Windows to enforce, or null when none are enforced.
+ *
+ * The bundled document is enforced only when it parses, matches its pinned
+ * digest and carries a valid signature by the production kid from the
+ * bundled issuer history. Any other state (test-signed, unsigned, tampered,
+ * unreadable) turns window enforcement off: no signed-time or log-time
+ * window check runs, so no receipt gets a new refusal from an unproven
+ * document. A non-production signature is accepted only through the
+ * library-only test seam (`fromTestSnapshot`), never from the bundled file.
+ */
+export function enforceableVersionWindows(bundledOrTest: VersionWindows | null | undefined, fromTestSnapshot = false): VersionWindows | null {
+  if (!bundledOrTest || !bundledOrTest.ok) return null;
+  if (fromTestSnapshot) return bundledOrTest;
+  return bundledOrTest.signature === 'production' ? bundledOrTest : null;
+}
+
+/** The windows this build enforces: the test snapshot's, else the bundled ones when production-signed. */
+export function activeVersionWindows(testSnapshotWindows?: VersionWindows | null): VersionWindows | null {
+  if (testSnapshotWindows) return enforceableVersionWindows(testSnapshotWindows, true);
+  return enforceableVersionWindows(loadBundledVersionWindows());
+}
+
 /** Window id for a signed payload version, or null when it has none. */
 export function windowIdForPayloadVersion(version: number, issuerRoot = false): string | null {
   if (!Number.isInteger(version) || version < 1) return null;

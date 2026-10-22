@@ -47,7 +47,7 @@ import {
   type VerifyVerdict,
 } from './verdict.js';
 import { verifyTreeHeadTrust } from './anchor-trust.js';
-import { loadBundledVersionWindows } from './version-windows.js';
+import { activeVersionWindows } from './version-windows.js';
 import { logTimeReason } from './log-time.js';
 import { carryTestSnapshot, readTestSnapshot } from './internal/test-seam.js';
 import {
@@ -816,9 +816,12 @@ async function logTimeCheck(
   trustedKids: readonly string[],
   options: CheckReceiptOptions,
 ): Promise<'log_time_after_window' | 'log_time_unavailable' | null> {
+  // No production-signed windows bundled: L5 does not run.
+  const windows = activeVersionWindows(readTestSnapshot(options)?.versionWindows);
+  if (!windows) return null;
   return logTimeReason({
     claims: (result.issuer_signature.payload || {}) as Record<string, unknown>,
-    windows: readTestSnapshot(options)?.versionWindows ?? loadBundledVersionWindows(),
+    windows,
     origin: verified.origin,
     leafIndex: verified.leafIndex,
     verifiedHead: verified.head as never,
