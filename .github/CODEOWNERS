@@ -11,6 +11,10 @@
 # Frozen version registry pin and its test.
 /packages/verify/test/fixtures/version-registry.frozen.json @XFuel-Lab
 /packages/verify/test/version-registry.test.mjs @XFuel-Lab
-# The workflow that runs the gate, and this file.
-/.github/workflows/test.yml @XFuel-Lab
+# Verifier source and package manifest: a change here moves corpus results.
+/packages/verify/src/** @XFuel-Lab
+/packages/verify/package.json @XFuel-Lab
+/packages/verify/test/fixtures/** @XFuel-Lab
+# Workflows (the gate runs in test.yml), and this file.
+/.github/workflows/** @XFuel-Lab
 /.github/CODEOWNERS @XFuel-Lab

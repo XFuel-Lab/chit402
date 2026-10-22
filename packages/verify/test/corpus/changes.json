@@ -119,6 +119,7 @@
     },
     "overall": "partial"
    },
+   "input_digest": "5efe16c049613de2b1f8add5bf6cdb7a4b6274ae6a5aba9ca3c362f659e4b9dd",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "The case copied the production issuer-history pin into claims signed by the test key, so the library path stopped at issuer_history_pin_mismatch before the version rule. The pin now names the covering test history. The v6 window is not enforced yet (PR3 target), so the case reaches the log read."
@@ -141,6 +142,7 @@
     },
     "overall": "partial"
    },
+   "input_digest": "f28229c1bb2b6c3ed3065af7d32714f9c45f505595eb0a711c77d31a770cf1fa",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "Same pin fix as the v6 case. The control now passes every check before the log, which is what a control is for."
@@ -163,6 +165,7 @@
     },
     "overall": "partial"
    },
+   "input_digest": "e0ff8daf09aef4aeb17b7921e0ed4efaf2bf9a68fc9699001827bb9a1faf1f7b",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "The v4/v5 claims carried payment.payee, which no v4/v5 receipt signed, so they were rejected as unsupported_version instead of being read as v4/v5. Without it they are read as v4 and reach the log read: the L1 allowlist is not enforced yet (PR3 target)."
@@ -185,6 +188,7 @@
     },
     "overall": "partial"
    },
+   "input_digest": "ad284fc482d869565ccc3966655009de1425d991776fb389a560d76694f14c86",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "Same claims fix as the v4 case."
@@ -206,6 +210,7 @@
      "shape": "pass"
     }
    },
+   "input_digest": "e0ff8daf09aef4aeb17b7921e0ed4efaf2bf9a68fc9699001827bb9a1faf1f7b",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "Same claims fix. The CLI now reads the claims as v4 and rejects the test key (key untrusted) instead of stopping at unsupported_version."
@@ -227,9 +232,70 @@
      "shape": "pass"
     }
    },
+   "input_digest": "ad284fc482d869565ccc3966655009de1425d991776fb389a560d76694f14c86",
    "pr": "verify: corpus baseline and gate coverage checks",
    "spec": "§5.1 golden corpus (case construction)",
    "note": "Same claims fix as the v4 CLI case."
+  },
+  {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
   }
  ]
 }
