@@ -13,7 +13,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gate, BASELINE, CHANGES, REGISTRY_PIN } from '../scripts/corpus-gate.mjs';
+import { createHash } from 'node:crypto';
+import { gate, BASELINE, CHANGES, REGISTRY_PIN, baseOutcomes, docForm, exportInputs, inputDigests, inputsProblems, stable } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -110,29 +111,114 @@ test('corpus_fix on a signature row 1 -> 0 is rejected, even with a changed inpu
   assert.ok(problems.some((p) => p.includes(`${SIG}: corpus_fix may not move a case to exit 0`)), problems.join('; '));
 });
 
-test('corpus_fix with a changed input digest is accepted, unless it moves to exit 0', () => {
+test('corpus_fix with a changed input digest is accepted only when `to` is the merge-base verifier outcome, and never exit 0', () => {
   const was = { ...baseline[SYN], exit: 1, result: 'invalid', reason: 'unsupported_version', overall: 'failed' };
   const to = { ...baseline[SYN], exit: 2, result: 'could_not_check', reason: 'log_unreachable', overall: 'partial' };
   const base = { ...baseline, [SYN]: was };
-  const ok = run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: withEntries(entry(SYN, to, { kind: 'corpus_fix', note: 'x', input_digest: D_HEAD })), ...digests(synId, D_BASE, D_HEAD) });
+  const fix = (row) => withEntries(entry(SYN, row, { kind: 'corpus_fix', note: 'x', input_digest: D_HEAD }));
+  const ok = run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: fix(to), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: clone(to) } });
   assert.deepEqual(ok, []);
+  // Merge-base verifier gives something else on the head input.
+  const other = run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: fix(to), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: was } });
+  assert.ok(other.some((p) => p.includes('is not what the merge-base verifier gives on the head input')), other.join('; '));
+  // No merge-base outcome at all, or none for this key.
+  assert.ok(run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: fix(to), ...digests(synId, D_BASE, D_HEAD) }).some((p) => p.includes('needs the merge-base verifier outcomes')));
+  assert.ok(run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: fix(to), ...digests(synId, D_BASE, D_HEAD), baseOnHead: {} }).some((p) => p.includes('has no outcome for this case and path')));
+  // Exit 0 stays capped even when the merge-base verifier agrees.
   const zero = { ...to, exit: 0, result: 'verified', reason: null };
-  assert.ok(run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: zero }, headChanges: withEntries(entry(SYN, zero, { kind: 'corpus_fix', note: 'x', input_digest: D_HEAD })), ...digests(synId, D_BASE, D_HEAD) }).some((p) => p.includes('may not move a case to exit 0')));
+  assert.ok(run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: zero }, headChanges: fix(zero), ...digests(synId, D_BASE, D_HEAD), baseOnHead: { [SYN]: zero } }).some((p) => p.includes('may not move a case to exit 0')));
   // The same loosening as a plain tighten entry is still rejected.
   assert.ok(run({ baseBaseline: base, headBaseline: { ...baseline, [SYN]: to }, headChanges: withEntries(entry(SYN, to)) }).some((p) => p.includes('more permissive than the merge base')));
 });
 
-test('the corpus_fix entries in changes.json carry their head input digest', async () => {
-  const { inputDigests } = await import('./corpus/input-digests.mjs');
-  const head = await inputDigests(pkg);
+// ---------- case inputs: export, digests, merge-base runs ----------
+
+const headInputs = await exportInputs(pkg);
+const withCase = (inputs, id, edit) => ({ ...inputs, cases: inputs.cases.map((c) => (c.id === id ? edit(clone(c)) : c)) });
+
+test('the corpus_fix entries in changes.json carry their head input digest', () => {
+  const head = inputDigests(headInputs);
   const fixes = changes.changes.filter((c) => c.kind === 'corpus_fix');
   assert.ok(fixes.length > 0);
   for (const c of fixes) assert.equal(c.input_digest, head[c.case], `${c.case}|${c.path}`);
 });
 
 test('input digests do not depend on the run', async () => {
-  const { inputDigests } = await import('./corpus/input-digests.mjs');
-  assert.deepEqual(await inputDigests(pkg), await inputDigests(pkg));
+  assert.deepEqual(inputDigests(await exportInputs(pkg)), inputDigests(headInputs));
+});
+
+test('the history marker is the issuer history document hash', async () => {
+  const { issuerHistoryDocumentHash } = await import('../dist/issuer-history.js');
+  const c = headInputs.cases.find((x) => x.id === 'control-test-key-v10');
+  const h = JSON.parse(c.history);
+  assert.equal(createHash('sha256').update(stable(h)).digest('hex'), issuerHistoryDocumentHash(h));
+  assert.ok(JSON.stringify(docForm(c.doc, c.history)).includes('<covering test history>'));
+});
+
+test('the issuer history is digested: a key validity window, kid, version or seq change moves the digests', () => {
+  const before = inputDigests(headInputs);
+  const edits = {
+    not_after: (h) => { h.entries[0].not_after = '2020-06-01T00:00:00.000Z'; },
+    not_before: (h) => { h.entries[0].not_before = '2019-01-01T00:00:00.000Z'; },
+    status: (h) => { h.entries[0].status = 'revoked'; h.entries[0].revoked_at = '2021-01-01T00:00:00.000Z'; },
+    kid: (h) => { h.entries[0].kid = 'other-kid'; },
+    version: (h) => { h.version = 2; },
+    seq: (h) => { h.seq = 9; },
+  };
+  for (const [name, edit] of Object.entries(edits)) {
+    const changed = { ...headInputs, cases: headInputs.cases.map((c) => { const h = JSON.parse(c.history); edit(h); return { ...c, history: JSON.stringify(h) }; }) };
+    const after = inputDigests(changed);
+    for (const id of Object.keys(before)) assert.notEqual(after[id], before[id], `${name}: ${id}`);
+  }
+  // Key bytes alone do not: each export uses a fresh throwaway key, and
+  // 'input digests do not depend on the run' holds.
+});
+
+test('the window change from the review moves the digest and the merge-base outcome of control-test-key-v10', async () => {
+  const id = 'control-test-key-v10';
+  const changed = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries[0].not_after = '2020-06-01T00:00:00.000Z'; c.history = JSON.stringify(h); return c; });
+  assert.notEqual(inputDigests(changed)[id], inputDigests(headInputs)[id]);
+  const o = await baseOutcomes(pkg, changed, [`${id}|library`]);
+  assert.equal(o[`${id}|library`].exit, 1, JSON.stringify(o));
+});
+
+test('head inputs are checked as data', () => {
+  assert.deepEqual(inputsProblems(headInputs), []);
+  assert.ok(inputsProblems({ format: 'x', cases: [] }).length);
+  assert.ok(inputsProblems({ ...headInputs, cases: [{ id: '../x', paths: [], doc: '', history: '', jwks: '' }] }).length);
+  assert.ok(inputsProblems({ ...headInputs, cases: [headInputs.cases[0], headInputs.cases[0]] }).some((p) => p.includes('duplicate')));
+});
+
+// Protocol Review's case: the head verifier is changed to accept an unknown
+// v13 receipt as v10; the v13 case gets a no-op `corpus_note`, the baseline
+// is re-recorded with the looser rows, and two corpus_fix entries carry the
+// new head digest. The gate never runs the head verifier: the merge-base
+// verifier (this tree here) on the edited input still says
+// unsupported_version, so both entries are rejected although the digest
+// rule alone is met.
+const V13 = 'version-v13-unknown';
+const attackInputs = withCase(headInputs, V13, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'fixture tidy'; c.doc = JSON.stringify(d); return c; });
+const attackRows = {
+  [`${V13}|library`]: { exit: 2, result: 'could_not_check', reason: 'log_unreachable', checks: { signature: 'pass', key_window: 'pass', payment_binding: 'could_not_check', log_inclusion: 'could_not_check', anchor: 'could_not_check', shape: 'pass' }, overall: 'partial' },
+  [`${V13}|cli`]: { exit: 1, result: 'invalid', reason: 'key untrusted', checks: { signature: 'fail', key_window: 'could_not_check', payment_binding: 'could_not_check', log_inclusion: 'could_not_check', anchor: 'could_not_check', shape: 'pass' } },
+};
+const attackEntries = (digest) => Object.entries(attackRows).map(([k, to]) => entry(k, to, { kind: 'corpus_fix', note: 'fixture tidy', input_digest: digest }));
+
+test('review case: a no-op input edit plus a looser verifier is rejected by the merge-base run', async () => {
+  const headDigests = inputDigests(attackInputs);
+  const baseDigests = inputDigests(headInputs);
+  assert.notEqual(headDigests[V13], baseDigests[V13], 'the digest rule alone is met');
+  const keys = Object.keys(attackRows);
+  const baseOnHead = await baseOutcomes(pkg, attackInputs, keys);
+  assert.equal(baseOnHead[`${V13}|library`].reason, 'unsupported_version');
+  const problems = run({ headBaseline: { ...baseline, ...attackRows }, headChanges: withEntries(...attackEntries(headDigests[V13])), baseDigests, headDigests, baseOnHead });
+  for (const k of keys) assert.ok(problems.some((p) => p.startsWith(`${k}: corpus_fix: \`to\` is not what the merge-base verifier gives`)), `${k}: ${problems.join('; ')}`);
+  assert.ok(!problems.some((p) => /input digest|input_digest|unchanged from the merge base/.test(p)), problems.join('; '));
+});
+
+test('the merge-base runner leaves out a path it does not have', async () => {
+  const o = await baseOutcomes(pkg, headInputs, ['control-test-key-v10|nope', 'no-such-case|cli']);
+  assert.deepEqual(o, {});
 });
 
 test('removing a real receipt case fails; changes.json is append-only', () => {
@@ -206,36 +292,60 @@ test('end to end: the mutant baseline edit fails the gate script, a clean head p
   assert.match(bad.stderr, /more permissive than the merge base: exit 1 -> 0/);
 });
 
-test('end to end: a corpus_fix needs digest files whose case input changed', { skip: !gitOk }, () => {
-  const to = { ...baseline[SYN], exit: 2, result: 'could_not_check', reason: 'log_unreachable', overall: 'partial' };
+function writeInputs(root, name, inputs) {
+  const f = join(root, name);
+  writeFileSync(f, JSON.stringify(inputs));
+  return f;
+}
+
+test('end to end: a corpus_fix passes only with merge-base runs on a changed head input', { skip: !gitOk }, () => {
+  const to = clone(baseline[SYN]);
   const setRow = (root, row) => {
     const p = join(root, BASELINE);
     const b = JSON.parse(readFileSync(p, 'utf8'));
     b[SYN] = row;
     writeFileSync(p, JSON.stringify(b, null, 1));
   };
+  const tidy = withCase(headInputs, synId, (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'input changed'; c.doc = JSON.stringify(d); return c; });
+  const digest = inputDigests(tidy)[synId];
   const r = repoWith((root) => {
     setRow(root, to);
     const cp = join(root, CHANGES);
     const c = JSON.parse(readFileSync(cp, 'utf8'));
-    c.changes.push(entry(SYN, to, { kind: 'corpus_fix', note: 'x', input_digest: D_HEAD }));
+    c.changes.push(entry(SYN, to, { kind: 'corpus_fix', note: 'x', input_digest: digest }));
     writeFileSync(cp, JSON.stringify(c, null, 1));
   }, (root) => setRow(root, { ...to, exit: 1, result: 'invalid', reason: 'unsupported_version', overall: 'failed' }));
-  const files = (base, head) => {
-    const b = join(r.root, 'base-digests.json');
-    const h = join(r.root, 'head-digests.json');
-    writeFileSync(b, JSON.stringify({ [synId]: base }));
-    writeFileSync(h, JSON.stringify({ [synId]: head }));
-    return ['--base-digests', b, '--head-digests', h];
-  };
   const none = gateCli(r.root, r.base);
   assert.equal(none.status, 1);
   assert.match(none.stderr, /needs the merge-base and head input digests/);
-  const same = gateCli(r.root, r.base, files(D_HEAD, D_HEAD));
+  // Head input unchanged from the merge base: rejected.
+  const same = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'same.json', headInputs)]);
   assert.equal(same.status, 1);
-  assert.match(same.stderr, /unchanged from the merge base/);
-  const changed = gateCli(r.root, r.base, files(D_BASE, D_HEAD));
+  assert.match(same.stderr, /input_digest is not the head digest|unchanged from the merge base/);
+  // Changed input, and `to` is what the merge-base verifier gives on it: ok.
+  const changed = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'tidy.json', tidy)]);
   assert.equal(changed.status, 0, changed.stderr);
+  // Malformed head inputs fail closed.
+  const bad = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'bad.json', { format: 'x' })]);
+  assert.equal(bad.status, 1);
+});
+
+test('end to end: the review case fails the gate script', { skip: !gitOk }, () => {
+  const digest = inputDigests(attackInputs)[V13];
+  const r = repoWith((root) => {
+    const p = join(root, BASELINE);
+    const b = JSON.parse(readFileSync(p, 'utf8'));
+    Object.assign(b, attackRows);
+    writeFileSync(p, JSON.stringify(b, null, 1));
+    const cp = join(root, CHANGES);
+    const c = JSON.parse(readFileSync(cp, 'utf8'));
+    c.changes.push(...attackEntries(digest));
+    writeFileSync(cp, JSON.stringify(c, null, 1));
+  });
+  const res = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'attack.json', attackInputs)]);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /version-v13-unknown\|library: corpus_fix: `to` is not what the merge-base verifier gives on the head input/);
+  assert.match(res.stderr, /version-v13-unknown\|cli: corpus_fix: `to` is not what the merge-base verifier gives on the head input/);
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {

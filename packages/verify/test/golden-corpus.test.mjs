@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { corpusDir, compare, consistency, pool, runPathAsync } from './corpus/lib.mjs';
 import { buildSynthetic } from './corpus/synthetic.mjs';
+import { GET_HOSTS } from './corpus/tape-hosts.mjs';
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 const manifest = readJson(join(corpusDir, 'manifest.json'));
@@ -156,7 +157,8 @@ test('local tier (holder documents, kept off the repo)', { skip: !privateDir || 
 });
 
 // Recording is GET-only, so a chain read can only ever be stored as an
-// error entry. A tape holding an RPC answer was not made by the recorder.
+// error entry, and a GET only goes to an allowed https host. A tape holding
+// an RPC answer or another host was not made by the recorder.
 function tapeProblems(file) {
   const { entries } = readJson(file);
   const problems = [];
@@ -166,12 +168,16 @@ function tapeProblems(file) {
       if (typeof value?.error !== 'string' || fields.some((f) => f !== 'error')) problems.push(`entry ${i}: RPC entry is not an error entry`);
     } else if (!key.startsWith('GET ')) {
       problems.push(`entry ${i}: neither GET nor RPC`);
+    } else {
+      let u = null;
+      try { u = new URL(key.slice(4)); } catch { /* reported below */ }
+      if (!u || u.protocol !== 'https:' || !GET_HOSTS.has(u.hostname) || u.username || u.password || u.port) problems.push(`entry ${i}: GET entry is not an https URL on an allowed host`);
     }
   });
   return problems;
 }
 
-test('every RPC entry on the tapes is an error entry', () => {
+test('every RPC entry on the tapes is an error entry, every GET is on an allowed host', () => {
   const tapes = [join(corpusDir, 'tapes', 'public.json')];
   if (privateDir && existsSync(join(privateDir, 'tape.json'))) tapes.push(join(privateDir, 'tape.json'));
   for (const file of tapes) {
@@ -182,11 +188,27 @@ test('every RPC entry on the tapes is an error entry', () => {
   assert.ok(rpc.length > 0, 'the public tape has RPC error entries to check');
 });
 
-test('the tape check rejects an RPC answer', () => {
+test('the tape check rejects an RPC answer and a GET off the allowed hosts', () => {
   const dir = mkdtempSync(join(tmpdir(), 'tape-check-'));
   const f = join(dir, 'tape.json');
-  writeFileSync(f, JSON.stringify({ entries: { 'RPC h getTransaction []': { status: 200, body: '{"result":{}}' }, 'RPC h getSlot []': { error: 'x', result: 1 }, 'RPC h getBlock []': { error: 'chain read not recorded' } } }));
-  assert.deepEqual(tapeProblems(f), ['entry 0: RPC entry is not an error entry', 'entry 1: RPC entry is not an error entry']);
+  writeFileSync(f, JSON.stringify({ entries: {
+    'RPC h getTransaction []': { status: 200, body: '{"result":{}}' },
+    'RPC h getSlot []': { error: 'x', result: 1 },
+    'RPC h getBlock []': { error: 'chain read not recorded' },
+    'GET https://api.chit402.com/receipt/x': { status: 200, body: '{}' },
+    'GET https://rpc.example.org/x': { status: 200, body: '{}' },
+    'GET http://api.chit402.com/x': { status: 200, body: '{}' },
+    'GET https://api.chit402.com:8443/x': { status: 200, body: '{}' },
+    'POST https://api.chit402.com/x': { status: 200, body: '{}' },
+  } }));
+  assert.deepEqual(tapeProblems(f), [
+    'entry 0: RPC entry is not an error entry',
+    'entry 1: RPC entry is not an error entry',
+    'entry 4: GET entry is not an https URL on an allowed host',
+    'entry 5: GET entry is not an https URL on an allowed host',
+    'entry 6: GET entry is not an https URL on an allowed host',
+    'entry 7: neither GET nor RPC',
+  ]);
 });
 
 test('every pinned outcome is well formed', () => {

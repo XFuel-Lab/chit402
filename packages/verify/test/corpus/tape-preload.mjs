@@ -15,15 +15,12 @@
  * case sees one consistent snapshot of the log.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+import { GET_HOSTS } from './tape-hosts.mjs';
 
 const MODE = process.env.CHIT_CORPUS_MODE || 'replay';
 const TAPE = process.env.CHIT_CORPUS_TAPE || '';
 const realFetch = globalThis.fetch.bind(globalThis);
 
-const GET_HOSTS = new Set([
-  'api.chit402.com', 'chit402.com', 'www.chit402.com',
-  'api.xfuel.app', 'xfuel.app', 'www.xfuel.app',
-]);
 
 // Tests of the recorder point it at a local server instead of the public
 // hosts: CHIT_CORPUS_RECORD_LOCAL_PORT allows http://127.0.0.1:<port> only.

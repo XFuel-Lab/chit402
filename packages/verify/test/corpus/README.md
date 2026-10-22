@@ -49,8 +49,19 @@ gate start by one version fails the corpus.
 
 ## Baseline gate (CI)
 
-`scripts/corpus-gate.mjs` runs in the `Verify package (Linux)` job before
-the tests, against the merge base, using the merge base's copy of the gate.
+`scripts/corpus-gate.mjs` runs in its own job, `Corpus baseline gate`, and
+`Verify package (Linux)` needs it and fails unless it passed. The gate job
+runs no code from the change under review:
+
+- `Corpus inputs (head)` (a separate job) builds the head tree and exports
+  its synthetic case inputs as one JSON file (`corpus-gate.mjs export`):
+  the case document, the covering test issuer history and the JWKS of each
+  case. Only that file is passed on.
+- `Corpus baseline gate` checks out the merge base as a worktree, builds
+  only that tree, and runs the merge base's copy of the gate. It reads the
+  head baseline, changes.json and registry pin as data, digests the head
+  inputs itself, and runs the merge-base verifier on them.
+
 It fails when:
 
 - a `baseline.json` entry changed and no `changes.json` entry added in this
@@ -58,25 +69,31 @@ It fails when:
 - a `tighten` entry (the default kind) is not at least as strict as the
   merge-base outcome;
 - a `corpus_fix` entry (a synthetic case that was built wrong) is for a real
-  receipt, has no note, moves a case to exit 0, or does not carry the case's
-  `input_digest`. The digest is the head digest from
-  `test/corpus/input-digests.mjs` and must differ from the merge-base digest,
-  so a corpus_fix only covers a case whose input changed in the same change;
+  receipt, has no note, moves a case to exit 0, does not carry the case's
+  `input_digest` (the head digest, which must differ from the merge-base
+  digest), or its `to` is not exactly the outcome (exit, result, reason,
+  checks, overall) that the merge-base verifier gives on the head input.
+  So a corpus_fix covers only an outcome the input change alone explains;
 - a real receipt case is removed;
 - `changes.json` or `test/fixtures/version-registry.frozen.json` is edited
   other than by appending (an appended registry entry needs a `registry`
   entry in `changes.json`).
 
-So a verifier change plus a baseline edit cannot bless a looser result in
-one PR. Local run (base tree built at <base>, this tree built):
+The input digest covers the case document, the issuer history (every entry
+with kid, validity window, status and custody; version and seq) and the
+JWKS. Public key bytes, signatures and the hashes computed from them are
+left out, since the test key is new on every run.
 
-    node test/corpus/input-digests.mjs <base>/packages/verify > /tmp/base-digests.json
-    node test/corpus/input-digests.mjs . > /tmp/head-digests.json
+Local run (merge-base tree checked out and built at <base>, this tree
+built):
+
+    node scripts/corpus-gate.mjs export . > /tmp/head-inputs.json
     node scripts/corpus-gate.mjs --base origin/main --root ../.. \
-      --base-digests /tmp/base-digests.json --head-digests /tmp/head-digests.json
+      --base-tree <base>/packages/verify --head-inputs /tmp/head-inputs.json
 
 Every RPC entry on a tape (public, and the local tier's when set) must be an
-error entry: the recorder is GET-only.
+error entry, and every GET entry an https URL on an allowed host
+(`tape-hosts.mjs`): the recorder is GET-only.
 
 Synthetic cases carry a `target` from the spec. The PR that reaches it adds
 the `changes.json` entry.
