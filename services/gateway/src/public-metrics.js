@@ -3,6 +3,7 @@
  * Exact volume, revenue, fees, payers, mix, tokens, proofs, COGS, floats,
  * uptime, server name, and fee configuration stay on the house owner route.
  */
+import { deployedCommit } from './gateway-commit.js';
 
 export function receiptVolumeBucket(count) {
   const n = Number(count);
@@ -47,9 +48,12 @@ export function publicHealthBody({
   unanchoredLeaves = 0,
   receiptFailures = 0,
   issuanceCap = null,
+  env = process.env,
 } = {}) {
   const body = {
     status: degraded ? 'degraded' : 'ok',
+    // Full 40-hex sha of the deployed checkout, or null (GATEWAY_COMMIT).
+    commit: deployedCommit(env),
     last_anchored_root: lastAnchoredRoot ?? null,
     last_anchored_tx: lastAnchoredTx ?? null,
     free_tier: 'available',
