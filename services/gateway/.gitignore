@@ -56,3 +56,11 @@ temp/
 private/
 secrets/
 
+
+# Runtime state written by the running gateway: the x402 challenge store
+# (default path data/x402-challenges.json), its per-operation lock file,
+# stale lock files it renames aside, and its temp files. Never commit these.
+/data/x402-challenges.json
+/data/x402-challenges.json.lock
+/data/x402-challenges.json.lock.dead.*
+/data/x402-challenges.json.*.tmp
