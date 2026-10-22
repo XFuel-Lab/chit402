@@ -139,16 +139,32 @@ It fails when:
   whether that key's RFC 7638 thumbprint is the kid; or `invalid` with the
   raw signature bytes. Each embedded `issuer_jwk` is recorded as `absent`,
   `no_key` (for example x and y dropped), `trusted:<role>` (the same key as
-  the trusted one) or `other:...`. Throwaway test key bytes change on
-  every run, so roles are kept rather than key bytes; any byte change to a
+  the trusted one) or `other:...`. For every carried key (each issuer
+  history entry, each JWKS key, and both embedded `issuer_jwk`) and each
+  signature, the digest also records the key's role, the kid it is filed
+  under, whether it verifies the signature, and which roles hold the same
+  key bytes (RFC 7638 thumbprint classes). So a JWKS or history key
+  swapped under a kid, a second key under a kid, or reordered keys move the
+  digest, whichever key the verifier reads. Throwaway test key bytes
+  change on every run, so roles and byte classes are kept rather than key
+  bytes; any byte change to a
   signed part or a signature, or a re-sign under any key other than the
   trusted one for the kid, moves the digest. An input is never changed under a
   pinned path, whatever the outcome: a changed input is a new case with
   new pin entries. In practice this means no current synthetic case takes
   a `corpus_fix` or `corpus_fix_reason`;
 - `declarations.frozen.json` at the merge base is not valid JSON, or is
-  missing while the merge-base `corpus-gate.mjs` reads it. Only the change
-  that adds the pin (main's gate does not know it yet) runs without one;
+  missing while it has existed on the merge base's history (or the
+  merge-base `corpus-gate.mjs` reads it). Only the change that adds the
+  first pin, to a main that never had one, runs without it. A head
+  baseline, changes.json or pin that is not valid JSON fails with a
+  message;
+- a pinned baseline row moves (a changed or removed row, or an added
+  changes.json entry for it, `tighten` included) in a change that also
+  edits a case input builder: `test/corpus/synthetic.mjs`,
+  `test/history-file.mjs` or anything under `test/fixtures/`. A builder
+  change lands alone (or as a reviewed re-pin, which moves no row), and a
+  verifier change that tightens a row lands without builder edits;
 - a case path of the head export is not classified by the head pin. Every
   synthetic case path is in exactly one list: declared, deferred or
   `reason_allowed`. A new case appends a declaration for each path (or a
