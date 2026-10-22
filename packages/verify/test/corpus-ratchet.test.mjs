@@ -43,8 +43,12 @@ test('each PR3 tighten `to` is in baseline.json and baseline-chain.json', () => 
   assert.deepEqual(tightened.map((c) => `${c.case}|${c.path}`).sort(), Object.keys(OLD).sort());
   for (const c of tightened) {
     const key = `${c.case}|${c.path}`;
-    assert.deepEqual(baseline[key], c.to, key);
+    // #629 later recorded the pinned cause in the library rows; the rest of the row is the PR3 `to`.
+    const { cause: _cause, ...row } = baseline[key];
+    assert.deepEqual(row, c.to, key);
     assert.deepEqual(chainBaseline[key], c.to, `chain ${key}`);
+    const latest = [...changes.changes].reverse().find((x) => x.case === c.case && x.path === c.path);
+    assert.deepEqual(latest.to, baseline[key], `latest entry for ${key}`);
   }
 });
 

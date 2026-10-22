@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinProblems, pinDigestProblems, appendedPinEntries, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, declarationRowProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -142,11 +142,15 @@ test('corpus_fix with a changed input digest is accepted only when `to` is the m
 const headInputs = await exportInputs(pkg);
 const withCase = (inputs, id, edit) => ({ ...inputs, cases: inputs.cases.map((c) => (c.id === id ? edit(clone(c)) : c)) });
 
-test('the corpus_fix entries in changes.json carry their head input digest', () => {
-  const head = inputDigests(headInputs);
+test('the corpus_fix entries in changes.json carry their head input digest (the form they were recorded with)', () => {
+  // Recorded before the digest bound signature state (#629); changes.json is append-only.
+  const byId = Object.fromEntries(headInputs.cases.map((c) => [c.id, c]));
   const fixes = changes.changes.filter((c) => c.kind === 'corpus_fix');
   assert.ok(fixes.length > 0);
-  for (const c of fixes) assert.equal(c.input_digest, head[c.case], `${c.case}|${c.path}`);
+  for (const c of fixes) {
+    assert.equal(c.input_digest, caseDigest(byId[c.case], { signatures: false }), `${c.case}|${c.path}`);
+    assert.notEqual(c.input_digest, caseDigest(byId[c.case]), `${c.case}|${c.path}`);
+  }
 });
 
 test('input digests do not depend on the run', async () => {
@@ -587,7 +591,9 @@ test('pin: a legitimate append passes; an edit, a removal or a reason_allowed en
   const enforced = withExpect(headInputs, U, { library: 'version_window_closed' });
   const declaredU = clone(pin);
   declaredU.declarations.push({ case: U, path: 'library', expect: 'version_window_closed', input_digest: inputDigests(headInputs)[U] });
-  assert.deepEqual(run({ ...pinned(enforced), headPin: declaredU, baseOnHead: { [`${U}|library`]: { exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed' } } }), []);
+  // The verifier change already tightened the deferred row (exit 2 -> 1) and recorded its cause.
+  const afterA = { ...baseline, [`${U}|library`]: { ...baseline[`${U}|library`], exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed' } };
+  assert.deepEqual(run({ ...pinned(enforced), baseBaseline: afterA, headBaseline: afterA, headPin: declaredU, baseOnHead: { [`${U}|library`]: { exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed' } } }), []);
   // Declared twice, edited, removed, deleted.
   const twice = clone(declaredU);
   twice.declarations.push({ case: U, path: 'library', expect: 'log_unreachable', input_digest: inputDigests(headInputs)[U] });
@@ -827,7 +833,10 @@ test('a deferred path is declared once the merged verifier reaches its rule: the
   p1.declarations.push(withDigest({ case: U6, path: 'library', expect: 'version_window_closed' }));
   const pr = withExpect(headInputs, U6, { library: 'version_window_closed' });
   const merged = { ...Object.fromEntries([[U6LIB, { exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed' }]]) };
-  assert.deepEqual(run({ ...pinned(pr), headPin: p1, baseOnHead: merged }), []);
+  const afterA = { ...baseline, [U6LIB]: { ...baseline[U6LIB], exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed' } };
+  assert.deepEqual(run({ ...pinned(pr), baseBaseline: afterA, headBaseline: afterA, headPin: p1, baseOnHead: merged }), []);
+  // PR-A itself: a src change tightening the deferred row 2 -> 1 with a new reason and cause passes.
+  assert.deepEqual(run({ ...pinned(), headBaseline: afterA, headChanges: withEntries(entry(U6LIB, afterA[U6LIB], { kind: 'tighten' })), changedFiles: [SRC] }), []);
   // Before PR-A, the same append is refused.
   assert.ok(has(await appendRun(pr, p1), BOUND(U6LIB, 'version_window_closed', 'log_unreachable')));
   // No merge-base outcomes: fails closed.
@@ -957,6 +966,128 @@ test('unclassified case path: a new case without a pin entry is rejected; a new 
   assert.ok(has(await appendRun(wrong, wrongPin), BOUND(`${NEW}|cli`, 'version_mismatch', 'unsupported_version')));
 });
 
+// ---------- Protocol Review re-check of 1d267f9d ----------
+// Signature-blind digest + same-exit tighten (DG2t), a src change moving a
+// declared reason at the same exit (T1, T2lib), and golden-corpus edits.
+
+const GOLDEN_FILE = 'packages/verify/test/golden-corpus.test.mjs';
+const flipChar = (t) => (t[0] === 'A' ? 'B' : 'A') + t.slice(1);
+const flipJws = (jws) => { const [h, p, sg] = jws.split('.'); return `${h}.${p}.${flipChar(sg)}`; };
+const flipDocSig = (inputs, id) => withCase(inputs, id, (c) => {
+  const d = JSON.parse(c.doc);
+  if (d.issuer_signature.jws) d.issuer_signature.jws = flipJws(d.issuer_signature.jws);
+  else d.issuer_signature.value = flipChar(d.issuer_signature.value);
+  c.doc = JSON.stringify(d);
+  return c;
+});
+const flipHistorySig = (inputs, id) => withCase(inputs, id, (c) => { const h = JSON.parse(c.history); h.issuer_signature.jws = flipJws(h.issuer_signature.jws); c.history = JSON.stringify(h); return c; });
+
+test('signature state: every head case signature verifies, and is part of the digest', () => {
+  for (const c of headInputs.cases) {
+    const f = signatureForm(c);
+    assert.equal(f.history, 'valid', c.id);
+    assert.equal(f.doc, c.id === 'control-unsigned-document' ? 'absent' : 'valid', c.id);
+  }
+  // A flipped byte in the document signature (JWS or detached) or the history signature moves the digest.
+  for (const id of ['gate10-pv10-no-history-pin', 'label-v10-outer-stamp-6', 'gate8-detached-pv8', 'version-l1-detached-not-allowlisted']) {
+    const flipped = flipDocSig(headInputs, id);
+    assert.match(signatureForm(flipped.cases.find((c) => c.id === id)).doc, /^invalid:[0-9a-f]{64}$/, id);
+    assert.notEqual(inputDigests(flipped)[id], D[id], id);
+    // The pre-#629 form ignored it.
+    assert.equal(caseDigest(flipped.cases.find((c) => c.id === id), { signatures: false }), caseDigest(headInputs.cases.find((c) => c.id === id), { signatures: false }), id);
+  }
+  const h = flipHistorySig(headInputs, 'control-test-key-v10');
+  assert.notEqual(inputDigests(h)['control-test-key-v10'], D['control-test-key-v10']);
+});
+
+test('DG2t: a signature flip on gate10-pv10 with a tighten row and a golden-corpus edit is rejected', async () => {
+  const id = 'gate10-pv10-no-history-pin';
+  const key = `${id}|library`;
+  const flipped = flipDocSig(headInputs, id);
+  const o = await baseOutcomes(pkg, flipped, [key]);
+  // On the merge-base verifier the case no longer reaches the gate-10 rule.
+  assert.notEqual(String(o[key].cause ?? o[key].reason), declaredValue(key));
+  assert.equal(o[key].exit, baseline[key].exit);
+  const row = { ...rowOf(o[key]), cause: o[key].cause ?? null };
+  const files = [GOLDEN_FILE, 'packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/corpus/baseline.json', 'packages/verify/test/corpus/changes.json'];
+  const problems = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), ...pinned(flipped), changedFiles: files });
+  assert.ok(has(problems, `${key}: the head input digest differs`), problems.join('; '));
+  assert.ok(has(problems, `${key}: baseline cause ${JSON.stringify(row.cause)} is not the declared ${JSON.stringify(declaredValue(key))}`), problems.join('; '));
+  assert.ok(has(problems, `${key}: the cause of a declared path may not change`), problems.join('; '));
+  assert.ok(has(problems, `${key}: a pinned baseline row may not change in the same change as test/golden-corpus.test.mjs`), problems.join('; '));
+  // Each rule alone: the flip without a row change (digest), the row change without the flip (cause, reason).
+  assert.ok(has(run({ ...pinned(flipped) }), `${key}: the head input digest differs`));
+  const rowOnly = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), ...pinned() });
+  assert.ok(has(rowOnly, `${key}: the cause of a declared path may not change`), rowOnly.join('; '));
+});
+
+test('T1: a src change moving the declared label-v10 cli reason at the same exit is rejected, with or without a golden edit', () => {
+  const key = 'label-v10-outer-stamp-6|cli';
+  const row = { ...baseline[key], reason: 'key untrusted' };
+  assert.equal(row.exit, baseline[key].exit);
+  for (const files of [[SRC], [SRC, GOLDEN_FILE]]) {
+    const problems = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), ...pinned(), changedFiles: files });
+    assert.ok(has(problems, `${key}: baseline reason "key untrusted" is not the declared "version_mismatch"`), problems.join('; '));
+    assert.ok(has(problems, `${key}: the reason of a declared path may not change ("version_mismatch" -> "key untrusted")`), problems.join('; '));
+    if (files.includes(GOLDEN_FILE)) assert.ok(has(problems, 'in the same change as test/golden-corpus.test.mjs'), problems.join('; '));
+  }
+});
+
+test('T2lib: a src change moving the declared v13 library reason and cause at the same exit is rejected', () => {
+  const key = `${V13}|library`;
+  for (const row of [{ ...baseline[key], reason: 'invalid' }, { ...baseline[key], reason: 'invalid', cause: 'invalid' }, { ...baseline[key], cause: 'signature_invalid' }]) {
+    const problems = run({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), ...pinned(), changedFiles: [SRC] });
+    assert.ok(problems.some((p) => p.startsWith(`${key}: the reason of a declared path may not change`) || p.startsWith(`${key}: the cause of a declared path may not change`)), problems.join('; '));
+  }
+  // A row without the recorded cause is refused.
+  const { cause: _c, ...noCause } = baseline[key];
+  assert.ok(has(run({ headBaseline: { ...baseline, [key]: noCause }, headChanges: withEntries(entry(key, noCause, { kind: 'tighten' })), ...pinned() }), `${key}: baseline cause null is not the declared "unsupported_version"`));
+  // A tighter check at the same reason and cause still passes.
+  const stricter = { ...baseline[key], checks: { ...baseline[key].checks, shape: 'fail' } };
+  assert.deepEqual(run({ headBaseline: { ...baseline, [key]: stricter }, headChanges: withEntries(entry(key, stricter, { kind: 'tighten' })), ...pinned(), changedFiles: [SRC] }), []);
+});
+
+test('deferred: a reason or cause change needs a strictly tighter exit', () => {
+  const key = U6LIB;
+  const sameExit = { ...baseline[key], reason: 'not_checked', cause: 'not_checked' };
+  const p = run({ headBaseline: { ...baseline, [key]: sameExit }, headChanges: withEntries(entry(key, sameExit, { kind: 'tighten' })), ...pinned(), changedFiles: [SRC] });
+  assert.ok(has(p, `${key}: a deferred path may change reason or cause only with a strictly tighter exit (exit 2 -> 2)`), p.join('; '));
+});
+
+test('(c) a pinned baseline row may not change in a change that touches golden-corpus.test.mjs', () => {
+  const key = `${V13}|cli`;
+  const stricter = { ...baseline[key], checks: { ...baseline[key].checks, shape: 'fail' } };
+  const over = { headBaseline: { ...baseline, [key]: stricter }, headChanges: withEntries(entry(key, stricter, { kind: 'tighten' })), ...pinned() };
+  assert.deepEqual(run({ ...over, changedFiles: [SRC] }), []);
+  for (const g of [GOLDEN_FILE, 'Packages/Verify/Test/Golden-Corpus.test.mjs']) {
+    assert.ok(has(run({ ...over, changedFiles: [SRC, g] }), `${key}: a pinned baseline row may not change in the same change as test/golden-corpus.test.mjs`), g);
+  }
+  // A golden edit with no pinned row change, or with a real receipt row change only, is not this rule.
+  assert.deepEqual(run({ ...pinned(), changedFiles: [GOLDEN_FILE] }), []);
+  // A reason_allowed (pinned) row counts as well.
+  const r = `${U6}|cli`;
+  const rs = { ...baseline[r], checks: { ...baseline[r].checks, shape: 'fail' } };
+  assert.ok(has(run({ headBaseline: { ...baseline, [r]: rs }, headChanges: withEntries(entry(r, rs, { kind: 'tighten' })), ...pinned(), changedFiles: [GOLDEN_FILE] }), `${r}: a pinned baseline row may not change`));
+});
+
+test('baseline rows record the declared decision: cli reason, library and signature cause', () => {
+  for (const e of pin.declarations) {
+    const row = baseline[pinKeyOf(e)];
+    if (e.path === 'cli') assert.equal(row.reason, e.expect, pinKeyOf(e));
+    else assert.equal(row.cause, e.expect, pinKeyOf(e));
+  }
+  assert.deepEqual(declarationRowProblems(baseline, baseline, pinMaps(pin), pinMaps(pin)), []);
+});
+
+test('first pin (no merge-base pin): rows must record the declared decision; the movement rules start once main has the pin', () => {
+  const key = `${V13}|library`;
+  const { cause: _c, ...mainRow } = baseline[key];
+  // main's row has no cause; this PR records it next to a golden edit: fine on the first pin.
+  assert.deepEqual(run({ ...pinned(), basePin: null, baseBaseline: { ...baseline, [key]: mainRow }, headChanges: withEntries(entry(key, baseline[key], { kind: 'tighten' })), changedFiles: [GOLDEN_FILE] }), []);
+  // The head row must still carry the declared cause.
+  assert.ok(has(run({ ...pinned(), basePin: null, headBaseline: { ...baseline, [key]: mainRow }, headChanges: withEntries(entry(key, mainRow, { kind: 'tighten' })) }), `${key}: baseline cause null is not the declared`));
+});
+
 test('removing a real receipt case fails; changes.json is append-only', () => {
   const head = clone(baseline);
   delete head[REAL];
@@ -1063,7 +1194,8 @@ test('end to end: a corpus_fix passes only with merge-base runs on a changed hea
   const changed = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'tidy.json', tidy)]);
   assert.equal(changed.status, 1, changed.stdout);
   const lines = changed.stderr.trim().split('\n');
-  assert.ok(lines.length > 0 && lines.every((l) => l.includes(DIGEST_PIN)), changed.stderr);
+  assert.ok(lines.some((l) => l.includes(DIGEST_PIN)), changed.stderr);
+  assert.ok(lines.every((l) => l.includes(DIGEST_PIN) || l.includes('of a declared path may not change')), changed.stderr);
   // Malformed head inputs fail closed.
   const bad = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'bad.json', { format: 'x' })]);
   assert.equal(bad.status, 1);

@@ -121,8 +121,21 @@ It fails when:
   leaves `deferred` only with a real decision. An added `deferred` entry
   may not name a declared or `reason_allowed` path. The pin is a verifier
   path, so a pin change cannot carry a correction;
+- a declared path's baseline row does not record its declared decision:
+  for cli the `reason` equals the declared value, and library and
+  signature rows carry `cause` equal to it. A changed row of a declared
+  path keeps its `reason` and `cause`, so a tighten or a verifier change
+  cannot re-decide a declared case at the same exit. A deferred path may
+  change `reason` or `cause` only with a strictly tighter exit (2 to 1);
+- a pinned baseline row (declared, deferred or `reason_allowed`) changes in
+  a change that touches `test/golden-corpus.test.mjs`;
 - a head case input digest differs from the `input_digest` pinned for any
-  of its declared or deferred paths. An input is never changed under a
+  of its declared or deferred paths. The digest includes the signature
+  state of the case document and of the issuer history: `valid` under a
+  key the case carries, or `invalid` with the raw signature bytes. Valid
+  signatures by the throwaway test key change on every run, so only their
+  validity is kept; any byte change to a signed part or a signature moves
+  the digest. An input is never changed under a
   pinned path, whatever the outcome: a changed input is a new case with
   new pin entries. In practice this means no current synthetic case takes
   a `corpus_fix` or `corpus_fix_reason`;
@@ -161,8 +174,8 @@ It fails when:
   entry in `changes.json`).
 
 The input digest covers the case document, the issuer history (every entry
-with kid, validity window, status and custody; version and seq) and the
-JWKS. Public key bytes, signatures and the hashes computed from them are
+with kid, validity window, status and custody; version and seq), the
+JWKS and the signature state of the document and the history. Public key bytes, signatures and the hashes computed from them are
 left out, since the test key is new on every run.
 
 Local run (merge-base tree checked out and built at <base>, this tree

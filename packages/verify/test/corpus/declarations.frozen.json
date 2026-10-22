@@ -1,174 +1,174 @@
 {
   "format": "chit402.corpus-declarations.v1",
-  "note": "Append-only (corpus-gate.mjs). Every synthetic case path is in exactly one list. declarations: the exact cause (library, signature) or reason (cli) each case path is decided by, with input_digest, the digest of the case input (the head input must keep it; a changed input is a new case). deferred: declared today but not by a case rule, with input_digest; no corpus correction. synthetic.mjs `expect` must equal declarations plus deferred exactly. An appended declaration or deferred entry must equal what the merge-base verifier gives on the head input, with an existing case input unchanged, and an appended declaration must be a real decision. reason_allowed: frozen; rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
+  "note": "Append-only (corpus-gate.mjs). Every synthetic case path is in exactly one list. declarations: the exact cause (library, signature) or reason (cli) each case path is decided by, with input_digest, the digest of the case input, including the signature state of the document and the issuer history (the head input must keep it; a changed input is a new case). deferred: declared today but not by a case rule, with input_digest; no corpus correction. synthetic.mjs `expect` must equal declarations plus deferred exactly. An appended declaration or deferred entry must equal what the merge-base verifier gives on the head input, with an existing case input unchanged, and an appended declaration must be a real decision. reason_allowed: frozen; rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
   "declarations": [
     {
       "case": "label-v4v5-conflicting-stamps",
       "path": "library",
       "expect": "unsupported_version",
-      "input_digest": "951f110b99cef3af6d7b65baff44edc2d22efde6a28a7040e9b4338056511843"
+      "input_digest": "6e71761987f005d0c731353313e6600198a401a65d18a668a39215c56bdec693"
     },
     {
       "case": "version-v13-unknown",
       "path": "cli",
       "expect": "unsupported_version",
-      "input_digest": "975c0e8cbdf480dd6f19af0374adf80bf4f844841007b3095daa7dee3bd230f9"
+      "input_digest": "7615d02018db0be959ed90e2c02976e93d8e4ac4d20e20dbc24c4b32a22e59cb"
     },
     {
       "case": "version-v13-unknown",
       "path": "library",
       "expect": "unsupported_version",
-      "input_digest": "975c0e8cbdf480dd6f19af0374adf80bf4f844841007b3095daa7dee3bd230f9"
+      "input_digest": "7615d02018db0be959ed90e2c02976e93d8e4ac4d20e20dbc24c4b32a22e59cb"
     },
     {
       "case": "version-v12-shape-no-version",
       "path": "cli",
       "expect": "id_prefix_version_mismatch",
-      "input_digest": "40f418e99141bec0291dc4796cf6dfa29288f290a7d57a9f042ada42305fa677"
+      "input_digest": "1eb00f81747e1bb5839c8345ec61af98973f1dcee6f866daa193adeb6a95bedc"
     },
     {
       "case": "version-v12-shape-no-version",
       "path": "library",
       "expect": "id_prefix_version_mismatch",
-      "input_digest": "40f418e99141bec0291dc4796cf6dfa29288f290a7d57a9f042ada42305fa677"
+      "input_digest": "1eb00f81747e1bb5839c8345ec61af98973f1dcee6f866daa193adeb6a95bedc"
     },
     {
       "case": "version-v12-shape-no-version-plain-id",
       "path": "cli",
       "expect": "unsupported_version",
-      "input_digest": "ff6e432aa75f331f80f68fcb475aa4631cae8872b36d1da9fbda3867451a3ab6"
+      "input_digest": "d26a90b013d8d7808225f456e7eb7d6f8876dee83e46a04f9e5c5b18e9361705"
     },
     {
       "case": "version-v12-shape-no-version-plain-id",
       "path": "library",
       "expect": "unsupported_version",
-      "input_digest": "ff6e432aa75f331f80f68fcb475aa4631cae8872b36d1da9fbda3867451a3ab6"
+      "input_digest": "d26a90b013d8d7808225f456e7eb7d6f8876dee83e46a04f9e5c5b18e9361705"
     },
     {
       "case": "version-unversioned-object-no-stamp",
       "path": "cli",
       "expect": "unsupported_version",
-      "input_digest": "48b688db48e3a12118f85d824f632e1177d1f1f70966fdf2e29b30bf8284ca31"
+      "input_digest": "2f42c255e84637667a8bbd7305d28b1dc28a70db98b7beda728deff4a3f814b6"
     },
     {
       "case": "version-unversioned-object-no-stamp",
       "path": "library",
       "expect": "unsupported_version",
-      "input_digest": "48b688db48e3a12118f85d824f632e1177d1f1f70966fdf2e29b30bf8284ca31"
+      "input_digest": "2f42c255e84637667a8bbd7305d28b1dc28a70db98b7beda728deff4a3f814b6"
     },
     {
       "case": "version-l1-v4-not-allowlisted",
       "path": "cli",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "e8c760c27b87006e0d0561327317c61a9b6f5c0faeb12a491faefed24eb0eba3"
+      "input_digest": "fca93d2068a2507c2ed53bb14bab4806219dbab18cec88a43a72d5ee78edb953"
     },
     {
       "case": "version-l1-v4-not-allowlisted",
       "path": "library",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "e8c760c27b87006e0d0561327317c61a9b6f5c0faeb12a491faefed24eb0eba3"
+      "input_digest": "fca93d2068a2507c2ed53bb14bab4806219dbab18cec88a43a72d5ee78edb953"
     },
     {
       "case": "version-l1-v5-not-allowlisted",
       "path": "cli",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "0bff03866a302b758ff3b11f565fcb86f9e9071b7646ea641f77dc5b31b3d108"
+      "input_digest": "244627b3aacb0bb7aa58e3e9805e675efd3e25280ce36a491e61d25ff12bd32f"
     },
     {
       "case": "version-l1-v5-not-allowlisted",
       "path": "library",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "0bff03866a302b758ff3b11f565fcb86f9e9071b7646ea641f77dc5b31b3d108"
+      "input_digest": "244627b3aacb0bb7aa58e3e9805e675efd3e25280ce36a491e61d25ff12bd32f"
     },
     {
       "case": "version-l1-v4-production-kid",
       "path": "cli",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "9189d77d8ebf018d7264767e8e7c0b3a7e1b63e622e3e49beb1d74972b47c180"
+      "input_digest": "8e3b70e2ca7c748e705b4473614d991b7287c87571850f3668dd455d7cb722d6"
     },
     {
       "case": "version-l1-detached-not-allowlisted",
       "path": "library",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "53aa618821e71a2fd7c6cc52df9293121de6d9ad59436a6c438acadf9f0256e5"
+      "input_digest": "8339018ecc0ea22cdd7ab11fa9ca64facd0bacf9892f0a8d812a4df7c755a990"
     },
     {
       "case": "timing-detached-created-at-moved",
       "path": "library",
       "expect": "legacy_form_not_allowlisted",
-      "input_digest": "93b4202e476f7007c7f82b0223702e9b59b9bd504651a787419fcedbee98d57a"
+      "input_digest": "0ffaa6ed5f0d55e5e182b887eab7a2120e74f1ad5c52bde4f1d7c41ec7506600"
     },
     {
       "case": "gate10-pv9-no-history-pin",
       "path": "library",
       "expect": "log_unreachable",
-      "input_digest": "e13e993a3a7a3a73bb6639e0a7d60e84eef298cd71ee49884877e0e0013185f2"
+      "input_digest": "d35f3d0201c5c8937a62c296d06034e22fe033298c38f32d981627d213ec9665"
     },
     {
       "case": "gate10-pv10-no-history-pin",
       "path": "library",
       "expect": "issuer history: issuer_history_pin_missing",
-      "input_digest": "e36fd0b0877b1ced5fa11ff723002445bf48d603c950efd31f2b6ac1ff362dcb"
+      "input_digest": "f6dc124763f6398c591c8ab8d8931ee945a47d1fefca3150c6a3b1b15e3b612b"
     },
     {
       "case": "gate9-pv8-no-head-binding",
       "path": "library",
       "expect": "log_unreachable",
-      "input_digest": "f66c8ecd609f76d65c462ad4a18837941f0b4a7b3536d6d2ed0091b35de343f4"
+      "input_digest": "63adcdd30e7a1ef99311854162ed0ed345b8dd0f3073092a16ca6904ebfd9a87"
     },
     {
       "case": "gate9-pv9-no-head-binding",
       "path": "library",
       "expect": "payload v9 requires tree_head_hash and tolerance inside signed claims",
-      "input_digest": "f9e001a4a9b01f9bbb1a2e07b27c2e8ebbb76b21f5e4ddc3a993357fac3742f4"
+      "input_digest": "42d6db9a72e9b3f93235af4861e1ce67b9ff27743f5ba0f7bedc4500a1750d3c"
     },
     {
       "case": "gate8-detached-pv7",
       "path": "signature",
       "expect": "signature_valid",
-      "input_digest": "837976b073ba4c2ef996b56214e5066466dfce1ee32e875336819af45fcc6bc8"
+      "input_digest": "8b6e22182def1c20e2f0423d65e59ff0925169e8336c2f74688d6475217f1707"
     },
     {
       "case": "gate8-detached-pv8",
       "path": "signature",
       "expect": "signature_valid",
-      "input_digest": "127fefe2c9ee04433ed1d859bcc5afd117f22b77928e9e81482cb0d52e2601bd"
+      "input_digest": "2eb6e784d7b3ee9a6cfbc8d5fd67ddadf13ff89085e6ec57e2c1486ba7e19234"
     },
     {
       "case": "control-test-key-v10",
       "path": "library",
       "expect": "log_unreachable",
-      "input_digest": "007c73b96440257bc5eb4b32e6938ceaf023a9c3c57b4a01c7ec9c70fe731e24"
+      "input_digest": "d636c9785faa9e3a2b522d88ee2efb0bd5a3f1d501f6aa73f6c9a5c1951165e2"
     },
     {
       "case": "label-v10-outer-stamp-6",
       "path": "cli",
       "expect": "version_mismatch",
-      "input_digest": "31a087a4ea4164c5da5c82653b899a5799c89ddffe0ac9d1c6ef4bd85a5be6bc"
+      "input_digest": "cfe1e93ee3ed4247fd7de812c04aea2b5cd83b8a55d2375cd5fb95f7bc45ca58"
     },
     {
       "case": "label-v6-outer-stamp-10",
       "path": "cli",
       "expect": "version_mismatch",
-      "input_digest": "4816768995478ca1f2952a405016c9797a86b540aa76e85797db9edf58eea802"
+      "input_digest": "e6f3979e774bea2c16f92f23ca3db02a0c89250135d5a280bf6977731916e460"
     },
     {
       "case": "label-v4v5-conflicting-stamps",
       "path": "cli",
       "expect": "unsupported_version",
-      "input_digest": "951f110b99cef3af6d7b65baff44edc2d22efde6a28a7040e9b4338056511843"
+      "input_digest": "6e71761987f005d0c731353313e6600198a401a65d18a668a39215c56bdec693"
     },
     {
       "case": "control-test-key-v10",
       "path": "cli",
       "expect": "key untrusted",
-      "input_digest": "007c73b96440257bc5eb4b32e6938ceaf023a9c3c57b4a01c7ec9c70fe731e24"
+      "input_digest": "d636c9785faa9e3a2b522d88ee2efb0bd5a3f1d501f6aa73f6c9a5c1951165e2"
     },
     {
       "case": "control-unsigned-document",
       "path": "cli",
       "expect": "signed_receipt_unavailable",
-      "input_digest": "dcef8d3668e5ffbce96e1caeafeb99ad09981af8040b572dbf7d80d44d09fb05"
+      "input_digest": "c741b6d75860602c195f5f97659c835f8e6ca18dc752a5deba7f3df9255141d7"
     }
   ],
   "deferred": [
@@ -176,14 +176,14 @@
       "case": "version-v10-claims-signed-as-v6-after-window",
       "path": "library",
       "expect": "log_unreachable",
-      "input_digest": "350e3f085d0752e0bf911ed0e116434e39cf97de889294377fb99fee5c6f139a",
+      "input_digest": "9cd3f5485a775891dcdfa8a4d5ddeb4ac7fcfac784738a9818a60b551e364d50",
       "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
     },
     {
       "case": "timing-l5-backdated-iat",
       "path": "library",
       "expect": "log_unreachable",
-      "input_digest": "6e57f323e8e6ade43c174e94b20c6e6d185657e7854b434b91ebefd88cd76e33",
+      "input_digest": "77275825132ae6904fb0cf436f4b48bb3e87f406ef6d360bad68729e4c249531",
       "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
     }
   ],

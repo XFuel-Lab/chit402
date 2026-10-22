@@ -52,14 +52,24 @@
  *     corpus correction also needs the merge-base pin, and the merge-base
  *     synthetic.mjs `expect` values equal to it (see declaredProblems for
  *     what the pin allows);
+ *   - a declared path's baseline row does not record its declared decision
+ *     (cli `reason`, library and signature `cause`), or a changed row moves
+ *     its `reason` or `cause`; a deferred path's row moves its reason or
+ *     cause without a strictly tighter exit (declarationRowProblems);
+ *   - a pinned baseline row changes in a change that touches
+ *     test/golden-corpus.test.mjs (goldenEditProblems);
  *   - the chain tier breaks its rules (gateChain below).
+ *
+ * The input digest (caseDigest) includes the signature state of the case
+ * document and the issuer history (signatureForm): valid under a key the
+ * case carries, or invalid with the raw signature bytes.
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
  * base, so a change cannot loosen the gate that checks it.
  * Exit 0: no problems. Exit 1: problems listed on stderr. Exit 3: usage.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -192,9 +202,104 @@ export function docForm(text, historyText) {
   return mask(c);
 }
 
-/** Digest of one exported case: document, issuer history and JWKS. */
-export function caseDigest(c) {
-  return sha256(stable({ doc: docForm(c.doc, c.history), history: historyForm(c.history), jwks: jwksForm(c.jwks) }));
+// ---------- signature state (bound into the digest) ----------
+
+// Detached field lists, as canonicalFieldsV7 / canonicalFieldsV8 in src.
+function detachedFieldsV7(r) {
+  const p = r.payment || {};
+  return [r.task_id ?? null, p.rail ?? null, p.ref ?? null, p.gross_amount ?? null, p.net_amount ?? null, p.fee_amount ?? null,
+    p.protocol_fee_bps ?? p.fee_bps ?? null, p.platform_fee ?? null, p.platform_fee_bps ?? null, r.provider_cogs?.actual ?? null,
+    r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null, r.route?.provider ?? null, r.output?.hash ?? null,
+    r.binding?.expected_commitment ?? null];
+}
+function detachedFieldsV8(r) {
+  const p = r.payment || {};
+  const b = p.accounting?.internal_breakdown;
+  const c = r.caller_binding;
+  return [r.task_id ?? null, p.rail ?? null, p.ref ?? null, p.gross_amount ?? null, p.settled_amount ?? null,
+    b?.route_margin_bps ?? null, b?.route_margin_amount ?? null, b?.receipt_floor_amount ?? null, b?.provider_cogs_amount ?? null,
+    b?.tier2_proof_amount ?? null, r.provider_cogs?.actual ?? null, r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null,
+    r.route?.provider ?? null, r.output?.hash ?? null, r.binding?.expected_commitment ?? null,
+    c?.payer_wallet ?? null, c?.agent_pubkey ?? null, c?.api_key_hash ?? null];
+}
+
+const jwkId = (j) => sha256(stable({ kty: j?.kty ?? null, crv: j?.crv ?? null, x: j?.x ?? null, y: j?.y ?? null }));
+
+/** The keys a case carries: the document's and the history's issuer_jwk, the history entries' jwk and the JWKS. */
+function caseKeys(doc, history, jwks) {
+  const all = [doc?.issuer_signature?.issuer_jwk, history?.issuer_signature?.issuer_jwk,
+    ...(Array.isArray(history?.entries) ? history.entries.map((e) => e?.jwk) : []), ...(Array.isArray(jwks?.keys) ? jwks.keys : [])];
+  const out = [];
+  const seen = new Set();
+  for (const j of all) {
+    if (!j || typeof j !== 'object' || j.kty !== 'EC' || j.crv !== 'P-256' || typeof j.x !== 'string' || typeof j.y !== 'string') continue;
+    const id = jwkId(j);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    try { out.push({ id, key: createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: j.x, y: j.y }, format: 'jwk' }) }); } catch { /* not a key */ }
+  }
+  return out;
+}
+
+/**
+ * One signature: `valid` (verifies under a key the case carries),
+ * `invalid:<sha256 of the raw signature>`, or `absent`. Signatures and
+ * keys made with a throwaway key change on every run, so only validity is
+ * kept for a valid one; any byte change to the signed bytes or the
+ * signature turns `valid` into `invalid`, and an invalid one is kept byte
+ * for byte.
+ */
+function sigState(messages, sigText, keys) {
+  if (typeof sigText !== 'string' || !sigText) return 'absent';
+  const sig = Buffer.from(sigText, 'base64url');
+  for (const k of keys) {
+    for (const m of messages) {
+      let ok = false;
+      try { ok = cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { ok = false; }
+      if (ok) return 'valid';
+    }
+  }
+  return `invalid:${sha256(sigText)}`;
+}
+
+function jwsState(jws, keys) {
+  if (typeof jws !== 'string') return 'absent';
+  const parts = jws.split('.');
+  if (parts.length !== 3) return `malformed:${sha256(jws)}`;
+  const header = b64json(parts[0]);
+  if (!header || header.alg !== 'ES256') return `alg:${sha256(jws)}`;
+  return sigState([`${parts[0]}.${parts[1]}`], parts[2], keys);
+}
+
+/** Signature state of a case: the document (JWS or detached) and the issuer history. */
+export function signatureForm(c) {
+  const doc = parse(c.doc);
+  const history = parse(c.history);
+  const jwks = parse(c.jwks);
+  const keys = caseKeys(doc, history, jwks);
+  const ds = doc && typeof doc === 'object' ? doc.issuer_signature : null;
+  let docState = 'absent';
+  if (ds && typeof ds === 'object') {
+    if (typeof ds.jws === 'string') docState = jwsState(ds.jws, keys);
+    else if (typeof ds.value === 'string') {
+      const { issuer_signature: _omit, ...rest } = doc;
+      docState = sigState([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, keys);
+    }
+  }
+  const hs = history && typeof history === 'object' ? history.issuer_signature : null;
+  return { doc: docState, history: hs && typeof hs === 'object' ? jwsState(hs.jws, keys) : 'absent' };
+}
+
+/**
+ * Digest of one exported case: document, issuer history, JWKS, and the
+ * signature state of the document and the history (signatureForm).
+ */
+export function caseDigest(c, { signatures = true } = {}) {
+  const form = { doc: docForm(c.doc, c.history), history: historyForm(c.history), jwks: jwksForm(c.jwks) };
+  // `signatures: false` is the form before #629, which the corpus_fix
+  // entries already in changes.json were recorded with.
+  if (signatures) form.signatures = signatureForm(c);
+  return sha256(stable(form));
 }
 
 export function inputsProblems(inputs) {
@@ -608,6 +713,65 @@ export function appendBindingProblems(basePin, headPin, baseOnHead, baseDigests,
 }
 
 /**
+ * Baseline rows of pinned paths.
+ *   - A declared path's row records its decision: for cli the `reason`
+ *     equals the declared value, for library and signature the row
+ *     carries `cause` equal to it. A changed row keeps the merge-base
+ *     `reason` and `cause`, so a tighten or a src change cannot re-decide
+ *     a declared case at the same exit (or at any exit).
+ *   - A deferred path may change `reason` or `cause` only with a strictly
+ *     tighter exit (2 -> 1).
+ * The movement rules apply once the merge base has a pin; the first pin
+ * (this file's bootstrap) records the causes.
+ */
+export function declarationRowProblems(base, head, basePinMaps, headPinMaps) {
+  const p = [];
+  const declared = new Map([...(headPinMaps?.declared ?? []), ...(basePinMaps?.declared ?? [])]);
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  for (const [key, want] of declared) {
+    if (!has(head, key)) continue;
+    const now = head[key];
+    const path = key.split('|')[1];
+    if (path === 'cli') {
+      if (now?.reason !== want) p.push(`${key}: baseline reason ${JSON.stringify(now?.reason)} is not the declared ${JSON.stringify(want)}`);
+    } else if ((now?.cause ?? null) !== want) {
+      p.push(`${key}: baseline cause ${JSON.stringify(now?.cause ?? null)} is not the declared ${JSON.stringify(want)} (a declared ${path} row records its cause)`);
+    }
+    if (basePinMaps && has(base, key) && !same(base[key], now)) {
+      const was = base[key];
+      if (now?.reason !== was?.reason) p.push(`${key}: the reason of a declared path may not change (${JSON.stringify(was?.reason)} -> ${JSON.stringify(now?.reason)})`);
+      if (was?.cause !== undefined && (now?.cause ?? null) !== (was.cause ?? null)) p.push(`${key}: the cause of a declared path may not change (${JSON.stringify(was.cause)} -> ${JSON.stringify(now?.cause ?? null)})`);
+    }
+  }
+  // The movement rules hold once the merge base has a pin (not on the first pin).
+  if (!basePinMaps) return p;
+  const deferred = new Map([...(headPinMaps?.deferred ?? []), ...(basePinMaps?.deferred ?? [])]);
+  for (const key of deferred.keys()) {
+    if (declared.has(key) || !has(base, key) || !has(head, key)) continue;
+    const was = base[key];
+    const now = head[key];
+    const moved = now?.reason !== was?.reason || (now?.cause ?? null) !== (was?.cause ?? null);
+    if (moved && !(exitRank(now?.exit) < exitRank(was?.exit))) p.push(`${key}: a deferred path may change reason or cause only with a strictly tighter exit (exit ${was?.exit} -> ${now?.exit})`);
+  }
+  return p;
+}
+
+const GOLDEN = 'packages/verify/test/golden-corpus.test.mjs';
+
+/** A change that touches golden-corpus.test.mjs may not change any pinned baseline row (once the merge base has a pin). */
+export function goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps) {
+  if (!basePinMaps) return [];
+  if (!Array.isArray(changedFiles) || !changedFiles.some((f) => String(f).normalize('NFKC').toLowerCase() === GOLDEN)) return [];
+  const pinned = new Set([...(basePinMaps?.pinned ?? []), ...(headPinMaps?.pinned ?? [])]);
+  const p = [];
+  for (const key of new Set([...Object.keys(base), ...Object.keys(head)])) {
+    if (!pinned.has(key)) continue;
+    if (!same(base[key], head[key])) p.push(`${key}: a pinned baseline row may not change in the same change as test/golden-corpus.test.mjs`);
+  }
+  return p;
+}
+
+/**
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
@@ -682,6 +846,12 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
         }
       }
     }
+  }
+
+  // Pinned rows (declarationRowProblems, goldenEditProblems).
+  if (basePinMaps || headPinMaps) {
+    problems.push(...declarationRowProblems(base, head, basePinMaps, headPinMaps));
+    problems.push(...goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps));
   }
 
   const checked = new Set();

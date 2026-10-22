@@ -154,6 +154,9 @@ test('each synthetic case is decided by its own rule', async () => {
       const r = results.get(key);
       const got = String(r.cause ?? r.reason ?? '');
       assert.equal(got, want, `${key}: decided by ${JSON.stringify(got)}, expected exactly ${JSON.stringify(want)}`);
+      // The baseline row records the decision: reason (cli) or cause.
+      if (path === 'cli') assert.equal(baseline[key].reason, want, `${key}: baseline reason`);
+      else assert.equal(baseline[key].cause, want, `${key}: baseline cause`);
       asserted += 1;
     }
   }
