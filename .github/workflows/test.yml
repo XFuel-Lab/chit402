@@ -189,6 +189,7 @@ jobs:
             base=$(git rev-parse HEAD~1)
           fi
           gate=packages/verify/scripts/corpus-gate.mjs
+          digest=packages/verify/test/corpus/input-digests.mjs
           if git cat-file -e "$base:$gate" 2>/dev/null; then
             git show "$base:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
             echo "corpus gate: merge-base copy from $base"
@@ -196,7 +197,22 @@ jobs:
             cp "$gate" "$RUNNER_TEMP/corpus-gate.mjs"
             echo "::notice::No corpus gate at $base; running this change's copy"
           fi
-          node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE"
+          # Per-case input digests of the merge base and of this change. An
+          # added corpus_fix entry must carry a head digest that differs from
+          # the merge base, so it only covers a case whose input changed here.
+          if git cat-file -e "$base:$digest" 2>/dev/null; then
+            git show "$base:$digest" > "$RUNNER_TEMP/input-digests.mjs"
+          else
+            cp "$digest" "$RUNNER_TEMP/input-digests.mjs"
+          fi
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          for tree in "$RUNNER_TEMP/base" "$GITHUB_WORKSPACE"; do
+            (cd "$tree/packages/verify" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
+          done
+          node "$RUNNER_TEMP/input-digests.mjs" "$RUNNER_TEMP/base/packages/verify" > "$RUNNER_TEMP/base-digests.json"
+          node "$RUNNER_TEMP/input-digests.mjs" "$GITHUB_WORKSPACE/packages/verify" > "$RUNNER_TEMP/head-digests.json"
+          node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE" \
+            --base-digests "$RUNNER_TEMP/base-digests.json" --head-digests "$RUNNER_TEMP/head-digests.json"
 
       - name: Test chit402-verify
         working-directory: packages/verify

@@ -1446,7 +1446,7 @@
  "label-v4v5-conflicting-stamps|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1500,7 +1500,7 @@
  "version-v13-unknown|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1554,7 +1554,7 @@
  "version-v12-shape-no-version-plain-id|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",
@@ -1581,7 +1581,7 @@
  "version-unversioned-object-no-stamp|library": {
   "exit": 1,
   "result": "invalid",
-  "reason": "invalid",
+  "reason": "unsupported_version",
   "checks": {
    "signature": "could_not_check",
    "key_window": "could_not_check",

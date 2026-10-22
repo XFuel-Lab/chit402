@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { corpusDir, compare, consistency, pool, runPathAsync } from './corpus/lib.mjs';
@@ -197,6 +197,40 @@ test('local tier (holder documents, kept off the repo)', { skip: !privateDir || 
     for (const p of compare(pb[key], actual, changeFor(key))) problems.push(`${key}: ${p}`);
   });
   assert.deepEqual(problems, []);
+});
+
+// Recording is GET-only, so a chain read can only ever be stored as an
+// error entry. A tape holding an RPC answer was not made by the recorder.
+function tapeProblems(file) {
+  const { entries } = readJson(file);
+  const problems = [];
+  Object.entries(entries).forEach(([key, value], i) => {
+    if (key.startsWith('RPC ')) {
+      const fields = value && typeof value === 'object' ? Object.keys(value) : [];
+      if (typeof value?.error !== 'string' || fields.some((f) => f !== 'error')) problems.push(`entry ${i}: RPC entry is not an error entry`);
+    } else if (!key.startsWith('GET ')) {
+      problems.push(`entry ${i}: neither GET nor RPC`);
+    }
+  });
+  return problems;
+}
+
+test('every RPC entry on the tapes is an error entry', () => {
+  const tapes = [join(corpusDir, 'tapes', 'public.json')];
+  if (privateDir && existsSync(join(privateDir, 'tape.json'))) tapes.push(join(privateDir, 'tape.json'));
+  for (const file of tapes) {
+    // Entry indexes only: the private tape stays out of test output.
+    assert.deepEqual(tapeProblems(file), [], file === tapes[0] ? 'public tape' : 'private tape');
+  }
+  const rpc = Object.keys(readJson(tapes[0]).entries).filter((k) => k.startsWith('RPC '));
+  assert.ok(rpc.length > 0, 'the public tape has RPC error entries to check');
+});
+
+test('the tape check rejects an RPC answer', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tape-check-'));
+  const f = join(dir, 'tape.json');
+  writeFileSync(f, JSON.stringify({ entries: { 'RPC h getTransaction []': { status: 200, body: '{"result":{}}' }, 'RPC h getSlot []': { error: 'x', result: 1 }, 'RPC h getBlock []': { error: 'chain read not recorded' } } }));
+  assert.deepEqual(tapeProblems(f), ['entry 0: RPC entry is not an error entry', 'entry 1: RPC entry is not an error entry']);
 });
 
 test('every pinned outcome is well formed', () => {

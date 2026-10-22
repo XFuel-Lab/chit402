@@ -66,14 +66,25 @@ It fails when:
 - a `tighten` entry (the default kind) is not at least as strict as the
   merge-base outcome;
 - a `corpus_fix` entry (a synthetic case that was built wrong) is for a real
-  receipt, has no note, or moves a case to exit 0;
+  receipt, has no note, moves a case to exit 0, or does not carry the case's
+  `input_digest`. The digest is the head digest from
+  `test/corpus/input-digests.mjs` and must differ from the merge-base digest,
+  so a corpus_fix only covers a case whose input changed in the same change;
 - a real receipt case is removed;
 - `changes.json` or `test/fixtures/version-registry.frozen.json` is edited
   other than by appending (an appended registry entry needs a `registry`
   entry in `changes.json`).
 
 So a verifier change plus a baseline edit cannot bless a looser result in
-one PR. Local run: `node scripts/corpus-gate.mjs --base origin/main --root ../..`.
+one PR. Local run (base tree built at <base>, this tree built):
+
+    node test/corpus/input-digests.mjs <base>/packages/verify > /tmp/base-digests.json
+    node test/corpus/input-digests.mjs . > /tmp/head-digests.json
+    node scripts/corpus-gate.mjs --base origin/main --root ../.. \
+      --base-digests /tmp/base-digests.json --head-digests /tmp/head-digests.json
+
+Every RPC entry on a tape (public, and the local tier's when set) must be an
+error entry: the recorder is GET-only.
 
 Synthetic cases carry a `target` from the spec. The PR that reaches it adds
 the `changes.json` entry.

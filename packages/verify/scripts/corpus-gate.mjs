@@ -4,6 +4,11 @@
  * and the frozen version registry with their merge-base versions.
  *
  *   node packages/verify/scripts/corpus-gate.mjs --base <commit> [--root <repo>]
+ *        [--base-digests <json> --head-digests <json>]
+ *
+ * The digest files come from test/corpus/input-digests.mjs, run on the
+ * merge-base tree and on the head tree. Without them any added corpus_fix
+ * entry fails.
  *
  * Fails (exit 1) when:
  *   - a baseline.json entry differs from the merge base and no changes.json
@@ -12,7 +17,10 @@
  *   - an added `tighten` entry (the default kind) is not at least as strict
  *     as the merge-base outcome (exit, result, overall and every check);
  *   - an added `corpus_fix` entry is for a real receipt (id-* or file-*), has
- *     no note, or moves a case to exit 0 / verified;
+ *     no note, moves a case to exit 0 / verified, or does not carry the
+ *     case's head input digest (`input_digest`) where that digest differs
+ *     from the merge-base digest. A corpus_fix is only for a case whose
+ *     input changed in the same PR, never for a verifier change.
  *   - a real receipt case is removed from the baseline;
  *   - changes.json is not append-only (an existing entry is edited or
  *     dropped);
@@ -62,11 +70,26 @@ function looser(from, to) {
   return p;
 }
 
+/** A corpus_fix must name a case whose input digest changed in this PR. */
+function digestProblems(ch, baseDigests, headDigests) {
+  if (!baseDigests || !headDigests) return ['corpus_fix needs the merge-base and head input digests (--base-digests, --head-digests)'];
+  const d = ch.input_digest;
+  if (typeof d !== 'string' || !/^[0-9a-f]{64}$/.test(d)) return ['corpus_fix needs input_digest (sha256 of the case input)'];
+  const head = headDigests[ch.case];
+  const base = baseDigests[ch.case];
+  const p = [];
+  if (head === undefined) p.push('corpus_fix: case has no head input digest');
+  else if (head !== d) p.push('corpus_fix: input_digest is not the head digest of the case');
+  if (base === undefined) p.push('corpus_fix: case has no merge-base input digest');
+  else if (base === d) p.push('corpus_fix: case input is unchanged from the merge base');
+  return p;
+}
+
 /**
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null }) {
   const problems = [];
   const bEntries = baseChanges?.changes ?? [];
   const hEntries = headChanges?.changes ?? [];
@@ -107,7 +130,8 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     } else if (ch.kind === 'corpus_fix') {
       if (isReal(key)) problems.push(`${key}: corpus_fix is only for synthetic cases`);
       if (!ch.note) problems.push(`${key}: corpus_fix needs a note`);
-      if ((now.exit === 0 || now.result === 'verified') && !key.endsWith('|signature')) problems.push(`${key}: corpus_fix may not move a case to exit 0`);
+      if (now.exit === 0 || resultRank(now.result) === 2) problems.push(`${key}: corpus_fix may not move a case to exit 0`);
+      for (const p of digestProblems(ch, baseDigests, headDigests)) problems.push(`${key}: ${p}`);
     }
   }
   for (const key of addedFor.keys()) {
@@ -148,8 +172,10 @@ function readHead(root, path) {
   return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
 }
 
-export function gateRepo(root, base) {
+export function gateRepo(root, base, digests = {}) {
   return gate({
+    baseDigests: digests.base ?? null,
+    headDigests: digests.head ?? null,
     baseBaseline: gitShow(root, base, BASELINE),
     headBaseline: readHead(root, BASELINE),
     baseChanges: gitShow(root, base, CHANGES),
@@ -167,7 +193,8 @@ if (isMain) {
   const root = opt('--root') || process.cwd();
   if (!base) { console.error('usage: corpus-gate.mjs --base <commit> [--root <repo>]'); process.exit(3); }
   try { execFileSync('git', ['-C', root, 'rev-parse', '--verify', `${base}^{commit}`], { stdio: 'ignore' }); } catch { console.error(`corpus-gate: unknown base ${base}`); process.exit(3); }
-  const problems = gateRepo(root, base);
+  const readOpt = (n) => { const f = opt(n); return f ? JSON.parse(readFileSync(f, 'utf8')) : null; };
+  const problems = gateRepo(root, base, { base: readOpt('--base-digests'), head: readOpt('--head-digests') });
   if (problems.length) {
     for (const p of problems) console.error(`corpus-gate: ${p}`);
     process.exit(1);
