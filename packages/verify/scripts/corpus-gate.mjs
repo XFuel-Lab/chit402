@@ -40,10 +40,15 @@
  *   - declarations.frozen.json is not append-only or not well formed, or the
  *     head synthetic.mjs `expect` values (from the head export) differ from
  *     the head pin, or a head case path is not classified by the head pin
- *     (declared, deferred or reason_allowed); reason_allowed is frozen; an
- *     appended declaration must be a real decision (not the deferred value
- *     and not a cause that decides nothing, see isNonDecision); an added
- *     deferred entry may not name a declared or reason_allowed path; a
+ *     (declared, deferred or reason_allowed); a head case input digest
+ *     differs from the input_digest pinned for its declared or deferred
+ *     paths; an appended declaration or deferred entry is not what the
+ *     merge-base verifier gives on the head input, or an existing case's
+ *     input changed from the merge base (appendBindingProblems);
+ *     reason_allowed is frozen; an appended declaration must also not be
+ *     the deferred value or a cause that decides nothing (isNonDecision);
+ *     an added deferred entry may not name a declared or reason_allowed
+ *     path; a
  *     corpus correction also needs the merge-base pin, and the merge-base
  *     synthetic.mjs `expect` values equal to it (see declaredProblems for
  *     what the pin allows);
@@ -289,7 +294,12 @@ const pinKey = (e) => `${e?.case}|${e?.path}`;
  * key untrusted, head_key_untrusted, could_not_check, invalid, unreadable).
  * Matched by pattern as well, so a new cause of the same kind is covered.
  * An appended declaration may not take one of these: a path leaves
- * `deferred` only with a real decision.
+ * `deferred` only with a real decision. This is a second check: an append
+ * must already equal the merge-base verifier's output on an unchanged
+ * input (appendBindingProblems). It stays because that binding alone would
+ * accept a deferred path declared at its own non-decision value (the
+ * merge-base verifier does give log_unreachable there), and it keeps a new
+ * case path with a non-decision outcome in `deferred`.
  */
 const NON_DECISION = new Set(['', 'invalid', 'could_not_check', 'unreadable', 'unchecked', 'pending', 'key untrusted', 'key_untrusted', 'head_key_untrusted']);
 export function isNonDecision(value) {
@@ -332,7 +342,7 @@ export function pinProblems(basePin, headPin) {
     const seen = new Set();
     for (const e of h) {
       const ok = e && typeof e === 'object' && typeof e.case === 'string' && e.case && typeof e.path === 'string' && e.path
-        && (list === 'reason_allowed' || (typeof e.expect === 'string' && e.expect));
+        && (list === 'reason_allowed' || (typeof e.expect === 'string' && e.expect && typeof e.input_digest === 'string' && /^[0-9a-f]{64}$/.test(e.input_digest)));
       if (!ok) { p.push(`${name}: ${list}: malformed entry ${JSON.stringify(e).slice(0, 120)}`); continue; }
       if (seen.has(pinKey(e))) p.push(`${name}: ${list}: ${pinKey(e)} appears twice`);
       seen.add(pinKey(e));
@@ -490,6 +500,7 @@ const CORPUS_INFRA = [
   /^test\/corpus\/tapes\//,
   /^test\/history-file\.mjs$/,
   /^test\/corpus\/declarations\.frozen\.json$/,
+  /^test\/golden-corpus\.test\.mjs$/,
 ];
 
 /**
@@ -545,6 +556,57 @@ function baseOnHeadProblems(key, ch, baseOnHead) {
   return [];
 }
 
+/** Pin entries appended against the merge-base pin (declarations and deferred). */
+export function appendedPinEntries(basePin, headPin) {
+  if (!basePin || !headPin) return [];
+  const out = [];
+  for (const list of ['declarations', 'deferred']) {
+    const b = Array.isArray(basePin[list]) ? basePin[list] : [];
+    const h = Array.isArray(headPin[list]) ? headPin[list] : [];
+    for (const e of h.slice(b.length)) if (e && typeof e === 'object') out.push({ list, ...e });
+  }
+  return out;
+}
+
+/**
+ * Every declared and deferred pin entry carries the input digest of its
+ * case. The head input of the case must have exactly that digest: an input
+ * is never changed under a pinned path (a changed input is a new case).
+ */
+export function pinDigestProblems(headPin, headDigests) {
+  if (!headPin || !headDigests) return [];
+  const p = [];
+  for (const list of ['declarations', 'deferred']) {
+    for (const e of Array.isArray(headPin[list]) ? headPin[list] : []) {
+      const d = headDigests[e?.case];
+      if (d !== undefined && d !== e?.input_digest) p.push(`${pinKey(e)}: the head input digest differs from the input_digest pinned in declarations.frozen.json; a changed input needs a new case`);
+    }
+  }
+  return p;
+}
+
+/**
+ * An appended declaration or deferred entry is bound to the verifier: its
+ * expect must equal what the MERGE-BASE verifier gives (cause, else reason)
+ * on the head input of that path, and an existing case's head input must
+ * be unchanged from the merge base. So a value cannot be chosen, only read
+ * off main's verifier on main's input.
+ */
+export function appendBindingProblems(basePin, headPin, baseOnHead, baseDigests, headDigests) {
+  const p = [];
+  for (const e of appendedPinEntries(basePin, headPin)) {
+    const k = pinKey(e);
+    if (!baseOnHead || !headDigests || !baseDigests) { p.push(`${k}: a pin append needs the merge-base verifier outcomes and input digests (--base-tree, --head-inputs)`); continue; }
+    if (!Object.prototype.hasOwnProperty.call(baseOnHead, k)) { p.push(`${k}: a pin append needs a merge-base verifier outcome for this case and path`); continue; }
+    const o = baseOnHead[k];
+    const got = String(o?.cause ?? o?.reason ?? '');
+    if (got !== e.expect) p.push(`${k}: pinned ${JSON.stringify(e.expect)}, but the merge-base verifier on the head input gives ${JSON.stringify(got)}`);
+    const base = baseDigests[e.case];
+    if (base !== undefined && base !== headDigests[e.case]) p.push(`${k}: a pin append for an existing case needs its input unchanged from the merge base`);
+  }
+  return p;
+}
+
 /**
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
@@ -555,6 +617,9 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   // with the head pin whenever the head export is given.
   problems.push(...pinProblems(basePin, headPin));
   if (headDecls && headPin) for (const d of declarationDrift(headDecls, headPin)) problems.push(`synthetic.mjs (head) and declarations.frozen.json (head) differ: ${d}`);
+  // Pinned input digests, and appends bound to the merge-base verifier.
+  problems.push(...pinDigestProblems(headPin, headDigests));
+  problems.push(...appendBindingProblems(basePin, headPin, baseOnHead, baseDigests, headDigests));
   // Every head case path is classified by the head pin.
   if (headCases && headPin) for (const k of unclassifiedPaths(headCases, headPin)) problems.push(`${k}: case path in synthetic.mjs (head) is not in declarations.frozen.json (head); declare it, or defer it with its current expect`);
   const basePinMaps = basePin ? pinMaps(basePin) : null;
@@ -779,28 +844,27 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headPin: readHead(root, DECLARATIONS_PIN),
   };
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
+  const appendKeys = appendedPinEntries(files.basePin, files.headPin).map(pinKey);
   const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
   const corrections = fixKeys.length > 0 || Object.keys(files.baseBaseline ?? {}).some((k) => !Object.prototype.hasOwnProperty.call(files.headBaseline ?? {}, k));
-  if (headInputs && inputsProblems(headInputs).length === 0) {
+  const inputsOk = !!headInputs && inputsProblems(headInputs).length === 0;
+  if (headInputs && !inputsOk) problems.push(...inputsProblems(headInputs));
+  if (inputsOk) {
     extra.headDecls = exportDeclarations(headInputs);
     extra.headCases = headInputs.cases.map((c) => ({ id: c.id, paths: c.paths }));
+    extra.headDigests = inputDigests(headInputs);
   }
-  if (corrections && baseTree && !fixKeys.length) {
-    try { extra.baseCases = caseDeclarations(await exportInputs(baseTree)); } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
+  const needBase = fixKeys.length > 0 || appendKeys.length > 0;
+  if (baseTree && (corrections || needBase)) {
+    try {
+      const baseInputs = await exportInputs(baseTree);
+      extra.baseCases = caseDeclarations(baseInputs);
+      if (needBase) extra.baseDigests = inputDigests(baseInputs);
+    } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
   }
-  if (fixKeys.length && baseTree && headInputs) {
-    const bad = inputsProblems(headInputs);
-    if (bad.length) problems.push(...bad);
-    else {
-      extra.headDigests = inputDigests(headInputs);
-      try {
-        const baseInputs = await exportInputs(baseTree);
-        extra.baseDigests = inputDigests(baseInputs);
-        extra.baseCases = caseDeclarations(baseInputs);
-      } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
-      extra.baseOnHead = await baseOutcomes(baseTree, headInputs, fixKeys);
-    }
+  if (needBase && baseTree && inputsOk) {
+    extra.baseOnHead = await baseOutcomes(baseTree, headInputs, [...new Set([...fixKeys, ...appendKeys])]);
   }
   const chain = gateChain({
     baseChainBaseline: gitShow(root, base, CHAIN_BASELINE),

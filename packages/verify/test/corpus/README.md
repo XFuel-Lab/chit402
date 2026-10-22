@@ -13,7 +13,7 @@ recorded entry.
 |---|---|---|
 | Receipt ids | 96 | 81 Base receipt ids, the reference receipts, the demo receipt, and the task ids of the 54-file inventory. Public receipt shells only. |
 | Fixture files | 6 | Receipt files already in `test/fixtures`. |
-| Synthetic | 21 (32 case paths) | `synthetic.mjs`: `label`, `version`, `timing`, `gate` and control cases, built fresh under a throwaway key on each run. |
+| Synthetic | 22 (34 case paths) | `synthetic.mjs`: `label`, `version`, `timing`, `gate` and control cases, built fresh under a throwaway key on each run. |
 
 Every child process loads `tape-preload.mjs`, which answers each fetch from
 `tapes/public.json` and fixes the clock to the recording time. A request not
@@ -104,8 +104,15 @@ It fails when:
   expectation is pinned but a correction on it is refused until a
   declaration is appended) and `reason_allowed`. `declarations` and
   `deferred` are append-only; `reason_allowed` is frozen and must equal the
-  merge-base list exactly. An appended declaration may not declare a path
-  twice, may not equal the `deferred` value it replaces, and may not be a
+  merge-base list exactly. Each `declarations` and `deferred` entry carries
+  `input_digest`, the digest of its case input computed as the gate
+  computes it (`caseDigest`). An appended `declarations` or `deferred`
+  entry must equal what the merge-base verifier gives (cause, else reason)
+  on the head input of that path, and for an existing case that input must
+  be unchanged from the merge base; a new case is run the same way. So a
+  value is read off main's verifier, never chosen. An appended declaration
+  may not declare a path twice, may not equal the `deferred` value it
+  replaces, and may not be a
   cause that makes no decision by a case rule (`log_unreachable`,
   `key untrusted`, `signed_receipt_unavailable`, `receipt_unavailable`,
   `could_not_check`, a generic `invalid`, and any `*_unreachable`,
@@ -114,6 +121,11 @@ It fails when:
   leaves `deferred` only with a real decision. An added `deferred` entry
   may not name a declared or `reason_allowed` path. The pin is a verifier
   path, so a pin change cannot carry a correction;
+- a head case input digest differs from the `input_digest` pinned for any
+  of its declared or deferred paths. An input is never changed under a
+  pinned path, whatever the outcome: a changed input is a new case with
+  new pin entries. In practice this means no current synthetic case takes
+  a `corpus_fix` or `corpus_fix_reason`;
 - a case path of the head export is not classified by the head pin. Every
   synthetic case path is in exactly one list: declared, deferred or
   `reason_allowed`. A new case appends a declaration for each path (or a
@@ -133,7 +145,8 @@ It fails when:
   `test/**`, `*.md` and `LICENSE` (`.md`, `.txt`). Inside `test/`, the
   corpus runners and recorders (`test/corpus/lib.mjs`, `run-*.mjs`,
   `tape-*.mjs`, `record*.mjs`), the tapes (`test/corpus/tapes/`) and
-  `test/history-file.mjs` and `test/corpus/declarations.frozen.json` count
+  `test/history-file.mjs`, `test/corpus/declarations.frozen.json` and
+  `test/golden-corpus.test.mjs` count
   as verifier paths too. So do everything
   under `packages/aliases/chit402-verify/` except `*.md`, and any `dist/`
   output. Paths are compared after NFKC normalization and lowercasing, and
@@ -162,13 +175,18 @@ built):
 Deferred: `version-v10-claims-signed-as-v6-after-window|library` and
 `timing-l5-backdated-iat|library` declare `log_unreachable` today, which is
 not their own rule (the offline tape has no chain RPC). They are pinned as
-`deferred`. A change that makes them reach their rule appends a
-declaration with the new cause in the same change as the `synthetic.mjs`
-update. The two control cli paths are deferred too:
-`control-test-key-v10|cli` (`key untrusted`: the CLI's production key set
-rejects the test key before any rule) and `control-unsigned-document|cli`
-(`signed_receipt_unavailable`). Neither can take a declaration while its
-outcome makes no decision, so neither takes a correction.
+`deferred`. The golden corpus does not compare a deferred path exactly;
+its outcome is held by the baseline and the tighten rule. The verifier
+change that makes it reach its rule lands first (baseline tightened in
+the same change); a later change appends the declaration and updates
+`synthetic.mjs`, and the gate checks that value against the merged
+verifier.
+
+Controls: `control-test-key-v10|cli` is declared `key untrusted` (the
+CLI's production key set rejects the test key) and
+`control-unsigned-document|cli` is declared `signed_receipt_unavailable`,
+their targets. They were declared in the first pin, so a later
+declaration for them is rejected as a second declaration.
 
 Label cases: `label-v10-outer-stamp-6|cli` and `label-v6-outer-stamp-10|cli`
 are declared `version_mismatch`, and `label-v4v5-conflicting-stamps|cli`
