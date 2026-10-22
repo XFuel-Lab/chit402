@@ -14,9 +14,12 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 - **Allowlist API narrowed.** `parseLegacyAllowlist` and `loadBundledLegacyAllowlist` are no longer exported, and `onLegacyAllowlist(fp)` checks the bundled list only. There is no unpinned path in the public API.
 - New verdict reasons with docs anchors: `version_window_closed`, `version_window_not_open`, `version_window_missing`, `log_time_after_window`, `log_time_unavailable`, `legacy_form_not_allowlisted`.
 
+### Fixed (from #621)
+- **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
+
 ### Tests
 - Window values against the merge times, the c5a3860d upper-bound sanity check, parser fail-closed cases, signer status, the publish check, the L1 list with an alg:none header and a second key, low-S fingerprints, the L5 earliest-head probe and decision, and the library-only test snapshot seam (not exported, no CLI flag).
-- The golden corpus now replays recorded read-only chain replies from the public Base and Solana RPCs, so xfuel-3155b7d8 is exit 0 offline.
+- The golden corpus gains a chain tier: a second tape with recorded read-only replies from the public Base and Solana RPCs, where xfuel-3155b7d8 is exit 0 offline. The GET-only tier and its baseline are unchanged.
 
 ## 0.4.11: Library verdict matches the CLI
 

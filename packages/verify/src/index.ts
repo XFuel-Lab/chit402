@@ -1860,8 +1860,11 @@ function withLibraryVerdict(receipt: XFuelReceipt, result: ReceiptVerification):
   const trusted = result.issuer_signature.valid === true && result.issuer_signature.key_trusted !== false;
   const failed = result.overall === 'failed';
   // A failure the library found outside the six named checks (offline
-  // inclusion, head trust, preimages, refusal) still maps to exit 1.
-  const failureReason = failed ? 'invalid' : null;
+  // inclusion, head trust, preimages, refusal) still maps to exit 1. A
+  // version the verifier does not support keeps exit 1 here and names
+  // unsupported_version, so the verdict carries the upgrade next step.
+  const unsupported = (result.errors || []).includes('unsupported_version');
+  const failureReason = failed ? (unsupported ? 'unsupported_version' : 'invalid') : null;
   // A trusted detached legacy signature is still a signature check. A
   // document with neither is the CLI's unsigned path.
   const full = hasCompactJws(receipt) || trusted
