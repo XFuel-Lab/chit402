@@ -1,0 +1,54 @@
+{
+  "schema": "chit402.quarantine_ack.v2",
+  "payload_version": 2,
+  "iss": "chit402",
+  "iat": null,
+  "epoch": 2,
+  "quarantined_head": {
+    "tree_size": 11,
+    "prefix_size": 10,
+    "root": "cf9f998f969c8c7c3b969b0b636a4b7bf6424ebcaf746790b33c38e168c54341",
+    "published_at": "FILL_FROM_JOURNAL",
+    "kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+    "head_jws_sha256": "FILL_FROM_JOURNAL",
+    "anchors": {
+      "base": {
+        "chain_id": 8453,
+        "tx": "0xae4db6e8079688dd08fba598302f9cd364afde2681cc97d14dde91e1e310b357"
+      },
+      "solana": {
+        "cluster": "mainnet-beta",
+        "signature": "5bdexVCBR1BrztGWUNwSift4J26GtrU3ZaTtAYZJDMf7g6gVAMKnxcKsZUVAbUidqPgBppTLcpv2aTKCrdxnWqPF"
+      }
+    }
+  },
+  "reason": "publish_append_race",
+  "replacement_head": {
+    "tree_size": 11,
+    "root": "3519a85ef7a2f534c805ad2ffd9be0dddafba64315f42911beaf6fb22a850856",
+    "published_at": "2026-10-09T10:23:55.863Z",
+    "anchors": {
+      "base": {
+        "chain_id": 8453,
+        "tx": "0xeb056e3ada456a368cc2e0838550030821e06e7d27fd9d4cd8f1d9222a546281"
+      }
+    }
+  },
+  "consistency": {
+    "first_tree_size": 10,
+    "second_tree_size": 11,
+    "proof": [
+      "da5de11e3c45d20f4d860b20322f94770d492f76b7ef34bf842ea4427f77645f",
+      "0eda8bb251abe061bc31703d8e5f641387aaca93ef7aed8418d98892ed995bcc",
+      "d4f311ae74fac84f6d1a45ef18f72805f0f21656f955502fb46de1cf45172660"
+    ]
+  },
+  "handling": {
+    "head_served": false,
+    "inclusion_against_head": "not_evidence",
+    "receipts_only_in_head": 0,
+    "covered_by": "replacement_head",
+    "escrow_register": "excluded",
+    "scope": "this_head_only"
+  }
+}
