@@ -3,7 +3,8 @@
  * verify-receipt.mjs — Offline XFuel receipt verification
  *
  * Verifies an XFuel receipt HMAC signature without hitting the API.
- * Use this when XFuel is unavailable or you want independent verification.
+ * Use this when the API is unavailable and you hold the HMAC secret. The HMAC
+ * secrets are held by the gateway, so this is not independent witnessing.
  *
  * Usage:
  *   node verify-receipt.mjs <receipt.json> <secret>

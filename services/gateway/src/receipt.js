@@ -2057,10 +2057,10 @@ export function verifyReceiptHmac(receipt, secret, { sigField = 'signature' } = 
 }
 
 /**
- * Verify a receipt against multiple secrets (replaceable signer).
+ * Verify a receipt against multiple secrets.
  * Returns valid if ANY secret verifies EITHER the hmac_attestation or co_attestation.
- * This is the offline verify path for when XFuel disappears — the co-signer's
- * key still works. See docs/VERIFY_ALGORITHM.md.
+ * Both HMACs are computed by the gateway with secrets it holds; neither is an
+ * independent witness. See docs/VERIFY_ALGORITHM.md.
  *
  * @param {object} receipt
  * @param {string[]} secrets - array of secrets to try (primary, co-signer, etc.)
@@ -2556,8 +2556,8 @@ export function usageOf(task) {
  * @param {object} task     Listener task (from aiListener.activeTasks).
  * @param {object} [opts]   { baseUrl, signingSecret, coSignerSecret, reqHost, apiKeyHash, agentId, agentPubkey, payerWallet, payTo }
  *                          signingSecret enables the Tier-1 signed receipt (HMAC over the payment-bound tuple).
- *                          coSignerSecret adds a second attestor (replaceable signer) so
- *                          treasuries can verify even if XFuel disappears.
+ *                          coSignerSecret adds a second gateway-held HMAC (co_attestation);
+ *                          it is not an independent witness.
  *                          reqHost enables host-aware URL prefix selection (chit- on api.chit402.com).
  *                          apiKeyHash, agentId, agentPubkey, payerWallet enable caller binding for
  *                          entitlement verification (who is entitled to this receipt).

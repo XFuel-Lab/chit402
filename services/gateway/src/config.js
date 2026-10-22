@@ -151,10 +151,10 @@ const config = {
   // detect tampering. Off by default → receipt JSON is unchanged. Dedicated secret
   // (NOT reused from WEBHOOK_SECRET) so enabling webhooks never implies signing.
   //
-  // Replaceable Signer: coSignerSecret adds a second attestor slot. When set,
-  // receipts carry both `signature` (primary) and `co_signature` (partner/auditor).
-  // Either validates the receipt. If XFuel disappears, the co-signer's key still
-  // works. See docs/VERIFY_ALGORITHM.md for the offline verify path.
+  // coSignerSecret adds a second HMAC (`co_attestation`). It is computed here, by
+  // the gateway, with a secret the gateway holds, so it is not an independent
+  // witness and chit402-verify does not read it. Receipts are not independently
+  // witnessed yet. See docs/VERIFY_ALGORITHM.md.
   receipts: {
     signingSecret: process.env.RECEIPT_SIGNING_SECRET || null,
     coSignerSecret: process.env.RECEIPT_CO_SIGNER_SECRET || null,
