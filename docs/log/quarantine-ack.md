@@ -7,8 +7,9 @@ This format exists for the escrow pre-bond register. A signed head marked `exclu
 ## Status
 - **Format:** this document.
 - **Draft entry:** [`quarantine-acks/epoch-2-size-11-cf9f998f.draft.json`](quarantine-acks/epoch-2-size-11-cf9f998f.draft.json). It is unsigned, and the fields marked `FILL_FROM_JOURNAL` are still placeholders.
-- **Signing tool:** `services/gateway/scripts/sign-quarantine-ack.mjs`. It fills those fields from the receipt-log journal, signs, self-verifies and prints. It writes nothing.
-- **Library:** `services/gateway/src/quarantine-ack.js` (validate, sign, verify, consistency check). Tests: `services/gateway/test/quarantine-ack.test.mjs`, throwaway keys only.
+- **Signing tool:** `services/gateway/scripts/sign-quarantine-ack.mjs`. It fills those fields from the receipt-log journal, signs, self-verifies and prints. It writes nothing. **On hold:** nobody runs it until PR3 of the verifier stack has landed and this PR has passed review.
+- **Library:** `services/gateway/src/quarantine-ack.js` (validate, sign, verify, consistency check, four-part head identity). Tests: `services/gateway/test/quarantine-ack.test.mjs`, throwaway keys only.
+- **Pre-bond register (proposed):** [`pre-bond-register.md`](pre-bond-register.md), with the example [`pre-bond-register.example.json`](pre-bond-register.example.json), the validator `services/gateway/src/pre-bond-register.js` and tests `services/gateway/test/pre-bond-register.test.mjs`.
 - **Not done yet:** serving the signed note. See Publication.
 
 ## Relation to the journal note (`chit402.quarantine_ack.v1`)
@@ -73,13 +74,35 @@ A verifier checks, in order:
 - **Gateway behavior:** since #525 it quarantines this head at boot, and the head is not in `epoch.heads`, inclusion or head serving. `/health` lists it under `quarantined_heads` with `acknowledged: true` from the v1 journal note.
 
 ## Publication
-The signed note is not published yet. The proposed steps are:
+The signed note is not published yet, and it is not signed yet. Signing waits until PR3 of the verifier stack has landed and this PR has passed review. The proposed steps after that are:
 1. Commit the signed document as `docs/log/quarantine-acks/epoch-2-size-11-cf9f998f.json`, next to the draft. The repo copy is the durable public record.
 2. Serve the same bytes from the gateway at `GET /.well-known/quarantine-acks.json`. That is a list document, `{ "schema": "chit402.quarantine_acks.v1", "acks": [ <published documents> ] }`, which is not itself signed: each entry carries its own signature. This route is a follow-up change.
 3. Add `ack_url` and `ack_sha256` to each `/health` `quarantined_heads[]` entry, so a reader who sees a quarantined head can find its note.
-4. The escrow pre-bond register lists `{ epoch, tree_size, root, status: "excluded", ack_sha256 }` for this head. The register hash is pinned when the bond is deployed.
+4. The escrow pre-bond register lists this head by `{ epoch, tree_size, root, head_jws_sha256 }` with `status: "excluded"` and the note's `ack_sha256`. The register hash is pinned when the bond is deployed. See R1 and the proposed format in [`pre-bond-register.md`](pre-bond-register.md).
 
 A verifier finds notes through `/.well-known/quarantine-acks.json` or the repo path. It checks each note under the issuer history key for its `kid`, as it does for tree heads.
 
-## Ordering rule
-A note excuses a head only if it is signed (`iat`) and listed on the pre-bond register before bond start. A note signed later, or after evidence naming that head was submitted, excuses nothing. The register hash pinned at deploy is what makes the order checkable on chain: a contract can't see when a file was first served.
+## Normative rules
+The key words MUST, MUST NOT and SHOULD are used as in RFC 2119.
+
+### R1. The pinned register is the authority
+- The pre-bond register hash pinned when the bond is deployed is the only authority on which heads are excluded. A note, a served file, a `/health` flag or a later register does not change it.
+- A note excuses a head only if the head's entry on the pinned register has `status: "excluded"` and an `ack_sha256` equal to the SHA-256 of the JCS bytes of that note.
+- The note's signed `iat` MUST be strictly before bond start (the register's `as_of`). A note signed at or after bond start excuses nothing, even if it is otherwise valid.
+- A head that is not on the pinned register counts as post-bond and is never excused.
+
+### R2. A head is identified by four parts
+- An exclusion names a head by `(epoch, tree_size, root, head_jws_sha256)`. All four MUST match. A verifier MUST NOT exclude a head by its root alone, or by any subset of the four parts.
+- The reason: the excluded root `cf9f998f…` is also the honest size-10 root of epoch 2. A root-only rule would also excuse the honest size-10 head and any other signed object carrying that root.
+- `head_jws_sha256` is the SHA-256 of the head's compact JWS string. ES256 is non-deterministic, so two signatures over the same claims are two different signed objects, and only the one named is excluded.
+- `ackExcludesHead`, `registerExcludes` and `registerLists` enforce this: a head with any part missing, or with a `jws` that does not hash to the given `head_jws_sha256`, is never matched.
+
+### R3. No evidence from an excluded head
+- An inclusion proof against an excluded head MUST NOT be used as evidence either way: not to show that a receipt is in the log, and not to show that it is missing or at a different index.
+- Escrow evidence that relies on an excluded head is rejected. A receipt's inclusion is shown only against a head that is not excluded (here, the replacement head or a later head).
+- `inclusionEvidenceAllowed(register, head)` returns false for an excluded head.
+
+### R4. The note is signed by the key it guards against
+- The note is signed by the same issuer key whose heads the escrow watches. Whoever holds that key could also sign a note for a head they want excused, including a real fork, at any time.
+- A valid signature therefore does not make a note trustworthy on its own. The pinned register exists for this reason: it fixes, before bond start, the exact set of excused heads and the hash of each note. A later note signed by the same key cannot be added to it.
+- The consistency proof adds a second limit: a note can only describe a root that is a prefix of the replacement root, so it cannot describe a fork.

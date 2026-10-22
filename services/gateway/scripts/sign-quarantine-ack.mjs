@@ -14,6 +14,11 @@
  *
  * Drop --dry-run and add --confirm SIGN to sign. Signing requires
  * ISSUER_SIGNER=kms; the env key path is refused.
+ *
+ * On hold: do not sign until PR3 of the verifier stack has landed and the
+ * format in docs/log/quarantine-ack.md has passed review. The note excuses a
+ * head only if its iat is before bond start and the pinned pre-bond register
+ * names it (docs/log/pre-bond-register.md).
  */
 import fs from 'node:fs';
 import path from 'node:path';

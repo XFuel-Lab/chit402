@@ -1,0 +1,15 @@
+{
+  "schema": "chit402.pre_bond_register.v0",
+  "as_of": "FILL_AT_BOND_START",
+  "issuer_kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+  "heads": [
+    {
+      "epoch": 2,
+      "tree_size": 11,
+      "root": "cf9f998f969c8c7c3b969b0b636a4b7bf6424ebcaf746790b33c38e168c54341",
+      "head_jws_sha256": "FILL_FROM_SIGNED_ACK",
+      "status": "excluded",
+      "ack_sha256": "FILL_FROM_SIGNED_ACK"
+    }
+  ]
+}

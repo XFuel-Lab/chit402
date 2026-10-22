@@ -22,6 +22,7 @@ const {
   validateQuarantineAckClaims,
   verifyConsistencyProof,
   verifyQuarantineAck,
+  journalHeads,
 } = await import('../src/quarantine-ack.js');
 const { leafHash, rootOf, consistencyProof } = await import('../src/receipt-merkle.js');
 
@@ -296,4 +297,20 @@ test('script: dry run fills from a journal file, prints claims, writes nothing; 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an ack excludes only the head it names by all four parts, never by root alone', async () => {
+  const { ackExcludesHead, headIdentity } = await import('../src/quarantine-ack.js');
+  const signer = throwawaySigner();
+  const claims = filledClaims(signer);
+  const id = { epoch: 2, tree_size: 11, root: claims.quarantined_head.root, head_jws_sha256: claims.quarantined_head.head_jws_sha256 };
+  assert.equal(ackExcludesHead(claims, id), true);
+  assert.equal(ackExcludesHead(claims, { root: id.root }), false);
+  assert.equal(ackExcludesHead(claims, { epoch: 2, tree_size: 11, root: id.root }), false);
+  assert.equal(ackExcludesHead(claims, { ...id, tree_size: 10 }), false);
+  assert.equal(ackExcludesHead(claims, { ...id, epoch: 1 }), false);
+  assert.equal(ackExcludesHead(claims, { ...id, head_jws_sha256: '0'.repeat(64) }), false);
+  const raced = journalHeads(raceJournal(signer)).find((e) => e.decoded.payload.root === id.root);
+  assert.equal(ackExcludesHead(claims, { epoch: 2, tree_size: 11, root: id.root, jws: raced.jws }), false, 'a different journal, so a different JWS');
+  assert.equal(headIdentity({ ...id, jws: 'a.b.c' }), null, 'jws and hash must agree');
 });

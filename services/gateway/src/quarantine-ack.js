@@ -437,3 +437,46 @@ export function fillQuarantineAckFromJournal(draft, journalText, { nowSeconds, v
   claims.iat = nowSeconds;
   return claims;
 }
+
+/**
+ * Head identity for exclusion: (epoch, tree_size, root, head_jws_sha256).
+ * A root alone never identifies a head: the same root is an honest head at
+ * its true size. `head` is { epoch, tree_size, root } plus either `jws`
+ * (the compact head JWS) or `head_jws_sha256`.
+ * @returns {{ epoch: number, tree_size: number, root: string, head_jws_sha256: string } | null}
+ */
+export function headIdentity(head) {
+  if (!isObject(head)) return null;
+  const epoch = head.epoch;
+  const treeSize = head.tree_size;
+  const root = typeof head.root === 'string' ? head.root : null;
+  let jwsHash = null;
+  if (typeof head.jws === 'string' && head.jws.length > 0) {
+    jwsHash = sha256(Buffer.from(head.jws, 'utf8')).toString('hex');
+    if (head.head_jws_sha256 != null && head.head_jws_sha256 !== jwsHash) return null;
+  } else if (typeof head.head_jws_sha256 === 'string') {
+    jwsHash = head.head_jws_sha256;
+  }
+  if (!posInt(epoch) || !posInt(treeSize) || !HEX64.test(String(root)) || !HEX64.test(String(jwsHash))) return null;
+  return { epoch, tree_size: treeSize, root, head_jws_sha256: jwsHash };
+}
+
+/** True when two identities name the same signed head. All four parts must match. */
+export function sameHeadIdentity(a, b) {
+  return !!a && !!b
+    && a.epoch === b.epoch
+    && a.tree_size === b.tree_size
+    && a.root === b.root
+    && a.head_jws_sha256 === b.head_jws_sha256;
+}
+
+/**
+ * Does this verified ack name exactly this head? Matching is by
+ * (epoch, tree_size, root, head_jws_sha256). A head with an incomplete
+ * identity is never matched, so a root-only lookup always returns false.
+ */
+export function ackExcludesHead(claims, head) {
+  if (!isObject(claims) || !isObject(claims.quarantined_head)) return false;
+  const want = headIdentity({ ...claims.quarantined_head, epoch: claims.epoch, jws: undefined });
+  return sameHeadIdentity(want, headIdentity(head));
+}
