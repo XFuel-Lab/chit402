@@ -552,6 +552,8 @@ across receipts. A one-shot settlement claim closes once (claim_already_settled)
 **Merkle hashing (RFC 6962)**: leaf_hash is already the leaf hash, SHA-256(0x00 || task_id|row_hash). Do not prefix it again.
 An interior node is SHA-256(0x01 || left || right). An odd last node is promoted unchanged.
 Fold the inclusion proof from leaf_hash, taking each sibling's side from the proof, to reach the signed root.
+**Consistency**: GET /v1/receipts/tree/consistency?first=&second= returns a proof that the size-first tree is a prefix of the size-second tree (optional epoch). Check first_root and second_root against the signed heads at those sizes. The proof hash order is our own, not RFC 6962 PROOF order; the reference check is verifyConsistency in receipt-merkle.js (docs/product/receipt-merkle.md). chit402-verify does not check consistency yet.
+**Public attestation**: eligible Base receipt shells carry public_attestation.jws (ES256, typ chit402-public-receipt+jwt, issuer key). It signs task_id, issued_at, the payment tx (payment.ref), payee, gross and settled amounts, asset, and the log leaf_hash, leaf_index and epoch. That binds the public fields to the leaf. The payer is not in it or in the leaf, by design.
 **Head binding**: payload version 9 and later sign tree_head_hash and tolerance
 inside the JWS. tree_head_hash is the log prefix that ends at this receipt, so
 that root proves inclusion. A later head verifies when its inclusion proof

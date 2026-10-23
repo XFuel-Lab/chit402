@@ -75,9 +75,36 @@ It does not check the head signature or the anchor transactions. `chit402-verify
 | `GET /v1/receipts/tree/head` | Latest signed tree head (`chit402.tree_head.v2`), or `not_yet_published`. `?tree_size=N` returns that signed head only. `N` is a canonical positive integer. A duplicate or non-canonical value is `400 {error:"bad_tree_size"}`. The sized response is `Cache-Control: private, no-store`. |
 | `GET /v1/receipts/tree/epoch/:epoch/head` | Signed head of a closed epoch. Epoch 1 is the pinned final root, with its Base and Solana transactions. A public read does not broadcast. |
 | `GET /v1/receipts/:task_id/inclusion` | Proof against the newest effectively anchored head: `leaf_index`, `tree_size`, `root`, `proof`, and `head` (`tree_size`, `root`, `signature`, anchor tx and chain when known). A broadcast head is treated as anchored only when the journal intent, the tracker receipt, the signed Base tx, and the block time all agree. `anchor_confirmed_by` says `signed_head` or `anchor_state`. The signed `anchors` object is not rewritten. `?tree_size=N` selects that signed head. `N` is a canonical positive integer with no leading zeros. A leaf past the anchored size is `status: pending_anchor` with `anchored_tree_size` and `live_tree_size`, and no proof. When the selected head is not itself anchored and a later anchored signed head contains the leaf, the body adds optional `covered_by`. It names the smallest such head: `epoch`, `tree_size`, `root`, `inclusion_url` (`/v1/receipts/<task_id>/inclusion?tree_size=<N>`), and `anchors`. `anchors.base.tx` is the Base transaction hash. `anchors.solana.slot` and `anchors.solana.signature` are present when that head has a Solana anchor. The field is omitted when the head is anchored, including `pending_anchor` for a leaf past that head. A quarantined head is not served and is not `covered_by`. Existing fields are unchanged. `head_url` is `/v1/receipts/tree/epoch/<E>/head` for a closed epoch and `/v1/receipts/tree/head?tree_size=<N>` for the open epoch. The public page uses that same `N` on both the inclusion link and the head link. Inclusion and head are the same size. |
-| `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second` |
+| `GET /v1/receipts/tree/consistency?first=&second=` | Proof that the tree of size `first` is a prefix of size `second`. Optional `epoch` picks the epoch. See [Consistency proofs](#consistency-proofs). |
 
 The gateway signs a new head on the first append of each UTC day. A public read does not publish or anchor, and it does not re-sign a stored head. Inclusion uses the newest effectively anchored head, so a leaf appended after that head is `pending_anchor` until the next anchor. A proof against a head that is not itself anchored can name the smallest later anchored signed head in `covered_by`. That object is `epoch`, `tree_size`, `root`, `inclusion_url` for that size, and the anchor transactions: Base `anchors.base.tx`, plus Solana `anchors.solana.slot` and `anchors.solana.signature` when present. It is left out when the inclusion head is itself anchored. A quarantined head is an example of a head that never anchors; it is not served, and it is not used as `covered_by`. A closed epoch and the open epoch can both have a head of the same size. The closed receipt pairs with `/v1/receipts/tree/epoch/<E>/head`, never with the open epoch's `?tree_size=` head. A closed epoch uses its pinned final head. A journal head newer than that pin, or a head that names a different root at the same size, is rejected. The verify page names a Base transaction, a Solana transaction, both, or `PENDING` for a leaf that is not in the anchored head yet. `PENDING` is only shown when the receipt verifies. A failed receipt is `FAILED`. Storage, epochs, and restore are in [receipt-log.md](./receipt-log.md).
+
+## Consistency proofs
+
+An inclusion proof ties one leaf to one signed head. To check that a later head extends an earlier one, fetch a consistency proof between their sizes. For a head and the head before it, use the earlier head's `tree_size` as `first` and this head's as `second`. The earlier root is the signed head's `prev_root`.
+
+```bash
+curl -s "https://api.chit402.com/v1/receipts/tree/consistency?first=36&second=37"
+```
+
+The response (`chit402.consistency.v1`) carries `epoch`, `first_tree_size`, `second_tree_size`, `first_root`, `second_root` and `proof`. Compare `first_root` and `second_root` with the roots of the two signed heads (`GET /v1/receipts/tree/head?tree_size=N`). The response itself is not signed, so the signed heads are what bind the roots.
+
+`proof` is a list of node hashes in our own order, not the RFC 6962 `PROOF(m, D[n])` order. A stock RFC 6962 or RFC 9162 consistency verifier will not accept it as is. The order is: split the size-`second` tree at the largest power of two below its size, as RFC 6962 does, and recurse left then right. A subtree that lies wholly inside the first `first` leaves, or wholly after them, contributes its root hash. The reference check is `verifyConsistency` in `services/gateway/src/receipt-merkle.js`. It rebuilds both roots from the list and requires every hash to be used.
+
+Epochs are separate trees. A consistency proof covers two sizes in the same epoch. The link between epochs is the signed epoch record (`GET /v1/receipts/tree/epoch`) and the closed epoch head (`GET /v1/receipts/tree/epoch/:epoch/head`).
+
+`chit402-verify` does not check consistency yet. It checks inclusion against one signed head.
+
+## Public attestation
+
+A receipt shell is unsigned. A stranger cannot recompute `leaf_hash` from it, because `row_hash` is owner-held. For eligible Base receipts the shell carries `public_attestation.jws`, an ES256 JWS (`typ` `chit402-public-receipt+jwt`) under the issuer key in `/.well-known/jwks.json`. Its payload is the line `chit402.public_receipt.v1`, a newline, and a JSON object that signs:
+
+- `task_id` and `issued_at`
+- `payment.ref` (the payment tx, `base:0x…`), `payment.payee`, `payment.gross_amount`, `payment.settled_amount`, `payment.asset` and `payment.rail`
+- `log.leaf_hash`, `log.leaf_index` and `log.epoch`
+- `iss` and `attested_at`
+
+That ties the public fields to the leaf by signature, so the inclusion proof for `log.leaf_hash` covers this receipt. The payer is not in the attestation or the leaf. That is by design. `npx chit402-verify <receipt url>` reports `verified_public` only when the attestation signature, the shell fields, the leaf's inclusion and anchor, and the Base payment all check out. A receipt issued before public attestation started has no `public_attestation`, and a stranger check of it reports could not check.
 
 ## Dual anchor
 
