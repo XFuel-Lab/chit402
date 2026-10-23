@@ -298,22 +298,27 @@ jobs:
           SANDBOX_IMAGE: node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
         run: |
           set -euo pipefail
-          base=$(git merge-base HEAD "origin/$BASE_REF")
+          # Git reads that resolve the merge base or its content ignore
+          # replace refs and grafts.
+          unset GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS
+          g() { GIT_GRAFT_FILE=/dev/null git --no-replace-objects -c advice.graftFileDeprecated=false "$@"; }
+          base=$(g merge-base HEAD "origin/$BASE_REF")
           drv="$RUNNER_TEMP/driver"
           # Each driver must come from the merge base once it has ever existed
           # on the target branch; a branch that predates it fails closed (merge
           # the target branch in). Only the change that adds a driver runs its
-          # own copy, with a notice. Shallow history fails closed.
+          # own copy, with a notice. A shallow, partial or treeless clone
+          # fails closed.
           bash packages/verify/scripts/select-driver.sh "$GITHUB_WORKSPACE" "origin/$BASE_REF" "$base" "$drv" \
             packages/verify/scripts/corpus-gate.mjs packages/verify/scripts/harness-diff.mjs
           changed=$(node "$drv/harness-diff.mjs" changed "$GITHUB_WORKSPACE" "$base" HEAD)
-          own=$(git diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs packages/verify/scripts/select-driver.sh)
+          own=$(g diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs packages/verify/scripts/select-driver.sh)
           if [ -z "$changed" ] && [ -z "$own" ]; then
             echo "No corpus harness file changed; nothing to diff."
             exit 0
           fi
           printf 'Corpus harness files changed:\n%s\n' "${changed:-(none; the job itself changed, so it runs as a self-check)}"
-          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          g worktree add --detach "$RUNNER_TEMP/base" "$base"
           basepkg="$RUNNER_TEMP/base/packages/verify"
           (cd "$basepkg" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
           node "$drv/harness-diff.mjs" overlay "$basepkg" "$GITHUB_WORKSPACE" HEAD "$RUNNER_TEMP/head"

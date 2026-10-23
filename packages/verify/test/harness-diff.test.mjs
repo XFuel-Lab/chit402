@@ -133,3 +133,24 @@ test('compare fails closed on a missing outcome or no outcomes at all', () => {
   assert.ok(compareOutcomes({}, {}).some((p) => p.includes('gave no outcomes')));
   assert.ok(compareOutcomes({ public: { 'x|cli': { exit: 2 } } }, {}).some((p) => p.includes('no outcome from the head harness')));
 });
+
+test('git reads ignore replace refs and grafts (changed and overlay)', { skip: !gitOk }, () => {
+  const r = harnessRepo();
+  const lib = readFileSync(join(r.root, LIB), 'utf8');
+  edit(r.root, 'packages/verify/src/cli.ts', (s) => `${s}\n`);
+  r.git('commit', '-q', '-am', 'src only');
+  const forged = join(work, 'forged-lib.mjs');
+  writeFileSync(forged, `${PR_A_LINE}${lib}`);
+  // Plain git would see a harness edit in HEAD through the replace ref.
+  r.git('replace', r.git('rev-parse', `HEAD:${LIB}`), r.git('hash-object', '-w', forged));
+  assert.notEqual(r.git('show', `HEAD:${LIB}`), lib.trim());
+  assert.deepEqual(changedHarnessPaths(r.root, r.base, 'HEAD'), []);
+  const overlay = join(work, 'overlay-replace');
+  buildOverlay(pkg, r.root, 'HEAD', overlay);
+  assert.equal(readFileSync(join(overlay, 'test/corpus/run-library.mjs'), 'utf8'), lib);
+  rmSync(overlay, { recursive: true, force: true });
+  // A graft that makes HEAD a root commit would list every file as changed.
+  mkdirSync(join(r.root, '.git', 'info'), { recursive: true });
+  writeFileSync(join(r.root, '.git', 'info', 'grafts'), `${r.git('rev-parse', 'HEAD')}\n`);
+  assert.deepEqual(changedHarnessPaths(r.root, r.base, 'HEAD'), []);
+});
