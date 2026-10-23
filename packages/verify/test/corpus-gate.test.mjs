@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths, builderRowProblems, isBuilderPath } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths, builderRowProblems, isBuilderPath, pinHistoryProblems } from '../scripts/corpus-gate.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -1136,10 +1136,13 @@ for (const id of [L5, V10A6]) {
     for (const files of [JK_FILES, [...JK_FILES, SRC_TOUCH]]) {
       const problems = run({ ...pinned(swapped), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: files });
       assert.ok(has(problems, `${key}: the head input digest differs`), problems.join('; '));
-      assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder`), problems.join('; '));
+      assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file`), problems.join('; '));
     }
-    // The tighten alone, without the builder edit and the swap, is still the allowed verifier-first flow.
-    assert.deepEqual(run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })) }), []);
+    // The tighten alone to `key untrusted` is refused too: it decides nothing.
+    assert.ok(has(run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: [SRC_TOUCH] }), `${key}: a deferred row may move only to a decision by a case rule`));
+    // A verifier-first tighten to a decision cause is still the allowed flow.
+    const decided = { ...row, cause: 'iat_backdated' };
+    assert.deepEqual(run({ ...pinned(), headBaseline: { ...baseline, [key]: decided }, headChanges: withEntries(entry(key, decided, { kind: 'tighten' })), changedFiles: [SRC_TOUCH] }), []);
   });
 }
 
@@ -1158,12 +1161,12 @@ test('JK variants: a second JWKS key under the same kid, a key byte change, and 
   assert.equal(stable(signatureForm(headInputs.cases.find((c) => c.id === id)).doc_keys), stable(['history[0]|corpus-test-kid|1|0', 'jwks[0]|corpus-test-kid|1|0', 'doc.issuer_jwk|corpus-test-kid|1|0', 'history.issuer_jwk|corpus-test-kid|1|0']));
 });
 
-test('builder edits: a pinned row may not move in the same change as synthetic.mjs, history-file.mjs or a fixture', () => {
+test('builder edits: a pinned row may not move in the same change as synthetic.mjs, history-file.mjs, a fixture or the corpus harness', () => {
   const key = `${L5}|library`;
-  const row = { ...baseline[key], exit: 1, result: 'invalid', reason: 'key untrusted', cause: 'key untrusted', overall: 'failed' };
+  const row = { ...baseline[key], exit: 1, result: 'invalid', reason: 'invalid', cause: 'iat_backdated', overall: 'failed' };
   const tight = (files, over = {}) => run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: files, ...over });
   for (const f of ['packages/verify/test/corpus/synthetic.mjs', 'packages/verify/test/history-file.mjs', 'packages/verify/test/fixtures/x.json', 'packages/verify/test/corpus/SYNTHETIC.mjs', 'packages/verify/test/ѕynthetic.mjs']) {
-    assert.ok(has(tight([f]), `${key}: a pinned baseline row may not move in the same change as a case input builder`), f);
+    assert.ok(has(tight([f]), `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file`), f);
   }
   assert.deepEqual(tight([]), []);
   assert.deepEqual(tight(['packages/verify/test/corpus/README.md']), []);
@@ -1174,7 +1177,10 @@ test('builder edits: a pinned row may not move in the same change as synthetic.m
   assert.ok(!has(run({ ...pinned(), headBaseline: { ...baseline, [REAL]: realRow }, headChanges: withEntries(entry(REAL, realRow)), changedFiles: ['packages/verify/test/fixtures/x.json'] }), 'case input builder'));
   // A changes.json entry for a pinned path counts as a move, even with the row unchanged.
   assert.ok(has(builderRowProblems(baseline, baseline, new Map([[key, { kind: 'tighten' }]]), ['packages/verify/test/corpus/synthetic.mjs'], pinMaps(pin), pinMaps(pin)), 'case input builder'));
-  assert.equal(isBuilderPath('packages/verify/test/corpus/lib.mjs'), false);
+  // The corpus harness counts too (HN-l5); the pin and docs do not.
+  assert.equal(isBuilderPath('packages/verify/test/corpus/lib.mjs'), true);
+  assert.equal(isBuilderPath('packages/verify/test/corpus/README.md'), false);
+  assert.equal(isBuilderPath('packages/verify/src/cli.ts'), false);
 });
 
 test('Hrev-g10: a revoked entry added to gate10-pv10\'s history with a same-exit row move is rejected by the builder rule and the digest, not only the frozen cause', () => {
@@ -1183,8 +1189,66 @@ test('Hrev-g10: a revoked entry added to gate10-pv10\'s history with a same-exit
   for (const key of [`${id}|library`]) {
     const row = { ...baseline[key], reason: 'kid_revoked_before_issuance', cause: 'kid_revoked_before_issuance' };
     const problems = run({ ...pinned(hrev), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: ['packages/verify/test/history-file.mjs', 'packages/verify/test/corpus/synthetic.mjs', SRC_TOUCH] });
-    assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder`), problems.join('; '));
+    assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file`), problems.join('; '));
     assert.ok(has(problems, `${id}|library: the head input digest differs`), problems.join('; '));
+  }
+});
+
+// HN-l5 (review of 6193d9af): a one-line harness edit that hides the case's
+// keys, plus a deferred tighten to what the hidden keys give.
+const HARNESS_LIB = 'packages/verify/test/corpus/run-library.mjs';
+const HARNESS_CLI = 'packages/verify/test/corpus/lib.mjs';
+const NEUTER_ROW = (key) => ({ ...baseline[key], exit: 1, result: 'invalid', reason: 'key untrusted', cause: 'key untrusted', overall: 'failed' });
+for (const id of [L5, V10A6]) {
+  test(`HN: ${id}|library: a run-library.mjs edit plus a deferred tighten to \`1 key untrusted\` is rejected twice`, () => {
+    const key = `${id}|library`;
+    assert.equal(pin.deferred.find((e) => `${e.case}|${e.path}` === key)?.expect, 'log_unreachable');
+    const row = NEUTER_ROW(key);
+    const problems = run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: [HARNESS_LIB] });
+    assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file (${HARNESS_LIB})`), problems.join('; '));
+    assert.ok(has(problems, `${key}: a deferred row may move only to a decision by a case rule, not "key untrusted"`), problems.join('; '));
+    // The same with a src touch next to it, and with the other harness files.
+    for (const f of [HARNESS_CLI, 'packages/verify/test/corpus/run-signature.mjs', 'packages/verify/test/corpus/tape-preload.mjs', 'packages/verify/test/corpus/tapes/x.json', 'packages/verify/test/golden-corpus.test.mjs']) {
+      const q = run({ ...pinned(), headBaseline: { ...baseline, [key]: { ...row, cause: 'iat_backdated' } }, headChanges: withEntries(entry(key, { ...row, cause: 'iat_backdated' }, { kind: 'tighten' })), changedFiles: [f, SRC] });
+      assert.ok(has(q, `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file`), `${f}: ${q.join('; ')}`);
+    }
+  });
+}
+
+test('HN cli: a lib.mjs (cli runner) edit plus a move of a pinned cli row is rejected', () => {
+  for (const key of [`${L5}|cli`, `${V10A6}|cli`, 'label-v10-outer-stamp-6|cli']) {
+    const was = baseline[key];
+    const row = { ...was, checks: { ...was.checks, payment_binding: 'fail' } };
+    const problems = run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: [HARNESS_CLI] });
+    assert.ok(has(problems, `${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file (${HARNESS_CLI})`), `${key}: ${problems.join('; ')}`);
+    // Without the harness edit (a src change), the row move is not this rule's concern.
+    assert.ok(!has(run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: [SRC] }), 'corpus harness file'), key);
+  }
+  // The harness edit alone, no row moving, is not refused by this rule.
+  assert.deepEqual(run({ ...pinned(), changedFiles: [HARNESS_CLI] }), []);
+  assert.equal(isBuilderPath(DECLARATIONS_PIN), false);
+});
+
+const NON_DECISION_CAUSES = ['log_unreachable', 'anchor_unreachable', 'issuer_history_unavailable', 'receipt_unavailable', 'signed_receipt_unavailable', 'log_time_unavailable', 'base_rpc_error', 'rpc_timeout', 'pending_anchor', 'payer_unchecked', 'signature_unchecked', 'key untrusted', 'key_untrusted', 'head_key_untrusted', 'could_not_check', 'invalid', 'unreadable', 'unchecked', 'pending', ''];
+test('deferred: a move to each cause that decides nothing is rejected, even with a src change and a tighter exit', () => {
+  for (const id of [L5, V10A6]) {
+    const key = `${id}|library`;
+    for (const cause of NON_DECISION_CAUSES) {
+      assert.ok(isNonDecision(cause), cause);
+      const row = { ...baseline[key], exit: 1, result: 'invalid', reason: 'invalid', cause, overall: 'failed' };
+      const problems = run({ ...pinned(), headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(entry(key, row, { kind: 'tighten' })), changedFiles: [SRC] });
+      assert.ok(has(problems, `${key}: a deferred row may move only to a decision by a case rule, not ${JSON.stringify(cause)}`), `${cause}: ${problems.join('; ')}`);
+    }
+    // An exit-only move that keeps the deferred value is refused as well.
+    const exitOnly = { ...baseline[key], exit: 1, result: 'invalid', overall: 'failed' };
+    assert.ok(has(run({ ...pinned(), headBaseline: { ...baseline, [key]: exitOnly }, headChanges: withEntries(entry(key, exitOnly, { kind: 'tighten' })), changedFiles: [SRC] }), `${key}: a deferred row may move only to a decision by a case rule, not "log_unreachable"`));
+    // A deferred entry held at a decision value of another rule may not move onto that value either.
+    const held = clone(pin); held.deferred = held.deferred.map((e) => (`${e.case}|${e.path}` === key ? { ...e, expect: 'unsupported_version' } : e));
+    const onHeld = { ...baseline[key], exit: 1, result: 'invalid', reason: 'invalid', cause: 'unsupported_version', overall: 'failed' };
+    assert.ok(has(declarationRowProblems(baseline, { ...baseline, [key]: onHeld }, pinMaps(held), pinMaps(held)), `${key}: a deferred row may move only to a decision by a case rule, not "unsupported_version"`));
+    // A decision cause with a src change passes (NA-control, DEF-tighter).
+    const ok = { ...baseline[key], exit: 1, result: 'invalid', reason: 'invalid', cause: 'version_window_closed', overall: 'failed' };
+    assert.deepEqual(run({ ...pinned(), headBaseline: { ...baseline, [key]: ok }, headChanges: withEntries(entry(key, ok, { kind: 'tighten' })), changedFiles: [SRC] }), [], key);
   }
 });
 
@@ -1805,6 +1869,62 @@ test('end to end: an unparseable head pin fails closed with a message, not a cra
     assert.ok(res.stderr.includes(`corpus-gate: ${rel} at the head is not valid JSON; the gate fails closed`), res.stderr);
     assert.doesNotMatch(res.stderr, /SyntaxError|\n\s+at /);
   }
+});
+
+test('end to end: HN-l5 (the run-library.mjs edit and the deferred tighten) fails the gate script', { skip: !gitOk }, () => {
+  const key = `${L5}|library`;
+  const rel = HARNESS_LIB;
+  const src = readFileSync(join(pkg, rel.replace(/^packages\/verify\//, '')), 'utf8');
+  const r = repoWith((root) => {
+    writeFileSync(join(root, rel), src.replace(/const jwks = /, 'const jwks = /timing-l5/.test(file) ? { keys: [] } : '));
+    const b = JSON.parse(readFileSync(join(root, BASELINE), 'utf8'));
+    const row = NEUTER_ROW(key);
+    b[key] = row;
+    writeFileSync(join(root, BASELINE), JSON.stringify(b, null, 1));
+    const c = JSON.parse(readFileSync(join(root, CHANGES), 'utf8'));
+    c.changes.push(entry(key, row, { kind: 'tighten' }));
+    writeFileSync(join(root, CHANGES), JSON.stringify(c, null, 2));
+  }, (root) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), src); });
+  assert.notEqual(readFileSync(join(r.root, rel), 'utf8'), src);
+  const res = gateCli(r.root, r.base);
+  assert.equal(res.status, 1, res.stdout);
+  assert.ok(res.stderr.includes(`${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file`), res.stderr);
+  assert.ok(res.stderr.includes(`${key}: a deferred row may move only to a decision by a case rule`), res.stderr);
+});
+
+test('end to end: in a shallow clone the pin history check fails closed when the merge-base pin is missing', { skip: !gitOk }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-'));
+  const git = (dir, ...a) => { const r = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git(root, 'init', '-q');
+  for (const rel of [BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN]) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), readFileSync(join(pkg, rel.replace(/^packages\/verify\//, '')))); }
+  git(root, 'add', '-A'); git(root, 'commit', '-q', '-m', 'pin');
+  git(root, 'rm', '-q', DECLARATIONS_PIN); git(root, 'commit', '-q', '-m', 'pin deleted');
+  const base = git(root, 'rev-parse', 'HEAD');
+  writeFileSync(join(root, DECLARATIONS_PIN), readFileSync(join(pkg, DECLARATIONS_PIN.replace(/^packages\/verify\//, ''))));
+  git(root, 'add', '-A'); git(root, 'commit', '-q', '-m', 'head');
+  // Full history: refused because the history has had the pin.
+  const full = gateCli(root, base);
+  assert.equal(full.status, 1, full.stdout);
+  assert.match(full.stderr, /is missing at the merge base, whose history has had it/);
+  // Shallow clone with the boundary at the deleting commit: the history behind it is gone.
+  const shallow = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-clone-'));
+  const cl = spawnSync('git', ['clone', '-q', '--depth', '2', `file://${root}`, shallow], { encoding: 'utf8' });
+  assert.equal(cl.status, 0, cl.stderr);
+  assert.equal(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true');
+  assert.equal(git(shallow, 'rev-list', '-1', base, '--', DECLARATIONS_PIN), '');
+  const res = gateCli(shallow, base);
+  assert.equal(res.status, 1, res.stdout);
+  assert.ok(res.stderr.includes('cannot be read in full (shallow clone or git error), and the pin is missing there; the gate fails closed'), res.stderr);
+  // A shallow clone whose merge base has the pin is not refused for its depth.
+  const clean = repoWith(() => {});
+  const shallow2 = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-clone-'));
+  assert.equal(spawnSync('git', ['clone', '-q', '--depth', '2', `file://${clean.root}`, shallow2]).status, 0);
+  assert.equal(gateCli(shallow2, clean.base).status, 0);
+  // Unit: unknown history with a missing pin fails; with the pin present, or a readable history, it does not.
+  assert.equal(pinHistoryProblems('unknown', 'missing').length, 1);
+  assert.deepEqual(pinHistoryProblems('unknown', 'ok'), []);
+  assert.deepEqual(pinHistoryProblems('no', 'missing'), []);
+  assert.deepEqual(pinHistoryProblems('yes', 'missing'), []);
 });
 
 test('end to end: an unknown base is a usage error, not a pass', { skip: !gitOk }, () => {
