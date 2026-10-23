@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
-import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, declarationRowProblems, basePinStateProblems, builderRowProblems, isBuilderPath, pinHistoryProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, effectiveDigests, repinListProblems, repinFormsOf, REPIN_FILES, declarationRowProblems, basePinStateProblems, signatureForm, stable, unclassifiedPaths, builderRowProblems, isBuilderPath, pinHistoryProblems } from '../scripts/corpus-gate.mjs';
 import { tempDir } from './tmp-dirs.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
@@ -1356,6 +1356,282 @@ test('frozen registry: append-only, appended entries recorded', () => {
   assert.deepEqual(run({ headRegistry: grown, headChanges: withEntries({ kind: 'registry', entry: 'pv12', pr: 'x', spec: 'x' }) }), []);
 });
 
+// ---------- reviewed re-pin (repins in declarations.frozen.json) ----------
+
+const SYNTH_FILE = 'packages/verify/test/corpus/synthetic.mjs';
+const HISTORY_FILE = 'packages/verify/test/history-file.mjs';
+const REPIN_SCOPE = [SYNTH_FILE, DECLARATIONS_PIN, CHANGES];
+// A builder tidy: one more top-level field in the case JWKS. The document and
+// every outcome stay. (A document change is a new case, not a re-pin.)
+const tidyJwks = (c) => { const j = JSON.parse(c.jwks); j.corpus_note = 'builder tidy'; c.jwks = JSON.stringify(j, null, 2); return c; };
+const tidyDoc = (c) => { const d = JSON.parse(c.doc); d.corpus_note = 'builder tidy'; c.doc = JSON.stringify(d, null, 2); return c; };
+const tidyOf = (ids, edit = tidyJwks) => ids.reduce((acc, id) => withCase(acc, id, edit), headInputs);
+const keysOf = (inputs) => inputs.cases.flatMap((c) => c.paths.map((x) => `${c.id}|${x}`));
+const BASE_DIGESTS = inputDigests(headInputs);
+const repinOf = (id, to, extra = {}) => ({ case: id, from_digest: BASE_DIGESTS[id], to_digest: to, pr: 'test', note: 'builder tidy', ...extra });
+const repinChange = (id, extra = {}) => ({ kind: 'repin', case: id, pr: 'test', spec: 'builder tidy, same outcomes', ...extra });
+const withRepins = (...r) => ({ ...clone(pin), repins: r });
+const onBaseAll = await baseOutcomes(pkg, headInputs, keysOf(headInputs));
+const TIDY = tidyOf([V13]);
+const onTidy = { ...onBaseAll, ...(await baseOutcomes(pkg, TIDY, keysOf(TIDY).filter((k) => k.startsWith(`${V13}|`)))) };
+const BASE_FORMS = repinFormsOf(headInputs);
+const repinRun = (over = {}) => run({
+  ...pinned(TIDY),
+  headPin: withRepins(repinOf(V13, inputDigests(TIDY)[V13])),
+  headChanges: withEntries(repinChange(V13)),
+  changedFiles: REPIN_SCOPE,
+  repinOutcomes: { keys: keysOf(headInputs), onHead: onTidy, onBase: onBaseAll },
+  repinForms: { base: BASE_FORMS, head: repinFormsOf(TIDY) },
+  ...over,
+});
+// A full re-pin of one case to `inputs`, with outcomes read off the merge-base verifier.
+const repinTo = async (inputs, id) => {
+  const k = keysOf(inputs).filter((x) => x.startsWith(`${id}|`));
+  const onHead = { ...onBaseAll, ...(await baseOutcomes(pkg, inputs, k)) };
+  return run({
+    ...pinned(inputs),
+    headPin: withRepins(repinOf(id, inputDigests(inputs)[id])),
+    headChanges: withEntries(repinChange(id)),
+    changedFiles: REPIN_SCOPE,
+    repinOutcomes: { keys: keysOf(headInputs), onHead, onBase: onBaseAll },
+    repinForms: { base: BASE_FORMS, head: repinFormsOf(inputs) },
+  });
+};
+
+test('re-pin: the effective digest is the last repin of a case; a moved input with no repin is still rejected', () => {
+  const to1 = 'c'.repeat(64);
+  const to2 = 'd'.repeat(64);
+  const p2 = withRepins(repinOf(V13, to1), repinOf(V13, to2, { from_digest: to1 }));
+  assert.equal(effectiveDigests(p2).get(V13), to2);
+  assert.equal(effectiveDigests(pin).get(V13), BASE_DIGESTS[V13]);
+  assert.deepEqual(repinListProblems(pin, p2), []);
+  assert.deepEqual(pinDigestProblems(p2, { ...BASE_DIGESTS, [V13]: to2 }), []);
+  assert.ok(has(pinDigestProblems(p2, { ...BASE_DIGESTS, [V13]: to1 }), `${V13}|library: the head input digest differs`));
+  assert.ok(has(pinDigestProblems(pin, inputDigests(TIDY)), `${V13}|library: the head input digest differs`));
+});
+
+test('re-pin: a scoped change whose outcomes on the merge-base verifier are identical passes', () => {
+  assert.notEqual(inputDigests(TIDY)[V13], BASE_DIGESTS[V13]);
+  for (const k of keysOf(TIDY).filter((x) => x.startsWith(`${V13}|`))) assert.equal(stable(onTidy[k]), stable(onBaseAll[k]), k);
+  assert.deepEqual(repinRun(), []);
+  // history-file.mjs is in scope too; and a second re-pin chains on the first.
+  assert.deepEqual(repinRun({ changedFiles: [...REPIN_SCOPE, HISTORY_FILE] }), []);
+  assert.deepEqual(REPIN_FILES, [SYNTH_FILE, HISTORY_FILE, DECLARATIONS_PIN, CHANGES]);
+});
+
+test('re-pin: repins is append-only, and each entry is well formed and continues its case chain', () => {
+  const to = inputDigests(TIDY)[V13];
+  const r = repinOf(V13, to);
+  const base = withRepins(r);
+  assert.ok(has(repinListProblems(base, withRepins()), 'repins is append-only: entry 0'));
+  assert.ok(has(repinListProblems(base, withRepins({ ...r, note: 'other' })), 'repins is append-only: entry 0'));
+  assert.ok(has(repinListProblems(base, clone(pin)), 'repins removed'));
+  assert.ok(has(repinListProblems(pin, { ...clone(pin), repins: {} }), 'repins is not an array'));
+  for (const bad of [{ ...r, note: '' }, { ...r, pr: undefined }, { ...r, to_digest: 'x' }, { ...r, from_digest: undefined }, { ...r, extra: 1 }]) {
+    assert.ok(has(repinListProblems(pin, withRepins(bad)), 'repins: malformed entry'), JSON.stringify(bad));
+  }
+  assert.ok(has(repinListProblems(pin, withRepins({ ...r, case: 'version-v14-unknown' })), 'is not a declared or deferred case'));
+  assert.ok(has(repinListProblems(pin, withRepins({ ...r, to_digest: r.from_digest })), 'from_digest equals to_digest'));
+  assert.ok(has(repinListProblems(pin, withRepins({ ...r, from_digest: 'e'.repeat(64) })), "from_digest is not the case's effective digest"));
+  // Entries of one case that pin different digests: a repin may not pick one of them.
+  const split = withRepins(r);
+  split.declarations = split.declarations.map((e) => (e.case === V13 && e.path === 'cli' ? { ...e, input_digest: 'f'.repeat(64) } : e));
+  assert.ok(has(repinListProblems(pin, split), "from_digest is not the case's effective digest"));
+  assert.equal(effectiveDigests({ ...split, repins: [] }).get(V13), null);
+  // The pin checks report it in the gate too.
+  assert.ok(has(repinRun({ headPin: withRepins({ ...r, from_digest: 'e'.repeat(64) }) }), "from_digest is not the case's effective digest"));
+});
+
+test('re-pin: a change that touches any other file is rejected', () => {
+  for (const f of ['packages/verify/src/receipt-version.ts', GOLDEN_FILE, BASELINE, 'packages/verify/test/corpus/run-cli.mjs', 'packages/verify/package.json', 'packages/verify/test/corpus/README.md', 'packages/verify/test/corpus/synthetic.mjs.bak', 'packages/verify/test/corpus/ѕynthetic.mjs', 'README.md']) {
+    assert.ok(has(repinRun({ changedFiles: [...REPIN_SCOPE, f] }), 're-pin: a re-pin change touches only'), f);
+  }
+  assert.ok(has(repinRun({ changedFiles: null }), 're-pin: needs the list of files'));
+});
+
+test('re-pin: nothing else in the pin, the baseline or changes.json moves', () => {
+  const to = inputDigests(TIDY)[V13];
+  // A declaration appended next to the repin.
+  const grown = withRepins(repinOf(V13, to));
+  grown.declarations.push({ case: 'version-v10-claims-signed-as-v6-after-window', path: 'library', expect: 'version_window_closed', input_digest: BASE_DIGESTS['version-v10-claims-signed-as-v6-after-window'] });
+  assert.ok(has(repinRun({ headPin: grown }), 'declarations.frozen.json may change only by appending to repins'));
+  // A note edited in the pin.
+  assert.ok(has(repinRun({ headPin: { ...withRepins(repinOf(V13, to)), note: 'edited' } }), 'may change only by appending to repins'));
+  // A baseline row tightened with its tighten entry.
+  const key = 'version-l1-v4-not-allowlisted|cli';
+  const row = { ...baseline[key], checks: Object.fromEntries(Object.keys(baseline[key].checks).map((k) => [k, 'fail'])) };
+  const tight = repinRun({ headBaseline: { ...baseline, [key]: row }, headChanges: withEntries(repinChange(V13), entry(key, row)) });
+  assert.ok(has(tight, 'baseline rows may not change in a re-pin change'), tight.join('; '));
+  assert.ok(has(tight, 'changes.json may get only repin entries'), tight.join('; '));
+  // changes.json repin entries match the appended repins, one each.
+  assert.ok(has(repinRun({ headChanges: changes }), `${V13}: 1 repins entries but 0 changes.json repin entries`));
+  assert.ok(has(repinRun({ headChanges: withEntries(repinChange(V13), repinChange(V13)) }), `${V13}: 1 repins entries but 2`));
+  assert.ok(has(repinRun({ headChanges: withEntries(repinChange(V13, { path: 'cli' })) }), 'repin entry needs case, pr and spec, and no path'));
+  // A repin entry in changes.json with no repin appended.
+  assert.ok(has(run({ headChanges: withEntries(repinChange(V13)) }), 'repin entry for version-v13-unknown with no repins entry appended'));
+});
+
+test('re-pin: every moved case is re-pinned to its head digest, and only moved cases', () => {
+  const two = tidyOf([V13, 'control-unsigned-document']);
+  const hd = inputDigests(two);
+  const one = repinRun({ ...pinned(two), headPin: withRepins(repinOf(V13, hd[V13])) });
+  assert.ok(has(one, 're-pin: control-unsigned-document: input digest changed with no repins entry'), one.join('; '));
+  assert.ok(has(one, 'control-unsigned-document|cli: the head input digest differs'), one.join('; '));
+  const wrongTo = repinRun({ headPin: withRepins(repinOf(V13, 'c'.repeat(64))) });
+  assert.ok(has(wrongTo, "re-pin: version-v13-unknown: the last repin's to_digest is not the head input digest"), wrongTo.join('; '));
+  const unmoved = repinRun({ ...pinned(headInputs), headPin: withRepins(repinOf(V13, 'c'.repeat(64))) });
+  assert.ok(has(unmoved, 're-pin: version-v13-unknown: re-pinned, but its input digest did not change'), unmoved.join('; '));
+  const extra = { ...TIDY, cases: [...TIDY.cases, { ...clone(TIDY.cases.find((c) => c.id === V13)), id: 'version-v14-unknown' }] };
+  assert.ok(has(repinRun({ headDigests: inputDigests(extra) }), 'the case set may not change in a re-pin change'));
+  assert.ok(has(repinRun({ baseDigests: { ...BASE_DIGESTS, [V13]: 'e'.repeat(64) } }), 'the merge-base input is not its merge-base effective digest'));
+});
+
+test('re-pin: any change in the full outcome on the merge-base verifier is rejected', async () => {
+  const lib = `${V13}|library`;
+  const cli = `${V13}|cli`;
+  const sig = 'gate8-detached-pv7|signature';
+  const o = onBaseAll[lib];
+  const variants = {
+    cause: { ...onTidy, [lib]: { ...o, cause: 'other_cause' } },
+    reason: { ...onTidy, [cli]: { ...onTidy[cli], reason: 'other_reason' } },
+    exit: { ...onTidy, [lib]: { ...o, exit: 2, result: 'could_not_check' } },
+    check: { ...onTidy, [lib]: { ...o, checks: { ...o.checks, [Object.keys(o.checks)[0]]: 'pass' } } },
+    signature: { ...onTidy, [sig]: { ...onBaseAll[sig], checks: { ...onBaseAll[sig].checks, signature: onBaseAll[sig].checks.signature === 'pass' ? 'fail' : 'pass' } } },
+    overall: { ...onTidy, [lib]: { ...o, overall: o.overall === 'failed' ? 'partial' : 'failed' } },
+  };
+  for (const [name, onHead] of Object.entries(variants)) {
+    const problems = repinRun({ repinOutcomes: { keys: keysOf(headInputs), onHead, onBase: onBaseAll } });
+    assert.ok(has(problems, 'the merge-base verifier gives a different outcome on the head input'), `${name}: ${problems.join('; ')}`);
+  }
+  const { [lib]: _gone, ...missing } = onTidy;
+  assert.ok(has(repinRun({ repinOutcomes: { keys: keysOf(headInputs), onHead: missing, onBase: onBaseAll } }), `${lib}: no merge-base verifier outcome on both inputs`));
+  // A real input swap: the unsigned control case built from the v13 document.
+  const swapped = V13_DOC(headInputs, 'control-unsigned-document');
+  const id = 'control-unsigned-document';
+  const k = keysOf(swapped).filter((x) => x.startsWith(`${id}|`));
+  const onSwap = { ...onBaseAll, ...(await baseOutcomes(pkg, swapped, k)) };
+  const sw = run({
+    ...pinned(swapped),
+    headPin: withRepins(repinOf(id, inputDigests(swapped)[id])),
+    headChanges: withEntries(repinChange(id)),
+    changedFiles: REPIN_SCOPE,
+    repinOutcomes: { keys: keysOf(headInputs), onHead: onSwap, onBase: onBaseAll },
+  });
+  assert.ok(sw.some((p) => p.startsWith(`re-pin: ${id}|`) && p.includes('different outcome')), sw.join('; '));
+});
+
+// The six wholesale swaps from the review: the target case takes the source
+// case's document, history and JWKS. Outcomes match, the case does not.
+const SWAPS = [
+  ['label-v10-outer-stamp-6', 'label-v6-outer-stamp-10'],
+  ['gate10-pv9-no-history-pin', 'control-test-key-v10'],
+  ['gate9-pv8-no-head-binding', 'control-test-key-v10'],
+  ['version-l1-v5-not-allowlisted', 'version-l1-v4-not-allowlisted'],
+  ['version-v12-shape-no-version-plain-id', 'version-unversioned-object-no-stamp'],
+  [V13, 'version-v12-shape-no-version-plain-id'],
+];
+const swapInto = (target, source) => withCase(headInputs, target, (c) => { const s = headInputs.cases.find((x) => x.id === source); return { ...c, doc: s.doc, history: s.history, jwks: s.jwks }; });
+
+test('re-pin: each of the six wholesale input swaps from the review is rejected as a document change', async () => {
+  for (const [target, source] of SWAPS) {
+    const problems = await repinTo(swapInto(target, source), target);
+    assert.ok(has(problems, `re-pin: ${target}: the case document changed`), `${target} <- ${source}: ${problems.join('; ')}`);
+    assert.ok(has(problems, `re-pin: ${target}: the re-pinned document is the document of ${source}`), `${target} <- ${source}: ${problems.join('; ')}`);
+  }
+});
+
+test('re-pin: a document change is a new case; a document signature or key change is rejected even with the same document form', async () => {
+  // One more field in the v13 document (the earlier re-pin fixture): same outcomes, rejected.
+  const docTidy = tidyOf([V13], tidyDoc);
+  const p1 = await repinTo(docTidy, V13);
+  assert.ok(has(p1, `re-pin: ${V13}: the case document changed`), p1.join('; '));
+  assert.ok(!p1.some((x) => x.includes('different outcome')), p1.join('; '));
+  // Re-signed under an injected key: the document form is the same, the signature state is not.
+  const { inputs } = resignDoc(headInputs, KS_ID);
+  assert.equal(repinFormsOf(inputs)[KS_ID].doc, BASE_FORMS[KS_ID].doc);
+  const p2 = await repinTo(inputs, KS_ID);
+  assert.ok(has(p2, `re-pin: ${KS_ID}: a signature state, key relation or carried-key state changed`), p2.join('; '));
+  // The embedded key loses x and y: same document form, a different key relation.
+  const xy = withCase(headInputs, KS_ID, (c) => { const d = JSON.parse(c.doc); const { x: _x, y: _y, ...rest } = d.issuer_signature.issuer_jwk; d.issuer_signature.issuer_jwk = rest; c.doc = JSON.stringify(d, null, 2); return c; });
+  const p3 = await repinTo(xy, KS_ID);
+  assert.ok(has(p3, `re-pin: ${KS_ID}: a signature state, key relation or carried-key state changed`), p3.join('; '));
+  // Without the document forms the re-pin fails closed.
+  assert.ok(has(repinRun({ repinForms: null }), 'needs the merge-base and head case documents'));
+});
+
+// A JWKS-only change that changes key bytes under the case kid. Where the
+// verifier reads the key (L5) the outcome moves too; where the case is
+// decided before the signature check (v13) it does not, so the outcome check
+// alone would let the case take a different key. The carried-key state
+// rejects both: a re-pin keeps every key the verifier can read.
+const KEY_MSG = 'a signature state, key relation or carried-key state changed';
+test('re-pin: a JWKS key swap under the kid is rejected by the carried-key state, whether or not the outcome moves', async () => {
+  const l5 = swapJwksKey(headInputs, L5);
+  const p1 = await repinTo(l5, L5);
+  assert.ok(has(p1, `re-pin: ${L5}: ${KEY_MSG}`), p1.join('; '));
+  assert.ok(p1.some((x) => x.startsWith(`re-pin: ${L5}|library`) && x.includes('different outcome')), p1.join('; '));
+  for (const v of [swapJwksKey(headInputs, V13), editJwks(headInputs, V13, (j) => { j.keys.push(freshUnder(j.keys[0].kid, j.keys[0])); }), editJwks(headInputs, V13, (j) => { j.keys.unshift(freshUnder('other-kid', j.keys[0])); })]) {
+    const p = await repinTo(v, V13);
+    assert.ok(has(p, `re-pin: ${V13}: ${KEY_MSG}`), p.join('; '));
+    assert.ok(!p.some((x) => x.includes('different outcome')), p.join('; '));
+    assert.ok(!has(p, 'the case document changed'), p.join('; '));
+  }
+  // The JWKS change that keeps every key (a field outside the keys) still re-pins.
+  assert.deepEqual(await repinTo(TIDY, V13), []);
+});
+
+// Key members other than x and y: main's verifier ignores use, key_ops and
+// x5c, so outcomes stay identical, but a stricter verifier could read them.
+const MEMBER_EDITS = {
+  use: (k) => { k.use = 'enc'; },
+  key_ops: (k) => { k.key_ops = ['encrypt']; },
+  x5c: (k) => { k.x5c = ['AAAA']; },
+  alg: (k) => { k.alg = 'RS256'; },
+  crv: (k) => { k.crv = 'P-384'; },
+  kty: (k) => { k.kty = 'OKP'; },
+  kid: (k) => { k.kid = `${k.kid}-2`; },
+  ext: (k) => { k.ext = true; },
+  dropped_alg: (k) => { delete k.alg; delete k.use; },
+};
+const JWK_MSG = 'a JWK member other than x and y changed';
+test('re-pin: a JWK member other than x and y changed is rejected for each member, in the JWKS, the history and the embedded keys', async () => {
+  for (const id of [V13, 'control-test-key-v10']) {
+    for (const [name, edit] of Object.entries(MEMBER_EDITS)) {
+      const v = editJwks(headInputs, id, (j) => { edit(j.keys[0]); });
+      const p = await repinTo(v, id);
+      assert.ok(has(p, `re-pin: ${id}: ${JWK_MSG}`), `${id} ${name}: ${p.join('; ')}`);
+      assert.ok(!has(p, 'the case document changed'), `${id} ${name}: ${p.join('; ')}`);
+    }
+  }
+  // The issuer history entry key and the history's own issuer_jwk.
+  const hist = withCase(headInputs, V13, (c) => { const h = JSON.parse(c.history); h.entries[0].jwk.use = 'enc'; c.history = JSON.stringify(h); return c; });
+  assert.ok(has(await repinTo(hist, V13), `re-pin: ${V13}: ${JWK_MSG}`));
+  const histIss = withCase(headInputs, V13, (c) => { const h = JSON.parse(c.history); if (h.issuer_signature?.issuer_jwk) h.issuer_signature.issuer_jwk.key_ops = ['verify']; c.history = JSON.stringify(h); return c; });
+  assert.ok(JSON.parse(headInputs.cases.find((x) => x.id === V13).history).issuer_signature?.issuer_jwk);
+  assert.ok(has(await repinTo(histIss, V13), `re-pin: ${V13}: ${JWK_MSG}`));
+  // Members are compared as a set: the same key written with its members in another order is not a change.
+  const reordered = editJwks(headInputs, V13, (j) => { j.keys[0] = Object.fromEntries(Object.entries(j.keys[0]).reverse()); });
+  assert.equal(repinFormsOf(reordered)[V13].keys, BASE_FORMS[V13].keys);
+  // A JWKS field outside the keys still re-pins.
+  assert.equal(repinFormsOf(TIDY)[V13].keys, BASE_FORMS[V13].keys);
+  assert.deepEqual(await repinTo(TIDY, V13), []);
+});
+
+test('re-pin: Hrev-g10 as a re-pin (a revoked entry added to the issuer history) is rejected by the history entries and key states', async () => {
+  const id = 'gate10-pv10-no-history-pin';
+  const hrev = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries.push({ ...h.entries[0], status: 'revoked', revoked_at: '2020-01-01T00:00:00.000Z' }); c.history = JSON.stringify(h); return c; });
+  const p = await repinTo(hrev, id);
+  assert.ok(has(p, `re-pin: ${id}: the issuer history entries changed`), p.join('; '));
+  assert.ok(has(p, `re-pin: ${id}: ${KEY_MSG}`), p.join('; '));
+  assert.ok(!has(p, 'the case document changed'), p.join('; '));
+});
+
+test('re-pin: fails closed without merge-base outcomes or digests', () => {
+  assert.ok(has(repinRun({ repinOutcomes: null }), 'needs the merge-base verifier outcomes on the head and merge-base inputs'));
+  assert.ok(has(repinRun({ baseDigests: null }), 'needs the merge-base and head input digests'));
+  assert.ok(has(repinRun({ basePin: null }), 're-pin: needs declarations.frozen.json at the merge base'));
+});
+
 // ---------- end to end, in a throwaway git repo ----------
 
 const gitOk = spawnSync('git', ['--version']).status === 0;
@@ -1530,6 +1806,49 @@ test('end to end: a case path the pin does not classify fails the gate script', 
   const bad = gateCli(r.root, r.base, ['--head-inputs', writeInputs(r.root, 'grown.json', grown)]);
   assert.equal(bad.status, 1, bad.stdout);
   assert.match(bad.stderr, /version-v14-unknown\|cli: case path in synthetic\.mjs \(head\) is not in declarations\.frozen\.json/);
+});
+
+test('end to end: a reviewed re-pin passes with identical outcomes on the merge-base verifier, and an input swap does not', { skip: !gitOk }, () => {
+  const to = inputDigests(TIDY)[V13];
+  const repo = (id, digest) => repoWith((root) => {
+    const pp = join(root, DECLARATIONS_PIN);
+    const p = JSON.parse(readFileSync(pp, 'utf8'));
+    p.repins = [repinOf(id, digest)];
+    writeFileSync(pp, JSON.stringify(p, null, 1));
+    const cp = join(root, CHANGES);
+    const c = JSON.parse(readFileSync(cp, 'utf8'));
+    c.changes.push(repinChange(id));
+    writeFileSync(cp, JSON.stringify(c, null, 1));
+  });
+  const r = repo(V13, to);
+  const ok = gateCli(r.root, r.base, ['--base-tree', pkg, '--head-inputs', writeInputs(r.root, 'tidy.json', TIDY)]);
+  assert.equal(ok.status, 0, ok.stderr);
+  // Without the merge-base tree the re-pin fails closed.
+  const none = gateCli(r.root, r.base, ['--head-inputs', writeInputs(r.root, 'tidy2.json', TIDY)]);
+  assert.equal(none.status, 1);
+  assert.match(none.stderr, /re-pin: needs the merge-base/);
+  // The same tidy input without a repin is rejected by the digest pin.
+  const plain = repoWith(() => {});
+  const noRepin = gateCli(plain.root, plain.base, ['--base-tree', pkg, '--head-inputs', writeInputs(plain.root, 'tidy.json', TIDY)]);
+  assert.equal(noRepin.status, 1);
+  assert.match(noRepin.stderr, /version-v13-unknown\|library: the head input digest differs/);
+  // An input swap re-pinned: the outcome moves, so it is rejected.
+  const id = 'control-unsigned-document';
+  const swapped = V13_DOC(headInputs, id);
+  const s = repo(id, inputDigests(swapped)[id]);
+  const bad = gateCli(s.root, s.base, ['--base-tree', pkg, '--head-inputs', writeInputs(s.root, 'swapped.json', swapped)]);
+  assert.equal(bad.status, 1, bad.stdout);
+  assert.match(bad.stderr, /re-pin: control-unsigned-document\|cli: the merge-base verifier gives a different outcome on the head input/);
+  assert.match(bad.stderr, /re-pin: control-unsigned-document: the case document changed/);
+  // A wholesale swap with matching outcomes (label-v10 takes label-v6's input): rejected as a document change.
+  const [target, source] = SWAPS[0];
+  const lab = swapInto(target, source);
+  const l = repo(target, inputDigests(lab)[target]);
+  const labRes = gateCli(l.root, l.base, ['--base-tree', pkg, '--head-inputs', writeInputs(l.root, 'swap.json', lab)]);
+  assert.equal(labRes.status, 1, labRes.stdout);
+  assert.match(labRes.stderr, /re-pin: label-v10-outer-stamp-6: the case document changed/);
+  assert.match(labRes.stderr, /re-pin: label-v10-outer-stamp-6: the re-pinned document is the document of label-v6-outer-stamp-10/);
+  assert.doesNotMatch(labRes.stderr, /different outcome/);
 });
 
 test('end to end: a merge-base pin that is missing (under a gate that reads it) or not valid JSON fails the gate script', { skip: !gitOk }, () => {
