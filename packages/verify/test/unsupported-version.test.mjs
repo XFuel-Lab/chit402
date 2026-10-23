@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -35,7 +36,7 @@ const exported = publicKey.export({ format: 'jwk' });
 const kid = 'm10-version-kid';
 const jwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, alg: 'ES256', use: 'sig', kid };
 const jwks = { keys: [jwk] };
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm10-ver-'));
+const dir = tempDir('m10-ver-');
 const jwksPath = path.join(dir, 'jwks.json');
 const historyPath = path.join(dir, 'history.json');
 const inclusionPath = path.join(dir, 'inclusion.json');

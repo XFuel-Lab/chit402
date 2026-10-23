@@ -6,17 +6,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const shell = JSON.parse(readFileSync(new URL('./fixtures/public/chit-43c98110-prelog-shell.json', import.meta.url), 'utf8'));
 const env = { ...process.env, BASE_RPC_URL: 'http://127.0.0.1:9/', SOLANA_RPC_URL: 'http://127.0.0.1:9/' };
 
 function run(doc) {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-prelog-'));
+  const dir = tempDir('chit-prelog-');
   const file = join(dir, 'shell.json');
   writeFileSync(file, JSON.stringify(doc));
   const proc = spawnSync(process.execPath, [cli, file, '--json'], { encoding: 'utf8', timeout: 20000, env });

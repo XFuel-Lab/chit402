@@ -6,12 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const lib = await import('../dist/index.js');
 const { verifyReceipt, computePaymentCommitment, verdictFromVerification, unsignedDocumentVerdict } = lib;
@@ -24,7 +24,7 @@ const JWKS = read('chit402-jwks.json');
 const REAL = read('chit-4d6e8331.json');
 
 function runCli(doc) {
-  const dir = mkdtempSync(join(tmpdir(), 'v0411-'));
+  const dir = tempDir('v0411-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(doc));
   const proc = spawnSync(process.execPath, [cli, file, '--json'], { encoding: 'utf8', timeout: 20000 });

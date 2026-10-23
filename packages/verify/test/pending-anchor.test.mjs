@@ -5,14 +5,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -321,7 +321,7 @@ test('epoch-2 style: leaves 0-3 verify with --rpc and leaf 4 is PENDING', async 
     });
   });
   const port = await listen(rpc);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-pending-anchor-'));
+  const dir = tempDir('chit-pending-anchor-');
   const url = `http://127.0.0.1:${port}`;
   const cli = join(pkgDir, 'dist', 'cli.js');
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify({ keys: [fx.key.publicJwk] }));
@@ -697,7 +697,7 @@ test('a pending leaf on a failed receipt is FAILED', async () => {
     });
   });
   const port = await listen(rpc);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-pending-failed-'));
+  const dir = tempDir('chit-pending-failed-');
   const url = `http://127.0.0.1:${port}`;
   const cli = join(pkgDir, 'dist', 'cli.js');
   const pending = {

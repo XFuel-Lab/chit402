@@ -6,11 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { RPC_TIMEOUT_MS } = await import('../dist/rpc-deadline.js');
@@ -151,7 +151,7 @@ function rpcServer(handler) {
 }
 
 test('arguments after -- are rejected', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-dash-'));
+  const dir = tempDir('chit-dash-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, '{}\n');
   for (const args of [[file, '--', '--check-payer'], [file, '--', 'anything'], [file, '--json', '--', '--check-payer']]) {
@@ -225,7 +225,7 @@ test('re-signed 10x amount, wrong payer, and wrong payee exit 1', async () => {
     }
     assert.ok(seen.includes('eth_getTransactionReceipt'));
 
-    const dir = mkdtempSync(join(tmpdir(), 'chit-resign-cli-'));
+    const dir = tempDir('chit-resign-cli-');
     const file = join(dir, 'receipt.json');
     writeFileSync(file, JSON.stringify(ten.receipt));
     const cliRun = runCli([file, '--json'], { BASE_RPC_URL: rpcUrl, SOLANA_RPC_URL: rpcUrl });
@@ -242,7 +242,7 @@ test('a real receipt whose chain transfer is short exits 1', () => {
   const source = loadFixture('chit-5d775d12.v7.json');
   const original = claimsOf(source);
   const tx = original.payment.ref.slice('base:'.length);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-short-'));
+  const dir = tempDir('chit-short-');
   const file = join(dir, 'receipt.json');
   const copy = { ...source };
   delete copy.verify_url;
@@ -270,7 +270,7 @@ test('an RPC that never answers is exit 2 inside the deadline', () => {
   const source = loadFixture('chit-5d775d12.v7.json');
   delete source.verify_url;
   if (source.verification) delete source.verification.jwks_uri;
-  const dir = mkdtempSync(join(tmpdir(), 'chit-hang-'));
+  const dir = tempDir('chit-hang-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(source));
   const run = runCli([file, '--json'], {
@@ -292,7 +292,7 @@ test('null, error, and a missing receipt are exit 2', () => {
   const source = loadFixture('chit-5d775d12.v7.json');
   delete source.verify_url;
   if (source.verification) delete source.verification.jwks_uri;
-  const dir = mkdtempSync(join(tmpdir(), 'chit-null-rpc-'));
+  const dir = tempDir('chit-null-rpc-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(source));
   for (const mode of ['null', 'error', 'omit', 'nobody']) {
@@ -345,7 +345,7 @@ test('the five signed fixtures pass the payer check on their transfer', async ()
         assert.equal(verified.overall, 'verified', `${task} ${verified.errors.join(';')}`);
       }
 
-      const dir = mkdtempSync(join(tmpdir(), 'chit-five-'));
+      const dir = tempDir('chit-five-');
       const file = join(dir, 'receipt.json');
       writeFileSync(file, JSON.stringify(copy));
       const run = runCli([file, '--json'], {
@@ -375,7 +375,7 @@ test('a pre-log receipt stays NOT_IN_LOG when the payer transfer matches', async
   const source = loadFixture('public/chit-1ebc5616.json');
   const signed = claimsOf(source);
   const tx = signed.payment.ref.slice('base:'.length);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-prelog-'));
+  const dir = tempDir('chit-prelog-');
   const file = join(dir, 'receipt.json');
   const headFile = fileURLToPath(new URL('./fixtures/recorded/head-current.json', import.meta.url));
   const copy = structuredClone(source);
