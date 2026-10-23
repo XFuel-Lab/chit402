@@ -133,8 +133,9 @@ It fails when:
   (`isNonDecision`, for example `key untrusted`) or the deferred value;
 - a pinned baseline row (declared, deferred or `reason_allowed`) changes in
   a change that touches `test/golden-corpus.test.mjs`;
-- a head case input digest differs from the `input_digest` pinned for any
-  of its declared or deferred paths. The digest includes the signature
+- a head case input digest differs from the effective digest pinned for
+  any of its declared or deferred paths (its `input_digest`, or the
+  `to_digest` of the case's last `repins` entry; see Reviewed re-pin). The digest includes the signature
   state of the case document and of the issuer history, with its key
   relation: `valid:<kid>:<role>` only under the issuer history entry or
   JWKS key filed under the signature's kid; `valid_untrusted:...` naming
@@ -155,7 +156,7 @@ It fails when:
   signed part or a signature, or a re-sign under any key other than the
   trusted one for the kid, moves the digest. An input is never changed under a
   pinned path, whatever the outcome: a changed input is a new case with
-  new pin entries. In practice this means no current synthetic case takes
+  new pin entries, or a reviewed re-pin when no outcome moves. In practice this means no current synthetic case takes
   a `corpus_fix` or `corpus_fix_reason`;
 - `declarations.frozen.json` at the merge base is not valid JSON, or is
   missing while it has existed on the merge base's history (or the
@@ -210,6 +211,8 @@ It fails when:
   against the merge base, as data. Land corpus corrections and verifier changes in
   separate PRs: the verifier change is then checked against corrected
   inputs that are already on main;
+- a change appends to `repins` and breaks a re-pin rule (see Reviewed
+  re-pin);
 - a real receipt case is removed;
 - `changes.json` or `test/fixtures/version-registry.frozen.json` is edited
   other than by appending (an appended registry entry needs a `registry`
@@ -248,6 +251,74 @@ are declared `version_mismatch`, and `label-v4v5-conflicting-stamps|cli`
 is declared `unsupported_version`. The last is decided by the conflicting
 stamps: the same document without `hmac_attestation`, or with a matching
 v4 one, is decided by `legacy_form_not_allowlisted` instead.
+
+## Reviewed re-pin
+
+A change to how `synthetic.mjs` (or `test/history-file.mjs`) builds a
+case's inputs can move its input digest without moving anything the
+verifier reads (for example a field outside the JWKS keys or the history
+entries). Such a change re-pins the moved cases instead of adding new ones.
+A change to a case document is never a re-pin: it is a new case. It is its
+own PR kind:
+
+- it touches only `test/corpus/synthetic.mjs`, `test/history-file.mjs`,
+  `test/corpus/declarations.frozen.json` and `test/corpus/changes.json`
+  (exact paths; `REPIN_FILES` in `corpus-gate.mjs`);
+- it appends entries to the pin's `repins` list and changes nothing else in
+  the pin. `repins` is append-only. Each entry is
+  `{case, from_digest, to_digest, pr, note}` for a declared or deferred
+  case; `from_digest` is the case's effective digest before the entry (its
+  `input_digest`, or the previous repin's `to_digest`), and `to_digest`
+  differs from it. The effective digest of a case is the `to_digest` of its
+  last repin;
+- every case whose input digest moved has a repin whose last `to_digest` is
+  the head digest, no unmoved case is re-pinned, the merge-base input of a
+  re-pinned case is its merge-base effective digest, and the case set does
+  not change;
+- each moved case keeps what the verifier's rules read: the document form
+  (version, shape, payload and every field, as `docForm` reads it), every
+  signature state, key relation and carried-key state of the document and
+  the issuer history (`signatureForm`: which key verifies, which roles hold
+  the same key bytes), and the issuer history entries (kid, key form,
+  validity window, status, revocation) equal the merge base, and every
+  carried JWK (history entries, JWKS keys, the document's and the
+  history's `issuer_jwk`) keeps every member other than `x` and `y`
+  (`kty`, `crv`, `kid`, `alg`, `use`, `key_ops`, `x5c` and the rest; member
+  order does not count). The
+  re-pinned document is not the document of another case. Only the rest of
+  the JWKS and history forms may move (for example a field outside the keys
+  and entries). So a wholesale swap of one case's input for another's is
+  refused even when the outcomes match;
+- a JWKS-only change that changes key bytes under a kid is refused by the
+  carried-key state whatever the outcome. Where the verifier reads that
+  key, the outcome check would usually catch it too; where the case is
+  decided before the signature check, the outcome stays the same but the
+  input no longer holds the key the case was pinned with, so a later
+  verifier change could reach the signature check with a different key.
+  The same holds for an added, removed or reordered key, and for a history
+  entry that is added, revoked or moved (it can change which rule is next
+  in line behind the case's own rule);
+- no baseline row changes, and `changes.json` gets only one
+  `{kind: "repin", case, pr, spec}` entry (no `path`) per appended repin;
+- on the MERGE-BASE verifier, every case path has the same full outcome
+  (exit, result, reason, cause, every check including `signature`, and
+  overall) on the head input as on the merge-base input. The gate runs
+  both, in replay against the merge-base public tape.
+
+Without the merge-base tree and the head export the gate fails a re-pin
+closed.
+
+Required human step: the repository owner reviews and approves each re-pin
+PR from their own account before it merges. The gate cannot check this. It
+is enforced only by branch protection (required code-owner review, with the
+owner's account as code owner for `declarations.frozen.json`), which is a
+repository setting the owner controls; these files do not change settings.
+
+Order: if the merge-base verifier cannot read what the new builder
+produces (for example a field it does not parse yet), the outcomes differ
+and the re-pin is refused. A verifier change under `src/` that accepts both
+forms lands first, as its own PR; the re-pin follows against that merged
+verifier.
 
 Who reviews pin appends: `.github/CODEOWNERS` names the shared project
 account, and code-owner review is not enforced, so an append to
