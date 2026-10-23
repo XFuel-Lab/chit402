@@ -39,6 +39,17 @@
  * show a difference. golden-corpus.test.mjs itself is not run (its
  * comparison logic is not an outcome). The job is a tripwire for harness
  * changes that move an outcome; a harness diff still needs review.
+ *
+ * Trust: `compare` trusts the stdout of each `outcomes` run, and the head
+ * side is written by the head harness. A head harness that prints
+ * base-looking outcomes (every key, the merge-base values) passes. The job
+ * is a tripwire only: it does not replace human review of a harness change
+ * or code-owner protection on .github/workflows/** and these scripts, and it
+ * runs on pull requests only, so a push straight to main skips it.
+ *
+ * Which copy of this file and corpus-gate.mjs CI runs is decided by
+ * select-driver.sh: the merge-base copy once the file has ever existed on
+ * the target branch, failing closed on a branch that predates it.
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -140,7 +151,11 @@ function compareTier(base, head) {
   return p;
 }
 
-/** Differences between two per-tape outcome maps, one line each. */
+/**
+ * Differences between two per-tape outcome maps, one line each.
+ * The head map is whatever the head harness printed: a forged map that
+ * mirrors the merge-base outcomes passes (a tripwire, not a proof).
+ */
 export function compareOutcomes(base, head) {
   const p = [];
   if (!base || Object.keys(base).length === 0 || Object.values(base).every((t) => !t || Object.keys(t).length === 0)) p.push('the merge-base harness gave no outcomes');

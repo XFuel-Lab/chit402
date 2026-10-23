@@ -232,15 +232,13 @@ jobs:
           else
             base=$(git rev-parse HEAD~1)
           fi
-          gate=packages/verify/scripts/corpus-gate.mjs
-          if git cat-file -e "$base:$gate" 2>/dev/null; then
-            git show "$base:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
-            echo "corpus gate: merge-base copy from $base"
-          else
-            # Only the change that adds the gate takes this branch.
-            git show "HEAD:$gate" > "$RUNNER_TEMP/corpus-gate.mjs"
-            echo "::notice::No corpus gate at $base; running this change's copy"
-          fi
+          # The gate must come from the merge base once it has ever existed on
+          # the target branch; a branch that predates it fails closed. Only
+          # the change that adds it runs its own copy. Shallow history fails
+          # closed.
+          if [ "$EVENT_NAME" = "pull_request" ]; then histref="origin/$BASE_REF"; else histref="$base"; fi
+          bash packages/verify/scripts/select-driver.sh "$GITHUB_WORKSPACE" "$histref" "$base" "$RUNNER_TEMP" \
+            packages/verify/scripts/corpus-gate.mjs
           # Build the merge-base tree only. No npm ci, tsc or script from the
           # head tree runs in this job.
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
@@ -261,8 +259,13 @@ jobs:
   # merge-base verifier build, and fails on any case|path outcome
   # difference.
   #  - The driver is the merge-base copy of scripts/harness-diff.mjs and
-  #    scripts/corpus-gate.mjs; only the merge-base tree is built (npm ci
-  #    --ignore-scripts, tsc). Head files are read through git as data.
+  #    scripts/corpus-gate.mjs (scripts/select-driver.sh: a branch that
+  #    predates a driver on the target branch fails closed); only the
+  #    merge-base tree is built (npm ci --ignore-scripts, tsc). Head files
+  #    are read through git as data.
+  #  - Tripwire only: the comparator trusts the head harness's stdout, so a
+  #    forged one passes. Review and code-owner protection still apply, and
+  #    pushes straight to main do not run this job.
   #  - Both harnesses run in a container with no network, a read-only root
   #    and read-only mounts, no capabilities, as the runner user, with no
   #    environment passed in. The job has no secrets and only contents: read,
@@ -273,6 +276,7 @@ jobs:
     name: Corpus harness diff
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -289,23 +293,21 @@ jobs:
         shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}
-          SANDBOX_IMAGE: node:22-bookworm-slim
+          # node:22-bookworm-slim, pinned by digest (multi-arch index from
+          # registry-1.docker.io, read 2026-10-22). Bump the digest on purpose.
+          SANDBOX_IMAGE: node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
         run: |
           set -euo pipefail
           base=$(git merge-base HEAD "origin/$BASE_REF")
           drv="$RUNNER_TEMP/driver"
-          mkdir -p "$drv"
-          for f in corpus-gate.mjs harness-diff.mjs; do
-            if git cat-file -e "$base:packages/verify/scripts/$f" 2>/dev/null; then
-              git show "$base:packages/verify/scripts/$f" > "$drv/$f"
-            else
-              # Only the change that adds the job takes this branch.
-              git show "HEAD:packages/verify/scripts/$f" > "$drv/$f"
-              echo "::notice::No $f at $base; running this change's copy"
-            fi
-          done
+          # Each driver must come from the merge base once it has ever existed
+          # on the target branch; a branch that predates it fails closed (merge
+          # the target branch in). Only the change that adds a driver runs its
+          # own copy, with a notice. Shallow history fails closed.
+          bash packages/verify/scripts/select-driver.sh "$GITHUB_WORKSPACE" "origin/$BASE_REF" "$base" "$drv" \
+            packages/verify/scripts/corpus-gate.mjs packages/verify/scripts/harness-diff.mjs
           changed=$(node "$drv/harness-diff.mjs" changed "$GITHUB_WORKSPACE" "$base" HEAD)
-          own=$(git diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs)
+          own=$(git diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs packages/verify/scripts/select-driver.sh)
           if [ -z "$changed" ] && [ -z "$own" ]; then
             echo "No corpus harness file changed; nothing to diff."
             exit 0
@@ -319,6 +321,7 @@ jobs:
           docker pull -q "$SANDBOX_IMAGE"
           sandbox() {
             docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,size=2g \
+              --pids-limit 512 --memory 2g --memory-swap 2g --cpus 2 \
               --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
               -v "$drv:$drv:ro" -v "$basepkg:$basepkg:ro" -v "$RUNNER_TEMP/head:$RUNNER_TEMP/head:ro" \
               -v "$RUNNER_TEMP/cases:$RUNNER_TEMP/cases:ro" -w /tmp \
@@ -326,6 +329,11 @@ jobs:
           }
           sandbox "$basepkg" > "$RUNNER_TEMP/outcomes-base.json"
           sandbox "$RUNNER_TEMP/head" > "$RUNNER_TEMP/outcomes-head.json"
+          # The comparator trusts each sandbox's stdout, and the head harness
+          # writes the head side: a harness that forges base-looking outcomes
+          # passes. This job is a tripwire for harness changes that move an
+          # outcome. It does not replace review or code-owner protection, and
+          # pushes straight to main do not run it.
           node "$drv/harness-diff.mjs" compare "$RUNNER_TEMP/outcomes-base.json" "$RUNNER_TEMP/outcomes-head.json"
 
   verify-linux:
