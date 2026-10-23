@@ -252,6 +252,82 @@ jobs:
           node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE" \
             --base-tree "$basepkg" --head-inputs "$RUNNER_TEMP/head-inputs/corpus-inputs.json"
 
+  # Corpus harness diff. The corpus gate never runs head code, so it cannot
+  # judge a change to the corpus harness (lib.mjs with the cli runner,
+  # run-*.mjs, tape-*.mjs, record*.mjs, tapes/**, history-file.mjs,
+  # golden-corpus.test.mjs, synthetic.mjs, test/fixtures/**). On a pull
+  # request that touches one of them, this job runs the merge-base harness
+  # and the head harness on the same merge-base cases, against the
+  # merge-base verifier build, and fails on any case|path outcome
+  # difference.
+  #  - The driver is the merge-base copy of scripts/harness-diff.mjs and
+  #    scripts/corpus-gate.mjs; only the merge-base tree is built (npm ci
+  #    --ignore-scripts, tsc). Head files are read through git as data.
+  #  - Both harnesses run in a container with no network, a read-only root
+  #    and read-only mounts, no capabilities, as the runner user, with no
+  #    environment passed in. The job has no secrets and only contents: read,
+  #    and the checkout does not keep credentials. pull_request only.
+  #  - It is not a dependency of Verify package (Linux): whether it becomes a
+  #    required check is a branch-protection decision.
+  harness-diff:
+    name: Corpus harness diff
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Harness diff (merge-base driver; both harnesses offline in a sandbox)
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          SANDBOX_IMAGE: node:22-bookworm-slim
+        run: |
+          set -euo pipefail
+          base=$(git merge-base HEAD "origin/$BASE_REF")
+          drv="$RUNNER_TEMP/driver"
+          mkdir -p "$drv"
+          for f in corpus-gate.mjs harness-diff.mjs; do
+            if git cat-file -e "$base:packages/verify/scripts/$f" 2>/dev/null; then
+              git show "$base:packages/verify/scripts/$f" > "$drv/$f"
+            else
+              # Only the change that adds the job takes this branch.
+              git show "HEAD:packages/verify/scripts/$f" > "$drv/$f"
+              echo "::notice::No $f at $base; running this change's copy"
+            fi
+          done
+          changed=$(node "$drv/harness-diff.mjs" changed "$GITHUB_WORKSPACE" "$base" HEAD)
+          own=$(git diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs)
+          if [ -z "$changed" ] && [ -z "$own" ]; then
+            echo "No corpus harness file changed; nothing to diff."
+            exit 0
+          fi
+          printf 'Corpus harness files changed:\n%s\n' "${changed:-(none; the job itself changed, so it runs as a self-check)}"
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          basepkg="$RUNNER_TEMP/base/packages/verify"
+          (cd "$basepkg" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
+          node "$drv/harness-diff.mjs" overlay "$basepkg" "$GITHUB_WORKSPACE" HEAD "$RUNNER_TEMP/head"
+          node "$drv/harness-diff.mjs" cases "$basepkg" "$RUNNER_TEMP/cases"
+          docker pull -q "$SANDBOX_IMAGE"
+          sandbox() {
+            docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,size=2g \
+              --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+              -v "$drv:$drv:ro" -v "$basepkg:$basepkg:ro" -v "$RUNNER_TEMP/head:$RUNNER_TEMP/head:ro" \
+              -v "$RUNNER_TEMP/cases:$RUNNER_TEMP/cases:ro" -w /tmp \
+              "$SANDBOX_IMAGE" node "$drv/harness-diff.mjs" outcomes "$1" "$RUNNER_TEMP/cases/cases.json"
+          }
+          sandbox "$basepkg" > "$RUNNER_TEMP/outcomes-base.json"
+          sandbox "$RUNNER_TEMP/head" > "$RUNNER_TEMP/outcomes-head.json"
+          node "$drv/harness-diff.mjs" compare "$RUNNER_TEMP/outcomes-base.json" "$RUNNER_TEMP/outcomes-head.json"
+
   verify-linux:
     name: Verify package (Linux)
     needs: corpus-gate
