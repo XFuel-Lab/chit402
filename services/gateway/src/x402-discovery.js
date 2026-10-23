@@ -2318,7 +2318,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptTreeConsistency',
           summary: 'Consistency proof between two tree sizes',
-          description: 'Public. Query first and second are tree sizes, first <= second.',
+          description: 'Public. Query first and second are tree sizes, first <= second; optional epoch. Check first_root and second_root against the signed heads at those sizes. The proof hash order is our own, not RFC 6962 PROOF order; see docs/product/receipt-merkle.md (Consistency proofs). chit402-verify does not check consistency yet.',
           tags: ['Receipts'],
           parameters: [
             { name: 'first', in: 'query', required: true, schema: { type: 'integer' } },
@@ -2331,7 +2331,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         get: {
           operationId: 'receiptInclusion',
           summary: 'Inclusion proof for one receipt',
-          description: 'Public. Merkle hashing is RFC 6962: leaf_hash is already SHA-256(0x00 || task_id|row_hash) and must not be prefixed again; an interior node is SHA-256(0x01 || left || right); an odd last node is promoted. Fold the proof from leaf_hash using each sibling side to reach the signed root. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the smallest later anchored signed head that contains the leaf (epoch, tree_size, root, inclusion_url, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored.',
+          description: 'Public. Merkle hashing is RFC 6962: leaf_hash is already SHA-256(0x00 || task_id|row_hash) and must not be prefixed again; an interior node is SHA-256(0x01 || left || right); an odd last node is promoted. Fold the proof from leaf_hash using each sibling side to reach the signed root. Proves the leaf against the newest anchored signed head. A leaf past that head is pending_anchor. Optional tree_size selects one signed head. When that head is not anchored, covered_by names the smallest later anchored signed head that contains the leaf (epoch, tree_size, root, inclusion_url, Base tx, Solana slot and signature when present). Omitted when the head is itself anchored. To check that a later head extends this one, use GET /v1/receipts/tree/consistency.',
           tags: ['Receipts'],
           parameters: [
             { name: 'task_id', in: 'path', required: true, schema: { type: 'string' } },
