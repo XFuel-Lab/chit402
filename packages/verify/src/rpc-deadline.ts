@@ -73,18 +73,55 @@ export async function jsonRpc(
 ): Promise<unknown> {
   assertHermeticRpc(url);
   const owned = signal ? null : openRpcDeadline(timeoutMs);
+  const active = (signal ?? owned?.signal) as AbortSignal;
+  // The deadline covers the whole call, including the body read. Aborting a
+  // fetch does not always interrupt a body that stalled after the headers, so
+  // the call also races the signal itself.
+  let onAbort: (() => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    const fail = () => reject(active.reason instanceof Error
+      ? active.reason
+      : Object.assign(new Error('rpc_timeout'), { name: 'TimeoutError' }));
+    if (active.aborted) return fail();
+    onAbort = fail;
+    active.addEventListener('abort', fail, { once: true });
+  });
+  aborted.catch(() => {});
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-      signal: signal ?? owned?.signal,
-    });
-    if (!res.ok) throw new Error(`rpc_http_${res.status}`);
-    const json = await res.json() as { result?: unknown; error?: { message?: string } | null };
-    if (json.error) throw new Error(`rpc_error: ${json.error.message || 'unknown'}`);
-    return json.result ?? null;
+    return await Promise.race([jsonRpcCall(url, method, params, active), aborted]);
   } finally {
+    if (onAbort) active.removeEventListener('abort', onAbort);
     owned?.cancel();
+  }
+}
+
+async function jsonRpcCall(url: string, method: string, params: unknown[], active: AbortSignal): Promise<unknown> {
+  {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: active,
+        // A redirect is not followed: the POST is never replayed to another host.
+        redirect: 'error',
+      });
+    } catch (err) {
+      const cause = (err as { cause?: { message?: string; code?: string } } | null)?.cause;
+      if (/redirect/i.test(String(cause?.message || ''))) {
+        throw Object.assign(new Error('rpc_error: redirect refused'), { rpcCode: 'redirect' });
+      }
+      if (err instanceof TypeError && err.message === 'fetch failed') {
+        throw new Error(`rpc_network${cause?.code ? `: ${cause.code}` : ''}`);
+      }
+      throw err;
+    }
+    if (!res.ok) throw new Error(`rpc_http_${res.status}`);
+    const json = await res.json() as { result?: unknown; error?: { message?: string; code?: unknown } | null };
+    if (json.error) {
+      throw Object.assign(new Error(`rpc_error: ${json.error.message || 'unknown'}`), { rpcCode: json.error.code ?? null });
+    }
+    return json.result ?? null;
   }
 }

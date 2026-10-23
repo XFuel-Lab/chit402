@@ -6,10 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { jcsCanonicalize } = await import('../dist/jcs.js');
@@ -208,7 +209,7 @@ test('a payload v10 receipt verifies only against the exact history file', async
   }));
   const opts = { jwks: { keys: [key.publicJwk] }, trustedKids: [key.kid] };
   const exact = await verifyReceipt(receipt, { ...opts, issuerHistory: v1.doc, issuerHistoryBytes: v1.bytes });
-  assert.equal(exact.overall, 'verified', exact.errors.join('; '));
+  assertLibraryPass(exact, exact.errors.join('; '));
   const moved = await verifyReceipt(receipt, { ...opts, issuerHistory: later.doc, issuerHistoryBytes: later.bytes });
   assert.equal(moved.overall, 'failed');
   assert.equal(moved.issuer_history.reason, 'issuer_history_pin_mismatch');
@@ -356,7 +357,7 @@ test('a later active entry does not clear a revocation or a retire', () => {
 test('removed history flags do not verify, and a missing kid is not VERIFIED', async () => {
   const key = issuerKey();
   const receipt = receiptFor(key, paymentClaims(8));
-  const dir = mkdtempSync(join(tmpdir(), 'chit-history-downgrade-'));
+  const dir = tempDir('chit-history-downgrade-');
   const receiptPath = join(dir, 'receipt.json');
   const jwksPath = join(dir, 'jwks.json');
   writeFileSync(receiptPath, JSON.stringify(receipt));
@@ -437,7 +438,7 @@ test('a history window failure exits 1 and a missing kid exits 2', async () => {
     return { ...body, entry_hash: issuerHistoryEntryHash(body) };
   }
   const receipt = receiptFor(key, paymentClaims(8));
-  const dir = mkdtempSync(join(tmpdir(), 'chit-history-check-'));
+  const dir = tempDir('chit-history-check-');
   const receiptPath = join(dir, 'receipt.json');
   const jwksPath = join(dir, 'jwks.json');
   writeFileSync(receiptPath, JSON.stringify(receipt));

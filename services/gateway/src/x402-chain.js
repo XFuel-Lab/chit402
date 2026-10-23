@@ -16,6 +16,9 @@ import {
   installEchoChainReader,
 } from './x402-chain-hook.js';
 import { withRpcTimeout } from './receipt-log-anchor.js';
+import {
+  ARC_CHAINS, arcNetwork, evmRpcUrlFor, evmSettlementSide, isArcSystemLog, lateIssueWindow,
+} from './arc-rail.js';
 
 export {
   setChainReaderForTests,
@@ -27,14 +30,9 @@ export {
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
-/** Public Base RPCs reject eth_getLogs ranges above this. */
-const LOG_CHUNK_BLOCKS = 2000n;
-/** One resolve scans at most this many chunks, then stops. */
-const LOG_CHUNK_CAP = 2n;
-/** Blocks before the later of the issue anchor and the validAfter anchor. */
-const LOG_SEARCH_MARGIN = 64n;
-/** Base block time used only to turn a unix time into a block estimate. */
-const BASE_BLOCK_SECONDS = 2n;
+// Late-issue search window (chunk size, chunk cap, margin, block time) is per
+// chain: see lateIssueWindow in arc-rail.js. Base keeps 2,000 x 2 chunks, a
+// 64-block margin and 2 s blocks.
 /** Head block stamped on a new challenge. A miss leaves issue_block empty. */
 const HEAD_BLOCK_TTL_MS = 2000;
 let headBlockCache = { url: null, block: null, at: 0 };
@@ -185,6 +183,155 @@ function topicAddress(topic) {
   return ethers.getAddress(`0x${topic.slice(-40)}`);
 }
 
+const AUTH_NONCE_RE = /^0x[0-9a-fA-F]{64}$/;
+
+/** EIP-3009 nonce as lowercase bytes32, or null when it is not exactly 0x plus 64 hex. */
+export function canonicalAuthNonce(nonce) {
+  return typeof nonce === 'string' && AUTH_NONCE_RE.test(nonce) ? nonce.toLowerCase() : null;
+}
+
+const UINT_RE = /^[0-9]{1,78}$/;
+// Integer-equivalent decimal ("2000.0"). toPaymentPayload sends it to the
+// facilitator as "2000" on every EVM path, so it is the same uint.
+const UINT_DOT_ZERO_RE = /^([0-9]{1,78})\.0+$/;
+const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+// Whole bytes only: 0x plus an even number of hex digits.
+const SIGNATURE_RE = /^0x(?:[0-9a-fA-F]{2})+$/;
+const AUTH_FIELDS = new Set(['from', 'to', 'value', 'validAfter', 'validBefore', 'nonce']);
+
+/** Largest payment header accepted, in characters (raw JSON or base64). */
+export const PAYMENT_HEADER_MAX_CHARS = 64 * 1024;
+/** An ECDSA signature is 65 bytes. Smart wallets (ERC-1271, ERC-6492) are longer. */
+export const EVM_SIGNATURE_MIN_BYTES = 65;
+/** Room for an ERC-6492 wrapper: factory, deploy calldata, inner signature, magic suffix. */
+export const EVM_SIGNATURE_MAX_BYTES = 8 * 1024;
+/**
+ * Longest validBefore window accepted, from now. The challenge advertises
+ * maxTimeoutSeconds (120 by default), but the SDKs in this repo sign
+ * validBefore = now + 3600, so the window is the larger of the two.
+ */
+export const EVM_AUTH_MAX_WINDOW_S = 3600;
+/** Client clock allowance for validAfter and the validBefore upper bound. */
+export const EVM_AUTH_CLOCK_SKEW_S = 60;
+/** validBefore must be more than this many seconds away, so the facilitator can land the tx. */
+export const EVM_AUTH_MIN_REMAINING_S = 6;
+
+function isPlainObject(v) {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function evmAddress(v) {
+  return typeof v === 'string' && EVM_ADDRESS_RE.test(v);
+}
+
+/** Largest EIP-3009 uint256 field (value, validAfter, validBefore). */
+export const UINT256_MAX = (1n << 256n) - 1n;
+
+/**
+ * A uint256 field as a decimal string, or null. "2000.0" reads as "2000".
+ * Anything above 2^256 - 1 is null: the token contract cannot take it.
+ */
+function uintField(v) {
+  if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) return String(v);
+  if (typeof v !== 'string') return null;
+  let digits = null;
+  if (UINT_RE.test(v)) digits = v;
+  else {
+    const m = UINT_DOT_ZERO_RE.exec(v);
+    if (m) digits = m[1];
+  }
+  if (digits == null || BigInt(digits) > UINT256_MAX) return null;
+  return digits;
+}
+
+/**
+ * True when a decoded header is a transfer method other than EIP-3009
+ * transferWithAuthorization (Permit2, a different x402 scheme, and so on).
+ */
+function otherPaymentScheme(decoded) {
+  const p = decoded?.payload;
+  if (p && typeof p === 'object' && (p.permit2Authorization || p.permit2 || p.permit)) return true;
+  const method = decoded?.accepted?.extra?.assetTransferMethod ?? decoded?.extra?.assetTransferMethod;
+  if (method != null && String(method).toLowerCase() !== 'eip3009') return true;
+  const scheme = decoded?.accepted?.scheme ?? decoded?.scheme;
+  if (scheme != null && String(scheme) !== 'exact') return true;
+  return false;
+}
+
+/**
+ * The one authorization a header carries, or null when there is none or more
+ * than one. Two shapes are accepted, the same two toPaymentPayload forwards:
+ * x402 `payload: { authorization, signature }`, and the XFuel SDK
+ * `authorization: { message, signature }`. A header with both, a bare
+ * top-level authorization without `message`, or a stray top-level signature
+ * is refused, so the facilitator never sees a different authorization than
+ * the one checked here.
+ */
+function singleAuthorization(decoded) {
+  const p = decoded.payload;
+  const inPayload = isPlainObject(p) && p.authorization != null;
+  const top = decoded.authorization;
+  if (inPayload) {
+    if (top != null || decoded.signature != null) return null;
+    if (!isPlainObject(p.authorization)) return null;
+    return { auth: p.authorization, signature: p.signature };
+  }
+  if (top == null) return null;
+  if (!isPlainObject(top) || !isPlainObject(top.message)) return null;
+  if (decoded.signature != null) return null;
+  if (isPlainObject(p) && p.signature != null) return null;
+  return { auth: top.message, signature: top.signature };
+}
+
+/**
+ * Why an EVM payment header is refused before the facilitator, or null when
+ * it carries one well-formed EIP-3009 authorization:
+ * - header at most PAYMENT_HEADER_MAX_CHARS;
+ * - from and to are 20-byte hex addresses; no fields beyond the six EIP-3009 ones;
+ * - value, validAfter (optional, 0) and validBefore are uints, at most 2^256 - 1;
+ * - validAfter <= now + skew, and now + EVM_AUTH_MIN_REMAINING_S < validBefore
+ *   <= now + max(maxTimeoutSeconds, EVM_AUTH_MAX_WINDOW_S) + skew;
+ * - a bytes32 nonce;
+ * - a signature of whole bytes, EVM_SIGNATURE_MIN_BYTES to EVM_SIGNATURE_MAX_BYTES.
+ * Other transfer methods get payment_scheme_unsupported. Every other refusal
+ * is settle_unconfirmed.
+ * @param {string} paymentHeader
+ * @param {{ nowSec?: number, maxTimeoutSeconds?: number }} [opts]
+ */
+export function evmAuthorizationRefusal(paymentHeader, { nowSec, maxTimeoutSeconds } = {}) {
+  if (typeof paymentHeader === 'string' && paymentHeader.length > PAYMENT_HEADER_MAX_CHARS) {
+    return 'settle_unconfirmed';
+  }
+  const decoded = decodePaymentHeader(paymentHeader);
+  if (decoded && otherPaymentScheme(decoded)) return 'payment_scheme_unsupported';
+  if (!isPlainObject(decoded)) return 'settle_unconfirmed';
+  const one = singleAuthorization(decoded);
+  if (!one) return 'settle_unconfirmed';
+  const { auth, signature } = one;
+  for (const key of Object.keys(auth)) {
+    if (!AUTH_FIELDS.has(key)) return 'settle_unconfirmed';
+  }
+  // from and to must be addresses here. The payee and payer checks that
+  // follow bind them to the challenge and the facilitator result.
+  if (!evmAddress(auth.from) || !evmAddress(auth.to)) return 'settle_unconfirmed';
+  const value = uintField(auth.value);
+  const validAfter = auth.validAfter == null ? '0' : uintField(auth.validAfter);
+  const validBefore = uintField(auth.validBefore);
+  if (!value || !validAfter || !validBefore) return 'settle_unconfirmed';
+  const now = BigInt(Number.isSafeInteger(nowSec) ? nowSec : Math.floor(Date.now() / 1000));
+  const advertised = Number.isSafeInteger(maxTimeoutSeconds) && maxTimeoutSeconds > 0 ? maxTimeoutSeconds : 0;
+  const windowS = BigInt(Math.max(advertised, EVM_AUTH_MAX_WINDOW_S));
+  const skew = BigInt(EVM_AUTH_CLOCK_SKEW_S);
+  if (BigInt(validAfter) > now + skew) return 'settle_unconfirmed';
+  if (BigInt(validBefore) <= now + BigInt(EVM_AUTH_MIN_REMAINING_S)) return 'settle_unconfirmed';
+  if (BigInt(validBefore) > now + windowS + skew) return 'settle_unconfirmed';
+  if (!canonicalAuthNonce(auth.nonce)) return 'settle_unconfirmed';
+  if (typeof signature !== 'string' || !SIGNATURE_RE.test(signature)) return 'settle_unconfirmed';
+  const sigBytes = (signature.length - 2) / 2;
+  if (sigBytes < EVM_SIGNATURE_MIN_BYTES || sigBytes > EVM_SIGNATURE_MAX_BYTES) return 'settle_unconfirmed';
+  return null;
+}
+
 export function readEvmAuthorization(paymentHeader) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return null;
@@ -196,6 +343,8 @@ export function readEvmAuthorization(paymentHeader) {
     to: auth.to || null,
     value: auth.value != null ? String(auth.value) : null,
     nonce: auth.nonce || null,
+    validAfter: auth.validAfter != null ? auth.validAfter : null,
+    validBefore: auth.validBefore != null ? auth.validBefore : null,
     signature: typeof signature === 'string' ? signature : null,
   };
 }
@@ -214,6 +363,9 @@ export function confirmEvmReceipt(receipt, {
   if (receipt.status !== 1 && receipt.status !== '0x1') return { ok: false, code: 'settle_unconfirmed' };
   const asset = String(challenge?.asset || '').toLowerCase();
   if (!asset) return { ok: false, code: 'settle_unconfirmed' };
+  // Arc mirrors each USDC move from 0xff..fe in 18-decimal units. That emitter
+  // is never the payment asset.
+  if (isArcSystemLog({ address: asset })) return { ok: false, code: 'settle_unconfirmed' };
 
   let wrapped = null;
   if (authorization?.signature) {
@@ -237,6 +389,7 @@ export function confirmEvmReceipt(receipt, {
   const auths = [];
   for (let i = 0; i < (receipt.logs || []).length; i += 1) {
     const log = receipt.logs[i];
+    if (isArcSystemLog(log)) continue;
     const addr = String(log.address || '').toLowerCase();
     if (addr !== asset) continue;
     const topic0 = String(log.topics?.[0] || '').toLowerCase();
@@ -255,14 +408,13 @@ export function confirmEvmReceipt(receipt, {
     }
   }
   if (matches.length !== 1) return { ok: false, code: 'settle_unconfirmed' };
-  const authNonce = authorization?.nonce ? String(authorization.nonce).toLowerCase() : null;
+  // EIP-3009 nonce is required. Without it, any AuthorizationUsed by the payer
+  // would match, and a different transfer could confirm this payment.
+  const authNonce = canonicalAuthNonce(authorization?.nonce);
+  if (!authNonce) return { ok: false, code: 'settle_unconfirmed' };
   const authOk = auths.some((a) => a.authorizer && sameEvmAddress(a.authorizer, wantPayer));
-  const nonceOk = !authNonce || auths.some((a) => {
-    if (!a.authorizer || !sameEvmAddress(a.authorizer, wantPayer) || !a.nonce) return false;
-    const raw = authNonce.startsWith('0x') ? authNonce : `0x${authNonce}`;
-    const want = ethers.zeroPadValue(raw, 32).toLowerCase();
-    return String(a.nonce).toLowerCase() === want;
-  });
+  const nonceOk = auths.some((a) => a.authorizer && sameEvmAddress(a.authorizer, wantPayer)
+    && a.nonce && String(a.nonce).toLowerCase() === authNonce);
   if (!authOk || !nonceOk) return { ok: false, code: 'settle_unconfirmed' };
 
   const min = BigInt(String(challenge.amount));
@@ -272,6 +424,7 @@ export function confirmEvmReceipt(receipt, {
   // safe/finalized block at or above blockNumber, before treating this as
   // final. Solana already requires finalized. Do not implement that here.
   const matchedLog = (receipt.logs || []).find((log) => {
+    if (isArcSystemLog(log)) return false;
     const addr = String(log.address || '').toLowerCase();
     return addr === asset && String(log.topics?.[0] || '').toLowerCase() === TRANSFER_TOPIC.toLowerCase();
   });
@@ -465,7 +618,7 @@ function hexBlock(n) {
   return `0x${n.toString(16)}`;
 }
 
-function timeAnchor(tipNumber, tipTimestamp, unixSec) {
+function timeAnchor(tipNumber, tipTimestamp, unixSec, blockMs = 2000n) {
   if (unixSec == null || unixSec === '' || tipTimestamp == null) return null;
   let tipTs;
   let unix;
@@ -476,7 +629,7 @@ function timeAnchor(tipNumber, tipTimestamp, unixSec) {
     return null;
   }
   if (unix <= 0n || tipTs <= 0n) return null;
-  const delta = tipTs > unix ? (tipTs - unix) / BASE_BLOCK_SECONDS : 0n;
+  const delta = tipTs > unix ? ((tipTs - unix) * 1000n) / blockMs : 0n;
   return tipNumber > delta ? tipNumber - delta : 0n;
 }
 
@@ -486,7 +639,7 @@ function timeAnchor(tipNumber, tipTimestamp, unixSec) {
  * challenge issued-at when that block was not stored. validAfter alone
  * never opens a scan from genesis.
  */
-function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}) {
+function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedAtMs } = {}, win = lateIssueWindow(null)) {
   const anchors = [];
   let issued = null;
   if (issueBlock != null && issueBlock !== '') {
@@ -498,15 +651,15 @@ function boundedStart(tipNumber, tipTimestamp, { issueBlock, validAfter, issuedA
   if (issued == null) {
     const ms = Number(issuedAtMs);
     if (Number.isFinite(ms) && ms > 0) {
-      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000));
+      issued = timeAnchor(tipNumber, tipTimestamp, Math.floor(ms / 1000), win.blockMs);
     }
   }
   if (issued != null) anchors.push(issued);
-  const after = timeAnchor(tipNumber, tipTimestamp, validAfter);
+  const after = timeAnchor(tipNumber, tipTimestamp, validAfter, win.blockMs);
   if (after != null) anchors.push(after);
   if (anchors.length === 0) return null;
   let start = anchors.reduce((hi, n) => (n > hi ? n : hi));
-  start = start > LOG_SEARCH_MARGIN ? start - LOG_SEARCH_MARGIN : 0n;
+  start = start > win.marginBlocks ? start - win.marginBlocks : 0n;
   if (start > tipNumber) start = tipNumber;
   if (start < 0n) start = 0n;
   return start;
@@ -572,8 +725,10 @@ export async function findAuthorizationTx(rpcUrl, {
   issuedAtMs = null,
   scannedTo = null,
   meter = null,
+  network = null,
 } = {}) {
   if (!rpcUrl || !asset || !from || !nonce) return { ok: false, pending: true };
+  const win = lateIssueWindow(network);
   let topic1;
   let topic2;
   try {
@@ -589,7 +744,7 @@ export async function findAuthorizationTx(rpcUrl, {
     const tip = await rpcCall(rpcUrl, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
     if (!tip?.number) return { ok: false, pending: true };
     const tipN = BigInt(tip.number);
-    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs });
+    const anchor = boundedStart(tipN, tip.timestamp, { issueBlock, validAfter, issuedAtMs }, win);
     if (anchor == null) return { ok: false, pending: true };
     let start = anchor;
     if (cursorIn != null) {
@@ -597,12 +752,12 @@ export async function findAuthorizationTx(rpcUrl, {
       if (next > start) start = next;
     }
     if (start > tipN) return { ok: false, pending: true, scannedTo: cursorIn };
-    const capEnd = start + (LOG_CHUNK_BLOCKS * LOG_CHUNK_CAP) - 1n;
+    const capEnd = start + (win.chunkBlocks * win.chunkCap) - 1n;
     const windowEnd = capEnd < tipN ? capEnd : tipN;
     const logs = [];
     let covered = start - 1n;
     for (let cursor = start; cursor <= windowEnd;) {
-      const end = cursor + LOG_CHUNK_BLOCKS - 1n > windowEnd ? windowEnd : cursor + LOG_CHUNK_BLOCKS - 1n;
+      const end = cursor + win.chunkBlocks - 1n > windowEnd ? windowEnd : cursor + win.chunkBlocks - 1n;
       if (!chargeMeter(meter, 1)) return { ok: false, pending: true };
       const chunk = await rpcCall(rpcUrl, 'eth_getLogs', [{
         address: asset,
@@ -738,7 +893,7 @@ export async function confirmSettlement({
         signature: sig,
       });
     }
-    const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+    const url = evmRpcUrlFor(challenge?.network, cfg);
     if (!url) return { ok: false, code: 'settle_unconfirmed', pending: true };
     const txHash = facilitator.transaction || facilitator.txRef;
     const receipt = await readEvmReceipt(url, txHash, cfg.rpcMeter || null);
@@ -806,6 +961,7 @@ function freshSettlementRow() {
 const settlementRpc = {
   base: freshSettlementRow(),
   solana: freshSettlementRow(),
+  arc: freshSettlementRow(),
 };
 
 let settlementTimer = null;
@@ -822,6 +978,13 @@ export function expectedBaseChainId(network) {
   if (n === 'base' || n === 'eip155:8453') return BASE_MAINNET_CHAIN_ID;
   if (n === 'base-sepolia' || n === 'eip155:84532') return BASE_SEPOLIA_CHAIN_ID;
   return null;
+}
+
+/** eth_chainId an EVM settlement RPC must report. Arc only when its rail is live. */
+export function expectedEvmChainId(network) {
+  const arc = arcNetwork(network);
+  if (arc) return ARC_CHAINS[arc].chainId;
+  return expectedBaseChainId(network);
 }
 
 export function expectedSolanaGenesis(network) {
@@ -849,7 +1012,7 @@ function chainIdEquals(chainId, expected) {
 
 function settlementSide(network) {
   if (!network) return null;
-  return isSolanaNetwork(network) ? 'solana' : 'base';
+  return isSolanaNetwork(network) ? 'solana' : evmSettlementSide(network);
 }
 
 export function settlementRpcState(side) {
@@ -866,6 +1029,7 @@ export function settlementRpcState(side) {
 export function resetSettlementRpcForTests() {
   settlementRpc.base = freshSettlementRow();
   settlementRpc.solana = freshSettlementRow();
+  settlementRpc.arc = freshSettlementRow();
   if (settlementTimer) {
     clearInterval(settlementTimer);
     settlementTimer = null;
@@ -993,11 +1157,26 @@ export async function probeConfiguredSettlementRpcs(cfg = {}, opts = {}) {
       warn: opts.warn,
     }));
   }
+  // Arc row: probed only while the rail is live and ARC_RPC_URL is set.
+  const arcUrl = cfg.arcRpcUrl || null;
+  const arcExpected = arcNetwork('arc-testnet') ? ARC_CHAINS['arc-testnet'].chainId : null;
+  if (arcUrl && arcExpected != null) {
+    jobs.push(await probeSettlementSide({
+      side: 'arc',
+      url: arcUrl,
+      expected: arcExpected,
+      request: opts.request,
+      timeoutMs: opts.timeoutMs,
+      now: opts.now,
+    }));
+  }
   await Promise.all(jobs);
-  return {
+  const out = {
     base: settlementRpcState('base'),
     solana: settlementRpcState('solana'),
   };
+  if (arcExpected != null) out.arc = settlementRpcState('arc');
+  return out;
 }
 
 export function startSettlementRpcRecheck(cfg = {}, { intervalMs } = {}) {

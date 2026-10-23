@@ -7,10 +7,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const snapshotPath = fileURLToPath(new URL('../issuer-history.snapshot.json', import.meta.url));
@@ -224,7 +224,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   const house = JSON.parse(readFileSync(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url), 'utf8'));
   delete house.verify_url;
   if (house.verification) delete house.verification.jwks_uri;
-  const dir = mkdtempSync(join(tmpdir(), 'chit-verdict-040-'));
+  const dir = tempDir('chit-verdict-040-');
   const receiptPath = join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(house));
   const run = runCli([receiptPath, '--json']);
@@ -248,7 +248,7 @@ test('--json uses the 0.4 schema and a log that did not run is exit 2', () => {
   assert.equal(body.checks.key_window, 'pass');
   assert.equal(body.result === 'verified', false);
   assert.equal(body.verifier.name, 'chit402-verify');
-  assert.equal(body.verifier.version, '0.4.9');
+  assert.equal(body.verifier.version, '0.5.0-pre.0');
   assert.equal(body.history.source, 'bundled');
   assert.equal(body.history.as_of, '2026-10-14');
   assert.doesNotMatch(run.stdout, /verified_no_key_window/);
@@ -546,7 +546,7 @@ test('an unreachable history host does not exit 0', () => {
   const house = JSON.parse(readFileSync(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url), 'utf8'));
   house.verify_url = 'http://127.0.0.1:9/receipt/chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96';
   if (house.verification) delete house.verification.jwks_uri;
-  const dir = mkdtempSync(join(tmpdir(), 'chit-unreachable-history-'));
+  const dir = tempDir('chit-unreachable-history-');
   const receiptPath = join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(house));
   const run = runCli([receiptPath, '--json']);

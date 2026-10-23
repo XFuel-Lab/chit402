@@ -6,7 +6,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, '..', 'dist');
@@ -15,7 +15,7 @@ const ROUTE_CONTENT = {
   '/agent-shop': {
     title: 'The till for an agent shop | Chit',
     h1: 'Your SEO bot spent it. You hold the book.',
-    lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (cost-plus, quoted, receipted) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
+    lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (a quoted price and a receipt for every call) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/docs': {
     title: 'Chit402 — treasury desk for agent spend',
@@ -144,7 +144,7 @@ const ROUTE_CONTENT = {
     title: 'Pricing — standard receipt $0.002 USDC | Chit402',
     h1: 'Pay for a collected hop.',
     lede:
-      'Cost-plus, quoted, receipted on POST /v1/chat/completions at api.chit402.com. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. USDC on Base and Solana; signed receipt and verify_url included.',
+      'POST /v1/chat/completions at api.chit402.com charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Standard signed receipt $0.002 USDC (amount 2000) every hop; provider routing cost + 1%. Signed receipt and verify_url included.',
   },
   '/book': {
     title: 'Principal book — spend dashboard | Chit',
@@ -164,7 +164,7 @@ const ROUTE_CONTENT = {
   '/v1': {
     title: 'Pay /v1/chat/completions | Chit',
     h1: 'Bot drop-in. Wallet pays. You hold the book.',
-    lede: 'Possession book stamps spend from the public /v1 wire (baseURL https://api.chit402.com/v1). POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without payment or a partner key, the gateway returns HTTP 402.',
+    lede: 'Possession book stamps spend from the public /v1 wire (baseURL https://api.chit402.com/v1). POST /v1/chat/completions charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana. Without payment or a partner key, the gateway returns HTTP 402.',
   },
 };
 
@@ -173,44 +173,48 @@ function truncateDescription(text, maxLen = 155) {
   return text.slice(0, maxLen - 3).replace(/\s+\S*$/, '') + '...';
 }
 
-function transformHtml(html, route, { title, h1, lede }) {
+/**
+ * Every replacement is a function so "$&", "$'" or "$1" in a title or lede
+ * is inserted literally, never read as a replace pattern (same rule as middleware.ts).
+ */
+export function transformHtml(html, route, { title, h1, lede }) {
   const description = truncateDescription(lede);
   const canonicalUrl = `https://www.chit402.com${route}`;
   const ogImage = 'https://www.chit402.com/og-image.png';
   
   let result = html
-    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${title}</title>`)
     .replace(
       /<meta name="description" content="[^"]*" \/>/,
-      `<meta name="description" content="${description}" />`
+      () => `<meta name="description" content="${description}" />`
     )
     .replace(
       /<meta property="og:title" content="[^"]*" \/>/,
-      `<meta property="og:title" content="${title}" />`
+      () => `<meta property="og:title" content="${title}" />`
     )
     .replace(
       /<meta property="og:description" content="[^"]*" \/>/,
-      `<meta property="og:description" content="${description}" />`
+      () => `<meta property="og:description" content="${description}" />`
     )
     .replace(
       /<meta property="og:url" content="[^"]*" \/>/,
-      `<meta property="og:url" content="${canonicalUrl}" />`
+      () => `<meta property="og:url" content="${canonicalUrl}" />`
     )
     .replace(
       /<meta property="og:image" content="[^"]*" \/>/,
-      `<meta property="og:image" content="${ogImage}" />`
+      () => `<meta property="og:image" content="${ogImage}" />`
     )
     .replace(
       /<meta name="twitter:title" content="[^"]*" \/>/,
-      `<meta name="twitter:title" content="${title}" />`
+      () => `<meta name="twitter:title" content="${title}" />`
     )
     .replace(
       /<meta name="twitter:description" content="[^"]*" \/>/,
-      `<meta name="twitter:description" content="${description}" />`
+      () => `<meta name="twitter:description" content="${description}" />`
     );
 
   const canonicalLink = `<link rel="canonical" href="${canonicalUrl}" />`;
-  result = result.replace(/<\/head>/, `  ${canonicalLink}\n</head>`);
+  result = result.replace(/<\/head>/, () => `  ${canonicalLink}\n</head>`);
 
   const crawlerBlock = `
   <noscript>
@@ -222,27 +226,31 @@ function transformHtml(html, route, { title, h1, lede }) {
 
   result = result.replace(
     /<div id="root"><\/div>/,
-    `<div id="root"></div>${crawlerBlock}`
+    () => `<div id="root"></div>${crawlerBlock}`
   );
 
   return result;
 }
 
-const indexHtml = readFileSync(join(distDir, 'index.html'), 'utf8');
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 
-for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
-  const routeDir = join(distDir, route.slice(1));
-  const routeHtml = join(routeDir, 'index.html');
-  
-  if (!existsSync(routeDir)) {
-    mkdirSync(routeDir, { recursive: true });
+if (isMain) {
+  const indexHtml = readFileSync(join(distDir, 'index.html'), 'utf8');
+
+  for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
+    const routeDir = join(distDir, route.slice(1));
+    const routeHtml = join(routeDir, 'index.html');
+    
+    if (!existsSync(routeDir)) {
+      mkdirSync(routeDir, { recursive: true });
+    }
+    
+    const newHtml = transformHtml(indexHtml, route, content);
+    writeFileSync(routeHtml, newHtml);
+    console.log(`✓ Generated ${route}/index.html`);
+    console.log(`  Title: "${content.title}"`);
+    console.log(`  H1: "${content.h1}"`);
   }
-  
-  const newHtml = transformHtml(indexHtml, route, content);
-  writeFileSync(routeHtml, newHtml);
-  console.log(`✓ Generated ${route}/index.html`);
-  console.log(`  Title: "${content.title}"`);
-  console.log(`  H1: "${content.h1}"`);
-}
 
-console.log(`\n✅ Prerender complete: ${Object.keys(ROUTE_CONTENT).length} route-specific HTML files with crawler content.`);
+  console.log(`\n✅ Prerender complete: ${Object.keys(ROUTE_CONTENT).length} route-specific HTML files with crawler content.`);
+}

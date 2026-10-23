@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-rolling-e2e-'));
 
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
@@ -16,7 +17,7 @@ process.env.X402_ENABLED = 'true';
 process.env.X402_ROLLING_SETTLEMENT = 'true';
 process.env.X402_COST_PLUS = 'true';
 process.env.X402_FACILITATOR_PROVIDER = 'zan';
-process.env.X402_PAY_TO = '0xtreasury';
+process.env.X402_PAY_TO = '0x7000000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base';
 process.env.X402_FACILITATOR_API_KEY = 'testkey';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
@@ -176,7 +177,7 @@ test('second 402 equals measured cost-plus, not the rate card', async () => {
   assert.equal(challenge.accepts[0].maxAmountRequired, expected);
 
   const nonce = challenge.accepts[0].extra.nonce;
-  const paidRes = await post({}, { 'x-payment': 'PAYMENT-BLOB', 'x-payment-nonce': nonce });
+  const paidRes = await post({}, { 'x-payment': evmAuthHeader('PAYMENT-BLOB'), 'x-payment-nonce': nonce });
   const paid = await paidRes.json();
   assert.equal(paidRes.status, 202, JSON.stringify(paid));
 

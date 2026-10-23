@@ -75,7 +75,7 @@ export default function Products() {
           <p>
             Chit is the stamp and ledger — who paid which call — not a smart router and not a model
             shop. Pick the seat that matches how much privacy and proof you need after USDC settle.
-            Every path is cost-plus, quoted, receipted at{' '}
+            Every path charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana, at{' '}
             <code>{apiV1}/chat/completions</code>.
           </p>
         </header>

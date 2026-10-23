@@ -5,6 +5,8 @@
  * COULD_NOT_CHECK do not contain the words invalid or INVALID.
  */
 
+import { payerCheckOutcome } from './payer.js';
+
 export type CheckState = 'pass' | 'fail' | 'could_not_check';
 
 /**
@@ -22,6 +24,12 @@ export interface VerdictLog {
     base: string | null;
     solana: string | null;
   };
+  /** 0.4.10: an anchor lookup that failed while another chain confirmed. */
+  warnings?: string[];
+  /** 0.4.10: true when a claimed anchor chain was not checked this run. */
+  partial?: true;
+  /** 0.4.10: the claimed chains this run did not check. */
+  unchecked_anchors?: ('base' | 'solana')[];
 }
 
 export interface VerifyVerdict {
@@ -64,6 +72,13 @@ export interface VerifyVerdict {
   };
 }
 
+const VERSION_WINDOW_FAIL = new Set([
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
+]);
+
 const WINDOW_FAIL = new Set([
   'kid_revoked_before_issuance',
   'issued_before_not_before',
@@ -87,6 +102,10 @@ const WINDOW_FAIL = new Set([
   'introduced_key_signature',
   'inherited_key_window',
   'issuer_history_not_extension',
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
 ]);
 
 export function verdictCopy(reason: string | null, result: VerdictResult): { message: string; next_step: string | null } {
@@ -181,6 +200,30 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
       next_step: 'Re-run when the anchor for this leaf is published.',
     };
   }
+  if (reason === 'version_window_closed' || reason === 'version_window_not_open' || reason === 'version_window_missing') {
+    return {
+      message: 'The receipt was signed outside the window of its receipt version.',
+      next_step: null,
+    };
+  }
+  if (reason === 'log_time_after_window') {
+    return {
+      message: 'The receipt entered the public log after its receipt version closed.',
+      next_step: null,
+    };
+  }
+  if (reason === 'log_time_unavailable') {
+    return {
+      message: 'The log time of this receipt could not be read from the chain. Its version has closed, so it is needed.',
+      next_step: 'Re-run when the chain RPC answers.',
+    };
+  }
+  if (reason === 'legacy_form_not_allowlisted') {
+    return {
+      message: 'This receipt form (version not signed, or a detached signature) is accepted only for listed receipts, and it is not listed.',
+      next_step: null,
+    };
+  }
   if (reason === 'kid_status_regression') {
     return {
       message: 'Issuer history changes not_before or restores a revoked key.',
@@ -268,6 +311,10 @@ export interface VerdictInput {
   historyReason?: string | null;
   /** Resolver found no document that covers this kid. */
   historyMissing?: boolean;
+  /** The history read did not complete (for example a refused redirect). */
+  historyUnreachable?: boolean;
+  /** Published preimage bytes could not be read (for example a refused redirect). */
+  paymentUnreachable?: boolean;
   bindingExpected?: boolean;
   bindingMatches?: boolean | null;
   claimMismatches?: number;
@@ -291,6 +338,12 @@ export interface VerdictInput {
    * is the reason. History and payment defaults must not run.
    */
   absentReason?: string | null;
+  /**
+   * A failure found outside the six named checks (for example an offline
+   * inclusion proof the library rejected). When set and no named check
+   * failed, the result is `invalid` with this reason. The CLI does not set it.
+   */
+  failureReason?: string | null;
 }
 
 function claimed(state: CheckState | 'unclaimed' | undefined): CheckState {
@@ -306,9 +359,10 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   const idMismatch = errors.includes('id_mismatch') || errors.includes('task_id_mismatch') || errors.includes('receipt_id_mismatch');
   const idPrefix = errors.includes('id_prefix_version_mismatch');
   const intentLegacy = errors.includes('intent_on_legacy_version');
+  const legacyForm = errors.includes('legacy_form_not_allowlisted');
 
   let shape: CheckState = 'pass';
-  if (idPrefix || intentLegacy) shape = 'fail';
+  if (idPrefix || intentLegacy || legacyForm) shape = 'fail';
   else if (unsupported) shape = 'could_not_check';
   else if (versionMismatch || idMismatch) shape = 'fail';
 
@@ -320,7 +374,9 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
 
   const historyReason = input.historyReason || null;
   let keyWindow: CheckState = 'could_not_check';
-  if (input.historyMissing || historyReason === 'kid_not_in_history') keyWindow = 'could_not_check';
+  // A version window refusal does not depend on the history document.
+  if (input.historyChecked && historyReason && VERSION_WINDOW_FAIL.has(historyReason) && !input.historyUnreachable) keyWindow = 'fail';
+  else if (input.historyMissing || historyReason === 'kid_not_in_history' || input.historyUnreachable) keyWindow = 'could_not_check';
   else if (input.historyChecked && input.historyOk) keyWindow = 'pass';
   else if (input.historyChecked && historyReason && WINDOW_FAIL.has(historyReason)) keyWindow = 'fail';
   else if (input.historyChecked && input.historyOk === false) keyWindow = 'fail';
@@ -335,6 +391,7 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
     else if (input.payerRequired && input.payerOutcome !== 'pass') payment = 'could_not_check';
     else if (!input.payerRequired && input.payerChecked && input.payerValid === false) payment = 'fail';
     else if (input.bindingExpected && input.bindingMatches !== true && !unsupported) payment = 'could_not_check';
+    else if (input.paymentUnreachable) payment = 'could_not_check';
   }
 
   const logInclusion = claimed(input.logInclusion);
@@ -357,6 +414,9 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
   if (failed.length) {
     result = 'invalid';
     reason = failReason(failed, historyReason, input.logReason || null, errors, payment, input.claimMismatches || 0);
+  } else if (input.failureReason) {
+    result = 'invalid';
+    reason = input.failureReason;
   } else if (unchecked.length) {
     result = 'could_not_check';
     reason = uncheckedReason(unchecked, historyReason, input.logReason || null, errors);
@@ -383,6 +443,133 @@ export function buildVerifyVerdict(input: VerdictInput): VerifyVerdict {
     log: input.log ?? null,
     verifier: { name: 'chit402-verify', version: input.version },
   };
+}
+
+/** The parts of a library `ReceiptVerification` the verdict reads. */
+export interface VerificationVerdictSource {
+  errors: string[];
+  receipt_version?: number | null;
+  issuer_signature: { valid: boolean; checked: boolean; key_trusted?: boolean };
+  issuer_history: { checked: boolean; ok: boolean; reason: string | null; document?: unknown; unreachable?: boolean };
+  preimages?: { unreachable?: string[] };
+  binding: { expected: string | null; matches: boolean };
+  claim_mismatches: unknown[];
+  payer: { checked: boolean; valid: boolean; reason?: string; outcome?: 'pass' | 'fail' | 'unchecked' };
+}
+
+export interface VerificationVerdictContext {
+  version: string;
+  receiptId?: string | null;
+  /** Resolved issuer history. Omitted means only what the result itself loaded. */
+  history?: {
+    source: 'file' | 'live' | 'bundled' | null;
+    headHash: string | null;
+    entryCount: number | null;
+    asOf: string | null;
+    invalid: boolean;
+    reason: string | null;
+    documentPresent: boolean;
+  };
+  /** Exit 0 requires the on-chain payer check. The CLI and the library both pass true. */
+  payerRequired: boolean;
+  logInclusion?: CheckState | 'unclaimed';
+  anchor?: CheckState | 'unclaimed';
+  logReason?: string | null;
+  log?: VerdictLog | null;
+  failureReason?: string | null;
+}
+
+/**
+ * The one mapping from a signed-receipt check to VERIFIED / INVALID /
+ * COULD_NOT_CHECK (exit 0 / 1 / 2). The CLI and `verifyReceipt` both call it.
+ * A check that did not run is could_not_check, never a pass.
+ */
+export function verdictFromVerification(
+  result: VerificationVerdictSource,
+  ctx: VerificationVerdictContext,
+): VerifyVerdict {
+  const unsupported = (result.errors || []).includes('unsupported_version');
+  const history = ctx.history ?? {
+    source: null,
+    headHash: null,
+    entryCount: null,
+    asOf: null,
+    invalid: false,
+    reason: null,
+    documentPresent: result.issuer_history.document != null,
+  };
+  const signatureValid = result.issuer_signature.valid === true
+    && result.issuer_signature.key_trusted !== false;
+  return buildVerifyVerdict({
+    version: ctx.version,
+    receiptId: ctx.receiptId ?? null,
+    displayId: ctx.receiptId ?? null,
+    payloadVersion: result.receipt_version ?? null,
+    historySource: history.source,
+    historyHead: history.headHash,
+    historyCount: history.entryCount,
+    historyAsOf: history.asOf,
+    signatureValid: unsupported ? null : signatureValid,
+    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
+    historyChecked: unsupported ? false : (history.invalid || result.issuer_history.checked),
+    historyOk: unsupported ? false : (history.invalid ? false : result.issuer_history.ok),
+    historyReason: history.invalid ? (history.reason || result.issuer_history.reason) : result.issuer_history.reason,
+    historyMissing: unsupported ? true : (!history.documentPresent && !history.invalid),
+    historyUnreachable: !history.invalid && result.issuer_history.unreachable === true,
+    paymentUnreachable: (result.preimages?.unreachable?.length ?? 0) > 0,
+    bindingExpected: !!result.binding.expected,
+    bindingMatches: result.binding.matches,
+    claimMismatches: result.claim_mismatches.length,
+    payerChecked: result.payer.checked,
+    payerValid: result.payer.valid,
+    payerRequired: ctx.payerRequired,
+    payerOutcome: ctx.payerRequired ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
+    errors: result.errors,
+    logInclusion: ctx.logInclusion ?? 'unclaimed',
+    anchor: ctx.anchor ?? 'unclaimed',
+    logReason: ctx.logReason ?? null,
+    log: ctx.log ?? null,
+    failureReason: ctx.failureReason ?? null,
+  });
+}
+
+/**
+ * A document with no compact issuer JWS. The CLI and the library give the
+ * same verdict: the signature was not checked, so this is COULD_NOT_CHECK
+ * (exit 2) unless a log check proved it absent (NOT_IN_LOG, exit 1).
+ */
+export function unsignedDocumentVerdict(ctx: {
+  version: string;
+  history?: {
+    source: 'file' | 'live' | 'bundled' | null;
+    headHash: string | null;
+    entryCount: number | null;
+    asOf: string | null;
+  };
+  logInclusion?: CheckState | 'unclaimed';
+  anchor?: CheckState | 'unclaimed';
+  notInLog?: boolean;
+  failureReason?: string | null;
+}): VerifyVerdict {
+  const notInLog = ctx.notInLog === true;
+  return buildVerifyVerdict({
+    version: ctx.version,
+    receiptId: null,
+    displayId: null,
+    payloadVersion: null,
+    historySource: ctx.history?.source ?? null,
+    historyHead: ctx.history?.headHash ?? null,
+    historyCount: ctx.history?.entryCount ?? null,
+    historyAsOf: ctx.history?.asOf ?? null,
+    signatureChecked: false,
+    historyReason: notInLog ? null : 'signed_receipt_unavailable',
+    historyMissing: false,
+    errors: [],
+    logInclusion: ctx.logInclusion ?? 'unclaimed',
+    anchor: ctx.anchor ?? 'unclaimed',
+    logReason: notInLog ? 'not_in_log' : null,
+    failureReason: ctx.failureReason ?? null,
+  });
 }
 
 function absentReceiptVerdict(input: VerdictInput): VerifyVerdict {
@@ -426,6 +613,7 @@ function failReason(
   claimMismatches = 0,
 ): string {
   if (failed.includes('shape')) {
+    if (errors.includes('legacy_form_not_allowlisted')) return 'legacy_form_not_allowlisted';
     if (errors.includes('id_prefix_version_mismatch')) return 'id_prefix_version_mismatch';
     if (errors.includes('intent_on_legacy_version')) return 'intent_on_legacy_version';
     if (errors.includes('version_mismatch') || errors.includes('payload_version_mismatch')) return 'version_mismatch';
@@ -482,6 +670,21 @@ export function verdictDocAnchor(reason: string): string {
   return reason;
 }
 
+const CHAIN_LABEL: Record<'base' | 'solana', string> = { base: 'Base', solana: 'Solana' };
+
+/** One line per claimed anchor chain this run did not check (0.4.10). */
+export function uncheckedAnchorLines(verdict: VerifyVerdict): string[] {
+  const unchecked = verdict.log?.unchecked_anchors || [];
+  if (unchecked.length === 0) return [];
+  const checked = (['base', 'solana'] as const).filter((chain) => !unchecked.includes(chain));
+  return unchecked.map((chain) => {
+    const other = checked.length > 0 ? checked.map((c) => CHAIN_LABEL[c]).join(' and ') : null;
+    return other
+      ? `${CHAIN_LABEL[chain]} not checked: its anchor RPC did not answer. The anchor was confirmed on ${other} only.`
+      : `${CHAIN_LABEL[chain]} not checked: its anchor RPC did not answer.`;
+  });
+}
+
 /**
  * Human lines. COULD_NOT_CHECK says the receipt could not be checked.
  * The message line is `verdict.message`, the same string `--json` prints.
@@ -499,6 +702,7 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
     if (verdict.public?.chain_from) lines.push(`On-chain sender (chain fact, not signed): ${verdict.public.chain_from}`);
     lines.push('Details: https://chit402.com/docs/verify#verified_public');
   }
+  for (const line of uncheckedAnchorLines(verdict)) lines.push(line);
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
     lines.push(`Issuer history: as of ${verdict.history.as_of}`);
@@ -570,4 +774,10 @@ export const VERDICT_DOC_ANCHORS = [
   'log_epoch_mismatch',
   'transfer_mismatch',
   'public_rail_unsupported',
+  'version_window_closed',
+  'version_window_not_open',
+  'version_window_missing',
+  'log_time_after_window',
+  'log_time_unavailable',
+  'legacy_form_not_allowlisted',
 ] as const;

@@ -9,6 +9,15 @@ All notable changes to the Chit402 MCP server are documented here. This project 
 - Default API URL is `https://api.chit402.com` (`server.json` and the SDK default). Republish `xfuel-mcp` for the npm package and the registry card to match.
 - The Tier-2 settlement proof add-on is not currently offered. `get_verified_quote` lists `tiers_available: ['signed']`; `get_proof` / `verify_proof` read historical proofs only; `proof_tier` on quotes is refused (400 `settlement_proof_not_offered`). Supersedes the 0.4.1 note that SP1 tools remain optional Tier-2.
 
+## 0.5.0: Verifier upgrade
+
+### Changed
+- **`verify_receipt` uses `chit402-verify` ^0.4.11** in place of `@xfuel/verify` ^0.1.0, and runs the same check as the `chit402-verify` CLI.
+- **Three-way verdict.** `verify_receipt` returns `result` (`VERIFIED`, `INVALID` or `COULD_NOT_CHECK`), `exit_code` (0, 1, 2), `reason`, `message`, `scope`, `receipt_id` and `checks`. It no longer returns `overall`, the raw receipt, or a verification object. `scope: "public"` means the public attestation verified (amount, payee, tx, log position; payer not claimed).
+- **Issuer host only.** The receipt is fetched from `https://api.chit402.com/receipt/<id>`. A `verify_url` on `api.xfuel.app` is read from `api.chit402.com`. Any other host, a non-https URL, credentials, an IP address, a port, a path other than `/receipt/<id>`, or a redirect is refused. `task_id` is read from the issuer host, not from the configured API URL.
+- **Removed inputs:** `fetch_jwks`, `check_payer` and `check_nullifier`. The payer check always runs, as in the CLI.
+- Not published.
+
 ## 0.4.1 — MCP book + receipt door
 
 ### Added

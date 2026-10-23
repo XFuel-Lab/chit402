@@ -1,0 +1,208 @@
+{
+  "format": "chit402.corpus-declarations.v1",
+  "note": "Append-only (corpus-gate.mjs). Every synthetic case path is in exactly one list. declarations: the exact cause (library, signature) or reason (cli) each case path is decided by, with input_digest, the digest of the case input, including the signature state and key relation of the document and the issuer history (the head input must keep it; a changed input is a new case). deferred: declared today but not by a case rule, with input_digest; no corpus correction. synthetic.mjs `expect` must equal declarations plus deferred exactly. An appended declaration or deferred entry must equal what the merge-base verifier gives on the head input, with an existing case input unchanged, and an appended declaration must be a real decision. reason_allowed: frozen; rule-class paths that were never declared, the only paths where kind corpus_fix_reason is accepted.",
+  "declarations": [
+    {
+      "case": "label-v4v5-conflicting-stamps",
+      "path": "library",
+      "expect": "unsupported_version",
+      "input_digest": "fd1f30c4b975934c1d0c43a32eee6d0936808c449e039e8b06a2f3efd1b716c9"
+    },
+    {
+      "case": "version-v13-unknown",
+      "path": "cli",
+      "expect": "unsupported_version",
+      "input_digest": "0364df0385e07a5de68bea777e74259bcdc5ad7a527f32d3e8cbbada4f9df1e4"
+    },
+    {
+      "case": "version-v13-unknown",
+      "path": "library",
+      "expect": "unsupported_version",
+      "input_digest": "0364df0385e07a5de68bea777e74259bcdc5ad7a527f32d3e8cbbada4f9df1e4"
+    },
+    {
+      "case": "version-v12-shape-no-version",
+      "path": "cli",
+      "expect": "id_prefix_version_mismatch",
+      "input_digest": "204c30dffd408b02c00132d6300b7c6adf9fc847774d89107e54548833cd967c"
+    },
+    {
+      "case": "version-v12-shape-no-version",
+      "path": "library",
+      "expect": "id_prefix_version_mismatch",
+      "input_digest": "204c30dffd408b02c00132d6300b7c6adf9fc847774d89107e54548833cd967c"
+    },
+    {
+      "case": "version-v12-shape-no-version-plain-id",
+      "path": "cli",
+      "expect": "unsupported_version",
+      "input_digest": "3ef3228ef3f63c4dbc43f1489b006ded66e964f6585e0f6b7b4843a436c48bdd"
+    },
+    {
+      "case": "version-v12-shape-no-version-plain-id",
+      "path": "library",
+      "expect": "unsupported_version",
+      "input_digest": "3ef3228ef3f63c4dbc43f1489b006ded66e964f6585e0f6b7b4843a436c48bdd"
+    },
+    {
+      "case": "version-unversioned-object-no-stamp",
+      "path": "cli",
+      "expect": "unsupported_version",
+      "input_digest": "e85477594b1f96eefe31d7de8308384b6d404ea6fc90fbe6be17bcb8147050e1"
+    },
+    {
+      "case": "version-unversioned-object-no-stamp",
+      "path": "library",
+      "expect": "unsupported_version",
+      "input_digest": "e85477594b1f96eefe31d7de8308384b6d404ea6fc90fbe6be17bcb8147050e1"
+    },
+    {
+      "case": "version-l1-v4-not-allowlisted",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "6073a6fdce69e15846c3408b6f56e2f48d50a70f5d252a5310e9796eed5369be"
+    },
+    {
+      "case": "version-l1-v4-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "6073a6fdce69e15846c3408b6f56e2f48d50a70f5d252a5310e9796eed5369be"
+    },
+    {
+      "case": "version-l1-v5-not-allowlisted",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "6312f34f53b69593cb2b904e209a678382769d09bd99013f9f08ace623310d31"
+    },
+    {
+      "case": "version-l1-v5-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "6312f34f53b69593cb2b904e209a678382769d09bd99013f9f08ace623310d31"
+    },
+    {
+      "case": "version-l1-v4-production-kid",
+      "path": "cli",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "158dcc37344e50769a0ea75beca0f7ff5f09c68ba51a7e7e74e3d6fb2fc810fb"
+    },
+    {
+      "case": "version-l1-detached-not-allowlisted",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "9bf0f4b49d85729d279224a429f9df5e8c245311cb809566103291c640d945cb"
+    },
+    {
+      "case": "timing-detached-created-at-moved",
+      "path": "library",
+      "expect": "legacy_form_not_allowlisted",
+      "input_digest": "1559c1d1017a076135bec4ef513cc1f90fe23cab0bf0fb58deac5ed862cc9859"
+    },
+    {
+      "case": "gate10-pv9-no-history-pin",
+      "path": "library",
+      "expect": "log_unreachable",
+      "input_digest": "30adeb90eadec8aa701e2795f98c8733a679b3d70cc416b807aaf0434a535fd1"
+    },
+    {
+      "case": "gate10-pv10-no-history-pin",
+      "path": "library",
+      "expect": "issuer history: issuer_history_pin_missing",
+      "input_digest": "834992aad459af5ef13f08da529b25950335580978b1b00a48b7b6bcb428b55d"
+    },
+    {
+      "case": "gate9-pv8-no-head-binding",
+      "path": "library",
+      "expect": "log_unreachable",
+      "input_digest": "0d947a328aeb1cf197d7a970628a4d79192606a0201f8b0616ea4c2b401bdb53"
+    },
+    {
+      "case": "gate9-pv9-no-head-binding",
+      "path": "library",
+      "expect": "payload v9 requires tree_head_hash and tolerance inside signed claims",
+      "input_digest": "f43ca6598cb7c9fb52ddf6107d5e21f6f64a122ee1f6d4cdf5ab2e204abf98a8"
+    },
+    {
+      "case": "gate8-detached-pv7",
+      "path": "signature",
+      "expect": "signature_valid",
+      "input_digest": "acc104e0e3cc664f3eaa04ab4fd5daa9159e8a23cf5b86ae99c1e37cea268f48"
+    },
+    {
+      "case": "gate8-detached-pv8",
+      "path": "signature",
+      "expect": "signature_valid",
+      "input_digest": "0ffc688077aa833f5e1247203a8e06f584bddd117a3781d3153e86db9ff9614c"
+    },
+    {
+      "case": "control-test-key-v10",
+      "path": "library",
+      "expect": "log_unreachable",
+      "input_digest": "7529e86db76aa9fbd506cae5915711c2ea0f286db577636126217ebfcad76cc6"
+    },
+    {
+      "case": "label-v10-outer-stamp-6",
+      "path": "cli",
+      "expect": "version_mismatch",
+      "input_digest": "5aece60b092960c73f61d6c448c2841147a6f02723e280b3d8ec78f00e1b4f98"
+    },
+    {
+      "case": "label-v6-outer-stamp-10",
+      "path": "cli",
+      "expect": "version_mismatch",
+      "input_digest": "6b80d5f4d5df706e8c6a52c648ec70d0c078a638759e061f3c34912fa6fd53f8"
+    },
+    {
+      "case": "label-v4v5-conflicting-stamps",
+      "path": "cli",
+      "expect": "unsupported_version",
+      "input_digest": "fd1f30c4b975934c1d0c43a32eee6d0936808c449e039e8b06a2f3efd1b716c9"
+    },
+    {
+      "case": "control-test-key-v10",
+      "path": "cli",
+      "expect": "key untrusted",
+      "input_digest": "7529e86db76aa9fbd506cae5915711c2ea0f286db577636126217ebfcad76cc6"
+    },
+    {
+      "case": "control-unsigned-document",
+      "path": "cli",
+      "expect": "signed_receipt_unavailable",
+      "input_digest": "560468763ae1abe23222d2a2cd3b22841c1af02bd8c47b0abac39b4616af32df"
+    }
+  ],
+  "deferred": [
+    {
+      "case": "version-v10-claims-signed-as-v6-after-window",
+      "path": "library",
+      "expect": "log_unreachable",
+      "input_digest": "06a6fbc36b7a3a344438aa49b2420fe3d35489f3d3d06bf1970b4502af041040",
+      "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
+    },
+    {
+      "case": "timing-l5-backdated-iat",
+      "path": "library",
+      "expect": "log_unreachable",
+      "input_digest": "475fbbb53275703850df0ef093f8e46744cf0d3be3e947b83aac7b4a08a5316c",
+      "note": "declares log_unreachable, which is not a decision by the case rule; no correction until a declaration for this path is appended"
+    }
+  ],
+  "reason_allowed": [
+    {
+      "case": "version-v10-claims-signed-as-v6-after-window",
+      "path": "cli"
+    },
+    {
+      "case": "version-l1-detached-not-allowlisted",
+      "path": "cli"
+    },
+    {
+      "case": "timing-detached-created-at-moved",
+      "path": "cli"
+    },
+    {
+      "case": "timing-l5-backdated-iat",
+      "path": "cli"
+    }
+  ]
+}

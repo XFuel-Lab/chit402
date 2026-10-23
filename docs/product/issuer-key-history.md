@@ -30,7 +30,7 @@ A high-water mark (`version` and `head_hash`) is kept outside the history file: 
 | `reason` | Short revocation note, or null. |
 | `custody` | Where the private key is held. |
 
-Custody, as the process is written: the ES256 private key is the base64 PEM in the gateway environment variable `ISSUER_PRIVATE_KEY`. The process does not call a cloud KMS. When that variable is unset, a local run generates an ephemeral key. Production sets the variable. The history sentence names that location. It is not the key.
+Custody: since 2026-10-20 the ES256 private key is held in a cloud KMS, and the KMS is the only production signer. The key is no longer in the gateway environment. The kid is unchanged. The history sentence names where the key is held. It is not the key.
 
 ## The current key
 
@@ -46,7 +46,7 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. That file is the offline check. `--no-issuer-history` skips the kid window and prints `VERIFIED_NO_KEY_WINDOW`, never `VERIFIED`. Exit code is 0 unless `--strict`, which exits 1. Skipping the window is not offline verification.
 
-A new key whose `not_before` is at or before an earlier key's `not_before` is `inherited_key_window`. A history signed only by a key that first appears after the genesis entry is `introduced_key_signature`. A one-entry history signed by that key is the genesis case and verifies. Production refuses to boot when `ISSUER_PRIVATE_KEY` is missing or empty. `ALLOW_EPHEMERAL_ISSUER_KEY`, `ISSUER_ROOT_ENABLED`, and `ISSUER_ROOT_ALLOW_SKIP` do not override that. Unset `NODE_ENV` is production.
+A new key whose `not_before` is at or before an earlier key's `not_before` is `inherited_key_window`. A history signed only by a key that first appears after the genesis entry is `introduced_key_signature`. A one-entry history signed by that key is the genesis case and verifies. When the environment signer is selected, production refuses to boot when `ISSUER_PRIVATE_KEY` is missing or empty. `ALLOW_EPHEMERAL_ISSUER_KEY`, `ISSUER_ROOT_ENABLED`, and `ISSUER_ROOT_ALLOW_SKIP` do not override that. Unset `NODE_ENV` is production.
 
 ```bash
 curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json

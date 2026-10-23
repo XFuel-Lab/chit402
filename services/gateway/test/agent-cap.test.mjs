@@ -12,13 +12,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { evmAuthHeader } from './helpers/evm-auth-header.mjs';
+
+// The payer the mock facilitator reports, and the `from` the fixture headers sign.
+const MOCK_PAYER = `0x${'5b'.repeat(20)}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xfuel-agent-cap-'));
 
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret-cap';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'true';
 process.env.X402_METER_V1 = 'true';
-process.env.X402_PAY_TO = '0xBasetreasury';
+process.env.X402_PAY_TO = '0x8453000000000000000000000000000000000001';
 process.env.X402_NETWORK = 'base';
 process.env.X402_USDC_PRICE_DEFAULT = '2000';
 process.env.X402_SOLANA_ENABLED = 'true';
@@ -49,7 +53,7 @@ function createMockFacilitator() {
       let parsed = {};
       try { parsed = body ? JSON.parse(body) : {}; } catch { return send(400, { error: 'bad_json' }); }
       const isStandardX402 = !!parsed.paymentPayload;
-      const payer = parsed.paymentPayload?.payload?.authorization?.from || '0xmockpayer';
+      const payer = parsed.paymentPayload?.payload?.authorization?.from || MOCK_PAYER;
       const network = parsed.paymentRequirements?.network || 'base';
       const txRef = `0x${crypto.randomBytes(32).toString('hex')}`;
       if (req.url?.endsWith('/verify')) {
@@ -151,7 +155,7 @@ async function settlePaid(path = '/v1/chat/completions', headers = {}) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
+      'x-payment': evmAuthHeader('PAYMENT-BLOB-1', { from: MOCK_PAYER }),
       'x-payment-nonce': nonce,
       ...headers,
     },
@@ -276,7 +280,7 @@ test('Y=2000 spent: next paid call fails closed — no second payment, refusal i
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-payment': 'PAYMENT-BLOB',
+      'x-payment': evmAuthHeader('PAYMENT-BLOB-2', { from: MOCK_PAYER }),
       'x-payment-nonce': nonce,
       'x-xfuel-session': session,
     },

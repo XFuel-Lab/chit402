@@ -22,6 +22,7 @@ import {
   type AnchorInclusion,
   type AnchorReceipt,
   type AnchorWitnessResult,
+  anchorRpcUrls,
 } from './anchor-witness.js';
 import { isReceiptShell } from './shell.js';
 import {
@@ -34,15 +35,21 @@ import { BASE_RPC_URL } from './base-payer.js';
 import { SOLANA_RPC_URL } from './solana-payer.js';
 import { payerCheckOutcome } from './payer.js';
 import { type EpochRecord } from './epoch.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import { jwkThumbprint, verifyIssuerJws, ISSUER_JWS_TYP, type Es256Jwk } from './jws.js';
 import {
   buildVerifyVerdict,
   humanVerdictLines,
+  unsignedDocumentVerdict,
   verdictCopy,
+  verdictFromVerification,
   type CheckState,
   type VerifyVerdict,
 } from './verdict.js';
 import { verifyTreeHeadTrust } from './anchor-trust.js';
+import { activeVersionWindows } from './version-windows.js';
+import { logTimeReason } from './log-time.js';
+import { carryTestSnapshot, readTestSnapshot } from './internal/test-seam.js';
 import {
   parsePublicAttestation,
   sameReceiptId,
@@ -147,6 +154,8 @@ type FreshLog = {
   anchor: CheckState;
   logReason: string | null;
   log: VerifyVerdict['log'];
+  /** Set on a pass: the head the inclusion proof verified against, for the L5 log time. */
+  verified?: { origin: string; head: AnchorHead; leafIndex: number | null };
 };
 
 function inclusionHeadUrl(
@@ -170,7 +179,7 @@ async function absenceAgainstSignedHead(
   history: IssuerHistoryDocument | null,
 ): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
   try {
-    const res = await fetch(`${origin}/v1/receipts/tree/head`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/tree/head`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -203,7 +212,7 @@ function hardLogReason(result: AnchorWitnessResult): string | null {
     return inclusionReason;
   }
   const mismatch = (result.errors || []).find((err) => (
-    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf/.test(err)
+    /mismatch|head_signature|head_claims|head_key|inclusion_failed|bad_root|no_leaf|anchor_ref_invalid/.test(err)
   ));
   return mismatch ? mismatch.replace(/^(solana|base):/, '') : null;
 }
@@ -216,7 +225,7 @@ async function publicShellAbsence(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return false;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -312,7 +321,7 @@ export async function freshPublicLog(
     const origin = new URL(String(receipt.verify_url)).origin;
     const task = receipt.task_id;
     if (!task) return missed;
-    const res = await fetch(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
+    const res = await fetchNoRedirect(`${origin}/v1/receipts/${encodeURIComponent(String(task))}/inclusion`, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -335,7 +344,7 @@ export async function freshPublicLog(
     };
     const headUrl = inclusionHeadUrl(origin, inclusion);
     if (!headUrl) return missed;
-    const headRes = await fetch(headUrl, {
+    const headRes = await fetchNoRedirect(headUrl, {
       headers: { accept: 'application/json' },
       signal: AbortSignal.timeout(LOG_FETCH_MS),
     });
@@ -346,7 +355,7 @@ export async function freshPublicLog(
     const headSchema = (head as { schema?: string }).schema;
     if (headEpoch != null || headSchema === 'chit402.tree_head.v2') {
       try {
-        const epochRes = await fetch(`${origin}/v1/receipts/tree/epoch`, {
+        const epochRes = await fetchNoRedirect(`${origin}/v1/receipts/tree/epoch`, {
           headers: { accept: 'application/json' },
           signal: AbortSignal.timeout(LOG_FETCH_MS),
         });
@@ -364,8 +373,8 @@ export async function freshPublicLog(
       receipt: receipt as AnchorReceipt,
       inclusion,
       head,
-      baseRpcUrl: process.env.BASE_RPC_URL || BASE_RPC_URL,
-      solanaRpcUrl: process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
+      baseRpcUrls: anchorRpcUrls('base'),
+      solanaRpcUrls: anchorRpcUrls('solana'),
       checkNewestAnchor: false,
       signedLeaf: options.signedLeaf ?? null,
       issuerHistory: history,
@@ -388,10 +397,12 @@ export async function freshPublicLog(
       return missedLog('log_epoch_mismatch');
     }
     if (result.overall === 'verified') {
+      const leafIndex = Number(inclusion.leaf_index);
       return {
         logInclusion: 'pass',
         anchor: 'pass',
         logReason: null,
+        verified: { origin, head, leafIndex: Number.isSafeInteger(leafIndex) ? leafIndex : null },
         log: {
           leaf_index: inclusion.leaf_index ?? null,
           tree_size: inclusion.tree_size ?? null,
@@ -400,6 +411,15 @@ export async function freshPublicLog(
             base: result.base.tx,
             solana: result.solana.signature,
           },
+          ...(result.anchor_warnings && result.anchor_warnings.length > 0
+            ? {
+              warnings: [...result.anchor_warnings],
+              partial: true,
+              unchecked_anchors: result.anchor_warnings
+                .map((code) => code.split(':')[0])
+                .filter((chain): chain is 'base' | 'solana' => chain === 'base' || chain === 'solana'),
+            }
+            : {}),
         },
       };
     }
@@ -430,7 +450,7 @@ export async function freshPublicLog(
     }
     if (result.overall === 'failed') {
       const definitive = [result.base.reason, result.solana.reason].find((code) => (
-        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch'
+        code === 'tx_reverted' || code === 'tx_failed' || code === 'chain_mismatch' || code === 'anchor_ref_invalid'
       ));
       if (definitive) {
         return { logInclusion: 'pass', anchor: 'fail', logReason: definitive, log: null };
@@ -788,6 +808,36 @@ function linesOutcome(verdict: VerifyVerdict): CheckReceiptOutcome {
  * Same check the CLI runs for one id, URL, file, or pasted receipt JSON.
  * `publicInput` accepts only JSON, an id, or an allowed URL.
  */
+/** L5 wiring: the decision is in log-time.ts. */
+async function logTimeCheck(
+  result: Awaited<ReturnType<typeof verifyReceipt>>,
+  verified: NonNullable<FreshLog['verified']>,
+  history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
+  options: CheckReceiptOptions,
+): Promise<'log_time_after_window' | 'log_time_unavailable' | null> {
+  // No production-signed windows bundled: L5 does not run.
+  const windows = activeVersionWindows(readTestSnapshot(options)?.versionWindows);
+  if (!windows) return null;
+  return logTimeReason({
+    claims: (result.issuer_signature.payload || {}) as Record<string, unknown>,
+    windows,
+    origin: verified.origin,
+    leafIndex: verified.leafIndex,
+    verifiedHead: verified.head as never,
+    history,
+    trustedKids,
+    solanaRpcUrls: anchorRpcUrls('solana'),
+    getJson: async (url) => {
+      const res = await fetchNoRedirect(url, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(LOG_FETCH_MS),
+      });
+      return res.json().catch(() => null);
+    },
+  });
+}
+
 export async function checkReceiptInput(raw: string, options: CheckReceiptOptions = {}): Promise<CheckReceiptOutcome> {
   const publicInput = options.publicInput === true;
   const target = publicInput ? String(raw ?? '').trim() : String(raw ?? '');
@@ -855,6 +905,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
       && typeof receipt.verify_url !== 'string'
       && Object.prototype.hasOwnProperty.call(receipt, 'public_attestation');
     resolved = await resolveIssuerHistory({
+      bundledOverride: readTestSnapshot(options)?.issuerHistory ?? null,
       fileBytes: options.issuerHistoryBytes ?? null,
       receipt: shellOrigin ? { ...receipt, verify_url: `${receiptOrigin}/receipt/` } : receipt,
       trustedKids,
@@ -932,35 +983,29 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
         logReason = 'not_in_log';
       }
     }
-    const notInLog = logReason === 'not_in_log';
-    const verdict = buildVerifyVerdict({
+    const verdict = unsignedDocumentVerdict({
       version: packageVersion(),
-      receiptId: null,
-      displayId: null,
-      payloadVersion: null,
-      historySource: resolved.source,
-      historyHead: resolved.headHash,
-      historyCount: resolved.entryCount,
-      historyAsOf: resolved.asOf,
-      signatureChecked: false,
-      historyReason: notInLog ? null : 'signed_receipt_unavailable',
-      historyMissing: false,
-      errors: [],
+      history: {
+        source: resolved.source,
+        headHash: resolved.headHash,
+        entryCount: resolved.entryCount,
+        asOf: resolved.asOf,
+      },
       logInclusion,
       anchor: anchorState,
-      logReason: notInLog ? 'not_in_log' : null,
+      notInLog: logReason === 'not_in_log',
     });
     return linesOutcome(verdict);
   }
 
-  const result = await verifyReceipt(receipt, {
+  const result = await verifyReceipt(receipt, carryTestSnapshot(options, {
     trustedKids,
     requirePreimages: true,
     checkPayer,
     rpcUrl: options.rpcUrl || process.env.BASE_RPC_URL || BASE_RPC_URL,
     solanaRpcUrl: options.solanaRpcUrl || process.env.SOLANA_RPC_URL || SOLANA_RPC_URL,
     ...historyOptions(resolved),
-  });
+  }));
 
   const unsupported = (result.errors || []).includes('unsupported_version');
   let logInclusion: CheckState | 'unclaimed' = 'unclaimed';
@@ -975,34 +1020,36 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     anchorState = fresh.anchor;
     logReason = fresh.logReason;
     log = fresh.log;
+    if (fresh.logInclusion === 'pass' && fresh.verified) {
+      const reason = await logTimeCheck(result, fresh.verified, resolved.document, trustedKids, options);
+      if (reason) {
+        result.issuer_history = {
+          ...result.issuer_history,
+          checked: true,
+          ok: false,
+          unreachable: reason === 'log_time_unavailable',
+          reason,
+        };
+      }
+    }
   }
 
   const signedId = result.issuer_signature.valid === true
     ? signedReceiptId(result.issuer_signature.payload)
     : null;
-  const verdict = buildVerifyVerdict({
+  const verdict = verdictFromVerification(result, {
     version: packageVersion(),
     receiptId: signedId,
-    displayId: signedId,
-    payloadVersion: result.receipt_version ?? null,
-    historySource: resolved.source,
-    historyHead: resolved.headHash,
-    historyCount: resolved.entryCount,
-    historyAsOf: resolved.asOf,
-    signatureValid: unsupported ? null : result.issuer_signature.valid === true,
-    signatureChecked: unsupported ? false : Boolean(result.issuer_signature.checked),
-    historyChecked: unsupported ? false : (resolved.invalid || result.issuer_history.checked),
-    historyOk: unsupported ? false : (resolved.invalid ? false : result.issuer_history.ok),
-    historyReason: resolved.invalid ? (resolved.reason || result.issuer_history.reason) : result.issuer_history.reason,
-    historyMissing: unsupported ? true : (resolved.document == null && !resolved.invalid),
-    bindingExpected: !!result.binding.expected,
-    bindingMatches: result.binding.matches,
-    claimMismatches: result.claim_mismatches.length,
-    payerChecked: result.payer.checked,
-    payerValid: result.payer.valid,
+    history: {
+      source: resolved.source,
+      headHash: resolved.headHash,
+      entryCount: resolved.entryCount,
+      asOf: resolved.asOf,
+      invalid: resolved.invalid,
+      reason: resolved.reason,
+      documentPresent: resolved.document != null,
+    },
     payerRequired: checkPayer,
-    payerOutcome: checkPayer ? (result.payer.outcome ?? payerCheckOutcome(result.payer)) : null,
-    errors: result.errors,
     logInclusion,
     anchor: anchorState,
     logReason,

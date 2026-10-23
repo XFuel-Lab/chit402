@@ -80,7 +80,7 @@ function fixture() {
       },
       solana: {
         status: 'anchored',
-        signature: 'sig1',
+        signature: '2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX',
         slot: 99,
         cluster: 'devnet',
         memo,

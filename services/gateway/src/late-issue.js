@@ -12,10 +12,11 @@
  */
 import crypto from 'node:crypto';
 import logger from './logger.js';
-import { confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
+import { canonicalAuthNonce, confirmSettlement, evmFinality, findAuthorizationTx, readEvmReceipt } from './x402-chain.js';
 import { samePayee, truncateWallet } from './x402-flags.js';
 import { recordReceiptFailure } from './receipt-failures.js';
 import { canonicalNetwork, normalizePaymentRef, sameNetwork } from './payment-ref.js';
+import { evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { buildV11SignedClaims, minuteIssuedAt } from './v11-seal.js';
 import { jcsRfc8785 } from './offer-receipt.js';
 import { getIssuerKid, signJwsAsync } from './issuer-key.js';
@@ -51,7 +52,10 @@ export function lateIssueShadow(cfg = {}) {
 
 export function evmAuthKey(network, asset, from, nonce) {
   if (!from || !nonce) return null;
-  return `${canonicalNetwork(network)}|${String(asset || '').toLowerCase()}|${String(from).toLowerCase()}|${String(nonce).toLowerCase()}`;
+  // A well-formed nonce keys as lowercase bytes32, the same string earlier
+  // releases stored. Anything else keeps its old lowercased form.
+  const n = canonicalAuthNonce(nonce) || String(nonce).toLowerCase();
+  return `${canonicalNetwork(network)}|${String(asset || '').toLowerCase()}|${String(from).toLowerCase()}|${n}`;
 }
 
 function nowMs(deps, cfg) {
@@ -333,11 +337,11 @@ async function proveFinality(record, out, deps) {
   if (out.finalized === false) return { ...out, pending: true };
   if (out.finalized === true && Number.isFinite(Number(out.blockTimestamp))) return out;
   const cfg = deps.cfg || {};
-  const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  const url = evmRpcUrlFor(record.network, cfg);
   if (!url || out.blockNumber == null) return pendingChain(out);
   try {
     const fin = await evmFinality(url, out.blockNumber, 8000, deps.rpcMeter || null);
-    const url2 = cfg.baseRpcUrl2 || cfg.rpcUrl2 || null;
+    const url2 = isArcId(record.network) ? null : (cfg.baseRpcUrl2 || cfg.rpcUrl2 || null);
     if (url2) {
       const other = await evmFinality(url2, out.blockNumber, 8000, deps.rpcMeter || null);
       if (!fin.finalized || !other.finalized || fin.blockTimestamp !== other.blockTimestamp) {
@@ -436,7 +440,7 @@ export function lateVerifyUrl(cfg, pendingId) {
 async function discoverHint(record, deps) {
   if (record.tx_hint || readerOf(deps)) return { record, scannedTo: null };
   const cfg = deps.cfg || {};
-  const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  const url = evmRpcUrlFor(record.network, cfg);
   if (!url) return { record, scannedTo: null };
   const found = await findAuthorizationTx(url, {
     asset: record.asset,
@@ -447,6 +451,7 @@ async function discoverHint(record, deps) {
     issuedAtMs: record.challenge_issued_at,
     scannedTo: record.scanned_to,
     meter: deps.rpcMeter || null,
+    network: record.network,
   });
   const scannedTo = found?.scannedTo ?? null;
   if (!found?.ok || !found.tx) return { record, scannedTo };
@@ -504,7 +509,7 @@ async function reorgGuard(record, chain, deps) {
     }
     return true;
   }
-  const url = cfg.baseRpcUrl || cfg.rpcUrl || null;
+  const url = evmRpcUrlFor(record.network, cfg);
   const tx = chain?.tx || chain?.transaction || record.tx_hint;
   if (!url || !tx) return false;
   try {

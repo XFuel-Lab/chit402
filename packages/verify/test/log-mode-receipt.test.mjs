@@ -7,12 +7,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -95,7 +96,7 @@ function fixture() {
       },
       solana: {
         status: 'anchored',
-        signature: 'sig-log-mode',
+        signature: '5AJWNP2hfZiD511rpFenjZXqZACyYp8RjadatEzGJ84YdQSQyVVbYyHJLa2hqco67oD3xZrYMDDvySoN7zAXNrCr',
         slot: 99,
         cluster: 'devnet',
         memo,
@@ -140,7 +141,7 @@ function rpcServer(fx) {
       else if (msg.method === 'eth_getTransactionByHash') {
         result = { hash: fx.baseTx, input: `0x${fx.root}`, from: PINNED_BASE_ANCHOR_WALLET.toLowerCase() };
       } else if (msg.method === 'getSignaturesForAddress') {
-        result = [{ signature: 'sig-log-mode', err: null }];
+        result = [{ signature: '5AJWNP2hfZiD511rpFenjZXqZACyYp8RjadatEzGJ84YdQSQyVVbYyHJLa2hqco67oD3xZrYMDDvySoN7zAXNrCr', err: null }];
       } else if (msg.method === 'getTransaction') {
         result = {
           slot: 99,
@@ -195,7 +196,7 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
     skipIssuerHistory: true,
   };
   const honest = await verifyReceipt(fx.receipt, trust);
-  assert.equal(honest.overall, 'verified', honest.errors.join('; '));
+  assertLibraryPass(honest, honest.errors.join('; '));
 
   const stripped = JSON.parse(JSON.stringify(fx.receipt));
   delete stripped.issuer_signature;
@@ -208,7 +209,8 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
   partial.issuer_signature = { alg: 'ES256', value: 'dummy', kid: 'not-checked' };
   const partialResult = await verifyReceipt(partial, { ...trust, jwks: undefined });
   assert.notEqual(partialResult.overall, 'verified');
-  assert.match(partialResult.issuer_signature.reason, /JWKS not provided/);
+  // Detached form: refused by the empty L1 list before any key lookup.
+  assert.match(partialResult.issuer_signature.reason, /legacy_form_not_allowlisted/);
 
   const tampered = JSON.parse(JSON.stringify(fx.receipt));
   tampered.payment.gross_amount = '100000';
@@ -216,7 +218,7 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
   assert.equal(tamperedResult.overall, 'failed');
   assert.match(tamperedResult.errors.join(' '), /gross_amount/);
 
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-receipt-'));
+  const dir = tempDir('chit-log-receipt-');
   const files = writeCase(dir, fx.receipt, fx);
   const run = await runCli([files.receiptPath, '--json', '--rpc', 'http://127.0.0.1:9']);
   assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);

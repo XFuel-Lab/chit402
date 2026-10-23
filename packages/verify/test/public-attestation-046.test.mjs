@@ -6,11 +6,11 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -465,7 +465,7 @@ test('M9 a holder document never takes the public path, valid or not', async () 
   const holderClaims = { task_id: TASK, iss: 'chit402', iat: 1792268940, payment: { rail: 'usdc', ref: `base:${PAY_TX}` }, payload_version: 6 };
   const holderJws = signRaw(key, { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: key.kid }, JSON.stringify(holderClaims));
   const attestation = attest(key, baseClaims());
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-pub-holder-'));
+  const dir = tempDir('chit-pub-holder-');
   for (const jws of [holderJws, `${holderJws.slice(0, -4)}AAAA`]) {
     const doc = { ...holderClaims, issuer_signature: { alg: 'ES256', jws, kid: key.kid }, public_attestation: { jws: attestation } };
     const file = path.join(dir, 'holder.json');
@@ -478,7 +478,7 @@ test('M9 a holder document never takes the public path, valid or not', async () 
 });
 
 test('CLI exit codes: malformed is 1, pending is 2, no attestation is the 0.4.5 exit 2', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-pub-cli-'));
+  const dir = tempDir('chit-pub-cli-');
   const write = (name, body) => { const f = path.join(dir, name); writeFileSync(f, JSON.stringify(body)); return f; };
   const env = { ...process.env, BASE_RPC_URL: 'http://127.0.0.1:9/', SOLANA_RPC_URL: 'http://127.0.0.1:9/' };
   const cliRun = (file) => spawnSync(process.execPath, [cli, file, '--json'], { encoding: 'utf8', timeout: 30000, env });

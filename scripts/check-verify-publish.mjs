@@ -3,6 +3,7 @@
  * Fails when the versions differ or the alias dependency is a range.
  */
 import { readFileSync } from 'node:fs';
+import { createPublicKey, verify } from 'node:crypto';
 
 const primary = JSON.parse(readFileSync(new URL('../packages/verify/package.json', import.meta.url), 'utf8'));
 const alias = JSON.parse(readFileSync(new URL('../packages/aliases/chit402-verify/package.json', import.meta.url), 'utf8'));
@@ -19,6 +20,25 @@ if (alias.publishConfig?.provenance !== true) errors.push('@xfuel/verify publish
 const bins = primary.bin || {};
 if (bins['chit402-verify'] == null || bins['xfuel-verify'] == null) {
   errors.push('chit402-verify must ship both chit402-verify and xfuel-verify bins');
+}
+
+// The bundled version windows must carry the production issuer signature.
+// PR builds ship a test-signed copy; the signing ceremony replaces it.
+const PROD_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
+try {
+  const windows = JSON.parse(readFileSync(new URL('../packages/verify/version-windows.json', import.meta.url), 'utf8'));
+  const history = JSON.parse(readFileSync(new URL('../packages/verify/issuer-history.snapshot.json', import.meta.url), 'utf8'));
+  const jws = String(windows.issuer_signature?.jws || '');
+  const [h, p, sig] = jws.split('.');
+  const header = JSON.parse(Buffer.from(h || '', 'base64url').toString('utf8') || '{}');
+  const entry = (history.entries || []).find((e) => e.kid === PROD_KID);
+  const ok = header.kid === PROD_KID && entry && sig && verify('sha256', Buffer.from(`${h}.${p}`), {
+    key: createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: entry.jwk.x, y: entry.jwk.y }, format: 'jwk' }),
+    dsaEncoding: 'ieee-p1363',
+  }, Buffer.from(sig, 'base64url'));
+  if (!ok) errors.push(`packages/verify/version-windows.json is not signed by the production issuer key (kid ${header.kid || 'none'})`);
+} catch (err) {
+  errors.push(`packages/verify/version-windows.json unreadable: ${err.message}`);
 }
 
 if (errors.length) {

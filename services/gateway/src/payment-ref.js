@@ -3,6 +3,7 @@
  * original string; only dedupe and replay indexes use the key from here.
  */
 import { fromCaip2Network, isSolanaNetwork } from './x402-facilitator.js';
+import { arcNetwork } from './arc-rail.js';
 
 const EVM_TX = /^0x[0-9a-fA-F]{64}$/;
 const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -61,6 +62,8 @@ export function canonicalNetwork(network) {
   const short = fromCaip2Network(String(network || ''));
   if (short === 'base' || short === 'eip155:8453') return 'base';
   if (short === 'base-sepolia' || short === 'eip155:84532') return 'base-sepolia';
+  const arc = arcNetwork(network);
+  if (arc) return arc;
   if (isSolanaNetwork(short)) return fromCaip2Network(short);
   return String(network || '').trim();
 }

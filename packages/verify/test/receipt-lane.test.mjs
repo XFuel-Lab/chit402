@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -124,7 +125,7 @@ test('anchor_changed alone does not freeze', () => {
 test('a v8 receipt still verifies when the unsigned lane is attached', async () => {
   const live = JSON.parse(readFileSync(new URL('./fixtures/chit-4d6e8331.json', import.meta.url), 'utf8'));
   const before = await verifyReceipt(live, {});
-  assert.equal(before.overall, 'verified');
+  assertLibraryPass(before);
   assert.equal(before.issuer_signature.payload?.payload_version, 8);
   assert.equal(before.receipt_lane.signed, false);
   assert.equal(before.receipt_lane.settled_by, 'receipt');
@@ -144,7 +145,7 @@ test('a v8 receipt still verifies when the unsigned lane is attached', async () 
     },
   };
   const after = await verifyReceipt(stamped, {});
-  assert.equal(after.overall, 'verified');
+  assertLibraryPass(after);
   assert.equal(after.issuer_signature.valid, true);
   assert.equal(stamped.issuer_signature.payload_version, 8);
   assert.equal(after.receipt_lane.settled_by, 'receipt');

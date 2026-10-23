@@ -43,56 +43,53 @@ interface SeoConfig {
 const CHIT_HOME_SEO: SeoConfig = {
   ...CHIT_SEO,
   h1: 'Chit402 — treasury desk for agent spend',
-  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. Cost-plus, quoted, receipted — USDC on Base and Solana. The wire is api.chit402.com/v1.',
+  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. You see the price first, it\'s based on our cost, and you pay in USDC on Base and Solana. The wire is api.chit402.com/v1.',
 };
 
 const CHIT_V1_SEO_FULL: SeoConfig = {
   ...CHIT_V1_SEO,
   h1: 'Bot drop-in. Wallet pays. You hold the book.',
-  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions is cost-plus, quoted, receipted — USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
+  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions: you see the price first, it\'s based on our cost, and every paid call gets a signed receipt. USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
 };
 
+/**
+ * The path is request data. Escape it for a quoted attribute, and pass every
+ * replacement as a function so "$'" or "$&" in a path is never a pattern.
+ */
+function escapeAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
-  const canonicalUrl = `https://${seo.domain}${pathname}`;
+  const canonicalUrl = escapeAttr(`https://${seo.domain}${pathname}`);
   
   let result = html
-    .replace(/<title>[^<]*<\/title>/, `<title>${seo.title}</title>`)
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${seo.title}</title>`)
     .replace(
-      /<meta name="description" content="[^"]*" \/>/,
-      `<meta name="description" content="${seo.description}" />`
-    )
+      /<meta name="description" content="[^"]*" \/>/, () => `<meta name="description" content="${seo.description}" />`)
     .replace(
-      /<meta property="og:title" content="[^"]*" \/>/,
-      `<meta property="og:title" content="${seo.ogTitle}" />`
-    )
+      /<meta property="og:title" content="[^"]*" \/>/, () => `<meta property="og:title" content="${seo.ogTitle}" />`)
     .replace(
-      /<meta property="og:description" content="[^"]*" \/>/,
-      `<meta property="og:description" content="${seo.ogDescription}" />`
-    )
+      /<meta property="og:description" content="[^"]*" \/>/, () => `<meta property="og:description" content="${seo.ogDescription}" />`)
     .replace(
-      /<meta property="og:url" content="[^"]*" \/>/,
-      `<meta property="og:url" content="${canonicalUrl}" />`
-    )
+      /<meta property="og:url" content="[^"]*" \/>/, () => `<meta property="og:url" content="${canonicalUrl}" />`)
     .replace(
-      /<meta property="og:image" content="[^"]*" \/>/,
-      `<meta property="og:image" content="${seo.ogImage}" />`
-    )
+      /<meta property="og:image" content="[^"]*" \/>/, () => `<meta property="og:image" content="${seo.ogImage}" />`)
     .replace(
-      /<meta name="twitter:title" content="[^"]*" \/>/,
-      `<meta name="twitter:title" content="${seo.ogTitle}" />`
-    )
+      /<meta name="twitter:title" content="[^"]*" \/>/, () => `<meta name="twitter:title" content="${seo.ogTitle}" />`)
     .replace(
-      /<meta name="twitter:description" content="[^"]*" \/>/,
-      `<meta name="twitter:description" content="${seo.ogDescription}" />`
-    );
+      /<meta name="twitter:description" content="[^"]*" \/>/, () => `<meta name="twitter:description" content="${seo.ogDescription}" />`);
 
   if (!result.includes('rel="canonical"')) {
-    result = result.replace(/<\/head>/, `  <link rel="canonical" href="${canonicalUrl}" />\n</head>`);
+    result = result.replace(/<\/head>/, () => `  <link rel="canonical" href="${canonicalUrl}" />\n</head>`);
   } else {
     result = result.replace(
-      /<link rel="canonical" href="[^"]*" \/>/,
-      `<link rel="canonical" href="${canonicalUrl}" />`
-    );
+      /<link rel="canonical" href="[^"]*" \/>/, () => `<link rel="canonical" href="${canonicalUrl}" />`);
   }
 
   const chitNoscript = `
@@ -104,12 +101,10 @@ function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
   </noscript>`;
 
   if (result.includes('<noscript>')) {
-    result = result.replace(/<noscript>[\s\S]*?<\/noscript>/, chitNoscript.trim());
+    result = result.replace(/<noscript>[\s\S]*?<\/noscript>/, () => chitNoscript.trim());
   } else {
     result = result.replace(
-      /<div id="root"><\/div>/,
-      `<div id="root"></div>${chitNoscript}`
-    );
+      /<div id="root"><\/div>/, () => `<div id="root"></div>${chitNoscript}`);
   }
 
   return result;

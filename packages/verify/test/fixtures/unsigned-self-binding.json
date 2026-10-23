@@ -1,0 +1,26 @@
+{
+ "schema": "xfuel.receipt.v3",
+ "task_id": "task-forged-0001",
+ "payment": {
+  "rail": "usdc",
+  "ref": "base:0xabababababababababababababababababababababababababababababababab",
+  "gross_amount": "999000000",
+  "net_amount": "999000000"
+ },
+ "route": {
+  "provider": "theta-edgecloud",
+  "model": "theta/glm-5.2-9b-chat"
+ },
+ "output": {
+  "hash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+ },
+ "binding": {
+  "rail": "usdc",
+  "amount": "999000000",
+  "expected_commitment": "0xb642c9d6db286d4cf93415b153b859f7122424fae761da595e8e49072e1ad1e7",
+  "covers": [
+   "payment",
+   "settlement"
+  ]
+ }
+}

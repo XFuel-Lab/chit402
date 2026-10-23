@@ -8,10 +8,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureDir = path.join(pkgDir, 'test', 'fixtures', 'public');
@@ -76,7 +77,7 @@ function runCliAsync(args) {
 
 test('both public receipts verify unmodified', async () => {
   const houseResult = await verifyReceipt(house, houseOpts);
-  assert.equal(houseResult.overall, 'verified', houseResult.errors.join('; '));
+  assertLibraryPass(houseResult, houseResult.errors.join('; '));
   assert.equal(houseResult.verified_scope, 'signed_claims');
   assert.equal(houseResult.issuer_signature.valid, true);
   assert.equal(houseResult.amount_usdc, '2000');
@@ -98,7 +99,7 @@ test('both public receipts verify unmodified', async () => {
   assert.equal(houseResult.unsigned_fields.some((field) => field.startsWith('issuer_signature')), false);
 
   const foreignResult = await verifyReceipt(foreign, foreignOpts);
-  assert.equal(foreignResult.overall, 'verified', foreignResult.errors.join('; '));
+  assertLibraryPass(foreignResult, foreignResult.errors.join('; '));
   assert.equal(foreignResult.amount_usdc, '10000');
   assert.equal(foreignResult.claim_mismatches.length, 0);
   assert.ok(foreignResult.unsigned_fields.includes('schema'));
@@ -140,7 +141,7 @@ test('NOT_IN_LOG needs a verified head, and a bad fetched proof exits 1', async 
   });
   const port = await listen(server);
   try {
-    const dir = mkdtempSync(path.join(tmpdir(), 'chit-honest-'));
+    const dir = tempDir('chit-honest-');
     const missing = clone(house);
     if (missing.verification) delete missing.verification.jwks_uri;
     missing.verify_url = `http://127.0.0.1:${port}/receipt/${house.task_id}`;
@@ -221,7 +222,7 @@ test('unsigned outer edits stay unverified and do not become the verified facts'
     if (child) receipt[headKey][child] = value;
     else receipt[headKey] = value;
     const result = await verifyReceipt(receipt, houseOpts);
-    assert.equal(result.overall, 'verified', `${pathName} ${result.errors.join('; ')}`);
+    assertLibraryPass(result, `${pathName} ${result.errors.join('; ')}`);
     assert.ok(result.unsigned_fields.includes(pathName), pathName);
     assert.equal(result.amount_usdc, '2000', pathName);
     assert.equal(result.model, 'akash/meta-llama/Llama-3.3-70B-Instruct', pathName);
@@ -331,7 +332,7 @@ test('a tampered amount fails in the library and --rpc is not a verifier flag', 
   assert.equal(result.overall, 'failed');
   assert.ok(result.claim_mismatches.some((row) => row.field === 'payment.gross_amount' && row.outer === '100000' && row.signed === '10000'));
 
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-'));
+  const dir = tempDir('chit-log-');
   const receiptPath = path.join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(tampered));
   const run = runCli([receiptPath, '--json', '--rpc']);

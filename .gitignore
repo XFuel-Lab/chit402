@@ -149,3 +149,8 @@ target/
 *.sublime-project
 *.sublime-workspace
 
+
+# Golden corpus local tier (holder documents with payer fields). Never commit.
+**/corpus-private/
+packages/verify/test/corpus/private/
+/backend/theta-bridge/

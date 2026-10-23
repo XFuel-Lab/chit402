@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(__dirname, '..');
@@ -427,11 +429,15 @@ describe('verifyIssuerSignatureWithJwks', () => {
 
     const result = verifyIssuerSignatureWithJwks(receipt, jwks);
 
+    // 0.4.11: a detached signature is trusted only under a kid pinned in
+    // issuer history. A caller key outside that history is key untrusted.
     assert.equal(result.checked, true);
-    assert.equal(result.valid, true);
+    assert.equal(result.valid, false);
+    assert.equal(result.key_trusted, false);
+    assert.equal(result.reason, 'key untrusted');
   });
 
-  test('returns no_matching_key when kid not in JWKS', () => {
+  test('returns kid_not_in_history when no key verifies and the kid is not pinned', () => {
     const receipt = {
       task_id: 'xfuel-no-key',
       status: 'completed',
@@ -449,10 +455,10 @@ describe('verifyIssuerSignatureWithJwks', () => {
     const result = verifyIssuerSignatureWithJwks(receipt, jwks);
 
     assert.equal(result.checked, false);
-    assert.equal(result.reason, 'no_matching_key');
+    assert.equal(result.reason, 'kid_not_in_history');
   });
 
-  test('returns empty_jwks for empty key set', () => {
+  test('an empty key set falls back to the pinned history key only', () => {
     const receipt = {
       task_id: 'xfuel-empty-jwks',
       status: 'completed',
@@ -461,8 +467,8 @@ describe('verifyIssuerSignatureWithJwks', () => {
 
     const result = verifyIssuerSignatureWithJwks(receipt, { keys: [] });
 
-    assert.equal(result.checked, false);
-    assert.equal(result.reason, 'empty_jwks');
+    assert.equal(result.valid, false);
+    assert.equal(result.reason, 'signature_invalid');
   });
 });
 
@@ -670,7 +676,7 @@ describe('canonicalIssuerPayload with fee/COGS fields', () => {
 });
 
 describe('verifyReceipt overall status semantics', () => {
-  test('overall=partial when receipt has issuer_signature but no JWKS provided', async () => {
+  test('a detached signature with no JWKS is refused by the empty L1 list', async () => {
     const receipt = {
       task_id: 'task-sig-no-jwks',
       status: 'completed',
@@ -680,9 +686,9 @@ describe('verifyReceipt overall status semantics', () => {
 
     const result = await verifyReceipt(receipt, {}); // No JWKS
 
-    assert.equal(result.overall, 'partial');
-    assert.equal(result.issuer_signature.checked, false);
-    assert.ok(result.issuer_signature.reason.includes('JWKS not provided'));
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.reason, 'legacy_form_not_allowlisted');
   });
 
   test('overall=failed when JWKS provided but signature invalid', async () => {
@@ -720,7 +726,7 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.overall, 'failed');
   });
 
-  test('overall=verified when unsigned receipt has valid binding', async () => {
+  test('overall=partial when an unsigned receipt carries a self-consistent binding', async () => {
     const taskId = 'task-unsigned';
     const paymentRef = 'base:0x' + 'ab'.repeat(32);
     const amount = '10000';
@@ -742,10 +748,15 @@ describe('verifyReceipt overall status semantics', () => {
 
     const result = await verifyReceipt(receipt, {});
 
-    assert.equal(result.overall, 'verified');
+    // The binding only shows the document agrees with itself. Without a
+    // trusted issuer signature this is could_not_check, the same as the CLI.
+    assert.equal(result.overall, 'partial');
+    assert.equal(result.binding.matches, false);
+    assert.equal(result.verdict.exit_code, 2);
+    assert.equal(result.verdict.reason, 'signed_receipt_unavailable');
   });
 
-  test('overall=verified when signed receipt with valid JWKS and binding', async () => {
+  test('overall=failed when a detached signature verifies only under a caller key outside issuer history', async () => {
     const taskId = 'task-signed-valid';
     const paymentRef = 'base:0x' + 'cd'.repeat(32);
     const amount = '20000';
@@ -771,9 +782,13 @@ describe('verifyReceipt overall status semantics', () => {
     const jwks = { keys: [TEST_PUBLIC_KEY_JWK] };
     const result = await verifyReceipt(receipt, { jwks });
 
-    assert.equal(result.overall, 'verified');
-    assert.equal(result.issuer_signature.valid, true);
-    assert.equal(result.binding.matches, true);
+    assert.equal(result.overall, 'failed');
+    assert.equal(result.issuer_signature.valid, false);
+    assert.equal(result.issuer_signature.key_trusted, false);
+    // L1: the detached form is refused before any key lookup.
+    assert.equal(result.issuer_signature.reason, 'legacy_form_not_allowlisted');
+    assert.equal(result.binding.matches, false);
+    assert.equal(result.verdict.exit_code, 1);
   });
 
   test('overall=partial for unmetered receipt with no binding or signature', async () => {
@@ -805,7 +820,7 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.issuer_signature.valid, true);
     assert.equal(result.issuer_signature.trust, 'pinned_kid');
     assert.equal(result.amount_usdc, '1000');
-    assert.equal(result.overall, 'verified');
+    assertLibraryPass(result);
   });
 
   test('pinned receipt fails when JWS is tampered', async () => {
@@ -822,7 +837,7 @@ describe('verifyReceipt overall status semantics', () => {
     assert.equal(result.overall, 'failed');
   });
 
-  test('legacy receipt without issuer_jwk still verifies with JWKS option', async () => {
+  test('legacy receipt without issuer_jwk is key untrusted under a caller JWKS key', async () => {
     const receipt = {
       task_id: 'xfuel-legacy-jwks',
       status: 'completed',
@@ -840,10 +855,10 @@ describe('verifyReceipt overall status semantics', () => {
     const jwks = { keys: [TEST_PUBLIC_KEY_JWK] };
     const result = await verifyReceipt(receipt, { jwks });
 
-    assert.equal(result.issuer_signature.valid, true);
+    assert.equal(result.issuer_signature.valid, false);
     assert.equal(result.issuer_signature.checked, true);
-    assert.equal(result.issuer_signature.trust, 'jwks');
-    assert.equal(result.overall, 'verified');
+    assert.equal(result.issuer_signature.key_trusted, false);
+    assert.equal(result.overall, 'failed');
   });
 });
 
@@ -1062,7 +1077,7 @@ describe('issuer key trust', () => {
     assert.deepEqual(result.claim_mismatches, []);
     assert.match(result.binding.reason, /expected_commitment is null/);
     assert.doesNotMatch(result.binding.reason, /unmetered|TFUEL/);
-    assert.equal(result.overall, 'verified');
+    assertLibraryPass(result);
   });
 
   test('live receipt still verifies when a real JWKS file is supplied', async () => {
@@ -1168,7 +1183,9 @@ describe('Base payer confirms payee and asset', () => {
   });
 });
 
-function signClaims(payload) {
+function signClaims(input) {
+  // Inside the v8 validity window (version-windows.json) unless the test sets iat.
+  const payload = 'iat' in input ? input : { iat: 1790812800, ...input };
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const jwkExport = publicKey.export({ format: 'jwk' });
   const canonical = JSON.stringify({ crv: jwkExport.crv, kty: jwkExport.kty, x: jwkExport.x, y: jwkExport.y });
@@ -1258,9 +1275,8 @@ describe('claim_id stranger rule', () => {
 describe('package exports', () => {
   test('dist/cli.js is an exported subpath so the alias can resolve chit402-verify', async (t) => {
     const { createRequire } = await import('node:module');
-    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const dir = mkdtempSync(path.join(tmpdir(), 'chit402-verify-export-'));
+    const { mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
+    const dir = tempDir('chit402-verify-export-');
     try {
       const scope = path.join(dir, 'node_modules');
       mkdirSync(scope, { recursive: true });
@@ -1425,7 +1441,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
   test('a v9 receipt verifies and the pair comes from the signed claims', async () => {
     const receipt = envelope();
     const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.issuer_signature.valid, true);
     assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
     assert.deepEqual(result.head_binding.tolerance, tolerance);
@@ -1467,7 +1483,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
       trustedKids: [receipt.issuer_signature.kid],
       head: { root: 'cd'.repeat(32) },
     });
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.head_binding.tree_head_hash, tree_head_hash);
   });
 
@@ -1506,7 +1522,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
       head: { root: laterRoot, tree_size: 3 },
       inclusion,
     });
-    assert.equal(covered.overall, 'verified', covered.errors.join('; '));
+    assertLibraryPass(covered, covered.errors.join('; '));
     assert.equal(covered.head_binding.tree_head_hash, issued);
 
     const stolen = await verifyReceipt(receipt, {
@@ -1521,7 +1537,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
       trustedKids: [receipt.issuer_signature.kid],
       head: { root: issued },
     });
-    assert.equal(same.overall, 'verified', same.errors.join('; '));
+    assertLibraryPass(same, same.errors.join('; '));
   });
 
   test('an offline inclusion with no row hash fails', async () => {
@@ -1587,7 +1603,7 @@ describe('payload v9 binds tree_head_hash and tolerance inside the JWS', () => {
     delete receipt.tree_head_hash;
     delete receipt.tolerance;
     const result = await verifyReceipt(receipt, { trustedKids: [receipt.issuer_signature.kid] });
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.issuer_signature.payload.payload_version, 8);
     assert.equal(result.head_binding, null);
   });

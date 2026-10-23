@@ -27,7 +27,7 @@ export const VERIFIER_MIN = '0.4.9';
 export const UNSUPPORTED_VERSION = 'unsupported_version';
 export const VERSION_MISMATCH = 'version_mismatch';
 export const INVALID_JWS = 'invalid_jws';
-export const UPGRADE_HINT = 'this receipt requires a verifier newer than @xfuel/verify 0.3.5';
+export const UPGRADE_HINT = `this receipt requires a newer verifier (minimum @xfuel/verify ${VERIFIER_MIN}); run npx chit402-verify@latest`;
 
 /** Named claims on the Sep 4–5 object JWS (payload v4/v5), without a signed version. */
 const UNVERSIONED_TOP = new Set([
@@ -313,7 +313,9 @@ export function formatSupportedReceiptVersions(): string {
     `  v: ${SUPPORTED_RECEIPT_VERSIONS.v.join(', ')}`,
     `  payload_version: ${LEGACY_PAYLOAD_VERSIONS.join(', ')}, and 11 only with a signed issuer_root`,
     `  refusal payload_version: ${REFUSAL_EXACT_VERSIONS.join(', ')}`,
-    '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred)',
+    '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred),',
+    '    and detached signatures: only by exact fingerprint on the bundled legacy list (empty in this release)',
+    '  each version is accepted only inside its signed validity window (version-windows.json)',
     'Unknown versions fail closed: unsupported_version, exit 2.',
     `Use chit402-verify ${VERIFIER_MIN} or later.`,
     'Older verifiers may print VERIFIED for formats they do not understand.',

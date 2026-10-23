@@ -1,4 +1,5 @@
 import express from 'express';
+import { versionWindowsBytes } from './version-windows-doc.js';
 import crypto from 'crypto';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -23,6 +24,7 @@ import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boo
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { readHeadBlock, probeConfiguredSettlementRpcs, startSettlementRpcRecheck } from './x402-chain.js';
+import { evmRpcUrlFor } from './arc-rail.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
 import { checkPricingConfig, tier2ProofUnits, promptTokensFor, quotedMaxOutputTokens, STAMP_FEE_UNITS, publishedPaymentEconomics } from './pricing.js';
 import { estimateCogsFromRequest } from './provider-rates.js';
@@ -133,7 +135,7 @@ import { BookEscrowStore, handleEscrowAction } from './book-escrow.js';
 import { BookA2aJobStore, handleA2aJobAction } from './book-a2a-escrow.js';
 import { BoardPostStore } from './board-posts.js';
 import { BoardJobStore, getAgentRecord } from './board-jobs.js';
-import { houseAgentIdsFromEnv } from './board-posts.js';
+import { houseAgentIdsFromEnv, getBoardPost } from './board-posts.js';
 import { registerBoardRoutes } from './board-routes.js';
 import { registerBoardJobRoutes } from './board-job-routes.js';
 import { ingestForeignX402, getBaseProvider, buildPublicForeignIngestReceipt, resolveForeignIngestVerify } from './foreign-x402-ingest.js';
@@ -147,6 +149,7 @@ import {
   renderReceiptShellHtml,
   renderReceiptShellMissing,
   shellPreimageBytes,
+  withPreLogNote,
   RECEIPT_HTML_CSP,
 } from './receipt-shell.js';
 import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendGenericNotFound } from './owner-view.js';
@@ -1797,7 +1800,7 @@ export async function createApp() {
   async function publicTaskRequestChallenge(req) {
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const x = config.x402;
-    const issueBlock = await readHeadBlock(x.baseRpcUrl || x.rpcUrl || null, 250);
+    const issueBlock = await readHeadBlock(evmRpcUrlFor(x.network, x), 250);
     const { body, headers } = await buildPaymentChallenge({
       taskId: `x402-discovery-${req.id || Date.now()}`,
       maxAmountRequired: String(x.usdcPriceDefault || '10000'),
@@ -2957,7 +2960,7 @@ export async function createApp() {
       let raw = req.params.refusalId;
       const jsonSuffix = raw && raw.endsWith('.json');
       if (jsonSuffix) raw = raw.slice(0, -5);
-      const fmt = String(req.query.format || '').toLowerCase();
+      const fmt = publicFormat(req.query.format);
       const wantsJson = jsonSuffix
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
@@ -3034,24 +3037,33 @@ export async function createApp() {
 
   async function sendPublicShell(res, receipt, { wantsJson, taskId, attestation = false }) {
     const { shell, inclusion } = await shellFor(receipt, taskId);
+    // True only when the store was asked and holds nothing for this receipt.
+    let noAttestation = false;
+    // A drifted attestation is withheld; the receipt still has one, so no pre-log note.
+    let attestationWithheld = false;
     // Read only: a stored attestation or a pending marker. Never signs.
     if (attestation && publicAttestationServeEnabled()) {
       const served = await publicAttestations.servedAttestation(shell.task_id || taskId);
       const drift = served?.jws ? attestationShellDrift(served.jws, shell) : null;
       if (drift) {
         logger.error({ taskId: shell.task_id, field: drift }, 'public attestation withheld: shell differs from signed claims');
+        attestationWithheld = true;
       } else if (served) {
         shell.public_attestation = served;
+      } else {
+        noAttestation = true;
       }
     }
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
     res.set(VERIFIER_MIN_HEADER, VERIFIER_MIN);
-    if (wantsJson) return res.json(withVerifierAdvisory(shell));
+    if (wantsJson) return res.json(withVerifierAdvisory(withPreLogNote(shell, { attestationWithheld })));
     res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
     return res.type('html').send(renderReceiptShellHtml(shell, {
       publicBaseUrl: config.service.publicBaseUrl || '',
       inclusion,
+      noAttestation,
+      attestationWithheld,
     }));
   }
 
@@ -3102,6 +3114,48 @@ export async function createApp() {
   // GET /receipt/by-tx?tx=<signature> — lookup by payment ref.
   // Task store first (native receipts). Foreign-ingest and stamped payouts
   // live only on the usage ledger, keyed `base:<tx>` or a bare hash.
+  function publicFormat(v) {
+    const f = typeof v === 'string' ? v.toLowerCase() : '';
+    // auditor is the selective-disclosure view of /receipt/:id (SDK, www, docs).
+    return f === 'json' || f === 'html' || f === 'auditor' ? f : '';
+  }
+
+  function isStampRow(row) {
+    if (!row) return false;
+    const kind = row.event || row.evidence;
+    return kind === 'board_stamp' || kind === 'ingest_stamp';
+  }
+
+  // Parent of a stamp row, or null when it has none that resolves (a true orphan).
+  // Board post, comment and flag stamps go to the public post (it carries its comments);
+  // an ingest stamp goes to the foreign receipt it stamped.
+  function stampParentPath(row) {
+    const kind = row.event || row.evidence;
+    if (kind === 'board_stamp') {
+      const postId = row.board?.post_id;
+      if (!postId) return null;
+      const view = getBoardPost(String(postId), { posts: boardPosts });
+      if (view?.status !== 200) return null;
+      // A taken-down or hidden post is not a page to send a payer to.
+      const st = view.body?.post?.status;
+      if (st === 'taken_down' || st === 'hidden') return null;
+      const id = encodeURIComponent(String(postId));
+      return /^(comment|comment_flag)$/.test(String(row.board?.purpose || ''))
+        ? `/v1/board/posts/${id}/comments`
+        : `/v1/board/posts/${id}`;
+    }
+    if (kind === 'ingest_stamp') {
+      const parent = row.parent_ref ? String(row.parent_ref) : '';
+      if (!parent) return null;
+      // The parent must be a receipt row, not another stamp or a refusal.
+      const parentRow = usageSettled.findByTask(parent);
+      if (!parentRow || isStampRow(parentRow) || parentRow.refusal) return null;
+      if (String(parentRow.task_id || '') !== parent) return null;
+      return `/receipt/${encodeURIComponent(parent)}`;
+    }
+    return null;
+  }
+
   app.get('/receipt/by-tx', rateLimit, (req, res) => {
     res.vary('Accept');
     res.set('Cache-Control', 'private, no-store');
@@ -3124,14 +3178,22 @@ export async function createApp() {
         ? null
         : usageSettled.findByPaymentQuery(tx, { chain: req.query.chain });
       const taskId = task?.taskId || ledgerRow?.task_id || null;
-      const fmt = String(req.query.format || '').toLowerCase();
+      // Only json, html and auditor are carried into a redirect. Anything else is dropped.
+      const fmt = publicFormat(req.query.format);
       const wantsJson = fmt === 'json' || req.accepts(['html', 'json']) === 'json';
 
       if (!taskId) return sendPublicMissing(res, wantsJson);
 
+      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
+      // A stamp row has no receipt page of its own. Send it to what it paid for.
+      if (!task && isStampRow(ledgerRow)) {
+        const parentPath = stampParentPath(ledgerRow);
+        if (!parentPath) return sendPublicMissing(res, wantsJson);
+        return res.redirect(302, `${baseUrl}${parentPath}${fmt ? `?format=${fmt}` : ''}`);
+      }
+
       // Redirect to canonical verify_url so the URL shape is consistent.
       // GET /receipt/:id rebuilds a foreign row from its snapshot, including the issuer JWS.
-      const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
       const canonicalUrl = `${baseUrl}/receipt/${taskId}${fmt ? `?format=${fmt}` : ''}`;
       return res.redirect(302, canonicalUrl);
     } catch (err) {
@@ -4240,6 +4302,15 @@ export async function createApp() {
       logger.error({ err, reqId: req.id }, 'GET receipt-policy-history error');
       return res.status(500).json({ error: 'internal', message: err.message });
     }
+  });
+
+  // Signed receipt version windows (the verifier's bundled copy is authoritative).
+  app.get('/.well-known/version-windows.json', (_req, res) => {
+    const bytes = versionWindowsBytes();
+    if (!bytes) return res.status(404).json({ error: 'not_found' });
+    res.set('Cache-Control', 'public, max-age=300');
+    res.type('application/json');
+    return res.send(bytes);
   });
 
   // Anchor wallets the verifier accepts besides the package pin.

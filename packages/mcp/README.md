@@ -4,7 +4,7 @@ MCP server for Chit402 — returns the **book** and **verify_url**, not another 
 
 **First hour:** `list_models` → `chat_completions` (unmetered `POST /v1/chat/completions`).
 **Book:** `register_agent` → `get_book` / `get_agent_book` (possession-gated last-N spend).
-**Prove it:** `verify_receipt` (offline binding via `@xfuel/verify`). SP1 tools (`get_proof`, `verify_proof`) read historical proofs only: the Tier-2 settlement proof add-on is not currently offered.
+**Prove it:** `verify_receipt` (the `chit402-verify` verdict: VERIFIED, INVALID or COULD_NOT_CHECK; issuer host only). SP1 tools (`get_proof`, `verify_proof`) read historical proofs only: the Tier-2 settlement proof add-on is not currently offered.
 
 Zero config talks to https://api.chit402.com. Hosted `/v1` is live paid — set a partner `CHIT402_API_KEY` or use x402.
 
@@ -70,7 +70,7 @@ Human-readable `content[0].text` also includes `Verify/share: …` for clients t
 | `list_models` | Live catalog — hub, modality, pricing, availability |
 | `register_agent` | `POST /v1/agents/register` — bind `agentWallet` + collected receipt → `agent_id` |
 | `get_book` / `get_agent_book` | Possession-gated last-N collected spend + budget Y / remaining |
-| `verify_receipt` | Offline receipt verify (`@xfuel/verify`) — default prove-it path |
+| `verify_receipt` | `chit402-verify` verdict (exit 0 / 1 / 2 and a reason), fetched from the issuer host only. Default prove-it path |
 | `submit_inference` | Paid `/task-request`. 402 without a payer. Amount USDC 6dp. |
 | `get_task_status` | Status / fees for a task id |
 | `get_proof` / `verify_proof` | Historical Tier-2 SP1 proofs only (add-on not currently offered) |
@@ -105,7 +105,7 @@ npm run smoke
 
 ## Publish (maintainers)
 
-Publish **xfuel-sdk** and **@xfuel/verify** first, then:
+Publish **xfuel-sdk** and **chit402-verify** first, then:
 
 ```powershell
 cd packages/mcp

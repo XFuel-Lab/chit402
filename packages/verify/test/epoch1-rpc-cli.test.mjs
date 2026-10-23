@@ -5,14 +5,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -222,7 +223,7 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
     });
   });
   const port = await listen(rpc);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-epoch1-rpc-'));
+  const dir = tempDir('chit-epoch1-rpc-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(fx.receipt));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(fx.inclusion));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));
@@ -254,7 +255,7 @@ test('xfuel-verify passes an epoch-1 receipt against the real mainnet genesis ha
 });
 
 test('an unpublished head is reported as not_yet_published', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-unpublished-'));
+  const dir = tempDir('chit-unpublished-');
   const head = {
     schema: 'chit402.tree_head.v2',
     status: 'not_yet_published',
@@ -289,14 +290,14 @@ test('--version prints the package version', () => {
   const cli = join(pkgDir, 'dist', 'cli.js');
   const run = spawnSync(process.execPath, [cli, '--version'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^chit402-verify \d+\.\d+\.\d+\n/);
+  assert.match(run.stdout, /^chit402-verify \d+\.\d+\.\d+(-[0-9A-Za-z.]+)?\n/);
   const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
   assert.equal(run.stdout.split('\n')[0], `chit402-verify ${pkg.version}`);
   assert.match(run.stdout, /payload_version: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/);
 });
 
 test('a not_in_tree inclusion file is not reported as bad_root', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-not-in-tree-'));
+  const dir = tempDir('chit-not-in-tree-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify({ task_id: TASK_ID, book_chain: { row_hash: ROW_HASH } }));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify({ error: 'not_in_tree', task_id: TASK_ID }));
   writeFileSync(join(dir, 'head.json'), JSON.stringify({
@@ -324,7 +325,7 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
   const receiptPath = fileURLToPath(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url));
   const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   const payment = await verifyReceipt(receipt, {});
-  assert.equal(payment.overall, 'verified', payment.errors.join('; '));
+  assertLibraryPass(payment, payment.errors.join('; '));
 
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const exported = publicKey.export({ format: 'jwk' });
@@ -337,10 +338,10 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
     tree_size: 4,
     anchors: {
       base: { from: PINNED_BASE_ANCHOR_WALLET, tx: `0x${'11'.repeat(32)}` },
-      solana: { fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER, signature: 'sig-pre-log' },
+      solana: { fee_payer: PINNED_SOLANA_ANCHOR_FEE_PAYER, signature: '4myzwAPfSJk2RZMje77WVcmzhHMhNtaZDextSgNLo6tSYPi45fC1ABJuVgzE7eBH6V5ZzpUC8xRoQoZCrhAYDBaD' },
     },
   };
-  const dir = mkdtempSync(join(tmpdir(), 'chit-pre-log-'));
+  const dir = tempDir('chit-pre-log-');
   const inclusionPath = join(dir, 'inclusion.json');
   const headPath = join(dir, 'head.json');
   const issuerJwk = receipt.issuer_signature.issuer_jwk;
@@ -382,7 +383,7 @@ test('a pre-log receipt such as chit-1ebc5616 is NOT_IN_LOG and the payment stil
 });
 
 test('an unpublished head with a receipt and inclusion is not_yet_published', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-unpublished-full-'));
+  const dir = tempDir('chit-unpublished-full-');
   const head = {
     schema: 'chit402.tree_head.v2',
     status: 'not_yet_published',

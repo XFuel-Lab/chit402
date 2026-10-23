@@ -1,4 +1,5 @@
 import logger from './logger.js';
+import { arcNetwork, arcCaip } from './arc-rail.js';
 import { getAddress } from 'ethers';
 import { resolveFacilitatorBearer } from './cdp-jwt.js';
 
@@ -129,6 +130,8 @@ export function facilitatorNetwork(network) {
   if (isProtoNetworkKey(n) || isProtoNetworkKey(nLower)) return 'unknown-network';
   if (nLower === 'base' || nLower === 'eip155:8453') return 'base';
   if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'base-sepolia';
+  const arc = arcNetwork(nLower);
+  if (arc) return arc;
   if (ownValue(SOLANA_NETWORKS, nLower) != null) return nLower;
   const fromCaip = ownValue(SOLANA_CAIP2_TO_SHORT, n) ?? ownValue(SOLANA_CAIP2_TO_SHORT, nLower);
   if (typeof fromCaip === 'string') return fromCaip;
@@ -159,6 +162,7 @@ export function isEvmNetwork(network) {
   const n = String(network || '').toLowerCase();
   if (n.startsWith('eip155:')) return true;
   if (n === 'base' || n === 'base-sepolia') return true;
+  if (arcNetwork(n)) return true;
   return false;
 }
 
@@ -254,6 +258,15 @@ export function normalizeIntegerString(value, fieldName) {
 }
 
 /**
+ * An authorization uint for the v1 and SDK wire shape. A missing field stays
+ * missing (String(undefined)), as before; the facilitator refuses it.
+ */
+function wireUint(value, fieldName) {
+  if (value === null || value === undefined) return String(value);
+  return normalizeIntegerString(value, fieldName).value;
+}
+
+/**
  * Normalize an EIP-3009 nonce to a 0x-prefixed 64-character hex string (bytes32).
  *
  * - 64 hex without 0x → prefix 0x
@@ -343,6 +356,8 @@ export function toCaip2Network(network) {
   // EVM networks (lowercase compare)
   if (nLower === 'base' || nLower === 'eip155:8453') return 'eip155:8453';
   if (nLower === 'base-sepolia' || nLower === 'eip155:84532') return 'eip155:84532';
+  const arc = arcCaip(nLower);
+  if (arc) return arc;
   // Solana networks: short name → CAIP-2
   const sol = ownValue(SOLANA_NETWORKS, nLower);
   if (typeof sol === 'string') return sol;
@@ -360,6 +375,8 @@ export function fromCaip2Network(network) {
   // EVM networks (lowercase compare)
   if (nLower === 'eip155:8453' || nLower === 'base') return 'base';
   if (nLower === 'eip155:84532' || nLower === 'base-sepolia') return 'base-sepolia';
+  const arcShort = arcNetwork(nLower);
+  if (arcShort) return arcShort;
   // Solana networks: CAIP-2 → short name
   const exact = ownValue(SOLANA_CAIP2_TO_SHORT, n);
   if (typeof exact === 'string') return exact;
@@ -735,12 +752,15 @@ export function toPaymentPayload(decoded, { network, resource, extensions, x402V
     network: network || accepted.network || decoded.network,
     payload: {
       signature,
+      // Same integer forms as the CDP-native v2 path: "2000.0" goes out as
+      // "2000", a JSON number as its integer string, and a nonzero fraction
+      // throws before the facilitator is called.
       authorization: {
         from: msg.from,
         to: msg.to,
-        value: String(msg.value),
-        validAfter: String(msg.validAfter ?? 0),
-        validBefore: String(msg.validBefore),
+        value: wireUint(msg.value, 'value'),
+        validAfter: normalizeIntegerString(msg.validAfter ?? 0, 'validAfter').value,
+        validBefore: wireUint(msg.validBefore, 'validBefore'),
         nonce: msg.nonce,
       },
     },

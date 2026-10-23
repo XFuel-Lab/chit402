@@ -116,24 +116,56 @@ function catalogEcho(challenge: X402Challenge, accept: X402Accept): Record<strin
  * Use `createEip3009Payer` from `xfuel-sdk/onchain` only when you intend to
  * spend real USDC.
  */
+/**
+ * Default `from` for createMockPayer: a 20-byte address ("MockPayer" in ASCII,
+ * zero padded). Gateways refuse a `from` that is not an address before the
+ * facilitator, so the default has to be address-shaped. No key controls it.
+ */
+export const MOCK_PAYER_ADDRESS = '0x4d6f636b50617965720000000000000000000000';
+
 export function createMockPayer(opts: { from?: string } = {}): X402Payer {
   return async (challenge) => {
     const a = selectAccept(challenge);
     const nonce = a.extra?.nonce;
+    const from = opts.from ?? MOCK_PAYER_ADDRESS;
+    const amount = acceptAmount(a);
+    // EIP-3009-shaped, unsigned. The gateway refuses EVM payments that do not
+    // decode to an authorization with a bytes32 nonce, mock or not.
+    const authorization = {
+      message: {
+        from,
+        to: a.payTo ?? null,
+        value: amount,
+        validAfter: '0',
+        validBefore: String(Math.floor(Date.now() / 1000) + 3600),
+        nonce: randomBytes32Hex(),
+      },
+      signature: `0x${'00'.repeat(65)}`,
+    };
     const header = encodePaymentHeader({
       x402Version: challenge.x402Version ?? 1,
       scheme: a.scheme,
       network: a.network,
       asset: a.asset,
-      amount: acceptAmount(a),
+      amount,
       payTo: a.payTo ?? null,
-      from: opts.from ?? '0xMockPayer',
+      from,
       nonce,
       mock: true,
+      authorization,
       ...catalogEcho(challenge, a),
     });
     return { header, nonce };
   };
+}
+
+/** 0x plus 64 lowercase hex from the platform CSPRNG. */
+function randomBytes32Hex(): string {
+  const bytes = new Uint8Array(32);
+  const c = (globalThis as { crypto?: { getRandomValues?: (b: Uint8Array) => Uint8Array } }).crypto;
+  if (!c || typeof c.getRandomValues !== 'function') throw new Error('createMockPayer needs crypto.getRandomValues');
+  c.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
 /**

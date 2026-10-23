@@ -50,6 +50,7 @@ function evmHeader({
     amount: value,
     payTo: to,
     payload: {
+      signature: `0x${'11'.repeat(65)}`,
       authorization: {
         from, to, value, validAfter: '0',
         validBefore: String(Math.floor(Date.now() / 1000) + 3600),

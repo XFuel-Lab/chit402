@@ -13,6 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -25,14 +27,16 @@ const {
   signedClaimsOnAllowlist,
   SUPPORTED_RECEIPT_VERSIONS,
   VERIFIER_MIN,
+  legacyReceiptFingerprint,
 } = await import('../dist/index.js');
+const { TEST_SNAPSHOT, parseLegacyAllowlistForTest } = await import('../dist/internal/test-seam.js');
 
 const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
 const exported = publicKey.export({ format: 'jwk' });
 const kid = 'm10-version-kid';
 const jwk = { kty: 'EC', crv: 'P-256', x: exported.x, y: exported.y, alg: 'ES256', use: 'sig', kid };
 const jwks = { keys: [jwk] };
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'm10-ver-'));
+const dir = tempDir('m10-ver-');
 const jwksPath = path.join(dir, 'jwks.json');
 const historyPath = path.join(dir, 'history.json');
 const inclusionPath = path.join(dir, 'inclusion.json');
@@ -42,7 +46,7 @@ fs.writeFileSync(historyPath, '{}');
 fs.writeFileSync(inclusionPath, '{}');
 fs.writeFileSync(headPath, '{}');
 
-const HINT = 'this receipt requires a verifier newer than @xfuel/verify 0.3.5';
+const HINT = 'this receipt requires a newer verifier (minimum @xfuel/verify 0.4.9); run npx chit402-verify@latest';
 const VERSION_REASONS = new Set(['unsupported_version', 'version_mismatch']);
 
 function signText(payloadText, headerExtra = {}) {
@@ -68,7 +72,7 @@ function v11ish(v) {
     receipt_id: 'xfuel-v11-m10',
     iss: 'chit402',
     kid,
-    issued_at: '2026-09-26T17:27Z',
+    issued_at: '2026-10-09T17:27Z',
     asset: 'USDC',
     chain: 'base',
     pay_to: `0x${'22'.repeat(20)}`,
@@ -162,6 +166,9 @@ async function assertApi(receipt, reason) {
   assert.equal(fetches, 0, 'RPC before the version gate');
   assert.equal(result.overall, 'failed');
   assert.equal(result.errors[0], reason);
+  // The library verdict names the same reason as errors[0] and stays exit 1.
+  assert.equal(result.verdict.reason, reason);
+  assert.equal(result.verdict.exit_code, 1);
   assert.equal(result.issuer_signature.valid, false);
   assert.equal(result.amount_usdc, null);
   assert.equal(result.tx, null);
@@ -312,7 +319,7 @@ test('T-VNUMFORM raw JSON 11.0 and 1.1e1 are the number 11', async () => {
       },
     });
     assert.notEqual(result.errors[0], 'unsupported_version', result.errors.join(','));
-    assert.equal(result.overall, 'verified', result.errors.join(','));
+    assertLibraryPass(result, result.errors.join(','));
     assert.equal(result.receipt_version, 11);
     assert.equal(result.version_source, 'signed');
   }
@@ -398,9 +405,16 @@ test('T-PVMISSING unversioned receipts follow the v4/v5 outer rule', async () =>
       caller_binding: { payer_wallet: `0x${'11'.repeat(20)}` },
     };
     const receipt = receiptFor(claims, { outerPv: outer });
-    const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
+    // L1: the bundled list is empty, so the form has no path.
+    const refused = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
+    assert.equal(refused.overall, 'failed');
+    assert.deepEqual(refused.errors, ['legacy_form_not_allowlisted']);
+    // Admitted only by its exact fingerprint on a (test) list.
+    const fp = legacyReceiptFingerprint(receipt);
+    const list = parseLegacyAllowlistForTest(JSON.stringify({ schema: 'chit402.legacy_allowlist.v1', status: 'final', note: '', entries: [fp] }), { unpinnedForTest: true });
+    const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid], [TEST_SNAPSHOT]: { legacyAllowlist: list } });
     assert.notEqual(result.errors[0], 'unsupported_version', result.errors.join('; '));
-    assert.equal(result.overall, 'verified', result.errors.join('; '));
+    assertLibraryPass(result, result.errors.join('; '));
     assert.equal(result.version_source, 'inferred');
     assert.equal(result.receipt_version, outer);
   }
@@ -445,7 +459,7 @@ test('T-MM-HDR a version on the JWS header is ignored', async () => {
   const claims = legacyClaims(8);
   const receipt = receiptFor(claims, { header: { v: 12, payload_version: 12 } });
   const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid] });
-  assert.equal(result.overall, 'verified', result.errors.join('; '));
+  assertLibraryPass(result, result.errors.join('; '));
   assert.equal(result.receipt_version, 8);
   const receiptPath = writeJson('hdr-receipt.json', receipt);
   const proc = runCli([receiptPath, '--json']);
@@ -722,7 +736,7 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
     }
     const receipt = receiptFor(claims);
     const result = await verifyReceipt(receipt, { jwks, trustedKids: [kid], skipIssuerHistory: true });
-    assert.equal(result.overall, 'verified', `pv ${version}: ${result.errors.join('; ')}`);
+    assertLibraryPass(result, `pv ${version}: ${result.errors.join('; ')}`);
     assert.equal(result.receipt_version, version);
     assert.equal(result.version_source, 'signed');
     assert.equal(result.errors.includes('unsupported_version'), false);
@@ -731,13 +745,13 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
   const parsed = JSON.parse(eight);
   const decimal = receiptFor(parsed, { raw: eight });
   const decimalResult = await verifyReceipt(decimal, { jwks, trustedKids: [kid] });
-  assert.equal(decimalResult.overall, 'verified', decimalResult.errors.join('; '));
+  assertLibraryPass(decimalResult, decimalResult.errors.join('; '));
   assert.equal(decimalResult.receipt_version, 8);
 
   const hmac = receiptFor(legacyClaims(6));
   hmac.hmac_attestation = { payload_version: 8 };
   const hmacResult = await verifyReceipt(hmac, { jwks, trustedKids: [kid] });
-  assert.equal(hmacResult.overall, 'verified', hmacResult.errors.join('; '));
+  assertLibraryPass(hmacResult, hmacResult.errors.join('; '));
   assert.notEqual(hmacResult.errors[0], 'version_mismatch');
 
   const fixtures = [
@@ -751,7 +765,7 @@ test('P-CTL-LEGACY payload versions 6 through 10 still verify', async () => {
     const result = await verifyReceipt(receipt, {});
     assert.notEqual(result.errors[0], 'unsupported_version', name);
     assert.notEqual(result.errors[0], 'version_mismatch', name);
-    if (mustVerify) assert.equal(result.overall, 'verified', `${name}: ${result.errors.join('; ')}`);
+    if (mustVerify) assertLibraryPass(result, `${name}: ${result.errors.join('; ')}`);
   }
 });
 
@@ -781,7 +795,7 @@ test('P-CTL-V11 a signed v11 receipt verifies and UpToV10 refuses it', async () 
       routing: '{"provider":"p","model":"m"}',
     },
   });
-  assert.equal(opened.overall, 'verified', opened.errors.join(','));
+  assertLibraryPass(opened, opened.errors.join(','));
   const old = await verifyReceiptUpToV10(receipt, { jwks, trustedKids: [] });
   assert.equal(old.errors[0], 'unsupported_version');
   const shellPath = writeJson('v11-shell.json', {

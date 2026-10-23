@@ -29,12 +29,24 @@ const {
 
 const baseURL = `${XFUEL_API_URL.replace(/\/$/, '')}/v1`;
 
+interface ModelsResponse {
+  data: Array<{ id: string }>;
+}
+
+interface ChatCompletionResponse {
+  choices: Array<{ message: { content: string } }>;
+  xfuel: {
+    compute: unknown;
+    proof: { attests: unknown; links: { proof: string } };
+  };
+}
+
 async function listModels() {
   const res = await fetch(`${baseURL}/models`, {
     headers: { Authorization: `Bearer ${XFUEL_API_KEY}` },
   });
-  const body = await res.json();
-  console.log('Models:', body.data.map((m: { id: string }) => m.id).join(', '));
+  const body = (await res.json()) as ModelsResponse;
+  console.log('Models:', body.data.map((m) => m.id).join(', '));
 }
 
 async function chat() {
@@ -51,7 +63,7 @@ async function chat() {
     }),
   });
 
-  const body = await res.json();
+  const body = (await res.json()) as ChatCompletionResponse;
   console.log('  answer     :', body.choices[0].message.content);
 
   // The verification receipt is available two ways: response headers…

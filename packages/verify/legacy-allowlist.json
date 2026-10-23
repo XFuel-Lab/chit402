@@ -1,0 +1,6 @@
+{
+ "schema": "chit402.legacy_allowlist.v1",
+ "status": "final",
+ "note": "Closed list of the real v4/v5 (version not signed) and detached receipts. Empty: the 2026-10-22 production export (107 task files, 6 book rows) found 0 detached signatures, 0 array payloads, 0 JWS claims without payload_version and 0 receipts issued before the key's not_before. Each entry would be an exact receipt fingerprint; a receipt in these forms that is not listed is refused.",
+ "entries": []
+}

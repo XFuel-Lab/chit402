@@ -63,7 +63,7 @@ npx chit402-verify - < receipt.json
 | 1 | `INVALID`. Includes a payer, payee, or amount mismatch |
 | 2 | `COULD_NOT_CHECK`. The log, the anchor, or the payer was not checked |
 
-Flags are `--issuer-history <file>` and `--json`. Anything after `--` exits 1. With no RPC reachable, a signed receipt is exit 2, not exit 0. This alias forwards every argument to `chit402-verify` 0.4.8.
+Flags are `--issuer-history <file>` and `--json`. Anything after `--` exits 1. With no RPC reachable, a signed receipt is exit 2, not exit 0. This alias forwards every argument to `chit402-verify` 0.5.0-pre.0.
 
 ## Publish
 

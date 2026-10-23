@@ -5,12 +5,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -99,7 +99,7 @@ function fixture(patch = {}) {
       },
       solana: patch.solana || {
         status: 'anchored',
-        signature: 'sig1',
+        signature: '2soASZVz6NaEUZtRyCbf3hAdpPAAiecRovUSi99FFw9GJGQTbdoPFaFctNx1Nzt2FzPMLj5JjBnkXJm6CGofULNX',
         slot: 99,
         cluster: 'devnet',
         memo,
@@ -386,7 +386,7 @@ test('cli --rpc prints the prove and does-not-prove lines', () => {
       issuer_jwk: fx.key.publicJwk,
     },
   };
-  const dir = mkdtempSync(join(tmpdir(), 'chit-anchor-'));
+  const dir = tempDir('chit-anchor-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(signedReceipt));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify(fx.inclusion));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(fx.head));

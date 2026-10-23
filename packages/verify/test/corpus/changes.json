@@ -1,0 +1,856 @@
+{
+ "note": "Recorded changes to the golden corpus baseline, append-only. Each entry names the case and path, the new pinned outcome (`to`), the PR, and the spec section. kind `tighten` (default): the new outcome must be at least as strict as the merge-base outcome. kind `corpus_fix`: a synthetic case was built wrong and is corrected; needs a note, never for a real receipt, never to exit 0. kind `registry`: names a version appended to the frozen registry (`entry`). scripts/corpus-gate.mjs checks all of this against the merge base in CI.",
+ "changes": [
+  {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "#621",
+   "spec": "§2 version gate: reason only (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-v10-claims-signed-as-v6-after-window",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "350e3f085d0752e0bf911ed0e116434e39cf97de889294377fb99fee5c6f139a",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "The case copied the production issuer-history pin into claims signed by the test key, so the library path stopped at issuer_history_pin_mismatch before the version rule. The pin now names the covering test history. The v6 window is not enforced yet (PR3 target), so the case reaches the log read."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "control-test-key-v10",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "007c73b96440257bc5eb4b32e6938ceaf023a9c3c57b4a01c7ec9c70fe731e24",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same pin fix as the v6 case. The control now passes every check before the log, which is what a control is for."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "e8c760c27b87006e0d0561327317c61a9b6f5c0faeb12a491faefed24eb0eba3",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "The v4/v5 claims carried payment.payee, which no v4/v5 receipt signed, so they were rejected as unsupported_version instead of being read as v4/v5. Without it they are read as v4 and reach the log read: the L1 allowlist is not enforced yet (PR3 target)."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "0bff03866a302b758ff3b11f565fcb86f9e9071b7646ea641f77dc5b31b3d108",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix as the v4 case."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "cli",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "key untrusted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    }
+   },
+   "input_digest": "e8c760c27b87006e0d0561327317c61a9b6f5c0faeb12a491faefed24eb0eba3",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix. The CLI now reads the claims as v4 and rejects the test key (key untrusted) instead of stopping at unsupported_version."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "cli",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "key untrusted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    }
+   },
+   "input_digest": "0bff03866a302b758ff3b11f565fcb86f9e9071b7646ea641f77dc5b31b3d108",
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§5.1 golden corpus (case construction)",
+   "note": "Same claims fix as the v4 CLI case."
+  },
+  {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed"
+   },
+   "pr": "verify: corpus baseline and gate coverage checks",
+   "spec": "§2 version gate: baseline now pins the #621 reason (invalid -> unsupported_version); exit 1 and overall failed unchanged"
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "gate10-pv9-no-history-pin",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "e13e993a3a7a3a73bb6639e0a7d60e84eef298cd71ee49884877e0e0013185f2",
+   "pr": "verify: keep corpus corrections separate from verifier changes",
+   "spec": "§5.2 registry gates; PR3 validity windows",
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "gate9-pv8-no-head-binding",
+   "path": "library",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial"
+   },
+   "input_digest": "f66c8ecd609f76d65c462ad4a18837941f0b4a7b3536d6d2ed0091b35de343f4",
+   "pr": "verify: keep corpus corrections separate from verifier changes",
+   "spec": "§5.2 registry gates; PR3 validity windows",
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+  },
+  {
+   "kind": "corpus_fix",
+   "case": "gate9-pv9-no-head-binding",
+   "path": "library",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "invalid",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed"
+   },
+   "input_digest": "f9e001a4a9b01f9bbb1a2e07b27c2e8ebbb76b21f5e4ddc3a993357fac3742f4",
+   "pr": "verify: keep corpus corrections separate from verifier changes",
+   "spec": "§5.2 registry gates; PR3 validity windows",
+   "note": "The case signed iat 2026-10-22, after its version window closed, so once windows are enforced (a production-signed windows document) the window would decide it instead of the gate. It now signs inside its window (pv8 2026-09-29, pv9 2026-10-04). Outcome unchanged before and after PR3."
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v5 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed"
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v5 JWS not on the bundled legacy list (empty per the 2026-10-22 production export), legacy_form_not_allowlisted"
+  },
+  {
+   "case": "version-l1-v4-production-kid",
+   "path": "cli",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    }
+   },
+   "pr": "PR3 verify/redesign-3-windows",
+   "spec": "L1: unversioned v4 JWS under the production kid is refused by the bundled legacy list (empty per the 2026-10-22 production export) before key trust, legacy_form_not_allowlisted"
+  },
+  {
+   "case": "label-v4v5-conflicting-stamps",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed",
+    "cause": "unsupported_version"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-v13-unknown",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed",
+    "cause": "unsupported_version"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-v12-shape-no-version",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "id_prefix_version_mismatch",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed",
+    "cause": "id_prefix_version_mismatch"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-v12-shape-no-version-plain-id",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed",
+    "cause": "unsupported_version"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-unversioned-object-no-stamp",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "unsupported_version",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "could_not_check"
+    },
+    "overall": "failed",
+    "cause": "unsupported_version"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-l1-v4-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed",
+    "cause": "legacy_form_not_allowlisted"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-l1-v5-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "legacy_form_not_allowlisted",
+    "checks": {
+     "signature": "fail",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "fail"
+    },
+    "overall": "failed",
+    "cause": "legacy_form_not_allowlisted"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-l1-detached-not-allowlisted",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "invalid",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed",
+    "cause": "legacy_form_not_allowlisted"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "timing-detached-created-at-moved",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "invalid",
+    "checks": {
+     "signature": "could_not_check",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed",
+    "cause": "legacy_form_not_allowlisted"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate10-pv9-no-history-pin",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial",
+    "cause": "log_unreachable"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate10-pv10-no-history-pin",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "invalid",
+    "checks": {
+     "signature": "pass",
+     "key_window": "could_not_check",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed",
+    "cause": "issuer history: issuer_history_pin_missing"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate9-pv8-no-head-binding",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial",
+    "cause": "log_unreachable"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate9-pv9-no-head-binding",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 1,
+    "result": "invalid",
+    "reason": "invalid",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "failed",
+    "cause": "payload v9 requires tree_head_hash and tolerance inside signed claims"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate8-detached-pv7",
+   "path": "signature",
+   "kind": "tighten",
+   "to": {
+    "exit": 0,
+    "result": "signature_valid",
+    "reason": null,
+    "checks": {
+     "signature": "pass"
+    },
+    "cause": "signature_valid"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "gate8-detached-pv8",
+   "path": "signature",
+   "kind": "tighten",
+   "to": {
+    "exit": 0,
+    "result": "signature_valid",
+    "reason": null,
+    "checks": {
+     "signature": "pass"
+    },
+    "cause": "signature_valid"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "control-test-key-v10",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial",
+    "cause": "log_unreachable"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "version-v10-claims-signed-as-v6-after-window",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial",
+    "cause": "log_unreachable"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  },
+  {
+   "case": "timing-l5-backdated-iat",
+   "path": "library",
+   "kind": "tighten",
+   "to": {
+    "exit": 2,
+    "result": "could_not_check",
+    "reason": "log_unreachable",
+    "checks": {
+     "signature": "pass",
+     "key_window": "pass",
+     "payment_binding": "could_not_check",
+     "log_inclusion": "could_not_check",
+     "anchor": "could_not_check",
+     "shape": "pass"
+    },
+    "overall": "partial",
+    "cause": "log_unreachable"
+   },
+   "pr": "#629 verify/widen-gate-paths",
+   "spec": "record the pinned cause in the baseline row (declarations.frozen.json); outcome unchanged"
+  }
+ ]
+}

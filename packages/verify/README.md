@@ -24,11 +24,19 @@ const receipt = { /* Chit402 receipt JSON */ };
 const result = verifyBinding(receipt);
 console.log(result.matches); // true if binding verified
 
-// Full verification including on-chain nullifier check
-const fullResult = await verifyReceipt(receipt, { checkNullifier: true });
-console.log(fullResult.overall); // 'verified' | 'partial' | 'failed'
+// Signature, binding and signed claims. `overall` follows `verdict.exit_code`.
+const fullResult = await verifyReceipt(receipt);
+console.log(fullResult.overall); // 'partial' (exit 2) | 'failed' (exit 1); 'verified' only at exit 0
+console.log(fullResult.verdict); // { result, exit_code: 0 | 1 | 2, reason, checks }
 console.log(fullResult.receipt_lane.freeze); // unsigned; does not change overall
+
+// The same verdict the CLI prints, including the log, anchor and payer checks.
+import { checkReceiptInput } from 'chit402-verify/check-input';
+const { verdict } = await checkReceiptInput('xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15', { publicInput: true });
+console.log(verdict.result, verdict.exit_code);
 ```
+
+Since 0.4.11 the library is never more generous than the CLI. `overall` comes from the shared verdict: `verified` only at `verdict.exit_code` 0, `failed` at 1, `partial` at 2. `verifyReceipt` does not fetch the public log or the anchors, so those checks are `could_not_check` there and a receipt whose library checks all pass is `partial` (exit 2). Use `checkReceiptInput` for exit 0. A document without a trusted issuer signature is `partial` (`signed_receipt_unavailable`). Binding, nullifier and payer facts come only from verified signed claims. A detached legacy `issuer_signature.value` is trusted only under a kid pinned in issuer history (the bundled snapshot or a supplied history that extends it), never under a caller JWKS key alone. Follow-up reads (issuer history, JWKS, preimages, inclusion, tree head, epoch) refuse redirects; a refused redirect is could_not_check.
 
 ### CLI
 
@@ -183,7 +191,33 @@ This matches `SP1ProofHooks.computePaymentCommitment` on-chain.
 
 The command is `chit402-verify <id|url|file|-> [--issuer-history <file>] [--json]`. `-h`/`--help` and `-V`/`--version` exit 0. Any other flag, and any argument after `--`, exits 1. `unsupported_version` is exit 2 and is decided before any chain RPC. No flag turns it into a pass.
 
-Offline, with no RPC reachable, a signed receipt is exit 2. It is not exit 0. A fabricated `payment.ref` is also exit 2: the chain was not checked, so it is not a mismatch. Old receipts still verify when the signed transfer is on chain and the log check passes. Solana credits the signed payee in USDC; a missing payee is exit 2. The Base payer read waits 12 seconds. Each Base anchor call waits 8 seconds. The Solana payer read waits 30 seconds, and each Solana anchor call waits 30 seconds. None of them retry. The epoch record is trusted only for a history key that was active at the verified head's `published_at` and was never revoked. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
+Offline, with no RPC reachable, a signed receipt is exit 2. It is not exit 0. A fabricated `payment.ref` is also exit 2: the chain was not checked, so it is not a mismatch. Old receipts still verify when the signed transfer is on chain and the log check passes. Solana credits the signed payee in USDC; a missing payee is exit 2. The Base payer read waits 12 seconds. Each Base anchor call waits 8 seconds. The Solana payer read waits 30 seconds, and each Solana anchor call waits 30 seconds. The payer reads do not retry. Since 0.4.10 the anchor lookups do: each chain tries up to two attempts per endpoint (backoff 400 ms) over a public fallback list (Base: `mainnet.base.org`, `base-rpc.publicnode.com`, `1rpc.io/base`; Solana: `api.mainnet-beta.solana.com`, `solana-rpc.publicnode.com`), and starts no new attempt after 30 s on Base or 45 s on Solana. Setting `BASE_RPC_URL` or `SOLANA_RPC_URL` replaces that chain's list with your endpoint, still retried.
+
+One confirmed anchor is enough (0.4.10). When the head claims both chains and one confirms the root while the other chain's RPC lookup only failed (error, timeout, or null), the anchor check passes. Human output adds a line such as `Solana not checked: its anchor RPC did not answer. The anchor was confirmed on Base only.`, and `--json` sets `log.partial: true`, `log.unchecked_anchors` (for example `["solana"]`) and `log.warnings` (for example `["solana:solana_rpc_error"]`). Only a transport failure counts: a network error, a timeout, or an HTTP error status. A JSON-RPC error object, a body that is not a JSON-RPC answer, a refused redirect, a bad RPC URL, or a malformed transaction is `*_rpc_rejected` (exit 2, not covered). An anchor reference in the signed head that is not a 64-byte base58 Solana signature or a `0x` + 64-hex Base hash is `anchor_ref_invalid` (exit 1), with no RPC call. A node that answers a well-formed reference with JSON-RPC -32602/-32600 (some public nodes do this for archive reads) is that endpoint rejecting the call: the next endpoint in the list is asked, and if none gives an answer the result is `*_rpc_rejected` (exit 2). Every check on a fetched transaction (calldata, sender, revert, memo, fee payer, slot) runs before the side reads (chain id, tip, genesis), so a failed side read cannot hide a mismatch. RPC calls do not follow redirects. Each call's deadline also covers reading the response body.
+
+The payer check on a public shell reads the payment from Base. So when Base is unreachable the result is exit 2 `payer_unchecked` even if Solana confirms the anchor; in practice the one-chain rule helps when Solana is the chain that did not answer.
+
+The verifier trusts the endpoint it reads, as in 0.4.9: a confirmation from the first endpoint that answers is not cross-checked against a second endpoint. An opt-in cross-check (ask two endpoints and require agreement) is planned for 0.4.11. A mismatch on either chain (memo, calldata, sender, fee payer, cluster, slot, reverted or failed tx) is still exit 1 and is never outvoted by the other chain. Any other unchecked state (not finalized, too shallow, not found) is not covered by the other chain. No chain confirmed is still exit 2. The epoch record is trusted only for a history key that was active at the verified head's `published_at` and was never revoked. The JSON verdict keys are unchanged. `payer_unchecked` is the reason when the payer check is the one that did not finish.
+
+## Receipts issued before the public log (Oct 2, 2026)
+
+The public receipt log began on Oct 2, 2026. Its first receipt leaf (epoch 1, leaf index 1, after the genesis leaf) is `xfuel-39af100b-23dd-4d86-a16b-4556ca6796af`, issued 2026-10-02 17:30 UTC. Receipts issued before that have no log leaf, and their public shell shows `inclusion.leaf_hash: null`. The gateway pins that start time as `PUBLIC_LOG_START` in `services/gateway/src/receipt-shell.js`, because the epoch records carry roots and sizes, not times.
+
+For those receipts the verifier gives exit 1 `NOT_IN_LOG`, on Base and on Solana alike. That is the documented result for a receipt with no log leaf, and this release does not change it.
+
+This applies only to receipt ids of the form `chit-<uuid>` or `xfuel-<uuid>`. For other pre-log rows, such as foreign ingest receipts (`foreign-x402-...`) and register receipts (`register-...`), the verifier stops earlier and gives exit 2 `signed_receipt_unavailable`, so the note below does not apply to them.
+
+What it means: no public log entry covers the receipt, so the log cannot show that the issuer committed to it, and a third party cannot confirm it from the log.
+
+What it does not mean: it is not evidence of tampering or a forged signature. A receipt that predates the log fails the log check whether it is genuine or not, so exit 1 here does not tell those apart.
+
+What can still be checked:
+- Anyone can read the payment tx on its chain (Base or Solana) and see whether a USDC transfer of the stated amount went to the stated payee.
+- The owner can run `npx chit402-verify@latest` on their signed receipt. In `--json`, `checks.signature`, `checks.key_window` and `checks.payment_binding` still report pass or fail. The overall result stays exit 1, because `checks.log_inclusion` is `fail`.
+
+A public shell alone (no signed receipt) cannot check the signature or the payer: those checks are `could_not_check`.
+
+The public shell JSON for such a receipt carries a `log_note` with the same plain text the receipt page shows, worded for its chain. A receipt with a public attestation (signed, pending, or withheld because it no longer matches the shell) gets no `log_note`. The verifier ignores it, and the verdict is the same with or without it.
 
 ## Public receipt attestation (0.4.6)
 
@@ -258,6 +292,7 @@ Full verification combining binding and optional nullifier check.
   amount_usdc: string | null;
   tx: string | null;
   overall: 'verified' | 'partial' | 'failed';
+  verdict: { result: string; exit_code: 0 | 1 | 2; reason: string | null; checks: object };
   errors: string[];
 }
 ```

@@ -142,6 +142,8 @@ that challenge.
 
 On `challenge_required` or `challenge_mismatch`, fetch a fresh 402 once, re-sign, and retry. On `payment_in_flight`, wait for `Retry-After` and resend the **same** payment. Do not sign a new authorization for an in-flight challenge. `submitTaskWithPayment` throws on a second 402; automatic retry is a separate SDK change.
 
+EVM payments must carry a complete EIP-3009 authorization: `from`, `to`, `value`, `validBefore`, a bytes32 `nonce`, and a signature. A header missing any of them is refused with `402 settle_unconfirmed` before the facilitator runs, so no funds move. Permit2 and other transfer methods are refused with `402 payment_scheme_unsupported`; sign an EIP-3009 `transferWithAuthorization` instead.
+
 If the first attempt is pending or fails confirmation, the challenge stays
 `settle_unconfirmed` until reconcile runs. Retrying that challenge does not
 open a new 402 and does not settle again. Wait for reconcile; do not sign a

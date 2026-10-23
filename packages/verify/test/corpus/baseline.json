@@ -1,0 +1,1873 @@
+{
+ "id-xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "base_rpc_error",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "pass",
+   "anchor": "could_not_check",
+   "shape": "pass",
+   "payer": "not_claimed"
+  }
+ },
+ "id-chit-43c98110-8ad4-4a65-8fa7-fa3a04424c0e|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-chit-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-register-f79c8294773597c843c5acc5bdc8b01f|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unreadable",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-00eb2124-012c-4fb3-b3f8-9d62031c4cdc|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-02a4b779-2215-450e-8c5d-ff8edae8167f|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-07bf6d57-49a2-43aa-89ce-bf1b93a3c480|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-088d4ba1-0cad-4525-832b-3f50962a7d22|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-0e99960a-9940-47f1-a562-dc63c868b4e6|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-124415ab-733b-45f3-97fd-d358bfc1fba4|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-18048416-ed15-4fc4-a3f6-6d50da7467c4|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1a5def32-c76a-4180-a626-c5aaf4420d09|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1b7ac401-b449-49a0-9f99-d79ed6c90c20|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1d22e03b-7d1b-4138-9c6e-4af770db983b|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1d5fd982-25df-46e5-83ea-afb1f945d39c|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1e847c02-6ecc-48b4-b6d9-0b5934828e07|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-23938f81-7b9c-4fd6-b03c-074a34af5e70|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2514c283-a5fb-4152-ab73-db206d7e69fc|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2bda0411-f993-4b06-9a0e-047aa7b327f3|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2c61e265-d05f-4dc2-bd43-46ff30d484e6|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2f10cec0-a0a2-48b2-a6f8-e256c2e18a79|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2f2c809a-a147-484e-9652-9ac0a0ccc340|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-2f9b9b20-2b16-42d3-a39e-8d4632481772|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-30ff44c4-330a-48a1-ae06-9070cef5c603|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-325320fa-ca59-457f-9a23-91f76aa4f2a7|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-354e1cc9-475f-4304-b3e0-6766c0893402|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-39af100b-23dd-4d86-a16b-4556ca6796af|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-43c98110-8ad4-4a65-8fa7-fa3a04424c0e|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-45218c6d-f5da-4e07-8071-3fb1c4caec6b|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-45423051-fa1c-40e0-9ca1-9609eb270d01|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-468eadd1-11cf-4e50-9e06-c8c8e8ef5c33|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-4a560055-fd31-421c-8ac7-34db7cab247b|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-4afc71b6-cc09-4e2a-8cdd-69c409a20d48|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-4d6e8331-c30f-400d-a76e-fcce0cfde209|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-5365dd64-9af3-4019-9532-59abbf585d4e|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-53e6207e-b77b-40d8-b3c7-d9264c4c7030|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-546baa6c-0959-4c3c-9732-4b72bdad144b|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-56e3ee6d-2acb-4cab-8fa4-dfd5f9f31e6f|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-5bc98516-9a1f-4290-afde-6c5d9a7cb883|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-5d775d12-f43a-460f-8b4a-9299b4eedf20|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-64100c67-2ebe-4fe8-b3af-72862c01cb88|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-65089684-ba9c-423a-af41-57e8d70e7e61|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-66ca86e4-601a-4c44-92c7-4cfb9213fcd6|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-6815f055-06f1-4280-bcb1-2e5cb1b035cb|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-6f436fdf-6315-47d4-be77-8ca7f997b46d|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-74e65107-3064-4b8f-8770-1268bd61cba2|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-78e23bf3-474e-4553-922c-eb5bb7c527dd|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-82c2563e-ca04-4780-a657-97b3b1b33ee9|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-8967e31d-5a75-4c0f-8ad5-64bd2b3d5a60|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-8a08fa44-bfc0-490c-a657-d509bb258a4d|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-9a50d058-e66d-49af-b301-c27e2d5763d2|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-9bd2be7f-3d31-4221-9feb-58746be551be|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-a9437fe0-7d5d-4bea-8ec5-1f9a9bade0ae|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-ad06b438-7c33-424f-b566-952586d0b2cc|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-addada4d-1ad4-4f53-81c1-41c60e0cf322|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-ae85c0eb-0564-4372-b0bc-20b69701395a|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-aee034c2-56fd-4489-b164-b11ccc715442|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-af1cf6e5-5da7-4a85-9197-134f96da77f0|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-b0f2ba93-025a-4658-8962-7bbabe021b0c|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-b4751e25-6e38-49c1-9ecb-8aa5d1d8d774|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-b8dc8457-c2a1-4926-8803-9ed50d601093|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-ba49491e-aa17-43a9-8947-e146405ddd49|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-babdad43-be59-4bec-a8a2-80335007a1f1|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-bf112b22-6258-425c-9ea5-d7086dfaa487|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-c57e1e72-eed2-489a-82ee-38fb740a3b9f|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-c7a04833-7bbd-4192-aa85-f1d44cdbf139|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-cbf48330-ed22-4c57-bdb8-848eb36cafa3|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-cc7f9762-eb7e-4f3d-9bae-2730831870e0|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-d0e1f963-dc24-4eb2-aa64-cda0e1851f75|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-d0f72014-100d-471d-be5f-3b5bbc8982cb|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-d2d0916a-045c-4a65-8604-2ccd740b69f1|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-d329f32f-e5c7-4d45-b3e0-e8b41229cca7|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-dc712c9f-8190-41b9-9499-6b6893c255a6|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-dffd7731-3d22-49a5-b2f2-0399ee2de4c4|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-e2313661-183b-4f85-a39c-322bcd196b1b|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-e4b92496-d10d-4339-aeae-3a9b310ba504|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-e665c92d-0a79-480a-b573-839498f6eec3|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-e88ce2d1-a9c1-40c3-af1a-39ed950e4418|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-ea05dd04-e503-467f-8da0-d8384d5a228b|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-f845a057-3fa5-4715-929b-29c4c0423b8b|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-faa40e5e-8f62-4f5d-bb5a-6a0c6f25681f|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-fb977f14-d229-4295-875f-153715bc54a3|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-c5a3860d-df26-490d-ab92-8f3069dac8c8|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "id-xfuel-628dc1ad-103e-4bdd-b0d7-afdc86a06984|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "id-xfuel-01d71cd9-57a9-4d0f-84bb-66fe72df9d37|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-12bae4a5-0e75-488a-9871-2ca224b30511|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-228feb6c-ffd3-47f2-9a3e-5f84b4be7e6a|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-597825b6-e72f-4f22-98ed-a27c4c868493|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-7c4a2c20-57b6-4009-9cef-061efff24c6a|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-b596d578-b2cf-450a-90b2-4f17dc409835|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-d5c0ed06-6980-41d1-9019-e15831a1d986|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-fe7a5b21-f34f-4830-bb71-bf0db4ca85b7|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "id-xfuel-a05caa88-6dc0-4515-b539-3d6a46047458|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "id-xfuel-1a422eaa-38c8-48e8-bc40-875e8c099b4a|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "id-url-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-mun7ofgh-254760bcb731|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq262x0-1467b076fc62|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-muq264r9-69896464bb19|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-url-foreign-x402-musbd035-3f1fb99ba601|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "id-bare-foreign-x402-muh526gf-4cf984953f98|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unreadable",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "file-chit-1ebc5616|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "file-chit-39af100b|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "file-foreign-x402-muy1hh8y|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "base_rpc_error",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "pass",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "file-chit-43c98110-prelog-shell|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "file-chit-4d6e8331|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "file-chit-5d775d12.v7|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "not_in_log",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "fail",
+   "anchor": "pass",
+   "shape": "pass"
+  }
+ },
+ "label-v10-outer-stamp-6|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "version_mismatch",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "label-v6-outer-stamp-10|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "version_mismatch",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "label-v4v5-conflicting-stamps|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "label-v4v5-conflicting-stamps|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  },
+  "overall": "failed",
+  "cause": "unsupported_version"
+ },
+ "version-v10-claims-signed-as-v6-after-window|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "version-v10-claims-signed-as-v6-after-window|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial",
+  "cause": "log_unreachable"
+ },
+ "version-v13-unknown|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "version-v13-unknown|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  },
+  "overall": "failed",
+  "cause": "unsupported_version"
+ },
+ "version-v12-shape-no-version|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "id_prefix_version_mismatch",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "version-v12-shape-no-version|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "id_prefix_version_mismatch",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  },
+  "overall": "failed",
+  "cause": "id_prefix_version_mismatch"
+ },
+ "version-v12-shape-no-version-plain-id|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "version-v12-shape-no-version-plain-id|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  },
+  "overall": "failed",
+  "cause": "unsupported_version"
+ },
+ "version-unversioned-object-no-stamp|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  }
+ },
+ "version-unversioned-object-no-stamp|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "unsupported_version",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "could_not_check"
+  },
+  "overall": "failed",
+  "cause": "unsupported_version"
+ },
+ "version-l1-v4-not-allowlisted|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "version-l1-v4-not-allowlisted|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  },
+  "overall": "failed",
+  "cause": "legacy_form_not_allowlisted"
+ },
+ "version-l1-v5-not-allowlisted|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "version-l1-v5-not-allowlisted|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  },
+  "overall": "failed",
+  "cause": "legacy_form_not_allowlisted"
+ },
+ "version-l1-v4-production-kid|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "legacy_form_not_allowlisted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "fail"
+  }
+ },
+ "version-l1-detached-not-allowlisted|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "version-l1-detached-not-allowlisted|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed",
+  "cause": "legacy_form_not_allowlisted"
+ },
+ "timing-detached-created-at-moved|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "timing-detached-created-at-moved|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed",
+  "cause": "legacy_form_not_allowlisted"
+ },
+ "timing-l5-backdated-iat|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "timing-l5-backdated-iat|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial",
+  "cause": "log_unreachable"
+ },
+ "gate10-pv9-no-history-pin|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial",
+  "cause": "log_unreachable"
+ },
+ "gate10-pv10-no-history-pin|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "pass",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed",
+  "cause": "issuer history: issuer_history_pin_missing"
+ },
+ "gate9-pv8-no-head-binding|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial",
+  "cause": "log_unreachable"
+ },
+ "gate9-pv9-no-head-binding|library": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "invalid",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "failed",
+  "cause": "payload v9 requires tree_head_hash and tolerance inside signed claims"
+ },
+ "gate8-detached-pv7|signature": {
+  "exit": 0,
+  "result": "signature_valid",
+  "reason": null,
+  "checks": {
+   "signature": "pass"
+  },
+  "cause": "signature_valid"
+ },
+ "gate8-detached-pv8|signature": {
+  "exit": 0,
+  "result": "signature_valid",
+  "reason": null,
+  "checks": {
+   "signature": "pass"
+  },
+  "cause": "signature_valid"
+ },
+ "control-test-key-v10|cli": {
+  "exit": 1,
+  "result": "invalid",
+  "reason": "key untrusted",
+  "checks": {
+   "signature": "fail",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ },
+ "control-test-key-v10|library": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "log_unreachable",
+  "checks": {
+   "signature": "pass",
+   "key_window": "pass",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  },
+  "overall": "partial",
+  "cause": "log_unreachable"
+ },
+ "control-unsigned-document|cli": {
+  "exit": 2,
+  "result": "could_not_check",
+  "reason": "signed_receipt_unavailable",
+  "checks": {
+   "signature": "could_not_check",
+   "key_window": "could_not_check",
+   "payment_binding": "could_not_check",
+   "log_inclusion": "could_not_check",
+   "anchor": "could_not_check",
+   "shape": "pass"
+  }
+ }
+}

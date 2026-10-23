@@ -10,8 +10,10 @@ on:
     # cursor/gateway-v11-issuer-root-5306 is the base of stacked draft #499.
     # cursor/verify-head-issuer-bind-ce2e was the #492 stack. The filter matches
     # those bases so Verify package (Windows) runs.
+    # verify/redesign-* is the stacked verifier redesign (each PR is based on
+    # the previous one).
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e]
+    branches: [main, develop, cursor/spend-hold-ceiling-0d9c, cursor/gateway-v11-issuer-root-5306, cursor/verify-head-issuer-bind-ce2e, 'verify/redesign-*']
 
 jobs:
   public-identifiers:
@@ -155,10 +157,207 @@ jobs:
   # Two tests fail only on Windows (ESM file URL for --import, and process
   # exit while undici sockets are closing). Publish is workflow_dispatch in
   # publish-verify.yml and runs this suite before npm publish --provenance.
+  # Corpus gate, in three parts so no head code runs where the gate runs:
+  #  1. corpus-inputs runs the head tree's synthetic cases and uploads them as
+  #     data (one JSON file). Nothing else leaves this job.
+  #  2. corpus-gate checks out the merge base as a worktree, builds only that
+  #     tree, and runs the merge base's copy of the gate. It reads the head
+  #     baseline, changes.json and registry pin through git as data, digests
+  #     the head inputs itself, and runs the merge-base verifier on them for
+  #     each added corpus_fix entry.
+  #  3. Verify package (Linux) needs corpus-gate and fails unless it passed,
+  #     so the required check cannot go green without the gate.
+  corpus-inputs:
+    name: Corpus inputs (head)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Export synthetic case inputs
+        working-directory: packages/verify
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx tsc
+          node scripts/corpus-gate.mjs export . > "$RUNNER_TEMP/corpus-inputs.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: corpus-inputs
+          path: ${{ runner.temp }}/corpus-inputs.json
+          if-no-files-found: error
+          retention-days: 5
+
+  corpus-gate:
+    name: Corpus baseline gate
+    needs: corpus-inputs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, so the gate can read the merge base.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: corpus-inputs
+          path: ${{ runner.temp }}/head-inputs
+
+      - name: Corpus baseline gate (merge-base code only)
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base=$(git merge-base HEAD "origin/$BASE_REF")
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base=$(git rev-parse HEAD~1)
+          fi
+          # The gate must come from the merge base once it has ever existed on
+          # the target branch; a branch that predates it fails closed. Only
+          # the change that adds it runs its own copy. Shallow history fails
+          # closed.
+          if [ "$EVENT_NAME" = "pull_request" ]; then histref="origin/$BASE_REF"; else histref="$base"; fi
+          bash packages/verify/scripts/select-driver.sh "$GITHUB_WORKSPACE" "$histref" "$base" "$RUNNER_TEMP" \
+            packages/verify/scripts/corpus-gate.mjs
+          # Build the merge-base tree only. No npm ci, tsc or script from the
+          # head tree runs in this job.
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          basepkg="$RUNNER_TEMP/base/packages/verify"
+          if [ -f "$basepkg/package-lock.json" ]; then
+            (cd "$basepkg" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
+          fi
+          cd "$RUNNER_TEMP"
+          node "$RUNNER_TEMP/corpus-gate.mjs" --base "$base" --root "$GITHUB_WORKSPACE" \
+            --base-tree "$basepkg" --head-inputs "$RUNNER_TEMP/head-inputs/corpus-inputs.json"
+
+  # Corpus harness diff. The corpus gate never runs head code, so it cannot
+  # judge a change to the corpus harness (lib.mjs with the cli runner,
+  # run-*.mjs, tape-*.mjs, record*.mjs, tapes/**, history-file.mjs,
+  # golden-corpus.test.mjs, synthetic.mjs, test/fixtures/**). On a pull
+  # request that touches one of them, this job runs the merge-base harness
+  # and the head harness on the same merge-base cases, against the
+  # merge-base verifier build, and fails on any case|path outcome
+  # difference.
+  #  - The driver is the merge-base copy of scripts/harness-diff.mjs and
+  #    scripts/corpus-gate.mjs (scripts/select-driver.sh: a branch that
+  #    predates a driver on the target branch fails closed); only the
+  #    merge-base tree is built (npm ci --ignore-scripts, tsc). Head files
+  #    are read through git as data.
+  #  - Tripwire only: the comparator trusts the head harness's stdout, so a
+  #    forged one passes. Review and code-owner protection still apply, and
+  #    pushes straight to main do not run this job.
+  #  - Both harnesses run in a container with no network, a read-only root
+  #    and read-only mounts, no capabilities, as the runner user, with no
+  #    environment passed in. The job has no secrets and only contents: read,
+  #    and the checkout does not keep credentials. pull_request only.
+  #  - It is not a dependency of Verify package (Linux): whether it becomes a
+  #    required check is a branch-protection decision.
+  harness-diff:
+    name: Corpus harness diff
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Harness diff (merge-base driver; both harnesses offline in a sandbox)
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          # node:22-bookworm-slim, pinned by digest (multi-arch index from
+          # registry-1.docker.io, read 2026-10-22). Bump the digest on purpose.
+          SANDBOX_IMAGE: node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d
+        run: |
+          set -euo pipefail
+          # Git reads that resolve the merge base or its content ignore
+          # replace refs and grafts.
+          unset GIT_REPLACE_REF_BASE GIT_NO_REPLACE_OBJECTS
+          g() { GIT_GRAFT_FILE=/dev/null git --no-replace-objects -c advice.graftFileDeprecated=false "$@"; }
+          base=$(g merge-base HEAD "origin/$BASE_REF")
+          drv="$RUNNER_TEMP/driver"
+          # Each driver must come from the merge base once it has ever existed
+          # on the target branch; a branch that predates it fails closed (merge
+          # the target branch in). Only the change that adds a driver runs its
+          # own copy, with a notice. A shallow, partial or treeless clone
+          # fails closed.
+          bash packages/verify/scripts/select-driver.sh "$GITHUB_WORKSPACE" "origin/$BASE_REF" "$base" "$drv" \
+            packages/verify/scripts/corpus-gate.mjs packages/verify/scripts/harness-diff.mjs
+          changed=$(node "$drv/harness-diff.mjs" changed "$GITHUB_WORKSPACE" "$base" HEAD)
+          own=$(g diff --name-only "$base" HEAD -- .github/workflows/test.yml packages/verify/scripts/harness-diff.mjs packages/verify/scripts/select-driver.sh)
+          if [ -z "$changed" ] && [ -z "$own" ]; then
+            echo "No corpus harness file changed; nothing to diff."
+            exit 0
+          fi
+          printf 'Corpus harness files changed:\n%s\n' "${changed:-(none; the job itself changed, so it runs as a self-check)}"
+          g worktree add --detach "$RUNNER_TEMP/base" "$base"
+          basepkg="$RUNNER_TEMP/base/packages/verify"
+          (cd "$basepkg" && npm ci --ignore-scripts --no-audit --no-fund && npx tsc)
+          node "$drv/harness-diff.mjs" overlay "$basepkg" "$GITHUB_WORKSPACE" HEAD "$RUNNER_TEMP/head"
+          node "$drv/harness-diff.mjs" cases "$basepkg" "$RUNNER_TEMP/cases"
+          docker pull -q "$SANDBOX_IMAGE"
+          sandbox() {
+            docker run --rm --network none --read-only --tmpfs /tmp:rw,exec,size=2g \
+              --pids-limit 512 --memory 2g --memory-swap 2g --cpus 2 \
+              --cap-drop ALL --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
+              -v "$drv:$drv:ro" -v "$basepkg:$basepkg:ro" -v "$RUNNER_TEMP/head:$RUNNER_TEMP/head:ro" \
+              -v "$RUNNER_TEMP/cases:$RUNNER_TEMP/cases:ro" -w /tmp \
+              "$SANDBOX_IMAGE" node "$drv/harness-diff.mjs" outcomes "$1" "$RUNNER_TEMP/cases/cases.json"
+          }
+          sandbox "$basepkg" > "$RUNNER_TEMP/outcomes-base.json"
+          sandbox "$RUNNER_TEMP/head" > "$RUNNER_TEMP/outcomes-head.json"
+          # The comparator trusts each sandbox's stdout, and the head harness
+          # writes the head side: a harness that forges base-looking outcomes
+          # passes. This job is a tripwire for harness changes that move an
+          # outcome. It does not replace review or code-owner protection, and
+          # pushes straight to main do not run it.
+          node "$drv/harness-diff.mjs" compare "$RUNNER_TEMP/outcomes-base.json" "$RUNNER_TEMP/outcomes-head.json"
+
   verify-linux:
     name: Verify package (Linux)
+    needs: corpus-gate
+    # Runs (and reports) even when the gate failed or was skipped, so the
+    # required check is red, not skipped.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Corpus baseline gate passed
+        env:
+          GATE_RESULT: ${{ needs.corpus-gate.result }}
+        run: |
+          if [ "$GATE_RESULT" != "success" ]; then
+            echo "::error::Corpus baseline gate result: $GATE_RESULT"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7

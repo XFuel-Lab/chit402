@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { jcsCanonicalize } from './jcs.js';
+import { fetchNoRedirect } from './fetch-guard.js';
 import {
   verifyIssuerJws,
   ISSUER_JWS_TYP,
@@ -454,7 +455,7 @@ async function loadIssuerHistoryBody({
     };
   }
   try {
-    const res = await fetchImpl(url, { signal: AbortSignal.timeout(4000) });
+    const res = await fetchNoRedirect(url, { signal: AbortSignal.timeout(4000) }, fetchImpl);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     raw = await res.text();
     doc = JSON.parse(raw) as IssuerHistoryDocument;
@@ -793,6 +794,7 @@ function resolvedFrom(
  * bundled snapshot. A file that does not verify is invalid and is not replaced.
  */
 export async function resolveIssuerHistory({
+  bundledOverride = null,
   fileBytes = null,
   receipt = {},
   fetchImpl = globalThis.fetch,
@@ -800,6 +802,8 @@ export async function resolveIssuerHistory({
   trustedKids,
   timeoutMs = 800,
 }: {
+  /** Test seam only (internal/test-seam.ts): replaces the bundled snapshot. */
+  bundledOverride?: { document: IssuerHistoryDocument; bytes: string } | null;
   fileBytes?: string | null;
   receipt?: { verification?: { jwks_uri?: string }; verify_url?: string };
   fetchImpl?: typeof fetch;
@@ -807,7 +811,7 @@ export async function resolveIssuerHistory({
   trustedKids?: readonly string[];
   timeoutMs?: number;
 } = {}): Promise<ResolvedIssuerHistory> {
-  const bundled = loadBundledIssuerHistory();
+  const bundled = bundledOverride ?? loadBundledIssuerHistory();
   if (fileBytes != null) {
     let doc: IssuerHistoryDocument;
     try {
@@ -839,7 +843,7 @@ export async function resolveIssuerHistory({
     }
     if (hostOk) {
       try {
-        const res = await fetchImpl(liveUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetchNoRedirect(liveUrl, { signal: AbortSignal.timeout(timeoutMs) }, fetchImpl);
         if (res.ok) {
           const bytes = await res.text();
           const doc = JSON.parse(bytes) as IssuerHistoryDocument;
