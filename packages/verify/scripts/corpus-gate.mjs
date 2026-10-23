@@ -55,7 +55,8 @@
  *   - a declared path's baseline row does not record its declared decision
  *     (cli `reason`, library and signature `cause`), or a changed row moves
  *     its `reason` or `cause`; a deferred path's row moves its reason or
- *     cause without a strictly tighter exit (declarationRowProblems);
+ *     cause without a strictly tighter exit, or moves to a cause that
+ *     decides nothing (isNonDecision) (declarationRowProblems);
  *   - a pinned baseline row changes in a change that touches
  *     test/golden-corpus.test.mjs (goldenEditProblems);
  *   - declarations.frozen.json at the merge base is not valid JSON, or is
@@ -64,8 +65,10 @@
  *     change that adds the first pin runs without one); a head JSON file
  *     is not valid JSON;
  *   - a pinned baseline row moves in a change that also edits a case input
- *     builder (synthetic.mjs, test/history-file.mjs, test/fixtures/**;
- *     builderRowProblems);
+ *     builder or corpus harness file (synthetic.mjs, test/fixtures/**, and
+ *     CORPUS_INFRA other than the pin; builderRowProblems);
+ *   - the pin history cannot be read in full (a shallow clone, or git
+ *     fails) while the merge-base pin is missing;
  *   - the chain tier breaks its rules (gateChain below).
  *
  * The input digest (caseDigest) includes the signature state of the case
@@ -801,7 +804,9 @@ export function appendBindingProblems(basePin, headPin, baseOnHead, baseDigests,
  *     `reason` and `cause`, so a tighten or a src change cannot re-decide
  *     a declared case at the same exit (or at any exit).
  *   - A deferred path may change `reason` or `cause` only with a strictly
- *     tighter exit (2 -> 1).
+ *     tighter exit (2 -> 1), and a deferred row that moves (exit, reason or
+ *     cause) must land on a decision: its reason and cause may not be a
+ *     cause that decides nothing (isNonDecision) or the deferred value.
  * The movement rules apply once the merge base has a pin; the first pin
  * (this file's bootstrap) records the causes.
  */
@@ -833,25 +838,46 @@ export function declarationRowProblems(base, head, basePinMaps, headPinMaps) {
     const now = head[key];
     const moved = now?.reason !== was?.reason || (now?.cause ?? null) !== (was?.cause ?? null);
     if (moved && !(exitRank(now?.exit) < exitRank(was?.exit))) p.push(`${key}: a deferred path may change reason or cause only with a strictly tighter exit (exit ${was?.exit} -> ${now?.exit})`);
+    // A deferred row that moves (exit, reason or cause) must land on a
+    // decision by a case rule: never a cause that decides nothing
+    // (isNonDecision) and never the deferred value it is held at.
+    if (moved || now?.exit !== was?.exit) {
+      const path = key.split('|')[1];
+      const value = path === 'cli' ? now?.reason : (now?.cause ?? now?.reason);
+      // cli rows decide by reason; library and signature rows by cause (their
+      // reason is the generic result).
+      if (isNonDecision(value) || value === deferred.get(key)) p.push(`${key}: a deferred row may move only to a decision by a case rule, not ${JSON.stringify(value ?? null)} (a cause that decides nothing, or the deferred value)`);
+    }
   }
   return p;
 }
 
 const GOLDEN = 'packages/verify/test/golden-corpus.test.mjs';
 
-/** Files that build case inputs: synthetic.mjs, the covering history writer and the test fixtures. */
+/**
+ * Files that build case inputs or run the corpus: synthetic.mjs, the test
+ * fixtures, and the corpus harness (CORPUS_INFRA other than the pin: lib.mjs
+ * with the cli runner, run-*.mjs, tape-*.mjs, record*.mjs, tapes/**,
+ * test/history-file.mjs and golden-corpus.test.mjs). An edit to any of these
+ * can change what a pinned case observes without a verifier change.
+ */
 export function isBuilderPath(path) {
   const raw = String(path ?? '');
   if (!/^[\x20-\x7e]+$/.test(raw)) return true;
   const p = raw.normalize('NFKC').toLowerCase();
-  return p === 'packages/verify/test/corpus/synthetic.mjs' || p === 'packages/verify/test/history-file.mjs' || p.startsWith('packages/verify/test/fixtures/');
+  const VERIFY = 'packages/verify/';
+  if (!p.startsWith(VERIFY)) return false;
+  const rest = p.slice(VERIFY.length);
+  if (rest === 'test/corpus/synthetic.mjs' || rest.startsWith('test/fixtures/')) return true;
+  return CORPUS_INFRA.some((re) => re.test(rest)) && rest !== 'test/corpus/declarations.frozen.json';
 }
 
 /**
  * Once the merge base has a pin, a pinned baseline row may not move (change,
  * removal, or an added changes.json entry for it, tighten included) in a
- * change that also edits a case input builder. A builder change lands alone,
- * or as a reviewed re-pin, which moves no row.
+ * change that also edits a case input builder or a corpus harness file
+ * (isBuilderPath). Such a change lands alone, or as a reviewed re-pin,
+ * which moves no row.
  */
 export function builderRowProblems(base, head, addedFor, changedFiles, basePinMaps, headPinMaps) {
   if (!basePinMaps || !Array.isArray(changedFiles)) return [];
@@ -863,7 +889,7 @@ export function builderRowProblems(base, head, addedFor, changedFiles, basePinMa
   const p = [];
   for (const key of pinned) {
     const moved = (has(base, key) && (!has(head, key) || !same(base[key], head[key]))) || (addedFor.has(key) && !['registry', 'repin'].includes(addedFor.get(key)?.kind));
-    if (moved) p.push(`${key}: a pinned baseline row may not move in the same change as a case input builder (${shown}); land the builder change alone or as a reviewed re-pin`);
+    if (moved) p.push(`${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file (${shown}); land that change alone or as a reviewed re-pin`);
   }
   return p;
 }
@@ -1139,12 +1165,25 @@ function readHead(root, path) {
 }
 
 /** Whether `path` existed in any commit reachable from `rev` (git history, as data). */
-function everInHistory(root, rev, path) {
+/**
+ * Whether `path` has existed on the history of `rev`: 'yes', 'no', or
+ * 'unknown' when the history cannot be read in full (a shallow clone, where
+ * the commits behind the boundary are missing, or a git error).
+ */
+export function pinHistoryOf(root, rev, path) {
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   try {
-    return execFileSync('git', ['-C', root, 'rev-list', '-1', rev, '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== '';
+    if (git('rev-parse', '--is-shallow-repository') !== 'false') return 'unknown';
+    return git('rev-list', '-1', rev, '--', path) !== '' ? 'yes' : 'no';
   } catch {
-    return true;
+    return 'unknown';
   }
+}
+
+/** The pin history could not be read and the merge-base pin is missing: fail closed. */
+export function pinHistoryProblems(history, state) {
+  if (history === 'unknown' && state === 'missing') return [`the history of ${DECLARATIONS_PIN} on the merge base cannot be read in full (shallow clone or git error), and the pin is missing there; the gate fails closed (check out with full history)`];
+  return [];
 }
 
 /** Added corpus_fix keys of a changes.json pair. */
@@ -1163,6 +1202,7 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
   headParseProblems = [];
   const pinAtBase = gitShowState(root, base, DECLARATIONS_PIN);
   const baseGate = gitShowText(root, base, 'packages/verify/scripts/corpus-gate.mjs');
+  const pinHistory = pinHistoryOf(root, base, DECLARATIONS_PIN);
   const files = {
     baseBaseline: gitShow(root, base, BASELINE),
     headBaseline: readHead(root, BASELINE),
@@ -1175,10 +1215,12 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     // The pin is required once it has ever existed on the merge base's
     // history, or the merge-base gate reads it. Only the change that adds
     // the first pin (to a main that never had one) runs without it.
-    basePinRequired: everInHistory(root, base, DECLARATIONS_PIN) || (typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json')),
+    basePinRequired: pinHistory !== 'no' || (typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json')),
     headPin: readHead(root, DECLARATIONS_PIN),
   };
   if (headParseProblems.length) return [...headParseProblems];
+  const historyProblems = pinHistoryProblems(pinHistory, pinAtBase.state);
+  if (historyProblems.length) return historyProblems;
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
   const appendKeys = appendedPinEntries(files.basePin, files.headPin).map(pinKey);
   const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, changedFiles: changedFilesOf(root, base) };

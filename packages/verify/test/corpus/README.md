@@ -126,7 +126,11 @@ It fails when:
   signature rows carry `cause` equal to it. A changed row of a declared
   path keeps its `reason` and `cause`, so a tighten or a verifier change
   cannot re-decide a declared case at the same exit. A deferred path may
-  change `reason` or `cause` only with a strictly tighter exit (2 to 1);
+  change `reason` or `cause` only with a strictly tighter exit (2 to 1),
+  and a deferred row that moves (exit, reason or cause) must land on a
+  decision by a case rule: its decision value (cli `reason`, library and
+  signature `cause`) may not be a cause that decides nothing
+  (`isNonDecision`, for example `key untrusted`) or the deferred value;
 - a pinned baseline row (declared, deferred or `reason_allowed`) changes in
   a change that touches `test/golden-corpus.test.mjs`;
 - a head case input digest differs from the `input_digest` pinned for any
@@ -156,15 +160,27 @@ It fails when:
 - `declarations.frozen.json` at the merge base is not valid JSON, or is
   missing while it has existed on the merge base's history (or the
   merge-base `corpus-gate.mjs` reads it). Only the change that adds the
-  first pin, to a main that never had one, runs without it. A head
+  first pin, to a main that never had one, runs without it. If the merge
+  base pin is missing and its history cannot be read in full (a shallow
+  clone, or a git error), the gate fails closed and asks for a checkout
+  with full history; CI checks out with `fetch-depth: 0`. A head
   baseline, changes.json or pin that is not valid JSON fails with a
   message;
 - a pinned baseline row moves (a changed or removed row, or an added
   changes.json entry for it, `tighten` included) in a change that also
-  edits a case input builder: `test/corpus/synthetic.mjs`,
-  `test/history-file.mjs` or anything under `test/fixtures/`. A builder
+  edits a case input builder or a corpus harness file:
+  `test/corpus/synthetic.mjs`, anything under `test/fixtures/`, and the
+  corpus infrastructure other than the pin (`test/corpus/lib.mjs` with the
+  cli runner, `run-*.mjs`, `tape-*.mjs`, `record*.mjs`, `tapes/**`,
+  `test/history-file.mjs` and `test/golden-corpus.test.mjs`). Such a
   change lands alone (or as a reviewed re-pin, which moves no row), and a
-  verifier change that tightens a row lands without builder edits;
+  verifier change that tightens a row lands without them. A harness edit
+  alone, with no pinned row moving, is not judged by the gate: the gate
+  job runs no head code by design, so it cannot run the head harness to
+  compare its outcomes with the merge-base harness. A harness-only change
+  is review-only, like a workflow change, and the review should check
+  that main's verifier gives the same outcome on every case through the
+  head harness as through the merge-base harness;
 - a case path of the head export is not classified by the head pin. Every
   synthetic case path is in exactly one list: declared, deferred or
   `reason_allowed`. A new case appends a declaration for each path (or a
