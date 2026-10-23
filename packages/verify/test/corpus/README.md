@@ -280,7 +280,11 @@ own PR kind:
   signature state, key relation and carried-key state of the document and
   the issuer history (`signatureForm`: which key verifies, which roles hold
   the same key bytes), and the issuer history entries (kid, key form,
-  validity window, status, revocation) equal the merge base. The
+  validity window, status, revocation) equal the merge base, and every
+  carried JWK (history entries, JWKS keys, the document's and the
+  history's `issuer_jwk`) keeps every member other than `x` and `y`
+  (`kty`, `crv`, `kid`, `alg`, `use`, `key_ops`, `x5c` and the rest; member
+  order does not count). The
   re-pinned document is not the document of another case. Only the rest of
   the JWKS and history forms may move (for example a field outside the keys
   and entries). So a wholesale swap of one case's input for another's is

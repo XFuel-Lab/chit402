@@ -862,10 +862,29 @@ export function repinListProblems(basePin, headPin) {
 }
 
 /** Per case, as strings: the document form, the full signature form (states, key relations, carried-key states) and the issuer history entries. */
+// A JWK with every member but the public key bytes x and y.
+const jwkMembers = (j) => (j && typeof j === 'object' && !Array.isArray(j) ? (({ x, y, ...rest }) => rest)(j) : j ?? null);
+
+/** Every carried JWK (history entries, JWKS keys, both issuer_jwk) with every member but x and y, in role order. */
+export function jwkMembersForm(c) {
+  const doc = parse(c?.doc);
+  const history = parse(c?.history);
+  const jwks = parse(c?.jwks);
+  const entries = history && typeof history === 'object' && Array.isArray(history.entries) ? history.entries.map((e) => jwkMembers(e?.jwk)) : null;
+  return {
+    history: entries,
+    jwks: jwks && typeof jwks === 'object' && Array.isArray(jwks.keys) ? jwks.keys.map(jwkMembers) : (jwks && typeof jwks === 'object' ? jwks.keys ?? null : null),
+    doc_issuer_jwk: jwkMembers(doc?.issuer_signature?.issuer_jwk),
+    history_issuer_jwk: jwkMembers(history?.issuer_signature?.issuer_jwk),
+  };
+}
+
 export function repinFormsOf(inputs) {
   return Object.fromEntries((inputs?.cases ?? []).map((c) => {
     const h = historyForm(c.history);
     return [c.id, {
+      // Every carried JWK's members other than x and y (kty, crv, kid, alg, use, key_ops, x5c, d, ...).
+      keys: stable(jwkMembersForm(c)),
       doc: stable(docForm(c.doc, c.history)),
       // Every signature state, key relation and carried-key state (signatureForm).
       signature: stable(signatureForm(c)),
@@ -899,8 +918,9 @@ const sameFullOutcome = (a, b) => {
  *     effective digest (equal to the merge-base input) to the head digest,
  *     with the case set unchanged;
  *   - keep each moved case's document form, every signature state, key
- *     relation and carried-key state, and the issuer history entries as at
- *     the merge base, and not take another case's document;
+ *     relation and carried-key state, the issuer history entries, and every
+ *     carried JWK member other than x and y as at the merge base, and not
+ *     take another case's document;
  *   - give the same full outcome (exit, result, reason, cause, every check
  *     including signature, overall) on every case path when the MERGE-BASE
  *     verifier runs the head input and the merge-base input.
@@ -979,6 +999,7 @@ export function repinProblems({ basePin, headPin, baseBaseline, headBaseline, ad
       if (!b || !h) { p.push(`${label}: ${id}: no merge-base or head case document`); continue; }
       if (b.doc !== h.doc) p.push(`${label}: ${id}: the case document changed; a re-pin keeps the document form (a changed document is a new case)`);
       if (b.signature !== h.signature) p.push(`${label}: ${id}: a signature state, key relation or carried-key state changed (document or issuer history); a re-pin keeps every key the verifier can read`);
+      if (b.keys !== h.keys) p.push(`${label}: ${id}: a JWK member other than x and y changed (kty, crv, kid, alg, use, key_ops, x5c and every other member stay); a re-pin keeps every carried key's members`);
       if (b.history !== h.history) p.push(`${label}: ${id}: the issuer history entries changed; a re-pin keeps every history key, kid, window, status and revocation`);
       for (const [other, f] of Object.entries(repinForms.base)) {
         if (other !== id && f.doc === h.doc) p.push(`${label}: ${id}: the re-pinned document is the document of ${other}`);

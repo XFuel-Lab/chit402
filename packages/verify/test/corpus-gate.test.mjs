@@ -1580,6 +1580,43 @@ test('re-pin: a JWKS key swap under the kid is rejected by the carried-key state
   assert.deepEqual(await repinTo(TIDY, V13), []);
 });
 
+// Key members other than x and y: main's verifier ignores use, key_ops and
+// x5c, so outcomes stay identical, but a stricter verifier could read them.
+const MEMBER_EDITS = {
+  use: (k) => { k.use = 'enc'; },
+  key_ops: (k) => { k.key_ops = ['encrypt']; },
+  x5c: (k) => { k.x5c = ['AAAA']; },
+  alg: (k) => { k.alg = 'RS256'; },
+  crv: (k) => { k.crv = 'P-384'; },
+  kty: (k) => { k.kty = 'OKP'; },
+  kid: (k) => { k.kid = `${k.kid}-2`; },
+  ext: (k) => { k.ext = true; },
+  dropped_alg: (k) => { delete k.alg; delete k.use; },
+};
+const JWK_MSG = 'a JWK member other than x and y changed';
+test('re-pin: a JWK member other than x and y changed is rejected for each member, in the JWKS, the history and the embedded keys', async () => {
+  for (const id of [V13, 'control-test-key-v10']) {
+    for (const [name, edit] of Object.entries(MEMBER_EDITS)) {
+      const v = editJwks(headInputs, id, (j) => { edit(j.keys[0]); });
+      const p = await repinTo(v, id);
+      assert.ok(has(p, `re-pin: ${id}: ${JWK_MSG}`), `${id} ${name}: ${p.join('; ')}`);
+      assert.ok(!has(p, 'the case document changed'), `${id} ${name}: ${p.join('; ')}`);
+    }
+  }
+  // The issuer history entry key and the history's own issuer_jwk.
+  const hist = withCase(headInputs, V13, (c) => { const h = JSON.parse(c.history); h.entries[0].jwk.use = 'enc'; c.history = JSON.stringify(h); return c; });
+  assert.ok(has(await repinTo(hist, V13), `re-pin: ${V13}: ${JWK_MSG}`));
+  const histIss = withCase(headInputs, V13, (c) => { const h = JSON.parse(c.history); if (h.issuer_signature?.issuer_jwk) h.issuer_signature.issuer_jwk.key_ops = ['verify']; c.history = JSON.stringify(h); return c; });
+  assert.ok(JSON.parse(headInputs.cases.find((x) => x.id === V13).history).issuer_signature?.issuer_jwk);
+  assert.ok(has(await repinTo(histIss, V13), `re-pin: ${V13}: ${JWK_MSG}`));
+  // Members are compared as a set: the same key written with its members in another order is not a change.
+  const reordered = editJwks(headInputs, V13, (j) => { j.keys[0] = Object.fromEntries(Object.entries(j.keys[0]).reverse()); });
+  assert.equal(repinFormsOf(reordered)[V13].keys, BASE_FORMS[V13].keys);
+  // A JWKS field outside the keys still re-pins.
+  assert.equal(repinFormsOf(TIDY)[V13].keys, BASE_FORMS[V13].keys);
+  assert.deepEqual(await repinTo(TIDY, V13), []);
+});
+
 test('re-pin: Hrev-g10 as a re-pin (a revoked entry added to the issuer history) is rejected by the history entries and key states', async () => {
   const id = 'gate10-pv10-no-history-pin';
   const hrev = withCase(headInputs, id, (c) => { const h = JSON.parse(c.history); h.entries.push({ ...h.entries[0], status: 'revoked', revoked_at: '2020-01-01T00:00:00.000Z' }); c.history = JSON.stringify(h); return c; });
