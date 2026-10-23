@@ -2,20 +2,19 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 
 const HISTORY = 'https://api.chit402.com/.well-known/issuer-history.json';
-const RECEIPT_ID = 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944';
+const RECEIPT_ID = 'xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15';
 const RECEIPT = `https://api.chit402.com/receipt/${RECEIPT_ID}?format=json`;
 const KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
-const example = `# Receipt JSON for this id returns 200. /preimage returns 404 today.
+const example = `# Receipt JSON and /preimage for this id both return 200.
 curl -sS "${RECEIPT}" -o receipt.json
 curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preimage.json
-# HTTP 404 preimage_unavailable — the canonical object was not stored with this
-# document, and the server does not rebuild it on read.
+# /preimage is the unsigned public shell (JCS), not the signed payload.
+# This receipt carries a public attestation, so anyone with the URL can check it:
+npx chit402-verify "https://api.chit402.com/receipt/${RECEIPT_ID}"
+# VERIFIED_PUBLIC: settled amount, payee, tx, and log position. Payer is not claimed.
 curl -sS "${HISTORY}?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history issuer-history.json
-# After a receipt is issued with a stored object, /preimage returns 200.
-# Then: npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
-# sha256 of that body is payload_hash. X-Chit-Hash-Alg is sha256.`;
+npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history issuer-history.json`;
 
 export default function ReceiptCheckDocs() {
   return (
@@ -80,9 +79,8 @@ export default function ReceiptCheckDocs() {
           </pre>
           <p style={styles.note}>
             <code>GET /receipt/{RECEIPT_ID}</code> returns 200. <code>GET /receipt/{RECEIPT_ID}/preimage</code>{' '}
-            returns 404: the canonical object was not stored with that document. The same path returns the
-            stored bytes once a receipt is issued with them. <code>@xfuel/verify</code> 0.3.1 is published;
-            the command above checks the issuer-history pin on the receipt file without that preimage.
+            returns 200 with the unsigned public shell (JCS). It is not the signed payload. The receipt carries a
+            public attestation, so <code>npx chit402-verify</code> reports VERIFIED_PUBLIC for its public fields.
           </p>
         </div>
 

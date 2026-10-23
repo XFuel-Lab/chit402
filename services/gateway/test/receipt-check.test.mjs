@@ -177,7 +177,7 @@ test('oversized input is rejected and a wallet is not looked up', async () => {
   assert.equal(looked.body.error, 'receipt_required');
   assert.equal(looked.body.hint, 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.');
   assert.deepEqual(looked.body.accepted, ['receipt JSON', 'a chit- id', 'a verify link']);
-  assert.equal(looked.body.example, 'xfuel-661ca345-973c-4cb6-b073-8ae0c7b37944');
+  assert.equal(looked.body.example, 'xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15');
   assert.match(looked.body.request_id, /^chk_[0-9a-f]{16}$/);
   assert.equal(JSON.stringify(looked.body).includes(wallet), false);
   assert.equal(body.hint, 'Paste a shorter receipt, or a chit- or xfuel- id, or a verify link.');
