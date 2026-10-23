@@ -1,7 +1,7 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { versionWindowsBytes, productionKeys, canonical, VERSION_WINDOWS_PRODUCTION_KID } from '../src/version-windows-doc.js';
@@ -25,8 +25,18 @@ function doc({ kid = VERSION_WINDOWS_PRODUCTION_KID, typ = 'chit402-version-wind
   if (edit) edit(d);
   return JSON.stringify(d, null, 2);
 }
+// One temp dir per run of this file, removed after all tests, also when a
+// test fails. Each document gets its own subdir.
+let root = null;
+let count = 0;
+after(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+});
 function file(text) {
-  const p = join(mkdtempSync(join(tmpdir(), 'vwd-')), 'version-windows.json');
+  root ??= mkdtempSync(join(tmpdir(), 'vwd-'));
+  const dir = join(root, String(count++));
+  mkdirSync(dir);
+  const p = join(dir, 'version-windows.json');
   writeFileSync(p, text);
   return p;
 }
