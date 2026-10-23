@@ -2,7 +2,8 @@
 // harness-diff.mjs) the corpus jobs run. Once a driver has ever existed on
 // the target branch it must come from the merge base; a branch that
 // predates it fails closed. Only the change that adds it runs its own copy.
-// A shallow clone fails closed.
+// A shallow, partial or treeless clone fails closed, and replace refs and
+// grafts are ignored.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -119,4 +120,98 @@ test('an unknown ref or base fails closed; missing arguments are a usage error',
   assert.equal(run(r.root, 'origin/nope', head, join(work, 'out-e'), GATE).status, 1);
   assert.equal(run(r.root, 'main', '0000000000000000000000000000000000000000', join(work, 'out-e'), GATE).status, 1);
   assert.equal(spawnSync('bash', [script, r.root, 'main'], { encoding: 'utf8' }).status, 3);
+});
+
+// main: gate, then the driver added, then the driver deleted (tip). A branch
+// off the tip adds its own driver. The driver has existed on main, so the
+// branch must fail closed. A replace ref or a graft that re-parents the tip
+// onto the first commit hides that history; neither may change the answer.
+function deletedOnMain() {
+  const r = repo();
+  const c0 = r.git('rev-parse', 'HEAD');
+  r.put(DIFF, TRUSTED);
+  r.commit('main: add the driver');
+  r.git('rm', '-q', DIFF);
+  const tip = r.commit('main: drop the driver');
+  r.git('checkout', '-q', '-b', 'pr');
+  r.put(DIFF, FORGED);
+  r.commit('pr: its own driver');
+  return { ...r, c0, tip };
+}
+
+test('a replace ref that hides the driver\'s history on main is ignored', { skip }, () => {
+  const r = deletedOnMain();
+  r.git('replace', '--graft', r.tip, r.c0);
+  assert.equal(r.git('rev-list', '-1', 'main', '--', DIFF), '', 'the replace ref hides the history from plain git');
+  const res = run(r.root, 'main', r.tip, join(work, 'out-replace-hist'), GATE, DIFF);
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /::error::.*harness-diff\.mjs exists on main .* but not at the merge base/);
+  assert.ok(!existsSync(join(work, 'out-replace-hist', 'harness-diff.mjs')));
+});
+
+test('a replace ref that swaps the merge-base driver blob is ignored', { skip }, () => {
+  const r = repo();
+  r.put(DIFF, TRUSTED);
+  const base = r.commit('main: add the driver');
+  r.git('checkout', '-q', '-b', 'pr');
+  r.put('README.md', 'pr\n');
+  r.commit('pr: docs');
+  const forged = join(work, 'forged-blob.mjs');
+  writeFileSync(forged, FORGED);
+  r.git('replace', r.git('rev-parse', `${base}:${DIFF}`), r.git('hash-object', '-w', forged));
+  assert.equal(r.git('show', `${base}:${DIFF}`) + '\n', FORGED, 'the replace ref swaps the blob for plain git');
+  const out = join(work, 'out-replace-blob');
+  const res = run(r.root, 'main', base, out, GATE, DIFF);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(readFileSync(join(out, 'harness-diff.mjs'), 'utf8'), TRUSTED);
+  // An inherited GIT_REPLACE_REF_BASE is not honoured either.
+  const env = { ...process.env, GIT_REPLACE_REF_BASE: 'refs/replace/' };
+  const res2 = spawnSync('bash', [script, r.root, 'main', base, out, DIFF], { encoding: 'utf8', env });
+  assert.equal(res2.status, 0, res2.stdout + res2.stderr);
+  assert.equal(readFileSync(join(out, 'harness-diff.mjs'), 'utf8'), TRUSTED);
+});
+
+test('a graft file that hides the driver\'s history on main is ignored', { skip }, () => {
+  const r = deletedOnMain();
+  mkdirSync(join(r.root, '.git', 'info'), { recursive: true });
+  writeFileSync(join(r.root, '.git', 'info', 'grafts'), `${r.tip} ${r.c0}\n`);
+  assert.equal(r.git('-c', 'advice.graftFileDeprecated=false', 'rev-list', '-1', 'main', '--', DIFF), '', 'the graft hides the history from plain git');
+  const out = join(work, 'out-graft');
+  const res = run(r.root, 'main', r.tip, out, GATE, DIFF);
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /::error::.*harness-diff\.mjs exists on main .* but not at the merge base/);
+  assert.ok(!existsSync(join(out, 'harness-diff.mjs')));
+  // GIT_GRAFT_FILE pointing at the same grafts is overridden too.
+  const env = { ...process.env, GIT_GRAFT_FILE: join(r.root, '.git', 'info', 'grafts') };
+  const res2 = spawnSync('bash', [script, r.root, 'main', r.tip, out, GATE, DIFF], { encoding: 'utf8', env });
+  assert.equal(res2.status, 1, res2.stdout + res2.stderr);
+});
+
+for (const filter of ['blob:none', 'tree:0']) {
+  test(`a partial clone (--filter=${filter}) fails closed`, { skip }, () => {
+    const r = repo();
+    r.git('checkout', '-q', '-b', 'add-driver');
+    r.put(DIFF, TRUSTED);
+    r.commit('add the driver');
+    r.git('config', 'uploadpack.allowFilter', 'true');
+    const clone = join(work, `partial-${filter.replace(/\W/g, '-')}`);
+    const c = spawnSync('git', ['clone', '-q', `--filter=${filter}`, '--no-single-branch', `file://${r.root}`, clone], { encoding: 'utf8' });
+    assert.equal(c.status, 0, c.stderr);
+    assert.equal(spawnSync('git', ['-C', clone, 'checkout', '-q', 'add-driver']).status, 0);
+    assert.equal(spawnSync('git', ['-C', clone, 'rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).stdout.trim(), 'false');
+    const out = join(work, `out-${filter.replace(/\W/g, '-')}`);
+    const res = run(clone, 'origin/main', 'origin/main', out, GATE, DIFF);
+    assert.equal(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stdout, /::error::select-driver: the checkout is a partial or treeless clone/);
+    assert.ok(!existsSync(join(out, 'harness-diff.mjs')));
+  });
+}
+
+test('a promisor remote set in config alone fails closed', { skip }, () => {
+  const r = repo();
+  r.git('config', 'extensions.partialClone', 'origin');
+  const head = r.git('rev-parse', 'HEAD');
+  const res = run(r.root, 'main', head, join(work, 'out-promisor'), GATE);
+  assert.equal(res.status, 1, res.stdout + res.stderr);
+  assert.match(res.stdout, /partial or treeless clone/);
 });

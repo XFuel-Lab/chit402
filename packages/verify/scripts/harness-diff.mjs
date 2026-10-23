@@ -53,15 +53,25 @@
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { devNull } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isBuilderPath } from './corpus-gate.mjs';
 
 const VERIFY = 'packages/verify/';
 
+// Git reads of the merge base and the change ignore replace refs and grafts.
+const GIT_ENV = (() => {
+  const env = { ...process.env, GIT_GRAFT_FILE: devNull };
+  delete env.GIT_REPLACE_REF_BASE;
+  delete env.GIT_NO_REPLACE_OBJECTS;
+  return env;
+})();
+const git = (root, args, opts = {}) => execFileSync('git', ['--no-replace-objects', '-c', 'advice.graftFileDeprecated=false', '-C', root, ...args], { env: GIT_ENV, ...opts });
+
 /** Harness paths (repo-relative) changed between two commits. */
 export function changedHarnessPaths(root, base, rev = 'HEAD') {
-  const out = execFileSync('git', ['-C', root, 'diff', '--name-only', '--no-renames', '-z', base, rev], { encoding: 'utf8', maxBuffer: 64 << 20 });
+  const out = git(root, ['diff', '--name-only', '--no-renames', '-z', base, rev], { encoding: 'utf8', maxBuffer: 64 << 20 });
   return out.split('\0').filter(Boolean).filter(isBuilderPath);
 }
 
@@ -91,12 +101,12 @@ export function buildOverlay(baseTree, root, rev, out) {
     const rel = VERIFY + relative(out, f).split('\\').join('/');
     if (isBuilderPath(rel)) rmSync(f, { force: true });
   }
-  const tracked = execFileSync('git', ['-C', root, 'ls-tree', '-r', '-z', '--name-only', rev, '--', `${VERIFY}test`], { encoding: 'utf8', maxBuffer: 64 << 20 })
+  const tracked = git(root, ['ls-tree', '-r', '-z', '--name-only', rev, '--', `${VERIFY}test`], { encoding: 'utf8', maxBuffer: 64 << 20 })
     .split('\0').filter(Boolean).filter(isBuilderPath);
   for (const rel of tracked) {
     const dest = join(out, rel.slice(VERIFY.length));
     mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, execFileSync('git', ['-C', root, 'show', `${rev}:${rel}`], { maxBuffer: 256 << 20 }));
+    writeFileSync(dest, git(root, ['show', `${rev}:${rel}`], { maxBuffer: 256 << 20 }));
   }
   return tracked;
 }
