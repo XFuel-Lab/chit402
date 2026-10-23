@@ -52,7 +52,7 @@ test('corpus inventory: every case has a baseline, no blocked receipt', () => {
   for (const ch of changes) {
     if (ch.kind === 'registry') { assert.ok(ch.entry && ch.pr && ch.spec, `incomplete registry entry ${JSON.stringify(ch)}`); continue; }
     assert.ok(ch.case && ch.path && ch.to !== undefined && ch.pr && ch.spec, `incomplete change entry ${JSON.stringify(ch)}`);
-    assert.ok([undefined, 'tighten', 'corpus_fix'].includes(ch.kind), `unknown kind ${ch.kind}`);
+    assert.ok([undefined, 'tighten', 'corpus_fix', 'corpus_fix_reason'].includes(ch.kind), `unknown kind ${ch.kind}`);
   }
 });
 
@@ -125,16 +125,38 @@ test('synthetic verdict cases are never VERIFIED', async (t) => {
 
 test('each synthetic case is decided by its own rule', async () => {
   await runAll;
+  // The expected cause is the pinned one (declarations.frozen.json, a
+  // deferred entry overridden by a later declaration), compared exactly.
+  const pinFile = readJson(join(corpusDir, 'declarations.frozen.json'));
+  const pinned = new Map();
+  for (const e of pinFile.deferred) pinned.set(`${e.case}|${e.path}`, e.expect);
+  for (const e of pinFile.declarations) pinned.set(`${e.case}|${e.path}`, e.expect);
+  const declared = new Map();
+  for (const c of synthetic) for (const [path, want] of Object.entries(c.expect || {})) declared.set(`${c.id}|${path}`, want);
+  assert.deepEqual(Object.fromEntries([...declared].sort()), Object.fromEntries([...pinned].sort()), 'synthetic.mjs expect values differ from declarations.frozen.json');
+  // Every case path is classified: declared, deferred or reason_allowed.
+  const reasonAllowed = new Set(pinFile.reason_allowed.map((e) => `${e.case}|${e.path}`));
+  const unclassified = synthetic.flatMap((c) => c.paths.map((path) => `${c.id}|${path}`)).filter((k) => !pinned.has(k) && !reasonAllowed.has(k));
+  assert.deepEqual(unclassified, [], 'case paths not classified by declarations.frozen.json');
+  // Declared paths are compared exactly. A deferred path (not superseded by
+  // a declaration) is not decided by its rule yet; its outcome is held by
+  // the baseline and the tighten rule, so the verifier change that reaches
+  // the rule can land first and the declaration is appended after it, read
+  // off the merged verifier (corpus-gate.mjs appendBindingProblems).
+  const declaredOnly = new Map(pinFile.declarations.map((e) => [`${e.case}|${e.path}`, e.expect]));
   let asserted = 0;
   for (const c of synthetic) {
     for (const path of c.paths) {
-      const want = c.expect?.[path];
-      if (path !== 'cli') assert.ok(want, `${c.id}|${path} has no expected cause`);
+      const key = `${c.id}|${path}`;
+      if (path !== 'cli') assert.ok(pinned.has(key), `${key} has no expected cause`);
+      const want = declaredOnly.get(key);
       if (!want) continue;
-      const r = results.get(`${c.id}|${path}`);
+      const r = results.get(key);
       const got = String(r.cause ?? r.reason ?? '');
-      assert.ok(got.includes(want), `${c.id}|${path}: decided by ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`);
-      assert.ok(!/issuer_history_pin_mismatch/.test(got), `${c.id}|${path}: test history pin does not match`);
+      assert.equal(got, want, `${key}: decided by ${JSON.stringify(got)}, expected exactly ${JSON.stringify(want)}`);
+      // The baseline row records the decision: reason (cli) or cause.
+      if (path === 'cli') assert.equal(baseline[key].reason, want, `${key}: baseline reason`);
+      else assert.equal(baseline[key].cause, want, `${key}: baseline cause`);
       asserted += 1;
     }
   }

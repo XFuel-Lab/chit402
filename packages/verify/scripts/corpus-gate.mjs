@@ -37,14 +37,54 @@
  *     dropped);
  *   - the frozen registry file is not append-only, or an appended entry has
  *     no added `registry` changes.json entry;
+ *   - declarations.frozen.json is not append-only or not well formed, or the
+ *     head synthetic.mjs `expect` values (from the head export) differ from
+ *     the head pin, or a head case path is not classified by the head pin
+ *     (declared, deferred or reason_allowed); a head case input digest
+ *     differs from the input_digest pinned for its declared or deferred
+ *     paths; an appended declaration or deferred entry is not what the
+ *     merge-base verifier gives on the head input, or an existing case's
+ *     input changed from the merge base (appendBindingProblems);
+ *     reason_allowed is frozen; an appended declaration must also not be
+ *     the deferred value or a cause that decides nothing (isNonDecision);
+ *     an added deferred entry may not name a declared or reason_allowed
+ *     path; a
+ *     corpus correction also needs the merge-base pin, and the merge-base
+ *     synthetic.mjs `expect` values equal to it (see declaredProblems for
+ *     what the pin allows);
+ *   - a declared path's baseline row does not record its declared decision
+ *     (cli `reason`, library and signature `cause`), or a changed row moves
+ *     its `reason` or `cause`; a deferred path's row moves its reason or
+ *     cause without a strictly tighter exit, or moves to a cause that
+ *     decides nothing (isNonDecision) (declarationRowProblems);
+ *   - a pinned baseline row changes in a change that touches
+ *     test/golden-corpus.test.mjs (goldenEditProblems);
+ *   - declarations.frozen.json at the merge base is not valid JSON, or is
+ *     missing while it has existed on the merge base's history or the
+ *     merge-base corpus-gate.mjs reads it (basePinStateProblems; only the
+ *     change that adds the first pin runs without one); a head JSON file
+ *     is not valid JSON;
+ *   - a pinned baseline row moves in a change that also edits a case input
+ *     builder or corpus harness file (synthetic.mjs, test/fixtures/**, and
+ *     CORPUS_INFRA other than the pin; builderRowProblems);
+ *   - the pin history cannot be read in full (a shallow clone, or git
+ *     fails) while the merge-base pin is missing;
  *   - the chain tier breaks its rules (gateChain below).
+ *
+ * The input digest (caseDigest) includes the signature state of the case
+ * document and the issuer history (signatureForm): valid under the history
+ * or JWKS key filed under the signature kid, valid only under another
+ * carried key (named by role), or invalid with the raw signature bytes;
+ * how each embedded issuer_jwk relates to that trusted key; and, for every
+ * carried key, whether it verifies the signature and which roles hold the
+ * same key bytes (keyStates).
  *
  * Self-contained on purpose: CI runs the copy of this file from the merge
  * base, so a change cannot loosen the gate that checks it.
  * Exit 0: no problems. Exit 1: problems listed on stderr. Exit 3: usage.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -53,6 +93,7 @@ import { pathToFileURL } from 'node:url';
 export const BASELINE = 'packages/verify/test/corpus/baseline.json';
 export const CHANGES = 'packages/verify/test/corpus/changes.json';
 export const REGISTRY_PIN = 'packages/verify/test/fixtures/version-registry.frozen.json';
+export const DECLARATIONS_PIN = 'packages/verify/test/corpus/declarations.frozen.json';
 export const CHAIN_BASELINE = 'packages/verify/test/corpus/baseline-chain.json';
 export const CHAIN_TAPE = 'packages/verify/test/corpus/tapes/public-chain.json';
 
@@ -176,9 +217,173 @@ export function docForm(text, historyText) {
   return mask(c);
 }
 
-/** Digest of one exported case: document, issuer history and JWKS. */
-export function caseDigest(c) {
-  return sha256(stable({ doc: docForm(c.doc, c.history), history: historyForm(c.history), jwks: jwksForm(c.jwks) }));
+// ---------- signature state (bound into the digest) ----------
+
+// Detached field lists, as canonicalFieldsV7 / canonicalFieldsV8 in src.
+function detachedFieldsV7(r) {
+  const p = r.payment || {};
+  return [r.task_id ?? null, p.rail ?? null, p.ref ?? null, p.gross_amount ?? null, p.net_amount ?? null, p.fee_amount ?? null,
+    p.protocol_fee_bps ?? p.fee_bps ?? null, p.platform_fee ?? null, p.platform_fee_bps ?? null, r.provider_cogs?.actual ?? null,
+    r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null, r.route?.provider ?? null, r.output?.hash ?? null,
+    r.binding?.expected_commitment ?? null];
+}
+function detachedFieldsV8(r) {
+  const p = r.payment || {};
+  const b = p.accounting?.internal_breakdown;
+  const c = r.caller_binding;
+  return [r.task_id ?? null, p.rail ?? null, p.ref ?? null, p.gross_amount ?? null, p.settled_amount ?? null,
+    b?.route_margin_bps ?? null, b?.route_margin_amount ?? null, b?.receipt_floor_amount ?? null, b?.provider_cogs_amount ?? null,
+    b?.tier2_proof_amount ?? null, r.provider_cogs?.actual ?? null, r.route?.model ?? null, r.route?.model_commitment?.commitment ?? null,
+    r.route?.provider ?? null, r.output?.hash ?? null, r.binding?.expected_commitment ?? null,
+    c?.payer_wallet ?? null, c?.agent_pubkey ?? null, c?.api_key_hash ?? null];
+}
+
+const isEcKey = (j) => !!j && typeof j === 'object' && j.kty === 'EC' && j.crv === 'P-256' && typeof j.x === 'string' && typeof j.y === 'string';
+/** RFC 7638 JWK thumbprint of an EC P-256 key. */
+const thumbprint = (j) => createHash('sha256').update(`{"crv":"P-256","kty":"EC","x":"${j.x}","y":"${j.y}"}`).digest('base64url');
+const toKey = (j) => { try { return createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: j.x, y: j.y }, format: 'jwk' }); } catch { return null; } };
+
+/**
+ * The keys a case carries, each with its role: `history[i]` (an issuer
+ * history entry), `jwks[i]`, `doc.issuer_jwk` and `history.issuer_jwk`,
+ * with the kid it is filed under. Only a history entry or a JWKS key filed
+ * under the signature's kid is trusted for that signature; the document's
+ * and the history's own issuer_jwk never are.
+ */
+function caseKeys(doc, history, jwks) {
+  const out = [];
+  const add = (role, j, filed) => { if (isEcKey(j)) { const key = toKey(j); if (key) out.push({ role, kid: filed ?? null, jwk: j, key }); } };
+  (Array.isArray(history?.entries) ? history.entries : []).forEach((e, i) => add(`history[${i}]`, e?.jwk, e?.kid ?? e?.jwk?.kid));
+  (Array.isArray(jwks?.keys) ? jwks.keys : []).forEach((k, i) => add(`jwks[${i}]`, k, k?.kid));
+  add('doc.issuer_jwk', doc?.issuer_signature?.issuer_jwk, doc?.issuer_signature?.issuer_jwk?.kid);
+  add('history.issuer_jwk', history?.issuer_signature?.issuer_jwk, history?.issuer_signature?.issuer_jwk?.kid);
+  return out;
+}
+const trustedFor = (k, kid) => typeof kid === 'string' && k.kid === kid && /^(history|jwks)\[\d+\]$/.test(k.role);
+
+/**
+ * One signature, with its key relation:
+ *   - `valid:<kid>:<role>`: verifies under the history entry or JWKS key
+ *     filed under its kid (the first such role, history before JWKS);
+ *   - `valid_untrusted:<kid>:<role>:<kid filed>:<thumbprint is kid>`:
+ *     verifies only under some other key the case carries (the document's
+ *     or history's issuer_jwk, or a key filed under another kid). Whether
+ *     the key's RFC 7638 thumbprint equals the signature kid is kept;
+ *     throwaway key bytes are not, so the form is the same on every run;
+ *   - `invalid:<sha256 of the raw signature>`; `absent`.
+ * Any byte change to the signed bytes or the signature, or a re-sign
+ * under a key that is not the trusted one for the kid, moves the state.
+ */
+function sigState(messages, sigText, kid, keys) {
+  if (typeof sigText !== 'string' || !sigText) return 'absent';
+  const sig = Buffer.from(sigText, 'base64url');
+  const verifies = (k) => messages.some((m) => {
+    try { return cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { return false; }
+  });
+  const k = String(kid ?? '');
+  const trusted = keys.find((x) => trustedFor(x, kid) && verifies(x));
+  if (trusted) return `valid:${k}:${trusted.role}`;
+  const other = keys.find((x) => verifies(x));
+  if (other) return `valid_untrusted:${k}:${other.role}:${other.kid ?? ''}:${thumbprint(other.jwk) === k}`;
+  return `invalid:${sha256(sigText)}`;
+}
+
+function jwsState(jws, keys) {
+  if (typeof jws !== 'string') return 'absent';
+  const parts = jws.split('.');
+  if (parts.length !== 3) return `malformed:${sha256(jws)}`;
+  const header = b64json(parts[0]);
+  if (!header || header.alg !== 'ES256') return `alg:${sha256(jws)}`;
+  return sigState([`${parts[0]}.${parts[1]}`], parts[2], header.kid, keys);
+}
+
+/**
+ * How an embedded issuer_jwk relates to the trusted key for a kid:
+ * `absent`, `no_key` (not an EC P-256 key with x and y, for example x/y
+ * dropped), `trusted:<role>` (same key bytes as the history entry or JWKS
+ * key filed under the kid), or `other:<its kid>:<thumbprint is kid>`.
+ */
+function keyRelation(jwk, kid, keys) {
+  if (jwk === undefined || jwk === null) return 'absent';
+  if (!isEcKey(jwk)) return 'no_key';
+  const same = keys.find((x) => trustedFor(x, kid) && x.jwk.x === jwk.x && x.jwk.y === jwk.y);
+  if (same) return `trusted:${same.role}`;
+  return `other:${jwk.kid ?? ''}:${thumbprint(jwk) === String(kid ?? '')}`;
+}
+
+/**
+ * Every carried key against one signature: `<role>|<kid filed>|<verifies
+ * 1/0>|<bytes class>`, in role order (history entries, JWKS, then the
+ * document's and the history's issuer_jwk). The bytes class is the index
+ * of the first role with the same RFC 7638 thumbprint, so whether two
+ * roles hold the same key is recorded without the throwaway key bytes.
+ * A key swapped under a kid, a second key under a kid, or reordered keys
+ * all move it, whichever key the verifier reads.
+ */
+function keyStates(messages, sigText, keys) {
+  if (typeof sigText !== 'string' || !sigText) return [];
+  const sig = Buffer.from(sigText, 'base64url');
+  const cls = new Map();
+  return keys.map((k) => {
+    const t = thumbprint(k.jwk);
+    if (!cls.has(t)) cls.set(t, cls.size);
+    const v = messages.some((m) => { try { return cryptoVerify('sha256', Buffer.from(m, 'utf8'), { key: k.key, dsaEncoding: 'ieee-p1363' }, sig); } catch { return false; } });
+    return `${k.role}|${k.kid ?? ''}|${v ? 1 : 0}|${cls.get(t)}`;
+  });
+}
+const jwsParts = (jws) => { const p = typeof jws === 'string' ? jws.split('.') : []; return p.length === 3 ? { messages: [`${p[0]}.${p[1]}`], sig: p[2] } : { messages: [], sig: null }; };
+
+/**
+ * Signature state of a case: the document (JWS or detached) and the issuer
+ * history, each with its key relation (sigState, keyRelation) and the state
+ * of every carried key against it (keyStates).
+ */
+export function signatureForm(c) {
+  const doc = parse(c.doc);
+  const history = parse(c.history);
+  const jwks = parse(c.jwks);
+  const keys = caseKeys(doc, history, jwks);
+  const ds = doc && typeof doc === 'object' ? doc.issuer_signature : null;
+  let docState = 'absent';
+  let docKid = null;
+  if (ds && typeof ds === 'object') {
+    if (typeof ds.jws === 'string') {
+      docKid = b64json(ds.jws.split('.')[0])?.kid ?? null;
+      docState = jwsState(ds.jws, keys);
+    } else if (typeof ds.value === 'string') {
+      docKid = ds.kid ?? null;
+      const { issuer_signature: _omit, ...rest } = doc;
+      docState = sigState([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, docKid, keys);
+    }
+  }
+  let docKeys = [];
+  if (ds && typeof ds === 'object') {
+    if (typeof ds.jws === 'string') { const j = jwsParts(ds.jws); docKeys = keyStates(j.messages, j.sig, keys); }
+    else if (typeof ds.value === 'string') { const { issuer_signature: _omit, ...rest } = doc; docKeys = keyStates([JSON.stringify(detachedFieldsV7(rest)), JSON.stringify(detachedFieldsV8(rest))], ds.value, keys); }
+  }
+  const hj = jwsParts(history?.issuer_signature?.jws);
+  const hs = history && typeof history === 'object' ? history.issuer_signature : null;
+  const histKid = hs && typeof hs.jws === 'string' ? b64json(hs.jws.split('.')[0])?.kid ?? null : null;
+  return {
+    doc: docState,
+    doc_key: ds && typeof ds === 'object' ? keyRelation(ds.issuer_jwk, docKid, keys) : 'absent',
+    history: hs && typeof hs === 'object' ? jwsState(hs.jws, keys) : 'absent',
+    history_key: hs && typeof hs === 'object' ? keyRelation(hs.issuer_jwk, histKid, keys) : 'absent',
+    doc_keys: docKeys,
+    history_keys: keyStates(hj.messages, hj.sig, keys),
+  };
+}
+
+/**
+ * Digest of one exported case: document, issuer history, JWKS, and the
+ * signature state of the document and the history (signatureForm).
+ */
+export function caseDigest(c, { signatures = true } = {}) {
+  const form = { doc: docForm(c.doc, c.history), history: historyForm(c.history), jwks: jwksForm(c.jwks) };
+  // `signatures: false` is the form before #629, which the corpus_fix
+  // entries already in changes.json were recorded with.
+  if (signatures) form.signatures = signatureForm(c);
+  return sha256(stable(form));
 }
 
 export function inputsProblems(inputs) {
@@ -209,7 +414,10 @@ export async function exportInputs(pkgDir) {
   const text = (f) => (f ? readFileSync(f, 'utf8') : '');
   return {
     format: INPUTS_FORMAT,
-    cases: cases.map((c) => ({ id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile) })),
+    cases: cases.map((c) => ({
+      id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile),
+      class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null,
+    })),
   };
 }
 
@@ -248,9 +456,211 @@ export async function baseOutcomes(baseTree, headInputs, keys) {
     writeFileSync(historyFile, c.history);
     writeFileSync(jwksFile, c.jwks);
     const o = await lib.runPathAsync({ id, file, historyFile, jwksFile }, path, tape);
-    out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}) };
+    out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}), cause: o.cause ?? null };
   }
   return out;
+}
+
+export const FIX_KINDS = Object.freeze(['corpus_fix', 'corpus_fix_reason']);
+const isFixKind = (kind) => FIX_KINDS.includes(kind);
+// Classes whose cases each test one rule; a fix there must keep the rule.
+const RULE_CLASSES = new Set(['label', 'version', 'gate', 'timing']);
+
+// ---------- pinned case declarations (declarations.frozen.json) ----------
+
+export const DECLARATIONS_FORMAT = 'chit402.corpus-declarations.v1';
+const PIN_LISTS = ['declarations', 'deferred', 'reason_allowed'];
+const pinKey = (e) => `${e?.case}|${e?.path}`;
+
+/**
+ * Causes and reasons that make no decision by a case rule: the verifier
+ * stopped because something was not reachable, not available, not checked
+ * or not trusted, or gave only the generic result (from the 0.5.0-pre.0
+ * verifier cause set: log_unreachable, anchor_unreachable,
+ * issuer_history_unavailable, receipt_unavailable,
+ * signed_receipt_unavailable, log_time_unavailable, base_rpc_error,
+ * rpc_timeout, pending_anchor, payer_unchecked, signature_unchecked,
+ * key untrusted, head_key_untrusted, could_not_check, invalid, unreadable).
+ * Matched by pattern as well, so a new cause of the same kind is covered.
+ * An appended declaration may not take one of these: a path leaves
+ * `deferred` only with a real decision. This is a second check: an append
+ * must already equal the merge-base verifier's output on an unchanged
+ * input (appendBindingProblems). It stays because that binding alone would
+ * accept a deferred path declared at its own non-decision value (the
+ * merge-base verifier does give log_unreachable there), and it keeps a new
+ * case path with a non-decision outcome in `deferred`.
+ */
+const NON_DECISION = new Set(['', 'invalid', 'could_not_check', 'unreadable', 'unchecked', 'pending', 'key untrusted', 'key_untrusted', 'head_key_untrusted']);
+export function isNonDecision(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (NON_DECISION.has(v)) return true;
+  return /(unreachable|unavailable|rpc_error|rpc_timeout|timeout|unchecked|pending|untrusted)/.test(v);
+}
+
+/**
+ * The pin as maps. `declared`: exact expected cause or reason per
+ * case|path. `deferred`: declared in synthetic.mjs today but not by the
+ * case rule (an appended declaration with a real decision supersedes it).
+ * `effective`: what synthetic.mjs `expect` must equal. `reasonAllowed`:
+ * the never-declared paths where corpus_fix_reason is accepted.
+ * `pinned`: every case|path the pin names. `cases`: every case id it names.
+ */
+export function pinMaps(pin) {
+  const declared = new Map();
+  const deferred = new Map();
+  const reasonAllowed = new Set();
+  for (const e of pin?.declarations ?? []) if (!declared.has(pinKey(e))) declared.set(pinKey(e), e.expect);
+  for (const e of pin?.deferred ?? []) if (!deferred.has(pinKey(e))) deferred.set(pinKey(e), e.expect);
+  for (const e of pin?.reason_allowed ?? []) reasonAllowed.add(pinKey(e));
+  const effective = new Map([...deferred, ...declared]);
+  const pinned = new Set([...declared.keys(), ...deferred.keys(), ...reasonAllowed]);
+  const cases = new Set([...pinned].map((k) => k.split('|')[0]));
+  return { declared, deferred, reasonAllowed, effective, pinned, cases };
+}
+
+/** declarations.frozen.json: well formed, and append-only against the merge base. */
+export function pinProblems(basePin, headPin) {
+  const p = [];
+  const name = 'declarations.frozen.json';
+  if (basePin && !headPin) return [`${name}: removed`];
+  if (!headPin) return p;
+  if (headPin.format !== DECLARATIONS_FORMAT) p.push(`${name}: format is not ${DECLARATIONS_FORMAT}`);
+  for (const list of PIN_LISTS) {
+    const h = headPin[list];
+    if (!Array.isArray(h)) { p.push(`${name}: ${list} is not an array`); continue; }
+    const seen = new Set();
+    for (const e of h) {
+      const ok = e && typeof e === 'object' && typeof e.case === 'string' && e.case && typeof e.path === 'string' && e.path
+        && (list === 'reason_allowed' || (typeof e.expect === 'string' && e.expect && typeof e.input_digest === 'string' && /^[0-9a-f]{64}$/.test(e.input_digest)));
+      if (!ok) { p.push(`${name}: ${list}: malformed entry ${JSON.stringify(e).slice(0, 120)}`); continue; }
+      if (seen.has(pinKey(e))) p.push(`${name}: ${list}: ${pinKey(e)} appears twice`);
+      seen.add(pinKey(e));
+    }
+    const b = Array.isArray(basePin?.[list]) ? basePin[list] : [];
+    for (let i = 0; i < b.length; i += 1) {
+      if (!same(b[i], h[i])) p.push(`${name} is append-only: ${list} entry ${i} (${pinKey(b[i])}) was edited or removed`);
+    }
+  }
+  const head = pinMaps(headPin);
+  // An added deferred entry is for a path that is not declared and not on
+  // the corpus_fix_reason list. (A merge-base deferred entry stays when a
+  // later declaration supersedes it; the pin is append-only.)
+  const baseDeferredCount = Array.isArray(basePin?.deferred) ? basePin.deferred.length : 0;
+  for (const e of Array.isArray(headPin.deferred) ? headPin.deferred.slice(baseDeferredCount) : []) {
+    const k = pinKey(e);
+    if (head.declared.has(k)) p.push(`${name}: deferred entry ${k} names a declared path`);
+    if (head.reasonAllowed.has(k)) p.push(`${name}: deferred entry ${k} names a reason_allowed path`);
+  }
+  if (!basePin) {
+    // First pin: a reason_allowed path must never have been declared.
+    for (const e of Array.isArray(headPin.reason_allowed) ? headPin.reason_allowed : []) {
+      const k = pinKey(e);
+      if (head.declared.has(k) || head.deferred.has(k)) p.push(`${name}: reason_allowed entry ${k} names a declared path`);
+    }
+    return p;
+  }
+  const base = pinMaps(basePin);
+  // reason_allowed is frozen: exactly the merge-base list, nothing appended.
+  const baseReason = Array.isArray(basePin.reason_allowed) ? basePin.reason_allowed : [];
+  const headReason = Array.isArray(headPin.reason_allowed) ? headPin.reason_allowed : [];
+  for (const e of headReason.slice(baseReason.length)) p.push(`${name}: reason_allowed is frozen; ${pinKey(e)} may not be added`);
+  // An appended declaration is a real decision: never declared before, not
+  // the deferred value it replaces, and not a cause that decides nothing.
+  for (const e of Array.isArray(headPin.declarations) ? headPin.declarations.slice((basePin.declarations ?? []).length) : []) {
+    const k = pinKey(e);
+    if (base.declared.has(k)) p.push(`${name}: ${k} is already declared`);
+    if (base.deferred.has(k) && e?.expect === base.deferred.get(k)) p.push(`${name}: ${k} is deferred as ${JSON.stringify(base.deferred.get(k))}; a declaration for it must name a real decision, not the deferred value`);
+    if (typeof e?.expect === 'string' && isNonDecision(e.expect)) p.push(`${name}: ${k} may not be declared ${JSON.stringify(e.expect)}, which makes no decision by the case rule`);
+  }
+  return p;
+}
+
+/** synthetic.mjs `expect` values of an export (or of caseDeclarations), as case|path -> value. */
+export function exportDeclarations(casesOrInputs) {
+  const list = Array.isArray(casesOrInputs?.cases)
+    ? casesOrInputs.cases.map((c) => [c.id, c.expect])
+    : Object.entries(casesOrInputs ?? {}).map(([id, d]) => [id, d?.expect]);
+  const out = new Map();
+  for (const [id, expect] of list) {
+    if (expect == null) continue;
+    if (typeof expect !== 'object' || Array.isArray(expect)) { out.set(`${id}|*`, expect); continue; }
+    for (const [path, v] of Object.entries(expect)) out.set(`${id}|${path}`, v);
+  }
+  return out;
+}
+
+/**
+ * Case paths of an export (`cases`: id and paths) that the pin does not
+ * classify: every case path is declared, deferred or on reason_allowed.
+ */
+export function unclassifiedPaths(cases, pin) {
+  const { pinned } = pinMaps(pin);
+  const out = [];
+  for (const c of Array.isArray(cases) ? cases : []) {
+    for (const path of Array.isArray(c?.paths) ? c.paths : []) {
+      const k = `${c.id}|${path}`;
+      if (!pinned.has(k)) out.push(k);
+    }
+  }
+  return out;
+}
+
+/** Differences between synthetic.mjs declarations and a pin, by case|path. */
+export function declarationDrift(decls, pin) {
+  const want = pinMaps(pin).effective;
+  const p = [];
+  for (const [k, v] of decls) {
+    if (!want.has(k)) p.push(`${k} is declared in synthetic.mjs (${JSON.stringify(v)}) but not pinned`);
+    else if (want.get(k) !== v) p.push(`${k} is ${JSON.stringify(v)} in synthetic.mjs, pinned ${JSON.stringify(want.get(k))}`);
+  }
+  for (const [k, v] of want) if (!decls.has(k)) p.push(`${k} is pinned ${JSON.stringify(v)} but not declared in synthetic.mjs`);
+  return p;
+}
+
+/**
+ * A corpus correction must keep the case decided by the rule pinned for it
+ * at the MERGE BASE (declarations.frozen.json read from the merge-base
+ * commit): the merge-base verifier's cause (else reason) on the head input
+ * must equal the pinned value exactly. A deferred path takes no correction.
+ * A rule-class path that is not declared takes only kind corpus_fix_reason,
+ * and only if the merge-base pin lists it in reason_allowed (paths that
+ * were never declared). So a case cannot be neutered in one PR and its
+ * rule loosened in a later one, and editing synthetic.mjs changes nothing
+ * the gate accepts.
+ */
+function declaredProblems(key, ch, baseCases, baseOnHead, basePinMaps, headPinMaps) {
+  const [id] = key.split('|');
+  if (!baseCases) return ['corpus_fix needs the merge-base case declarations (--base-tree)'];
+  if (!basePinMaps) return [`corpus_fix needs ${DECLARATIONS_PIN} at the merge base`];
+  if (basePinMaps.declared.has(key)) {
+    const want = basePinMaps.declared.get(key);
+    const o = baseOnHead?.[key];
+    const got = String(o?.cause ?? o?.reason ?? '');
+    const p = [];
+    if (got !== want) p.push(`corpus_fix: the merge-base verifier on the head input is decided by ${JSON.stringify(got)}, not the merge-base declared ${JSON.stringify(want)}`);
+    if (ch.kind === 'corpus_fix_reason') p.push('corpus_fix_reason is only for a case path with no declared expectation; use corpus_fix');
+    return p;
+  }
+  if (basePinMaps.deferred.has(key)) {
+    return [`corpus_fix: ${key} is deferred in declarations.frozen.json (declared ${JSON.stringify(basePinMaps.deferred.get(key))}, not by the case rule); append a declaration for it before any correction`];
+  }
+  if (ch.kind === 'corpus_fix_reason') {
+    if (!basePinMaps.reasonAllowed.has(key)) return ['corpus_fix_reason is only for the paths listed in reason_allowed of the merge-base declarations.frozen.json'];
+    if (headPinMaps && (headPinMaps.declared.has(key) || headPinMaps.deferred.has(key))) return ['corpus_fix_reason: the path is declared in the head declarations.frozen.json; use corpus_fix'];
+    return [];
+  }
+  const decl = baseCases[id];
+  if (RULE_CLASSES.has(String(decl?.class)) || basePinMaps.cases.has(id)) {
+    return basePinMaps.reasonAllowed.has(key)
+      ? [`corpus_fix: rule case path with no declared expectation at the merge base; use kind corpus_fix_reason with a note`]
+      : [`corpus_fix: rule case path that is neither declared nor in reason_allowed at the merge base; append a declaration first`];
+  }
+  return [];
+}
+
+/** Merge-base case declarations by id: class, target, expect. */
+export function caseDeclarations(inputs) {
+  return Object.fromEntries((inputs?.cases ?? []).map((c) => [c.id, { class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null }]));
 }
 
 /** A corpus_fix must name a case whose input digest changed in this PR. */
@@ -268,17 +678,50 @@ function digestProblems(ch, baseDigests, headDigests) {
   return p;
 }
 
+// Corpus infrastructure under packages/verify/test/: what the corpus
+// observes and how it runs, and the pinned case declarations. synthetic.mjs, baseline*.json, changes.json and
+// manifest.json stay allowed next to a corpus_fix.
+const CORPUS_INFRA = [
+  /^test\/corpus\/lib\.mjs$/,
+  /^test\/corpus\/run-[^/]*\.mjs$/,
+  /^test\/corpus\/tape-[^/]*\.mjs$/,
+  /^test\/corpus\/record[^/]*\.mjs$/,
+  /^test\/corpus\/tapes\//,
+  /^test\/history-file\.mjs$/,
+  /^test\/corpus\/declarations\.frozen\.json$/,
+  /^test\/golden-corpus\.test\.mjs$/,
+];
+
 /**
- * Paths whose change can move a verifier outcome: the source, the package
- * manifest, lockfile and TypeScript config, the bundled data files at the
- * package root (issuer history snapshots, legacy allowlist, version
- * windows), the build digest, and any dist/ output.
+ * Paths whose change can move a verifier outcome, or what the corpus
+ * observes of it. Default deny under packages/verify/: everything counts
+ * except test/** (minus the corpus infrastructure above), *.md and
+ * LICENSE. Also the @xfuel/verify alias (packages/aliases/chit402-verify/,
+ * minus *.md) and any dist/ output anywhere.
+ *
+ * Matching is on the NFKC form in lower case, and a path with any
+ * character outside printable ASCII counts as a verifier path outright, so
+ * `SRC/`, `package.JSON` or a look-alike `ѕrc/` cannot pass as something
+ * else.
  */
 export function isVerifierPath(path) {
-  return /^packages\/verify\/src\//.test(path)
-    || /^packages\/verify\/[^/]+\.json$/.test(path)
-    || path === 'packages/verify/BUILD_DIGEST.txt'
-    || /(^|\/)dist\//.test(path);
+  const raw = String(path ?? '');
+  if (!/^[\x20-\x7e]+$/.test(raw)) return true;
+  const p = raw.normalize('NFKC').toLowerCase();
+  if (/(^|\/)dist\//.test(p)) return true;
+  const VERIFY = 'packages/verify/';
+  if (p.startsWith(VERIFY)) {
+    const rest = p.slice(VERIFY.length);
+    if (rest.startsWith('src/')) return true;
+    if (CORPUS_INFRA.some((re) => re.test(rest))) return true;
+    if (rest.startsWith('test/')) return false;
+    if (/^license(\.(md|txt))?$/.test(rest)) return false;
+    if (rest.endsWith('.md')) return false;
+    return true;
+  }
+  const ALIAS = 'packages/aliases/chit402-verify/';
+  if (p.startsWith(ALIAS)) return !p.endsWith('.md');
+  return false;
 }
 
 /** Files a change touches against the merge base, from git (data only). */
@@ -302,12 +745,201 @@ function baseOnHeadProblems(key, ch, baseOnHead) {
   return [];
 }
 
+/** Pin entries appended against the merge-base pin (declarations and deferred). */
+export function appendedPinEntries(basePin, headPin) {
+  if (!basePin || !headPin) return [];
+  const out = [];
+  for (const list of ['declarations', 'deferred']) {
+    const b = Array.isArray(basePin[list]) ? basePin[list] : [];
+    const h = Array.isArray(headPin[list]) ? headPin[list] : [];
+    for (const e of h.slice(b.length)) if (e && typeof e === 'object') out.push({ list, ...e });
+  }
+  return out;
+}
+
+/**
+ * Every declared and deferred pin entry carries the input digest of its
+ * case. The head input of the case must have exactly that digest: an input
+ * is never changed under a pinned path (a changed input is a new case).
+ */
+export function pinDigestProblems(headPin, headDigests) {
+  if (!headPin || !headDigests) return [];
+  const p = [];
+  for (const list of ['declarations', 'deferred']) {
+    for (const e of Array.isArray(headPin[list]) ? headPin[list] : []) {
+      const d = headDigests[e?.case];
+      if (d !== undefined && d !== e?.input_digest) p.push(`${pinKey(e)}: the head input digest differs from the input_digest pinned in declarations.frozen.json; a changed input needs a new case`);
+    }
+  }
+  return p;
+}
+
+/**
+ * An appended declaration or deferred entry is bound to the verifier: its
+ * expect must equal what the MERGE-BASE verifier gives (cause, else reason)
+ * on the head input of that path, and an existing case's head input must
+ * be unchanged from the merge base. So a value cannot be chosen, only read
+ * off main's verifier on main's input.
+ */
+export function appendBindingProblems(basePin, headPin, baseOnHead, baseDigests, headDigests) {
+  const p = [];
+  for (const e of appendedPinEntries(basePin, headPin)) {
+    const k = pinKey(e);
+    if (!baseOnHead || !headDigests || !baseDigests) { p.push(`${k}: a pin append needs the merge-base verifier outcomes and input digests (--base-tree, --head-inputs)`); continue; }
+    if (!Object.prototype.hasOwnProperty.call(baseOnHead, k)) { p.push(`${k}: a pin append needs a merge-base verifier outcome for this case and path`); continue; }
+    const o = baseOnHead[k];
+    const got = String(o?.cause ?? o?.reason ?? '');
+    if (got !== e.expect) p.push(`${k}: pinned ${JSON.stringify(e.expect)}, but the merge-base verifier on the head input gives ${JSON.stringify(got)}`);
+    const base = baseDigests[e.case];
+    if (base !== undefined && base !== headDigests[e.case]) p.push(`${k}: a pin append for an existing case needs its input unchanged from the merge base`);
+  }
+  return p;
+}
+
+/**
+ * Baseline rows of pinned paths.
+ *   - A declared path's row records its decision: for cli the `reason`
+ *     equals the declared value, for library and signature the row
+ *     carries `cause` equal to it. A changed row keeps the merge-base
+ *     `reason` and `cause`, so a tighten or a src change cannot re-decide
+ *     a declared case at the same exit (or at any exit).
+ *   - A deferred path may change `reason` or `cause` only with a strictly
+ *     tighter exit (2 -> 1), and a deferred row that moves (exit, reason or
+ *     cause) must land on a decision: its reason and cause may not be a
+ *     cause that decides nothing (isNonDecision) or the deferred value.
+ * The movement rules apply once the merge base has a pin; the first pin
+ * (this file's bootstrap) records the causes.
+ */
+export function declarationRowProblems(base, head, basePinMaps, headPinMaps) {
+  const p = [];
+  const declared = new Map([...(headPinMaps?.declared ?? []), ...(basePinMaps?.declared ?? [])]);
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  for (const [key, want] of declared) {
+    if (!has(head, key)) continue;
+    const now = head[key];
+    const path = key.split('|')[1];
+    if (path === 'cli') {
+      if (now?.reason !== want) p.push(`${key}: baseline reason ${JSON.stringify(now?.reason)} is not the declared ${JSON.stringify(want)}`);
+    } else if ((now?.cause ?? null) !== want) {
+      p.push(`${key}: baseline cause ${JSON.stringify(now?.cause ?? null)} is not the declared ${JSON.stringify(want)} (a declared ${path} row records its cause)`);
+    }
+    if (basePinMaps && has(base, key) && !same(base[key], now)) {
+      const was = base[key];
+      if (now?.reason !== was?.reason) p.push(`${key}: the reason of a declared path may not change (${JSON.stringify(was?.reason)} -> ${JSON.stringify(now?.reason)})`);
+      if (was?.cause !== undefined && (now?.cause ?? null) !== (was.cause ?? null)) p.push(`${key}: the cause of a declared path may not change (${JSON.stringify(was.cause)} -> ${JSON.stringify(now?.cause ?? null)})`);
+    }
+  }
+  // The movement rules hold once the merge base has a pin (not on the first pin).
+  if (!basePinMaps) return p;
+  const deferred = new Map([...(headPinMaps?.deferred ?? []), ...(basePinMaps?.deferred ?? [])]);
+  for (const key of deferred.keys()) {
+    if (declared.has(key) || !has(base, key) || !has(head, key)) continue;
+    const was = base[key];
+    const now = head[key];
+    const moved = now?.reason !== was?.reason || (now?.cause ?? null) !== (was?.cause ?? null);
+    if (moved && !(exitRank(now?.exit) < exitRank(was?.exit))) p.push(`${key}: a deferred path may change reason or cause only with a strictly tighter exit (exit ${was?.exit} -> ${now?.exit})`);
+    // A deferred row that moves (exit, reason or cause) must land on a
+    // decision by a case rule: never a cause that decides nothing
+    // (isNonDecision) and never the deferred value it is held at.
+    if (moved || now?.exit !== was?.exit) {
+      const path = key.split('|')[1];
+      const value = path === 'cli' ? now?.reason : (now?.cause ?? now?.reason);
+      // cli rows decide by reason; library and signature rows by cause (their
+      // reason is the generic result).
+      if (isNonDecision(value) || value === deferred.get(key)) p.push(`${key}: a deferred row may move only to a decision by a case rule, not ${JSON.stringify(value ?? null)} (a cause that decides nothing, or the deferred value)`);
+    }
+  }
+  return p;
+}
+
+const GOLDEN = 'packages/verify/test/golden-corpus.test.mjs';
+
+/**
+ * Files that build case inputs or run the corpus: synthetic.mjs, the test
+ * fixtures, and the corpus harness (CORPUS_INFRA other than the pin: lib.mjs
+ * with the cli runner, run-*.mjs, tape-*.mjs, record*.mjs, tapes/**,
+ * test/history-file.mjs and golden-corpus.test.mjs). An edit to any of these
+ * can change what a pinned case observes without a verifier change.
+ */
+export function isBuilderPath(path) {
+  const raw = String(path ?? '');
+  if (!/^[\x20-\x7e]+$/.test(raw)) return true;
+  const p = raw.normalize('NFKC').toLowerCase();
+  const VERIFY = 'packages/verify/';
+  if (!p.startsWith(VERIFY)) return false;
+  const rest = p.slice(VERIFY.length);
+  if (rest === 'test/corpus/synthetic.mjs' || rest.startsWith('test/fixtures/')) return true;
+  return CORPUS_INFRA.some((re) => re.test(rest)) && rest !== 'test/corpus/declarations.frozen.json';
+}
+
+/**
+ * Once the merge base has a pin, a pinned baseline row may not move (change,
+ * removal, or an added changes.json entry for it, tighten included) in a
+ * change that also edits a case input builder or a corpus harness file
+ * (isBuilderPath). Such a change lands alone, or as a reviewed re-pin,
+ * which moves no row.
+ */
+export function builderRowProblems(base, head, addedFor, changedFiles, basePinMaps, headPinMaps) {
+  if (!basePinMaps || !Array.isArray(changedFiles)) return [];
+  const builders = changedFiles.filter(isBuilderPath);
+  if (!builders.length) return [];
+  const pinned = new Set([...(basePinMaps?.pinned ?? []), ...(headPinMaps?.pinned ?? [])]);
+  const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const shown = builders.slice(0, 2).join(', ') + (builders.length > 2 ? `, and ${builders.length - 2} more` : '');
+  const p = [];
+  for (const key of pinned) {
+    const moved = (has(base, key) && (!has(head, key) || !same(base[key], head[key]))) || (addedFor.has(key) && !['registry', 'repin'].includes(addedFor.get(key)?.kind));
+    if (moved) p.push(`${key}: a pinned baseline row may not move in the same change as a case input builder or corpus harness file (${shown}); land that change alone or as a reviewed re-pin`);
+  }
+  return p;
+}
+
+/** A change that touches golden-corpus.test.mjs may not change any pinned baseline row (once the merge base has a pin). */
+export function goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps) {
+  if (!basePinMaps) return [];
+  if (!Array.isArray(changedFiles) || !changedFiles.some((f) => String(f).normalize('NFKC').toLowerCase() === GOLDEN)) return [];
+  const pinned = new Set([...(basePinMaps?.pinned ?? []), ...(headPinMaps?.pinned ?? [])]);
+  const p = [];
+  for (const key of new Set([...Object.keys(base), ...Object.keys(head)])) {
+    if (!pinned.has(key)) continue;
+    if (!same(base[key], head[key])) p.push(`${key}: a pinned baseline row may not change in the same change as test/golden-corpus.test.mjs`);
+  }
+  return p;
+}
+
+/**
+ * State of the merge-base pin (`ok`, `missing`, `unparseable`, or null
+ * when not read). `required`: the pin existed on the merge base's history,
+ * or the merge-base corpus-gate.mjs reads
+ * declarations.frozen.json, so main has had a pin and must still have it.
+ */
+export function basePinStateProblems(state, required) {
+  if (state === 'unparseable') return [`${DECLARATIONS_PIN} at the merge base is not valid JSON; the gate fails closed`];
+  if (state === 'missing' && required) return [`${DECLARATIONS_PIN} is missing at the merge base, whose history has had it (or whose gate reads it); the gate fails closed`];
+  return [];
+}
+
 /**
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null, basePinState = null, basePinRequired = false }) {
   const problems = [];
+  // The merge-base pin, read as data: an unparseable one always fails, and
+  // a missing one fails once the merge-base gate knows the pin (only the
+  // change that adds the pin runs without one).
+  problems.push(...basePinStateProblems(basePinState, basePinRequired));
+  // Pinned declarations: append-only, and the head synthetic.mjs must agree
+  // with the head pin whenever the head export is given.
+  problems.push(...pinProblems(basePin, headPin));
+  if (headDecls && headPin) for (const d of declarationDrift(headDecls, headPin)) problems.push(`synthetic.mjs (head) and declarations.frozen.json (head) differ: ${d}`);
+  // Pinned input digests, and appends bound to the merge-base verifier.
+  problems.push(...pinDigestProblems(headPin, headDigests));
+  problems.push(...appendBindingProblems(basePin, headPin, baseOnHead, baseDigests, headDigests));
+  // Every head case path is classified by the head pin.
+  if (headCases && headPin) for (const k of unclassifiedPaths(headCases, headPin)) problems.push(`${k}: case path in synthetic.mjs (head) is not in declarations.frozen.json (head); declare it, or defer it with its current expect`);
+  const basePinMaps = basePin ? pinMaps(basePin) : null;
+  const headPinMaps = headPin ? pinMaps(headPin) : null;
   const bEntries = baseChanges?.changes ?? [];
   const hEntries = headChanges?.changes ?? [];
   if (!Array.isArray(hEntries)) return ['changes.json: `changes` is not an array'];
@@ -318,7 +950,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   const addedFor = new Map();
   for (const ch of added) {
     const kind = ch?.kind ?? 'tighten';
-    if (!['tighten', 'corpus_fix', 'registry'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
+    if (!['tighten', 'corpus_fix', 'corpus_fix_reason', 'registry'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
     if (!ch.pr || !ch.spec) problems.push(`changes.json: entry without pr and spec: ${JSON.stringify(ch).slice(0, 120)}`);
     if (kind === 'registry') continue;
     if (!ch.case || !ch.path) { problems.push(`changes.json: entry without case and path: ${JSON.stringify(ch).slice(0, 120)}`); continue; }
@@ -335,10 +967,26 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   // not share a change with a verifier change: the verifier would be
   // judged against inputs and rows edited in the same breath.
   const corrections = [
-    ...[...addedFor].filter(([, ch]) => ch.kind === 'corpus_fix').map(([key]) => key),
-    ...Object.keys(base).filter((key) => !has(head, key) && !(addedFor.get(key)?.kind === 'corpus_fix')),
+    ...[...addedFor].filter(([, ch]) => isFixKind(ch.kind)).map(([key]) => key),
+    ...Object.keys(base).filter((key) => !has(head, key) && !isFixKind(addedFor.get(key)?.kind)),
   ];
   if (corrections.length) {
+    if (!basePin) problems.push(`corpus corrections need ${DECLARATIONS_PIN} at the merge base`);
+    else if (!baseCases) problems.push('corpus corrections need the merge-base case declarations (--base-tree)');
+    else {
+      const drift = declarationDrift(exportDeclarations(baseCases), basePin);
+      if (drift.length) {
+        problems.push(`corpus corrections are refused while synthetic.mjs and declarations.frozen.json differ at the merge base: ${drift.slice(0, 3).join('; ')}${drift.length > 3 ? `; and ${drift.length - 3} more` : ''}`);
+      }
+    }
+    if (!headDecls) problems.push('corpus corrections need the head case declarations (--head-inputs)');
+    if (!headPin) problems.push(`corpus corrections need ${DECLARATIONS_PIN} at the head`);
+    // A pinned case path is never removed.
+    for (const key of corrections) {
+      if (has(base, key) && !has(head, key) && (basePinMaps?.pinned.has(key) || headPinMaps?.pinned.has(key))) {
+        problems.push(`${key}: a case path pinned in declarations.frozen.json may not be removed`);
+      }
+    }
     if (!Array.isArray(changedFiles)) {
       problems.push('corpus corrections need the list of files this change touches (git diff against the merge base)');
     } else {
@@ -352,15 +1000,26 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     }
   }
 
+  // Pinned rows (declarationRowProblems, goldenEditProblems).
+  if (basePinMaps || headPinMaps) {
+    problems.push(...declarationRowProblems(base, head, basePinMaps, headPinMaps));
+    problems.push(...goldenEditProblems(base, head, changedFiles, basePinMaps, headPinMaps));
+    problems.push(...builderRowProblems(base, head, addedFor, changedFiles, basePinMaps, headPinMaps));
+  }
+
   const checked = new Set();
   const checkCorpusFix = (key, ch, now) => {
     checked.add(key);
     if (isReal(key)) problems.push(`${key}: corpus_fix is only for synthetic cases`);
     if (!ch.note) problems.push(`${key}: corpus_fix needs a note`);
     if (now && (now.exit === 0 || resultRank(now.result) === 2)) problems.push(`${key}: corpus_fix may not move a case to exit 0`);
-    if (ch.to === null) return;
+    if (ch.to === null) {
+      if ((basePinMaps?.pinned.has(key) || headPinMaps?.pinned.has(key)) && has(head, key)) problems.push(`${key}: to: null on a case path pinned in declarations.frozen.json`);
+      return;
+    }
     for (const p of digestProblems(ch, baseDigests, headDigests)) problems.push(`${key}: ${p}`);
     for (const p of baseOnHeadProblems(key, ch, baseOnHead)) problems.push(`${key}: ${p}`);
+    for (const p of declaredProblems(key, ch, baseCases, baseOnHead, basePinMaps, headPinMaps)) problems.push(`${key}: ${p}`);
   };
 
   for (const key of Object.keys(base)) {
@@ -371,7 +1030,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     if (now === undefined) {
       if (isReal(key)) problems.push(`${key}: a real receipt case was removed from the baseline`);
       else if (!ch || ch.kind !== 'corpus_fix' || ch.to !== null || !ch.note) problems.push(`${key}: removed without a corpus_fix entry (to: null, with a note)`);
-      if (ch?.kind === 'corpus_fix') checked.add(key);
+      if (isFixKind(ch?.kind)) checked.add(key);
       continue;
     }
     if (!ch) { problems.push(`${key}: baseline changed with no changes.json entry added in this change`); continue; }
@@ -379,7 +1038,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
     for (const p of wellFormed(now)) problems.push(`${key}: ${p}`);
     if (ch.kind === 'tighten') {
       for (const p of looser(was, now)) problems.push(`${key}: more permissive than the merge base: ${p}`);
-    } else if (ch.kind === 'corpus_fix') {
+    } else if (isFixKind(ch.kind)) {
       checkCorpusFix(key, ch, now);
     }
   }
@@ -387,7 +1046,7 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   // outcome) or that names a new row gets the same checks, and its `to`
   // must be the head row.
   for (const [key, ch] of addedFor) {
-    if (ch.kind !== 'corpus_fix' || checked.has(key)) continue;
+    if (!isFixKind(ch.kind) || checked.has(key)) continue;
     const now = has(head, key) ? head[key] : undefined;
     if (now === undefined) continue;
     if (!same(ch.to, now)) problems.push(`${key}: baseline value is not the changes.json entry's \`to\``);
@@ -479,16 +1138,59 @@ function gitShow(root, rev, path) {
   }
 }
 
+/** A merge-base file as `{ state: 'ok' | 'missing' | 'unparseable', value, text }`. */
+function gitShowState(root, rev, path) {
+  let text;
+  try {
+    text = execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 });
+  } catch {
+    return { state: 'missing', value: null, text: null };
+  }
+  try { return { state: 'ok', value: JSON.parse(text), text }; } catch { return { state: 'unparseable', value: null, text }; }
+}
+
+function gitShowText(root, rev, path) {
+  try { return execFileSync('git', ['-C', root, 'show', `${rev}:${path}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 << 20 }); } catch { return null; }
+}
+
+// Head JSON files that could not be parsed in this run (gateRepo reports them).
+let headParseProblems = [];
 function readHead(root, path) {
   const p = join(root, path);
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch {
+    headParseProblems.push(`${path} at the head is not valid JSON; the gate fails closed`);
+    return null;
+  }
+}
+
+/** Whether `path` existed in any commit reachable from `rev` (git history, as data). */
+/**
+ * Whether `path` has existed on the history of `rev`: 'yes', 'no', or
+ * 'unknown' when the history cannot be read in full (a shallow clone, where
+ * the commits behind the boundary are missing, or a git error).
+ */
+export function pinHistoryOf(root, rev, path) {
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (git('rev-parse', '--is-shallow-repository') !== 'false') return 'unknown';
+    return git('rev-list', '-1', rev, '--', path) !== '' ? 'yes' : 'no';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** The pin history could not be read and the merge-base pin is missing: fail closed. */
+export function pinHistoryProblems(history, state) {
+  if (history === 'unknown' && state === 'missing') return [`the history of ${DECLARATIONS_PIN} on the merge base cannot be read in full (shallow clone or git error), and the pin is missing there; the gate fails closed (check out with full history)`];
+  return [];
 }
 
 /** Added corpus_fix keys of a changes.json pair. */
 export function addedCorpusFixKeys(baseChanges, headChanges) {
   const b = baseChanges?.changes ?? [];
   const h = Array.isArray(headChanges?.changes) ? headChanges.changes : [];
-  return h.slice(b.length).filter((c) => c?.kind === 'corpus_fix' && c.case && c.path).map((c) => `${c.case}|${c.path}`);
+  return h.slice(b.length).filter((c) => isFixKind(c?.kind) && c.case && c.path).map((c) => `${c.case}|${c.path}`);
 }
 
 /**
@@ -497,6 +1199,10 @@ export function addedCorpusFixKeys(baseChanges, headChanges) {
  * parsed export of the head tree. Both are needed for a corpus_fix.
  */
 export async function gateRepo(root, base, { baseTree = null, headInputs = null } = {}) {
+  headParseProblems = [];
+  const pinAtBase = gitShowState(root, base, DECLARATIONS_PIN);
+  const baseGate = gitShowText(root, base, 'packages/verify/scripts/corpus-gate.mjs');
+  const pinHistory = pinHistoryOf(root, base, DECLARATIONS_PIN);
   const files = {
     baseBaseline: gitShow(root, base, BASELINE),
     headBaseline: readHead(root, BASELINE),
@@ -504,18 +1210,39 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     headChanges: readHead(root, CHANGES),
     baseRegistry: gitShow(root, base, REGISTRY_PIN),
     headRegistry: readHead(root, REGISTRY_PIN),
+    basePin: pinAtBase.value,
+    basePinState: pinAtBase.state,
+    // The pin is required once it has ever existed on the merge base's
+    // history, or the merge-base gate reads it. Only the change that adds
+    // the first pin (to a main that never had one) runs without it.
+    basePinRequired: pinHistory !== 'no' || (typeof baseGate === 'string' && baseGate.includes('declarations.frozen.json')),
+    headPin: readHead(root, DECLARATIONS_PIN),
   };
+  if (headParseProblems.length) return [...headParseProblems];
+  const historyProblems = pinHistoryProblems(pinHistory, pinAtBase.state);
+  if (historyProblems.length) return historyProblems;
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
-  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, changedFiles: changedFilesOf(root, base) };
+  const appendKeys = appendedPinEntries(files.basePin, files.headPin).map(pinKey);
+  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
-  if (fixKeys.length && baseTree && headInputs) {
-    const bad = inputsProblems(headInputs);
-    if (bad.length) problems.push(...bad);
-    else {
-      extra.headDigests = inputDigests(headInputs);
-      try { extra.baseDigests = inputDigests(await exportInputs(baseTree)); } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
-      extra.baseOnHead = await baseOutcomes(baseTree, headInputs, fixKeys);
-    }
+  const corrections = fixKeys.length > 0 || Object.keys(files.baseBaseline ?? {}).some((k) => !Object.prototype.hasOwnProperty.call(files.headBaseline ?? {}, k));
+  const inputsOk = !!headInputs && inputsProblems(headInputs).length === 0;
+  if (headInputs && !inputsOk) problems.push(...inputsProblems(headInputs));
+  if (inputsOk) {
+    extra.headDecls = exportDeclarations(headInputs);
+    extra.headCases = headInputs.cases.map((c) => ({ id: c.id, paths: c.paths }));
+    extra.headDigests = inputDigests(headInputs);
+  }
+  const needBase = fixKeys.length > 0 || appendKeys.length > 0;
+  if (baseTree && (corrections || needBase)) {
+    try {
+      const baseInputs = await exportInputs(baseTree);
+      extra.baseCases = caseDeclarations(baseInputs);
+      if (needBase) extra.baseDigests = inputDigests(baseInputs);
+    } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
+  }
+  if (needBase && baseTree && inputsOk) {
+    extra.baseOnHead = await baseOutcomes(baseTree, headInputs, [...new Set([...fixKeys, ...appendKeys])]);
   }
   const chain = gateChain({
     baseChainBaseline: gitShow(root, base, CHAIN_BASELINE),

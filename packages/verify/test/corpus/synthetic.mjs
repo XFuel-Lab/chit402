@@ -54,6 +54,11 @@ let testHistoryPin = null;
  * passed and the offline tape answered the log read: the rule named in the
  * case's target is not enforced yet, and the PR that adds it moves the case
  * through changes.json.
+ *
+ * Every `expect` value (these and the per-case cli/signature ones below) is
+ * pinned in declarations.frozen.json, compared exactly. The pin is
+ * append-only and the corpus gate refuses corrections while this file and
+ * the pin disagree.
  */
 export const LIBRARY_CAUSE = Object.freeze({
   'label-v4v5-conflicting-stamps': 'unsupported_version',
@@ -149,18 +154,21 @@ export async function buildSynthetic(dir) {
   {
     const doc = structuredClone(v10);
     doc.issuer_signature.payload_version = 6;
-    add({ id: 'label-v10-outer-stamp-6', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'exit != 0; version taken from the signed claims only', paths: ['cli'] }, doc);
+    add({ id: 'label-v10-outer-stamp-6', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'exit != 0; version taken from the signed claims only', expect: { cli: 'version_mismatch' }, paths: ['cli'] }, doc);
   }
   const v6 = readFixture('public/chit-1ebc5616.json');
   {
     const doc = structuredClone(v6);
     doc.issuer_signature.payload_version = 10;
-    add({ id: 'label-v6-outer-stamp-10', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'never better than the unmodified v6 receipt (exit 1 NOT_IN_LOG)', paths: ['cli'] }, doc);
+    add({ id: 'label-v6-outer-stamp-10', class: 'label', spec: '§5.1 relabel; §2 rule #1a', target: 'never better than the unmodified v6 receipt (exit 1 NOT_IN_LOG)', expect: { cli: 'version_mismatch' }, paths: ['cli'] }, doc);
   }
   {
     const doc = docFor(key, unversionedClaims('xfuel-corpus-0000-label-4v5', T_SEP05), { outerPv: 4 });
+    // The cli outcome is decided by the conflicting stamps: the same
+    // document without hmac_attestation, or with a matching v4 one, is
+    // decided by legacy_form_not_allowlisted instead.
     doc.hmac_attestation = { payload_version: 5 };
-    add({ id: 'label-v4v5-conflicting-stamps', class: 'label', spec: '§5.1 relabel; L1', target: 'exit != 0 (stamps disagree: no inferred version)' }, doc);
+    add({ id: 'label-v4v5-conflicting-stamps', class: 'label', spec: '§5.1 relabel; L1', target: 'exit != 0 (stamps disagree: no inferred version)', expect: { cli: 'unsupported_version' } }, doc);
   }
 
   // --- version: the signed version is older, newer, or missing ---
@@ -170,23 +178,23 @@ export async function buildSynthetic(dir) {
   }
   {
     const claims = { ...signedClaimsOf(v10), payload_version: 13, iat: T_OCT22, task_id: 'xfuel-corpus-0000-version-v13' };
-    add({ id: 'version-v13-unknown', class: 'version', spec: '§5.1; §2 unknown version', target: 'exit 2 unsupported_version' }, docFor(key, claims, { outerPv: 13 }));
+    add({ id: 'version-v13-unknown', class: 'version', spec: '§5.1; §2 unknown version', target: 'exit 2 unsupported_version', expect: { cli: 'unsupported_version' } }, docFor(key, claims, { outerPv: 13 }));
   }
   {
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'chit-c0c0c0c0-0000-4000-8000-000000000012' };
     delete claims.payload_version;
-    add({ id: 'version-v12-shape-no-version', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)' }, docFor(key, claims));
+    add({ id: 'version-v12-shape-no-version', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)', expect: { cli: 'id_prefix_version_mismatch' } }, docFor(key, claims));
   }
   {
     // Same shape with a non-uuid task id, so the id-prefix rule does not
     // decide it first: the missing signed version does.
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'xfuel-corpus-0000-version-v12-plain-id' };
     delete claims.payload_version;
-    add({ id: 'version-v12-shape-no-version-plain-id', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)' }, docFor(key, claims));
+    add({ id: 'version-v12-shape-no-version-plain-id', class: 'version', spec: '§5.1; §2 missing version fails closed', target: 'exit 1 (no signed version outside the L1 allowlist)', expect: { cli: 'unsupported_version' } }, docFor(key, claims));
   }
   {
     const claims = unversionedClaims('xfuel-corpus-0000-version-unstamped', T_OCT22);
-    add({ id: 'version-unversioned-object-no-stamp', class: 'version', spec: '§2 missing version; L1', target: 'exit != 0' }, docFor(key, claims));
+    add({ id: 'version-unversioned-object-no-stamp', class: 'version', spec: '§2 missing version; L1', target: 'exit != 0', expect: { cli: 'unsupported_version' } }, docFor(key, claims));
   }
 
   // --- version: L1 closed allowlist. v4/v5 and detached receipts pass only
@@ -239,14 +247,14 @@ export async function buildSynthetic(dir) {
     for (const pv of [9, 10]) {
       const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate10-pv${pv}-no-pin` };
       delete claims.issuer_history;
-      add({ id: `gate10-pv${pv}-no-history-pin`, class: 'gate', gate: 10, spec: '§5.2 registry; canonical_preimage gate', target: pv >= 10 ? 'exit 1 (pin required from v10)' : 'unchanged (no pin before v10)', expect: { library: pv >= 10 ? 'issuer_history_pin_missing' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
+      add({ id: `gate10-pv${pv}-no-history-pin`, class: 'gate', gate: 10, spec: '§5.2 registry; canonical_preimage gate', target: pv >= 10 ? 'exit 1 (pin required from v10)' : 'unchanged (no pin before v10)', expect: { library: pv >= 10 ? 'issuer history: issuer_history_pin_missing' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
     }
     // Gate 9: the signed head binding (tree_head_hash + tolerance) is required from v9.
     for (const pv of [8, 9]) {
       const claims = { ...base, iat: IN_WINDOW_IAT[pv], payload_version: pv, task_id: `xfuel-corpus-0000-gate9-pv${pv}-no-head` };
       delete claims.tree_head_hash;
       delete claims.tolerance;
-      add({ id: `gate9-pv${pv}-no-head-binding`, class: 'gate', gate: 9, spec: '§5.2 registry; head_binding gate', target: pv >= 9 ? 'exit 1 (head binding required from v9)' : 'unchanged (no head binding before v9)', expect: { library: pv >= 9 ? 'requires tree_head_hash and tolerance' : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
+      add({ id: `gate9-pv${pv}-no-head-binding`, class: 'gate', gate: 9, spec: '§5.2 registry; head_binding gate', target: pv >= 9 ? 'exit 1 (head binding required from v9)' : 'unchanged (no head binding before v9)', expect: { library: pv >= 9 ? `payload v${pv} requires tree_head_hash and tolerance inside signed claims` : 'log_unreachable' }, paths: ['library'] }, docFor(key, claims, { outerPv: pv }));
     }
   }
 
@@ -274,11 +282,11 @@ export async function buildSynthetic(dir) {
   // --- control: a current-version receipt under the test key ---
   {
     const claims = { ...signedClaimsOf(v10), iat: T_OCT22, task_id: 'xfuel-corpus-0000-control-v10' };
-    add({ id: 'control-test-key-v10', class: 'control', spec: '§5.1', target: 'unchanged (detects over-tightening)' }, docFor(key, claims, { outerPv: 10 }));
+    add({ id: 'control-test-key-v10', class: 'control', spec: '§5.1', target: 'unchanged (detects over-tightening)', expect: { cli: 'key untrusted' } }, docFor(key, claims, { outerPv: 10 }));
   }
   {
     const doc = readFixture('unsigned-self-binding.json');
-    add({ id: 'control-unsigned-document', class: 'control', spec: '§3', target: 'exit 2 signed_receipt_unavailable', paths: ['cli'] }, doc);
+    add({ id: 'control-unsigned-document', class: 'control', spec: '§3', target: 'exit 2 signed_receipt_unavailable', expect: { cli: 'signed_receipt_unavailable' }, paths: ['cli'] }, doc);
   }
   return out;
 }
