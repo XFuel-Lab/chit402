@@ -85,7 +85,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, createPublicKey, verify as cryptoVerify } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -410,15 +410,20 @@ export function inputDigests(inputs) {
 export async function exportInputs(pkgDir) {
   const synth = join(resolve(pkgDir), 'test', 'corpus', 'synthetic.mjs');
   const { buildSynthetic } = await import(pathToFileURL(synth).href);
-  const cases = await buildSynthetic(mkdtempSync(join(tmpdir(), 'corpus-inputs-')));
-  const text = (f) => (f ? readFileSync(f, 'utf8') : '');
-  return {
-    format: INPUTS_FORMAT,
-    cases: cases.map((c) => ({
-      id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile),
-      class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null,
-    })),
-  };
+  const dir = mkdtempSync(join(tmpdir(), 'corpus-inputs-'));
+  try {
+    const cases = await buildSynthetic(dir);
+    const text = (f) => (f ? readFileSync(f, 'utf8') : '');
+    return {
+      format: INPUTS_FORMAT,
+      cases: cases.map((c) => ({
+        id: c.id, paths: c.paths, doc: text(c.file), history: text(c.historyFile), jwks: text(c.jwksFile),
+        class: c.class ?? null, target: c.target ?? null, expect: c.expect ?? null,
+      })),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const sameOutcome = (a, b) => {
@@ -443,20 +448,24 @@ export async function baseOutcomes(baseTree, headInputs, keys) {
   const runners = { cli: true, library: existsSync(join(corpus, 'run-library.mjs')), signature: existsSync(join(corpus, 'run-signature.mjs')) };
   const tape = join(corpus, 'tapes', 'public.json');
   const dir = mkdtempSync(join(tmpdir(), 'corpus-base-on-head-'));
-  for (const key of keys) {
-    const [id, path] = key.split('|');
-    const c = headInputs.cases.find((x) => x.id === id);
-    if (!c || !runners[path] || !c.paths.includes(path)) continue;
-    const d = join(dir, String(Object.keys(out).length));
-    mkdirSync(d);
-    const file = join(d, 'case.json');
-    const historyFile = join(d, 'issuer-history.json');
-    const jwksFile = join(d, 'jwks.json');
-    writeFileSync(file, c.doc);
-    writeFileSync(historyFile, c.history);
-    writeFileSync(jwksFile, c.jwks);
-    const o = await lib.runPathAsync({ id, file, historyFile, jwksFile }, path, tape);
-    out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}), cause: o.cause ?? null };
+  try {
+    for (const key of keys) {
+      const [id, path] = key.split('|');
+      const c = headInputs.cases.find((x) => x.id === id);
+      if (!c || !runners[path] || !c.paths.includes(path)) continue;
+      const d = join(dir, String(Object.keys(out).length));
+      mkdirSync(d);
+      const file = join(d, 'case.json');
+      const historyFile = join(d, 'issuer-history.json');
+      const jwksFile = join(d, 'jwks.json');
+      writeFileSync(file, c.doc);
+      writeFileSync(historyFile, c.history);
+      writeFileSync(jwksFile, c.jwks);
+      const o = await lib.runPathAsync({ id, file, historyFile, jwksFile }, path, tape);
+      out[key] = { exit: o.exit, result: o.result, reason: o.reason, checks: o.checks, ...(o.overall !== undefined ? { overall: o.overall } : {}), cause: o.cause ?? null };
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
   return out;
 }

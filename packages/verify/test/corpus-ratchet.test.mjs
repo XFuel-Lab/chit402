@@ -8,12 +8,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gate, gateChain, BASELINE, CHANGES, REGISTRY_PIN, CHAIN_BASELINE, CHAIN_TAPE } from '../scripts/corpus-gate.mjs';
 import { compare } from './corpus/lib.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -121,7 +121,7 @@ test('chain gate: unchanged passes; the tape is append-only; rows never removed 
 const gitOk = spawnSync('git', ['--version']).status === 0;
 
 test('end to end: the review revert fails the gate script; the strict head passes', { skip: !gitOk }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'corpus-ratchet-'));
+  const root = tempDir('corpus-ratchet-');
   const git = (...a) => {
     const r = spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);

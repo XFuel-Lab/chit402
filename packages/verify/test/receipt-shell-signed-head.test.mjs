@@ -7,12 +7,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -51,7 +51,7 @@ const leaf = leafHash(`${claims.task_id}|${row}`);
 const inclusion = { leaf_index: 0, tree_size: 1, leaf, row_hash: row, proof: [], root: leaf };
 const headClaims = { schema: 'chit402.tree_head.v2', payload_version: 2, tree_size: 1, root: leaf };
 const signedHead = { ...headClaims, issuer_signature: { jws: jws(issuer, { typ: 'chit402-tree-head+jwt' }, headClaims) } };
-const dir = mkdtempSync(join(tmpdir(), 'chit-shell-head-'));
+const dir = tempDir('chit-shell-head-');
 const w = (n, o) => { const f = join(dir, n); writeFileSync(f, typeof o === 'string' ? o : JSON.stringify(o)); return f; };
 const jwks = w('jwks.json', { keys: [issuer.jwk] });
 const historyPath = await writeCoveringHistory(dir, {

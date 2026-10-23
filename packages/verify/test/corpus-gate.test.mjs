@@ -9,12 +9,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
 import { gate, isVerifierPath, caseDeclarations, BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN, DECLARATIONS_FORMAT, baseOutcomes, caseDigest, docForm, exportInputs, exportDeclarations, inputDigests, inputsProblems, isNonDecision, pinMaps, pinProblems, pinDigestProblems, appendedPinEntries, declarationRowProblems, basePinStateProblems, builderRowProblems, isBuilderPath, pinHistoryProblems, signatureForm, stable, unclassifiedPaths } from '../scripts/corpus-gate.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
 const script = join(pkg, 'scripts', 'corpus-gate.mjs');
@@ -1361,7 +1361,7 @@ test('frozen registry: append-only, appended entries recorded', () => {
 const gitOk = spawnSync('git', ['--version']).status === 0;
 
 function repoWith(edit, baseEdit = () => {}) {
-  const root = mkdtempSync(join(tmpdir(), 'corpus-gate-'));
+  const root = tempDir('corpus-gate-');
   const git = (...a) => {
     const r = spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
@@ -1471,7 +1471,7 @@ test('end to end: review M1 with a src change fails the gate script, which runs 
   const keys = [`${V13}|library`, `${V13}|cli`];
   const baseOnHead = await baseOutcomes(pkg, swapped, keys);
   const digest = inputDigests(swapped)[V13];
-  const marker = join(mkdtempSync(join(tmpdir(), 'corpus-m1-')), 'ran');
+  const marker = join(tempDir('corpus-m1-'), 'ran');
   const srcFile = 'packages/verify/src/receipt-version.ts';
   const synthFile = 'packages/verify/test/corpus/synthetic.mjs';
   const r = repoWith((root) => {
@@ -1556,7 +1556,7 @@ test('end to end: a merge-base pin that is missing (under a gate that reads it) 
 });
 
 test('end to end: a pin that ever existed on the merge base history is required, even with the gate literal edited out', { skip: !gitOk }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'corpus-gate-hist-'));
+  const root = tempDir('corpus-gate-hist-');
   const git = (...a) => { const r = spawnSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git('init', '-q');
   for (const rel of [BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN]) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), readFileSync(join(pkg, rel.replace(/^packages\/verify\//, '')))); }
@@ -1611,7 +1611,7 @@ test('end to end: HN-l5 (the run-library.mjs edit and the deferred tighten) fail
 });
 
 test('end to end: in a shallow clone the pin history check fails closed when the merge-base pin is missing', { skip: !gitOk }, () => {
-  const root = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-'));
+  const root = tempDir('corpus-gate-shallow-');
   const git = (dir, ...a) => { const r = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   git(root, 'init', '-q');
   for (const rel of [BASELINE, CHANGES, REGISTRY_PIN, DECLARATIONS_PIN]) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), readFileSync(join(pkg, rel.replace(/^packages\/verify\//, '')))); }
@@ -1625,7 +1625,7 @@ test('end to end: in a shallow clone the pin history check fails closed when the
   assert.equal(full.status, 1, full.stdout);
   assert.match(full.stderr, /is missing at the merge base, whose history has had it/);
   // Shallow clone with the boundary at the deleting commit: the history behind it is gone.
-  const shallow = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-clone-'));
+  const shallow = tempDir('corpus-gate-shallow-clone-');
   const cl = spawnSync('git', ['clone', '-q', '--depth', '2', `file://${root}`, shallow], { encoding: 'utf8' });
   assert.equal(cl.status, 0, cl.stderr);
   assert.equal(git(shallow, 'rev-parse', '--is-shallow-repository'), 'true');
@@ -1635,7 +1635,7 @@ test('end to end: in a shallow clone the pin history check fails closed when the
   assert.ok(res.stderr.includes('cannot be read in full (shallow clone or git error), and the pin is missing there; the gate fails closed'), res.stderr);
   // A shallow clone whose merge base has the pin is not refused for its depth.
   const clean = repoWith(() => {});
-  const shallow2 = mkdtempSync(join(tmpdir(), 'corpus-gate-shallow-clone-'));
+  const shallow2 = tempDir('corpus-gate-shallow-clone-');
   assert.equal(spawnSync('git', ['clone', '-q', '--depth', '2', `file://${clean.root}`, shallow2]).status, 0);
   assert.equal(gateCli(shallow2, clean.base).status, 0);
   // Unit: unknown history with a missing pin fails; with the pin present, or a readable history, it does not.

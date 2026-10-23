@@ -4,12 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { keccak256, solidityPacked, toUtf8Bytes } from 'ethers';
+import { tempDir } from './tmp-dirs.mjs';
 
 const {
   verifyPublishedPreimages,
@@ -526,7 +526,7 @@ test('a tampered canonical preimage fails the receipt and the CLI', async () => 
   assert.equal(result.overall, 'failed');
   assert.match(result.errors.join(' '), /canonical preimage: payload_hash_mismatch/);
 
-  const dir = mkdtempSync(join(tmpdir(), 'chit-preimage-'));
+  const dir = tempDir('chit-preimage-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipt));
   // fileURLToPath, not URL.pathname. On Windows pathname is "/C:/..." and
   // path.join turns that into "\C:\...", so node never starts and stdout is empty.

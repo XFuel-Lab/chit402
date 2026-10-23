@@ -13,6 +13,7 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(__dirname, '..');
@@ -1274,9 +1275,8 @@ describe('claim_id stranger rule', () => {
 describe('package exports', () => {
   test('dist/cli.js is an exported subpath so the alias can resolve chit402-verify', async (t) => {
     const { createRequire } = await import('node:module');
-    const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const dir = mkdtempSync(path.join(tmpdir(), 'chit402-verify-export-'));
+    const { mkdirSync, writeFileSync, symlinkSync, rmSync } = await import('node:fs');
+    const dir = tempDir('chit402-verify-export-');
     try {
       const scope = path.join(dir, 'node_modules');
       mkdirSync(scope, { recursive: true });

@@ -5,12 +5,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const {
   verifyReceipt,
@@ -461,7 +461,7 @@ test('a leaf hash that differs between epochs fails closed with tree_head_mismat
 
 test('CLI carry-forward flags are removed in 0.4', () => {
   const fx = carryFixture();
-  const dir = mkdtempSync(join(tmpdir(), 'chit-carry-'));
+  const dir = tempDir('chit-carry-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(fx.receipt));
   writeFileSync(join(dir, 'old-head.json'), JSON.stringify(fx.old.head));
   const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));

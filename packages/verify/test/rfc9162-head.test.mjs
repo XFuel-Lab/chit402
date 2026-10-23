@@ -5,10 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -238,7 +238,7 @@ test('a tree head with the issuer signature removed does not verify offline', as
 });
 
 test('xfuel-verify without --rpc rejects a head that has no issuer signature', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-offline-unsigned-'));
+  const dir = tempDir('xfuel-offline-unsigned-');
   const receiptPath = path.join(dir, 'receipt.json');
   const headPath = path.join(dir, 'head.json');
   const stripped = { ...honestHead };
@@ -261,7 +261,7 @@ test('xfuel-verify without --rpc rejects a head that has no issuer signature', (
 });
 
 test('xfuel-verify without --rpc rejects a rewritten tree size', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'xfuel-offline-head-'));
+  const dir = tempDir('xfuel-offline-head-');
   const receiptPath = path.join(dir, 'receipt.json');
   const headPath = path.join(dir, 'head.json');
   writeFileSync(receiptPath, JSON.stringify({

@@ -8,11 +8,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixtureDir = path.join(pkgDir, 'test', 'fixtures', 'public');
@@ -141,7 +141,7 @@ test('NOT_IN_LOG needs a verified head, and a bad fetched proof exits 1', async 
   });
   const port = await listen(server);
   try {
-    const dir = mkdtempSync(path.join(tmpdir(), 'chit-honest-'));
+    const dir = tempDir('chit-honest-');
     const missing = clone(house);
     if (missing.verification) delete missing.verification.jwks_uri;
     missing.verify_url = `http://127.0.0.1:${port}/receipt/${house.task_id}`;
@@ -332,7 +332,7 @@ test('a tampered amount fails in the library and --rpc is not a verifier flag', 
   assert.equal(result.overall, 'failed');
   assert.ok(result.claim_mismatches.some((row) => row.field === 'payment.gross_amount' && row.outer === '100000' && row.signed === '10000'));
 
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-'));
+  const dir = tempDir('chit-log-');
   const receiptPath = path.join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(tampered));
   const run = runCli([receiptPath, '--json', '--rpc']);

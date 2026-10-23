@@ -5,10 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { buildVerifyVerdict, humanVerdictLines } = await import('../dist/verdict.js');
@@ -129,7 +129,7 @@ test('a local receipt whose log was not checked does not print invalid', () => {
   const house = JSON.parse(readFileSync(new URL('./fixtures/public/chit-1ebc5616.json', import.meta.url), 'utf8'));
   delete house.verify_url;
   if (house.verification) delete house.verification.jwks_uri;
-  const dir = mkdtempSync(join(tmpdir(), 'chit-could-not-check-'));
+  const dir = tempDir('chit-could-not-check-');
   const receiptPath = join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(house));
 

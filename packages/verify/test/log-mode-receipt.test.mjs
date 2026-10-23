@@ -7,13 +7,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { writeCoveringHistory } from './history-file.mjs';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
@@ -218,7 +218,7 @@ test('log mode fails a stripped signature, a partial check, and a tampered amoun
   assert.equal(tamperedResult.overall, 'failed');
   assert.match(tamperedResult.errors.join(' '), /gross_amount/);
 
-  const dir = mkdtempSync(path.join(tmpdir(), 'chit-log-receipt-'));
+  const dir = tempDir('chit-log-receipt-');
   const files = writeCase(dir, fx.receipt, fx);
   const run = await runCli([files.receiptPath, '--json', '--rpc', 'http://127.0.0.1:9']);
   assert.equal(run.status, 1, `${run.stdout}\n${run.stderr}`);

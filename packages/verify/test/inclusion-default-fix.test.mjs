@@ -7,12 +7,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { execSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
@@ -254,7 +254,7 @@ test('T22 a size mismatch is tree_size_mismatch in the signed flow and offline',
   assert.equal(sameSizeNull.errors.includes('tree_size_mismatch'), false);
   assert.equal(sameSizeNull.errors.includes('tree_head_mismatch'), false);
 
-  const dir = mkdtempSync(join(tmpdir(), 'chit-t22-'));
+  const dir = tempDir('chit-t22-');
   writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipt));
   writeFileSync(join(dir, 'inclusion.json'), JSON.stringify({ ...inc4, proof: null, status: 'pending_anchor' }));
   writeFileSync(join(dir, 'head.json'), JSON.stringify(head11));
@@ -428,7 +428,7 @@ function extractRollback(dest) {
 }
 
 async function build035() {
-  const dir = mkdtempSync(join(tmpdir(), 'chit-verify-035-'));
+  const dir = tempDir('chit-verify-035-');
   await extractRollback(dir);
   const packed = join(dir, 'packages', 'verify');
   if (!existsSync(join(packed, 'package.json'))) {
@@ -444,7 +444,7 @@ async function build035() {
 test('T23 only a matching inclusion and head can verify', async () => {
   const cli035 = await build035();
   const cli036 = join(pkgDir, 'dist', 'cli.js');
-  const dir = mkdtempSync(join(tmpdir(), 'chit-t23-'));
+  const dir = tempDir('chit-t23-');
   const receiptPath = join(dir, 'receipt.json');
   writeFileSync(receiptPath, JSON.stringify(signedV6()));
   writeFileSync(join(dir, 'jwks.json'), JSON.stringify(jwks));

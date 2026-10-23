@@ -3,11 +3,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const { checkReceiptInput, classifyReceiptInput } = await import('../dist/check-input.js');
@@ -50,7 +50,7 @@ test('a pasted receipt, an id, and a URL share one verdict', async () => {
 });
 
 test('a public path is not read from disk', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'check-input-'));
+  const dir = tempDir('check-input-');
   const file = join(dir, 'secret-receipt.json');
   const secret = 'disk-secret-not-for-the-box';
   writeFileSync(file, JSON.stringify({ task_id: ID, note: secret, issuer_signature: { jws: 'aaa.bbb.ccc' } }));
@@ -99,7 +99,7 @@ test('a public issuer-history read error is COULD_NOT_CHECK', async () => {
 });
 
 test('CLI lines for a file match checkReceiptInput', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'check-input-cli-'));
+  const dir = tempDir('check-input-cli-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, PASTE);
   const run = cliText([file]);

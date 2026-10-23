@@ -7,10 +7,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const preload = pathToFileURL(fileURLToPath(new URL('./corpus/tape-preload.mjs', import.meta.url))).href;
 
@@ -49,7 +49,7 @@ test('3xx answers are stored as errors, never followed, and replay as errors', a
     res.end('{"ok":true}');
   });
   try {
-    const tape = join(mkdtempSync(join(tmpdir(), 'corpus-rec-')), 'tape.json');
+    const tape = join(tempDir('corpus-rec-'), 'tape.json');
     const base = `http://127.0.0.1:${main.port}`;
     const urls = [`${base}/ok`, ...['301', '302', '303', '307', '308'].flatMap((s) => [`${base}/r${s}`, `${base}/r${s}x`])];
     const rec = await child({ CHIT_CORPUS_MODE: 'record', CHIT_CORPUS_TAPE: tape, CHIT_CORPUS_RECORD_LOCAL_PORT: String(main.port) }, urls);
@@ -83,7 +83,7 @@ test('3xx answers are stored as errors, never followed, and replay as errors', a
 test('record mode refuses hosts outside the allowed set', async () => {
   const srv = await listen((req, res) => { res.end('{}'); });
   try {
-    const tape = join(mkdtempSync(join(tmpdir(), 'corpus-rec-')), 'tape.json');
+    const tape = join(tempDir('corpus-rec-'), 'tape.json');
     // Local port allowed is a different one, so this server is not recordable.
     const rec = await child({ CHIT_CORPUS_MODE: 'record', CHIT_CORPUS_TAPE: tape, CHIT_CORPUS_RECORD_LOCAL_PORT: '9' }, [`http://127.0.0.1:${srv.port}/x`]);
     assert.match(rec[0].error, /host not recorded/);
@@ -94,7 +94,7 @@ test('record mode refuses hosts outside the allowed set', async () => {
 });
 
 test('replay of an older tape entry holding a 3xx answer is an error', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'corpus-rec-'));
+  const dir = tempDir('corpus-rec-');
   const tape = join(dir, 'tape.json');
   const { writeFileSync } = await import('node:fs');
   writeFileSync(tape, JSON.stringify({ recorded_at: null, entries: { 'GET https://api.chit402.com/x': { status: 302, body: '' } } }));
