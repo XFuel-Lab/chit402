@@ -59,6 +59,14 @@
  *     decides nothing (isNonDecision) (declarationRowProblems);
  *   - a pinned baseline row changes in a change that touches
  *     test/golden-corpus.test.mjs (goldenEditProblems);
+ *   - a change that appends to the pin's `repins` list (reviewed re-pin)
+ *     touches a file outside REPIN_FILES, changes anything else in the pin,
+ *     the baseline or changes.json (other than `repin` entries), leaves a
+ *     moved case digest without a repin, changes a re-pinned case's
+ *     document (form, signature state or key relation), or any case path gets a different
+ *     outcome when the merge-base verifier runs the head input instead of
+ *     the merge-base input (repinProblems). Effective pinned digests follow
+ *     the last repin of each case;
  *   - declarations.frozen.json at the merge base is not valid JSON, or is
  *     missing while it has existed on the merge base's history or the
  *     merge-base corpus-gate.mjs reads it (basePinStateProblems; only the
@@ -541,6 +549,7 @@ export function pinProblems(basePin, headPin) {
       if (!same(b[i], h[i])) p.push(`${name} is append-only: ${list} entry ${i} (${pinKey(b[i])}) was edited or removed`);
     }
   }
+  p.push(...repinListProblems(basePin, headPin));
   const head = pinMaps(headPin);
   // An added deferred entry is for a path that is not declared and not on
   // the corpus_fix_reason list. (A merge-base deferred entry stays when a
@@ -768,7 +777,249 @@ export function pinDigestProblems(headPin, headDigests) {
   for (const list of ['declarations', 'deferred']) {
     for (const e of Array.isArray(headPin[list]) ? headPin[list] : []) {
       const d = headDigests[e?.case];
-      if (d !== undefined && d !== e?.input_digest) p.push(`${pinKey(e)}: the head input digest differs from the input_digest pinned in declarations.frozen.json; a changed input needs a new case`);
+      const want = lastRepins(headPin).get(e?.case) ?? e?.input_digest;
+      if (d !== undefined && d !== want) p.push(`${pinKey(e)}: the head input digest differs from the input_digest pinned in declarations.frozen.json; a changed input needs a new case (or a reviewed re-pin with the same outcomes)`);
+    }
+  }
+  return p;
+}
+
+// ---------- reviewed re-pin (declarations.frozen.json `repins`) ----------
+
+/** Files a re-pin change may touch, and nothing else. */
+export const REPIN_FILES = Object.freeze([
+  'packages/verify/test/corpus/synthetic.mjs',
+  'packages/verify/test/history-file.mjs',
+  DECLARATIONS_PIN,
+  CHANGES,
+]);
+const HEX64 = /^[0-9a-f]{64}$/;
+const repinList = (pin) => (Array.isArray(pin?.repins) ? pin.repins : []);
+
+/** The input_digest values pinned on each case's declared and deferred entries. */
+function entryDigests(pin) {
+  const out = new Map();
+  for (const list of ['declarations', 'deferred']) {
+    for (const e of Array.isArray(pin?.[list]) ? pin[list] : []) {
+      if (!e || typeof e.case !== 'string') continue;
+      if (!out.has(e.case)) out.set(e.case, new Set());
+      out.get(e.case).add(e.input_digest);
+    }
+  }
+  return out;
+}
+
+/** The to_digest of the last `repins` entry of each re-pinned case. */
+function lastRepins(pin) {
+  const out = new Map();
+  for (const r of repinList(pin)) if (r && typeof r.case === 'string') out.set(r.case, r.to_digest);
+  return out;
+}
+
+/**
+ * Effective input digest per pinned case: the last `repins` entry of the
+ * case, else the input_digest pinned on its declared and deferred entries
+ * (null when those entries disagree).
+ */
+export function effectiveDigests(pin) {
+  const out = new Map();
+  for (const [c, set] of entryDigests(pin)) out.set(c, set.size === 1 ? [...set][0] : null);
+  for (const [c, d] of lastRepins(pin)) if (out.has(c)) out.set(c, d);
+  return out;
+}
+
+/** `repins`: an array of well-formed entries, append-only, each one continuing its case's digest chain. */
+export function repinListProblems(basePin, headPin) {
+  const name = 'declarations.frozen.json';
+  const p = [];
+  if (!headPin || headPin.repins === undefined) {
+    if (repinList(basePin).length) p.push(`${name}: repins removed`);
+    return p;
+  }
+  if (!Array.isArray(headPin.repins)) return [`${name}: repins is not an array`];
+  const b = repinList(basePin);
+  for (let i = 0; i < b.length; i += 1) {
+    if (!same(b[i], headPin.repins[i])) p.push(`${name}: repins is append-only: entry ${i} (${b[i]?.case}) was edited or removed`);
+  }
+  const eff = effectiveDigests({ ...headPin, repins: [] });
+  const pinnedSets = entryDigests(headPin);
+  const chained = new Set();
+  const keys = ['case', 'from_digest', 'to_digest', 'pr', 'note'];
+  for (const r of headPin.repins) {
+    const ok = r && typeof r === 'object' && !Array.isArray(r)
+      && Object.keys(r).every((k) => keys.includes(k))
+      && typeof r.case === 'string' && r.case && HEX64.test(r.from_digest ?? '') && HEX64.test(r.to_digest ?? '')
+      && typeof r.pr === 'string' && r.pr.trim() && typeof r.note === 'string' && r.note.trim();
+    if (!ok) { p.push(`${name}: repins: malformed entry ${JSON.stringify(r).slice(0, 120)} (needs case, from_digest, to_digest, pr, note)`); continue; }
+    if (!eff.has(r.case)) { p.push(`${name}: repins: ${r.case} is not a declared or deferred case`); continue; }
+    if (r.from_digest === r.to_digest) p.push(`${name}: repins: ${r.case}: from_digest equals to_digest`);
+    const fromOk = chained.has(r.case) ? eff.get(r.case) === r.from_digest : [...pinnedSets.get(r.case)].every((d) => d === r.from_digest);
+    if (!fromOk) p.push(`${name}: repins: ${r.case}: from_digest is not the case's effective digest before this entry`);
+    eff.set(r.case, r.to_digest);
+    chained.add(r.case);
+  }
+  return p;
+}
+
+/** Per case, as strings: the document form, the full signature form (states, key relations, carried-key states) and the issuer history entries. */
+// A JWK with every member but the public key bytes x and y.
+const jwkMembers = (j) => (j && typeof j === 'object' && !Array.isArray(j) ? (({ x, y, ...rest }) => rest)(j) : j ?? null);
+
+/** Every carried JWK (history entries, JWKS keys, both issuer_jwk) with every member but x and y, in role order. */
+export function jwkMembersForm(c) {
+  const doc = parse(c?.doc);
+  const history = parse(c?.history);
+  const jwks = parse(c?.jwks);
+  const entries = history && typeof history === 'object' && Array.isArray(history.entries) ? history.entries.map((e) => jwkMembers(e?.jwk)) : null;
+  return {
+    history: entries,
+    jwks: jwks && typeof jwks === 'object' && Array.isArray(jwks.keys) ? jwks.keys.map(jwkMembers) : (jwks && typeof jwks === 'object' ? jwks.keys ?? null : null),
+    doc_issuer_jwk: jwkMembers(doc?.issuer_signature?.issuer_jwk),
+    history_issuer_jwk: jwkMembers(history?.issuer_signature?.issuer_jwk),
+  };
+}
+
+export function repinFormsOf(inputs) {
+  return Object.fromEntries((inputs?.cases ?? []).map((c) => {
+    const h = historyForm(c.history);
+    return [c.id, {
+      // Every carried JWK's members other than x and y (kty, crv, kid, alg, use, key_ops, x5c, d, ...).
+      keys: stable(jwkMembersForm(c)),
+      doc: stable(docForm(c.doc, c.history)),
+      // Every signature state, key relation and carried-key state (signatureForm).
+      signature: stable(signatureForm(c)),
+      history: stable(h && typeof h === 'object' && !Array.isArray(h) ? h.entries ?? null : h),
+    }];
+  }));
+}
+
+/** Repin entries appended against the merge-base pin. */
+export function appendedRepins(basePin, headPin) {
+  const h = repinList(headPin);
+  return h.slice(repinList(basePin).length);
+}
+
+const sameFullOutcome = (a, b) => {
+  const pick = (o) => (o && typeof o === 'object'
+    ? { exit: o.exit, result: o.result, reason: o.reason ?? null, cause: o.cause ?? null, checks: o.checks ?? null, overall: o.overall ?? null }
+    : o);
+  return stable(pick(a)) === stable(pick(b));
+};
+
+/**
+ * A change that appends to `repins` re-pins case inputs whose digest moved
+ * (for example a builder change in synthetic.mjs) without moving any
+ * outcome. It must:
+ *   - touch only REPIN_FILES;
+ *   - leave every pin list but `repins`, and every baseline row, as at the
+ *     merge base, and append only `repin` entries to changes.json, one per
+ *     appended repin (case, pr, spec);
+ *   - re-pin each case whose input digest moved, from its merge-base
+ *     effective digest (equal to the merge-base input) to the head digest,
+ *     with the case set unchanged;
+ *   - keep each moved case's document form, every signature state, key
+ *     relation and carried-key state, the issuer history entries, and every
+ *     carried JWK member other than x and y as at the merge base, and not
+ *     take another case's document;
+ *   - give the same full outcome (exit, result, reason, cause, every check
+ *     including signature, overall) on every case path when the MERGE-BASE
+ *     verifier runs the head input and the merge-base input.
+ * The review of a re-pin from the account that controls the repository is
+ * a required human step the gate cannot check (see test/corpus/README.md).
+ */
+export function repinProblems({ basePin, headPin, baseBaseline, headBaseline, addedChanges, changedFiles, baseDigests, headDigests, repinOutcomes, repinForms = null }) {
+  const added = appendedRepins(basePin, headPin);
+  const changeRepins = (addedChanges ?? []).filter((ch) => ch?.kind === 'repin');
+  const p = [];
+  if (!added.length) {
+    for (const ch of changeRepins) p.push(`changes.json: repin entry for ${ch?.case} with no repins entry appended to declarations.frozen.json`);
+    return p;
+  }
+  const label = 're-pin';
+  if (!basePin) p.push(`${label}: needs declarations.frozen.json at the merge base`);
+  // Scope.
+  if (!Array.isArray(changedFiles)) p.push(`${label}: needs the list of files this change touches`);
+  else {
+    const allowed = new Set(REPIN_FILES);
+    const outside = changedFiles.filter((f) => !allowed.has(String(f)) || !/^[\x20-\x7e]+$/.test(String(f)));
+    if (outside.length) p.push(`${label}: a re-pin change touches only ${REPIN_FILES.join(', ')}; it also touches ${outside.slice(0, 3).join(', ')}${outside.length > 3 ? `, and ${outside.length - 3} more` : ''}`);
+  }
+  // Nothing else in the pin, the baseline or changes.json moves.
+  const rest = (pin) => { const { repins: _r, ...o } = pin ?? {}; return o; };
+  if (basePin && headPin && !same(rest(basePin), rest(headPin))) p.push(`${label}: declarations.frozen.json may change only by appending to repins`);
+  if (!same(baseBaseline ?? {}, headBaseline ?? {})) p.push(`${label}: baseline rows may not change in a re-pin change`);
+  for (const ch of addedChanges ?? []) if (ch?.kind !== 'repin') p.push(`${label}: changes.json may get only repin entries in a re-pin change (found ${JSON.stringify(ch?.kind ?? 'tighten')})`);
+  const want = new Map();
+  for (const r of added) want.set(r?.case, (want.get(r?.case) ?? 0) + 1);
+  const got = new Map();
+  for (const ch of changeRepins) {
+    if (!ch.case || !ch.pr || !ch.spec || ch.path !== undefined) p.push(`changes.json: repin entry needs case, pr and spec, and no path: ${JSON.stringify(ch).slice(0, 120)}`);
+    got.set(ch.case, (got.get(ch.case) ?? 0) + 1);
+  }
+  for (const c of new Set([...want.keys(), ...got.keys()])) {
+    if ((want.get(c) ?? 0) !== (got.get(c) ?? 0)) p.push(`${label}: ${c}: ${want.get(c) ?? 0} repins entries but ${got.get(c) ?? 0} changes.json repin entries`);
+  }
+  // Digests.
+  if (!baseDigests || !headDigests) p.push(`${label}: needs the merge-base and head input digests (--base-tree, --head-inputs)`);
+  else {
+    const baseIds = Object.keys(baseDigests).sort();
+    const headIds = Object.keys(headDigests).sort();
+    if (stable(baseIds) !== stable(headIds)) p.push(`${label}: the case set may not change in a re-pin change`);
+    const baseEff = effectiveDigests(basePin);
+    const headLast = lastRepins(headPin);
+    for (const r of added) {
+      if (!r || typeof r.case !== 'string') continue;
+      if (baseDigests[r.case] === undefined || headDigests[r.case] === undefined) { p.push(`${label}: ${r.case}: no merge-base or head input`); continue; }
+      if (baseEff.has(r.case) && baseDigests[r.case] !== baseEff.get(r.case)) p.push(`${label}: ${r.case}: the merge-base input is not its merge-base effective digest`);
+    }
+    for (const id of headIds) {
+      if (baseDigests[id] === undefined || baseDigests[id] === headDigests[id]) continue;
+      if (!want.has(id)) p.push(`${label}: ${id}: input digest changed with no repins entry`);
+      else if (headLast.get(id) !== headDigests[id]) p.push(`${label}: ${id}: the last repin's to_digest is not the head input digest`);
+    }
+    for (const id of want.keys()) {
+      if (baseDigests[id] !== undefined && baseDigests[id] === headDigests[id]) p.push(`${label}: ${id}: re-pinned, but its input digest did not change`);
+    }
+  }
+  // Case identity: a re-pin keeps everything the verifier's rules read. The
+  // document form (version, shape, payload, every field), every signature
+  // state, key relation and carried-key state (which key verifies, which
+  // roles share key bytes), and the issuer history entries (kid, key form,
+  // window, status, revocation) are those of the merge base. What may move
+  // is the rest of the JWKS and history forms (for example a field outside
+  // the keys and entries). A re-pinned input also may not take another
+  // case's document.
+  const reIds = new Set(added.map((r) => r?.case).filter((c) => typeof c === 'string'));
+  if (baseDigests && headDigests) for (const id of Object.keys(headDigests)) if (baseDigests[id] !== undefined && baseDigests[id] !== headDigests[id]) reIds.add(id);
+  if (!repinForms?.base || !repinForms?.head) p.push(`${label}: needs the merge-base and head case documents (--base-tree, --head-inputs)`);
+  else {
+    for (const id of reIds) {
+      const b = repinForms.base[id];
+      const h = repinForms.head[id];
+      if (!b || !h) { p.push(`${label}: ${id}: no merge-base or head case document`); continue; }
+      if (b.doc !== h.doc) p.push(`${label}: ${id}: the case document changed; a re-pin keeps the document form (a changed document is a new case)`);
+      if (b.signature !== h.signature) p.push(`${label}: ${id}: a signature state, key relation or carried-key state changed (document or issuer history); a re-pin keeps every key the verifier can read`);
+      if (b.keys !== h.keys) p.push(`${label}: ${id}: a JWK member other than x and y changed (kty, crv, kid, alg, use, key_ops, x5c and every other member stay); a re-pin keeps every carried key's members`);
+      if (b.history !== h.history) p.push(`${label}: ${id}: the issuer history entries changed; a re-pin keeps every history key, kid, window, status and revocation`);
+      for (const [other, f] of Object.entries(repinForms.base)) {
+        if (other !== id && f.doc === h.doc) p.push(`${label}: ${id}: the re-pinned document is the document of ${other}`);
+      }
+    }
+  }
+  // Outcome identity on main's verifier.
+  const onHead = repinOutcomes?.onHead;
+  const onBase = repinOutcomes?.onBase;
+  if (!onHead || !onBase) p.push(`${label}: needs the merge-base verifier outcomes on the head and merge-base inputs (--base-tree, --head-inputs)`);
+  else {
+    const keys = new Set([...Object.keys(onHead), ...Object.keys(onBase), ...(repinOutcomes.keys ?? [])]);
+    if (!keys.size) p.push(`${label}: no case path was run on the merge-base verifier`);
+    for (const k of keys) {
+      if (!Object.prototype.hasOwnProperty.call(onHead, k) || !Object.prototype.hasOwnProperty.call(onBase, k)) { p.push(`${label}: ${k}: no merge-base verifier outcome on both inputs`); continue; }
+      if (!sameFullOutcome(onHead[k], onBase[k])) {
+        const a = onBase[k] || {};
+        const b = onHead[k] || {};
+        p.push(`${label}: ${k}: the merge-base verifier gives a different outcome on the head input (exit ${a.exit} ${a.result} ${a.cause ?? a.reason} -> exit ${b.exit} ${b.result} ${b.cause ?? b.reason}, or a check)`);
+      }
     }
   }
   return p;
@@ -923,7 +1174,7 @@ export function basePinStateProblems(state, required) {
  * Pure gate. Each argument is parsed JSON (or null when the file does not
  * exist on that side). Returns a list of problems.
  */
-export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null, basePinState = null, basePinRequired = false }) {
+export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, baseRegistry, headRegistry, baseDigests = null, headDigests = null, baseOnHead = null, changedFiles = null, baseCases = null, basePin = null, headPin = null, headDecls = null, headCases = null, repinOutcomes = null, repinForms = null, basePinState = null, basePinRequired = false }) {
   const problems = [];
   // The merge-base pin, read as data: an unparseable one always fails, and
   // a missing one fails once the merge-base gate knows the pin (only the
@@ -950,9 +1201,9 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   const addedFor = new Map();
   for (const ch of added) {
     const kind = ch?.kind ?? 'tighten';
-    if (!['tighten', 'corpus_fix', 'corpus_fix_reason', 'registry'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
+    if (!['tighten', 'corpus_fix', 'corpus_fix_reason', 'registry', 'repin'].includes(kind)) { problems.push(`changes.json: unknown kind ${JSON.stringify(kind)}`); continue; }
     if (!ch.pr || !ch.spec) problems.push(`changes.json: entry without pr and spec: ${JSON.stringify(ch).slice(0, 120)}`);
-    if (kind === 'registry') continue;
+    if (kind === 'registry' || kind === 'repin') continue;
     if (!ch.case || !ch.path) { problems.push(`changes.json: entry without case and path: ${JSON.stringify(ch).slice(0, 120)}`); continue; }
     const key = `${ch.case}|${ch.path}`;
     if (addedFor.has(key)) problems.push(`changes.json: two added entries for ${key}`);
@@ -962,6 +1213,9 @@ export function gate({ baseBaseline, headBaseline, baseChanges, headChanges, bas
   const base = baseBaseline ?? {};
   const head = headBaseline ?? {};
   const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+  // Reviewed re-pin (repins appended to declarations.frozen.json).
+  problems.push(...repinProblems({ basePin, headPin, baseBaseline, headBaseline, addedChanges: added, changedFiles, baseDigests, headDigests, repinOutcomes, repinForms }));
 
   // A corpus correction (corpus_fix entry, or a baseline row removed) may
   // not share a change with a verifier change: the verifier would be
@@ -1223,7 +1477,7 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
   if (historyProblems.length) return historyProblems;
   const fixKeys = addedCorpusFixKeys(files.baseChanges, files.headChanges);
   const appendKeys = appendedPinEntries(files.basePin, files.headPin).map(pinKey);
-  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, changedFiles: changedFilesOf(root, base) };
+  const extra = { baseDigests: null, headDigests: null, baseOnHead: null, baseCases: null, headDecls: null, headCases: null, repinOutcomes: null, repinForms: null, changedFiles: changedFilesOf(root, base) };
   const problems = [];
   const corrections = fixKeys.length > 0 || Object.keys(files.baseBaseline ?? {}).some((k) => !Object.prototype.hasOwnProperty.call(files.headBaseline ?? {}, k));
   const inputsOk = !!headInputs && inputsProblems(headInputs).length === 0;
@@ -1233,16 +1487,24 @@ export async function gateRepo(root, base, { baseTree = null, headInputs = null 
     extra.headCases = headInputs.cases.map((c) => ({ id: c.id, paths: c.paths }));
     extra.headDigests = inputDigests(headInputs);
   }
-  const needBase = fixKeys.length > 0 || appendKeys.length > 0;
+  const repin = appendedRepins(files.basePin, files.headPin).length > 0;
+  const needBase = fixKeys.length > 0 || appendKeys.length > 0 || repin;
+  let baseInputs = null;
   if (baseTree && (corrections || needBase)) {
     try {
-      const baseInputs = await exportInputs(baseTree);
+      baseInputs = await exportInputs(baseTree);
       extra.baseCases = caseDeclarations(baseInputs);
       if (needBase) extra.baseDigests = inputDigests(baseInputs);
     } catch (e) { problems.push(`merge-base inputs could not be built: ${e.message}`); }
   }
-  if (needBase && baseTree && inputsOk) {
+  if ((fixKeys.length > 0 || appendKeys.length > 0) && baseTree && inputsOk) {
     extra.baseOnHead = await baseOutcomes(baseTree, headInputs, [...new Set([...fixKeys, ...appendKeys])]);
+  }
+  if (repin && baseTree && inputsOk && baseInputs) {
+    // Every case path, on the merge-base verifier, with the head input and with the merge-base input.
+    const keys = [...new Set([...headInputs.cases, ...baseInputs.cases].flatMap((c) => c.paths.map((x) => `${c.id}|${x}`)))];
+    extra.repinOutcomes = { keys, onHead: await baseOutcomes(baseTree, headInputs, keys), onBase: await baseOutcomes(baseTree, baseInputs, keys) };
+    extra.repinForms = { base: repinFormsOf(baseInputs), head: repinFormsOf(headInputs) };
   }
   const chain = gateChain({
     baseChainBaseline: gitShow(root, base, CHAIN_BASELINE),
