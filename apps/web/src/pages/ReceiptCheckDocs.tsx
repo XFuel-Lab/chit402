@@ -10,7 +10,7 @@ const example = `# Receipt JSON and /preimage for this id both return 200.
 curl -sS "${RECEIPT}" -o receipt.json
 curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preimage.json
 # /preimage is the unsigned public shell (JCS), not the signed payload.
-# This receipt carries a public attestation, so a stranger can check it:
+# This receipt carries a public attestation, so anyone with the URL can check it:
 npx chit402-verify "https://api.chit402.com/receipt/${RECEIPT_ID}"
 # VERIFIED_PUBLIC: settled amount, payee, tx, and log position. Payer is not claimed.
 curl -sS "${HISTORY}?version=1" -o issuer-history.json
