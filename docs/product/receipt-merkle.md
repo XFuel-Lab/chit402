@@ -15,7 +15,7 @@ Receipts issued before the public log started (Oct 2, 2026) have no leaf. Their 
 
 - A receipt leaf body is the UTF-8 string `task_id|row_hash`: the receipt's `task_id` exactly as the inclusion response names it (for example `xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15`; a `chit-` receipt id resolves to its `xfuel-` task id), one ASCII `|` (0x7c), then `row_hash` as 64 lowercase hex characters with no `0x`. No JSON, no quotes, no whitespace, no trailing newline. A missing `row_hash` is the empty string.
 - Leaf 0 of an epoch is the genesis body, the compact JSON `{"schema":"chit402.tree_genesis.v1","payload_version":1,"verifier_binary_build_digest":"<digest>"}` in that key order. The digest is 64 hex characters, or JSON `null` (unquoted) when none was published at that genesis.
-- `row_hash` is owner-held (see [receipt-preimage.md](./receipt-preimage.md)). A stranger starts from the published leaf hash (`leaf` on the inclusion response, `inclusion.leaf_hash` on the public shell). The owner can check that step too.
+- `row_hash` is owner-held (see [receipt-preimage.md](./receipt-preimage.md)). An outside party starts from the published leaf hash (`leaf` on the inclusion response, `inclusion.leaf_hash` on the public shell). The owner can check that step too.
 
 ### Hashes
 
@@ -97,14 +97,14 @@ Epochs are separate trees. A consistency proof covers two sizes in the same epoc
 
 ## Public attestation
 
-A receipt shell is unsigned. A stranger cannot recompute `leaf_hash` from it, because `row_hash` is owner-held. For eligible Base receipts the shell carries `public_attestation.jws`, an ES256 JWS (`typ` `chit402-public-receipt+jwt`) under the issuer key in `/.well-known/jwks.json`. Its payload is the line `chit402.public_receipt.v1`, a newline, and a JSON object that signs:
+A receipt shell is unsigned. An outside party cannot recompute `leaf_hash` from it, because `row_hash` is owner-held. For eligible Base receipts the shell carries `public_attestation.jws`, an ES256 JWS (`typ` `chit402-public-receipt+jwt`) under the issuer key in `/.well-known/jwks.json`. Its payload is the line `chit402.public_receipt.v1`, a newline, and a JSON object that signs:
 
 - `task_id` and `issued_at`
 - `payment.ref` (the payment tx, `base:0x…`), `payment.payee`, `payment.gross_amount`, `payment.settled_amount`, `payment.asset` and `payment.rail`
 - `log.leaf_hash`, `log.leaf_index` and `log.epoch`
 - `iss` and `attested_at`
 
-That ties the public fields to the leaf by signature, so the inclusion proof for `log.leaf_hash` covers this receipt. The payer is not in the attestation or the leaf. That is by design. `npx chit402-verify <receipt url>` reports `verified_public` only when the attestation signature, the shell fields, the leaf's inclusion and anchor, and the Base payment all check out. A receipt issued before public attestation started has no `public_attestation`, and a stranger check of it reports could not check.
+That ties the public fields to the leaf by signature, so the inclusion proof for `log.leaf_hash` covers this receipt. The payer is not in the attestation or the leaf. That is by design. `npx chit402-verify <receipt url>` reports `verified_public` only when the attestation signature, the shell fields, the leaf's inclusion and anchor, and the Base payment all check out. A receipt issued before public attestation started has no `public_attestation`, and an outside check of it reports could-not-check.
 
 ## Dual anchor
 
