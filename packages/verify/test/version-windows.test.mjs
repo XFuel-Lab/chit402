@@ -7,10 +7,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const windowsPath = join(pkgDir, 'version-windows.json');
@@ -55,7 +55,7 @@ function keyPair() {
 }
 
 function signWindows(body, key, kid = key.kid) {
-  const dir = mkdtempSync(join(tmpdir(), 'vw-'));
+  const dir = tempDir('vw-');
   const bodyPath = join(dir, 'body.json');
   writeFileSync(bodyPath, JSON.stringify(body));
   const input = execFileSync(process.execPath, [helper, 'signing-input', bodyPath, kid, '1792674000']).toString();
@@ -454,7 +454,7 @@ test('the test seam swaps the windows for one call', async () => {
 test('the test seam replaces the bundled issuer history in the CLI resolver', async () => {
   const { resolveIssuerHistory, loadBundledIssuerHistory } = await import('../dist/issuer-history.js');
   const { writeCoveringHistory } = await import('./history-file.mjs');
-  const dir = mkdtempSync(join(tmpdir(), 'vw-seam-'));
+  const dir = tempDir('vw-seam-');
   const historyPath = await writeCoveringHistory(dir, { privateKey: kp.privateKey, kid: kp.kid, publicJwk: kp.jwk }, '2026-09-01T00:00:00.000Z');
   const bytes = readFileSync(historyPath, 'utf8');
   const document = JSON.parse(bytes);

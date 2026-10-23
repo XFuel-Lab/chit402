@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { verifyReceipt, verifyReceiptUpToV10 } from '../dist/index.js';
 import { v11SaltRejection } from '../dist/v11-receipt.js';
 import { assertLibraryPass } from './library-pass.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
@@ -111,7 +112,7 @@ test('malformed salts and a wrong salt fail with distinct reasons', async () => 
   const salt = 'cd'.repeat(32);
   const { privateKey, jwk } = jwkAndKey();
   const receipt = receiptFor(privateKey, jwk, baseClaims(salt));
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'v11-verify-'));
+  const dir = tempDir('v11-verify-');
   const file = path.join(dir, 'receipt.json');
   fs.writeFileSync(file, JSON.stringify(receipt));
   const jwks = path.join(dir, 'jwks.json');

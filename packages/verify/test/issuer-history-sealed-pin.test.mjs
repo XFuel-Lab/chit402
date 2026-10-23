@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const {
@@ -227,10 +228,9 @@ test('the CLI history resolver refuses a v1 fork', async () => {
 
 test('the CLI does not verify against a v1 fork history file', async () => {
   const { spawnSync } = await import('node:child_process');
-  const { mkdtempSync, writeFileSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
+  const { writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const dir = mkdtempSync(join(tmpdir(), 'v1-fork-'));
+  const dir = tempDir('v1-fork-');
   const forkPath = join(dir, 'history.json');
   writeFileSync(forkPath, successor(v1Bytes, testKey(), 3, 3).bytes);
   const receiptPath = fileURLToPath(new URL('./fixtures/chit-5d775d12.v7.json', import.meta.url));

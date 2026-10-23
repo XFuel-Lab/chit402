@@ -12,12 +12,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corpusDir, compare, consistency, pool, runPathAsync } from './corpus/lib.mjs';
 import { buildSynthetic } from './corpus/synthetic.mjs';
 import { GET_HOSTS } from './corpus/tape-hosts.mjs';
+import { tempDir } from './tmp-dirs.mjs';
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 const manifest = readJson(join(corpusDir, 'manifest.json'));
@@ -27,7 +27,7 @@ const publicTape = join(corpusDir, 'tapes', 'public.json');
 const fixtures = join(corpusDir, '..', 'fixtures');
 const BLOCKED = /1e57cdd7/i;
 
-const synthetic = await buildSynthetic(mkdtempSync(join(tmpdir(), 'corpus-syn-')));
+const synthetic = await buildSynthetic(tempDir('corpus-syn-'));
 const cases = [
   ...manifest.ids.map((c) => ({ ...c, kind: 'id', paths: ['cli'] })),
   ...manifest.files.map((c) => ({ ...c, kind: 'file', file: join(fixtures, c.fixture), paths: ['cli'] })),
@@ -266,7 +266,7 @@ test('every RPC entry on the tapes is an error entry, every GET is on an allowed
 });
 
 test('the tape check rejects an RPC answer and a GET off the allowed hosts', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tape-check-'));
+  const dir = tempDir('tape-check-');
   const f = join(dir, 'tape.json');
   writeFileSync(f, JSON.stringify({ entries: {
     'RPC h getTransaction []': { status: 200, body: '{"result":{}}' },

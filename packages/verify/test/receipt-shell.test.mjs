@@ -11,10 +11,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -92,7 +92,7 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
     assert.equal(raw.includes(banned), false, banned);
   }
 
-  const dir = mkdtempSync(join(tmpdir(), 'chit-shell-'));
+  const dir = tempDir('chit-shell-');
   const shellPath = join(dir, 'shell.json');
   writeFileSync(shellPath, raw);
   const inclusion = inclusionFor(holder);
@@ -148,7 +148,7 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
 test('a forged holder key is not VERIFIED, and a shell without inclusion is not VERIFIED', () => {
   const holder = JSON.parse(readFileSync(holderPath, 'utf8'));
   const forged = resign(holder);
-  const dir = mkdtempSync(join(tmpdir(), 'chit-shell-attack-'));
+  const dir = tempDir('chit-shell-attack-');
   const shell = shellFromHolder(forged);
   const shellPath = join(dir, 'shell.json');
   writeFileSync(shellPath, JSON.stringify(shell));

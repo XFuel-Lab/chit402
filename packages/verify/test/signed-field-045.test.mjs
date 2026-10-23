@@ -6,10 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const rpcPreload = new URL('./rpc-preload.mjs', import.meta.url).href;
@@ -141,7 +141,7 @@ test('an honest holder doc is not exit 1, and a spoofed id is not shown', async 
     await new Promise((resolve) => server.close(resolve));
   }
 
-  const dir = mkdtempSync(join(tmpdir(), 'chit-holder-045-'));
+  const dir = tempDir('chit-holder-045-');
   const file = join(dir, 'holder.json');
   writeFileSync(file, JSON.stringify(holder));
   const cliRun = runCli([file, '--json'], {

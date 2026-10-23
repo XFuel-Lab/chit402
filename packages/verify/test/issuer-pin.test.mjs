@@ -5,12 +5,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -923,7 +923,7 @@ test('published pin ref names a commit and the file hash', () => {
 });
 
 test('anchor CLI reports a downgrade without a network fetch', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-'));
+  const dir = tempDir('issuer-pin-');
   const receipt = join(dir, 'receipt.json');
   const inclusion = join(dir, 'inclusion.json');
   const head = join(dir, 'head.json');
@@ -940,7 +940,7 @@ test('anchor CLI reports a downgrade without a network fetch', () => {
 });
 
 test('witness flags do not downgrade a receipt that does not claim a pin', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-aux-'));
+  const dir = tempDir('issuer-pin-aux-');
   const receipt = join(dir, 'receipt.json');
   const inclusion = join(dir, 'inclusion.json');
   const head = join(dir, 'head.json');
@@ -975,7 +975,7 @@ test('witness flags do not downgrade a receipt that does not claim a pin', () =>
 });
 
 test('a witnesses file does not replace a claimed pin', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-era-'));
+  const dir = tempDir('issuer-pin-era-');
   const receipt = join(dir, 'receipt.json');
   const inclusion = join(dir, 'inclusion.json');
   const head = join(dir, 'head.json');
@@ -994,7 +994,7 @@ test('a witnesses file does not replace a claimed pin', () => {
 });
 
 test('the CLI prior pin cannot install an attacker key', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'issuer-pin-prior-'));
+  const dir = tempDir('issuer-pin-prior-');
   const attacker = makeKey();
   const bytes = pinBytes(attacker);
   const pinFile = join(dir, 'pin.json');
