@@ -32,6 +32,20 @@ function file(text) {
 }
 const keys = [jwk];
 
+// Flip one bit of a decoded signature byte and re-encode. Editing the last
+// base64url character is not reliable: for a 64-byte signature it carries
+// only 2 data bits, so some edits change only padding bits and decode to the
+// same signature.
+function flipSignatureBit(jws) {
+  const [h, p, s] = jws.split('.');
+  const raw = Buffer.from(s, 'base64url');
+  const edited = Buffer.from(raw);
+  edited[32] ^= 0x01;
+  const out = edited.toString('base64url');
+  assert.notDeepEqual(Buffer.from(out, 'base64url'), raw, 'the edit changes the decoded signature');
+  return `${h}.${p}.${out}`;
+}
+
 test('serves the exact bytes of a document whose production signature verifies', () => {
   const text = doc();
   assert.equal(versionWindowsBytes(file(text), { keys }), text);
@@ -41,7 +55,7 @@ test('the signature is verified, not only the kid fields', () => {
   assert.equal(versionWindowsBytes(file(doc()), { keys: [otherJwk] }), null, 'wrong key');
   assert.equal(versionWindowsBytes(file(doc()), { keys: [] }), null, 'no key');
   assert.equal(versionWindowsBytes(file(doc({ edit: (d) => { d.log_grace_seconds = 1; } })), { keys }), null, 'body edited after signing');
-  assert.equal(versionWindowsBytes(file(doc({ edit: (d) => { d.issuer_signature.jws = d.issuer_signature.jws.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')); } })), { keys }), null, 'signature bytes edited');
+  assert.equal(versionWindowsBytes(file(doc({ edit: (d) => { d.issuer_signature.jws = flipSignatureBit(d.issuer_signature.jws); } })), { keys }), null, 'signature bytes edited');
   assert.equal(versionWindowsBytes(file(doc({ bodyHash: 'ab'.repeat(32) })), { keys }), null, 'payload hash is not the body');
   assert.equal(versionWindowsBytes(file(doc({ payloadSchema: 'x' })), { keys }), null, 'payload schema');
 });
