@@ -136,7 +136,9 @@ test('compare fails closed on a missing outcome or no outcomes at all', () => {
 
 test('git reads ignore replace refs and grafts (changed and overlay)', { skip: !gitOk }, () => {
   const r = harnessRepo();
-  const lib = readFileSync(join(r.root, LIB), 'utf8');
+  // The committed blob, which is what the overlay writes (the working copy
+  // may have CRLF line ends on Windows).
+  const lib = spawnSync('git', ['-C', r.root, 'show', `HEAD:${LIB}`], { encoding: 'utf8' }).stdout;
   edit(r.root, 'packages/verify/src/cli.ts', (s) => `${s}\n`);
   r.git('commit', '-q', '-am', 'src only');
   const forged = join(work, 'forged-lib.mjs');
