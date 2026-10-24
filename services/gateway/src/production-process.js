@@ -88,6 +88,17 @@ export function noteLoadedIssuerKid(kid) {
   loadedKid = kid ? String(kid) : null;
 }
 
+/** The kid issuer-key recorded for the key it loaded, or null. */
+export function loadedIssuerKid() {
+  return loadedKid;
+}
+
+/** RFC 7638 kid of base64 PEM issuer key material, or null when it does not parse. */
+export function issuerMaterialKid(material) {
+  const m = material == null ? '' : String(material).trim();
+  return m ? kidOfMaterial(m) : null;
+}
+
 /** NODE_ENV unset, or anything but exact test/development, is production. */
 export function nodeEnvIsProduction(nodeEnv) {
   const env = nodeEnv == null ? '' : String(nodeEnv).trim();

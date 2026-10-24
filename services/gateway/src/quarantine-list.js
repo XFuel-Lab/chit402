@@ -19,10 +19,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { computeJwkThumbprint, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
-import { isProductionIssuerPublicKey, isProductionProcess, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
+import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
+import { issuerMaterialKid, loadedIssuerKid, testIssuerKids } from './production-process.js';
 
 export const QUARANTINE_LIST_SCHEMA = 'chit402.quarantine_list.v1';
 export const QUARANTINE_LIST_TYP = 'chit402-quarantine-list+jwt';
@@ -199,8 +200,33 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   if (publicJwk && isProductionIssuerPublicKey(publicJwk, extra.keys)) {
     return { ok: false, reason: 'production_key' };
   }
-  // Last: the shared check (production kid or key loaded, or a key set without the test opt-out).
-  if (isProductionProcess(env) || isProductionProcess(process.env)) return { ok: false, reason: 'production_env' };
+  // Narrowed (decision 1, option b): ISSUER_TEST_KEY is ignored here. Every
+  // key this process could sign with must be a known test key (public-seed
+  // test keys, testIssuerKids): the signer's public key by its own
+  // thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in either
+  // env, and the key issuer-key loaded. An unlisted key, including a new
+  // production key not yet in PRODUCTION_ISSUER_PUBLIC_KEYS, never signs.
+  const testKids = testIssuerKids();
+  if (publicJwk) {
+    let thumb = null;
+    try {
+      thumb = wellFormedPublicJwk(publicJwk) ? computeJwkThumbprint({ kty: 'EC', crv: 'P-256', x: publicJwk.x, y: publicJwk.y }) : null;
+    } catch {
+      thumb = null;
+    }
+    if (!thumb || !testKids.has(thumb)) return { ok: false, reason: 'not_test_key' };
+  }
+  if (kid != null && !testKids.has(String(kid))) return { ok: false, reason: 'not_test_key' };
+  for (const e of [env, process.env]) {
+    const material = e?.ISSUER_PRIVATE_KEY;
+    if (material != null && String(material).trim() && !testKids.has(issuerMaterialKid(material))) {
+      return { ok: false, reason: 'not_test_key' };
+    }
+    const configured = String(e?.ISSUER_KID || '').trim();
+    if (configured && !testKids.has(configured)) return { ok: false, reason: 'not_test_key' };
+  }
+  const loaded = loadedIssuerKid();
+  if (loaded && !testKids.has(loaded)) return { ok: false, reason: 'not_test_key' };
   return { ok: true };
 }
 

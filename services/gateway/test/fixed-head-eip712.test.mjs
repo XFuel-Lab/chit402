@@ -948,7 +948,7 @@ test('quarantine guard: a relabelled stand-in key whose public key matches a pro
     else process.env.ISSUER_HISTORY_EXTRA = saved;
   }
   assert.equal(standInSigner.calls.length, 0);
-  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'any-label', publicJwk: jwk }), { ok: true }, 'not listed: a plain test key');
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'any-label', publicJwk: jwk }), { ok: false, reason: 'not_test_key' }, 'not listed and not a known test key: refused (decision 1 narrowing)');
   resetIssuerSigner();
 });
 
@@ -1029,6 +1029,45 @@ test('quarantine guard: a malformed ISSUER_HISTORY_EXTRA refuses (history_extra_
   }
   assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: good }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'production_key' }, 'a well-formed entry is a key to refuse');
   assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: '  ' }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: true }, 'blank is unset');
+});
+
+test('quarantine guard (narrowed): ISSUER_TEST_KEY is ignored; only a known test key signs, any other key is refused (not_test_key)', async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
+  const throwaway = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const tj = throwaway.publicKey.export({ format: 'jwk' });
+  const throwawayEnv = Buffer.from(throwaway.privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+  const saved = process.env.ISSUER_TEST_KEY;
+  try {
+    for (const flag of [undefined, '1']) {
+      if (flag === undefined) delete process.env.ISSUER_TEST_KEY;
+      else process.env.ISSUER_TEST_KEY = flag;
+      const label = `ISSUER_TEST_KEY=${flag}`;
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_TEST_KEY: '1' }, kid: 'unlisted', publicJwk: tj }), { ok: false, reason: 'not_test_key' }, label);
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_TEST_KEY: '1' }, kid: KEY.kid, publicJwk: tj }), { ok: false, reason: 'not_test_key' }, `${label}: the claimed kid does not decide`);
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_TEST_KEY: '1', ISSUER_PRIVATE_KEY: throwawayEnv } }), { ok: false, reason: 'not_test_key' }, label);
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'development', ISSUER_TEST_KEY: '1', ISSUER_KID: 'rotated-kid' } }), { ok: false, reason: 'not_test_key' }, label);
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: true }, `${label}: the known synthetic test key`);
+      const unlisted = stubSigner({ kid: 'unlisted', publicJwk: { x: tj.x, y: tj.y }, privateKey: throwaway.privateKey });
+      _setIssuerSignerForTest(unlisted);
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test', ISSUER_TEST_KEY: '1' } }),
+        (err) => err.code === 'quarantine_sign_refused' && err.reason === 'not_test_key',
+        label,
+      );
+      assert.equal(unlisted.calls.length, 0);
+      const stub = installStub();
+      const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
+      assert.equal(JSON.parse(bytes).issuer_signature.kid, KEY.kid, `${label}: a stub on the known test key signs`);
+      assert.ok(stub.calls.length >= 1);
+      resetIssuerSigner();
+    }
+  } finally {
+    if (saved === undefined) delete process.env.ISSUER_TEST_KEY;
+    else process.env.ISSUER_TEST_KEY = saved;
+    resetIssuerSigner();
+  }
 });
 
 // ---------------------------------------------------------------- G15 KMS
