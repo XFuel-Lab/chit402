@@ -13,7 +13,8 @@
  * the way the gateway loads it (ISSUER_PRIVATE_KEY or KMS) and is never
  * printed, logged or written. Output: the signed v1 under
  * <log dir>/quarantine-list/v1.json and SIGNED_LIST_SHA256 for
- * pinQuarantineList.
+ * pinQuarantineList. RECEIPT_LOG_DIR must be set, as the gateway sees it, and
+ * --log-dir must name the same directory (log_dir_env_unset otherwise).
  */
 process.env.DOTENV_CONFIG_QUIET = 'true';
 const { runProductionListSigner } = await import('../src/quarantine-list-production.js');
