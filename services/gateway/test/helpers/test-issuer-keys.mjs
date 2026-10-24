@@ -21,9 +21,14 @@ export function testIssuerKey(n) {
 
 let next = 0;
 
-/** A distinct known test issuer key on each call in this process (cycles after 64). */
+/**
+ * A distinct known test issuer key on each call in this process. There are 64
+ * (the seeds in src/production-process.js); the 65th call throws instead of
+ * silently reusing a key. A file that needs more must add seeds there.
+ */
 export function nextTestIssuerKey() {
-  const key = testIssuerKey(next % 64);
+  if (next >= 64) throw new Error('nextTestIssuerKey: all 64 known test issuer keys are used in this process; add seeds to TEST_ISSUER_KEY_SEEDS');
+  const key = testIssuerKey(next);
   next += 1;
   return key;
 }
