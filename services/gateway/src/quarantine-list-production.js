@@ -363,9 +363,11 @@ async function runWith({
       err('v1 already holds this list under the production key; nothing signed or written');
       return { ok: true, state: 'same' };
     }
-    // The signer is loaded before the log is read: under KMS the log loader
-    // needs the active signer for the JWKS. It is read once, here; the same
-    // snapshot is used for the key match, the sign call and the verify.
+    // The input file and the list directory are already read. The signer is
+    // loaded before the receipt log is loaded (tree.load in buildFromLog):
+    // under KMS the log loader needs the active signer for the JWKS. The
+    // signer is read once, here; the same snapshot is used for the key
+    // match, the sign call and the verify.
     const signer = await loadSigner(env);
     if (ephemeralIssuerKid() != null) refuse('not_production_key', 'the loaded issuer key is ephemeral');
     const snap = snapshot(signer);
