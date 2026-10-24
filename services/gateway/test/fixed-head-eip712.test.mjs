@@ -1278,6 +1278,38 @@ test('M-Q1: in a fresh process with no issuer key configured, the ephemeral key 
   assert.equal(out.unlisted, 'not_test_key');
 });
 
+test('production keys: a JWK coordinate is well formed only as exactly 43 base64url characters decoding to 32 bytes', () => {
+  const prod = PP.PRODUCTION_ISSUER_PUBLIC_KEYS[0];
+  const x = prod.x;
+  const xBytes = Buffer.from(x, 'base64url');
+  assert.equal(PP.wellFormedPublicJwk({ x: prod.x, y: prod.y }), true, 'canonical form');
+  assert.equal(PP.wellFormedPublicJwk(KEY.publicJwk), true);
+  const bad = {
+    padded: `${x}=`,
+    standard: xBytes.toString('base64'),
+    lz33: Buffer.concat([Buffer.alloc(1), xBytes]).toString('base64url'),
+    short31: xBytes.subarray(1).toString('base64url'),
+    junkSuffix: `${x}!!..`,
+    junkInside: `${x.slice(0, 20)}*${x.slice(21)}`,
+    whitespace: ` ${x}`,
+    nonCanonicalLastChar: `${x.slice(0, 42)}${x[42] === 'B' ? 'C' : 'B'}`,
+    empty: '',
+    number: 42,
+  };
+  for (const [label, v] of Object.entries(bad)) {
+    if (label === 'nonCanonicalLastChar' && Buffer.from(bad[label], 'base64url').toString('base64url') === bad[label]) continue;
+    assert.equal(PP.wellFormedPublicJwk({ x: v, y: prod.y }), false, label);
+    assert.equal(PP.wellFormedPublicJwk({ x: prod.x, y: v }), false, `${label} (y)`);
+  }
+  // Matching still refuses non-canonical spellings of a production point.
+  for (const label of ['padded', 'standard', 'lz33', 'junkSuffix']) {
+    assert.equal(PP.isProductionIssuerPublicKey({ x: bad[label], y: prod.y }), true, `${label} still matches the production key`);
+  }
+  // An ISSUER_HISTORY_EXTRA entry with junk in a coordinate is malformed, not skipped.
+  const extra = JSON.stringify([{ jwk: { kty: 'EC', crv: 'P-256', x: bad.junkSuffix, y: prod.y } }]);
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: extra }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'history_extra_malformed' });
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {
