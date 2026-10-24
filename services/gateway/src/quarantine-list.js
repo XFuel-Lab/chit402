@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { computeJwkThumbprint, ephemeralIssuerKid, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
 import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
@@ -254,35 +254,85 @@ function guardError(reason) {
  * @returns {Promise<string>} stored bytes
  */
 export async function signQuarantineList(doc, { env = process.env } = {}) {
+  // Each signer property is read once, into a snapshot of plain values. The
+  // guards, the kid in the JWS header and the post-sign verify all use only
+  // the snapshot, so a getter cannot show the guard one key and kid and then
+  // sign or label with another. After the snapshot, the signer object is
+  // touched only to call sign().
   const peeked = peekIssuerSigner();
+  const peekedSnap = peeked ? signerSnapshot(peeked) : null;
   const first = quarantineSignGuard({
     env,
-    kid: peeked?.kid ?? null,
-    signerKind: peeked?.kind ?? null,
-    publicJwk: peeked?.publicJwk ?? null,
+    kid: peekedSnap?.kid ?? null,
+    signerKind: peekedSnap?.kind ?? null,
+    publicJwk: peekedSnap?.publicJwk ?? null,
   });
   if (!first.ok) throw guardError(first.reason);
   const active = peeked || await (await import('./issuer-signer.js')).initIssuerSigner(env);
+  const snap = peeked ? peekedSnap : signerSnapshot(active);
   const second = quarantineSignGuard({
     env,
-    kid: active?.kid ?? null,
-    signerKind: active?.kind ?? null,
-    publicJwk: active?.publicJwk ?? null,
+    kid: snap.kid,
+    signerKind: snap.kind,
+    publicJwk: snap.publicJwk,
   });
   if (!second.ok) throw guardError(second.reason);
+  if (snap.accessor) throw guardError('signer_accessor');
   // The guard judged the signer by the public key it reports, so it must report one.
-  if (!active?.publicJwk) throw guardError('no_public_key');
-  const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
-  if (kid !== active?.kid) throw guardError('signer_changed');
-  // The guard judged the public key the signer reports. The signature must
-  // verify under that key, so a signer that reports a test or ephemeral key
-  // but signs with another private key is refused.
-  const reported = { kty: 'EC', crv: 'P-256', x: active.publicJwk.x, y: active.publicJwk.y, kid, alg: 'ES256' };
+  if (!snap.publicJwk) throw guardError('no_public_key');
+  if (snap.kid == null) throw guardError('no_kid');
+  const signingInput = jwsSigningInput(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP, kid: snap.kid });
+  const signature = await snap.sign(Buffer.from(signingInput, 'utf8'));
+  if (!Buffer.isBuffer(signature) || signature.length !== 64) throw guardError('issuer_sign_invalid');
+  const jws = `${signingInput}.${signature.toString('base64url')}`;
+  if (jwsHeader(jws)?.kid !== snap.kid) throw guardError('signer_changed');
+  // The signature must verify under the public key the guard judged, so a
+  // signer that reports a test or ephemeral key but signs with another
+  // private key is refused.
+  const reported = { kty: 'EC', crv: 'P-256', x: snap.publicJwk.x, y: snap.publicJwk.y, kid: snap.kid, alg: 'ES256' };
   if (!verifyJwsWithJwks(jws, { keys: [reported] }).valid) throw guardError('signer_mismatch');
   return jcsRfc8785({
     ...doc,
-    issuer_signature: { alg: 'ES256', typ: QUARANTINE_LIST_TYP, kid, jws },
+    issuer_signature: { alg: 'ES256', typ: QUARANTINE_LIST_TYP, kid: snap.kid, jws },
   });
+}
+
+/** True when `name` is a getter or setter on `obj` or its prototype chain. */
+function hasAccessor(obj, name) {
+  for (let o = obj; o && typeof o === 'object'; o = Object.getPrototypeOf(o)) {
+    const d = Object.getOwnPropertyDescriptor(o, name);
+    if (d) return Boolean(d.get || d.set);
+  }
+  return false;
+}
+
+/**
+ * Plain copies of a signer's kind, kid and public key x/y, each property read
+ * exactly once, plus a bound sign() on the same object. `accessor` is true
+ * when any of them is a getter or setter: real signers (env, KMS, test stubs)
+ * are plain objects, so a getter there is refused rather than trusted.
+ */
+function signerSnapshot(signer) {
+  if (!signer) return { kind: null, kid: null, publicJwk: null, sign: null, accessor: false };
+  const kind = signer.kind;
+  const kid = signer.kid;
+  const pub = signer.publicJwk;
+  const sign = signer.sign;
+  let accessor = ['kind', 'kid', 'publicJwk', 'sign'].some((n) => hasAccessor(signer, n));
+  let publicJwk = null;
+  if (pub && typeof pub === 'object') {
+    const x = pub.x;
+    const y = pub.y;
+    accessor = accessor || hasAccessor(pub, 'x') || hasAccessor(pub, 'y');
+    publicJwk = { x: typeof x === 'string' ? x : null, y: typeof y === 'string' ? y : null };
+  }
+  return {
+    accessor,
+    kind: kind == null ? null : String(kind),
+    kid: kid == null ? null : String(kid),
+    publicJwk,
+    sign: typeof sign === 'function' ? (input) => sign.call(signer, input) : async () => { throw guardError('issuer_sign_invalid'); },
+  };
 }
 
 function jwsPayload(jws) {
