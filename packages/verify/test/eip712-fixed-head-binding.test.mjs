@@ -229,7 +229,8 @@ test('a binding that cannot be opened is unchecked, not a pass', () => {
 });
 
 test('B1 flag-off golden is pinned and carries no fixed head or binding', () => {
-  const raw = readFileSync(B1_FILE);
+  // Hash the committed (LF) bytes: a Windows checkout may have CRLF.
+  const raw = Buffer.from(readFileSync(B1_FILE, 'utf8').replace(/\r\n/g, '\n'), 'utf8');
   assert.equal(createHash('sha256').update(raw).digest('hex'), B1_SHA256);
   assert.equal(V.payer_binding.source_sha256, B1_SHA256);
   const b1 = JSON.parse(raw.toString('utf8'));

@@ -24,7 +24,7 @@ const { leafHashOf } = await import(path.join(gateway, 'src/public-attestation.j
 const shared = JSON.parse(fs.readFileSync(path.join(gateway, 'test/fixtures/escrow-eip712-vectors.json'), 'utf8'));
 const b1 = JSON.parse(fs.readFileSync(path.join(gateway, 'test/fixtures/payer-binding-b1-main.json'), 'utf8'));
 const B1_SHA256 = crypto.createHash('sha256')
-  .update(fs.readFileSync(path.join(gateway, 'test/fixtures/payer-binding-b1-main.json')))
+  .update(fs.readFileSync(path.join(gateway, 'test/fixtures/payer-binding-b1-main.json'), 'utf8').replace(/\r\n/g, '\n'))
   .digest('hex');
 
 const KEY = syntheticIssuerKey();
