@@ -389,6 +389,39 @@ test('verifyReceipt: the binding reads row_hash like the log leaf (boundRowHash)
   assert.deepEqual(none.payer_binding, { checked: false, valid: false, reason: 'row_hash_missing' });
 });
 
+test('verifyReceipt: a binding is checked under a JWKS key whose label is not its thumbprint (N2)', async () => {
+  const { receipt, payload } = resignedReceipt();
+  const LABEL = 'issuer-key-1';
+  const header = { alg: 'ES256', typ: 'chit402-receipt+jwt', kid: LABEL };
+  const input = `${Buffer.from(JSON.stringify(header)).toString('base64url')}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}`;
+  const sig = sign('sha256', Buffer.from(input), { key: KEY.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  const labelled = clone(receipt);
+  labelled.issuer_signature = { ...receipt.issuer_signature, jws: `${input}.${sig}`, kid: LABEL };
+  delete labelled.issuer_signature.issuer_jwk;
+  const jwks = { keys: [{ ...KEY.publicJwk, kid: LABEL }] };
+  const opts = { jwks, skipIssuerHistory: true };
+  const plain = await lib.verifyReceipt(labelled, opts);
+  assert.equal(plain.issuer_signature.valid, true, JSON.stringify(plain.issuer_signature));
+  assert.equal(plain.issuer_signature.trust, 'jwks');
+  assert.notEqual(LABEL, KEY.kid);
+
+  const binding = bindingFor(payload, ROW, SALT);
+  const good = await lib.verifyReceipt({ ...labelled, row_hash: ROW, payer_binding: { status: 'signed', binding, payer_salt: SALT } }, opts);
+  assert.deepEqual(good.payer_binding, { checked: true, valid: true });
+
+  const otherKey = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const forged = { ...clone(binding), ...signTyped('ReceiptBinding', binding.message, otherKey.privateKey) };
+  const bad = await lib.verifyReceipt({ ...labelled, row_hash: ROW, payer_binding: { status: 'signed', binding: forged, payer_salt: SALT } }, opts);
+  assert.deepEqual(bad.payer_binding, { checked: true, valid: false, reason: 'signature' });
+  assert.equal(bad.verdict.exit_code, 1);
+
+  // A JWKS key under the label that did not sign the receipt is not used.
+  const decoy = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+  const decoyJwks = { keys: [{ kty: 'EC', crv: 'P-256', x: decoy.x, y: decoy.y, kid: LABEL, alg: 'ES256' }, ...jwks.keys] };
+  const viaDecoy = await lib.verifyReceipt({ ...labelled, row_hash: ROW, payer_binding: { status: 'signed', binding, payer_salt: SALT } }, { jwks: decoyJwks, skipIssuerHistory: true });
+  assert.deepEqual(viaDecoy.payer_binding, { checked: true, valid: true });
+});
+
 test('verifyReceipt: a binding on a non-Base receipt fails as network', async () => {
   const { receipt, payload } = resignedReceipt();
   const claims = clone(payload);

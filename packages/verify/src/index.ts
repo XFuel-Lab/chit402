@@ -1881,6 +1881,8 @@ function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, 
     return;
   }
   const sig = result.issuer_signature;
+  // `key_trusted === false` cannot come with `valid === true` today; it is
+  // kept as defense in depth if a trust path ever changes.
   if (sig.valid !== true || sig.key_trusted === false || !sig.payload || typeof sig.kid !== 'string') {
     result.payer_binding = { checked: false, valid: false, reason: 'receipt_signature_untrusted' };
     return;
@@ -1890,7 +1892,23 @@ function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, 
     ...((options.issuerHistory?.entries || []) as Array<{ jwk?: unknown }>).map((entry) => entry?.jwk),
     receipt.issuer_signature?.issuer_jwk,
   ];
-  const jwk = keyForKid(sig.kid, candidates);
+  let jwk = keyForKid(sig.kid, candidates);
+  let bindingKid = sig.kid;
+  if (!jwk && sig.trust === 'jwks') {
+    // A caller JWKS may label the key with a kid that is not its RFC 7638
+    // thumbprint. Use the JWKS key that verified the receipt JWS; the
+    // binding names that key by its thumbprint.
+    const jws = receipt.issuer_signature?.jws;
+    const verifying = typeof jws === 'string'
+      ? jwksCandidates(options.jwks, sig.kid).find((key) => (
+        verifyIssuerJws(jws, key, { expectTyp: ISSUER_JWS_TYP.receipt }).valid
+      ))
+      : undefined;
+    if (verifying) {
+      jwk = verifying;
+      bindingKid = jwkThumbprint(verifying);
+    }
+  }
   if (!jwk) {
     result.payer_binding = { checked: false, valid: false, reason: 'key_unavailable' };
     return;
@@ -1900,7 +1918,7 @@ function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, 
   const check: PayerBindingCheck = bound.ok
     ? verifyReceiptBindingEip712(view.binding, {
       claims: sig.payload,
-      kid: sig.kid,
+      kid: bindingKid,
       jwk,
       rowHash: bound.row,
       payerSalt: view.payer_salt,
