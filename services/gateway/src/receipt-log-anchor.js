@@ -12,6 +12,7 @@ import { Wallet, getAddress } from 'ethers';
 import { ReceiptLogRefused } from './receipt-log-store.js';
 import { epochRootOf } from './receipt-log-epoch.js';
 import { analyzeSeq } from './book-seq.js';
+import { isProductionProcess } from './production-process.js';
 
 const PIN_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,9 +28,27 @@ export function normalizeRoot(root) {
   return hex;
 }
 
+/**
+ * The shared production check (production-process.js): NODE_ENV other than
+ * test/development, the production kid or public key loaded or active, an
+ * active KMS signer, or any issuer key signal (ISSUER_PRIVATE_KEY, ISSUER_KID,
+ * ISSUER_SIGNER=kms, ISSUER_KMS_KEY_ID) that is not a known test key under
+ * ISSUER_TEST_KEY=1.
+ */
+function productionEnv(env) {
+  return isProductionProcess(env);
+}
+
 function readPinFile(env) {
   const file = env.RECEIPT_LOG_PIN_FILE || PIN_FILE;
-  if (!fs.existsSync(file)) return null;
+  if (!fs.existsSync(file)) {
+    // Production never runs, or signs, without the pin: a missing pin file
+    // refuses instead of silently disabling the pin check.
+    if (productionEnv(env)) {
+      throw new ReceiptLogRefused('pin_missing', `receipt log pin file is missing: ${file}`);
+    }
+    return null;
+  }
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));

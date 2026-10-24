@@ -43,6 +43,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isProductionProcess } from './production-process.js';
 
 export const SALT_AAD_LABEL = 'v11/salt';
 export const SALT_AAD_PREFIX = SALT_AAD_LABEL;
@@ -613,12 +614,12 @@ export function resetSaltStore() {
 
 /**
  * Production is anything other than explicit test or development.
- * Unset NODE_ENV is production.
+ * Unset NODE_ENV is production. The shared check (production-process.js)
+ * also counts the loaded production kid or a set issuer key variable.
  * @param {string|undefined|null} nodeEnv
  */
 export function isProductionEnv(nodeEnv = process.env.NODE_ENV) {
-  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
-  return env !== 'test' && env !== 'development';
+  return isProductionProcess(process.env, { nodeEnv });
 }
 
 /**

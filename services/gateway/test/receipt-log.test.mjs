@@ -11,8 +11,17 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
+const { acquireReceiptLogLock, _releaseReceiptLogLocksForTest } = await import('../src/receipt-log-lock.js');
+
+/** Production writes the journal only while holding the directory lock. */
+function lockedDir(dir) {
+  const lock = acquireReceiptLogLock(dir);
+  assert.equal(lock.held, true, `receipt log lock for ${dir}: ${lock.reason}`);
+  return dir;
+}
 
 const {
   ReceiptMerkleTree,
@@ -2532,7 +2541,7 @@ test('rebuild with a configured key still refuses a book that is not epoch 1', (
     task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af',
     row_hash: 'not-the-historical-row',
   }) + '\n');
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const env = { ...process.env, ISSUER_PRIVATE_KEY: Buffer.from(pem).toString('base64') };
   const out = spawnSync(process.execPath, [
@@ -2972,7 +2981,7 @@ function restoreEnv(name, previous) {
 }
 
 function throwawayIssuer() {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const jwk = publicKey.export({ format: 'jwk' });
   return {
@@ -3017,7 +3026,11 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
         if (caps[1] == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
         else process.env.ANCHOR_MAX_PRIORITY_WEI = caps[1];
         const tree = new ReceiptMerkleTree();
-        tree.dir = tmp();
+        tree.dir = lockedDir(tmp());
+        // Production publishes only from a durable, locked log. This one
+        // starts its own throwaway genesis.
+        tree.durable = true;
+        tree.allowFreshGenesis = true;
         await tree.appendReceipt('row-1', 'hash-1', { publish: false });
         const before = signs;
         const head = await tree.publishHead({
@@ -3040,6 +3053,7 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
     restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
     restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
     restoreEnv('ISSUER_KID', prevKid);
+    _releaseReceiptLogLocksForTest();
     _resetIssuerKey();
   }
 });
@@ -3067,7 +3081,11 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
   process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
   process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
   const tree = new ReceiptMerkleTree();
-  tree.dir = dir;
+  tree.dir = lockedDir(dir);
+  // Production publishes only from a durable, locked log. This one starts
+  // its own throwaway genesis.
+  tree.durable = true;
+  tree.allowFreshGenesis = true;
   await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let phase = 'first';
   const lookup = async (intent) => {
@@ -3116,7 +3134,9 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
 
     const speedDir = tmp();
     const speed = new ReceiptMerkleTree();
-    speed.dir = speedDir;
+    speed.dir = lockedDir(speedDir);
+    speed.durable = true;
+    speed.allowFreshGenesis = true;
     await speed.appendReceipt('row-1', 'hash-1', { publish: false });
     process.env.NODE_ENV = 'PRODUCTION';
     process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
@@ -3162,6 +3182,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
     restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
     restoreEnv('ISSUER_KID', prevKid);
+    _releaseReceiptLogLocksForTest();
     _resetIssuerKey();
   }
 });

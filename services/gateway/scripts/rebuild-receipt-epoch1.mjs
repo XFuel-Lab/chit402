@@ -37,6 +37,7 @@ import {
   JOURNAL_NAME,
   writeRestoredEpochs,
 } from '../src/receipt-log-store.js';
+import { acquireReceiptLogLock } from '../src/receipt-log-lock.js';
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -98,6 +99,13 @@ if (rebuilt.root !== EPOCH1_FINAL_ROOT) {
 }
 
 const outDir = path.resolve(out);
+// Same single-writer lock as the server: refuse while anything holds this directory.
+const lock = acquireReceiptLogLock(outDir);
+if (!lock.held) {
+  const cause = lock.cause ? ` ${JSON.stringify(lock.cause)}` : '';
+  console.error(`REFUSED: ${lock.reason}${cause}. Stop the process that holds ${lock.file} first.`);
+  process.exit(1);
+}
 const record = writeRestoredEpochs(outDir, rebuilt, { signRecord });
 const verified = verifyJwsWithJwks(record.issuer_signature?.jws, getJwks());
 if (!verified.valid) {

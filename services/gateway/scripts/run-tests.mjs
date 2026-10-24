@@ -100,6 +100,10 @@ function main() {
         // Ephemeral key resets in this process may drop an in-memory history
         // chain. Production never reads this flag.
         ISSUER_HISTORY_TEST_ROTATION: process.env.ISSUER_HISTORY_TEST_ROTATION || 'true',
+        // Test files load throwaway issuer keys. A set ISSUER_PRIVATE_KEY counts
+        // as production unless this opt-out is set, and the opt-out never
+        // covers the production kid (src/production-process.js).
+        ISSUER_TEST_KEY: process.env.ISSUER_TEST_KEY || '1',
       },
     },
   );
