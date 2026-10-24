@@ -5951,7 +5951,8 @@ export async function startServer() {
     throw err;
   }
   if (config.x402?.enabled) {
-    // MF4: only an exact test/development NODE_ENV may run without the durable store.
+    // MF4: only a non-production process (shared check: exact test/development
+    // NODE_ENV and no production or unlisted issuer key) may run without the durable store.
     const { storePath, required } = challengeStorePlan({
       nodeEnv: process.env.NODE_ENV,
       configured: config.x402.challengeStorePath,

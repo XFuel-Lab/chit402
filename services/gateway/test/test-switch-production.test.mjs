@@ -17,6 +17,7 @@ const { validateWebhookUrl } = await import('../src/book-webhook.js');
 const { _allowSettlementProofForTests, settlementProofEnabled } = await import('../src/settlement-proof-flag.js');
 const { readReceiptPolicyConfig } = await import('../src/receipt-policy.js');
 const { assertFacilitatorUrl } = await import('../src/x402-facilitator.js');
+const { challengeStorePlan } = await import('../src/x402-durable-store.js');
 
 const KEYS = ['ISSUER_PRIVATE_KEY', 'ISSUER_KID', 'ISSUER_SIGNER', 'ISSUER_KMS_KEY_ID', 'ISSUER_TEST_KEY', 'NODE_ENV', 'ISSUER_CAP_DB'];
 const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -141,4 +142,78 @@ test('late issue and server: no NODE_ENV-only test switch is left; each site use
   assert.match(read('server.js'), /if \(publicAttestationWorker && !testSwitchesOn\(\)\) publicAttestationWorker\.start\(\);/);
   assert.match(read('receipt-policy.js'), /const production = isProductionProcess\(env\);/);
   assert.match(read('x402-facilitator.js'), /const production = isProductionProcess\(env\);/);
+});
+
+test('x402 challenge store: development or test with a production-like key requires the durable store (shared check)', () => {
+  setEnv({ NODE_ENV: 'development' });
+  for (const nodeEnv of ['development', 'test']) {
+    assert.deepEqual(challengeStorePlan({ nodeEnv, configured: null, env: { NODE_ENV: nodeEnv } }), { required: false, storePath: null }, nodeEnv);
+    assert.deepEqual(challengeStorePlan({ nodeEnv, configured: null, env: { NODE_ENV: nodeEnv, ISSUER_TEST_KEY: '1', ISSUER_PRIVATE_KEY: testIssuerKey(3).env } }), { required: false, storePath: null }, `${nodeEnv}: a known test key`);
+    for (const extra of [{ ISSUER_PRIVATE_KEY: throwawayKeyEnv() }, { ISSUER_KID: PRODUCTION_ISSUER_KID }, { ISSUER_SIGNER: 'kms' }, { ISSUER_TEST_KEY: '1', ISSUER_PRIVATE_KEY: throwawayKeyEnv() }]) {
+      const plan = challengeStorePlan({ nodeEnv, configured: null, env: { NODE_ENV: nodeEnv, ...extra } });
+      assert.deepEqual(plan, { required: true, storePath: 'data/x402-challenges.json' }, `${nodeEnv} + ${Object.keys(extra).join(',')}`);
+    }
+  }
+  // The boot call passes only nodeEnv: process.env is read.
+  setEnv({ NODE_ENV: 'development', ISSUER_PRIVATE_KEY: throwawayKeyEnv() });
+  assert.equal(challengeStorePlan({ nodeEnv: 'development', configured: null }).required, true, 'process.env with a live key');
+  setEnv({ NODE_ENV: 'development' });
+  _setIssuerSignerForTest(prodKidStub());
+  assert.equal(challengeStorePlan({ nodeEnv: 'development', configured: null }).required, true, 'a signer reporting the production kid');
+  _setIssuerSignerForTest(null);
+  assert.equal(challengeStorePlan({ nodeEnv: 'development', configured: '/x/y.json' }).storePath, '/x/y.json');
+});
+
+/**
+ * Every NODE_ENV read in services/gateway/src. Each file that reads NODE_ENV
+ * (or a nodeEnv taken from it) must be listed here with the reason it is not
+ * a NODE_ENV-only production gate. A new file that reads NODE_ENV fails this
+ * test until it uses the shared check or is listed.
+ */
+const NODE_ENV_ALLOWLIST = {
+  'production-process.js': 'the shared production check itself',
+  'test-switch.js': 'testSwitchesOn: NODE_ENV=test AND not isProductionProcess',
+  'issuer-key.js': 'passes NODE_ENV into isProductionProcess',
+  'salt-store.js': 'passes NODE_ENV into isProductionProcess',
+  'x402-durable-store.js': 'challengeStorePlan passes nodeEnv into isProductionProcess',
+  'server.js': 'passes NODE_ENV to challengeStorePlan, which applies the shared check',
+  'config.js': 'exposes service.nodeEnv for the logger only; not a gate',
+  'logger.js': 'pino-pretty transport in development only; cosmetic, not a gate',
+  'x402-discovery.js': 'a description string, not a check',
+};
+const SHARED_CHECK_FILES = ['test-switch.js', 'issuer-key.js', 'salt-store.js', 'x402-durable-store.js'];
+
+test('every NODE_ENV read in services/gateway/src uses the shared check or is allowlisted with a reason', () => {
+  const root = new URL('../src/', import.meta.url);
+  const files = [];
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const u = new URL(ent.name + (ent.isDirectory() ? '/' : ''), dir);
+      if (ent.isDirectory()) walk(u);
+      else if (/\.(c|m)?js$/.test(ent.name)) files.push(u);
+    }
+  };
+  walk(root);
+  assert.ok(files.length > 50, 'scanned the whole src tree');
+  const readers = new Map();
+  for (const u of files) {
+    const rel = u.pathname.slice(root.pathname.length);
+    const lines = fs.readFileSync(u, 'utf8').split('\n')
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .filter((l) => /NODE_ENV|\bnodeEnv\b/.test(l));
+    if (lines.length) readers.set(rel, lines);
+  }
+  for (const [rel, lines] of readers) {
+    assert.ok(NODE_ENV_ALLOWLIST[rel], `${rel} reads NODE_ENV without the shared check:\n${lines.join('\n')}`);
+  }
+  for (const rel of Object.keys(NODE_ENV_ALLOWLIST)) assert.ok(readers.has(rel), `${rel} is allowlisted but no longer reads NODE_ENV; drop it`);
+  const read = (f) => fs.readFileSync(new URL(f, root), 'utf8');
+  for (const f of SHARED_CHECK_FILES) assert.match(read(f), /isProductionProcess\(/, f);
+  // Raw comparisons of NODE_ENV to a literal appear only where listed.
+  const raw = /(?:NODE_ENV|\bnodeEnv)\s*(?:===|!==|==|!=)\s*['"]|['"](?:test|development|production)['"]\s*(?:===|!==)\s*(?:\w+\.)*(?:NODE_ENV|nodeEnv)\b/;
+  for (const [rel, lines] of readers) {
+    const hits = lines.filter((l) => raw.test(l));
+    if (!hits.length) continue;
+    assert.ok(['test-switch.js', 'logger.js', 'production-process.js'].includes(rel), `${rel} compares NODE_ENV to a literal:\n${hits.join('\n')}`);
+  }
 });

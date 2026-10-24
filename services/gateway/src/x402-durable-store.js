@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ChallengeStore } from './x402-adapter.js';
+import { isProductionProcess } from './production-process.js';
 
 function sleepSync(ms) {
   const sab = new SharedArrayBuffer(4);
@@ -284,14 +285,17 @@ export function openDurableChallengeStore(file, { createIfMissing = false } = {}
 }
 
 /**
- * Durable challenge store plan for boot. Anything other than an exact
- * NODE_ENV of test or development is treated as production.
+ * Durable challenge store plan for boot. Required whenever the shared
+ * production check (production-process.js) is on: any NODE_ENV other than an
+ * exact test or development, and also test or development with a production
+ * or unlisted issuer key loaded or configured.
+ * @param {{ nodeEnv?: string|null, configured?: string|null, env?: NodeJS.ProcessEnv }} [opts]
  */
-export function challengeStorePlan({ nodeEnv, configured } = {}) {
-  const devOrTest = nodeEnv === 'test' || nodeEnv === 'development';
+export function challengeStorePlan({ nodeEnv, configured, env = process.env } = {}) {
+  const required = isProductionProcess(env, { nodeEnv: nodeEnv ?? null });
   return {
-    required: !devOrTest,
-    storePath: configured || (devOrTest ? null : 'data/x402-challenges.json'),
+    required,
+    storePath: configured || (required ? 'data/x402-challenges.json' : null),
   };
 }
 

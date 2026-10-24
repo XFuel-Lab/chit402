@@ -67,6 +67,7 @@ quietly — the service starts, serves traffic, and is wrong:
 | `PROVIDER_FLOATS_JSON` | Optional, but a float id must exist per provider you route to or that provider's COGS never burns. Ids are `theta-edgecloud` and `akash-network` |
 | `FREE_TIER_DAILY_COGS_USD` | A per-caller daily ceiling. `0` restores uncapped serving. Visible at `GET /health` → `free_tier` |
 | `ANCHOR_MAX_FEE_WEI` | Required whenever the gateway's shared production check is on: `NODE_ENV` unset or anything but `test`/`development`, or an issuer key (`ISSUER_PRIVATE_KEY`, `ISSUER_KID`, `ISSUER_SIGNER=kms`, `ISSUER_KMS_KEY_ID`) that is not a known test key, even under `development`. Integer wei cap on `maxFeePerGas` for the first sign, replacement, and speed-up. Deploy default `20000000000` (20 gwei). Unset or non-numeric refuses to sign |
+| `RECEIPT_POLICY_*` | Required under the same shared production check as the fee caps, so a launcher that starts the gateway with `NODE_ENV` unset needs them too, or boot refuses. See docs/product/issuer-root.md |
 | `ANCHOR_MAX_PRIORITY_WEI` | Same rule for `maxPriorityFeePerGas`. Deploy default `2000000000` (2 gwei) |
 | `M2M_RELAYER_AUDIENCE` | Required when relayer addresses are set. Signatures bind this audience and a single-use nonce |
 | `GATEWAY_COMMIT` | Deploy must export this. Set it to `$(git rev-parse HEAD)` for the checkout that is about to run. Receipt-check feedback names the commit. Unset is recorded as `GATEWAY_COMMIT unset` |
