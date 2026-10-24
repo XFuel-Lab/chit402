@@ -1737,8 +1737,19 @@ export async function verifyReceiptUpToV10(
   return verifyReceiptUpToV10Impl(receipt, options, verifyReceipt);
 }
 
-/** Signed schemas of issuer documents that are never payment receipts. */
-const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|quarantine_list|tree_head_eip712|receipt_binding_eip712|public_receipt)\b/;
+/** The only `chit402.*` schema a signed receipt payload may name (exact). */
+const RECEIPT_SIGNED_SCHEMAS: ReadonlySet<string> = new Set(['chit402.foreign_payout.v1']);
+
+/**
+ * Allowlist, not a denylist: any signed schema in the `chit402` namespace
+ * that is not exactly a receipt schema is an issuer document (tree head,
+ * epoch, history, quarantine list, EIP-712 record, public attestation and
+ * the rest), whatever its case, leading space or separators.
+ */
+function nonReceiptSignedSchema(schema: string): boolean {
+  if (RECEIPT_SIGNED_SCHEMAS.has(schema)) return false;
+  return /^chit402(?![a-z0-9])/.test(schema.trim().toLowerCase());
+}
 
 /**
  * Economic payment fields that, when on the outer receipt, are always in the
@@ -1780,7 +1791,7 @@ function signedReceiptBindingErrors(
     return ['signed payload is not a receipt'];
   }
   const schema = typeof claims.schema === 'string' ? claims.schema : null;
-  if (schema && NON_RECEIPT_SIGNED_SCHEMA.test(schema)) {
+  if (schema && nonReceiptSignedSchema(schema)) {
     return [`signed payload is not a receipt (schema ${schema})`];
   }
   const errs: string[] = [];

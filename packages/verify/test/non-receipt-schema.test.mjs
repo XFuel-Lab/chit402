@@ -55,3 +55,50 @@ test('a quarantine list under its own typ is refused in the receipt slot', async
   assert.notEqual(out.overall, 'verified');
   assert.notEqual(out.verdict.exit_code, 0);
 });
+
+// N5: an allowlist, not a denylist. Every other chit402 schema, and case,
+// space and separator variants of the listed ones, are refused by schema.
+const MORE = [
+  'chit402.tree_head.v1',
+  'chit402.tree_head.v2',
+  'chit402.tree_epoch.v1',
+  'chit402.issuer_history.v1',
+  'chit402.public_receipt.v1',
+  'chit402.guardian_set.v1',
+  'chit402.issuer_key_pin.v1',
+  'chit402.supersession.v1',
+  'chit402.version_windows.v1',
+  'chit402.legacy_allowlist.v1',
+  'chit402.book_audit.v1',
+  'chit402.receipt_lane.v1',
+  'chit402.consistency.v1',
+  'chit402.receipt_shell.v1',
+  'Chit402.quarantine_list.v1',
+  'CHIT402.QUARANTINE_LIST.V1',
+  ' chit402.quarantine_list.v1',
+  '\tchit402.quarantine_list.v1',
+  'chit402.quarantine-list.v1',
+  'chit402..quarantine_list.v1',
+  'chit402:quarantine_list.v1',
+  'chit402',
+  'Chit402.foreign_payout.v1',
+  ' chit402.foreign_payout.v1',
+];
+
+for (const schema of MORE) {
+  test(`allowlist: signed schema ${JSON.stringify(schema)} is not a receipt`, async () => {
+    const out = await verifyReceipt(signed({ ...claims, schema }), OPTS);
+    assert.equal(out.overall, 'failed');
+    assert.ok(out.errors.some((e) => e === `signed payload is not a receipt (schema ${schema})`), out.errors.join('; '));
+    assert.notEqual(out.verdict.exit_code, 0);
+  });
+}
+
+test('allowlist: the receipt schemas are not refused by schema', async () => {
+  for (const schema of ['chit402.foreign_payout.v1', 'xfuel.receipt.v4', 'chit402x.other.v1']) {
+    const out = await verifyReceipt(signed({ ...claims, schema }), OPTS);
+    assert.ok(!out.errors.some((e) => /not a receipt \(schema/.test(e)), `${schema}: ${out.errors.join('; ')}`);
+  }
+  const none = await verifyReceipt(signed(claims), OPTS);
+  assert.ok(!none.errors.some((e) => /not a receipt/.test(e)));
+});
