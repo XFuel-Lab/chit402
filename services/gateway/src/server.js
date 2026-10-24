@@ -4559,7 +4559,6 @@ export async function createApp() {
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
         receiptFailures: receiptFailureCount(),
         issuanceCap: issuanceCapHealth(),
-        escrowRefusals: escrowRefusalCounts(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
@@ -4681,12 +4680,17 @@ export async function createApp() {
     }
     const failures = listReceiptFailures({ since: since ? String(since) : null });
     const refusalCounts = listRefusalCounts({ since: since ? String(since) : null });
+    // Per-path, per-reason escrow refusal counts (fixed heads, quarantine list
+    // signing, payer binding), including count-only skips. Gated here, never on
+    // public /health: the counters ticking around a known receipt would tell
+    // its payment rail and paid status. Codes and counts only.
+    const escrowRefusals = escrowRefusalCounts() || {};
     const wantsCsv = req.query?.format === 'csv' || String(req.headers.accept || '').includes('text/csv');
     res.set('Cache-Control', 'private, no-store');
     if (wantsCsv) {
       return res.type('text/csv').send(receiptFailureCsv(failures));
     }
-    return res.json({ failures, refusal_counts: refusalCounts });
+    return res.json({ failures, refusal_counts: refusalCounts, escrow_refusals: escrowRefusals });
   });
 
   app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {

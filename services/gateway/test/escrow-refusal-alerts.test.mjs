@@ -1,8 +1,8 @@
 /**
  * Operator alerts for refusals in the fixed-head, quarantine list signing and
  * payer binding paths. Each refusal writes one receipt-failure row (stage
- * `sign`, reason `<path>:<code>`) and bumps a per-reason count that /health
- * serves as `escrow_refusals`. Offline: synthetic test key, local server, no
+ * `sign`, reason `<path>:<code>`) and bumps a per-reason count that only the
+ * OPS_READ_TOKEN-gated ops route serves, as `escrow_refusals`. Offline: synthetic test key, local server, no
  * network, no production key.
  */
 import { test, before, after } from 'node:test';
@@ -460,23 +460,11 @@ test('alert rows persist in RECEIPT_FAILURES_FILE and per-reason counts reload f
   }
 });
 
-test('publicHealthBody: escrow_refusals is absent when there are none and carries only codes and counts', () => {
-  assert.equal('escrow_refusals' in publicHealthBody({}), false);
-  assert.equal('escrow_refusals' in publicHealthBody({ escrowRefusals: null }), false);
-  assert.equal('escrow_refusals' in publicHealthBody({ escrowRefusals: { fixed_head: { root_mismatch: 0 } } }), false);
-  const body = publicHealthBody({
-    escrowRefusals: {
-      fixed_head: { root_mismatch: 2 },
-      payer_binding: { network: 1, '0xABC': 5, 'with space': 1 },
-      quarantine_sign: { not_test_key: '3' },
-      elsewhere: { network: 9 },
-    },
-  });
-  assert.deepEqual(body.escrow_refusals, {
-    fixed_head: { root_mismatch: 2 },
-    quarantine_sign: { not_test_key: 3 },
-    payer_binding: { network: 1 },
-  });
+test('publicHealthBody: no per-reason escrow counts, whatever the caller passes', () => {
+  const clean = publicHealthBody({});
+  const passed = publicHealthBody({ escrowRefusals: { fixed_head: { root_mismatch: 2 }, payer_binding: { network: 1 } } });
+  assert.deepEqual(passed, clean, 'an escrowRefusals input changes nothing');
+  assert.equal(/escrow|root_mismatch|payer_binding/.test(JSON.stringify(passed)), false);
 });
 
 let server;
@@ -497,7 +485,7 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test('GET /health and GET /v1/ops/receipt-failures (local server) show the alerts, with no payer and no secret', async () => {
+test('GET /health and GET /v1/ops/receipt-failures (local server): rows and per-reason counts on the ops route only, /health keeps its clean shape', async () => {
   RF.resetReceiptFailuresForTests();
   const clean = await (await fetch(`${base}/health`)).json();
   assert.equal('escrow_refusals' in clean, false, 'clean: no key');
@@ -506,24 +494,35 @@ test('GET /health and GET /v1/ops/receipt-failures (local server) show the alert
   RF.recordEscrowRefusal({ path: 'quarantine_sign', reason: 'not_test_key' });
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount' });
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'leaf_mismatch' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payer' });
   const health = await (await fetch(`${base}/health`)).json();
-  assert.equal(health.receipt_failures, startCount + 4);
-  assert.deepEqual(health.escrow_refusals, {
-    fixed_head: { quarantined: 1 },
-    payer_binding: { amount: 1, leaf_mismatch: 1 },
-    quarantine_sign: { not_test_key: 1 },
-  });
+  assert.equal(health.receipt_failures, startCount + 4, 'the public total counts alert rows, not count-only skips');
+  assert.deepEqual(Object.keys(health).sort(), Object.keys(clean).sort(), '/health keeps the clean key set');
   const text = JSON.stringify(health);
+  assert.equal(/escrow|fixed_head|quarantine_sign|payer_binding|no_payer|network"?:\s*\d/.test(text), false, 'no per-path or per-reason detail on /health');
   assert.equal(text.includes('owner-test-token'), false);
   assert.equal(/0x[0-9a-fA-F]{40}/.test(text), false, 'no address-shaped value');
   const ops = await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } });
   assert.equal(ops.status, 200);
-  const reasons = (await ops.json()).failures.map((r) => r.reason);
+  const body = await ops.json();
+  const reasons = body.failures.map((r) => r.reason);
   for (const r of ['fixed_head:quarantined', 'quarantine_sign:not_test_key', 'payer_binding:amount', 'payer_binding:leaf_mismatch']) {
     assert.ok(reasons.includes(r), r);
   }
+  assert.deepEqual(body.escrow_refusals, {
+    fixed_head: { quarantined: 1 },
+    payer_binding: { amount: 1, leaf_mismatch: 1, network: 1, no_payer: 1 },
+    quarantine_sign: { not_test_key: 1 },
+  }, 'per-reason counts, count-only skips included, on the ops route');
   const anon = await fetch(`${base}/v1/ops/receipt-failures`);
-  assert.equal(anon.status, 401, 'owner-only');
+  assert.equal(anon.status, 401, 'OPS_READ_TOKEN-gated');
+});
+
+test('GET /v1/ops/receipt-failures: escrow_refusals is an empty object when there are none', async () => {
+  RF.resetReceiptFailuresForTests();
+  const body = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+  assert.deepEqual(body.escrow_refusals, {});
 });
 
 test('SF1: 5000 routine payer binding skips plus one real settle failure: the settle row stays in the ops export and the public count is unaffected', async () => {

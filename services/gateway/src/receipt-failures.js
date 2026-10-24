@@ -8,8 +8,11 @@
  * Escrow-path refusals (fixed heads, quarantine list signing, payer binding)
  * use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
  * id. The code is from a fixed list per path, else `other`, so a row can never
- * carry a payer, a salt, a key or free text. Per-reason counts are kept for
- * /health. Payer binding skips for a receipt that is not a Base mainnet USDC
+ * carry a payer, a salt, a key or free text. Per-reason counts are served
+ * only on GET /v1/ops/receipt-failures (escrow_refusals), never on public
+ * /health, where they would be a timing oracle on a known receipt's payment
+ * rail. Public /health shows alert rows only inside the receipt_failures total.
+ * Payer binding skips for a receipt that is not a Base mainnet USDC
  * paid receipt (`no_payer`, `no_payment`, `network`, `asset`,
  * `no_payment_ref`) are routine: they are counted, not raised.
  *
@@ -263,7 +266,7 @@ function countEscrowRow(row) {
 /**
  * Operator alert for a refusal in the fixed-head, quarantine list signing or
  * payer binding path. Writes one receipt-failure row (so the /health
- * receipt_failures count and GET /v1/ops/receipt-failures show it) and bumps
+ * receipt_failures total and GET /v1/ops/receipt-failures show it) and bumps
  * the per-reason count. Never throws.
  * @param {{ path: string, reason: string, outcome?: 'refused'|'pending' }} input
  * @returns {object|null} the row, or null (not-applicable skip, folded repeat, bad path)
@@ -310,8 +313,8 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
 }
 
 /**
- * Per-reason escrow refusal counts for /health: path -> reason -> count.
- * Codes only. Null when there are none, so a clean boot adds no key.
+ * Per-reason escrow refusal counts for the ops route: path -> reason -> count.
+ * Codes only, including count-only skips. Null when there are none.
  */
 export function escrowRefusalCounts() {
   loadFile();
