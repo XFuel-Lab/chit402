@@ -710,3 +710,18 @@ test('N2: alert rows stop at RECEIPT_FAILURE_ALERT_ROW_CAP, oldest dropped, sett
     RF.resetReceiptFailuresForTests();
   }
 });
+
+test('N4: the ops route 401 and 503 responses are private, no-store', async () => {
+  const anon = await fetch(`${base}/v1/ops/receipt-failures`);
+  assert.equal(anon.status, 401);
+  assert.equal(anon.headers.get('cache-control'), 'private, no-store', '401');
+  const saved = process.env.OPS_READ_TOKEN;
+  delete process.env.OPS_READ_TOKEN;
+  try {
+    const off = await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } });
+    assert.equal(off.status, 503);
+    assert.equal(off.headers.get('cache-control'), 'private, no-store', '503');
+  } finally {
+    process.env.OPS_READ_TOKEN = saved;
+  }
+});
