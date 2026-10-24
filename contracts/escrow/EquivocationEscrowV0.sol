@@ -171,6 +171,11 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     uint64 public activatedAt;
     uint64 public noticeAt;
     bool public closed;
+    /// @dev Time the first incident opened (0 = never). Withdrawal is frozen
+    ///      only from here through one claim window, once per contract life.
+    ///      Later incidents record evidence and pay refunds from the
+    ///      remaining bond, but never freeze withdrawal.
+    uint64 public freezeStart;
 
     bool public listPinned;
     bytes32 public quarantineListHash;
@@ -188,7 +193,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     ///      that epoch joins it while its claim window is open and is refused
     ///      after, so a settled epoch never opens or freezes again.
     mapping(bytes32 => uint256) public incidentOf;
-    /// @dev Incidents opened and not yet settled. Withdrawal waits for zero.
+    /// @dev Incidents opened and not yet settled.
     uint256 public openIncidents;
     /// @dev Sum of `requested` over unsettled incidents (bounty reserve).
     uint256 public openRequested;
@@ -231,7 +236,6 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     error NoNotice();
     error NoticeAlreadyGiven();
     error IncidentOpen();
-    error BountyPending();
     error CoverageEnded();
     error CommitExists();
     error TooManyOpenCommits();
@@ -407,19 +411,25 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     }
 
     /// @notice Withdraw the remaining bond after notice, the notice period and
-    ///         the reveal grace, with no unsettled incident and no pending bounty.
-    ///         Before activation nothing is covered yet, so the owner may
-    ///         withdraw at any time (this closes the contract).
+    ///         the reveal grace, outside the single freeze window. Registered
+    ///         refunds of unsettled incidents and pending bounties (within the
+    ///         cap) stay in the contract and remain claimable. Closing ends
+    ///         new reveals and new refund registrations. Before activation
+    ///         nothing is covered yet, so the owner may withdraw at any time.
     function withdraw() external onlyOwner nonReentrant {
         if (closed) revert NotActive();
+        uint256 reserve = 0;
         if (activatedAt != 0) {
             if (noticeAt == 0) revert NoNotice();
             if (block.timestamp < revealGraceEnd()) revert TooEarly();
-            if (_incidentOpen()) revert IncidentOpen();
-            if (pendingBounties != 0) revert BountyPending();
+            if (_frozen()) revert IncidentOpen();
+            uint256 bountyRoom = BOUNTY_CAP - bountiesPaid;
+            uint256 bountyReserve = pendingBounties * BOUNTY;
+            reserve = openRequested + (bountyReserve < bountyRoom ? bountyReserve : bountyRoom);
         }
-        uint256 amount = bondAccounted;
-        bondAccounted = 0;
+        uint256 kept = bondAccounted < reserve ? bondAccounted : reserve;
+        uint256 amount = bondAccounted - kept;
+        bondAccounted = kept;
         closed = true;
         if (amount != 0) TOKEN.safeTransfer(OWNER, amount);
         emit Withdrawn(amount);
@@ -526,6 +536,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     {
         BKey storage bk = _bKeys[key];
         if (bk.incidentId == 0 || (b.leafHash != bk.lo && b.leafHash != bk.hi)) revert NotAffected();
+        if (closed) revert NotActive();
         Incident storage inc = _incidents[bk.incidentId];
         if (inc.settled || block.timestamp > inc.claimsCloseAt) revert ClaimsClosed();
         if (b.kid != KID) revert UnknownKid();
@@ -586,7 +597,12 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     }
 
     function frozen() external view returns (bool) {
-        return _incidentOpen();
+        return _frozen();
+    }
+
+    /// @notice End of the single freeze window (0 if no incident yet).
+    function freezeEnd() public view returns (uint256) {
+        return freezeStart == 0 ? 0 : uint256(freezeStart) + CLAIM_WINDOW;
     }
 
     function incident(uint256 id) external view returns (Incident memory) {
@@ -673,8 +689,11 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         return block.timestamp > uint256(c.at) + MIN_DELAY + REVEAL_WINDOW;
     }
 
-    function _incidentOpen() internal view returns (bool) {
-        return openIncidents != 0;
+    /// @dev Total freeze over the contract's life is at most one claim
+    ///      window, starting at the first incident. Every settlement happens
+    ///      after this window, so nothing re-freezes once an incident settles.
+    function _frozen() internal view returns (bool) {
+        return freezeStart != 0 && block.timestamp <= uint256(freezeStart) + CLAIM_WINDOW;
     }
 
     /// @notice Incident identity: the conflicting epoch plus the issuer kid.
@@ -720,6 +739,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
             incidentId = ++incidentCount;
             incidentOf[ik] = incidentId;
             openIncidents += 1;
+            if (freezeStart == 0) freezeStart = uint64(block.timestamp);
             uint64 closeAt = uint64(block.timestamp + CLAIM_WINDOW);
             _incidents[incidentId] = Incident({
                 epoch: epoch,

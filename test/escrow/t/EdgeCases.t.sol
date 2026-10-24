@@ -116,11 +116,12 @@ contract EdgeCasesTest is EscrowFixture {
         esc.cancelNotice();
         vm.prank(owner);
         esc.giveNotice();
-        vm.warp(esc.revealGraceEnd());
         assertTrue(esc.frozen(), "still frozen");
-        vm.prank(owner);
-        vm.expectRevert(E.IncidentOpen.selector);
-        esc.withdraw();
+        assertEq(esc.freezeEnd(), esc.incident(1).claimsCloseAt, "freeze is the first claim window");
+        vm.warp(esc.freezeEnd());
+        assertTrue(esc.frozen(), "frozen through the last second");
+        vm.warp(esc.freezeEnd() + 1);
+        assertFalse(esc.frozen(), "freeze ends with the first claim window");
     }
 
     function test_edge_pre_activation_withdraw_closes() public {

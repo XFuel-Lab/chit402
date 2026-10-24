@@ -441,12 +441,11 @@ contract EscrowTest is EscrowFixture {
         vm.expectRevert(E.ClaimsClosed.selector);
         esc.registerRefund(key, b, bs, carol, ps);
         esc.settle(1);
+        // The pending bounty is reserved, not a reason to block withdrawal.
         vm.prank(owner);
-        vm.expectRevert(E.BountyPending.selector);
         esc.withdraw();
+        assertEq(esc.bondAccounted(), 50 * ONE, "bounty reserved");
         esc.finalizeBounty(7);
-        vm.prank(owner);
-        esc.withdraw();
         esc.claimRefund(ev.l1);
         assertEq(usdc.balanceOf(bob), 1 * ONE, "refund paid after withdraw");
         vm.prank(alice);

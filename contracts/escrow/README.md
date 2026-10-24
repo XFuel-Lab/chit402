@@ -18,12 +18,18 @@ the contest window. Affected payers register refunds with a signed `ReceiptBindi
 the claim window, and the incident settles pro rata if refunds exceed the bond.
 
 One fork is one incident. Incidents are keyed by the conflicting epoch plus the pinned kid
-(`incidentKey(epoch)`). The first valid key from an epoch opens that epoch's incident and
-stops withdrawal. Later keys from the same epoch join it while its claim window is open and
-revert with `IncidentClosed` after that, so a settled or expired epoch never re-opens or
-freezes withdrawal again. A conflict in a different epoch needs a new pair of heads signed
-in that epoch, so it is a new equivocation and opens its own incident. `settle(incidentId)`
-closes an incident after its window.
+(`incidentKey(epoch)`). The first valid key from an epoch opens that epoch's incident. Later
+keys from the same epoch join it while its claim window is open and revert with
+`IncidentClosed` after that, so a settled or expired epoch never re-opens.
+
+Withdrawal is frozen at most once in the contract's life: from the first incident's opening
+through its claim window (`freezeEnd()`). Incidents in other epochs, including a fork
+carried into later epochs, record evidence and pay refunds from the remaining bond within
+the caps, but never freeze withdrawal. Every settlement happens after that window, so
+nothing freezes again once an incident has settled. At withdrawal the owner receives the
+bond minus the refunds registered in unsettled incidents and the pending bounties within
+the cap; those stay claimable. Closing stops new reveals and new refund registrations.
+`settle(incidentId)` closes an incident after its window.
 
 ## Signing format
 
@@ -54,8 +60,8 @@ Shared vectors: `test/escrow/vectors/eip712.json`.
 | Open commits per address | 8 |
 
 Times are `block.timestamp` seconds. Commits stop at `withdrawableAt` (notice + 14 days).
-Withdrawal waits for `withdrawableAt + MIN_DELAY + REVEAL_WINDOW`, no unsettled incident and
-no pending bounty. Before activation the owner may withdraw at any time, which closes the
+Withdrawal waits for `withdrawableAt + MIN_DELAY + REVEAL_WINDOW` and the end of the single
+freeze window. Before activation the owner may withdraw at any time, which closes the
 contract.
 
 `asset_id` in a binding names the receipt's payment asset (Base mainnet USDC,
