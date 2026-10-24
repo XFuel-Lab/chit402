@@ -26,6 +26,17 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 
 ### Fixed: non-receipt signed schemas
 - A signed payload whose schema is `chit402.quarantine_list`, `chit402.tree_head_eip712` or `chit402.receipt_binding_eip712` is refused as a receipt (`signed payload is not a receipt`), as `quarantine_ack` already was. `BUILD_DIGEST.txt` moved again (`src/index.ts`).
+- The schema check is now an allowlist: any signed schema in the `chit402` namespace other than exactly `chit402.foreign_payout.v1` is refused, including case, leading-space and separator variants.
+
+### Fixed: review of the EIP-712 checks
+- **Public-attestation path.** A fixed head that does not match its signed head is now `fixed_head_invalid` (exit 1) there too. Before, it could still give `VERIFIED_PUBLIC`.
+- **Absence path.** A signed head whose fixed head does not match is not used for `NOT_IN_LOG`; the full path reports `fixed_head_invalid`.
+- **Full path pins.** The fetched log head is checked under the same trusted kids as the receipt. The CLI never sets them, so it is the production pin there, as before.
+- **Row hash for the binding.** The binding reads `row_hash` exactly as the log leaf does (`row_hash` and `book_chain.row_hash` must agree). A disagreement is `row_hash_mismatch` (exit 1 `payer_binding_invalid`).
+- **Unknown binding status.** A `payer_binding` whose status is not `signed`, `pending` or `missing` is reported as `not checked (status_unknown)`; the verdict does not change.
+- **JWKS labels.** A binding is checked under the JWKS key that verified the receipt even when the JWKS `kid` label is not the key's thumbprint.
+- Docs: how to check a binding copied from the owner view (`row_hash` sits beside `payer_binding`, not inside it).
+- Tests: the CLI wiring of `fixed_head_invalid` on both paths, against a loopback log and RPC; the pre-log shell test now reads a loopback stub instead of the production host. `BUILD_DIGEST.txt` moved (`src/check-input.ts`, `src/index.ts`).
 
 ### Fixed (from #621)
 - **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
