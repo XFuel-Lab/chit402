@@ -536,7 +536,7 @@ test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a 
   let signer = goodSigner();
   let r = await withV1Read((real, file, ...rest) => `${real.call(fs, file, ...rest)} `, () => run(applyArgs(s), { signer }));
   assert.deepEqual(r.result, { ok: false, reason: 'write_mismatch', written: true });
-  const v1 = path.join(listDirOf(s.logDir), 'v1.json');
+  const v1 = path.join(listDirOf(fs.realpathSync(s.logDir)), 'v1.json');
   assert.ok(fs.existsSync(v1));
   assert.ok(r.out.includes(`FILE=${v1}`));
   assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash on a mismatch');
@@ -785,4 +785,39 @@ test('QP21: RECEIPT_LOG_DIR is required; --log-dir alone is refused as log_dir_e
   assert.ok(!/LIST_SHA256=/.test(out.stdout), out.stdout);
   assert.equal(signer.calls.length, 0);
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+test('QP22: the log directory is resolved once; a symlink retargeted after the check does not move v1', async () => {
+  for (const via of ['flag', 'env']) {
+    const s = await setup();
+    const real = fs.realpathSync(s.logDir);
+    const other = tmp('qlprod-retarget-');
+    fs.cpSync(s.logDir, other, { recursive: true });
+    const link = path.join(tmp('qlprod-cur-'), 'current');
+    fs.symlinkSync(s.logDir, link);
+    const seen = [];
+    const buildFromLog = async (d) => {
+      // After the directory checks, before the write: point the link elsewhere.
+      seen.push(d);
+      fs.unlinkSync(link);
+      fs.symlinkSync(other, link);
+      return buildUnsignedV1FromLog(d);
+    };
+    const argv = via === 'flag'
+      ? ['--log-dir', link, '--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM]
+      : ['--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM];
+    const env = { RECEIPT_LOG_DIR: via === 'flag' ? s.logDir : link };
+    const r = await run(argv, { signer: goodSigner(), env, buildFromLog });
+    assert.equal(r.result.state, 'written', `${via}: ${r.err.join(' ')}`);
+    assert.deepEqual(seen, [real], `${via}: the log is built from the resolved path`);
+    const v1 = path.join(listDirOf(real), 'v1.json');
+    assert.ok(fs.existsSync(v1), via);
+    assert.ok(r.out.includes(`FILE=${v1}`), `${via}: ${r.out.join(' ')}`);
+    assert.equal(fs.existsSync(listDirOf(other)), false, `${via}: nothing written through the retargeted link`);
+    assert.equal(fs.realpathSync(link), fs.realpathSync(other));
+  }
+  // RECEIPT_LOG_DIR alone naming a path that does not resolve.
+  const s = await setup();
+  const r = await run(['--list', s.file], { signer: goodSigner(), env: { RECEIPT_LOG_DIR: path.join(s.logDir, 'missing') } });
+  assert.deepEqual(r.result, { ok: false, reason: 'log_dir_unresolved' });
 });

@@ -270,12 +270,15 @@ export function pinArgs(doc) {
   return { entries: doc.entries.map(tuple), highWater: doc.high_water.map(tuple) };
 }
 
-function realDir(dir) {
+function realDir(dir, reason = 'log_dir_mismatch') {
+  let real;
   try {
-    return fs.realpathSync(dir);
+    real = fs.realpathSync(dir);
   } catch {
-    return refuse('log_dir_mismatch', 'a log directory does not resolve');
+    return refuse(reason, 'a log directory does not resolve');
   }
+  if (!fs.statSync(real).isDirectory()) refuse(reason, 'a log directory is not a directory');
+  return real;
 }
 
 function parseArgs(argv) {
@@ -338,11 +341,16 @@ async function runWith({
     // not derive, so a hand-typed --log-dir could name a directory the gateway
     // does not serve and its hash would be pinned anyway.
     if (!envLogDir) refuse('log_dir_env_unset', 'RECEIPT_LOG_DIR must be set to the directory the gateway serves; --log-dir alone is not accepted');
-    const logDir = args.logDir || envLogDir;
-    if (!path.isAbsolute(logDir)) refuse('usage', 'the log directory must be an absolute path');
-    // Both given: they must be the same directory, or v1 could be signed into
-    // a directory the gateway does not serve and its hash pinned anyway.
-    if (args.logDir && envLogDir && realDir(args.logDir) !== realDir(envLogDir)) {
+    const chosen = args.logDir || envLogDir;
+    if (!path.isAbsolute(chosen)) refuse('usage', 'the log directory must be an absolute path');
+    // Resolved once. Every later read and write uses this real path, never the
+    // flag or env string, so a symlink retargeted mid-run cannot move v1 into
+    // a directory other than the one checked here.
+    const logDir = realDir(chosen, args.logDir ? 'log_dir_mismatch' : 'log_dir_unresolved');
+    // --log-dir given: it must be the directory RECEIPT_LOG_DIR names, or v1
+    // could be signed into a directory the gateway does not serve and its
+    // hash pinned anyway.
+    if (args.logDir && realDir(envLogDir) !== logDir) {
       refuse('log_dir_mismatch', '--log-dir and RECEIPT_LOG_DIR name different directories');
     }
     const fileBytes = fs.readFileSync(args.list);
