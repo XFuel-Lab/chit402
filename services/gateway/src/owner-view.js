@@ -540,13 +540,26 @@ export function createOwnerView(deps) {
       || deps.saltStore?.get?.(receipt?.task_id)
       || null;
     const row = loaded.ledgerRow?.book_chain?.row_hash ?? loaded.ledgerRow?.row_hash ?? null;
-    return {
+    const body = {
       jws: originalJws(receipt),
       salt: stored?.salt ?? null,
       private_fields: stored?.privateFields ?? privateFieldsOf(receipt),
       // Own leaf preimage part (task_id|row_hash) so the owner can prove inclusion.
       row_hash: typeof row === 'string' ? row : null,
     };
+    // Payer binding: owner view only, read from the private store. A read
+    // never signs; a receipt without one shows pending or missing.
+    if (typeof deps.payerBinding === 'function') {
+      const taskId = String(loaded.taskId || receipt?.task_id || '');
+      let view;
+      try {
+        view = deps.payerBinding(taskId);
+      } catch {
+        view = { status: 'missing', reason: 'store_unreadable' };
+      }
+      body.payer_binding = view || { status: 'missing', reason: 'not_bound' };
+    }
+    return body;
   }
 
   async function handleChallenge(req, res) {
