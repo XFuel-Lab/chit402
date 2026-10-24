@@ -958,3 +958,68 @@ test('QP25: the public runner reads no env name beyond RECEIPT_LOG_DIR and what 
   assert.equal(signer.calls.length, 0);
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
+
+/** Run fn with fs.openSync / fs.linkSync hooked for the v1 temp file and link only. */
+async function withWriteHooks({ beforeOpen, afterLink }, fn) {
+  const realOpen = fs.openSync;
+  const realLink = fs.linkSync;
+  fs.openSync = function patched(p, ...rest) {
+    if (beforeOpen && String(p).includes('.v1.json.tmp-')) beforeOpen(p);
+    return realOpen.call(fs, p, ...rest);
+  };
+  fs.linkSync = function patched(a, b, ...rest) {
+    const out = realLink.call(fs, a, b, ...rest);
+    if (afterLink && String(b).endsWith(`${path.sep}v1.json`)) afterLink(b);
+    return out;
+  };
+  try {
+    return await fn();
+  } finally {
+    fs.openSync = realOpen;
+    fs.linkSync = realLink;
+  }
+}
+
+test('QP26: a quarantine-list directory swapped between the check and the link fails closed as list_dir_changed, reported as written', async () => {
+  const check = (r, label) => {
+    assert.deepEqual(r.result, { ok: false, reason: 'list_dir_changed', written: true }, `${label}: ${r.err.join(' ')}`);
+    assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), `${label}: no pin hash`);
+    const text = r.err.join('\n');
+    assert.ok(/refused: list_dir_changed\./.test(text), `${label}: ${text}`);
+    assert.ok(/Do not pin\. v1 was written, but not necessarily to /.test(text), `${label}: ${text}`);
+    assert.ok(!/Nothing written/.test(text), `${label}: ${text}`);
+  };
+  const prepared = async () => {
+    const s = await setup();
+    const listDir = listDirOf(fs.realpathSync(s.logDir));
+    fs.mkdirSync(listDir, { mode: 0o700 });
+    return { s, listDir, target: tmp('qlprod-swap-'), aside: `${listDir}.aside` };
+  };
+  // (a) Swapped for a symlink before the temp open: the write lands in the target.
+  let { s, listDir, target, aside } = await prepared();
+  let r = await withWriteHooks({
+    beforeOpen: () => { fs.renameSync(listDir, aside); fs.symlinkSync(target, listDir); },
+  }, () => run(applyArgs(s), { signer: goodSigner() }));
+  check(r, 'symlink');
+  assert.ok(fs.existsSync(path.join(target, 'v1.json')), 'the write went through the swapped link');
+  // (b) Replaced by another real directory: a different inode.
+  ({ s, listDir, target, aside } = await prepared());
+  r = await withWriteHooks({
+    beforeOpen: () => { fs.renameSync(listDir, aside); fs.mkdirSync(listDir, { mode: 0o700 }); },
+  }, () => run(applyArgs(s), { signer: goodSigner() }));
+  check(r, 'replaced');
+  // (c) Swapped for a symlink before the open and swapped back after the link:
+  // the directory is the checked one again, but v1.json in it is not ours.
+  ({ s, listDir, target, aside } = await prepared());
+  r = await withWriteHooks({
+    beforeOpen: () => { fs.renameSync(listDir, aside); fs.symlinkSync(target, listDir); },
+    afterLink: () => { fs.unlinkSync(listDir); fs.renameSync(aside, listDir); },
+  }, () => run(applyArgs(s), { signer: goodSigner() }));
+  check(r, 'swapped back');
+  assert.equal(fs.existsSync(path.join(listDir, 'v1.json')), false);
+  assert.ok(fs.existsSync(path.join(target, 'v1.json')));
+  // No swap: the identity check passes and v1 is written as usual.
+  ({ s } = await prepared());
+  r = await run(applyArgs(s), { signer: goodSigner() });
+  assert.equal(r.result.state, 'written', r.err.join(' '));
+});

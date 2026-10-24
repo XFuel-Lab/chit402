@@ -225,16 +225,46 @@ async function signWithSnapshot(doc, snap, keys) {
   return bytes;
 }
 
-/** The list directory must be a real directory (not a symlink) when it exists. */
+/**
+ * The list directory must be a real directory (not a symlink) when it exists.
+ * @returns {fs.BigIntStats|null} its lstat, or null when it does not exist
+ */
 export function assertListDir(dir) {
   let st;
   try {
-    st = fs.lstatSync(dir);
+    st = fs.lstatSync(dir, { bigint: true });
   } catch (err) {
-    if (err?.code === 'ENOENT') return;
+    if (err?.code === 'ENOENT') return null;
     throw err;
   }
   if (st.isSymbolicLink() || !st.isDirectory()) refuse('list_dir_not_directory', 'the quarantine-list path is a symlink or not a directory');
+  return st;
+}
+
+const sameInode = (a, b) => a.dev === b.dev && a.ino === b.ino;
+
+/**
+ * After the link: the list directory must still be the one checked before
+ * the temp file was opened (same dev/ino, not a symlink), and v1.json in it
+ * must be the temp file just written. Node has no openat or O_NOFOLLOW for
+ * directory components, so a directory swapped for a symlink (or another
+ * directory) between the check and the link would otherwise go unnoticed.
+ * Swapping it needs write access to the log directory already, which also
+ * allows tampering with the log itself; this check makes that case fail
+ * closed rather than report a clean write.
+ */
+function assertWroteIntoCheckedDir(dir, dirStat, file, tmpStat) {
+  let now;
+  let linked;
+  try {
+    now = fs.lstatSync(dir, { bigint: true });
+    linked = fs.lstatSync(file, { bigint: true });
+  } catch {
+    refuse('list_dir_changed', 'the quarantine-list directory or v1.json changed during the write; v1 may be in another directory');
+  }
+  if (now.isSymbolicLink() || !sameInode(now, dirStat) || !sameInode(linked, tmpStat)) {
+    refuse('list_dir_changed', 'the quarantine-list directory changed during the write; v1 may be in another directory');
+  }
 }
 
 /**
@@ -245,12 +275,15 @@ export function assertListDir(dir) {
 export function writeV1Atomic(dir, bytes, { onLinked } = {}) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // mkdir leaves an existing symlink in place, so check what is there now.
-  assertListDir(dir);
+  const dirStat = assertListDir(dir);
+  if (!dirStat) refuse('list_dir_changed', 'the quarantine-list directory disappeared before the write');
   const file = path.join(dir, 'v1.json');
   const tmp = path.join(dir, `.v1.json.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
+  let tmpStat;
   try {
     try {
+      tmpStat = fs.fstatSync(fd, { bigint: true });
       // 0644 whatever the umask: the gateway serves this file.
       fs.fchmodSync(fd, 0o644);
       fs.writeSync(fd, bytes);
@@ -265,6 +298,7 @@ export function writeV1Atomic(dir, bytes, { onLinked } = {}) {
       throw err;
     }
     if (onLinked) onLinked(file);
+    assertWroteIntoCheckedDir(dir, dirStat, file, tmpStat);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
@@ -436,9 +470,13 @@ async function runWith({
       // v1 is on disk. A rerun of the same command checks it and, when it
       // verifies, returns 'same' and prints SIGNED_LIST_SHA256.
       out(`FILE=${linkedFile}`);
-      if (reason === 'write_mismatch') err(`refused: write_mismatch. ${e.message}`);
+      if (e instanceof ProductionListRefused) err(`refused: ${reason}. ${e.message}`);
       else err(`failed after writing: ${e?.code || 'error'}. v1 WAS written to ${linkedFile}.`);
-      err('Do not pin yet. Rerun the same command: it verifies v1 and prints SIGNED_LIST_SHA256, or refuses.');
+      if (reason === 'list_dir_changed') {
+        err(`Do not pin. v1 was written, but not necessarily to ${linkedFile}: inspect the log directory and the quarantine-list path before any rerun.`);
+      } else {
+        err('Do not pin yet. Rerun the same command: it verifies v1 and prints SIGNED_LIST_SHA256, or refuses.');
+      }
       return { ok: false, reason, written: true };
     }
     if (e instanceof ProductionListRefused) {
