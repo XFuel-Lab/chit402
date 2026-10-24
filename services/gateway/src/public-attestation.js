@@ -57,7 +57,8 @@ export function minuteIso(value) {
 
 /** `base:0x<64 hex>` in lowercase, or null. One attestation per normalized ref. */
 export function normalizeBaseRef(ref) {
-  const m = /^(?:base|eip155:8453):(0x[0-9a-fA-F]{64})$/.exec(String(ref || '').trim());
+  if (typeof ref !== 'string') return null;
+  const m = /^(?:base|eip155:8453):(0x[0-9a-fA-F]{64})$/.exec(ref.trim());
   return m ? `base:${m[1].toLowerCase()}` : null;
 }
 
