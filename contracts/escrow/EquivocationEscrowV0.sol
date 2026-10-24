@@ -85,6 +85,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         uint32 epoch;
         uint64 openedAt;
         uint64 claimsCloseAt;
+        uint64 freezeUntil;
         bool settled;
         uint256 requested;
         uint256 pool;
@@ -144,6 +145,8 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     uint256 public constant BOND_PERIOD = 14 days;
     uint256 public constant NOTICE_PERIOD = 14 days;
     uint256 public constant CLAIM_WINDOW = 14 days;
+    /// @dev Cumulative withdrawal freeze over the bond's whole life.
+    uint256 public constant FREEZE_CAP = 28 days;
 
     uint256 public constant MIN_BOND = 1_000_000_000; // 1,000 USDC (6 decimals)
     uint256 public constant BOUNTY = 50_000_000; // 50 USDC per epoch
@@ -171,11 +174,13 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     uint64 public activatedAt;
     uint64 public noticeAt;
     bool public closed;
-    /// @dev Time the first incident opened (0 = never). Withdrawal is frozen
-    ///      only from here through one claim window, once per contract life.
-    ///      Later incidents record evidence and pay refunds from the
-    ///      remaining bond, but never freeze withdrawal.
-    uint64 public freezeStart;
+    /// @dev Withdrawal is frozen while block.timestamp < freezeUntil. Each
+    ///      incident freezes from its opening for min(CLAIM_WINDOW, the
+    ///      unused cap), charged to frozenUsed when it opens. Once frozenUsed
+    ///      reaches FREEZE_CAP, later incidents still record evidence and pay
+    ///      from the remaining bond, but never freeze.
+    uint64 public freezeUntil;
+    uint32 public frozenUsed;
 
     bool public listPinned;
     bytes32 public quarantineListHash;
@@ -258,6 +263,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     error AlreadyClaimed();
     error NothingToSettle();
     error IncidentClosed();
+    error AnotherIncidentOpen();
     error ClaimsOpen();
     error NotSettled();
     error NothingToClaim();
@@ -277,7 +283,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     event EvidenceRecorded(
         bytes32 indexed key, uint8 evidenceType, uint32 epoch, uint48 seq, address payTo, uint256 incidentId
     );
-    event IncidentOpened(uint256 indexed incidentId, uint32 indexed epoch, uint64 claimsCloseAt);
+    event IncidentOpened(uint256 indexed incidentId, uint32 indexed epoch, uint64 claimsCloseAt, uint64 freezeUntil);
     event BountyFinalized(uint32 indexed epoch, address payTo, uint256 amount);
     event RefundRegistered(bytes32 indexed leafHash, address payer, uint256 amount, uint256 incidentId);
     event IncidentSettled(uint256 indexed incidentId, uint256 requested, uint256 pool);
@@ -411,7 +417,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     }
 
     /// @notice Withdraw the remaining bond after notice, the notice period and
-    ///         the reveal grace, outside the single freeze window. Registered
+    ///         the reveal grace, while withdrawal is not frozen. Registered
     ///         refunds of unsettled incidents and pending bounties (within the
     ///         cap) stay in the contract and remain claimable. Closing ends
     ///         new reveals and new refund registrations. Before activation
@@ -600,10 +606,6 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         return _frozen();
     }
 
-    /// @notice End of the single freeze window (0 if no incident yet).
-    function freezeEnd() public view returns (uint256) {
-        return freezeStart == 0 ? 0 : uint256(freezeStart) + CLAIM_WINDOW;
-    }
 
     function incident(uint256 id) external view returns (Incident memory) {
         return _incidents[id];
@@ -689,11 +691,10 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         return block.timestamp > uint256(c.at) + MIN_DELAY + REVEAL_WINDOW;
     }
 
-    /// @dev Total freeze over the contract's life is at most one claim
-    ///      window, starting at the first incident. Every settlement happens
-    ///      after this window, so nothing re-freezes once an incident settles.
+    /// @dev At most one incident is open at a time and each freeze is charged
+    ///      up front, so the total frozen time never exceeds FREEZE_CAP.
     function _frozen() internal view returns (bool) {
-        return freezeStart != 0 && block.timestamp <= uint256(freezeStart) + CLAIM_WINDOW;
+        return block.timestamp < freezeUntil;
     }
 
     /// @notice Incident identity: the conflicting epoch plus the issuer kid.
@@ -736,23 +737,34 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         bytes32 ik = incidentKey(epoch);
         uint256 incidentId = incidentOf[ik];
         if (incidentId == 0) {
+            // One open incident at a time: a different epoch waits until the
+            // open one is settled (anyone may settle after its window).
+            if (openIncidents != 0) revert AnotherIncidentOpen();
             incidentId = ++incidentCount;
             incidentOf[ik] = incidentId;
-            openIncidents += 1;
-            if (freezeStart == 0) freezeStart = uint64(block.timestamp);
+            openIncidents = 1;
             uint64 closeAt = uint64(block.timestamp + CLAIM_WINDOW);
+            uint256 room = FREEZE_CAP - frozenUsed;
+            uint256 d = room < CLAIM_WINDOW ? room : CLAIM_WINDOW;
+            uint64 until = 0;
+            if (d != 0) {
+                until = uint64(block.timestamp + d);
+                freezeUntil = until;
+                frozenUsed += uint32(d);
+            }
             _incidents[incidentId] = Incident({
                 epoch: epoch,
                 openedAt: uint64(block.timestamp),
                 claimsCloseAt: closeAt,
+                freezeUntil: until,
                 settled: false,
                 requested: 0,
                 pool: 0
             });
-            emit IncidentOpened(incidentId, epoch, closeAt);
+            emit IncidentOpened(incidentId, epoch, closeAt, until);
         } else {
             // Same fork. Join only while its claim window is open; after
-            // that the epoch is closed for good (no re-open, no re-freeze).
+            // that the epoch is closed for good (no re-open, no new freeze).
             Incident storage cur = _incidents[incidentId];
             if (cur.settled || block.timestamp > cur.claimsCloseAt) revert IncidentClosed();
         }

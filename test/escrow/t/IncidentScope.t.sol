@@ -6,9 +6,9 @@ import {TreeLib} from "./utils/TreeLib.sol";
 import {EquivocationEscrowV0 as E} from "escrow/EquivocationEscrowV0.sol";
 
 /// @dev One fork is one incident, keyed by (epoch, kid). A settled or expired
-///      epoch never re-opens, and later keys from it pay nothing. Withdrawal
-///      is frozen at most once per contract (the first claim window); later
-///      incidents in other epochs pay from the remaining bond but never freeze.
+///      epoch never re-opens, and later keys from it pay nothing. At most one
+///      incident is open at a time, and the total frozen time over the bond's
+///      life is capped at 28 days; after that, incidents pay but never freeze.
 contract IncidentScopeTest is EscrowFixture {
     uint32 constant EP = 9;
     uint256 constant SIZE = 32;
@@ -199,161 +199,142 @@ contract IncidentScopeTest is EscrowFixture {
         ev = E.EvidenceB(g1, signHead(g1), g2, signHead(g2), uint64(i), honest[i], forked[i], TreeLib.proof(honest, i), TreeLib.proof(forked, i));
     }
 
-    /// @dev One fork carried through epochs N, N+1 and N+2. Each epoch gets
-    ///      its own incident and pays from the remaining bond within the caps,
-    ///      but withdrawal is frozen only once (the first claim window), and
-    ///      fresh keys replayed across later expiries never freeze again or
-    ///      pay a leaf twice.
-    function test_incident_fork_spanning_epochs_freezes_once() public {
-        uint32 n0 = EP;
-        address p1 = address(0x9101);
-        address p2 = address(0x9102);
-        address p3 = address(0x9103);
+    function openEpoch(uint32 ep, uint256 idx, address who, address payer, uint64 amt) internal returns (bytes32 k) {
+        k = submitB(who, who, evAtEpoch(ep, idx));
+        register(k, honest[idx], payer, amt);
+    }
 
-        // Epoch N opens incident 1 and starts the one freeze.
-        bytes32 kN = submitB(alice, alice, evAtEpoch(n0, 3));
-        uint256 fEnd = esc.freezeEnd();
-        assertEq(fEnd, esc.incident(1).claimsCloseAt, "freeze = first claim window");
-        assertTrue(esc.frozen(), "frozen");
-        register(kN, honest[3], p1, 5 * ONE);
+    function closeOut(uint256 id) internal {
+        uint32 ep = esc.incident(id).epoch;
+        uint256 t = uint256(esc.incident(id).claimsCloseAt) + 1;
+        if (block.timestamp < t) vm.warp(t);
+        if (!esc.bounty(ep).finalized) esc.finalizeBounty(ep);
+        esc.settle(id);
+    }
 
-        // Epoch N+1, same fork, during the freeze: own incident, same freeze.
-        vm.warp(block.timestamp + 5 days);
-        bytes32 kN1 = submitB(bob, bob, evAtEpoch(n0 + 1, 4));
-        assertEq(esc.incidentCount(), 2, "incident 2");
-        assertEq(esc.freezeEnd(), fEnd, "freeze not extended");
-        expectRegisterRevert(keyOf(evAtEpoch(n0 + 1, 3)), honest[3], p1, 5 * ONE, E.NotAffected.selector);
-        register(kN1, honest[4], p2, 4 * ONE);
-        vm.warp(block.timestamp + 1 hours);
-        esc.finalizeBounty(n0);
-        esc.finalizeBounty(n0 + 1);
+    /// @dev One fork carried through epochs N to N+4, each epoch opened right
+    ///      after the previous one settles, across several expiries. Total
+    ///      frozen time stops at 28 days; later epochs still pay; no leaf or
+    ///      bounty pays twice; withdrawal works after the cap.
+    function test_incident_chain_across_epochs_capped_at_28_days() public {
+        uint256 totalFrozen;
+        for (uint256 e = 0; e < 5; e++) {
+            uint32 ep = EP + uint32(e);
+            address who = address(uint160(0x7300 + e));
+            address payer = address(uint160(0x9300 + e));
+            uint256 openedAt = block.timestamp + esc.MIN_DELAY();
+            openEpoch(ep, 3 + e, who, payer, 5 * ONE);
+            E.Incident memory inc = esc.incident(e + 1);
+            assertEq(inc.epoch, ep, "epoch");
+            assertEq(inc.openedAt, openedAt, "opened now");
+            uint256 froze = inc.freezeUntil == 0 ? 0 : inc.freezeUntil - inc.openedAt;
+            totalFrozen += froze;
+            if (e < 2) {
+                assertEq(froze, 14 days, "freezes one claim window");
+                assertTrue(esc.frozen(), "frozen");
+            } else {
+                assertEq(froze, 0, "cap reached: no freeze");
+                assertFalse(esc.frozen(), "not frozen after the cap");
+            }
+            assertLe(totalFrozen, 28 days, "cap");
+            assertEq(uint256(esc.frozenUsed()), totalFrozen, "frozenUsed tracks");
 
-        // First settle, after the freeze.
-        vm.warp(fEnd + 1);
-        assertFalse(esc.frozen(), "open after the first claim window");
-        esc.settle(1);
-        esc.claimRefund(honest[3]);
+            // The next epoch of the same fork waits while this one is open.
+            tryRevealB(who, evAtEpoch(ep + 1, 20), E.AnotherIncidentOpen.selector);
+            // A leaf refunded under an earlier epoch cannot register again.
+            if (e > 0) {
+                bytes32 again = submitB(who, who, evAtEpoch(ep, 2 + e));
+                expectRegisterRevert(again, honest[2 + e], address(uint160(0x9300 + e - 1)), 5 * ONE, E.AlreadyClaimed.selector);
+            }
 
-        // Epoch N+2, same fork, after a settle: pays, never freezes.
-        bytes32 kN2 = submitB(carol, carol, evAtEpoch(n0 + 2, 5));
-        assertEq(esc.incidentCount(), 3, "incident 3");
-        assertFalse(esc.frozen(), "no re-freeze after a settle");
-        assertEq(esc.freezeEnd(), fEnd, "freeze end fixed");
-        register(kN2, honest[5], p3, 3 * ONE);
-
-        // Leaves already registered stay one-shot across epochs.
-        bytes32 kN2at3 = submitB(alice, alice, evAtEpoch(n0 + 2, 3));
-        expectRegisterRevert(kN2at3, honest[3], p1, 5 * ONE, E.AlreadyClaimed.selector);
-        bytes32 kN2at4 = submitB(bob, bob, evAtEpoch(n0 + 2, 4));
-        expectRegisterRevert(kN2at4, honest[4], p2, 4 * ONE, E.AlreadyClaimed.selector);
-
-        // Replay fresh keys from all three epochs across four more expiries.
-        for (uint256 k = 0; k < 4; k++) {
-            vm.warp(block.timestamp + esc.CLAIM_WINDOW() + 1);
-            address who = address(uint160(0x7200 + k));
-            tryRevealB(who, evAtEpoch(n0, 10 + k), E.IncidentClosed.selector);
-            tryRevealB(who, evAtEpoch(n0 + 1, 10 + k), E.IncidentClosed.selector);
-            tryRevealB(who, evAtEpoch(n0 + 2, 10 + k), E.IncidentClosed.selector);
-            assertFalse(esc.frozen(), "withdrawal stays open");
-            assertEq(esc.incidentCount(), 3, "no new incident");
-            assertEq(esc.freezeEnd(), fEnd, "freeze end fixed");
+            vm.warp(block.timestamp + 1 hours);
+            closeOut(e + 1);
+            esc.claimRefund(honest[3 + e]);
+            assertEq(usdc.balanceOf(payer), 5 * ONE, "refund once");
+            assertFalse(esc.frozen(), "open after settle");
+            // A settled epoch never re-opens.
+            tryRevealB(who, evAtEpoch(ep, 25), E.IncidentClosed.selector);
+        }
+        assertEq(totalFrozen, 28 days, "total frozen time is the cap");
+        assertEq(esc.bountiesPaid(), 100 * ONE, "bounty cap");
+        for (uint256 e = 0; e < 5; e++) {
+            vm.expectRevert(E.NothingToClaim.selector);
+            esc.claimRefund(honest[3 + e]);
         }
 
-        esc.finalizeBounty(n0 + 2);
-        assertEq(esc.bountiesPaid(), 100 * ONE, "bounty cap holds");
-        esc.settle(2);
-        esc.settle(3);
-        esc.claimRefund(honest[4]);
-        esc.claimRefund(honest[5]);
-        vm.expectRevert(E.NothingToClaim.selector);
-        esc.claimRefund(honest[3]);
-        vm.expectRevert(E.NothingToClaim.selector);
-        esc.claimRefund(honest[4]);
-        assertEq(usdc.balanceOf(p1), 5 * ONE, "p1 once");
-        assertEq(usdc.balanceOf(p2), 4 * ONE, "p2 once");
-        assertEq(usdc.balanceOf(p3), 3 * ONE, "p3 once");
-
         noticeNow();
         vm.warp(esc.revealGraceEnd());
         vm.prank(owner);
         esc.withdraw();
-        assertEq(usdc.balanceOf(owner), 1000 * ONE - 12 * ONE - 100 * ONE, "owner gets the rest");
+        assertEq(usdc.balanceOf(owner), 1000 * ONE - 25 * ONE - 100 * ONE, "owner gets the rest");
     }
 
-    /// @dev A later epoch's incident opened after the freeze: withdrawal goes
-    ///      ahead, its registered refund and pending bounty stay reserved, and
-    ///      closing stops new registrations.
-    function test_incident_later_epoch_pays_but_never_freezes() public {
-        (, address payer) = openAndSettleEpoch9();
-        uint256 bondAfter = esc.bondAccounted();
+    function test_incident_second_incident_refused_while_one_open() public {
+        submitB(alice, alice, evAtEpoch(EP, 3));
+        E.EvidenceB memory other = evAtEpoch(EP + 1, 3);
+        tryRevealB(bob, other, E.AnotherIncidentOpen.selector);
+        tryRevealA(bob, pairA(EP + 7, 20, keccak256("z1"), keccak256("z2")), E.AnotherIncidentOpen.selector);
+        assertEq(esc.incidentCount(), 1, "one incident");
+        assertEq(esc.evidenceIncident(keyOf(other)), 0, "nothing recorded");
+        assertEq(esc.pendingBounties(), 1, "no second bounty");
+
+        // Past the window but unsettled: still one at a time.
+        vm.warp(uint256(esc.incident(1).claimsCloseAt) + 1);
+        tryRevealB(carol, other, E.AnotherIncidentOpen.selector);
+        assertFalse(esc.frozen(), "freeze over");
+
+        closeOut(1);
+        submitB(carol, carol, other);
+        assertEq(esc.incidentCount(), 2, "next epoch opens after settle");
+        assertTrue(esc.frozen(), "second freeze inside the cap");
+        assertEq(uint256(esc.frozenUsed()), 28 days, "cap used");
+    }
+
+    /// @dev After the cap, a later epoch opens without freezing; the owner
+    ///      gives notice and withdraws while it is unsettled; its refund and
+    ///      an earlier unclaimed bounty still pay after close.
+    function test_incident_after_cap_withdraw_and_accepted_payouts() public {
+        openEpoch(EP, 3, alice, address(0x9401), 5 * ONE);
+        vm.warp(block.timestamp + 1 hours);
+        closeOut(1);
+        esc.claimRefund(honest[3]);
+        openEpoch(EP + 1, 4, bob, address(0x9402), 5 * ONE);
+        vm.warp(block.timestamp + 1 hours);
+        closeOut(2);
+        assertEq(uint256(esc.frozenUsed()), 28 days, "cap reached");
+        assertEq(esc.credits(bob), 50 * ONE, "bounty credited, unclaimed");
+
         noticeNow();
-
-        vm.warp(esc.withdrawableAt() - 1);
-        E.EvidenceB memory ev = evAtEpoch(EP + 1, 3);
-        bytes32 salt = keccak256("late-epoch");
-        commitB(bob, bob, ev, salt);
-        passDelay();
-        revealB(bob, bob, ev, salt);
-        bytes32 k = keyOf(ev);
-        assertEq(esc.incidentCount(), 2, "incident 2");
-        assertEq(esc.incident(2).epoch, EP + 1, "epoch stored");
-        assertFalse(esc.frozen(), "no second freeze");
-
-        expectRegisterRevert(k, honest[3], payer, 5 * ONE, E.AlreadyClaimed.selector);
-        register(k, forked[3], address(0x9002), 4 * ONE);
+        openEpoch(EP + 2, 5, carol, address(0x9403), 5 * ONE);
+        assertFalse(esc.frozen(), "no freeze after the cap");
+        assertEq(esc.incident(3).freezeUntil, 0, "freezeUntil 0");
 
         vm.warp(esc.revealGraceEnd());
-        assertLe(block.timestamp, esc.incident(2).claimsCloseAt, "incident 2 still open");
+        uint256 bondBefore = esc.bondAccounted();
         vm.prank(owner);
         esc.withdraw();
-        assertEq(usdc.balanceOf(owner), bondAfter - 4 * ONE - 50 * ONE, "refund and bounty reserved");
-        assertEq(esc.bondAccounted(), 54 * ONE, "reserve kept");
+        assertEq(esc.bondAccounted(), 5 * ONE, "registered refund reserved");
+        assertEq(usdc.balanceOf(owner), bondBefore - 5 * ONE, "owner gets the rest");
 
-        expectRegisterRevert(k, honest[3], address(0x9003), 1 * ONE, E.NotActive.selector);
-        esc.finalizeBounty(EP + 1);
-        vm.warp(uint256(esc.incident(2).claimsCloseAt) + 1);
-        esc.settle(2);
-        esc.claimRefund(forked[3]);
+        // Closed: no new registrations or reveals; accepted payouts still pay.
+        expectRegisterRevert(keyOf(evAtEpoch(EP + 2, 5)), forked[5], address(0x9404), 1 * ONE, E.NotActive.selector);
+        esc.settle(3);
+        esc.claimRefund(honest[5]);
+        esc.claimRefund(honest[4]);
         vm.prank(bob);
         esc.claim();
-        assertEq(usdc.balanceOf(address(0x9002)), 4 * ONE, "paid from the reserve");
-        assertEq(usdc.balanceOf(bob), 50 * ONE, "bounty from the reserve");
-        assertEq(usdc.balanceOf(payer), 5 * ONE, "epoch 9 payer still paid once");
-        assertEq(esc.bondAccounted(), 0, "nothing left");
-    }
-
-    function test_incident_concurrent_epochs_share_one_freeze() public {
-        submitB(alice, alice, evAt(3));
-        vm.warp(block.timestamp + 10 days);
-        submitA(bob, bob, pairA(EP + 1, 20, keccak256("x1"), keccak256("x2")));
-        assertEq(esc.openIncidents(), 2, "two open");
-        assertEq(esc.freezeEnd(), esc.incident(1).claimsCloseAt, "freeze not extended");
-        bytes32 k3 = keyOf(evAt(3));
-        register(k3, honest[3], address(0x9003), 5 * ONE);
-        assertEq(esc.openRequested(), 5 * ONE, "reserve tracked");
-
-        vm.warp(esc.freezeEnd() + 1);
-        assertFalse(esc.frozen(), "open while incident 2 is still in its window");
-        esc.finalizeBounty(EP);
-        esc.finalizeBounty(EP + 1);
-        esc.settle(1);
-        assertEq(esc.openIncidents(), 1, "incident 2 open");
-        vm.warp(uint256(esc.incident(2).claimsCloseAt) + 1);
-        esc.settle(2);
-        assertEq(esc.openRequested(), 0, "reserve cleared");
-
-        vm.expectRevert(E.NothingToSettle.selector);
-        esc.settle(0);
-        vm.expectRevert(E.NothingToSettle.selector);
-        esc.settle(3);
-        vm.expectRevert(E.NothingToSettle.selector);
-        esc.settle(2);
-
-        noticeNow();
-        vm.warp(esc.revealGraceEnd());
-        vm.prank(owner);
-        esc.withdraw();
-        assertTrue(esc.closed(), "closed");
+        assertEq(usdc.balanceOf(address(0x9401)), 5 * ONE, "p1");
+        assertEq(usdc.balanceOf(address(0x9402)), 5 * ONE, "p2 after cap");
+        assertEq(usdc.balanceOf(address(0x9403)), 5 * ONE, "p3 after close");
+        assertEq(usdc.balanceOf(bob), 50 * ONE, "bounty after cap");
+        vm.prank(alice);
+        esc.claim();
+        vm.expectRevert(E.NothingToClaim.selector);
+        esc.claimRefund(honest[5]);
+        vm.prank(bob);
+        vm.expectRevert(E.NothingToClaim.selector);
+        esc.claim();
+        assertEq(usdc.balanceOf(address(esc)), 0, "nothing stranded");
     }
 
     /// @dev Evidence never spans epochs: both heads of A and B must share one.

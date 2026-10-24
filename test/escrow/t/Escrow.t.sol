@@ -256,10 +256,16 @@ contract EscrowTest is EscrowFixture {
         assertEq(esc.credits(alice), 50 * ONE, "first finder");
         assertEq(esc.credits(bob) + esc.credits(carol), 0, "later keys pay nothing");
 
+        // One open incident at a time: each later epoch opens after a settle.
+        vm.warp(uint256(esc.incident(1).claimsCloseAt) + 1);
+        esc.settle(1);
         submitA(bob, bob, pairA(8, 5, R1, R2));
-        submitA(carol, carol, pairA(9, 5, R1, R2));
         vm.warp(block.timestamp + 1 hours);
         esc.finalizeBounty(8);
+        vm.warp(uint256(esc.incident(2).claimsCloseAt) + 1);
+        esc.settle(2);
+        submitA(carol, carol, pairA(9, 5, R1, R2));
+        vm.warp(block.timestamp + 1 hours);
         esc.finalizeBounty(9);
         assertEq(esc.bountiesPaid(), 100 * ONE, "total cap");
         assertEq(esc.credits(carol), 0, "third epoch over cap");

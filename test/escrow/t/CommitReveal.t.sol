@@ -367,25 +367,27 @@ contract CommitRevealTest is EscrowFixture {
 
     // CR14
     function test_CR14_bounty_caps_through_commit_reveal() public {
+        // One open incident at a time, so epochs run one after another.
         for (uint32 ep = 20; ep < 24; ep++) {
             for (uint256 k = 0; k < 3; k++) {
                 address who = address(uint160(0xE000 + ep * 10 + k));
                 PairA memory p = pairA(ep, 9, R1, keccak256(abi.encode(ep, k)));
                 commitA(who, who, p, bytes32(k));
             }
-        }
-        passDelay();
-        for (uint32 ep = 20; ep < 24; ep++) {
+            passDelay();
             for (uint256 k = 0; k < 3; k++) {
                 address who = address(uint160(0xE000 + ep * 10 + k));
                 PairA memory p = pairA(ep, 9, R1, keccak256(abi.encode(ep, k)));
                 revealA(who, who, p, bytes32(k));
             }
+            vm.warp(block.timestamp + 1 hours);
+            esc.finalizeBounty(ep);
+            uint256 id = esc.incidentCount();
+            vm.warp(uint256(esc.incident(id).claimsCloseAt) + 1);
+            esc.settle(id);
         }
-        vm.warp(block.timestamp + 1 hours);
         uint256 total;
         for (uint32 ep = 20; ep < 24; ep++) {
-            esc.finalizeBounty(ep);
             for (uint256 k = 0; k < 3; k++) total += esc.credits(address(uint160(0xE000 + ep * 10 + k)));
         }
         assertEq(total, 100 * ONE, "total bounty cap");

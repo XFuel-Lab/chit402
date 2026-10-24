@@ -24,7 +24,7 @@ forge-std submodule: `t/utils/Test.sol` holds the small cheatcode interface and 
 | `t/CommitReveal.t.sol` | CR1-CR14 |
 | `t/Binding.t.sol` | BC1-BC10 |
 | `t/EdgeCases.t.sol` | Extra edge cases and a payout bound fuzz |
-| `t/IncidentScope.t.sol` | One incident per (epoch, kid) and one freeze per contract: a fork across epochs N to N+2 replayed over several expiries freezes once and pays each leaf once; reserves at withdrawal |
+| `t/IncidentScope.t.sol` | One incident per (epoch, kid), one open at a time, 28-day cumulative freeze cap: chained epochs N to N+4, refusal while open, withdrawal and accepted payouts after the cap, no double pay |
 | `t/Precompile.t.sol` | Local 0x100 against a Wycheproof P-256 subset and edge cases |
 | `t/Vectors.t.sol` | Constants, the worked head vector, the production kid thumbprint, node-signed vectors |
 | `t/ForkBaseSepolia.t.sol` | F1, opt-in: read-only Base Sepolia fork and `eth_call` to 0x100 |

@@ -12,24 +12,30 @@ tree heads signed by the pinned P-256 key that disagree about the log can submit
 - **Type B:** same epoch, different leaf hashes at the same index, each with an inclusion
   proof under its head (RFC 9162 loop, ported from `services/gateway/src/receipt-merkle.js`).
 
-Submission is commit then reveal. The first valid reveal opens an incident and stops
-withdrawal at once. The epoch bounty goes to the earliest commit among reveals that land in
+Submission is commit then reveal. The first valid reveal opens an incident and, within the
+freeze cap below, stops withdrawal at once. The epoch bounty goes to the earliest commit among reveals that land in
 the contest window. Affected payers register refunds with a signed `ReceiptBinding` during
 the claim window, and the incident settles pro rata if refunds exceed the bond.
 
-One fork is one incident. Incidents are keyed by the conflicting epoch plus the pinned kid
-(`incidentKey(epoch)`). The first valid key from an epoch opens that epoch's incident. Later
-keys from the same epoch join it while its claim window is open and revert with
-`IncidentClosed` after that, so a settled or expired epoch never re-opens.
+Incident and freeze rules:
 
-Withdrawal is frozen at most once in the contract's life: from the first incident's opening
-through its claim window (`freezeEnd()`). Incidents in other epochs, including a fork
-carried into later epochs, record evidence and pay refunds from the remaining bond within
-the caps, but never freeze withdrawal. Every settlement happens after that window, so
-nothing freezes again once an incident has settled. At withdrawal the owner receives the
-bond minus the refunds registered in unsettled incidents and the pending bounties within
-the cap; those stay claimable. Closing stops new reveals and new refund registrations.
-`settle(incidentId)` closes an incident after its window.
+- **One incident per (epoch, kid).** Incidents are keyed by the conflicting epoch plus the
+  pinned kid (`incidentKey(epoch)`). Later keys from the same epoch join its incident while
+  its claim window is open and revert with `IncidentClosed` after that, so a settled or
+  expired epoch never re-opens.
+- **At most one open incident at a time.** A key from a different epoch reverts with
+  `AnotherIncidentOpen` until the open incident is settled (anyone may call
+  `settle(incidentId)` after its window).
+- **Cumulative freeze cap of 28 days** (`FREEZE_CAP`) over the bond's whole life. Each new
+  incident freezes withdrawal from its opening for min(14 days, unused cap), charged to
+  `frozenUsed` up front (`freezeUntil`). Once the cap is used, the owner's notice and
+  withdrawal path works again and later evidence can no longer freeze; it still records
+  and pays from the remaining bond within the caps.
+- **Accepted payouts stay honored.** Bounties already credited and refunds registered in an
+  accepted incident pay within their caps after the cap is hit and after withdrawal. At
+  withdrawal the owner receives the bond minus refunds registered in an unsettled incident
+  and pending bounties within the bounty cap; those stay in the contract. Closing stops new
+  reveals and new refund registrations. Refunds are one per leaf across all incidents.
 
 ## Signing format
 
@@ -56,12 +62,13 @@ Shared vectors: `test/escrow/vectors/eip712.json`.
 | Bond period before notice | 14 days |
 | Notice before withdrawal | 14 days |
 | Claim window per incident | 14 days |
+| Cumulative freeze cap | 28 days |
 | Commit delay / reveal window / contest window | 5 minutes / 24 hours / 1 hour |
 | Open commits per address | 8 |
 
 Times are `block.timestamp` seconds. Commits stop at `withdrawableAt` (notice + 14 days).
-Withdrawal waits for `withdrawableAt + MIN_DELAY + REVEAL_WINDOW` and the end of the single
-freeze window. Before activation the owner may withdraw at any time, which closes the
+Withdrawal waits for `withdrawableAt + MIN_DELAY + REVEAL_WINDOW` and for any current
+freeze to end. Before activation the owner may withdraw at any time, which closes the
 contract.
 
 `asset_id` in a binding names the receipt's payment asset (Base mainnet USDC,
