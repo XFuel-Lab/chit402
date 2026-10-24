@@ -475,3 +475,29 @@ test('QP12: the script end to end in a production env with a test key: hash firs
   }
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
+
+test('QP13: --log-dir and RECEIPT_LOG_DIR must name the same real directory when both are set', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const other = tmp('qlprod-other-');
+  fs.cpSync(s.logDir, other, { recursive: true });
+  let r = await run(applyArgs(s), { signer, env: { RECEIPT_LOG_DIR: other } });
+  assert.deepEqual(r.result, { ok: false, reason: 'log_dir_mismatch' });
+  r = await run(applyArgs(s), { signer, env: { RECEIPT_LOG_DIR: path.join(other, 'missing') } });
+  assert.deepEqual(r.result, { ok: false, reason: 'log_dir_mismatch' });
+  // Both set to the same path that does not exist: refused, not resolved later.
+  const missing = path.join(other, 'missing');
+  r = await run(['--log-dir', missing, '--list', s.file], { signer, env: { RECEIPT_LOG_DIR: missing } });
+  assert.deepEqual(r.result, { ok: false, reason: 'log_dir_mismatch' });
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+  assert.equal(fs.existsSync(listDirOf(other)), false);
+  // The same directory by another spelling (trailing slash, a symlink to it) is fine.
+  const link = path.join(tmp('qlprod-link-'), 'logdir');
+  fs.symlinkSync(s.logDir, link);
+  r = await run(['--log-dir', s.logDir, '--list', s.file], { signer, env: { RECEIPT_LOG_DIR: `${link}/` } });
+  assert.equal(r.result.state, 'dry_run', r.err.join(' '));
+  // RECEIPT_LOG_DIR alone is used when --log-dir is absent.
+  r = await run(['--list', s.file], { signer, env: { RECEIPT_LOG_DIR: s.logDir } });
+  assert.equal(r.result.state, 'dry_run', r.err.join(' '));
+});

@@ -249,6 +249,14 @@ export function pinArgs(doc) {
   return { entries: doc.entries.map(tuple), highWater: doc.high_water.map(tuple) };
 }
 
+function realDir(dir) {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return refuse('log_dir_mismatch', 'a log directory does not resolve');
+  }
+}
+
 function parseArgs(argv) {
   const out = { apply: false, confirm: null, list: null, listSha256: null, logDir: null };
   for (let i = 0; i < argv.length; i += 1) {
@@ -282,8 +290,14 @@ export async function runProductionListSigner({
   try {
     const args = parseArgs(argv);
     if (!args.list) refuse('usage', '--list <unsigned v1 file> is required');
-    const logDir = args.logDir || env.RECEIPT_LOG_DIR || '';
+    const envLogDir = env.RECEIPT_LOG_DIR || '';
+    const logDir = args.logDir || envLogDir;
     if (!logDir) refuse('usage', '--log-dir or RECEIPT_LOG_DIR is required');
+    // Both given: they must be the same directory, or v1 could be signed into
+    // a directory the gateway does not serve and its hash pinned anyway.
+    if (args.logDir && envLogDir && realDir(args.logDir) !== realDir(envLogDir)) {
+      refuse('log_dir_mismatch', '--log-dir and RECEIPT_LOG_DIR name different directories');
+    }
     const fileBytes = fs.readFileSync(args.list);
     const inputHash = sha256Hex(fileBytes);
     out(`LIST_SHA256=${inputHash}`);
