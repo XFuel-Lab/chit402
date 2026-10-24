@@ -1018,6 +1018,15 @@ test('QP26: a quarantine-list directory swapped between the check and the link f
   check(r, 'swapped back');
   assert.equal(fs.existsSync(path.join(listDir, 'v1.json')), false);
   assert.ok(fs.existsSync(path.join(target, 'v1.json')));
+  // (d) As (c), and a different v1.json is left in the checked directory: the
+  // directory matches, but the file there is not the one just written.
+  ({ s, listDir, target, aside } = await prepared());
+  r = await withWriteHooks({
+    beforeOpen: () => { fs.renameSync(listDir, aside); fs.symlinkSync(target, listDir); },
+    afterLink: () => { fs.unlinkSync(listDir); fs.renameSync(aside, listDir); fs.writeFileSync(path.join(listDir, 'v1.json'), 'planted'); },
+  }, () => run(applyArgs(s), { signer: goodSigner() }));
+  check(r, 'planted');
+  assert.equal(fs.readFileSync(path.join(listDir, 'v1.json'), 'utf8'), 'planted');
   // No swap: the identity check passes and v1 is written as usual.
   ({ s } = await prepared());
   r = await run(applyArgs(s), { signer: goodSigner() });
