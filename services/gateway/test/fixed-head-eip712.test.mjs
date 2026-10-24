@@ -956,7 +956,14 @@ test('production keys: PRODUCTION_ISSUER_PUBLIC_KEYS holds every key in the publ
   const fixtures = path.join(here, '..', '..', '..', 'packages', 'verify', 'test', 'fixtures');
   const history = JSON.parse(fs.readFileSync(path.join(fixtures, 'public', 'issuer-history-v1.json'), 'utf8'));
   const jwks = JSON.parse(fs.readFileSync(path.join(fixtures, 'chit402-jwks.json'), 'utf8'));
-  const published = [...history.entries.map((e) => ({ kid: e.kid, ...e.jwk })), ...jwks.keys];
+  // The latest published snapshot is what a rotation updates; v1 is frozen.
+  const latest = JSON.parse(fs.readFileSync(path.join(here, '..', '..', '..', 'packages', 'verify', 'issuer-history.snapshot.json'), 'utf8'));
+  assert.ok(Array.isArray(latest.entries) && latest.entries.length >= 1);
+  const published = [
+    ...history.entries.map((e) => ({ kid: e.kid, ...e.jwk })),
+    ...latest.entries.map((e) => ({ kid: e.kid, ...e.jwk })),
+    ...jwks.keys,
+  ];
   assert.ok(published.length >= 2);
   for (const key of published) {
     assert.equal(PP.isProductionIssuerPublicKey(key), true, key.kid);
@@ -967,6 +974,61 @@ test('production keys: PRODUCTION_ISSUER_PUBLIC_KEYS holds every key in the publ
     assert.equal(thumb, k.kid, 'each listed key is its own RFC 7638 kid');
   }
   assert.equal(PP.isProductionIssuerPublicKey(KEY.publicJwk), false);
+});
+
+test('production keys: every spelling of a production point matches (decoded 32-byte x/y), labels do not matter', () => {
+  const k = PP.PRODUCTION_ISSUER_PUBLIC_KEYS[0];
+  const std = (v) => Buffer.from(v, 'base64url').toString('base64');
+  const padded = (v) => `${v}${'='.repeat((4 - (v.length % 4)) % 4)}`;
+  const leadingZero = (v) => Buffer.concat([Buffer.alloc(1), Buffer.from(v, 'base64url')]).toString('base64url');
+  const spellings = [
+    { x: k.x, y: k.y },
+    { x: padded(k.x), y: padded(k.y) },
+    { x: std(k.x), y: std(k.y) },
+    { x: leadingZero(k.x), y: leadingZero(k.y) },
+    { x: ` ${k.x}`, y: `${k.y} ` },
+    { x: k.x, y: k.y, crv: 'p-256' },
+  ];
+  for (const sp of spellings) {
+    assert.equal(PP.isProductionIssuerPublicKey({ kty: 'EC', crv: 'P-256', ...sp }), true, JSON.stringify(sp));
+    assert.deepEqual(
+      Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'relabelled', publicJwk: { kty: 'EC', crv: 'P-256', ...sp } }),
+      { ok: false, reason: 'production_key' },
+      JSON.stringify(sp),
+    );
+  }
+  assert.equal(PP.isProductionIssuerPublicKey({ x: k.x, y: KEY.publicJwk.y }), false, 'one coordinate is not enough');
+  assert.equal(PP.isProductionIssuerPublicKey({ x: k.x, y: k.y, crv: 'P-384' }), false);
+  assert.equal(PP.isProductionIssuerPublicKey(KEY.publicJwk), false);
+});
+
+test('quarantine guard: a malformed ISSUER_HISTORY_EXTRA refuses (history_extra_malformed) instead of being skipped', () => {
+  const good = JSON.stringify([{ kid: 'k', jwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y } }]);
+  const bad = [
+    'not json',
+    '{"entries":"x"}',
+    '42',
+    JSON.stringify([{ kid: 'no-jwk' }]),
+    JSON.stringify([{ kid: 'k', jwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x } }]),
+    JSON.stringify([{ kid: 'k', jwk: { kty: 'EC', crv: 'P-256', x: 123, y: KEY.publicJwk.y } }]),
+    JSON.stringify([{ kid: 'k', jwk: { kty: 'EC', crv: 'P-256', x: 'BB'.repeat(40), y: KEY.publicJwk.y } }]),
+    JSON.stringify([null]),
+    JSON.stringify([JSON.parse(good)[0], { kid: 'second-bad' }]),
+  ];
+  for (const raw of bad) {
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: raw }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'history_extra_malformed' }, raw);
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: raw } }), { ok: false, reason: 'history_extra_malformed' }, `${raw} (no signer yet)`);
+  }
+  const saved = process.env.ISSUER_HISTORY_EXTRA;
+  try {
+    process.env.ISSUER_HISTORY_EXTRA = bad[3];
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'history_extra_malformed' }, 'the process env is read too');
+  } finally {
+    if (saved === undefined) delete process.env.ISSUER_HISTORY_EXTRA;
+    else process.env.ISSUER_HISTORY_EXTRA = saved;
+  }
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: good }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'production_key' }, 'a well-formed entry is a key to refuse');
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: '  ' }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: true }, 'blank is unset');
 });
 
 // ---------------------------------------------------------------- G15 KMS

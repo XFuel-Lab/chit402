@@ -22,7 +22,7 @@ import { jcsRfc8785 } from './offer-receipt.js';
 import { signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
-import { isProductionIssuerPublicKey, isProductionProcess, nodeEnvIsProduction } from './production-process.js';
+import { isProductionIssuerPublicKey, isProductionProcess, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
 
 export const QUARANTINE_LIST_SCHEMA = 'chit402.quarantine_list.v1';
 export const QUARANTINE_LIST_TYP = 'chit402-quarantine-list+jwt';
@@ -131,21 +131,39 @@ export function buildQuarantineList({ entries, highWater, prevBytes = null }) {
   };
 }
 
-/** Issuer history entries named in ISSUER_HISTORY_EXTRA (either env): their keys are refused too. */
+/**
+ * Issuer history entries named in ISSUER_HISTORY_EXTRA (either env): their
+ * keys are refused too. A set value that does not parse, is not a list, or
+ * has an entry without a well-formed P-256 `jwk` is `malformed`: the guard
+ * refuses rather than skipping it.
+ */
 function historyExtraKeys(...envs) {
-  const out = [];
+  const keys = [];
+  let malformed = false;
   for (const e of envs) {
     const raw = e?.ISSUER_HISTORY_EXTRA;
-    if (!raw || !String(raw).trim()) continue;
+    if (raw == null || !String(raw).trim()) continue;
+    let parsed;
     try {
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
-      if (Array.isArray(list)) for (const entry of list) if (entry?.jwk) out.push(entry.jwk);
+      parsed = JSON.parse(raw);
     } catch {
-      // Unparsable history extra adds no keys; the production checks still apply.
+      malformed = true;
+      continue;
+    }
+    const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+    if (!Array.isArray(list)) {
+      malformed = true;
+      continue;
+    }
+    for (const entry of list) {
+      if (!entry || typeof entry !== 'object' || !wellFormedPublicJwk(entry.jwk)) {
+        malformed = true;
+        continue;
+      }
+      keys.push(entry.jwk);
     }
   }
-  return out;
+  return { keys, malformed };
 }
 
 function kmsSetting(e) {
@@ -176,7 +194,9 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   for (const e of [env, process.env]) {
     if (String(e?.ISSUER_KID || '').trim() === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
   }
-  if (publicJwk && isProductionIssuerPublicKey(publicJwk, historyExtraKeys(env, process.env))) {
+  const extra = historyExtraKeys(env, process.env);
+  if (extra.malformed) return { ok: false, reason: 'history_extra_malformed' };
+  if (publicJwk && isProductionIssuerPublicKey(publicJwk, extra.keys)) {
     return { ok: false, reason: 'production_key' };
   }
   // Last: the shared check (production kid or key loaded, or a key set without the test opt-out).

@@ -35,10 +35,32 @@ export const PRODUCTION_ISSUER_PUBLIC_KEYS = Object.freeze([
   }),
 ]);
 
-/** Same curve point, ignoring kid and any other label. */
+/**
+ * A JWK coordinate as its 32-byte big-endian value, or null. Accepts the
+ * base64url and standard alphabets, with or without padding, and extra
+ * leading zero bytes, so every spelling of one point compares equal.
+ */
+function coordBytes(v) {
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  let b = Buffer.from(v.trim(), 'base64');
+  while (b.length > 32 && b[0] === 0) b = b.subarray(1);
+  if (b.length > 32 || b.length === 0) return null;
+  if (b.length < 32) b = Buffer.concat([Buffer.alloc(32 - b.length), b]);
+  return b;
+}
+
+function isP256(crv) {
+  return crv == null || String(crv).trim().toUpperCase() === 'P-256';
+}
+
+/** Same curve point (decoded 32-byte x and y), ignoring kid and any other label. */
 function samePoint(a, b) {
-  return Boolean(a && b) && typeof a.x === 'string' && typeof a.y === 'string'
-    && a.x === b.x && a.y === b.y && String(a.crv || 'P-256') === String(b.crv || 'P-256');
+  if (!a || !b || !isP256(a.crv) || !isP256(b.crv)) return false;
+  const ax = coordBytes(a.x);
+  const ay = coordBytes(a.y);
+  const bx = coordBytes(b.x);
+  const by = coordBytes(b.y);
+  return Boolean(ax && ay && bx && by) && ax.equals(bx) && ay.equals(by);
 }
 
 /**
@@ -48,6 +70,11 @@ function samePoint(a, b) {
  * @param {{ x?: string, y?: string, crv?: string }|null|undefined} jwk
  * @param {Array<{ x?: string, y?: string, crv?: string }>} [extra]
  */
+/** Whether a JWK carries two coordinates that decode to 32-byte values. */
+export function wellFormedPublicJwk(jwk) {
+  return Boolean(jwk && typeof jwk === 'object' && isP256(jwk.crv) && coordBytes(jwk.x) && coordBytes(jwk.y));
+}
+
 export function isProductionIssuerPublicKey(jwk, extra = []) {
   if (!jwk) return false;
   return PRODUCTION_ISSUER_PUBLIC_KEYS.some((k) => samePoint(jwk, k))
