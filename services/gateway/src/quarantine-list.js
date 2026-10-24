@@ -410,13 +410,27 @@ export function quarantineListDir(logDir) {
   return path.join(logDir, QUARANTINE_LIST_DIRNAME);
 }
 
-/** Sorted version numbers present on disk. */
+/**
+ * A list that exists but cannot be read is an error, never "no list": the
+ * list is a deny list, so reading it as empty would let excluded heads back in.
+ */
+function unreadable(err, what) {
+  const out = coded(`quarantine list ${what} cannot be read (${err?.code || 'error'})`, 'quarantine_list_unreadable');
+  out.cause = err;
+  return out;
+}
+
+/**
+ * Sorted version numbers present on disk. Empty only when the directory does
+ * not exist (ENOENT); any other read error throws quarantine_list_unreadable.
+ */
 export function quarantineListVersions(dir) {
   let names = [];
   try {
     names = fs.readdirSync(dir);
-  } catch {
-    return [];
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw unreadable(err, 'directory');
   }
   return names
     .map((name) => VERSION_FILE.exec(name))
@@ -435,7 +449,11 @@ export function readQuarantineList(dir, version = null) {
   if (versions.length === 0) return null;
   const want = version == null ? versions[versions.length - 1] : version;
   if (!versions.includes(want)) return null;
-  return { version: want, bytes: fs.readFileSync(path.join(dir, `v${want}.json`), 'utf8') };
+  try {
+    return { version: want, bytes: fs.readFileSync(path.join(dir, `v${want}.json`), 'utf8') };
+  } catch (err) {
+    throw unreadable(err, `version ${want}`);
+  }
 }
 
 /**
@@ -461,18 +479,22 @@ export function writeQuarantineListVersion(dir, bytes) {
 }
 
 /**
- * Entries of every stored version, for refusal R-2. Read only.
+ * Entries of every stored version, for refusal R-2. Read only. Empty only
+ * when no list exists; an unreadable or unparseable list throws
+ * quarantine_list_unreadable, so the caller refuses rather than signs.
  * @param {string} dir
  */
 export function quarantinedTriples(dir) {
   const latest = readQuarantineList(dir);
   if (!latest) return [];
+  let doc;
   try {
-    const doc = JSON.parse(latest.bytes);
-    return (doc.entries || []).map((e) => ({ epoch: e.epoch, tree_size: e.tree_size, root: e.root }));
-  } catch {
-    return [];
+    doc = JSON.parse(latest.bytes);
+  } catch (err) {
+    throw unreadable(err, `version ${latest.version}`);
   }
+  if (!doc || !Array.isArray(doc.entries)) throw unreadable({ code: 'no_entries' }, `version ${latest.version}`);
+  return doc.entries.map((e) => ({ epoch: e.epoch, tree_size: e.tree_size, root: e.root }));
 }
 
 /**
