@@ -821,3 +821,52 @@ test('QP22: the log directory is resolved once; a symlink retargeted after the c
   const r = await run(['--list', s.file], { signer: goodSigner(), env: { RECEIPT_LOG_DIR: path.join(s.logDir, 'missing') } });
   assert.deepEqual(r.result, { ok: false, reason: 'log_dir_unresolved' });
 });
+
+test('QP23: a temp-file cleanup failure after the link reports v1 as written, never "Nothing written"', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const realRm = fs.rmSync;
+  let thrown = 0;
+  fs.rmSync = function patched(p, ...rest) {
+    if (String(p).includes('.v1.json.tmp-')) {
+      thrown += 1;
+      const e = new Error('busy');
+      e.code = 'EBUSY';
+      throw e;
+    }
+    return realRm.call(fs, p, ...rest);
+  };
+  let r;
+  try {
+    r = await run(applyArgs(s), { signer });
+  } finally {
+    fs.rmSync = realRm;
+  }
+  assert.equal(thrown, 1);
+  assert.deepEqual(r.result, { ok: false, reason: 'error', written: true });
+  const v1 = path.join(listDirOf(fs.realpathSync(s.logDir)), 'v1.json');
+  assert.ok(fs.existsSync(v1));
+  assert.ok(r.out.includes(`FILE=${v1}`), r.out.join(' '));
+  const text = r.err.join('\n');
+  assert.ok(/failed after writing: EBUSY\. v1 WAS written to /.test(text), text);
+  assert.ok(/Do not pin yet\. Rerun the same command/.test(text), text);
+  assert.ok(!/Nothing written/.test(text), text);
+  // The rerun verifies v1 (the leftover temp link is not a version) and prints the pin hash.
+  const again = await run(applyArgs(s), { signer });
+  assert.equal(again.result.state, 'same', again.err.join(' '));
+  assert.ok(again.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')));
+  assert.equal(signer.calls.length, 1);
+  // writeV1Atomic on its own: onLinked runs before the cleanup throws.
+  const dir = path.join(tmp('qlprod-onlinked-'), 'quarantine-list');
+  const linked = [];
+  fs.rmSync = function patched(p, ...rest) {
+    if (String(p).includes('.v1.json.tmp-')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+    return realRm.call(fs, p, ...rest);
+  };
+  try {
+    assert.throws(() => P.writeV1Atomic(dir, 'bytes', { onLinked: (f) => linked.push(f) }), (e) => e.code === 'EBUSY');
+  } finally {
+    fs.rmSync = realRm;
+  }
+  assert.deepEqual(linked, [path.join(dir, 'v1.json')]);
+});

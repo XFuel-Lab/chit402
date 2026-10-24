@@ -225,8 +225,12 @@ export function assertListDir(dir) {
   if (st.isSymbolicLink() || !st.isDirectory()) refuse('list_dir_not_directory', 'the quarantine-list path is a symlink or not a directory');
 }
 
-/** Write v1.json once: temp file, fsync, link (fails if v1 exists), fsync dir. */
-export function writeV1Atomic(dir, bytes) {
+/**
+ * Write v1.json once: temp file, fsync, link (fails if v1 exists), fsync dir.
+ * `onLinked(file)` runs as soon as the link succeeds, before the temp file is
+ * removed, so a caller knows v1 is on disk even if a later step throws.
+ */
+export function writeV1Atomic(dir, bytes, { onLinked } = {}) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // mkdir leaves an existing symlink in place, so check what is there now.
   assertListDir(dir);
@@ -248,6 +252,7 @@ export function writeV1Atomic(dir, bytes) {
       if (err?.code === 'EEXIST') refuse('v1_exists_different', 'v1 appeared while signing; it is never overwritten');
       throw err;
     }
+    if (onLinked) onLinked(file);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
@@ -400,8 +405,7 @@ async function runWith({
       return { ok: true, state: 'dry_run' };
     }
     const bytes = await signWithSnapshot(doc, snap, keys);
-    const file = writeV1Atomic(dir, bytes);
-    linkedFile = file;
+    const file = writeV1Atomic(dir, bytes, { onLinked: (f) => { linkedFile = f; } });
     const stored = fs.readFileSync(file, 'utf8');
     if (stored !== bytes) {
       refuse('write_mismatch', 'v1 was written but its bytes on disk differ from the signed bytes; inspect it before pinning anything');
