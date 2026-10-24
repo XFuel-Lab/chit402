@@ -677,3 +677,15 @@ test('QP18: every flag may be given once only', async () => {
   assert.equal(signer.calls.length, 0);
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
+
+test('QP19: v1.json is mode 0644 even under umask 077', async () => {
+  const s = await setup();
+  const prev = process.umask(0o077);
+  try {
+    const r = await run(applyArgs(s), { signer: goodSigner() });
+    assert.equal(r.result.state, 'written', r.err.join(' '));
+  } finally {
+    process.umask(prev);
+  }
+  assert.equal(fs.statSync(path.join(listDirOf(s.logDir), 'v1.json')).mode & 0o777, 0o644);
+});

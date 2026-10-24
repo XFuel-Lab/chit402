@@ -235,6 +235,8 @@ export function writeV1Atomic(dir, bytes) {
   const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
   try {
     try {
+      // 0644 whatever the umask: the gateway serves this file.
+      fs.fchmodSync(fd, 0o644);
       fs.writeSync(fd, bytes);
       fs.fsyncSync(fd);
     } finally {
