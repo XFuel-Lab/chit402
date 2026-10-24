@@ -27,9 +27,22 @@ export function normalizeRoot(root) {
   return hex;
 }
 
+/** NODE_ENV unset or anything but test/development is production. */
+function productionEnv(env) {
+  const v = env.NODE_ENV == null ? '' : String(env.NODE_ENV).trim();
+  return v !== 'test' && v !== 'development';
+}
+
 function readPinFile(env) {
   const file = env.RECEIPT_LOG_PIN_FILE || PIN_FILE;
-  if (!fs.existsSync(file)) return null;
+  if (!fs.existsSync(file)) {
+    // Production never runs, or signs, without the pin: a missing pin file
+    // refuses instead of silently disabling the pin check.
+    if (productionEnv(env)) {
+      throw new ReceiptLogRefused('pin_missing', `receipt log pin file is missing: ${file}`);
+    }
+    return null;
+  }
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
