@@ -121,11 +121,12 @@ async function readyTree({ ready = true } = {}) {
   return { tree, dir };
 }
 
-function claims({ payer = payerA.address, asset = BASE_USDC, gross = '2000', taskId = 'xfuel-pb-unit', network } = {}) {
+/** `ref: null` omits the signed payment.ref; the default is a Base mainnet ref like real receipts carry. */
+function claims({ payer = payerA.address, asset = BASE_USDC, gross = '2000', taskId = 'xfuel-pb-unit', network, ref = `base:0x${'e1'.repeat(32)}` } = {}) {
   return {
     task_id: taskId,
     caller_binding: { payer_wallet: payer },
-    payment: { rail: 'usdc', asset, gross_amount: gross, settled_amount: gross, ...(network === undefined ? {} : { network }) },
+    payment: { rail: 'usdc', ...(ref === null ? {} : { ref }), asset, gross_amount: gross, settled_amount: gross, ...(network === undefined ? {} : { network }) },
   };
 }
 
@@ -689,6 +690,49 @@ test('B8: a signed network other than Base mainnet gets no binding; Base spellin
   assert.deepEqual(await worker.tick(), ['skipped']);
   assert.equal(c.counts.typed, 0);
   assert.deepEqual(W.payerBindingView(store, 'xfuel-pb-b8-network'), { status: 'missing', reason: 'network' });
+});
+
+test('B8: the signed payment.ref gates the network on the real signed-claim shape (golden receipt, ref changed)', async () => {
+  const golden = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'payer-binding-b1-main.json'), 'utf8'));
+  const real = JSON.parse(Buffer.from(golden.holder_jws.split('.')[1], 'base64url').toString('utf8'));
+  assert.equal(real.payment.network, undefined, 'real signed claims carry no payment.network');
+  assert.match(real.payment.ref, /^base:0x[0-9a-f]{64}$/);
+  const hash = real.payment.ref.slice('base:'.length);
+  const withRef = (ref) => {
+    const c = structuredClone(real);
+    if (ref === null) delete c.payment.ref;
+    else c.payment.ref = ref;
+    return c;
+  };
+  assert.equal(B.bindingInputsFromClaims(real).ok, true, 'the golden receipt binds as signed');
+  for (const ref of [`base:${hash}`, `eip155:8453:${hash}`, ` base:${hash} `, `base:${hash.toUpperCase().replace('0X', '0x')}`]) {
+    assert.equal(B.bindingInputsFromClaims(withRef(ref)).ok, true, ref);
+  }
+  for (const ref of [`base-sepolia:${hash}`, `eip155:84532:${hash}`, `ethereum:${hash}`, `solana:${hash}`,
+    `eip155:1:${hash}`, `eip155:${hash}`, `Base:${hash}`, `base:${hash}00`, 'base:', hash]) {
+    assert.deepEqual(B.bindingInputsFromClaims(withRef(ref)), { ok: false, reason: 'network' }, ref);
+  }
+  for (const ref of [null, '', '   ']) {
+    assert.deepEqual(B.bindingInputsFromClaims(withRef(ref)), { ok: false, reason: 'no_payment_ref' }, String(ref));
+  }
+  // Through the worker on the real shape: skipped with the coded reason, no typed sign.
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b8r-'));
+  const c = countingSigner(envSigner);
+  const refs = {
+    'xfuel-pb-b8r-sepolia': `base-sepolia:${hash}`,
+    'xfuel-pb-b8r-84532': `eip155:84532:${hash}`,
+    'xfuel-pb-b8r-eth': `ethereum:${hash}`,
+    'xfuel-pb-b8r-sol': `solana:${hash}`,
+    'xfuel-pb-b8r-none': null,
+  };
+  const worker = unitWorker({ store, tree, jwsFor: (id) => fakeJws({ ...withRef(refs[id]), task_id: id }), signer: c.signer });
+  for (const [id, n] of Object.keys(refs).map((k, i) => [k, i])) await appendAndEnqueue(worker, tree, id, ROW(70 + n));
+  assert.deepEqual(await worker.tick(), ['skipped', 'skipped', 'skipped', 'skipped', 'skipped']);
+  assert.equal(c.counts.typed, 0);
+  for (const id of Object.keys(refs)) {
+    assert.deepEqual(W.payerBindingView(store, id), { status: 'missing', reason: refs[id] === null ? 'no_payment_ref' : 'network' }, id);
+  }
 });
 
 // ---------------------------------------------------------------- B9

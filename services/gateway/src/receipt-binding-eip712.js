@@ -25,7 +25,7 @@ import {
   typedDigest,
   verifyTypedSignature,
 } from './eip712-p256.js';
-import { BASE_USDC } from './public-attestation.js';
+import { BASE_USDC, normalizeBaseRef } from './public-attestation.js';
 
 export const PAYER_BINDING_FLAG = 'RECEIPT_PAYER_BINDING_EIP712';
 export const PAYER_BINDING_SCHEMA = 'chit402.receipt_binding_eip712.v1';
@@ -33,8 +33,12 @@ const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const AMOUNT = /^[1-9][0-9]*$/;
 const HEX32 = /^[0-9a-f]{64}$/;
 const UINT64_MAX = (1n << 64n) - 1n;
-/** Spellings of Base mainnet used in signed payment claims. */
+/** Spellings of Base mainnet in an optional signed payment.network field. */
 const BASE_NETWORKS = new Set(['base', 'eip155:8453']);
+// The network gate is Base MAINNET (the signed payment.ref prefix), while the
+// binding's EIP-712 domain uses chainId 84532 (Base Sepolia, the v0 test
+// escrow). They differ on purpose: a test escrow refunds test USDC against
+// mainnet-USDC receipts. Do not "fix" one to match the other.
 
 /** Strict flag parse: only the exact string "true" turns it on. */
 export function payerBindingFlagOn(env = process.env) {
@@ -54,7 +58,13 @@ export function bindingInputsFromClaims(claims) {
   const pay = claims.payment;
   if (!pay || typeof pay !== 'object') return { ok: false, reason: 'no_payment' };
   if (pay.rail != null && pay.rail !== 'usdc') return { ok: false, reason: 'asset' };
-  // When the signed claims name a network, it must be Base mainnet.
+  // Signed claims carry the network only as the payment.ref prefix. It must
+  // be present and be Base mainnet: `base:` or `eip155:8453:` then a 32-byte
+  // tx hash, the same strict pattern as public attestations. Not
+  // networkFromPaymentRef, which cuts `eip155:84532:` down to `eip155`.
+  if (pay.ref == null || String(pay.ref).trim() === '') return { ok: false, reason: 'no_payment_ref' };
+  if (!normalizeBaseRef(pay.ref)) return { ok: false, reason: 'network' };
+  // A payment.network field, if one is ever signed, must agree.
   if (pay.network != null && !BASE_NETWORKS.has(String(pay.network).trim().toLowerCase())) {
     return { ok: false, reason: 'network' };
   }
