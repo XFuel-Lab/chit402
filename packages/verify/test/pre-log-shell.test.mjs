@@ -10,13 +10,17 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from './tmp-dirs.mjs';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const shell = JSON.parse(readFileSync(new URL('./fixtures/public/chit-43c98110-prelog-shell.json', import.meta.url), 'utf8'));
 const head = JSON.parse(readFileSync(new URL('./fixtures/public/tree-head-size3.json', import.meta.url), 'utf8'));
+const holder = JSON.parse(readFileSync(new URL('./fixtures/public/foreign-x402-muy1hh8y.json', import.meta.url), 'utf8'));
+const { checkReceiptInput } = await import('../dist/check-input.js');
 const env = { ...process.env, BASE_RPC_URL: 'http://127.0.0.1:9/', SOLANA_RPC_URL: 'http://127.0.0.1:9/' };
 
 const stub = { doc: shell, head, gets: [] };
@@ -31,7 +35,7 @@ before(async () => {
     stub.gets.push(`${req.method} ${req.url}`);
     if (req.method !== 'GET') return send(405, { error: 'method' });
     if (req.url.startsWith(`/receipt/${shell.receipt_id}`)) return send(200, stub.doc);
-    if (req.url.startsWith(`/v1/receipts/${shell.receipt_id}/inclusion`)) return send(404, { error: 'not_in_tree' });
+    if (/^\/v1\/receipts\/[^/]+\/inclusion/.test(req.url)) return send(404, { error: 'not_in_tree' });
     if (req.url.startsWith('/v1/receipts/tree/head')) return send(200, stub.head);
     return send(404, { error: 'not_found' });
   });
@@ -86,6 +90,36 @@ test('pre-log shell: an unsigned head is not NOT_IN_LOG', async () => {
   stub.head = head;
   assert.equal(r.status, 2, JSON.stringify(r.body));
   assert.notEqual(r.body.reason, 'not_in_log');
+});
+
+test('pre-log shell: a bad fixed head beside the signed head is not NOT_IN_LOG (N4)', async () => {
+  for (const fixed of [{}, { schema: 'chit402.tree_head_eip712.v1' }]) {
+    stub.head = { ...head, fixed_head: fixed };
+    const r = await run(shell);
+    assert.notEqual(r.body.reason, 'not_in_log', JSON.stringify(r.body));
+    assert.notEqual(r.status, 0);
+    assert.notEqual(r.body.checks.log_inclusion, 'fail');
+  }
+  stub.head = head;
+});
+
+test('absence on the full path: a bad fixed head is fixed_head_invalid, not NOT_IN_LOG (N4)', async () => {
+  const dir = tempDir('chit-absence-');
+  const file = join(dir, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...holder, verify_url: `${origin}/receipt/${holder.task_id}` }));
+  const opts = { rpcUrl: 'http://127.0.0.1:9/', solanaRpcUrl: 'http://127.0.0.1:9/' };
+  try {
+    stub.head = head;
+    const plain = (await checkReceiptInput(file, opts)).verdict;
+    assert.equal(plain.reason, 'not_in_log', JSON.stringify(plain));
+    assert.equal(plain.exit_code, 1);
+    stub.head = { ...head, fixed_head: {} };
+    const bad = (await checkReceiptInput(file, opts)).verdict;
+    assert.equal(bad.exit_code, 1, JSON.stringify(bad));
+    assert.equal(bad.reason, 'fixed_head_invalid');
+  } finally {
+    stub.head = head;
+  }
 });
 
 test('pre-log shell: only the loopback stub was read, GET only', () => {

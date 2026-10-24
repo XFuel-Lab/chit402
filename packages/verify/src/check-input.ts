@@ -211,7 +211,12 @@ async function absenceAgainstSignedHead(
       trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
       issuerHistory: history,
     });
-    if (trust.ok) return { kind: 'not_in_log' };
+    if (trust.ok) {
+      // A fixed head beside it must match too, as on the inclusion path.
+      const fixed = fixedHeadOutcome(head, history, DEFAULT_TRUSTED_ISSUER_KIDS);
+      if (fixed && !fixed.ok) return { kind: 'bad_head', reason: 'fixed_head_invalid' };
+      return { kind: 'not_in_log' };
+    }
     if (!trust.reason || trust.reason === 'head_signature_missing') return { kind: 'unchecked' };
     return { kind: 'bad_head', reason: trust.reason };
   } catch {
