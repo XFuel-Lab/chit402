@@ -238,6 +238,15 @@ A public shell may carry `public_attestation: { "jws": "..." }`, or `{ "status":
 
 A malformed or invalid attestation is exit 1. It never falls back to `signed_receipt_unavailable`. A pending one is exit 2. Base only; Solana is a later release. Every published verifier from 0.3.0 to 0.4.5 rejects the tagged payload. `verifyIssuerJws` refuses this typ, so the attestation cannot stand in for a receipt, tree head, epoch, refusal, or history signature.
 
+## EIP-712 fixed heads and payer bindings
+
+Both are off on the issuer until enabled. When one is present the verifier checks it; when it is absent, output is the same as before.
+
+- **Fixed head.** A tree head may carry `fixed_head` (schema `chit402.tree_head_eip712.v1`): an EIP-712 `TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)` signed with the head's P-256 key over `sha256(0x1901 || domainSeparator || structHash)`. The domain is `Chit402TreeHead`, version `1`, chainId 84532, and the receipt-log salt. Its message must equal the signed JWS head (epoch, tree_size, root, published_at in seconds, kid as bytes32). When the head verified and the fixed head matches, the JSON log block has `fixed_head: "verified"`. A mismatch is exit 1 `fixed_head_invalid`.
+- **Payer binding.** The owner view may carry `payer_binding: { status: "signed", binding, payer_salt }` with `row_hash`. The binding (schema `chit402.receipt_binding_eip712.v1`) is `ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)` in the `Chit402ReceiptBinding` domain (chainId 84532). It is checked under the key that verified the receipt, against the signed claims only: the signed `payment.ref` must be a string on Base mainnet (`base:` or `eip155:8453:`), the asset Base USDC, the amount the signed `gross_amount`, the leaf `sha256(0x00 || task_id|row_hash)`, and the commitment must open to the signed payer with `payer_salt`. A mismatch is exit 1 `payer_binding_invalid`. Without `row_hash` or `payer_salt` the binding is reported as not checked and the verdict does not change.
+
+`verifyReceipt` reports `payer_binding: { checked, valid, reason? }` only when a signed binding is present. The checks are also exported (`verifyFixedHeadEip712`, `verifyReceiptBindingEip712`).
+
 ## Receipt versions
 
 The signed JWS payload is the version. It is an exact JSON number. Strings, booleans, arrays, null, and non-integers are `unsupported_version`. `11.0` and `1.1e1` are the number 11.

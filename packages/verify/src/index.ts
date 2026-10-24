@@ -118,6 +118,7 @@ import {
   type VersionWindows,
 } from './version-windows.js';
 import { readTestSnapshot } from './internal/test-seam.js';
+import { keyForKid, verifyReceiptBindingEip712, type PayerBindingCheck } from './eip712.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
   unsignedDocumentVerdict,
@@ -440,6 +441,14 @@ export interface ReceiptVerification {
    */
   verdict?: LibraryVerdict;
   errors: string[];
+  /**
+   * EIP-712 payer binding next to the receipt (`payer_binding` with status
+   * `signed`, from the owner view). Absent when the receipt has none. A
+   * binding that does not match the signed receipt makes `overall` failed
+   * (`payer_binding_invalid`). One that cannot be linked or opened (no row
+   * hash, no payer_salt, no key) is `checked: false` and changes nothing.
+   */
+  payer_binding?: PayerBindingCheck;
   /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
   receipt_version?: number | null;
   /** `inferred` is the Sep 4–5 unversioned rule. Otherwise the JWS payload. */
@@ -1848,7 +1857,50 @@ export async function verifyReceipt(
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
   const result = await verifyReceiptChecks(receipt, options);
+  attachPayerBinding(receipt, result, options);
   return withLibraryVerdict(receipt, result);
+}
+
+/**
+ * Check a `payer_binding` (status `signed`) beside the receipt against the
+ * verified receipt claims, under the key that verified the receipt JWS.
+ * Nothing is added when the receipt carries no signed binding.
+ */
+function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, options: VerifyReceiptOptions): void {
+  const outer = (receipt as { payer_binding?: unknown }).payer_binding;
+  if (!outer || typeof outer !== 'object') return;
+  const view = outer as { status?: unknown; binding?: unknown; payer_salt?: unknown };
+  if (view.status !== 'signed') return;
+  const sig = result.issuer_signature;
+  if (sig.valid !== true || sig.key_trusted === false || !sig.payload || typeof sig.kid !== 'string') {
+    result.payer_binding = { checked: false, valid: false, reason: 'receipt_signature_untrusted' };
+    return;
+  }
+  const candidates: unknown[] = [
+    ...(options.jwks?.keys || []),
+    ...((options.issuerHistory?.entries || []) as Array<{ jwk?: unknown }>).map((entry) => entry?.jwk),
+    receipt.issuer_signature?.issuer_jwk,
+  ];
+  const jwk = keyForKid(sig.kid, candidates);
+  if (!jwk) {
+    result.payer_binding = { checked: false, valid: false, reason: 'key_unavailable' };
+    return;
+  }
+  const rowHash = typeof receipt.row_hash === 'string' && receipt.row_hash
+    ? receipt.row_hash
+    : (typeof receipt.book_chain?.row_hash === 'string' ? receipt.book_chain.row_hash : null);
+  const check = verifyReceiptBindingEip712(view.binding, {
+    claims: sig.payload,
+    kid: sig.kid,
+    jwk,
+    rowHash,
+    payerSalt: view.payer_salt,
+  });
+  result.payer_binding = check;
+  if (check.checked && !check.valid) {
+    if (!result.errors.includes('payer_binding_invalid')) result.errors.push('payer_binding_invalid');
+    result.overall = 'failed';
+  }
 }
 
 function hasCompactJws(receipt: XFuelReceipt | null | undefined): boolean {
@@ -1864,7 +1916,10 @@ function withLibraryVerdict(receipt: XFuelReceipt, result: ReceiptVerification):
   // version the verifier does not support keeps exit 1 here and names
   // unsupported_version, so the verdict carries the upgrade next step.
   const unsupported = (result.errors || []).includes('unsupported_version');
-  const failureReason = failed ? (unsupported ? 'unsupported_version' : 'invalid') : null;
+  const bindingInvalid = result.payer_binding?.checked === true && result.payer_binding.valid === false;
+  const failureReason = failed
+    ? (unsupported ? 'unsupported_version' : (bindingInvalid ? 'payer_binding_invalid' : 'invalid'))
+    : null;
   // A trusted detached legacy signature is still a signature check. A
   // document with neither is the CLI's unsigned path.
   const full = hasCompactJws(receipt) || trusted
@@ -2746,6 +2801,33 @@ export {
 } from './version-registry.js';
 export type { RegisteredVersion, VersionRule, VersionFeature } from './version-registry.js';
 
+export {
+  EIP712_CHAIN_ID,
+  EIP712_DOMAIN_TYPE,
+  EIP712_DOMAIN_TYPEHASH,
+  EXPECTED_LOG_SALT,
+  FIXED_HEAD_SCHEMA,
+  PAYER_BINDING_SCHEMA,
+  TREE_HEAD_TYPE,
+  TREE_HEAD_TYPEHASH,
+  TREE_HEAD_DOMAIN_NAME,
+  RECEIPT_BINDING_TYPE,
+  RECEIPT_BINDING_TYPEHASH,
+  RECEIPT_BINDING_DOMAIN_NAME,
+  PAYER_COMMITMENT_TAG,
+  BASE_USDC_ASSET_ID,
+  bindingInputsFromClaims,
+  domainSeparator as eip712DomainSeparator,
+  kidBytes32,
+  normalizeBaseRef,
+  payerCommitment,
+  receiptLeafHash,
+  treeHeadMessageFromClaims,
+  typedDigest as eip712TypedDigest,
+  verifyFixedHeadEip712,
+  verifyReceiptBindingEip712,
+} from './eip712.js';
+export type { PayerBindingCheck, Eip712Check, TreeHeadMessage, ReceiptBindingMessage } from './eip712.js';
 export {
   LEGACY_ALLOWLIST_SCHEMA,
   LEGACY_ALLOWLIST_SHA256,

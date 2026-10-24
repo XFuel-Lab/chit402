@@ -57,6 +57,7 @@ import {
   type PublicReceiptClaims,
 } from './public-attestation.js';
 import { truncateAddress, verifyPublicBasePayment } from './public-payment.js';
+import { keyForKid, verifyFixedHeadEip712 } from './eip712.js';
 
 export const RECEIPT_ID_RE = /^(chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -156,7 +157,28 @@ type FreshLog = {
   log: VerifyVerdict['log'];
   /** Set on a pass: the head the inclusion proof verified against, for the L5 log time. */
   verified?: { origin: string; head: AnchorHead; leafIndex: number | null };
+  /** Set when the verified head carries an EIP-712 fixed head that does not match it. */
+  fixedHeadInvalid?: string;
 };
+
+/**
+ * EIP-712 fixed head on a verified tree head. Absent (flag off) is null.
+ * It must say exactly what the JWS head says, signed by the head's key.
+ */
+export function fixedHeadOutcome(
+  head: AnchorHead,
+  history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
+): { ok: true } | { ok: false; reason: string } | null {
+  const fixed = (head as { fixed_head?: unknown }).fixed_head;
+  if (fixed === undefined || fixed === null) return null;
+  const trust = verifyTreeHeadTrust(head, { trustedKids, issuerHistory: history });
+  if (!trust.ok || !trust.payload || typeof trust.kid !== 'string') return { ok: false, reason: 'head_untrusted' };
+  const embedded = (head as { issuer_signature?: { issuer_jwk?: unknown } }).issuer_signature?.issuer_jwk;
+  const jwk = keyForKid(trust.kid, [embedded, ...(history?.entries || []).map((entry) => entry?.jwk)]);
+  if (!jwk) return { ok: false, reason: 'key' };
+  return verifyFixedHeadEip712(fixed, { claims: trust.payload as Record<string, unknown>, kid: trust.kid, jwk });
+}
 
 function inclusionHeadUrl(
   origin: string,
@@ -398,12 +420,15 @@ export async function freshPublicLog(
     }
     if (result.overall === 'verified') {
       const leafIndex = Number(inclusion.leaf_index);
+      const fixed = fixedHeadOutcome(head, history, pins);
       return {
         logInclusion: 'pass',
         anchor: 'pass',
         logReason: null,
         verified: { origin, head, leafIndex: Number.isSafeInteger(leafIndex) ? leafIndex : null },
+        ...(fixed && !fixed.ok ? { fixedHeadInvalid: fixed.reason } : {}),
         log: {
+          ...(fixed && fixed.ok ? { fixed_head: 'verified' as const } : {}),
           leaf_index: inclusion.leaf_index ?? null,
           tree_size: inclusion.tree_size ?? null,
           root: result.root,
@@ -1014,8 +1039,10 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   let log: VerifyVerdict['log'] = null;
   const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
   const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url, { loopback: !publicInput });
+  let fixedHeadInvalid: string | null = null;
   if (signatureOk && result.issuer_history.ok && logHostOk) {
     const fresh = await freshPublicLog(receipt, resolved.document);
+    fixedHeadInvalid = fresh.fixedHeadInvalid ?? null;
     logInclusion = fresh.logInclusion;
     anchorState = fresh.anchor;
     logReason = fresh.logReason;
@@ -1054,7 +1081,17 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     anchor: anchorState,
     logReason,
     log,
+    failureReason: result.payer_binding?.checked === true && result.payer_binding.valid === false
+      ? 'payer_binding_invalid'
+      : (fixedHeadInvalid ? 'fixed_head_invalid' : null),
   });
+  if (result.payer_binding) {
+    verdict.payer_binding = {
+      checked: result.payer_binding.checked,
+      valid: result.payer_binding.valid,
+      reason: result.payer_binding.valid ? null : result.payer_binding.reason,
+    };
+  }
   return linesOutcome(verdict);
 }
 

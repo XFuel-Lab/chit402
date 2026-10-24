@@ -863,11 +863,20 @@ test('B11: chit402-verify gives the same verdict with a binding next to the rece
   assert.equal(b.overall, a.overall);
   assert.deepEqual(b.issuer_signature, a.issuer_signature);
   assert.equal(a.issuer_signature.valid, true);
-  const { unsigned_fields: ub, ...restB } = b;
+  // Without the row hash the binding cannot be linked to the leaf, so it is
+  // reported as unchecked and changes nothing else.
+  const { unsigned_fields: ub, payer_binding: pb, ...restB } = b;
   const { unsigned_fields: ua, ...restA } = a;
   assert.deepEqual(restB, restA);
+  assert.deepEqual(pb, { checked: false, valid: false, reason: 'row_hash_missing' });
+  assert.ok(!('payer_binding' in a));
   assert.deepEqual(ua, []);
   assert.ok(ub.length > 0 && ub.every((f) => f.startsWith('payer_binding.')));
+  // With the leaf's row hash the verifier checks the binding end to end.
+  const linked = await verify.verifyReceipt({ ...withBinding, row_hash: ROW(11) }, offline);
+  assert.deepEqual(linked.payer_binding, { checked: true, valid: true });
+  assert.deepEqual(linked.verdict, a.verdict);
+  assert.equal(linked.overall, a.overall);
   resetReceiptMerkleTree();
 });
 

@@ -18,6 +18,12 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 - **Allowlist API narrowed.** `parseLegacyAllowlist` and `loadBundledLegacyAllowlist` are no longer exported, and `onLegacyAllowlist(fp)` checks the bundled list only. There is no unpinned path in the public API.
 - New verdict reasons with docs anchors: `version_window_closed`, `version_window_not_open`, `version_window_missing`, `log_time_after_window`, `log_time_unavailable`, `legacy_form_not_allowlisted`.
 
+### Added: EIP-712 fixed heads and payer bindings
+- **Fixed heads.** A tree head with `fixed_head` is checked against the signed JWS head under the head's key: schema, type string, domain (`Chit402TreeHead`, version 1, chainId 84532, receipt-log salt), exact message fields, and the P-256 signature over `sha256(0x1901 || domainSeparator || structHash)`. A match adds `log.fixed_head: "verified"`; a mismatch is `fixed_head_invalid` (exit 1). No `fixed_head`: no change.
+- **Payer bindings.** A receipt with `payer_binding` (status `signed`) is checked under the key that verified the receipt: domain (`Chit402ReceiptBinding`, chainId 84532), signature, kid, Base USDC asset id, and the same signed-claim gate as the issuer (string `payment.ref` on `base` or `eip155:8453`, Base USDC, signed gross amount), then the leaf from `row_hash` and the payer commitment opened with `payer_salt`. A mismatch is `payer_binding_invalid` (exit 1). Without `row_hash` or `payer_salt` it is reported as not checked and changes nothing. `verifyReceipt` adds `payer_binding` only when a signed binding is present.
+- New verdict reasons with docs anchors: `fixed_head_invalid`, `payer_binding_invalid`. Exit codes, flags (`--issuer-history`, `--json`) and the `xfuel-verify` bin are unchanged. Version not bumped in this change. `BUILD_DIGEST.txt` moved because `src/eip712.ts` is new and `src/index.ts`, `src/check-input.ts` and `src/verdict.ts` changed.
+- Tests: vectors signed by the issuer code under the synthetic test key, parity with the shared escrow vectors, the flag-off golden (sha256 36cd1a58f1c4b0a12dd080a2b54df1ab25c9feefb0d78e52e12ef7060abae139), and negatives for a forged binding, a wrong network, a wrong chainId and a non-string ref.
+
 ### Fixed (from #621)
 - **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
 
