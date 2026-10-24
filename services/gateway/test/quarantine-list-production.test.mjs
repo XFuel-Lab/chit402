@@ -501,3 +501,52 @@ test('QP13: --log-dir and RECEIPT_LOG_DIR must name the same real directory when
   r = await run(['--list', s.file], { signer, env: { RECEIPT_LOG_DIR: s.logDir } });
   assert.equal(r.result.state, 'dry_run', r.err.join(' '));
 });
+
+/** Swap fs.readFileSync for reads of v1.json only, for one call of fn. */
+async function withV1Read(fake, fn) {
+  const real = fs.readFileSync;
+  fs.readFileSync = function patched(file, ...rest) {
+    if (String(file).endsWith(`${path.sep}v1.json`)) return fake(real, file, ...rest);
+    return real.call(fs, file, ...rest);
+  };
+  try {
+    return await fn();
+  } finally {
+    fs.readFileSync = real;
+  }
+}
+
+test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a rerun recovers to same', async () => {
+  // Read-back differs from the signed bytes: write_mismatch, v1 on disk.
+  let s = await setup();
+  let signer = goodSigner();
+  let r = await withV1Read((real, file, ...rest) => `${real.call(fs, file, ...rest)} `, () => run(applyArgs(s), { signer }));
+  assert.deepEqual(r.result, { ok: false, reason: 'write_mismatch', written: true });
+  const v1 = path.join(listDirOf(s.logDir), 'v1.json');
+  assert.ok(fs.existsSync(v1));
+  assert.ok(r.out.includes(`FILE=${v1}`));
+  assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash on a mismatch');
+  let text = r.err.join('\n');
+  assert.ok(/v1 was written/.test(text), text);
+  assert.ok(/Do not pin yet\. Rerun the same command/.test(text), text);
+  assert.ok(!/Nothing written/.test(text), text);
+  // Read-back throws (EIO): the message says v1 WAS written, never "Nothing written".
+  s = await setup();
+  signer = goodSigner();
+  r = await withV1Read(() => { const e = new Error('io'); e.code = 'EIO'; throw e; }, () => run(applyArgs(s), { signer }));
+  assert.deepEqual(r.result, { ok: false, reason: 'error', written: true });
+  text = r.err.join('\n');
+  assert.ok(/failed after writing: EIO\. v1 WAS written to /.test(text), text);
+  assert.ok(!/Nothing written/.test(text), text);
+  // The rerun recovers: same, and the pin hash is printed.
+  const again = await run(applyArgs(s), { signer });
+  assert.equal(again.result.state, 'same', again.err.join(' '));
+  assert.ok(again.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')));
+  assert.equal(signer.calls.length, 1);
+  // Before the link, a failure still says nothing was written.
+  s = await setup();
+  r = await run(applyArgs(s), { signer: stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true, onSign: () => { const e = new Error('kms'); e.code = 'ThrottlingException'; throw e; } }) });
+  assert.deepEqual(r.result, { ok: false, reason: 'error' });
+  assert.ok(/failed: ThrottlingException\. Nothing written\./.test(r.err.join('\n')));
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});

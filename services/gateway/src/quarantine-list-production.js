@@ -287,6 +287,9 @@ export async function runProductionListSigner({
   out = (line) => process.stdout.write(`${line}\n`),
   err = (line) => process.stderr.write(`${line}\n`),
 }) {
+  // Set once v1.json is linked into place. From then on v1 is on disk, and no
+  // message may say nothing was written.
+  let linkedFile = null;
   try {
     const args = parseArgs(argv);
     if (!args.list) refuse('usage', '--list <unsigned v1 file> is required');
@@ -342,8 +345,11 @@ export async function runProductionListSigner({
     }
     const bytes = await signWithSnapshot(doc, snap, keys);
     const file = writeV1Atomic(dir, bytes);
+    linkedFile = file;
     const stored = fs.readFileSync(file, 'utf8');
-    if (stored !== bytes) refuse('write_mismatch', 'v1 on disk does not equal the signed bytes');
+    if (stored !== bytes) {
+      refuse('write_mismatch', 'v1 was written but its bytes on disk differ from the signed bytes; inspect it before pinning anything');
+    }
     const pin = pinArgs(doc);
     out(`SIGNED_LIST_SHA256=${sha256Hex(Buffer.from(stored, 'utf8'))}`);
     out(`LIST_ENTRIES=${JSON.stringify(pin.entries)}`);
@@ -352,6 +358,16 @@ export async function runProductionListSigner({
     err(`signed and wrote version 1, ${doc.entries.length} entries`);
     return { ok: true, state: 'written' };
   } catch (e) {
+    const reason = e instanceof ProductionListRefused ? e.reason : 'error';
+    if (linkedFile) {
+      // v1 is on disk. A rerun of the same command checks it and, when it
+      // verifies, returns 'same' and prints SIGNED_LIST_SHA256.
+      out(`FILE=${linkedFile}`);
+      if (reason === 'write_mismatch') err(`refused: write_mismatch. ${e.message}`);
+      else err(`failed after writing: ${e?.code || 'error'}. v1 WAS written to ${linkedFile}.`);
+      err('Do not pin yet. Rerun the same command: it verifies v1 and prints SIGNED_LIST_SHA256, or refuses.');
+      return { ok: false, reason, written: true };
+    }
     if (e instanceof ProductionListRefused) {
       err(`refused: ${e.reason}. ${e.message === e.reason ? '' : e.message}`.trim());
       return { ok: false, reason: e.reason };
