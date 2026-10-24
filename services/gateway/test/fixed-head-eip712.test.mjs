@@ -748,6 +748,87 @@ test('G14: the ops script builds, signs and seals a list from a journal with a r
   assert.match(again.stdout, /no change since version 1/);
 });
 
+// ---------------------------------------------------------------- quarantine signing guard
+
+test('quarantine guard: the script refuses a production env, KMS, or --apply --confirm YES without both allows', () => {
+  const script = path.join(here, '..', 'scripts', 'sign-quarantine-list.mjs');
+  // An empty dir: a refusal happens before the log is read, so nothing is read or written.
+  const dir = tmp('quarantine-guard-');
+  const base = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
+  delete base.RECEIPT_LOG_DIR;
+  delete base.QUARANTINE_SIGN_ALLOW_PRODUCTION;
+  delete base.ISSUER_SIGNER;
+  const run = (env, extra = []) => spawnSync(process.execPath, [script, '--log-dir', dir, '--apply', '--confirm', 'YES', ...extra], { env, encoding: 'utf8' });
+  const unset = { ...base };
+  delete unset.NODE_ENV;
+  const cases = [
+    ['production, --apply --confirm YES only', { ...base, NODE_ENV: 'production' }, [], 'production_env'],
+    ['NODE_ENV unset counts as production', unset, [], 'production_env'],
+    ['production, env allow without the flag', { ...base, NODE_ENV: 'production', QUARANTINE_SIGN_ALLOW_PRODUCTION: '1' }, [], 'production_env'],
+    ['production, flag without the env allow', { ...base, NODE_ENV: 'production' }, ['--allow-production-issuer'], 'production_env'],
+    ['production, env allow not exactly 1', { ...base, NODE_ENV: 'production', QUARANTINE_SIGN_ALLOW_PRODUCTION: 'true' }, ['--allow-production-issuer'], 'production_env'],
+    ['KMS signer in a test env', { ...base, NODE_ENV: 'test', ISSUER_SIGNER: 'kms', ISSUER_KMS_KEY_ID: 'alias/chit402-quarantine-guard-test' }, [], 'kms_signer'],
+  ];
+  for (const [label, env, extra, reason] of cases) {
+    const out = run(env, extra);
+    assert.notEqual(out.status, 0, label);
+    assert.match(out.stderr, new RegExp(`refused: ${reason}`), label);
+  }
+  assert.deepEqual(fs.readdirSync(dir), []);
+  // The pure guard, for the same inputs plus the production kid.
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'production' }, argv: [] }), { ok: false, reason: 'production_env' });
+  assert.deepEqual(Q.quarantineSignGuard({ env: {}, argv: ['--apply', '--confirm', 'YES'] }), { ok: false, reason: 'production_env' });
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_SIGNER: ' KMS ' }, argv: [] }), { ok: false, reason: 'kms_signer' });
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, argv: [], kid: 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q' }), { ok: false, reason: 'production_kid' });
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, argv: [], kid: KEY.kid }), { ok: true, allowed: false });
+  assert.deepEqual(
+    Q.quarantineSignGuard({ env: { NODE_ENV: 'production', QUARANTINE_SIGN_ALLOW_PRODUCTION: '1' }, argv: ['--allow-production-issuer'] }),
+    { ok: true, allowed: true },
+  );
+});
+
+test('quarantine guard: signQuarantineList refuses without both allows and still signs with a stub signer', async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
+  // Stub signer under the synthetic key: signs in a test env with no allow.
+  const stub = installStub();
+  const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' }, argv: [] });
+  const parsed = JSON.parse(bytes);
+  assert.equal(parsed.issuer_signature.kid, KEY.kid);
+  assert.equal(parsed.issuer_signature.typ, Q.QUARANTINE_LIST_TYP);
+  assert.ok(stub.calls.length >= 1);
+  // Production env: refused before any sign, with and without --apply --confirm YES.
+  const before = stub.calls.length;
+  for (const argv of [[], ['--apply', '--confirm', 'YES'], ['--allow-production-issuer']]) {
+    await assert.rejects(
+      Q.signQuarantineList(doc, { env: { NODE_ENV: 'production' }, argv }),
+      (err) => err.code === 'quarantine_sign_refused' && err.reason === 'production_env',
+    );
+  }
+  await assert.rejects(
+    Q.signQuarantineList(doc, { env: { NODE_ENV: 'test', ISSUER_SIGNER: 'kms' }, argv: [] }),
+    (err) => err.code === 'quarantine_sign_refused' && err.reason === 'kms_signer',
+  );
+  // A signer that reports the production kid is refused in a test env too.
+  const prodKid = stubSigner({ kid: 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q', publicJwk: KEY.publicJwk, privateKey: KEY.privateKey });
+  _setIssuerSignerForTest(prodKid);
+  await assert.rejects(
+    Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' }, argv: [] }),
+    (err) => err.code === 'quarantine_sign_refused' && err.reason === 'production_kid',
+  );
+  assert.equal(stub.calls.length, before);
+  assert.equal(prodKid.calls.length, 0);
+  // Both allows: the stub (synthetic key) signs even with NODE_ENV=production.
+  installStub();
+  const allowed = await Q.signQuarantineList(doc, {
+    env: { NODE_ENV: 'production', QUARANTINE_SIGN_ALLOW_PRODUCTION: '1' },
+    argv: ['--allow-production-issuer'],
+  });
+  assert.equal(JSON.parse(allowed).issuer_signature.kid, KEY.kid);
+  resetIssuerSigner();
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {
