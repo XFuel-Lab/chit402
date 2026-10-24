@@ -1,0 +1,29 @@
+# Foundry project for contracts/escrow (EquivocationEscrowV0, Base Sepolia only).
+# Run from this folder: forge test
+# The contract sources live in contracts/escrow so the repo Hardhat build
+# compiles them too. Compiler settings mirror hardhat.config.cjs (0.8.24, viaIR,
+# optimizer 200). evm_version osaka makes the local EVM serve the EIP-7951
+# P256VERIFY precompile at 0x100 (6,900 gas), the same rules as Base after Azul.
+[profile.default]
+src = "t"
+test = "t"
+script = "script"
+out = "out"
+cache_path = "cache"
+libs = ["../../node_modules"]
+remappings = [
+  "@openzeppelin/contracts/=../../node_modules/@openzeppelin/contracts/",
+  "escrow/=../../contracts/escrow/",
+]
+allow_paths = ["../../contracts/escrow", "../../node_modules"]
+solc = "0.8.24"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+evm_version = "osaka"
+fs_permissions = [{ access = "read", path = "./vectors" }]
+gas_reports = ["EquivocationEscrowV0"]
+
+[fuzz]
+runs = 256
+seed = "0x2c7b0ae5"
