@@ -198,28 +198,24 @@ export function jwsSigningInput(payload, {
   return `${b64urlJson(header)}.${payloadPart}`;
 }
 
-/**
- * Sign a message with the issuer's private key (ES256).
- * Returns the raw signature as base64url (R || S, 64 bytes for P-256).
- * @deprecated Use signJws() for standard-library-compatible signatures.
- */
-export function signWithIssuerKey(message) {
-  assertSyncSignerAllowed();
-  const { privateKey, kid } = initIssuerKey();
-  let signature = crypto.sign('sha256', Buffer.from(message, 'utf8'), {
-    key: privateKey,
-    dsaEncoding: 'ieee-p1363',
-  });
-  if (String(process.env.ISSUER_SIGNER_LOW_S || '').trim() === 'true') signature = lowS(signature);
-  return { value: signature.toString('base64url'), kid };
+function rawSignRemoved() {
+  const err = new Error('raw signing with the issuer key is removed; use signJws or signJwsAsync');
+  err.code = 'issuer_raw_sign_removed';
+  return err;
 }
 
-/** Async form of signWithIssuerKey. Delegates to the active signer. */
-export async function signWithIssuerKeyAsync(message) {
-  const { initIssuerSigner } = await import('./issuer-signer.js');
-  const signer = peekIssuerSigner() || await initIssuerSigner();
-  const signature = await signer.sign(Buffer.from(message, 'utf8'));
-  return { value: signature.toString('base64url'), kid: signer.kid };
+/**
+ * Removed. Raw signing over caller bytes is not offered. Kept as an export
+ * that always throws so an old import fails loudly instead of signing.
+ * @deprecated Use signJws() or signJwsAsync().
+ */
+export function signWithIssuerKey(_message) {
+  throw rawSignRemoved();
+}
+
+/** Removed. Always rejects. See signWithIssuerKey. */
+export async function signWithIssuerKeyAsync(_message) {
+  throw rawSignRemoved();
 }
 
 /**

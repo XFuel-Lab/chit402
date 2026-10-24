@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { GetPublicKeyCommand, SignCommand } from '@aws-sdk/client-kms';
 import { computeJwkThumbprint } from './issuer-key.js';
 import { derToJose, lowS } from './ecdsa-der.js';
+import { assertSignerInput } from './issuer-signer-guard.js';
 
 const RAW_LIMIT = 4096;
 
@@ -109,9 +110,13 @@ export async function createKmsSigner({ client, env = process.env } = {}) {
     kind: 'kms',
     kid: material.kid,
     publicJwk: material.publicJwk,
-    async sign(input, { signal = null } = {}) {
+    async sign(input, opts = {}) {
+      const { signal = null } = opts || {};
       const message = Buffer.isBuffer(input) ? input : Buffer.from(input || []);
+      const mode = assertSignerInput(message, opts);
       const digest = message.length > RAW_LIMIT;
+      // A typed preimage is 66 bytes and always goes RAW + ECDSA_SHA_256.
+      if (mode === 'typed' && digest) throw invalid();
       const payload = digest ? crypto.createHash('sha256').update(message).digest() : message;
       let out;
       try {

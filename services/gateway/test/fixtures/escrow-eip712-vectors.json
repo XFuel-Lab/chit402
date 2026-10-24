@@ -1,0 +1,41 @@
+{
+  "schema": "chit402.escrow_eip712_vectors.v1",
+  "note": "Shared by the gateway tests and the escrow contract tests. Values from the escrow v0 design brief (a) and (h).",
+  "digest_alg": "sha256(eip712_preimage)",
+  "domain_type": "EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)",
+  "domain_typehash": "0xa604fff5a27d5951f334ccda7abff3286a8af29caeeb196a6f2b40a1dce7612b",
+  "chain_id": 84532,
+  "version": "1",
+  "log_id": {
+    "tag": "chit402.receipt-log.v1",
+    "epoch1_root": "dd20e39a39a225b7b3441bb7f61532c06562288b74ae5dc4dda015c48312f973",
+    "genesis_digest": "422cceb1be77114317043b0a00bc18cba6ca9cee34144cd23875c6dcf1b47368",
+    "salt": "0x7a92860b2db8dfee1901affef1a3352ab94a3b3bfcc410aef7238ef170435211"
+  },
+  "kid": {
+    "base64url": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+    "bytes32": "0x22f169982faf3e1918fefd2f89db2b5954fdbb3944e5758a66000439e253ab54"
+  },
+  "tree_head": {
+    "type": "TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)",
+    "typehash": "0xf80e0f8d60b561c1041da3667da6c960baaa52b6b5a8d3ec70e506a054d3b7c7",
+    "domain_name": "Chit402TreeHead",
+    "domain_separator": "0xf872d64db3e6a1016b2dbdef96c6065d8b1104416485c6ef465c2b9df8c4cbc9",
+    "vectors": [
+      {
+        "label": "live head 2026-10-24, epoch 2 size 39",
+        "published_at_iso": "2026-10-24T00:00:46.980Z",
+        "message": {
+          "epoch": 2,
+          "tree_size": 39,
+          "root": "0x3471f0bafad7a6304773db19dfaf8edf1902c7aff3a826f7fee6ce1a88c2fb05",
+          "published_at": 1792800046,
+          "kid": "0x22f169982faf3e1918fefd2f89db2b5954fdbb3944e5758a66000439e253ab54"
+        },
+        "struct_hash": "0x8a4bcea24e0fdbbed86c4a6036431d22443770c19efa88a021d3811b9442707c",
+        "preimage": "0x1901f872d64db3e6a1016b2dbdef96c6065d8b1104416485c6ef465c2b9df8c4cbc98a4bcea24e0fdbbed86c4a6036431d22443770c19efa88a021d3811b9442707c",
+        "e": "0x2c7b0ae5fab76b2b6b13e6ef7ba99d0eb7e7df9e087102ad32b681ec7842412f"
+      }
+    ]
+  }
+}
