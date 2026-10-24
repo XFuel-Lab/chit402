@@ -12,7 +12,10 @@
  * payer salt or the commitment.
  *
  * Operator alerts: every refusal also writes a receipt-failure row
- * `payer_binding:<reason>` (code only, no task id). A retried reason is raised
+ * `payer_binding:<reason>` (code only, no task id). Skips for a receipt that
+ * is not a Base mainnet USDC paid receipt (no_payer, no_payment, network,
+ * asset, no_payment_ref) are counted only, with no row (receipt-failures.js).
+ * `capped` (binding_cap backpressure) is not a refusal and raises nothing. A retried reason is raised
  * once, on the first attempt (outcome pending), and again if the job finally
  * fails (outcome refused), so a long backoff does not flood the log.
  */
