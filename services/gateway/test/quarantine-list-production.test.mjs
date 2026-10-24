@@ -1103,3 +1103,49 @@ test('QP28: the list dir removed and replaced by a symlink that reuses its inode
   assert.ok(/Do not pin\. v1 was written, but not necessarily to /.test(text), text);
   assert.ok(!/Rerun the same command/.test(text), text);
 });
+
+test('QP29: a temp cleanup failure after list_dir_changed keeps that reason and its inspect advice, with the cleanup error as detail', async () => {
+  const s = await setup();
+  const listDir = listDirOf(fs.realpathSync(s.logDir));
+  fs.mkdirSync(listDir, { mode: 0o700 });
+  const target = tmp('qlprod-swapclean-');
+  const aside = `${listDir}.aside`;
+  const realRm = fs.rmSync;
+  let thrown = 0;
+  fs.rmSync = function patched(p, ...rest) {
+    if (String(p).includes('.v1.json.tmp-')) {
+      thrown += 1;
+      const e = new Error('busy');
+      e.code = 'EBUSY';
+      throw e;
+    }
+    return realRm.call(fs, p, ...rest);
+  };
+  let r;
+  try {
+    r = await withWriteHooks({
+      beforeOpen: () => { fs.renameSync(listDir, aside); fs.symlinkSync(target, listDir); },
+    }, () => run(applyArgs(s), { signer: goodSigner() }));
+  } finally {
+    fs.rmSync = realRm;
+  }
+  assert.equal(thrown, 1);
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_changed', written: true }, r.err.join(' '));
+  const text = r.err.join('\n');
+  assert.ok(/refused: list_dir_changed\. .*\(temp file cleanup also failed: EBUSY\)/.test(text), text);
+  assert.ok(/Do not pin\. v1 was written, but not necessarily to .*inspect the log directory/.test(text), text);
+  assert.ok(!/Rerun the same command/.test(text), text);
+  assert.ok(!/failed after writing: EBUSY/.test(text), text);
+  assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')));
+  // With no earlier error, the cleanup failure is still the failure (QP23 shape).
+  const dir = path.join(tmp('qlprod-cleanonly-'), 'quarantine-list');
+  fs.rmSync = function patched(p, ...rest) {
+    if (String(p).includes('.v1.json.tmp-')) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; }
+    return realRm.call(fs, p, ...rest);
+  };
+  try {
+    assert.throws(() => P.writeV1Atomic(dir, 'bytes'), (e) => e.code === 'EBUSY');
+  } finally {
+    fs.rmSync = realRm;
+  }
+});

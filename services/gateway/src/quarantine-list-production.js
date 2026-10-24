@@ -281,6 +281,7 @@ export function writeV1Atomic(dir, bytes, { onLinked } = {}) {
   const tmp = path.join(dir, `.v1.json.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
   let tmpStat;
+  let pending = null;
   try {
     try {
       tmpStat = fs.fstatSync(fd, { bigint: true });
@@ -299,8 +300,21 @@ export function writeV1Atomic(dir, bytes, { onLinked } = {}) {
     }
     if (onLinked) onLinked(file);
     assertWroteIntoCheckedDir(dir, dirStat, file, tmpStat);
+  } catch (err) {
+    pending = err;
+    throw err;
   } finally {
-    fs.rmSync(tmp, { force: true });
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (cleanupErr) {
+      // A cleanup failure never replaces an earlier error (list_dir_changed
+      // must keep its reason and its "inspect" advice); it is only added as
+      // detail. With no earlier error, the cleanup error is the failure.
+      if (!pending) throw cleanupErr;
+      if (pending instanceof ProductionListRefused) {
+        pending.message = `${pending.message} (temp file cleanup also failed: ${cleanupErr?.code || 'error'})`;
+      }
+    }
   }
   try {
     const dfd = fs.openSync(dir, 'r');
