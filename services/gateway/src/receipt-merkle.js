@@ -36,6 +36,7 @@ import {
 } from './solana-receipt-anchor.js';
 import { bundleIndexHash, emptyBundleIndex } from './receipt-log-s3.js';
 import { acquireReceiptLogLock, verifyReceiptLogLock } from './receipt-log-lock.js';
+import { isProductionProcess } from './production-process.js';
 import {
   appendJournal,
   freshGenesisAllowed,
@@ -899,9 +900,12 @@ function parseAnchorWei(raw) {
   }
 }
 
-/** Any casing of production. Unset, test, and development are not production. */
+/**
+ * The shared production check (production-process.js): NODE_ENV unset or
+ * anything but test/development, or a production or unlisted issuer key.
+ */
 export function anchorFeeCapsRequired(env = process.env) {
-  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+  return isProductionProcess(env);
 }
 
 /** Max `maxFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
@@ -916,8 +920,8 @@ export function anchorMaxPriorityWei(env = process.env) {
 
 /**
  * Production must name both caps as integer wei strings. There is no flag
- * that skips this. The check is case-insensitive on NODE_ENV. Dev and test
- * may leave the caps unset, and unset then means no cap.
+ * that skips this. Production is the shared check, so NODE_ENV unset counts.
+ * Dev and test may leave the caps unset, and unset then means no cap.
  * @throws {ReceiptLogRefused}
  */
 export function assertAnchorFeeCaps(env = process.env) {

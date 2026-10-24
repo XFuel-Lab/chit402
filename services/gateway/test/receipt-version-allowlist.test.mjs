@@ -5,13 +5,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
 process.env.ISSUER_ROOT_ENABLED = 'false';
 process.env.NODE_ENV = 'test';
-const issuer = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const issuer = nextTestIssuerKey();
 process.env.ISSUER_PRIVATE_KEY = Buffer.from(issuer.privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
 process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
 

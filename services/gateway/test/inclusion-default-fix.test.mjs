@@ -5,13 +5,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdtempSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.HUB_CATALOG_OFFLINE = 'true';
@@ -688,7 +689,7 @@ function extractRollback(pathspec, dest) {
 
 test('T12 a log with block_ts still boots on 484c5b7e', async () => {
   await withAnchorKey(async () => {
-    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const { privateKey } = nextTestIssuerKey();
     const issuerPem = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
     process.env.ISSUER_PRIVATE_KEY = issuerPem;
     _resetIssuerKey();

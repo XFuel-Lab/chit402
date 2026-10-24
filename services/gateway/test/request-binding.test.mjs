@@ -30,6 +30,7 @@ import { assertIssuerRootStartup, KEY_RETIRED_TOPIC, _resetIssuerRootStartupStat
 import { _resetIssuerKey } from '../src/issuer-key.js';
 import { resetIssuerHistoryStore } from '../src/issuer-history.js';
 import { buildLegacyReceiptSet } from '../src/legacy-receipt-merkle.js';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 const BODY = '{"model":"xfuel/auto","messages":[{"role":"user","content":"hello"}]}';
 const SALT = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -191,7 +192,7 @@ test('an open v11 refusal without a request is request_unbound and is not stored
   ];
   for (const key of keys) prev[key] = process.env[key];
   try {
-    const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const { privateKey } = nextTestIssuerKey();
     process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
     process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
     _resetIssuerKey();
@@ -296,7 +297,7 @@ test('a paid settle signs request_digest without publishing an unsalted body has
   ];
   for (const key of keys) prev[key] = process.env[key];
   try {
-    const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const { privateKey } = nextTestIssuerKey();
     process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
     process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
     _resetIssuerKey();

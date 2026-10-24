@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -360,7 +361,7 @@ test('a restart keeps post-restart signatures ahead of leftover sequence numbers
 });
 
 function pemEnv() {
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   return Buffer.from(pem).toString('base64');
 }
