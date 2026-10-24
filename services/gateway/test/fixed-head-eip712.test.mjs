@@ -1372,6 +1372,121 @@ test('S5: a stub holding a known test key but labelled with an unlisted kid is r
   });
 });
 
+/** A signer that signs every input with `privateKey`, for the M-S4a getter tests. */
+function realSigner(privateKey, fields) {
+  const signer = {
+    kind: 'env',
+    calls: [],
+    async sign(input) {
+      signer.calls.push(input.length);
+      return crypto.sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+    },
+  };
+  return Object.defineProperties(signer, fields);
+}
+
+test('M-S4a: a publicJwk getter that shows a known test key for the first N reads and then K2, signing with K2, is refused; the getter is read exactly once', async () => {
+  await withLiveKeyGone(async ({ doc, k2, k2Jwk, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    for (const n of [1, 2, 3, 4, 5]) {
+      let reads = 0;
+      const signer = realSigner(k2.privateKey, {
+        kid: { value: KEY.kid, enumerable: true },
+        publicJwk: {
+          enumerable: true,
+          get() {
+            reads += 1;
+            const k = reads <= n ? KEY.publicJwk : k2Jwk;
+            return { kty: 'EC', crv: 'P-256', x: k.x, y: k.y };
+          },
+        },
+      });
+      _setIssuerSignerForTest(signer);
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+        (err) => err.code === 'quarantine_sign_refused' && ['signer_accessor', 'signer_mismatch'].includes(err.reason),
+        `N=${n}`,
+      );
+      assert.equal(reads, 1, `N=${n}: publicJwk read exactly once`);
+      assert.equal(signer.calls.length, 0, `N=${n}: never signs`);
+      resetIssuerSigner();
+    }
+  });
+});
+
+test('M-S4a: a kid getter that relabels after the guard is refused; the getter is read exactly once', async () => {
+  await withLiveKeyGone(async ({ doc, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    for (const n of [1, 2, 3]) {
+      let reads = 0;
+      const signer = realSigner(KEY.privateKey, {
+        publicJwk: { value: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y }, enumerable: true },
+        kid: {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return reads <= n ? KEY.kid : 'any-label';
+          },
+        },
+      });
+      _setIssuerSignerForTest(signer);
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+        (err) => err.code === 'quarantine_sign_refused' && err.reason === 'signer_accessor',
+        `N=${n}`,
+      );
+      assert.equal(reads, 1, `N=${n}: kid read exactly once`);
+      assert.equal(signer.calls.length, 0, `N=${n}: never signs`);
+      resetIssuerSigner();
+    }
+  });
+});
+
+test('M-S4a: a Proxy signer that switches key or kid between reads gets one read of each; a K2 signature is refused and the header kid is the guarded kid', async () => {
+  await withLiveKeyGone(async ({ doc, k2, k2Jwk, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    const proxied = (privateKey, pick) => {
+      const reads = { kid: 0, publicJwk: 0 };
+      const target = {
+        kind: 'env',
+        kid: KEY.kid,
+        publicJwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y },
+        async sign(input) {
+          return crypto.sign('sha256', Buffer.from(input), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+        },
+      };
+      const p = new Proxy(target, {
+        get(t, name, recv) {
+          if (name in reads) {
+            reads[name] += 1;
+            return pick(name, reads[name], t);
+          }
+          return Reflect.get(t, name, recv);
+        },
+      });
+      return { p, reads };
+    };
+    // publicJwk: test key on read 1, K2 afterwards; signs with K2.
+    const a = proxied(k2.privateKey, (name, r, t) => (name === 'publicJwk' && r > 1 ? { kty: 'EC', crv: 'P-256', x: k2Jwk.x, y: k2Jwk.y } : t[name]));
+    _setIssuerSignerForTest(a.p);
+    await assert.rejects(Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }), (err) => err.reason === 'signer_mismatch');
+    assert.deepEqual(a.reads, { kid: 1, publicJwk: 1 });
+    resetIssuerSigner();
+    // kid: test kid on read 1, a relabel afterwards; signs with the test key.
+    const b = proxied(KEY.privateKey, (name, r, t) => (name === 'kid' && r > 1 ? 'any-label' : t[name]));
+    _setIssuerSignerForTest(b.p);
+    const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
+    const sig = JSON.parse(bytes).issuer_signature;
+    assert.equal(sig.kid, KEY.kid);
+    assert.equal(JSON.parse(Buffer.from(sig.jws.split('.')[0], 'base64url').toString('utf8')).kid, KEY.kid, 'the header carries the guarded kid, never the relabel');
+    assert.deepEqual(b.reads, { kid: 1, publicJwk: 1 });
+    assert.equal(Q.verifyQuarantineList(bytes, { keys: [{ ...KEY.publicJwk, kid: KEY.kid, alg: 'ES256', kty: 'EC', crv: 'P-256' }] }).ok, true);
+  });
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {
