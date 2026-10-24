@@ -118,6 +118,18 @@ export default function VerifyDocs() {
           </p>
         </div>
 
+        <div className="docs-panel" id="payer-binding">
+          <h2>Payer binding from the owner view</h2>
+          <p>
+            The owner view returns <code>row_hash</code> at the top level of its body, beside{' '}
+            <code>payer_binding</code>, not inside it. A receipt with only <code>payer_binding</code> pasted in
+            prints <code>not checked (row_hash_missing)</code> and the verdict does not change. To check the
+            binding, copy both onto the receipt: <code>row_hash</code> and <code>payer_binding</code>. When the
+            receipt also has <code>book_chain.row_hash</code>, the two must be equal, as for the log leaf; if they
+            differ the result is <code>payer_binding_invalid</code> (exit 1).
+          </p>
+        </div>
+
         <div className="docs-panel" id="merkle-hashing">
           <h2>Merkle hashing</h2>
           <p>
