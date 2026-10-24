@@ -185,8 +185,13 @@ export function existingV1State(dir, canonical, keys) {
  * once (snapshot) for the key match, the sign call and the verify.
  * @returns {Promise<string>} stored bytes
  */
-export async function signProductionV1(doc, signer, productionKeys = PRODUCTION_ISSUER_PUBLIC_KEYS) {
-  return signWithSnapshot(doc, snapshot(signer), decodedKeys(productionKeys));
+export async function signProductionV1(doc, signer) {
+  return signWithSnapshot(doc, snapshot(signer), decodedKeys(PRODUCTION_ISSUER_PUBLIC_KEYS));
+}
+
+/** Tests only: signProductionV1 against a given allowlist. Nothing in src or scripts calls it. */
+export async function _signProductionV1ForTest(doc, signer, testKeys) {
+  return signWithSnapshot(doc, snapshot(signer), decodedKeys(testKeys));
 }
 
 async function signWithSnapshot(doc, snap, keys) {
@@ -271,22 +276,35 @@ function parseArgs(argv) {
   return out;
 }
 
+const RUN_OPTIONS = Object.freeze(['argv', 'env', 'buildFromLog', 'loadSigner', 'out', 'err']);
+
 /**
- * The host command. `productionKeys` is the allowlist; the script passes
- * nothing, so it is always PRODUCTION_ISSUER_PUBLIC_KEYS. Tests pass a test
- * key's x/y here. `buildFromLog(logDir)` returns the unsigned document the
- * log gives today.
- * @returns {Promise<{ ok: boolean, reason?: string, state?: string }>}
+ * The host command, as the script calls it. The allowlist is always
+ * PRODUCTION_ISSUER_PUBLIC_KEYS: there is no option, argument or env var for
+ * it, and any option outside RUN_OPTIONS is refused. `buildFromLog(logDir)`
+ * returns the unsigned document the log gives today. `env` is read only for
+ * RECEIPT_LOG_DIR here; it also goes to isProductionProcess and loadSigner.
+ * @returns {Promise<{ ok: boolean, reason?: string, state?: string, written?: boolean }>}
  */
-export async function runProductionListSigner({
+export async function runProductionListSigner(opts) {
+  const extra = Object.keys(opts || {}).filter((k) => !RUN_OPTIONS.includes(k));
+  if (extra.length) throw new TypeError(`runProductionListSigner: unknown option ${extra[0]}`);
+  return runWith(opts, PRODUCTION_ISSUER_PUBLIC_KEYS);
+}
+
+/** Tests only: the same run against a given allowlist. Nothing in src or scripts calls it. */
+export async function _runProductionListSignerForTest(opts, testKeys) {
+  return runWith(opts, testKeys);
+}
+
+async function runWith({
   argv,
-  env = process.env,
+  env,
   buildFromLog,
   loadSigner,
-  productionKeys = PRODUCTION_ISSUER_PUBLIC_KEYS,
   out = (line) => process.stdout.write(`${line}\n`),
   err = (line) => process.stderr.write(`${line}\n`),
-}) {
+}, productionKeys) {
   // Set once v1.json is linked into place. From then on v1 is on disk, and no
   // message may say nothing was written.
   let linkedFile = null;

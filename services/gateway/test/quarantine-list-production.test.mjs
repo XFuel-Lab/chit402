@@ -1,8 +1,9 @@
 /**
  * Production signer for quarantine list v1 (scripts/sign-quarantine-list-production.mjs,
  * src/quarantine-list-production.js). Offline, generated test keys only. The
- * production allowlist is stubbed by passing a test key's x/y as
- * `productionKeys`; the script itself never passes it.
+ * production allowlist is stubbed through the test-only entry points
+ * (_runProductionListSignerForTest, _signProductionV1ForTest) with a test
+ * key's x/y. The exported runner the script calls has no allowlist input.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -135,15 +136,14 @@ function capture() {
 async function run(argv, { signer, keys = STUB_KEYS, env = {}, buildFromLog = (d) => buildUnsignedV1FromLog(d) } = {}) {
   const c = capture();
   const loads = [];
-  const result = await P.runProductionListSigner({
+  const result = await P._runProductionListSignerForTest({
     argv,
     env,
     buildFromLog,
     loadSigner: async (e) => { loads.push(e); return signer; },
-    productionKeys: keys,
     out: c.o,
     err: c.e,
-  });
+  }, keys);
   return { result, out: c.out, err: c.err, loads };
 }
 
@@ -291,7 +291,7 @@ test('QP7: an existing v1 or a later version is never overwritten', async () => 
   const dir = listDirOf(s.logDir);
   fs.mkdirSync(dir, { recursive: true });
   const doc = JSON.parse(fs.readFileSync(s.file, 'utf8'));
-  const sign = async (d, signer, keys) => P.signProductionV1(d, signer, keys);
+  const sign = async (d, signer, keys) => P._signProductionV1ForTest(d, signer, keys);
   // A v1 of a different list, validly signed.
   const otherDoc = Q.buildQuarantineList({ entries: [{ ...doc.entries[0], reason: 'other' }], highWater: doc.high_water });
   const otherBytes = await sign(otherDoc, goodSigner(), [...STUB_KEYS]);
@@ -349,9 +349,11 @@ test('QP8: a signature that does not verify under the allowlisted key is refused
   // The whole-document check after signing: a document that is not a valid list is not returned.
   const doc = JSON.parse(fs.readFileSync(s.file, 'utf8'));
   const signer = goodSigner();
-  await assert.rejects(P.signProductionV1({ ...doc, entries_hash: '00'.repeat(32) }, signer, STUB_KEYS), (e) => e.reason === 'verify_failed');
-  await assert.rejects(P.signProductionV1(doc, liar, STUB_KEYS), (e) => e.reason === 'signer_mismatch');
-  const ok = await P.signProductionV1(doc, signer, STUB_KEYS);
+  await assert.rejects(P._signProductionV1ForTest({ ...doc, entries_hash: '00'.repeat(32) }, signer, STUB_KEYS), (e) => e.reason === 'verify_failed');
+  await assert.rejects(P._signProductionV1ForTest(doc, liar, STUB_KEYS), (e) => e.reason === 'signer_mismatch');
+  const ok = await P._signProductionV1ForTest(doc, signer, STUB_KEYS);
+  // The exported signer has no allowlist input: a test key is refused there.
+  await assert.rejects(P.signProductionV1(doc, signer, STUB_KEYS), (e) => e.reason === 'not_production_key');
   assert.equal(Q.verifyQuarantineList(ok, { keys: [{ ...KEY.publicJwk }] }).ok, true);
 });
 
@@ -412,9 +414,9 @@ test('QP10: refused outside a production process, and for an ephemeral key even 
     const eph = createEnvSigner(process.env);
     const ephKeys = [{ x: eph.publicJwk.x, y: eph.publicJwk.y }];
     const c = capture();
-    const out = await P.runProductionListSigner({
-      argv: applyArgs(s), env: {}, buildFromLog: async () => built, loadSigner: async () => eph, productionKeys: ephKeys, out: c.o, err: c.e,
-    });
+    const out = await P._runProductionListSignerForTest({
+      argv: applyArgs(s), env: {}, buildFromLog: async () => built, loadSigner: async () => eph, out: c.o, err: c.e,
+    }, ephKeys);
     assert.deepEqual(out, { ok: false, reason: 'not_production_key' });
   } finally {
     process.env.ISSUER_PRIVATE_KEY = saved.k;
@@ -431,7 +433,6 @@ test('QP11: the script is a thin entry point with the real allowlist; the test-o
   assert.ok(!/productionKeys/.test(src), 'the script never passes an allowlist');
   assert.ok(/initIssuerSigner\(env\)/.test(src), 'the key loads through the gateway signer');
   const mod = fs.readFileSync(MODULE, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(/productionKeys = PRODUCTION_ISSUER_PUBLIC_KEYS/.test(mod), 'the default allowlist is the production list');
   assert.ok(!/console\.|logger|\.export\(/.test(mod), 'the module neither logs nor exports key material');
   assert.ok(!/env\.ISSUER_PRIVATE_KEY|\[['"]ISSUER_PRIVATE_KEY/.test(mod), 'the module never reads key material');
   assert.ok(!/quarantineSignGuard|signQuarantineList\(/.test(mod), 'the test-only guard is not called or bypassed here');
@@ -548,5 +549,85 @@ test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a 
   r = await run(applyArgs(s), { signer: stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true, onSign: () => { const e = new Error('kms'); e.code = 'ThrottlingException'; throw e; } }) });
   assert.deepEqual(r.result, { ok: false, reason: 'error' });
   assert.ok(/failed: ThrottlingException\. Nothing written\./.test(r.err.join('\n')));
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
+}
+
+test('QP15: the allowlist cannot come from a caller, env or issuer history: source scans', async () => {
+  const mod = stripComments(fs.readFileSync(MODULE, 'utf8'));
+  const script = stripComments(fs.readFileSync(NEW_SCRIPT, 'utf8'));
+  // The module reads exactly one env value, RECEIPT_LOG_DIR. env otherwise only
+  // goes to isProductionProcess and loadSigner (initIssuerSigner's own path).
+  assert.ok(!/process\s*\.\s*env|process\s*\[|globalThis|Reflect\./.test(mod), 'the module never touches process.env');
+  const reads = [...mod.matchAll(/\benv\b\s*(\??\.)?\s*(\[|[A-Za-z_$][\w$]*)?/g)].map((m) => m[0].replace(/\s+/g, ''));
+  const allowed = new Set(['env', 'env.RECEIPT_LOG_DIR']);
+  for (const r of reads) assert.ok(allowed.has(r), `unexpected env use: ${r}`);
+  assert.equal(reads.filter((r) => r === 'env.RECEIPT_LOG_DIR').length, 1, 'RECEIPT_LOG_DIR is read once');
+  const bare = mod.match(/\benv\b(?!\s*\.\s*RECEIPT_LOG_DIR)/g) || [];
+  const contexts = [...mod.matchAll(/^.*\benv\b(?!\s*\.\s*RECEIPT_LOG_DIR).*$/gm)].map((m) => m[0].trim());
+  const okContexts = [
+    /^const RUN_OPTIONS = Object\.freeze\(\['argv', 'env', 'buildFromLog', 'loadSigner', 'out', 'err'\]\);$/,
+    /^env,$/,
+    /^if \(!isProductionProcess\(env\)\) refuse\(/,
+    /^const signer = await loadSigner\(env\);$/,
+  ];
+  for (const line of contexts) assert.ok(okContexts.some((re) => re.test(line)), `env used outside the allowed places: ${line}`);
+  assert.equal(bare.length, contexts.length, 'one bare env per allowed line');
+  assert.ok(!/ISSUER_HISTORY_EXTRA|issuer-history|historyExtra/.test(mod), 'issuer history is not an allowlist source');
+  // The production allowlist is named in three places only: the import, the exported runner, the exported signer.
+  assert.equal((mod.match(/PRODUCTION_ISSUER_PUBLIC_KEYS/g) || []).length, 3);
+  const runner = /\nexport async function runProductionListSigner\(opts\) \{\n([\s\S]*?)\n\}\n/.exec(mod);
+  assert.ok(runner, 'the exported runner takes one opts argument');
+  assert.ok(/\n  return runWith\(opts, PRODUCTION_ISSUER_PUBLIC_KEYS\);$/.test(runner[1]), 'the exported runner pins the production allowlist');
+  assert.equal((runner[1].match(/runWith\(/g) || []).length, 1);
+  assert.ok(/export async function signProductionV1\(doc, signer\) \{\n  return signWithSnapshot\(doc, snapshot\(signer\), decodedKeys\(PRODUCTION_ISSUER_PUBLIC_KEYS\)\);\n\}/.test(mod), 'the exported signer pins the production allowlist');
+  assert.ok(/^const RUN_OPTIONS = Object\.freeze\(\['argv', 'env', 'buildFromLog', 'loadSigner', 'out', 'err'\]\);$/m.test(mod), 'the runner takes no allowlist option');
+  // The script names only the exported runner, with the four fixed options.
+  assert.ok(!/ForTest|productionKeys|runWith|_sign|_run/.test(script), 'the script never names a test entry point or an allowlist');
+  assert.ok(/const \{ runProductionListSigner \} = await import\('\.\.\/src\/quarantine-list-production\.js'\);/.test(script));
+  assert.ok(/runProductionListSigner\(\{\n  argv: process\.argv\.slice\(2\),\n  env: process\.env,\n  buildFromLog: \(logDir\) => buildUnsignedV1FromLog\(logDir\),\n  loadSigner: \(env\) => initIssuerSigner\(env\),\n\}\);/.test(script), 'the script passes exactly argv, env, buildFromLog and loadSigner');
+  // No source or script file calls the test-only entry points.
+  for (const dirName of ['src', 'scripts']) {
+    const dir = path.join(here, '..', dirName);
+    for (const name of fs.readdirSync(dir).filter((n) => /\.(m?js|cjs)$/.test(n))) {
+      const text = fs.readFileSync(path.join(dir, name), 'utf8');
+      const hits = (text.match(/_(run|sign)ProductionV?1?\w*ForTest/g) || []);
+      const own = name === 'quarantine-list-production.js' ? 2 : 0;
+      assert.equal(hits.length, own, `${dirName}/${name} names a test-only entry point`);
+    }
+  }
+  // At runtime the exported runner refuses an allowlist option outright.
+  const s = await setup();
+  await assert.rejects(
+    P.runProductionListSigner({ argv: ['--list', s.file, '--log-dir', s.logDir], env: {}, buildFromLog: buildUnsignedV1FromLog, loadSigner: async () => goodSigner(), productionKeys: STUB_KEYS }),
+    /unknown option productionKeys/,
+  );
+});
+
+test('QP16: the script refuses a test key also listed in ISSUER_HISTORY_EXTRA and in allowlist-looking env vars', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const stub = JSON.stringify(STUB_KEYS);
+  const env = {
+    ...process.env,
+    ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(),
+    ISSUER_KID: KEY.kid,
+    ISSUER_HISTORY_EXTRA: JSON.stringify([{ kid: KEY.kid, jwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y }, alg: 'ES256', status: 'retired' }]),
+    QL_ALLOW: stub,
+    PRODUCTION_ISSUER_PUBLIC_KEYS: stub,
+    productionKeys: stub,
+    QUARANTINE_PRODUCTION_KEYS: stub,
+  };
+  delete env.NODE_ENV;
+  delete env.ISSUER_TEST_KEY;
+  const go = (args) => spawnSync(process.execPath, [NEW_SCRIPT, '--log-dir', s.logDir, '--list', s.file, ...args], { env, encoding: 'utf8', timeout: 30_000 });
+  for (const args of [[], ['--list-sha256', s.hash, '--apply', '--confirm', CONFIRM]]) {
+    const out = go(args);
+    assert.equal(out.status, 1, out.stderr);
+    assert.equal(out.stdout.split('\n')[0], `LIST_SHA256=${s.hash}`);
+    assert.ok(/refused: not_production_key/.test(out.stderr), out.stderr);
+  }
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
