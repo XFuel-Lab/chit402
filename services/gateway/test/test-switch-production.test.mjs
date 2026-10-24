@@ -223,6 +223,13 @@ const NODE_ENV_ALLOWLIST = {
     reason: 'pino-pretty transport in development only; cosmetic, not a gate',
     lines: ["transport: config.service.nodeEnv === 'development' ? {"],
   },
+  'quarantine-list.js': {
+    reason: 'refusal only: the quarantine signing guard refuses a production NODE_ENV (passed env or process env) and separately requires a known test or ephemeral key, so NODE_ENV can never turn signing on',
+    lines: [
+      "if (nodeEnvIsProduction(env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };",
+      "if (nodeEnvIsProduction(process.env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };",
+    ],
+  },
   'x402-discovery.js': {
     reason: 'a description string, not a check',
     lines: ["description: 'HTTPS treasury desk endpoint. localhost/http allowed only in NODE_ENV=test.',"],
