@@ -139,9 +139,10 @@ test('late issue and server: no NODE_ENV-only test switch is left; each site use
     assert.equal(/String\(env\.NODE_ENV \|\| ''\) === 'test'/.test(src), false, f);
   }
   assert.equal((read('late-issue.js').match(/testSwitchesOn\(\)/g) || []).length, 6);
-  assert.match(read('server.js'), /if \(publicAttestationWorker && !testSwitchesOn\(\)\) publicAttestationWorker\.start\(\);/);
-  assert.match(read('receipt-policy.js'), /const production = isProductionProcess\(env\);/);
-  assert.match(read('x402-facilitator.js'), /const production = isProductionProcess\(env\);/);
+  // assert.ok(re.test(src)), not assert.match: a failing match would carry the whole file in the error.
+  assert.ok(/if \(publicAttestationWorker && !testSwitchesOn\(\)\) publicAttestationWorker\.start\(\);/.test(read('server.js')), 'server.js: the attestation worker start must use !testSwitchesOn()');
+  assert.ok(/const production = isProductionProcess\(env\);/.test(read('receipt-policy.js')), 'receipt-policy.js must use isProductionProcess(env)');
+  assert.ok(/const production = isProductionProcess\(env\);/.test(read('x402-facilitator.js')), 'x402-facilitator.js must use isProductionProcess(env)');
 });
 
 test('x402 challenge store: development or test with a production-like key requires the durable store (shared check)', () => {
@@ -208,7 +209,7 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
   }
   for (const rel of Object.keys(NODE_ENV_ALLOWLIST)) assert.ok(readers.has(rel), `${rel} is allowlisted but no longer reads NODE_ENV; drop it`);
   const read = (f) => fs.readFileSync(new URL(f, root), 'utf8');
-  for (const f of SHARED_CHECK_FILES) assert.match(read(f), /isProductionProcess\(/, f);
+  for (const f of SHARED_CHECK_FILES) assert.ok(/isProductionProcess\(/.test(read(f)), `${f} must call isProductionProcess`);
   // Raw comparisons of NODE_ENV to a literal appear only where listed.
   const raw = /(?:NODE_ENV|\bnodeEnv)\s*(?:===|!==|==|!=)\s*['"]|['"](?:test|development|production)['"]\s*(?:===|!==)\s*(?:\w+\.)*(?:NODE_ENV|nodeEnv)\b/;
   for (const [rel, lines] of readers) {
