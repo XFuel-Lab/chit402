@@ -355,8 +355,9 @@ async function runWith({
     assertListDir(dir);
     const state = existingV1State(dir, canonical, keys);
     if (state === 'same') {
-      const stored = fs.readFileSync(path.join(dir, 'v1.json'));
-      out(`SIGNED_LIST_SHA256=${sha256Hex(stored)}`);
+      // Hash what the route serves: the utf8 read, re-encoded (quarantine-list.js).
+      const stored = fs.readFileSync(path.join(dir, 'v1.json'), 'utf8');
+      out(`SIGNED_LIST_SHA256=${sha256Hex(Buffer.from(stored, 'utf8'))}`);
       err('v1 already holds this list under the production key; nothing signed or written');
       return { ok: true, state: 'same' };
     }
