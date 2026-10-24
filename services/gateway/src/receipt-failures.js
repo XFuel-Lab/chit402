@@ -68,6 +68,9 @@ const ESCROW_REASONS = {
     'field_range', 'signer_unavailable', 'salt_source', 'signer_error', 'leaf_conflict',
     'leaf_mismatch', 'holder_claims_missing', 'task_id_mismatch', 'store_write', 'store_error',
     'no_store', 'no_log', 'not_in_log', 'no_epoch', 'internal',
+    // The active signer's kid is not the receipt's kid (after a rotation): the
+    // binding is not signed. Raised, not count-only.
+    'kid_mismatch',
   ]),
 };
 /**

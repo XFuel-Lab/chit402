@@ -441,6 +441,17 @@ test('payer binding: a retried refusal alerts once (pending) on the first attemp
   assert.equal(RF.escrowRefusalCounts().payer_binding.signer_unavailable, 2);
 });
 
+test('payer binding: kid_mismatch is a listed, alerting reason (not other, not count-only)', () => {
+  RF.resetReceiptFailuresForTests();
+  const row = RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'kid_mismatch' });
+  assert.equal(row?.reason, 'payer_binding:kid_mismatch', 'a row under its own code');
+  assertAlert('payer_binding', 'kid_mismatch');
+  assert.equal(RF.escrowRefusalCounts().payer_binding.other, undefined, 'not mapped to other');
+  // Only the payer binding path lists it.
+  RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'kid_mismatch' });
+  assert.deepEqual(RF.escrowRefusalCounts().fixed_head, { other: 1 });
+});
+
 test('payer binding: the flag-on boot without a store raises no_store', () => {
   const src = fs.readFileSync(path.join(gatewayDir, 'src', 'server.js'), 'utf8');
   const re = /without a persistent store; payer binding stays off'\);\n\s*recordEscrowRefusal\(\{ path: 'payer_binding', reason: 'no_store' \}\);/;
