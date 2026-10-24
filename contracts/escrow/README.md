@@ -17,6 +17,14 @@ withdrawal at once. The epoch bounty goes to the earliest commit among reveals t
 the contest window. Affected payers register refunds with a signed `ReceiptBinding` during
 the claim window, and the incident settles pro rata if refunds exceed the bond.
 
+One fork is one incident. Incidents are keyed by the conflicting epoch plus the pinned kid
+(`incidentKey(epoch)`). The first valid key from an epoch opens that epoch's incident and
+stops withdrawal. Later keys from the same epoch join it while its claim window is open and
+revert with `IncidentClosed` after that, so a settled or expired epoch never re-opens or
+freezes withdrawal again. A conflict in a different epoch needs a new pair of heads signed
+in that epoch, so it is a new equivocation and opens its own incident. `settle(incidentId)`
+closes an incident after its window.
+
 ## Signing format
 
 - `TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)`

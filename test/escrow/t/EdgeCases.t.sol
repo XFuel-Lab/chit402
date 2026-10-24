@@ -140,16 +140,6 @@ contract EdgeCasesTest is EscrowFixture {
         e2.activate();
     }
 
-    function test_edge_new_evidence_after_window_opens_second_incident() public {
-        submitA(alice, alice, pairA(5, 20, R1, R2));
-        vm.warp(esc.incident(1).claimsCloseAt + 1);
-        // No explicit settle: the next valid reveal settles incident 1 first.
-        submitA(bob, bob, pairA(6, 20, R1, R2));
-        assertTrue(esc.incident(1).settled, "incident 1 settled");
-        assertEq(esc.incidentCount(), 2, "incident 2 opened");
-        assertTrue(esc.frozen(), "frozen again");
-    }
-
     /// @dev Bounties plus refunds never exceed the bond, for random refund sets.
     function testFuzz_payouts_never_exceed_bond(uint8 nKeys, uint64 amtSeed, bool bountyFirst) public {
         uint256 n = 1 + (uint256(nKeys) % 40);
@@ -189,7 +179,7 @@ contract EdgeCasesTest is EscrowFixture {
             esc.finalizeBounty(40);
         }
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         uint256 paid;
         for (uint256 i = 0; i < n; i++) {
             esc.claimRefund(honest[i]);

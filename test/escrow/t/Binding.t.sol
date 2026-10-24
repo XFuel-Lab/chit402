@@ -35,7 +35,7 @@ contract BindingTest is EscrowFixture {
         vm.expectRevert(E.NotSettled.selector);
         esc.claimRefund(ev.l1);
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         esc.claimRefund(ev.l1);
         esc.claimRefund(ev.l2);
         assertEq(usdc.balanceOf(p1), 2 * ONE, "p1 paid");
@@ -88,7 +88,7 @@ contract BindingTest is EscrowFixture {
         // Second incident: a new fork in another epoch that contains the same
         // leaf hash on one side.
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         bytes32[] memory honest = new bytes32[](4);
         bytes32[] memory forked = new bytes32[](4);
         for (uint256 i = 0; i < 4; i++) {
@@ -168,7 +168,7 @@ contract BindingTest is EscrowFixture {
         _register(key, binding(ev.l1, p1, ps1, 9 * ONE), p1, ps1);
         assertEq(esc.refundOf(ev.l1).amount, 5 * ONE, "capped");
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         esc.claimRefund(ev.l1);
         assertEq(usdc.balanceOf(p1), 5 * ONE, "paid 5");
     }
@@ -180,7 +180,7 @@ contract BindingTest is EscrowFixture {
         vm.warp(esc.incident(1).claimsCloseAt + 1);
         vm.expectRevert(E.ClaimsClosed.selector);
         esc.registerRefund(key, b, s, p1, ps1);
-        esc.settle();
+        esc.settle(1);
         vm.expectRevert(E.ClaimsClosed.selector);
         esc.registerRefund(key, b, s, p1, ps1);
     }
@@ -192,7 +192,7 @@ contract BindingTest is EscrowFixture {
         vm.prank(carol);
         esc.registerRefund(key, b, s, p1, ps1);
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         vm.prank(carol);
         esc.claimRefund(ev.l1);
         assertEq(usdc.balanceOf(p1), 2 * ONE, "payer paid");
@@ -206,7 +206,7 @@ contract BindingTest is EscrowFixture {
         vm.warp(block.timestamp + 1 hours);
         esc.finalizeBounty(7);
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         usdc.setBlacklisted(p1, true);
         vm.expectRevert(bytes("Blacklistable: account is blacklisted"));
         esc.claimRefund(ev.l1);

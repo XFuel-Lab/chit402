@@ -82,6 +82,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     }
 
     struct Incident {
+        uint32 epoch;
         uint64 openedAt;
         uint64 claimsCloseAt;
         bool settled;
@@ -182,6 +183,15 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
 
     uint256 public incidentCount;
     mapping(uint256 => Incident) internal _incidents;
+    /// @dev incidentKey(epoch) => incident id (0 = none). One fork is one
+    ///      incident: once an epoch's incident exists, every later key from
+    ///      that epoch joins it while its claim window is open and is refused
+    ///      after, so a settled epoch never opens or freezes again.
+    mapping(bytes32 => uint256) public incidentOf;
+    /// @dev Incidents opened and not yet settled. Withdrawal waits for zero.
+    uint256 public openIncidents;
+    /// @dev Sum of `requested` over unsettled incidents (bounty reserve).
+    uint256 public openRequested;
 
     mapping(uint32 => EpochBounty) internal _bounties;
     uint256 public bountiesPaid;
@@ -243,6 +253,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     error WrongAsset();
     error AlreadyClaimed();
     error NothingToSettle();
+    error IncidentClosed();
     error ClaimsOpen();
     error NotSettled();
     error NothingToClaim();
@@ -262,7 +273,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     event EvidenceRecorded(
         bytes32 indexed key, uint8 evidenceType, uint32 epoch, uint48 seq, address payTo, uint256 incidentId
     );
-    event IncidentOpened(uint256 indexed incidentId, uint64 claimsCloseAt);
+    event IncidentOpened(uint256 indexed incidentId, uint32 indexed epoch, uint64 claimsCloseAt);
     event BountyFinalized(uint32 indexed epoch, address payTo, uint256 amount);
     event RefundRegistered(bytes32 indexed leafHash, address payer, uint256 amount, uint256 incidentId);
     event IncidentSettled(uint256 indexed incidentId, uint256 requested, uint256 pool);
@@ -490,7 +501,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         if (block.timestamp < uint256(b.firstRevealAt) + CONTEST_WINDOW) revert ContestOpen();
         b.finalized = true;
         pendingBounties -= 1;
-        uint256 reserve = _incidentOpen() ? _incidents[incidentCount].requested : 0;
+        uint256 reserve = openRequested;
         uint256 amount = 0;
         if (bountiesPaid + BOUNTY <= BOUNTY_CAP && bondAccounted >= reserve + BOUNTY) {
             amount = BOUNTY;
@@ -527,16 +538,18 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         uint64 amount = b.amountAtomic < REFUND_CAP ? b.amountAtomic : uint64(REFUND_CAP);
         _refunds[b.leafHash] = Refund({payer: payer, amount: amount, paid: false, incidentId: bk.incidentId});
         inc.requested += amount;
+        openRequested += amount;
         emit RefundRegistered(b.leafHash, payer, amount, bk.incidentId);
     }
 
-    /// @notice Close the current incident after its claim window. Refunds take
+    /// @notice Close an incident after its claim window. Refunds take
     ///         min(requested, bond) and are paid pro rata. Anyone may call.
-    function settle() external nonReentrant {
-        if (!_incidentOpen()) revert NothingToSettle();
-        Incident storage inc = _incidents[incidentCount];
+    function settle(uint256 incidentId) external nonReentrant {
+        if (incidentId == 0 || incidentId > incidentCount) revert NothingToSettle();
+        Incident storage inc = _incidents[incidentId];
+        if (inc.settled) revert NothingToSettle();
         if (block.timestamp <= inc.claimsCloseAt) revert ClaimsOpen();
-        _settle(inc);
+        _settle(incidentId, inc);
     }
 
     /// @notice Pay a settled refund to its payer. Anyone may call.
@@ -661,7 +674,14 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     }
 
     function _incidentOpen() internal view returns (bool) {
-        return incidentCount != 0 && !_incidents[incidentCount].settled;
+        return openIncidents != 0;
+    }
+
+    /// @notice Incident identity: the conflicting epoch plus the issuer kid.
+    ///         Both heads of any type A or B evidence share one epoch, and the
+    ///         kid is pinned, so every key from one fork maps to one incident.
+    function incidentKey(uint32 epoch) public view returns (bytes32) {
+        return keccak256(abi.encode(epoch, KID));
     }
 
     function _order(bytes32 a, bytes32 b) internal pure returns (bytes32, bytes32) {
@@ -694,22 +714,28 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     {
         if (evidenceIncident[key] != 0) revert DuplicateEvidence();
 
-        if (_incidentOpen() && block.timestamp > _incidents[incidentCount].claimsCloseAt) {
-            _settle(_incidents[incidentCount]);
-        }
-        if (!_incidentOpen()) {
-            uint256 id = ++incidentCount;
+        bytes32 ik = incidentKey(epoch);
+        uint256 incidentId = incidentOf[ik];
+        if (incidentId == 0) {
+            incidentId = ++incidentCount;
+            incidentOf[ik] = incidentId;
+            openIncidents += 1;
             uint64 closeAt = uint64(block.timestamp + CLAIM_WINDOW);
-            _incidents[id] = Incident({
+            _incidents[incidentId] = Incident({
+                epoch: epoch,
                 openedAt: uint64(block.timestamp),
                 claimsCloseAt: closeAt,
                 settled: false,
                 requested: 0,
                 pool: 0
             });
-            emit IncidentOpened(id, closeAt);
+            emit IncidentOpened(incidentId, epoch, closeAt);
+        } else {
+            // Same fork. Join only while its claim window is open; after
+            // that the epoch is closed for good (no re-open, no re-freeze).
+            Incident storage cur = _incidents[incidentId];
+            if (cur.settled || block.timestamp > cur.claimsCloseAt) revert IncidentClosed();
         }
-        uint256 incidentId = incidentCount;
         evidenceIncident[key] = incidentId;
         if (evidenceType == EVIDENCE_B) {
             _bKeys[key] = BKey({lo: lo, hi: hi, incidentId: incidentId});
@@ -730,12 +756,14 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         emit EvidenceRecorded(key, evidenceType, epoch, seq, payTo, incidentId);
     }
 
-    function _settle(Incident storage inc) internal {
+    function _settle(uint256 incidentId, Incident storage inc) internal {
         uint256 pool = inc.requested < bondAccounted ? inc.requested : bondAccounted;
         inc.pool = pool;
         inc.settled = true;
         bondAccounted -= pool;
-        emit IncidentSettled(incidentCount, inc.requested, pool);
+        openIncidents -= 1;
+        openRequested -= inc.requested;
+        emit IncidentSettled(incidentId, inc.requested, pool);
     }
 
     /// @dev Strict 0x100 check: the call must succeed AND return exactly 32

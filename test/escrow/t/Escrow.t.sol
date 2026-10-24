@@ -306,7 +306,7 @@ contract EscrowTest is EscrowFixture {
         E.Incident memory inc = esc.incident(1);
         assertEq(inc.requested, 1000 * ONE, "requested");
         vm.warp(inc.claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
         inc = esc.incident(1);
         assertEq(inc.pool, 950 * ONE, "pool = remaining bond");
         uint256 paid;
@@ -432,7 +432,7 @@ contract EscrowTest is EscrowFixture {
         E.Incident memory inc = esc.incident(1);
         vm.warp(inc.claimsCloseAt);
         vm.expectRevert(E.ClaimsOpen.selector);
-        esc.settle();
+        esc.settle(1);
         _reg(key, ev.l1, bob, 1 * ONE); // exactly at claimsCloseAt is still open
         vm.warp(inc.claimsCloseAt + 1);
         bytes32 ps = keccak256(abi.encode("salt", carol));
@@ -440,7 +440,7 @@ contract EscrowTest is EscrowFixture {
         E.Sig memory bs = signBinding(b);
         vm.expectRevert(E.ClaimsClosed.selector);
         esc.registerRefund(key, b, bs, carol, ps);
-        esc.settle();
+        esc.settle(1);
         vm.prank(owner);
         vm.expectRevert(E.BountyPending.selector);
         esc.withdraw();
@@ -464,14 +464,14 @@ contract EscrowTest is EscrowFixture {
         vm.warp(block.timestamp + 1 hours);
         esc.finalizeBounty(7);
         vm.warp(esc.incident(1).claimsCloseAt + 1);
-        esc.settle();
+        esc.settle(1);
 
         usdc.setHook(address(esc), abi.encodeCall(E.claim, ()));
         vm.prank(alice);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         esc.claim();
 
-        usdc.setHook(address(esc), abi.encodeCall(E.settle, ()));
+        usdc.setHook(address(esc), abi.encodeCall(E.settle, (uint256(1))));
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
         esc.claimRefund(ev.l1);
 
@@ -692,7 +692,7 @@ contract EscrowTest is EscrowFixture {
         esc.revealA(p.h1, p.s1, p.h2, p.s2, alice, salt);
         emit log_named_uint("gas revealA (first, opens incident)", g - gasleft());
 
-        E.EvidenceB memory ev = forkB(6, 39, 20, 7);
+        E.EvidenceB memory ev = forkB(5, 39, 20, 7);
         salt = keccak256("gasB");
         commitB(bob, bob, ev, salt);
         passDelay();
@@ -702,7 +702,7 @@ contract EscrowTest is EscrowFixture {
         emit log_named_uint("gas revealB (size 39, joins incident)", g - gasleft());
 
         (bytes32 lo, bytes32 hi) = ev.l1 < ev.l2 ? (ev.l1, ev.l2) : (ev.l2, ev.l1);
-        bytes32 key = esc.keyB(6, ev.index, lo, hi);
+        bytes32 key = esc.keyB(5, ev.index, lo, hi);
         bytes32 ps = keccak256("ps");
         E.ReceiptBinding memory b = binding(ev.l1, carol, ps, 2 * ONE);
         E.Sig memory bs = signBinding(b);
@@ -720,7 +720,7 @@ contract EscrowTest is EscrowFixture {
         emit log_named_uint("gas claim (bounty)", g - gasleft());
         vm.warp(esc.incident(1).claimsCloseAt + 1);
         g = gasleft();
-        esc.settle();
+        esc.settle(1);
         emit log_named_uint("gas settle", g - gasleft());
         g = gasleft();
         esc.claimRefund(ev.l1);
