@@ -325,6 +325,39 @@ test('verifyReceipt: a valid binding is checked; a forged one fails the receipt'
   assert.equal(unopened.overall, plain.overall);
 });
 
+test('verifyReceipt: the binding reads row_hash like the log leaf (boundRowHash)', async () => {
+  const { receipt, payload } = resignedReceipt();
+  const binding = bindingFor(payload, ROW, SALT);
+  const view = { status: 'signed', binding, payer_salt: SALT };
+  const WRONG = 'dd'.repeat(32);
+  const run = (rows) => lib.verifyReceipt({ ...receipt, ...rows, payer_binding: view }, OPTS);
+
+  // Probe A4d: a correct row_hash next to a wrong book_chain.row_hash does not pass.
+  const a4d = await run({ row_hash: ROW, book_chain: { row_hash: WRONG } });
+  assert.deepEqual(a4d.payer_binding, { checked: true, valid: false, reason: 'row_hash_mismatch' });
+  assert.equal(a4d.overall, 'failed');
+  assert.ok(a4d.errors.includes('payer_binding_invalid'));
+  assert.equal(a4d.verdict.exit_code, 1);
+  assert.equal(a4d.verdict.reason, 'payer_binding_invalid');
+
+  // A4e, the reverse, is the same mismatch.
+  const a4e = await run({ row_hash: WRONG, book_chain: { row_hash: ROW } });
+  assert.deepEqual(a4e.payer_binding, { checked: true, valid: false, reason: 'row_hash_mismatch' });
+
+  // An empty row_hash is a present source, as for the leaf: it does not fall through.
+  const empty = await run({ row_hash: '', book_chain: { row_hash: ROW } });
+  assert.deepEqual(empty.payer_binding, { checked: true, valid: false, reason: 'row_hash_mismatch' });
+
+  // One source, or two that agree, is checked.
+  for (const rows of [{ row_hash: ROW }, { book_chain: { row_hash: ROW } }, { row_hash: ROW, book_chain: { row_hash: ROW } }]) {
+    const ok = await run(rows);
+    assert.deepEqual(ok.payer_binding, { checked: true, valid: true }, JSON.stringify(rows));
+  }
+  // No row hash at all is not checked.
+  const none = await run({});
+  assert.deepEqual(none.payer_binding, { checked: false, valid: false, reason: 'row_hash_missing' });
+});
+
 test('verifyReceipt: a binding on a non-Base receipt fails as network', async () => {
   const { receipt, payload } = resignedReceipt();
   const claims = clone(payload);

@@ -1886,16 +1886,17 @@ function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, 
     result.payer_binding = { checked: false, valid: false, reason: 'key_unavailable' };
     return;
   }
-  const rowHash = typeof receipt.row_hash === 'string' && receipt.row_hash
-    ? receipt.row_hash
-    : (typeof receipt.book_chain?.row_hash === 'string' ? receipt.book_chain.row_hash : null);
-  const check = verifyReceiptBindingEip712(view.binding, {
-    claims: sig.payload,
-    kid: sig.kid,
-    jwk,
-    rowHash,
-    payerSalt: view.payer_salt,
-  });
+  // Same row source as the log leaf: two row hashes that disagree fail.
+  const bound = boundRowHash(receipt);
+  const check: PayerBindingCheck = bound.ok
+    ? verifyReceiptBindingEip712(view.binding, {
+      claims: sig.payload,
+      kid: sig.kid,
+      jwk,
+      rowHash: bound.row,
+      payerSalt: view.payer_salt,
+    })
+    : { checked: true, valid: false, reason: bound.reason };
   result.payer_binding = check;
   if (check.checked && !check.valid) {
     if (!result.errors.includes('payer_binding_invalid')) result.errors.push('payer_binding_invalid');
