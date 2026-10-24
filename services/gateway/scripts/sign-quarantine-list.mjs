@@ -6,6 +6,12 @@
  *   node scripts/sign-quarantine-list.mjs --log-dir "$RECEIPT_LOG_DIR"
  *   node scripts/sign-quarantine-list.mjs --log-dir "$RECEIPT_LOG_DIR" --apply --confirm YES
  *
+ * Signing refuses a production environment (NODE_ENV unset or not
+ * test/development), ISSUER_SIGNER=kms, or the production kid, unless BOTH
+ * QUARANTINE_SIGN_ALLOW_PRODUCTION=1 and --allow-production-issuer are given.
+ * --apply --confirm YES alone never signs with the production key. Never
+ * point a test or rehearsal run at the real key.
+ *
  * Reads the receipt log read-only (no lock, no journal write). Every
  * quarantined head must already carry a quarantine_ack in the journal.
  * Each entry's consistency proof runs from its prefix size to the latest
@@ -22,6 +28,7 @@ const {
   buildQuarantineList,
   quarantineListDir,
   readQuarantineList,
+  quarantineSignGuard,
   signQuarantineList,
   writeQuarantineListVersion,
 } = await import('../src/quarantine-list.js');
@@ -42,6 +49,13 @@ const logDir = arg('--log-dir') || process.env.RECEIPT_LOG_DIR || '';
 if (!logDir) fail('--log-dir or RECEIPT_LOG_DIR is required');
 const apply = process.argv.includes('--apply');
 if (apply && arg('--confirm') !== 'YES') fail('--apply needs --confirm YES');
+if (apply) {
+  // Before reading the log: a production or KMS issuer needs both allows.
+  const guard = quarantineSignGuard({ env: process.env, argv: process.argv });
+  if (!guard.ok) {
+    fail(`refused: ${guard.reason}. Signing with a production or KMS issuer needs QUARANTINE_SIGN_ALLOW_PRODUCTION=1 and --allow-production-issuer.`);
+  }
+}
 
 const tree = new ReceiptMerkleTree();
 tree.load(logDir);
@@ -123,6 +137,12 @@ if (!apply) {
   console.error(`dry run: version ${doc.version}, ${entries.length} entries; nothing signed or written`);
   process.exit(0);
 }
-const bytes = await signQuarantineList(doc);
+let bytes;
+try {
+  bytes = await signQuarantineList(doc, { env: process.env, argv: process.argv });
+} catch (err) {
+  if (err?.code === 'quarantine_sign_refused') fail(`refused: ${err.reason}. Nothing signed or written.`);
+  throw err;
+}
 const written = writeQuarantineListVersion(dir, bytes);
 console.log(JSON.stringify({ version: written.version, file: written.file, entries: entries.length }));

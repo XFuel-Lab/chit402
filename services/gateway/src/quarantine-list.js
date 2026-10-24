@@ -19,7 +19,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { isProductionIssuerEnv, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
+import { peekIssuerSigner } from './issuer-signer-state.js';
 
 export const QUARANTINE_LIST_SCHEMA = 'chit402.quarantine_list.v1';
 export const QUARANTINE_LIST_TYP = 'chit402-quarantine-list+jwt';
@@ -128,13 +130,53 @@ export function buildQuarantineList({ entries, highWater, prevBytes = null }) {
   };
 }
 
+/** Env var and flag that must BOTH be present to sign with a production or KMS issuer. */
+export const QUARANTINE_SIGN_ALLOW_ENV = 'QUARANTINE_SIGN_ALLOW_PRODUCTION';
+export const QUARANTINE_SIGN_ALLOW_FLAG = '--allow-production-issuer';
+
 /**
- * Sign with the active issuer signer (JWS path). Ops script only.
+ * Which issuer the list may be signed with. A production environment
+ * (NODE_ENV unset or anything but test/development), the KMS signer, or the
+ * production kid is refused unless QUARANTINE_SIGN_ALLOW_PRODUCTION=1 AND
+ * --allow-production-issuer are both given. --apply --confirm YES is not an
+ * allow.
+ * @param {{ env?: NodeJS.ProcessEnv, argv?: string[], kid?: string|null }} [opts]
+ * @returns {{ ok: true, allowed: boolean } | { ok: false, reason: string }}
+ */
+export function quarantineSignGuard({ env = process.env, argv = process.argv, kid = null } = {}) {
+  const allowed = env[QUARANTINE_SIGN_ALLOW_ENV] === '1' && Array.isArray(argv) && argv.includes(QUARANTINE_SIGN_ALLOW_FLAG);
+  let reason = null;
+  // null, not undefined: an unset NODE_ENV must not fall back to this process's value.
+  if (isProductionIssuerEnv(env.NODE_ENV ?? null)) reason = 'production_env';
+  else if (String(env.ISSUER_SIGNER || '').trim().toLowerCase() === 'kms') reason = 'kms_signer';
+  else if (kid != null && kid === PRODUCTION_ISSUER_KID) reason = 'production_kid';
+  if (reason && !allowed) return { ok: false, reason };
+  return { ok: true, allowed: Boolean(reason) };
+}
+
+function guardError(reason) {
+  const err = new Error(`quarantine list signing refused (${reason}); a production or KMS issuer needs ${QUARANTINE_SIGN_ALLOW_ENV}=1 and ${QUARANTINE_SIGN_ALLOW_FLAG}`);
+  err.code = 'quarantine_sign_refused';
+  err.reason = reason;
+  return err;
+}
+
+/**
+ * Sign with the active issuer signer (JWS path). Ops script only. Refuses a
+ * production or KMS issuer unless both allows are given (quarantineSignGuard),
+ * checked before the signer is created and again on its kid.
  * @param {object} doc from buildQuarantineList
+ * @param {{ env?: NodeJS.ProcessEnv, argv?: string[] }} [opts]
  * @returns {Promise<string>} stored bytes
  */
-export async function signQuarantineList(doc) {
+export async function signQuarantineList(doc, { env = process.env, argv = process.argv } = {}) {
+  const first = quarantineSignGuard({ env, argv });
+  if (!first.ok) throw guardError(first.reason);
+  const active = peekIssuerSigner() || await (await import('./issuer-signer.js')).initIssuerSigner(env);
+  const second = quarantineSignGuard({ env, argv, kid: active?.kid ?? null });
+  if (!second.ok) throw guardError(second.reason);
   const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
+  if (kid !== active?.kid) throw guardError('signer_changed');
   return jcsRfc8785({
     ...doc,
     issuer_signature: { alg: 'ES256', typ: QUARANTINE_LIST_TYP, kid, jws },
