@@ -293,6 +293,37 @@ test('verifyReceipt: no binding leaves the result shape unchanged', async () => 
   assert.equal(pending.overall, plain.overall);
 });
 
+test('verifyReceipt: a binding with an unknown status is reported, not checked, verdict unchanged (N1)', async () => {
+  const { receipt, payload } = resignedReceipt();
+  const plain = await lib.verifyReceipt(receipt, OPTS);
+  const binding = bindingFor(payload, ROW, SALT);
+  const otherKey = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const forged = { ...clone(binding), ...signTyped('ReceiptBinding', binding.message, otherKey.privateKey) };
+  for (const status of ['missing', 'pending']) {
+    const out = await lib.verifyReceipt({ ...receipt, row_hash: ROW, payer_binding: { status, binding: forged } }, OPTS);
+    assert.ok(!('payer_binding' in out), status);
+  }
+  const odd = [
+    { status: 'Signed', binding: forged, payer_salt: SALT },
+    { status: ' signed', binding: forged, payer_salt: SALT },
+    { binding: forged, payer_salt: SALT },
+    [{ status: 'signed', binding: forged, payer_salt: SALT }],
+    'signed',
+  ];
+  for (const view of odd) {
+    const out = await lib.verifyReceipt({ ...receipt, row_hash: ROW, payer_binding: view }, OPTS);
+    assert.deepEqual(out.payer_binding, { checked: false, valid: false, reason: 'status_unknown' }, JSON.stringify(view));
+    assert.equal(out.overall, plain.overall, JSON.stringify(view));
+    assert.ok(!out.errors.includes('payer_binding_invalid'));
+  }
+  const v = buildVerifyVerdict({
+    version: 'test', signatureValid: true, signatureChecked: true, historyChecked: true, historyOk: true,
+    logInclusion: 'pass', anchor: 'pass',
+  });
+  v.payer_binding = { checked: false, valid: false, reason: 'status_unknown' };
+  assert.ok(humanVerdictLines(v).includes('Payer binding (EIP-712): not checked (status_unknown).'));
+});
+
 test('verifyReceipt: a valid binding is checked; a forged one fails the receipt', async () => {
   const { receipt, payload } = resignedReceipt();
   const plain = await lib.verifyReceipt(receipt, OPTS);

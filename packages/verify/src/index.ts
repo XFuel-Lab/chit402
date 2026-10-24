@@ -1868,9 +1868,18 @@ export async function verifyReceipt(
  */
 function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, options: VerifyReceiptOptions): void {
   const outer = (receipt as { payer_binding?: unknown }).payer_binding;
-  if (!outer || typeof outer !== 'object') return;
-  const view = outer as { status?: unknown; binding?: unknown; payer_salt?: unknown };
-  if (view.status !== 'signed') return;
+  if (outer === undefined || outer === null) return;
+  const view = (typeof outer === 'object' && !Array.isArray(outer) ? outer : {}) as {
+    status?: unknown; binding?: unknown; payer_salt?: unknown;
+  };
+  if (view.status !== 'signed') {
+    // `pending` and `missing` are what the issuer shows before a binding is
+    // signed: nothing to check, nothing printed. Anything else is reported
+    // as present and not checked, so it is not silently dropped.
+    if (view.status === 'pending' || view.status === 'missing') return;
+    result.payer_binding = { checked: false, valid: false, reason: 'status_unknown' };
+    return;
+  }
   const sig = result.issuer_signature;
   if (sig.valid !== true || sig.key_trusted === false || !sig.payload || typeof sig.kid !== 'string') {
     result.payer_binding = { checked: false, valid: false, reason: 'receipt_signature_untrusted' };
