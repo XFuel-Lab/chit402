@@ -2093,6 +2093,12 @@ export class ReceiptMerkleTree {
         kid,
       });
     } catch (err) {
+      if (err?.code === 'quarantine_list_unreadable') {
+        // The deny list exists but cannot be read: no fixed head, and say so.
+        logger.error({ code: 'fixed_head_refused', reason: 'quarantine_list_unreadable', err: err?.message }, 'fixed tree head not signed');
+        recordReceiptFailure({ stage: 'sign', reason: 'quarantine_list_unreadable', outcome: 'refused' });
+        return { fixed_head: null, refused: 'quarantine_list_unreadable' };
+      }
       logger.error({ code: 'fixed_head_refused', reason: 'internal', err: err?.message }, 'fixed tree head not signed');
       return { fixed_head: null, refused: 'internal' };
     }
