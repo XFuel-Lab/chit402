@@ -655,3 +655,58 @@ test('dedup: a day of 60 s fixed-head log refusals stays far under the alert cap
     RF.resetReceiptFailuresForTests();
   }
 });
+
+test('N1: an unwritable RECEIPT_FAILURES_FILE never makes a refusal throw; the row stays in memory and is counted', async () => {
+  const dir = tmp('alerts-unwritable-');
+  const plainFile = path.join(dir, 'not-a-dir');
+  fs.writeFileSync(plainFile, 'x');
+  process.env.RECEIPT_FAILURES_FILE = path.join(plainFile, 'receipt-failures.jsonl');
+  try {
+    RF.resetReceiptFailuresForTests();
+    assert.doesNotThrow(() => RF.recordEscrowRefusal({ path: 'quarantine_sign', reason: 'not_test_key' }));
+    assertAlert('quarantine_sign', 'not_test_key');
+    assert.equal(RF.receiptFailureCount(), 1);
+    // A real refusal path still returns its refusal.
+    const leaves = leavesN(11);
+    const out = await T.signFixedHead(fhClaims({ root: 'ab'.repeat(32) }), fhCtx(leaves));
+    assert.equal(out.refused, 'root_mismatch');
+    assertAlert('fixed_head', 'root_mismatch');
+    assert.equal(fs.readFileSync(plainFile, 'utf8'), 'x', 'nothing written');
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('N2: alert rows stop at RECEIPT_FAILURE_ALERT_ROW_CAP, oldest dropped, settle rows untouched, and the reload keeps the cap', () => {
+  const dir = tmp('alerts-cap-');
+  process.env.RECEIPT_FAILURES_FILE = path.join(dir, 'receipt-failures.jsonl');
+  try {
+    RF.resetReceiptFailuresForTests();
+    const t0 = Date.parse('2026-10-24T00:00:00.000Z');
+    let clock = t0;
+    RF.setEscrowAlertClockForTests(() => clock);
+    RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base', time: '2026-10-23T00:00:00.000Z' });
+    const cap = RF.RECEIPT_FAILURE_ALERT_ROW_CAP;
+    assert.equal(cap, 1000);
+    for (let i = 0; i < cap + 1; i += 1) {
+      RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' });
+      clock += RF.ESCROW_ALERT_DEDUP_MS;
+    }
+    const check = (label) => {
+      const list = RF.listReceiptFailures();
+      const alerts = list.filter((r) => r.reason === 'fixed_head:log_not_ready');
+      assert.equal(alerts.length, cap, `${label}: alert rows capped`);
+      assert.equal(Date.parse(alerts[0].time), t0 + RF.ESCROW_ALERT_DEDUP_MS, `${label}: the oldest alert row dropped`);
+      assert.equal(list.filter((r) => r.reason === 'settle_failed').length, 1, `${label}: the settle row kept`);
+      assert.equal(list[0].reason, 'settle_failed', `${label}: rows stay in record order`);
+    };
+    check('memory');
+    assert.equal(RF.receiptFailureCount(), cap + 2);
+    RF.resetReceiptFailuresForTests();
+    check('reload');
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
+});
