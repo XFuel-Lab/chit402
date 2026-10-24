@@ -21,9 +21,11 @@ export const SCENARIO_TIMES = Object.freeze({
  * JWS inputs (start "eyJ") get a fixed 64-byte value derived from the input,
  * so two runs produce the same JWS bytes. Anything else (the EIP-712
  * preimage) is signed for real with `privateKey`, then turned high-S when
- * `highS` is set, to prove the caller normalizes.
+ * `highS` is set, to prove the caller normalizes. `realJws` signs JWS inputs
+ * for real too, for paths that verify the signature after signing (the
+ * quarantine list).
  */
-export function stubSigner({ kid, publicJwk, privateKey, highS = false, onSign = null }) {
+export function stubSigner({ kid, publicJwk, privateKey, highS = false, onSign = null, realJws = false }) {
   const N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
   const calls = [];
   return {
@@ -35,7 +37,7 @@ export function stubSigner({ kid, publicJwk, privateKey, highS = false, onSign =
       const message = Buffer.from(input);
       calls.push({ first: message[0], length: message.length, typed: Boolean(opts && opts.typedPreimage) });
       if (onSign) await onSign(message, opts);
-      if (message.subarray(0, 3).toString('latin1') === 'eyJ') {
+      if (!realJws && message.subarray(0, 3).toString('latin1') === 'eyJ') {
         const r = crypto.createHash('sha256').update(Buffer.concat([Buffer.from('r'), message])).digest();
         const s = crypto.createHash('sha256').update(Buffer.concat([Buffer.from('s'), message])).digest();
         s[0] &= 0x7f;
