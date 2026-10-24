@@ -1348,6 +1348,30 @@ test('S4: a hand-built signer that reports a test or the ephemeral public key an
   });
 });
 
+test('S5: a stub holding a known test key but labelled with an unlisted kid is refused on the claimed kid (not_test_key)', async () => {
+  await withLiveKeyGone(async ({ doc, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    assert.equal(PP.testIssuerKids().has(KEY.kid), true);
+    for (const label of ['unlisted-label', 'did:web:example#key-1', `${KEY.kid}x`]) {
+      const stub = stubSigner({ kid: label, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true });
+      _setIssuerSignerForTest(stub);
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+        (err) => err.code === 'quarantine_sign_refused' && err.reason === 'not_test_key',
+        label,
+      );
+      assert.equal(stub.calls.length, 0, `${label}: never signs`);
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: label, publicJwk: KEY.publicJwk }), { ok: false, reason: 'not_test_key' }, label);
+      resetIssuerSigner();
+    }
+    // The same key with its own kid signs.
+    const ok = stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true });
+    _setIssuerSignerForTest(ok);
+    assert.equal(JSON.parse(await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } })).issuer_signature.kid, KEY.kid);
+  });
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {
