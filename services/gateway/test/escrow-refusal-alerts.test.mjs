@@ -725,3 +725,27 @@ test('N4: the ops route 401 and 503 responses are private, no-store', async () =
     process.env.OPS_READ_TOKEN = saved;
   }
 });
+
+test('N6: the ops route 401 and 503 bodies carry no row data and no counts', async () => {
+  RF.resetReceiptFailuresForTests();
+  RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base', tx: `0x${'ab'.repeat(32)}`, requestId: 'req-n6' });
+  RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'quarantined' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payer' });
+  const leak = /settle_failed|fixed_head|payer_binding|quarantined|no_payer|req-n6|abab|failures|refusal_counts|escrow_refusals/;
+  const check = async (res, status) => {
+    assert.equal(res.status, status);
+    const text = await res.text();
+    assert.equal(leak.test(text), false, `${status} body carries no row data`);
+    assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['error', 'message'], `${status} body is error and message only`);
+  };
+  await check(await fetch(`${base}/v1/ops/receipt-failures`), 401);
+  await check(await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer wrong-token' } }), 401);
+  const saved = process.env.OPS_READ_TOKEN;
+  delete process.env.OPS_READ_TOKEN;
+  try {
+    await check(await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } }), 503);
+  } finally {
+    process.env.OPS_READ_TOKEN = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+});
