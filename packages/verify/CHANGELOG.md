@@ -24,6 +24,9 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 - New verdict reasons with docs anchors: `fixed_head_invalid`, `payer_binding_invalid`. Exit codes, flags (`--issuer-history`, `--json`) and the `xfuel-verify` bin are unchanged. Version not bumped in this change. `BUILD_DIGEST.txt` moved because `src/eip712.ts` is new and `src/index.ts`, `src/check-input.ts` and `src/verdict.ts` changed.
 - Tests: vectors signed by the issuer code under the synthetic test key, parity with the shared escrow vectors, the flag-off golden (sha256 36cd1a58f1c4b0a12dd080a2b54df1ab25c9feefb0d78e52e12ef7060abae139), and negatives for a forged binding, a wrong network, a wrong chainId and a non-string ref.
 
+### Fixed: non-receipt signed schemas
+- A signed payload whose schema is `chit402.quarantine_list`, `chit402.tree_head_eip712` or `chit402.receipt_binding_eip712` is refused as a receipt (`signed payload is not a receipt`), as `quarantine_ack` already was. `BUILD_DIGEST.txt` moved again (`src/index.ts`).
+
 ### Fixed (from #621)
 - **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
 

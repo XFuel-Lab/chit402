@@ -1738,7 +1738,7 @@ export async function verifyReceiptUpToV10(
 }
 
 /** Signed schemas of issuer documents that are never payment receipts. */
-const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|public_receipt)\b/;
+const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|quarantine_list|tree_head_eip712|receipt_binding_eip712|public_receipt)\b/;
 
 /**
  * Economic payment fields that, when on the outer receipt, are always in the
