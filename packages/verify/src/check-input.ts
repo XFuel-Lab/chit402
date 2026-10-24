@@ -667,6 +667,11 @@ export async function verifyPublicShell(
     const reason = fresh.logReason === 'not_in_log' ? 'not_in_log' : (fresh.logReason || 'log_inclusion');
     return publicVerdict(opts, 'invalid', reason, checks, null, null, null);
   }
+  // A fixed head that does not say what its signed head says is a definite
+  // failure here too, as on the full path.
+  if (fresh.fixedHeadInvalid) {
+    return publicVerdict(opts, 'invalid', 'fixed_head_invalid', { ...checks, log_inclusion: 'fail' }, null, null, null);
+  }
 
   // On chain: exactly one matching Transfer of the signed settled amount.
   const paid = await verifyPublicBasePayment({
