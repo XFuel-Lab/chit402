@@ -62,8 +62,9 @@ export function bindingInputsFromClaims(claims) {
   // be present and be Base mainnet: `base:` or `eip155:8453:` then a 32-byte
   // tx hash, the same strict pattern as public attestations. Not
   // networkFromPaymentRef, which cuts `eip155:84532:` down to `eip155`.
-  if (pay.ref == null || String(pay.ref).trim() === '') return { ok: false, reason: 'no_payment_ref' };
-  if (!normalizeBaseRef(pay.ref)) return { ok: false, reason: 'network' };
+  if (pay.ref == null || (typeof pay.ref === 'string' && pay.ref.trim() === '')) return { ok: false, reason: 'no_payment_ref' };
+  // Only a string ref: an array or object that stringifies to a valid ref does not count.
+  if (typeof pay.ref !== 'string' || !normalizeBaseRef(pay.ref)) return { ok: false, reason: 'network' };
   // A payment.network field, if one is ever signed, must agree.
   if (pay.network != null && !BASE_NETWORKS.has(String(pay.network).trim().toLowerCase())) {
     return { ok: false, reason: 'network' };

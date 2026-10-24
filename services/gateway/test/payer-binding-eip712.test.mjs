@@ -33,6 +33,7 @@ delete process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
 delete process.env.RECEIPT_ANCHOR_PRIVATE_KEY;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const { normalizeBaseRef } = await import('../src/public-attestation.js');
 const VECTORS = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'escrow-eip712-vectors.json'), 'utf8'));
 const BINDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'payer-binding-store-'));
 fs.rmdirSync(BINDING_DIR); // the store creates it on first write
@@ -733,6 +734,20 @@ test('B8: the signed payment.ref gates the network on the real signed-claim shap
   for (const id of Object.keys(refs)) {
     assert.deepEqual(W.payerBindingView(store, id), { status: 'missing', reason: refs[id] === null ? 'no_payment_ref' : 'network' }, id);
   }
+});
+
+test('B8: a payment.ref that is not a string (array or object that stringifies to a Base ref) gets no binding', () => {
+  const golden = JSON.parse(fs.readFileSync(path.join(here, 'fixtures', 'payer-binding-b1-main.json'), 'utf8'));
+  const real = JSON.parse(Buffer.from(golden.holder_jws.split('.')[1], 'base64url').toString('utf8'));
+  const good = real.payment.ref;
+  const withRef = (ref) => ({ ...real, payment: { ...real.payment, ref } });
+  for (const ref of [[good], [good, good], { toString: () => good }, { ref: good }, 8453]) {
+    assert.deepEqual(B.bindingInputsFromClaims(withRef(ref)), { ok: false, reason: 'network' }, JSON.stringify(ref) ?? String(ref));
+  }
+  assert.equal(B.bindingInputsFromClaims(withRef(good)).ok, true);
+  assert.equal(normalizeBaseRef([good]), null);
+  assert.equal(normalizeBaseRef({ toString: () => good }), null);
+  assert.equal(normalizeBaseRef(good), good.toLowerCase());
 });
 
 // ---------------------------------------------------------------- B9
