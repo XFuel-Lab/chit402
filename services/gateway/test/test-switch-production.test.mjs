@@ -237,6 +237,62 @@ const NODE_ENV_ALLOWLIST = {
 };
 const SHARED_CHECK_FILES = ['test-switch.js', 'issuer-key.js', 'salt-store.js', 'x402-durable-store.js'];
 
+/**
+ * JavaScript source with comments removed: block comments anywhere (also
+ * inside a line or across lines, keeping the newlines) and `//` comments to
+ * the end of the line. String and template literals are kept as they are, and
+ * a backslash outside a string skips the next character (regex escapes), so
+ * `'https://x'` or `/\/\//` is not read as a comment. Only for the scan below.
+ */
+function stripJsComments(text) {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (c === '/' && n === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const body = end === -1 ? text.slice(i) : text.slice(i, end + 2);
+      out += body.replace(/[^\n]/g, '');
+      i += body.length;
+    } else if (c === '/' && n === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+    } else if (c === '\'' || c === '"' || c === '`') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c && !(c !== '`' && text[j] === '\n')) j += text[j] === '\\' ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else if (c === '\\') {
+      out += text.slice(i, i + 2);
+      i += 2;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+test('the NODE_ENV scan strips comments inside lines, not only lines that start with one', () => {
+  const src = [
+    "/* c */ if (process.env.NODE_ENV === 'production') return { ok: true };",
+    '// if (process.env.NODE_ENV) only a comment',
+    '/**',
+    ' * NODE_ENV in a block comment body',
+    ' */',
+    "const a = 1; // NODE_ENV trailing comment",
+    "const b = /* NODE_ENV */ 2; const u = 'https://x/NODE_ENV';",
+    "const r = /\\/\\//; const n = process.env.NODE_ENV; /* tail",
+    'NODE_ENV still in the open block comment */ const z = 3;',
+  ].join('\n');
+  const kept = stripJsComments(src).split('\n').map((l) => l.trim()).filter((l) => /NODE_ENV/.test(l));
+  assert.deepEqual(kept, [
+    "if (process.env.NODE_ENV === 'production') return { ok: true };",
+    "const b =  2; const u = 'https://x/NODE_ENV';",
+    'const r = /\\/\\//; const n = process.env.NODE_ENV;',
+  ]);
+});
+
 test('every NODE_ENV read in services/gateway/src uses the shared check or is allowlisted with a reason', () => {
   const root = new URL('../src/', import.meta.url);
   const files = [];
@@ -252,8 +308,8 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
   const readers = new Map();
   for (const u of files) {
     const rel = u.pathname.slice(root.pathname.length);
-    const lines = fs.readFileSync(u, 'utf8').split('\n')
-      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    const lines = stripJsComments(fs.readFileSync(u, 'utf8')).split('\n')
+      .map((l) => l.trimEnd())
       .filter((l) => /NODE_ENV|\bnodeEnv\b/.test(l));
     if (lines.length) readers.set(rel, lines);
   }
@@ -274,6 +330,15 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
     assert.ok(allowed.length === 0, `${rel}: allowlisted NODE_ENV line(s) no longer present; drop them:\n${allowed.join('\n')}`);
   }
   const read = (f) => fs.readFileSync(new URL(f, root), 'utf8');
+  // The two allowlisted quarantine-list.js refusals are the first two statements of quarantineSignGuard.
+  const guardLines = stripJsComments(read('quarantine-list.js')).split('\n').map((l) => l.trim());
+  const at = guardLines.findIndex((l) => l.startsWith('export function quarantineSignGuard('));
+  assert.ok(at !== -1, 'quarantine-list.js defines quarantineSignGuard');
+  const firstTwo = guardLines.slice(at + 1).filter(Boolean).slice(0, 2);
+  assert.ok(
+    firstTwo.length === 2 && firstTwo.every((l, k) => l === NODE_ENV_ALLOWLIST['quarantine-list.js'].lines[k]),
+    `quarantineSignGuard must open with the two NODE_ENV refusals; got:\n${firstTwo.join('\n')}`,
+  );
   for (const f of SHARED_CHECK_FILES) assert.ok(/isProductionProcess\(/.test(read(f)), `${f} must call isProductionProcess`);
   // Raw comparisons of NODE_ENV to a literal appear only where listed.
   const raw = /(?:NODE_ENV|\bnodeEnv)\s*(?:===|!==|==|!=)\s*['"]|['"](?:test|development|production)['"]\s*(?:===|!==)\s*(?:\w+\.)*(?:NODE_ENV|nodeEnv)\b/;
