@@ -1046,7 +1046,9 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url, { loopback: !publicInput });
   let fixedHeadInvalid: string | null = null;
   if (signatureOk && result.issuer_history.ok && logHostOk) {
-    const fresh = await freshPublicLog(receipt, resolved.document);
+    // Same pins as the receipt signature. The CLI never sets trustedKids, so
+    // this is the production pin there.
+    const fresh = await freshPublicLog(receipt, resolved.document, { trustedKids });
     fixedHeadInvalid = fresh.fixedHeadInvalid ?? null;
     logInclusion = fresh.logInclusion;
     anchorState = fresh.anchor;
