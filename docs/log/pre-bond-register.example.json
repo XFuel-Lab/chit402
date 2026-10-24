@@ -1,0 +1,23 @@
+{
+  "schema": "chit402.pre_bond_register.v0",
+  "as_of": "PLANNED_BOND_START_UTC",
+  "issuer_kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+  "heads": [
+    {
+      "epoch": 2,
+      "tree_size": 11,
+      "root": "cf9f998f969c8c7c3b969b0b636a4b7bf6424ebcaf746790b33c38e168c54341",
+      "head_jws_sha256": "FILL_FROM_SIGNED_ACK",
+      "status": "excluded",
+      "ack_sha256": "FILL_FROM_SIGNED_ACK"
+    },
+    {
+      "epoch": "FILL_BEFORE_DEPLOY",
+      "tree_size": "FILL_BEFORE_DEPLOY",
+      "root": "FILL_BEFORE_DEPLOY",
+      "head_jws_sha256": "FILL_BEFORE_DEPLOY",
+      "status": "frontier",
+      "ack_sha256": null
+    }
+  ]
+}
