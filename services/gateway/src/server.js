@@ -14,6 +14,9 @@ import {
   publicAttestationSignDecision,
 } from './public-attestation-store.js';
 import { createPublicAttestationWorker } from './public-attestation-worker.js';
+import { openPayerBindingStore, payerBindingStoreDir } from './payer-binding-store.js';
+import { appendedLeafHash, createPayerBindingWorker, payerBindingView, taskHasLeaf } from './payer-binding-worker.js';
+import { payerBindingFlagOn } from './receipt-binding-eip712.js';
 import { attestationShellDrift } from './public-attestation.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
@@ -1139,15 +1142,57 @@ export async function createApp() {
     })
     : null;
   if (publicAttestationWorker && process.env.NODE_ENV !== 'test') publicAttestationWorker.start();
+  // Payer binding (RECEIPT_PAYER_BINDING_EIP712, default off). Private store
+  // next to the other private task data; served only in the owner view.
+  const payerBindingDir = payerBindingStoreDir({ env: process.env, persist: config.taskStore?.persist, agentsDir });
+  const payerBindingStore = openPayerBindingStore(payerBindingDir);
+  const payerBindingOn = payerBindingFlagOn(process.env);
+  if (payerBindingOn && !payerBindingStore) {
+    logger.error({}, 'RECEIPT_PAYER_BINDING_EIP712=true without a persistent store; payer binding stays off');
+  }
+  const payerBindingWorker = payerBindingOn && payerBindingStore
+    ? createPayerBindingWorker({
+      store: payerBindingStore,
+      tree: getReceiptMerkleTree,
+      holderJws: (taskId) => {
+        let task = null;
+        try {
+          task = _findTask(getAIListener(), taskId);
+        } catch {
+          task = null;
+        }
+        return task?.issuerSignature?.jws || task?.issuer_signature?.jws || null;
+      },
+    })
+    : null;
+  if (payerBindingWorker && process.env.NODE_ENV !== 'test') payerBindingWorker.start();
   setBookRowWrittenHook(async (entry) => {
     let leafAppended = false;
+    let freshLeafHash = null;
     try {
       if (entry?.task_id) {
-        const appended = await getReceiptMerkleTree().appendReceipt(entry.task_id, entry.row_hash || '');
+        const tree = getReceiptMerkleTree();
+        // Only a leaf appended by this call gets a binding job (no backfill).
+        const hadLeaf = payerBindingWorker ? taskHasLeaf(tree, entry.task_id) : true;
+        const appended = await tree.appendReceipt(entry.task_id, entry.row_hash || '');
         leafAppended = appended != null;
+        if (leafAppended && !hadLeaf) freshLeafHash = appendedLeafHash(tree, entry.task_id);
       }
     } catch (err) {
       logger.warn({ err: err.message, taskId: entry?.task_id }, 'receipt merkle append failed');
+    }
+    if (freshLeafHash && payerBindingWorker) {
+      // Not awaited: the job write and the sign run off this hook.
+      Promise.resolve()
+        .then(() => {
+          const queued = payerBindingWorker.enqueueAppended({
+            taskId: entry.task_id,
+            rowHash: entry.row_hash || '',
+            leafHash: freshLeafHash,
+          });
+          if (queued.queued) payerBindingWorker.kick();
+        })
+        .catch((err) => logger.warn({ code: 'payer_binding_enqueue_failed', reason: err?.code || 'internal', taskId: entry?.task_id }, 'payer binding'));
     }
     // Queued only after the leaf exists. Signing is async, off this path.
     if (leafAppended && publicAttestationWorker) {
@@ -5746,6 +5791,8 @@ export async function createApp() {
     saltStore,
     registry: agentRegistry,
     loadReceipt: loadFullReceipt,
+    // Read only. Present only with RECEIPT_PAYER_BINDING_EIP712=true.
+    payerBinding: payerBindingOn ? (taskId) => payerBindingView(payerBindingStore, taskId) : null,
     listReceipts: listOwnedReceipts,
     houseMetrics: collectHouseMetrics,
     houseAgentId: process.env.HOUSE_AGENT_ID || null,
@@ -5837,7 +5884,18 @@ export async function createApp() {
     res.status(500).json({ error: 'internal', message: 'Internal server error' });
   });
 
-  app.locals.__test = { usageSettled, agentRegistry, boardPosts, boardJobs, ownerView, saltStore, publicAttestations, publicAttestationWorker };
+  app.locals.__test = {
+    usageSettled,
+    agentRegistry,
+    boardPosts,
+    boardJobs,
+    ownerView,
+    saltStore,
+    publicAttestations,
+    publicAttestationWorker,
+    payerBindingStore,
+    payerBindingWorker,
+  };
 
   return app;
 }

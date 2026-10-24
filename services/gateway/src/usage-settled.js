@@ -34,6 +34,10 @@ let bookRowWrittenHook = null;
 export function setBookRowWrittenHook(fn) {
   bookRowWrittenHook = typeof fn === 'function' ? fn : null;
 }
+/** Test only: the hook createApp installed. */
+export function _bookRowWrittenHookForTest() {
+  return bookRowWrittenHook;
+}
 
 /**
  * After a new book row is indexed (and the merkle hook has appended the leaf).

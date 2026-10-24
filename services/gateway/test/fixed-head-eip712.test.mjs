@@ -488,7 +488,7 @@ test('G10: the signer refuses 0x19 input outside the typed path and a bad typed 
   // The capability was claimed by eip712-p256.js at import; no second claim.
   assert.throws(() => guard.claimTypedPreimageCapability(), (err) => err.code === 'issuer_typed_capability_claimed');
   // Only allowlisted struct kinds; no raw-bytes entry point.
-  assert.deepEqual(E.allowedTypedStructs().map((s) => s.kind), ['TreeHead']);
+  assert.deepEqual(E.allowedTypedStructs().map((s) => s.kind), ['TreeHead', 'ReceiptBinding']);
   await assert.rejects(E.signTypedStruct('Other', {}, { salt: E.EXPECTED_LOG_SALT }), (err) => err.code === 'eip712_type_not_allowed');
   await assert.rejects(E.signTypedStruct('__proto__', {}, { salt: E.EXPECTED_LOG_SALT }), (err) => err.code === 'eip712_type_not_allowed');
   assert.throws(() => signWithIssuerKey('x'), (err) => err.code === 'issuer_raw_sign_removed');
