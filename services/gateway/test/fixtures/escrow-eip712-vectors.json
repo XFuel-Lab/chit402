@@ -37,5 +37,34 @@
         "e": "0x2c7b0ae5fab76b2b6b13e6ef7ba99d0eb7e7df9e087102ad32b681ec7842412f"
       }
     ]
+  },
+  "receipt_binding": {
+    "note": "Typehash, payer tag and asset id are from the brief (h). The vector inputs are synthetic; the struct hash, preimage and e were computed with the ethers TypedDataEncoder and match src/eip712-p256.js.",
+    "type": "ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)",
+    "typehash": "0x988137c56725cd0e31ca35c99b68f3e106602c950645b1a17ea521fe49100ba0",
+    "domain_name": "Chit402ReceiptBinding",
+    "domain_separator": "0xd8170c88933716d7fe5bddbc5ad0439731d3bdcbfdd8004c627b142f1d7be927",
+    "payer_tag_text": "chit402.payer-commitment.v1",
+    "payer_tag": "0x48d821d8afa6e4e7fb248cd90fb31e5b8e381d46154394f008c7ffabf630665d",
+    "asset_text": "eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "asset_id": "0xe388d402aba230f5d279b790e1c6cb48e608d50c648f65eb394dfa8a44b5ddb5",
+    "vectors": [
+      {
+        "label": "synthetic receipt, 2000 atomic USDC",
+        "leaf_preimage": "xfuel-00000000-0000-4000-8000-000000000001|abababababababababababababababababababababababababababababababab",
+        "payer": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+        "payer_salt": "0x59120f365f148dfbc5371db44a0c4afad1fb85be6c661df812250e291d1a7a91",
+        "message": {
+          "leaf_hash": "0x5f9e636f222708f7dac56dcaaadc2683b5d4eb0c95540e6d75964f8a5f4540d0",
+          "payer_commitment": "0x81eea156ce41be0125c56170cd98c2e898eaf5064805fb319362cad77c58479c",
+          "amount_atomic": "2000",
+          "asset_id": "0xe388d402aba230f5d279b790e1c6cb48e608d50c648f65eb394dfa8a44b5ddb5",
+          "kid": "0x22f169982faf3e1918fefd2f89db2b5954fdbb3944e5758a66000439e253ab54"
+        },
+        "struct_hash": "0x1fb680b7e7e7629e576b39338b25f134625d662e3c268f8a31d6847589f452e9",
+        "preimage": "0x1901d8170c88933716d7fe5bddbc5ad0439731d3bdcbfdd8004c627b142f1d7be9271fb680b7e7e7629e576b39338b25f134625d662e3c268f8a31d6847589f452e9",
+        "e": "0x16bc4f44ce4401b5ed142e3ea5c1f2810e840efd4aebd1c79c39adbb9a505b00"
+      }
+    ]
   }
 }

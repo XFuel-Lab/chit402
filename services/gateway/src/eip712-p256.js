@@ -8,7 +8,8 @@
  * verify. There is no keccak digest signing and no prehash mode.
  *
  * Callers pass typed fields only, never bytes. The struct kinds this module
- * can sign are fixed here (TreeHead). Each kind has its own domain name.
+ * can sign are fixed here (TreeHead, ReceiptBinding). Each kind has its own
+ * domain name, so a signature for one never verifies as the other.
  * The domain salt is the log id, from the boot-verified epoch-1 root and
  * genesis digest (see logIdSalt).
  */
@@ -39,6 +40,13 @@ export const EXPECTED_LOG_SALT = '0x7a92860b2db8dfee1901affef1a3352ab94a3b3bfcc4
 export const TREE_HEAD_TYPE = 'TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)';
 export const TREE_HEAD_DOMAIN_NAME = 'Chit402TreeHead';
 
+export const RECEIPT_BINDING_TYPE = 'ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)';
+export const RECEIPT_BINDING_DOMAIN_NAME = 'Chit402ReceiptBinding';
+/** keccak256("chit402.payer-commitment.v1") */
+export const PAYER_COMMITMENT_TAG_TEXT = 'chit402.payer-commitment.v1';
+/** CAIP-19 style id of the payment asset, Base USDC. */
+export const BASE_USDC_ASSET_TEXT = 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
 const HEX32 = /^[0-9a-f]{64}$/;
 const HEX32_0X = /^0x[0-9a-f]{64}$/;
 
@@ -52,6 +60,9 @@ function utf8Keccak(text) {
 
 export const EIP712_DOMAIN_TYPEHASH = utf8Keccak(EIP712_DOMAIN_TYPE);
 export const TREE_HEAD_TYPEHASH = utf8Keccak(TREE_HEAD_TYPE);
+export const RECEIPT_BINDING_TYPEHASH = utf8Keccak(RECEIPT_BINDING_TYPE);
+export const PAYER_COMMITMENT_TAG = utf8Keccak(PAYER_COMMITMENT_TAG_TEXT);
+export const BASE_USDC_ASSET_ID = utf8Keccak(BASE_USDC_ASSET_TEXT);
 
 function bytesOf0x(hex) {
   return Buffer.from(hex.slice(2), 'hex');
@@ -145,6 +156,43 @@ export function treeHeadStructHash(m) {
 }
 
 /**
+ * keccak256(abi.encode(PAYER_COMMITMENT_TAG, payer, payer_salt)).
+ * @param {string} payer 0x + 40 hex (any case)
+ * @param {Buffer} payerSalt exactly 32 bytes
+ */
+export function payerCommitment(payer, payerSalt) {
+  if (typeof payer !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(payer)) {
+    throw coded('payer must be a 20-byte address', 'eip712_field_range');
+  }
+  if (!Buffer.isBuffer(payerSalt) || payerSalt.length !== 32) {
+    throw coded('payer salt must be 32 bytes', 'eip712_field_range');
+  }
+  const addressWord = Buffer.concat([Buffer.alloc(12), Buffer.from(payer.slice(2), 'hex')]);
+  return keccakHex(Buffer.concat([bytesOf0x(PAYER_COMMITMENT_TAG), addressWord, payerSalt]));
+}
+
+// Amounts travel as decimal strings in JSON (uint64 can exceed 2^53).
+function amountValue(v) {
+  if (typeof v === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(v)) return BigInt(v);
+  return v;
+}
+
+/**
+ * ReceiptBinding message: { leaf_hash, payer_commitment, amount_atomic,
+ * asset_id, kid } with the bytes32 fields as 0x strings.
+ */
+export function receiptBindingStructHash(m) {
+  return keccakHex(Buffer.concat([
+    bytesOf0x(RECEIPT_BINDING_TYPEHASH),
+    bytes32Word(m.leaf_hash),
+    bytes32Word(m.payer_commitment),
+    uintWord(amountValue(m.amount_atomic), 64),
+    bytes32Word(m.asset_id),
+    bytes32Word(m.kid),
+  ]));
+}
+
+/**
  * Struct kinds this module may sign. Not extensible from outside.
  */
 const TYPED_STRUCTS = Object.freeze({
@@ -152,6 +200,11 @@ const TYPED_STRUCTS = Object.freeze({
     typehash: TREE_HEAD_TYPEHASH,
     domainName: TREE_HEAD_DOMAIN_NAME,
     structHash: treeHeadStructHash,
+  }),
+  ReceiptBinding: Object.freeze({
+    typehash: RECEIPT_BINDING_TYPEHASH,
+    domainName: RECEIPT_BINDING_DOMAIN_NAME,
+    structHash: receiptBindingStructHash,
   }),
 });
 
