@@ -36,6 +36,8 @@ import {
 } from './solana-receipt-anchor.js';
 import { bundleIndexHash, emptyBundleIndex } from './receipt-log-s3.js';
 import { acquireReceiptLogLock, verifyReceiptLogLock } from './receipt-log-lock.js';
+import { fixedHeadFlagOn, openFixedHeadStore, publishedAtSeconds, signFixedHead } from './tree-head-eip712.js';
+import { quarantineListDir, quarantinedTriples } from './quarantine-list.js';
 import { isProductionProcess } from './production-process.js';
 import {
   appendJournal,
@@ -2055,7 +2057,59 @@ export class ReceiptMerkleTree {
     else this.heads.push(head);
     this._rememberAnchor(day, scope, head);
     this._persistHead(head);
+    if (fixedHeadFlagOn()) await this._signFixedHead(claims, kid);
     return head;
+  }
+
+  _fixedHeads() {
+    if (!this.dir) return null;
+    if (!this._fixedHeadStore) this._fixedHeadStore = openFixedHeadStore(this.dir);
+    return this._fixedHeadStore;
+  }
+
+  /**
+   * EIP-712 fixed head for a JWS head that was just signed and persisted.
+   * Runs inside the publish chain. Never edits the head or its claims, and
+   * never throws into the publish path.
+   */
+  async _signFixedHead(claims, kid) {
+    try {
+      const leafCount = this.leaves.length;
+      return await signFixedHead(claims, {
+        ready: receiptLogSigningReady(this),
+        logIdentity: this.logIdentity || null,
+        currentEpoch: this.epoch,
+        leafCount,
+        rootAt: (size) => hex(rootOf(this.leaves.slice(0, size))),
+        quarantined: [
+          ...(this.quarantinedHeads || []).map((row) => ({
+            epoch: row.epoch,
+            tree_size: row.tree_size,
+            root: row.root,
+          })),
+          ...quarantinedTriples(quarantineListDir(this.dir)),
+        ],
+        store: this._fixedHeads(),
+        kid,
+      });
+    } catch (err) {
+      logger.error({ code: 'fixed_head_refused', reason: 'internal', err: err?.message }, 'fixed tree head not signed');
+      return { fixed_head: null, refused: 'internal' };
+    }
+  }
+
+  /**
+   * Stored fixed head for a signed JWS head, or null. A lookup only: it
+   * never signs.
+   * @param {object} head
+   */
+  fixedHeadFor(head) {
+    if (!head || !this.dir) return null;
+    const store = this._fixedHeads();
+    if (!store || store.broken) return null;
+    const publishedAt = publishedAtSeconds(head.published_at);
+    if (publishedAt == null || typeof head.root !== 'string') return null;
+    return store.find(head.epoch, head.tree_size, `0x${head.root}`, publishedAt);
   }
 
   currentBundleIndexHash() {
@@ -3661,6 +3715,12 @@ export function getReceiptMerkleTree() {
 
 export function resetReceiptMerkleTree() {
   _tree = new ReceiptMerkleTree();
+  return _tree;
+}
+
+/** Tests only: install a prepared tree as the process tree. */
+export function _setReceiptMerkleTreeForTest(tree) {
+  _tree = tree;
   return _tree;
 }
 
