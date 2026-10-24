@@ -274,6 +274,11 @@ export async function signQuarantineList(doc, { env = process.env } = {}) {
   if (!active?.publicJwk) throw guardError('no_public_key');
   const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
   if (kid !== active?.kid) throw guardError('signer_changed');
+  // The guard judged the public key the signer reports. The signature must
+  // verify under that key, so a signer that reports a test or ephemeral key
+  // but signs with another private key is refused.
+  const reported = { kty: 'EC', crv: 'P-256', x: active.publicJwk.x, y: active.publicJwk.y, kid, alg: 'ES256' };
+  if (!verifyJwsWithJwks(jws, { keys: [reported] }).valid) throw guardError('signer_mismatch');
   return jcsRfc8785({
     ...doc,
     issuer_signature: { alg: 'ES256', typ: QUARANTINE_LIST_TYP, kid, jws },

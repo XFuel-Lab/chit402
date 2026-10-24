@@ -828,7 +828,7 @@ test('quarantine guard: signQuarantineList refuses production, KMS and the produ
   _resetIssuerKey();
   const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
   // Stub signer under the synthetic key: signs in a test env.
-  const stub = installStub();
+  const stub = installStub({ realJws: true });
   const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
   const parsed = JSON.parse(bytes);
   assert.equal(parsed.issuer_signature.kid, KEY.kid);
@@ -1057,7 +1057,7 @@ test('quarantine guard (narrowed): ISSUER_TEST_KEY is ignored; only a known test
         label,
       );
       assert.equal(unlisted.calls.length, 0);
-      const stub = installStub();
+      const stub = installStub({ realJws: true });
       const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
       assert.equal(JSON.parse(bytes).issuer_signature.kid, KEY.kid, `${label}: a stub on the known test key signs`);
       assert.ok(stub.calls.length >= 1);
@@ -1087,7 +1087,7 @@ test('quarantine guard: with no issuer key configured, the ephemeral key or a st
     // A stub signs on a known test key; a stub on an unlisted throwaway key does not.
     const throwaway = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const tj = throwaway.publicKey.export({ format: 'jwk' });
-    installStub();
+    installStub({ realJws: true });
     assert.equal(JSON.parse(await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } })).issuer_signature.kid, KEY.kid);
     const stub = stubSigner({ kid: 'stub-kid', publicJwk: { x: tj.x, y: tj.y }, privateKey: throwaway.privateKey });
     _setIssuerSignerForTest(stub);
@@ -1261,7 +1261,7 @@ test('M-Q1: in a fresh process with no issuer key configured, the ephemeral key 
     out.ephemeral = JSON.parse(await Q.signQuarantineList(doc, { env: process.env })).issuer_signature.kid;
     resetIssuerSigner();
     const tk = testIssuerKey(7);
-    _setIssuerSignerForTest(stubSigner({ kid: tk.kid, publicJwk: tk.publicJwk, privateKey: tk.privateKey }));
+    _setIssuerSignerForTest(stubSigner({ kid: tk.kid, publicJwk: tk.publicJwk, privateKey: tk.privateKey, realJws: true }));
     out.stub = JSON.parse(await Q.signQuarantineList(doc, { env: process.env })).issuer_signature.kid === tk.kid;
     const k = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const j = k.publicKey.export({ format: 'jwk' });
@@ -1308,6 +1308,44 @@ test('production keys: a JWK coordinate is well formed only as exactly 43 base64
   // An ISSUER_HISTORY_EXTRA entry with junk in a coordinate is malformed, not skipped.
   const extra = JSON.stringify([{ jwk: { kty: 'EC', crv: 'P-256', x: bad.junkSuffix, y: prod.y } }]);
   assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: extra }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'history_extra_malformed' });
+});
+
+test('S4: a hand-built signer that reports a test or the ephemeral public key and kid but signs with K2 is refused (signer_mismatch)', async () => {
+  await withLiveKeyGone(async ({ doc, k2, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    const liar = (kid, publicJwk) => {
+      const calls = [];
+      return {
+        kind: 'env',
+        kid,
+        publicJwk: { kty: 'EC', crv: 'P-256', x: publicJwk.x, y: publicJwk.y },
+        calls,
+        async sign(input) {
+          calls.push(input.length);
+          return crypto.sign('sha256', Buffer.from(input), { key: k2.privateKey, dsaEncoding: 'ieee-p1363' });
+        },
+      };
+    };
+    // Reports the known test key.
+    const asTest = liar(KEY.kid, KEY.publicJwk);
+    _setIssuerSignerForTest(asTest);
+    await assert.rejects(Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }), (err) => err.code === 'quarantine_sign_refused' && err.reason === 'signer_mismatch', 'reports the test key');
+    assert.equal(asTest.calls.length, 1, 'K2 did sign; the result is refused, not returned');
+    resetIssuerSigner();
+    // Reports this process's ephemeral key.
+    const { initIssuerKey, ephemeralIssuerKid } = await import('../src/issuer-key.js');
+    const eph = initIssuerKey();
+    assert.equal(ephemeralIssuerKid(), eph.kid);
+    const asEph = liar(eph.kid, eph.publicKeyJwk);
+    _setIssuerSignerForTest(asEph);
+    await assert.rejects(Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }), (err) => err.reason === 'signer_mismatch', 'reports the ephemeral key');
+    resetIssuerSigner();
+    // The honest ephemeral signer still signs, and the output verifies.
+    const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
+    const jwk = { ...eph.publicKeyJwk };
+    assert.equal(Q.verifyQuarantineList(bytes, { keys: [jwk] }).ok, true);
+  });
 });
 
 // ---------------------------------------------------------------- G15 KMS
