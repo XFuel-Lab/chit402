@@ -278,8 +278,12 @@ function realDir(dir) {
 
 function parseArgs(argv) {
   const out = { apply: false, confirm: null, list: null, listSha256: null, logDir: null };
+  const seen = new Set();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
+    // Each flag once: a second --confirm or --list must not silently win.
+    if (seen.has(a)) refuse('usage', `${a} given more than once`);
+    seen.add(a);
     if (a === '--apply') out.apply = true;
     else if (a === '--confirm') out.confirm = argv[++i] ?? null;
     else if (a === '--list') out.list = argv[++i] ?? null;

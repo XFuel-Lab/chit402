@@ -658,3 +658,22 @@ test('QP17: a symlinked or non-directory quarantine-list path, or a relative log
   assert.deepEqual(r.result, { ok: false, reason: 'usage' });
   assert.equal(signer.calls.length, 0);
 });
+
+test('QP18: every flag may be given once only', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const cases = [
+    [...applyArgs(s), '--confirm', 'YES'],
+    ['--confirm', 'YES', ...applyArgs(s)],
+    [...applyArgs(s), '--list', s.file],
+    [...applyArgs(s), '--list-sha256', s.hash],
+    [...applyArgs(s), '--log-dir', s.logDir],
+    [...applyArgs(s), '--apply'],
+  ];
+  for (const argv of cases) {
+    const r = await run(argv, { signer });
+    assert.deepEqual(r.result, { ok: false, reason: 'usage' }, argv.join(' '));
+  }
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
