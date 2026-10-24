@@ -2,7 +2,8 @@
  * The quarantine list is a deny list: a list that exists but cannot be read
  * never reads as empty. Readers throw quarantine_list_unreadable, the route
  * answers 500 (never 404 or an empty list), and fixed-head signing refuses
- * and records a receipt failure. Offline: synthetic
+ * and records a receipt failure. The verifier also requires the outer
+ * issuer_signature alg and kid to match the JWS header. Offline: synthetic
  * key, local server, no network.
  */
 import { test } from 'node:test';
@@ -209,3 +210,28 @@ test('FC7: fixed-head signing refuses when the list cannot be read, and records 
   resetReceiptFailuresForTests();
 });
 
+test('FC8: the verifier requires outer alg ES256 and an outer kid equal to the JWS header kid', async () => {
+  const bytes = await signedV1();
+  const jwks = getJwks();
+  assert.equal(Q.verifyQuarantineList(bytes, jwks).ok, true);
+  const doc = JSON.parse(bytes);
+  const relabel = (sig) => jcsRfc8785({ ...doc, issuer_signature: { ...doc.issuer_signature, ...sig } });
+  const strip = (name) => {
+    const { [name]: _drop, ...rest } = doc.issuer_signature;
+    return jcsRfc8785({ ...doc, issuer_signature: rest });
+  };
+  assert.deepEqual(Q.verifyQuarantineList(relabel({ alg: 'none' }), jwks), { ok: false, reason: 'alg' });
+  assert.deepEqual(Q.verifyQuarantineList(relabel({ alg: 'ES384' }), jwks), { ok: false, reason: 'alg' });
+  assert.deepEqual(Q.verifyQuarantineList(strip('alg'), jwks), { ok: false, reason: 'alg' });
+  assert.deepEqual(Q.verifyQuarantineList(relabel({ kid: 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q' }), jwks), { ok: false, reason: 'kid' });
+  assert.deepEqual(Q.verifyQuarantineList(relabel({ kid: `${doc.issuer_signature.kid}x` }), jwks), { ok: false, reason: 'kid' });
+  assert.deepEqual(Q.verifyQuarantineList(strip('kid'), jwks), { ok: false, reason: 'kid' });
+  assert.deepEqual(Q.verifyQuarantineList(relabel({ kid: '' }), jwks), { ok: false, reason: 'kid' });
+  // A JWS header that says alg none is refused too (header alg checked before the signature).
+  const [, payload, sig] = doc.issuer_signature.jws.split('.');
+  const noneHeader = Buffer.from(JSON.stringify({ alg: 'none', typ: Q.QUARANTINE_LIST_TYP, kid: doc.issuer_signature.kid })).toString('base64url');
+  const r = Q.verifyQuarantineList(relabel({ jws: `${noneHeader}.${payload}.${sig}` }), jwks);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'alg');
+  resetIssuerSigner();
+});

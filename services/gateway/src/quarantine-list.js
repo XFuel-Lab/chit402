@@ -378,6 +378,9 @@ export function verifyQuarantineList(bytes, jwks, { prevBytes = null } = {}) {
   const sig = doc.issuer_signature || {};
   const header = jwsHeader(sig.jws);
   if (sig.typ !== QUARANTINE_LIST_TYP || header?.typ !== QUARANTINE_LIST_TYP) return { ok: false, reason: 'typ' };
+  // The outer labels must say what the JWS header says: ES256, same kid.
+  if (sig.alg !== 'ES256' || header?.alg !== 'ES256') return { ok: false, reason: 'alg' };
+  if (typeof sig.kid !== 'string' || !sig.kid || sig.kid !== header?.kid) return { ok: false, reason: 'kid' };
   const checked = verifyJwsWithJwks(sig.jws, jwks);
   if (!checked.valid) return { ok: false, reason: 'signature' };
   if (jcsRfc8785(jwsPayload(sig.jws)) !== jcsRfc8785(quarantineListClaims(doc))) {
