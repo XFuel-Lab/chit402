@@ -166,21 +166,67 @@ test('x402 challenge store: development or test with a production-like key requi
 });
 
 /**
- * Every NODE_ENV read in services/gateway/src. Each file that reads NODE_ENV
- * (or a nodeEnv taken from it) must be listed here with the reason it is not
- * a NODE_ENV-only production gate. A new file that reads NODE_ENV fails this
- * test until it uses the shared check or is listed.
+ * Every NODE_ENV read in services/gateway/src, line by line. Each code line
+ * that mentions NODE_ENV (or a nodeEnv taken from it) must be listed here
+ * exactly (trimmed), as many times as it appears in that file, with the
+ * reason it is not a NODE_ENV-only production gate. Any new line, in any
+ * form, fails this test until someone reviews it and lists it, including in
+ * a file that already has listed lines.
  */
 const NODE_ENV_ALLOWLIST = {
-  'production-process.js': 'the shared production check itself',
-  'test-switch.js': 'testSwitchesOn: NODE_ENV=test AND not isProductionProcess',
-  'issuer-key.js': 'passes NODE_ENV into isProductionProcess',
-  'salt-store.js': 'passes NODE_ENV into isProductionProcess',
-  'x402-durable-store.js': 'challengeStorePlan passes nodeEnv into isProductionProcess',
-  'server.js': 'passes NODE_ENV to challengeStorePlan, which applies the shared check',
-  'config.js': 'exposes service.nodeEnv for the logger only; not a gate',
-  'logger.js': 'pino-pretty transport in development only; cosmetic, not a gate',
-  'x402-discovery.js': 'a description string, not a check',
+  'production-process.js': {
+    reason: 'the shared production check itself',
+    lines: [
+      'export function nodeEnvIsProduction(nodeEnv) {',
+      "const env = nodeEnv == null ? '' : String(nodeEnv).trim();",
+      'export function isProductionProcess(env = process.env, { nodeEnv } = {}) {',
+      'const node = nodeEnv === undefined ? e.NODE_ENV : nodeEnv;',
+    ],
+  },
+  'test-switch.js': {
+    reason: 'testSwitchesOn: NODE_ENV=test AND not isProductionProcess',
+    lines: ["return env?.NODE_ENV === 'test' && !isProductionProcess(env);"],
+  },
+  'issuer-key.js': {
+    reason: 'passes NODE_ENV into isProductionProcess',
+    lines: [
+      'export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {',
+      'return isProductionProcess(process.env, { nodeEnv });',
+    ],
+  },
+  'salt-store.js': {
+    reason: 'passes NODE_ENV into isProductionProcess',
+    lines: [
+      'export function isProductionEnv(nodeEnv = process.env.NODE_ENV) {',
+      'return isProductionProcess(process.env, { nodeEnv });',
+      'export function saltStoreAllowsV11Issuance({ nodeEnv, issuerRootEnabled, store, allowEphemeral } = {}) {',
+      "if (!isProductionEnv(nodeEnv) || ephemeral) return { ok: true, reason: null };",
+      'nodeEnv: env.NODE_ENV,',
+    ],
+  },
+  'x402-durable-store.js': {
+    reason: 'challengeStorePlan passes nodeEnv into isProductionProcess',
+    lines: [
+      'export function challengeStorePlan({ nodeEnv, configured, env = process.env } = {}) {',
+      'const required = isProductionProcess(env, { nodeEnv: nodeEnv ?? null });',
+    ],
+  },
+  'server.js': {
+    reason: 'the boot call passes the real NODE_ENV to challengeStorePlan, which applies the shared check',
+    lines: ['nodeEnv: process.env.NODE_ENV,'],
+  },
+  'config.js': {
+    reason: 'exposes service.nodeEnv for the logger only; not a gate',
+    lines: ["nodeEnv: process.env.NODE_ENV || 'development',"],
+  },
+  'logger.js': {
+    reason: 'pino-pretty transport in development only; cosmetic, not a gate',
+    lines: ["transport: config.service.nodeEnv === 'development' ? {"],
+  },
+  'x402-discovery.js': {
+    reason: 'a description string, not a check',
+    lines: ["description: 'HTTPS treasury desk endpoint. localhost/http allowed only in NODE_ENV=test.',"],
+  },
 };
 const SHARED_CHECK_FILES = ['test-switch.js', 'issuer-key.js', 'salt-store.js', 'x402-durable-store.js'];
 
@@ -208,6 +254,18 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
     assert.ok(NODE_ENV_ALLOWLIST[rel], `${rel} reads NODE_ENV without the shared check:\n${lines.join('\n')}`);
   }
   for (const rel of Object.keys(NODE_ENV_ALLOWLIST)) assert.ok(readers.has(rel), `${rel} is allowlisted but no longer reads NODE_ENV; drop it`);
+  // Line level: the multiset of trimmed NODE_ENV lines per file must equal the listed one.
+  for (const [rel, lines] of readers) {
+    const allowed = [...NODE_ENV_ALLOWLIST[rel].lines];
+    const extra = [];
+    for (const raw of lines) {
+      const at = allowed.indexOf(raw.trim());
+      if (at === -1) extra.push(raw.trim());
+      else allowed.splice(at, 1);
+    }
+    assert.ok(extra.length === 0, `${rel}: NODE_ENV line(s) not on the allowlist (use the shared check, or review and list them):\n${extra.join('\n')}`);
+    assert.ok(allowed.length === 0, `${rel}: allowlisted NODE_ENV line(s) no longer present; drop them:\n${allowed.join('\n')}`);
+  }
   const read = (f) => fs.readFileSync(new URL(f, root), 'utf8');
   for (const f of SHARED_CHECK_FILES) assert.ok(/isProductionProcess\(/.test(read(f)), `${f} must call isProductionProcess`);
   // Raw comparisons of NODE_ENV to a literal appear only where listed.
