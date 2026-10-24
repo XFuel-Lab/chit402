@@ -136,12 +136,22 @@ function capture() {
   return { out, err, o: (l) => out.push(l), e: (l) => err.push(l) };
 }
 
+/**
+ * RECEIPT_LOG_DIR is required, so unless a test names it in env (even as
+ * undefined), it is set to the --log-dir value, as the runbook passes it.
+ */
+function withLogDirEnv(argv, env) {
+  if (Object.prototype.hasOwnProperty.call(env, 'RECEIPT_LOG_DIR')) return env;
+  const i = argv.indexOf('--log-dir');
+  return i >= 0 && typeof argv[i + 1] === 'string' ? { ...env, RECEIPT_LOG_DIR: argv[i + 1] } : env;
+}
+
 async function run(argv, { signer, keys = STUB_KEYS, env = {}, buildFromLog = (d) => buildUnsignedV1FromLog(d) } = {}) {
   const c = capture();
   const loads = [];
   const result = await P._runProductionListSignerForTest({
     argv,
-    env,
+    env: withLogDirEnv(argv, env),
     buildFromLog,
     loadSigner: async (e) => { loads.push(e); return signer; },
     out: c.o,
@@ -366,7 +376,7 @@ test('QP9: only an allowlisted key signs: the real allowlist refuses every test 
   const signer = goodSigner();
   const c = capture();
   const real = await P.runProductionListSigner({
-    argv: applyArgs(s), env: {}, buildFromLog: (d) => buildUnsignedV1FromLog(d), loadSigner: async () => signer, out: c.o, err: c.e,
+    argv: applyArgs(s), env: { RECEIPT_LOG_DIR: s.logDir }, buildFromLog: (d) => buildUnsignedV1FromLog(d), loadSigner: async () => signer, out: c.o, err: c.e,
   });
   assert.deepEqual(real, { ok: false, reason: 'not_production_key' });
   assert.equal(signer.calls.length, 0);
@@ -418,7 +428,7 @@ test('QP10: refused outside a production process, and for an ephemeral key even 
     const ephKeys = [{ x: eph.publicJwk.x, y: eph.publicJwk.y }];
     const c = capture();
     const out = await P._runProductionListSignerForTest({
-      argv: applyArgs(s), env: {}, buildFromLog: async () => built, loadSigner: async () => eph, out: c.o, err: c.e,
+      argv: applyArgs(s), env: { RECEIPT_LOG_DIR: s.logDir }, buildFromLog: async () => built, loadSigner: async () => eph, out: c.o, err: c.e,
     }, ephKeys);
     assert.deepEqual(out, { ok: false, reason: 'not_production_key' });
   } finally {
@@ -459,7 +469,7 @@ test('QP11: the script is a thin entry point with the real allowlist; the test-o
 
 test('QP12: the script end to end in a production env with a test key: hash first, confirm refused, real allowlist refuses the key, nothing written', { timeout: 120_000 }, async () => {
   const s = await setup();
-  const env = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid, RECEIPT_LOG_DIR: s.logDir };
   delete env.NODE_ENV;
   delete env.ISSUER_TEST_KEY;
   const go = (args) => spawnSync(process.execPath, [NEW_SCRIPT, '--log-dir', s.logDir, '--list', s.file, ...args], { env, encoding: 'utf8', timeout: 30_000 });
@@ -617,6 +627,7 @@ test('QP16: the script refuses a test key also listed in ISSUER_HISTORY_EXTRA an
     ...process.env,
     ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(),
     ISSUER_KID: KEY.kid,
+    RECEIPT_LOG_DIR: s.logDir,
     ISSUER_HISTORY_EXTRA: JSON.stringify([{ kid: KEY.kid, jwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y }, alg: 'ES256', status: 'retired' }]),
     QL_ALLOW: stub,
     PRODUCTION_ISSUER_PUBLIC_KEYS: stub,
@@ -746,4 +757,32 @@ test('QP20: a log with two raced heads: the rebuilt v1 still equals the test-onl
   assert.equal(r.result.state, 'written', r.err.join(' '));
   const entries = JSON.parse(r.out.find((l) => l.startsWith('LIST_ENTRIES=')).slice('LIST_ENTRIES='.length));
   assert.equal(entries.length, 2);
+});
+
+test('QP21: RECEIPT_LOG_DIR is required; --log-dir alone is refused as log_dir_env_unset before anything is read', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  for (const env of [{ RECEIPT_LOG_DIR: undefined }, { RECEIPT_LOG_DIR: '' }]) {
+    for (const argv of [applyArgs(s), ['--log-dir', s.logDir, '--list', s.file]]) {
+      const r = await run(argv, { signer, env });
+      assert.deepEqual(r.result, { ok: false, reason: 'log_dir_env_unset' }, argv.join(' '));
+      assert.ok(!r.out.some((l) => l.startsWith('LIST_SHA256=')), 'refused before the input is read');
+      assert.equal(r.loads.length, 0, 'the signer is never loaded');
+      assert.ok(/refused: log_dir_env_unset\. RECEIPT_LOG_DIR must be set/.test(r.err.join('\n')), r.err.join('\n'));
+    }
+  }
+  // Neither given: the same refusal.
+  const none = await run(['--list', s.file], { signer, env: { RECEIPT_LOG_DIR: undefined } });
+  assert.deepEqual(none.result, { ok: false, reason: 'log_dir_env_unset' });
+  // The real script in a production env with RECEIPT_LOG_DIR unset.
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
+  delete env.NODE_ENV;
+  delete env.ISSUER_TEST_KEY;
+  delete env.RECEIPT_LOG_DIR;
+  const out = spawnSync(process.execPath, [NEW_SCRIPT, '--log-dir', s.logDir, '--list', s.file], { env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(out.status, 1, out.stderr);
+  assert.ok(/refused: log_dir_env_unset/.test(out.stderr), out.stderr);
+  assert.ok(!/LIST_SHA256=/.test(out.stdout), out.stdout);
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });

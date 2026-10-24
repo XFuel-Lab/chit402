@@ -303,7 +303,8 @@ const RUN_OPTIONS = Object.freeze(['argv', 'env', 'buildFromLog', 'loadSigner', 
  * PRODUCTION_ISSUER_PUBLIC_KEYS: there is no option, argument or env var for
  * it, and any option outside RUN_OPTIONS is refused. `buildFromLog(logDir)`
  * returns the unsigned document the log gives today. `env` is read only for
- * RECEIPT_LOG_DIR here; it also goes to isProductionProcess and loadSigner.
+ * RECEIPT_LOG_DIR here (required; --log-dir, when given, must resolve to
+ * the same directory); it also goes to isProductionProcess and loadSigner.
  * @returns {Promise<{ ok: boolean, reason?: string, state?: string, written?: boolean }>}
  */
 export async function runProductionListSigner(opts) {
@@ -332,8 +333,12 @@ async function runWith({
     const args = parseArgs(argv);
     if (!args.list) refuse('usage', '--list <unsigned v1 file> is required');
     const envLogDir = env.RECEIPT_LOG_DIR || '';
+    // RECEIPT_LOG_DIR is required. With it unset the gateway serves its own
+    // fallback (taskStore dir/../receipt-log, server.js), which this tool does
+    // not derive, so a hand-typed --log-dir could name a directory the gateway
+    // does not serve and its hash would be pinned anyway.
+    if (!envLogDir) refuse('log_dir_env_unset', 'RECEIPT_LOG_DIR must be set to the directory the gateway serves; --log-dir alone is not accepted');
     const logDir = args.logDir || envLogDir;
-    if (!logDir) refuse('usage', '--log-dir or RECEIPT_LOG_DIR is required');
     if (!path.isAbsolute(logDir)) refuse('usage', 'the log directory must be an absolute path');
     // Both given: they must be the same directory, or v1 could be signed into
     // a directory the gateway does not serve and its hash pinned anyway.
