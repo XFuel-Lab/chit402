@@ -12,6 +12,7 @@ import { Wallet, getAddress } from 'ethers';
 import { ReceiptLogRefused } from './receipt-log-store.js';
 import { epochRootOf } from './receipt-log-epoch.js';
 import { analyzeSeq } from './book-seq.js';
+import { isProductionProcess } from './production-process.js';
 
 const PIN_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,10 +28,9 @@ export function normalizeRoot(root) {
   return hex;
 }
 
-/** NODE_ENV unset or anything but test/development is production. */
+/** The shared production check: NODE_ENV, the loaded issuer kid, or a set ISSUER_PRIVATE_KEY. */
 function productionEnv(env) {
-  const v = env.NODE_ENV == null ? '' : String(env.NODE_ENV).trim();
-  return v !== 'test' && v !== 'development';
+  return isProductionProcess(env);
 }
 
 function readPinFile(env) {

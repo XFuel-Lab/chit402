@@ -487,3 +487,177 @@ test('closed epoch head signed on read: production refuses unless durable, pin-c
     }
   });
 });
+
+// ---- Shared production check: NODE_ENV alone does not switch the gates off ----
+
+const { PRODUCTION_ISSUER_KID, isProductionProcess } = await import('../src/production-process.js');
+const { isProductionIssuerEnv } = await import('../src/issuer-key.js');
+const { isProductionEnv: saltIsProductionEnv } = await import('../src/salt-store.js');
+const nodeCrypto = await import('node:crypto');
+
+/** A throwaway P-256 key, base64 PEM, the same format the loader reads. */
+function throwawayKeyEnv() {
+  const { privateKey } = nodeCrypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  return Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
+}
+
+/** A stub signer that reports the production kid. It holds no key and never signs. */
+function prodKidStub() {
+  return {
+    kind: 'env',
+    kid: PRODUCTION_ISSUER_KID,
+    publicJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+    async sign() {
+      throw new Error('stub signer must not sign');
+    },
+  };
+}
+
+/** `dir` is a log made beforehand: making one in these envs is itself refused. */
+async function assertDevGatesStayOn(label, dir) {
+  const before = snapshotDir(dir);
+  const tree = new ReceiptMerkleTree();
+  tree.load(dir);
+  const size = tree.leaves.length;
+  await assert.rejects(
+    tree.appendReceipt('task-c', 'cc'.repeat(32), { publish: false }),
+    (err) => err.code === 'log_not_locked',
+    `${label}: unlocked append is refused`,
+  );
+  assert.equal(tree.leaves.length, size);
+  assert.deepEqual(snapshotDir(dir), before, `${label}: nothing written`);
+
+  const missing = join(tmp(), 'no-pin.json');
+  process.env.RECEIPT_LOG_PIN_FILE = missing;
+  assert.throws(() => readReceiptLogPin(), (err) => err.code === 'pin_missing', `${label}: pin file`);
+  assert.throws(() => bootReceiptLog(tmp(), { allowFreshGenesis: true }), (err) => err.code === 'pin_missing', `${label}: boot`);
+  _releaseReceiptLogLocksForTest();
+  assert.throws(() => bootReceiptLog(tmp(), { pin: null, allowFreshGenesis: true }), (err) => err.code === 'pin_missing', `${label}: null pin`);
+  _releaseReceiptLogLocksForTest();
+}
+
+test('production check: NODE_ENV=development with a signer reporting the production kid keeps log_not_locked and pin_missing on', T, async () => {
+  const dir = await makeLog();
+  await withEnv({ ...PROD_ENV, NODE_ENV: 'development', ISSUER_PRIVATE_KEY: undefined, ISSUER_TEST_KEY: '1' }, async () => {
+    _setIssuerSignerForTest(prodKidStub());
+    try {
+      assert.equal(isProductionProcess(), true);
+      assert.equal(isProductionIssuerEnv(), true);
+      assert.equal(saltIsProductionEnv('development'), true);
+      await assertDevGatesStayOn('production kid', dir);
+    } finally {
+      _setIssuerSignerForTest(null);
+    }
+    assert.equal(isProductionProcess(), false, 'without the production kid, development is not production');
+  });
+});
+
+test('production check: NODE_ENV=development with ISSUER_PRIVATE_KEY set keeps log_not_locked and pin_missing on', T, async () => {
+  const dir = await makeLog();
+  await withEnv({ ...PROD_ENV, NODE_ENV: 'development', ISSUER_PRIVATE_KEY: throwawayKeyEnv(), ISSUER_TEST_KEY: undefined }, async () => {
+    assert.equal(isProductionProcess(), true);
+    assert.equal(isProductionIssuerEnv('development'), true);
+    assert.equal(saltIsProductionEnv('test'), true);
+    await assertDevGatesStayOn('ISSUER_PRIVATE_KEY set', dir);
+  });
+});
+
+test('production check: ISSUER_TEST_KEY=1 opts a throwaway key out, but never the production kid or key material that does not parse', T_ANY, async () => {
+  const key = throwawayKeyEnv();
+  await withEnv({ NODE_ENV: 'development', ISSUER_PRIVATE_KEY: key, ISSUER_TEST_KEY: '1' }, () => {
+    assert.equal(isProductionProcess(), false);
+    assert.equal(isProductionProcess(process.env, { nodeEnv: 'production' }), true, 'NODE_ENV production always wins');
+    _setIssuerSignerForTest(prodKidStub());
+    try {
+      assert.equal(isProductionProcess(), true, 'the opt-out never covers the production kid');
+    } finally {
+      _setIssuerSignerForTest(null);
+    }
+  });
+  await withEnv({ NODE_ENV: 'test', ISSUER_PRIVATE_KEY: 'bm90IGEga2V5', ISSUER_TEST_KEY: '1' }, () => {
+    assert.equal(isProductionProcess(), true, 'unparsable key material cannot prove it is a test key');
+  });
+  await withEnv({ NODE_ENV: 'test', ISSUER_PRIVATE_KEY: key, ISSUER_TEST_KEY: 'true' }, () => {
+    assert.equal(isProductionProcess(), true, 'only the exact value 1 opts out');
+  });
+  await withEnv({ NODE_ENV: 'test', ISSUER_PRIVATE_KEY: undefined, ISSUER_TEST_KEY: undefined }, () => {
+    assert.equal(isProductionProcess(), false);
+    assert.equal(isProductionProcess({ NODE_ENV: 'test', ISSUER_PRIVATE_KEY: key }), true, 'a passed env with a key set counts');
+  });
+});
+
+// ---- Side-file writes check the writer too ----
+
+async function unlockedProdTree(fn) {
+  const dir = await makeLog();
+  const before = snapshotDir(dir);
+  const tree = new ReceiptMerkleTree();
+  tree.load(dir);
+  await withEnv(PROD_ENV, () => fn(tree));
+  assert.deepEqual(snapshotDir(dir), before, 'no side file was rewritten');
+}
+
+test('writer: noteBundleFailure refuses in production without the lock (log_not_locked) and leaves bundle-index alone', T, async () => {
+  await unlockedProdTree((tree) => {
+    const failures = tree.bundleFailures || 0;
+    assert.throws(() => tree.noteBundleFailure(), (err) => err.code === 'log_not_locked');
+    assert.equal(tree.bundleFailures || 0, failures);
+  });
+});
+
+test('writer: _reopenAnchored refuses in production without the lock (log_not_locked) and leaves anchor-state alone', T, async () => {
+  await unlockedProdTree((tree) => {
+    assert.throws(() => tree._reopenAnchored('aa'.repeat(32), '0x' + '11'.repeat(32), 'unconfirmed'), (err) => err.code === 'log_not_locked');
+  });
+});
+
+test('writer: _writeSnapshot refuses in production without the lock (log_not_locked) and leaves the checkpoint alone', T, async () => {
+  await unlockedProdTree((tree) => {
+    assert.throws(() => tree._writeSnapshot(), (err) => err.code === 'log_not_locked');
+  });
+});
+
+test('writer: side-file writes stop with log_lock_lost once the lock file is replaced', T, async () => {
+  const dir = tmp();
+  await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, async () => {
+    const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
+    await tree.appendReceipt('task-a', 'aa'.repeat(32), { publish: false });
+    const lockPath = join(dir, RECEIPT_LOG_LOCK_FILE);
+    fs.unlinkSync(lockPath);
+    fs.writeFileSync(lockPath, '');
+    const before = snapshotDir(dir);
+    assert.throws(() => tree.noteBundleFailure(), (err) => err.code === 'log_lock_lost');
+    assert.throws(() => tree._reopenAnchored('aa'.repeat(32), null, 'unconfirmed'), (err) => err.code === 'log_lock_lost');
+    assert.throws(() => tree._writeSnapshot(), (err) => err.code === 'log_lock_lost');
+    assert.deepEqual(snapshotDir(dir), before);
+    _releaseReceiptLogLocksForTest();
+  });
+});
+
+test('lock: a lock file replaced during the journal write stops the writer after the fsync (log_lock_lost)', T, async () => {
+  const dir = tmp();
+  await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, async () => {
+    const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
+    await tree.appendReceipt('task-a', 'aa'.repeat(32), { publish: false });
+    const lockPath = join(dir, RECEIPT_LOG_LOCK_FILE);
+    const realFsync = fs.fsyncSync;
+    let swapped = false;
+    fs.fsyncSync = function patched(fd) {
+      const out = realFsync.call(fs, fd);
+      if (!swapped) {
+        swapped = true;
+        fs.unlinkSync(lockPath);
+        fs.writeFileSync(lockPath, '');
+      }
+      return out;
+    };
+    try {
+      await assert.rejects(tree.appendReceipt('task-b', 'bb'.repeat(32), { publish: false }), (err) => err.code === 'log_lock_lost');
+    } finally {
+      fs.fsyncSync = realFsync;
+    }
+    assert.equal(swapped, true, 'the swap ran inside the write');
+    await assert.rejects(tree.appendReceipt('task-c', 'cc'.repeat(32), { publish: false }), (err) => err.code === 'log_lock_lost');
+    _releaseReceiptLogLocksForTest();
+  });
+});

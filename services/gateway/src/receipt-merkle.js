@@ -1079,6 +1079,20 @@ export class ReceiptMerkleTree {
   _journal(record) {
     this._assertWriter();
     appendJournal(this.dir, record);
+    this._assertLockKeptAfterWrite();
+  }
+
+  /**
+   * Re-check the lock inode after the fsync. Another process can only win the
+   * lock path between the pre-write check and the write by unlinking the file
+   * and booting inside that window; if it did, this writer stops here so at
+   * most one record can interleave.
+   */
+  _assertLockKeptAfterWrite() {
+    if (!this.dir || this.durable !== true) return;
+    if (verifyReceiptLogLock(this.dir).reason !== 'log_lock_lost') return;
+    logger.error({ code: 'log_lock_lost', dir: this.dir }, 'receipt log writer stopped: the lock file changed during a write');
+    throw new ReceiptLogRefused('log_lock_lost', 'receipt log lock file was deleted or replaced during a write');
   }
 
   _assertWriter() {
@@ -2359,6 +2373,7 @@ export class ReceiptMerkleTree {
    * instead of confirming the same transaction forever.
    */
   _reopenAnchored(root, tx, reason) {
+    this._assertWriter();
     const key = normalizeRoot(root) || root;
     if (key && this.anchorState?.base?.[key]) delete this.anchorState.base[key];
     if (root && root !== key && this.anchorState?.base?.[root]) delete this.anchorState.base[root];
@@ -3231,6 +3246,7 @@ export class ReceiptMerkleTree {
   }
 
   noteBundleFailure() {
+    this._assertWriter();
     this.bundleFailures = (this.bundleFailures || 0) + 1;
     if (!this.bundleIndex) this.bundleIndex = emptyBundleIndex();
     this.bundleIndex.consecutive_failures = this.bundleFailures;
@@ -3308,6 +3324,7 @@ export class ReceiptMerkleTree {
 
   _writeSnapshot() {
     if (!this.dir) return;
+    this._assertWriter();
     writeCheckpoint(this.dir, this._snapshotEpochs());
     writeAnchorState(this.dir, this.anchorState);
     if (this.bundleIndex) writeBundleIndexFile(this.dir, this.bundleIndex);
