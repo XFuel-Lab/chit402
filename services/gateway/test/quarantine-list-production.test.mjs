@@ -1066,3 +1066,40 @@ test('QP27: a symlink in any component of RECEIPT_LOG_DIR or --log-dir is refuse
   assert.equal(signer.calls.length, 0);
   assert.equal(fs.existsSync(listDirOf(real)), false);
 });
+
+test('QP28: the list dir removed and replaced by a symlink that reuses its inode is still list_dir_changed', async () => {
+  const s = await setup();
+  const listDir = listDirOf(fs.realpathSync(s.logDir));
+  fs.mkdirSync(listDir, { mode: 0o700 });
+  const target = tmp('qlprod-reuse-');
+  const before = fs.lstatSync(listDir, { bigint: true });
+  // ext4 often hands the freed inode straight to the new symlink. So that the
+  // test does not depend on the filesystem, the symlink's lstat reports the
+  // removed directory's dev/ino either way: only isSymbolicLink() tells them apart.
+  const realLstat = fs.lstatSync;
+  let reused = null;
+  fs.lstatSync = function patched(p, ...rest) {
+    const st = realLstat.call(fs, p, ...rest);
+    if (String(p) === listDir && st.isSymbolicLink()) {
+      if (reused === null) reused = st.ino === before.ino || BigInt(st.ino) === before.ino;
+      return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { dev: before.dev, ino: before.ino });
+    }
+    return st;
+  };
+  let r;
+  try {
+    r = await withWriteHooks({
+      beforeOpen: () => { fs.rmdirSync(listDir); fs.symlinkSync(target, listDir); },
+    }, () => run(applyArgs(s), { signer: goodSigner() }));
+  } finally {
+    fs.lstatSync = realLstat;
+  }
+  assert.notEqual(reused, null, 'the swapped symlink was examined');
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_changed', written: true }, r.err.join(' '));
+  assert.ok(fs.existsSync(path.join(target, 'v1.json')), 'the write went through the swapped link');
+  assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')));
+  const text = r.err.join('\n');
+  assert.ok(/refused: list_dir_changed\./.test(text), text);
+  assert.ok(/Do not pin\. v1 was written, but not necessarily to /.test(text), text);
+  assert.ok(!/Rerun the same command/.test(text), text);
+});
