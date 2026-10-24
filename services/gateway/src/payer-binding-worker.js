@@ -10,6 +10,10 @@
  *
  * Log lines carry the task id and a reason code only: never the payer, the
  * payer salt or the commitment.
+ *
+ * The binding is signed only by the key that signed the receipt (the holder
+ * JWS header kid). When the active signer is another key, as after a key
+ * rotation, the job is skipped with `kid_mismatch` and not retried.
  */
 import logger from './logger.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
@@ -40,6 +44,19 @@ export function appendedLeafHash(tree, taskId) {
   if (!Number.isSafeInteger(index) || index < 0) return null;
   const stored = tree.leaves?.[index];
   return stored ? Buffer.from(stored).toString('hex') : null;
+}
+
+/** The `kid` in a compact JWS protected header, or null. */
+export function jwsHeaderKid(jws) {
+  if (typeof jws !== 'string') return null;
+  const parts = jws.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    return header && typeof header === 'object' && typeof header.kid === 'string' && header.kid ? header.kid : null;
+  } catch {
+    return null;
+  }
 }
 
 /** True when the task already has a leaf (open or closed epoch). */
@@ -79,7 +96,7 @@ export function createPayerBindingWorker(deps) {
   const now = deps.now || (() => Date.now());
   const signerOf = deps.signer || (() => peekIssuerSigner());
   const readyOf = deps.ready || ((tree) => receiptLogSigningReady(tree, env));
-  const stats = { enqueued: 0, signed: 0, failed: 0, skipped: 0, retried: 0, capped: 0, refused_mismatch: 0 };
+  const stats = { enqueued: 0, signed: 0, failed: 0, skipped: 0, retried: 0, capped: 0, refused_mismatch: 0, refused_kid: 0 };
   const cap = { windowStart: 0, used: 0 };
   let running = null;
   let interval = null;
@@ -165,7 +182,8 @@ export function createPayerBindingWorker(deps) {
       stats.refused_mismatch += 1;
       return finalize(job, 'failed', 'leaf_mismatch');
     }
-    const claims = decodeJwsClaims(deps.holderJws(taskId));
+    const holderJws = deps.holderJws(taskId);
+    const claims = decodeJwsClaims(holderJws);
     if (!claims) return retryOrFail(job, 'holder_claims_missing');
     if (claims.task_id != null && String(claims.task_id) !== taskId) {
       return finalize(job, 'failed', 'task_id_mismatch');
@@ -174,6 +192,16 @@ export function createPayerBindingWorker(deps) {
     if (!inputs.ok) return finalize(job, 'skipped', inputs.reason);
     const signer = signerOf();
     if (!signer) return retryOrFail(job, 'signer_unavailable');
+    // A verifier checks the binding under the key that signed the receipt.
+    // After a key rotation the active signer is another key, and a binding
+    // it seals would read as invalid next to an honest receipt. Refuse, not
+    // retried: the receipt's key will not come back as the active signer.
+    // A holder JWS with no kid cannot be matched and is refused the same way.
+    const receiptKid = jwsHeaderKid(holderJws);
+    if (!receiptKid || receiptKid !== signer.kid) {
+      stats.refused_kid += 1;
+      return finalize(job, 'skipped', 'kid_mismatch');
+    }
     const ready = readyOf(tree);
     if (!ready?.ok) return retryOrFail(job, ready?.reason || 'log_not_ready');
     const slot = capTake();
