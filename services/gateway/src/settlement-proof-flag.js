@@ -20,6 +20,7 @@
  */
 import { normalizeRequestedTier } from './tier-policy.js';
 import logger from './logger.js';
+import { testSwitchesOn } from './test-switch.js';
 
 export const SETTLEMENT_PROOF_FLAG = 'SETTLEMENT_PROOF_ENABLED';
 export const SETTLEMENT_PROOF_NOT_OFFERED = 'settlement_proof_not_offered';
@@ -34,7 +35,7 @@ export const SETTLEMENT_TIER_CLAIMS_SIGNED = false;
 // Tests exercise the flag-on paths; nothing outside NODE_ENV=test can do this.
 let _testOverride = false;
 export function _allowSettlementProofForTests(on = true) {
-  if (process.env.NODE_ENV !== 'test') {
+  if (!testSwitchesOn()) {
     throw new Error('_allowSettlementProofForTests is test-only');
   }
   _testOverride = !!on;
@@ -49,7 +50,7 @@ export function settlementProofRequestedByEnv(env = process.env) {
 
 export function settlementProofEnabled(env = process.env) {
   if (!settlementProofRequestedByEnv(env)) return false;
-  if (SETTLEMENT_TIER_CLAIMS_SIGNED || _testOverride) return true;
+  if (SETTLEMENT_TIER_CLAIMS_SIGNED || (_testOverride && testSwitchesOn())) return true;
   if (!_warned) {
     _warned = true;
     logger.warn(

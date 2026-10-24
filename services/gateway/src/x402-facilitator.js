@@ -2,6 +2,7 @@ import logger from './logger.js';
 import { arcNetwork, arcCaip } from './arc-rail.js';
 import { getAddress } from 'ethers';
 import { resolveFacilitatorBearer } from './cdp-jwt.js';
+import { isProductionProcess } from './production-process.js';
 
 /**
  * Real x402 facilitator client (Base Sepolia + Base mainnet).
@@ -923,7 +924,8 @@ export function assertFacilitatorUrl(gateway, env = process.env) {
     throw facilitatorUrlError('facilitator_http_rejected');
   }
   if (url.username || url.password) throw facilitatorUrlError('facilitator_http_rejected');
-  const production = String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+  // Shared production check: NODE_ENV unset counts, and so does a loaded production key.
+  const production = isProductionProcess(env);
   const loopback = url.hostname === '127.0.0.1'
     || url.hostname === 'localhost'
     || url.hostname === '::1'

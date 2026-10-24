@@ -184,6 +184,7 @@ import {
 import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
 import { mountReceiptCheck } from './receipt-check.js';
 import { openCheckStats } from './receipt-check-stats.js';
+import { testSwitchesOn } from './test-switch.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -1126,7 +1127,7 @@ export async function createApp() {
       alert: publicAttestationAlert,
     })
     : null;
-  if (publicAttestationWorker && process.env.NODE_ENV !== 'test') publicAttestationWorker.start();
+  if (publicAttestationWorker && !testSwitchesOn()) publicAttestationWorker.start();
   setBookRowWrittenHook(async (entry) => {
     let leafAppended = false;
     try {

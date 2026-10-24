@@ -13,6 +13,7 @@
  */
 import crypto from 'crypto';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { isProductionProcess } from './production-process.js';
 
 export const RECEIPT_POLICY_HISTORY_SCHEMA = 'chit402.receipt_policy_history.v1';
 export const RECEIPT_POLICY_RETENTION_MODE = 'compliance';
@@ -112,7 +113,8 @@ function explicitTerms(env) {
  * @returns {{ terms: object, source: 'env'|'default', problems: string[] }}
  */
 export function readReceiptPolicyConfig(env = process.env) {
-  const production = env.NODE_ENV === 'production';
+  // Shared production check: NODE_ENV unset counts, and so does a loaded production key.
+  const production = isProductionProcess(env);
   const problems = [];
   const useEnv = explicitTerms(env) || production;
   if (!useEnv) {
