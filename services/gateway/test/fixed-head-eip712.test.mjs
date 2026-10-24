@@ -948,7 +948,7 @@ test('quarantine guard: a relabelled stand-in key whose public key matches a pro
     else process.env.ISSUER_HISTORY_EXTRA = saved;
   }
   assert.equal(standInSigner.calls.length, 0);
-  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'any-label', publicJwk: jwk }), { ok: false, reason: 'not_test_key' }, 'not listed and not a known test key: refused (decision 1 narrowing)');
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'any-label', publicJwk: jwk }), { ok: false, reason: 'not_test_key' }, 'not listed and not a known test key while a key is configured: refused');
   resetIssuerSigner();
 });
 
@@ -1067,6 +1067,45 @@ test('quarantine guard (narrowed): ISSUER_TEST_KEY is ignored; only a known test
     if (saved === undefined) delete process.env.ISSUER_TEST_KEY;
     else process.env.ISSUER_TEST_KEY = saved;
     resetIssuerSigner();
+  }
+});
+
+test('quarantine guard: with no issuer key configured, an ephemeral key or a stub signs; configuring any key brings back the known-test-key rule', async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
+  const names = ['ISSUER_PRIVATE_KEY', 'ISSUER_KID', 'ISSUER_KMS_KEY_ID', 'ISSUER_TEST_KEY', 'ISSUER_SIGNER'];
+  const saved = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  try {
+    for (const n of names) delete process.env[n];
+    // Ephemeral: the env signer mints an in-process key when none is configured.
+    const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
+    const parsed = JSON.parse(bytes);
+    assert.equal(PP.testIssuerKids().has(parsed.issuer_signature.kid), false, 'an ephemeral key, not a listed one');
+    resetIssuerSigner();
+    _resetIssuerKey();
+    // A stub on an unlisted throwaway key.
+    const throwaway = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const tj = throwaway.publicKey.export({ format: 'jwk' });
+    const stub = stubSigner({ kid: 'stub-kid', publicJwk: { x: tj.x, y: tj.y }, privateKey: throwaway.privateKey });
+    _setIssuerSignerForTest(stub);
+    assert.equal(JSON.parse(await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } })).issuer_signature.kid, 'stub-kid');
+    // Production checks still apply with no key configured.
+    const prodPub = PP.PRODUCTION_ISSUER_PUBLIC_KEYS[0];
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'x', publicJwk: { x: prodPub.x, y: prodPub.y } }), { ok: false, reason: 'production_key' });
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'x', signerKind: 'kms' }), { ok: false, reason: 'kms_signer' });
+    assert.deepEqual(Q.quarantineSignGuard({ env: {} }), { ok: false, reason: 'production_env' });
+    // Configuring any key brings back the known-test-key rule.
+    for (const extra of [{ ISSUER_KID: 'rotated-kid' }, { ISSUER_KMS_KEY_ID: 'alias/x' }, { ISSUER_PRIVATE_KEY: Buffer.from(throwaway.privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64') }]) {
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ...extra }, kid: 'stub-kid', publicJwk: tj }), { ok: false, reason: 'not_test_key' }, JSON.stringify(Object.keys(extra)));
+    }
+  } finally {
+    for (const [n, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[n];
+      else process.env[n] = v;
+    }
+    resetIssuerSigner();
+    _resetIssuerKey();
   }
 });
 

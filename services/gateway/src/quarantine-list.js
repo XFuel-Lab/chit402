@@ -200,12 +200,20 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   if (publicJwk && isProductionIssuerPublicKey(publicJwk, extra.keys)) {
     return { ok: false, reason: 'production_key' };
   }
-  // Narrowed (decision 1, option b): ISSUER_TEST_KEY is ignored here. Every
-  // key this process could sign with must be a known test key (public-seed
-  // test keys, testIssuerKids): the signer's public key by its own
-  // thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in either
-  // env, and the key issuer-key loaded. An unlisted key, including a new
-  // production key not yet in PRODUCTION_ISSUER_PUBLIC_KEYS, never signs.
+  // ISSUER_TEST_KEY is ignored here. Only a stub, an ephemeral key or a known
+  // test key signs. With no issuer key configured in either env (no
+  // ISSUER_PRIVATE_KEY, ISSUER_KID or ISSUER_KMS_KEY_ID), the only signers a
+  // process can have are an in-process ephemeral key or a test stub, and the
+  // production checks above already ran on its public key. Once any key is
+  // configured, every key this process could sign with must be a known test
+  // key (public-seed test keys, testIssuerKids): the signer's public key by
+  // its own thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in
+  // either env, and the key issuer-key loaded. An unlisted configured key,
+  // including a new production key not yet in PRODUCTION_ISSUER_PUBLIC_KEYS,
+  // never signs.
+  const configured = [env, process.env].some((e) => ['ISSUER_PRIVATE_KEY', 'ISSUER_KID', 'ISSUER_KMS_KEY_ID']
+    .some((name) => e?.[name] != null && String(e[name]).trim() !== ''));
+  if (!configured) return { ok: true };
   const testKids = testIssuerKids();
   if (publicJwk) {
     let thumb = null;
