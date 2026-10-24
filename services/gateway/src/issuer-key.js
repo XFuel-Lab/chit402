@@ -22,6 +22,7 @@ import crypto from 'crypto';
 import { peekIssuerSigner, resetIssuerSigner } from './issuer-signer-state.js';
 import { lowS } from './ecdsa-der.js';
 import { isCanonicalCompactEs256, isCanonicalEs256Signature } from './jws-canonical.js';
+import { PRODUCTION_ISSUER_KID, isProductionProcess, noteLoadedIssuerKid } from './production-process.js';
 
 export { isCanonicalCompactEs256 };
 
@@ -29,8 +30,8 @@ let _privateKey = null;
 let _publicKeyJwk = null;
 let _kid = null;
 
-/** Published api.chit402.com issuer kid. Production uses this unless ISSUER_KID names another. */
-const PRODUCTION_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
+// PRODUCTION_ISSUER_KID (production-process.js) is the published api.chit402.com
+// issuer kid. Production uses it unless ISSUER_KID names another.
 
 function issuerKeyMaterial() {
   const raw = process.env.ISSUER_PRIVATE_KEY;
@@ -40,12 +41,13 @@ function issuerKeyMaterial() {
 }
 
 /**
- * Production is every NODE_ENV other than test and development. Unset is production.
+ * Production is every NODE_ENV other than test and development (unset is
+ * production), and also any process that loaded the production kid or has
+ * ISSUER_PRIVATE_KEY set without the test-key opt-out. See production-process.js.
  * @param {string|undefined|null} [nodeEnv]
  */
 export function isProductionIssuerEnv(nodeEnv = process.env.NODE_ENV) {
-  const env = nodeEnv == null ? '' : String(nodeEnv).trim();
-  return env !== 'test' && env !== 'development';
+  return isProductionProcess(process.env, { nodeEnv });
 }
 
 /**
@@ -150,6 +152,7 @@ export function initIssuerKey() {
     use: 'sig',
   };
   _kid = kid;
+  noteLoadedIssuerKid(kid);
 
   return { privateKey: _privateKey, publicKeyJwk: _publicKeyJwk, kid: _kid };
 }
@@ -534,6 +537,7 @@ export function _resetIssuerKey() {
   _privateKey = null;
   _publicKeyJwk = null;
   _kid = null;
+  noteLoadedIssuerKid(null);
   resetIssuerSigner();
 }
 

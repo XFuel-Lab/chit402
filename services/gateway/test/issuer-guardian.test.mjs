@@ -11,6 +11,7 @@ import os from 'os';
 import path from 'path';
 import { Interface } from 'ethers';
 import { fileURLToPath } from 'node:url';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -89,7 +90,7 @@ function restoreEnv(prev) {
 }
 
 function useStableKey() {
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   process.env.ISSUER_PRIVATE_KEY = Buffer.from(pem).toString('base64');
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';

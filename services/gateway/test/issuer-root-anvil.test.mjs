@@ -21,6 +21,7 @@ import {
 import { buildReceipt, decodeReceiptClaims } from '../src/receipt.js';
 import { _resetIssuerKey } from '../src/issuer-key.js';
 import { resetIssuerHistoryStore } from '../src/issuer-history.js';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -143,7 +144,7 @@ test('strict startup accepts two RPCs serving Anvil chain 84532 bytecode', {
 
     const setFile = `${dir}/set.json`;
     fs.writeFileSync(setFile, JSON.stringify(artifact));
-    const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const { privateKey } = nextTestIssuerKey();
     process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
     process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';
     process.env.ISSUER_ROOT_ENABLED = 'true';

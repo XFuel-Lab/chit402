@@ -16,7 +16,7 @@
 import crypto from 'crypto';
 import logger from './logger.js';
 import { recordReceiptFailure } from './receipt-failures.js';
-import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
   clockToleranceClaim,
@@ -35,6 +35,8 @@ import {
   ZERO_ROOT,
 } from './solana-receipt-anchor.js';
 import { bundleIndexHash, emptyBundleIndex } from './receipt-log-s3.js';
+import { acquireReceiptLogLock, verifyReceiptLogLock } from './receipt-log-lock.js';
+import { isProductionProcess } from './production-process.js';
 import {
   appendJournal,
   freshGenesisAllowed,
@@ -898,9 +900,12 @@ function parseAnchorWei(raw) {
   }
 }
 
-/** Any casing of production. Unset, test, and development are not production. */
+/**
+ * The shared production check (production-process.js): NODE_ENV unset or
+ * anything but test/development, or a production or unlisted issuer key.
+ */
 export function anchorFeeCapsRequired(env = process.env) {
-  return String(env.NODE_ENV || '').trim().toLowerCase() === 'production';
+  return isProductionProcess(env);
 }
 
 /** Max `maxFeePerGas` (wei). Unset or non-numeric means no cap outside production. */
@@ -915,8 +920,8 @@ export function anchorMaxPriorityWei(env = process.env) {
 
 /**
  * Production must name both caps as integer wei strings. There is no flag
- * that skips this. The check is case-insensitive on NODE_ENV. Dev and test
- * may leave the caps unset, and unset then means no cap.
+ * that skips this. Production is the shared check, so NODE_ENV unset counts.
+ * Dev and test may leave the caps unset, and unset then means no cap.
  * @throws {ReceiptLogRefused}
  */
 export function assertAnchorFeeCaps(env = process.env) {
@@ -1067,6 +1072,45 @@ export class ReceiptMerkleTree {
     return new Date();
   }
 
+  /**
+   * Every journal write from this tree goes through here. A durable tree
+   * re-checks its single-writer lock first: a lock that was lost (lock file
+   * deleted or renamed while held) stops the writer, and in production a
+   * durable tree that never took the lock may not write at all.
+   */
+  _journal(record) {
+    this._assertWriter();
+    appendJournal(this.dir, record);
+    this._assertLockKeptAfterWrite();
+  }
+
+  /**
+   * Re-check the lock inode after the fsync. Another process can only win the
+   * lock path between the pre-write check and the write by unlinking the file
+   * and booting inside that window; if it did, this writer stops here so at
+   * most one record can interleave.
+   */
+  _assertLockKeptAfterWrite() {
+    if (!this.dir || this.durable !== true) return;
+    if (verifyReceiptLogLock(this.dir).reason !== 'log_lock_lost') return;
+    logger.error({ code: 'log_lock_lost', dir: this.dir }, 'receipt log writer stopped: the lock file changed during a write');
+    throw new ReceiptLogRefused('log_lock_lost', 'receipt log lock file was deleted or replaced during a write');
+  }
+
+  _assertWriter() {
+    if (!this.dir || this.durable !== true) return;
+    const lock = verifyReceiptLogLock(this.dir);
+    if (lock.ok) return;
+    if (lock.reason === 'log_lock_lost') {
+      logger.error({ code: 'log_lock_lost', dir: this.dir }, 'receipt log write refused: the lock file is no longer the locked file');
+      throw new ReceiptLogRefused('log_lock_lost', 'receipt log lock file was deleted or replaced while held');
+    }
+    if (isProductionIssuerEnv()) {
+      logger.error({ code: 'log_not_locked', dir: this.dir }, 'receipt log write refused: this process does not hold the directory lock');
+      throw new ReceiptLogRefused('log_not_locked', 'receipt log directory lock is not held by this process');
+    }
+  }
+
   _push(taskId, bytes, kind) {
     const buf = Buffer.from(bytes);
     const hash = leafHash(buf);
@@ -1074,7 +1118,7 @@ export class ReceiptMerkleTree {
     const at = this._now().toISOString();
     if (this.dir) {
       this._ensureEpochOpen();
-      appendJournal(this.dir, {
+      this._journal({
         v: 1,
         op: 'leaf',
         epoch: this.epoch,
@@ -1102,7 +1146,7 @@ export class ReceiptMerkleTree {
 
   _ensureEpochOpen() {
     if (!this.dir || this._epochOpened) return;
-    appendJournal(this.dir, {
+    this._journal({
       v: 1,
       op: 'epoch_open',
       epoch: this.epoch,
@@ -1735,6 +1779,19 @@ export class ReceiptMerkleTree {
   }
 
   async publishHead(opts = {}) {
+    // Production publishes only from the durable log. An in-memory tree
+    // (RECEIPT_LOG_BOOT=0, or no boot) never signs a head.
+    // Production also needs the pin check and a live directory lock.
+    if (isProductionIssuerEnv()) {
+      const ready = receiptLogHeadReady(this);
+      if (!ready.ok) {
+        if (this._headRefusalLogged !== ready.reason) {
+          this._headRefusalLogged = ready.reason;
+          logger.error({ code: ready.reason }, 'tree head publish refused: receipt log is not durable, pin-checked and locked');
+        }
+        return null;
+      }
+    }
     const prev = this._publishChain || Promise.resolve();
     const run = prev.then(async () => {
       this._publishActive = true;
@@ -2050,7 +2107,7 @@ export class ReceiptMerkleTree {
     this.lastBundleOkAt = index?.last_bundle_ok_at || this.lastBundleOkAt;
     this.bundleFailures = index?.consecutive_failures || 0;
     if (this.dir) {
-      appendJournal(this.dir, { v: 1, op: 'bundle_index', index });
+      this._journal({ v: 1, op: 'bundle_index', index });
       this._writeSnapshot();
     }
   }
@@ -2149,7 +2206,7 @@ export class ReceiptMerkleTree {
       status: 'intent',
       epoch: this.epoch,
     };
-    appendJournal(this.dir, record);
+    this._journal(record);
     this.anchorIntents.push(record);
     return { needsSign: true, nonce, intent: record };
   }
@@ -2184,7 +2241,7 @@ export class ReceiptMerkleTree {
       epoch: intent.epoch ?? this.epoch,
     };
     if (nextBlockTs != null) record.block_ts = nextBlockTs;
-    if (this.dir) appendJournal(this.dir, record);
+    if (this.dir) this._journal(record);
     this.anchorIntents.push(record);
     return record;
   }
@@ -2266,6 +2323,7 @@ export class ReceiptMerkleTree {
    * instead of confirming the same transaction forever.
    */
   _reopenAnchored(root, tx, reason) {
+    this._assertWriter();
     const key = normalizeRoot(root) || root;
     if (key && this.anchorState?.base?.[key]) delete this.anchorState.base[key];
     if (root && root !== key && this.anchorState?.base?.[root]) delete this.anchorState.base[root];
@@ -2578,7 +2636,7 @@ export class ReceiptMerkleTree {
       epoch: this.epoch,
       at: new Date().toISOString(),
     };
-    if (this.dir) appendJournal(this.dir, created);
+    if (this.dir) this._journal(created);
     this.anchorIntents.push(created);
     this._markIntent(old, 'superseded', { superseded_by: signed.hash, reason: 'replaced_at_nonce' });
     let known = false;
@@ -3138,6 +3196,7 @@ export class ReceiptMerkleTree {
   }
 
   noteBundleFailure() {
+    this._assertWriter();
     this.bundleFailures = (this.bundleFailures || 0) + 1;
     if (!this.bundleIndex) this.bundleIndex = emptyBundleIndex();
     this.bundleIndex.consecutive_failures = this.bundleFailures;
@@ -3178,8 +3237,8 @@ export class ReceiptMerkleTree {
   _persistHead(head) {
     if (!this.dir) return;
     this._ensureEpochOpen();
-    appendJournal(this.dir, { v: 1, op: 'head', epoch: this.epoch, head });
-    appendJournal(this.dir, {
+    this._journal({ v: 1, op: 'head', epoch: this.epoch, head });
+    this._journal({
       v: 1,
       op: 'anchor',
       epoch: this.epoch,
@@ -3215,6 +3274,7 @@ export class ReceiptMerkleTree {
 
   _writeSnapshot() {
     if (!this.dir) return;
+    this._assertWriter();
     writeCheckpoint(this.dir, this._snapshotEpochs());
     writeAnchorState(this.dir, this.anchorState);
     if (this.bundleIndex) writeBundleIndexFile(this.dir, this.bundleIndex);
@@ -3330,7 +3390,7 @@ export class ReceiptMerkleTree {
     };
     const { jws, kid } = await signJwsAsync(claims, { typ: 'chit402-quarantine-ack+jwt' });
     if (this.dir) {
-      appendJournal(this.dir, {
+      this._journal({
         v: 1,
         op: 'quarantine_ack',
         ...claims,
@@ -3383,6 +3443,15 @@ export class ReceiptMerkleTree {
     const key = `${wanted}:${root}:${treeSize}`;
     if (!this._signedClosedHeads) this._signedClosedHeads = new Map();
     if (this._signedClosedHeads.has(key)) return this._signedClosedHeads.get(key);
+    // Signed on read: production needs the same durable, pin and lock checks
+    // as the publish path.
+    if (isProductionIssuerEnv()) {
+      const ready = receiptLogHeadReady(this);
+      if (!ready.ok) {
+        logger.error({ code: ready.reason, epoch: wanted }, 'closed epoch head not signed: receipt log is not durable, pin-checked and locked');
+        return null;
+      }
+    }
     const source = pin || readReceiptLogPin();
     const pair = closedEpochAnchorPair(source, wanted, root, treeSize);
     if (!pair) return null;
@@ -3616,14 +3685,35 @@ export function bootReceiptLog(dir, opts = {}) {
   // A missing or unparsable key stays pending until publish, as before.
   solanaFeePayerOrNull();
   const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
+  // One writer per log directory on this host. A second process is refused
+  // before it reads or appends. Production also refuses when the lock cannot
+  // be taken at all.
+  const lock = acquireReceiptLogLock(dir, opts.lock || {});
+  if (!lock.held) {
+    if (lock.reason === 'log_locked') {
+      throw new ReceiptLogRefused('log_locked', 'receipt log directory is held by another process');
+    }
+    if (lock.reason === 'log_lock_lost') {
+      throw new ReceiptLogRefused('log_lock_lost', 'receipt log lock file was deleted or replaced while held');
+    }
+    if (isProductionIssuerEnv()) {
+      logger.error({ code: 'log_lock_unavailable', dir, cause: lock.cause || null }, 'receipt log directory lock could not be taken');
+      throw new ReceiptLogRefused('log_lock_unavailable', `receipt log directory lock could not be taken (${JSON.stringify(lock.cause || null)})`);
+    }
+    logger.warn({ code: 'log_lock_unavailable', dir, cause: lock.cause || null }, 'receipt log directory lock unavailable outside production');
+  }
   const tree = new ReceiptMerkleTree();
   tree.durable = true;
   tree.dir = dir;
+  tree.pinVerified = false;
   const allowFresh = opts.allowFreshGenesis !== undefined
     ? opts.allowFreshGenesis
     : freshGenesisAllowed();
   const loaded = readReceiptLog(dir, { strict, allowFresh });
   const pin = Object.prototype.hasOwnProperty.call(opts, 'pin') ? opts.pin : readReceiptLogPin();
+  if (!pin && isProductionIssuerEnv()) {
+    throw new ReceiptLogRefused('pin_missing', 'production never boots the receipt log without its pin');
+  }
   if (loaded.empty) {
     if (pin && !allowFresh) {
       throw new ReceiptLogRefused(
@@ -3650,11 +3740,69 @@ export function bootReceiptLog(dir, opts = {}) {
   }
   tree.allowFreshGenesis = false;
   tree._applyLoaded(loaded);
-  if (!allowFresh && pin) assertJournalMatchesPin(tree, pin);
+  if (!allowFresh && pin) {
+    assertJournalMatchesPin(tree, pin);
+    tree.pinVerified = true;
+  }
   if (!allowFresh) gateEpochRecord(tree);
   else if (tree.epochRecord) gateEpochRecord(tree);
+  // Log identity for new signed artifacts: taken only from the epoch record
+  // that just passed the pinned check, after the journal matched the pin.
+  tree.logIdentity = null;
+  if (!allowFresh && tree.pinVerified) {
+    const e1 = (tree.epochRecord?.epochs || []).find((row) => Number(row.epoch) === 1);
+    if (e1) {
+      tree.logIdentity = Object.freeze({
+        epoch1_root: String(e1.final_root),
+        genesis_digest: String(e1.genesis_digest),
+      });
+    }
+  }
   _tree = tree;
   return tree;
+}
+
+function lockReason(dir) {
+  const lock = verifyReceiptLogLock(dir);
+  if (lock.ok) return null;
+  return lock.reason === 'log_lock_lost' ? 'log_lock_lost' : 'log_lock_missing';
+}
+
+/**
+ * Whether a JWS tree head (publish path, or a closed-epoch head signed on
+ * read) may be signed from this tree in production: durable, pin-checked
+ * (or an explicit fresh genesis at boot), and a live directory lock.
+ * @param {ReceiptMerkleTree | null | undefined} tree
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function receiptLogHeadReady(tree) {
+  if (!tree || tree.durable !== true) return { ok: false, reason: 'log_not_durable' };
+  if (tree.pinVerified !== true && tree.allowFreshGenesis !== true) return { ok: false, reason: 'pin_unverified' };
+  if (tree.dir) {
+    const reason = lockReason(tree.dir);
+    if (reason) return { ok: false, reason };
+  } else {
+    return { ok: false, reason: 'log_not_durable' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Whether a new signed artifact (fixed head, payer binding) may be signed
+ * from this tree. Stricter than receiptLogHeadReady: no fresh genesis, the
+ * pin must have passed, boot must be on. Every condition must hold.
+ * @param {ReceiptMerkleTree | null | undefined} tree
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function receiptLogSigningReady(tree, env = process.env) {
+  if (!tree || tree.durable !== true) return { ok: false, reason: 'log_not_durable' };
+  if (String(env.RECEIPT_LOG_BOOT ?? '') === '0') return { ok: false, reason: 'log_boot_disabled' };
+  if (tree.allowFreshGenesis === true || freshGenesisAllowed(env)) return { ok: false, reason: 'fresh_genesis' };
+  if (tree.pinVerified !== true) return { ok: false, reason: 'pin_unverified' };
+  const reason = lockReason(tree.dir);
+  if (reason) return { ok: false, reason };
+  return receiptLogHeadReady(tree);
 }
 
 function gateEpochRecord(tree) {

@@ -11,6 +11,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -42,7 +43,7 @@ const {
 const { RECEIPT_PAYLOAD_VERSION, activeReceiptPayloadVersion } = await import('../src/receipt.js');
 
 function freshKey() {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = nextTestIssuerKey();
   const exported = publicKey.export({ format: 'jwk' });
   const publicJwk = {
     kty: 'EC',
