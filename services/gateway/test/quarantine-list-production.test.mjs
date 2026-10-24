@@ -631,3 +631,30 @@ test('QP16: the script refuses a test key also listed in ISSUER_HISTORY_EXTRA an
   }
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
+
+test('QP17: a symlinked or non-directory quarantine-list path, or a relative log dir, is refused', async () => {
+  const signer = goodSigner();
+  // Symlink to an empty directory elsewhere: nothing is written through it.
+  let s = await setup();
+  const target = tmp('qlprod-target-');
+  fs.symlinkSync(target, listDirOf(s.logDir));
+  let r = await run(applyArgs(s), { signer });
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_not_directory' });
+  assert.deepEqual(fs.readdirSync(target), []);
+  // A regular file where the directory should be.
+  s = await setup();
+  fs.writeFileSync(listDirOf(s.logDir), 'x');
+  r = await run(applyArgs(s), { signer });
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_not_directory' });
+  // The write helper refuses a symlinked directory on its own too.
+  const linkDir = path.join(tmp('qlprod-wlink-'), 'quarantine-list');
+  fs.symlinkSync(target, linkDir);
+  assert.throws(() => P.writeV1Atomic(linkDir, 'bytes'), (e) => e.reason === 'list_dir_not_directory');
+  assert.deepEqual(fs.readdirSync(target), []);
+  // A relative log directory.
+  s = await setup();
+  const rel = path.relative(process.cwd(), s.logDir);
+  r = await run(['--log-dir', rel, '--list', s.file], { signer });
+  assert.deepEqual(r.result, { ok: false, reason: 'usage' });
+  assert.equal(signer.calls.length, 0);
+});

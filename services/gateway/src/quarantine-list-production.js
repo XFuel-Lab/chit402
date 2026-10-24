@@ -213,9 +213,23 @@ async function signWithSnapshot(doc, snap, keys) {
   return bytes;
 }
 
+/** The list directory must be a real directory (not a symlink) when it exists. */
+export function assertListDir(dir) {
+  let st;
+  try {
+    st = fs.lstatSync(dir);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return;
+    throw err;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) refuse('list_dir_not_directory', 'the quarantine-list path is a symlink or not a directory');
+}
+
 /** Write v1.json once: temp file, fsync, link (fails if v1 exists), fsync dir. */
 export function writeV1Atomic(dir, bytes) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // mkdir leaves an existing symlink in place, so check what is there now.
+  assertListDir(dir);
   const file = path.join(dir, 'v1.json');
   const tmp = path.join(dir, `.v1.json.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`);
   const fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o644);
@@ -314,6 +328,7 @@ async function runWith({
     const envLogDir = env.RECEIPT_LOG_DIR || '';
     const logDir = args.logDir || envLogDir;
     if (!logDir) refuse('usage', '--log-dir or RECEIPT_LOG_DIR is required');
+    if (!path.isAbsolute(logDir)) refuse('usage', 'the log directory must be an absolute path');
     // Both given: they must be the same directory, or v1 could be signed into
     // a directory the gateway does not serve and its hash pinned anyway.
     if (args.logDir && envLogDir && realDir(args.logDir) !== realDir(envLogDir)) {
@@ -333,6 +348,7 @@ async function runWith({
     const keys = decodedKeys(productionKeys);
     const { doc, canonical } = parseUnsignedV1(fileBytes);
     const dir = quarantineListDir(logDir);
+    assertListDir(dir);
     const state = existingV1State(dir, canonical, keys);
     if (state === 'same') {
       const stored = fs.readFileSync(path.join(dir, 'v1.json'));
