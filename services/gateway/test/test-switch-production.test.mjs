@@ -276,3 +276,17 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
     assert.ok(['test-switch.js', 'logger.js', 'production-process.js'].includes(rel), `${rel} compares NODE_ENV to a literal:\n${hits.join('\n')}`);
   }
 });
+
+test('server boot: the x402 challenge store plan is built from the real NODE_ENV, with no nodeEnv or env override', () => {
+  const src = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const at = src.indexOf('challengeStorePlan({');
+  assert.ok(at !== -1, 'server.js calls challengeStorePlan({...})');
+  assert.equal(src.indexOf('challengeStorePlan({', at + 1), -1, 'exactly one boot call');
+  // Only the call itself, never the whole file, goes into an assertion message.
+  const call = src.slice(at, src.indexOf('})', at) + 2);
+  assert.ok(call.length < 300, 'the call is short');
+  assert.ok(
+    /^challengeStorePlan\(\{\s*nodeEnv: process\.env\.NODE_ENV,\s*configured: config\.x402\.challengeStorePath,\s*\}\)$/.test(call),
+    `server.js boot call must pass nodeEnv: process.env.NODE_ENV and nothing else that changes the plan; got:\n${call}`,
+  );
+});
