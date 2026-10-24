@@ -4,8 +4,8 @@
  * NODE_ENV alone is not enough: a host that loads the production issuer key
  * with NODE_ENV=development would otherwise switch off every production-only
  * gate. So the process also counts as production when:
- *   - the loaded issuer kid (sync key, active signer, or the key material in
- *     ISSUER_PRIVATE_KEY) is the published production kid, or
+ *   - the loaded issuer key (sync key, active signer, or the key material in
+ *     ISSUER_PRIVATE_KEY) is a production key, by kid or by public key x/y, or
  *   - ISSUER_PRIVATE_KEY, ISSUER_KID or ISSUER_KMS_KEY_ID is set, or
  *     ISSUER_SIGNER=kms, or the active signer is KMS.
  *
@@ -20,11 +20,97 @@ import { peekIssuerSigner } from './issuer-signer-state.js';
 /** Published api.chit402.com issuer kid. */
 export const PRODUCTION_ISSUER_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 
+/**
+ * Every production issuer public key, from the published issuer history
+ * (/.well-known/issuer-history, v1). A key rotation adds its entry here; a
+ * test pins this list to the published history fixture.
+ */
+export const PRODUCTION_ISSUER_PUBLIC_KEYS = Object.freeze([
+  Object.freeze({
+    kid: PRODUCTION_ISSUER_KID,
+    kty: 'EC',
+    crv: 'P-256',
+    x: '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk',
+    y: 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34',
+  }),
+]);
+
+/**
+ * A JWK coordinate as its 32-byte big-endian value, or null. Strict: exactly
+ * 43 base64url characters with no padding, decoding to exactly 32 bytes and
+ * re-encoding to the same string. Anything else (padding, the standard
+ * alphabet, extra or missing bytes, stray characters) is rejected.
+ */
+function coordBytes(v) {
+  if (typeof v !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(v)) return null;
+  const b = Buffer.from(v, 'base64url');
+  if (b.length !== 32 || b.toString('base64url') !== v) return null;
+  return b;
+}
+
+/**
+ * Lenient decode, used only to refuse: any spelling that a lenient decoder
+ * reads as a production coordinate (padded, standard alphabet, leading zero
+ * bytes, stray characters) still matches, so a non-canonical spelling of a
+ * production key is refused as that key rather than slipping past the match.
+ */
+function looseCoordBytes(v) {
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  let b = Buffer.from(v.trim(), 'base64');
+  while (b.length > 32 && b[0] === 0) b = b.subarray(1);
+  if (b.length > 32 || b.length === 0) return null;
+  if (b.length < 32) b = Buffer.concat([Buffer.alloc(32 - b.length), b]);
+  return b;
+}
+
+function isP256(crv) {
+  return crv == null || String(crv).trim().toUpperCase() === 'P-256';
+}
+
+/** Same curve point (decoded 32-byte x and y), ignoring kid and any other label. */
+function samePoint(a, b) {
+  if (!a || !b || !isP256(a.crv) || !isP256(b.crv)) return false;
+  const ax = looseCoordBytes(a.x);
+  const ay = looseCoordBytes(a.y);
+  const bx = looseCoordBytes(b.x);
+  const by = looseCoordBytes(b.y);
+  return Boolean(ax && ay && bx && by) && ax.equals(bx) && ay.equals(by);
+}
+
+/** Whether a JWK carries two strict base64url coordinates of exactly 32 bytes each. */
+export function wellFormedPublicJwk(jwk) {
+  return Boolean(jwk && typeof jwk === 'object' && isP256(jwk.crv) && coordBytes(jwk.x) && coordBytes(jwk.y));
+}
+
+/**
+ * True when `jwk` is the public key of any production issuer key, by x/y,
+ * whatever kid it is labelled with. `extra` adds more keys to match (for
+ * example issuer history entries from ISSUER_HISTORY_EXTRA).
+ * @param {{ x?: string, y?: string, crv?: string }|null|undefined} jwk
+ * @param {Array<{ x?: string, y?: string, crv?: string }>} [extra]
+ */
+export function isProductionIssuerPublicKey(jwk, extra = []) {
+  if (!jwk) return false;
+  return PRODUCTION_ISSUER_PUBLIC_KEYS.some((k) => samePoint(jwk, k))
+    || (Array.isArray(extra) && extra.some((k) => samePoint(jwk, k)));
+}
+
 let loadedKid = null;
 
 /** issuer-key records the kid of the key it loaded. */
 export function noteLoadedIssuerKid(kid) {
   loadedKid = kid ? String(kid) : null;
+}
+
+/** The kid issuer-key recorded for the key it loaded, or null. */
+export function loadedIssuerKid() {
+  return loadedKid;
+}
+
+/** RFC 7638 kid of base64 PEM issuer key material, or null when it does not parse. */
+export function issuerMaterialKid(material) {
+  const m = material == null ? '' : String(material).trim();
+  return m ? kidOfMaterial(m) : null;
 }
 
 /** NODE_ENV unset, or anything but exact test/development, is production. */
@@ -42,24 +128,34 @@ function keyMaterial(env) {
 
 const kidCache = new Map();
 
-/** RFC 7638 kid of base64 PEM key material, or null when it does not parse. */
-function kidOfMaterial(material) {
+/** Public JWK + RFC 7638 kid of base64 PEM key material, or null when it does not parse. */
+function publicOfMaterial(material) {
   if (kidCache.has(material)) return kidCache.get(material);
-  let kid = null;
+  let out = null;
   try {
     const pem = Buffer.from(material, 'base64').toString('utf8');
     const jwk = crypto.createPublicKey(crypto.createPrivateKey({ key: pem, format: 'pem' })).export({ format: 'jwk' });
     if (jwk.kty === 'EC' && jwk.x && jwk.y) {
-      kid = crypto.createHash('sha256')
+      const kid = crypto.createHash('sha256')
         .update(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))
         .digest('base64url');
+      out = { kid, jwk: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } };
     }
   } catch {
-    kid = null;
+    out = null;
   }
   if (kidCache.size > 16) kidCache.clear();
-  kidCache.set(material, kid);
-  return kid;
+  kidCache.set(material, out);
+  return out;
+}
+
+function kidOfMaterial(material) {
+  return publicOfMaterial(material)?.kid ?? null;
+}
+
+function productionMaterial(material) {
+  const pub = publicOfMaterial(material);
+  return Boolean(pub) && (pub.kid === PRODUCTION_ISSUER_KID || isProductionIssuerPublicKey(pub.jwk));
 }
 
 /**
@@ -141,10 +237,13 @@ export function isProductionProcess(env = process.env, { nodeEnv } = {}) {
   if (loadedKid === PRODUCTION_ISSUER_KID) return true;
   const signer = peekIssuerSigner();
   if (signer?.kid === PRODUCTION_ISSUER_KID) return true;
+  if (isProductionIssuerPublicKey(signer?.publicJwk)) return true;
   // An active KMS signer is production unless it is a known test key under the opt-out.
   if (signer?.kind === 'kms' && !(optedOut(process.env) && testIssuerKids().has(signer.kid))) return true;
   const sources = e === process.env ? [e] : [e, process.env];
   for (const src of sources) {
+    const material = keyMaterial(src);
+    if (material && productionMaterial(material)) return true;
     const signals = keySignals(src);
     if (signals.length === 0) continue;
     if (signals.includes(PRODUCTION_ISSUER_KID)) return true;

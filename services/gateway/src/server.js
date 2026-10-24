@@ -109,6 +109,8 @@ import { s3ConfigFromEnv, startHourlyBundleTimer } from './receipt-log-s3.js';
 import { withPublicPreimages, preimageField, preimageBytes, setPublicShellHeaders } from './receipt-preimage.js';
 import { writeCanonicalPreimage } from './canonical-preimage.js';
 import { assertIssuerHistoryBoot, configureIssuerHistoryStore, currentIssuerHistory, writeIssuerHistory } from './issuer-history.js';
+import { fixedHeadFlagOn } from './tree-head-eip712.js';
+import { quarantineListDir, writeQuarantineListResponse } from './quarantine-list.js';
 import { applyRequestSaltHeader, captureRawRequestBody, clientRequestForRefusal, isRequestBindingError } from './request-binding.js';
 import { assertIssuerHistoryMirrorBoot, issuerHistoryMirrorClaim, writeIssuerHistoryMirror } from './issuer-history-mirror.js';
 import { assertSigningKeyNotGuardian } from './issuer-guardian.js';
@@ -915,6 +917,16 @@ function sendPublicInternal(res, err, logLabel, code, req) {
  * Canonical positive integer: digits only, no sign, no leading zero, no
  * whitespace. `01`, `+1`, `1e2`, and ` 1` are rejected. The text is not trimmed.
  */
+/**
+ * `{ fixed_head }` when the fixed-head flag is on and a stored fixed head
+ * matches this signed head; otherwise `{}`. A lookup only, never a sign.
+ */
+function fixedHeadField(tree, head) {
+  if (!fixedHeadFlagOn()) return {};
+  const fixed = typeof tree.fixedHeadFor === 'function' ? tree.fixedHeadFor(head) : null;
+  return fixed ? { fixed_head: fixed } : {};
+}
+
 function canonicalPositiveInteger(value) {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const raw = typeof value === 'string' ? value : String(value);
@@ -3266,6 +3278,7 @@ export async function createApp() {
           const facts = tree.headChainFacts(head);
           return res.json({
             ...head,
+            ...fixedHeadField(tree, head),
             receipt_log: receiptLog,
             anchor_confirmed_by: facts.confirmed_by || null,
           });
@@ -3279,7 +3292,7 @@ export async function createApp() {
       }
       const head = tree.latestSignedHead();
       if (!head) return res.json({ ...tree.unpublishedHead(), receipt_log: receiptLog });
-      return res.json({ ...head, receipt_log: receiptLog });
+      return res.json({ ...head, ...fixedHeadField(tree, head), receipt_log: receiptLog });
     } catch (err) {
       logger.error({ err }, 'tree head error');
       return res.status(500).json({ error: 'internal', message: 'internal error' });
@@ -4274,6 +4287,19 @@ export async function createApp() {
       return await writeIssuerHistory(res, req.query);
     } catch (err) {
       return sendPublicInternal(res, err, 'GET issuer-history error', 'issuer_history_failed');
+    }
+  });
+
+  // Quarantine list. Stored bytes written by scripts/sign-quarantine-list.mjs.
+  // ?version=N serves a sealed version forever; any other query is 400.
+  // Never signs.
+  app.get('/.well-known/quarantine-list.json', (req, res) => {
+    try {
+      const tree = getReceiptMerkleTree();
+      const dir = tree?.dir ? quarantineListDir(tree.dir) : null;
+      return writeQuarantineListResponse(res, dir, req.query);
+    } catch (err) {
+      return sendPublicInternal(res, err, 'GET quarantine-list error', 'quarantine_list_failed');
     }
   });
 

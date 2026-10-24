@@ -16,7 +16,15 @@ process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret';
 process.env.RECEIPT_CO_SIGNER_SECRET = 'test-co-signer-secret';
 
-const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, signJws, verifyWithJwk, verifyJws, verifyJwsWithJwks } = await import('../src/issuer-key.js');
+const { _resetIssuerKey, getJwks, initIssuerKey, signWithIssuerKey, signWithIssuerKeyAsync, signJws, verifyWithJwk, verifyJws, verifyJwsWithJwks } = await import('../src/issuer-key.js');
+
+// The raw signing exports refuse. verifyWithJwk is still covered with a
+// signature made here from the test key.
+function testRawSign(message) {
+  const { privateKey, kid } = initIssuerKey();
+  const sig = crypto.sign('sha256', Buffer.from(message, 'utf8'), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  return { value: sig.toString('base64url'), kid };
+}
 const {
   buildReceipt,
   verifyReceiptHmac,
@@ -88,10 +96,15 @@ describe('Issuer Key Management', () => {
     assert.equal(publicKeyJwk.kid, kid);
   });
 
-  test('signWithIssuerKey produces a valid signature', () => {
-    const message = 'test message';
-    const { value, kid } = signWithIssuerKey(message);
+  test('signWithIssuerKey and signWithIssuerKeyAsync refuse to sign raw bytes', async () => {
+    for (const message of ['test message', '\u0019\u0001x', 'eyJhbGciOiJFUzI1NiJ9.e30']) {
+      assert.throws(() => signWithIssuerKey(message), (err) => err.code === 'issuer_raw_sign_removed');
+      await assert.rejects(signWithIssuerKeyAsync(message), (err) => err.code === 'issuer_raw_sign_removed');
+    }
+  });
 
+  test('a raw P-256 signature from the test key is 64 bytes (R||S)', () => {
+    const { value, kid } = testRawSign('test message');
     assert.ok(value, 'should produce a signature');
     assert.ok(kid, 'should include kid');
     const sigBytes = Buffer.from(value, 'base64url');
@@ -100,7 +113,7 @@ describe('Issuer Key Management', () => {
 
   test('verifyWithJwk validates correct signature', () => {
     const message = 'test message';
-    const { value: sig } = signWithIssuerKey(message);
+    const { value: sig } = testRawSign(message);
     const { publicKeyJwk: jwk } = initIssuerKey();
 
     const valid = verifyWithJwk(message, sig, jwk);
@@ -109,7 +122,7 @@ describe('Issuer Key Management', () => {
 
   test('verifyWithJwk rejects non-canonical spellings of a valid signature', () => {
     const message = 'test message';
-    const { value: sig } = signWithIssuerKey(message);
+    const { value: sig } = testRawSign(message);
     const { publicKeyJwk: jwk } = initIssuerKey();
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     const trailing = `${sig.slice(0, -1)}${alphabet[alphabet.indexOf(sig.at(-1)) | 1]}`;
@@ -126,7 +139,7 @@ describe('Issuer Key Management', () => {
   });
 
   test('verifyWithJwk rejects wrong message', () => {
-    const { value: sig } = signWithIssuerKey('original message');
+    const { value: sig } = testRawSign('original message');
     const { publicKeyJwk: jwk } = initIssuerKey();
 
     const valid = verifyWithJwk('tampered message', sig, jwk);
@@ -135,7 +148,7 @@ describe('Issuer Key Management', () => {
 
   test('verifyWithJwk rejects wrong key', () => {
     const message = 'test message';
-    const { value: sig } = signWithIssuerKey(message);
+    const { value: sig } = testRawSign(message);
 
     // Generate a different key
     const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
