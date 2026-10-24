@@ -1166,7 +1166,7 @@ export async function createApp() {
       },
     })
     : null;
-  if (payerBindingWorker && process.env.NODE_ENV !== 'test') payerBindingWorker.start();
+  if (payerBindingWorker && !testSwitchesOn()) payerBindingWorker.start();
   setBookRowWrittenHook(async (entry) => {
     let leafAppended = false;
     let freshLeafHash = null;

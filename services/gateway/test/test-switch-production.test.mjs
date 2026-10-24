@@ -297,3 +297,27 @@ test('server boot: the x402 challenge store plan is built from the real NODE_ENV
     `server.js boot call must pass nodeEnv: process.env.NODE_ENV and nothing else that changes the plan; got:\n${call}`,
   );
 });
+
+test('payer binding worker: it starts under NODE_ENV=test when a production-like key is loaded (start is gated on testSwitchesOn, like the attestation worker)', () => {
+  const src = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  // Only the matching lines go into an assertion message, never the whole file.
+  const startLines = src.split('\n').filter((l) => /payerBindingWorker\.start\(/.test(l)).map((l) => l.trim());
+  assert.ok(startLines.length === 1, `server.js must start the payer binding worker exactly once; found:\n${startLines.join('\n')}`);
+  assert.ok(
+    startLines[0] === 'if (payerBindingWorker && !testSwitchesOn()) payerBindingWorker.start();',
+    `server.js: the payer binding worker start must be gated on !testSwitchesOn(); got:\n${startLines[0]}`,
+  );
+  // The gate the start uses: off (so the worker starts) under NODE_ENV=test with a production-like key.
+  for (const [label, arrange] of [
+    ['an unlisted issuer key', () => setEnv({ NODE_ENV: 'test', ISSUER_TEST_KEY: '1', ISSUER_PRIVATE_KEY: throwawayKeyEnv() })],
+    ['the production kid', () => setEnv({ NODE_ENV: 'test', ISSUER_TEST_KEY: '1', ISSUER_KID: PRODUCTION_ISSUER_KID })],
+    ['a signer reporting the production kid', () => { setEnv({ NODE_ENV: 'test', ISSUER_TEST_KEY: '1' }); _setIssuerSignerForTest(prodKidStub()); }],
+  ]) {
+    arrange();
+    assert.ok(testSwitchesOn() === false, `${label}: the worker must start`);
+    _setIssuerSignerForTest(null);
+  }
+  // And a plain test process with a known test key keeps the worker off.
+  setEnv({ NODE_ENV: 'test', ISSUER_TEST_KEY: '1', ISSUER_PRIVATE_KEY: testIssuerKey(4).env });
+  assert.ok(testSwitchesOn() === true, 'a known test key under NODE_ENV=test: the worker stays off');
+});
