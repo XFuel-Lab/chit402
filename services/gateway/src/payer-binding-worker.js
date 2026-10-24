@@ -14,12 +14,19 @@
  * The binding is signed only by the key that signed the receipt (the holder
  * JWS header kid). When the active signer is another key, as after a key
  * rotation, the job is skipped with `kid_mismatch` and not retried.
+ *
+ * The owner view checks the same pairing at read time. A mutable stored JWS
+ * (flag-off v10, issuer root off) can be re-signed under the active key after
+ * its binding was sealed (tree-head restamp, or drop and re-sign). A sealed
+ * binding whose kid is not the current receipt JWS header kid is shown as
+ * `missing/kid_mismatch`, never as signed.
  */
 import logger from './logger.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
 import { decodeJwsClaims, leafRecordFor } from './public-attestation.js';
 import { receiptLogSigningReady } from './receipt-merkle.js';
 import { bindingInputsFromClaims, payerBindingFlagOn, signReceiptBinding } from './receipt-binding-eip712.js';
+import { kidBytes32 } from './eip712-p256.js';
 
 export const PAYER_BINDING_CAP_KIND = 'payer_binding';
 export const PAYER_BINDING_DEFAULTS = Object.freeze({
@@ -56,6 +63,22 @@ export function jwsHeaderKid(jws) {
     return header && typeof header === 'object' && typeof header.kid === 'string' && header.kid ? header.kid : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * True only when the sealed binding's signed kid is the bytes32 form of the
+ * current receipt JWS header kid. Missing, malformed or different: false.
+ */
+export function bindingKidMatchesJws(binding, receiptJws) {
+  const have = binding?.message?.kid;
+  if (typeof have !== 'string' || !have) return false;
+  const kid = jwsHeaderKid(receiptJws);
+  if (!kid) return false;
+  try {
+    return kidBytes32(kid) === have;
+  } catch {
+    return false;
   }
 }
 
@@ -285,9 +308,11 @@ export function createPayerBindingWorker(deps) {
 
 /**
  * Owner-view status for a task. Reads only; never signs.
+ * `receiptJws` is the receipt JWS served beside the binding. A sealed binding
+ * is shown only when it was signed by that JWS's header kid.
  * @returns {{ status: 'signed', binding: object, payer_salt: string } | { status: 'pending' } | { status: 'missing', reason: string }}
  */
-export function payerBindingView(store, taskId) {
+export function payerBindingView(store, taskId, receiptJws) {
   if (!store) return { status: 'missing', reason: 'not_bound' };
   let sealed = null;
   let job = null;
@@ -298,6 +323,7 @@ export function payerBindingView(store, taskId) {
     return { status: 'missing', reason: 'store_unreadable' };
   }
   if (sealed?.binding && sealed?.payer_salt) {
+    if (!bindingKidMatchesJws(sealed.binding, receiptJws)) return { status: 'missing', reason: 'kid_mismatch' };
     return { status: 'signed', binding: sealed.binding, payer_salt: sealed.payer_salt };
   }
   if (!job) return { status: 'missing', reason: 'not_bound' };

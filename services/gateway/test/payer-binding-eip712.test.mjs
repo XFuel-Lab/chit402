@@ -56,6 +56,7 @@ const { _bookRowWrittenHookForTest } = await import('../src/usage-settled.js');
 const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 const { NOT_FOUND_BODY } = await import('../src/owner-view.js');
+const { buildReceipt, stampCoveringTreeHead } = await import('../src/receipt.js');
 
 const payerA = Wallet.createRandom();
 const payerB = Wallet.createRandom();
@@ -493,7 +494,7 @@ test('B4: signed once after the append; retry and restart return stored bytes; n
   assert.equal((await appendAndEnqueue(again, tree, 'xfuel-pb-b4', ROW(4))).reason, 'had_leaf');
   assert.equal(c.counts.typed, 1);
   assert.equal(fs.readFileSync(path.join(store.dir, 'xfuel-pb-b4.binding.json'), 'utf8'), bytes);
-  const view = W.payerBindingView(store, 'xfuel-pb-b4');
+  const view = W.payerBindingView(store, 'xfuel-pb-b4', jwsFor('xfuel-pb-b4'));
   assert.equal(view.status, 'signed');
   assert.equal(B.verifyBinding(view.binding, view.payer_salt, payerA.address, KEY.publicJwk).ok, true);
   assert.equal(view.binding.message.leaf_hash, `0x${leafHashOf('xfuel-pb-b4', ROW(4))}`);
@@ -918,7 +919,7 @@ test('B13 / A1a: after a rotation the active signer does not bind a receipt sign
   const w2 = unitWorker({ store: store2, tree, jwsFor: (id) => fakeJws(claims({ taskId: id }), k2.kid), signer: c.signer });
   assert.equal((await appendAndEnqueue(w2, tree, 'xfuel-pb-b13b', ROW(131))).queued, true);
   assert.deepEqual(await w2.tick(), ['signed']);
-  const view = W.payerBindingView(store2, 'xfuel-pb-b13b');
+  const view = W.payerBindingView(store2, 'xfuel-pb-b13b', fakeJws(claims({ taskId: 'xfuel-pb-b13b' }), k2.kid));
   assert.equal(B.verifyBinding(view.binding, view.payer_salt, payerA.address, k2.publicJwk).ok, true);
 });
 
@@ -1026,5 +1027,165 @@ test('B12: leaf_hash only from the append record; a wrong or changed leaf is ref
   assert.throws(() => store.getJob('../x'), (err) => err.code === 'binding_task_id');
   assert.throws(() => store.getJob('a/b'), (err) => err.code === 'binding_task_id');
   assert.equal(payerBindingStoreDir({ env: {}, persist: false, agentsDir: '/x' }), null);
+  assert.equal(c.counts.typed, 1);
+});
+
+// ---------------------------------------------------------------- B14 (SF1)
+
+/** Header kid of a compact JWS, read directly. */
+function headerKidOf(jws) {
+  return JSON.parse(Buffer.from(String(jws).split('.')[0], 'base64url').toString('utf8')).kid;
+}
+
+function claimsOf(jws) {
+  return JSON.parse(Buffer.from(String(jws).split('.')[1], 'base64url').toString('utf8'));
+}
+
+/**
+ * A flag-off v10 receipt sealed under KEY, its leaf appended after the first
+ * seal (so the signed covering head is stale), and its binding sealed under
+ * KEY by the server worker.
+ */
+async function boundMutableReceipt(taskId, row) {
+  const task = plant(taskId, payerA.address);
+  const jws = await holderJwsOf(baseOn, taskId);
+  assert.equal(headerKidOf(jws), KEY.kid);
+  assert.equal(Number(claimsOf(jws).payload_version), 10, 'flag-off v10 receipt');
+  const { tree } = await readyTree();
+  await runHook(hookOn, tree, taskId, row);
+  await appOn.locals.__test.payerBindingWorker.tick();
+  const sealed = appOn.locals.__test.payerBindingStore.getBinding(taskId);
+  assert.ok(sealed, 'binding sealed');
+  assert.equal(sealed.binding.message.kid, E.kidBytes32(KEY.kid));
+  assert.equal(task.issuerSignature.jws, jws, 'the hook and the worker do not re-sign');
+  return { task, jws, tree };
+}
+
+async function withActiveSigner(signer, fn) {
+  _setIssuerSignerForTest(signer);
+  try {
+    return await fn();
+  } finally {
+    _setIssuerSignerForTest(counting.signer);
+  }
+}
+
+const k2Signer = (k2) => stubSigner({ kid: k2.kid, publicJwk: k2.publicJwk, privateKey: k2.privateKey });
+
+test('B14 / SF1: a tree-head restamp under a rotated key: the owner view shows missing/kid_mismatch, not the old-key binding', async () => {
+  const taskId = 'xfuel-pb-b14a';
+  const { task, jws } = await boundMutableReceipt(taskId, ROW(141));
+  const k2 = rotatedKey();
+  await withActiveSigner(k2Signer(k2), async () => {
+    await buildReceipt(task, { baseUrl: baseOn, persistSignature: true });
+  });
+  const after = task.issuerSignature.jws;
+  assert.notEqual(after, jws, 'restamp re-signed the stored JWS');
+  assert.equal(headerKidOf(after), k2.kid, 'under the rotated key');
+  // Restamp path: only tree_head_hash changed in the signed claims.
+  const { tree_head_hash: h0, payload_hash: p0, ...before0 } = claimsOf(jws);
+  const { tree_head_hash: h1, payload_hash: p1, ...after1 } = claimsOf(after);
+  assert.notEqual(h1, h0);
+  assert.deepEqual(after1, before0);
+  // The sealed binding is unchanged and still verifies only under KEY.
+  const sealed = appOn.locals.__test.payerBindingStore.getBinding(taskId);
+  assert.equal(B.verifyBinding(sealed.binding, sealed.payer_salt, payerA.address, KEY.publicJwk).ok, true);
+  assert.equal(B.verifyBinding(sealed.binding, sealed.payer_salt, payerA.address, k2.publicJwk).ok, false);
+  assert.deepEqual(W.payerBindingView(appOn.locals.__test.payerBindingStore, taskId, after), { status: 'missing', reason: 'kid_mismatch' });
+  const owner = JSON.parse((await ownerBody(baseOn, payerA, taskId)).text);
+  assert.equal(owner.jws, after);
+  assert.deepEqual(owner.payer_binding, { status: 'missing', reason: 'kid_mismatch' });
+  resetReceiptMerkleTree();
+});
+
+test('B14 / SF1: drop and re-sign under a rotated key: the owner view shows missing/kid_mismatch', async () => {
+  const taskId = 'xfuel-pb-b14b';
+  const { task, jws } = await boundMutableReceipt(taskId, ROW(142));
+  const k2 = rotatedKey();
+  // A settlement field the stored JWS does not cover: the stored JWS is dropped and signed again.
+  task.outputHash = `0x${'ef'.repeat(32)}`;
+  await withActiveSigner(k2Signer(k2), async () => {
+    await buildReceipt(task, { baseUrl: baseOn, persistSignature: true });
+  });
+  const after = task.issuerSignature.jws;
+  assert.notEqual(after, jws);
+  assert.equal(headerKidOf(after), k2.kid);
+  assert.notEqual(claimsOf(after).output?.hash, claimsOf(jws).output?.hash, 'drop-and-re-sign path, not the restamp');
+  assert.deepEqual(W.payerBindingView(appOn.locals.__test.payerBindingStore, taskId, after), { status: 'missing', reason: 'kid_mismatch' });
+  const owner = JSON.parse((await ownerBody(baseOn, payerA, taskId)).text);
+  assert.equal(owner.jws, after);
+  assert.deepEqual(owner.payer_binding, { status: 'missing', reason: 'kid_mismatch' });
+  resetReceiptMerkleTree();
+});
+
+test('B14 / SF1 control: a restamp with no rotation keeps the signed binding, and it verifies under the receipt key', async () => {
+  const taskId = 'xfuel-pb-b14c';
+  const { task, jws } = await boundMutableReceipt(taskId, ROW(143));
+  await buildReceipt(task, { baseUrl: baseOn, persistSignature: true });
+  const after = task.issuerSignature.jws;
+  assert.notEqual(after, jws, 'restamp re-signed');
+  assert.equal(headerKidOf(after), KEY.kid, 'same key');
+  const owner = JSON.parse((await ownerBody(baseOn, payerA, taskId)).text);
+  assert.equal(owner.jws, after);
+  assert.equal(owner.payer_binding.status, 'signed');
+  const sealed = appOn.locals.__test.payerBindingStore.getBinding(taskId);
+  assert.deepEqual(owner.payer_binding.binding, sealed.binding);
+  assert.equal(B.verifyBinding(owner.payer_binding.binding, owner.payer_binding.payer_salt, payerA.address, KEY.publicJwk).ok, true);
+  resetReceiptMerkleTree();
+});
+
+test('B14 / SF1: a v11 receipt is not re-signed after a rotation; its binding stays signed', async () => {
+  const k2 = rotatedKey();
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b14d-'));
+  const c = countingSigner(envSigner);
+  const v11 = (id) => fakeJws({ ...claims({ taskId: id }), v: 11, payload_version: 11, tree_head_hash: null }, KEY.kid);
+  const worker = unitWorker({ store, tree, jwsFor: v11, signer: c.signer });
+  assert.equal((await appendAndEnqueue(worker, tree, 'xfuel-pb-b14d', ROW(144))).queued, true);
+  assert.deepEqual(await worker.tick(), ['signed']);
+  const receipt = { task_id: 'xfuel-pb-b14d', issuer_signature: { alg: 'ES256', jws: v11('xfuel-pb-b14d'), kid: KEY.kid } };
+  _setReceiptMerkleTreeForTest(tree);
+  await withActiveSigner(k2Signer(k2), async () => {
+    await stampCoveringTreeHead(receipt);
+  });
+  assert.equal(receipt.issuer_signature.jws, v11('xfuel-pb-b14d'), 'v11 JWS byte-identical');
+  const view = W.payerBindingView(store, 'xfuel-pb-b14d', receipt.issuer_signature.jws);
+  assert.equal(view.status, 'signed');
+  assert.equal(B.verifyBinding(view.binding, view.payer_salt, payerA.address, KEY.publicJwk).ok, true);
+  resetReceiptMerkleTree();
+});
+
+test('B14 / SF1: the view compares the binding kid with the JWS header kid; no JWS, no kid or a bad binding kid is kid_mismatch', async () => {
+  const k2 = rotatedKey();
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b14e-'));
+  const c = countingSigner(envSigner);
+  const jwsFor = (id) => fakeJws(claims({ taskId: id }), KEY.kid);
+  const worker = unitWorker({ store, tree, jwsFor, signer: c.signer });
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b14e', ROW(145));
+  assert.deepEqual(await worker.tick(), ['signed']);
+  const id = 'xfuel-pb-b14e';
+  const mismatch = { status: 'missing', reason: 'kid_mismatch' };
+  assert.equal(W.payerBindingView(store, id, jwsFor(id)).status, 'signed');
+  // Header kid is K2 while the payload carries the old kid: the header decides.
+  const headerK2 = fakeJws({ ...claims({ taskId: id }), kid: KEY.kid }, k2.kid);
+  assert.deepEqual(W.payerBindingView(store, id, headerK2), mismatch);
+  // Header kid is KEY while the payload names K2: still signed.
+  assert.equal(W.payerBindingView(store, id, fakeJws({ ...claims({ taskId: id }), kid: k2.kid }, KEY.kid)).status, 'signed');
+  assert.deepEqual(W.payerBindingView(store, id), mismatch);
+  assert.deepEqual(W.payerBindingView(store, id, null), mismatch);
+  assert.deepEqual(W.payerBindingView(store, id, fakeJws(claims({ taskId: id }), null)), mismatch);
+  assert.deepEqual(W.payerBindingView(store, id, 'not-a-jws'), mismatch);
+  // A header kid that is not a 32-byte thumbprint.
+  assert.deepEqual(W.payerBindingView(store, id, fakeJws(claims({ taskId: id }), 'short-kid')), mismatch);
+  // A sealed binding with no kid, or a different kid, is not shown.
+  const sealed = store.getBinding(id);
+  for (const [label, kid] of [['no kid', undefined], ['empty kid', ''], ['other kid', E.kidBytes32(k2.kid)], ['upper hex', sealed.binding.message.kid.toUpperCase().replace(/^0X/, '0x')]]) {
+    const message = { ...sealed.binding.message };
+    if (kid === undefined) delete message.kid;
+    else message.kid = kid;
+    const fake = { getBinding: () => ({ ...sealed, binding: { ...sealed.binding, message } }), getJob: () => null };
+    assert.deepEqual(W.payerBindingView(fake, id, jwsFor(id)), mismatch, label);
+  }
   assert.equal(c.counts.typed, 1);
 });

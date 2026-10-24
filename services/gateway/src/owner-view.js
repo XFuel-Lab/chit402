@@ -548,12 +548,13 @@ export function createOwnerView(deps) {
       row_hash: typeof row === 'string' ? row : null,
     };
     // Payer binding: owner view only, read from the private store. A read
-    // never signs; a receipt without one shows pending or missing.
+    // never signs; a receipt without one shows pending or missing. The view
+    // gets the JWS served here, so a binding by another key is not shown.
     if (typeof deps.payerBinding === 'function') {
       const taskId = String(loaded.taskId || receipt?.task_id || '');
       let view;
       try {
-        view = deps.payerBinding(taskId);
+        view = deps.payerBinding(taskId, body.jws);
       } catch {
         view = { status: 'missing', reason: 'store_unreadable' };
       }
