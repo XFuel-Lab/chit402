@@ -28,7 +28,13 @@ export function normalizeRoot(root) {
   return hex;
 }
 
-/** The shared production check: NODE_ENV, the loaded issuer kid, or a set ISSUER_PRIVATE_KEY. */
+/**
+ * The shared production check (production-process.js): NODE_ENV other than
+ * test/development, the production kid or public key loaded or active, an
+ * active KMS signer, or any issuer key signal (ISSUER_PRIVATE_KEY, ISSUER_KID,
+ * ISSUER_SIGNER=kms, ISSUER_KMS_KEY_ID) that is not a known test key under
+ * ISSUER_TEST_KEY=1.
+ */
 function productionEnv(env) {
   return isProductionProcess(env);
 }
