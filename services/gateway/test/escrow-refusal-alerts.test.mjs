@@ -147,9 +147,9 @@ test('fixed head: every refusal records one alert row and one per-reason count',
   assert.equal((await T.signFixedHead(fhClaims({ root: other }), fhCtx(leaves2, { store }))).refused, 'conflicting_root');
   assertAlert('fixed_head', 'conflicting_root');
   // A signed fixed head raises nothing.
-  const before = RF.receiptFailureCount();
+  const before = RF.listReceiptFailures().length;
   assert.ok((await T.signFixedHead(fhClaims({ root }), fhCtx(leaves))).fixed_head);
-  assert.equal(RF.receiptFailureCount(), before, 'success adds no row');
+  assert.equal(RF.listReceiptFailures().length, before, 'success adds no row');
   assert.equal(escrowRows('fixed_head').length, cases.length + 2);
 });
 
@@ -238,11 +238,11 @@ test('quarantine signing: every refusal reason records one alert row and one per
     assertAlert('quarantine_sign', 'issuer_sign_invalid');
 
     // An honest stub on the known test key signs and raises nothing.
-    const before = RF.receiptFailureCount();
+    const before = RF.listReceiptFailures().length;
     _setIssuerSignerForTest(stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true }));
     const bytes = await Q.signQuarantineList(listDoc(), { env: { NODE_ENV: 'test' } });
     assert.equal(JSON.parse(bytes).issuer_signature.kid, KEY.kid);
-    assert.equal(RF.receiptFailureCount(), before, 'a good signature adds no row');
+    assert.equal(RF.listReceiptFailures().length, before, 'a good signature adds no row');
   } finally {
     resetIssuerSigner();
     _resetIssuerKey();
@@ -284,9 +284,9 @@ test('quarantine signing: assertJwsKid refuses a mismatched, missing or unreadab
   }
   assertAlert('quarantine_sign', 'signer_changed', { rows: cases.length });
   // The matching kid passes and raises nothing.
-  const before = RF.receiptFailureCount();
+  const before = RF.listReceiptFailures().length;
   assert.doesNotThrow(() => Q.assertJwsKid(jwsWith({ alg: 'ES256', typ: Q.QUARANTINE_LIST_TYP, kid: KEY.kid }), KEY.kid));
-  assert.equal(RF.receiptFailureCount(), before);
+  assert.equal(RF.listReceiptFailures().length, before);
 });
 
 test('quarantine signing: the script pre-check refusal writes an alert row to RECEIPT_FAILURES_FILE', () => {
@@ -493,7 +493,8 @@ test('alert rows persist in RECEIPT_FAILURES_FILE and per-reason counts reload f
     assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 3, 'not-applicable skips are not written');
     RF.resetReceiptFailuresForTests();
     assert.deepEqual(RF.escrowRefusalCounts(), { fixed_head: { root_mismatch: 1 }, payer_binding: { amount: 1 } });
-    assert.equal(RF.receiptFailureCount(), 3);
+    assert.equal(RF.listReceiptFailures().length, 3, 'rows reload');
+    assert.equal(RF.receiptFailureCount(), 1, 'the public total counts only the non-alert row');
   } finally {
     delete process.env.RECEIPT_FAILURES_FILE;
     RF.resetReceiptFailuresForTests();
@@ -537,7 +538,7 @@ test('GET /health and GET /v1/ops/receipt-failures (local server): rows and per-
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network' });
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payer' });
   const health = await (await fetch(`${base}/health`)).json();
-  assert.equal(health.receipt_failures, startCount + 4, 'the public total counts alert rows, not count-only skips');
+  assert.equal(health.receipt_failures, startCount, 'alert rows and skips leave the public total alone');
   assert.deepEqual(Object.keys(health).sort(), Object.keys(clean).sort(), '/health keeps the clean key set');
   const text = JSON.stringify(health);
   assert.equal(/escrow|fixed_head|quarantine_sign|payer_binding|no_payer|network"?:\s*\d/.test(text), false, 'no per-path or per-reason detail on /health');
@@ -612,7 +613,7 @@ test('dedup: one row per (path, reason, outcome) per 15 minutes, with a repeat c
   assert.deepEqual(rows.slice(1).map((r) => r.repeat), [14, 14, 14], 'each later row carries the folded count');
   assert.deepEqual(rows.map((r) => Date.parse(r.time) - t0), [0, 15, 30, 45].map((m) => m * 60_000));
   assert.equal(RF.escrowRefusalCounts().fixed_head.log_not_ready, 60, 'every refusal counted');
-  assert.equal(RF.receiptFailureCount(), 4, 'the public total counts rows, not folded repeats');
+  assert.equal(RF.receiptFailureCount(), 0, 'alert rows stay out of the public total');
   // The window is per (path, reason, outcome).
   clock = t0 + 10 * 60 * 60_000;
   RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' });
@@ -649,7 +650,8 @@ test('dedup: a day of 60 s fixed-head log refusals stays far under the alert cap
     // 96 rows: the first, plus 95 that each fold 14. The last 14 refusals after the
     // final row are only in memory, so the reload count is 1440 - 14.
     assert.equal(RF.escrowRefusalCounts().fixed_head.log_lock_lost, 1426, 'reload counts 1 + repeat per row');
-    assert.equal(RF.receiptFailureCount(), 96);
+    assert.equal(RF.listReceiptFailures().length, 96);
+    assert.equal(RF.receiptFailureCount(), 0);
   } finally {
     delete process.env.RECEIPT_FAILURES_FILE;
     RF.resetReceiptFailuresForTests();
@@ -665,7 +667,6 @@ test('N1: an unwritable RECEIPT_FAILURES_FILE never makes a refusal throw; the r
     RF.resetReceiptFailuresForTests();
     assert.doesNotThrow(() => RF.recordEscrowRefusal({ path: 'quarantine_sign', reason: 'not_test_key' }));
     assertAlert('quarantine_sign', 'not_test_key');
-    assert.equal(RF.receiptFailureCount(), 1);
     // A real refusal path still returns its refusal.
     const leaves = leavesN(11);
     const out = await T.signFixedHead(fhClaims({ root: 'ab'.repeat(32) }), fhCtx(leaves));
@@ -702,7 +703,7 @@ test('N2: alert rows stop at RECEIPT_FAILURE_ALERT_ROW_CAP, oldest dropped, sett
       assert.equal(list[0].reason, 'settle_failed', `${label}: rows stay in record order`);
     };
     check('memory');
-    assert.equal(RF.receiptFailureCount(), cap + 2);
+    assert.equal(RF.receiptFailureCount(), 1, 'only the settle row is in the public total');
     RF.resetReceiptFailuresForTests();
     check('reload');
   } finally {
@@ -748,4 +749,43 @@ test('N6: the ops route 401 and 503 bodies carry no row data and no counts', asy
     process.env.OPS_READ_TOKEN = saved;
     RF.resetReceiptFailuresForTests();
   }
+});
+
+/** Every number anywhere in a JSON value, with its key path. */
+function numericLeaves(value, at = '') {
+  if (typeof value === 'number') return [[at, value]];
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([k, v]) => numericLeaves(v, `${at}.${k}`));
+}
+
+test('public /health carries no numeric refusal data: a flood of alerts and skips leaves every number and key unchanged', async () => {
+  RF.resetReceiptFailuresForTests();
+  const clean = await (await fetch(`${base}/health`)).json();
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  RF.setEscrowAlertClockForTests(() => clock);
+  const reasons = {
+    fixed_head: ['log_not_ready', 'log_lock_lost', 'root_mismatch', 'quarantined', 'internal'],
+    quarantine_sign: ['production_env', 'not_test_key', 'signer_changed'],
+    payer_binding: ['amount', 'leaf_mismatch', 'kid_mismatch', 'network', 'asset', 'no_payment_ref', 'no_payer', 'no_payment'],
+  };
+  for (let i = 0; i < 300; i += 1) {
+    for (const [p, list] of Object.entries(reasons)) {
+      for (const r of list) {
+        RF.recordEscrowRefusal({ path: p, reason: r });
+        RF.recordEscrowRefusal({ path: p, reason: r, outcome: 'pending' });
+      }
+    }
+    clock += RF.ESCROW_ALERT_DEDUP_MS;
+  }
+  assert.equal(RF.listReceiptFailures().length, RF.RECEIPT_FAILURE_ALERT_ROW_CAP, 'alert rows were written, up to the cap');
+  const after = await (await fetch(`${base}/health`)).json();
+  assert.deepEqual(Object.keys(after).sort(), Object.keys(clean).sort(), 'no new key');
+  assert.deepEqual(numericLeaves(after), numericLeaves(clean), 'every number on /health is unchanged');
+  assert.equal(after.receipt_failures, clean.receipt_failures);
+  assert.equal(/escrow|refus|fixed_head|quarantine_sign|payer_binding/i.test(JSON.stringify(after)), false, 'no refusal key or code');
+  // The ops route has them all.
+  const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+  assert.equal(ops.escrow_refusals.payer_binding.no_payer, 600);
+  assert.equal(ops.escrow_refusals.fixed_head.log_not_ready, 600);
+  RF.resetReceiptFailuresForTests();
 });

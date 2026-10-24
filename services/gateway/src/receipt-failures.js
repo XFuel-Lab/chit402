@@ -11,7 +11,8 @@
  * carry a payer, a salt, a key or free text. Per-reason counts are served
  * only on GET /v1/ops/receipt-failures (escrow_refusals), never on public
  * /health, where they would be a timing oracle on a known receipt's payment
- * rail. Public /health shows alert rows only inside the receipt_failures total.
+ * rail. Alert rows are not added to the public receipt_failures total either,
+ * so public /health carries no refusal number derived from these paths.
  * Payer binding skips for a receipt that is not a Base mainnet USDC
  * paid receipt (`no_payer`, `no_payment`, `network`, `asset`,
  * `no_payment_ref`) are routine: they are counted, not raised.
@@ -101,7 +102,7 @@ let loaded = false;
 /**
  * RECEIPT_FAILURES_FILE is read once per process, on first use (loadFile).
  * Rows another process appends later, such as scripts/sign-quarantine-list.mjs
- * while the gateway runs, reach the gateway's ops route and /health total only
+ * while the gateway runs, reach the gateway's ops route only
  * after a gateway restart. Two processes rotating the same file can also race
  * on the rename. The writer itself always appends.
  */
@@ -135,10 +136,11 @@ function loadFile() {
       }
     } catch { /* skip a torn line */ }
   }
-  total += parsed.length;
   const plain = [];
   const alerts = [];
   for (const row of parsed) (isAlertRow(row) ? alerts : plain).push(row);
+  // Alert rows stay out of the public total (see recordEscrowRefusal).
+  total += plain.length;
   for (const row of plain.slice(-RECEIPT_FAILURE_ROW_CAP)) rows.push(stamp(row));
   for (const row of alerts.slice(-RECEIPT_FAILURE_ALERT_ROW_CAP)) alertRows.push(stamp(row));
 }
@@ -275,9 +277,9 @@ function countEscrowRow(row) {
 
 /**
  * Operator alert for a refusal in the fixed-head, quarantine list signing or
- * payer binding path. Writes one receipt-failure row (so the /health
- * receipt_failures total and GET /v1/ops/receipt-failures show it) and bumps
- * the per-reason count. Never throws.
+ * payer binding path. Writes one receipt-failure row (shown on
+ * GET /v1/ops/receipt-failures, not counted in the public /health
+ * receipt_failures total) and bumps the per-reason count. Never throws.
  * @param {{ path: string, reason: string, outcome?: 'refused'|'pending' }} input
  * @returns {object|null} the row, or null (not-applicable skip, folded repeat, bad path)
  */
@@ -313,7 +315,6 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
     });
     if (!row) return null;
     pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
-    total += 1;
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
