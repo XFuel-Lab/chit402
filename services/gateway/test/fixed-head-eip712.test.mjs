@@ -867,6 +867,108 @@ test('quarantine guard: signQuarantineList refuses production, KMS and the produ
   resetIssuerSigner();
 });
 
+const PP = await import('../src/production-process.js');
+
+test('quarantine guard: a NODE_ENV=production process calling the module directly with env {NODE_ENV:test} is refused', async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
+  const stub = installStub();
+  const saved = { NODE_ENV: process.env.NODE_ENV, ISSUER_SIGNER: process.env.ISSUER_SIGNER };
+  try {
+    process.env.NODE_ENV = 'production';
+    for (const extraEnv of OVERRIDE_ENVS) {
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ...extraEnv } }), { ok: false, reason: 'production_env' });
+      assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ...extraEnv }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: false, reason: 'production_env' });
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test', ...extraEnv } }),
+        (err) => err.code === 'quarantine_sign_refused' && err.reason === 'production_env',
+      );
+    }
+    process.env.NODE_ENV = 'test';
+    process.env.ISSUER_SIGNER = 'kms';
+    assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' } }), { ok: false, reason: 'kms_signer' }, 'a KMS process env is refused whatever env is passed');
+    await assert.rejects(
+      Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+      (err) => err.code === 'quarantine_sign_refused' && err.reason === 'kms_signer',
+    );
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  assert.equal(stub.calls.length, 0, 'the signer is never called');
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: KEY.kid, publicJwk: KEY.publicJwk }), { ok: true });
+  resetIssuerSigner();
+});
+
+test('quarantine guard: a relabelled stand-in key whose public key matches a production key is refused (production_key)', async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const doc = Q.buildQuarantineList({ entries: [listEntry()], highWater: [{ epoch: 2, tree_size: 39, root: '34'.repeat(32) }], prevBytes: null });
+  // 1. The published production public key (public x/y only) under another kid label. Holds no private key.
+  const prodPub = PP.PRODUCTION_ISSUER_PUBLIC_KEYS[0];
+  for (const label of ['relabelled-kid', PROD_KID.toLowerCase(), ` ${PROD_KID}`, KEY.kid]) {
+    assert.deepEqual(
+      Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: label, publicJwk: { kty: 'EC', crv: 'P-256', x: prodPub.x, y: prodPub.y } }),
+      { ok: false, reason: 'production_key' },
+      label,
+    );
+  }
+  const relabelled = stubSigner({ kid: 'relabelled-kid', publicJwk: { x: prodPub.x, y: prodPub.y }, privateKey: KEY.privateKey });
+  _setIssuerSignerForTest(relabelled);
+  await assert.rejects(
+    Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+    (err) => err.code === 'quarantine_sign_refused' && err.reason === 'production_key',
+  );
+  assert.equal(relabelled.calls.length, 0);
+  resetIssuerSigner();
+
+  // 2. A stand-in for a rotated or second production key: a throwaway test key listed as an issuer history entry.
+  const standIn = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = standIn.publicKey.export({ format: 'jwk' });
+  const extra = JSON.stringify([{ kid: 'stand-in-production', jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y } }]);
+  assert.deepEqual(
+    Q.quarantineSignGuard({ env: { NODE_ENV: 'test', ISSUER_HISTORY_EXTRA: extra }, kid: 'any-label', publicJwk: jwk }),
+    { ok: false, reason: 'production_key' },
+  );
+  const saved = process.env.ISSUER_HISTORY_EXTRA;
+  const standInSigner = stubSigner({ kid: 'any-label', publicJwk: { x: jwk.x, y: jwk.y }, privateKey: standIn.privateKey });
+  _setIssuerSignerForTest(standInSigner);
+  try {
+    process.env.ISSUER_HISTORY_EXTRA = extra;
+    await assert.rejects(
+      Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+      (err) => err.code === 'quarantine_sign_refused' && err.reason === 'production_key',
+      'a key named in this process\'s issuer history is refused even when the passed env omits it',
+    );
+  } finally {
+    if (saved === undefined) delete process.env.ISSUER_HISTORY_EXTRA;
+    else process.env.ISSUER_HISTORY_EXTRA = saved;
+  }
+  assert.equal(standInSigner.calls.length, 0);
+  assert.deepEqual(Q.quarantineSignGuard({ env: { NODE_ENV: 'test' }, kid: 'any-label', publicJwk: jwk }), { ok: true }, 'not listed: a plain test key');
+  resetIssuerSigner();
+});
+
+test('production keys: PRODUCTION_ISSUER_PUBLIC_KEYS holds every key in the published issuer history and JWKS', () => {
+  const fixtures = path.join(here, '..', '..', '..', 'packages', 'verify', 'test', 'fixtures');
+  const history = JSON.parse(fs.readFileSync(path.join(fixtures, 'public', 'issuer-history-v1.json'), 'utf8'));
+  const jwks = JSON.parse(fs.readFileSync(path.join(fixtures, 'chit402-jwks.json'), 'utf8'));
+  const published = [...history.entries.map((e) => ({ kid: e.kid, ...e.jwk })), ...jwks.keys];
+  assert.ok(published.length >= 2);
+  for (const key of published) {
+    assert.equal(PP.isProductionIssuerPublicKey(key), true, key.kid);
+    assert.ok(PP.PRODUCTION_ISSUER_PUBLIC_KEYS.some((k) => k.kid === key.kid), key.kid);
+  }
+  for (const k of PP.PRODUCTION_ISSUER_PUBLIC_KEYS) {
+    const thumb = crypto.createHash('sha256').update(JSON.stringify({ crv: k.crv, kty: k.kty, x: k.x, y: k.y })).digest('base64url');
+    assert.equal(thumb, k.kid, 'each listed key is its own RFC 7638 kid');
+  }
+  assert.equal(PP.isProductionIssuerPublicKey(KEY.publicJwk), false);
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {

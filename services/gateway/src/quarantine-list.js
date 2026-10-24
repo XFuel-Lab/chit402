@@ -19,9 +19,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { isProductionIssuerEnv, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
+import { isProductionIssuerPublicKey, isProductionProcess, nodeEnvIsProduction } from './production-process.js';
 
 export const QUARANTINE_LIST_SCHEMA = 'chit402.quarantine_list.v1';
 export const QUARANTINE_LIST_TYP = 'chit402-quarantine-list+jwt';
@@ -130,23 +131,53 @@ export function buildQuarantineList({ entries, highWater, prevBytes = null }) {
   };
 }
 
+/** Issuer history entries named in ISSUER_HISTORY_EXTRA (either env): their keys are refused too. */
+function historyExtraKeys(...envs) {
+  const out = [];
+  for (const e of envs) {
+    const raw = e?.ISSUER_HISTORY_EXTRA;
+    if (!raw || !String(raw).trim()) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+      if (Array.isArray(list)) for (const entry of list) if (entry?.jwk) out.push(entry.jwk);
+    } catch {
+      // Unparsable history extra adds no keys; the production checks still apply.
+    }
+  }
+  return out;
+}
+
+function kmsSetting(e) {
+  return String(e?.ISSUER_SIGNER || '').trim().toLowerCase() === 'kms';
+}
+
 /**
  * Which issuer the list may be signed with. Only a stub or test signer: a
  * production environment (NODE_ENV unset or anything but test/development),
- * the KMS signer (ISSUER_SIGNER=kms or an active KMS signer), and the
- * production kid are always refused. There is no override of any kind:
- * --apply --confirm YES, extra flags and extra env vars change nothing.
- * Signing list v1 with the production issuer is a later, separately reviewed
- * host step, not this script.
- * @param {{ env?: NodeJS.ProcessEnv, kid?: string|null, signerKind?: string|null }} [opts]
+ * the KMS signer (ISSUER_SIGNER=kms or an active KMS signer), the production
+ * kid, and any production public key (matched by x/y against every key in
+ * the published issuer history and ISSUER_HISTORY_EXTRA, whatever its kid)
+ * are always refused. The passed `env` and this process's own env are both
+ * checked, because the key is loaded from process.env. There is no override
+ * of any kind: --apply --confirm YES, extra flags and extra env vars change
+ * nothing. Signing list v1 with the production issuer is a later, separately
+ * reviewed host step, not this script.
+ * @param {{ env?: NodeJS.ProcessEnv, kid?: string|null, signerKind?: string|null, publicJwk?: { x?: string, y?: string, crv?: string }|null }} [opts]
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function quarantineSignGuard({ env = process.env, kid = null, signerKind = null } = {}) {
+export function quarantineSignGuard({ env = process.env, kid = null, signerKind = null, publicJwk = null } = {}) {
   // null, not undefined: an unset NODE_ENV must not fall back to this process's value.
-  if (isProductionIssuerEnv(env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };
-  if (String(env.ISSUER_SIGNER || '').trim().toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
+  if (nodeEnvIsProduction(env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };
+  if (nodeEnvIsProduction(process.env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };
+  if (kmsSetting(env) || kmsSetting(process.env)) return { ok: false, reason: 'kms_signer' };
   if (signerKind != null && String(signerKind).toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
   if (kid != null && kid === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
+  if (publicJwk && isProductionIssuerPublicKey(publicJwk, historyExtraKeys(env, process.env))) {
+    return { ok: false, reason: 'production_key' };
+  }
+  // Last: the shared check (production kid or key loaded, or a key set without the test opt-out).
+  if (isProductionProcess(env) || isProductionProcess(process.env)) return { ok: false, reason: 'production_env' };
   return { ok: true };
 }
 
@@ -167,10 +198,21 @@ function guardError(reason) {
  * @returns {Promise<string>} stored bytes
  */
 export async function signQuarantineList(doc, { env = process.env } = {}) {
-  const first = quarantineSignGuard({ env });
+  const peeked = peekIssuerSigner();
+  const first = quarantineSignGuard({
+    env,
+    kid: peeked?.kid ?? null,
+    signerKind: peeked?.kind ?? null,
+    publicJwk: peeked?.publicJwk ?? null,
+  });
   if (!first.ok) throw guardError(first.reason);
-  const active = peekIssuerSigner() || await (await import('./issuer-signer.js')).initIssuerSigner(env);
-  const second = quarantineSignGuard({ env, kid: active?.kid ?? null, signerKind: active?.kind ?? null });
+  const active = peeked || await (await import('./issuer-signer.js')).initIssuerSigner(env);
+  const second = quarantineSignGuard({
+    env,
+    kid: active?.kid ?? null,
+    signerKind: active?.kind ?? null,
+    publicJwk: active?.publicJwk ?? null,
+  });
   if (!second.ok) throw guardError(second.reason);
   const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
   if (kid !== active?.kid) throw guardError('signer_changed');
