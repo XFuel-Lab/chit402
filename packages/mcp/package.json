@@ -55,7 +55,7 @@
     "directory": "packages/mcp"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "chit402-verify": "^0.4.11",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
