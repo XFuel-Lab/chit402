@@ -55,6 +55,8 @@ if (apply) {
   // Before reading the log: production, KMS and the production kid are always refused.
   const guard = quarantineSignGuard({ env: process.env });
   if (!guard.ok) {
+    // Appended to RECEIPT_FAILURES_FILE when set. A running gateway reads that
+    // file once at boot, so it shows this row only after a restart.
     recordEscrowRefusal({ path: 'quarantine_sign', reason: guard.reason });
     fail(`refused: ${guard.reason}. This script signs only with a stub or test signer; there is no override.`);
   }

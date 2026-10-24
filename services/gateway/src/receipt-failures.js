@@ -98,6 +98,13 @@ const escrowCounts = new Map();
 let total = 0;
 let loaded = false;
 
+/**
+ * RECEIPT_FAILURES_FILE is read once per process, on first use (loadFile).
+ * Rows another process appends later, such as scripts/sign-quarantine-list.mjs
+ * while the gateway runs, reach the gateway's ops route and /health total only
+ * after a gateway restart. Two processes rotating the same file can also race
+ * on the rename. The writer itself always appends.
+ */
 function storeFile() {
   const configured = process.env.RECEIPT_FAILURES_FILE;
   if (typeof configured !== 'string' || configured.trim() === '') return null;
