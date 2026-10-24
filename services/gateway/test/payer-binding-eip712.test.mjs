@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { Wallet, ethers } from 'ethers';
 import { syntheticIssuerKey, syntheticIssuerKeyEnv } from '../../../packages/verify/test/fixtures/slot-typing/synthetic-key.mjs';
 import { stubSigner } from './helpers/fixed-head-scenario.mjs';
@@ -120,11 +121,11 @@ async function readyTree({ ready = true } = {}) {
   return { tree, dir };
 }
 
-function claims({ payer = payerA.address, asset = BASE_USDC, gross = '2000', taskId = 'xfuel-pb-unit' } = {}) {
+function claims({ payer = payerA.address, asset = BASE_USDC, gross = '2000', taskId = 'xfuel-pb-unit', network } = {}) {
   return {
     task_id: taskId,
     caller_binding: { payer_wallet: payer },
-    payment: { rail: 'usdc', asset, gross_amount: gross, settled_amount: gross },
+    payment: { rail: 'usdc', asset, gross_amount: gross, settled_amount: gross, ...(network === undefined ? {} : { network }) },
   };
 }
 
@@ -380,6 +381,33 @@ test('B1: flag off: no binding store, no job, owner view and journal as before',
   );
   assert.deepEqual(fs.readdirSync(dirOn).sort(), fs.readdirSync(dirOff).sort());
   resetReceiptMerkleTree();
+});
+
+test('B1: flag off, holder JWS, public shells, owner view, book row and journal equal the main dab93caf golden', () => {
+  // Same helper, run on main dab93caf to make the fixture, run here with the
+  // flag unset in a fresh process.
+  const golden = fs.readFileSync(path.join(here, 'fixtures', 'payer-binding-b1-main.json'), 'utf8');
+  const out = path.join(tmp('payer-binding-b1-golden-'), 'b1.json');
+  const env = { ...process.env };
+  delete env.RECEIPT_PAYER_BINDING_EIP712;
+  delete env.RECEIPT_PAYER_BINDING_DIR;
+  const run = spawnSync(process.execPath, [path.join(here, 'helpers', 'make-payer-binding-golden.mjs'), out], { env, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr.slice(-2000));
+  const mine = fs.readFileSync(out, 'utf8');
+  const a = JSON.parse(mine);
+  const b = JSON.parse(golden);
+  const digest = (v) => crypto.createHash('sha256').update(typeof v === 'string' ? v : JSON.stringify(v)).digest('hex');
+  for (const key of Object.keys(b)) {
+    if (key === 'public') {
+      for (const k of Object.keys(b.public)) assert.equal(digest(a.public[k]), digest(b.public[k]), `public.${k}`);
+    } else {
+      assert.equal(digest(a[key]), digest(b[key]), key);
+    }
+  }
+  assert.equal(mine, golden);
+  assert.equal(a.agents_dir_files.includes('payer-bindings'), false);
+  assert.equal(a.owner.status, 200);
+  assert.equal('payer_binding' in JSON.parse(a.owner.body), false);
 });
 
 // ---------------------------------------------------------------- B2
@@ -643,6 +671,24 @@ test('B8: no payer, non-USDC, pre-flag receipt: no binding, coded reason, receip
   assert.deepEqual(symbolOwner.payer_binding, { status: 'missing', reason: 'asset' });
   assert.equal(getAIListener().activeTasks.get(symbolTask).issuerSignature.jws, symbolJws);
   resetReceiptMerkleTree();
+});
+
+test('B8: a signed network other than Base mainnet gets no binding; Base spellings and an absent network do', async () => {
+  for (const network of ['base-sepolia', 'eip155:84532', 'solana', 'ethereum', 'eip155:1', '', 'basex']) {
+    assert.deepEqual(B.bindingInputsFromClaims(claims({ network })), { ok: false, reason: 'network' }, network);
+  }
+  for (const network of ['base', 'eip155:8453', 'Base', ' eip155:8453 ', null, undefined]) {
+    assert.equal(B.bindingInputsFromClaims(claims({ network })).ok, true, String(network));
+  }
+  // Through the worker: skipped with the coded reason, no sign.
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b8n-'));
+  const c = countingSigner(envSigner);
+  const worker = unitWorker({ store, tree, jwsFor: (id) => fakeJws(claims({ taskId: id, network: 'base-sepolia' })), signer: c.signer });
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b8-network', ROW(87));
+  assert.deepEqual(await worker.tick(), ['skipped']);
+  assert.equal(c.counts.typed, 0);
+  assert.deepEqual(W.payerBindingView(store, 'xfuel-pb-b8-network'), { status: 'missing', reason: 'network' });
 });
 
 // ---------------------------------------------------------------- B9

@@ -33,6 +33,8 @@ const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const AMOUNT = /^[1-9][0-9]*$/;
 const HEX32 = /^[0-9a-f]{64}$/;
 const UINT64_MAX = (1n << 64n) - 1n;
+/** Spellings of Base mainnet used in signed payment claims. */
+const BASE_NETWORKS = new Set(['base', 'eip155:8453']);
 
 /** Strict flag parse: only the exact string "true" turns it on. */
 export function payerBindingFlagOn(env = process.env) {
@@ -52,6 +54,10 @@ export function bindingInputsFromClaims(claims) {
   const pay = claims.payment;
   if (!pay || typeof pay !== 'object') return { ok: false, reason: 'no_payment' };
   if (pay.rail != null && pay.rail !== 'usdc') return { ok: false, reason: 'asset' };
+  // When the signed claims name a network, it must be Base mainnet.
+  if (pay.network != null && !BASE_NETWORKS.has(String(pay.network).trim().toLowerCase())) {
+    return { ok: false, reason: 'network' };
+  }
   if (typeof pay.asset !== 'string' || pay.asset.toLowerCase() !== BASE_USDC.toLowerCase()) {
     return { ok: false, reason: 'asset' };
   }

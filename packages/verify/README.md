@@ -127,7 +127,12 @@ console.log(result.verified_scope);              // 'signed_claims'
 Amount, payer, payee, asset, and tx are read from the verified JWS claims.
 Every signed path is compared with the outer receipt. A mismatch fails.
 Paths the signature does not cover are `unsigned_fields` and are printed as
-`UNVERIFIED`. Overall does not verify them. The outer document `schema` is
+`UNVERIFIED`. Overall does not verify them. "Unsigned" here means "not inside
+the receipt JWS", not "invalid". For example, an owner-view `payer_binding`
+placed next to a receipt shows up as `payer_binding.*` in `unsigned_fields`:
+that object carries its own EIP-712 signature (`ReceiptBinding`), which this
+verifier does not check yet, and its presence does not change the verdict.
+The outer document `schema` is
 not a copy of the JWS `schema`. The CLI always checks the USDC `Transfer`
 log for payer, payee, asset, and amount. `verifyReceipt(receipt, { checkPayer: true })`
 is the same check. There is no CLI flag to skip it.
