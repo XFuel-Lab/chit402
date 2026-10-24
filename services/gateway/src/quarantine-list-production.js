@@ -189,8 +189,20 @@ export async function signProductionV1(doc, signer) {
   return signWithSnapshot(doc, snapshot(signer), decodedKeys(PRODUCTION_ISSUER_PUBLIC_KEYS));
 }
 
+/**
+ * The two test-only entry points below take any allowlist, so each refuses
+ * to run in a production process (the real isProductionProcess on this
+ * process's own env; tests run with NODE_ENV=test and test keys only). A
+ * caller that finds them by name, Object.keys or any other import trick gets
+ * this throw on the host, never a signature.
+ */
+function refuseTestEntryInProduction() {
+  if (isProductionProcess()) throw new TypeError('test-only entry point: refused in a production process');
+}
+
 /** Tests only: signProductionV1 against a given allowlist. Nothing in src or scripts calls it. */
 export async function _signProductionV1ForTest(doc, signer, testKeys) {
+  refuseTestEntryInProduction();
   return signWithSnapshot(doc, snapshot(signer), decodedKeys(testKeys));
 }
 
@@ -323,6 +335,7 @@ export async function runProductionListSigner(opts) {
 
 /** Tests only: the same run against a given allowlist. Nothing in src or scripts calls it. */
 export async function _runProductionListSignerForTest(opts, testKeys) {
+  refuseTestEntryInProduction();
   return runWith(opts, testKeys);
 }
 

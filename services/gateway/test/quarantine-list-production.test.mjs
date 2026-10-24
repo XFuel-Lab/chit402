@@ -630,6 +630,7 @@ test('QP16: the script refuses a test key also listed in ISSUER_HISTORY_EXTRA an
     RECEIPT_LOG_DIR: s.logDir,
     ISSUER_HISTORY_EXTRA: JSON.stringify([{ kid: KEY.kid, jwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y }, alg: 'ES256', status: 'retired' }]),
     QL_ALLOW: stub,
+    QLX: stub,
     PRODUCTION_ISSUER_PUBLIC_KEYS: stub,
     productionKeys: stub,
     QUARANTINE_PRODUCTION_KEYS: stub,
@@ -869,4 +870,91 @@ test('QP23: a temp-file cleanup failure after the link reports v1 as written, ne
     fs.rmSync = realRm;
   }
   assert.deepEqual(linked, [path.join(dir, 'v1.json')]);
+});
+
+test('QP24: the test-only entry points refuse to run in a production process, however they are found', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const built = await buildUnsignedV1FromLog(s.logDir);
+  const savedNodeEnv = process.env.NODE_ENV;
+  // In this process, with NODE_ENV unset (production by isProductionProcess).
+  delete process.env.NODE_ENV;
+  try {
+    await assert.rejects(
+      P._runProductionListSignerForTest({
+        argv: applyArgs(s), env: { RECEIPT_LOG_DIR: s.logDir }, buildFromLog: async () => built, loadSigner: async () => signer, out: () => {}, err: () => {},
+      }, STUB_KEYS),
+      /test-only entry point: refused in a production process/,
+    );
+    await assert.rejects(P._signProductionV1ForTest(built, signer, STUB_KEYS), /test-only entry point: refused in a production process/);
+    // Found by enumerating the module namespace instead of by name: the same refusal.
+    const found = Object.keys(P).filter((k) => k.startsWith('_') && typeof P[k] === 'function');
+    assert.equal(found.length, 2, found.join(','));
+    for (const k of found) await assert.rejects(P[k]({ argv: [], env: {} }, STUB_KEYS), /refused in a production process/, k);
+  } finally {
+    process.env.NODE_ENV = savedNodeEnv;
+  }
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+  // A separate production process (gateway-like env with a test key) that
+  // discovers the entry through Object.keys and passes a test allowlist.
+  const probe = [
+    `const m = await import(${JSON.stringify(new URL(`file://${MODULE}`).href)});`,
+    "const name = Object.keys(m).find((k) => k.startsWith('_') && k.includes('Signer'));",
+    "try { const r = await m[name]({ argv: JSON.parse(process.env.QARGV), env: process.env, buildFromLog: async () => { throw new Error('reached'); }, loadSigner: async () => { throw new Error('reached'); } }, JSON.parse(process.env.QLX)); console.log('RESULT', JSON.stringify(r)); }",
+    "catch (e) { console.log('THREW', e.message); }",
+  ].join('\n');
+  const env = {
+    ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid, RECEIPT_LOG_DIR: s.logDir,
+    QLX: JSON.stringify(STUB_KEYS), QARGV: JSON.stringify(applyArgs(s)),
+  };
+  delete env.NODE_ENV;
+  delete env.ISSUER_TEST_KEY;
+  const out = spawnSync(process.execPath, ['--input-type=module', '-e', probe], { env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(out.status, 0, out.stderr);
+  assert.ok(/^THREW test-only entry point: refused in a production process$/m.test(out.stdout), out.stdout + out.stderr);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+test('QP25: the public runner reads no env name beyond RECEIPT_LOG_DIR and what isProductionProcess reads', async () => {
+  const s = await setup();
+  const { isProductionProcess } = await import('../src/production-process.js');
+  const base = { RECEIPT_LOG_DIR: s.logDir };
+  // Baseline: the env names isProductionProcess itself touches for this env.
+  const baseline = new Set(['RECEIPT_LOG_DIR']);
+  const rec = new Proxy({ ...base }, {
+    get: (t, k) => { if (typeof k === 'string') baseline.add(k); return t[k]; },
+    has: (t, k) => { if (typeof k === 'string') baseline.add(k); return k in t; },
+    ownKeys: (t) => { baseline.add('<ownKeys>'); return Reflect.ownKeys(t); },
+  });
+  isProductionProcess(rec);
+  // The run: any other name read returns a test allowlist, in every shape a
+  // mutant might parse, so reading one would let the test key sign.
+  const stub = JSON.stringify(STUB_KEYS);
+  const stray = [];
+  const env = new Proxy({ ...base }, {
+    get: (t, k) => {
+      if (typeof k !== 'string' || baseline.has(k)) return t[k];
+      stray.push(k);
+      return stub;
+    },
+    has: (t, k) => {
+      if (typeof k === 'string' && !baseline.has(k)) { stray.push(`in:${k}`); return true; }
+      return k in t;
+    },
+    ownKeys: (t) => {
+      if (!baseline.has('<ownKeys>')) stray.push('<ownKeys>');
+      return [...Reflect.ownKeys(t), 'QLX'];
+    },
+    getOwnPropertyDescriptor: (t, k) => (k === 'QLX' ? { value: stub, enumerable: true, configurable: true, writable: true } : Reflect.getOwnPropertyDescriptor(t, k)),
+  });
+  const signer = goodSigner();
+  const c = capture();
+  const r = await P.runProductionListSigner({
+    argv: applyArgs(s), env, buildFromLog: (d) => buildUnsignedV1FromLog(d), loadSigner: async () => signer, out: c.o, err: c.e,
+  });
+  assert.deepEqual(stray, [], `env names read outside the allowed set: ${stray.join(',')}`);
+  assert.deepEqual(r, { ok: false, reason: 'not_production_key' });
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
