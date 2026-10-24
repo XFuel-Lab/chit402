@@ -781,7 +781,7 @@ function kmsClient({ throttleTyped = false } = {}) {
 test('G15: the KMS signer sends the 66-byte preimage RAW + ECDSA_SHA_256; throttling gives no fixed head and the JWS head is unaffected', async () => {
   const saved = { ...process.env };
   process.env.ISSUER_SIGNER = 'kms';
-  process.env.ISSUER_KMS_KEY_ID = 'arn:aws:kms:us-east-1:000000000000:key/test';
+  process.env.ISSUER_KMS_KEY_ID = 'alias/chit402-fixed-head-test';
   process.env.ISSUER_KMS_REGION = 'us-east-1';
   try {
     const client = kmsClient();
