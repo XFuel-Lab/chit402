@@ -19,7 +19,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { computeJwkThumbprint, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { computeJwkThumbprint, ephemeralIssuerKid, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
 import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
@@ -200,21 +200,20 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   if (publicJwk && isProductionIssuerPublicKey(publicJwk, extra.keys)) {
     return { ok: false, reason: 'production_key' };
   }
-  // ISSUER_TEST_KEY is ignored here. Only a stub, an ephemeral key or a known
-  // test key signs. With no issuer key configured in either env (no
-  // ISSUER_PRIVATE_KEY, ISSUER_KID or ISSUER_KMS_KEY_ID), the only signers a
-  // process can have are an in-process ephemeral key or a test stub, and the
-  // production checks above already ran on its public key. Once any key is
-  // configured, every key this process could sign with must be a known test
-  // key (public-seed test keys, testIssuerKids): the signer's public key by
-  // its own thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in
-  // either env, and the key issuer-key loaded. An unlisted configured key,
-  // including a new production key not yet in PRODUCTION_ISSUER_PUBLIC_KEYS,
-  // never signs.
-  const configured = [env, process.env].some((e) => ['ISSUER_PRIVATE_KEY', 'ISSUER_KID', 'ISSUER_KMS_KEY_ID']
-    .some((name) => e?.[name] != null && String(e[name]).trim() !== ''));
-  if (!configured) return { ok: true };
+  // ISSUER_TEST_KEY is ignored here. Only two kinds of key sign: a known test
+  // key (testIssuerKids, derived from public seeds), or the ephemeral key that
+  // issuer-key.js generated in this process because no key material was set
+  // (ephemeralIssuerKid, recorded in issuer-key's own state, never read from
+  // env). A stub signer must use a known test key. Every check below runs on
+  // every call, whatever the env holds now: the signer's public key by its
+  // own thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in
+  // either env, and the key issuer-key loaded. So a key that was loaded or
+  // installed in-process and then had its env vars removed is still refused,
+  // and an unlisted key, including a new production key not yet in
+  // PRODUCTION_ISSUER_PUBLIC_KEYS, never signs.
   const testKids = testIssuerKids();
+  const ephemeral = ephemeralIssuerKid();
+  const allowed = (k) => testKids.has(k) || (ephemeral != null && k === ephemeral);
   if (publicJwk) {
     let thumb = null;
     try {
@@ -222,9 +221,9 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
     } catch {
       thumb = null;
     }
-    if (!thumb || !testKids.has(thumb)) return { ok: false, reason: 'not_test_key' };
+    if (!thumb || !allowed(thumb)) return { ok: false, reason: 'not_test_key' };
   }
-  if (kid != null && !testKids.has(String(kid))) return { ok: false, reason: 'not_test_key' };
+  if (kid != null && !allowed(String(kid))) return { ok: false, reason: 'not_test_key' };
   for (const e of [env, process.env]) {
     const material = e?.ISSUER_PRIVATE_KEY;
     if (material != null && String(material).trim() && !testKids.has(issuerMaterialKid(material))) {
@@ -234,7 +233,7 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
     if (configured && !testKids.has(configured)) return { ok: false, reason: 'not_test_key' };
   }
   const loaded = loadedIssuerKid();
-  if (loaded && !testKids.has(loaded)) return { ok: false, reason: 'not_test_key' };
+  if (loaded && !allowed(loaded)) return { ok: false, reason: 'not_test_key' };
   return { ok: true };
 }
 
@@ -271,6 +270,8 @@ export async function signQuarantineList(doc, { env = process.env } = {}) {
     publicJwk: active?.publicJwk ?? null,
   });
   if (!second.ok) throw guardError(second.reason);
+  // The guard judged the signer by the public key it reports, so it must report one.
+  if (!active?.publicJwk) throw guardError('no_public_key');
   const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
   if (kid !== active?.kid) throw guardError('signer_changed');
   return jcsRfc8785({

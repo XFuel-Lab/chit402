@@ -29,6 +29,9 @@ export { isCanonicalCompactEs256 };
 let _privateKey = null;
 let _publicKeyJwk = null;
 let _kid = null;
+// True when initIssuerKey generated the loaded key itself because no key
+// material was set. Module state only: no env var can set it.
+let _ephemeral = false;
 
 // PRODUCTION_ISSUER_KID (production-process.js) is the published api.chit402.com
 // issuer kid. Production uses it unless ISSUER_KID names another.
@@ -152,9 +155,20 @@ export function initIssuerKey() {
     use: 'sig',
   };
   _kid = kid;
+  _ephemeral = !envKey;
   noteLoadedIssuerKid(kid);
 
   return { privateKey: _privateKey, publicKeyJwk: _publicKeyJwk, kid: _kid };
+}
+
+/**
+ * The kid of the loaded key when initIssuerKey generated it in this process
+ * (no key material was set), otherwise null. Read by the quarantine list
+ * guard, which lets only this key or a known test key sign.
+ * @returns {string|null}
+ */
+export function ephemeralIssuerKid() {
+  return _ephemeral && _privateKey ? _kid : null;
 }
 
 /**
@@ -533,6 +547,7 @@ export function _resetIssuerKey() {
   _privateKey = null;
   _publicKeyJwk = null;
   _kid = null;
+  _ephemeral = false;
   noteLoadedIssuerKid(null);
   resetIssuerSigner();
 }
