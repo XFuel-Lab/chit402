@@ -23,6 +23,7 @@ import { getIssuerKid, signJwsAsync } from './issuer-key.js';
 import { bindSaltReceipt, requestDigest, requestSalt, saltReceiptId } from './request-binding.js';
 import { buildVerifyUrl } from './receipt.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
+import { testSwitchesOn } from './test-switch.js';
 
 export const LATE_HORIZON_MS = 24 * 60 * 60 * 1000;
 export const LATE_SKEW_MS = 120_000;
@@ -364,7 +365,7 @@ async function proveFinality(record, out, deps) {
 
 async function readSettlement(record, deps, reader) {
   const cfg = { ...(deps.cfg || {}) };
-  if (process.env.NODE_ENV !== 'test') {
+  if (!testSwitchesOn()) {
     delete cfg.chainReader;
     delete cfg.chainReader2;
     delete cfg.lateSigner;
@@ -390,7 +391,7 @@ async function readSettlement(record, deps, reader) {
       authorization: record.auth,
       expectedPayTo: record.payee,
       cfg,
-      chainReader: reader || (process.env.NODE_ENV === 'test' ? cfg.chainReader : null) || null,
+      chainReader: reader || (testSwitchesOn() ? cfg.chainReader : null) || null,
       // No pre-settle OK on this path. A paused network stays pending.
       ignorePause: false,
     });
@@ -402,7 +403,7 @@ async function readSettlement(record, deps, reader) {
 
 /** Test-only cfg hooks. Production reads RPC from cfg and never these fields. */
 function testHooks(cfg) {
-  if (process.env.NODE_ENV !== 'test' || !cfg || typeof cfg !== 'object') return {};
+  if (!testSwitchesOn() || !cfg || typeof cfg !== 'object') return {};
   const out = {};
   if (typeof cfg.lateSigner === 'function') out.signer = cfg.lateSigner;
   if (typeof cfg.lateAppendLog === 'function') out.appendLog = cfg.lateAppendLog;
@@ -414,7 +415,7 @@ function testHooks(cfg) {
 
 function readerOf(deps) {
   if (typeof deps.chainReader === 'function') return deps.chainReader;
-  if (process.env.NODE_ENV === 'test' && typeof deps.cfg?.chainReader === 'function') return deps.cfg.chainReader;
+  if (testSwitchesOn() && typeof deps.cfg?.chainReader === 'function') return deps.cfg.chainReader;
   return null;
 }
 
@@ -472,7 +473,7 @@ async function readChain(record, deps) {
   const primary = readerOf(deps);
   const secondary = typeof deps.chainReader2 === 'function'
     ? deps.chainReader2
-    : (process.env.NODE_ENV === 'test' && typeof cfg.chainReader2 === 'function' ? cfg.chainReader2 : null);
+    : (testSwitchesOn() && typeof cfg.chainReader2 === 'function' ? cfg.chainReader2 : null);
   const first = await proveFinality(hinted, await readSettlement(hinted, deps, primary), deps);
   const withTx = first?.tx || first?.transaction || hinted.tx_hint
     ? { ...first, tx: first?.tx || first?.transaction || hinted.tx_hint }
@@ -628,7 +629,7 @@ async function writeLateLedger(receipt, deps) {
     await deps.recordLedger(receipt);
     return;
   }
-  if (process.env.NODE_ENV === 'test') return;
+  if (testSwitchesOn()) return;
   const { recordLateIssueReceipt } = await import('./usage-settled.js');
   await recordLateIssueReceipt(receipt);
 }

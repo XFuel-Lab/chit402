@@ -189,6 +189,7 @@ import {
 import { buildPublicPullExport, isKnownPullExportSlug } from './public-pull-export.js';
 import { mountReceiptCheck } from './receipt-check.js';
 import { openCheckStats } from './receipt-check-stats.js';
+import { testSwitchesOn } from './test-switch.js';
 
 /**
  * XFuel M2M API Server — agent gateway for verifiable AI compute settlement.
@@ -1141,7 +1142,7 @@ export async function createApp() {
       alert: publicAttestationAlert,
     })
     : null;
-  if (publicAttestationWorker && process.env.NODE_ENV !== 'test') publicAttestationWorker.start();
+  if (publicAttestationWorker && !testSwitchesOn()) publicAttestationWorker.start();
   // Payer binding (RECEIPT_PAYER_BINDING_EIP712, default off). Private store
   // next to the other private task data; served only in the owner view.
   const payerBindingDir = payerBindingStoreDir({ env: process.env, persist: config.taskStore?.persist, agentsDir });
@@ -1165,7 +1166,7 @@ export async function createApp() {
       },
     })
     : null;
-  if (payerBindingWorker && process.env.NODE_ENV !== 'test') payerBindingWorker.start();
+  if (payerBindingWorker && !testSwitchesOn()) payerBindingWorker.start();
   setBookRowWrittenHook(async (entry) => {
     let leafAppended = false;
     let freshLeafHash = null;
@@ -6034,7 +6035,8 @@ export async function startServer() {
     throw err;
   }
   if (config.x402?.enabled) {
-    // MF4: only an exact test/development NODE_ENV may run without the durable store.
+    // MF4: only a non-production process (shared check: exact test/development
+    // NODE_ENV and no production or unlisted issuer key) may run without the durable store.
     const { storePath, required } = challengeStorePlan({
       nodeEnv: process.env.NODE_ENV,
       configured: config.x402.challengeStorePath,

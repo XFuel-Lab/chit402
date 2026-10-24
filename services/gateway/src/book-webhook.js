@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import logger from './logger.js';
 import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
+import { testSwitchesOn } from './test-switch.js';
 
 /** Signed envelope schema for treasury desk push. */
 export const BOOK_WEBHOOK_SCHEMA = 'chit402.book_webhook.v1';
@@ -114,7 +115,7 @@ export function validateWebhookUrl(url) {
   } catch {
     throw new Error('url must be a valid absolute URL');
   }
-  const isTest = process.env.NODE_ENV === 'test';
+  const isTest = testSwitchesOn();
   if (parsed.protocol === 'http:') {
     if (!isTest) throw new Error('url must use https');
   } else if (parsed.protocol !== 'https:') {

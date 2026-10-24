@@ -130,7 +130,7 @@ Vector. Terms:
 
 The same cap set to the decimal string `2000` hashes to `ecf4cdabe9b755e4776167429dcffb73e1f275994cda68f0e32d776cac925601`.
 
-Production boot (`NODE_ENV=production`) refuses to start unless `RECEIPT_POLICY_ID`, `RECEIPT_POLICY_VERSION`, `RECEIPT_POLICY_DISPUTE_WINDOW_SECONDS`, `RECEIPT_POLICY_RETENTION_DAYS`, and `RECEIPT_POLICY_RETENTION_MODE=compliance` are set. `RECEIPT_POLICY_MAX_CUMULATIVE_SPEND` is optional. Outside production, an empty config uses the dev defaults above. A partial config fails closed in every environment.
+Production boot refuses to start unless `RECEIPT_POLICY_ID`, `RECEIPT_POLICY_VERSION`, `RECEIPT_POLICY_DISPUTE_WINDOW_SECONDS`, `RECEIPT_POLICY_RETENTION_DAYS`, and `RECEIPT_POLICY_RETENTION_MODE=compliance` are set. `RECEIPT_POLICY_MAX_CUMULATIVE_SPEND` is optional. Outside production, an empty config uses the dev defaults above. A partial config fails closed in every environment. Production here is the gateway's shared production check: `NODE_ENV` unset or anything but `test`/`development`, or an issuer key that is not a known test key, even under `development`. Ops note: a launcher that starts the gateway with `NODE_ENV` unset now needs the `RECEIPT_POLICY_*` variables set, or boot refuses (the pm2 ecosystem file sets `NODE_ENV` explicitly).
 
 Boot and signing also refuse unless both of these hold:
 

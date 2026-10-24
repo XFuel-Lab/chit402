@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import logger from './logger.js';
+import { testSwitchesOn } from './test-switch.js';
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -50,7 +51,7 @@ export function capWindows(now = Date.now()) {
 export function resolveIssuanceCapPath(env = process.env) {
   const configured = String(env.ISSUER_CAP_DB || '').trim();
   if (configured) return configured;
-  if (String(env.NODE_ENV || '') === 'test') return ':memory:';
+  if (testSwitchesOn(env)) return ':memory:';
   return path.join(process.cwd(), '.data', 'issuer-sign-counts.sqlite');
 }
 
