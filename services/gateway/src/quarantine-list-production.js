@@ -321,6 +321,28 @@ export function pinArgs(doc) {
   return { entries: doc.entries.map(tuple), highWater: doc.high_water.map(tuple) };
 }
 
+/**
+ * lstat each component of the absolute path (a relative value is taken from
+ * the cwd, as the gateway would) and refuse any symlink as log_dir_symlink.
+ * A component that does not exist ends the walk; realDir refuses it next.
+ */
+function assertNoSymlinkComponent(value, label) {
+  const abs = path.resolve(value);
+  const { root } = path.parse(abs);
+  let cur = root;
+  for (const part of abs.slice(root.length).split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, part);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch (err) {
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return;
+      throw err;
+    }
+    if (st.isSymbolicLink()) refuse('log_dir_symlink', `${label} goes through a symlink at ${cur}; give the real path`);
+  }
+}
+
 function realDir(dir, reason = 'log_dir_mismatch') {
   let real;
   try {
@@ -395,6 +417,10 @@ async function runWith({
     if (!envLogDir) refuse('log_dir_env_unset', 'RECEIPT_LOG_DIR must be set to the directory the gateway serves; --log-dir alone is not accepted');
     const chosen = args.logDir || envLogDir;
     if (!path.isAbsolute(chosen)) refuse('usage', 'the log directory must be an absolute path');
+    // No symlink in any component of either value. Comparing resolved paths
+    // alone would accept a link that can be retargeted between runs.
+    assertNoSymlinkComponent(envLogDir, 'RECEIPT_LOG_DIR');
+    if (args.logDir) assertNoSymlinkComponent(args.logDir, '--log-dir');
     // Resolved once. Every later read and write uses this real path, never the
     // flag or env string, so a symlink retargeted mid-run cannot move v1 into
     // a directory other than the one checked here.

@@ -506,11 +506,14 @@ test('QP13: --log-dir and RECEIPT_LOG_DIR must name the same real directory when
   assert.equal(signer.calls.length, 0);
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
   assert.equal(fs.existsSync(listDirOf(other)), false);
-  // The same directory by another spelling (trailing slash, a symlink to it) is fine.
+  // The same directory by another spelling (trailing slash, a dot component) is fine.
+  r = await run(['--log-dir', s.logDir, '--list', s.file], { signer, env: { RECEIPT_LOG_DIR: `${path.dirname(s.logDir)}${path.sep}.${path.sep}${path.basename(s.logDir)}${path.sep}` } });
+  assert.equal(r.result.state, 'dry_run', r.err.join(' '));
+  // A symlink to it is not: see QP27.
   const link = path.join(tmp('qlprod-link-'), 'logdir');
   fs.symlinkSync(s.logDir, link);
   r = await run(['--log-dir', s.logDir, '--list', s.file], { signer, env: { RECEIPT_LOG_DIR: `${link}/` } });
-  assert.equal(r.result.state, 'dry_run', r.err.join(' '));
+  assert.deepEqual(r.result, { ok: false, reason: 'log_dir_symlink' });
   // RECEIPT_LOG_DIR alone is used when --log-dir is absent.
   r = await run(['--list', s.file], { signer, env: { RECEIPT_LOG_DIR: s.logDir } });
   assert.equal(r.result.state, 'dry_run', r.err.join(' '));
@@ -788,34 +791,24 @@ test('QP21: RECEIPT_LOG_DIR is required; --log-dir alone is refused as log_dir_e
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });
 
-test('QP22: the log directory is resolved once; a symlink retargeted after the check does not move v1', async () => {
+test('QP22: the log directory is resolved once; the log is built and v1 written from that one canonical path', async () => {
   for (const via of ['flag', 'env']) {
     const s = await setup();
     const real = fs.realpathSync(s.logDir);
-    const other = tmp('qlprod-retarget-');
-    fs.cpSync(s.logDir, other, { recursive: true });
-    const link = path.join(tmp('qlprod-cur-'), 'current');
-    fs.symlinkSync(s.logDir, link);
+    // A non-canonical spelling of the same directory (dot component, trailing slash).
+    const spelled = `${path.dirname(real)}${path.sep}.${path.sep}${path.basename(real)}${path.sep}`;
     const seen = [];
-    const buildFromLog = async (d) => {
-      // After the directory checks, before the write: point the link elsewhere.
-      seen.push(d);
-      fs.unlinkSync(link);
-      fs.symlinkSync(other, link);
-      return buildUnsignedV1FromLog(d);
-    };
+    const buildFromLog = async (d) => { seen.push(d); return buildUnsignedV1FromLog(d); };
     const argv = via === 'flag'
-      ? ['--log-dir', link, '--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM]
+      ? ['--log-dir', spelled, '--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM]
       : ['--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM];
-    const env = { RECEIPT_LOG_DIR: via === 'flag' ? s.logDir : link };
+    const env = { RECEIPT_LOG_DIR: via === 'flag' ? real : spelled };
     const r = await run(argv, { signer: goodSigner(), env, buildFromLog });
     assert.equal(r.result.state, 'written', `${via}: ${r.err.join(' ')}`);
     assert.deepEqual(seen, [real], `${via}: the log is built from the resolved path`);
     const v1 = path.join(listDirOf(real), 'v1.json');
     assert.ok(fs.existsSync(v1), via);
     assert.ok(r.out.includes(`FILE=${v1}`), `${via}: ${r.out.join(' ')}`);
-    assert.equal(fs.existsSync(listDirOf(other)), false, `${via}: nothing written through the retargeted link`);
-    assert.equal(fs.realpathSync(link), fs.realpathSync(other));
   }
   // RECEIPT_LOG_DIR alone naming a path that does not resolve.
   const s = await setup();
@@ -1031,4 +1024,45 @@ test('QP26: a quarantine-list directory swapped between the check and the link f
   ({ s } = await prepared());
   r = await run(applyArgs(s), { signer: goodSigner() });
   assert.equal(r.result.state, 'written', r.err.join(' '));
+});
+
+test('QP27: a symlink in any component of RECEIPT_LOG_DIR or --log-dir is refused as log_dir_symlink before anything is read', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const real = fs.realpathSync(s.logDir);
+  const signer = goodSigner();
+  const holder = tmp('qlprod-sym-');
+  const finalLink = path.join(holder, 'logdir');
+  fs.symlinkSync(real, finalLink);
+  // A link in the middle: <holder>/parent -> dirname(real), then basename(real).
+  const parentLink = path.join(holder, 'parent');
+  fs.symlinkSync(path.dirname(real), parentLink);
+  const midPath = path.join(parentLink, path.basename(real));
+  const cases = [
+    ['final link in the flag', ['--log-dir', finalLink], { RECEIPT_LOG_DIR: real }],
+    ['final link in the env', [], { RECEIPT_LOG_DIR: finalLink }],
+    ['final link in the env, real flag', ['--log-dir', real], { RECEIPT_LOG_DIR: finalLink }],
+    ['middle link in the flag', ['--log-dir', midPath], { RECEIPT_LOG_DIR: real }],
+    ['middle link in the env', [], { RECEIPT_LOG_DIR: midPath }],
+    ['middle link, trailing slash', ['--log-dir', `${midPath}${path.sep}`], { RECEIPT_LOG_DIR: real }],
+    ['both links', ['--log-dir', finalLink], { RECEIPT_LOG_DIR: midPath }],
+  ];
+  for (const [label, dirArgs, env] of cases) {
+    const r = await run([...dirArgs, '--list', s.file, '--list-sha256', s.hash, '--apply', '--confirm', CONFIRM], { signer, env });
+    assert.deepEqual(r.result, { ok: false, reason: 'log_dir_symlink' }, `${label}: ${r.err.join(' ')}`);
+    assert.ok(!r.out.some((l) => l.startsWith('LIST_SHA256=')), `${label}: refused before the input is read`);
+    assert.equal(r.loads.length, 0, `${label}: the signer is never loaded`);
+    assert.ok(/refused: log_dir_symlink\. (RECEIPT_LOG_DIR|--log-dir) goes through a symlink at /.test(r.err.join('\n')), r.err.join('\n'));
+  }
+  // The real path itself is accepted.
+  const ok = await run(['--log-dir', real, '--list', s.file], { signer, env: { RECEIPT_LOG_DIR: real } });
+  assert.equal(ok.result.state, 'dry_run', ok.err.join(' '));
+  // The real script, production env, RECEIPT_LOG_DIR through a symlink.
+  const env = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid, RECEIPT_LOG_DIR: finalLink };
+  delete env.NODE_ENV;
+  delete env.ISSUER_TEST_KEY;
+  const out = spawnSync(process.execPath, [NEW_SCRIPT, '--log-dir', finalLink, '--list', s.file], { env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(out.status, 1, out.stderr);
+  assert.ok(/refused: log_dir_symlink/.test(out.stderr), out.stderr);
+  assert.equal(signer.calls.length, 0);
+  assert.equal(fs.existsSync(listDirOf(real)), false);
 });
