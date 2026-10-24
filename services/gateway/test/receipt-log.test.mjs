@@ -11,6 +11,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
 const { acquireReceiptLogLock, _releaseReceiptLogLocksForTest } = await import('../src/receipt-log-lock.js');
@@ -2540,7 +2541,7 @@ test('rebuild with a configured key still refuses a book that is not epoch 1', (
     task_id: 'xfuel-39af100b-23dd-4d86-a16b-4556ca6796af',
     row_hash: 'not-the-historical-row',
   }) + '\n');
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const env = { ...process.env, ISSUER_PRIVATE_KEY: Buffer.from(pem).toString('base64') };
   const out = spawnSync(process.execPath, [
@@ -2980,7 +2981,7 @@ function restoreEnv(name, previous) {
 }
 
 function throwawayIssuer() {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = nextTestIssuerKey();
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const jwk = publicKey.export({ format: 'jwk' });
   return {

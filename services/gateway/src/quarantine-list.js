@@ -173,6 +173,9 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   if (kmsSetting(env) || kmsSetting(process.env)) return { ok: false, reason: 'kms_signer' };
   if (signerKind != null && String(signerKind).toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
   if (kid != null && kid === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
+  for (const e of [env, process.env]) {
+    if (String(e?.ISSUER_KID || '').trim() === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
+  }
   if (publicJwk && isProductionIssuerPublicKey(publicJwk, historyExtraKeys(env, process.env))) {
     return { ok: false, reason: 'production_key' };
   }

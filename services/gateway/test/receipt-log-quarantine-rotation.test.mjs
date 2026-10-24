@@ -10,6 +10,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 const { ReceiptMerkleTree, resetReceiptMerkleTree, rootOf } = await import('../src/receipt-merkle.js');
 const { epochRootOf } = await import('../src/receipt-log-epoch.js');
@@ -17,7 +18,7 @@ const { readReceiptLog, appendJournal } = await import('../src/receipt-log-store
 const { signJws, getIssuerPublicKeyJwk, _resetIssuerKey } = await import('../src/issuer-key.js');
 
 const hex = (b) => Buffer.from(b).toString('hex');
-const pem = () => Buffer.from(crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+const pem = () => Buffer.from(nextTestIssuerKey()
   .privateKey.export({ format: 'pem', type: 'pkcs8' })).toString('base64');
 const KEY_A = pem();
 const KEY_B = pem();

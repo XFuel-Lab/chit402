@@ -9,6 +9,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import pino from 'pino';
+import { nextTestIssuerKey } from './helpers/test-issuer-keys.mjs';
 
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.TASK_STORE_PERSIST = 'false';
@@ -91,7 +92,7 @@ function restoreEnv(prev) {
 }
 
 function useStableKey() {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey, publicKey } = nextTestIssuerKey();
   process.env.ISSUER_PRIVATE_KEY = Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64');
   process.env.ISSUER_KID = computeJwkThumbprint(publicKey.export({ format: 'jwk' }));
   process.env.ISSUER_KEY_NOT_BEFORE = '2026-09-04T08:52:05Z';

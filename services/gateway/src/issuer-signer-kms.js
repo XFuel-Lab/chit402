@@ -7,6 +7,7 @@ import { GetPublicKeyCommand, SignCommand } from '@aws-sdk/client-kms';
 import { computeJwkThumbprint } from './issuer-key.js';
 import { derToJose, lowS } from './ecdsa-der.js';
 import { assertSignerInput } from './issuer-signer-guard.js';
+import { isProductionProcess } from './production-process.js';
 
 const RAW_LIMIT = 4096;
 
@@ -51,7 +52,8 @@ function assertPublicKey(out, env) {
   const { key, publicJwk } = publicJwkFromSpki(der);
   const kid = computeJwkThumbprint(publicJwk);
   const configured = String(env.ISSUER_KID || '').trim();
-  const production = env.NODE_ENV !== 'test' && env.NODE_ENV !== 'development';
+  // Shared production check: NODE_ENV, KMS itself, a set ISSUER_KID, or a production key.
+  const production = isProductionProcess(env);
   if (production && !configured) throw coded('issuer kid does not match the configured kid', 'issuer_kid_mismatch');
   if (configured && kid !== configured) throw coded('issuer kid does not match the configured kid', 'issuer_kid_mismatch');
   return { key, publicJwk, kid };
