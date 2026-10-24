@@ -6,7 +6,7 @@
  * It is same-host only and has no pid file or reclaim. Production never
  * publishes a tree head from a log that is not durable.
  */
-import { test } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { mkdtempSync } from 'node:fs';
@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 const {
   acquireReceiptLogLock,
   holdsReceiptLogLock,
+  verifyReceiptLogLock,
+  FLOCK_BIN,
   RECEIPT_LOG_LOCK_FILE,
   _releaseReceiptLogLocksForTest,
 } = await import('../src/receipt-log-lock.js');
@@ -25,6 +27,8 @@ const {
   ReceiptMerkleTree,
   bootReceiptLog,
   receiptLogSigningReady,
+  receiptLogHeadReady,
+  readReceiptLogPin,
   resetReceiptMerkleTree,
 } = await import('../src/receipt-merkle.js');
 const { _setIssuerSignerForTest } = await import('../src/issuer-signer.js');
@@ -35,24 +39,51 @@ function tmp() {
   return mkdtempSync(join(tmpdir(), 'chit-single-writer-'));
 }
 
+const children = new Set();
+const WAIT_MS = 10_000;
+
+/** Kill every child a test started, even when the test failed or timed out. */
+async function killChildren() {
+  const waits = [];
+  for (const child of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    waits.push(waitExit(child));
+  }
+  children.clear();
+  await Promise.all(waits);
+}
+afterEach(killChildren);
+after(killChildren);
+
 /** Start a child that takes the lock, prints LOCKED or the reason, then waits. */
-function holder(dir, extra = '') {
+function holder(dir, extra = '', { env = process.env, opts = null } = {}) {
   const code = `
     import { acquireReceiptLogLock } from ${JSON.stringify(lockModule)};
-    const r = acquireReceiptLogLock(${JSON.stringify(dir)});
+    const r = acquireReceiptLogLock(${JSON.stringify(dir)}${opts ? `, ${JSON.stringify(opts)}` : ''});
     process.stdout.write((r.held ? 'LOCKED' : r.reason) + '\\n');
     ${extra}
     setInterval(() => {}, 1000);
   `;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'], env });
+  children.add(child);
   const ready = new Promise((resolve, reject) => {
     let out = '';
+    const timer = setTimeout(() => reject(new Error('holder did not report within the timeout')), WAIT_MS);
     child.stdout.on('data', (b) => {
       out += String(b);
-      if (out.includes('\n')) resolve(out.trim());
+      if (out.includes('\n')) {
+        clearTimeout(timer);
+        resolve(out.trim());
+      }
     });
-    child.on('error', reject);
-    child.on('exit', (c) => resolve(`exit:${c}`));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('exit', (c) => {
+      clearTimeout(timer);
+      resolve(`exit:${c}`);
+    });
   });
   return { child, ready };
 }
@@ -60,7 +91,11 @@ function holder(dir, extra = '') {
 function waitExit(child) {
   return new Promise((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve();
-    child.on('exit', () => resolve());
+    const timer = setTimeout(resolve, WAIT_MS);
+    child.on('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
   });
 }
 
@@ -76,9 +111,13 @@ function withEnv(vars, fn) {
     });
 }
 
-const hasFlock = spawnSync('flock', ['--version'], { stdio: 'ignore' }).status === 0;
+const hasFlock = process.platform !== 'win32' && fs.existsSync(FLOCK_BIN)
+  && spawnSync(FLOCK_BIN, ['--version'], { stdio: 'ignore', timeout: 5000 }).status === 0;
+/** Every test fails fast instead of hanging. */
+const T = { skip: !hasFlock, timeout: 30_000 };
+const T_ANY = { timeout: 30_000 };
 
-test('M12: a second process on the same log directory is refused while the first holds it', { skip: !hasFlock }, async () => {
+test('M12: a second process on the same log directory is refused while the first holds it', T, async () => {
   const dir = tmp();
   const a = holder(dir);
   assert.equal(await a.ready, 'LOCKED');
@@ -97,7 +136,7 @@ test('M12: a second process on the same log directory is refused while the first
   }
 });
 
-test('M12: the kernel releases the lock when the holder dies, with no pid file or reclaim step', { skip: !hasFlock }, async () => {
+test('M12: the kernel releases the lock when the holder dies, with no pid file or reclaim step', T, async () => {
   const dir = tmp();
   const a = holder(dir);
   assert.equal(await a.ready, 'LOCKED');
@@ -111,7 +150,7 @@ test('M12: the kernel releases the lock when the holder dies, with no pid file o
   await waitExit(b.child);
 });
 
-test('M22: a lock file left on disk by a dead process does not block, and content is never used to reclaim', { skip: !hasFlock }, async () => {
+test('M22: a lock file left on disk by a dead process does not block, and content is never used to reclaim', T, async () => {
   const dir = tmp();
   fs.writeFileSync(join(dir, RECEIPT_LOG_LOCK_FILE), '999999\n');
   const a = holder(dir);
@@ -126,7 +165,7 @@ test('M22: a lock file left on disk by a dead process does not block, and conten
   await waitExit(b.child);
 });
 
-test('M12: the lock is not inherited by other child processes of the holder', { skip: !hasFlock }, async () => {
+test('M12: the lock is not inherited by other child processes of the holder', T, async () => {
   const dir = tmp();
   const extra = "import('node:child_process').then(({ spawn }) => spawn('sleep', ['30'], { stdio: 'ignore', detached: true }).unref());";
   const a = holder(dir, extra);
@@ -139,7 +178,7 @@ test('M12: the lock is not inherited by other child processes of the holder', { 
   await waitExit(b.child);
 });
 
-test('M12: the same process reuses its own lock for the same directory', { skip: !hasFlock }, () => {
+test('M12: the same process reuses its own lock for the same directory', T, () => {
   const dir = tmp();
   const first = acquireReceiptLogLock(dir);
   assert.equal(first.held, true);
@@ -151,7 +190,7 @@ test('M12: the same process reuses its own lock for the same directory', { skip:
   assert.equal(holdsReceiptLogLock(dir), false);
 });
 
-test('M12: production refuses boot when the lock cannot be taken; test env warns and is not signing-ready', async () => {
+test('M12: production refuses boot when the lock cannot be taken; test env warns and is not signing-ready', T_ANY, async () => {
   const dir = tmp();
   await withEnv({ NODE_ENV: 'production', ANCHOR_MAX_FEE_WEI: '1000000000', ANCHOR_MAX_PRIORITY_WEI: '1000000' }, () => {
     assert.throws(
@@ -168,7 +207,7 @@ test('M12: production refuses boot when the lock cannot be taken; test env warns
   });
 });
 
-test('M13: signing readiness needs durable + boot enabled + no fresh genesis + pin verified + lock held', { skip: !hasFlock }, async () => {
+test('M13: signing readiness needs durable + boot enabled + no fresh genesis + pin verified + lock held', T, async () => {
   await withEnv({ RECEIPT_LOG_BOOT: undefined, RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, () => {
     assert.deepEqual(receiptLogSigningReady(null), { ok: false, reason: 'log_not_durable' });
     const memory = new ReceiptMerkleTree();
@@ -197,7 +236,7 @@ test('M13: signing readiness needs durable + boot enabled + no fresh genesis + p
   });
 });
 
-test('M13: a boot that skips the pin (pin unset or fresh genesis) never marks the log pin-verified', { skip: !hasFlock }, async () => {
+test('M13: a boot that skips the pin (pin unset or fresh genesis) never marks the log pin-verified', T, async () => {
   await withEnv({ NODE_ENV: 'test' }, () => {
     const dir = tmp();
     const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
@@ -221,7 +260,7 @@ function countingSigner() {
   return { signer, calls };
 }
 
-test('M13: production never publishes a tree head from a non-durable (RECEIPT_LOG_BOOT=0) tree', async () => {
+test('M13: production never publishes a tree head from a non-durable (RECEIPT_LOG_BOOT=0) tree', T_ANY, async () => {
   const { signer, calls } = countingSigner();
   await withEnv({ NODE_ENV: 'production', RECEIPT_LOG_BOOT: '0' }, async () => {
     _setIssuerSignerForTest(signer);
@@ -235,6 +274,216 @@ test('M13: production never publishes a tree head from a non-durable (RECEIPT_LO
       assert.equal(calls.n, 0, 'the issuer signer is never called');
     } finally {
       _setIssuerSignerForTest(null);
+    }
+  });
+});
+
+const backfillScript = fileURLToPath(new URL('../scripts/backfill-receipt-log.mjs', import.meta.url));
+const gatewayDir = fileURLToPath(new URL('..', import.meta.url));
+const PROD_ENV = { NODE_ENV: 'production', ANCHOR_MAX_FEE_WEI: '1000000000', ANCHOR_MAX_PRIORITY_WEI: '1000000' };
+
+function snapshotDir(dir) {
+  const out = {};
+  for (const name of fs.readdirSync(dir).sort()) {
+    const p = join(dir, name);
+    if (fs.statSync(p).isFile()) out[name] = fs.readFileSync(p).toString('base64');
+  }
+  return out;
+}
+
+/** A small durable log made in this process (test env, fresh genesis), lock released afterwards. */
+async function makeLog() {
+  const dir = tmp();
+  await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, async () => {
+    const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
+    await tree.appendReceipt('task-a', 'aa'.repeat(32), { publish: false });
+  });
+  _releaseReceiptLogLocksForTest();
+  return dir;
+}
+
+test('MF-1: backfill --apply is refused with log_locked while another process holds the lock, and the log is unchanged', T, async () => {
+  const dir = await makeLog();
+  const jsonl = join(tmp(), 'usage-settled.jsonl');
+  fs.writeFileSync(jsonl, `${JSON.stringify({ task_id: 'task-b', agent_id: 'a1', row_hash: 'bb'.repeat(32) })}\n`);
+  const before = snapshotDir(dir);
+  const a = holder(dir);
+  assert.equal(await a.ready, 'LOCKED');
+  const env = { ...process.env, NODE_ENV: 'test' };
+  delete env.ISSUER_PRIVATE_KEY;
+  const run = spawnSync(process.execPath, [backfillScript, '--jsonl', jsonl, '--dir', dir, '--apply'], {
+    cwd: gatewayDir,
+    env,
+    encoding: 'utf8',
+    timeout: 20_000,
+  });
+  assert.equal(run.error, undefined);
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /REFUSED: log_locked/);
+  assert.deepEqual(snapshotDir(dir), before, 'journal and leaves are unchanged');
+});
+
+test('MF-1: a tree opened with load() and no lock cannot append in production (log_not_locked)', T, async () => {
+  const dir = await makeLog();
+  const before = snapshotDir(dir);
+  const tree = new ReceiptMerkleTree();
+  tree.load(dir);
+  const size = tree.leaves.length;
+  await withEnv(PROD_ENV, async () => {
+    await assert.rejects(tree.appendReceipt('task-c', 'cc'.repeat(32), { publish: false }), (err) => err.code === 'log_not_locked');
+  });
+  assert.equal(tree.leaves.length, size);
+  assert.deepEqual(snapshotDir(dir), before);
+});
+
+for (const how of ['deleted', 'renamed']) {
+  test(`lock: when the lock file is ${how} while held, the next append fails closed (log_lock_lost)`, T, async () => {
+    const dir = tmp();
+    await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, async () => {
+      const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
+      await tree.appendReceipt('task-a', 'aa'.repeat(32), { publish: false });
+      assert.deepEqual(verifyReceiptLogLock(dir), { ok: true });
+      const lockPath = join(dir, RECEIPT_LOG_LOCK_FILE);
+      if (how === 'deleted') fs.unlinkSync(lockPath);
+      else {
+        fs.renameSync(lockPath, `${lockPath}.old`);
+        fs.writeFileSync(lockPath, '');
+      }
+      // Another process can now lock the new path, so this writer must stop.
+      const b = holder(dir);
+      assert.equal(await b.ready, 'LOCKED');
+      const before = snapshotDir(dir);
+      const size = tree.leaves.length;
+      assert.deepEqual(verifyReceiptLogLock(dir), { ok: false, reason: 'log_lock_lost' });
+      assert.equal(holdsReceiptLogLock(dir), false);
+      await assert.rejects(tree.appendReceipt('task-b', 'bb'.repeat(32), { publish: false }), (err) => err.code === 'log_lock_lost');
+      assert.equal(tree.leaves.length, size);
+      assert.deepEqual(snapshotDir(dir), before, 'nothing written after the lock was lost');
+      assert.equal(acquireReceiptLogLock(dir).reason, 'log_lock_lost', 'the same process does not silently re-lock');
+      assert.equal(receiptLogHeadReady(tree).ok, false);
+      _releaseReceiptLogLocksForTest();
+    });
+  });
+}
+
+test('lock: flock runs from /usr/bin/flock only; a fake flock earlier on PATH is ignored, and a fake binary fails the probe', T, async () => {
+  const dir = tmp();
+  const bin = tmp();
+  const fake = join(bin, 'flock');
+  fs.writeFileSync(fake, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const a = holder(dir);
+  assert.equal(await a.ready, 'LOCKED');
+  const b = holder(dir, '', { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(await b.ready, 'log_locked', 'PATH is not used to find flock');
+  await killChildren();
+
+  const viaFake = acquireReceiptLogLock(tmp(), { flockBin: fake });
+  assert.equal(viaFake.held, false);
+  assert.equal(viaFake.reason, 'log_lock_unavailable');
+  assert.equal(viaFake.cause.error, 'lock_probe_failed', 'a helper that locks nothing fails the second-open probe');
+
+  const relative = acquireReceiptLogLock(tmp(), { flockBin: 'flock' });
+  assert.equal(relative.reason, 'log_lock_unavailable');
+  assert.equal(relative.cause.error, 'flock_not_absolute');
+});
+
+test('lock: log_lock_unavailable carries the cause (error code, status, signal)', T_ANY, () => {
+  const dir = tmp();
+  const r = acquireReceiptLogLock(dir, { flockBin: join(dir, 'no-such-flock') });
+  assert.equal(r.reason, 'log_lock_unavailable');
+  assert.equal(r.cause.error, 'ENOENT');
+  assert.ok(Object.prototype.hasOwnProperty.call(r.cause, 'status'));
+  assert.ok(Object.prototype.hasOwnProperty.call(r.cause, 'signal'));
+});
+
+test('lock: a symlinked lock file is refused and its target is not created or locked', T, () => {
+  const dir = tmp();
+  const outside = join(tmp(), 'target.lock');
+  fs.symlinkSync(outside, join(dir, RECEIPT_LOG_LOCK_FILE));
+  const r = acquireReceiptLogLock(dir);
+  assert.equal(r.held, false);
+  assert.equal(r.reason, 'log_lock_unavailable');
+  assert.equal(r.cause.error, 'lock_symlink');
+  assert.equal(fs.existsSync(outside), false, 'a dangling symlink target is not created');
+  fs.writeFileSync(outside, '');
+  const r2 = acquireReceiptLogLock(dir);
+  assert.equal(r2.cause.error, 'lock_symlink');
+  assert.equal(holdsReceiptLogLock(dir), false);
+});
+
+test('pin: in production a missing RECEIPT_LOG_PIN_FILE refuses boot and signing; outside production it reads as unset', T, async () => {
+  const missing = join(tmp(), 'no-pin.json');
+  await withEnv({ ...PROD_ENV, RECEIPT_LOG_PIN_FILE: missing }, () => {
+    assert.throws(() => readReceiptLogPin(), (err) => err.code === 'pin_missing');
+    const dir = tmp();
+    assert.throws(() => bootReceiptLog(dir, { allowFreshGenesis: true }), (err) => err.code === 'pin_missing');
+    _releaseReceiptLogLocksForTest();
+    const dir2 = tmp();
+    assert.throws(() => bootReceiptLog(dir2, { pin: null, allowFreshGenesis: true }), (err) => err.code === 'pin_missing');
+    _releaseReceiptLogLocksForTest();
+  });
+  await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_PIN_FILE: missing }, () => {
+    assert.equal(readReceiptLogPin(), null);
+  });
+});
+
+test('head path: production publishes a head only from a durable, pin-checked, locked log', T, async () => {
+  const { signer, calls } = countingSigner();
+  const dir = tmp();
+  await withEnv({ ...PROD_ENV, RECEIPT_LOG_BOOT: undefined }, async () => {
+    _setIssuerSignerForTest(signer);
+    try {
+      const tree = new ReceiptMerkleTree();
+      tree.durable = true;
+      tree.dir = dir;
+      tree.pinVerified = false;
+      tree.allowFreshGenesis = false;
+      assert.deepEqual(receiptLogHeadReady(tree), { ok: false, reason: 'pin_unverified' });
+      assert.equal(await tree.publishHead({ force: true }), null);
+      tree.pinVerified = true;
+      assert.deepEqual(receiptLogHeadReady(tree), { ok: false, reason: 'log_lock_missing' });
+      assert.equal(await tree.publishHead({ force: true }), null);
+      assert.equal(calls.n, 0, 'the issuer signer is never called');
+      assert.equal(tree.heads.length, 0);
+      assert.equal(acquireReceiptLogLock(dir).held, true);
+      assert.deepEqual(receiptLogHeadReady(tree), { ok: true });
+      assert.deepEqual(receiptLogSigningReady(tree, {}), { ok: true }, 'the stricter gate builds on the head gate');
+    } finally {
+      _setIssuerSignerForTest(null);
+      _releaseReceiptLogLocksForTest();
+    }
+  });
+});
+
+test('closed epoch head signed on read: production refuses unless durable, pin-checked and locked', T, async () => {
+  const { signer, calls } = countingSigner();
+  const dir = tmp();
+  await withEnv({ ...PROD_ENV, RECEIPT_LOG_BOOT: undefined }, async () => {
+    _setIssuerSignerForTest(signer);
+    let touched = 0;
+    const pin = new Proxy({}, { get() { touched += 1; return undefined; } });
+    try {
+      const tree = new ReceiptMerkleTree();
+      tree.closedEpochs = [{ epoch: 1, leaves: [Buffer.alloc(32, 1)] }];
+      assert.equal(await tree.signedClosedEpochHead(1, pin), null);
+      tree.durable = true;
+      tree.dir = dir;
+      tree.pinVerified = false;
+      assert.equal(await tree.signedClosedEpochHead(1, pin), null);
+      tree.pinVerified = true;
+      assert.equal(await tree.signedClosedEpochHead(1, pin), null);
+      assert.equal(touched, 0, 'refused before the pin or the signer is used');
+      assert.equal(calls.n, 0);
+      assert.equal(acquireReceiptLogLock(dir).held, true);
+      try {
+        await tree.signedClosedEpochHead(1, pin);
+      } catch {
+        // The fake pin has no anchors; only reaching it matters here.
+      }
+      assert.ok(touched > 0, 'a ready log goes on to the pinned anchor check');
+    } finally {
+      _setIssuerSignerForTest(null);
+      _releaseReceiptLogLocksForTest();
     }
   });
 });

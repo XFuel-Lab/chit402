@@ -6,11 +6,12 @@
  *   node scripts/sign-quarantine-list.mjs --log-dir "$RECEIPT_LOG_DIR"
  *   node scripts/sign-quarantine-list.mjs --log-dir "$RECEIPT_LOG_DIR" --apply --confirm YES
  *
- * Signing refuses a production environment (NODE_ENV unset or not
- * test/development), ISSUER_SIGNER=kms, or the production kid, unless BOTH
- * QUARANTINE_SIGN_ALLOW_PRODUCTION=1 and --allow-production-issuer are given.
- * --apply --confirm YES alone never signs with the production key. Never
- * point a test or rehearsal run at the real key.
+ * Signing always refuses a production environment (NODE_ENV unset or not
+ * test/development), ISSUER_SIGNER=kms or an active KMS signer, and the
+ * production kid. No flag or env var overrides that. Only a stub or test
+ * signer signs here. Signing list v1 with the production issuer is a later,
+ * separately reviewed host step. Never point a test or rehearsal run at the
+ * real key.
  *
  * Reads the receipt log read-only (no lock, no journal write). Every
  * quarantined head must already carry a quarantine_ack in the journal.
@@ -50,10 +51,10 @@ if (!logDir) fail('--log-dir or RECEIPT_LOG_DIR is required');
 const apply = process.argv.includes('--apply');
 if (apply && arg('--confirm') !== 'YES') fail('--apply needs --confirm YES');
 if (apply) {
-  // Before reading the log: a production or KMS issuer needs both allows.
-  const guard = quarantineSignGuard({ env: process.env, argv: process.argv });
+  // Before reading the log: production, KMS and the production kid are always refused.
+  const guard = quarantineSignGuard({ env: process.env });
   if (!guard.ok) {
-    fail(`refused: ${guard.reason}. Signing with a production or KMS issuer needs QUARANTINE_SIGN_ALLOW_PRODUCTION=1 and --allow-production-issuer.`);
+    fail(`refused: ${guard.reason}. This script signs only with a stub or test signer; there is no override.`);
   }
 }
 
@@ -139,7 +140,7 @@ if (!apply) {
 }
 let bytes;
 try {
-  bytes = await signQuarantineList(doc, { env: process.env, argv: process.argv });
+  bytes = await signQuarantineList(doc, { env: process.env });
 } catch (err) {
   if (err?.code === 'quarantine_sign_refused') fail(`refused: ${err.reason}. Nothing signed or written.`);
   throw err;

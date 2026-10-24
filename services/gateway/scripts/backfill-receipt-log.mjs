@@ -15,6 +15,9 @@
  *     --dir .data/receipt-log
  *   node scripts/backfill-receipt-log.mjs --jsonl ... --dir ... --apply
  *
+ * --apply takes the receipt log directory lock before it reads the log and
+ * refuses with log_locked while the server or another writer holds it.
+ *
  * Loads `.env` the same way the server does. A directory with no journal
  * exits before planning, so a missing file is not reported as
  * epoch1_has_no_receipt_leaf.
@@ -30,6 +33,7 @@ import {
   verifyJwsWithJwks,
 } from '../src/issuer-key.js';
 import { ReceiptMerkleTree } from '../src/receipt-merkle.js';
+import { acquireReceiptLogLock } from '../src/receipt-log-lock.js';
 import { planReceiptBackfill } from '../src/receipt-log-anchor.js';
 import { EPOCH_RECORD_JWT_TYP, epochRecordWithUnlogged } from '../src/receipt-log-epoch.js';
 import { JOURNAL_NAME, appendSignedEpochRecord } from '../src/receipt-log-store.js';
@@ -58,6 +62,18 @@ const journalPath = path.join(abs, JOURNAL_NAME);
 if (!fs.existsSync(journalPath)) {
   console.error(`REFUSED: no journal at ${abs}`);
   process.exit(1);
+}
+
+// --apply writes the journal, so it takes the same single-writer lock as the
+// server before it reads the log. A running server (or another backfill)
+// on this directory refuses it with log_locked. The lock is held until exit.
+if (apply) {
+  const lock = acquireReceiptLogLock(abs);
+  if (!lock.held) {
+    const cause = lock.cause ? ` ${JSON.stringify(lock.cause)}` : '';
+    console.error(`REFUSED: ${lock.reason}${cause}. Stop the process that holds ${lock.file} first.`);
+    process.exit(1);
+  }
 }
 
 const tree = new ReceiptMerkleTree();

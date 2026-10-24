@@ -130,50 +130,47 @@ export function buildQuarantineList({ entries, highWater, prevBytes = null }) {
   };
 }
 
-/** Env var and flag that must BOTH be present to sign with a production or KMS issuer. */
-export const QUARANTINE_SIGN_ALLOW_ENV = 'QUARANTINE_SIGN_ALLOW_PRODUCTION';
-export const QUARANTINE_SIGN_ALLOW_FLAG = '--allow-production-issuer';
-
 /**
- * Which issuer the list may be signed with. A production environment
- * (NODE_ENV unset or anything but test/development), the KMS signer, or the
- * production kid is refused unless QUARANTINE_SIGN_ALLOW_PRODUCTION=1 AND
- * --allow-production-issuer are both given. --apply --confirm YES is not an
- * allow.
- * @param {{ env?: NodeJS.ProcessEnv, argv?: string[], kid?: string|null }} [opts]
- * @returns {{ ok: true, allowed: boolean } | { ok: false, reason: string }}
+ * Which issuer the list may be signed with. Only a stub or test signer: a
+ * production environment (NODE_ENV unset or anything but test/development),
+ * the KMS signer (ISSUER_SIGNER=kms or an active KMS signer), and the
+ * production kid are always refused. There is no override of any kind:
+ * --apply --confirm YES, extra flags and extra env vars change nothing.
+ * Signing list v1 with the production issuer is a later, separately reviewed
+ * host step, not this script.
+ * @param {{ env?: NodeJS.ProcessEnv, kid?: string|null, signerKind?: string|null }} [opts]
+ * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function quarantineSignGuard({ env = process.env, argv = process.argv, kid = null } = {}) {
-  const allowed = env[QUARANTINE_SIGN_ALLOW_ENV] === '1' && Array.isArray(argv) && argv.includes(QUARANTINE_SIGN_ALLOW_FLAG);
-  let reason = null;
+export function quarantineSignGuard({ env = process.env, kid = null, signerKind = null } = {}) {
   // null, not undefined: an unset NODE_ENV must not fall back to this process's value.
-  if (isProductionIssuerEnv(env.NODE_ENV ?? null)) reason = 'production_env';
-  else if (String(env.ISSUER_SIGNER || '').trim().toLowerCase() === 'kms') reason = 'kms_signer';
-  else if (kid != null && kid === PRODUCTION_ISSUER_KID) reason = 'production_kid';
-  if (reason && !allowed) return { ok: false, reason };
-  return { ok: true, allowed: Boolean(reason) };
+  if (isProductionIssuerEnv(env.NODE_ENV ?? null)) return { ok: false, reason: 'production_env' };
+  if (String(env.ISSUER_SIGNER || '').trim().toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
+  if (signerKind != null && String(signerKind).toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
+  if (kid != null && kid === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
+  return { ok: true };
 }
 
 function guardError(reason) {
-  const err = new Error(`quarantine list signing refused (${reason}); a production or KMS issuer needs ${QUARANTINE_SIGN_ALLOW_ENV}=1 and ${QUARANTINE_SIGN_ALLOW_FLAG}`);
+  const err = new Error(`quarantine list signing refused (${reason}); only a stub or test signer may sign here`);
   err.code = 'quarantine_sign_refused';
   err.reason = reason;
   return err;
 }
 
 /**
- * Sign with the active issuer signer (JWS path). Ops script only. Refuses a
- * production or KMS issuer unless both allows are given (quarantineSignGuard),
- * checked before the signer is created and again on its kid.
+ * Sign with the active issuer signer (JWS path). Ops script and tests only.
+ * Always refuses a production environment, the KMS signer and the production
+ * kid (quarantineSignGuard), checked before the signer is created and again
+ * on the active signer's kind and kid. No override exists.
  * @param {object} doc from buildQuarantineList
- * @param {{ env?: NodeJS.ProcessEnv, argv?: string[] }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv }} [opts]
  * @returns {Promise<string>} stored bytes
  */
-export async function signQuarantineList(doc, { env = process.env, argv = process.argv } = {}) {
-  const first = quarantineSignGuard({ env, argv });
+export async function signQuarantineList(doc, { env = process.env } = {}) {
+  const first = quarantineSignGuard({ env });
   if (!first.ok) throw guardError(first.reason);
   const active = peekIssuerSigner() || await (await import('./issuer-signer.js')).initIssuerSigner(env);
-  const second = quarantineSignGuard({ env, argv, kid: active?.kid ?? null });
+  const second = quarantineSignGuard({ env, kid: active?.kid ?? null, signerKind: active?.kind ?? null });
   if (!second.ok) throw guardError(second.reason);
   const { jws, kid } = await signJwsAsync(quarantineListClaims(doc), { typ: QUARANTINE_LIST_TYP });
   if (kid !== active?.kid) throw guardError('signer_changed');

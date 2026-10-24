@@ -13,6 +13,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const gatewayRoot = fileURLToPath(new URL('..', import.meta.url));
+const { acquireReceiptLogLock, _releaseReceiptLogLocksForTest } = await import('../src/receipt-log-lock.js');
+
+/** Production writes the journal only while holding the directory lock. */
+function lockedDir(dir) {
+  const lock = acquireReceiptLogLock(dir);
+  assert.equal(lock.held, true, `receipt log lock for ${dir}: ${lock.reason}`);
+  return dir;
+}
 
 const {
   ReceiptMerkleTree,
@@ -3017,9 +3025,9 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
         if (caps[1] == null) delete process.env.ANCHOR_MAX_PRIORITY_WEI;
         else process.env.ANCHOR_MAX_PRIORITY_WEI = caps[1];
         const tree = new ReceiptMerkleTree();
-        tree.dir = tmp();
-        // Production publishes only from a durable log. This one starts its
-        // own throwaway genesis.
+        tree.dir = lockedDir(tmp());
+        // Production publishes only from a durable, locked log. This one
+        // starts its own throwaway genesis.
         tree.durable = true;
         tree.allowFreshGenesis = true;
         await tree.appendReceipt('row-1', 'hash-1', { publish: false });
@@ -3044,6 +3052,7 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
     restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
     restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
     restoreEnv('ISSUER_KID', prevKid);
+    _releaseReceiptLogLocksForTest();
     _resetIssuerKey();
   }
 });
@@ -3071,9 +3080,9 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
   process.env.ANCHOR_MAX_FEE_WEI = '20000000000';
   process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
   const tree = new ReceiptMerkleTree();
-  tree.dir = dir;
-  // Production publishes only from a durable log. This one starts its
-  // own throwaway genesis.
+  tree.dir = lockedDir(dir);
+  // Production publishes only from a durable, locked log. This one starts
+  // its own throwaway genesis.
   tree.durable = true;
   tree.allowFreshGenesis = true;
   await tree.appendReceipt('row-1', 'hash-1', { publish: false });
@@ -3124,7 +3133,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
 
     const speedDir = tmp();
     const speed = new ReceiptMerkleTree();
-    speed.dir = speedDir;
+    speed.dir = lockedDir(speedDir);
     speed.durable = true;
     speed.allowFreshGenesis = true;
     await speed.appendReceipt('row-1', 'hash-1', { publish: false });
@@ -3172,6 +3181,7 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     restoreEnv('ANCHOR_MAX_PRIORITY_WEI', prevPri);
     restoreEnv('ISSUER_PRIVATE_KEY', prevIssuer);
     restoreEnv('ISSUER_KID', prevKid);
+    _releaseReceiptLogLocksForTest();
     _resetIssuerKey();
   }
 });
