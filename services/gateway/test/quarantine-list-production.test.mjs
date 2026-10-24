@@ -107,10 +107,13 @@ function dryRunFile(logDir) {
   const env = { ...process.env, NODE_ENV: 'test', ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
   const dry = spawnSync(process.execPath, [OLD_SCRIPT, '--log-dir', logDir], { env, encoding: 'utf8', timeout: 60_000 });
   assert.equal(dry.status, 0, dry.stderr);
-  // The log loader's own log lines go to stdout too; the list is the last line.
-  const lines = dry.stdout.split('\n').filter((l) => l.trim());
+  // The log loader's own log lines go to stdout too, and the logger writes
+  // asynchronously, so they can land before or after the list. The list is
+  // the one line that starts with its first key.
+  const lines = dry.stdout.split('\n').filter((l) => l.startsWith('{"canonicalization":'));
+  assert.equal(lines.length, 1, dry.stdout);
   const file = path.join(tmp('qlprod-in-'), 'quarantine-list-v1-dryrun.json');
-  fs.writeFileSync(file, `${lines[lines.length - 1]}\n`);
+  fs.writeFileSync(file, `${lines[0]}\n`);
   return { file, raw: dry.stdout };
 }
 
@@ -688,4 +691,59 @@ test('QP19: v1.json is mode 0644 even under umask 077', async () => {
     process.umask(prev);
   }
   assert.equal(fs.statSync(path.join(listDirOf(s.logDir), 'v1.json')).mode & 0o777, 0o644);
+});
+
+test('QP20: a log with two raced heads: the rebuilt v1 still equals the test-only script dry run, and both entries are signed', { timeout: 120_000 }, async () => {
+  resetIssuerSigner();
+  _resetIssuerKey();
+  const dir = tmp('qlprod-two-');
+  const tree = new ReceiptMerkleTree();
+  tree.dir = dir;
+  const publish = (now) => tree.publishHead({ force: true, now, sleep: async () => {}, send: async () => { throw new Error('no_send'); } });
+  for (let i = 1; i <= 9; i += 1) await tree.appendReceipt(`row-${i}`, `hash-${i}`, { publish: false });
+  await publish('2026-10-09T09:00:00.000Z');
+  for (let i = 10; i <= 13; i += 1) await tree.appendReceipt(`row-${i}`, `hash-${i}`, { publish: false });
+  const honest = await publish('2026-10-09T10:00:00.000Z');
+  assert.equal(honest.tree_size, 14);
+  const raced = [];
+  for (const [label, prefix, at] of [[11, 10, '2026-10-09T10:23:55.000Z'], [13, 12, '2026-10-09T10:24:55.000Z']]) {
+    const root = Buffer.from(rootOf(tree.leaves.slice(0, prefix))).toString('hex');
+    const claims = {
+      schema: 'chit402.tree_head.v2',
+      payload_version: 2,
+      epoch: tree.epoch,
+      prev_epoch_root: tree.prevEpochRoot,
+      prev_epoch_size: tree.prevEpochSize,
+      prev_root: '0'.repeat(64),
+      tree_size: label,
+      root,
+      anchor_status: 'pending',
+      anchor_tx: null,
+      anchor_from: null,
+      published_at: at,
+      anchors: { base: { status: 'pending', tx: null }, solana: { status: 'pending', signature: null } },
+    };
+    const signed = signJws(claims, { typ: 'chit402-tree-head+jwt' });
+    appendJournal(dir, {
+      v: 1,
+      op: 'head',
+      epoch: tree.epoch,
+      head: { ...claims, issuer_signature: { alg: 'ES256', typ: 'chit402-tree-head+jwt', payload_version: 2, jws: signed.jws, kid: signed.kid, issuer_jwk: getIssuerPublicKeyJwk() } },
+    });
+    raced.push(root);
+  }
+  const loaded = new ReceiptMerkleTree();
+  loaded.load(dir);
+  assert.equal(loaded.quarantinedHeads.length, 2);
+  for (const root of raced) await loaded.acknowledgeQuarantinedHead(root);
+  const { file } = dryRunFile(dir);
+  const { jcsRfc8785 } = await import('../src/offer-receipt.js');
+  const built = await buildUnsignedV1FromLog(dir);
+  assert.equal(`${jcsRfc8785(built)}\n`, fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(built.entries.map((e) => [e.tree_size, e.prefix_size, e.consistency.second]), [[11, 10, 14], [13, 12, 14]]);
+  const hash = sha256(fs.readFileSync(file));
+  const r = await run(['--log-dir', dir, '--list', file, '--list-sha256', hash, '--apply', '--confirm', CONFIRM], { signer: goodSigner() });
+  assert.equal(r.result.state, 'written', r.err.join(' '));
+  const entries = JSON.parse(r.out.find((l) => l.startsWith('LIST_ENTRIES=')).slice('LIST_ENTRIES='.length));
+  assert.equal(entries.length, 2);
 });
