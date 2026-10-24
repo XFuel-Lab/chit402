@@ -494,6 +494,7 @@ const { PRODUCTION_ISSUER_KID, isProductionProcess } = await import('../src/prod
 const { isProductionIssuerEnv } = await import('../src/issuer-key.js');
 const { isProductionEnv: saltIsProductionEnv } = await import('../src/salt-store.js');
 const nodeCrypto = await import('node:crypto');
+const { testIssuerKey } = await import('./helpers/test-issuer-keys.mjs');
 
 /** A throwaway P-256 key, base64 PEM, the same format the loader reads. */
 function throwawayKeyEnv() {
@@ -562,10 +563,11 @@ test('production check: NODE_ENV=development with ISSUER_PRIVATE_KEY set keeps l
   });
 });
 
-test('production check: ISSUER_TEST_KEY=1 opts a throwaway key out, but never the production kid or key material that does not parse', T_ANY, async () => {
-  const key = throwawayKeyEnv();
+test('production check: ISSUER_TEST_KEY=1 opts a known test key out, but never the production kid or key material that does not parse', T_ANY, async () => {
+  const key = testIssuerKey(5).env;
   await withEnv({ NODE_ENV: 'development', ISSUER_PRIVATE_KEY: key, ISSUER_TEST_KEY: '1' }, () => {
     assert.equal(isProductionProcess(), false);
+    assert.equal(isProductionProcess({ ...process.env, ISSUER_PRIVATE_KEY: throwawayKeyEnv() }), true, 'an unlisted key (a new production key) is never opted out');
     assert.equal(isProductionProcess(process.env, { nodeEnv: 'production' }), true, 'NODE_ENV production always wins');
     _setIssuerSignerForTest(prodKidStub());
     try {
@@ -658,6 +660,125 @@ test('lock: a lock file replaced during the journal write stops the writer after
     }
     assert.equal(swapped, true, 'the swap ran inside the write');
     await assert.rejects(tree.appendReceipt('task-c', 'cc'.repeat(32), { publish: false }), (err) => err.code === 'log_lock_lost');
+    _releaseReceiptLogLocksForTest();
+  });
+});
+
+// ---- Shared production check: KMS, ISSUER_KID, the loaded kid, fee caps ----
+
+const { noteLoadedIssuerKid, testIssuerKids } = await import('../src/production-process.js');
+const { anchorFeeCapsRequired, assertAnchorFeeCaps } = await import('../src/receipt-merkle.js');
+const { createKmsSigner } = await import('../src/issuer-signer-kms.js');
+const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
+
+const DEV_CLEAN = { NODE_ENV: 'development', ISSUER_PRIVATE_KEY: undefined, ISSUER_KID: undefined, ISSUER_SIGNER: undefined, ISSUER_KMS_KEY_ID: undefined, ISSUER_TEST_KEY: undefined };
+
+test('production check: ISSUER_SIGNER=kms, a set ISSUER_KMS_KEY_ID or any set ISSUER_KID counts as production under NODE_ENV=development', T_ANY, async () => {
+  const test0 = testIssuerKey(0);
+  await withEnv(DEV_CLEAN, () => {
+    assert.equal(isProductionProcess(), false, 'no key signal: development is not production');
+    for (const extra of [{ ISSUER_SIGNER: 'kms' }, { ISSUER_SIGNER: ' KMS ' }, { ISSUER_KMS_KEY_ID: 'alias/any' }, { ISSUER_KID: 'some-rotated-kid' }, { ISSUER_KID: test0.kid }]) {
+      assert.equal(isProductionProcess({ ...process.env, ...extra }), true, JSON.stringify(extra));
+    }
+    // With the opt-out, only known test kids pass.
+    const opt = { ...process.env, ISSUER_TEST_KEY: '1' };
+    assert.equal(isProductionProcess({ ...opt, ISSUER_KID: test0.kid }), false);
+    assert.equal(isProductionProcess({ ...opt, ISSUER_KID: 'some-rotated-kid' }), true);
+    assert.equal(isProductionProcess({ ...opt, ISSUER_SIGNER: 'kms', ISSUER_KMS_KEY_ID: 'alias/x' }), true, 'KMS with no known kid');
+    assert.equal(isProductionProcess({ ...opt, ISSUER_SIGNER: 'kms', ISSUER_KMS_KEY_ID: 'alias/x', ISSUER_KID: test0.kid }), false);
+    assert.equal(isProductionProcess({ ...opt, ISSUER_PRIVATE_KEY: test0.env, ISSUER_KID: 'some-rotated-kid' }), true, 'every signal must be a test kid');
+    assert.equal(isProductionProcess({ ...opt, ISSUER_KID: PRODUCTION_ISSUER_KID }), true);
+    assert.ok(testIssuerKids().has(test0.kid));
+    assert.equal(testIssuerKids().has(PRODUCTION_ISSUER_KID), false);
+  });
+});
+
+test('production check: an active KMS signer is production unless it is a known test key under the opt-out', T_ANY, async () => {
+  const stub = (kid) => ({ kind: 'kms', kid, publicJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }, async sign() { throw new Error('stub'); } });
+  await withEnv(DEV_CLEAN, () => {
+    try {
+      _setIssuerSignerForTest(stub('rotated-kms-kid'));
+      assert.equal(isProductionProcess(), true);
+      process.env.ISSUER_TEST_KEY = '1';
+      assert.equal(isProductionProcess(), true, 'the opt-out does not cover an unlisted KMS kid');
+      _setIssuerSignerForTest(stub(testIssuerKey(1).kid));
+      assert.equal(isProductionProcess(), false);
+    } finally {
+      _setIssuerSignerForTest(null);
+    }
+  });
+});
+
+test('production check: the KMS signer requires a configured kid under NODE_ENV=development (shared check in issuer-signer-kms)', T_ANY, async () => {
+  const key = nodeCrypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const client = {
+    async send(command) {
+      if (command instanceof GetPublicKeyCommand) {
+        return { KeySpec: 'ECC_NIST_P256', KeyUsage: 'SIGN_VERIFY', SigningAlgorithms: ['ECDSA_SHA_256'], PublicKey: key.publicKey.export({ format: 'der', type: 'spki' }) };
+      }
+      throw new Error('no signing in this test');
+    },
+  };
+  await withEnv(DEV_CLEAN, async () => {
+    const env = { ...process.env, ISSUER_SIGNER: 'kms', ISSUER_KMS_KEY_ID: 'alias/chit402-dev-test', ISSUER_KMS_REGION: 'us-east-1' };
+    await assert.rejects(createKmsSigner({ client, env }), (err) => err.code === 'issuer_kid_mismatch');
+  });
+});
+
+test('production check: a loaded production kid alone (no key material) counts as production', T_ANY, async () => {
+  await withEnv({ ...DEV_CLEAN, ISSUER_TEST_KEY: '1' }, () => {
+    try {
+      assert.equal(isProductionProcess(), false);
+      noteLoadedIssuerKid(PRODUCTION_ISSUER_KID);
+      assert.equal(isProductionProcess(), true);
+      assert.equal(isProductionIssuerEnv('development'), true);
+    } finally {
+      noteLoadedIssuerKid(null);
+    }
+    assert.equal(isProductionProcess(), false);
+  });
+});
+
+test('fee caps: anchor fee caps follow the shared production check (unset NODE_ENV, or development with an unlisted key)', T_ANY, async () => {
+  await withEnv(DEV_CLEAN, () => {
+    assert.equal(anchorFeeCapsRequired({ ...process.env, NODE_ENV: undefined }), true, 'NODE_ENV unset');
+    assert.equal(anchorFeeCapsRequired({ ...process.env, NODE_ENV: 'Production' }), true);
+    assert.equal(anchorFeeCapsRequired({ ...process.env, ISSUER_PRIVATE_KEY: throwawayKeyEnv() }), true, 'development with an unlisted key');
+    assert.throws(() => assertAnchorFeeCaps({ ...process.env, ISSUER_PRIVATE_KEY: throwawayKeyEnv() }), (err) => err.code === 'anchor_fee_cap_config');
+    assert.equal(anchorFeeCapsRequired({ ...process.env }), false, 'development, no key');
+    assert.equal(anchorFeeCapsRequired({ ...process.env, ISSUER_PRIVATE_KEY: testIssuerKey(2).env, ISSUER_TEST_KEY: '1' }), false, 'a known test key under the opt-out');
+  });
+});
+
+test('lock: _journal itself stops after the fsync when the lock file was replaced during the write (exactly one record written)', T, async () => {
+  const dir = tmp();
+  await withEnv({ NODE_ENV: 'test', RECEIPT_LOG_ACCEPT_FRESH_GENESIS: undefined }, async () => {
+    const tree = bootReceiptLog(dir, { pin: null, allowFreshGenesis: true });
+    await tree.appendReceipt('task-a', 'aa'.repeat(32), { publish: false });
+    const journal = join(dir, 'journal.jsonl');
+    const lockPath = join(dir, RECEIPT_LOG_LOCK_FILE);
+    const lines = () => fs.readFileSync(journal, 'utf8').split('\n').filter(Boolean).length;
+    const before = lines();
+    const checkpointBefore = snapshotDir(dir)['checkpoint.json'];
+    const realFsync = fs.fsyncSync;
+    let swapped = false;
+    fs.fsyncSync = function patched(fd) {
+      const out = realFsync.call(fs, fd);
+      if (!swapped) {
+        swapped = true;
+        fs.unlinkSync(lockPath);
+        fs.writeFileSync(lockPath, '');
+      }
+      return out;
+    };
+    try {
+      assert.throws(() => tree._journal({ v: 1, op: 'test_marker', at: 'x' }), (err) => err.code === 'log_lock_lost');
+    } finally {
+      fs.fsyncSync = realFsync;
+    }
+    assert.equal(swapped, true);
+    assert.equal(lines(), before + 1, 'the one record already written stays; nothing more');
+    assert.equal(snapshotDir(dir)['checkpoint.json'], checkpointBefore, 'the checkpoint is unchanged');
     _releaseReceiptLogLocksForTest();
   });
 });

@@ -19,10 +19,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
+import { computeJwkThumbprint, signJwsAsync, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
-import { isProductionIssuerPublicKey, isProductionProcess, nodeEnvIsProduction } from './production-process.js';
+import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
+import { issuerMaterialKid, loadedIssuerKid, testIssuerKids } from './production-process.js';
 
 export const QUARANTINE_LIST_SCHEMA = 'chit402.quarantine_list.v1';
 export const QUARANTINE_LIST_TYP = 'chit402-quarantine-list+jwt';
@@ -131,21 +132,39 @@ export function buildQuarantineList({ entries, highWater, prevBytes = null }) {
   };
 }
 
-/** Issuer history entries named in ISSUER_HISTORY_EXTRA (either env): their keys are refused too. */
+/**
+ * Issuer history entries named in ISSUER_HISTORY_EXTRA (either env): their
+ * keys are refused too. A set value that does not parse, is not a list, or
+ * has an entry without a well-formed P-256 `jwk` is `malformed`: the guard
+ * refuses rather than skipping it.
+ */
 function historyExtraKeys(...envs) {
-  const out = [];
+  const keys = [];
+  let malformed = false;
   for (const e of envs) {
     const raw = e?.ISSUER_HISTORY_EXTRA;
-    if (!raw || !String(raw).trim()) continue;
+    if (raw == null || !String(raw).trim()) continue;
+    let parsed;
     try {
-      const parsed = JSON.parse(raw);
-      const list = Array.isArray(parsed) ? parsed : parsed?.entries;
-      if (Array.isArray(list)) for (const entry of list) if (entry?.jwk) out.push(entry.jwk);
+      parsed = JSON.parse(raw);
     } catch {
-      // Unparsable history extra adds no keys; the production checks still apply.
+      malformed = true;
+      continue;
+    }
+    const list = Array.isArray(parsed) ? parsed : parsed?.entries;
+    if (!Array.isArray(list)) {
+      malformed = true;
+      continue;
+    }
+    for (const entry of list) {
+      if (!entry || typeof entry !== 'object' || !wellFormedPublicJwk(entry.jwk)) {
+        malformed = true;
+        continue;
+      }
+      keys.push(entry.jwk);
     }
   }
-  return out;
+  return { keys, malformed };
 }
 
 function kmsSetting(e) {
@@ -173,11 +192,41 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   if (kmsSetting(env) || kmsSetting(process.env)) return { ok: false, reason: 'kms_signer' };
   if (signerKind != null && String(signerKind).toLowerCase() === 'kms') return { ok: false, reason: 'kms_signer' };
   if (kid != null && kid === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
-  if (publicJwk && isProductionIssuerPublicKey(publicJwk, historyExtraKeys(env, process.env))) {
+  for (const e of [env, process.env]) {
+    if (String(e?.ISSUER_KID || '').trim() === PRODUCTION_ISSUER_KID) return { ok: false, reason: 'production_kid' };
+  }
+  const extra = historyExtraKeys(env, process.env);
+  if (extra.malformed) return { ok: false, reason: 'history_extra_malformed' };
+  if (publicJwk && isProductionIssuerPublicKey(publicJwk, extra.keys)) {
     return { ok: false, reason: 'production_key' };
   }
-  // Last: the shared check (production kid or key loaded, or a key set without the test opt-out).
-  if (isProductionProcess(env) || isProductionProcess(process.env)) return { ok: false, reason: 'production_env' };
+  // Narrowed (decision 1, option b): ISSUER_TEST_KEY is ignored here. Every
+  // key this process could sign with must be a known test key (public-seed
+  // test keys, testIssuerKids): the signer's public key by its own
+  // thumbprint, the claimed kid, ISSUER_PRIVATE_KEY and ISSUER_KID in either
+  // env, and the key issuer-key loaded. An unlisted key, including a new
+  // production key not yet in PRODUCTION_ISSUER_PUBLIC_KEYS, never signs.
+  const testKids = testIssuerKids();
+  if (publicJwk) {
+    let thumb = null;
+    try {
+      thumb = wellFormedPublicJwk(publicJwk) ? computeJwkThumbprint({ kty: 'EC', crv: 'P-256', x: publicJwk.x, y: publicJwk.y }) : null;
+    } catch {
+      thumb = null;
+    }
+    if (!thumb || !testKids.has(thumb)) return { ok: false, reason: 'not_test_key' };
+  }
+  if (kid != null && !testKids.has(String(kid))) return { ok: false, reason: 'not_test_key' };
+  for (const e of [env, process.env]) {
+    const material = e?.ISSUER_PRIVATE_KEY;
+    if (material != null && String(material).trim() && !testKids.has(issuerMaterialKid(material))) {
+      return { ok: false, reason: 'not_test_key' };
+    }
+    const configured = String(e?.ISSUER_KID || '').trim();
+    if (configured && !testKids.has(configured)) return { ok: false, reason: 'not_test_key' };
+  }
+  const loaded = loadedIssuerKid();
+  if (loaded && !testKids.has(loaded)) return { ok: false, reason: 'not_test_key' };
   return { ok: true };
 }
 
