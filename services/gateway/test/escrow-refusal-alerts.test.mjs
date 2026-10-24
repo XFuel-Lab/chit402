@@ -335,7 +335,7 @@ async function appendAndEnqueue(worker, tree, taskId, rowHash) {
   return worker.enqueueAppended({ taskId, rowHash, leafHash: W.appendedLeafHash(tree, taskId) });
 }
 
-test('payer binding: no_payment_ref, network (incl. non-string ref), asset and amount skips each raise an alert; no_payer and no_payment are counted only', async () => {
+test('payer binding: amount raises an alert; no_payment_ref, network (incl. non-string ref), asset, no_payer and no_payment are counted only', async () => {
   RF.resetReceiptFailuresForTests();
   _releaseReceiptLogLocksForTest();
   const tree = await readyTree();
@@ -356,15 +356,13 @@ test('payer binding: no_payment_ref, network (incl. non-string ref), asset and a
   for (const id of Object.keys(byTask)) await appendAndEnqueue(worker, tree, id, ROW(n += 1));
   const results = await worker.tick();
   assert.deepEqual(results, Object.keys(byTask).map(() => 'skipped'));
-  assertAlert('payer_binding', 'no_payment_ref', { rows: 2 });
-  assertAlert('payer_binding', 'network', { rows: 3 });
-  assertAlert('payer_binding', 'asset');
   assertAlert('payer_binding', 'amount');
-  // Not a Base USDC paid receipt at all: counted on /health, no alert row.
-  assert.equal(RF.listReceiptFailures().filter((r) => /no_payer|no_payment$/.test(r.reason)).length, 0);
-  assert.equal(RF.escrowRefusalCounts().payer_binding.no_payer, 1);
-  assert.equal(RF.escrowRefusalCounts().payer_binding.no_payment, 1);
-  assert.equal(escrowRows('payer_binding').length, 7);
+  // Not a Base mainnet USDC paid receipt: routine, counted, no alert row.
+  for (const [reason, n] of [['no_payment_ref', 2], ['network', 3], ['asset', 1], ['no_payer', 1], ['no_payment', 1]]) {
+    assert.equal(RF.listReceiptFailures().filter((r) => r.reason === `payer_binding:${reason}`).length, 0, `${reason}: no row`);
+    assert.equal(RF.escrowRefusalCounts().payer_binding[reason], n, `${reason}: counted`);
+  }
+  assert.equal(escrowRows('payer_binding').length, 1);
   // No payer address or task id anywhere in the rows or the counts.
   const dump = JSON.stringify([RF.listReceiptFailures(), RF.escrowRefusalCounts()]);
   assert.equal(dump.toLowerCase().includes(payer.address.toLowerCase().slice(2)), false, 'no payer address');
@@ -445,12 +443,13 @@ test('alert rows persist in RECEIPT_FAILURES_FILE and per-reason counts reload f
   try {
     RF.resetReceiptFailuresForTests();
     RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'root_mismatch' });
+    RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount' });
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network' });
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payer' });
     RF.recordReceiptFailure({ stage: 'sign', reason: 'unrelated', outcome: 'refused' });
     assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 3, 'not-applicable skips are not written');
     RF.resetReceiptFailuresForTests();
-    assert.deepEqual(RF.escrowRefusalCounts(), { fixed_head: { root_mismatch: 1 }, payer_binding: { network: 1 } });
+    assert.deepEqual(RF.escrowRefusalCounts(), { fixed_head: { root_mismatch: 1 }, payer_binding: { amount: 1 } });
     assert.equal(RF.receiptFailureCount(), 3);
   } finally {
     delete process.env.RECEIPT_FAILURES_FILE;
@@ -502,13 +501,13 @@ test('GET /health and GET /v1/ops/receipt-failures (local server) show the alert
   const startCount = clean.receipt_failures;
   RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'quarantined' });
   RF.recordEscrowRefusal({ path: 'quarantine_sign', reason: 'not_test_key' });
-  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payment_ref' });
-  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'leaf_mismatch' });
   const health = await (await fetch(`${base}/health`)).json();
   assert.equal(health.receipt_failures, startCount + 4);
   assert.deepEqual(health.escrow_refusals, {
     fixed_head: { quarantined: 1 },
-    payer_binding: { network: 1, no_payment_ref: 1 },
+    payer_binding: { amount: 1, leaf_mismatch: 1 },
     quarantine_sign: { not_test_key: 1 },
   });
   const text = JSON.stringify(health);
@@ -517,9 +516,37 @@ test('GET /health and GET /v1/ops/receipt-failures (local server) show the alert
   const ops = await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } });
   assert.equal(ops.status, 200);
   const reasons = (await ops.json()).failures.map((r) => r.reason);
-  for (const r of ['fixed_head:quarantined', 'quarantine_sign:not_test_key', 'payer_binding:no_payment_ref', 'payer_binding:network']) {
+  for (const r of ['fixed_head:quarantined', 'quarantine_sign:not_test_key', 'payer_binding:amount', 'payer_binding:leaf_mismatch']) {
     assert.ok(reasons.includes(r), r);
   }
   const anon = await fetch(`${base}/v1/ops/receipt-failures`);
   assert.equal(anon.status, 401, 'owner-only');
+});
+
+test('SF1: 5000 routine payer binding skips plus one real settle failure: the settle row stays in the ops export and the public count is unaffected', async () => {
+  RF.resetReceiptFailuresForTests();
+  const startCount = (await (await fetch(`${base}/health`)).json()).receipt_failures;
+  RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base' });
+  const skips = ['network', 'asset', 'no_payment_ref', 'no_payer', 'no_payment'];
+  for (let i = 0; i < 5000; i += 1) {
+    assert.equal(RF.recordEscrowRefusal({ path: 'payer_binding', reason: skips[i % skips.length] }), null, 'skip: no row');
+  }
+  const health = await (await fetch(`${base}/health`)).json();
+  assert.equal(health.receipt_failures, startCount + 1, 'only the settle failure counts');
+  const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+  assert.deepEqual(ops.failures.map((r) => r.reason), ['settle_failed'], 'settle row kept, no skip rows');
+});
+
+test('SF1: a flood of alert rows is capped on its own and never evicts a settle failure', async () => {
+  RF.resetReceiptFailuresForTests();
+  RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base' });
+  for (let i = 0; i < RF.RECEIPT_FAILURE_ROW_CAP + 1; i += 1) {
+    RF.recordEscrowRefusal({ path: 'fixed_head', reason: i % 2 ? 'log_not_ready' : 'log_lock_lost' });
+  }
+  const list = RF.listReceiptFailures();
+  assert.equal(list.filter((r) => r.reason === 'settle_failed').length, 1, 'settle row kept');
+  assert.ok(list.filter((r) => r.reason.startsWith('fixed_head:')).length <= RF.RECEIPT_FAILURE_ALERT_ROW_CAP, 'alert rows capped');
+  assert.ok(RF.RECEIPT_FAILURE_ALERT_ROW_CAP < RF.RECEIPT_FAILURE_ROW_CAP, 'alert cap is its own, smaller cap');
+  const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+  assert.ok(ops.failures.some((r) => r.reason === 'settle_failed'), 'settle row in the ops export');
 });

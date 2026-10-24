@@ -9,8 +9,13 @@
  * use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
  * id. The code is from a fixed list per path, else `other`, so a row can never
  * carry a payer, a salt, a key or free text. Per-reason counts are kept for
- * /health. Two payer binding skips mean the receipt is not a Base USDC paid
- * receipt at all (`no_payer`, `no_payment`): they are counted, not raised.
+ * /health. Payer binding skips for a receipt that is not a Base mainnet USDC
+ * paid receipt (`no_payer`, `no_payment`, `network`, `asset`,
+ * `no_payment_ref`) are routine: they are counted, not raised.
+ *
+ * Alert rows have their own cap (RECEIPT_FAILURE_ALERT_ROW_CAP), kept apart
+ * from the settle/confirm/sign/log/anchor rows, so a flood of alerts can
+ * never push a real settle failure out of the ops export.
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -26,6 +31,7 @@ const REFUSAL_NETWORKS = new Set(['base', 'base-sepolia', 'solana', 'solana-devn
 
 export const RECEIPT_FAILURE_ROW_CAP = 5000;
 export const RECEIPT_FAILURE_FILE_BYTES = 5 * 1024 * 1024;
+export const RECEIPT_FAILURE_ALERT_ROW_CAP = 1000;
 const REFUSAL_DAY_CAP = 30;
 
 export const ESCROW_REFUSAL_PATHS = Object.freeze(['fixed_head', 'quarantine_sign', 'payer_binding']);
@@ -52,11 +58,22 @@ const ESCROW_REASONS = {
     'no_store', 'no_log', 'not_in_log', 'no_epoch', 'internal',
   ]),
 };
-/** Payer binding skips for receipts that are not Base USDC paid receipts: counted, no row. */
-const ESCROW_NOT_APPLICABLE = new Set(['payer_binding:no_payer', 'payer_binding:no_payment']);
+/**
+ * Payer binding skips for receipts that are not Base mainnet USDC paid
+ * receipts: routine, and anyone can cause them (a testnet or non-USDC
+ * payment), so they are counted with no row. `amount` and everything after
+ * claim parsing still raise.
+ */
+const ESCROW_NOT_APPLICABLE = new Set([
+  'payer_binding:no_payer', 'payer_binding:no_payment', 'payer_binding:network',
+  'payer_binding:asset', 'payer_binding:no_payment_ref',
+]);
 const ESCROW_ROW_REASON = /^(fixed_head|quarantine_sign|payer_binding):([a-z_]+)$/;
 
 const rows = [];
+/** Escrow-path alert rows, capped on their own. */
+const alertRows = [];
+let seq = 0;
 const refusalCounts = new Map();
 const escrowCounts = new Map();
 let total = 0;
@@ -93,7 +110,26 @@ function loadFile() {
     } catch { /* skip a torn line */ }
   }
   total += parsed.length;
-  rows.push(...parsed.slice(-RECEIPT_FAILURE_ROW_CAP));
+  const plain = [];
+  const alerts = [];
+  for (const row of parsed) (isAlertRow(row) ? alerts : plain).push(row);
+  for (const row of plain.slice(-RECEIPT_FAILURE_ROW_CAP)) rows.push(stamp(row));
+  for (const row of alerts.slice(-RECEIPT_FAILURE_ALERT_ROW_CAP)) alertRows.push(stamp(row));
+}
+
+/** Insertion order across both row lists; not enumerable, so never exported. */
+function stamp(row) {
+  Object.defineProperty(row, 'seq', { value: seq += 1, enumerable: false });
+  return row;
+}
+
+function isAlertRow(row) {
+  return row.stage === 'sign' && ESCROW_ROW_REASON.test(row.reason);
+}
+
+function pushCapped(list, row, cap) {
+  list.push(stamp(row));
+  if (list.length > cap) list.splice(0, list.length - cap);
 }
 
 function rotateFile(file) {
@@ -181,11 +217,8 @@ export function recordReceiptFailure(input = {}) {
     loadFile();
     const row = shape({ ...input, time: input.time || new Date().toISOString() });
     if (!row) return null;
-    rows.push(row);
+    pushCapped(rows, row, RECEIPT_FAILURE_ROW_CAP);
     total += 1;
-    if (rows.length > RECEIPT_FAILURE_ROW_CAP) {
-      rows.splice(0, rows.length - RECEIPT_FAILURE_ROW_CAP);
-    }
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
@@ -237,12 +270,9 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
       time: new Date().toISOString(),
     });
     if (!row) return null;
-    rows.push(row);
+    pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
     total += 1;
     bumpEscrow(key);
-    if (rows.length > RECEIPT_FAILURE_ROW_CAP) {
-      rows.splice(0, rows.length - RECEIPT_FAILURE_ROW_CAP);
-    }
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
@@ -296,7 +326,8 @@ export function listRefusalCounts({ since = null } = {}) {
 export function listReceiptFailures({ since = null } = {}) {
   loadFile();
   const cut = since ? Date.parse(since) : NaN;
-  return rows.filter((row) => {
+  const all = alertRows.length ? [...rows, ...alertRows].sort((a, b) => a.seq - b.seq) : rows;
+  return all.filter((row) => {
     if (!since) return true;
     const at = Date.parse(row.time);
     return Number.isFinite(at) && Number.isFinite(cut) && at >= cut;
@@ -310,6 +341,7 @@ export function receiptFailureCount() {
 
 export function resetReceiptFailuresForTests() {
   rows.length = 0;
+  alertRows.length = 0;
   refusalCounts.clear();
   escrowCounts.clear();
   total = 0;
