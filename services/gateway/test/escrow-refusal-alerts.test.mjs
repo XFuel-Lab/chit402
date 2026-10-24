@@ -252,12 +252,41 @@ test('quarantine signing: every refusal reason records one alert row and one per
 test('quarantine signing: signer_changed and every other guard throw go through the alerting guardError', () => {
   const src = fs.readFileSync(path.join(gatewayDir, 'src', 'quarantine-list.js'), 'utf8');
   assert.ok(/function guardError\(reason\) \{\n\s*recordEscrowRefusal\(\{ path: 'quarantine_sign', reason \}\);/.test(src), 'guardError records the alert first');
-  assert.ok(/throw guardError\('signer_changed'\)/.test(src), 'signer_changed is thrown through guardError');
+  assert.ok(/\n\s*assertJwsKid\(jws, snap\.kid\);/.test(src), 'signQuarantineList checks the JWS kid with assertJwsKid');
   const lines = src.split('\n');
   const rawThrows = lines.filter((line) => /\bthrow\b/.test(line) && /quarantine_sign_refused/.test(line));
   assert.equal(rawThrows.length, 0, 'no refusal is thrown around guardError');
   const codeSites = lines.filter((line) => /err\.code = 'quarantine_sign_refused'/.test(line));
   assert.equal(codeSites.length, 1, 'only guardError builds a refusal error');
+});
+
+test('quarantine signing: assertJwsKid refuses a mismatched, missing or unreadable kid with signer_changed and an alert', () => {
+  const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const jwsWith = (header) => `${b64(header)}.${b64({ a: 1 })}.c2ln`;
+  const refused = (jws, kid, label) => {
+    assert.throws(() => Q.assertJwsKid(jws, kid), (err) => err.code === 'quarantine_sign_refused' && err.reason === 'signer_changed', label);
+  };
+  RF.resetReceiptFailuresForTests();
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  RF.setEscrowAlertClockForTests(() => clock);
+  const cases = [
+    [jwsWith({ alg: 'ES256', kid: 'other-kid' }), KEY.kid, 'another kid'],
+    [jwsWith({ alg: 'ES256' }), KEY.kid, 'no kid in the header'],
+    [jwsWith({ alg: 'ES256', kid: `${KEY.kid} ` }), KEY.kid, 'kid with a trailing space'],
+    ['not-base64!.e30.c2ln', KEY.kid, 'unreadable header'],
+    [jwsWith({ alg: 'ES256', kid: '' }), '', 'empty kid'],
+    [jwsWith({ alg: 'ES256' }), undefined, 'undefined kid on both sides'],
+    [jwsWith({ alg: 'ES256', kid: null }), null, 'null kid on both sides'],
+  ];
+  for (const [jws, kid, label] of cases) {
+    refused(jws, kid, label);
+    clock += RF.ESCROW_ALERT_DEDUP_MS;
+  }
+  assertAlert('quarantine_sign', 'signer_changed', { rows: cases.length });
+  // The matching kid passes and raises nothing.
+  const before = RF.receiptFailureCount();
+  assert.doesNotThrow(() => Q.assertJwsKid(jwsWith({ alg: 'ES256', typ: Q.QUARANTINE_LIST_TYP, kid: KEY.kid }), KEY.kid));
+  assert.equal(RF.receiptFailureCount(), before);
 });
 
 test('quarantine signing: the script pre-check refusal writes an alert row to RECEIPT_FAILURES_FILE', () => {
