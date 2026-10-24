@@ -9,8 +9,9 @@
  * edits them. It returns a separate object that is stored in
  * fixed-heads.jsonl (fsync before it is served), not in the receipt journal.
  *
- * Refusals. Each gives no fixed head, one coded log line, and leaves the JWS
- * head as published:
+ * Refusals. Each gives no fixed head, one coded log line, one operator alert
+ * (receipt-failure row `fixed_head:<reason>`), and leaves the JWS head as
+ * published:
  * - R-1 root_mismatch: claims.root is not the root of leaves[0..tree_size).
  * - R-2 quarantined: (epoch, tree_size, root) is quarantined.
  * - R-3 conflicting_root: a fixed head with another root exists for this
@@ -25,6 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import logger from './logger.js';
+import { recordEscrowRefusal } from './receipt-failures.js';
 import {
   EIP712_CHAIN_ID,
   EIP712_DIGEST_ALG,
@@ -221,6 +223,7 @@ function refuse(reason, claims) {
     epoch: Number.isSafeInteger(claims?.epoch) ? claims.epoch : null,
     tree_size: Number.isSafeInteger(claims?.tree_size) ? claims.tree_size : null,
   }, 'fixed tree head not signed');
+  recordEscrowRefusal({ path: 'fixed_head', reason });
   return { fixed_head: null, refused: reason };
 }
 

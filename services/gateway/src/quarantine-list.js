@@ -22,6 +22,7 @@ import { jcsRfc8785 } from './offer-receipt.js';
 import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
+import { recordEscrowRefusal } from './receipt-failures.js';
 import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
 import { issuerMaterialKid, loadedIssuerKid, testIssuerKids } from './production-process.js';
 
@@ -237,7 +238,12 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   return { ok: true };
 }
 
+/**
+ * Every signing refusal goes through here: one operator alert (receipt-failure
+ * row `quarantine_sign:<reason>`), then the coded error.
+ */
 function guardError(reason) {
+  recordEscrowRefusal({ path: 'quarantine_sign', reason });
   const err = new Error(`quarantine list signing refused (${reason}); only a stub or test signer may sign here`);
   err.code = 'quarantine_sign_refused';
   err.reason = reason;

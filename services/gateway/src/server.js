@@ -161,6 +161,8 @@ import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendG
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegraded } from './public-metrics.js';
 import {
   receiptFailureCount,
+  escrowRefusalCounts,
+  recordEscrowRefusal,
   listReceiptFailures,
   listRefusalCounts,
   receiptFailureCsv,
@@ -1150,6 +1152,7 @@ export async function createApp() {
   const payerBindingOn = payerBindingFlagOn(process.env);
   if (payerBindingOn && !payerBindingStore) {
     logger.error({}, 'RECEIPT_PAYER_BINDING_EIP712=true without a persistent store; payer binding stays off');
+    recordEscrowRefusal({ path: 'payer_binding', reason: 'no_store' });
   }
   const payerBindingWorker = payerBindingOn && payerBindingStore
     ? createPayerBindingWorker({
@@ -4556,6 +4559,7 @@ export async function createApp() {
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
         receiptFailures: receiptFailureCount(),
         issuanceCap: issuanceCapHealth(),
+        escrowRefusals: escrowRefusalCounts(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');

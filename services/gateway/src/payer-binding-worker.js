@@ -10,8 +10,14 @@
  *
  * Log lines carry the task id and a reason code only: never the payer, the
  * payer salt or the commitment.
+ *
+ * Operator alerts: every refusal also writes a receipt-failure row
+ * `payer_binding:<reason>` (code only, no task id). A retried reason is raised
+ * once, on the first attempt (outcome pending), and again if the job finally
+ * fails (outcome refused), so a long backoff does not flood the log.
  */
 import logger from './logger.js';
+import { recordEscrowRefusal } from './receipt-failures.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
 import { decodeJwsClaims, leafRecordFor } from './public-attestation.js';
 import { receiptLogSigningReady } from './receipt-merkle.js';
@@ -99,14 +105,20 @@ export function createPayerBindingWorker(deps) {
     logger[level]({ code, task_id: taskId, reason }, 'payer binding');
   }
 
+  function alert(reason, outcome = 'refused') {
+    recordEscrowRefusal({ path: 'payer_binding', reason, outcome });
+  }
+
   function retryOrFail(job, reason) {
     const attempts = Number(job.attempts || 0) + 1;
     if (attempts >= cfg.maxAttempts) {
       store.updateJob(job.task_id, { status: 'failed', reason, attempts });
       stats.failed += 1;
       note('error', 'payer_binding_failed', job.task_id, reason);
+      alert(reason);
       return 'failed';
     }
+    if (attempts === 1) alert(reason, 'pending');
     const delay = Math.min(cfg.baseDelayMs * (2 ** (attempts - 1)), cfg.maxDelayMs);
     store.updateJob(job.task_id, { status: 'pending', reason, attempts, next_at: now() + delay });
     stats.retried += 1;
@@ -119,6 +131,7 @@ export function createPayerBindingWorker(deps) {
     if (status === 'failed') stats.failed += 1;
     if (status === 'skipped') stats.skipped += 1;
     note(status === 'failed' ? 'error' : 'info', `payer_binding_${status}`, job.task_id, reason);
+    if (status === 'failed' || status === 'skipped') alert(reason);
     return status;
   }
 
@@ -136,6 +149,7 @@ export function createPayerBindingWorker(deps) {
       return { queued: created, reason: created ? undefined : 'exists' };
     } catch (err) {
       note('warn', 'payer_binding_refused', String(taskId), err?.code || 'store_error');
+      alert(err?.code || 'store_error');
       return { queued: false, reason: err?.code || 'store_error' };
     }
   }
@@ -228,6 +242,7 @@ export function createPayerBindingWorker(deps) {
           results.push(await processJob(job));
         } catch (err) {
           note('error', 'payer_binding_failed', job.task_id, err?.code || 'internal');
+          alert('internal');
           results.push('error');
         }
       }

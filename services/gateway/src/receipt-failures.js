@@ -4,6 +4,13 @@
  * Pre-settle refusals are day/network/reason counts, not rows.
  * Memory keeps 5,000 rows. The JSONL file rotates at 5 MB.
  * No payer, no payload, no header.
+ *
+ * Escrow-path refusals (fixed heads, quarantine list signing, payer binding)
+ * use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
+ * id. The code is from a fixed list per path, else `other`, so a row can never
+ * carry a payer, a salt, a key or free text. Per-reason counts are kept for
+ * /health. Two payer binding skips mean the receipt is not a Base USDC paid
+ * receipt at all (`no_payer`, `no_payment`): they are counted, not raised.
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -21,8 +28,37 @@ export const RECEIPT_FAILURE_ROW_CAP = 5000;
 export const RECEIPT_FAILURE_FILE_BYTES = 5 * 1024 * 1024;
 const REFUSAL_DAY_CAP = 30;
 
+export const ESCROW_REFUSAL_PATHS = Object.freeze(['fixed_head', 'quarantine_sign', 'payer_binding']);
+const LOG_READY_REASONS = [
+  'log_not_ready', 'log_not_durable', 'log_boot_disabled', 'fresh_genesis', 'pin_unverified',
+  'log_lock_missing', 'log_lock_lost', 'log_lock_unavailable', 'log_locked', 'log_identity',
+];
+const ESCROW_REASONS = {
+  fixed_head: new Set([
+    ...LOG_READY_REASONS,
+    'field_range', 'not_open_epoch', 'root_mismatch', 'quarantined', 'store_unreadable',
+    'conflicting_root', 'signer_unavailable', 'signer_error', 'store_write', 'internal',
+  ]),
+  quarantine_sign: new Set([
+    'production_env', 'kms_signer', 'production_kid', 'history_extra_malformed', 'production_key',
+    'not_test_key', 'signer_accessor', 'no_public_key', 'no_kid', 'issuer_sign_invalid',
+    'signer_changed', 'signer_mismatch',
+  ]),
+  payer_binding: new Set([
+    ...LOG_READY_REASONS,
+    'no_claims', 'no_payer', 'no_payment', 'asset', 'no_payment_ref', 'network', 'amount',
+    'field_range', 'signer_unavailable', 'salt_source', 'signer_error', 'leaf_conflict',
+    'leaf_mismatch', 'holder_claims_missing', 'task_id_mismatch', 'store_write', 'store_error',
+    'no_store', 'no_log', 'not_in_log', 'no_epoch', 'internal',
+  ]),
+};
+/** Payer binding skips for receipts that are not Base USDC paid receipts: counted, no row. */
+const ESCROW_NOT_APPLICABLE = new Set(['payer_binding:no_payer', 'payer_binding:no_payment']);
+const ESCROW_ROW_REASON = /^(fixed_head|quarantine_sign|payer_binding):([a-z_]+)$/;
+
 const rows = [];
 const refusalCounts = new Map();
+const escrowCounts = new Map();
 let total = 0;
 let loaded = false;
 
@@ -50,7 +86,10 @@ function loadFile() {
     if (!line.trim()) continue;
     try {
       const row = shape(JSON.parse(line));
-      if (row) parsed.push(row);
+      if (row) {
+        parsed.push(row);
+        countEscrowRow(row);
+      }
     } catch { /* skip a torn line */ }
   }
   total += parsed.length;
@@ -155,6 +194,81 @@ export function recordReceiptFailure(input = {}) {
   }
 }
 
+function escrowReason(pathName, reason) {
+  const allowed = ESCROW_REASONS[pathName];
+  // A string code only: an object whose toString returns a listed code does not count.
+  return allowed && typeof reason === 'string' && allowed.has(reason) ? reason : 'other';
+}
+
+function bumpEscrow(key) {
+  escrowCounts.set(key, (escrowCounts.get(key) || 0) + 1);
+}
+
+function countEscrowRow(row) {
+  if (row.stage !== 'sign') return;
+  const m = ESCROW_ROW_REASON.exec(row.reason);
+  if (!m) return;
+  bumpEscrow(`${m[1]}:${escrowReason(m[1], m[2])}`);
+}
+
+/**
+ * Operator alert for a refusal in the fixed-head, quarantine list signing or
+ * payer binding path. Writes one receipt-failure row (so the /health
+ * receipt_failures count and GET /v1/ops/receipt-failures show it) and bumps
+ * the per-reason count. Never throws.
+ * @param {{ path: string, reason: string, outcome?: 'refused'|'pending' }} input
+ * @returns {object|null} the row, or null (not-applicable skip, bad path)
+ */
+export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused' } = {}) {
+  try {
+    if (!ESCROW_REASONS[pathName]) return null;
+    const key = `${pathName}:${escrowReason(pathName, reason)}`;
+    if (ESCROW_NOT_APPLICABLE.has(key)) {
+      bumpEscrow(key);
+      return null;
+    }
+    loadFile();
+    const row = shape({
+      stage: 'sign',
+      reason: key,
+      outcome: outcome === 'pending' ? 'pending' : 'refused',
+      network: null,
+      tx: null,
+      time: new Date().toISOString(),
+    });
+    if (!row) return null;
+    rows.push(row);
+    total += 1;
+    bumpEscrow(key);
+    if (rows.length > RECEIPT_FAILURE_ROW_CAP) {
+      rows.splice(0, rows.length - RECEIPT_FAILURE_ROW_CAP);
+    }
+    const file = storeFile();
+    if (file) appendLimited(file, row);
+    return row;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Per-reason escrow refusal counts for /health: path -> reason -> count.
+ * Codes only. Null when there are none, so a clean boot adds no key.
+ */
+export function escrowRefusalCounts() {
+  loadFile();
+  if (escrowCounts.size === 0) return null;
+  const out = {};
+  for (const [key, count] of [...escrowCounts].sort(([a], [b]) => a.localeCompare(b))) {
+    const split = key.indexOf(':');
+    const pathName = key.slice(0, split);
+    const reason = key.slice(split + 1);
+    if (!out[pathName]) out[pathName] = {};
+    out[pathName][reason] = count;
+  }
+  return out;
+}
+
 export function listRefusalCounts({ since = null } = {}) {
   const sinceDay = since && Number.isFinite(Date.parse(since))
     ? new Date(Date.parse(since)).toISOString().slice(0, 10)
@@ -197,6 +311,7 @@ export function receiptFailureCount() {
 export function resetReceiptFailuresForTests() {
   rows.length = 0;
   refusalCounts.clear();
+  escrowCounts.clear();
   total = 0;
   loaded = false;
 }

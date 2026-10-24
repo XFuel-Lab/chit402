@@ -38,6 +38,25 @@ function publicCount(value) {
   return Math.floor(n);
 }
 
+const ESCROW_HEALTH_PATHS = ['fixed_head', 'quarantine_sign', 'payer_binding'];
+const ESCROW_HEALTH_REASON = /^[a-z][a-z_]{0,39}$/;
+
+function publicEscrowRefusals(counts) {
+  if (!counts || typeof counts !== 'object') return null;
+  const out = {};
+  for (const name of ESCROW_HEALTH_PATHS) {
+    const byReason = counts[name];
+    if (!byReason || typeof byReason !== 'object') continue;
+    for (const [reason, n] of Object.entries(byReason)) {
+      const count = publicCount(n);
+      if (!ESCROW_HEALTH_REASON.test(reason) || count === 0) continue;
+      if (!out[name]) out[name] = {};
+      out[name][reason] = count;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export function publicHealthBody({
   degraded = false,
   lastAnchoredRoot = null,
@@ -47,6 +66,7 @@ export function publicHealthBody({
   unanchoredLeaves = 0,
   receiptFailures = 0,
   issuanceCap = null,
+  escrowRefusals = null,
 } = {}) {
   const body = {
     status: degraded ? 'degraded' : 'ok',
@@ -60,6 +80,10 @@ export function publicHealthBody({
       cap: issuanceCap || { hour_used: 0, day_used: 0, state: 'off' },
     },
   };
+  // Per-reason escrow refusal counts (fixed heads, quarantine list signing,
+  // payer binding). Fixed reason codes and counts only. Absent when none.
+  const escrow = publicEscrowRefusals(escrowRefusals);
+  if (escrow) body.escrow_refusals = escrow;
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
   // An acknowledged head stays in the list. It does not flip status to degraded.
   if (quarantinedHeads && Number(quarantinedHeads.count) > 0) {
