@@ -3018,6 +3018,10 @@ test('production refuses to sign when anchor caps are unset or not numeric', asy
         else process.env.ANCHOR_MAX_PRIORITY_WEI = caps[1];
         const tree = new ReceiptMerkleTree();
         tree.dir = tmp();
+        // Production publishes only from a durable log. This one starts its
+        // own throwaway genesis.
+        tree.durable = true;
+        tree.allowFreshGenesis = true;
         await tree.appendReceipt('row-1', 'hash-1', { publish: false });
         const before = signs;
         const head = await tree.publishHead({
@@ -3068,6 +3072,10 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
   process.env.ANCHOR_MAX_PRIORITY_WEI = '2000000000';
   const tree = new ReceiptMerkleTree();
   tree.dir = dir;
+  // Production publishes only from a durable log. This one starts its
+  // own throwaway genesis.
+  tree.durable = true;
+  tree.allowFreshGenesis = true;
   await tree.appendReceipt('row-1', 'hash-1', { publish: false });
   let phase = 'first';
   const lookup = async (intent) => {
@@ -3117,6 +3125,8 @@ test('unset production caps refuse replacement and a priority-only cap refuses s
     const speedDir = tmp();
     const speed = new ReceiptMerkleTree();
     speed.dir = speedDir;
+    speed.durable = true;
+    speed.allowFreshGenesis = true;
     await speed.appendReceipt('row-1', 'hash-1', { publish: false });
     process.env.NODE_ENV = 'PRODUCTION';
     process.env.ANCHOR_MAX_FEE_WEI = '20000000000';

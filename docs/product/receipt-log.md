@@ -55,6 +55,8 @@ Each pin anchor has a `tx`. Boot loads a Base transaction with `eth_getTransacti
 
 The only way past the pin and the on-chain check is `RECEIPT_LOG_ACCEPT_FRESH_GENESIS` set to exactly `YES_I_ACCEPT_A_NEW_PUBLIC_RECEIPT_LOG`. Boot logs that at error level, including the words `FRESH GENESIS`. The flag does not extend epoch 1 or epoch 2. Leave it unset on the public gateway.
 
+**One writer, durable only.** Boot takes an exclusive `flock` on `RECEIPT_LOG_DIR/receipt-log.lock` and keeps that descriptor open for the life of the process. A second process on the same directory is refused with `log_locked`. The lock has no pid file and no reclaim step: the kernel drops it when the holder exits or dies. It covers one host only. A copied or restored directory on another machine does not see it, so a second machine must never run with the issuer key. Production also refuses boot with `log_lock_unavailable` when util-linux `flock` is missing. Production never publishes a tree head from a log that is not durable (for example `RECEIPT_LOG_BOOT=0`): `publishHead` returns null and logs `log_not_durable`. New signed artifacts that build on the log ask `receiptLogSigningReady`, which needs a durable log, boot enabled, no fresh genesis, a passed pin check, and the lock held.
+
 `RECEIPT_LOG_STRICT=false` logs and continues when the journal is missing but an anchor snapshot exists. It still does not mint a genesis. Production should leave strict mode on.
 
 A failed disk write throws. It is not swallowed.

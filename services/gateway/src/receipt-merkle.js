@@ -16,7 +16,7 @@
 import crypto from 'crypto';
 import logger from './logger.js';
 import { recordReceiptFailure } from './receipt-failures.js';
-import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks } from './issuer-key.js';
+import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
   clockToleranceClaim,
@@ -35,6 +35,7 @@ import {
   ZERO_ROOT,
 } from './solana-receipt-anchor.js';
 import { bundleIndexHash, emptyBundleIndex } from './receipt-log-s3.js';
+import { acquireReceiptLogLock, holdsReceiptLogLock } from './receipt-log-lock.js';
 import {
   appendJournal,
   freshGenesisAllowed,
@@ -1735,6 +1736,15 @@ export class ReceiptMerkleTree {
   }
 
   async publishHead(opts = {}) {
+    // Production publishes only from the durable log. An in-memory tree
+    // (RECEIPT_LOG_BOOT=0, or no boot) never signs a head.
+    if (isProductionIssuerEnv() && !this.durable) {
+      if (!this._nonDurableRefusalLogged) {
+        this._nonDurableRefusalLogged = true;
+        logger.error({ code: 'log_not_durable' }, 'tree head publish refused: receipt log is not durable');
+      }
+      return null;
+    }
     const prev = this._publishChain || Promise.resolve();
     const run = prev.then(async () => {
       this._publishActive = true;
@@ -3616,9 +3626,23 @@ export function bootReceiptLog(dir, opts = {}) {
   // A missing or unparsable key stays pending until publish, as before.
   solanaFeePayerOrNull();
   const strict = opts.strict !== undefined ? opts.strict : receiptLogStrict();
+  // One writer per log directory on this host. A second process is refused
+  // before it reads or appends. Production also refuses when the lock cannot
+  // be taken at all.
+  const lock = acquireReceiptLogLock(dir, opts.lock || {});
+  if (!lock.held) {
+    if (lock.reason === 'log_locked') {
+      throw new ReceiptLogRefused('log_locked', 'receipt log directory is held by another process');
+    }
+    if (isProductionIssuerEnv()) {
+      throw new ReceiptLogRefused('log_lock_unavailable', 'receipt log directory lock could not be taken');
+    }
+    logger.warn({ dir }, 'receipt log directory lock unavailable outside production');
+  }
   const tree = new ReceiptMerkleTree();
   tree.durable = true;
   tree.dir = dir;
+  tree.pinVerified = false;
   const allowFresh = opts.allowFreshGenesis !== undefined
     ? opts.allowFreshGenesis
     : freshGenesisAllowed();
@@ -3650,11 +3674,43 @@ export function bootReceiptLog(dir, opts = {}) {
   }
   tree.allowFreshGenesis = false;
   tree._applyLoaded(loaded);
-  if (!allowFresh && pin) assertJournalMatchesPin(tree, pin);
+  if (!allowFresh && pin) {
+    assertJournalMatchesPin(tree, pin);
+    tree.pinVerified = true;
+  }
   if (!allowFresh) gateEpochRecord(tree);
   else if (tree.epochRecord) gateEpochRecord(tree);
+  // Log identity for new signed artifacts: taken only from the epoch record
+  // that just passed the pinned check, after the journal matched the pin.
+  tree.logIdentity = null;
+  if (!allowFresh && tree.pinVerified) {
+    const e1 = (tree.epochRecord?.epochs || []).find((row) => Number(row.epoch) === 1);
+    if (e1) {
+      tree.logIdentity = Object.freeze({
+        epoch1_root: String(e1.final_root),
+        genesis_digest: String(e1.genesis_digest),
+      });
+    }
+  }
   _tree = tree;
   return tree;
+}
+
+/**
+ * Whether a new signed artifact (fixed head, payer binding) may be signed
+ * from this tree. Every condition must hold. The JWS head path does not use
+ * this.
+ * @param {ReceiptMerkleTree | null | undefined} tree
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+export function receiptLogSigningReady(tree, env = process.env) {
+  if (!tree || tree.durable !== true) return { ok: false, reason: 'log_not_durable' };
+  if (String(env.RECEIPT_LOG_BOOT ?? '') === '0') return { ok: false, reason: 'log_boot_disabled' };
+  if (tree.allowFreshGenesis === true || freshGenesisAllowed(env)) return { ok: false, reason: 'fresh_genesis' };
+  if (tree.pinVerified !== true) return { ok: false, reason: 'pin_unverified' };
+  if (!holdsReceiptLogLock(tree.dir)) return { ok: false, reason: 'log_lock_missing' };
+  return { ok: true };
 }
 
 function gateEpochRecord(tree) {
