@@ -425,8 +425,11 @@ test('payer binding: the flag-on boot without a store raises no_store', () => {
 
 test('alert rows carry only a listed code: unknown, free-text or address-like reasons become other', () => {
   RF.resetReceiptFailuresForTests();
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  RF.setEscrowAlertClockForTests(() => clock);
   const addr = Wallet.createRandom().address;
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: addr });
+  clock += RF.ESCROW_ALERT_DEDUP_MS;
   RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network\nsecret' });
   RF.recordEscrowRefusal({ path: 'fixed_head', reason: { toString: () => 'root_mismatch' } });
   assert.equal(RF.recordEscrowRefusal({ path: 'elsewhere', reason: 'network' }), null, 'unknown path: no row');
@@ -540,8 +543,11 @@ test('SF1: 5000 routine payer binding skips plus one real settle failure: the se
 test('SF1: a flood of alert rows is capped on its own and never evicts a settle failure', async () => {
   RF.resetReceiptFailuresForTests();
   RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base' });
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  RF.setEscrowAlertClockForTests(() => clock);
   for (let i = 0; i < RF.RECEIPT_FAILURE_ROW_CAP + 1; i += 1) {
     RF.recordEscrowRefusal({ path: 'fixed_head', reason: i % 2 ? 'log_not_ready' : 'log_lock_lost' });
+    clock += RF.ESCROW_ALERT_DEDUP_MS;
   }
   const list = RF.listReceiptFailures();
   assert.equal(list.filter((r) => r.reason === 'settle_failed').length, 1, 'settle row kept');
@@ -549,4 +555,64 @@ test('SF1: a flood of alert rows is capped on its own and never evicts a settle 
   assert.ok(RF.RECEIPT_FAILURE_ALERT_ROW_CAP < RF.RECEIPT_FAILURE_ROW_CAP, 'alert cap is its own, smaller cap');
   const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
   assert.ok(ops.failures.some((r) => r.reason === 'settle_failed'), 'settle row in the ops export');
+});
+
+test('dedup: one row per (path, reason, outcome) per 15 minutes, with a repeat count; every refusal still counted', () => {
+  RF.resetReceiptFailuresForTests();
+  const t0 = Date.parse('2026-10-24T12:00:00.000Z');
+  let clock = t0;
+  RF.setEscrowAlertClockForTests(() => clock);
+  // A log_* refusal at a 60 s publish tick for one hour: 60 refusals.
+  for (let i = 0; i < 60; i += 1) {
+    RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' });
+    clock += 60_000;
+  }
+  const rows = RF.listReceiptFailures().filter((r) => r.reason === 'fixed_head:log_not_ready');
+  assert.equal(rows.length, 4, 'one row per 15 minutes');
+  assert.equal(rows[0].repeat, undefined, 'the first row has no repeat');
+  assert.deepEqual(rows.slice(1).map((r) => r.repeat), [14, 14, 14], 'each later row carries the folded count');
+  assert.deepEqual(rows.map((r) => Date.parse(r.time) - t0), [0, 15, 30, 45].map((m) => m * 60_000));
+  assert.equal(RF.escrowRefusalCounts().fixed_head.log_not_ready, 60, 'every refusal counted');
+  assert.equal(RF.receiptFailureCount(), 4, 'the public total counts rows, not folded repeats');
+  // The window is per (path, reason, outcome).
+  clock = t0 + 10 * 60 * 60_000;
+  RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'log_lock_lost' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'log_lock_lost', outcome: 'pending' });
+  RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'log_lock_lost' });
+  const keys = RF.listReceiptFailures().slice(4).map((r) => `${r.reason}|${r.outcome}`);
+  assert.deepEqual(keys, ['fixed_head:log_lock_lost|refused', 'payer_binding:log_lock_lost|refused', 'payer_binding:log_lock_lost|pending']);
+  // Just inside the window folds; exactly at 15 minutes writes; a clock step back writes.
+  clock += RF.ESCROW_ALERT_DEDUP_MS - 1;
+  assert.equal(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' }), null, 'inside the window: folded');
+  clock += 1;
+  assert.equal(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' })?.repeat, 1, 'at 15 minutes: a row with repeat 1');
+  clock -= 60_000;
+  assert.ok(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' }), 'clock stepped back: a fresh row');
+});
+
+test('dedup: a day of 60 s fixed-head log refusals stays far under the alert cap, and repeats reload into the counts', () => {
+  const dir = tmp('alerts-dedup-file-');
+  process.env.RECEIPT_FAILURES_FILE = path.join(dir, 'receipt-failures.jsonl');
+  try {
+    RF.resetReceiptFailuresForTests();
+    let clock = Date.parse('2026-10-24T00:00:00.000Z');
+    RF.setEscrowAlertClockForTests(() => clock);
+    for (let i = 0; i < 1440; i += 1) {
+      RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_lock_lost' });
+      clock += 60_000;
+    }
+    const rows = RF.listReceiptFailures();
+    assert.equal(rows.length, 96, '96 rows for 1,440 refusals');
+    assert.ok(rows.length < RF.RECEIPT_FAILURE_ALERT_ROW_CAP / 10);
+    assert.equal(RF.escrowRefusalCounts().fixed_head.log_lock_lost, 1440);
+    RF.resetReceiptFailuresForTests();
+    // 96 rows: the first, plus 95 that each fold 14. The last 14 refusals after the
+    // final row are only in memory, so the reload count is 1440 - 14.
+    assert.equal(RF.escrowRefusalCounts().fixed_head.log_lock_lost, 1426, 'reload counts 1 + repeat per row');
+    assert.equal(RF.receiptFailureCount(), 96);
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
 });

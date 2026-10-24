@@ -13,6 +13,13 @@
  * paid receipt (`no_payer`, `no_payment`, `network`, `asset`,
  * `no_payment_ref`) are routine: they are counted, not raised.
  *
+ * Repeats are folded: one row per (path, reason, outcome) per 15 minutes.
+ * The first refusal writes a row. Identical refusals inside the window only
+ * bump the count; the next row after the window carries `repeat`, the number
+ * of identical refusals folded since the previous row. So a refusal that
+ * repeats every publish tick (fixed-head log_*) writes about 96 rows a day,
+ * not 1,440. The per-reason counts still count every refusal.
+ *
  * Alert rows have their own cap (RECEIPT_FAILURE_ALERT_ROW_CAP), kept apart
  * from the settle/confirm/sign/log/anchor rows, so a flood of alerts can
  * never push a real settle failure out of the ops export.
@@ -32,6 +39,8 @@ const REFUSAL_NETWORKS = new Set(['base', 'base-sepolia', 'solana', 'solana-devn
 export const RECEIPT_FAILURE_ROW_CAP = 5000;
 export const RECEIPT_FAILURE_FILE_BYTES = 5 * 1024 * 1024;
 export const RECEIPT_FAILURE_ALERT_ROW_CAP = 1000;
+export const ESCROW_ALERT_DEDUP_MS = 15 * 60 * 1000;
+const REPEAT_MAX = 1_000_000_000;
 const REFUSAL_DAY_CAP = 30;
 
 export const ESCROW_REFUSAL_PATHS = Object.freeze(['fixed_head', 'quarantine_sign', 'payer_binding']);
@@ -74,6 +83,10 @@ const rows = [];
 /** Escrow-path alert rows, capped on their own. */
 const alertRows = [];
 let seq = 0;
+/** `<path>:<reason>|<outcome>` -> { at, folded } for the 15 minute fold. */
+const lastAlert = new Map();
+const systemClock = () => Date.now();
+let alertClock = systemClock;
 const refusalCounts = new Map();
 const escrowCounts = new Map();
 let total = 0;
@@ -153,7 +166,7 @@ function shape(input) {
   const outcome = OUTCOMES.has(input.outcome) ? input.outcome : null;
   if (!stage || !outcome) return null;
   const tx = sanitizeTx(input.tx);
-  return {
+  const out = {
     time: typeof input.time === 'string' && input.time.length <= 40
       ? input.time
       : new Date().toISOString(),
@@ -166,6 +179,9 @@ function shape(input) {
       ? String(input.requestId || input.request_id).slice(0, 80)
       : null,
   };
+  // Folded identical alerts (escrow rows only); absent on every other row.
+  if (Number.isSafeInteger(input.repeat) && input.repeat > 0) out.repeat = Math.min(input.repeat, REPEAT_MAX);
+  return out;
 }
 
 function sanitizeTx(tx) {
@@ -233,15 +249,15 @@ function escrowReason(pathName, reason) {
   return allowed && typeof reason === 'string' && allowed.has(reason) ? reason : 'other';
 }
 
-function bumpEscrow(key) {
-  escrowCounts.set(key, (escrowCounts.get(key) || 0) + 1);
+function bumpEscrow(key, n = 1) {
+  escrowCounts.set(key, (escrowCounts.get(key) || 0) + n);
 }
 
 function countEscrowRow(row) {
   if (row.stage !== 'sign') return;
   const m = ESCROW_ROW_REASON.exec(row.reason);
   if (!m) return;
-  bumpEscrow(`${m[1]}:${escrowReason(m[1], m[2])}`);
+  bumpEscrow(`${m[1]}:${escrowReason(m[1], m[2])}`, 1 + (row.repeat || 0));
 }
 
 /**
@@ -250,7 +266,7 @@ function countEscrowRow(row) {
  * receipt_failures count and GET /v1/ops/receipt-failures show it) and bumps
  * the per-reason count. Never throws.
  * @param {{ path: string, reason: string, outcome?: 'refused'|'pending' }} input
- * @returns {object|null} the row, or null (not-applicable skip, bad path)
+ * @returns {object|null} the row, or null (not-applicable skip, folded repeat, bad path)
  */
 export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused' } = {}) {
   try {
@@ -261,18 +277,30 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
       return null;
     }
     loadFile();
+    bumpEscrow(key);
+    const rowOutcome = outcome === 'pending' ? 'pending' : 'refused';
+    const nowMs = Number(alertClock());
+    const at = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const foldKey = `${key}|${rowOutcome}`;
+    const last = lastAlert.get(foldKey);
+    // Inside the window: fold. A clock that steps back writes a fresh row.
+    if (last && at >= last.at && at - last.at < ESCROW_ALERT_DEDUP_MS) {
+      last.folded += 1;
+      return null;
+    }
+    lastAlert.set(foldKey, { at, folded: 0 });
     const row = shape({
       stage: 'sign',
       reason: key,
-      outcome: outcome === 'pending' ? 'pending' : 'refused',
+      outcome: rowOutcome,
       network: null,
       tx: null,
-      time: new Date().toISOString(),
+      time: new Date(at).toISOString(),
+      repeat: last ? last.folded : 0,
     });
     if (!row) return null;
     pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
     total += 1;
-    bumpEscrow(key);
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
@@ -339,9 +367,16 @@ export function receiptFailureCount() {
   return total;
 }
 
+/** Test seam for the 15 minute fold. Reset by resetReceiptFailuresForTests. */
+export function setEscrowAlertClockForTests(fn) {
+  alertClock = typeof fn === 'function' ? fn : systemClock;
+}
+
 export function resetReceiptFailuresForTests() {
   rows.length = 0;
   alertRows.length = 0;
+  lastAlert.clear();
+  alertClock = systemClock;
   refusalCounts.clear();
   escrowCounts.clear();
   total = 0;
