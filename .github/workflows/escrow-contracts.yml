@@ -1,0 +1,44 @@
+name: Escrow contracts
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/escrow/**'
+      - 'test/escrow/**'
+      - '.github/workflows/escrow-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/escrow/**'
+      - 'test/escrow/**'
+      - '.github/workflows/escrow-contracts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  forge:
+    name: Escrow contract tests (Foundry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies (OpenZeppelin from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1.9.2
+        with:
+          version: v1.8.6
+
+      - name: forge test
+        working-directory: test/escrow
+        # The Base Sepolia fork test runs only when the repository variable
+        # BASE_SEPOLIA_RPC_URL is set. It is read-only and skips otherwise.
+        env:
+          BASE_SEPOLIA_RPC_URL: ${{ vars.BASE_SEPOLIA_RPC_URL }}
+        run: forge test --gas-report
