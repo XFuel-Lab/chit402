@@ -7,6 +7,7 @@ import { KMSClient } from '@aws-sdk/client-kms';
 import { initIssuerKey } from './issuer-key.js';
 import { createKmsSigner } from './issuer-signer-kms.js';
 import { lowS } from './ecdsa-der.js';
+import { assertSignerInput } from './issuer-signer-guard.js';
 import { peekIssuerSigner, setIssuerSigner } from './issuer-signer-state.js';
 
 function coded(message, code) {
@@ -36,8 +37,9 @@ export function createEnvSigner(env = process.env) {
       x: loaded.publicKeyJwk.x,
       y: loaded.publicKeyJwk.y,
     },
-    async sign(input) {
+    async sign(input, opts) {
       const message = Buffer.isBuffer(input) ? input : Buffer.from(input);
+      assertSignerInput(message, opts);
       const sig = crypto.sign('sha256', message, {
         key: privateKey,
         dsaEncoding: 'ieee-p1363',
