@@ -625,6 +625,8 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['HTTP 408', '408', 'COULD_NOT_CHECK'],
     ['HTTP 425', '425', 'COULD_NOT_CHECK'],
     ['HTTP 429', '429', 'COULD_NOT_CHECK'],
+    ['HTTP 499', '499', 'FAIL'],
+    ['HTTP 599', '599', 'COULD_NOT_CHECK'],
   ]) {
     test(`1F916 record fetch ${label} is ${status}`, { timeout: 10000 }, async () => {
       const lb = await loopback({ '1f916.ai': mode });
@@ -673,6 +675,10 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['RPC HTTP 408', 'rpc.test', '408', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC HTTP 425', 'rpc.test', '425', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC HTTP 429', 'rpc.test', '429', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC HTTP 499', 'rpc.test', '499', 'FAIL', ['on_chain_tx']],
+    ['RPC HTTP 599', 'rpc.test', '599', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC body stalls after headers', 'rpc.test', 'stall_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC redirect', 'rpc.test', 'redirect', 'FAIL', ['on_chain_tx']],
     ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
   ]) {
     test(`signed receipt: ${label} is ${status}`, { timeout: 10000 }, async () => {
@@ -691,6 +697,10 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
           timeoutMs: 300,
         });
         for (const name of steps) assert.equal(result.steps[name].status, status, `${name}: ${formatReport(result)}`);
+        const rpcDetail = { stall_body: /^rpc:timeout$/, redirect: /^rpc:redirect_refused$/ }[mode];
+        if (host === 'rpc.test' && rpcDetail) {
+          assert.ok(rpcDetail.test(result.steps.on_chain_tx.detail), result.steps.on_chain_tx.detail);
+        }
         assert.equal(result.verdict, status, formatReport(result));
       } finally {
         await lb.close();
