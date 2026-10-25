@@ -57,6 +57,7 @@ import {
   type PublicReceiptClaims,
 } from './public-attestation.js';
 import { truncateAddress, verifyPublicBasePayment } from './public-payment.js';
+import { keyForKid, verifyFixedHeadEip712 } from './eip712.js';
 
 export const RECEIPT_ID_RE = /^(chit|xfuel)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -156,7 +157,28 @@ type FreshLog = {
   log: VerifyVerdict['log'];
   /** Set on a pass: the head the inclusion proof verified against, for the L5 log time. */
   verified?: { origin: string; head: AnchorHead; leafIndex: number | null };
+  /** Set when the verified head carries an EIP-712 fixed head that does not match it. */
+  fixedHeadInvalid?: string;
 };
+
+/**
+ * EIP-712 fixed head on a verified tree head. Absent (flag off) is null.
+ * It must say exactly what the JWS head says, signed by the head's key.
+ */
+export function fixedHeadOutcome(
+  head: AnchorHead,
+  history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
+): { ok: true } | { ok: false; reason: string } | null {
+  const fixed = (head as { fixed_head?: unknown }).fixed_head;
+  if (fixed === undefined || fixed === null) return null;
+  const trust = verifyTreeHeadTrust(head, { trustedKids, issuerHistory: history });
+  if (!trust.ok || !trust.payload || typeof trust.kid !== 'string') return { ok: false, reason: 'head_untrusted' };
+  const embedded = (head as { issuer_signature?: { issuer_jwk?: unknown } }).issuer_signature?.issuer_jwk;
+  const jwk = keyForKid(trust.kid, [embedded, ...(history?.entries || []).map((entry) => entry?.jwk)]);
+  if (!jwk) return { ok: false, reason: 'key' };
+  return verifyFixedHeadEip712(fixed, { claims: trust.payload as Record<string, unknown>, kid: trust.kid, jwk });
+}
 
 function inclusionHeadUrl(
   origin: string,
@@ -174,9 +196,14 @@ function inclusionHeadUrl(
   return `${origin}/v1/receipts/tree/head?tree_size=${encodeURIComponent(String(size))}`;
 }
 
+/**
+ * Absence is judged under the caller's pins, like the inclusion path:
+ * undefined is the production default and [] trusts nothing.
+ */
 async function absenceAgainstSignedHead(
   origin: string,
   history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
 ): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
   try {
     const res = await fetchNoRedirect(`${origin}/v1/receipts/tree/head`, {
@@ -186,10 +213,15 @@ async function absenceAgainstSignedHead(
     if (!res.ok) return { kind: 'unchecked' };
     const head = await res.json() as AnchorHead;
     const trust = verifyTreeHeadTrust(head, {
-      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+      trustedKids,
       issuerHistory: history,
     });
-    if (trust.ok) return { kind: 'not_in_log' };
+    if (trust.ok) {
+      // A fixed head beside it must match too, as on the inclusion path.
+      const fixed = fixedHeadOutcome(head, history, trustedKids);
+      if (fixed && !fixed.ok) return { kind: 'bad_head', reason: 'fixed_head_invalid' };
+      return { kind: 'not_in_log' };
+    }
     if (!trust.reason || trust.reason === 'head_signature_missing') return { kind: 'unchecked' };
     return { kind: 'bad_head', reason: trust.reason };
   } catch {
@@ -220,6 +252,7 @@ function hardLogReason(result: AnchorWitnessResult): string | null {
 async function publicShellAbsence(
   receipt: { verify_url?: string; task_id?: string | null },
   history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
 ): Promise<boolean> {
   try {
     const origin = new URL(String(receipt.verify_url)).origin;
@@ -232,7 +265,7 @@ async function publicShellAbsence(
     if (res.status !== 404) return false;
     const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
     if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return false;
-    const absence = await absenceAgainstSignedHead(origin, history);
+    const absence = await absenceAgainstSignedHead(origin, history, trustedKids);
     return absence.kind === 'not_in_log';
   } catch {
     return false;
@@ -328,7 +361,7 @@ export async function freshPublicLog(
     if (res.status === 404) {
       const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
       if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return missed;
-      const absence = await absenceAgainstSignedHead(origin, history);
+      const absence = await absenceAgainstSignedHead(origin, history, pins);
       if (absence.kind === 'not_in_log') {
         return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
       }
@@ -398,12 +431,15 @@ export async function freshPublicLog(
     }
     if (result.overall === 'verified') {
       const leafIndex = Number(inclusion.leaf_index);
+      const fixed = fixedHeadOutcome(head, history, pins);
       return {
         logInclusion: 'pass',
         anchor: 'pass',
         logReason: null,
         verified: { origin, head, leafIndex: Number.isSafeInteger(leafIndex) ? leafIndex : null },
+        ...(fixed && !fixed.ok ? { fixedHeadInvalid: fixed.reason } : {}),
         log: {
+          ...(fixed && fixed.ok ? { fixed_head: 'verified' as const } : {}),
           leaf_index: inclusion.leaf_index ?? null,
           tree_size: inclusion.tree_size ?? null,
           root: result.root,
@@ -641,6 +677,11 @@ export async function verifyPublicShell(
   if (fresh.logInclusion === 'fail' || fresh.anchor === 'fail') {
     const reason = fresh.logReason === 'not_in_log' ? 'not_in_log' : (fresh.logReason || 'log_inclusion');
     return publicVerdict(opts, 'invalid', reason, checks, null, null, null);
+  }
+  // A fixed head that does not say what its signed head says is a definite
+  // failure here too, as on the full path.
+  if (fresh.fixedHeadInvalid) {
+    return publicVerdict(opts, 'invalid', 'fixed_head_invalid', { ...checks, log_inclusion: 'fail' }, null, null, null);
   }
 
   // On chain: exactly one matching Transfer of the signed settled amount.
@@ -977,7 +1018,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     let logReason: string | null = 'signed_receipt_unavailable';
     if (shellInclusionAbsent(receipt)) {
       const logReceipt = shellLogReceipt(receipt, receiptOrigin, publicInput);
-      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document)) {
+      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document, trustedKids)) {
         logInclusion = 'fail';
         anchorState = 'pass';
         logReason = 'not_in_log';
@@ -1014,8 +1055,12 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   let log: VerifyVerdict['log'] = null;
   const signatureOk = result.issuer_signature.valid === true && !resolved.invalid && !unsupported;
   const logHostOk = typeof receipt.verify_url === 'string' && historyHostAllowed(receipt.verify_url, { loopback: !publicInput });
+  let fixedHeadInvalid: string | null = null;
   if (signatureOk && result.issuer_history.ok && logHostOk) {
-    const fresh = await freshPublicLog(receipt, resolved.document);
+    // Same pins as the receipt signature. The CLI never sets trustedKids, so
+    // this is the production pin there.
+    const fresh = await freshPublicLog(receipt, resolved.document, { trustedKids });
+    fixedHeadInvalid = fresh.fixedHeadInvalid ?? null;
     logInclusion = fresh.logInclusion;
     anchorState = fresh.anchor;
     logReason = fresh.logReason;
@@ -1054,7 +1099,17 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     anchor: anchorState,
     logReason,
     log,
+    failureReason: result.payer_binding?.checked === true && result.payer_binding.valid === false
+      ? 'payer_binding_invalid'
+      : (fixedHeadInvalid ? 'fixed_head_invalid' : null),
   });
+  if (result.payer_binding) {
+    verdict.payer_binding = {
+      checked: result.payer_binding.checked,
+      valid: result.payer_binding.valid,
+      reason: result.payer_binding.valid ? null : result.payer_binding.reason,
+    };
+  }
   return linesOutcome(verdict);
 }
 

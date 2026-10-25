@@ -118,6 +118,7 @@ import {
   type VersionWindows,
 } from './version-windows.js';
 import { readTestSnapshot } from './internal/test-seam.js';
+import { keyForKid, verifyReceiptBindingEip712, type PayerBindingCheck } from './eip712.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
   unsignedDocumentVerdict,
@@ -440,6 +441,14 @@ export interface ReceiptVerification {
    */
   verdict?: LibraryVerdict;
   errors: string[];
+  /**
+   * EIP-712 payer binding next to the receipt (`payer_binding` with status
+   * `signed`, from the owner view). Absent when the receipt has none. A
+   * binding that does not match the signed receipt makes `overall` failed
+   * (`payer_binding_invalid`). One that cannot be linked or opened (no row
+   * hash, no payer_salt, no key) is `checked: false` and changes nothing.
+   */
+  payer_binding?: PayerBindingCheck;
   /** Signed version, or the outer 4/5 used when the JWS itself has no version. */
   receipt_version?: number | null;
   /** `inferred` is the Sep 4–5 unversioned rule. Otherwise the JWS payload. */
@@ -1728,8 +1737,23 @@ export async function verifyReceiptUpToV10(
   return verifyReceiptUpToV10Impl(receipt, options, verifyReceipt);
 }
 
-/** Signed schemas of issuer documents that are never payment receipts. */
-const NON_RECEIPT_SIGNED_SCHEMA = /^chit402\.(tree_head|tree_epoch|issuer_history|book_seq|export_coverage|book_pull_export|anchor_wallets|freeze|quarantine_ack|public_receipt)\b/;
+/** The only `chit402.*` schema a signed receipt payload may name (exact). */
+const RECEIPT_SIGNED_SCHEMAS: ReadonlySet<string> = new Set(['chit402.foreign_payout.v1']);
+
+/**
+ * Allowlist, not a denylist: any signed schema in the `chit402` namespace
+ * that is not exactly a receipt schema is an issuer document (tree head,
+ * epoch, history, quarantine list, EIP-712 record, public attestation and
+ * the rest), whatever its case, leading space or separators.
+ */
+function nonReceiptSignedSchema(schema: string): boolean {
+  // Issuers write schemas in printable ASCII. Anything else (control or
+  // format characters such as a zero-width space, or a lookalike such as
+  // U+0130) is refused before the allowlist, so no prefix hides chit402.
+  if (/[^\x20-\x7e]/.test(schema)) return true;
+  if (RECEIPT_SIGNED_SCHEMAS.has(schema)) return false;
+  return /^chit402(?![a-z0-9])/.test(schema.trim().toLowerCase());
+}
 
 /**
  * Economic payment fields that, when on the outer receipt, are always in the
@@ -1771,7 +1795,7 @@ function signedReceiptBindingErrors(
     return ['signed payload is not a receipt'];
   }
   const schema = typeof claims.schema === 'string' ? claims.schema : null;
-  if (schema && NON_RECEIPT_SIGNED_SCHEMA.test(schema)) {
+  if (schema && nonReceiptSignedSchema(schema)) {
     return [`signed payload is not a receipt (schema ${schema})`];
   }
   const errs: string[] = [];
@@ -1848,7 +1872,78 @@ export async function verifyReceipt(
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
   const result = await verifyReceiptChecks(receipt, options);
+  attachPayerBinding(receipt, result, options);
   return withLibraryVerdict(receipt, result);
+}
+
+/**
+ * Check a `payer_binding` (status `signed`) beside the receipt against the
+ * verified receipt claims, under the key that verified the receipt JWS.
+ * Nothing is added when the receipt carries no signed binding.
+ */
+function attachPayerBinding(receipt: XFuelReceipt, result: ReceiptVerification, options: VerifyReceiptOptions): void {
+  const outer = (receipt as { payer_binding?: unknown }).payer_binding;
+  if (outer === undefined || outer === null) return;
+  const view = (typeof outer === 'object' && !Array.isArray(outer) ? outer : {}) as {
+    status?: unknown; binding?: unknown; payer_salt?: unknown;
+  };
+  if (view.status !== 'signed') {
+    // `pending` and `missing` are what the issuer shows before a binding is
+    // signed: nothing to check, nothing printed. Anything else is reported
+    // as present and not checked, so it is not silently dropped.
+    if (view.status === 'pending' || view.status === 'missing') return;
+    result.payer_binding = { checked: false, valid: false, reason: 'status_unknown' };
+    return;
+  }
+  const sig = result.issuer_signature;
+  // `key_trusted === false` cannot come with `valid === true` today; it is
+  // kept as defense in depth if a trust path ever changes.
+  if (sig.valid !== true || sig.key_trusted === false || !sig.payload || typeof sig.kid !== 'string') {
+    result.payer_binding = { checked: false, valid: false, reason: 'receipt_signature_untrusted' };
+    return;
+  }
+  const candidates: unknown[] = [
+    ...(options.jwks?.keys || []),
+    ...((options.issuerHistory?.entries || []) as Array<{ jwk?: unknown }>).map((entry) => entry?.jwk),
+    receipt.issuer_signature?.issuer_jwk,
+  ];
+  let jwk = keyForKid(sig.kid, candidates);
+  let bindingKid = sig.kid;
+  if (!jwk && sig.trust === 'jwks') {
+    // A caller JWKS may label the key with a kid that is not its RFC 7638
+    // thumbprint. Use the JWKS key that verified the receipt JWS; the
+    // binding names that key by its thumbprint.
+    const jws = receipt.issuer_signature?.jws;
+    const verifying = typeof jws === 'string'
+      ? jwksCandidates(options.jwks, sig.kid).find((key) => (
+        verifyIssuerJws(jws, key, { expectTyp: ISSUER_JWS_TYP.receipt }).valid
+      ))
+      : undefined;
+    if (verifying) {
+      jwk = verifying;
+      bindingKid = jwkThumbprint(verifying);
+    }
+  }
+  if (!jwk) {
+    result.payer_binding = { checked: false, valid: false, reason: 'key_unavailable' };
+    return;
+  }
+  // Same row source as the log leaf: two row hashes that disagree fail.
+  const bound = boundRowHash(receipt);
+  const check: PayerBindingCheck = bound.ok
+    ? verifyReceiptBindingEip712(view.binding, {
+      claims: sig.payload,
+      kid: bindingKid,
+      jwk,
+      rowHash: bound.row,
+      payerSalt: view.payer_salt,
+    })
+    : { checked: true, valid: false, reason: bound.reason };
+  result.payer_binding = check;
+  if (check.checked && !check.valid) {
+    if (!result.errors.includes('payer_binding_invalid')) result.errors.push('payer_binding_invalid');
+    result.overall = 'failed';
+  }
 }
 
 function hasCompactJws(receipt: XFuelReceipt | null | undefined): boolean {
@@ -1864,7 +1959,10 @@ function withLibraryVerdict(receipt: XFuelReceipt, result: ReceiptVerification):
   // version the verifier does not support keeps exit 1 here and names
   // unsupported_version, so the verdict carries the upgrade next step.
   const unsupported = (result.errors || []).includes('unsupported_version');
-  const failureReason = failed ? (unsupported ? 'unsupported_version' : 'invalid') : null;
+  const bindingInvalid = result.payer_binding?.checked === true && result.payer_binding.valid === false;
+  const failureReason = failed
+    ? (unsupported ? 'unsupported_version' : (bindingInvalid ? 'payer_binding_invalid' : 'invalid'))
+    : null;
   // A trusted detached legacy signature is still a signature check. A
   // document with neither is the CLI's unsigned path.
   const full = hasCompactJws(receipt) || trusted
@@ -2746,6 +2844,33 @@ export {
 } from './version-registry.js';
 export type { RegisteredVersion, VersionRule, VersionFeature } from './version-registry.js';
 
+export {
+  EIP712_CHAIN_ID,
+  EIP712_DOMAIN_TYPE,
+  EIP712_DOMAIN_TYPEHASH,
+  EXPECTED_LOG_SALT,
+  FIXED_HEAD_SCHEMA,
+  PAYER_BINDING_SCHEMA,
+  TREE_HEAD_TYPE,
+  TREE_HEAD_TYPEHASH,
+  TREE_HEAD_DOMAIN_NAME,
+  RECEIPT_BINDING_TYPE,
+  RECEIPT_BINDING_TYPEHASH,
+  RECEIPT_BINDING_DOMAIN_NAME,
+  PAYER_COMMITMENT_TAG,
+  BASE_USDC_ASSET_ID,
+  bindingInputsFromClaims,
+  domainSeparator as eip712DomainSeparator,
+  kidBytes32,
+  normalizeBaseRef,
+  payerCommitment,
+  receiptLeafHash,
+  treeHeadMessageFromClaims,
+  typedDigest as eip712TypedDigest,
+  verifyFixedHeadEip712,
+  verifyReceiptBindingEip712,
+} from './eip712.js';
+export type { PayerBindingCheck, Eip712Check, TreeHeadMessage, ReceiptBindingMessage } from './eip712.js';
 export {
   LEGACY_ALLOWLIST_SCHEMA,
   LEGACY_ALLOWLIST_SHA256,
