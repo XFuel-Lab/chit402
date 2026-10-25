@@ -61,6 +61,7 @@ const { createApp } = await import('../src/server.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 const { NOT_FOUND_BODY } = await import('../src/owner-view.js');
 const { buildReceipt, stampCoveringTreeHead } = await import('../src/receipt.js');
+const { configureIssuerHistoryStore, currentIssuerHistory } = await import('../src/issuer-history.js');
 
 const payerA = Wallet.createRandom();
 const payerB = Wallet.createRandom();
@@ -1132,19 +1133,31 @@ test('B14 / SF1: drop and re-sign under a rotated key: the owner view shows miss
 });
 
 test('B14 / SF1 control: a restamp with no rotation keeps the signed binding, and it verifies under the receipt key', async () => {
-  const taskId = 'xfuel-pb-b14c';
-  const { task, jws } = await boundMutableReceipt(taskId, ROW(143));
-  await buildReceipt(task, { baseUrl: baseOn, persistSignature: true });
-  const after = task.issuerSignature.jws;
-  assert.notEqual(after, jws, 'restamp re-signed');
-  assert.equal(headerKidOf(after), KEY.kid, 'same key');
-  const owner = JSON.parse((await ownerBody(baseOn, payerA, taskId)).text);
-  assert.equal(owner.jws, after);
-  assert.equal(owner.payer_binding.status, 'signed');
-  const sealed = appOn.locals.__test.payerBindingStore.getBinding(taskId);
-  assert.deepEqual(owner.payer_binding.binding, sealed.binding);
-  assert.equal(B.verifyBinding(owner.payer_binding.binding, owner.payer_binding.payer_salt, payerA.address, KEY.publicJwk).ok, true);
-  resetReceiptMerkleTree();
+  // Fresh history (#648 nit): this control must not depend on the K2 tests
+  // before it, so a reorder or .only exercises the same branch.
+  const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'payer-binding-history-'));
+  configureIssuerHistoryStore({ dir: freshDir, persist: true });
+  try {
+    const fresh = JSON.parse((await currentIssuerHistory()).body).entries;
+    assert.ok(fresh.length > 0 && fresh[fresh.length - 1].kid === KEY.kid, 'fresh history ends at the receipt key');
+    assert.equal((await currentIssuerHistory()).version, 1, 'a fresh history starts at version 1');
+    const taskId = 'xfuel-pb-b14c';
+    const { task, jws } = await boundMutableReceipt(taskId, ROW(143));
+    await buildReceipt(task, { baseUrl: baseOn, persistSignature: true });
+    const after = task.issuerSignature.jws;
+    assert.notEqual(after, jws, 'restamp re-signed');
+    assert.equal(headerKidOf(after), KEY.kid, 'same key');
+    const owner = JSON.parse((await ownerBody(baseOn, payerA, taskId)).text);
+    assert.equal(owner.jws, after);
+    assert.equal(owner.payer_binding.status, 'signed');
+    const sealed = appOn.locals.__test.payerBindingStore.getBinding(taskId);
+    assert.deepEqual(owner.payer_binding.binding, sealed.binding);
+    assert.equal(B.verifyBinding(owner.payer_binding.binding, owner.payer_binding.payer_salt, payerA.address, KEY.publicJwk).ok, true);
+    resetReceiptMerkleTree();
+  } finally {
+    configureIssuerHistoryStore({ dir: process.env.AGENTS_DIR, persist: true });
+    fs.rmSync(freshDir, { recursive: true, force: true });
+  }
 });
 
 test('B14 / SF1: a v11 receipt is not re-signed after a rotation; its binding stays signed', async () => {
