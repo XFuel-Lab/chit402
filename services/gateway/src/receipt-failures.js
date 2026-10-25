@@ -33,7 +33,9 @@
  * count as `alert_rows_dropped`.
  *
  * A fold still open when the gateway stops is written at shutdown
- * (flushEscrowAlertFolds), so its folded refusals survive a restart.
+ * (flushEscrowAlertFolds), and again right before exit, after the drain or on
+ * the forced exit, so its folded refusals survive a restart. Folds still open
+ * at a crash or SIGKILL are lost.
  *
  * On reload, rows keep their file order across both lists, and an alert row
  * whose code is not on its path's list reads `<path>:other`, as its count.

@@ -6228,12 +6228,23 @@ export async function startServer() {
       } catch {
         // Never blocks shutdown.
       }
+      // Workers and timers keep running during the drain, so a refusal can
+      // fold after the first flush: flush again right before every exit.
+      const flushAgain = () => {
+        try {
+          flushEscrowAlertFolds();
+        } catch {
+          // Never blocks shutdown.
+        }
+      };
       const forceExit = setTimeout(() => {
         logger.warn('Forced shutdown after 10s drain timeout');
+        flushAgain();
         process.exit(1);
       }, 10_000);
       if (typeof forceExit.unref === 'function') forceExit.unref();
       server.close((err) => {
+        flushAgain();
         if (err) {
           logger.error({ err }, 'Error during server close');
           process.exit(1);

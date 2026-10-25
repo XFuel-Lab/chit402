@@ -948,6 +948,49 @@ test('N-b: the gateway shutdown flushes open alert folds before closing the serv
   assert.ok(/import \{[^}]*\bflushEscrowAlertFolds\b[^}]*\} from '\.\/receipt-failures\.js';/.test(src), 'imported from receipt-failures.js');
 });
 
+test('N1 (649): shutdown flushes open folds again right before every exit, after the drain and on the forced exit', () => {
+  const src = fs.readFileSync(path.join(gatewayDir, 'src', 'server.js'), 'utf8');
+  assert.ok(/const flushAgain = \(\) => \{\n\s+try \{\n\s+flushEscrowAlertFolds\(\);\n\s+\} catch \{/.test(src), 'flushAgain wraps flushEscrowAlertFolds and never throws');
+  assert.ok(/logger\.warn\('Forced shutdown after 10s drain timeout'\);\n\s+flushAgain\(\);\n\s+process\.exit\(1\);/.test(src), 'the forced exit flushes first');
+  assert.ok(/server\.close\(\(err\) => \{\n\s+flushAgain\(\);\n\s+if \(err\) \{/.test(src), 'the close callback flushes before either exit');
+});
+
+test('N2 (649): a reload keeps up to RECEIPT_FAILURE_ROW_CAP plain rows, not the alert cap, and drops only the oldest beyond it', () => {
+  const alertCap = RF.RECEIPT_FAILURE_ALERT_ROW_CAP;
+  const plainCap = RF.RECEIPT_FAILURE_ROW_CAP;
+  const t0 = Date.parse('2026-10-20T00:00:00.000Z');
+  const at = (i) => new Date(t0 + i * 1000).toISOString();
+  // More plain rows than the alert cap, under the plain cap, with two alert rows.
+  const some = [];
+  for (let i = 0; i < alertCap + 200; i += 1) some.push(plainRow('settle_failed', at(i)));
+  some.splice(10, 0, alertRow('fixed_head:quarantined', at(10)));
+  some.push(alertRow('payer_binding:amount', at(alertCap + 300)));
+  reloadFrom(some);
+  try {
+    const list = RF.listReceiptFailures();
+    assert.equal(list.filter((r) => r.stage === 'settle').length, alertCap + 200, 'every plain row is kept');
+    assert.equal(list.length, alertCap + 202);
+    assert.equal(list[0].time, at(0), 'the oldest plain row is still first');
+    assert.equal(RF.receiptFailureCount(), alertCap + 200);
+    assert.equal(RF.alertRowsDropped(), 0);
+  } finally {
+    clearReload();
+  }
+  // Over the plain cap: exactly the oldest three plain rows dropped.
+  const many = [];
+  for (let i = 0; i < plainCap + 3; i += 1) many.push(plainRow('settle_failed', at(i)));
+  reloadFrom(many);
+  try {
+    const list = RF.listReceiptFailures();
+    assert.equal(list.length, plainCap);
+    assert.equal(list[0].time, at(3), 'the oldest three were dropped');
+    assert.equal(list[list.length - 1].time, at(plainCap + 2));
+    assert.equal(RF.alertRowsDropped(), 0, 'plain drops are not alert drops');
+  } finally {
+    clearReload();
+  }
+});
+
 test('N-c: repeat on a reloaded row: positive safe integers only, clamped to 1e9', () => {
   reloadFrom([
     alertRow('fixed_head:root_mismatch', '2026-10-24T00:00:01.000Z', { repeat: 1e15 }),

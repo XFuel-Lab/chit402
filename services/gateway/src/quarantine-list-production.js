@@ -67,9 +67,12 @@ function refuse(reason, message) {
   throw new ProductionListRefused(reason, message);
 }
 
+/** Tests may swap it for one run, through the test-only runner's recordRefusal option. */
+let refusalRecorder = appendHostEscrowRefusal;
+
 function recordRefusal(reason) {
   try {
-    appendHostEscrowRefusal({ path: 'quarantine_production_sign', reason });
+    refusalRecorder({ path: 'quarantine_production_sign', reason });
   } catch {
     // The recorder never throws; if one does, the run still refuses as before.
   }
@@ -426,7 +429,14 @@ export async function runProductionListSigner(opts) {
 /** Tests only: the same run against a given allowlist. Nothing in src or scripts calls it. */
 export async function _runProductionListSignerForTest(opts, testKeys) {
   refuseTestEntryInProduction();
-  return runWith(opts, testKeys);
+  if (typeof opts?.recordRefusal !== 'function') return runWith(opts, testKeys);
+  const saved = refusalRecorder;
+  refusalRecorder = opts.recordRefusal;
+  try {
+    return await runWith(opts, testKeys);
+  } finally {
+    refusalRecorder = saved;
+  }
 }
 
 async function runWith({
