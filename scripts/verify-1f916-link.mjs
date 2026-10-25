@@ -287,18 +287,33 @@ function transportCode(err) {
 }
 
 /**
- * The TLS code on a rejection or its cause.
+ * The TLS code on a rejection's cause or an AggregateError member, never on
+ * the rejection itself. Fetch puts a TLS failure on the cause of "fetch
+ * failed" (or "terminated" for a body read), so a top-level code is not one,
+ * for example a custom fetchImpl that throws { code: 'UNSPECIFIED' }.
  * @param {any} err
  * @returns {string|null}
  */
 function tlsCode(err) {
-  return errorCodes(err).find(isTlsCode) || null;
+  const nested = [err?.cause];
+  for (const holder of [err, err?.cause]) {
+    if (Array.isArray(holder?.errors)) nested.push(...holder.errors);
+  }
+  const codes = nested.filter((item) => item && typeof item.code === 'string').map((item) => item.code);
+  return codes.find(isTlsCode) || null;
 }
 
+// N-14: a body shorter than its content-length, ended by the server with a
+// clean close. Only the host's own server or CDN can produce it (an on-path
+// cut is UND_ERR_SOCKET), and it proves nothing about the link, so it is
+// COULD_NOT_CHECK, not a body that is not JSON.
+const BODY_TRUNCATED_CODE = 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH';
+
 /**
- * Sort a failed body read. A timeout, a network code or a TLS code is
- * transport (COULD_NOT_CHECK); anything else is null, so the caller reports
- * a body that is not JSON (FAIL). Shared by getJson and the RPC step.
+ * Sort a failed body read. A timeout, a network code, a TLS code or a body cut
+ * short of its content-length is transport (COULD_NOT_CHECK); anything else is
+ * null, so the caller reports a body that is not JSON (FAIL). Shared by
+ * getJson and the RPC step.
  * @param {any} err
  * @returns {Error|null}
  */
@@ -308,6 +323,7 @@ function bodyReadError(err) {
   if (code) return transportError(code);
   const tls = tlsCode(err);
   if (tls) return transportError(`tls:${tls}`);
+  if (errorCodes(err).includes(BODY_TRUNCATED_CODE)) return transportError(`body_truncated:${BODY_TRUNCATED_CODE}`);
   return null;
 }
 

@@ -608,6 +608,11 @@ async function loopback(routes) {
       res.writeHead(302, { location: 'http://127.0.0.1:9/elsewhere' });
       return res.end();
     }
+    if (mode === 'short_body') {
+      // N-14: fewer bytes than content-length, then a clean close.
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100', connection: 'close' });
+      return res.end('{"events":');
+    }
     if (mode === 'not_json') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end('<html>not json</html>');
@@ -670,6 +675,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['timeout', 'hang', 'COULD_NOT_CHECK', /^timeout$/],
     ['body stalls after headers', 'stall_body', 'COULD_NOT_CHECK', /^timeout$/],
     ['socket reset mid-body', 'reset_body', 'COULD_NOT_CHECK', /^UND_ERR_SOCKET$/],
+    ['body shorter than content-length, clean close', 'short_body', 'COULD_NOT_CHECK', /^body_truncated:UND_ERR_RES_CONTENT_LENGTH_MISMATCH$/],
     ['HTTP 404', '404', 'FAIL', /http_404/],
     ['HTTP 400', '400', 'FAIL', /http_400/],
     ['body not JSON', 'not_json', 'FAIL', /body_not_json/],
@@ -757,6 +763,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['RPC HTTP 599', 'rpc.test', '599', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC body stalls after headers', 'rpc.test', 'stall_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC socket reset mid-body', 'rpc.test', 'reset_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC body shorter than content-length', 'rpc.test', 'short_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC redirect', 'rpc.test', 'redirect', 'FAIL', ['on_chain_tx']],
     ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
   ]) {
@@ -776,7 +783,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
           timeoutMs: 300,
         });
         for (const name of steps) assert.equal(result.steps[name].status, status, `${name}: ${formatReport(result)}`);
-        const rpcDetail = { stall_body: /^rpc:timeout$/, reset_body: /^rpc:UND_ERR_SOCKET$/, redirect: /^rpc:redirect_refused$/ }[mode];
+        const rpcDetail = { stall_body: /^rpc:timeout$/, reset_body: /^rpc:UND_ERR_SOCKET$/, short_body: /^rpc:body_truncated:UND_ERR_RES_CONTENT_LENGTH_MISMATCH$/, redirect: /^rpc:redirect_refused$/ }[mode];
         if (host === 'rpc.test' && rpcDetail) {
           assert.ok(rpcDetail.test(result.steps.on_chain_tx.detail), result.steps.on_chain_tx.detail);
         }
@@ -887,7 +894,8 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     const timeout = new DOMException('timed out', 'TimeoutError');
     assert.equal(classifyFetchError(timeout).message, 'timeout');
     assert.equal(classifyFetchError(new DOMException('aborted', 'AbortError')).transport, true);
-    // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail, on the cause or on the error.
+    // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail. The code counts
+    // only on the cause (or an AggregateError member), where fetch puts it.
     // M-2b: every X509 certificate error code in Node's tls docs, plus UNSPECIFIED.
     const x509 = [
       'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_CRL', 'UNABLE_TO_DECRYPT_CERT_SIGNATURE', 'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
@@ -900,11 +908,15 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ];
     assert.equal(x509.length, 28);
     for (const code of [...x509, 'UNSPECIFIED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_TLS_HANDSHAKE_TIMEOUT']) {
-      for (const err of [fetchFailed(coded(code)), coded(code)]) {
+      for (const err of [fetchFailed(coded(code)), fetchFailed(new AggregateError([coded(code)], 'all failed'))]) {
         const got = classifyFetchError(err);
         assert.equal(got.transport, true, code);
         assert.equal(got.message, `tls:${code}`);
       }
+      // On the rejection itself (a custom fetchImpl, not fetch): not TLS, so FAIL.
+      const top = classifyFetchError(coded(code));
+      assert.notEqual(top.transport, true, `top-level ${code}`);
+      assert.equal(top.message, `fetch_error:x:${code}`);
     }
     const redirect = classifyFetchError(fetchFailed(new Error('unexpected redirect')));
     assert.equal(redirect.transport, undefined);
