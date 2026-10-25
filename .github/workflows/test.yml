@@ -410,7 +410,8 @@ jobs:
           if ! unshare -rn true; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-          unshare -rn npm test
+          # Loopback only: the 1f916 link tests (#650 S5) run local test servers on 127.0.0.1.
+          unshare -rn sh -c 'ip link set lo up && npm test'
 
   solana-audit-bundle:
     name: Solana audit bundle secret scan
