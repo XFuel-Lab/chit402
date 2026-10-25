@@ -161,6 +161,8 @@ import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendG
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegraded } from './public-metrics.js';
 import {
   receiptFailureCount,
+  escrowRefusalCounts,
+  recordEscrowRefusal,
   listReceiptFailures,
   listRefusalCounts,
   receiptFailureCsv,
@@ -1150,6 +1152,7 @@ export async function createApp() {
   const payerBindingOn = payerBindingFlagOn(process.env);
   if (payerBindingOn && !payerBindingStore) {
     logger.error({}, 'RECEIPT_PAYER_BINDING_EIP712=true without a persistent store; payer binding stays off');
+    recordEscrowRefusal({ path: 'payer_binding', reason: 'no_store' });
   }
   const payerBindingWorker = payerBindingOn && payerBindingStore
     ? createPayerBindingWorker({
@@ -4657,7 +4660,8 @@ export async function createApp() {
   const DOOR_METRICS_TTL_MS = 15_000;
 
   // GET /v1/ops/receipt-failures — read-only export for a monitor routine.
-  // Auth: OPS_READ_TOKEN via Authorization: Bearer. Off when unset (503).
+  // Auth: OPS_READ_TOKEN via Authorization: Bearer (a shared ops token, not an
+  // owner credential). Off when unset (503). Every response is no-store.
   // GET only. Other methods are 405 and never a payment challenge.
   // The token is not logged and is not accepted on any other route.
   app.all('/v1/ops/receipt-failures', (req, res, next) => {
@@ -4669,6 +4673,7 @@ export async function createApp() {
   app.get('/v1/ops/receipt-failures', rateLimit, (req, res) => {
     const auth = receiptFailuresAuth(extractReceiptFailuresToken(req));
     if (!auth.ok) {
+      res.set('Cache-Control', 'private, no-store');
       return res.status(auth.status).json({ error: auth.error, message: auth.message });
     }
     const since = req.query?.since;
@@ -4677,12 +4682,17 @@ export async function createApp() {
     }
     const failures = listReceiptFailures({ since: since ? String(since) : null });
     const refusalCounts = listRefusalCounts({ since: since ? String(since) : null });
+    // Per-path, per-reason escrow refusal counts (fixed heads, quarantine list
+    // signing, payer binding), including count-only skips. Gated here, never on
+    // public /health: the counters ticking around a known receipt would tell
+    // its payment rail and paid status. Codes and counts only.
+    const escrowRefusals = escrowRefusalCounts() || {};
     const wantsCsv = req.query?.format === 'csv' || String(req.headers.accept || '').includes('text/csv');
     res.set('Cache-Control', 'private, no-store');
     if (wantsCsv) {
       return res.type('text/csv').send(receiptFailureCsv(failures));
     }
-    return res.json({ failures, refusal_counts: refusalCounts });
+    return res.json({ failures, refusal_counts: refusalCounts, escrow_refusals: escrowRefusals });
   });
 
   app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {
@@ -5793,7 +5803,7 @@ export async function createApp() {
     registry: agentRegistry,
     loadReceipt: loadFullReceipt,
     // Read only. Present only with RECEIPT_PAYER_BINDING_EIP712=true.
-    payerBinding: payerBindingOn ? (taskId) => payerBindingView(payerBindingStore, taskId) : null,
+    payerBinding: payerBindingOn ? (taskId, receiptJws) => payerBindingView(payerBindingStore, taskId, receiptJws) : null,
     listReceipts: listOwnedReceipts,
     houseMetrics: collectHouseMetrics,
     houseAgentId: process.env.HOUSE_AGENT_ID || null,
