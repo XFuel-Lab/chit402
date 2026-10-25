@@ -7,9 +7,9 @@
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
  * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
- * A transport error (the fetch rejects, times out, or gets HTTP 5xx) is
- * COULD_NOT_CHECK, exit 2. HTTP 4xx, a body that is not JSON, a refused
- * redirect and a fixture miss stay FAIL, exit 1.
+ * A transport error (the fetch rejects, times out, or gets HTTP 5xx, 408, 425
+ * or 429) is COULD_NOT_CHECK, exit 2. Other HTTP 4xx, a body that is not JSON,
+ * a refused redirect and a fixture miss stay FAIL, exit 1.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
  * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
  * That result means the signature is not public, so the receipt was not checked.
@@ -157,6 +157,18 @@ function transportError(detail) {
   return err;
 }
 
+// Timeout and throttling answers say nothing about the link, so they are
+// COULD_NOT_CHECK like a 5xx: 408 Request Timeout, 425 Too Early, 429 Too Many Requests.
+const UNCHECKED_4XX = new Set([408, 425, 429]);
+
+/**
+ * True when an HTTP status means the server could not answer, not that it answered no.
+ * @param {number} status
+ */
+export function isTransportStatus(status) {
+  return status >= 500 || UNCHECKED_4XX.has(status);
+}
+
 function isTimeout(err) {
   return err?.name === 'TimeoutError' || err?.name === 'AbortError';
 }
@@ -191,7 +203,7 @@ async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
     throw classifyFetchError(err);
   }
   if (!res.ok) {
-    if (res.status >= 500) throw transportError(`http_${res.status}`);
+    if (isTransportStatus(res.status)) throw transportError(`http_${res.status}`);
     throw new Error(`http_${res.status}`);
   }
   try {
@@ -536,7 +548,7 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs = FETC
     return failOrUnchecked(sorted, `rpc:${sorted.message || 'failed'}`);
   }
   if (!res.ok) {
-    return res.status >= 500 ? unchecked(`rpc_http_${res.status}`) : fail(`rpc_http_${res.status}`);
+    return isTransportStatus(res.status) ? unchecked(`rpc_http_${res.status}`) : fail(`rpc_http_${res.status}`);
   }
   try {
     body = await res.json();

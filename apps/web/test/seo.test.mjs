@@ -782,5 +782,5 @@ test('#650 follow-up: docs index and book copy stay on chit402-verify 0.4.11 wor
   assert.ok(/ships it\./.test(trust), 'Trust says a new kid needs a verifier release');
   assert.ok(!/already pinned/.test(link), '1F916 page has no pinning wording');
   assert.ok(/<code>npx chit402-verify<\/code> does not\s+compare the fingerprint/.test(link), '1F916 page names the command that skips the fingerprint');
-  assert.ok(/A network error \(no answer, timeout, HTTP 5xx\) is also exit 2\./.test(link), '1F916 page states the transport exit code');
+  assert.ok(/A network error \(no answer, timeout, HTTP 5xx, 408, 425 or 429\) is also exit 2\./.test(link), '1F916 page states the transport exit code');
 });

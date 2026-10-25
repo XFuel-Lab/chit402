@@ -618,7 +618,14 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     });
   }
 
-  for (const [label, mode, status] of [['HTTP 502', '502', 'COULD_NOT_CHECK'], ['refused', 'refused', 'COULD_NOT_CHECK'], ['HTTP 404', '404', 'FAIL']]) {
+  for (const [label, mode, status] of [
+    ['HTTP 502', '502', 'COULD_NOT_CHECK'],
+    ['refused', 'refused', 'COULD_NOT_CHECK'],
+    ['HTTP 404', '404', 'FAIL'],
+    ['HTTP 408', '408', 'COULD_NOT_CHECK'],
+    ['HTTP 425', '425', 'COULD_NOT_CHECK'],
+    ['HTTP 429', '429', 'COULD_NOT_CHECK'],
+  ]) {
     test(`1F916 record fetch ${label} is ${status}`, { timeout: 10000 }, async () => {
       const lb = await loopback({ '1f916.ai': mode });
       try {
@@ -663,6 +670,9 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['RPC refused', 'rpc.test', 'refused', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC timeout', 'rpc.test', 'hang', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC HTTP 400', 'rpc.test', '400', 'FAIL', ['on_chain_tx']],
+    ['RPC HTTP 408', 'rpc.test', '408', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC HTTP 425', 'rpc.test', '425', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC HTTP 429', 'rpc.test', '429', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
   ]) {
     test(`signed receipt: ${label} is ${status}`, { timeout: 10000 }, async () => {
