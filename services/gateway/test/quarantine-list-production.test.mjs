@@ -1402,7 +1402,7 @@ test('QP34 / SF-1: the host append writes the gateway\'s own row, only to an exi
   const text = fs.readFileSync(file, 'utf8');
   assert.ok(text.startsWith(prior), 'prior bytes untouched');
   const added = text.slice(prior.length);
-  assert.equal(added, `${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
+  assert.equal(added, `\n${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
   // An unknown code is `other`; an unknown path writes nothing.
   assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'free text /tmp/x' }, { file, now }), true);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()).reason, `${PROD_PATH}:other`);
@@ -1502,6 +1502,10 @@ function pathologicalFiles() {
     cases.push(['/proc regular-looking file', '/proc/self/status']);
     // Regular-looking and writable by its owner: only the /proc guard stops it.
     cases.push(['/proc writable file', '/proc/self/comm']);
+    // N-1 (649): the path is not under /proc, but its real parent is.
+    const pp = path.join(dir, 'pp');
+    fs.symlinkSync('/proc/self', pp);
+    cases.push(['symlinked parent to /proc/self, then comm', path.join(pp, 'comm')]);
   }
   if (FIFO_OK) {
     const fifo = path.join(dir, 'fifo.jsonl');
@@ -1582,4 +1586,148 @@ test('N4 (649): the script end to end: exit code, stdout and stderr byte-identic
   }
   assert.deepEqual(listing(dir), before, 'nothing created, nothing appended');
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+// N-1 (649): behavioural tests for the host append's race guards.
+// Each hook runs once, right after the module's own lstat of the target.
+function hookLstatOnce(after) {
+  const original = fs.lstatSync;
+  let fired = false;
+  fs.lstatSync = function hooked(p, ...rest) {
+    const st = original.call(fs, p, ...rest);
+    if (!fired) {
+      fired = true;
+      after(p);
+    }
+    return st;
+  };
+  return () => { fs.lstatSync = original; };
+}
+
+test('B-R2 (649 N-1): a file unlinked between lstat and open is not recreated', () => {
+  const dir = tmp('qlprod-br2-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, '');
+  const restore = hookLstatOnce(() => fs.unlinkSync(file));
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    restore();
+  }
+  assert.equal(fs.existsSync(file), false, 'no O_CREAT: the file is not recreated');
+});
+
+test('B-R6 (649 N-1): a regular file swapped in after lstat gets nothing (dev/ino recheck)', () => {
+  const dir = tmp('qlprod-br6-');
+  const file = path.join(dir, 'rf.jsonl');
+  const other = path.join(dir, 'other.jsonl');
+  fs.writeFileSync(file, 'gateway\n');
+  fs.writeFileSync(other, 'someone else\n');
+  const restore = hookLstatOnce(() => fs.renameSync(other, file));
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    restore();
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), 'someone else\n', 'the swapped-in file is unchanged');
+});
+
+test('B-R8 (649 N-1): a FIFO swapped in after lstat does not block (O_NONBLOCK)', { skip: !FIFO_OK && 'mkfifo not available', timeout: 30_000 }, () => {
+  const dir = tmp('qlprod-br8-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, '');
+  const mod = path.join(here, '..', 'src', 'receipt-failure-host-append.js');
+  const script = `
+    import fs from 'node:fs';
+    import { spawnSync } from 'node:child_process';
+    const file = ${JSON.stringify(file)};
+    const original = fs.lstatSync;
+    let fired = false;
+    fs.lstatSync = function hooked(p, ...rest) {
+      const st = original.call(fs, p, ...rest);
+      if (!fired) { fired = true; fs.unlinkSync(file); spawnSync('mkfifo', [file]); }
+      return st;
+    };
+    const { appendHostEscrowRefusal } = await import(${JSON.stringify(pathToFileURLString(mod))});
+    process.stdout.write('RESULT=' + String(appendHostEscrowRefusal({ path: 'quarantine_production_sign', reason: 'usage' }, { file })));
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5_000 });
+  assert.equal(r.signal, null, `no hang: ${r.stderr}`);
+  assert.ok(/RESULT=false$/.test(r.stdout), `${r.stdout} ${r.stderr}`);
+  assert.ok(fs.lstatSync(file).isFIFO(), 'the FIFO is still there and was not written');
+});
+
+function pathToFileURLString(p) {
+  return new URL(`file://${path.resolve(p)}`).href;
+}
+
+test('B-R5b (649 N-1): a symlinked parent that resolves under /proc writes nothing to /proc/self/comm', { skip: process.platform !== 'linux' && 'linux only' }, () => {
+  const dir = tmp('qlprod-br5b-');
+  const pp = path.join(dir, 'pp');
+  fs.symlinkSync('/proc/self', pp);
+  const before = fs.readFileSync('/proc/self/comm', 'utf8');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: path.join(pp, 'comm') }), false);
+  assert.equal(fs.readFileSync('/proc/self/comm', 'utf8'), before, '/proc/self/comm unchanged');
+});
+
+test('N-2 (649): a file owned by another user gets nothing', { skip: typeof process.geteuid !== 'function' && 'no geteuid' }, () => {
+  const dir = tmp('qlprod-uid-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, 'gateway\n');
+  const original = fs.fstatSync;
+  fs.fstatSync = function hooked(fd, ...rest) {
+    const st = original.call(fs, fd, ...rest);
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { uid: process.geteuid() + 1 });
+  };
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    fs.fstatSync = original;
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), 'gateway\n');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), true, 'own file still appends');
+});
+
+test('N-3 (649): a torn tail does not swallow the next row, for the gateway writer and the host append', () => {
+  const dir = tmp('qlprod-torn-');
+  const file = path.join(dir, 'rf.jsonl');
+  const settle = { time: '2026-10-24T11:00:00.000Z', network: 'base', stage: 'settle', reason: 'settle_failed', tx: null, outcome: 'refused', request_id: null };
+  fs.writeFileSync(file, `${JSON.stringify(settle)}\n{"time":"2026-10-24T11:30:00.000Z","netw`);
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    // Gateway writer first, straight after a torn fragment.
+    RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'write_mismatch' });
+    RF.flushEscrowAlertFolds();
+    let text = fs.readFileSync(file, 'utf8');
+    assert.ok(/"netw\n\{"time"/.test(text), 'the gateway row starts on its own line after the torn fragment');
+    // Then the host append, straight after another torn fragment.
+    fs.appendFileSync(file, '{"time":"2026-10-24T11:45:00.000Z","sta');
+    const at = Date.parse('2026-10-24T12:00:00.000Z');
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file, now: () => at }), true);
+    text = fs.readFileSync(file, 'utf8');
+    assert.ok(/"sta\n\{"time"/.test(text), 'the host row starts on its own line after the torn fragment');
+    RF.resetReceiptFailuresForTests();
+    const reasons = RF.listReceiptFailures().map((r) => r.reason);
+    assert.ok(reasons.includes('settle_failed'), reasons.join(','));
+    assert.ok(reasons.includes(`${PROD_PATH}:usage`), reasons.join(','));
+    assert.ok(reasons.includes(`${PROD_PATH}:write_mismatch`), reasons.join(','));
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('N-6 (649): after a run with a test recorder, the default host recorder is back', async () => {
+  const calls = [];
+  const swapped = await withFailureFile('file', () => withThrowingRecorder(calls, async () => { const s = await setup(); return run(['--log-dir', s.logDir]); }));
+  assert.deepEqual(swapped.r.result, { ok: false, reason: 'usage' });
+  assert.deepEqual(calls, ['usage'], 'the test recorder saw the refusal');
+  assert.equal(swapped.rows.length, 0, 'the test recorder replaced the file append');
+  const restored = await withFailureFile('file', async () => { const s = await setup(); return run(['--log-dir', s.logDir]); });
+  assert.deepEqual(restored.r.result, { ok: false, reason: 'usage' });
+  assert.deepEqual(calls, ['usage'], 'the test recorder is not called again');
+  assert.deepEqual(restored.rows.map((r) => r.reason), [`${PROD_PATH}:usage`], 'the default host recorder appended the row');
 });

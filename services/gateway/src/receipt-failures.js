@@ -35,7 +35,8 @@
  * A fold still open when the gateway stops is written at shutdown
  * (flushEscrowAlertFolds), and again right before exit, after the drain or on
  * the forced exit, so its folded refusals survive a restart. Folds still open
- * at a crash or SIGKILL are lost.
+ * at a crash, a SIGKILL, or a second signal during the drain (the handler is
+ * process.once, so the second one exits with no flush) are lost.
  *
  * On reload, rows keep their file order across both lists, and an alert row
  * whose code is not on its path's list reads `<path>:other`, as its count.
@@ -223,7 +224,9 @@ function rotateFile(file) {
 }
 
 function appendLimited(file, row) {
-  const line = `${JSON.stringify(row)}\n`;
+  // Leading newline: a torn tail from a short write never glues two rows
+  // together. Blank lines are skipped on reload.
+  const line = `\n${JSON.stringify(row)}\n`;
   mkdirSync(path.dirname(file), { recursive: true });
   let size = 0;
   try { size = statSync(file).size; } catch { size = 0; }
