@@ -161,7 +161,7 @@ function signEs256(privateKey, kid, payload) {
   return `${header}.${body}.${sig}`;
 }
 
-function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
+function foreignPayoutHarness({ signedFingerprint = FINGERPRINT, native = false } = {}) {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' });
   const kid = createHash('sha256').update(JSON.stringify({
@@ -206,6 +206,21 @@ function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
       fingerprint_alg: '1f916-entry-hash',
     },
   };
+  // native: a chat receipt whose JWS carries payment.* and caller_binding
+  // instead of the chit402.foreign_payout.v1 schema (the second claims branch).
+  const nativeClaims = {
+    iss: 'chit402',
+    task_id: taskId,
+    payment: {
+      ref: `base:${tx}`,
+      gross_amount: '1000000',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payee: payTo,
+    },
+    caller_binding: { payer_wallet: payer },
+    agent_record_entry: payoutClaims.agent_record_entry,
+  };
+  const signedClaims = native ? nativeClaims : payoutClaims;
   const receipt = {
     task_id: taskId,
     verify_url: `https://api.chit402.com/receipt/${taskId}`,
@@ -213,7 +228,7 @@ function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
     evidence: 'foreign_ingest',
     source: 'foreign_ingest',
     verification: { jwks_uri: 'https://api.chit402.com/.well-known/jwks.json', source_of_truth: 'issuer_signature.jws' },
-    issuer_signature: { alg: 'ES256', kid, jws: signEs256(privateKey, kid, payoutClaims) },
+    issuer_signature: { alg: 'ES256', kid, jws: signEs256(privateKey, kid, signedClaims) },
     book_seq: 1,
     book_chain: {
       ...chainClaims,
@@ -230,6 +245,11 @@ function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
     },
     signature: { alg: 'HMAC-SHA256', scope: 'recorded', value: 'sha256=abc' },
   };
+  if (native) {
+    delete receipt.foreign_x402;
+    receipt.payment.asset = nativeClaims.payment.asset;
+    receipt.caller_binding = { payer_wallet: payer };
+  }
   const topic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
   const pad = (addr) => `0x${addr.slice(2).toLowerCase().padStart(64, '0')}`;
   const fetchImpl = async (url, init) => {
@@ -336,8 +356,16 @@ test('N-6 an uppercase signed fingerprint matches its lowercase claim and still 
 });
 
 test('N-8 an empty or malformed signed fingerprint is FAIL before the record fetch, not absent', async () => {
-  for (const [label, signed] of [['empty string', ''], ['63 hex', FINGERPRINT.slice(1)], ['65 hex', `${FINGERPRINT}0`], ['number', 7]]) {
-    const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: signed });
+  for (const [label, signed, native] of [
+    ['empty string', '', false],
+    ['63 hex', FINGERPRINT.slice(1), false],
+    ['65 hex', `${FINGERPRINT}0`, false],
+    ['number', 7, false],
+    ['array holding the right hex', [FINGERPRINT], false],
+    ['native receipt, empty string', '', true],
+    ['native receipt, array holding the right hex', [FINGERPRINT], true],
+  ]) {
+    const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: signed, native });
     let recordFetches = 0;
     const counting = async (url, init) => {
       if (String(url).includes('1f916.ai')) recordFetches += 1;
@@ -350,9 +378,14 @@ test('N-8 an empty or malformed signed fingerprint is FAIL before the record fet
     assert.equal(result.verdict, 'FAIL');
     assert.equal(recordFetches, 0, label);
   }
-  const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: null });
-  const absent = await verifyLink(specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl });
-  assert.equal(absent.verdict, 'PASS', `a null signed fingerprint is absent: ${formatReport(absent)}`);
+  for (const native of [false, true]) {
+    const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: null, native });
+    const absent = await verifyLink(specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl });
+    assert.equal(absent.verdict, 'PASS', `native=${native}: a null signed fingerprint is absent: ${formatReport(absent)}`);
+    const signed = foreignPayoutHarness({ native });
+    const ok = await verifyLink(signed.specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl: signed.fetchImpl });
+    assert.equal(ok.verdict, 'PASS', `native=${native}: ${formatReport(ok)}`);
+  }
 });
 
 test('the public unsigned receipt shell fails closed with a clear reason, not a verify_url mismatch', async () => {
