@@ -38,6 +38,8 @@ console.log(verdict.result, verdict.exit_code);
 
 Since 0.4.11 the library is never more generous than the CLI. `overall` comes from the shared verdict: `verified` only at `verdict.exit_code` 0, `failed` at 1, `partial` at 2. `verifyReceipt` does not fetch the public log or the anchors, so those checks are `could_not_check` there and a receipt whose library checks all pass is `partial` (exit 2). Use `checkReceiptInput` for exit 0. A document without a trusted issuer signature is `partial` (`signed_receipt_unavailable`). Binding, nullifier and payer facts come only from verified signed claims. A detached legacy `issuer_signature.value` is trusted only under a kid pinned in issuer history (the bundled snapshot or a supplied history that extends it), never under a caller JWKS key alone. Follow-up reads (issuer history, JWKS, preimages, inclusion, tree head, epoch) refuse redirects; a refused redirect is could_not_check.
 
+**`trustedKids` is a full trust root.** In `checkReceiptInput`, `verifyReceipt` and the other library calls, `trustedKids` replaces the production pin for everything the verifier trusts: the receipt signature, the issuer history, tree heads and fixed heads (on the inclusion and the absence path), the epoch record and, through the history, the anchor wallets. Leave it unset for the production pin. An empty list trusts nothing. Never build it from the receipt being checked (its `kid`, `issuer_jwk` or `jwks_uri`): a receipt that names its own trusted key proves nothing. The CLI never sets it.
+
 ### CLI
 
 ```bash

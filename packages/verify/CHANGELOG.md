@@ -24,6 +24,10 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 - New verdict reasons with docs anchors: `fixed_head_invalid`, `payer_binding_invalid`. Exit codes, flags (`--issuer-history`, `--json`) and the `xfuel-verify` bin are unchanged. Version not bumped in this change. `BUILD_DIGEST.txt` moved because `src/eip712.ts` is new and `src/index.ts`, `src/check-input.ts` and `src/verdict.ts` changed.
 - Tests: vectors signed by the issuer code under the synthetic test key, parity with the shared escrow vectors, the flag-off golden (sha256 36cd1a58f1c4b0a12dd080a2b54df1ab25c9feefb0d78e52e12ef7060abae139), and negatives for a forged binding, a wrong network, a wrong chainId and a non-string ref.
 
+### Notes: `trustedKids`
+- **`trustedKids` is a full trust root.** It replaces the production pin for the receipt signature, issuer history, tree heads and fixed heads, the epoch record and the anchor wallets. Unset means the production pin; `[]` trusts nothing. It must never come from the receipt being checked. The CLI never sets it.
+- The absence path (a receipt reported `not_in_tree` against the signed head, or a pre-log shell) now checks that head and its fixed head under the caller's `trustedKids`, as the inclusion path does. Before, it always used the production pin.
+
 ### Fixed: non-receipt signed schemas
 - A signed payload whose schema is `chit402.quarantine_list`, `chit402.tree_head_eip712` or `chit402.receipt_binding_eip712` is refused as a receipt (`signed payload is not a receipt`), as `quarantine_ack` already was. `BUILD_DIGEST.txt` moved again (`src/index.ts`).
 - The schema check is now an allowlist: any signed schema in the `chit402` namespace other than exactly `chit402.foreign_payout.v1` is refused, including case, leading-space and separator variants.
