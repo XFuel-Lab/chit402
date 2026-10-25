@@ -26,7 +26,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
-import { recordEscrowRefusal } from './receipt-failures.js';
+import { appendHostEscrowRefusal } from './receipt-failure-host-append.js';
 import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput } from './issuer-key.js';
 import { PRODUCTION_ISSUER_PUBLIC_KEYS, isProductionProcess } from './production-process.js';
 import {
@@ -55,8 +55,12 @@ export class ProductionListRefused extends Error {
 /**
  * Every refusal is recorded first as a receipt-failure row
  * `quarantine_production_sign:<reason>` (code only), the operator alert path.
- * Recording never throws and never changes the refusal: the same error is
- * thrown, with the same exit and output, whether or not the row was written.
+ * This is a host command, so it never uses the gateway's receipt-failure
+ * store (no startup read, no mkdir, no rotation): appendHostEscrowRefusal
+ * appends one line to RECEIPT_FAILURES_FILE only when that is an existing
+ * regular file. Recording never throws and never changes the refusal: the
+ * same error is thrown, with the same exit and output, whether or not the row
+ * was written.
  */
 function refuse(reason, message) {
   recordRefusal(reason);
@@ -65,9 +69,9 @@ function refuse(reason, message) {
 
 function recordRefusal(reason) {
   try {
-    recordEscrowRefusal({ path: 'quarantine_production_sign', reason });
+    appendHostEscrowRefusal({ path: 'quarantine_production_sign', reason });
   } catch {
-    // recordEscrowRefusal never throws; a failure here still refuses.
+    // The recorder never throws; if one does, the run still refuses as before.
   }
 }
 

@@ -7,7 +7,9 @@
  *
  * Escrow-path refusals (fixed heads, quarantine list signing, the production
  * quarantine list host signer, payer binding) use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
- * id. The code is from a fixed list per path, else `other`, so a row can never
+ * id. The production host signer does not use this module's store: it
+ * appends its one row through receipt-failure-host-append.js (existing
+ * regular file only, no read, mkdir or rotation). The code is from a fixed list per path, else `other`, so a row can never
  * carry a payer, a salt, a key or free text. Per-reason counts are served
  * only on GET /v1/ops/receipt-failures (escrow_refusals), never on public
  * /health, where they would be a timing oracle on a known receipt's payment
@@ -325,6 +327,33 @@ function countEscrowRow(row) {
   const m = ESCROW_ROW_REASON.exec(row.reason);
   if (!m) return;
   bumpEscrow(`${m[1]}:${escrowReason(m[1], m[2])}`, 1 + (row.repeat || 0));
+}
+
+/**
+ * The alert row recordEscrowRefusal writes for (path, reason, outcome) at
+ * `time`, with no state change: no count, no fold, no file. Null for an
+ * unknown path or a count-only skip. Used by the host-only append
+ * (receipt-failure-host-append.js), so a host row reloads exactly as a
+ * gateway row.
+ * @returns {object|null}
+ */
+export function escrowAlertRow({ path: pathName, reason, outcome = 'refused', time } = {}) {
+  try {
+    if (!ESCROW_REASONS[pathName]) return null;
+    const key = `${pathName}:${escrowReason(pathName, reason)}`;
+    if (ESCROW_NOT_APPLICABLE.has(key)) return null;
+    return shape({
+      stage: 'sign',
+      reason: key,
+      outcome: outcome === 'pending' ? 'pending' : 'refused',
+      network: null,
+      tx: null,
+      time: typeof time === 'string' ? time : new Date().toISOString(),
+      repeat: 0,
+    });
+  } catch {
+    return null;
+  }
 }
 
 /**

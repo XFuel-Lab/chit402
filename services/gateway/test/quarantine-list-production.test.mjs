@@ -1168,14 +1168,19 @@ function normalized(r) {
 }
 
 /**
- * Run `scenario()` with RECEIPT_FAILURES_FILE unset ('none'), set to a fresh
- * file ('file'), or set under a regular file so every append fails
- * ('unwritable'). Module state is reset before and after.
+ * Run `scenario()` with RECEIPT_FAILURES_FILE unset ('none'), set to the
+ * gateway's existing (empty) file ('file'), set to a path that does not exist
+ * ('missing'), or set under a regular file ('unwritable'). The host signer
+ * appends only to an existing regular file and never touches this process's
+ * receipt-failure store, so `reload` is what a gateway reload of the file
+ * sees afterwards: its rows and per-reason counts. Module state is reset
+ * before and after.
  */
 async function withFailureFile(mode, scenario) {
   const saved = process.env.RECEIPT_FAILURES_FILE;
   const dir = tmp('qlprod-rf-');
   let file = path.join(dir, 'receipt-failures.jsonl');
+  if (mode === 'file') fs.writeFileSync(file, '');
   if (mode === 'unwritable') {
     const blocker = path.join(dir, 'blocker');
     fs.writeFileSync(blocker, 'not a directory');
@@ -1186,9 +1191,12 @@ async function withFailureFile(mode, scenario) {
   RF.resetReceiptFailuresForTests();
   try {
     const r = await scenario();
+    const rows = fileRows(file);
+    // Gateway reload: a fresh store reads the file once.
+    RF.resetReceiptFailuresForTests();
     const memory = RF.listReceiptFailures().filter((row) => row.reason.startsWith(`${PROD_PATH}:`));
     const counts = (RF.escrowRefusalCounts() || {})[PROD_PATH] || {};
-    return { r, memory, counts, rows: mode === 'file' ? fileRows(file) : [], file };
+    return { r, memory, counts, rows, file, dir };
   } finally {
     if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
     else process.env.RECEIPT_FAILURES_FILE = saved;
@@ -1258,23 +1266,29 @@ const SFA_SCENARIOS = [
   }],
 ];
 
-test('QP30 / SF-A: every refusal records one quarantine_production_sign row, and the refusal is unchanged with the file set, unset or unwritable', { timeout: 180_000 }, async () => {
+test('QP30 / SF-A / SF-1: every refusal appends one quarantine_production_sign row to an existing file, a gateway reload counts it, and the refusal is unchanged with the file set, unset, missing or unwritable', { timeout: 180_000 }, async () => {
   for (const [code, scenario] of SFA_SCENARIOS) {
     const none = await withFailureFile('none', scenario);
     const file = await withFailureFile('file', scenario);
+    const missing = await withFailureFile('missing', scenario);
     const broken = await withFailureFile('unwritable', scenario);
     const label = `${code}: ${JSON.stringify(none.r.result)}`;
     assert.equal(none.r.result.ok, false, label);
     assert.equal(none.r.result.reason, code, label);
     // Same result, stdout and stderr whatever happens to the row.
     assert.deepEqual(normalized(file.r), normalized(none.r), `${label}: file set`);
+    assert.deepEqual(normalized(missing.r), normalized(none.r), `${label}: file missing`);
     assert.deepEqual(normalized(broken.r), normalized(none.r), `${label}: file unwritable`);
-    // The row: in the file when it is set, in memory in every mode, counted once.
+    // The row: appended to the existing file, and a gateway reload counts it once.
     assertOneRow(file.rows, code, `${label} (file)`);
-    for (const [mode, got] of [['none', none], ['file', file], ['unwritable', broken]]) {
-      assertOneRow(got.memory, code, `${label} (${mode}, memory)`);
-      assert.deepEqual(got.counts, { [code]: 1 }, `${label} (${mode}, counts)`);
+    assertOneRow(file.memory, code, `${label} (file, reload)`);
+    assert.deepEqual(file.counts, { [code]: 1 }, `${label} (file, reload counts)`);
+    // Otherwise nothing is written anywhere and nothing is created.
+    for (const [mode, got] of [['none', none], ['missing', missing], ['unwritable', broken]]) {
+      assert.deepEqual(got.memory, [], `${label} (${mode}): no row`);
+      assert.deepEqual(got.counts, {}, `${label} (${mode}): no count`);
     }
+    assert.equal(fs.existsSync(missing.file), false, `${label}: a missing file is never created`);
     assert.equal(fs.existsSync(broken.file), false, `${label}: nothing written under the blocker`);
   }
 });
@@ -1292,7 +1306,9 @@ test('QP31 / SF-A: a success writes no row; a dry run writes no row', async () =
 test('QP32 / SF-A: refuse() records before it throws, and every refusal code in the module is on the path list (never other)', () => {
   const src = fs.readFileSync(MODULE, 'utf8');
   assert.ok(/\nfunction refuse\(reason, message\) \{\n  recordRefusal\(reason\);\n  throw new ProductionListRefused\(reason, message\);\n\}\n/.test(src), 'refuse() records, then throws the same error');
-  assert.ok(/recordEscrowRefusal\(\{ path: 'quarantine_production_sign', reason \}\);/.test(src), 'recordRefusal writes the quarantine_production_sign path');
+  assert.ok(/appendHostEscrowRefusal\(\{ path: 'quarantine_production_sign', reason \}\);/.test(src), 'recordRefusal appends the quarantine_production_sign path through the host-only append');
+  assert.ok(/import \{ appendHostEscrowRefusal \} from '\.\/receipt-failure-host-append\.js';/.test(src), 'the host-only append is imported');
+  assert.ok(!/from '\.\/receipt-failures\.js'/.test(src), 'the host signer does not import the gateway store (no startup read, mkdir or rotation)');
   assert.ok(/if \(!\(e instanceof ProductionListRefused\)\) recordRefusal\('error'\);/.test(src), 'a failure that is not a refusal is recorded as error');
   const codes = new Set();
   for (const m of src.matchAll(/refuse\('([a-z0-9_]+)'/g)) codes.add(m[1]);
@@ -1318,7 +1334,7 @@ test('QP32 / SF-A: refuse() records before it throws, and every refusal code in 
   }
 });
 
-test('QP33 / SF-A: the script end to end: a refusal writes its row to RECEIPT_FAILURES_FILE, exit and stderr unchanged when the file cannot be written', { timeout: 120_000 }, async () => {
+test('QP33 / SF-A / SF-1: the script end to end: a refusal appends its row to the existing RECEIPT_FAILURES_FILE, exit and stderr unchanged when the file is missing or cannot be written', { timeout: 120_000 }, async () => {
   const s = await setup();
   const dir = tmp('qlprod-rfscript-');
   const blocker = path.join(dir, 'blocker');
@@ -1335,9 +1351,14 @@ test('QP33 / SF-A: the script end to end: a refusal writes its row to RECEIPT_FA
   for (const [code, argv, extra] of cases) {
     const runScript = (env) => spawnSync(process.execPath, [NEW_SCRIPT, ...argv], { env: { ...base, ...extra, ...env }, encoding: 'utf8', timeout: 60_000 });
     const file = path.join(dir, `${code}.jsonl`);
+    fs.writeFileSync(file, '');
+    const absent = path.join(dir, `${code}-absent.jsonl`);
     const withFile = runScript({ RECEIPT_FAILURES_FILE: file });
     const unset = runScript({});
     const broken = runScript({ RECEIPT_FAILURES_FILE: path.join(blocker, 'rf.jsonl') });
+    const missing = runScript({ RECEIPT_FAILURES_FILE: absent });
+    assert.equal(fs.existsSync(absent), false, `${code}: the script never creates the file`);
+    assert.deepEqual([missing.status, missing.stdout, missing.stderr], [unset.status, unset.stdout, unset.stderr], `${code}: missing file, byte-identical refusal`);
     for (const [label, res] of [['file', withFile], ['unset', unset], ['unwritable', broken]]) {
       assert.equal(res.status, 1, `${code} ${label}: ${res.stderr}`);
       assert.ok(new RegExp(`refused: ${code}`).test(res.stderr), `${code} ${label}: ${res.stderr}`);
@@ -1348,4 +1369,76 @@ test('QP33 / SF-A: the script end to end: a refusal writes its row to RECEIPT_FA
     assertOneRow(fileRows(file), code, `${code} (script)`);
   }
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+// ------------------------------------------------- SF-1: host-only append, never the gateway store
+
+const HA = await import('../src/receipt-failure-host-append.js');
+
+test('QP34 / SF-1: the host append writes the gateway\'s own row, only to an existing regular file, with no read, mkdir or rotation', () => {
+  const dir = tmp('qlprod-ha-');
+  const at = Date.parse('2026-10-24T12:00:00.000Z');
+  const now = () => at;
+  // Same row, field for field and in the same order, as the gateway writes.
+  RF.resetReceiptFailuresForTests();
+  try {
+    RF.setEscrowAlertClockForTests(now);
+    const gw = RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'write_mismatch' });
+    assert.equal(JSON.stringify(RF.escrowAlertRow({ path: PROD_PATH, reason: 'write_mismatch', time: new Date(at).toISOString() })), JSON.stringify(gw));
+  } finally {
+    RF.resetReceiptFailuresForTests();
+  }
+  // Existing file with gateway rows: one line appended, nothing else changed.
+  const file = path.join(dir, 'rf.jsonl');
+  const prior = `${JSON.stringify({ time: '2026-10-24T11:00:00.000Z', network: 'base', stage: 'settle', reason: 'settle_failed', tx: null, outcome: 'refused', request_id: null })}\n`;
+  fs.writeFileSync(file, prior);
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file, now }), true);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.startsWith(prior), 'prior bytes untouched');
+  const added = text.slice(prior.length);
+  assert.equal(added, `${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
+  // An unknown code is `other`; an unknown path writes nothing.
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'free text /tmp/x' }, { file, now }), true);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()).reason, `${PROD_PATH}:other`);
+  const size = fs.statSync(file).size;
+  assert.equal(HA.appendHostEscrowRefusal({ path: 'nope', reason: 'usage' }, { file, now }), false);
+  assert.equal(fs.statSync(file).size, size);
+  // A gateway reload counts the host rows next to its own, in file order.
+  process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    assert.deepEqual(RF.listReceiptFailures().map((r) => r.reason), ['settle_failed', `${PROD_PATH}:usage`, `${PROD_PATH}:other`]);
+    assert.deepEqual(RF.escrowRefusalCounts()[PROD_PATH], { other: 1, usage: 1 });
+    assert.equal(RF.receiptFailureCount(), 1, 'host rows stay out of the public total');
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
+  // Missing file, missing parent: false, nothing created, no mkdir.
+  const absent = path.join(dir, 'absent.jsonl');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: absent, now }), false);
+  assert.equal(fs.existsSync(absent), false);
+  const deep = path.join(dir, 'no', 'such', 'dir', 'rf.jsonl');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: deep, now }), false);
+  assert.equal(fs.existsSync(path.join(dir, 'no')), false, 'no directory created');
+  // Unset or blank: false.
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: '', now }), false);
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: undefined, now }), false);
+  // 5 MB or more: appended, never rotated (the gateway rotates its own file).
+  const big = path.join(dir, 'big.jsonl');
+  fs.writeFileSync(big, Buffer.alloc(RF.RECEIPT_FAILURE_FILE_BYTES + 10, 0x20));
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: big, now }), true);
+  assert.equal(fs.existsSync(`${big}.1`), false, 'no rotation');
+  assert.equal(fs.statSync(big).size, RF.RECEIPT_FAILURE_FILE_BYTES + 10 + added.length);
+});
+
+test('QP35 / SF-1: the host append source: lstat before open, O_APPEND|O_NOFOLLOW without O_CREAT, no read, mkdir or rotation', () => {
+  const raw = fs.readFileSync(path.join(here, '..', 'src', 'receipt-failure-host-append.js'), 'utf8');
+  // Code only: the header comment names the flags it never uses.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/const before = fs\.lstatSync\(real\);\n\s+if \(!before\.isFile\(\)\) return false;/.test(src), 'lstat, regular file only');
+  assert.ok(/fs\.openSync\(real, O_WRONLY \| O_APPEND \| O_NOFOLLOW \| O_NONBLOCK\)/.test(src), 'append-only open flags');
+  assert.ok(!/O_CREAT|O_TRUNC/.test(src), 'never creates or truncates');
+  assert.ok(!/readFileSync|readSync|mkdirSync|renameSync|rmSync|appendFileSync|unlinkSync/.test(src), 'no read, mkdir, rotation or create-by-append');
+  assert.ok(/after\.dev !== before\.dev \|\| after\.ino !== before\.ino/.test(src), 'the opened file is the one checked');
 });
