@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { bookRowHash, classifyFetchError, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -803,10 +804,10 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     assert.equal(result.verdict, 'FAIL');
   });
 
-  test('N-2 classifyFetchError: only network codes and timeouts are transport', () => {
+  test('N-2 classifyFetchError: only network codes, TLS codes and timeouts are transport', () => {
     const coded = (code, message = 'x') => Object.assign(new Error(message), { code });
     const fetchFailed = (cause) => new TypeError('fetch failed', { cause });
-    for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CLOSED']) {
+    for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN', 'ECONNABORTED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CLOSED']) {
       const got = classifyFetchError(fetchFailed(coded(code)));
       assert.equal(got.transport, true, code);
       assert.equal(got.message, code);
@@ -816,12 +817,21 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     const timeout = new DOMException('timed out', 'TimeoutError');
     assert.equal(classifyFetchError(timeout).message, 'timeout');
     assert.equal(classifyFetchError(new DOMException('aborted', 'AbortError')).transport, true);
+    // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail, on the cause or on the error.
+    for (const code of ['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_TLS_HANDSHAKE_TIMEOUT']) {
+      for (const err of [fetchFailed(coded(code)), coded(code)]) {
+        const got = classifyFetchError(err);
+        assert.equal(got.transport, true, code);
+        assert.equal(got.message, `tls:${code}`);
+      }
+    }
     const redirect = classifyFetchError(fetchFailed(new Error('unexpected redirect')));
     assert.equal(redirect.transport, undefined);
     assert.equal(redirect.message, 'redirect_refused');
     for (const [label, err] of [
       ['harness bug', new Error('unexpected fetch rpc.test')],
-      ['TLS certificate', fetchFailed(coded('CERT_HAS_EXPIRED', 'certificate has expired'))],
+      ['unlisted cause code', fetchFailed(coded('ERR_SOMETHING_ELSE'))],
+      ['near-miss TLS prefix', fetchFailed(coded('ERR_TLSX'))],
       ['bad port', fetchFailed(new Error('bad port'))],
       ['redirect text without a cause', new Error('unexpected redirect')],
       ['numeric code', Object.assign(new Error('odd'), { code: 23 })],
@@ -831,6 +841,8 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
       assert.notEqual(got.transport, true, label);
       assert.ok(/^fetch_error:/.test(got.message), `${label}: ${got.message}`);
     }
+    assert.equal(classifyFetchError(fetchFailed(coded('ERR_SOMETHING_ELSE'))).message, 'fetch_error:fetch failed:ERR_SOMETHING_ELSE');
+    assert.equal(classifyFetchError(fetchFailed(new Error('bad port'))).message, 'fetch_error:fetch failed');
     const miss = Object.assign(new Error('fixture_miss:https://x.test/'), { code: 'fixture_miss' });
     assert.equal(classifyFetchError(miss), miss, 'a fixture miss keeps its own error');
   });
@@ -846,6 +858,118 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     assert.ok(/fetch_error:unexpected fetch/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
     assert.equal(result.verdict, 'FAIL');
   });
+
+  // M-2: TLS and unreachable-network failures are COULD_NOT_CHECK exit 2, while a
+  // signed fingerprint mismatch is still FAIL exit 1 before any fetch.
+  async function runHarnessCli({ claimed = FINGERPRINT, record }) {
+    const { fetchImpl, specimen } = foreignPayoutHarness();
+    const body = specimen(claimed);
+    const wrapped = async (url, init) => {
+      const u = new URL(String(url));
+      if (u.host === '1f916.ai') return record(u, init);
+      if (u.host === 'www.chit402.com') return { ok: true, status: 200, json: async () => body };
+      return fetchImpl(url, init);
+    };
+    const result = await verifyLink(body, { fetchImpl: wrapped, rpcUrl: 'https://rpc.test/base', timeoutMs: 2000 });
+    const lines = [];
+    const prevRpc = process.env.BASE_RPC_URL;
+    process.env.BASE_RPC_URL = 'https://rpc.test/base';
+    let code;
+    try {
+      code = await runCli(['https://www.chit402.com/specimens/1f916-link-1.json'], {
+        fetchImpl: wrapped,
+        timeoutMs: 2000,
+        log: (line) => lines.push(line),
+        error: () => {},
+      });
+    } finally {
+      if (prevRpc === undefined) delete process.env.BASE_RPC_URL;
+      else process.env.BASE_RPC_URL = prevRpc;
+    }
+    return { result, code, out: lines.join('\n') };
+  }
+
+  function openssl(args, cwd) {
+    const r = spawnSync('openssl', args, { cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, `openssl ${args[0]} failed: ${r.error?.message || r.stderr}`);
+  }
+
+  /** A throwaway P-256 cert for CN=1f916.ai, made in a private temp dir and removed. */
+  function throwawayCert({ expired }) {
+    const dir = mkdtempSync(join(tmpdir(), 'link-tls-'));
+    try {
+      const keyArgs = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', 'key.pem', '-subj', '/CN=1f916.ai'];
+      if (expired) {
+        writeFileSync(join(dir, 'index.txt'), '');
+        writeFileSync(join(dir, 'serial'), '01\n');
+        writeFileSync(join(dir, 'ca.cnf'), '[ ca ]\ndefault_ca = d\n[ d ]\ndir = .\ndatabase = ./index.txt\nnew_certs_dir = .\nserial = ./serial\ndefault_md = sha256\npolicy = p\n[ p ]\ncommonName = supplied\n');
+        openssl(['req', '-new', ...keyArgs, '-out', 'req.csr'], dir);
+        openssl(['ca', '-batch', '-selfsign', '-config', 'ca.cnf', '-keyfile', 'key.pem', '-in', 'req.csr', '-out', 'cert.pem', '-startdate', '20200101000000Z', '-enddate', '20200102000000Z', '-notext'], dir);
+      } else {
+        openssl(['req', '-x509', ...keyArgs, '-out', 'cert.pem', '-days', '2'], dir);
+      }
+      return { key: readFileSync(join(dir, 'key.pem')), cert: readFileSync(join(dir, 'cert.pem')) };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  async function tlsRecordHost(opts) {
+    const server = createHttpsServer(throwawayCert(opts), (req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }], events_has_more: false }));
+    });
+    await new Promise((done) => server.listen(0, '127.0.0.1', done));
+    const { port } = server.address();
+    const record = (u, init) => {
+      const target = new URL(`https://127.0.0.1:${port}${u.pathname}${u.search}`);
+      assert.equal(target.hostname, '127.0.0.1', 'tests only reach loopback');
+      return fetch(target, init);
+    };
+    const close = () => new Promise((done) => {
+      server.closeAllConnections?.();
+      server.close(done);
+    });
+    return { record, close };
+  }
+
+  for (const [label, opts, code] of [
+    ['self-signed', { expired: false }, 'DEPTH_ZERO_SELF_SIGNED_CERT'],
+    ['expired', { expired: true }, 'CERT_HAS_EXPIRED'],
+  ]) {
+    test(`M-2 1f916.ai with a ${label} cert is COULD_NOT_CHECK exit 2 (tls:${code}); a signed mismatch is still FAIL exit 1`, { timeout: 20000 }, async () => {
+      const host = await tlsRecordHost(opts);
+      try {
+        const ok = await runHarnessCli({ record: host.record });
+        assert.equal(ok.result.steps.entry_fingerprint.status, 'COULD_NOT_CHECK', formatReport(ok.result));
+        assert.equal(ok.result.steps.entry_fingerprint.detail, `record_fetch:tls:${code}`);
+        assert.equal(ok.result.verdict, 'COULD_NOT_CHECK');
+        assert.equal(ok.code, 2, ok.out);
+        assert.ok(/^VERDICT COULD_NOT_CHECK$/m.test(ok.out), ok.out);
+        const bad = await runHarnessCli({ claimed: TAMPERED, record: host.record });
+        assert.equal(bad.result.steps.entry_fingerprint.status, 'FAIL', formatReport(bad.result));
+        assert.ok(/fingerprint_mismatch .* jws .* claimed /.test(bad.result.steps.entry_fingerprint.detail), bad.result.steps.entry_fingerprint.detail);
+        assert.equal(bad.code, 1, bad.out);
+      } finally {
+        await host.close();
+      }
+    });
+  }
+
+  for (const code of ['ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN', 'ECONNABORTED', 'EPIPE']) {
+    test(`M-2 a 1f916.ai fetch that fails with ${code} is COULD_NOT_CHECK exit 2; a signed mismatch is still FAIL exit 1`, async () => {
+      const record = async () => {
+        throw new TypeError('fetch failed', { cause: Object.assign(new Error(code.toLowerCase()), { code }) });
+      };
+      const ok = await runHarnessCli({ record });
+      assert.equal(ok.result.steps.entry_fingerprint.detail, `record_fetch:${code}`, formatReport(ok.result));
+      assert.equal(ok.result.verdict, 'COULD_NOT_CHECK');
+      assert.equal(ok.code, 2, ok.out);
+      const bad = await runHarnessCli({ claimed: TAMPERED, record });
+      assert.equal(bad.result.steps.entry_fingerprint.status, 'FAIL', formatReport(bad.result));
+      assert.equal(bad.code, 1, bad.out);
+    });
+  }
 
   test('CLI: no argument is usage, exit 2', async () => {
     assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);

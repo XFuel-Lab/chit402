@@ -7,10 +7,10 @@
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
  * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
- * A transport error (a refused or reset connection, a DNS failure, a timeout,
- * or HTTP 5xx, 408, 425 or 429) is COULD_NOT_CHECK, exit 2. Other HTTP 4xx, a
- * body that is not JSON, a refused redirect, a fixture miss and any other fetch
- * error stay FAIL, exit 1.
+ * A transport error (a refused, reset or unreachable connection, a DNS failure,
+ * a TLS failure, a timeout, or HTTP 5xx, 408, 425 or 429) is COULD_NOT_CHECK,
+ * exit 2. Other HTTP 4xx, a body that is not JSON, a refused redirect, a fixture
+ * miss and any other fetch error stay FAIL, exit 1.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
  * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
  * That result means the signature is not public, so the receipt was not checked.
@@ -182,6 +182,11 @@ const TRANSPORT_CODES = new Set([
   'ETIMEDOUT',
   'EAI_AGAIN',
   'ENOTFOUND',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ECONNABORTED',
+  'EPIPE',
   'UND_ERR_SOCKET',
   'UND_ERR_CLOSED',
   'UND_ERR_CONNECT_TIMEOUT',
@@ -189,27 +194,62 @@ const TRANSPORT_CODES = new Set([
   'UND_ERR_BODY_TIMEOUT',
 ]);
 
+// TLS failures say the client could not set up a trusted connection. They are
+// never proof about the link, so they are COULD_NOT_CHECK with a tls: detail.
+const TLS_CODES = new Set([
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+function isTlsCode(code) {
+  return TLS_CODES.has(code) || /^ERR_(SSL|TLS)_/.test(code);
+}
+
+/**
+ * The string codes on a rejection, its cause, and any AggregateError members.
+ * @param {any} err
+ * @returns {string[]}
+ */
+function errorCodes(err) {
+  const nested = [err, err?.cause];
+  for (const holder of [err, err?.cause]) {
+    if (Array.isArray(holder?.errors)) nested.push(...holder.errors);
+  }
+  return nested
+    .filter((item) => item && typeof item.code === 'string')
+    .map((item) => item.code);
+}
+
 /**
  * The transport code on a rejection, its cause, or an AggregateError member.
  * @param {any} err
  * @returns {string|null}
  */
 function transportCode(err) {
-  const nested = [err, err?.cause];
-  for (const holder of [err, err?.cause]) {
-    if (Array.isArray(holder?.errors)) nested.push(...holder.errors);
-  }
-  for (const item of nested) {
-    if (item && typeof item.code === 'string' && TRANSPORT_CODES.has(item.code)) return item.code;
-  }
-  return null;
+  return errorCodes(err).find((code) => TRANSPORT_CODES.has(code)) || null;
+}
+
+/**
+ * The TLS code on a rejection or its cause.
+ * @param {any} err
+ * @returns {string|null}
+ */
+function tlsCode(err) {
+  return errorCodes(err).find(isTlsCode) || null;
 }
 
 /**
  * Sort a fetch rejection into transport (COULD_NOT_CHECK) or not (FAIL).
- * Only a known network code or a timeout is transport. A fixture miss, a
- * refused redirect, a TLS error and anything unrecognised (for example a bug
- * in a custom fetchImpl) are FAIL, so they cannot pass as COULD_NOT_CHECK.
+ * A known network code, a TLS code or a timeout is transport. A fixture miss,
+ * a refused redirect and anything unrecognised (for example a bug in a custom
+ * fetchImpl) are FAIL, so they cannot pass as COULD_NOT_CHECK. The FAIL detail
+ * carries the error's code, or its cause's code, when there is one.
  * @param {any} err
  */
 export function classifyFetchError(err) {
@@ -217,8 +257,11 @@ export function classifyFetchError(err) {
   if (isTimeout(err)) return transportError('timeout');
   const code = transportCode(err);
   if (code) return transportError(code);
+  const tls = tlsCode(err);
+  if (tls) return transportError(`tls:${tls}`);
   if (err?.cause?.message === 'unexpected redirect') return new Error('redirect_refused');
-  return new Error(`fetch_error:${err?.message || 'unknown'}`);
+  const otherCode = errorCodes(err)[0];
+  return new Error(`fetch_error:${err?.message || 'unknown'}${otherCode ? `:${otherCode}` : ''}`);
 }
 
 /**
