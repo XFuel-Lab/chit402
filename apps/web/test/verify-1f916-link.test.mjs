@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
-import { bookRowHash, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
+import { bookRowHash, classifyFetchError, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const positivePath = join(root, 'scripts/fixtures/1f916-link-verifier-fixture.json');
@@ -527,6 +527,12 @@ async function loopback(routes) {
       res.write('{"events":');
       return undefined;
     }
+    if (mode === 'reset_body') {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' });
+      res.write('{"events":');
+      setTimeout(() => req.socket.destroy(), 20);
+      return undefined;
+    }
     if (mode === 'redirect') {
       res.writeHead(302, { location: 'http://127.0.0.1:9/elsewhere' });
       return res.end();
@@ -592,6 +598,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['connection refused', 'refused', 'COULD_NOT_CHECK', /./],
     ['timeout', 'hang', 'COULD_NOT_CHECK', /^timeout$/],
     ['body stalls after headers', 'stall_body', 'COULD_NOT_CHECK', /^timeout$/],
+    ['socket reset mid-body', 'reset_body', 'COULD_NOT_CHECK', /^UND_ERR_SOCKET$/],
     ['HTTP 404', '404', 'FAIL', /http_404/],
     ['HTTP 400', '400', 'FAIL', /http_400/],
     ['body not JSON', 'not_json', 'FAIL', /body_not_json/],
@@ -792,6 +799,47 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     assert.equal(await runCli([specimenUrl], { ...io, fetchImpl: miss }), 1, lines.join('\n'));
     const result = await verifyLink(load(specimen1Path), { fetchImpl: miss, rpcUrl: 'https://rpc.test/base' });
     assert.equal(result.steps.fetch_receipt.status, 'FAIL');
+    assert.equal(result.verdict, 'FAIL');
+  });
+
+  test('N-2 classifyFetchError: only network codes and timeouts are transport', () => {
+    const coded = (code, message = 'x') => Object.assign(new Error(message), { code });
+    const fetchFailed = (cause) => new TypeError('fetch failed', { cause });
+    for (const code of ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CLOSED']) {
+      const got = classifyFetchError(fetchFailed(coded(code)));
+      assert.equal(got.transport, true, code);
+      assert.equal(got.message, code);
+    }
+    const agg = Object.assign(new AggregateError([coded('ECONNREFUSED')], 'all failed'), {});
+    assert.equal(classifyFetchError(fetchFailed(agg)).transport, true, 'AggregateError member code');
+    const timeout = new DOMException('timed out', 'TimeoutError');
+    assert.equal(classifyFetchError(timeout).message, 'timeout');
+    assert.equal(classifyFetchError(new DOMException('aborted', 'AbortError')).transport, true);
+    const redirect = classifyFetchError(fetchFailed(new Error('unexpected redirect')));
+    assert.equal(redirect.transport, undefined);
+    assert.equal(redirect.message, 'redirect_refused');
+    for (const [label, err] of [
+      ['harness bug', new Error('unexpected fetch rpc.test')],
+      ['TLS certificate', fetchFailed(coded('CERT_HAS_EXPIRED', 'certificate has expired'))],
+      ['bad port', fetchFailed(new Error('bad port'))],
+      ['redirect text without a cause', new Error('unexpected redirect')],
+      ['numeric code', Object.assign(new Error('odd'), { code: 23 })],
+      ['undefined', undefined],
+    ]) {
+      const got = classifyFetchError(err);
+      assert.notEqual(got.transport, true, label);
+    }
+  });
+
+  test('N-2 a fetchImpl bug on the 1F916 step is FAIL, not COULD_NOT_CHECK', async () => {
+    const { fetchImpl, specimen } = foreignPayoutHarness();
+    const wrapped = async (url, init) => {
+      if (String(url).includes('1f916.ai')) throw new Error('unexpected fetch 1f916.ai');
+      return fetchImpl(url, init);
+    };
+    const result = await verifyLink(specimen(FINGERPRINT), { fetchImpl: wrapped, rpcUrl: 'https://rpc.test/base' });
+    assert.equal(result.steps.entry_fingerprint.status, 'FAIL', formatReport(result));
+    assert.ok(/fetch_error:unexpected fetch/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
     assert.equal(result.verdict, 'FAIL');
   });
 

@@ -7,9 +7,10 @@
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
  * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
- * A transport error (the fetch rejects, times out, or gets HTTP 5xx, 408, 425
- * or 429) is COULD_NOT_CHECK, exit 2. Other HTTP 4xx, a body that is not JSON,
- * a refused redirect and a fixture miss stay FAIL, exit 1.
+ * A transport error (a refused or reset connection, a DNS failure, a timeout,
+ * or HTTP 5xx, 408, 425 or 429) is COULD_NOT_CHECK, exit 2. Other HTTP 4xx, a
+ * body that is not JSON, a refused redirect, a fixture miss and any other fetch
+ * error stay FAIL, exit 1.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
  * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
  * That result means the signature is not public, so the receipt was not checked.
@@ -173,17 +174,51 @@ function isTimeout(err) {
   return err?.name === 'TimeoutError' || err?.name === 'AbortError';
 }
 
+// Error codes that mean the network failed, not that a server answered.
+// Node net and DNS codes, plus undici socket and timeout codes.
+const TRANSPORT_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CLOSED',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+
+/**
+ * The transport code on a rejection, its cause, or an AggregateError member.
+ * @param {any} err
+ * @returns {string|null}
+ */
+function transportCode(err) {
+  const nested = [err, err?.cause];
+  for (const holder of [err, err?.cause]) {
+    if (Array.isArray(holder?.errors)) nested.push(...holder.errors);
+  }
+  for (const item of nested) {
+    if (item && typeof item.code === 'string' && TRANSPORT_CODES.has(item.code)) return item.code;
+  }
+  return null;
+}
+
 /**
  * Sort a fetch rejection into transport (COULD_NOT_CHECK) or not (FAIL).
- * A fixture miss and a refused redirect are not transport errors.
+ * Only a known network code or a timeout is transport. A fixture miss, a
+ * refused redirect, a TLS error and anything unrecognised (for example a bug
+ * in a custom fetchImpl) are FAIL, so they cannot pass as COULD_NOT_CHECK.
  * @param {any} err
  */
 export function classifyFetchError(err) {
   if (err?.code === 'fixture_miss') return err;
-  if (isTimeout(err)) return transportError('timeout');
-  const cause = String(err?.cause?.message || '');
-  if (/redirect/i.test(cause)) return new Error('redirect_refused');
-  return transportError(err?.message || 'fetch_failed');
+  if (isTimeout(err) || isTimeout(err?.cause)) return transportError('timeout');
+  const code = transportCode(err);
+  if (code) return transportError(code);
+  if (err?.cause?.message === 'unexpected redirect') return new Error('redirect_refused');
+  return new Error(`fetch_error:${err?.message || 'unknown'}`);
 }
 
 /**
@@ -210,6 +245,8 @@ async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
     return await res.json();
   } catch (err) {
     if (isTimeout(err)) throw transportError('timeout');
+    const code = transportCode(err);
+    if (code) throw transportError(code);
     throw new Error('body_not_json');
   }
 }
@@ -553,7 +590,9 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs = FETC
   try {
     body = await res.json();
   } catch (err) {
-    return isTimeout(err) ? unchecked('rpc:timeout') : fail('rpc:body_not_json');
+    if (isTimeout(err)) return unchecked('rpc:timeout');
+    const code = transportCode(err);
+    return code ? unchecked(`rpc:${code}`) : fail('rpc:body_not_json');
   }
   if (body?.error) return fail(`rpc:${body.error.message || 'error'}`);
   const tx = body?.result;
