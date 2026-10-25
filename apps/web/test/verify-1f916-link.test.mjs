@@ -1185,6 +1185,34 @@ catch (err) { const c = classifyFetchError(err); console.log(JSON.stringify({ tr
     });
   }
 
+  // N-10: a body read that dies with a TLS code is COULD_NOT_CHECK on both
+  // body paths (getJson and the RPC), like a fetch rejection with that code.
+  for (const [label, where, err, detail, status] of [
+    ['1f916.ai body, TLS record MAC', 'record', 'ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC', 'record_fetch:tls:ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC', 'COULD_NOT_CHECK'],
+    ['1f916.ai body, unlisted code', 'record', 'ERR_SOMETHING_ELSE', 'record_fetch:body_not_json', 'FAIL'],
+    ['RPC body, TLS record MAC', 'rpc', 'ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC', 'rpc:tls:ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC', 'COULD_NOT_CHECK'],
+    ['RPC body, unlisted code', 'rpc', 'ERR_SOMETHING_ELSE', 'rpc:body_not_json', 'FAIL'],
+  ]) {
+    test(`N-10 ${label} is ${status}`, async () => {
+      const { fetchImpl, specimen } = foreignPayoutHarness();
+      const dying = {
+        ok: true,
+        status: 200,
+        json: async () => { throw new TypeError('terminated', { cause: Object.assign(new Error('body'), { code: err }) }); },
+      };
+      const wrapped = async (url, init) => {
+        const target = String(url);
+        if (where === 'record' && target.includes('1f916.ai')) return dying;
+        if (where === 'rpc' && target.startsWith('https://rpc.test/')) return dying;
+        return fetchImpl(url, init);
+      };
+      const result = await verifyLink(specimen(FINGERPRINT), { fetchImpl: wrapped, rpcUrl: 'https://rpc.test/base' });
+      const name = where === 'record' ? 'entry_fingerprint' : 'on_chain_tx';
+      assert.equal(result.steps[name].status, status, formatReport(result));
+      assert.equal(result.steps[name].detail, detail);
+    });
+  }
+
   test('CLI: no argument is usage, exit 2', async () => {
     assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);
   });

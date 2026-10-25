@@ -296,6 +296,22 @@ function tlsCode(err) {
 }
 
 /**
+ * Sort a failed body read. A timeout, a network code or a TLS code is
+ * transport (COULD_NOT_CHECK); anything else is null, so the caller reports
+ * a body that is not JSON (FAIL). Shared by getJson and the RPC step.
+ * @param {any} err
+ * @returns {Error|null}
+ */
+function bodyReadError(err) {
+  if (isTimeout(err)) return transportError('timeout');
+  const code = transportCode(err);
+  if (code) return transportError(code);
+  const tls = tlsCode(err);
+  if (tls) return transportError(`tls:${tls}`);
+  return null;
+}
+
+/**
  * Sort a fetch rejection into transport (COULD_NOT_CHECK) or not (FAIL).
  * A known network code, a TLS code or a timeout is transport. A fixture miss,
  * a refused redirect and anything unrecognised (for example a bug in a custom
@@ -338,9 +354,8 @@ async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   try {
     return await res.json();
   } catch (err) {
-    if (isTimeout(err)) throw transportError('timeout');
-    const code = transportCode(err);
-    if (code) throw transportError(code);
+    const sorted = bodyReadError(err);
+    if (sorted) throw sorted;
     throw new Error('body_not_json');
   }
 }
@@ -698,9 +713,8 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs = FETC
   try {
     body = await res.json();
   } catch (err) {
-    if (isTimeout(err)) return unchecked('rpc:timeout');
-    const code = transportCode(err);
-    return code ? unchecked(`rpc:${code}`) : fail('rpc:body_not_json');
+    const sorted = bodyReadError(err);
+    return sorted ? unchecked(`rpc:${sorted.message}`) : fail('rpc:body_not_json');
   }
   if (body?.error) return fail(`rpc:${body.error.message || 'error'}`);
   const tx = body?.result;
