@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const { verifyRefusal, verifyReceipt, verifyRequestDigest } = await import('../dist/index.js');
 

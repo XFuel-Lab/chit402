@@ -11,11 +11,7 @@ import { execSync } from 'node:child_process';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(__dirname, '..');
 
-try {
-  execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
-} catch {
-  // deps may be missing in some environments
-}
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const {
   verifySolanaPayer,

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const { verifyMerkleInclusion, verifyAnchoredRoot } = await import('../dist/anchor-witness.js');
 const {
