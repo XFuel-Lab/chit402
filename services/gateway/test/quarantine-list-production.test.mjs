@@ -23,6 +23,7 @@ process.env.ISSUER_PRIVATE_KEY = syntheticIssuerKeyEnv();
 const KEY = syntheticIssuerKey();
 process.env.ISSUER_KID = KEY.kid;
 delete process.env.RECEIPT_LOG_DIR;
+delete process.env.RECEIPT_FAILURES_FILE;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OLD_SCRIPT = path.join(here, '..', 'scripts', 'sign-quarantine-list.mjs');
@@ -38,6 +39,7 @@ const { resetIssuerSigner } = await import('../src/issuer-signer-state.js');
 const { createEnvSigner } = await import('../src/issuer-signer.js');
 const { _resetIssuerKey, signJws, getIssuerPublicKeyJwk, computeJwkThumbprint } = await import('../src/issuer-key.js');
 const { PRODUCTION_ISSUER_PUBLIC_KEYS, PRODUCTION_ISSUER_KID } = await import('../src/production-process.js');
+const RF = await import('../src/receipt-failures.js');
 
 const OTHER = testIssuerKey(7);
 /** The allowlist stub: the synthetic test key's x/y in place of the production key. */
@@ -1148,4 +1150,202 @@ test('QP29: a temp cleanup failure after list_dir_changed keeps that reason and 
   } finally {
     fs.rmSync = realRm;
   }
+});
+
+// ------------------------------------------------- SF-A: refusals reach the receipt-failure log
+
+const PROD_PATH = 'quarantine_production_sign';
+
+function fileRows(file) {
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/** Temp paths differ per setup; everything else in the output must match. */
+function normalized(r) {
+  const strip = (l) => String(l).replace(/[^\s'"`]*qlprod-[a-z]+-[A-Za-z0-9]+[^\s'"`]*/g, '<TMP>');
+  return { result: r.result, out: r.out.map(strip), err: r.err.map(strip) };
+}
+
+/**
+ * Run `scenario()` with RECEIPT_FAILURES_FILE unset ('none'), set to a fresh
+ * file ('file'), or set under a regular file so every append fails
+ * ('unwritable'). Module state is reset before and after.
+ */
+async function withFailureFile(mode, scenario) {
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  const dir = tmp('qlprod-rf-');
+  let file = path.join(dir, 'receipt-failures.jsonl');
+  if (mode === 'unwritable') {
+    const blocker = path.join(dir, 'blocker');
+    fs.writeFileSync(blocker, 'not a directory');
+    file = path.join(blocker, 'receipt-failures.jsonl');
+  }
+  if (mode === 'none') delete process.env.RECEIPT_FAILURES_FILE;
+  else process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    const r = await scenario();
+    const memory = RF.listReceiptFailures().filter((row) => row.reason.startsWith(`${PROD_PATH}:`));
+    const counts = (RF.escrowRefusalCounts() || {})[PROD_PATH] || {};
+    return { r, memory, counts, rows: mode === 'file' ? fileRows(file) : [], file };
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+}
+
+function assertOneRow(rows, code, label) {
+  assert.equal(rows.length, 1, `${label}: exactly one row (${rows.map((r) => r.reason).join(',')})`);
+  const [row] = rows;
+  assert.equal(row.reason, `${PROD_PATH}:${code}`, label);
+  assert.equal(row.stage, 'sign', label);
+  assert.equal(row.outcome, 'refused', label);
+  assert.equal(row.tx, null, `${label}: no tx`);
+  assert.equal(row.network, null, `${label}: no network`);
+  assert.equal(row.request_id, null, `${label}: no request id`);
+}
+
+/** Each scenario builds its own fresh log copy, so it can run once per mode. */
+const SFA_SCENARIOS = [
+  ['usage', async () => { const s = await setup(); return run(['--log-dir', s.logDir]); }],
+  ['usage', async () => { const s = await setup(); return run(['--list', s.file, '--list', s.file, '--log-dir', s.logDir]); }],
+  ['log_dir_env_unset', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file], { env: { RECEIPT_LOG_DIR: undefined } }); }],
+  ['log_dir_unresolved', async () => { const s = await setup(); return run(['--list', s.file], { env: { RECEIPT_LOG_DIR: path.join(s.logDir, 'missing') } }); }],
+  ['log_dir_mismatch', async () => {
+    const s = await setup();
+    const other = tmp('qlprod-other-');
+    return run(applyArgs(s), { signer: goodSigner(), env: { RECEIPT_LOG_DIR: other } });
+  }],
+  ['log_dir_symlink', async () => {
+    const s = await setup();
+    const link = path.join(tmp('qlprod-sym-'), 'logdir');
+    fs.symlinkSync(fs.realpathSync(s.logDir), link);
+    return run(['--log-dir', link, '--list', s.file], { signer: goodSigner(), env: { RECEIPT_LOG_DIR: fs.realpathSync(s.logDir) } });
+  }],
+  ['confirm_missing', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file, '--list-sha256', s.hash, '--apply'], { signer: goodSigner() }); }],
+  ['list_hash_mismatch', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file, '--apply', '--confirm', CONFIRM], { signer: goodSigner() }); }],
+  ['not_production_process', async () => { const s = await setup(); return run(applyArgs(s), { signer: goodSigner(), env: { NODE_ENV: 'test' } }); }],
+  ['not_production_key', async () => {
+    const s = await setup();
+    return run(applyArgs(s), { signer: stubSigner({ kid: OTHER.kid, publicJwk: OTHER.publicJwk, privateKey: OTHER.privateKey, realJws: true }) });
+  }],
+  ['list_not_build_output', async () => {
+    const s = await setup();
+    return run(applyArgs(s), { signer: goodSigner(), buildFromLog: async () => ({ different: true }) });
+  }],
+  ['write_mismatch', async () => {
+    const s = await setup();
+    return withV1Read((real, file, ...rest) => `${real.call(fs, file, ...rest)} `, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+  ['list_dir_changed', async () => {
+    const s = await setup();
+    const listDir = listDirOf(fs.realpathSync(s.logDir));
+    fs.mkdirSync(listDir, { mode: 0o700 });
+    return withWriteHooks({
+      beforeOpen: () => { fs.renameSync(listDir, `${listDir}.aside`); fs.mkdirSync(listDir, { mode: 0o700 }); },
+    }, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+  ['error', async () => {
+    const s = await setup();
+    const throttled = stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true, onSign: () => { const e = new Error('kms'); e.code = 'ThrottlingException'; throw e; } });
+    return run(applyArgs(s), { signer: throttled });
+  }],
+  ['error', async () => {
+    const s = await setup();
+    return withV1Read(() => { const e = new Error('io'); e.code = 'EIO'; throw e; }, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+];
+
+test('QP30 / SF-A: every refusal records one quarantine_production_sign row, and the refusal is unchanged with the file set, unset or unwritable', { timeout: 180_000 }, async () => {
+  for (const [code, scenario] of SFA_SCENARIOS) {
+    const none = await withFailureFile('none', scenario);
+    const file = await withFailureFile('file', scenario);
+    const broken = await withFailureFile('unwritable', scenario);
+    const label = `${code}: ${JSON.stringify(none.r.result)}`;
+    assert.equal(none.r.result.ok, false, label);
+    assert.equal(none.r.result.reason, code, label);
+    // Same result, stdout and stderr whatever happens to the row.
+    assert.deepEqual(normalized(file.r), normalized(none.r), `${label}: file set`);
+    assert.deepEqual(normalized(broken.r), normalized(none.r), `${label}: file unwritable`);
+    // The row: in the file when it is set, in memory in every mode, counted once.
+    assertOneRow(file.rows, code, `${label} (file)`);
+    for (const [mode, got] of [['none', none], ['file', file], ['unwritable', broken]]) {
+      assertOneRow(got.memory, code, `${label} (${mode}, memory)`);
+      assert.deepEqual(got.counts, { [code]: 1 }, `${label} (${mode}, counts)`);
+    }
+    assert.equal(fs.existsSync(broken.file), false, `${label}: nothing written under the blocker`);
+  }
+});
+
+test('QP31 / SF-A: a success writes no row; a dry run writes no row', async () => {
+  const dry = await withFailureFile('file', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file], { signer: goodSigner() }); });
+  assert.equal(dry.r.result.state, 'dry_run', dry.r.err.join(' '));
+  assert.deepEqual(dry.rows, []);
+  assert.deepEqual(dry.memory, []);
+  const written = await withFailureFile('file', async () => { const s = await setup(); return run(applyArgs(s), { signer: goodSigner() }); });
+  assert.equal(written.r.result.state, 'written', written.r.err.join(' '));
+  assert.deepEqual(written.rows, []);
+});
+
+test('QP32 / SF-A: refuse() records before it throws, and every refusal code in the module is on the path list (never other)', () => {
+  const src = fs.readFileSync(MODULE, 'utf8');
+  assert.ok(/\nfunction refuse\(reason, message\) \{\n  recordRefusal\(reason\);\n  throw new ProductionListRefused\(reason, message\);\n\}\n/.test(src), 'refuse() records, then throws the same error');
+  assert.ok(/recordEscrowRefusal\(\{ path: 'quarantine_production_sign', reason \}\);/.test(src), 'recordRefusal writes the quarantine_production_sign path');
+  assert.ok(/if \(!\(e instanceof ProductionListRefused\)\) recordRefusal\('error'\);/.test(src), 'a failure that is not a refusal is recorded as error');
+  const codes = new Set();
+  for (const m of src.matchAll(/refuse\('([a-z0-9_]+)'/g)) codes.add(m[1]);
+  for (const m of src.matchAll(/realDir\([^)]*'([a-z0-9_]+)'\)/g)) codes.add(m[1]);
+  for (const m of src.matchAll(/function realDir\(dir, reason = '([a-z0-9_]+)'\)/g)) codes.add(m[1]);
+  codes.add('error');
+  for (const named of ['log_dir_env_unset', 'log_dir_unresolved', 'log_dir_mismatch', 'log_dir_symlink', 'usage', 'list_dir_changed', 'write_mismatch', 'list_not_unsigned_v1', 'v1_exists_different']) {
+    assert.ok(codes.has(named), `scan finds ${named}`);
+  }
+  assert.ok(codes.size >= 26, `found ${codes.size} codes`);
+  assert.ok(RF.ESCROW_REFUSAL_PATHS.includes(PROD_PATH));
+  RF.resetReceiptFailuresForTests();
+  try {
+    for (const code of codes) {
+      const row = RF.recordEscrowRefusal({ path: PROD_PATH, reason: code });
+      assert.ok(row, `${code}: a row`);
+      assert.equal(row.reason, `${PROD_PATH}:${code}`, `${code} is listed, not other`);
+    }
+    assert.equal(RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'made_up_code' }).reason, `${PROD_PATH}:other`);
+    assert.equal(RF.receiptFailureCount(), 0, 'alert rows stay out of the public total');
+  } finally {
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('QP33 / SF-A: the script end to end: a refusal writes its row to RECEIPT_FAILURES_FILE, exit and stderr unchanged when the file cannot be written', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const dir = tmp('qlprod-rfscript-');
+  const blocker = path.join(dir, 'blocker');
+  fs.writeFileSync(blocker, 'x');
+  const base = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
+  delete base.NODE_ENV;
+  delete base.ISSUER_TEST_KEY;
+  delete base.RECEIPT_LOG_DIR;
+  delete base.RECEIPT_FAILURES_FILE;
+  const cases = [
+    ['usage', ['--log-dir', s.logDir], { RECEIPT_LOG_DIR: s.logDir }],
+    ['log_dir_env_unset', ['--log-dir', s.logDir, '--list', s.file], {}],
+  ];
+  for (const [code, argv, extra] of cases) {
+    const runScript = (env) => spawnSync(process.execPath, [NEW_SCRIPT, ...argv], { env: { ...base, ...extra, ...env }, encoding: 'utf8', timeout: 60_000 });
+    const file = path.join(dir, `${code}.jsonl`);
+    const withFile = runScript({ RECEIPT_FAILURES_FILE: file });
+    const unset = runScript({});
+    const broken = runScript({ RECEIPT_FAILURES_FILE: path.join(blocker, 'rf.jsonl') });
+    for (const [label, res] of [['file', withFile], ['unset', unset], ['unwritable', broken]]) {
+      assert.equal(res.status, 1, `${code} ${label}: ${res.stderr}`);
+      assert.ok(new RegExp(`refused: ${code}`).test(res.stderr), `${code} ${label}: ${res.stderr}`);
+    }
+    const refusalLine = (res) => res.stderr.split('\n').filter((l) => l.startsWith('refused: '));
+    assert.deepEqual(refusalLine(withFile), refusalLine(unset), `${code}: same refusal line`);
+    assert.deepEqual(refusalLine(broken), refusalLine(unset), `${code}: same refusal line, unwritable file`);
+    assertOneRow(fileRows(file), code, `${code} (script)`);
+  }
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });

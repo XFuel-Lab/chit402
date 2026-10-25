@@ -5,8 +5,8 @@
  * Memory keeps 5,000 rows. The JSONL file rotates at 5 MB.
  * No payer, no payload, no header.
  *
- * Escrow-path refusals (fixed heads, quarantine list signing, payer binding)
- * use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
+ * Escrow-path refusals (fixed heads, quarantine list signing, the production
+ * quarantine list host signer, payer binding) use the same rows: stage `sign`, reason `<path>:<code>`, no tx, no request
  * id. The code is from a fixed list per path, else `other`, so a row can never
  * carry a payer, a salt, a key or free text. Per-reason counts are served
  * only on GET /v1/ops/receipt-failures (escrow_refusals), never on public
@@ -26,7 +26,15 @@
  *
  * Alert rows have their own cap (RECEIPT_FAILURE_ALERT_ROW_CAP), kept apart
  * from the settle/confirm/sign/log/anchor rows, so a flood of alerts can
- * never push a real settle failure out of the ops export.
+ * never push a real settle failure out of the ops export. Alert rows dropped
+ * by that cap (live, or on reload) are counted; the ops route serves the
+ * count as `alert_rows_dropped`.
+ *
+ * A fold still open when the gateway stops is written at shutdown
+ * (flushEscrowAlertFolds), so its folded refusals survive a restart.
+ *
+ * On reload, rows keep their file order across both lists, and an alert row
+ * whose code is not on its path's list reads `<path>:other`, as its count.
  */
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -47,7 +55,7 @@ export const ESCROW_ALERT_DEDUP_MS = 15 * 60 * 1000;
 const REPEAT_MAX = 1_000_000_000;
 const REFUSAL_DAY_CAP = 30;
 
-export const ESCROW_REFUSAL_PATHS = Object.freeze(['fixed_head', 'quarantine_sign', 'payer_binding']);
+export const ESCROW_REFUSAL_PATHS = Object.freeze(['fixed_head', 'quarantine_sign', 'quarantine_production_sign', 'payer_binding']);
 const LOG_READY_REASONS = [
   'log_not_ready', 'log_not_durable', 'log_boot_disabled', 'fresh_genesis', 'pin_unverified',
   'log_lock_missing', 'log_lock_lost', 'log_lock_unavailable', 'log_locked', 'log_identity',
@@ -62,6 +70,16 @@ const ESCROW_REASONS = {
     'production_env', 'kms_signer', 'production_kid', 'history_extra_malformed', 'production_key',
     'not_test_key', 'signer_accessor', 'no_public_key', 'no_kid', 'issuer_sign_invalid',
     'signer_changed', 'signer_mismatch',
+  ]),
+  // scripts/sign-quarantine-list-production.mjs (quarantine-list-production.js):
+  // every refuse() code, plus `error` for a failure that is not a refusal.
+  quarantine_production_sign: new Set([
+    'usage', 'log_dir_env_unset', 'log_dir_unresolved', 'log_dir_mismatch', 'log_dir_symlink',
+    'confirm_missing', 'list_hash_mismatch', 'not_production_process', 'no_production_keys',
+    'list_not_canonical', 'list_not_unsigned_v1', 'list_dir_not_directory', 'later_version_exists',
+    'v1_exists_different', 'no_signer', 'signer_accessor', 'no_public_key', 'issuer_sign_invalid',
+    'not_production_key', 'kid_mismatch', 'signer_mismatch', 'verify_failed', 'list_build_failed',
+    'list_not_build_output', 'list_dir_changed', 'write_mismatch', 'error',
   ]),
   payer_binding: new Set([
     ...LOG_READY_REASONS,
@@ -84,7 +102,8 @@ const ESCROW_NOT_APPLICABLE = new Set([
   'payer_binding:no_payer', 'payer_binding:no_payment', 'payer_binding:network',
   'payer_binding:asset', 'payer_binding:no_payment_ref',
 ]);
-const ESCROW_ROW_REASON = /^(fixed_head|quarantine_sign|payer_binding):([a-z_]+)$/;
+// Codes may carry digits (quarantine_production_sign:list_not_unsigned_v1).
+const ESCROW_ROW_REASON = /^(fixed_head|quarantine_sign|quarantine_production_sign|payer_binding):([a-z0-9_]+)$/;
 
 const rows = [];
 /** Escrow-path alert rows, capped on their own. */
@@ -98,6 +117,8 @@ const refusalCounts = new Map();
 const escrowCounts = new Map();
 let total = 0;
 let loaded = false;
+/** Alert rows dropped from memory by RECEIPT_FAILURE_ALERT_ROW_CAP. */
+let alertDropped = 0;
 
 /**
  * RECEIPT_FAILURES_FILE is read once per process, on first use (loadFile).
@@ -126,23 +147,50 @@ function loadFile() {
   let text = '';
   try { text = readFileSync(file, 'utf8'); } catch { return; }
   const parsed = [];
+  let plainCount = 0;
+  let alertCount = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
       const row = shape(JSON.parse(line));
       if (row) {
-        parsed.push(row);
         countEscrowRow(row);
+        const alert = isAlertRow(row);
+        if (alert) {
+          normalizeAlertReason(row);
+          alertCount += 1;
+        } else {
+          plainCount += 1;
+        }
+        parsed.push({ row, alert });
       }
     } catch { /* skip a torn line */ }
   }
-  const plain = [];
-  const alerts = [];
-  for (const row of parsed) (isAlertRow(row) ? alerts : plain).push(row);
   // Alert rows stay out of the public total (see recordEscrowRefusal).
-  total += plain.length;
-  for (const row of plain.slice(-RECEIPT_FAILURE_ROW_CAP)) rows.push(stamp(row));
-  for (const row of alerts.slice(-RECEIPT_FAILURE_ALERT_ROW_CAP)) alertRows.push(stamp(row));
+  total += plainCount;
+  // Each list keeps its newest rows under its own cap. Rows are stamped in
+  // file order, so the export keeps the original interleaving of plain and
+  // alert rows across a reload.
+  const plainSkip = Math.max(0, plainCount - RECEIPT_FAILURE_ROW_CAP);
+  const alertSkip = Math.max(0, alertCount - RECEIPT_FAILURE_ALERT_ROW_CAP);
+  alertDropped += alertSkip;
+  let plainSeen = 0;
+  let alertSeen = 0;
+  for (const { row, alert } of parsed) {
+    if (alert) {
+      alertSeen += 1;
+      if (alertSeen > alertSkip) alertRows.push(stamp(row));
+    } else {
+      plainSeen += 1;
+      if (plainSeen > plainSkip) rows.push(stamp(row));
+    }
+  }
+}
+
+/** A reloaded alert row reads `<path>:<listed code or other>`, as its count. */
+function normalizeAlertReason(row) {
+  const m = ESCROW_ROW_REASON.exec(row.reason);
+  if (m) row.reason = `${m[1]}:${escrowReason(m[1], m[2])}`;
 }
 
 /** Insertion order across both row lists; not enumerable, so never exported. */
@@ -155,9 +203,13 @@ function isAlertRow(row) {
   return row.stage === 'sign' && ESCROW_ROW_REASON.test(row.reason);
 }
 
+/** @returns {number} rows dropped from the front of the list */
 function pushCapped(list, row, cap) {
   list.push(stamp(row));
-  if (list.length > cap) list.splice(0, list.length - cap);
+  if (list.length <= cap) return 0;
+  const drop = list.length - cap;
+  list.splice(0, drop);
+  return drop;
 }
 
 function rotateFile(file) {
@@ -301,6 +353,7 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
     // Inside the window: fold. A clock that steps back writes a fresh row.
     if (last && at >= last.at && at - last.at < ESCROW_ALERT_DEDUP_MS) {
       last.folded += 1;
+      last.lastAt = at;
       return null;
     }
     lastAlert.set(foldKey, { at, folded: 0 });
@@ -314,13 +367,56 @@ export function recordEscrowRefusal({ path: pathName, reason, outcome = 'refused
       repeat: last ? last.folded : 0,
     });
     if (!row) return null;
-    pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
+    alertDropped += pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
   } catch {
     return null;
   }
+}
+
+/**
+ * Write every fold that is still open: one row per (path, reason, outcome)
+ * with folded refusals since its last row. The row stands for the latest
+ * folded refusal (its time) and carries `repeat` for the others, so a reload
+ * counts exactly the refusals folded. The fold window restarts at that row.
+ * Called on gateway shutdown. Never throws.
+ * @returns {number} rows written
+ */
+export function flushEscrowAlertFolds() {
+  let written = 0;
+  try {
+    for (const [foldKey, last] of [...lastAlert]) {
+      if (!last || !(last.folded > 0)) continue;
+      const split = foldKey.lastIndexOf('|');
+      const at = Number.isFinite(last.lastAt) ? last.lastAt : last.at;
+      lastAlert.set(foldKey, { at, folded: 0 });
+      const row = shape({
+        stage: 'sign',
+        reason: foldKey.slice(0, split),
+        outcome: foldKey.slice(split + 1),
+        network: null,
+        tx: null,
+        time: new Date(at).toISOString(),
+        repeat: last.folded - 1,
+      });
+      if (!row) continue;
+      alertDropped += pushCapped(alertRows, row, RECEIPT_FAILURE_ALERT_ROW_CAP);
+      written += 1;
+      const file = storeFile();
+      if (file) {
+        try { appendLimited(file, row); } catch { /* the row stays in memory */ }
+      }
+    }
+  } catch { /* never throws on shutdown */ }
+  return written;
+}
+
+/** Alert rows dropped from memory by the alert cap since start (ops route only). */
+export function alertRowsDropped() {
+  loadFile();
+  return alertDropped;
 }
 
 /**
@@ -394,6 +490,7 @@ export function resetReceiptFailuresForTests() {
   refusalCounts.clear();
   escrowCounts.clear();
   total = 0;
+  alertDropped = 0;
   loaded = false;
 }
 

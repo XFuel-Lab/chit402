@@ -789,3 +789,219 @@ test('public /health carries no numeric refusal data: a flood of alerts and skip
   assert.equal(ops.escrow_refusals.fixed_head.log_not_ready, 600);
   RF.resetReceiptFailuresForTests();
 });
+
+// ---------------------------------------------------------------- SF-A follow-ups (#645 review)
+
+/** Write JSONL rows to a fresh RECEIPT_FAILURES_FILE and reload the module from it. */
+function reloadFrom(lines) {
+  const dir = tmp('alerts-reload-');
+  const file = path.join(dir, 'receipt-failures.jsonl');
+  fs.writeFileSync(file, `${lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n')}\n`);
+  process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  return file;
+}
+
+function clearReload() {
+  delete process.env.RECEIPT_FAILURES_FILE;
+  RF.resetReceiptFailuresForTests();
+}
+
+const plainRow = (reason, time) => ({ time, network: 'base', stage: 'settle', reason, tx: null, outcome: 'refused', request_id: null });
+const alertRow = (reason, time, extra = {}) => ({ time, network: null, stage: 'sign', reason, tx: null, outcome: 'refused', request_id: null, ...extra });
+
+test('Bugbot / N-d: a reload keeps the file order of interleaved plain and alert rows, on the list and the ops route', async () => {
+  // File order, with one alert row timed before the plain row it follows:
+  // the export follows the file (record) order, not the time field.
+  const lines = [
+    plainRow('settle_failed', '2026-10-24T10:00:00.000Z'),
+    alertRow('fixed_head:quarantined', '2026-10-24T10:01:00.000Z'),
+    plainRow('confirm_timeout', '2026-10-24T10:02:00.000Z'),
+    alertRow('payer_binding:amount', '2026-10-24T09:00:00.000Z'),
+    alertRow('quarantine_sign:not_test_key', '2026-10-24T10:04:00.000Z'),
+    plainRow('settle_failed', '2026-10-24T10:05:00.000Z'),
+    alertRow('quarantine_production_sign:write_mismatch', '2026-10-24T10:06:00.000Z'),
+  ];
+  const expected = lines.map((l) => `${l.stage}|${l.reason}|${l.time}`);
+  reloadFrom(lines);
+  try {
+    const got = RF.listReceiptFailures().map((r) => `${r.stage}|${r.reason}|${r.time}`);
+    assert.deepEqual(got, expected, 'exact file order after reload');
+    assert.equal(RF.receiptFailureCount(), 3, 'only the plain rows are in the public total');
+    // A row recorded after the reload comes last.
+    RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base', time: '2026-10-24T08:00:00.000Z' });
+    RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'root_mismatch' });
+    const after = RF.listReceiptFailures().map((r) => r.reason);
+    assert.deepEqual(after.slice(-2), ['settle_failed', 'fixed_head:root_mismatch']);
+    const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+    assert.deepEqual(ops.failures.slice(0, lines.length).map((r) => `${r.stage}|${r.reason}|${r.time}`), expected, 'the ops export keeps the order');
+  } finally {
+    clearReload();
+  }
+});
+
+test('N-a / N-c: alert rows dropped by the cap are counted (live and on reload) and served as alert_rows_dropped; the reload caps alerts on their own list', async () => {
+  const cap = RF.RECEIPT_FAILURE_ALERT_ROW_CAP;
+  RF.resetReceiptFailuresForTests();
+  try {
+    assert.equal(RF.alertRowsDropped(), 0);
+    let clock = Date.parse('2026-10-24T00:00:00.000Z');
+    RF.setEscrowAlertClockForTests(() => clock);
+    for (let i = 0; i < cap + 3; i += 1) {
+      RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' });
+      clock += RF.ESCROW_ALERT_DEDUP_MS;
+    }
+    assert.equal(RF.alertRowsDropped(), 3, 'live overflow counted');
+    const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+    assert.equal(ops.alert_rows_dropped, 3, 'served on the ops route');
+    RF.resetReceiptFailuresForTests();
+    assert.equal(RF.alertRowsDropped(), 0, 'reset');
+    const empty = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
+    assert.equal(empty.alert_rows_dropped, 0);
+    // Reload: one plain row, then cap + 5 alert rows.
+    const lines = [plainRow('settle_failed', '2026-10-23T00:00:00.000Z')];
+    for (let i = 0; i < cap + 5; i += 1) lines.push(alertRow('fixed_head:log_not_ready', new Date(Date.parse('2026-10-24T00:00:00.000Z') + i * 1000).toISOString()));
+    reloadFrom(lines);
+    const list = RF.listReceiptFailures();
+    assert.equal(list.length, cap + 1, 'the plain row plus exactly cap alert rows');
+    assert.equal(list[0].reason, 'settle_failed', 'the plain row is kept and first');
+    assert.equal(list.filter((r) => r.stage === 'sign').length, cap, 'alerts capped on their own list');
+    assert.equal(list[1].time, lines[6].time, 'the oldest five alert rows were dropped');
+    assert.equal(RF.receiptFailureCount(), 1, 'public total: the plain row only');
+    assert.equal(RF.alertRowsDropped(), 5, 'reload overflow counted');
+    // Reloaded alerts sit on the alert list: a full settle list does not evict them.
+    for (let i = 0; i < RF.RECEIPT_FAILURE_ROW_CAP; i += 1) {
+      RF.recordReceiptFailure({ stage: 'settle', reason: 'settle_failed', outcome: 'refused', network: 'base' });
+    }
+    assert.equal(RF.listReceiptFailures().filter((r) => r.stage === 'sign').length, cap, 'settle rows never push reloaded alerts out');
+  } finally {
+    clearReload();
+  }
+});
+
+test('N-b: a fold still open is written by flushEscrowAlertFolds, and a reload counts every folded refusal', () => {
+  const dir = tmp('alerts-flush-');
+  const file = path.join(dir, 'receipt-failures.jsonl');
+  process.env.RECEIPT_FAILURES_FILE = file;
+  try {
+    RF.resetReceiptFailuresForTests();
+    const t0 = Date.parse('2026-10-24T12:00:00.000Z');
+    let clock = t0;
+    RF.setEscrowAlertClockForTests(() => clock);
+    assert.equal(RF.flushEscrowAlertFolds(), 0, 'nothing open, nothing written');
+    assert.ok(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' }), 'the first refusal writes a row');
+    for (let i = 1; i <= 5; i += 1) {
+      clock = t0 + i * 60_000;
+      assert.equal(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' }), null, 'folded');
+    }
+    // A single fold (folded 1) on another key: its row carries no repeat.
+    RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount', outcome: 'pending' });
+    clock = t0 + 6 * 60_000;
+    RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount', outcome: 'pending' });
+    assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2, 'two rows before the flush');
+    assert.equal(RF.flushEscrowAlertFolds(), 2, 'one row per open fold');
+    const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(rows.length, 4);
+    const fh = rows.filter((r) => r.reason === 'fixed_head:log_not_ready');
+    assert.equal(fh.length, 2);
+    assert.equal(fh[1].repeat, 4, 'the flush row is the latest folded refusal and repeats the other four');
+    assert.equal(fh[1].time, new Date(t0 + 5 * 60_000).toISOString(), 'at the latest folded refusal');
+    const pb = rows.filter((r) => r.reason === 'payer_binding:amount');
+    assert.equal(pb.length, 2);
+    assert.equal(pb[1].outcome, 'pending');
+    assert.equal('repeat' in pb[1], false, 'one folded refusal: no repeat');
+    assert.equal(RF.flushEscrowAlertFolds(), 0, 'a second flush writes nothing');
+    // The window restarts at the flush row: a refusal inside it folds again.
+    clock = t0 + 7 * 60_000;
+    assert.equal(RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'log_not_ready' }), null);
+    const live = RF.escrowRefusalCounts();
+    assert.equal(live.fixed_head.log_not_ready, 7);
+    // Reload: the counts from the file equal the counts in memory before the last fold.
+    RF.resetReceiptFailuresForTests();
+    const reloaded = RF.escrowRefusalCounts();
+    assert.equal(reloaded.fixed_head.log_not_ready, 6, 'every refusal up to the flush survives the restart');
+    assert.equal(reloaded.payer_binding.amount, 2);
+    // A flush with an unwritable file never throws and keeps the row in memory.
+    const blocker = path.join(dir, 'blocker');
+    fs.writeFileSync(blocker, 'x');
+    process.env.RECEIPT_FAILURES_FILE = path.join(blocker, 'rf.jsonl');
+    RF.resetReceiptFailuresForTests();
+    clock = t0;
+    RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'quarantined' });
+    clock = t0 + 1000;
+    RF.recordEscrowRefusal({ path: 'fixed_head', reason: 'quarantined' });
+    let n;
+    assert.doesNotThrow(() => { n = RF.flushEscrowAlertFolds(); });
+    assert.equal(n, 1);
+    assert.equal(RF.listReceiptFailures().filter((r) => r.reason === 'fixed_head:quarantined').length, 2);
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('N-b: the gateway shutdown flushes open alert folds before closing the server', () => {
+  const src = fs.readFileSync(path.join(gatewayDir, 'src', 'server.js'), 'utf8');
+  assert.ok(/const shutdown = \(signal\) => \{[\s\S]*?flushEscrowAlertFolds\(\);[\s\S]*?server\.close\(/.test(src), 'shutdown calls flushEscrowAlertFolds before server.close');
+  assert.ok(/import \{[^}]*\bflushEscrowAlertFolds\b[^}]*\} from '\.\/receipt-failures\.js';/.test(src), 'imported from receipt-failures.js');
+});
+
+test('N-c: repeat on a reloaded row: positive safe integers only, clamped to 1e9', () => {
+  reloadFrom([
+    alertRow('fixed_head:root_mismatch', '2026-10-24T00:00:01.000Z', { repeat: 1e15 }),
+    alertRow('fixed_head:quarantined', '2026-10-24T00:00:02.000Z', { repeat: 2.5 }),
+    alertRow('fixed_head:internal', '2026-10-24T00:00:03.000Z', { repeat: '5' }),
+    alertRow('fixed_head:store_write', '2026-10-24T00:00:04.000Z', { repeat: -3 }),
+    alertRow('fixed_head:signer_error', '2026-10-24T00:00:05.000Z', { repeat: 0 }),
+    alertRow('fixed_head:field_range', '2026-10-24T00:00:06.000Z', { repeat: 7 }),
+  ]);
+  try {
+    const byReason = Object.fromEntries(RF.listReceiptFailures().map((r) => [r.reason, r]));
+    assert.equal(byReason['fixed_head:root_mismatch'].repeat, 1_000_000_000, 'clamped');
+    for (const r of ['fixed_head:quarantined', 'fixed_head:internal', 'fixed_head:store_write', 'fixed_head:signer_error']) {
+      assert.equal('repeat' in byReason[r], false, `${r}: dropped`);
+    }
+    assert.equal(byReason['fixed_head:field_range'].repeat, 7);
+    assert.deepEqual(RF.escrowRefusalCounts().fixed_head, {
+      field_range: 8, internal: 1, quarantined: 1, root_mismatch: 1_000_000_001, signer_error: 1, store_write: 1,
+    });
+  } finally {
+    clearReload();
+  }
+});
+
+test('N-c: every method other than GET on the ops route is 405, Allow GET, private, no-store', async () => {
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const res = await fetch(`${base}/v1/ops/receipt-failures`, { method, headers: { authorization: 'Bearer owner-test-token' } });
+    assert.equal(res.status, 405, method);
+    assert.equal(res.headers.get('allow'), 'GET', method);
+    assert.equal(res.headers.get('cache-control'), 'private, no-store', `${method}: no-store`);
+    assert.deepEqual(await res.json(), { error: 'method_not_allowed' });
+  }
+});
+
+test('N-e: a reloaded alert row with a code not on its path list reads <path>:other, matching its count; listed codes, digits included, are kept', () => {
+  reloadFrom([
+    alertRow('payer_binding:__proto__', '2026-10-24T00:00:01.000Z'),
+    alertRow('quarantine_sign:made_up', '2026-10-24T00:00:02.000Z'),
+    alertRow('fixed_head:x9', '2026-10-24T00:00:03.000Z'),
+    alertRow('quarantine_production_sign:list_not_unsigned_v1', '2026-10-24T00:00:04.000Z'),
+    alertRow('payer_binding:kid_mismatch', '2026-10-24T00:00:05.000Z'),
+    plainRow('settle_failed', '2026-10-24T00:00:06.000Z'),
+  ]);
+  try {
+    assert.deepEqual(RF.listReceiptFailures().map((r) => r.reason), [
+      'payer_binding:other', 'quarantine_sign:other', 'fixed_head:other',
+      'quarantine_production_sign:list_not_unsigned_v1', 'payer_binding:kid_mismatch', 'settle_failed',
+    ]);
+    assert.deepEqual(RF.escrowRefusalCounts(), {
+      fixed_head: { other: 1 },
+      payer_binding: { kid_mismatch: 1, other: 1 },
+      quarantine_production_sign: { list_not_unsigned_v1: 1 },
+      quarantine_sign: { other: 1 },
+    });
+    assert.equal(RF.receiptFailureCount(), 1, 'a digit code reloads as an alert row, not into the public total');
+  } finally {
+    clearReload();
+  }
+});

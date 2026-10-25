@@ -26,6 +26,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { recordEscrowRefusal } from './receipt-failures.js';
 import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput } from './issuer-key.js';
 import { PRODUCTION_ISSUER_PUBLIC_KEYS, isProductionProcess } from './production-process.js';
 import {
@@ -51,8 +52,23 @@ export class ProductionListRefused extends Error {
   }
 }
 
+/**
+ * Every refusal is recorded first as a receipt-failure row
+ * `quarantine_production_sign:<reason>` (code only), the operator alert path.
+ * Recording never throws and never changes the refusal: the same error is
+ * thrown, with the same exit and output, whether or not the row was written.
+ */
 function refuse(reason, message) {
+  recordRefusal(reason);
   throw new ProductionListRefused(reason, message);
+}
+
+function recordRefusal(reason) {
+  try {
+    recordEscrowRefusal({ path: 'quarantine_production_sign', reason });
+  } catch {
+    // recordEscrowRefusal never throws; a failure here still refuses.
+  }
 }
 
 function sha256Hex(buf) {
@@ -506,6 +522,8 @@ async function runWith({
     return { ok: true, state: 'written' };
   } catch (e) {
     const reason = e instanceof ProductionListRefused ? e.reason : 'error';
+    // A refusal was recorded in refuse(); any other failure is recorded here.
+    if (!(e instanceof ProductionListRefused)) recordRefusal('error');
     if (linkedFile) {
       // v1 is on disk. A rerun of the same command checks it and, when it
       // verifies, returns 'same' and prints SIGNED_LIST_SHA256.
