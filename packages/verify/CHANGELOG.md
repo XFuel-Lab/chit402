@@ -31,6 +31,7 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 ### Fixed: non-receipt signed schemas
 - A signed payload whose schema is `chit402.quarantine_list`, `chit402.tree_head_eip712` or `chit402.receipt_binding_eip712` is refused as a receipt (`signed payload is not a receipt`), as `quarantine_ack` already was. `BUILD_DIGEST.txt` moved again (`src/index.ts`).
 - The schema check is now an allowlist: any signed schema in the `chit402` namespace other than exactly `chit402.foreign_payout.v1` is refused, including case, leading-space and separator variants.
+- A signed schema with any character outside printable ASCII (a control or format character such as a zero-width space, or a lookalike such as `chit402` followed by U+0130) is refused as a receipt before the allowlist is checked.
 
 ### Fixed: review of the EIP-712 checks
 - **Public-attestation path.** A fixed head that does not match its signed head is now `fixed_head_invalid` (exit 1) there too. Before, it could still give `VERIFIED_PUBLIC`.

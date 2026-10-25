@@ -83,6 +83,24 @@ const MORE = [
   'chit402',
   'Chit402.foreign_payout.v1',
   ' chit402.foreign_payout.v1',
+  // Non-ASCII and control or format characters are refused before the allowlist.
+  '\u200bchit402.tree_head.v1',
+  '\u200cchit402.tree_head.v1',
+  '\u200dchit402.tree_head.v1',
+  '\u2060chit402.tree_head.v1',
+  '\ufeffchit402.tree_head.v1',
+  '\u00adchit402.tree_head.v1',
+  '\u202echit402.tree_head.v1',
+  '\u00a0chit402.tree_head.v1',
+  '\u3000chit402.tree_head.v1',
+  'chit402\u0130.x',
+  'chit402.foreign_payout.v1\u200b',
+  'chit402.foreign_payout.v1\u0000',
+  '\u0000chit402.tree_head.v1',
+  '\u007fchit402.tree_head.v1',
+  'xfuel.receipt.v4\u200b',
+  '\u0441hit402.tree_head.v1',
+  'chit402.tree_head.v1\n',
 ];
 
 for (const schema of MORE) {
@@ -95,7 +113,7 @@ for (const schema of MORE) {
 }
 
 test('allowlist: the receipt schemas are not refused by schema', async () => {
-  for (const schema of ['chit402.foreign_payout.v1', 'xfuel.receipt.v4', 'chit402x.other.v1']) {
+  for (const schema of ['chit402.foreign_payout.v1', 'xfuel.receipt.v4', 'chit402x.other.v1', 'receipt.v7', '']) {
     const out = await verifyReceipt(signed({ ...claims, schema }), OPTS);
     assert.ok(!out.errors.some((e) => /not a receipt \(schema/.test(e)), `${schema}: ${out.errors.join('; ')}`);
   }

@@ -1747,6 +1747,10 @@ const RECEIPT_SIGNED_SCHEMAS: ReadonlySet<string> = new Set(['chit402.foreign_pa
  * the rest), whatever its case, leading space or separators.
  */
 function nonReceiptSignedSchema(schema: string): boolean {
+  // Issuers write schemas in printable ASCII. Anything else (control or
+  // format characters such as a zero-width space, or a lookalike such as
+  // U+0130) is refused before the allowlist, so no prefix hides chit402.
+  if (/[^\x20-\x7e]/.test(schema)) return true;
   if (RECEIPT_SIGNED_SCHEMAS.has(schema)) return false;
   return /^chit402(?![a-z0-9])/.test(schema.trim().toLowerCase());
 }
