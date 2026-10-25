@@ -109,7 +109,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Issuer trust',
-    description: 'Pin JWKS + kid, rotation policy, receipt verify steps.',
+    description: 'Current ES256 key, issuer history, and chit402-verify.',
     href: '/trust',
     meta: 'trust',
     internal: true,

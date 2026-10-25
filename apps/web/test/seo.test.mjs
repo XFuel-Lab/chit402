@@ -533,8 +533,17 @@ test('false claims called out in the site alignment stay fixed', () => {
   const security = readFileSync(join(root, 'src/pages/Security.tsx'), 'utf8');
   const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');
   const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
-  assert.match(trust, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.match(trust, /npx chit402-verify/);
   assert.doesNotMatch(trust, /npx xfuel-verify/);
+  assert.doesNotMatch(trust, /--jwks-file/);
+  assert.doesNotMatch(trust, /ISSUER_PRIVATE_KEY/);
+  assert.doesNotMatch(trust, /pin JWKS/i);
+  assert.match(receipt, /npx chit402-verify/);
+  assert.match(receipt, /cloud KMS/);
+  assert.doesNotMatch(receipt, /not in a cloud KMS/);
+  assert.doesNotMatch(receipt, /ISSUER_PRIVATE_KEY/);
+  assert.doesNotMatch(receipt, /--strict-issuer-history/);
+  assert.doesNotMatch(receipt, /\?version=1/);
   assert.doesNotMatch(register, /The demo key/);
   assert.match(register, /Public demo keys never register/);
   assert.doesNotMatch(gateway, /HMAC-signed/);

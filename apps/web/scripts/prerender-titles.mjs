@@ -120,10 +120,10 @@ const ROUTE_CONTENT = {
     lede: 'vendor_blind mode for possession sessions. Providers see gateway traffic, not buyer topology. Gateway-trusted — not prompt encryption.',
   },
   '/trust': {
-    title: 'Issuer trust — pin JWKS + kid | Chit402',
+    title: 'Issuer trust | Chit402',
     h1: 'Issuer trust',
     lede:
-      'Public pin for Chit402 receipt signatures: JWKS URLs, current ES256 kid (RFC 7638 thumbprint), rotation rules, and offline verify steps. Private key never published.',
+      'Current ES256 issuer key for Chit402 receipts: the JWKS URL, the kid (RFC 7638 thumbprint), and how to run chit402-verify. The private key is never published.',
   },
   '/board': {
     title: 'Board — endpoint reports | Chit402',

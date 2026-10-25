@@ -9,7 +9,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 ## Money pages (chit402.com)
 
-- /trust    : Issuer trust — pin JWKS + kid, rotation policy, receipt verify steps. https://www.chit402.com/trust
+- /trust    : Issuer trust: current ES256 key, issuer history, and chit402-verify. https://www.chit402.com/trust
 - /docs/receipt-check : Recompute public receipt hashes and check the signed issuer key history. https://www.chit402.com/docs/receipt-check
 - /docs/verify : Exit codes for chit402-verify 0.4 and one anchor per verdict reason. https://www.chit402.com/docs/verify
 - /         : Treasury desk — who paid which call. Export, policy, evidence. https://chit402.com/book

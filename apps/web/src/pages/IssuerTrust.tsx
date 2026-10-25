@@ -7,12 +7,12 @@ const CURRENT_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 const JWK_X = '_H7J9niXF2tez_MnF25pnrDN7iJ_VC9gBzYYW9gzSPk';
 const JWK_Y = 'jiorfRc9wtNaRmaFHsQaXNzcWteUA0RnpvD4SWdVl34';
 
-const verifyCli = `# Pin JWKS once (out-of-band), then verify a receipt JSON file.
-# The CLI is the xfuel-verify bin inside the published package @xfuel/verify.
-curl -sS -o chit402-issuer.jwks.json ${JWKS_PRIMARY}
-npx -p @xfuel/verify xfuel-verify receipt.json --jwks-file chit402-issuer.jwks.json
+const HOUSE_RECEIPT = 'https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15';
 
-# Or fetch JWKS in your agent and match issuer_signature.kid to a pinned kid first`;
+const verifyCli = `# Issuer history is checked inside the command.
+npx chit402-verify "${HOUSE_RECEIPT}"
+# This receipt prints VERIFIED_PUBLIC and exits 0.
+# Exit 1 is INVALID. Exit 2 is COULD_NOT_CHECK.`;
 
 export default function IssuerTrust() {
   return (
@@ -22,15 +22,15 @@ export default function IssuerTrust() {
           <span className="docs-kicker">Public trust root</span>
           <h1>Issuer trust</h1>
           <p>
-            Chit402 signs collected receipts with ES256 (EC P-256). Partners pin this page and the JWKS
-            out-of-band — then verify every receipt against that pin. Possession book after settle; this page
-            does not gate <code>/book</code>.
+            Chit402 signs collected receipts with ES256 (EC P-256). Check a receipt with{' '}
+            <code>npx chit402-verify</code> and its URL. The command checks issuer history. Possession book
+            after settle; this page does not gate <code>/book</code>.
           </p>
         </header>
 
         <div className="docs-panel">
           <h2>JWKS</h2>
-          <p>Pin this URL out of band. It is the issuer key for collected receipts.</p>
+          <p>This URL publishes the current issuer public key for collected receipts.</p>
           <ul style={styles.list}>
             <li>
               <a href={JWKS_PRIMARY} target="_blank" rel="noreferrer">
@@ -71,8 +71,9 @@ export default function IssuerTrust() {
             </a>{' '}
             is the signed, append-only record: <code>kid</code>, public JWK, <code>not_before</code>,{' '}
             <code>not_after</code>, and <code>status</code>. Entries chain by hash. The current kid&apos;s{' '}
-            <code>not_before</code> is <code>2026-09-04T08:52:05Z</code>. The private key stays in{' '}
-            <code>ISSUER_PRIVATE_KEY</code> on the gateway. How to check:{' '}
+            <code>not_before</code> is <code>2026-09-04T08:52:05Z</code>. Since 2026-10-20 the production
+            signing key is held in a cloud KMS, and that KMS is the only production signer. The key is not
+            in the gateway environment. The kid is unchanged. How to check:{' '}
             <Link to="/docs/receipt-check">Receipt check</Link>.
           </p>
         </div>
@@ -84,43 +85,30 @@ export default function IssuerTrust() {
               <strong>New keys get a new <code>kid</code>.</strong> A retired thumbprint is never reused.
             </li>
             <li>
-              <strong>Overlap:</strong> during rotation, JWKS may publish multiple keys; verify against the{' '}
-              <code>issuer_signature.kid</code> on each receipt.
+              <strong>Issuer history is append-only.</strong> Each entry records the public JWK,{' '}
+              <code>not_before</code>, <code>not_after</code>, and <code>status</code>. The current key signs
+              the head.
             </li>
             <li>
-              <strong>Announce before drop:</strong> we keep the outgoing key in JWKS until partners had time to
-              refresh their pin; then remove it from JWKS.
-            </li>
-            <li>
-              <strong>In-receipt <code>issuer_jwk</code> is not an independent trust root.</strong> It only
-              documents consistency with the signed envelope. Pin JWKS + <code>kid</code> out-of-band first
-              (this page), then confirm the receipt’s embedded JWK matches that pin.
+              <strong>In-receipt <code>issuer_jwk</code> is not an independent trust root.</strong> It documents
+              the key in the signed envelope. <code>chit402-verify</code> does not read a JWKS file.
             </li>
           </ol>
         </div>
 
         <div className="docs-panel">
-          <h2>Verify a receipt against your pin</h2>
+          <h2>Verify a receipt</h2>
           <ol style={styles.list}>
             <li>
-              Out-of-band: bookmark this page and download JWKS from the authoritative URL above. Record the pinned{' '}
-              <code>kid</code> ({CURRENT_KID} today).
+              Copy the receipt URL: the public <code>verify_url</code>, or <code>GET /receipt/:taskId</code>.
             </li>
             <li>
-              Fetch the receipt: <code>GET /receipt/:taskId?format=json</code> (or the public{' '}
-              <code>verify_url</code> with JSON).
+              Run <code>npx chit402-verify</code> with that URL. Issuer history is checked inside the command.
             </li>
             <li>
-              Read <code>issuer_signature.kid</code> (or the JWS header <code>kid</code>). It must match your pinned{' '}
-              key in JWKS.
-            </li>
-            <li>
-              Verify ES256: compact <code>issuer_signature.jws</code> against the pinned public key, or run{' '}
-              <code>npx -p @xfuel/verify xfuel-verify</code> with your JWKS file.
-            </li>
-            <li>
-              Treat HMAC host fields and on-chain <code>payment.ref</code> as separate checks — issuer signature
-              proves Chit402 signed the receipt payload, not that USDC moved (confirm settlement separately).
+              Exit 0 prints <code>VERIFIED</code> when every check passed, including the payer. A public
+              attestation prints <code>VERIFIED_PUBLIC</code> and still exits 0. Exit 1 is <code>INVALID</code>.
+              Exit 2 is <code>COULD_NOT_CHECK</code>.
             </li>
           </ol>
           <pre className="docs-code">
@@ -131,8 +119,8 @@ export default function IssuerTrust() {
         <div className="docs-panel">
           <h2>What we never publish</h2>
           <p>
-            The issuer <strong>private key</strong> stays in gateway operations only — never in git, never on this
-            page, never in customer payloads. Only public JWKS and test fixtures appear here.
+            The issuer <strong>private key</strong> is never in git, never on this page, and never in customer
+            payloads. Only the public JWKS and these coordinates appear here.
           </p>
         </div>
 
