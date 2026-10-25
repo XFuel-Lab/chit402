@@ -1189,3 +1189,129 @@ test('B14 / SF1: the view compares the binding kid with the JWS header kid; no J
   }
   assert.equal(c.counts.typed, 1);
 });
+
+// ---------------------------------------------------------------- B15 (#648 review nits)
+
+/** Compact JWS with an arbitrary protected header. */
+function rawJws(header, c) {
+  return `${Buffer.from(JSON.stringify(header)).toString('base64url')}.${Buffer.from(JSON.stringify(c)).toString('base64url')}.c2ln`;
+}
+
+/** Same length, one character changed: the last one, or the case of the first letter. */
+function kidVariants(kid) {
+  const last = kid.at(-1) === 'A' ? 'B' : 'A';
+  const i = kid.search(/[A-Za-z]/);
+  const flipped = kid[i] === kid[i].toUpperCase() ? kid[i].toLowerCase() : kid[i].toUpperCase();
+  return {
+    lastChar: `${kid.slice(0, -1)}${last}`,
+    caseOnly: `${kid.slice(0, i)}${flipped}${kid.slice(i + 1)}`,
+  };
+}
+
+test('B15 / N1: the signer is read once per job; a rotation between the check and the sign never signs with the new key', async () => {
+  const k2 = rotatedKey();
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b15a-'));
+  const c1 = countingSigner(envSigner);
+  const c2 = countingSigner(stubSigner({ kid: k2.kid, publicJwk: k2.publicJwk, privateKey: k2.privateKey }));
+  let calls = 0;
+  // K1 on the first read, K2 on every later read: a fresh read at sign time sees K2.
+  const worker = W.createPayerBindingWorker({
+    store,
+    tree: () => tree,
+    holderJws: (id) => fakeJws(claims({ taskId: id }), KEY.kid),
+    signer: () => {
+      calls += 1;
+      return calls === 1 ? c1.signer : c2.signer;
+    },
+    env: { RECEIPT_PAYER_BINDING_EIP712: 'true' },
+    baseDelayMs: 1000,
+  });
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b15a', ROW(151));
+  assert.deepEqual(await worker.tick(), ['signed']);
+  assert.equal(calls, 1, 'one signer read for the job');
+  assert.equal(c2.counts.typed, 0, 'no typed sign under the rotated key');
+  assert.equal(c1.counts.typed, 1);
+  const sealed = store.getBinding('xfuel-pb-b15a');
+  assert.equal(sealed.binding.message.kid, E.kidBytes32(KEY.kid));
+  assert.equal(B.verifyBinding(sealed.binding, sealed.payer_salt, payerA.address, KEY.publicJwk).ok, true);
+  assert.equal(B.verifyBinding(sealed.binding, sealed.payer_salt, payerA.address, k2.publicJwk).ok, false);
+});
+
+test('B15 / N2: a kid that differs only in its last character or in case, or a 4-part JWS, is kid_mismatch', async () => {
+  const { tree } = await readyTree();
+  const v = kidVariants(KEY.kid);
+  assert.equal(v.lastChar.length, KEY.kid.length);
+  assert.notEqual(v.lastChar, KEY.kid);
+  assert.equal(v.caseOnly.toLowerCase(), KEY.kid.toLowerCase());
+  assert.notEqual(v.caseOnly, KEY.kid);
+  assert.equal(v.caseOnly.slice(0, 8) === KEY.kid.slice(0, 8), false, 'case flip is inside the first 8 characters');
+  assert.equal(v.lastChar.slice(0, 8), KEY.kid.slice(0, 8), 'same 8-character prefix');
+  const fourPart = (id) => `${fakeJws(claims({ taskId: id }), KEY.kid)}.x`;
+  assert.equal(W.jwsHeaderKid(fourPart('xfuel-pb-b15b')), null);
+  assert.equal(W.jwsHeaderKid(`${fakeJws({}, KEY.kid)}.`), null);
+  const cases = [
+    ['xfuel-pb-b15b-last', (id) => fakeJws(claims({ taskId: id }), v.lastChar)],
+    ['xfuel-pb-b15b-case', (id) => fakeJws(claims({ taskId: id }), v.caseOnly)],
+    ['xfuel-pb-b15b-four', fourPart],
+  ];
+  const store = openPayerBindingStore(tmp('payer-binding-b15b-'));
+  for (const [taskId, jwsFor] of cases) {
+    const c = countingSigner(envSigner);
+    const worker = unitWorker({ store, tree, jwsFor, signer: c.signer });
+    await appendAndEnqueue(worker, tree, taskId, ROW(taskId.length * 7 + 152));
+    // A 4-part string has no readable claims either, so the worker never gets to the kid.
+    const four = taskId.endsWith('-four');
+    assert.deepEqual(await worker.tick(), [four ? 'retry' : 'skipped'], taskId);
+    assert.equal(store.getJob(taskId).reason, four ? 'holder_claims_missing' : 'kid_mismatch', taskId);
+    assert.equal(c.counts.typed, 0, taskId);
+  }
+  // The same variants beside a binding sealed under KEY are not shown as signed.
+  const ok = openPayerBindingStore(tmp('payer-binding-b15b2-'));
+  const c = countingSigner(envSigner);
+  const w = unitWorker({ store: ok, tree, jwsFor: (id) => fakeJws(claims({ taskId: id }), KEY.kid), signer: c.signer });
+  await appendAndEnqueue(w, tree, 'xfuel-pb-b15b-ok', ROW(159));
+  assert.deepEqual(await w.tick(), ['signed']);
+  for (const [label, jwsFor] of cases) {
+    assert.deepEqual(W.payerBindingView(ok, 'xfuel-pb-b15b-ok', jwsFor('xfuel-pb-b15b-ok')), { status: 'missing', reason: 'kid_mismatch' }, label);
+  }
+});
+
+test('B15 / N3: the kid check runs before readiness and before a cap slot is taken', async () => {
+  const k2 = rotatedKey();
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b15c-'));
+  const c = countingSigner(envSigner);
+  let readyCalls = 0;
+  let ready = { ok: false, reason: 'log_not_ready' };
+  // Hourly cap of one: a refused job must not spend the only slot.
+  const worker = W.createPayerBindingWorker({
+    store,
+    tree: () => tree,
+    holderJws: (id) => fakeJws(claims({ taskId: id }), id === 'xfuel-pb-b15c-good' ? KEY.kid : k2.kid),
+    signer: () => c.signer,
+    ready: () => { readyCalls += 1; return ready; },
+    env: { RECEIPT_PAYER_BINDING_EIP712: 'true', RECEIPT_PAYER_BINDING_HOURLY_CAP: '1' },
+    now: () => Date.parse('2026-10-24T12:00:00.000Z'),
+    baseDelayMs: 1000,
+  });
+  // Log not ready: a mismatched job is still skipped as kid_mismatch, not retried as log_not_ready.
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b15c-bad1', ROW(161));
+  assert.deepEqual(await worker.tick(), ['skipped']);
+  assert.equal(store.getJob('xfuel-pb-b15c-bad1').reason, 'kid_mismatch');
+  assert.equal(readyCalls, 0, 'readiness is not consulted for a refused job');
+  ready = { ok: true };
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b15c-bad2', ROW(162));
+  assert.deepEqual(await worker.tick(), ['skipped']);
+  let stats = worker.stats();
+  assert.equal(stats.cap_hour_used, 0, 'no cap slot spent on kid_mismatch');
+  assert.equal(stats.capped, 0);
+  assert.equal(stats.refused_kid, 2);
+  // The single slot is still there for a good job in the same hour.
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b15c-good', ROW(163));
+  assert.deepEqual(await worker.tick(), ['signed']);
+  stats = worker.stats();
+  assert.equal(stats.cap_hour_used, 1);
+  assert.equal(stats.capped, 0);
+  assert.equal(c.counts.typed, 1);
+});
