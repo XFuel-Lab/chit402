@@ -10,11 +10,16 @@ const example = `# Receipt JSON and /preimage for this id both return 200.
 curl -sS "${RECEIPT}" -o receipt.json
 curl -sS -D - "https://api.chit402.com/receipt/${RECEIPT_ID}/preimage" -o preimage.json
 # /preimage is the unsigned public shell (JCS), not the signed payload.
-# This receipt carries a public attestation, so anyone with the URL can check it:
+# This receipt carries a public attestation, so anyone with the URL can check it.
+# Issuer history is checked inside the command.
 npx chit402-verify "https://api.chit402.com/receipt/${RECEIPT_ID}"
 # VERIFIED_PUBLIC: settled amount, payee, tx, and log position. Payer is not claimed.
-curl -sS "${HISTORY}?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --issuer-history issuer-history.json`;
+# Exit 0. Exit 1 is INVALID. Exit 2 is COULD_NOT_CHECK.
+
+# Optional: the same check with the current issuer-history snapshot (version 2).
+# The file must prefix-extend the snapshot shipped in the package.
+curl -sS "${HISTORY}" -o issuer-history.json
+npx chit402-verify receipt.json --issuer-history issuer-history.json`;
 
 export default function ReceiptCheckDocs() {
   return (
@@ -24,9 +29,9 @@ export default function ReceiptCheckDocs() {
           <span className="docs-kicker">Verify without trusting us</span>
           <h1>Receipt check</h1>
           <p>
-            A receipt stores one canonical object. Hash those bytes and you have <code>payload_hash</code>. The
-            issuer also pins the key-history snapshot that was current when it signed. <code>xfuel-verify</code>{' '}
-            checks that pin, including <code>not_after</code> on the pinned entry.
+            A receipt stores one canonical object. Hash those bytes and you have <code>payload_hash</code>.{' '}
+            <code>chit402-verify</code> checks the issuer signature, the key window, the log, and the anchor.
+            Issuer history is part of that check.
           </p>
           <p>
             <Link to="/check">Check a receipt</Link> in the browser. Paste the receipt JSON, or a receipt id or
@@ -60,15 +65,15 @@ export default function ReceiptCheckDocs() {
           </p>
           <p>
             The live kid is <code style={styles.mono}>{KID}</code>. <code>not_before</code> is{' '}
-            <code>2026-09-04T08:52:05Z</code>, the first deployment of this ES256 path. The private key is the
-            PEM in the gateway environment variable <code>ISSUER_PRIVATE_KEY</code>. It is not in a cloud KMS,
-            and it is not on this page.
+            <code>2026-09-04T08:52:05Z</code>, the first deployment of this ES256 path. Since 2026-10-20 the
+            production signing key is held in a cloud KMS, and that KMS is the only production signer. The key
+            is not in the gateway environment. The kid is unchanged. The private key is not on this page.
           </p>
           <p>
-            A new key gets a new <code>kid</code> and a new snapshot. <code>not_after</code> is read from the
-            snapshot the receipt pinned. A revoked key fails verification for receipts issued at or after{' '}
-            <code>revoked_at</code> on that entry. A pinned receipt fails closed when its snapshot cannot be
-            fetched. An older receipt with no pin warns unless <code>--strict-issuer-history</code> is set.
+            A new key gets a new <code>kid</code> and a new snapshot. A revoked key fails verification for a
+            receipt issued at or after <code>revoked_at</code> on that entry. <code>chit402-verify</code> always
+            checks issuer history. A <code>--issuer-history</code> file is accepted only when it prefix-extends
+            the snapshot shipped in the package. The current live snapshot is version 2.
           </p>
         </div>
 

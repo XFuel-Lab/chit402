@@ -109,7 +109,7 @@ const builders: DocLink[] = [
   },
   {
     title: 'Issuer trust',
-    description: 'Pin JWKS + kid, rotation policy, receipt verify steps.',
+    description: 'Current ES256 key, issuer history, and chit402-verify.',
     href: '/trust',
     meta: 'trust',
     internal: true,
@@ -248,15 +248,16 @@ export default function Docs() {
               <strong>2026-09-30</strong> — the receipt root is published daily on Base and on Solana.
               The current head is{' '}
               <a href={`${apiHost}/v1/receipts/tree/head`}>GET /v1/receipts/tree/head</a>.{' '}
-              <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that the anchor transaction
-              is present. It is not a full inclusion check.
+              chit402-verify 0.4.11 checks that anchor inside{' '}
+              <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
             </li>
             <li>
               <strong>2026-10-06</strong> — the public receipt log is durable and tied to an epoch.
             </li>
             <li>
               <strong>2026-10-03</strong> — a blocked spend can return a signed refusal
-              (<code>chit402.refusal.v1</code>). <code>@xfuel/verify</code> 0.3.1 verifies it.
+              (<code>chit402.refusal.v1</code>). chit402-verify 0.4.11 checks a signed refusal with{' '}
+              <code>npx chit402-verify</code> and the refusal URL.
             </li>
             <li>
               <strong>2026-10-04</strong> — public spend audit at <Link to="/audit">/audit</Link>.

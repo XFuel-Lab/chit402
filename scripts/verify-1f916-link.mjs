@@ -6,9 +6,11 @@
  *   node scripts/verify-1f916-link.mjs https://www.chit402.com/specimens/1f916-link-1.json
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
+ * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
- * fails closed with public_receipt_is_unsigned_shell. No flag, environment
- * variable, or fetch fixture turns that shell into PASS or VERIFIED.
+ * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
+ * That result means the signature is not public, so the receipt was not checked.
+ * No flag, environment variable, or fetch fixture turns that shell into PASS or VERIFIED.
  * Node built-ins only.
  *
  * Hermetic runs: set CHIT_VERIFY_FETCH_FIXTURE to a JSON file
@@ -58,6 +60,10 @@ function pass(detail) {
 
 function fail(detail) {
   return step('FAIL', detail);
+}
+
+function unchecked(detail) {
+  return step('COULD_NOT_CHECK', detail);
 }
 
 /**
@@ -153,8 +159,8 @@ function receiptUrl(id) {
 }
 
 /**
- * Public GET /receipt/:id is an unsigned shell. Fail closed on the schema or
- * on unsigned:true, including when a caller stuffed a jws field onto it.
+ * Public GET /receipt/:id is an unsigned shell. The schema, or unsigned:true,
+ * is COULD_NOT_CHECK, including when a caller stuffed a jws field onto it.
  * @param {unknown} receipt
  */
 function isPublicReceiptShell(receipt) {
@@ -303,10 +309,10 @@ export async function verifyLink(specimen, opts = {}) {
       if (isPublicReceiptShell(receipt)) {
         // Since #519 the public route returns an unsigned shell. The issuer JWS,
         // book chain and payment ref are owner-view only, so this tool cannot
-        // check them from the public URL. Fail closed. A fake jws field, unsigned:false
-        // on the shell schema, or any caller option still fails. Nothing here
-        // prints PASS or VERIFIED for the receipt.
-        steps.fetch_receipt = fail('public_receipt_is_unsigned_shell (issuer JWS is owner-view only)');
+        // check them from the public URL. That is COULD_NOT_CHECK, exit 2.
+        // A fake jws field, unsigned:false on the shell schema, or any caller
+        // option stays unchecked. Nothing here prints PASS or VERIFIED for the receipt.
+        steps.fetch_receipt = unchecked('public_receipt_is_unsigned_shell (issuer JWS is owner-view only)');
         receipt = null;
       } else if (!verifyUrl.endsWith(`/receipt/${specimen.chit_receipt_id}`)) {
         steps.fetch_receipt = fail('verify_url does not end with chit_receipt_id');
@@ -324,7 +330,11 @@ export async function verifyLink(specimen, opts = {}) {
   /** Fingerprint bound inside the issuer JWS, when the stamp included one. */
   let signedFingerprint = null;
   const jwksUri = receipt?.verification?.jwks_uri;
-  if (!receipt || steps.fetch_receipt.status !== 'PASS') {
+  if (steps.fetch_receipt.status === 'COULD_NOT_CHECK') {
+    steps.issuer_signature = unchecked('not_checked');
+    steps.receipt_chain = unchecked('not_checked');
+    steps.on_chain_tx = unchecked('not_checked');
+  } else if (!receipt || steps.fetch_receipt.status !== 'PASS') {
     steps.issuer_signature = fail('receipt_unavailable');
     steps.receipt_chain = fail('receipt_unavailable');
     steps.on_chain_tx = fail('receipt_unavailable');
@@ -417,7 +427,12 @@ export async function verifyLink(specimen, opts = {}) {
 
   steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
 
-  const verdict = STEPS.every((name) => steps[name]?.status === 'PASS') ? 'PASS' : 'FAIL';
+  const statuses = STEPS.map((name) => steps[name]?.status);
+  const verdict = statuses.every((status) => status === 'PASS')
+    ? 'PASS'
+    : statuses.some((status) => status === 'FAIL' || status == null)
+      ? 'FAIL'
+      : 'COULD_NOT_CHECK';
   return { steps, verdict };
 }
 
@@ -602,7 +617,8 @@ async function main() {
   } else {
     console.log(formatReport(result));
   }
-  process.exit(result.verdict === 'PASS' ? 0 : 1);
+  const code = result.verdict === 'PASS' ? 0 : result.verdict === 'COULD_NOT_CHECK' ? 2 : 1;
+  process.exit(code);
 }
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

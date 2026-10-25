@@ -42,22 +42,25 @@ A later key is appended. Set `ISSUER_HISTORY_EXTRA` to a JSON array of earlier e
 
 ## Check
 
-`xfuel-verify` reads the receipt's `kid` and `iat`. The earliest `revoked_at` and the earliest `not_after` across every entry for that kid stay in force. A later active row does not clear them. `not_before` is the latest stamp for that kid, so a later row cannot widen the window backwards. It fails if `iat` is outside `not_before` / `not_after`, or if a `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. A history that moves a kid from `revoked` to any later status, from `retired` to `active`, or to a different `not_before`, is `kid_status_regression`. History is checked by default when a snapshot is reachable. `--no-issuer-history`, or a history that cannot be loaded, is `verified_no_key_window` in `--json`. A loaded history that fails the window exits 1.
+`chit402-verify` reads the receipt's `kid` and `iat`. The earliest `revoked_at` and the earliest `not_after` across every entry for that kid stay in force. A later active row does not clear them. `not_before` is the latest stamp for that kid, so a later row cannot widen the window backwards. It fails if `iat` is outside `not_before` / `not_after`, or if a `revoked_at` is missing or not after `iat`. A receipt signed before revocation still verifies. A history that moves a kid from `revoked` to any later status, from `retired` to `active`, or to a different `not_before`, is `kid_status_regression`. History is always checked. A loaded history that fails the window is INVALID, exit 1.
 
-If the history URL cannot be fetched, the command warns and still verifies the signature. `--strict-issuer-history` fails closed instead. `--issuer-history-file` uses a saved document and does not fetch. That file is the offline check. `--no-issuer-history` skips the kid window and prints `VERIFIED_NO_KEY_WINDOW`, never `VERIFIED`. Exit code is 0 unless `--strict`, which exits 1. Skipping the window is not offline verification.
+With no file, the command uses a live snapshot that prefix-extends the copy shipped in the package, or that copy alone. `--issuer-history <file>` is the offline file. The file must prefix-extend the shipped snapshot. A file that does not is INVALID, exit 1. There is no flag to skip the check.
 
 A new key whose `not_before` is at or before an earlier key's `not_before` is `inherited_key_window`. A history signed only by a key that first appears after the genesis entry is `introduced_key_signature`. A one-entry history signed by that key is the genesis case and verifies. When the environment signer is selected, production refuses to boot when `ISSUER_PRIVATE_KEY` is missing or empty. `ALLOW_EPHEMERAL_ISSUER_KEY`, `ISSUER_ROOT_ENABLED`, and `ISSUER_ROOT_ALLOW_SKIP` do not override that. Unset `NODE_ENV` is production.
 
 ```bash
-curl -sS "https://api.chit402.com/receipt/RECEIPT_ID?format=json" -o receipt.json
-curl -sS -D - "https://api.chit402.com/receipt/RECEIPT_ID/preimage" -o preimage.json
-# X-Chit-Hash-Alg: sha256
-# sha256(preimage.json) matches payload_hash in the receipt JWS
-curl -sS "https://api.chit402.com/.well-known/issuer-history.json?version=1" -o issuer-history.json
-npx -p @xfuel/verify xfuel-verify receipt.json --canonical-preimage preimage.json --issuer-history issuer-history.json
+# Issuer history is checked inside the command.
+npx chit402-verify "https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15"
+# VERIFIED_PUBLIC, exit 0. The payer is not claimed.
+
+# Optional: the current issuer-history snapshot (version 2).
+curl -sS "https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15?format=json" -o receipt.json
+curl -sS "https://api.chit402.com/.well-known/issuer-history.json" -o issuer-history.json
+npx chit402-verify receipt.json --issuer-history issuer-history.json
+# VERIFIED_PUBLIC, exit 0.
 ```
 
-Use the `version` from the receipt's signed `issuer_history`, not always `1`. A receipt issued before payload version 10 has no stored canonical object: `/preimage` is 404, and `xfuel-verify` still checks the signature. A pinned receipt fails closed when that snapshot cannot be fetched. An unpinned receipt warns unless `--strict-issuer-history` is set. This works once the gateway serving `api.chit402.com` is running this build.
+The live snapshot is version 2. Pass that file, or pass no file. `?version=1` is an older snapshot. On this receipt, chit402-verify 0.4.11 reports INVALID (`issuer_history_not_extension`) for that file. Exit 0 is VERIFIED when the payer check passed, or VERIFIED_PUBLIC for a public attestation. Exit 1 is INVALID. Exit 2 is COULD_NOT_CHECK.
 
 ## Retire or revoke
 

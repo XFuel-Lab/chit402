@@ -1142,10 +1142,12 @@ export default function Book() {
               <Link to="/trust">/trust</Link>.
             </p>
             <p>
-              <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
-              that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
-              It does not prove the model computed the answer. The settlement proof add-on is coming
-              soon, and it covers settlement, not correctness.
+              <strong>What it does not prove.</strong> The issuer signature does not by itself prove
+              the USDC transfer. Check the receipt with{' '}
+              <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
+              The on-chain check is part of that command. On this receipt it prints VERIFIED_PUBLIC
+              and exits 0. The payer is not claimed. It does not prove the model computed the answer.
+              The settlement proof add-on is coming soon, and it covers settlement, not correctness.
             </p>
             <p>
               <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the
@@ -1156,13 +1158,14 @@ export default function Book() {
               <strong>Daily anchoring.</strong> The receipt root is published daily on Base and on
               Solana.{' '}
               <a href="https://api.chit402.com/v1/receipts/tree/head">Today&apos;s head</a> names both
-              anchors. <code>@xfuel/verify</code> 0.3.1 <code>--rpc</code> checks that those anchor
-              transactions are present. It is not a full inclusion check. 0.3.2 has not shipped.
+              anchors. chit402-verify 0.4.11 checks that anchor inside{' '}
+              <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
             </p>
             <p>
               <strong>Signed refusal.</strong> A blocked spend can come back as a signed refusal,
               schema <code>chit402.refusal.v1</code>, from the same ES256 key. It is not a payment
-              receipt. <code>@xfuel/verify</code> 0.3.1 verifies it. The document is public at{' '}
+              receipt. chit402-verify 0.4.11 checks a signed refusal with <code>npx chit402-verify</code> and
+              the refusal URL. The document is public at{' '}
               <code>GET /refusal/:id</code>.
             </p>
             <p>
