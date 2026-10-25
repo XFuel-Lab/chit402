@@ -129,6 +129,10 @@ jobs:
       - name: Gateway tests (receipts + x402 adapter)
         working-directory: services/gateway
         timeout-minutes: 12
+        # CI has none of the machine-dependent skips (root, no anvil), so any
+        # skip here fails. run-tests.mjs refuses a value above the manifest's.
+        env:
+          RUN_TESTS_MAX_SKIPPED: '0'
         run: npm test
 
   # ── CDP spend store (Linux + Windows) ──────────────────────

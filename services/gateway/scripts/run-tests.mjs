@@ -30,13 +30,16 @@
  * (`--test-name-pattern='^none$'` gave "pass 0, skipped 72"). Two guards:
  *   - The runner refuses --test-name-pattern, --test-skip-pattern, --test-only
  *     and --test-shard in its arguments, and strips them from NODE_OPTIONS
- *     before spawning node.
+ *     before spawning node. It reads them the way node does (quotes removed,
+ *     `_` as `-`, `--flag=value`), and treats --test-force-exit and test
+ *     isolation `none` the same way.
  *   - test-counts.json records `skipped`, the most skipped and todo tests a
  *     run may have. A run that skips more fails. Some skips depend on the
  *     machine (a root user can read a mode-000 file, anvil may be missing), so
  *     the number is the worst legitimate case, not one run's count:
  *     --write-counts keeps the recorded number and fails a run over it.
- *     Raising it is a hand edit, visible in the diff.
+ *     Raising it is a hand edit, visible in the diff. CI has none of those
+ *     skips and sets RUN_TESTS_MAX_SKIPPED=0, which may only lower the cap.
  */
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -58,46 +61,152 @@ const COUNTS_PATH = join(gatewayDir, 'test', 'test-counts.json');
 /** node --test options that run fewer tests than the full suite. */
 export const TEST_FILTER_FLAGS = ['--test-name-pattern', '--test-skip-pattern', '--test-only', '--test-shard'];
 
-function isTestFilter(arg) {
-  return TEST_FILTER_FLAGS.some((flag) => arg === flag || String(arg).startsWith(`${flag}=`));
+/**
+ * Other node --test options the runner refuses. --test-force-exit was removed
+ * in #653 on purpose: under load it cut a file's event stream. Test isolation
+ * `none` runs every file in one process, so the per-file completion and count
+ * records no longer describe files. Isolation `process` is the default and is
+ * allowed.
+ */
+export const REFUSED_TEST_FLAGS = ['--test-force-exit'];
+export const ISOLATION_FLAGS = ['--test-isolation', '--experimental-test-isolation'];
+
+/** Options that never take a value. */
+const NO_VALUE_FLAGS = new Set(['--test-only', '--test-force-exit']);
+
+/** The environment variable CI sets to lower the skip cap (see resolveSkipCap). */
+export const SKIP_CAP_ENV = 'RUN_TESTS_MAX_SKIPPED';
+
+/**
+ * An option token as node reads it: surrounding quotes (single or double,
+ * balanced or not) removed, and `_` read as `-` in the name, since node
+ * accepts --test_only for --test-only. `value` is the part after `=`, or null.
+ * @param {string} token
+ * @returns {{ name: string, value: string | null }}
+ */
+export function normaliseOption(token) {
+  const unquote = (text) => text.replace(/^['"]+/, '').replace(/['"]+$/, '');
+  const bare = unquote(String(token ?? '').trim());
+  const eq = bare.indexOf('=');
+  const name = (eq < 0 ? bare : bare.slice(0, eq)).replace(/_/g, '-');
+  return { name, value: eq < 0 ? null : unquote(bare.slice(eq + 1)) };
 }
 
 /**
- * Test filter options in an argument list, as given (`--test-only`,
- * `--test-name-pattern=x`, or `--test-name-pattern` followed by its value).
+ * Refused options in a token list: test filters, --test-force-exit and test
+ * isolation other than `process`, in every spelling normaliseOption reads.
+ * Each hit is the token's index and how many tokens it uses (2 when a value
+ * follows as its own token, as in `--test-name-pattern x`).
+ * @param {string[]} tokens
+ * @returns {{ index: number, take: number }[]}
+ */
+function refusedOptions(tokens) {
+  const hits = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const { name, value } = normaliseOption(tokens[i]);
+    const next = i + 1 < tokens.length ? normaliseOption(tokens[i + 1]) : null;
+    // A following token that is not itself an option is this option's value.
+    const valueToken = value === null && !NO_VALUE_FLAGS.has(name) && next !== null && !next.name.startsWith('-');
+    if (TEST_FILTER_FLAGS.includes(name) || REFUSED_TEST_FLAGS.includes(name)) {
+      hits.push({ index: i, take: valueToken ? 2 : 1 });
+    } else if (ISOLATION_FLAGS.includes(name)) {
+      const mode = value !== null ? value : (valueToken ? next.name : null);
+      if (mode !== 'process') hits.push({ index: i, take: valueToken ? 2 : 1 });
+    } else {
+      continue;
+    }
+    if (valueToken) i += 1;
+  }
+  return hits;
+}
+
+/**
+ * Refused option tokens in an argument list, as given (`--test-only`,
+ * `--test_name_pattern=x`, `--test-isolation=none`, or the flag token of
+ * `--test-name-pattern x`).
  * @param {string[]} args
  * @returns {string[]}
  */
 export function testFilterArgs(args) {
-  return (args || []).filter(isTestFilter);
+  const list = (args || []).map(String);
+  return refusedOptions(list).map(({ index }) => list[index]);
 }
 
 /**
- * NODE_OPTIONS with every test filter removed, including the value of a
- * space-separated `--test-name-pattern x`. Returns the cleaned string and what
- * was removed. NODE_OPTIONS is split on whitespace, the way node splits it for
- * unquoted values.
+ * NODE_OPTIONS split the way node splits it: on whitespace, with a
+ * double-quoted section (backslash escapes inside) kept in one token and its
+ * quotes removed. `raw` is the token as written, `text` as node reads it.
+ * @param {string} value
+ * @returns {{ raw: string, text: string }[]}
+ */
+export function nodeOptionsTokens(value) {
+  const tokens = [];
+  const src = String(value || '');
+  let i = 0;
+  while (i < src.length) {
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (i >= src.length) break;
+    const begin = i;
+    let text = '';
+    let quoted = false;
+    while (i < src.length && (quoted || !/\s/.test(src[i]))) {
+      const ch = src[i];
+      if (ch === '"') {
+        quoted = !quoted;
+      } else if (quoted && ch === '\\' && i + 1 < src.length) {
+        i += 1;
+        text += src[i];
+      } else {
+        text += ch;
+      }
+      i += 1;
+    }
+    tokens.push({ raw: src.slice(begin, i), text });
+  }
+  return tokens;
+}
+
+/**
+ * NODE_OPTIONS with every refused option removed (see refusedOptions),
+ * including the value of a space-separated `--test-name-pattern x`. Returns
+ * the cleaned string (kept tokens as written) and what was removed (as node
+ * reads it).
  * @param {string | undefined} value
  * @returns {{ value: string, removed: string[] }}
  */
 export function stripTestFilters(value) {
-  const parts = String(value || '').split(/\s+/).filter(Boolean);
-  const kept = [];
-  const removed = [];
-  for (let i = 0; i < parts.length; i += 1) {
-    const part = parts[i];
-    if (!isTestFilter(part)) {
-      kept.push(part);
-      continue;
-    }
-    removed.push(part);
-    const takesValue = part !== '--test-only' && !part.includes('=');
-    if (takesValue && i + 1 < parts.length && !parts[i + 1].startsWith('-')) {
-      i += 1;
-      removed.push(parts[i]);
-    }
+  const tokens = nodeOptionsTokens(value);
+  const drop = new Set();
+  for (const { index, take } of refusedOptions(tokens.map((t) => t.text))) {
+    for (let k = 0; k < take; k += 1) drop.add(index + k);
   }
-  return { value: kept.join(' '), removed };
+  return {
+    value: tokens.filter((_, i) => !drop.has(i)).map((t) => t.raw).join(' '),
+    removed: tokens.filter((_, i) => drop.has(i)).map((t) => t.text),
+  };
+}
+
+/**
+ * The skip cap for this run. The manifest's `skipped` is the worst legitimate
+ * machine (root, no anvil). CI has none of those skips, so the gateway step
+ * sets RUN_TESTS_MAX_SKIPPED=0 and any skip there fails. The variable may only
+ * lower the cap: a value above the manifest, or one that is not a whole number
+ * (an empty string included), is an error and the run does not start.
+ * @param {number} manifestSkipped
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ cap: number, source: string } | { error: string }}
+ */
+export function resolveSkipCap(manifestSkipped, env = process.env) {
+  if (!Object.prototype.hasOwnProperty.call(env, SKIP_CAP_ENV) || env[SKIP_CAP_ENV] === undefined) {
+    return { cap: manifestSkipped, source: 'test/test-counts.json' };
+  }
+  const raw = String(env[SKIP_CAP_ENV]);
+  if (!/^\d+$/.test(raw)) return { error: `run-tests: ${SKIP_CAP_ENV}=${JSON.stringify(raw)} is not a whole number. Refusing to run.` };
+  const cap = Number(raw);
+  if (cap > manifestSkipped) {
+    return { error: `run-tests: ${SKIP_CAP_ENV}=${cap} is above the ${manifestSkipped} skipped tests test/test-counts.json allows. It may only lower the cap. Refusing to run.` };
+  }
+  return { cap, source: SKIP_CAP_ENV };
 }
 
 const REGENERATE = 'If the change is intended, run `npm run test:counts` in services/gateway and commit test/test-counts.json.';
@@ -206,16 +315,18 @@ export function fileSkipCounts(records) {
 /**
  * Lines for a run that skipped more tests than the manifest allows.
  * @param {Map<string, number>} skips from fileSkipCounts
- * @param {number} maxSkipped manifest `skipped`
+ * @param {number} maxSkipped the cap (manifest `skipped`, or RUN_TESTS_MAX_SKIPPED)
+ * @param {string} cwd
+ * @param {string} [source] where the cap came from, for the message
  * @param {string} cwd
  * @returns {string[]}
  */
-export function skipCapLines(skips, maxSkipped, cwd) {
+export function skipCapLines(skips, maxSkipped, cwd, source = 'test/test-counts.json') {
   const total = [...skips.values()].reduce((a, b) => a + b, 0);
   if (total <= maxSkipped) return [];
   const worst = [...skips].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 5)
     .map(([file, n]) => `${relative(cwd, file)} (${n})`).join(', ');
-  return [`run-tests: FAIL ${total} tests were skipped, more than the ${maxSkipped} test/test-counts.json allows. A test filter (--test-name-pattern, --test-only) or a new skip can make a run green with tests not executed. Most skipped: ${worst}. If a new skip is intended, raise \`skipped\` in test/test-counts.json by hand and say why in the PR; npm run test:counts keeps the recorded number.`];
+  return [`run-tests: FAIL ${total} tests were skipped, more than the ${maxSkipped} ${source} allows. A test filter (--test-name-pattern, --test-only) or a new skip can make a run green with tests not executed. Most skipped: ${worst}. If a new skip is intended, raise \`skipped\` in test/test-counts.json by hand and say why in the PR; npm run test:counts keeps the recorded number.`];
 }
 
 /**
@@ -295,7 +406,7 @@ export function readManifest(path = COUNTS_PATH) {
  * `onCounts` is given, it receives the per-file counts (relative paths) and
  * the total skipped. When `maxSkipped` is given, a run that skips more fails.
  * `suiteTimeoutMs` is the hard cap on the whole node --test process.
- * @param {{ cwd?: string, timeoutMs?: number, suiteTimeoutMs?: number, stdio?: any, env?: NodeJS.ProcessEnv, nodeArgs?: string[], error?: (line: string) => void, expected?: Record<string, number>, maxSkipped?: number, onCounts?: (counts: Record<string, number>, skipped: number) => void }} [opts]
+ * @param {{ cwd?: string, timeoutMs?: number, suiteTimeoutMs?: number, stdio?: any, env?: NodeJS.ProcessEnv, nodeArgs?: string[], error?: (line: string) => void, expected?: Record<string, number>, maxSkipped?: number, skipCapSource?: string, onCounts?: (counts: Record<string, number>, skipped: number) => void }} [opts]
  */
 export function runTestFiles(files, opts = {}) {
   const cwd = opts.cwd || gatewayDir;
@@ -306,12 +417,12 @@ export function runTestFiles(files, opts = {}) {
 
   const filters = testFilterArgs(opts.nodeArgs);
   if (filters.length > 0) {
-    error(`run-tests: refusing test filter ${filters.join(' ')}. A filtered run reports skipped tests as passing and can exit 0 with nothing executed. Run node --test on the file directly to debug.`);
+    error(`run-tests: refusing test option ${filters.join(' ')}. A test filter reports skipped tests as passing and can exit 0 with nothing executed; --test-force-exit and test isolation none break the per-file records. Run node --test on the file directly to debug.`);
     return 1;
   }
   const nodeOptions = stripTestFilters(baseEnv.NODE_OPTIONS);
   if (nodeOptions.removed.length > 0) {
-    error(`run-tests: removed ${nodeOptions.removed.join(' ')} from NODE_OPTIONS for the test run. Test filters are not allowed.`);
+    error(`run-tests: removed ${nodeOptions.removed.join(' ')} from NODE_OPTIONS for the test run. Test filters, --test-force-exit and test isolation none are not allowed.`);
   }
 
   // Node options have to precede the file list. A per-test timeout so one hung
@@ -415,7 +526,7 @@ export function runTestFiles(files, opts = {}) {
   }
   const skips = fileSkipCounts(records);
   if (opts.maxSkipped !== undefined) {
-    const over = skipCapLines(skips, opts.maxSkipped, cwd);
+    const over = skipCapLines(skips, opts.maxSkipped, cwd, opts.skipCapSource);
     if (over.length > 0) {
       for (const line of over) error(line);
       return 1;
@@ -462,7 +573,13 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  process.exitCode = runTestFiles(files, { nodeArgs: args, expected, maxSkipped });
+  const skipCap = resolveSkipCap(maxSkipped);
+  if ('error' in skipCap) {
+    console.error(skipCap.error);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = runTestFiles(files, { nodeArgs: args, expected, maxSkipped: skipCap.cap, skipCapSource: skipCap.source });
 }
 
 /**

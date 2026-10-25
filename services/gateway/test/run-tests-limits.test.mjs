@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   countMismatches,
@@ -16,6 +17,9 @@ import {
   runTestFiles,
   skipCapLines,
   staleManifestEntries,
+  nodeOptionsTokens,
+  normaliseOption,
+  resolveSkipCap,
   stripTestFilters,
   testFilterArgs,
   writeCounts,
@@ -92,7 +96,7 @@ test('fileProblems reads timeout and cancelled rows, dedupes, and problem rows a
 
 test('run-tests main passes its own argv through and the reporter records problems', () => {
   const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
-  assert.ok(/runTestFiles\(files, \{ nodeArgs: args, expected, maxSkipped \}\)/.test(runner), 'main forwards node args and checks the manifest and the skip cap');
+  assert.ok(/runTestFiles\(files, \{ nodeArgs: args, expected, maxSkipped: skipCap\.cap, skipCapSource: skipCap\.source \}\)/.test(runner), 'main forwards node args and checks the manifest and the skip cap');
   assert.ok(/const args = process\.argv\.slice\(2\);/.test(runner), 'args are the runner argv');
   const reporter = readFileSync(join(gatewayDir, 'scripts/file-done-reporter.mjs'), 'utf8');
   assert.ok(/'testTimeoutFailure', 'cancelledByParent'/.test(reporter), 'reporter records timeouts and cancellations');
@@ -195,7 +199,9 @@ test('readCountManifest rejects a malformed manifest and a total that does not a
 
 test('the runner spawns node without --test-force-exit and --write-counts refuses extra arguments', () => {
   const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
-  assert.ok(!/'--test-force-exit'/.test(runner), 'no force-exit in the spawn arguments');
+  const spawnArgs = runner.slice(runner.indexOf('spawnSync(\n    process.execPath,'), runner.indexOf('      ...files,\n'));
+  assert.ok(/'--test-concurrency=1',/.test(spawnArgs), 'found the spawn arguments');
+  assert.ok(!/--test-force-exit/.test(spawnArgs), 'no force-exit in the spawn arguments');
   assert.ok(/if \(args\.length !== 1\)/.test(runner), '--write-counts takes no other arguments');
   assert.ok(/if \(code !== 0 \|\| !counts\)/.test(runner), '--write-counts writes only after a clean run');
   const pkg = JSON.parse(readFileSync(join(gatewayDir, 'package.json'), 'utf8'));
@@ -217,7 +223,7 @@ test('S-1: the runner refuses test filters in its arguments and spawns nothing',
     const { code, errors, out } = run([QUICK], { nodeArgs, expected: { [QUICK]: 2 }, maxSkipped: 0 });
     assert.equal(code, 1, `${nodeArgs.join(' ')}: ${out}`);
     assert.equal(errors.length, 1, out);
-    assert.ok(/^run-tests: refusing test filter --test-/.test(errors[0]), errors[0]);
+    assert.ok(/^run-tests: refusing test option --test-/.test(errors[0]), errors[0]);
   }
   assert.deepEqual(testFilterArgs(['--test-name-pattern', 'x', '--test-only', '--trace-warnings', '--test-shard=1/3']), ['--test-name-pattern', '--test-only', '--test-shard=1/3']);
   assert.deepEqual(testFilterArgs(['--trace-warnings', '--test-timeout=5']), []);
@@ -391,4 +397,96 @@ test('#652 M16: a timeout on a nested test only is reported from its nested row,
   assert.equal(code, 1, out);
   const abs = resolve(gatewayDir, NESTED_TIMEOUT);
   assert.ok(errors.some((line) => line.includes(abs) && /hit the per-file time limit \(testTimeoutFailure\), test: nested timeout inner\./.test(line)), out);
+});
+
+// S-B (pr654 review): the guard reads options the way node does.
+
+test('S-B: argv spellings node accepts are refused: _ for -, quotes, =value, force-exit, isolation none', { timeout: 60_000 }, () => {
+  for (const nodeArgs of [
+    ['--test_only'],
+    ['--test_name_pattern=x'],
+    ['"--test-only"'],
+    ["'--test-name-pattern=x'"],
+    ['--test-name-pattern="x"'],
+    ['--test-force-exit'],
+    ['--test_force_exit'],
+    ['--test-isolation=none'],
+    ['--test-isolation', 'none'],
+    ['--test_isolation="none"'],
+    ['--experimental-test-isolation=none'],
+  ]) {
+    const { code, errors, out } = run([QUICK], { nodeArgs, expected: { [QUICK]: 2 }, maxSkipped: 0 });
+    assert.equal(code, 1, `${nodeArgs.join(' ')}: ${out}`);
+    assert.equal(errors.length, 1, out);
+    assert.ok(/^run-tests: refusing test option /.test(errors[0]), errors[0]);
+  }
+  // Isolation `process` is the default and stays allowed, in both forms.
+  for (const nodeArgs of [['--test-isolation=process'], ['--test-isolation', 'process']]) {
+    assert.deepEqual(testFilterArgs(nodeArgs), [], nodeArgs.join(' '));
+  }
+  assert.deepEqual(normaliseOption('"--test_name_pattern=\'x\'"'), { name: '--test-name-pattern', value: 'x' });
+  assert.deepEqual(normaliseOption('--test_only'), { name: '--test-only', value: null });
+});
+
+test('S-B: NODE_OPTIONS spellings are stripped: --test_only, "--test-only", quoted values, force-exit, isolation none', { timeout: 60_000 }, () => {
+  for (const nodeOptions of ['--test_only', '"--test-only"', '--test_only --max-old-space-size=4096']) {
+    const env = { ...childEnv(), NODE_OPTIONS: nodeOptions };
+    let skipped;
+    const { code, errors, out } = run([QUICK], { env, expected: { [QUICK]: 2 }, maxSkipped: 0, onCounts: (_c, n) => { skipped = n; } });
+    assert.equal(code, 0, `${nodeOptions}: ${out}`);
+    assert.equal(skipped, 0, `${nodeOptions}: nothing skipped`);
+    assert.equal(errors.length, 1, out);
+    assert.ok(/^run-tests: removed --test[-_]only from NODE_OPTIONS/.test(errors[0]), errors[0]);
+  }
+  assert.deepEqual(stripTestFilters('--test_only --max-old-space-size=4096'), { value: '--max-old-space-size=4096', removed: ['--test_only'] });
+  assert.deepEqual(stripTestFilters('"--test-name-pattern=a b" --inspect=0'), { value: '--inspect=0', removed: ['--test-name-pattern=a b'] });
+  assert.deepEqual(stripTestFilters('--test-force-exit --test-isolation=none --experimental-test-isolation none'), { value: '', removed: ['--test-force-exit', '--test-isolation=none', '--experimental-test-isolation', 'none'] });
+  assert.deepEqual(stripTestFilters('--test-isolation=process "--title=a b"'), { value: '--test-isolation=process "--title=a b"', removed: [] });
+  assert.deepEqual(nodeOptionsTokens('"a\\"b" c'), [{ raw: '"a\\"b"', text: 'a"b' }, { raw: 'c', text: 'c' }]);
+});
+
+test('N-a: a value-less filter followed by an option strips only the filter', () => {
+  assert.deepEqual(stripTestFilters('--test-name-pattern --inspect=0'), { value: '--inspect=0', removed: ['--test-name-pattern'] });
+  assert.deepEqual(stripTestFilters('--test-shard --max-old-space-size=64'), { value: '--max-old-space-size=64', removed: ['--test-shard'] });
+  assert.deepEqual(testFilterArgs(['--test-isolation', '--trace-warnings']), ['--test-isolation'], 'isolation with no value is refused, and the next option is not taken as its value');
+});
+
+// S-A (pr654 review): CI runs with a skip cap of 0.
+
+test('S-A: RUN_TESTS_MAX_SKIPPED may lower the skip cap, never raise it', () => {
+  assert.deepEqual(resolveSkipCap(3, {}), { cap: 3, source: 'test/test-counts.json' });
+  assert.deepEqual(resolveSkipCap(3, { RUN_TESTS_MAX_SKIPPED: '0' }), { cap: 0, source: 'RUN_TESTS_MAX_SKIPPED' });
+  assert.deepEqual(resolveSkipCap(3, { RUN_TESTS_MAX_SKIPPED: '3' }), { cap: 3, source: 'RUN_TESTS_MAX_SKIPPED' });
+  for (const raw of ['4', '99', '', ' 0', '-1', '0.5', 'zero', '1e1']) {
+    const got = resolveSkipCap(3, { RUN_TESTS_MAX_SKIPPED: raw });
+    assert.ok('error' in got && /Refusing to run/.test(got.error), `${JSON.stringify(raw)}: ${JSON.stringify(got)}`);
+  }
+  assert.ok(/may only lower the cap/.test(resolveSkipCap(3, { RUN_TESTS_MAX_SKIPPED: '4' }).error));
+});
+
+test('S-A: a skip in a run capped at 0 fails and names RUN_TESTS_MAX_SKIPPED', { timeout: 60_000 }, () => {
+  const { code, errors, out } = run([QUICK, SKIPS], { expected: { [QUICK]: 2, [SKIPS]: 3 }, maxSkipped: 0, skipCapSource: 'RUN_TESTS_MAX_SKIPPED' });
+  assert.equal(code, 1, out);
+  assert.ok(errors.some((line) => /FAIL 2 tests were skipped, more than the 0 RUN_TESTS_MAX_SKIPPED allows/.test(line)), out);
+});
+
+test('S-A: the runner refuses an override above the manifest before running anything', { timeout: 60_000 }, () => {
+  const env = { ...childEnv(), RUN_TESTS_MAX_SKIPPED: '9' };
+  // --test-only is refused later, in runTestFiles, so even if the cap check
+  // were missing this child would stop before running the suite.
+  const r = spawnSync(process.execPath, ['scripts/run-tests.mjs', '--test-only'], { cwd: gatewayDir, env, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(/RUN_TESTS_MAX_SKIPPED=9 is above the \d+ skipped tests test\/test-counts\.json allows/.test(r.stderr), r.stderr);
+  assert.ok(!/^TAP version/m.test(r.stdout), 'no test ran');
+});
+
+test('S-A: main applies the resolved cap, and the gateway CI step sets it to 0', () => {
+  const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
+  assert.ok(/const skipCap = resolveSkipCap\(maxSkipped\);/.test(runner), 'main resolves the cap');
+  assert.ok(/maxSkipped: skipCap\.cap, skipCapSource: skipCap\.source/.test(runner), 'main runs with the resolved cap');
+  const yml = readFileSync(join(gatewayDir, '../../.github/workflows/test.yml'), 'utf8');
+  const job = yml.slice(yml.indexOf('\n  gateway:'), yml.indexOf('\n  cdp-spend-store:'));
+  const step = job.slice(job.indexOf('- name: Gateway tests'));
+  const stepBody = step.slice(0, step.indexOf('run: npm test'));
+  assert.ok(/\n        env:\n          RUN_TESTS_MAX_SKIPPED: '0'\n/.test(stepBody), 'the npm test step sets RUN_TESTS_MAX_SKIPPED to 0');
 });

@@ -17,11 +17,11 @@ import { resolve } from 'node:path';
 // When the stream ends, one count row per file follows: { file, tests }, the
 // number of test:pass and test:fail events for tests in that file, suites and
 // the file-level event left out. That is the same number the TAP `# tests`
-// summary adds up. The row also carries `skipped`, the skip and todo tests among
-// them, which run-tests.mjs caps against test/test-counts.json. run-tests.mjs compares it with test/test-counts.json, so a
+// summary adds up. run-tests.mjs compares it with test/test-counts.json, so a
 // file that stops early (an exit mid-file, a cut event stream) fails the run
 // even when the file itself reports success. A file with no count row counts
-// as zero.
+// as zero. The row also carries `skipped`, the skip and todo tests among them,
+// which run-tests.mjs caps.
 const PROBLEMS = new Set(['testTimeoutFailure', 'cancelledByParent']);
 
 export default async function* fileDoneReporter(source) {
