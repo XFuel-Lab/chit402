@@ -5803,7 +5803,7 @@ export async function createApp() {
     registry: agentRegistry,
     loadReceipt: loadFullReceipt,
     // Read only. Present only with RECEIPT_PAYER_BINDING_EIP712=true.
-    payerBinding: payerBindingOn ? (taskId) => payerBindingView(payerBindingStore, taskId) : null,
+    payerBinding: payerBindingOn ? (taskId, receiptJws) => payerBindingView(payerBindingStore, taskId, receiptJws) : null,
     listReceipts: listOwnedReceipts,
     houseMetrics: collectHouseMetrics,
     houseAgentId: process.env.HOUSE_AGENT_ID || null,
