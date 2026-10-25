@@ -9,6 +9,7 @@ import { describe, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
+import { createServer as createNetServer } from 'node:net';
 import { bookRowHash, classifyFetchError, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -1224,6 +1225,62 @@ catch (err) { const c = classifyFetchError(err); console.log(JSON.stringify({ tr
       assert.equal(result.steps[name].detail, detail);
     });
   }
+
+  // pr654 (Chief): a genuine link reached through a broken certificate or a
+  // broken network path is never FAIL. Real undici errors from the global
+  // fetch, every request of the run sent to one loopback path. FAIL needs an
+  // answer from a server the client trusts (see the control).
+  test('a genuine link whose every fetch meets a broken certificate or network path is COULD_NOT_CHECK exit 2, never FAIL', { timeout: 60000 }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'link-broken-'));
+    const servers = [];
+    const listen = async (server) => {
+      servers.push(server);
+      await new Promise((done) => server.listen(0, '127.0.0.1', done));
+      return server.address().port;
+    };
+    try {
+      openssl(['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', 'self.key', '-out', 'self.pem', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], dir);
+      const selfSigned = createHttpsServer({ key: readFileSync(join(dir, 'self.key')), cert: readFileSync(join(dir, 'self.pem')) }, (req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+      });
+      const plaintext = createNetServer((sock) => { sock.on('error', () => {}); sock.end('HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}'); });
+      const reset = createNetServer((sock) => { sock.on('error', () => {}); sock.resetAndDestroy(); });
+      const dead = createNetServer();
+      const deadPort = await listen(dead);
+      await new Promise((done) => dead.close(done));
+      servers.pop();
+      const paths = [
+        ['self-signed certificate', await listen(selfSigned), /^tls:DEPTH_ZERO_SELF_SIGNED_CERT$/],
+        ['plaintext on the TLS port', await listen(plaintext), /^tls:ERR_SSL_/],
+        ['reset after accept', await listen(reset), /^ECONNRESET$/],
+        ['connection refused', deadPort, /^ECONNREFUSED$/],
+      ];
+      for (const [label, port, specimenDetail] of paths) {
+        const viaPath = (url, init) => {
+          const u = new URL(String(url));
+          return fetch(`https://127.0.0.1:${port}${u.pathname}${u.search}`, init);
+        };
+        for (const path of [specimen1Path, specimen2Path]) {
+          const result = await verifyLink(load(path), { fetchImpl: viaPath, rpcUrl: 'https://rpc.test/base', timeoutMs: 3000 });
+          const failed = Object.entries(result.steps).filter(([, step]) => step.status === 'FAIL');
+          assert.deepEqual(failed, [], `${label}: ${formatReport(result)}`);
+          assert.equal(result.verdict, 'COULD_NOT_CHECK', `${label}: ${formatReport(result)}`);
+        }
+        const lines = [];
+        const code = await runCli([specimenUrl], { fetchImpl: viaPath, timeoutMs: 3000, log: (line) => lines.push(line), error: () => {} });
+        assert.equal(code, 2, `${label}: ${lines.join('\n')}`);
+        const detail = /^COULD_NOT_CHECK specimen (\S+)$/.exec(lines[0] || '');
+        assert.ok(detail && specimenDetail.test(detail[1]), `${label}: ${lines.join('\n')}`);
+      }
+    } finally {
+      for (const server of servers) {
+        server.closeAllConnections?.();
+        server.close();
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   test('CLI: no argument is usage, exit 2', async () => {
     assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);
