@@ -685,6 +685,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['RPC HTTP 499', 'rpc.test', '499', 'FAIL', ['on_chain_tx']],
     ['RPC HTTP 599', 'rpc.test', '599', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC body stalls after headers', 'rpc.test', 'stall_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC socket reset mid-body', 'rpc.test', 'reset_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC redirect', 'rpc.test', 'redirect', 'FAIL', ['on_chain_tx']],
     ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
   ]) {
@@ -704,7 +705,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
           timeoutMs: 300,
         });
         for (const name of steps) assert.equal(result.steps[name].status, status, `${name}: ${formatReport(result)}`);
-        const rpcDetail = { stall_body: /^rpc:timeout$/, redirect: /^rpc:redirect_refused$/ }[mode];
+        const rpcDetail = { stall_body: /^rpc:timeout$/, reset_body: /^rpc:UND_ERR_SOCKET$/, redirect: /^rpc:redirect_refused$/ }[mode];
         if (host === 'rpc.test' && rpcDetail) {
           assert.ok(rpcDetail.test(result.steps.on_chain_tx.detail), result.steps.on_chain_tx.detail);
         }
@@ -828,7 +829,10 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ]) {
       const got = classifyFetchError(err);
       assert.notEqual(got.transport, true, label);
+      assert.ok(/^fetch_error:/.test(got.message), `${label}: ${got.message}`);
     }
+    const miss = Object.assign(new Error('fixture_miss:https://x.test/'), { code: 'fixture_miss' });
+    assert.equal(classifyFetchError(miss), miss, 'a fixture miss keeps its own error');
   });
 
   test('N-2 a fetchImpl bug on the 1F916 step is FAIL, not COULD_NOT_CHECK', async () => {

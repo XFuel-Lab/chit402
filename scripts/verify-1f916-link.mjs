@@ -214,7 +214,7 @@ function transportCode(err) {
  */
 export function classifyFetchError(err) {
   if (err?.code === 'fixture_miss') return err;
-  if (isTimeout(err) || isTimeout(err?.cause)) return transportError('timeout');
+  if (isTimeout(err)) return transportError('timeout');
   const code = transportCode(err);
   if (code) return transportError(code);
   if (err?.cause?.message === 'unexpected redirect') return new Error('redirect_refused');
