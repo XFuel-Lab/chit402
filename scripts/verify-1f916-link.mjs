@@ -7,6 +7,10 @@
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
  * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
+ * A transport error (a refused, reset or unreachable connection, a DNS failure,
+ * a TLS failure, a timeout, or HTTP 5xx, 408, 425 or 429) is COULD_NOT_CHECK,
+ * exit 2. Other HTTP 4xx, a body that is not JSON, a refused redirect, a fixture
+ * miss and any other fetch error stay FAIL, exit 1.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
  * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
  * That result means the signature is not public, so the receipt was not checked.
@@ -128,6 +132,31 @@ function verifyEs256(jws, jwk) {
   }
 }
 
+/**
+ * Checks on a JWS and its kid that need no JWKS, so a JWKS outage cannot hide
+ * them. Returns the FAIL reason, or null when the structure is fine. The
+ * reasons match verifyEs256 and keyForKid.
+ * @param {unknown} jws
+ * @param {unknown} kid the kid printed next to the JWS
+ */
+function jwsStructureError(jws, kid) {
+  const parts = String(jws || '').split('.');
+  if (parts.length !== 3) return 'malformed_jws';
+  let header;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    return 'json_parse_error';
+  }
+  if (header?.alg !== 'ES256') return `unsupported_alg:${header?.alg}`;
+  // keyForKid only accepts a key whose RFC 7638 SHA-256 thumbprint equals the
+  // kid, so a kid that is not 43 base64url characters cannot be in any JWKS.
+  if (typeof kid !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(kid)) return `kid_not_in_jwks:${kid}`;
+  if (header.kid && header.kid !== kid) return 'kid_mismatch';
+  return null;
+}
+
 function same(a, b) {
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
@@ -142,16 +171,201 @@ function addr(value) {
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  */
-async function getJson(url, fetchImpl) {
-  const res = await fetchImpl(url, {
-    redirect: 'error',
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(20000),
-  });
+const FETCH_TIMEOUT_MS = 20000;
+
+/**
+ * A network problem, not a bad answer. Steps that hit one are COULD_NOT_CHECK.
+ * @param {string} detail
+ */
+function transportError(detail) {
+  const err = new Error(detail);
+  err.transport = true;
+  return err;
+}
+
+// Timeout and throttling answers say nothing about the link, so they are
+// COULD_NOT_CHECK like a 5xx: 408 Request Timeout, 425 Too Early, 429 Too Many Requests.
+const UNCHECKED_4XX = new Set([408, 425, 429]);
+
+/**
+ * True when an HTTP status means the server could not answer, not that it answered no.
+ * @param {number} status
+ */
+export function isTransportStatus(status) {
+  return status >= 500 || UNCHECKED_4XX.has(status);
+}
+
+function isTimeout(err) {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
+// Error codes that mean the network failed, not that a server answered.
+// Node net and DNS codes, plus undici socket and timeout codes.
+const TRANSPORT_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'ECONNABORTED',
+  'EPIPE',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CLOSED',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+
+// TLS failures say the client could not set up a trusted connection. They are
+// never proof about the link, so they are COULD_NOT_CHECK with a tls: detail.
+// The 28 X509 certificate error codes documented for node:tls (doc/api/tls.md,
+// "X509 certificate error codes"), in the documented order. UNSPECIFIED is what
+// Node reports for an OpenSSL verify error outside that list (for example a CA
+// whose keyUsage lacks keyCertSign).
+const TLS_CODES = new Set([
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_CRL',
+  'UNABLE_TO_DECRYPT_CERT_SIGNATURE',
+  'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
+  'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY',
+  'CERT_SIGNATURE_FAILURE',
+  'CRL_SIGNATURE_FAILURE',
+  'CERT_NOT_YET_VALID',
+  'CERT_HAS_EXPIRED',
+  'CRL_NOT_YET_VALID',
+  'CRL_HAS_EXPIRED',
+  'ERROR_IN_CERT_NOT_BEFORE_FIELD',
+  'ERROR_IN_CERT_NOT_AFTER_FIELD',
+  'ERROR_IN_CRL_LAST_UPDATE_FIELD',
+  'ERROR_IN_CRL_NEXT_UPDATE_FIELD',
+  'OUT_OF_MEM',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'CERT_CHAIN_TOO_LONG',
+  'CERT_REVOKED',
+  'INVALID_CA',
+  'PATH_LENGTH_EXCEEDED',
+  'INVALID_PURPOSE',
+  'CERT_UNTRUSTED',
+  'CERT_REJECTED',
+  'HOSTNAME_MISMATCH',
+  'UNSPECIFIED',
+]);
+
+// ERR_TLS_CERT_ALTNAME_INVALID and other ERR_TLS_* / ERR_SSL_* codes come in through the prefix rule.
+function isTlsCode(code) {
+  return TLS_CODES.has(code) || /^ERR_(SSL|TLS)_/.test(code);
+}
+
+/**
+ * The string codes on a rejection, its cause, and any AggregateError members.
+ * @param {any} err
+ * @returns {string[]}
+ */
+function errorCodes(err) {
+  const nested = [err, err?.cause];
+  for (const holder of [err, err?.cause]) {
+    if (Array.isArray(holder?.errors)) nested.push(...holder.errors);
+  }
+  return nested
+    .filter((item) => item && typeof item.code === 'string')
+    .map((item) => item.code);
+}
+
+/**
+ * The transport code on a rejection, its cause, or an AggregateError member.
+ * @param {any} err
+ * @returns {string|null}
+ */
+function transportCode(err) {
+  return errorCodes(err).find((code) => TRANSPORT_CODES.has(code)) || null;
+}
+
+/**
+ * The TLS code on a rejection or its cause.
+ * @param {any} err
+ * @returns {string|null}
+ */
+function tlsCode(err) {
+  return errorCodes(err).find(isTlsCode) || null;
+}
+
+/**
+ * Sort a failed body read. A timeout, a network code or a TLS code is
+ * transport (COULD_NOT_CHECK); anything else is null, so the caller reports
+ * a body that is not JSON (FAIL). Shared by getJson and the RPC step.
+ * @param {any} err
+ * @returns {Error|null}
+ */
+function bodyReadError(err) {
+  if (isTimeout(err)) return transportError('timeout');
+  const code = transportCode(err);
+  if (code) return transportError(code);
+  const tls = tlsCode(err);
+  if (tls) return transportError(`tls:${tls}`);
+  return null;
+}
+
+/**
+ * Sort a fetch rejection into transport (COULD_NOT_CHECK) or not (FAIL).
+ * A known network code, a TLS code or a timeout is transport. A fixture miss,
+ * a refused redirect and anything unrecognised (for example a bug in a custom
+ * fetchImpl) are FAIL, so they cannot pass as COULD_NOT_CHECK. The FAIL detail
+ * carries the error's code, or its cause's code, when there is one.
+ * @param {any} err
+ */
+export function classifyFetchError(err) {
+  if (err?.code === 'fixture_miss') return err;
+  if (isTimeout(err)) return transportError('timeout');
+  const code = transportCode(err);
+  if (code) return transportError(code);
+  const tls = tlsCode(err);
+  if (tls) return transportError(`tls:${tls}`);
+  if (err?.cause?.message === 'unexpected redirect') return new Error('redirect_refused');
+  const otherCode = errorCodes(err)[0];
+  return new Error(`fetch_error:${err?.message || 'unknown'}${otherCode ? `:${otherCode}` : ''}`);
+}
+
+/**
+ * @param {string | URL} url
+ * @param {typeof fetch} fetchImpl
+ * @param {number} [timeoutMs]
+ */
+async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      redirect: 'error',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw classifyFetchError(err);
+  }
   if (!res.ok) {
+    if (isTransportStatus(res.status)) throw transportError(`http_${res.status}`);
     throw new Error(`http_${res.status}`);
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (err) {
+    const sorted = bodyReadError(err);
+    if (sorted) throw sorted;
+    throw new Error('body_not_json');
+  }
+}
+
+/**
+ * @param {any} err
+ * @param {string} detail
+ */
+function failOrUnchecked(err, detail) {
+  return err?.transport ? unchecked(detail) : fail(detail);
 }
 
 function receiptUrl(id) {
@@ -188,7 +402,11 @@ function fetchFromFixtureEnv() {
   return async (url) => {
     const target = String(url);
     const key = keys.find((candidate) => target === candidate || target.startsWith(candidate));
-    if (!key) throw new Error(`fixture_miss:${target}`);
+    if (!key) {
+      const err = new Error(`fixture_miss:${target}`);
+      err.code = 'fixture_miss';
+      throw err;
+    }
     const body = responses[key];
     return {
       ok: true,
@@ -229,7 +447,7 @@ function settlementFromIssuerClaims(claims, receipt) {
     }
     return {
       ok: true,
-      fingerprint: claims.agent_record_entry?.fingerprint || null,
+      fingerprint: claims.agent_record_entry?.fingerprint ?? null,
       settlement: {
         ref: claims.payment_ref,
         gross_amount: claims.amount,
@@ -250,7 +468,7 @@ function settlementFromIssuerClaims(claims, receipt) {
   }
   return {
     ok: true,
-    fingerprint: claims?.agent_record_entry?.fingerprint || null,
+    fingerprint: claims?.agent_record_entry?.fingerprint ?? null,
     settlement: {
       ref: claims.payment.ref,
       gross_amount: claims.payment.gross_amount,
@@ -292,6 +510,7 @@ function keyForKid(jwks, kid) {
  */
 export async function verifyLink(specimen, opts = {}) {
   const fetchImpl = opts.fetchImpl || fetch;
+  const timeoutMs = opts.timeoutMs || FETCH_TIMEOUT_MS;
   const rpcUrl = opts.rpcUrl || process.env.BASE_RPC_URL || DEFAULT_RPC;
   /** @type {Record<string, {status: string, detail: string}>} */
   const steps = {};
@@ -304,7 +523,7 @@ export async function verifyLink(specimen, opts = {}) {
     steps.fetch_receipt = fail('chit_receipt_id or chit_verify_url is not the public receipt URL');
   } else {
     try {
-      receipt = await getJson(url, fetchImpl);
+      receipt = await getJson(url, fetchImpl, timeoutMs);
       const verifyUrl = String(receipt?.verify_url || '');
       if (isPublicReceiptShell(receipt)) {
         // Since #519 the public route returns an unsigned shell. The issuer JWS,
@@ -320,7 +539,8 @@ export async function verifyLink(specimen, opts = {}) {
         steps.fetch_receipt = pass(url);
       }
     } catch (err) {
-      steps.fetch_receipt = fail(err.message || 'fetch_failed');
+      receipt = null;
+      steps.fetch_receipt = failOrUnchecked(err, err.message || 'fetch_failed');
     }
   }
 
@@ -347,13 +567,27 @@ export async function verifyLink(specimen, opts = {}) {
     steps.receipt_chain = fail('issuer_signature_failed');
     steps.on_chain_tx = fail('issuer_signature_failed');
   } else {
-    try {
-      jwks = await getJson(JWKS_URL, fetchImpl);
-    } catch (err) {
-      const detail = `jwks_fetch:${err.message || 'failed'}`;
-      steps.issuer_signature = fail(detail);
-      steps.receipt_chain = fail(detail);
-      steps.on_chain_tx = fail(detail);
+    // Structural checks first: a malformed JWS or an impossible kid is FAIL
+    // whether or not the JWKS can be fetched.
+    const issuerBad = jwsStructureError(receipt.issuer_signature.jws, receipt.issuer_signature.kid);
+    const chain = receipt.book_chain;
+    const chainBad = !chain
+      ? 'book_chain_missing'
+      : jwsStructureError(chain.issuer_signature?.jws, chain.issuer_signature?.kid);
+    if (issuerBad) {
+      steps.issuer_signature = fail(issuerBad);
+      steps.on_chain_tx = fail('issuer_signature_failed');
+      steps.receipt_chain = fail(chainBad || 'issuer_signature_failed');
+    } else {
+      if (chainBad) steps.receipt_chain = fail(chainBad);
+      try {
+        jwks = await getJson(JWKS_URL, fetchImpl, timeoutMs);
+      } catch (err) {
+        const detail = `jwks_fetch:${err.message || 'failed'}`;
+        steps.issuer_signature = failOrUnchecked(err, detail);
+        steps.receipt_chain = steps.receipt_chain || failOrUnchecked(err, detail);
+        steps.on_chain_tx = failOrUnchecked(err, detail);
+      }
     }
   }
 
@@ -421,11 +655,11 @@ export async function verifyLink(specimen, opts = {}) {
     } else if (specimen?.payout_tx && !same(`base:${specimen.payout_tx}`, settlement.ref)) {
       steps.on_chain_tx = fail('payout_tx_mismatch');
     } else {
-      steps.on_chain_tx = await checkBaseTransfer(settlement, rpcUrl, fetchImpl);
+      steps.on_chain_tx = await checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs);
     }
   }
 
-  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
+  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint, timeoutMs);
 
   const statuses = STEPS.map((name) => steps[name]?.status);
   const verdict = statuses.every((status) => status === 'PASS')
@@ -441,7 +675,7 @@ export async function verifyLink(specimen, opts = {}) {
  * @param {string} rpcUrl
  * @param {typeof fetch} fetchImpl
  */
-async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
+async function checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   const ref = String(settlement?.ref || '');
   const match = /^base:(0x[0-9a-fA-F]{64})$/.exec(ref);
   if (!match) return fail(`payment.ref is not a Base tx: ${ref}`);
@@ -455,8 +689,9 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
   if (rpc.protocol !== 'https:') return fail('rpc_url_must_be_https');
 
   let body;
+  let res;
   try {
-    const res = await fetchImpl(rpcUrl, {
+    res = await fetchImpl(rpcUrl, {
       method: 'POST',
       redirect: 'error',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -466,12 +701,20 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
         method: 'eth_getTransactionReceipt',
         params: [txHash],
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return fail(`rpc_http_${res.status}`);
+  } catch (err) {
+    const sorted = classifyFetchError(err);
+    return failOrUnchecked(sorted, `rpc:${sorted.message || 'failed'}`);
+  }
+  if (!res.ok) {
+    return isTransportStatus(res.status) ? unchecked(`rpc_http_${res.status}`) : fail(`rpc_http_${res.status}`);
+  }
+  try {
     body = await res.json();
   } catch (err) {
-    return fail(`rpc:${err.message || 'failed'}`);
+    const sorted = bodyReadError(err);
+    return sorted ? unchecked(`rpc:${sorted.message}`) : fail('rpc:body_not_json');
   }
   if (body?.error) return fail(`rpc:${body.error.message || 'error'}`);
   const tx = body?.result;
@@ -510,7 +753,7 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
  * @param {object} specimen
  * @param {typeof fetch} fetchImpl
  */
-async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
+async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, timeoutMs = FETCH_TIMEOUT_MS) {
   const link = specimen?.agent_record_entry;
   const entry = specimen?.entry;
   if (!link || typeof link !== 'object') return fail('fingerprint_absent');
@@ -531,6 +774,18 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
   }
   if (!Number.isInteger(eventId) || eventId < 1) return fail('entry.event_id_invalid');
   if (entry.log !== 'identity_events') return fail('entry.log must be identity_events');
+  // The issuer's signed JWS already binds a fingerprint. A claimed value that
+  // contradicts it is FAIL before any 1f916.ai fetch, so a record host outage
+  // cannot turn a provable mismatch into COULD_NOT_CHECK.
+  // A signed fingerprint that is present but empty or not 64 hex characters is
+  // malformed, not absent.
+  if (signedFingerprint != null
+    && (typeof signedFingerprint !== 'string' || !/^[0-9a-fA-F]{64}$/.test(signedFingerprint))) {
+    return fail(`signed_fingerprint_malformed:${JSON.stringify(signedFingerprint)}`);
+  }
+  if (signedFingerprint && String(signedFingerprint).toLowerCase() !== fingerprint) {
+    return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} claimed ${fingerprint}`);
+  }
 
   let found = null;
   let since = null;
@@ -539,7 +794,7 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
     for (let page = 0; page < 20 && !found; page += 1) {
       const recordUrl = new URL(`/api/record/${encodeURIComponent(handle)}`, RECORD_ORIGIN);
       if (since != null) recordUrl.searchParams.set('events_since', String(since));
-      const body = await getJson(recordUrl, fetchImpl);
+      const body = await getJson(recordUrl, fetchImpl, timeoutMs);
       const events = Array.isArray(body?.events) ? body.events : [];
       found = events.find((row) => Number(row?.id) === eventId) || null;
       if (found || !body?.events_has_more) break;
@@ -549,7 +804,7 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
       since = cursor;
     }
   } catch (err) {
-    return fail(`record_fetch:${err.message || 'failed'}`);
+    return failOrUnchecked(err, `record_fetch:${err.message || 'failed'}`);
   }
   if (!found) return fail(`entry_not_found:${handle} event ${eventId}`);
   if (entry.kind != null && found.kind !== entry.kind) {
@@ -581,44 +836,61 @@ export function formatReport(result) {
  * @param {string} target file path or https://www.chit402.com/specimens/*.json
  * @param {typeof fetch} [fetchImpl]
  */
-export async function loadSpecimen(target, fetchImpl = fetch) {
+export async function loadSpecimen(target, fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS) {
   if (/^https:\/\//i.test(target)) {
     const url = new URL(target);
     if (url.origin !== SPECIMEN_ORIGIN || !url.pathname.startsWith('/specimens/') || !url.pathname.endsWith('.json') || url.search || url.username) {
       throw new Error('specimen URL must be https://www.chit402.com/specimens/*.json');
     }
-    return getJson(url, fetchImpl);
+    return getJson(url, fetchImpl, timeoutMs);
   }
   return JSON.parse(readFileSync(target, 'utf8'));
 }
 
-async function main() {
-  const target = process.argv[2];
+/**
+ * The CLI without process.exit, so tests can drive it in-process.
+ * Returns the exit code: 0 PASS, 1 FAIL, 2 COULD_NOT_CHECK or usage.
+ * @param {string[]} argv arguments after the script path
+ * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, log?: (line: string) => void, error?: (line: string) => void }} [io]
+ */
+export async function runCli(argv, io = {}) {
+  const log = io.log || ((line) => console.log(line));
+  const error = io.error || ((line) => console.error(line));
+  const target = argv[0];
   if (!target) {
-    console.error('usage: node scripts/verify-1f916-link.mjs <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
-    process.exit(2);
+    error('usage: node scripts/verify-1f916-link.mjs <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
+    return 2;
   }
+  const fixtureFetch = io.fetchImpl ? null : fetchFromFixtureEnv();
+  const fetchImpl = io.fetchImpl || fixtureFetch || fetch;
   let specimen;
   try {
-    specimen = await loadSpecimen(target);
+    specimen = await loadSpecimen(target, fetchImpl, io.timeoutMs);
   } catch (err) {
-    console.log(`FAIL specimen            ${err.message || 'unreadable'}`);
-    console.log('VERDICT FAIL');
-    process.exit(1);
+    if (err?.transport) {
+      log(`COULD_NOT_CHECK specimen ${err.message || 'fetch_failed'}`);
+      log('VERDICT COULD_NOT_CHECK');
+      return 2;
+    }
+    log(`FAIL specimen            ${err.message || 'unreadable'}`);
+    log('VERDICT FAIL');
+    return 1;
   }
-  const fetchImpl = fetchFromFixtureEnv();
-  const result = await verifyLink(specimen, fetchImpl ? { fetchImpl } : {});
-  if (fetchImpl) {
+  const result = await verifyLink(specimen, { fetchImpl, timeoutMs: io.timeoutMs });
+  if (fixtureFetch) {
     // Every response, including the JWKS and the Base RPC, came from a local file.
     // Any key can sign that receipt, so this run proves nothing about Chit402.
-    console.log(FIXTURE_BANNER);
-    console.error(FIXTURE_BANNER);
-    console.log(formatReport(result).replace(/^VERDICT PASS$/m, FIXTURE_VERDICT));
+    log(FIXTURE_BANNER);
+    error(FIXTURE_BANNER);
+    log(formatReport(result).replace(/^VERDICT PASS$/m, FIXTURE_VERDICT));
   } else {
-    console.log(formatReport(result));
+    log(formatReport(result));
   }
-  const code = result.verdict === 'PASS' ? 0 : result.verdict === 'COULD_NOT_CHECK' ? 2 : 1;
-  process.exit(code);
+  return result.verdict === 'PASS' ? 0 : result.verdict === 'COULD_NOT_CHECK' ? 2 : 1;
+}
+
+async function main() {
+  process.exit(await runCli(process.argv.slice(2)));
 }
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

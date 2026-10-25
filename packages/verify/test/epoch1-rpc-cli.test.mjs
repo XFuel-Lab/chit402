@@ -16,7 +16,7 @@ import { assertLibraryPass } from './library-pass.mjs';
 import { tempDir } from './tmp-dirs.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const {
   EPOCH1_FINAL_ROOT,

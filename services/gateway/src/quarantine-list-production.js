@@ -119,9 +119,16 @@ function snapshot(signer) {
   const pub = signer.publicJwk;
   const sign = signer.sign;
   if (!pub || typeof pub !== 'object') refuse('no_public_key');
-  if (hasAccessor(pub, 'x') || hasAccessor(pub, 'y')) refuse('signer_accessor');
+  if (['x', 'y', 'kty', 'crv'].some((n) => hasAccessor(pub, n))) refuse('signer_accessor');
   const x = pub.x;
   const y = pub.y;
+  // N11 (644): a reported key type, when present, must be EC P-256. The match
+  // below is on x/y alone, so this is hygiene, not the boundary.
+  const kty = pub.kty;
+  const crv = pub.crv;
+  if ((kty != null && kty !== 'EC') || (crv != null && crv !== 'P-256')) {
+    refuse('not_production_key', 'the signer reports a key type other than EC P-256');
+  }
   if (typeof sign !== 'function') refuse('issuer_sign_invalid');
   return {
     kind: kind == null ? null : String(kind),
@@ -216,8 +223,9 @@ export async function signProductionV1(doc, signer) {
  * The two test-only entry points below take any allowlist, so each refuses
  * to run in a production process (the real isProductionProcess on this
  * process's own env; tests run with NODE_ENV=test and test keys only). A
- * caller that finds them by name, Object.keys or any other import trick gets
- * this throw on the host, never a signature.
+ * caller that finds them by name, Object.keys or another import trick gets
+ * this throw on the host. It is a tripwire, not a boundary: code already
+ * running in the process can set process.env.NODE_ENV=test itself first.
  */
 function refuseTestEntryInProduction() {
   if (isProductionProcess()) throw new TypeError('test-only entry point: refused in a production process');
@@ -380,6 +388,27 @@ function assertNoSymlinkComponent(value, label) {
   }
 }
 
+/**
+ * D2 (644): true when no component of either value is a symlink and the env
+ * value still resolves to logDir. Records nothing and never throws.
+ */
+function logDirUnchanged(envLogDir, flagLogDir, logDir) {
+  try {
+    for (const value of [envLogDir, flagLogDir].filter(Boolean)) {
+      const abs = path.resolve(value);
+      const { root } = path.parse(abs);
+      let cur = root;
+      for (const part of abs.slice(root.length).split(path.sep).filter(Boolean)) {
+        cur = path.join(cur, part);
+        if (fs.lstatSync(cur).isSymbolicLink()) return false;
+      }
+    }
+    return fs.realpathSync(envLogDir) === logDir;
+  } catch {
+    return false;
+  }
+}
+
 function realDir(dir, reason = 'log_dir_mismatch') {
   let real;
   try {
@@ -523,6 +552,13 @@ async function runWith({
     }
     const bytes = await signWithSnapshot(doc, snap, keys);
     const file = writeV1Atomic(dir, bytes, { onLinked: (f) => { linkedFile = f; } });
+    // D2 (644): the log directory is still the one checked at the start, with
+    // no symlink in any component, for the run's whole window. Otherwise v1
+    // may sit in a directory the gateway does not serve.
+    // The checks here record nothing themselves, so the run still appends one row.
+    if (!logDirUnchanged(envLogDir, args.logDir, logDir)) {
+      refuse('list_dir_changed', 'the log directory changed during the run; v1 may be in another directory');
+    }
     const stored = fs.readFileSync(file, 'utf8');
     if (stored !== bytes) {
       refuse('write_mismatch', 'v1 was written but its bytes on disk differ from the signed bytes; inspect it before pinning anything');
@@ -546,6 +582,9 @@ async function runWith({
       else err(`failed after writing: ${e?.code || 'error'}. v1 WAS written to ${linkedFile}.`);
       if (reason === 'list_dir_changed') {
         err(`Do not pin. v1 was written, but not necessarily to ${linkedFile}: inspect the log directory and the quarantine-list path before any rerun.`);
+      } else if (reason === 'write_mismatch') {
+        // D5 (644): a refusal, not a transient failure; no rerun advice.
+        err(`Do not pin. Inspect ${linkedFile} before any rerun.`);
       } else {
         err('Do not pin yet. Rerun the same command: it verifies v1 and prints SIGNED_LIST_SHA256, or refuses.');
       }

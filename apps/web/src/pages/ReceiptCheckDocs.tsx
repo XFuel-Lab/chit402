@@ -61,7 +61,7 @@ export default function ReceiptCheckDocs() {
             <code>?version=N</code> or <code>?hash=</code>. A new receipt signs the hash, version, and seq of the
             snapshot in effect at issuance. Each entry has <code>kid</code>, the public JWK, <code>not_before</code>,{' '}
             <code>not_after</code>, and <code>status</code> (<code>active</code>, <code>retired</code>, or{' '}
-            <code>revoked</code>). Entries chain by <code>prev_hash</code>. The current key signs the head.
+            <code>revoked</code>). Entries chain by <code>prev_hash</code>. The current key signs the history head.
           </p>
           <p>
             The live kid is <code style={styles.mono}>{KID}</code>. <code>not_before</code> is{' '}

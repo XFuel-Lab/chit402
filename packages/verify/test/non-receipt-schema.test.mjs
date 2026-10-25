@@ -101,6 +101,10 @@ const MORE = [
   'xfuel.receipt.v4\u200b',
   '\u0441hit402.tree_head.v1',
   'chit402.tree_head.v1\n',
+  // N-E1 (646): the ASCII rule on its own, with no chit402 prefix for the trimmed rule to see.
+  'xfuel.receipt.v4\n',
+  'x\nchit402.tree_head.v1',
+  'xfuel.receipt.v4\t',
 ];
 
 for (const schema of MORE) {

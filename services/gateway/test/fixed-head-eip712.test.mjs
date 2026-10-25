@@ -1487,6 +1487,68 @@ test('M-S4a: a Proxy signer that switches key or kid between reads gets one read
   });
 });
 
+test('641/642 follow-up: a getter on the signer prototype is signer_accessor, not only an own getter; never signs', async () => {
+  await withLiveKeyGone(async ({ doc, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    for (const name of ['kid', 'publicJwk', 'kind']) {
+      let reads = 0;
+      const values = {
+        kind: 'env',
+        kid: KEY.kid,
+        publicJwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y },
+      };
+      const proto = Object.defineProperty({}, name, { get() { reads += 1; return values[name]; } });
+      const signer = Object.create(proto);
+      signer.calls = [];
+      for (const [k, v] of Object.entries(values)) if (k !== name) signer[k] = v;
+      signer.sign = async (input) => {
+        signer.calls.push(input.length);
+        return crypto.sign('sha256', Buffer.from(input), { key: KEY.privateKey, dsaEncoding: 'ieee-p1363' });
+      };
+      _setIssuerSignerForTest(signer);
+      await assert.rejects(
+        Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } }),
+        (err) => err.code === 'quarantine_sign_refused' && err.reason === 'signer_accessor',
+        `prototype ${name} getter`,
+      );
+      assert.equal(signer.calls.length, 0, `prototype ${name} getter: never signs`);
+      assert.ok(reads <= 1, `prototype ${name} getter: read at most once`);
+      resetIssuerSigner();
+    }
+  });
+});
+
+test('641/642 follow-up: a successful quarantine sign reads the signer\'s sign property exactly once', async () => {
+  await withLiveKeyGone(async ({ doc, dropK2 }) => {
+    process.env.NODE_ENV = 'test';
+    dropK2();
+    const reads = { sign: 0 };
+    let calls = 0;
+    const target = {
+      kind: 'env',
+      kid: KEY.kid,
+      publicJwk: { kty: 'EC', crv: 'P-256', x: KEY.publicJwk.x, y: KEY.publicJwk.y },
+      async sign(input) {
+        calls += 1;
+        return crypto.sign('sha256', Buffer.from(input), { key: KEY.privateKey, dsaEncoding: 'ieee-p1363' });
+      },
+    };
+    const p = new Proxy(target, {
+      get(t, name, recv) {
+        if (name === 'sign') reads.sign += 1;
+        return Reflect.get(t, name, recv);
+      },
+    });
+    _setIssuerSignerForTest(p);
+    const bytes = await Q.signQuarantineList(doc, { env: { NODE_ENV: 'test' } });
+    assert.equal(reads.sign, 1, 'sign read once, at the snapshot');
+    assert.equal(calls, 1, 'one signature');
+    assert.equal(Q.verifyQuarantineList(bytes, { keys: [{ ...KEY.publicJwk, kid: KEY.kid, alg: 'ES256', kty: 'EC', crv: 'P-256' }] }).ok, true);
+    resetIssuerSigner();
+  });
+});
+
 // ---------------------------------------------------------------- G15 KMS
 
 function spki(publicKey) {

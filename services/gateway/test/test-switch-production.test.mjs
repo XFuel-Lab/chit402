@@ -273,6 +273,42 @@ function stripJsComments(text) {
   return out;
 }
 
+/**
+ * N4 (643): lines the comment stripper may have misread. A code line (one that
+ * does not start with a comment marker) that mentions NODE_ENV must come out of
+ * the stripper unchanged. If the stripper removed part of it, a regex or
+ * template literal may have hidden code from the scan, so the line is flagged.
+ * This is the union of the old prefix filter and the stripper.
+ */
+function strippedDisagrees(text) {
+  const raw = text.split('\n');
+  const stripped = stripJsComments(text).split('\n');
+  const out = [];
+  raw.forEach((line, i) => {
+    const t = line.trim();
+    if (!/NODE_ENV|\bnodeEnv\b/.test(t) || /^(\/\/|\/\*|\*)/.test(t)) return;
+    if ((stripped[i] || '').trim() !== t) out.push(t);
+  });
+  return out;
+}
+
+test('N4 (643): a NODE_ENV gate hidden behind a regex or template literal is flagged', () => {
+  const gate = "if (process.env.NODE_ENV === 'production') return { ok: true };";
+  const evasions = [
+    `/[//]/; ${gate}`,
+    `/[/*]/; ${gate} /[*/]/`,
+    `/'/; '/*'; ${gate} '*/'`,
+    `\`\${'\`'}\`; '/*'; ${gate} '*/'`,
+  ];
+  for (const line of evasions) {
+    const src = ['const a = 1;', line, 'const z = 2;'].join('\n');
+    const keptByStripper = stripJsComments(src).split('\n').some((l) => /NODE_ENV/.test(l) && l.includes(gate));
+    assert.ok(keptByStripper || strippedDisagrees(src).length === 1, `flagged: ${line}`);
+  }
+  // A plain gate, a comment-only line and a comment after code are not flagged by this rule.
+  assert.deepEqual(strippedDisagrees([gate, '// NODE_ENV only a comment', ' * NODE_ENV in a block'].join('\n')), []);
+});
+
 test('the NODE_ENV scan strips comments inside lines, not only lines that start with one', () => {
   const src = [
     "/* c */ if (process.env.NODE_ENV === 'production') return { ok: true };",
@@ -316,6 +352,11 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
   for (const [rel, lines] of readers) {
     assert.ok(NODE_ENV_ALLOWLIST[rel], `${rel} reads NODE_ENV without the shared check:\n${lines.join('\n')}`);
   }
+  for (const u of files) {
+    const rel = u.pathname.slice(root.pathname.length);
+    const odd = strippedDisagrees(fs.readFileSync(u, 'utf8'));
+    assert.ok(odd.length === 0, `${rel}: NODE_ENV on a code line the comment stripper changed; put the comment on its own line:\n${odd.join('\n')}`);
+  }
   for (const rel of Object.keys(NODE_ENV_ALLOWLIST)) assert.ok(readers.has(rel), `${rel} is allowlisted but no longer reads NODE_ENV; drop it`);
   // Line level: the multiset of trimmed NODE_ENV lines per file must equal the listed one.
   for (const [rel, lines] of readers) {
@@ -334,6 +375,8 @@ test('every NODE_ENV read in services/gateway/src uses the shared check or is al
   const guardLines = stripJsComments(read('quarantine-list.js')).split('\n').map((l) => l.trim());
   const at = guardLines.findIndex((l) => l.startsWith('export function quarantineSignGuard('));
   assert.ok(at !== -1, 'quarantine-list.js defines quarantineSignGuard');
+  // N3 (643): nothing may follow the opening brace on the signature line.
+  assert.ok(/\)\s*\{$/.test(guardLines[at]), `quarantineSignGuard: no code on the signature line; got:\n${guardLines[at]}`);
   const firstTwo = guardLines.slice(at + 1).filter(Boolean).slice(0, 2);
   assert.ok(
     firstTwo.length === 2 && firstTwo.every((l, k) => l === NODE_ENV_ALLOWLIST['quarantine-list.js'].lines[k]),
@@ -363,10 +406,11 @@ test('server boot: the x402 challenge store plan is built from the real NODE_ENV
   );
 });
 
-test('payer binding worker: it starts under NODE_ENV=test when a production-like key is loaded (start is gated on testSwitchesOn, like the attestation worker)', () => {
+test('payer binding worker: the one start line is gated on !testSwitchesOn(), and that gate is off under NODE_ENV=test with a production-like key (source line plus gate; createApp is not booted)', () => {
   const src = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   // Only the matching lines go into an assertion message, never the whole file.
-  const startLines = src.split('\n').filter((l) => /payerBindingWorker\.start\(/.test(l)).map((l) => l.trim());
+  // N2 (643): optional chaining counts too.
+  const startLines = src.split('\n').filter((l) => /payerBindingWorker\??\.start\(/.test(l)).map((l) => l.trim());
   assert.ok(startLines.length === 1, `server.js must start the payer binding worker exactly once; found:\n${startLines.join('\n')}`);
   assert.ok(
     startLines[0] === 'if (payerBindingWorker && !testSwitchesOn()) payerBindingWorker.start();',

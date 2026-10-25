@@ -16,7 +16,14 @@
  * - nothing under /proc, /dev or /sys (by path and by the real parent);
  * - opened O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK, never O_CREAT, and
  *   the open file must still be that regular file (same device and inode);
+ * - the open file must be owned by this process's effective user, so the
+ *   command runs as the gateway's user (an ancestor swap to someone else's
+ *   file writes nothing);
  * - no read, no mkdir, no rotation, no fsync; one write.
+ * The line starts with a newline as well as ending with one, so a torn tail
+ * (a short write here, or one the gateway left) never glues two rows together.
+ * Blank lines are skipped on reload. O_APPEND atomicity assumes a local
+ * filesystem, not NFS.
  * The row is the one the gateway writes (escrowAlertRow), so a gateway reload
  * counts it. Any failure is swallowed: it returns false and never throws.
  */
@@ -48,11 +55,12 @@ export function appendHostEscrowRefusal({ path: pathName, reason } = {}, { file 
     if (!before.isFile()) return false;
     const row = escrowAlertRow({ path: pathName, reason, time: new Date(now()).toISOString() });
     if (!row) return false;
-    const line = Buffer.from(`${JSON.stringify(row)}\n`, 'utf8');
+    const line = Buffer.from(`\n${JSON.stringify(row)}\n`, 'utf8');
     const { O_WRONLY, O_APPEND, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = fs.constants;
     fd = fs.openSync(real, O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK);
     const after = fs.fstatSync(fd);
     if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino) return false;
+    if (typeof process.geteuid === 'function' && after.uid !== process.geteuid()) return false;
     return fs.writeSync(fd, line) === line.length;
   } catch {
     return false;
