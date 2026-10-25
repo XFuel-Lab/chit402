@@ -1847,4 +1847,7 @@ test('QP39 / D2 (644): a --log-dir value that goes through a symlink fails the p
   assert.equal(await P._logDirUnchangedForTest(logDir, link, logDir), false, 'flag through a symlink');
   assert.equal(await P._logDirUnchangedForTest(link, logDir, logDir), false, 'env through a symlink');
   assert.equal(await P._logDirUnchangedForTest(path.join(base, 'gone'), logDir, logDir), false, 'env no longer resolves');
+  const other = path.join(base, 'other');
+  fs.mkdirSync(other);
+  assert.equal(await P._logDirUnchangedForTest(other, logDir, logDir), false, 'env now names another real directory');
 });
