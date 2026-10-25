@@ -26,6 +26,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { jcsRfc8785 } from './offer-receipt.js';
+import { appendHostEscrowRefusal } from './receipt-failure-host-append.js';
 import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput } from './issuer-key.js';
 import { PRODUCTION_ISSUER_PUBLIC_KEYS, isProductionProcess } from './production-process.js';
 import {
@@ -51,8 +52,30 @@ export class ProductionListRefused extends Error {
   }
 }
 
+/**
+ * Every refusal is recorded first as a receipt-failure row
+ * `quarantine_production_sign:<reason>` (code only), the operator alert path.
+ * This is a host command, so it never uses the gateway's receipt-failure
+ * store (no startup read, no mkdir, no rotation): appendHostEscrowRefusal
+ * appends one line to RECEIPT_FAILURES_FILE only when that is an existing
+ * regular file. Recording never throws and never changes the refusal: the
+ * same error is thrown, with the same exit and output, whether or not the row
+ * was written.
+ */
 function refuse(reason, message) {
+  recordRefusal(reason);
   throw new ProductionListRefused(reason, message);
+}
+
+/** Tests may swap it for one run, through the test-only runner's recordRefusal option. */
+let refusalRecorder = appendHostEscrowRefusal;
+
+function recordRefusal(reason) {
+  try {
+    refusalRecorder({ path: 'quarantine_production_sign', reason });
+  } catch {
+    // The recorder never throws; if one does, the run still refuses as before.
+  }
 }
 
 function sha256Hex(buf) {
@@ -406,7 +429,14 @@ export async function runProductionListSigner(opts) {
 /** Tests only: the same run against a given allowlist. Nothing in src or scripts calls it. */
 export async function _runProductionListSignerForTest(opts, testKeys) {
   refuseTestEntryInProduction();
-  return runWith(opts, testKeys);
+  if (typeof opts?.recordRefusal !== 'function') return runWith(opts, testKeys);
+  const saved = refusalRecorder;
+  refusalRecorder = opts.recordRefusal;
+  try {
+    return await runWith(opts, testKeys);
+  } finally {
+    refusalRecorder = saved;
+  }
 }
 
 async function runWith({
@@ -506,6 +536,8 @@ async function runWith({
     return { ok: true, state: 'written' };
   } catch (e) {
     const reason = e instanceof ProductionListRefused ? e.reason : 'error';
+    // A refusal was recorded in refuse(); any other failure is recorded here.
+    if (!(e instanceof ProductionListRefused)) recordRefusal('error');
     if (linkedFile) {
       // v1 is on disk. A rerun of the same command checks it and, when it
       // verifies, returns 'same' and prints SIGNED_LIST_SHA256.

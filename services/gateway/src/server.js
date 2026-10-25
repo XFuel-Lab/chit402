@@ -162,6 +162,8 @@ import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegra
 import {
   receiptFailureCount,
   escrowRefusalCounts,
+  alertRowsDropped,
+  flushEscrowAlertFolds,
   recordEscrowRefusal,
   listReceiptFailures,
   listRefusalCounts,
@@ -4687,12 +4689,14 @@ export async function createApp() {
     // public /health: the counters ticking around a known receipt would tell
     // its payment rail and paid status. Codes and counts only.
     const escrowRefusals = escrowRefusalCounts() || {};
+    // Alert rows the alert cap dropped from memory (still in the file until it rotates).
+    const droppedAlertRows = alertRowsDropped();
     const wantsCsv = req.query?.format === 'csv' || String(req.headers.accept || '').includes('text/csv');
     res.set('Cache-Control', 'private, no-store');
     if (wantsCsv) {
       return res.type('text/csv').send(receiptFailureCsv(failures));
     }
-    return res.json({ failures, refusal_counts: refusalCounts, escrow_refusals: escrowRefusals });
+    return res.json({ failures, refusal_counts: refusalCounts, escrow_refusals: escrowRefusals, alert_rows_dropped: droppedAlertRows });
   });
 
   app.get('/v1/internal/door-metrics', rateLimit, (req, res) => {
@@ -6218,12 +6222,29 @@ export async function startServer() {
       } catch (err) {
         logger.warn({ err: err.message }, 'task-store flush on shutdown failed');
       }
+      // Write any open alert fold so its folded refusals survive the restart.
+      try {
+        flushEscrowAlertFolds();
+      } catch {
+        // Never blocks shutdown.
+      }
+      // Workers and timers keep running during the drain, so a refusal can
+      // fold after the first flush: flush again right before every exit.
+      const flushAgain = () => {
+        try {
+          flushEscrowAlertFolds();
+        } catch {
+          // Never blocks shutdown.
+        }
+      };
       const forceExit = setTimeout(() => {
         logger.warn('Forced shutdown after 10s drain timeout');
+        flushAgain();
         process.exit(1);
       }, 10_000);
       if (typeof forceExit.unref === 'function') forceExit.unref();
       server.close((err) => {
+        flushAgain();
         if (err) {
           logger.error({ err }, 'Error during server close');
           process.exit(1);

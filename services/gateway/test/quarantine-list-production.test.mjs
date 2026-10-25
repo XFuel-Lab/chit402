@@ -23,6 +23,7 @@ process.env.ISSUER_PRIVATE_KEY = syntheticIssuerKeyEnv();
 const KEY = syntheticIssuerKey();
 process.env.ISSUER_KID = KEY.kid;
 delete process.env.RECEIPT_LOG_DIR;
+delete process.env.RECEIPT_FAILURES_FILE;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OLD_SCRIPT = path.join(here, '..', 'scripts', 'sign-quarantine-list.mjs');
@@ -38,6 +39,7 @@ const { resetIssuerSigner } = await import('../src/issuer-signer-state.js');
 const { createEnvSigner } = await import('../src/issuer-signer.js');
 const { _resetIssuerKey, signJws, getIssuerPublicKeyJwk, computeJwkThumbprint } = await import('../src/issuer-key.js');
 const { PRODUCTION_ISSUER_PUBLIC_KEYS, PRODUCTION_ISSUER_KID } = await import('../src/production-process.js');
+const RF = await import('../src/receipt-failures.js');
 
 const OTHER = testIssuerKey(7);
 /** The allowlist stub: the synthetic test key's x/y in place of the production key. */
@@ -146,6 +148,9 @@ function withLogDirEnv(argv, env) {
   return i >= 0 && typeof argv[i + 1] === 'string' ? { ...env, RECEIPT_LOG_DIR: argv[i + 1] } : env;
 }
 
+/** N3 (649): a recorder run() passes to the test entry point; null otherwise. */
+let throwingRecorder = null;
+
 async function run(argv, { signer, keys = STUB_KEYS, env = {}, buildFromLog = (d) => buildUnsignedV1FromLog(d) } = {}) {
   const c = capture();
   const loads = [];
@@ -156,6 +161,8 @@ async function run(argv, { signer, keys = STUB_KEYS, env = {}, buildFromLog = (d
     loadSigner: async (e) => { loads.push(e); return signer; },
     out: c.o,
     err: c.e,
+    // N3 (649): set only inside withThrowingRecorder.
+    ...(throwingRecorder ? { recordRefusal: throwingRecorder } : {}),
   }, keys);
   return { result, out: c.out, err: c.err, loads };
 }
@@ -1148,4 +1155,431 @@ test('QP29: a temp cleanup failure after list_dir_changed keeps that reason and 
   } finally {
     fs.rmSync = realRm;
   }
+});
+
+// ------------------------------------------------- SF-A: refusals reach the receipt-failure log
+
+const PROD_PATH = 'quarantine_production_sign';
+
+function fileRows(file) {
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/** Temp paths differ per setup; everything else in the output must match. */
+function normalized(r) {
+  const strip = (l) => String(l).replace(/[^\s'"`]*qlprod-[a-z]+-[A-Za-z0-9]+[^\s'"`]*/g, '<TMP>');
+  return { result: r.result, out: r.out.map(strip), err: r.err.map(strip) };
+}
+
+/**
+ * Run `scenario()` with RECEIPT_FAILURES_FILE unset ('none'), set to the
+ * gateway's existing (empty) file ('file'), set to a path that does not exist
+ * ('missing'), or set under a regular file ('unwritable'). The host signer
+ * appends only to an existing regular file and never touches this process's
+ * receipt-failure store, so `reload` is what a gateway reload of the file
+ * sees afterwards: its rows and per-reason counts. Module state is reset
+ * before and after.
+ */
+async function withFailureFile(mode, scenario) {
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  const dir = tmp('qlprod-rf-');
+  let file = path.join(dir, 'receipt-failures.jsonl');
+  if (mode === 'file') fs.writeFileSync(file, '');
+  if (mode === 'unwritable') {
+    const blocker = path.join(dir, 'blocker');
+    fs.writeFileSync(blocker, 'not a directory');
+    file = path.join(blocker, 'receipt-failures.jsonl');
+  }
+  if (mode === 'none') delete process.env.RECEIPT_FAILURES_FILE;
+  else process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    const r = await scenario();
+    const rows = fileRows(file);
+    // Gateway reload: a fresh store reads the file once.
+    RF.resetReceiptFailuresForTests();
+    const memory = RF.listReceiptFailures().filter((row) => row.reason.startsWith(`${PROD_PATH}:`));
+    const counts = (RF.escrowRefusalCounts() || {})[PROD_PATH] || {};
+    return { r, memory, counts, rows, file, dir };
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+}
+
+function assertOneRow(rows, code, label) {
+  assert.equal(rows.length, 1, `${label}: exactly one row (${rows.map((r) => r.reason).join(',')})`);
+  const [row] = rows;
+  assert.equal(row.reason, `${PROD_PATH}:${code}`, label);
+  assert.equal(row.stage, 'sign', label);
+  assert.equal(row.outcome, 'refused', label);
+  assert.equal(row.tx, null, `${label}: no tx`);
+  assert.equal(row.network, null, `${label}: no network`);
+  assert.equal(row.request_id, null, `${label}: no request id`);
+}
+
+/** Each scenario builds its own fresh log copy, so it can run once per mode. */
+const SFA_SCENARIOS = [
+  ['usage', async () => { const s = await setup(); return run(['--log-dir', s.logDir]); }],
+  ['usage', async () => { const s = await setup(); return run(['--list', s.file, '--list', s.file, '--log-dir', s.logDir]); }],
+  ['log_dir_env_unset', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file], { env: { RECEIPT_LOG_DIR: undefined } }); }],
+  ['log_dir_unresolved', async () => { const s = await setup(); return run(['--list', s.file], { env: { RECEIPT_LOG_DIR: path.join(s.logDir, 'missing') } }); }],
+  ['log_dir_mismatch', async () => {
+    const s = await setup();
+    const other = tmp('qlprod-other-');
+    return run(applyArgs(s), { signer: goodSigner(), env: { RECEIPT_LOG_DIR: other } });
+  }],
+  ['log_dir_symlink', async () => {
+    const s = await setup();
+    const link = path.join(tmp('qlprod-sym-'), 'logdir');
+    fs.symlinkSync(fs.realpathSync(s.logDir), link);
+    return run(['--log-dir', link, '--list', s.file], { signer: goodSigner(), env: { RECEIPT_LOG_DIR: fs.realpathSync(s.logDir) } });
+  }],
+  ['confirm_missing', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file, '--list-sha256', s.hash, '--apply'], { signer: goodSigner() }); }],
+  ['list_hash_mismatch', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file, '--apply', '--confirm', CONFIRM], { signer: goodSigner() }); }],
+  ['not_production_process', async () => { const s = await setup(); return run(applyArgs(s), { signer: goodSigner(), env: { NODE_ENV: 'test' } }); }],
+  ['not_production_key', async () => {
+    const s = await setup();
+    return run(applyArgs(s), { signer: stubSigner({ kid: OTHER.kid, publicJwk: OTHER.publicJwk, privateKey: OTHER.privateKey, realJws: true }) });
+  }],
+  ['list_not_build_output', async () => {
+    const s = await setup();
+    return run(applyArgs(s), { signer: goodSigner(), buildFromLog: async () => ({ different: true }) });
+  }],
+  ['write_mismatch', async () => {
+    const s = await setup();
+    return withV1Read((real, file, ...rest) => `${real.call(fs, file, ...rest)} `, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+  ['list_dir_changed', async () => {
+    const s = await setup();
+    const listDir = listDirOf(fs.realpathSync(s.logDir));
+    fs.mkdirSync(listDir, { mode: 0o700 });
+    return withWriteHooks({
+      beforeOpen: () => { fs.renameSync(listDir, `${listDir}.aside`); fs.mkdirSync(listDir, { mode: 0o700 }); },
+    }, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+  ['error', async () => {
+    const s = await setup();
+    const throttled = stubSigner({ kid: KEY.kid, publicJwk: KEY.publicJwk, privateKey: KEY.privateKey, realJws: true, onSign: () => { const e = new Error('kms'); e.code = 'ThrottlingException'; throw e; } });
+    return run(applyArgs(s), { signer: throttled });
+  }],
+  ['error', async () => {
+    const s = await setup();
+    return withV1Read(() => { const e = new Error('io'); e.code = 'EIO'; throw e; }, () => run(applyArgs(s), { signer: goodSigner() }));
+  }],
+];
+
+test('QP30 / SF-A / SF-1: every refusal appends one quarantine_production_sign row to an existing file, a gateway reload counts it, and the refusal is unchanged with the file set, unset, missing or unwritable', { timeout: 180_000 }, async () => {
+  for (const [code, scenario] of SFA_SCENARIOS) {
+    const none = await withFailureFile('none', scenario);
+    const file = await withFailureFile('file', scenario);
+    const missing = await withFailureFile('missing', scenario);
+    const broken = await withFailureFile('unwritable', scenario);
+    const label = `${code}: ${JSON.stringify(none.r.result)}`;
+    assert.equal(none.r.result.ok, false, label);
+    assert.equal(none.r.result.reason, code, label);
+    // Same result, stdout and stderr whatever happens to the row.
+    assert.deepEqual(normalized(file.r), normalized(none.r), `${label}: file set`);
+    assert.deepEqual(normalized(missing.r), normalized(none.r), `${label}: file missing`);
+    assert.deepEqual(normalized(broken.r), normalized(none.r), `${label}: file unwritable`);
+    // The row: appended to the existing file, and a gateway reload counts it once.
+    assertOneRow(file.rows, code, `${label} (file)`);
+    assertOneRow(file.memory, code, `${label} (file, reload)`);
+    assert.deepEqual(file.counts, { [code]: 1 }, `${label} (file, reload counts)`);
+    // Otherwise nothing is written anywhere and nothing is created.
+    for (const [mode, got] of [['none', none], ['missing', missing], ['unwritable', broken]]) {
+      assert.deepEqual(got.memory, [], `${label} (${mode}): no row`);
+      assert.deepEqual(got.counts, {}, `${label} (${mode}): no count`);
+    }
+    assert.equal(fs.existsSync(missing.file), false, `${label}: a missing file is never created`);
+    assert.equal(fs.existsSync(broken.file), false, `${label}: nothing written under the blocker`);
+  }
+});
+
+test('QP31 / SF-A: a success writes no row; a dry run writes no row', async () => {
+  const dry = await withFailureFile('file', async () => { const s = await setup(); return run(['--log-dir', s.logDir, '--list', s.file], { signer: goodSigner() }); });
+  assert.equal(dry.r.result.state, 'dry_run', dry.r.err.join(' '));
+  assert.deepEqual(dry.rows, []);
+  assert.deepEqual(dry.memory, []);
+  const written = await withFailureFile('file', async () => { const s = await setup(); return run(applyArgs(s), { signer: goodSigner() }); });
+  assert.equal(written.r.result.state, 'written', written.r.err.join(' '));
+  assert.deepEqual(written.rows, []);
+});
+
+test('QP32 / SF-A: refuse() records before it throws, and every refusal code in the module is on the path list (never other)', () => {
+  const src = fs.readFileSync(MODULE, 'utf8');
+  assert.ok(/\nfunction refuse\(reason, message\) \{\n  recordRefusal\(reason\);\n  throw new ProductionListRefused\(reason, message\);\n\}\n/.test(src), 'refuse() records, then throws the same error');
+  assert.ok(/let refusalRecorder = appendHostEscrowRefusal;/.test(src), 'the recorder is the host-only append');
+  assert.ok(/refusalRecorder\(\{ path: 'quarantine_production_sign', reason \}\);/.test(src), 'recordRefusal appends the quarantine_production_sign path through the recorder');
+  assert.ok(/import \{ appendHostEscrowRefusal \} from '\.\/receipt-failure-host-append\.js';/.test(src), 'the host-only append is imported');
+  assert.ok(!/from '\.\/receipt-failures\.js'/.test(src), 'the host signer does not import the gateway store (no startup read, mkdir or rotation)');
+  assert.ok(/if \(!\(e instanceof ProductionListRefused\)\) recordRefusal\('error'\);/.test(src), 'a failure that is not a refusal is recorded as error');
+  const codes = new Set();
+  for (const m of src.matchAll(/refuse\('([a-z0-9_]+)'/g)) codes.add(m[1]);
+  for (const m of src.matchAll(/realDir\([^)]*'([a-z0-9_]+)'\)/g)) codes.add(m[1]);
+  for (const m of src.matchAll(/function realDir\(dir, reason = '([a-z0-9_]+)'\)/g)) codes.add(m[1]);
+  codes.add('error');
+  for (const named of ['log_dir_env_unset', 'log_dir_unresolved', 'log_dir_mismatch', 'log_dir_symlink', 'usage', 'list_dir_changed', 'write_mismatch', 'list_not_unsigned_v1', 'v1_exists_different']) {
+    assert.ok(codes.has(named), `scan finds ${named}`);
+  }
+  assert.ok(codes.size >= 26, `found ${codes.size} codes`);
+  assert.ok(RF.ESCROW_REFUSAL_PATHS.includes(PROD_PATH));
+  RF.resetReceiptFailuresForTests();
+  try {
+    for (const code of codes) {
+      const row = RF.recordEscrowRefusal({ path: PROD_PATH, reason: code });
+      assert.ok(row, `${code}: a row`);
+      assert.equal(row.reason, `${PROD_PATH}:${code}`, `${code} is listed, not other`);
+    }
+    assert.equal(RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'made_up_code' }).reason, `${PROD_PATH}:other`);
+    assert.equal(RF.receiptFailureCount(), 0, 'alert rows stay out of the public total');
+  } finally {
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('QP33 / SF-A / SF-1: the script end to end: a refusal appends its row to the existing RECEIPT_FAILURES_FILE, exit and stderr unchanged when the file is missing or cannot be written', { timeout: 120_000 }, async () => {
+  const s = await setup();
+  const dir = tmp('qlprod-rfscript-');
+  const blocker = path.join(dir, 'blocker');
+  fs.writeFileSync(blocker, 'x');
+  const base = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
+  delete base.NODE_ENV;
+  delete base.ISSUER_TEST_KEY;
+  delete base.RECEIPT_LOG_DIR;
+  delete base.RECEIPT_FAILURES_FILE;
+  const cases = [
+    ['usage', ['--log-dir', s.logDir], { RECEIPT_LOG_DIR: s.logDir }],
+    ['log_dir_env_unset', ['--log-dir', s.logDir, '--list', s.file], {}],
+  ];
+  for (const [code, argv, extra] of cases) {
+    const runScript = (env) => spawnSync(process.execPath, [NEW_SCRIPT, ...argv], { env: { ...base, ...extra, ...env }, encoding: 'utf8', timeout: 60_000 });
+    const file = path.join(dir, `${code}.jsonl`);
+    fs.writeFileSync(file, '');
+    const absent = path.join(dir, `${code}-absent.jsonl`);
+    const withFile = runScript({ RECEIPT_FAILURES_FILE: file });
+    const unset = runScript({});
+    const broken = runScript({ RECEIPT_FAILURES_FILE: path.join(blocker, 'rf.jsonl') });
+    const missing = runScript({ RECEIPT_FAILURES_FILE: absent });
+    assert.equal(fs.existsSync(absent), false, `${code}: the script never creates the file`);
+    assert.deepEqual([missing.status, missing.stdout, missing.stderr], [unset.status, unset.stdout, unset.stderr], `${code}: missing file, byte-identical refusal`);
+    for (const [label, res] of [['file', withFile], ['unset', unset], ['unwritable', broken]]) {
+      assert.equal(res.status, 1, `${code} ${label}: ${res.stderr}`);
+      assert.ok(new RegExp(`refused: ${code}`).test(res.stderr), `${code} ${label}: ${res.stderr}`);
+    }
+    const refusalLine = (res) => res.stderr.split('\n').filter((l) => l.startsWith('refused: '));
+    assert.deepEqual(refusalLine(withFile), refusalLine(unset), `${code}: same refusal line`);
+    assert.deepEqual(refusalLine(broken), refusalLine(unset), `${code}: same refusal line, unwritable file`);
+    assertOneRow(fileRows(file), code, `${code} (script)`);
+  }
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+// ------------------------------------------------- SF-1: host-only append, never the gateway store
+
+const HA = await import('../src/receipt-failure-host-append.js');
+
+test('QP34 / SF-1: the host append writes the gateway\'s own row, only to an existing regular file, with no read, mkdir or rotation', () => {
+  const dir = tmp('qlprod-ha-');
+  const at = Date.parse('2026-10-24T12:00:00.000Z');
+  const now = () => at;
+  // Same row, field for field and in the same order, as the gateway writes.
+  RF.resetReceiptFailuresForTests();
+  try {
+    RF.setEscrowAlertClockForTests(now);
+    const gw = RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'write_mismatch' });
+    assert.equal(JSON.stringify(RF.escrowAlertRow({ path: PROD_PATH, reason: 'write_mismatch', time: new Date(at).toISOString() })), JSON.stringify(gw));
+  } finally {
+    RF.resetReceiptFailuresForTests();
+  }
+  // Existing file with gateway rows: one line appended, nothing else changed.
+  const file = path.join(dir, 'rf.jsonl');
+  const prior = `${JSON.stringify({ time: '2026-10-24T11:00:00.000Z', network: 'base', stage: 'settle', reason: 'settle_failed', tx: null, outcome: 'refused', request_id: null })}\n`;
+  fs.writeFileSync(file, prior);
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file, now }), true);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.startsWith(prior), 'prior bytes untouched');
+  const added = text.slice(prior.length);
+  assert.equal(added, `${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
+  // An unknown code is `other`; an unknown path writes nothing.
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'free text /tmp/x' }, { file, now }), true);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()).reason, `${PROD_PATH}:other`);
+  const size = fs.statSync(file).size;
+  assert.equal(HA.appendHostEscrowRefusal({ path: 'nope', reason: 'usage' }, { file, now }), false);
+  assert.equal(fs.statSync(file).size, size);
+  // A gateway reload counts the host rows next to its own, in file order.
+  process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    assert.deepEqual(RF.listReceiptFailures().map((r) => r.reason), ['settle_failed', `${PROD_PATH}:usage`, `${PROD_PATH}:other`]);
+    assert.deepEqual(RF.escrowRefusalCounts()[PROD_PATH], { other: 1, usage: 1 });
+    assert.equal(RF.receiptFailureCount(), 1, 'host rows stay out of the public total');
+  } finally {
+    delete process.env.RECEIPT_FAILURES_FILE;
+    RF.resetReceiptFailuresForTests();
+  }
+  // Missing file, missing parent: false, nothing created, no mkdir.
+  const absent = path.join(dir, 'absent.jsonl');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: absent, now }), false);
+  assert.equal(fs.existsSync(absent), false);
+  const deep = path.join(dir, 'no', 'such', 'dir', 'rf.jsonl');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: deep, now }), false);
+  assert.equal(fs.existsSync(path.join(dir, 'no')), false, 'no directory created');
+  // Unset or blank: false.
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: '', now }), false);
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: undefined, now }), false);
+  // 5 MB or more: appended, never rotated (the gateway rotates its own file).
+  const big = path.join(dir, 'big.jsonl');
+  fs.writeFileSync(big, Buffer.alloc(RF.RECEIPT_FAILURE_FILE_BYTES + 10, 0x20));
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: big, now }), true);
+  assert.equal(fs.existsSync(`${big}.1`), false, 'no rotation');
+  assert.equal(fs.statSync(big).size, RF.RECEIPT_FAILURE_FILE_BYTES + 10 + added.length);
+});
+
+test('QP35 / SF-1: the host append source: lstat before open, O_APPEND|O_NOFOLLOW without O_CREAT, no read, mkdir or rotation', () => {
+  const raw = fs.readFileSync(path.join(here, '..', 'src', 'receipt-failure-host-append.js'), 'utf8');
+  // Code only: the header comment names the flags it never uses.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(/const before = fs\.lstatSync\(real\);\n\s+if \(!before\.isFile\(\)\) return false;/.test(src), 'lstat, regular file only');
+  assert.ok(/fs\.openSync\(real, O_WRONLY \| O_APPEND \| O_NOFOLLOW \| O_NONBLOCK\)/.test(src), 'append-only open flags');
+  assert.ok(!/O_CREAT|O_TRUNC/.test(src), 'never creates or truncates');
+  assert.ok(!/readFileSync|readSync|mkdirSync|renameSync|rmSync|appendFileSync|unlinkSync/.test(src), 'no read, mkdir, rotation or create-by-append');
+  assert.ok(/after\.dev !== before\.dev \|\| after\.ino !== before\.ino/.test(src), 'the opened file is the one checked');
+});
+
+// ------------------------------------------------- 649 nits: N3 (throwing recorder), N4 (pathological paths)
+
+test('N3 (649): a recorder that throws never changes the refusal, its output or its result', { timeout: 120_000 }, async () => {
+  const picks = SFA_SCENARIOS.filter(([code], i, all) => all.findIndex(([c]) => c === code) === i)
+    .filter(([code]) => ['usage', 'log_dir_symlink', 'confirm_missing', 'not_production_key', 'write_mismatch', 'list_dir_changed', 'error'].includes(code));
+  assert.equal(picks.length, 7);
+  for (const [code, scenario] of picks) {
+    const none = await withFailureFile('none', scenario);
+    const calls = [];
+    const thrown = await withFailureFile('none', () => withThrowingRecorder(calls, scenario));
+    const label = `${code}: ${JSON.stringify(none.r.result)}`;
+    assert.deepEqual(normalized(thrown.r), normalized(none.r), `${label}: same result and output with a throwing recorder`);
+    assert.deepEqual(calls, [code], `${label}: recorded once, with the code`);
+  }
+});
+
+/** Run a scenario whose run() goes through a throwing recordRefusal. */
+async function withThrowingRecorder(calls, scenario) {
+  throwingRecorder = ({ reason }) => { calls.push(reason); throw new Error('recorder exploded'); };
+  try {
+    return await scenario();
+  } finally {
+    throwingRecorder = null;
+  }
+}
+
+const FIFO_OK = process.platform === 'linux' && spawnSync('mkfifo', ['--help'], { encoding: 'utf8' }).status === 0;
+
+/** RECEIPT_FAILURES_FILE values the host append must refuse, each with what must stay true. */
+function pathologicalFiles() {
+  const dir = tmp('qlprod-patho-');
+  const regular = path.join(dir, 'gateway-rf.jsonl');
+  fs.writeFileSync(regular, 'gateway bytes\n');
+  const link = path.join(dir, 'link.jsonl');
+  fs.symlinkSync(regular, link);
+  const devLink = path.join(dir, 'devlink.jsonl');
+  const adir = path.join(dir, 'adir');
+  fs.mkdirSync(adir);
+  const cases = [
+    ['missing', path.join(dir, 'missing.jsonl')],
+    ['missing parent', path.join(dir, 'no', 'such', 'rf.jsonl')],
+    ['directory', adir],
+    ['symlink to a regular file', link],
+  ];
+  if (process.platform === 'linux') {
+    fs.symlinkSync('/dev/full', devLink);
+    cases.push(['char device /dev/full', '/dev/full']);
+    cases.push(['char device /dev/null', '/dev/null']);
+    cases.push(['symlink to /dev/full', devLink]);
+    cases.push(['/proc path', '/proc/self/nope/rf.jsonl']);
+    cases.push(['/proc regular-looking file', '/proc/self/status']);
+    // Regular-looking and writable by its owner: only the /proc guard stops it.
+    cases.push(['/proc writable file', '/proc/self/comm']);
+  }
+  if (FIFO_OK) {
+    const fifo = path.join(dir, 'fifo.jsonl');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    cases.push(['FIFO', fifo]);
+  }
+  return { dir, regular, cases };
+}
+
+function listing(dir) {
+  const out = [];
+  const walk = (d) => {
+    for (const name of fs.readdirSync(d).sort()) {
+      const p = path.join(d, name);
+      const st = fs.lstatSync(p);
+      out.push(`${path.relative(dir, p)}|${st.isFile() ? st.size : st.isDirectory() ? 'dir' : 'other'}`);
+      if (st.isDirectory()) walk(p);
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+test('N4 (649): the host append refuses a char device, FIFO, /proc path, symlink, directory or missing file: false, no hang, nothing created or changed', { timeout: 60_000 }, () => {
+  const { dir, regular, cases } = pathologicalFiles();
+  const before = listing(dir);
+  for (const [label, file] of cases) {
+    const t = Date.now();
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false, label);
+    assert.ok(Date.now() - t < 5_000, `${label}: returns at once`);
+  }
+  assert.deepEqual(listing(dir), before, 'nothing created, nothing appended');
+  assert.equal(fs.readFileSync(regular, 'utf8'), 'gateway bytes\n', 'a symlink target is never written');
+});
+
+test('N4 (649): in the module, every pathological RECEIPT_FAILURES_FILE leaves the refusal byte-identical to an unset file', { timeout: 120_000 }, async () => {
+  const { dir, cases } = pathologicalFiles();
+  const before = listing(dir);
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  try {
+    const picks = SFA_SCENARIOS.filter(([code], i, all) => all.findIndex(([c]) => c === code) === i)
+      .filter(([code]) => ['usage', 'log_dir_env_unset', 'confirm_missing', 'write_mismatch', 'error'].includes(code));
+    assert.equal(picks.length, 5);
+    for (const [code, scenario] of picks) {
+      const none = await withFailureFile('none', scenario);
+      for (const [label, file] of cases) {
+        process.env.RECEIPT_FAILURES_FILE = file;
+        RF.resetReceiptFailuresForTests();
+        const r = await scenario();
+        assert.deepEqual(normalized(r), normalized(none.r), `${code} / ${label}`);
+      }
+    }
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+  assert.deepEqual(listing(dir), before, 'nothing created, nothing appended');
+});
+
+test('N4 (649): the script end to end: exit code, stdout and stderr byte-identical to an unset file for each pathological path, with no hang', { timeout: 300_000 }, async () => {
+  const s = await setup();
+  const { dir, cases } = pathologicalFiles();
+  const before = listing(dir);
+  const base = { ...process.env, ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid, RECEIPT_LOG_DIR: s.logDir };
+  delete base.NODE_ENV;
+  delete base.ISSUER_TEST_KEY;
+  delete base.RECEIPT_FAILURES_FILE;
+  for (const argv of [['--log-dir', s.logDir], ['--log-dir', s.logDir, '--list', s.file, '--list-sha256', s.hash, '--apply']]) {
+    const runScript = (extra) => spawnSync(process.execPath, [NEW_SCRIPT, ...argv], { env: { ...base, ...extra }, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL' });
+    const unset = runScript({});
+    assert.equal(unset.status, 1, unset.stderr);
+    for (const [label, file] of cases) {
+      const res = runScript({ RECEIPT_FAILURES_FILE: file });
+      assert.equal(res.signal, null, `${label}: not killed (no hang)`);
+      assert.deepEqual([res.status, res.stdout, res.stderr], [unset.status, unset.stdout, unset.stderr], `${argv.join(' ')} / ${label}`);
+    }
+  }
+  assert.deepEqual(listing(dir), before, 'nothing created, nothing appended');
+  assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
 });

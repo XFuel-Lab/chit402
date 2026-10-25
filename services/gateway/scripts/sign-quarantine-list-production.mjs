@@ -15,6 +15,12 @@
  * <log dir>/quarantine-list/v1.json and SIGNED_LIST_SHA256 for
  * pinQuarantineList. RECEIPT_LOG_DIR must be set, as the gateway sees it, and
  * --log-dir must name the same directory (log_dir_env_unset otherwise).
+ * Each refusal is also appended as one receipt-failure row
+ * quarantine_production_sign:<code>. Run this as the gateway's user, with
+ * RECEIPT_FAILURES_FILE set to the gateway's existing file, so the operator
+ * alert sees it. This tool never creates, reads or rotates that file: it
+ * appends only when the path is an existing regular file, and otherwise
+ * writes nothing and refuses exactly as before.
  */
 process.env.DOTENV_CONFIG_QUIET = 'true';
 const { runProductionListSigner } = await import('../src/quarantine-list-production.js');
