@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2452,
+  "total": 2455,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -126,7 +126,7 @@
     "test/public-attestation-s1s7.test.mjs": 11,
     "test/public-attestation-signer-lock.test.mjs": 6,
     "test/publish-append-race.test.mjs": 1,
-    "test/quarantine-list-production.test.mjs": 49,
+    "test/quarantine-list-production.test.mjs": 50,
     "test/receipt-anchor-clock.test.mjs": 9,
     "test/receipt-audit-path.test.mjs": 4,
     "test/receipt-check-signed-id.test.mjs": 2,
@@ -169,7 +169,7 @@
     "test/rfc8785.test.mjs": 6,
     "test/rolling-e2e.test.mjs": 2,
     "test/rolling-settlement.test.mjs": 22,
-    "test/run-tests-limits.test.mjs": 23,
+    "test/run-tests-limits.test.mjs": 25,
     "test/salt-store-prod-format.test.mjs": 2,
     "test/salt-store.test.mjs": 6,
     "test/session-act-approval-ttl.test.mjs": 5,
