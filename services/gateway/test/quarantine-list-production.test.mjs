@@ -540,7 +540,7 @@ async function withV1Read(fake, fn) {
   }
 }
 
-test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a rerun recovers to same', async () => {
+test('QP14: after v1 is linked, any failure says v1 was written (rerun advice except on write_mismatch); a rerun recovers to same', async () => {
   // Read-back differs from the signed bytes: write_mismatch, v1 on disk.
   let s = await setup();
   let signer = goodSigner();
@@ -552,7 +552,9 @@ test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a 
   assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash on a mismatch');
   let text = r.err.join('\n');
   assert.ok(/v1 was written/.test(text), text);
-  assert.ok(/Do not pin yet\. Rerun the same command/.test(text), text);
+  // D5 (644): write_mismatch is a refusal, so no rerun advice.
+  assert.ok(/Do not pin\. Inspect .*v1\.json before any rerun\./.test(text), text);
+  assert.ok(!/Rerun/.test(text), text);
   assert.ok(!/Nothing written/.test(text), text);
   // Read-back throws (EIO): the message says v1 WAS written, never "Nothing written".
   s = await setup();
@@ -1730,4 +1732,97 @@ test('N-6 (649): after a run with a test recorder, the default host recorder is 
   assert.deepEqual(restored.r.result, { ok: false, reason: 'usage' });
   assert.deepEqual(calls, ['usage'], 'the test recorder is not called again');
   assert.deepEqual(restored.rows.map((r) => r.reason), [`${PROD_PATH}:usage`], 'the default host recorder appended the row');
+});
+
+test('QP36 / N11 (644): a signer reporting a key type other than EC P-256 is refused before any signature, even with the allowlisted x/y', async () => {
+  for (const [label, jwk] of [
+    ['crv secp256k1', { kty: 'EC', crv: 'secp256k1' }],
+    ['kty OKP', { kty: 'OKP', crv: 'P-256' }],
+    ['kty RSA, no crv', { kty: 'RSA', crv: undefined }],
+  ]) {
+    const s = await setup();
+    const signer = goodSigner();
+    signer.publicJwk = { ...signer.publicJwk, ...jwk };
+    if (jwk.crv === undefined) delete signer.publicJwk.crv;
+    const r = await run(applyArgs(s), { signer });
+    assert.equal(r.result.reason, 'not_production_key', `${label}: ${r.err.join(' ')}`);
+    assert.equal(signer.calls.length, 0, `${label}: nothing signed`);
+    assert.ok(!fs.existsSync(path.join(listDirOf(s.logDir), 'v1.json')), `${label}: nothing written`);
+  }
+  // A getter on kty or crv is an accessor, refused like x/y.
+  const s = await setup();
+  const signer = goodSigner();
+  const pub = { ...signer.publicJwk };
+  Object.defineProperty(pub, 'crv', { get: () => 'P-256', enumerable: true });
+  signer.publicJwk = pub;
+  const r = await run(applyArgs(s), { signer });
+  assert.equal(r.result.reason, 'signer_accessor');
+  // Control: kty and crv absent still matches on x/y.
+  const s2 = await setup();
+  const bare = goodSigner();
+  bare.publicJwk = { x: bare.publicJwk.x, y: bare.publicJwk.y };
+  const ok = await run(applyArgs(s2), { signer: bare });
+  assert.equal(ok.result.state, 'written', ok.err.join(' '));
+});
+
+test('QP37 / D2 (644): the log directory turned into a symlink after the link is list_dir_changed, with no pin hash and no rerun advice', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const moved = `${s.logDir}-moved`;
+  const realLink = fs.linkSync;
+  fs.linkSync = function swapAfterLink(...args) {
+    const out = realLink.apply(this, args);
+    if (String(args[1]).endsWith(`${path.sep}v1.json`)) {
+      fs.renameSync(s.logDir, moved);
+      fs.symlinkSync(moved, s.logDir);
+    }
+    return out;
+  };
+  let r;
+  try {
+    r = await run(applyArgs(s), { signer });
+  } finally {
+    fs.linkSync = realLink;
+  }
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_changed', written: true }, r.err.join(' '));
+  assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash');
+  const text = r.err.join('\n');
+  assert.ok(/the log directory changed during the run/.test(text), text);
+  assert.ok(/Do not pin\. v1 was written, but not necessarily to /.test(text), text);
+  assert.ok(!/Rerun/.test(text), text);
+  // Control: the same run with no swap writes and prints the pin hash.
+  const c = await setup();
+  const ok = await run(applyArgs(c), { signer: goodSigner() });
+  assert.equal(ok.result.state, 'written', ok.err.join(' '));
+});
+
+test('QP38 / N13 (644): the no-op path prints the hash of the bytes the route serves (utf8 round trip), also when v1.json holds an invalid UTF-8 byte', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const w = await run(applyArgs(s), { signer });
+  assert.equal(w.result.state, 'written', w.err.join(' '));
+  const dir = listDirOf(s.logDir);
+  const file = path.join(dir, 'v1.json');
+  const good = fs.readFileSync(file, 'utf8');
+  // An extra field inside issuer_signature holding the raw byte 0xff. Decoded
+  // as utf8 it is U+FFFD, so the decoded text is still canonical and
+  // verifies, and the run is a no-op.
+  const { jcsRfc8785 } = await import('../src/offer-receipt.js');
+  const doc = JSON.parse(good);
+  const text = jcsRfc8785({ ...doc, issuer_signature: { ...doc.issuer_signature, zz: '\ufffd' } }) + (good.endsWith('\n') ? '\n' : '');
+  const raw0 = Buffer.from(text, 'utf8');
+  const at = raw0.indexOf(Buffer.from('"zz":"\ufffd"', 'utf8'));
+  assert.ok(at > 0, 'the field is in the canonical text');
+  const raw = Buffer.concat([raw0.subarray(0, at + 6), Buffer.from([0xff]), raw0.subarray(at + 9)]);
+  assert.equal(raw.toString('utf8'), text, 'the invalid byte decodes to U+FFFD');
+  fs.writeFileSync(file, raw);
+  const again = await run(applyArgs(s), { signer });
+  assert.equal(again.result.state, 'same', again.err.join(' '));
+  assert.equal(signer.calls.length, 1, 'no second signature');
+  const res = { headers: {}, set(k, v) { this.headers[k] = v; return this; }, type() { return this; }, status() { return this; }, send(b) { this.body = b; return this; }, json(b) { this.body = b; return this; } };
+  Q.writeQuarantineListResponse(res, dir, {});
+  const printed = again.out.find((l) => l.startsWith('SIGNED_LIST_SHA256=')).slice('SIGNED_LIST_SHA256='.length);
+  assert.equal(printed, res.headers['X-Chit-List-Hash'], 'the pin hash is the served hash');
+  assert.equal(printed, sha256(Buffer.from(fs.readFileSync(file, 'utf8'), 'utf8')));
+  assert.notEqual(printed, sha256(fs.readFileSync(file)), 'not the raw file bytes');
 });
