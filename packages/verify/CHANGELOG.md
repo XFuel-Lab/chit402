@@ -18,6 +18,31 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 - **Allowlist API narrowed.** `parseLegacyAllowlist` and `loadBundledLegacyAllowlist` are no longer exported, and `onLegacyAllowlist(fp)` checks the bundled list only. There is no unpinned path in the public API.
 - New verdict reasons with docs anchors: `version_window_closed`, `version_window_not_open`, `version_window_missing`, `log_time_after_window`, `log_time_unavailable`, `legacy_form_not_allowlisted`.
 
+### Added: EIP-712 fixed heads and payer bindings
+- **Fixed heads.** A tree head with `fixed_head` is checked against the signed JWS head under the head's key: schema, type string, domain (`Chit402TreeHead`, version 1, chainId 84532, receipt-log salt), exact message fields, and the P-256 signature over `sha256(0x1901 || domainSeparator || structHash)`. A match adds `log.fixed_head: "verified"`; a mismatch is `fixed_head_invalid` (exit 1). No `fixed_head`: no change.
+- **Payer bindings.** A receipt with `payer_binding` (status `signed`) is checked under the key that verified the receipt: domain (`Chit402ReceiptBinding`, chainId 84532), signature, kid, Base USDC asset id, and the same signed-claim gate as the issuer (string `payment.ref` on `base` or `eip155:8453`, Base USDC, signed gross amount), then the leaf from `row_hash` and the payer commitment opened with `payer_salt`. A mismatch is `payer_binding_invalid` (exit 1). Without `row_hash` or `payer_salt` it is reported as not checked and changes nothing. `verifyReceipt` adds `payer_binding` only when a signed binding is present.
+- New verdict reasons with docs anchors: `fixed_head_invalid`, `payer_binding_invalid`. Exit codes, flags (`--issuer-history`, `--json`) and the `xfuel-verify` bin are unchanged. Version not bumped in this change. `BUILD_DIGEST.txt` moved because `src/eip712.ts` is new and `src/index.ts`, `src/check-input.ts` and `src/verdict.ts` changed.
+- Tests: vectors signed by the issuer code under the synthetic test key, parity with the shared escrow vectors, the flag-off golden (sha256 36cd1a58f1c4b0a12dd080a2b54df1ab25c9feefb0d78e52e12ef7060abae139), and negatives for a forged binding, a wrong network, a wrong chainId and a non-string ref.
+
+### Notes: `trustedKids`
+- **`trustedKids` is a full trust root.** It replaces the production pin for the receipt signature, issuer history, tree heads and fixed heads, the epoch record and the anchor wallets. Unset means the production pin; `[]` trusts nothing. It must never come from the receipt being checked. The CLI never sets it.
+- The absence path (a receipt reported `not_in_tree` against the signed head, or a pre-log shell) now checks that head and its fixed head under the caller's `trustedKids`, as the inclusion path does. Before, it always used the production pin.
+
+### Fixed: non-receipt signed schemas
+- A signed payload whose schema is `chit402.quarantine_list`, `chit402.tree_head_eip712` or `chit402.receipt_binding_eip712` is refused as a receipt (`signed payload is not a receipt`), as `quarantine_ack` already was. `BUILD_DIGEST.txt` moved again (`src/index.ts`).
+- The schema check is now an allowlist: any signed schema in the `chit402` namespace other than exactly `chit402.foreign_payout.v1` is refused, including case, leading-space and separator variants.
+- A signed schema with any character outside printable ASCII (a control or format character such as a zero-width space, or a lookalike such as `chit402` followed by U+0130) is refused as a receipt before the allowlist is checked.
+
+### Fixed: review of the EIP-712 checks
+- **Public-attestation path.** A fixed head that does not match its signed head is now `fixed_head_invalid` (exit 1) there too. Before, it could still give `VERIFIED_PUBLIC`.
+- **Absence path.** A signed head whose fixed head does not match is not used for `NOT_IN_LOG`; the full path reports `fixed_head_invalid`.
+- **Full path pins.** The fetched log head is checked under the same trusted kids as the receipt. The CLI never sets them, so it is the production pin there, as before.
+- **Row hash for the binding.** The binding reads `row_hash` exactly as the log leaf does (`row_hash` and `book_chain.row_hash` must agree). A disagreement is `row_hash_mismatch` (exit 1 `payer_binding_invalid`).
+- **Unknown binding status.** A `payer_binding` whose status is not `signed`, `pending` or `missing` is reported as `not checked (status_unknown)`; the verdict does not change.
+- **JWKS labels.** A binding is checked under the JWKS key that verified the receipt even when the JWKS `kid` label is not the key's thumbprint.
+- Docs: how to check a binding copied from the owner view (`row_hash` sits beside `payer_binding`, not inside it).
+- Tests: the CLI wiring of `fixed_head_invalid` on both paths, against a loopback log and RPC; the pre-log shell test now reads a loopback stub instead of the production host. `BUILD_DIGEST.txt` moved (`src/check-input.ts`, `src/index.ts`).
+
 ### Fixed (from #621)
 - **The library verdict names `unsupported_version`.** For a receipt version this verifier does not support, `verifyReceipt(...).verdict.reason` is now `unsupported_version` instead of the generic `invalid`. `overall` stays `failed` and `verdict.exit_code` stays 1, as in 0.4.11.
 
@@ -301,7 +326,7 @@ Numbered 0.4.4, above the 0.4.3 anchor-finality release.
 ## 0.2.0 — Trusted keys only
 
 ### Security
-- **Embedded `issuer_jwk` is not a trust root.** A signature is valid only when the verifying key matches a JWKS entry by `kid` (file, `--jwks-url`, or `--fetch-jwks` from an allowlisted issuer host) or its RFC 7638 thumbprint equals a pinned trusted kid. The default offline pin is production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` (`--trusted-kid` / `trustedKids` overrides it). Anything else is `key untrusted`.
+- **Embedded `issuer_jwk` is not a trust root.** A signature is valid only when the verifying key matches a JWKS entry by `kid` (file, `--jwks-url`, or `--fetch-jwks` from an allowlisted issuer host) or its RFC 7638 thumbprint equals a pinned trusted kid. The default offline pin is production kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q` (`trustedKids` overrides it in the library; the `--trusted-kid` CLI flag of this release was removed in 0.4). Anything else is `key untrusted`.
 - **Facts come from verified JWS claims.** Amount, payer, payee, asset, model, and tx are not read from the unsigned outer `payment` / `caller_binding` copies. Mismatches are reported and fail verification.
 - **Base payer check confirms payee and asset** as well as payer and amount.
 - **Package exports** include `./dist/cli.js` and `./cli`, so `chit402-verify` can resolve the CLI (`ERR_PACKAGE_PATH_NOT_EXPORTED`).

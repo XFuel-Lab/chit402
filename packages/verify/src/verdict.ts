@@ -30,6 +30,18 @@ export interface VerdictLog {
   partial?: true;
   /** 0.4.10: the claimed chains this run did not check. */
   unchecked_anchors?: ('base' | 'solana')[];
+  /**
+   * Set only when the verified head carries an EIP-712 fixed head and it
+   * says the same as the JWS head under the same key.
+   */
+  fixed_head?: 'verified';
+}
+
+/** Payer binding next to the receipt (owner view). Absent when the receipt has none. */
+export interface VerdictPayerBinding {
+  checked: boolean;
+  valid: boolean;
+  reason: string | null;
 }
 
 export interface VerifyVerdict {
@@ -51,6 +63,8 @@ export interface VerifyVerdict {
     /** Public scope only: the payer is not part of the claim. */
     payer?: 'not_claimed';
   };
+  /** Present only when the receipt carries a signed payer binding. */
+  payer_binding?: VerdictPayerBinding;
   /** Present only on the public-attestation path. */
   scope?: 'public';
   public?: {
@@ -274,6 +288,18 @@ export function verdictCopy(reason: string | null, result: VerdictResult): { mes
   if (reason === 'typ_mismatch') {
     return {
       message: 'The signature is over a different document type, not a receipt.',
+      next_step: null,
+    };
+  }
+  if (reason === 'payer_binding_invalid') {
+    return {
+      message: 'The payer binding next to the receipt does not match what the issuer signed.',
+      next_step: null,
+    };
+  }
+  if (reason === 'fixed_head_invalid') {
+    return {
+      message: 'The EIP-712 fixed head does not match the signed tree head.',
       next_step: null,
     };
   }
@@ -703,6 +729,13 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
     lines.push('Details: https://chit402.com/docs/verify#verified_public');
   }
   for (const line of uncheckedAnchorLines(verdict)) lines.push(line);
+  if (verdict.log?.fixed_head === 'verified') lines.push('Fixed head (EIP-712): matches the signed tree head.');
+  if (verdict.payer_binding) {
+    const pb = verdict.payer_binding;
+    if (pb.valid) lines.push('Payer binding (EIP-712): matches the signed receipt.');
+    else if (pb.checked) lines.push(`Payer binding (EIP-712): does not match the signed receipt (${pb.reason}).`);
+    else lines.push(`Payer binding (EIP-712): not checked (${pb.reason}).`);
+  }
   if (verdict.reason) lines.push(`Details: https://chit402.com/docs/verify#${verdictDocAnchor(verdict.reason)}`);
   if (verdict.history.source === 'bundled' && verdict.history.as_of) {
     lines.push(`Issuer history: as of ${verdict.history.as_of}`);
@@ -780,4 +813,6 @@ export const VERDICT_DOC_ANCHORS = [
   'log_time_after_window',
   'log_time_unavailable',
   'legacy_form_not_allowlisted',
+  'payer_binding_invalid',
+  'fixed_head_invalid',
 ] as const;

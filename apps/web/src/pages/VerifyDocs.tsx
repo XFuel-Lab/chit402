@@ -25,6 +25,8 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'log_time_after_window', text: 'The receipt entered the public log after its receipt version closed. Exit 1.' },
   { id: 'log_time_unavailable', text: 'The receipt version has closed and the chain time of its log entry could not be read. Exit 2.' },
   { id: 'legacy_form_not_allowlisted', text: 'A receipt whose version is not signed, or with a detached signature, is accepted only by exact fingerprint on the bundled list. The list is empty. Exit 1.' },
+  { id: 'payer_binding_invalid', text: 'The receipt carries an EIP-712 payer binding that does not match the signed receipt (signature, domain, network, amount, leaf or payer commitment). Exit 1.' },
+  { id: 'fixed_head_invalid', text: 'The tree head carries an EIP-712 fixed head that does not match the signed head or its key. Exit 1.' },
   { id: 'issued_at_missing', text: 'The receipt has no issuance time, so the key window cannot be checked. Exit 1.' },
   { id: 'not_before_missing', text: 'The history entry has no not_before. Exit 1.' },
   { id: 'not_after_invalid', text: 'The history entry has a not_after that does not parse. Exit 1.' },
@@ -113,6 +115,18 @@ export default function VerifyDocs() {
             shipped in the package (as of 2026-10-14). <code>--json</code> prints the verdict. The payer
             check is on; there is no flag to skip it. Other flags, including <code>--issuer-history-file</code>
             and any argument after <code>--</code>, are removed.
+          </p>
+        </div>
+
+        <div className="docs-panel" id="payer-binding">
+          <h2>Payer binding from the owner view</h2>
+          <p>
+            The owner view returns <code>row_hash</code> at the top level of its body, beside{' '}
+            <code>payer_binding</code>, not inside it. A receipt with only <code>payer_binding</code> pasted in
+            prints <code>not checked (row_hash_missing)</code> and the verdict does not change. To check the
+            binding, copy both onto the receipt: <code>row_hash</code> and <code>payer_binding</code>. When the
+            receipt also has <code>book_chain.row_hash</code>, the two must be equal, as for the log leaf; if they
+            differ the result is <code>payer_binding_invalid</code> (exit 1).
           </p>
         </div>
 

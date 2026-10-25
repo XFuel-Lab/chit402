@@ -7,14 +7,16 @@
  * inclusion proof, and a signed payment. A holder signed by any other key
  * is not VERIFIED.
  */
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
+import http from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './tmp-dirs.mjs';
+import { offHost, loopbackGuardImport } from './loopback-guard.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
@@ -76,11 +78,56 @@ function removed(run, flag) {
   notVerified(run);
 }
 
+const env = { ...process.env, BASE_RPC_URL: 'http://127.0.0.1:9/', SOLANA_RPC_URL: 'http://127.0.0.1:9/' };
+
 function run(args) {
-  return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', timeout: 15000 });
+  const proc = spawnSync(process.execPath, ['--import', loopbackGuardImport, cli, ...args], { encoding: 'utf8', timeout: 15000, env });
+  assert.doesNotMatch(proc.stderr, /OFF_LOOPBACK/);
+  return proc;
 }
 
-test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIFIED', () => {
+// The shell's log lookups go to this loopback stub: not_in_tree for the
+// receipt, and a recorded production tree head (its signature still checks).
+const head = JSON.parse(readFileSync(new URL('./fixtures/public/tree-head-size3.json', import.meta.url), 'utf8'));
+const logGets = [];
+let server;
+let origin;
+before(async () => {
+  server = http.createServer((req, res) => {
+    const send = (status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    logGets.push(`${req.method} ${req.url}`);
+    if (req.method !== 'GET') return send(405, { error: 'method' });
+    if (/^\/v1\/receipts\/[^/]+\/inclusion/.test(req.url)) return send(404, { error: 'not_in_tree' });
+    if (req.url.startsWith('/v1/receipts/tree/head')) return send(200, head);
+    return send(404, { error: 'not_found' });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  origin = `http://127.0.0.1:${server.address().port}`;
+});
+after(() => server?.close());
+
+// Async, so the stub in this process can answer while the CLI runs.
+function runAsync(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', loopbackGuardImport, cli, ...args], { env });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), 15000);
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (status) => {
+      clearTimeout(timer);
+      assert.doesNotMatch(stderr, /OFF_LOOPBACK/);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
+test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIFIED', async () => {
   const holder = JSON.parse(readFileSync(holderPath, 'utf8'));
   const shell = shellFromHolder(holder);
   const raw = JSON.stringify(shell);
@@ -95,6 +142,9 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
   const dir = tempDir('chit-shell-');
   const shellPath = join(dir, 'shell.json');
   writeFileSync(shellPath, raw);
+  // Same shell, with its log host on loopback for the run that reads the log.
+  const loopShellPath = join(dir, 'shell-loopback.json');
+  writeFileSync(loopShellPath, JSON.stringify({ ...shell, verify_url: `${origin}/receipt/${shell.receipt_id}` }));
   const inclusion = inclusionFor(holder);
   const inclusionPath = join(dir, 'inclusion.json');
   const headPath = join(dir, 'head.json');
@@ -108,20 +158,25 @@ test('1ebc5616 shell is INCLUDED_SHELL and an unsigned fixture head is not VERIF
     issuer_jwk: { kty: 'EC', crv: 'P-256', x: 'attacker', y: 'attacker' },
   }));
 
-  const plain = run([shellPath]);
-  assert.notEqual(plain.status, 0, plain.stdout + plain.stderr);
+  // The log says not_in_tree under a signed head: NOT_IN_LOG, exit 1.
+  const plain = await runAsync([loopShellPath]);
+  assert.equal(plain.status, 1, plain.stdout + plain.stderr);
+  assert.ok(/^NOT_IN_LOG\n/.test(plain.stdout), plain.stdout);
   assert.doesNotMatch(plain.stdout, /kid_not_in_history/);
   assert.doesNotMatch(plain.stdout, /--issuer-history/);
-  if (plain.status === 1) {
-    assert.match(plain.stdout, /^NOT_IN_LOG\n/);
-  } else {
-    assert.equal(plain.status, 2, plain.stdout + plain.stderr);
-    assert.match(plain.stdout, /^COULD_NOT_CHECK\n/);
-    assert.match(plain.stdout, /The receipt could not be checked\./);
-    assert.doesNotMatch(plain.stdout, /invalid/i);
-    assert.match(plain.stdout, /signed_receipt_unavailable/);
-  }
   notVerified(plain);
+  assert.ok(logGets.some((line) => line.startsWith('GET /v1/receipts/tree/head')), logGets.join('\n'));
+
+  // The log cannot be read (nothing listens on the loopback port): COULD_NOT_CHECK, exit 2.
+  const shut = join(dir, 'shell-unreachable.json');
+  writeFileSync(shut, JSON.stringify({ ...shell, verify_url: `http://127.0.0.1:9/receipt/${shell.receipt_id}` }));
+  const unread = run([shut]);
+  assert.equal(unread.status, 2, unread.stdout + unread.stderr);
+  assert.ok(/^COULD_NOT_CHECK\n/.test(unread.stdout), unread.stdout);
+  assert.ok(/The receipt could not be checked\./.test(unread.stdout), unread.stdout);
+  assert.doesNotMatch(unread.stdout, /invalid/i);
+  assert.ok(/signed_receipt_unavailable/.test(unread.stdout), unread.stdout);
+  notVerified(unread);
 
   const accepted = run([shellPath, '--accept-shell']);
   removed(accepted, '--accept-shell');
@@ -211,4 +266,9 @@ test('a forged holder key is not VERIFIED, and a shell without inclusion is not 
   assert.equal(decorated.status, 1);
   assert.match(decorated.stderr, /removed in 0\.4: a shell is not a verified payment/);
   assert.doesNotMatch(decorated.stdout, /Overall:\s*VERIFIED/);
+});
+
+test('only the loopback stub was read, GET only, and no fetch left loopback', () => {
+  assert.deepEqual(offHost, [], `off-loopback fetches: ${offHost.join(', ')}`);
+  assert.ok(logGets.every((line) => line.startsWith('GET ')), logGets.join('\n'));
 });

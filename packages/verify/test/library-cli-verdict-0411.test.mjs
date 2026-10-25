@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertLibraryPass } from './library-pass.mjs';
+import { offHost, loopbackGuardImport } from './loopback-guard.mjs';
 import { tempDir } from './tmp-dirs.mjs';
 
 const lib = await import('../dist/index.js');
@@ -27,7 +28,8 @@ function runCli(doc) {
   const dir = tempDir('v0411-');
   const file = join(dir, 'receipt.json');
   writeFileSync(file, JSON.stringify(doc));
-  const proc = spawnSync(process.execPath, [cli, file, '--json'], { encoding: 'utf8', timeout: 20000 });
+  const proc = spawnSync(process.execPath, ['--import', loopbackGuardImport, cli, file, '--json'], { encoding: 'utf8', timeout: 20000 });
+  assert.doesNotMatch(proc.stderr, /OFF_LOOPBACK/);
   return { status: proc.status, json: JSON.parse(proc.stdout) };
 }
 
@@ -151,6 +153,14 @@ test('real receipt with its outer nullifier swapped does not report that nullifi
   });
 });
 
+// A pinned fixture asks for its issuer history. This file stays offline:
+// the read is answered as unreachable, the same as with no network.
+const historyAsked = [];
+const offlineFetch = async (url) => {
+  historyAsked.push(String(url));
+  throw new TypeError('offline in test');
+};
+
 function receiptFixtures() {
   const out = [];
   const walk = (dir) => {
@@ -176,13 +186,14 @@ test('overall and the shared verdict agree on every receipt fixture', async () =
   assert.ok(docs.length >= 5);
   for (const [name, doc] of docs) {
     for (const opts of [{}, { jwks: JWKS }]) {
-      const result = await verifyReceipt(doc, opts);
+      const result = await verifyReceipt(doc, { ...opts, fetchImpl: offlineFetch });
       const label = `${name}: exit ${result.verdict.exit_code} vs ${result.overall}`;
       assert.equal(result.verdict.exit_code === 0, result.overall === 'verified' || result.overall === 'verified_carried_forward', label);
       assert.equal(result.verdict.exit_code === 1, result.overall === 'failed', label);
       assert.equal(result.verdict.exit_code === 2, result.overall === 'partial', label);
     }
   }
+  assert.ok(historyAsked.every((url) => url.endsWith('/.well-known/issuer-history.json?version=1')), historyAsked.join('\n'));
 });
 
 test('the shared verdict maps unchecked checks to exit 2 and failures to exit 1', () => {
@@ -204,4 +215,8 @@ test('the shared verdict maps unchecked checks to exit 2 and failures to exit 1'
   assert.equal(verdictFromVerification(base, { ...ctx, failureReason: 'invalid' }).exit_code, 1);
   assert.equal(unsignedDocumentVerdict({ version: 'test' }).exit_code, 2);
   assert.equal(unsignedDocumentVerdict({ version: 'test', logInclusion: 'fail', anchor: 'pass', notInLog: true }).reason, 'not_in_log');
+});
+
+test('no fetch left loopback in this file', () => {
+  assert.deepEqual(offHost, [], `off-loopback fetches: ${offHost.join(', ')}`);
 });
