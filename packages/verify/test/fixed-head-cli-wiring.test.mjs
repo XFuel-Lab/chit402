@@ -15,7 +15,7 @@ const { PINNED_BASE_ANCHOR_WALLET } = await import('../dist/anchor-trust.js');
 const { jwkThumbprint } = await import('../dist/jws.js');
 const { jcsCanonicalize } = await import('../dist/jcs.js');
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
-const { checkReceiptInput } = await import('../dist/check-input.js');
+const { checkReceiptInput, freshPublicLog } = await import('../dist/check-input.js');
 const { humanVerdictLines } = await import('../dist/verdict.js');
 const E = await import('../dist/eip712.js');
 const { EPOCH1_FINAL_ROOT, EPOCH1_FINAL_SIZE, EPOCH1_GENESIS_DIGEST, EPOCH2_OPENING_ROOT } = await import('../dist/epoch.js');
@@ -45,6 +45,8 @@ const ROW = 'row-hash-fixed-head-wiring';
 // Holder receipt (full path) and public attestation share one log.
 const HOLDER_TASK = 'xfuel-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
 const PUBLIC_TASK = 'xfuel-0b1e2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+// Signed by the test key but not in the log: the absence path.
+const ABSENT_TASK = 'xfuel-9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
 
 const b64 = (v) => Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)).toString('base64url');
 const sha = (buf) => createHash('sha256').update(buf).digest();
@@ -196,6 +198,7 @@ before(async () => {
     world.gets.push(req.url);
     const inclusion = /^\/v1\/receipts\/([^/]+)\/inclusion/.exec(req.url);
     if (inclusion && inclusions[decodeURIComponent(inclusion[1])]) return send(200, inclusions[decodeURIComponent(inclusion[1])]);
+    if (inclusion && decodeURIComponent(inclusion[1]) === ABSENT_TASK) return send(404, { error: 'not_in_tree' });
     if (req.url.startsWith('/v1/receipts/tree/epoch')) return send(200, epochRecord);
     if (req.url.startsWith('/v1/receipts/tree/head')) {
       return send(200, world.fixedHead === undefined ? signedHead : { ...signedHead, fixed_head: world.fixedHead });
@@ -210,9 +213,9 @@ before(async () => {
 });
 after(() => server?.close());
 
-function holderReceipt() {
+function holderReceipt(task = HOLDER_TASK) {
   const claims = {
-    task_id: HOLDER_TASK,
+    task_id: task,
     payload_version: 6,
     iat: '2026-10-17T18:29:00.000Z',
     payment: {
@@ -226,7 +229,7 @@ function holderReceipt() {
     ...claims,
     // Unsigned, as on issued receipts: the log leaf binds it.
     book_chain: { row_hash: ROW },
-    verify_url: `${origin}/receipt/${HOLDER_TASK}`,
+    verify_url: `${origin}/receipt/${task}`,
     issuer_signature: { alg: 'ES256', jws: signCompact(key, header, JSON.stringify(claims)), kid: key.kid, issuer_jwk: key.publicJwk },
   };
 }
@@ -346,6 +349,45 @@ for (const [label, make] of [['forged', forged], ['stale', stale], ['wrong shape
     assert.notEqual(v.result, 'verified_public');
   });
 }
+
+test('absence: the signed head and its fixed head are judged under the caller pins (N4)', async () => {
+  const receipt = { verify_url: `${origin}/receipt/${ABSENT_TASK}`, task_id: ABSENT_TASK };
+  world.fixedHead = goodFixed;
+  // Caller pins trust the test key: a good head proves absence.
+  const pinned = await freshPublicLog(receipt, history, { trustedKids: [key.kid] });
+  assert.equal(pinned.logReason, 'not_in_log', JSON.stringify(pinned));
+  assert.equal(pinned.anchor, 'pass');
+  // Undefined is the production default, which does not trust the test key.
+  const prod = await freshPublicLog(receipt, history, {});
+  assert.notEqual(prod.logReason, 'not_in_log', JSON.stringify(prod));
+  assert.equal(prod.logInclusion, 'fail');
+  // [] trusts nothing.
+  const none = await freshPublicLog(receipt, history, { trustedKids: [] });
+  assert.notEqual(none.logReason, 'not_in_log', JSON.stringify(none));
+  assert.equal(none.logInclusion, 'fail');
+  // A bad fixed head under the caller pins is fixed_head_invalid.
+  world.fixedHead = forged();
+  const bad = await freshPublicLog(receipt, history, { trustedKids: [key.kid] });
+  assert.equal(bad.logReason, 'fixed_head_invalid', JSON.stringify(bad));
+  world.fixedHead = undefined;
+});
+
+test('full path absence: a receipt not in the log is NOT_IN_LOG under the caller pins', async () => {
+  const dir = tempDir('chit-fixed-absent-');
+  const file = join(dir, 'receipt.json');
+  writeFileSync(file, JSON.stringify(holderReceipt(ABSENT_TASK)));
+  for (const fixed of [undefined, goodFixed]) {
+    world.fixedHead = fixed;
+    const v = (await checkReceiptInput(file, opts())).verdict;
+    assert.equal(v.reason, 'not_in_log', JSON.stringify(v));
+    assert.equal(v.exit_code, 1);
+  }
+  world.fixedHead = stale();
+  const bad = (await checkReceiptInput(file, opts())).verdict;
+  assert.equal(bad.reason, 'fixed_head_invalid', JSON.stringify(bad));
+  assert.equal(bad.exit_code, 1);
+  world.fixedHead = undefined;
+});
 
 test('only the loopback log and RPC were read', () => {
   assert.ok(world.gets.length > 0);

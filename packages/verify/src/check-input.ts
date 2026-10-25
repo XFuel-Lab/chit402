@@ -196,9 +196,14 @@ function inclusionHeadUrl(
   return `${origin}/v1/receipts/tree/head?tree_size=${encodeURIComponent(String(size))}`;
 }
 
+/**
+ * Absence is judged under the caller's pins, like the inclusion path:
+ * undefined is the production default and [] trusts nothing.
+ */
 async function absenceAgainstSignedHead(
   origin: string,
   history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
 ): Promise<{ kind: 'not_in_log' } | { kind: 'unchecked' } | { kind: 'bad_head'; reason: string }> {
   try {
     const res = await fetchNoRedirect(`${origin}/v1/receipts/tree/head`, {
@@ -208,12 +213,12 @@ async function absenceAgainstSignedHead(
     if (!res.ok) return { kind: 'unchecked' };
     const head = await res.json() as AnchorHead;
     const trust = verifyTreeHeadTrust(head, {
-      trustedKids: DEFAULT_TRUSTED_ISSUER_KIDS,
+      trustedKids,
       issuerHistory: history,
     });
     if (trust.ok) {
       // A fixed head beside it must match too, as on the inclusion path.
-      const fixed = fixedHeadOutcome(head, history, DEFAULT_TRUSTED_ISSUER_KIDS);
+      const fixed = fixedHeadOutcome(head, history, trustedKids);
       if (fixed && !fixed.ok) return { kind: 'bad_head', reason: 'fixed_head_invalid' };
       return { kind: 'not_in_log' };
     }
@@ -247,6 +252,7 @@ function hardLogReason(result: AnchorWitnessResult): string | null {
 async function publicShellAbsence(
   receipt: { verify_url?: string; task_id?: string | null },
   history: IssuerHistoryDocument | null,
+  trustedKids: readonly string[],
 ): Promise<boolean> {
   try {
     const origin = new URL(String(receipt.verify_url)).origin;
@@ -259,7 +265,7 @@ async function publicShellAbsence(
     if (res.status !== 404) return false;
     const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
     if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return false;
-    const absence = await absenceAgainstSignedHead(origin, history);
+    const absence = await absenceAgainstSignedHead(origin, history, trustedKids);
     return absence.kind === 'not_in_log';
   } catch {
     return false;
@@ -355,7 +361,7 @@ export async function freshPublicLog(
     if (res.status === 404) {
       const body = await res.json().catch(() => ({})) as { error?: string; reason?: string };
       if (body.error !== 'not_in_tree' && body.reason !== 'not_in_tree') return missed;
-      const absence = await absenceAgainstSignedHead(origin, history);
+      const absence = await absenceAgainstSignedHead(origin, history, pins);
       if (absence.kind === 'not_in_log') {
         return { logInclusion: 'fail', anchor: 'pass', logReason: 'not_in_log', log: null };
       }
@@ -1012,7 +1018,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
     let logReason: string | null = 'signed_receipt_unavailable';
     if (shellInclusionAbsent(receipt)) {
       const logReceipt = shellLogReceipt(receipt, receiptOrigin, publicInput);
-      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document)) {
+      if (logReceipt && await publicShellAbsence(logReceipt, resolved.document, trustedKids)) {
         logInclusion = 'fail';
         anchorState = 'pass';
         logReason = 'not_in_log';
