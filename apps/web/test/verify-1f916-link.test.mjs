@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { createHash, createSign, generateKeyPairSync } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
-import { createServer as createHttpsServer } from 'node:https';
+import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 import { bookRowHash, classifyFetchError, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const execFileAsync = promisify(execFile);
 const positivePath = join(root, 'scripts/fixtures/1f916-link-verifier-fixture.json');
 const tamperedPath = join(root, 'scripts/fixtures/1f916-link-verifier-fixture-tampered.json');
 const specimen1Path = join(root, 'apps/web/public/specimens/1f916-link-1.json');
@@ -853,7 +855,18 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     assert.equal(classifyFetchError(timeout).message, 'timeout');
     assert.equal(classifyFetchError(new DOMException('aborted', 'AbortError')).transport, true);
     // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail, on the cause or on the error.
-    for (const code of ['CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_TLS_HANDSHAKE_TIMEOUT']) {
+    // M-2b: every X509 certificate error code in Node's tls docs, plus UNSPECIFIED.
+    const x509 = [
+      'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_CRL', 'UNABLE_TO_DECRYPT_CERT_SIGNATURE', 'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
+      'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY', 'CERT_SIGNATURE_FAILURE', 'CRL_SIGNATURE_FAILURE', 'CERT_NOT_YET_VALID',
+      'CERT_HAS_EXPIRED', 'CRL_NOT_YET_VALID', 'CRL_HAS_EXPIRED', 'ERROR_IN_CERT_NOT_BEFORE_FIELD',
+      'ERROR_IN_CERT_NOT_AFTER_FIELD', 'ERROR_IN_CRL_LAST_UPDATE_FIELD', 'ERROR_IN_CRL_NEXT_UPDATE_FIELD', 'OUT_OF_MEM',
+      'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'CERT_CHAIN_TOO_LONG', 'CERT_REVOKED', 'INVALID_CA', 'PATH_LENGTH_EXCEEDED',
+      'INVALID_PURPOSE', 'CERT_UNTRUSTED', 'CERT_REJECTED', 'HOSTNAME_MISMATCH',
+    ];
+    assert.equal(x509.length, 28);
+    for (const code of [...x509, 'UNSPECIFIED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_TLS_HANDSHAKE_TIMEOUT']) {
       for (const err of [fetchFailed(coded(code)), coded(code)]) {
         const got = classifyFetchError(err);
         assert.equal(got.transport, true, code);
@@ -987,6 +1000,92 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
         assert.equal(bad.code, 1, bad.out);
       } finally {
         await host.close();
+      }
+    });
+  }
+
+  // M-2b: chains a client rejects even though they lead to a trusted root. Each
+  // run makes a throwaway root, trusted only by this test, in a private temp dir.
+  //   leaf_signs_leaf: an ordinary CA:FALSE leaf signs a 1f916.ai cert (INVALID_PURPOSE).
+  //   bad_signature:   the root signs a 1f916.ai cert, then one signature byte flips (CERT_SIGNATURE_FAILURE).
+  //   ca_no_certsign:  a CA:TRUE intermediate whose keyUsage lacks keyCertSign (Node: UNSPECIFIED).
+  function throwawayChain(kind) {
+    const dir = mkdtempSync(join(tmpdir(), 'link-chain-'));
+    const key = (name) => ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', `${name}.key`];
+    const sign = (csr, ca, ext, serial, out) => openssl(['x509', '-req', '-in', csr, '-CA', `${ca}.pem`, '-CAkey', `${ca}.key`, '-set_serial', serial, '-days', '2', '-extfile', ext, '-extensions', 'v3', '-out', out], dir);
+    writeFileSync(join(dir, 'leaf.cnf'), '[v3]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nsubjectAltName=DNS:1f916.ai\n');
+    writeFileSync(join(dir, 'plain.cnf'), '[v3]\nbasicConstraints=critical,CA:FALSE\nsubjectAltName=DNS:other.test\n');
+    writeFileSync(join(dir, 'nocertsign.cnf'), '[v3]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature\n');
+    openssl(['req', '-x509', ...key('root'), '-out', 'root.pem', '-days', '2', '-subj', '/CN=throwaway-root', '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign'], dir);
+    openssl(['req', '-new', ...key('site'), '-out', 'site.csr', '-subj', '/CN=1f916.ai'], dir);
+    const read = (name) => readFileSync(join(dir, name), 'utf8');
+    let cert;
+    if (kind === 'bad_signature') {
+      sign('site.csr', 'root', 'leaf.cnf', '4', 'site.pem');
+      const der = Buffer.from(read('site.pem').replace(/-----[^-]+-----|\s/g, ''), 'base64');
+      der[der.length - 1] ^= 0x01;
+      cert = `-----BEGIN CERTIFICATE-----\n${der.toString('base64').match(/.{1,64}/g).join('\n')}\n-----END CERTIFICATE-----\n`;
+    } else {
+      openssl(['req', '-new', ...key('mid'), '-out', 'mid.csr', '-subj', '/CN=other.test'], dir);
+      sign('mid.csr', 'root', kind === 'leaf_signs_leaf' ? 'plain.cnf' : 'nocertsign.cnf', '2', 'mid.pem');
+      sign('site.csr', 'mid', 'leaf.cnf', '3', 'site.pem');
+      cert = read('site.pem') + read('mid.pem');
+    }
+    return { dir, key: readFileSync(join(dir, 'site.key')), cert, ca: readFileSync(join(dir, 'root.pem')), rootPath: join(dir, 'root.pem') };
+  }
+
+  /** A fetch-shaped GET over node:https that trusts only the throwaway root. Errors are wrapped the way undici wraps them. */
+  function httpsTrusting(port, ca) {
+    return (u) => new Promise((resolve, reject) => {
+      const req = httpsRequest({ host: '127.0.0.1', port, path: `${u.pathname}${u.search}`, servername: '1f916.ai', ca }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json: async () => JSON.parse(text) }));
+      });
+      req.on('error', (err) => reject(new TypeError('fetch failed', { cause: err })));
+      req.end();
+    });
+  }
+
+  for (const [kind, code] of [
+    ['leaf_signs_leaf', 'INVALID_PURPOSE'],
+    ['bad_signature', 'CERT_SIGNATURE_FAILURE'],
+    ['ca_no_certsign', 'UNSPECIFIED'],
+  ]) {
+    test(`M-2b 1f916.ai chain ${kind} is COULD_NOT_CHECK exit 2 (tls:${code}); a signed mismatch is still FAIL exit 1`, { timeout: 30000 }, async () => {
+      const chain = throwawayChain(kind);
+      const server = createHttpsServer({ key: chain.key, cert: chain.cert }, (req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }], events_has_more: false }));
+      });
+      await new Promise((done) => server.listen(0, '127.0.0.1', done));
+      const { port } = server.address();
+      try {
+        const record = httpsTrusting(port, chain.ca);
+        const ok = await runHarnessCli({ record });
+        assert.equal(ok.result.steps.entry_fingerprint.status, 'COULD_NOT_CHECK', formatReport(ok.result));
+        assert.equal(ok.result.steps.entry_fingerprint.detail, `record_fetch:tls:${code}`);
+        assert.equal(ok.result.verdict, 'COULD_NOT_CHECK');
+        assert.equal(ok.code, 2, ok.out);
+        const bad = await runHarnessCli({ claimed: TAMPERED, record });
+        assert.equal(bad.result.steps.entry_fingerprint.status, 'FAIL', formatReport(bad.result));
+        assert.ok(/fingerprint_mismatch .* jws .* claimed /.test(bad.result.steps.entry_fingerprint.detail), bad.result.steps.entry_fingerprint.detail);
+        assert.equal(bad.code, 1, bad.out);
+        // The same chain through the real global fetch (undici), in a child that
+        // trusts the throwaway root via NODE_EXTRA_CA_CERTS.
+        const scriptUrl = pathToFileURL(join(root, 'scripts/verify-1f916-link.mjs')).href;
+        const probe = `import { classifyFetchError } from ${JSON.stringify(scriptUrl)};
+try { await fetch('https://127.0.0.1:${port}/api/record/chit402'); console.log('no_error'); }
+catch (err) { const c = classifyFetchError(err); console.log(JSON.stringify({ transport: c.transport === true, message: c.message })); }`;
+        const env = { ...process.env, NODE_EXTRA_CA_CERTS: chain.rootPath };
+        delete env.NODE_TEST_CONTEXT;
+        const child = await execFileAsync(process.execPath, ['--input-type=module', '-e', probe], { env, timeout: 15000 });
+        assert.deepEqual(JSON.parse(child.stdout.trim()), { transport: true, message: `tls:${code}` }, child.stdout + child.stderr);
+      } finally {
+        server.closeAllConnections?.();
+        await new Promise((done) => server.close(done));
+        rmSync(chain.dir, { recursive: true, force: true });
       }
     });
   }
