@@ -1,11 +1,12 @@
 /**
- * Unsigned quarantine list v1 rebuilt from a receipt log, read only (no lock,
- * no journal write). Same rules as the build in scripts/sign-quarantine-list.mjs:
- * every quarantined head needs a quarantine_ack, its consistency proof runs
- * from its prefix size to the latest signed head of that epoch, and the
- * high-water head is the latest signed head per listed epoch. Used by the
- * production v1 signer to check that its input is exactly what the log
- * builds today. A test pins the two builds byte for byte.
+ * Quarantine list entries rebuilt from a receipt log, read only (no lock, no
+ * journal write). The one build shared by scripts/sign-quarantine-list.mjs
+ * (any version) and the production v1 signer: every quarantined head needs a
+ * quarantine_ack, its consistency proof runs from its prefix size to the
+ * latest signed head of that epoch, and the high-water head is the latest
+ * signed head per listed epoch. The production signer uses it to check that
+ * its input is exactly what the log builds today. A test pins the script's
+ * dry run and this build byte for byte.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,13 +19,14 @@ function buildRefused(message) {
 }
 
 /**
+ * Entries for every quarantined head in the log, in log order, and the
+ * latest signed head of an epoch. Throws code `quarantine_list_build`.
  * @param {string} logDir
  * @param {{ ReceiptMerkleTree?: Function }} [deps]
- * @returns {Promise<object>} unsigned v1 document
+ * @returns {Promise<{ entries: object[], maxSignedHead: (epochNo: number) => object|null }>}
  */
-export async function buildUnsignedV1FromLog(logDir, deps = {}) {
+export async function quarantineEntriesFromLog(logDir, deps = {}) {
   const ReceiptMerkleTree = deps.ReceiptMerkleTree || (await import('./receipt-merkle.js')).ReceiptMerkleTree;
-  if (readQuarantineList(quarantineListDir(logDir))) throw buildRefused('a list version already exists; this build is v1 only');
   const tree = new ReceiptMerkleTree();
   tree.load(logDir);
 
@@ -66,10 +68,25 @@ export async function buildUnsignedV1FromLog(logDir, deps = {}) {
       quarantine_ack_jws: ack,
     });
   }
+  return { entries, maxSignedHead };
+}
+
+/** The high-water head (latest signed head) of each epoch the entries list. */
+export function highWaterOf(entries, maxSignedHead) {
   const epochs = [...new Set(entries.map((e) => e.epoch))].sort((a, b) => a - b);
-  const highWater = epochs.map((epochNo) => {
+  return epochs.map((epochNo) => {
     const h = maxSignedHead(epochNo);
     return { epoch: epochNo, tree_size: h.tree_size, root: h.root };
   });
-  return buildQuarantineList({ entries, highWater, prevBytes: null });
+}
+
+/**
+ * @param {string} logDir
+ * @param {{ ReceiptMerkleTree?: Function }} [deps]
+ * @returns {Promise<object>} unsigned v1 document
+ */
+export async function buildUnsignedV1FromLog(logDir, deps = {}) {
+  if (readQuarantineList(quarantineListDir(logDir))) throw buildRefused('a list version already exists; this build is v1 only');
+  const { entries, maxSignedHead } = await quarantineEntriesFromLog(logDir, deps);
+  return buildQuarantineList({ entries, highWater: highWaterOf(entries, maxSignedHead), prevBytes: null });
 }
