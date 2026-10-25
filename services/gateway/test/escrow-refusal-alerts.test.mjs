@@ -412,7 +412,9 @@ test('payer binding: leaf_mismatch, leaf_conflict on enqueue and a crashed job (
   await tree.appendReceipt('xfuel-alert-leaf', ROW(50), { publish: false });
   worker.enqueueAppended({ taskId: 'xfuel-alert-leaf', rowHash: ROW(50), leafHash: leafHashOf('xfuel-alert-leaf', ROW(999)) });
   await appendAndEnqueue(worker, tree, 'xfuel-alert-crash', ROW(51));
-  assert.deepEqual(await worker.tick(), ['failed', 'error']);
+  // Both jobs can share one created_at millisecond; the store then lists them
+  // in directory order, so compare the results as a set.
+  assert.deepEqual((await worker.tick()).sort(), ['error', 'failed']);
   assertAlert('payer_binding', 'leaf_mismatch');
   assertAlert('payer_binding', 'internal');
   // Enqueue refusal: the store already holds another leaf for the task.
