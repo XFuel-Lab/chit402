@@ -159,7 +159,7 @@ function signEs256(privateKey, kid, payload) {
   return `${header}.${body}.${sig}`;
 }
 
-function foreignPayoutHarness() {
+function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' });
   const kid = createHash('sha256').update(JSON.stringify({
@@ -200,7 +200,7 @@ function foreignPayoutHarness() {
       schema: 'chit402.agent_record_entry.v0',
       signed: false,
       registry: '1f916',
-      fingerprint: FINGERPRINT,
+      fingerprint: signedFingerprint,
       fingerprint_alg: '1f916-entry-hash',
     },
   };
@@ -316,6 +316,21 @@ test('a tampered entry fingerprint fails only that step on a foreign-ingest payo
   assert.equal(result.steps.entry_fingerprint.status, 'FAIL');
   assert.match(result.steps.entry_fingerprint.detail, /fingerprint_mismatch/);
   assert.equal(result.verdict, 'FAIL');
+});
+
+test('N-6 an uppercase signed fingerprint matches its lowercase claim and still catches a mismatch', async () => {
+  const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: FINGERPRINT.toUpperCase() });
+  const ok = await verifyLink(specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl });
+  assert.equal(ok.verdict, 'PASS', formatReport(ok));
+  let recordFetches = 0;
+  const counting = async (url, init) => {
+    if (String(url).includes('1f916.ai')) recordFetches += 1;
+    return fetchImpl(url, init);
+  };
+  const bad = await verifyLink(specimen(TAMPERED), { rpcUrl: 'https://rpc.test/base', fetchImpl: counting });
+  assert.equal(bad.steps.entry_fingerprint.status, 'FAIL', formatReport(bad));
+  assert.ok(/ jws .* claimed /.test(bad.steps.entry_fingerprint.detail), bad.steps.entry_fingerprint.detail);
+  assert.equal(recordFetches, 0, 'a signed mismatch fails before the 1f916.ai fetch');
 });
 
 test('the public unsigned receipt shell fails closed with a clear reason, not a verify_url mismatch', async () => {
