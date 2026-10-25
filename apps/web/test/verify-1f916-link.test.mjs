@@ -688,6 +688,50 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     });
   }
 
+  // M-1: the signed JWS binds fingerprint A and the specimen claims B. That is
+  // FAIL exit 1 whatever 1f916.ai does, including when it is down.
+  for (const [label, mode] of [['answers', 'up'], ['HTTP 502', '502'], ['refused', 'refused'], ['timeout', 'hang']]) {
+    test(`M-1 signed fingerprint contradicts the claim, 1f916.ai ${label}: FAIL exit 1`, { timeout: 10000 }, async () => {
+      const { fetchImpl, specimen } = foreignPayoutHarness();
+      const lb = mode === 'up' ? null : await loopback({ '1f916.ai': mode });
+      const claimed = specimen(TAMPERED);
+      const wrapped = async (url, init) => {
+        const u = new URL(String(url));
+        if (u.host === '1f916.ai' && lb) return lb.forward(url, init);
+        if (u.host === 'www.chit402.com') return { ok: true, status: 200, json: async () => claimed };
+        return fetchImpl(url, init);
+      };
+      try {
+        const result = await verifyLink(claimed, { fetchImpl: wrapped, rpcUrl: 'https://rpc.test/base', timeoutMs: 300 });
+        for (const name of ['fetch_receipt', 'issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+          assert.equal(result.steps[name].status, 'PASS', `${name}: ${formatReport(result)}`);
+        }
+        assert.equal(result.steps.entry_fingerprint.status, 'FAIL', formatReport(result));
+        assert.ok(/fingerprint_mismatch/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
+        assert.equal(result.verdict, 'FAIL', formatReport(result));
+        const lines = [];
+        const prevRpc = process.env.BASE_RPC_URL;
+        process.env.BASE_RPC_URL = 'https://rpc.test/base';
+        let code;
+        try {
+          code = await runCli(['https://www.chit402.com/specimens/1f916-link-1.json'], {
+            fetchImpl: wrapped,
+            timeoutMs: 300,
+            log: (line) => lines.push(line),
+            error: () => {},
+          });
+        } finally {
+          if (prevRpc === undefined) delete process.env.BASE_RPC_URL;
+          else process.env.BASE_RPC_URL = prevRpc;
+        }
+        assert.equal(code, 1, lines.join('\n'));
+        assert.ok(/^VERDICT FAIL$/m.test(lines.join('\n')), lines.join('\n'));
+      } finally {
+        await lb?.close();
+      }
+    });
+  }
+
   const specimenUrl = 'https://www.chit402.com/specimens/1f916-link-1.json';
   for (const [label, mode, code, verdict] of [
     ['HTTP 500', '500', 2, 'COULD_NOT_CHECK'],

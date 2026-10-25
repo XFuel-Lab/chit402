@@ -601,6 +601,12 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, t
   }
   if (!Number.isInteger(eventId) || eventId < 1) return fail('entry.event_id_invalid');
   if (entry.log !== 'identity_events') return fail('entry.log must be identity_events');
+  // The issuer's signed JWS already binds a fingerprint. A claimed value that
+  // contradicts it is FAIL before any 1f916.ai fetch, so a record host outage
+  // cannot turn a provable mismatch into COULD_NOT_CHECK.
+  if (signedFingerprint && String(signedFingerprint).toLowerCase() !== fingerprint) {
+    return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} claimed ${fingerprint}`);
+  }
 
   let found = null;
   let since = null;
