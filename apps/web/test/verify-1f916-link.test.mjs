@@ -333,6 +333,26 @@ test('N-6 an uppercase signed fingerprint matches its lowercase claim and still 
   assert.equal(recordFetches, 0, 'a signed mismatch fails before the 1f916.ai fetch');
 });
 
+test('N-8 an empty or malformed signed fingerprint is FAIL before the record fetch, not absent', async () => {
+  for (const [label, signed] of [['empty string', ''], ['63 hex', FINGERPRINT.slice(1)], ['number', 7]]) {
+    const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: signed });
+    let recordFetches = 0;
+    const counting = async (url, init) => {
+      if (String(url).includes('1f916.ai')) recordFetches += 1;
+      return fetchImpl(url, init);
+    };
+    const result = await verifyLink(specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl: counting });
+    assert.equal(result.steps.issuer_signature.status, 'PASS', `${label}: ${formatReport(result)}`);
+    assert.equal(result.steps.entry_fingerprint.status, 'FAIL', `${label}: ${formatReport(result)}`);
+    assert.ok(/^signed_fingerprint_malformed:/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
+    assert.equal(result.verdict, 'FAIL');
+    assert.equal(recordFetches, 0, label);
+  }
+  const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: null });
+  const absent = await verifyLink(specimen(FINGERPRINT), { rpcUrl: 'https://rpc.test/base', fetchImpl });
+  assert.equal(absent.verdict, 'PASS', `a null signed fingerprint is absent: ${formatReport(absent)}`);
+});
+
 test('the public unsigned receipt shell fails closed with a clear reason, not a verify_url mismatch', async () => {
   const fetchImpl = async (url) => {
     const target = String(url);

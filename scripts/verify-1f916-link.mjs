@@ -406,7 +406,7 @@ function settlementFromIssuerClaims(claims, receipt) {
     }
     return {
       ok: true,
-      fingerprint: claims.agent_record_entry?.fingerprint || null,
+      fingerprint: claims.agent_record_entry?.fingerprint ?? null,
       settlement: {
         ref: claims.payment_ref,
         gross_amount: claims.amount,
@@ -427,7 +427,7 @@ function settlementFromIssuerClaims(claims, receipt) {
   }
   return {
     ok: true,
-    fingerprint: claims?.agent_record_entry?.fingerprint || null,
+    fingerprint: claims?.agent_record_entry?.fingerprint ?? null,
     settlement: {
       ref: claims.payment.ref,
       gross_amount: claims.payment.gross_amount,
@@ -737,6 +737,12 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, t
   // The issuer's signed JWS already binds a fingerprint. A claimed value that
   // contradicts it is FAIL before any 1f916.ai fetch, so a record host outage
   // cannot turn a provable mismatch into COULD_NOT_CHECK.
+  // A signed fingerprint that is present but empty or not 64 hex characters is
+  // malformed, not absent.
+  if (signedFingerprint != null
+    && (typeof signedFingerprint !== 'string' || !/^[0-9a-fA-F]{64}$/.test(signedFingerprint))) {
+    return fail(`signed_fingerprint_malformed:${JSON.stringify(signedFingerprint)}`);
+  }
   if (signedFingerprint && String(signedFingerprint).toLowerCase() !== fingerprint) {
     return fail(`fingerprint_mismatch event ${eventId} jws ${signedFingerprint} claimed ${fingerprint}`);
   }
