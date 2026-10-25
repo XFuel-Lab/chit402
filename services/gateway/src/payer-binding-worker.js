@@ -22,7 +22,10 @@
  * `missing/kid_mismatch`, never as signed.
  *
  * Operator alerts: every refusal also writes a receipt-failure row
- * `payer_binding:<reason>` (code only, no task id). Skips for a receipt that
+ * `payer_binding:<reason>` (code only, no task id), including
+ * `payer_binding:kid_mismatch` when the active signer is not the receipt
+ * key. The read-time `missing/kid_mismatch` in the owner view writes no
+ * row. Skips for a receipt that
  * is not a Base mainnet USDC paid receipt (no_payer, no_payment, network,
  * asset, no_payment_ref) are counted only, with no row (receipt-failures.js).
  * `capped` (binding_cap backpressure) is not a refusal and raises nothing. A retried reason is raised

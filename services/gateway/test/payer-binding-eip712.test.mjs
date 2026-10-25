@@ -27,6 +27,10 @@ process.env.OWNER_VIEW_FETCH_MAX = '8000';
 process.env.OWNER_VIEW_CHALLENGE_MAX = '800';
 process.env.OWNER_VIEW_NOT_FOUND_BUDGET_MS = '8';
 process.env.OWNER_VIEW_AUDIENCES = '127.0.0.1';
+// B14 re-signs under a rotated key and then signs under KEY again, which
+// rewrites issuer history. scripts/run-tests.mjs sets this flag; setting it
+// here lets a direct node --test run pass too.
+process.env.ISSUER_HISTORY_TEST_ROTATION = 'true';
 delete process.env.RECEIPT_PAYER_BINDING_EIP712;
 delete process.env.RECEIPT_FIXED_HEAD_EIP712;
 delete process.env.RECEIPT_LOG_ACCEPT_FRESH_GENESIS;
