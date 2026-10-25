@@ -64,7 +64,7 @@ The live snapshot is version 2. Pass that file, or pass no file. `?version=1` is
 
 ## Retire or revoke
 
-The live key signs one new history entry. The sealed prefix is unchanged. The script does not listen. Two people confirm: `ISSUER_HISTORY_OPERATOR` and `ISSUER_HISTORY_APPROVER` must both be set and must differ, and `--confirm YES` is required.
+The live key signs one new history entry. The sealed prefix is unchanged. Since the KMS cutover the gateway environment has no `ISSUER_PRIVATE_KEY`. This recipe signs with the environment key, so it needs that key restored from the offline backup described in `docs/ops/issuer-kms.md`, or a retire path that signs through the KMS. The script does not listen. Two people confirm: `ISSUER_HISTORY_OPERATOR` and `ISSUER_HISTORY_APPROVER` must both be set and must differ, and `--confirm YES` is required.
 
 ```bash
 cd services/gateway

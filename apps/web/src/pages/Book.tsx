@@ -1138,12 +1138,12 @@ export default function Book() {
             </p>
             <p>
               <strong>What a receipt proves.</strong> {productName} signed the hub, the model, and
-              the amount. The signature is ES256. The <code>kid</code> is the one pinned on{' '}
+              the amount. The signature is ES256. The <code>kid</code> is the one listed on{' '}
               <Link to="/trust">/trust</Link>.
             </p>
             <p>
               <strong>What it does not prove.</strong> The issuer signature does not by itself prove
-              the USDC transfer. Check the receipt with{' '}
+              the USDC transfer. Check a receipt with <code>npx chit402-verify</code> and its URL, for example{' '}
               <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
               The on-chain check is part of that command. On this receipt it prints VERIFIED_PUBLIC
               and exits 0. The payer is not claimed. It does not prove the model computed the answer.

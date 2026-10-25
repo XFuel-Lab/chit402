@@ -765,3 +765,22 @@ test('middleware ledes drop the old cost-plus phrase', () => {
   assert.doesNotMatch(middleware, /cost-plus, quoted, receipted/i);
   assert.match(middleware, /You see the price first, it\\'s based on our cost, and you pay in USDC on Base and Solana\./);
 });
+
+test('#650 follow-up: docs index and book copy stay on chit402-verify 0.4.11 wording', () => {
+  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
+  const trust = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
+  const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');
+  const link = readFileSync(join(root, 'src/pages/OneF916Link.tsx'), 'utf8');
+  assert.ok(/chit402-verify 0\.4\.11 checks that anchor/.test(docs), 'Docs index names chit402-verify 0.4.11 for the anchor check');
+  assert.ok(!/<code>--rpc<\/code>/.test(docs), 'Docs index has no --rpc flag');
+  assert.ok(!/@xfuel\/verify<\/code> 0\.3\.1/.test(docs), 'Docs index has no @xfuel/verify 0.3.1 line');
+  assert.ok(!/one pinned on/.test(book), 'Book does not say the kid is pinned on /trust');
+  assert.ok(/Check a receipt with <code>npx chit402-verify<\/code> and its URL/.test(book), 'Book shows the general command form');
+  assert.ok(/signs\s+the history head/.test(trust), 'Trust says history head');
+  assert.ok(/signs the history head/.test(receipt), 'Receipt check says history head');
+  assert.ok(/ships it\./.test(trust), 'Trust says a new kid needs a verifier release');
+  assert.ok(!/already pinned/.test(link), '1F916 page has no pinning wording');
+  assert.ok(/<code>npx chit402-verify<\/code> does not\s+compare the fingerprint/.test(link), '1F916 page names the command that skips the fingerprint');
+  assert.ok(/A network error \(no answer, timeout, HTTP 5xx\) is also exit 2\./.test(link), '1F916 page states the transport exit code');
+});
