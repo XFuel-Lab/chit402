@@ -363,7 +363,7 @@ test('absence: the signed head and its fixed head are judged under the caller pi
   assert.equal(prod.logInclusion, 'fail');
   // [] trusts nothing.
   const none = await freshPublicLog(receipt, history, { trustedKids: [] });
-  assert.notEqual(none.logReason, 'not_in_log', JSON.stringify(none));
+  assert.equal(none.logReason, 'issuer_history_invalid', JSON.stringify(none));
   assert.equal(none.logInclusion, 'fail');
   // A bad fixed head under the caller pins is fixed_head_invalid.
   world.fixedHead = forged();

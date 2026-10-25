@@ -149,7 +149,7 @@ test('absence under the caller pins: unset is the production pin, [] trusts noth
   const prod = await freshPublicLog(receipt, history, {});
   assert.equal(prod.logReason, 'not_in_log', JSON.stringify(prod));
   const none = await freshPublicLog(receipt, history, { trustedKids: [] });
-  assert.notEqual(none.logReason, 'not_in_log', JSON.stringify(none));
+  assert.equal(none.logReason, 'issuer_history_invalid', JSON.stringify(none));
   assert.equal(none.logInclusion, 'fail');
   // The shell path too: the same pre-log shell is NOT_IN_LOG only under a pin that trusts the head.
   stub.doc = shell;
@@ -157,8 +157,9 @@ test('absence under the caller pins: unset is the production pin, [] trusts noth
   const shellProd = (await checkReceiptInput(url, {})).verdict;
   assert.equal(shellProd.reason, 'not_in_log', JSON.stringify(shellProd));
   const shellNone = (await checkReceiptInput(url, { trustedKids: [] })).verdict;
-  assert.notEqual(shellNone.reason, 'not_in_log', JSON.stringify(shellNone));
-  assert.notEqual(shellNone.exit_code, 0);
+  // N-E2 (646): pinned, so an accept-any regression with some third reason fails here.
+  assert.equal(shellNone.reason, 'signed_receipt_unavailable', JSON.stringify(shellNone));
+  assert.equal(shellNone.exit_code, 2);
 });
 
 test('pre-log shell: only the loopback stub was read, GET only', () => {

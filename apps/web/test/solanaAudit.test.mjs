@@ -1458,8 +1458,10 @@ test('A22 CSV preamble records the Solana query and scan flags', () => {
 
 test('A23 Node 20 and 22 run the web tests offline, and Base constants stay put', () => {
   const workflow = readFileSync(join(repo, '.github/workflows/test.yml'), 'utf8');
-  assert.match(workflow, /node: \['20', '22'\]/);
-  assert.match(workflow, /unshare -rn npm test/);
+  assert.ok(/node: \['20', '22'\]/.test(workflow), 'web tests must run on Node 20 and 22');
+  // The web tests run with no network; only loopback is brought up (local test servers, #650 S5).
+  const offlineRun = /unshare -rn sh -c 'ip link set lo up && npm test'/;
+  assert.ok(offlineRun.test(workflow), 'web tests must run under unshare -rn with only loopback up');
   assert.equal(AUDIT_WINDOW_BLOCKS, 302400);
   assert.equal(AUDIT_CHUNK_BLOCKS, 500);
   const note = buildSpendAuditReport({

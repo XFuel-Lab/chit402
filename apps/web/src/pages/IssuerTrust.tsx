@@ -82,12 +82,13 @@ export default function IssuerTrust() {
           <h2>Rotation policy</h2>
           <ol style={styles.list}>
             <li>
-              <strong>New keys get a new <code>kid</code>.</strong> A retired thumbprint is never reused.
+              <strong>New keys get a new <code>kid</code>.</strong> A retired thumbprint is never reused. A new kid
+              verifies once a <code>chit402-verify</code> release ships it.
             </li>
             <li>
               <strong>Issuer history is append-only.</strong> Each entry records the public JWK,{' '}
               <code>not_before</code>, <code>not_after</code>, and <code>status</code>. The current key signs
-              the head.
+              the history head.
             </li>
             <li>
               <strong>In-receipt <code>issuer_jwk</code> is not an independent trust root.</strong> It documents

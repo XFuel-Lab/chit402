@@ -19,11 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgDir = path.resolve(__dirname, '..');
 
 // Build TypeScript before importing
-try {
-  execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
-} catch {
-  // Build might fail if deps not installed; skip in CI
-}
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 // Import from built dist
 const {

@@ -540,7 +540,7 @@ async function withV1Read(fake, fn) {
   }
 }
 
-test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a rerun recovers to same', async () => {
+test('QP14: after v1 is linked, any failure says v1 was written (rerun advice except on write_mismatch); a rerun recovers to same', async () => {
   // Read-back differs from the signed bytes: write_mismatch, v1 on disk.
   let s = await setup();
   let signer = goodSigner();
@@ -552,7 +552,9 @@ test('QP14: after v1 is linked, any failure says v1 was written and to rerun; a 
   assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash on a mismatch');
   let text = r.err.join('\n');
   assert.ok(/v1 was written/.test(text), text);
-  assert.ok(/Do not pin yet\. Rerun the same command/.test(text), text);
+  // D5 (644): write_mismatch is a refusal, so no rerun advice.
+  assert.ok(/Do not pin\. Inspect .*v1\.json before any rerun\./.test(text), text);
+  assert.ok(!/Rerun/.test(text), text);
   assert.ok(!/Nothing written/.test(text), text);
   // Read-back throws (EIO): the message says v1 WAS written, never "Nothing written".
   s = await setup();
@@ -1402,7 +1404,7 @@ test('QP34 / SF-1: the host append writes the gateway\'s own row, only to an exi
   const text = fs.readFileSync(file, 'utf8');
   assert.ok(text.startsWith(prior), 'prior bytes untouched');
   const added = text.slice(prior.length);
-  assert.equal(added, `${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
+  assert.equal(added, `\n${JSON.stringify({ time: new Date(at).toISOString(), network: null, stage: 'sign', reason: `${PROD_PATH}:usage`, tx: null, outcome: 'refused', request_id: null })}\n`);
   // An unknown code is `other`; an unknown path writes nothing.
   assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'free text /tmp/x' }, { file, now }), true);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()).reason, `${PROD_PATH}:other`);
@@ -1502,6 +1504,10 @@ function pathologicalFiles() {
     cases.push(['/proc regular-looking file', '/proc/self/status']);
     // Regular-looking and writable by its owner: only the /proc guard stops it.
     cases.push(['/proc writable file', '/proc/self/comm']);
+    // N-1 (649): the path is not under /proc, but its real parent is.
+    const pp = path.join(dir, 'pp');
+    fs.symlinkSync('/proc/self', pp);
+    cases.push(['symlinked parent to /proc/self, then comm', path.join(pp, 'comm')]);
   }
   if (FIFO_OK) {
     const fifo = path.join(dir, 'fifo.jsonl');
@@ -1582,4 +1588,241 @@ test('N4 (649): the script end to end: exit code, stdout and stderr byte-identic
   }
   assert.deepEqual(listing(dir), before, 'nothing created, nothing appended');
   assert.equal(fs.existsSync(listDirOf(s.logDir)), false);
+});
+
+// N-1 (649): behavioural tests for the host append's race guards.
+// Each hook runs once, right after the module's own lstat of the target.
+function hookLstatOnce(after) {
+  const original = fs.lstatSync;
+  let fired = false;
+  fs.lstatSync = function hooked(p, ...rest) {
+    const st = original.call(fs, p, ...rest);
+    if (!fired) {
+      fired = true;
+      after(p);
+    }
+    return st;
+  };
+  return () => { fs.lstatSync = original; };
+}
+
+test('B-R2 (649 N-1): a file unlinked between lstat and open is not recreated', () => {
+  const dir = tmp('qlprod-br2-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, '');
+  const restore = hookLstatOnce(() => fs.unlinkSync(file));
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    restore();
+  }
+  assert.equal(fs.existsSync(file), false, 'no O_CREAT: the file is not recreated');
+});
+
+test('B-R6 (649 N-1): a regular file swapped in after lstat gets nothing (dev/ino recheck)', () => {
+  const dir = tmp('qlprod-br6-');
+  const file = path.join(dir, 'rf.jsonl');
+  const other = path.join(dir, 'other.jsonl');
+  fs.writeFileSync(file, 'gateway\n');
+  fs.writeFileSync(other, 'someone else\n');
+  const restore = hookLstatOnce(() => fs.renameSync(other, file));
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    restore();
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), 'someone else\n', 'the swapped-in file is unchanged');
+});
+
+test('B-R8 (649 N-1): a FIFO swapped in after lstat does not block (O_NONBLOCK)', { skip: !FIFO_OK && 'mkfifo not available', timeout: 30_000 }, () => {
+  const dir = tmp('qlprod-br8-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, '');
+  const mod = path.join(here, '..', 'src', 'receipt-failure-host-append.js');
+  const script = `
+    import fs from 'node:fs';
+    import { spawnSync } from 'node:child_process';
+    const file = ${JSON.stringify(file)};
+    const original = fs.lstatSync;
+    let fired = false;
+    fs.lstatSync = function hooked(p, ...rest) {
+      const st = original.call(fs, p, ...rest);
+      if (!fired) { fired = true; fs.unlinkSync(file); spawnSync('mkfifo', [file]); }
+      return st;
+    };
+    const { appendHostEscrowRefusal } = await import(${JSON.stringify(pathToFileURLString(mod))});
+    process.stdout.write('RESULT=' + String(appendHostEscrowRefusal({ path: 'quarantine_production_sign', reason: 'usage' }, { file })));
+  `;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 5_000 });
+  assert.equal(r.signal, null, `no hang: ${r.stderr}`);
+  assert.ok(/RESULT=false$/.test(r.stdout), `${r.stdout} ${r.stderr}`);
+  assert.ok(fs.lstatSync(file).isFIFO(), 'the FIFO is still there and was not written');
+});
+
+function pathToFileURLString(p) {
+  return new URL(`file://${path.resolve(p)}`).href;
+}
+
+test('B-R5b (649 N-1): a symlinked parent that resolves under /proc writes nothing to /proc/self/comm', { skip: process.platform !== 'linux' && 'linux only' }, () => {
+  const dir = tmp('qlprod-br5b-');
+  const pp = path.join(dir, 'pp');
+  fs.symlinkSync('/proc/self', pp);
+  const before = fs.readFileSync('/proc/self/comm', 'utf8');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file: path.join(pp, 'comm') }), false);
+  assert.equal(fs.readFileSync('/proc/self/comm', 'utf8'), before, '/proc/self/comm unchanged');
+});
+
+test('N-2 (649): a file owned by another user gets nothing', { skip: typeof process.geteuid !== 'function' && 'no geteuid' }, () => {
+  const dir = tmp('qlprod-uid-');
+  const file = path.join(dir, 'rf.jsonl');
+  fs.writeFileSync(file, 'gateway\n');
+  const original = fs.fstatSync;
+  fs.fstatSync = function hooked(fd, ...rest) {
+    const st = original.call(fs, fd, ...rest);
+    return Object.assign(Object.create(Object.getPrototypeOf(st)), st, { uid: process.geteuid() + 1 });
+  };
+  try {
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), false);
+  } finally {
+    fs.fstatSync = original;
+  }
+  assert.equal(fs.readFileSync(file, 'utf8'), 'gateway\n');
+  assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file }), true, 'own file still appends');
+});
+
+test('N-3 (649): a torn tail does not swallow the next row, for the gateway writer and the host append', () => {
+  const dir = tmp('qlprod-torn-');
+  const file = path.join(dir, 'rf.jsonl');
+  const settle = { time: '2026-10-24T11:00:00.000Z', network: 'base', stage: 'settle', reason: 'settle_failed', tx: null, outcome: 'refused', request_id: null };
+  fs.writeFileSync(file, `${JSON.stringify(settle)}\n{"time":"2026-10-24T11:30:00.000Z","netw`);
+  const saved = process.env.RECEIPT_FAILURES_FILE;
+  process.env.RECEIPT_FAILURES_FILE = file;
+  RF.resetReceiptFailuresForTests();
+  try {
+    // Gateway writer first, straight after a torn fragment.
+    RF.recordEscrowRefusal({ path: PROD_PATH, reason: 'write_mismatch' });
+    RF.flushEscrowAlertFolds();
+    let text = fs.readFileSync(file, 'utf8');
+    assert.ok(/"netw\n\{"time"/.test(text), 'the gateway row starts on its own line after the torn fragment');
+    // Then the host append, straight after another torn fragment.
+    fs.appendFileSync(file, '{"time":"2026-10-24T11:45:00.000Z","sta');
+    const at = Date.parse('2026-10-24T12:00:00.000Z');
+    assert.equal(HA.appendHostEscrowRefusal({ path: PROD_PATH, reason: 'usage' }, { file, now: () => at }), true);
+    text = fs.readFileSync(file, 'utf8');
+    assert.ok(/"sta\n\{"time"/.test(text), 'the host row starts on its own line after the torn fragment');
+    RF.resetReceiptFailuresForTests();
+    const reasons = RF.listReceiptFailures().map((r) => r.reason);
+    assert.ok(reasons.includes('settle_failed'), reasons.join(','));
+    assert.ok(reasons.includes(`${PROD_PATH}:usage`), reasons.join(','));
+    assert.ok(reasons.includes(`${PROD_PATH}:write_mismatch`), reasons.join(','));
+  } finally {
+    if (saved == null) delete process.env.RECEIPT_FAILURES_FILE;
+    else process.env.RECEIPT_FAILURES_FILE = saved;
+    RF.resetReceiptFailuresForTests();
+  }
+});
+
+test('N-6 (649): after a run with a test recorder, the default host recorder is back', async () => {
+  const calls = [];
+  const swapped = await withFailureFile('file', () => withThrowingRecorder(calls, async () => { const s = await setup(); return run(['--log-dir', s.logDir]); }));
+  assert.deepEqual(swapped.r.result, { ok: false, reason: 'usage' });
+  assert.deepEqual(calls, ['usage'], 'the test recorder saw the refusal');
+  assert.equal(swapped.rows.length, 0, 'the test recorder replaced the file append');
+  const restored = await withFailureFile('file', async () => { const s = await setup(); return run(['--log-dir', s.logDir]); });
+  assert.deepEqual(restored.r.result, { ok: false, reason: 'usage' });
+  assert.deepEqual(calls, ['usage'], 'the test recorder is not called again');
+  assert.deepEqual(restored.rows.map((r) => r.reason), [`${PROD_PATH}:usage`], 'the default host recorder appended the row');
+});
+
+test('QP36 / N11 (644): a signer reporting a key type other than EC P-256 is refused before any signature, even with the allowlisted x/y', async () => {
+  for (const [label, jwk] of [
+    ['crv secp256k1', { kty: 'EC', crv: 'secp256k1' }],
+    ['kty OKP', { kty: 'OKP', crv: 'P-256' }],
+    ['kty RSA, no crv', { kty: 'RSA', crv: undefined }],
+  ]) {
+    const s = await setup();
+    const signer = goodSigner();
+    signer.publicJwk = { ...signer.publicJwk, ...jwk };
+    if (jwk.crv === undefined) delete signer.publicJwk.crv;
+    const r = await run(applyArgs(s), { signer });
+    assert.equal(r.result.reason, 'not_production_key', `${label}: ${r.err.join(' ')}`);
+    assert.equal(signer.calls.length, 0, `${label}: nothing signed`);
+    assert.ok(!fs.existsSync(path.join(listDirOf(s.logDir), 'v1.json')), `${label}: nothing written`);
+  }
+  // A getter on kty or crv is an accessor, refused like x/y.
+  const s = await setup();
+  const signer = goodSigner();
+  const pub = { ...signer.publicJwk };
+  Object.defineProperty(pub, 'crv', { get: () => 'P-256', enumerable: true });
+  signer.publicJwk = pub;
+  const r = await run(applyArgs(s), { signer });
+  assert.equal(r.result.reason, 'signer_accessor');
+  // Control: kty and crv absent still matches on x/y.
+  const s2 = await setup();
+  const bare = goodSigner();
+  bare.publicJwk = { x: bare.publicJwk.x, y: bare.publicJwk.y };
+  const ok = await run(applyArgs(s2), { signer: bare });
+  assert.equal(ok.result.state, 'written', ok.err.join(' '));
+});
+
+test('QP37 / D2 (644): the log directory turned into a symlink after the link is list_dir_changed, with no pin hash and no rerun advice', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const moved = `${s.logDir}-moved`;
+  const realLink = fs.linkSync;
+  fs.linkSync = function swapAfterLink(...args) {
+    const out = realLink.apply(this, args);
+    if (String(args[1]).endsWith(`${path.sep}v1.json`)) {
+      fs.renameSync(s.logDir, moved);
+      fs.symlinkSync(moved, s.logDir);
+    }
+    return out;
+  };
+  let r;
+  try {
+    r = await run(applyArgs(s), { signer });
+  } finally {
+    fs.linkSync = realLink;
+  }
+  assert.deepEqual(r.result, { ok: false, reason: 'list_dir_changed', written: true }, r.err.join(' '));
+  assert.ok(!r.out.some((l) => l.startsWith('SIGNED_LIST_SHA256=')), 'no pin hash');
+  const text = r.err.join('\n');
+  assert.ok(/the log directory changed during the run/.test(text), text);
+  assert.ok(/Do not pin\. v1 was written, but not necessarily to /.test(text), text);
+  assert.ok(!/Rerun/.test(text), text);
+  // Control: the same run with no swap writes and prints the pin hash.
+  const c = await setup();
+  const ok = await run(applyArgs(c), { signer: goodSigner() });
+  assert.equal(ok.result.state, 'written', ok.err.join(' '));
+});
+
+test('QP38 / N13 (644): the no-op path prints the hash of the bytes the route serves (utf8 round trip), also when v1.json holds an invalid UTF-8 byte', async () => {
+  const s = await setup();
+  const signer = goodSigner();
+  const w = await run(applyArgs(s), { signer });
+  assert.equal(w.result.state, 'written', w.err.join(' '));
+  const dir = listDirOf(s.logDir);
+  const file = path.join(dir, 'v1.json');
+  const good = fs.readFileSync(file, 'utf8');
+  // An extra field inside issuer_signature holding the raw byte 0xff. Decoded
+  // as utf8 it is U+FFFD, so the decoded text is still canonical and
+  // verifies, and the run is a no-op.
+  const { jcsRfc8785 } = await import('../src/offer-receipt.js');
+  const doc = JSON.parse(good);
+  const text = jcsRfc8785({ ...doc, issuer_signature: { ...doc.issuer_signature, zz: '\ufffd' } }) + (good.endsWith('\n') ? '\n' : '');
+  const raw0 = Buffer.from(text, 'utf8');
+  const at = raw0.indexOf(Buffer.from('"zz":"\ufffd"', 'utf8'));
+  assert.ok(at > 0, 'the field is in the canonical text');
+  const raw = Buffer.concat([raw0.subarray(0, at + 6), Buffer.from([0xff]), raw0.subarray(at + 9)]);
+  assert.equal(raw.toString('utf8'), text, 'the invalid byte decodes to U+FFFD');
+  fs.writeFileSync(file, raw);
+  const again = await run(applyArgs(s), { signer });
+  assert.equal(again.result.state, 'same', again.err.join(' '));
+  assert.equal(signer.calls.length, 1, 'no second signature');
+  const res = { headers: {}, set(k, v) { this.headers[k] = v; return this; }, type() { return this; }, status() { return this; }, send(b) { this.body = b; return this; }, json(b) { this.body = b; return this; } };
+  Q.writeQuarantineListResponse(res, dir, {});
+  const printed = again.out.find((l) => l.startsWith('SIGNED_LIST_SHA256=')).slice('SIGNED_LIST_SHA256='.length);
+  assert.equal(printed, res.headers['X-Chit-List-Hash'], 'the pin hash is the served hash');
+  assert.equal(printed, sha256(Buffer.from(fs.readFileSync(file, 'utf8'), 'utf8')));
+  assert.notEqual(printed, sha256(fs.readFileSync(file)), 'not the raw file bytes');
 });

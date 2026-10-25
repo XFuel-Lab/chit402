@@ -20,11 +20,8 @@
  * for byte. The signature is a JWS from the active issuer signer; this
  * script never signs a fixed head or a binding.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-
 process.env.DOTENV_CONFIG_QUIET = 'true';
-const { ReceiptMerkleTree } = await import('../src/receipt-merkle.js');
+const { quarantineEntriesFromLog, highWaterOf } = await import('../src/quarantine-list-from-log.js');
 const {
   buildQuarantineList,
   quarantineListDir,
@@ -62,63 +59,17 @@ if (apply) {
   }
 }
 
-const tree = new ReceiptMerkleTree();
-tree.load(logDir);
-
-const acks = new Map();
-const journal = fs.readFileSync(path.join(logDir, 'journal.jsonl'), 'utf8');
-for (const line of journal.split('\n')) {
-  if (!line.trim()) continue;
-  const row = JSON.parse(line);
-  if (row.op === 'quarantine_ack' && row.issuer_signature?.jws) {
-    acks.set(`${row.epoch}|${row.tree_size}|${row.root}`, row.issuer_signature.jws);
+// The shared build (src/quarantine-list-from-log.js), the same one the
+// production v1 signer checks its input against.
+let fresh;
+let maxSignedHead;
+try {
+  ({ entries: fresh, maxSignedHead } = await quarantineEntriesFromLog(logDir));
+} catch (err) {
+  if (err?.code === 'quarantine_list_build') {
+    fail(/has no quarantine_ack$/.test(err.message) ? `${err.message}; acknowledge it first` : err.message);
   }
-}
-
-function epochLeaves(epochNo) {
-  if (tree.epoch === epochNo) return tree.leaves;
-  const closed = tree.closedEpochs.find((row) => row.epoch === epochNo);
-  return closed ? closed.leaves : null;
-}
-
-function headsOf(epochNo) {
-  if (tree.epoch === epochNo) return tree.heads || [];
-  const closed = tree.closedEpochs.find((row) => row.epoch === epochNo);
-  return (closed && closed.heads) || [];
-}
-
-function maxSignedHead(epochNo) {
-  const heads = headsOf(epochNo).filter((h) => Number.isSafeInteger(h?.tree_size) && h?.issuer_signature?.jws);
-  if (heads.length === 0) return null;
-  return heads.reduce((a, b) => (b.tree_size >= a.tree_size ? b : a));
-}
-
-const fresh = [];
-for (const q of tree.quarantinedHeads || []) {
-  const key = `${q.epoch}|${q.tree_size}|${q.root}`;
-  const ack = acks.get(key);
-  if (!ack) fail(`quarantined head epoch ${q.epoch} size ${q.tree_size} has no quarantine_ack; acknowledge it first`);
-  const honest = maxSignedHead(q.epoch);
-  if (!honest || honest.tree_size < q.tree_size) {
-    fail(`epoch ${q.epoch} has no signed head at or above size ${q.tree_size}`);
-  }
-  if (!epochLeaves(q.epoch)) fail(`epoch ${q.epoch} leaves are not loaded`);
-  const proof = tree.consistency(q.prefix_size, honest.tree_size, q.epoch);
-  if (proof.second_root !== honest.root) fail(`epoch ${q.epoch} honest head root does not match the leaves`);
-  fresh.push({
-    epoch: q.epoch,
-    tree_size: q.tree_size,
-    root: q.root,
-    prefix_size: q.prefix_size,
-    reason: 'publish_append_race',
-    consistency: {
-      first: q.prefix_size,
-      second: honest.tree_size,
-      second_root: honest.root,
-      proof: proof.proof,
-    },
-    quarantine_ack_jws: ack,
-  });
+  throw err;
 }
 
 const dir = quarantineListDir(logDir);
@@ -126,11 +77,7 @@ const prev = readQuarantineList(dir);
 const prevEntries = prev ? (JSON.parse(prev.bytes).entries || []) : [];
 const seen = new Set(prevEntries.map((e) => `${e.epoch}|${e.tree_size}|${e.root}`));
 const entries = [...prevEntries, ...fresh.filter((e) => !seen.has(`${e.epoch}|${e.tree_size}|${e.root}`))];
-const epochs = [...new Set(entries.map((e) => e.epoch))].sort((a, b) => a - b);
-const highWater = epochs.map((epochNo) => {
-  const h = maxSignedHead(epochNo);
-  return { epoch: epochNo, tree_size: h.tree_size, root: h.root };
-});
+const highWater = highWaterOf(entries, maxSignedHead);
 
 const doc = buildQuarantineList({ entries, highWater, prevBytes: prev ? prev.bytes : null });
 if (prev && entries.length === prevEntries.length && jcsRfc8785(doc.high_water) === jcsRfc8785(JSON.parse(prev.bytes).high_water)) {

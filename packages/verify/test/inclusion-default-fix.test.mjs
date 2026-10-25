@@ -18,7 +18,7 @@ const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const COMMIT_035 = '484c5b7e6657aed4a56a78f2a3b4b5c1ff0271b2';
 
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const { verifyReceipt } = await import('../dist/index.js');
 const { headTrustedFromInclusion, PINNED_BASE_ANCHOR_WALLET, PINNED_SOLANA_ANCHOR_FEE_PAYER } = await import('../dist/anchor-trust.js');

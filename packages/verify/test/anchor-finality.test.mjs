@@ -11,7 +11,7 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const {
   verifyAnchoredRoot,

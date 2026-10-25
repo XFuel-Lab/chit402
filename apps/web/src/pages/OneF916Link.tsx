@@ -32,6 +32,7 @@ npx chit402-verify "${VERIFY_1}"
 npx chit402-verify "${VERIFY_2}"
 
 # This script prints VERDICT COULD_NOT_CHECK and exits 2 for the same reason.
+# A network or TLS error (no answer, unreachable, timeout, TLS failure, HTTP 5xx, 408, 425 or 429) is also exit 2.
 # Exit 2 means not checked. It is not INVALID (exit 1).
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
@@ -179,7 +180,7 @@ export default function OneF916Link() {
             chit402-verify 0.4.11 checks only the Chit402 kid shipped in the package. It cannot
             check another issuer&apos;s key yet.
             The <code>iss</code> string is a label. Embedded <code>issuer_jwk</code> is not a
-            trust root unless its thumbprint equals a key you already pinned. See{' '}
+            trust root unless its thumbprint equals a key the verifier already trusts. See{' '}
             <Link to="/trust" style={{ color: '#00d4ff' }}>Issuer trust</Link>.
           </p>
         </div>
@@ -251,7 +252,7 @@ export default function OneF916Link() {
             the unsigned shell, so there is no signature to check. A receipt that fails a check is
             INVALID, exit 1. To check one of these receipts, its owner opens the signed receipt in
             the owner view, saves it as receipt.json, and runs <code>npx chit402-verify receipt.json</code>.
-            Until then, treat the specimens as not checked. It does not
+            Until then, treat the specimens as not checked. <code>npx chit402-verify</code> does not
             compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt fetch, the
             issuer signature, the book chain, the Base transfer, and the entry fingerprint. These
             specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public receipt

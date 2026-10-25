@@ -19,7 +19,7 @@ import { tempDir } from './tmp-dirs.mjs';
 import { offHost, loopbackGuardImport } from './loopback-guard.mjs';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
-execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' });
+await import('./dist-built.mjs'); // N-F1 (646): build once in npm test, not per file.
 
 const { shellFromHolder } = await import('../dist/index.js');
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
