@@ -334,7 +334,7 @@ test('N-6 an uppercase signed fingerprint matches its lowercase claim and still 
 });
 
 test('N-8 an empty or malformed signed fingerprint is FAIL before the record fetch, not absent', async () => {
-  for (const [label, signed] of [['empty string', ''], ['63 hex', FINGERPRINT.slice(1)], ['number', 7]]) {
+  for (const [label, signed] of [['empty string', ''], ['63 hex', FINGERPRINT.slice(1)], ['65 hex', `${FINGERPRINT}0`], ['number', 7]]) {
     const { fetchImpl, specimen } = foreignPayoutHarness({ signedFingerprint: signed });
     let recordFetches = 0;
     const counting = async (url, init) => {
@@ -1012,6 +1012,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
   for (const [label, target, edit, reason, jwksFetched] of [
     ['issuer JWS with two parts', 'issuer', (sig) => { sig.jws = sig.jws.split('.').slice(0, 2).join('.'); }, /^malformed_jws$/, false],
     ['issuer JWS header not JSON', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `bm90IGpzb24.${p[1]}.${p[2]}`; }, /^json_parse_error$/, false],
+    ['issuer JWS payload not JSON', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `${p[0]}.bm90IGpzb24.${p[2]}`; }, /^json_parse_error$/, false],
     ['issuer JWS alg HS256', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `${b64({ alg: 'HS256', kid: sig.kid })}.${p[1]}.${p[2]}`; }, /^unsupported_alg:HS256$/, false],
     ['issuer kid not a thumbprint', 'issuer', (sig) => { sig.kid = 'not-a-thumbprint'; }, /^kid_not_in_jwks:not-a-thumbprint$/, false],
     ['issuer header kid differs from the outer kid', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `${b64({ alg: 'ES256', kid: 'A'.repeat(43) })}.${p[1]}.${p[2]}`; }, /^kid_mismatch$/, false],
