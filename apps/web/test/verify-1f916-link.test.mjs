@@ -292,7 +292,7 @@ function foreignPayoutHarness({ signedFingerprint = FINGERPRINT } = {}) {
       },
     },
   };
-  return { fetchImpl, specimen, responses };
+  return { fetchImpl, specimen, responses, receipt };
 }
 
 test('a foreign-ingest payout receipt with an issuer JWS passes while status is still pending_first_stamp', async () => {
@@ -983,6 +983,52 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
       const bad = await runHarnessCli({ claimed: TAMPERED, record });
       assert.equal(bad.result.steps.entry_fingerprint.status, 'FAIL', formatReport(bad.result));
       assert.equal(bad.code, 1, bad.out);
+    });
+  }
+
+  // N-7: JWS structure and kid shape are checked before the JWKS fetch, so a
+  // JWKS outage cannot turn them into COULD_NOT_CHECK.
+  const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  for (const [label, target, edit, reason, jwksFetched] of [
+    ['issuer JWS with two parts', 'issuer', (sig) => { sig.jws = sig.jws.split('.').slice(0, 2).join('.'); }, /^malformed_jws$/, false],
+    ['issuer JWS header not JSON', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `bm90IGpzb24.${p[1]}.${p[2]}`; }, /^json_parse_error$/, false],
+    ['issuer JWS alg HS256', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `${b64({ alg: 'HS256', kid: sig.kid })}.${p[1]}.${p[2]}`; }, /^unsupported_alg:HS256$/, false],
+    ['issuer kid not a thumbprint', 'issuer', (sig) => { sig.kid = 'not-a-thumbprint'; }, /^kid_not_in_jwks:not-a-thumbprint$/, false],
+    ['issuer header kid differs from the outer kid', 'issuer', (sig) => { const p = sig.jws.split('.'); sig.jws = `${b64({ alg: 'ES256', kid: 'A'.repeat(43) })}.${p[1]}.${p[2]}`; }, /^kid_mismatch$/, false],
+    ['chain JWS with two parts', 'chain', (sig) => { sig.jws = sig.jws.split('.').slice(0, 2).join('.'); }, /^malformed_jws$/, true],
+    ['chain kid not a thumbprint', 'chain', (sig) => { sig.kid = 'short'; }, /^kid_not_in_jwks:short$/, true],
+    ['book_chain missing', 'drop_chain', null, /^book_chain_missing$/, true],
+  ]) {
+    test(`N-7 ${label} is FAIL even with the JWKS host at 502`, { timeout: 10000 }, async () => {
+      const { fetchImpl, specimen, receipt } = foreignPayoutHarness();
+      if (target === 'issuer') edit(receipt.issuer_signature);
+      if (target === 'chain') edit(receipt.book_chain.issuer_signature);
+      if (target === 'drop_chain') delete receipt.book_chain;
+      const lb = await loopback({ 'api.chit402.com': '502' });
+      let jwksFetches = 0;
+      try {
+        const wrapped = async (url, init) => {
+          if (String(url).endsWith('/.well-known/jwks.json')) {
+            jwksFetches += 1;
+            return lb.forward(url, init);
+          }
+          return fetchImpl(url, init);
+        };
+        const result = await verifyLink(specimen(FINGERPRINT), { fetchImpl: wrapped, rpcUrl: 'https://rpc.test/base', timeoutMs: 300 });
+        const name = target === 'issuer' ? 'issuer_signature' : 'receipt_chain';
+        assert.equal(result.steps[name].status, 'FAIL', formatReport(result));
+        assert.ok(reason.test(result.steps[name].detail), result.steps[name].detail);
+        assert.equal(result.verdict, 'FAIL', formatReport(result));
+        if (target === 'issuer') {
+          assert.equal(result.steps.receipt_chain.status, 'FAIL', formatReport(result));
+          assert.equal(result.steps.on_chain_tx.status, 'FAIL', formatReport(result));
+        } else {
+          assert.equal(result.steps.issuer_signature.status, 'COULD_NOT_CHECK', formatReport(result));
+        }
+        assert.equal(jwksFetches > 0, jwksFetched, `JWKS fetched ${jwksFetches} times`);
+      } finally {
+        await lb.close();
+      }
     });
   }
 

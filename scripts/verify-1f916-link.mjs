@@ -132,6 +132,31 @@ function verifyEs256(jws, jwk) {
   }
 }
 
+/**
+ * Checks on a JWS and its kid that need no JWKS, so a JWKS outage cannot hide
+ * them. Returns the FAIL reason, or null when the structure is fine. The
+ * reasons match verifyEs256 and keyForKid.
+ * @param {unknown} jws
+ * @param {unknown} kid the kid printed next to the JWS
+ */
+function jwsStructureError(jws, kid) {
+  const parts = String(jws || '').split('.');
+  if (parts.length !== 3) return 'malformed_jws';
+  let header;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    return 'json_parse_error';
+  }
+  if (header?.alg !== 'ES256') return `unsupported_alg:${header?.alg}`;
+  // keyForKid only accepts a key whose RFC 7638 SHA-256 thumbprint equals the
+  // kid, so a kid that is not 43 base64url characters cannot be in any JWKS.
+  if (typeof kid !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(kid)) return `kid_not_in_jwks:${kid}`;
+  if (header.kid && header.kid !== kid) return 'kid_mismatch';
+  return null;
+}
+
 function same(a, b) {
   if (a == null && b == null) return true;
   if (a == null || b == null) return false;
@@ -501,13 +526,27 @@ export async function verifyLink(specimen, opts = {}) {
     steps.receipt_chain = fail('issuer_signature_failed');
     steps.on_chain_tx = fail('issuer_signature_failed');
   } else {
-    try {
-      jwks = await getJson(JWKS_URL, fetchImpl, timeoutMs);
-    } catch (err) {
-      const detail = `jwks_fetch:${err.message || 'failed'}`;
-      steps.issuer_signature = failOrUnchecked(err, detail);
-      steps.receipt_chain = failOrUnchecked(err, detail);
-      steps.on_chain_tx = failOrUnchecked(err, detail);
+    // Structural checks first: a malformed JWS or an impossible kid is FAIL
+    // whether or not the JWKS can be fetched.
+    const issuerBad = jwsStructureError(receipt.issuer_signature.jws, receipt.issuer_signature.kid);
+    const chain = receipt.book_chain;
+    const chainBad = !chain
+      ? 'book_chain_missing'
+      : jwsStructureError(chain.issuer_signature?.jws, chain.issuer_signature?.kid);
+    if (issuerBad) {
+      steps.issuer_signature = fail(issuerBad);
+      steps.on_chain_tx = fail('issuer_signature_failed');
+      steps.receipt_chain = fail(chainBad || 'issuer_signature_failed');
+    } else {
+      if (chainBad) steps.receipt_chain = fail(chainBad);
+      try {
+        jwks = await getJson(JWKS_URL, fetchImpl, timeoutMs);
+      } catch (err) {
+        const detail = `jwks_fetch:${err.message || 'failed'}`;
+        steps.issuer_signature = failOrUnchecked(err, detail);
+        steps.receipt_chain = steps.receipt_chain || failOrUnchecked(err, detail);
+        steps.on_chain_tx = failOrUnchecked(err, detail);
+      }
     }
   }
 
