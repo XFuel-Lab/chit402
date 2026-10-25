@@ -298,7 +298,7 @@ test('quarantine signing: the script pre-check refusal writes an alert row to RE
   });
   assert.equal(res.status, 1, res.stderr);
   assert.ok(/refused: production_env/.test(res.stderr), 'stderr names the refusal');
-  const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].reason, 'quarantine_sign:production_env');
   assert.equal(rows[0].stage, 'sign');
@@ -492,7 +492,7 @@ test('alert rows persist in RECEIPT_FAILURES_FILE and per-reason counts reload f
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'network' });
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'no_payer' });
     RF.recordReceiptFailure({ stage: 'sign', reason: 'unrelated', outcome: 'refused' });
-    assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 3, 'not-applicable skips are not written');
+    assert.equal(fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).length, 3, 'not-applicable skips are not written');
     RF.resetReceiptFailuresForTests();
     assert.deepEqual(RF.escrowRefusalCounts(), { fixed_head: { root_mismatch: 1 }, payer_binding: { amount: 1 } });
     assert.equal(RF.listReceiptFailures().length, 3, 'rows reload');
@@ -900,9 +900,9 @@ test('N-b: a fold still open is written by flushEscrowAlertFolds, and a reload c
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount', outcome: 'pending' });
     clock = t0 + 6 * 60_000;
     RF.recordEscrowRefusal({ path: 'payer_binding', reason: 'amount', outcome: 'pending' });
-    assert.equal(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2, 'two rows before the flush');
+    assert.equal(fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).length, 2, 'two rows before the flush');
     assert.equal(RF.flushEscrowAlertFolds(), 2, 'one row per open fold');
-    const rows = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
     assert.equal(rows.length, 4);
     const fh = rows.filter((r) => r.reason === 'fixed_head:log_not_ready');
     assert.equal(fh.length, 2);
