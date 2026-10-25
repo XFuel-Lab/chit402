@@ -32,7 +32,7 @@ npx chit402-verify "${VERIFY_1}"
 npx chit402-verify "${VERIFY_2}"
 
 # This script prints VERDICT COULD_NOT_CHECK and exits 2 for the same reason.
-# A network error (no answer, timeout, HTTP 5xx, 408, 425 or 429) is also exit 2.
+# A network or TLS error (no answer, unreachable, timeout, TLS failure, HTTP 5xx, 408, 425 or 429) is also exit 2.
 # Exit 2 means not checked. It is not INVALID (exit 1).
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
