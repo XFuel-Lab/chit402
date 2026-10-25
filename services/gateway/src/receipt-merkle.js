@@ -15,7 +15,7 @@
  */
 import crypto from 'crypto';
 import logger from './logger.js';
-import { recordReceiptFailure } from './receipt-failures.js';
+import { recordEscrowRefusal, recordReceiptFailure } from './receipt-failures.js';
 import { signJwsAsync, verifyJwsWithJwks, getIssuerPublicKeyJwk, getJwks, isProductionIssuerEnv } from './issuer-key.js';
 import { verifierBuildDigest } from './verifier-digest.js';
 import {
@@ -2094,6 +2094,7 @@ export class ReceiptMerkleTree {
       });
     } catch (err) {
       logger.error({ code: 'fixed_head_refused', reason: 'internal', err: err?.message }, 'fixed tree head not signed');
+      recordEscrowRefusal({ path: 'fixed_head', reason: 'internal' });
       return { fixed_head: null, refused: 'internal' };
     }
   }
