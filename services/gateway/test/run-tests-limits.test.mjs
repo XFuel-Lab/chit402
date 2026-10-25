@@ -10,16 +10,25 @@ import {
   fileTestCounts,
   filesWithoutCompletion,
   problemMessages,
+  fileSkipCounts,
   readCountManifest,
+  readManifest,
   runTestFiles,
+  skipCapLines,
   staleManifestEntries,
+  stripTestFilters,
+  testFilterArgs,
+  writeCounts,
 } from '../scripts/run-tests.mjs';
+import fileDoneReporter from '../scripts/file-done-reporter.mjs';
 
 const gatewayDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SLOW = 'test/fixtures/run-tests/slow.fixture.mjs';
 const QUICK = 'test/fixtures/run-tests/quick.fixture.mjs';
 const EARLY = 'test/fixtures/run-tests/exits-early.fixture.mjs';
 const LEAK = 'test/fixtures/run-tests/leaks-handle.fixture.mjs';
+const FAILS = 'test/fixtures/run-tests/fails.fixture.mjs';
+const SKIPS = 'test/fixtures/run-tests/skips.fixture.mjs';
 
 function childEnv() {
   const env = { ...process.env };
@@ -81,7 +90,7 @@ test('fileProblems reads timeout and cancelled rows, dedupes, and problem rows a
 
 test('run-tests main passes its own argv through and the reporter records problems', () => {
   const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
-  assert.ok(/runTestFiles\(files, \{ nodeArgs: args, expected \}\)/.test(runner), 'main forwards node args and checks the manifest');
+  assert.ok(/runTestFiles\(files, \{ nodeArgs: args, expected, maxSkipped \}\)/.test(runner), 'main forwards node args and checks the manifest and the skip cap');
   assert.ok(/const args = process\.argv\.slice\(2\);/.test(runner), 'args are the runner argv');
   const reporter = readFileSync(join(gatewayDir, 'scripts/file-done-reporter.mjs'), 'utf8');
   assert.ok(/'testTimeoutFailure', 'cancelledByParent'/.test(reporter), 'reporter records timeouts and cancellations');
@@ -108,7 +117,7 @@ test('run-tests: a file that exits 0 partway fails against its manifest count', 
   assert.equal(bare.code, 0, `the early exit alone looks green: ${bare.out}`);
   const { code, errors, out } = run([QUICK, EARLY], { expected: { [QUICK]: 2, [EARLY]: 3 } });
   assert.equal(code, 1, out);
-  assert.ok(errors.some((line) => /FAIL test\/fixtures\/run-tests\/exits-early\.fixture\.mjs reported [0-2] of 3 expected tests/.test(line)), out);
+  assert.ok(errors.some((line) => /FAIL test\/fixtures\/run-tests\/exits-early\.fixture\.mjs reported ([0-2] of 3 expected tests|no test count, so 0 of 3 expected tests are confirmed)/.test(line)), out);
   assert.equal(errors.some((line) => line.includes(QUICK)), false, out);
 });
 
@@ -150,7 +159,7 @@ test('fileTestCounts reads count rows only, and a file with no count row is zero
   assert.deepEqual([...counts], [[a, 5]]);
   const lines = countMismatches(counts, ['test/a.test.mjs', 'test/b.test.mjs'], { 'test/a.test.mjs': 5, 'test/b.test.mjs': 3 }, gatewayDir);
   assert.equal(lines.length, 1, lines.join('\n'));
-  assert.ok(/FAIL test\/b\.test\.mjs reported 0 of 3 expected tests\. It stopped early or tests were removed\./.test(lines[0]), lines[0]);
+  assert.ok(/FAIL test\/b\.test\.mjs reported no test count, so 0 of 3 expected tests are confirmed\. The file exited before any test finished, or the reporter's stream was cut/.test(lines[0]), lines[0]);
   assert.deepEqual(staleManifestEntries({ 'test/a.test.mjs': 5, 'test/gone.test.mjs': 1 }, ['test/a.test.mjs']).length, 1);
   assert.ok(/lists test\/gone\.test\.mjs, which does not exist/.test(staleManifestEntries({ 'test/gone.test.mjs': 1 }, [])[0]));
 });
@@ -170,8 +179,13 @@ test('readCountManifest rejects a malformed manifest and a total that does not a
       writeFileSync(path, JSON.stringify(body));
       assert.throws(() => readCountManifest(path), undefined, JSON.stringify(body));
     }
-    writeFileSync(path, JSON.stringify({ total: 3, files: { 'test/a.test.mjs': 3 } }));
+    writeFileSync(path, JSON.stringify({ total: 3, skipped: 0, files: { 'test/a.test.mjs': 3 } }));
     assert.deepEqual(readCountManifest(path), { 'test/a.test.mjs': 3 });
+    assert.deepEqual(readManifest(path), { files: { 'test/a.test.mjs': 3 }, skipped: 0 });
+    for (const skipped of [undefined, -1, 1.5, '3', null]) {
+      writeFileSync(path, JSON.stringify({ total: 3, skipped, files: { 'test/a.test.mjs': 3 } }));
+      assert.throws(() => readManifest(path), /skipped/, `skipped ${JSON.stringify(skipped)}`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -185,4 +199,177 @@ test('the runner spawns node without --test-force-exit and --write-counts refuse
   const pkg = JSON.parse(readFileSync(join(gatewayDir, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.test, 'node scripts/run-tests.mjs');
   assert.equal(pkg.scripts['test:counts'], 'node scripts/run-tests.mjs --write-counts');
+});
+
+// S-1: test filters. A skipped test emits test:pass, so a filtered run keeps the
+// manifest counts and used to exit 0 with nothing executed.
+
+test('S-1: the runner refuses test filters in its arguments and spawns nothing', { timeout: 60_000 }, () => {
+  for (const nodeArgs of [
+    ['--test-name-pattern=^zzNOMATCH$'],
+    ['--test-name-pattern', '^zzNOMATCH$'],
+    ['--test-skip-pattern=quick'],
+    ['--test-only'],
+    ['--test-shard=1/2'],
+  ]) {
+    const { code, errors, out } = run([QUICK], { nodeArgs, expected: { [QUICK]: 2 }, maxSkipped: 0 });
+    assert.equal(code, 1, `${nodeArgs.join(' ')}: ${out}`);
+    assert.equal(errors.length, 1, out);
+    assert.ok(/^run-tests: refusing test filter --test-/.test(errors[0]), errors[0]);
+  }
+  assert.deepEqual(testFilterArgs(['--test-name-pattern', 'x', '--test-only', '--trace-warnings', '--test-shard=1/3']), ['--test-name-pattern', '--test-only', '--test-shard=1/3']);
+  assert.deepEqual(testFilterArgs(['--trace-warnings', '--test-timeout=5']), []);
+  assert.deepEqual(testFilterArgs(undefined), []);
+});
+
+test('S-1: ordinary node arguments still pass through', { timeout: 60_000 }, () => {
+  const { code, errors } = run([QUICK], { nodeArgs: ['--trace-warnings'], expected: { [QUICK]: 2 }, maxSkipped: 0 });
+  assert.equal(code, 0, errors.join('\n'));
+  assert.deepEqual(errors, []);
+});
+
+test('S-1: test filters are stripped from NODE_OPTIONS before node runs', { timeout: 60_000 }, () => {
+  // --test-only in NODE_OPTIONS skips every test not marked only. With the strip,
+  // both quick tests run and none is skipped, so a zero skip cap holds.
+  const env = { ...childEnv(), NODE_OPTIONS: '--test-only --max-old-space-size=4096' };
+  let skipped;
+  const { code, errors, out } = run([QUICK], { env, expected: { [QUICK]: 2 }, maxSkipped: 0, onCounts: (_c, s) => { skipped = s; } });
+  assert.equal(code, 0, out);
+  assert.equal(skipped, 0, out);
+  assert.equal(errors.length, 1, out);
+  assert.ok(/^run-tests: removed --test-only from NODE_OPTIONS/.test(errors[0]), errors[0]);
+  assert.deepEqual(stripTestFilters('--test-only --max-old-space-size=4096'), { value: '--max-old-space-size=4096', removed: ['--test-only'] });
+  assert.deepEqual(stripTestFilters('--test-name-pattern x --inspect=0 --test-skip-pattern=y --test-shard 1/2'), { value: '--inspect=0', removed: ['--test-name-pattern', 'x', '--test-skip-pattern=y', '--test-shard', '1/2'] });
+  assert.deepEqual(stripTestFilters(undefined), { value: '', removed: [] });
+});
+
+test('S-1: a run that skips more tests than the manifest allows fails and names the file', { timeout: 60_000 }, () => {
+  const over = run([QUICK, SKIPS], { expected: { [QUICK]: 2, [SKIPS]: 3 }, maxSkipped: 1 });
+  assert.equal(over.code, 1, over.out);
+  assert.ok(over.errors.some((line) => /FAIL 2 tests were skipped, more than the 1 test\/test-counts\.json allows/.test(line) && line.includes(`${SKIPS} (2)`)), over.out);
+  let skipped;
+  const at = run([QUICK, SKIPS], { expected: { [QUICK]: 2, [SKIPS]: 3 }, maxSkipped: 2, onCounts: (_c, s) => { skipped = s; } });
+  assert.equal(at.code, 0, at.out);
+  assert.equal(skipped, 2, 'skip and todo both count');
+});
+
+test('S-1: the skip cap alone catches the review repro shape (72 tests, 72 skipped)', () => {
+  // Defence in depth for a filter that gets past both guards, for example a
+  // new node flag: the count rows match the manifest, but the skips do not.
+  const a = resolve(gatewayDir, 'test/a.test.mjs');
+  const records = `${JSON.stringify({ file: a, tests: 72, skipped: 72 })}\n${JSON.stringify({ file: resolve(gatewayDir, 'test/b.test.mjs'), tests: 2 })}\n`;
+  const skips = fileSkipCounts(records);
+  assert.deepEqual([...skips.values()], [72, 0]);
+  const lines = skipCapLines(skips, 3, gatewayDir);
+  assert.equal(lines.length, 1);
+  assert.ok(/FAIL 72 tests were skipped, more than the 3/.test(lines[0]), lines[0]);
+  assert.deepEqual(skipCapLines(fileSkipCounts(`${JSON.stringify({ file: a, tests: 5, skipped: 3 })}\n`), 3, gatewayDir), []);
+});
+
+test('S-1: main reads the skip cap from the manifest, and the manifest records one', () => {
+  const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
+  assert.ok(/\(\{ files: expected, skipped: maxSkipped \} = readManifest\(\)\);/.test(runner), 'main takes maxSkipped from test-counts.json');
+  const manifest = readManifest(join(gatewayDir, 'test/test-counts.json'));
+  assert.ok(Number.isInteger(manifest.skipped) && manifest.skipped <= 10, `skipped cap ${manifest.skipped}`);
+});
+
+// M-1: gaps in the runner tests from the #653 review.
+
+test('M-1 R16: an ordinary failing assertion fails the run', { timeout: 60_000 }, () => {
+  const { code, out } = run([QUICK, FAILS], { expected: { [QUICK]: 2, [FAILS]: 2 }, maxSkipped: 0 });
+  assert.equal(code, 1, out);
+});
+
+test('M-1 R2: a file exactly one test short fails', () => {
+  const a = resolve(gatewayDir, 'test/a.test.mjs');
+  const lines = countMismatches(new Map([[a, 2]]), ['test/a.test.mjs'], { 'test/a.test.mjs': 3 }, gatewayDir);
+  assert.equal(lines.length, 1, 'one short is a mismatch');
+  assert.ok(/FAIL test\/a\.test\.mjs reported 2 of 3 expected tests\. It stopped early or tests were removed\./.test(lines[0]), lines[0]);
+  assert.deepEqual(countMismatches(new Map([[a, 3]]), ['test/a.test.mjs'], { 'test/a.test.mjs': 3 }, gatewayDir), []);
+});
+
+async function reporterRows(events) {
+  async function* source() { for (const e of events) yield e; }
+  const rows = [];
+  for await (const chunk of fileDoneReporter(source())) rows.push(JSON.parse(chunk));
+  return rows;
+}
+
+test('M-1 R10/R11: the reporter counts tests, not suites or the file-level event', async () => {
+  const file = resolve(gatewayDir, 'test/x.test.mjs');
+  const rows = await reporterRows([
+    { type: 'test:pass', data: { name: 'leaf one', nesting: 1, file, details: { type: 'test' } } },
+    { type: 'test:fail', data: { name: 'leaf two', nesting: 1, file, details: { type: 'test' } } },
+    { type: 'test:pass', data: { name: 'skipped leaf', nesting: 1, file, skip: true, details: { type: 'test' } } },
+    { type: 'test:pass', data: { name: 'todo leaf', nesting: 0, file, todo: true, details: { type: 'test' } } },
+    { type: 'test:pass', data: { name: 'a suite', nesting: 0, file, details: { type: 'suite' } } },
+    { type: 'test:complete', data: { name: file, nesting: 0, file, details: { passed: true } } },
+    { type: 'test:pass', data: { name: file, nesting: 0, file, details: {} } },
+  ]);
+  assert.deepEqual(rows, [{ file, passed: true }, { file, tests: 4, skipped: 2 }]);
+});
+
+test('M-1 R23: --write-counts refuses a file that reported no tests and writes nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'counts-'));
+  try {
+    const countsPath = join(dir, 'c.json');
+    const errors = [];
+    const files = ['test/a.test.mjs', 'test/b.test.mjs'];
+    const empty = writeCounts(files, ['--write-counts'], {
+      countsPath,
+      error: (line) => errors.push(line),
+      log: () => {},
+      run: (_f, o) => { o.onCounts({ 'test/a.test.mjs': 2, 'test/b.test.mjs': 0 }, 0); return 0; },
+    });
+    assert.equal(empty, 1, errors.join('\n'));
+    assert.ok(/no tests reported for test\/b\.test\.mjs/.test(errors.join('\n')), errors.join('\n'));
+    assert.throws(() => readFileSync(countsPath), /ENOENT/);
+    const ok = writeCounts(files, ['--write-counts'], {
+      countsPath,
+      error: (line) => errors.push(line),
+      log: () => {},
+      run: (_f, o) => { o.onCounts({ 'test/a.test.mjs': 2, 'test/b.test.mjs': 1 }, 1); return 0; },
+    });
+    assert.equal(ok, 0);
+    assert.deepEqual(readManifest(countsPath), { files: { 'test/a.test.mjs': 2, 'test/b.test.mjs': 1 }, skipped: 1 });
+    // A second write keeps the recorded cap (1) and hands it to the run, even
+    // when this machine skipped none.
+    let capSeen;
+    const again = writeCounts(files, ['--write-counts'], {
+      countsPath,
+      error: (line) => errors.push(line),
+      log: () => {},
+      run: (_f, o) => { capSeen = o.maxSkipped; o.onCounts({ 'test/a.test.mjs': 2, 'test/b.test.mjs': 1 }, 0); return 0; },
+    });
+    assert.equal(again, 0);
+    assert.equal(capSeen, 1, 'the recorded cap is applied to the run');
+    assert.equal(readManifest(countsPath).skipped, 1, 'the recorded cap is kept');
+    const filtered = writeCounts(files, ['--write-counts', '--test-only'], { countsPath: join(dir, 'd.json'), error: (line) => errors.push(line), log: () => {}, run: () => 0 });
+    assert.equal(filtered, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// M-2: the whole-suite cap names the file that was running.
+
+test('M-2: the whole-suite cap fails the run and names the file still running', { timeout: 60_000 }, () => {
+  const { code, errors, out } = run([QUICK, SLOW], { timeoutMs: 60_000, suiteTimeoutMs: 4000, expected: { [QUICK]: 2, [SLOW]: 2 }, maxSkipped: 0 });
+  assert.equal(code, 1, out);
+  assert.ok(errors.some((line) => /test process killed \(SIGKILL\)/.test(line)), out);
+  assert.ok(errors.some((line) => /FAIL the whole-suite cap of 4 s hit with 1 file unfinished: test\/fixtures\/run-tests\/slow\.fixture\.mjs\. Look at those first/.test(line)), out);
+  assert.equal(errors.some((line) => /unfinished.*quick\.fixture/.test(line)), false, out);
+});
+
+test('M-2: the suite cap is about 2x the loaded runtime and the gateway CI job has a timeout above it', () => {
+  const runner = readFileSync(join(gatewayDir, 'scripts/run-tests.mjs'), 'utf8');
+  assert.ok(/export const SUITE_TIMEOUT_MS = 10 \* 60 \* 1000;/.test(runner), 'suite cap is 600 s');
+  assert.ok(/timeout: suiteTimeoutMs,/.test(runner), 'spawnSync uses the suite cap');
+  const yml = readFileSync(join(gatewayDir, '../../.github/workflows/test.yml'), 'utf8');
+  const job = yml.slice(yml.indexOf('\n  gateway:'), yml.indexOf('\n  cdp-spend-store:'));
+  const m = /\n    timeout-minutes: (\d+)\n/.exec(job);
+  assert.ok(m, 'gateway job sets timeout-minutes');
+  assert.ok(Number(m[1]) > 10 && Number(m[1]) <= 25, `gateway job timeout-minutes ${m && m[1]}`);
+  const step = /- name: Gateway tests[^\n]*\n(?:        [^\n]*\n)*?        timeout-minutes: (\d+)\n/.exec(job);
+  assert.ok(step && Number(step[1]) > 10, 'the npm test step has a timeout above the 10 min suite cap');
 });

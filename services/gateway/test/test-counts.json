@@ -1,6 +1,7 @@
 {
-  "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference. Regenerate with npm run test:counts after a clean run.",
-  "total": 2427,
+  "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
+  "total": 2439,
+  "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
     "test/agent-book.test.mjs": 15,
@@ -168,7 +169,7 @@
     "test/rfc8785.test.mjs": 6,
     "test/rolling-e2e.test.mjs": 2,
     "test/rolling-settlement.test.mjs": 22,
-    "test/run-tests-limits.test.mjs": 11,
+    "test/run-tests-limits.test.mjs": 23,
     "test/salt-store-prod-format.test.mjs": 2,
     "test/salt-store.test.mjs": 6,
     "test/session-act-approval-ttl.test.mjs": 5,
