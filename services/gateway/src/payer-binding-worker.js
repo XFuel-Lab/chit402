@@ -53,14 +53,18 @@ export function appendedLeafHash(tree, taskId) {
   return stored ? Buffer.from(stored).toString('hex') : null;
 }
 
-/** The `kid` in a compact JWS protected header, or null. */
+/**
+ * The `kid` in a compact JWS protected header, or null. Only an ES256 header
+ * counts: receipts are signed ES256, so any other alg is not a receipt key.
+ */
 export function jwsHeaderKid(jws) {
   if (typeof jws !== 'string') return null;
   const parts = jws.split('.');
   if (parts.length !== 3) return null;
   try {
     const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
-    return header && typeof header === 'object' && typeof header.kid === 'string' && header.kid ? header.kid : null;
+    if (!header || typeof header !== 'object' || header.alg !== 'ES256') return null;
+    return typeof header.kid === 'string' && header.kid ? header.kid : null;
   } catch {
     return null;
   }

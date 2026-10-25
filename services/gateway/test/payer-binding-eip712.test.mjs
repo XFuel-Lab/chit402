@@ -1315,3 +1315,26 @@ test('B15 / N3: the kid check runs before readiness and before a cap slot is tak
   assert.equal(stats.capped, 0);
   assert.equal(c.counts.typed, 1);
 });
+
+test('B15 / N5: jwsHeaderKid reads a kid only from an ES256 header', async () => {
+  for (const header of [{ kid: KEY.kid }, { alg: 'none', kid: KEY.kid }, { alg: 'ES384', kid: KEY.kid }, { alg: 'es256', kid: KEY.kid }, { alg: ['ES256'], kid: KEY.kid }]) {
+    assert.equal(W.jwsHeaderKid(rawJws(header, {})), null, JSON.stringify(header));
+  }
+  assert.equal(W.jwsHeaderKid(rawJws({ alg: 'ES256', kid: KEY.kid }, {})), KEY.kid);
+  assert.equal(W.jwsHeaderKid(rawJws({ alg: 'ES256', typ: 'JWT', kid: KEY.kid }, {})), KEY.kid);
+  // The worker refuses, and the view hides, a binding beside a non-ES256 header.
+  const { tree } = await readyTree();
+  const store = openPayerBindingStore(tmp('payer-binding-b15d-'));
+  const c = countingSigner(envSigner);
+  const worker = unitWorker({ store, tree, jwsFor: (id) => rawJws({ alg: 'none', kid: KEY.kid }, claims({ taskId: id })), signer: c.signer });
+  await appendAndEnqueue(worker, tree, 'xfuel-pb-b15d', ROW(164));
+  assert.deepEqual(await worker.tick(), ['skipped']);
+  assert.equal(store.getJob('xfuel-pb-b15d').reason, 'kid_mismatch');
+  assert.equal(c.counts.typed, 0);
+  const ok = openPayerBindingStore(tmp('payer-binding-b15d2-'));
+  const w = unitWorker({ store: ok, tree, jwsFor: (id) => fakeJws(claims({ taskId: id }), KEY.kid), signer: c.signer });
+  await appendAndEnqueue(w, tree, 'xfuel-pb-b15d-ok', ROW(165));
+  assert.deepEqual(await w.tick(), ['signed']);
+  assert.deepEqual(W.payerBindingView(ok, 'xfuel-pb-b15d-ok', rawJws({ alg: 'ES384', kid: KEY.kid }, {})), { status: 'missing', reason: 'kid_mismatch' });
+  assert.equal(W.payerBindingView(ok, 'xfuel-pb-b15d-ok', rawJws({ alg: 'ES256', kid: KEY.kid }, {})).status, 'signed');
+});
