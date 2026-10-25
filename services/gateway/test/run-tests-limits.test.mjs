@@ -29,6 +29,8 @@ const EARLY = 'test/fixtures/run-tests/exits-early.fixture.mjs';
 const LEAK = 'test/fixtures/run-tests/leaks-handle.fixture.mjs';
 const FAILS = 'test/fixtures/run-tests/fails.fixture.mjs';
 const SKIPS = 'test/fixtures/run-tests/skips.fixture.mjs';
+const CANCELLED = 'test/fixtures/run-tests/cancelled.fixture.mjs';
+const NESTED_TIMEOUT = 'test/fixtures/run-tests/nested-timeout.fixture.mjs';
 
 function childEnv() {
   const env = { ...process.env };
@@ -372,4 +374,21 @@ test('M-2: the suite cap is about 2x the loaded runtime and the gateway CI job h
   assert.ok(Number(m[1]) > 10 && Number(m[1]) <= 25, `gateway job timeout-minutes ${m && m[1]}`);
   const step = /- name: Gateway tests[^\n]*\n(?:        [^\n]*\n)*?        timeout-minutes: (\d+)\n/.exec(job);
   assert.ok(step && Number(step[1]) > 10, 'the npm test step has a timeout above the 10 min suite cap');
+});
+
+// #652 survivors: behaviour, not source text.
+
+test('#652 M13b: a cancelled subtest fails the run and names the file and the test', { timeout: 60_000 }, () => {
+  const { code, errors, out } = run([QUICK, CANCELLED], { expected: { [QUICK]: 2, [CANCELLED]: 2 }, maxSkipped: 0 });
+  assert.equal(code, 1, out);
+  const abs = resolve(gatewayDir, CANCELLED);
+  assert.ok(errors.some((line) => line.includes(abs) && /had a cancelled test \(cancelledByParent\), test: cancelled orphan subtest\./.test(line)), out);
+  assert.equal(errors.some((line) => line.includes(resolve(gatewayDir, QUICK))), false, out);
+});
+
+test('#652 M16: a timeout on a nested test only is reported from its nested row, by name', { timeout: 60_000 }, () => {
+  const { code, errors, out } = run([QUICK, NESTED_TIMEOUT], { expected: { [QUICK]: 2, [NESTED_TIMEOUT]: 2 }, maxSkipped: 0 });
+  assert.equal(code, 1, out);
+  const abs = resolve(gatewayDir, NESTED_TIMEOUT);
+  assert.ok(errors.some((line) => line.includes(abs) && /hit the per-file time limit \(testTimeoutFailure\), test: nested timeout inner\./.test(line)), out);
 });

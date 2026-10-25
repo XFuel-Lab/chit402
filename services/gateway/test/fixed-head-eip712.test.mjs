@@ -722,11 +722,20 @@ test('G14: the ops script builds, signs and seals a list from a journal with a r
   const loaded = new ReceiptMerkleTree();
   loaded.load(dir);
   assert.equal(loaded.quarantinedHeads.length, 1);
-  await loaded.acknowledgeQuarantinedHead(racedRoot);
 
   const script = path.join(here, '..', 'scripts', 'sign-quarantine-list.mjs');
   const env = { ...process.env, NODE_ENV: 'test', ISSUER_PRIVATE_KEY: syntheticIssuerKeyEnv(), ISSUER_KID: KEY.kid };
   delete env.RECEIPT_LOG_DIR;
+  // #644 N6: before the acknowledgement the shared build refuses, and the
+  // script says so through fail(): exit 1, one line ending in the ack advice,
+  // no stack trace, nothing written (#652 mutants M19, M20).
+  const unacked = spawnSync(process.execPath, [script, '--log-dir', dir], { env, encoding: 'utf8' });
+  assert.equal(unacked.status, 1, unacked.stderr);
+  assert.ok(/has no quarantine_ack; acknowledge it first\n?$/.test(unacked.stderr), unacked.stderr);
+  assert.ok(!/\n\s+at /.test(unacked.stderr), `no stack trace: ${unacked.stderr}`);
+  assert.ok(!/"high_water"/.test(unacked.stdout), 'no list printed');
+  assert.equal(fs.existsSync(Q.quarantineListDir(dir)), false);
+  await loaded.acknowledgeQuarantinedHead(racedRoot);
   const journalBefore = fs.readFileSync(path.join(dir, 'journal.jsonl'));
   const dry = spawnSync(process.execPath, [script, '--log-dir', dir], { env, encoding: 'utf8' });
   assert.equal(dry.status, 0, dry.stderr);

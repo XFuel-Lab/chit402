@@ -891,7 +891,8 @@ test('QP24: the test-only entry points refuse to run in a production process, ho
     await assert.rejects(P._signProductionV1ForTest(built, signer, STUB_KEYS), /test-only entry point: refused in a production process/);
     // Found by enumerating the module namespace instead of by name: the same refusal.
     const found = Object.keys(P).filter((k) => k.startsWith('_') && typeof P[k] === 'function');
-    assert.equal(found.length, 2, found.join(','));
+    assert.equal(found.length, 3, found.join(','));
+    await assert.rejects(P._logDirUnchangedForTest(s.logDir, s.logDir, s.logDir), /test-only entry point: refused in a production process/);
     for (const k of found) await assert.rejects(P[k]({ argv: [], env: {} }, STUB_KEYS), /refused in a production process/, k);
   } finally {
     process.env.NODE_ENV = savedNodeEnv;
@@ -1749,14 +1750,18 @@ test('QP36 / N11 (644): a signer reporting a key type other than EC P-256 is ref
     assert.equal(signer.calls.length, 0, `${label}: nothing signed`);
     assert.ok(!fs.existsSync(path.join(listDirOf(s.logDir), 'v1.json')), `${label}: nothing written`);
   }
-  // A getter on kty or crv is an accessor, refused like x/y.
-  const s = await setup();
-  const signer = goodSigner();
-  const pub = { ...signer.publicJwk };
-  Object.defineProperty(pub, 'crv', { get: () => 'P-256', enumerable: true });
-  signer.publicJwk = pub;
-  const r = await run(applyArgs(s), { signer });
-  assert.equal(r.result.reason, 'signer_accessor');
+  // A getter on kty or crv is an accessor, refused like x/y. Each one alone,
+  // returning the value a production key reports.
+  for (const [name, value] of [['crv', 'P-256'], ['kty', 'EC']]) {
+    const s = await setup();
+    const signer = goodSigner();
+    const pub = { ...signer.publicJwk };
+    Object.defineProperty(pub, name, { get: () => value, enumerable: true });
+    signer.publicJwk = pub;
+    const r = await run(applyArgs(s), { signer });
+    assert.equal(r.result.reason, 'signer_accessor', `getter on ${name}: ${r.err.join(' ')}`);
+    assert.equal(signer.calls.length, 0, `getter on ${name}: nothing signed`);
+  }
   // Control: kty and crv absent still matches on x/y.
   const s2 = await setup();
   const bare = goodSigner();
@@ -1825,4 +1830,21 @@ test('QP38 / N13 (644): the no-op path prints the hash of the bytes the route se
   assert.equal(printed, res.headers['X-Chit-List-Hash'], 'the pin hash is the served hash');
   assert.equal(printed, sha256(Buffer.from(fs.readFileSync(file, 'utf8'), 'utf8')));
   assert.notEqual(printed, sha256(fs.readFileSync(file)), 'not the raw file bytes');
+});
+
+test('QP39 / D2 (644): a --log-dir value that goes through a symlink fails the post-link check even when RECEIPT_LOG_DIR still resolves to the log', async () => {
+  // The run refuses a symlinked --log-dir at the start, and a real path cannot
+  // later go through a symlink while still resolving to the same directory, so
+  // the flag walk is checked directly here (#652 mutant M6).
+  const base = tmp('qlprod-d2-');
+  const real = path.join(base, 'log');
+  fs.mkdirSync(real);
+  const link = path.join(base, 'log-link');
+  fs.symlinkSync(real, link);
+  const logDir = fs.realpathSync(real);
+  assert.equal(await P._logDirUnchangedForTest(logDir, logDir, logDir), true, 'control: both real');
+  assert.equal(await P._logDirUnchangedForTest(logDir, undefined, logDir), true, 'control: no flag');
+  assert.equal(await P._logDirUnchangedForTest(logDir, link, logDir), false, 'flag through a symlink');
+  assert.equal(await P._logDirUnchangedForTest(link, logDir, logDir), false, 'env through a symlink');
+  assert.equal(await P._logDirUnchangedForTest(path.join(base, 'gone'), logDir, logDir), false, 'env no longer resolves');
 });
