@@ -5,7 +5,8 @@
  *
  * The shell, the log's not_in_tree answer and the signed tree head come
  * from a loopback stub (the head is a recorded production head fixture).
- * Nothing is fetched from api.chit402.com.
+ * Nothing is fetched from api.chit402.com: an in-process fetch off
+ * loopback is refused and recorded, and the last test asserts none.
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,6 +22,18 @@ const shell = JSON.parse(readFileSync(new URL('./fixtures/public/chit-43c98110-p
 const head = JSON.parse(readFileSync(new URL('./fixtures/public/tree-head-size3.json', import.meta.url), 'utf8'));
 const holder = JSON.parse(readFileSync(new URL('./fixtures/public/foreign-x402-muy1hh8y.json', import.meta.url), 'utf8'));
 const { checkReceiptInput } = await import('../dist/check-input.js');
+// Anything off loopback is refused and recorded: this file never reaches a real host.
+const offHost = [];
+const realFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
+  const host = new URL(String(url)).hostname;
+  if (host !== '127.0.0.1') {
+    offHost.push(String(url));
+    throw new TypeError('off-loopback fetch refused in test');
+  }
+  return realFetch(input, init);
+};
 const env = { ...process.env, BASE_RPC_URL: 'http://127.0.0.1:9/', SOLANA_RPC_URL: 'http://127.0.0.1:9/' };
 
 const stub = { doc: shell, head, gets: [] };
@@ -106,7 +119,13 @@ test('pre-log shell: a bad fixed head beside the signed head is not NOT_IN_LOG (
 test('absence on the full path: a bad fixed head is fixed_head_invalid, not NOT_IN_LOG (N4)', async () => {
   const dir = tempDir('chit-absence-');
   const file = join(dir, 'receipt.json');
-  writeFileSync(file, JSON.stringify({ ...holder, verify_url: `${origin}/receipt/${holder.task_id}` }));
+  // Both URLs go to loopback: issuer history is looked up from jwks_uri first.
+  const copy = {
+    ...holder,
+    verify_url: `${origin}/receipt/${holder.task_id}`,
+    verification: { ...holder.verification, jwks_uri: `${origin}/.well-known/jwks.json` },
+  };
+  writeFileSync(file, JSON.stringify(copy));
   const opts = { rpcUrl: 'http://127.0.0.1:9/', solanaRpcUrl: 'http://127.0.0.1:9/' };
   try {
     stub.head = head;
@@ -123,6 +142,7 @@ test('absence on the full path: a bad fixed head is fixed_head_invalid, not NOT_
 });
 
 test('pre-log shell: only the loopback stub was read, GET only', () => {
+  assert.deepEqual(offHost, [], `off-loopback fetches: ${offHost.join(', ')}`);
   assert.ok(stub.gets.length > 0);
   assert.ok(stub.gets.every((line) => line.startsWith('GET ')), stub.gets.join('\n'));
 });
