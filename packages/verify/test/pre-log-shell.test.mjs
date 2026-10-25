@@ -21,7 +21,8 @@ const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 const shell = JSON.parse(readFileSync(new URL('./fixtures/public/chit-43c98110-prelog-shell.json', import.meta.url), 'utf8'));
 const head = JSON.parse(readFileSync(new URL('./fixtures/public/tree-head-size3.json', import.meta.url), 'utf8'));
 const holder = JSON.parse(readFileSync(new URL('./fixtures/public/foreign-x402-muy1hh8y.json', import.meta.url), 'utf8'));
-const { checkReceiptInput } = await import('../dist/check-input.js');
+const { checkReceiptInput, freshPublicLog } = await import('../dist/check-input.js');
+const { loadBundledIssuerHistory } = await import('../dist/issuer-history.js');
 // Anything off loopback is refused and recorded: this file never reaches a real host.
 const offHost = [];
 const realFetch = globalThis.fetch.bind(globalThis);
@@ -139,6 +140,25 @@ test('absence on the full path: a bad fixed head is fixed_head_invalid, not NOT_
   } finally {
     stub.head = head;
   }
+});
+
+test('absence under the caller pins: unset is the production pin, [] trusts nothing (N4)', async () => {
+  stub.head = head;
+  const history = loadBundledIssuerHistory().document;
+  const receipt = { verify_url: `${origin}/receipt/${shell.receipt_id}`, task_id: shell.receipt_id };
+  const prod = await freshPublicLog(receipt, history, {});
+  assert.equal(prod.logReason, 'not_in_log', JSON.stringify(prod));
+  const none = await freshPublicLog(receipt, history, { trustedKids: [] });
+  assert.notEqual(none.logReason, 'not_in_log', JSON.stringify(none));
+  assert.equal(none.logInclusion, 'fail');
+  // The shell path too: the same pre-log shell is NOT_IN_LOG only under a pin that trusts the head.
+  stub.doc = shell;
+  const url = `${origin}/receipt/${shell.receipt_id}`;
+  const shellProd = (await checkReceiptInput(url, {})).verdict;
+  assert.equal(shellProd.reason, 'not_in_log', JSON.stringify(shellProd));
+  const shellNone = (await checkReceiptInput(url, { trustedKids: [] })).verdict;
+  assert.notEqual(shellNone.reason, 'not_in_log', JSON.stringify(shellNone));
+  assert.notEqual(shellNone.exit_code, 0);
 });
 
 test('pre-log shell: only the loopback stub was read, GET only', () => {
