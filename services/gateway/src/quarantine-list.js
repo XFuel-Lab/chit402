@@ -22,6 +22,7 @@ import { jcsRfc8785 } from './offer-receipt.js';
 import { computeJwkThumbprint, ephemeralIssuerKid, jwsSigningInput, verifyJwsWithJwks } from './issuer-key.js';
 import { PRODUCTION_ISSUER_KID } from './issuer-history.js';
 import { peekIssuerSigner } from './issuer-signer-state.js';
+import { recordEscrowRefusal } from './receipt-failures.js';
 import { isProductionIssuerPublicKey, nodeEnvIsProduction, wellFormedPublicJwk } from './production-process.js';
 import { issuerMaterialKid, loadedIssuerKid, testIssuerKids } from './production-process.js';
 
@@ -237,7 +238,12 @@ export function quarantineSignGuard({ env = process.env, kid = null, signerKind 
   return { ok: true };
 }
 
+/**
+ * Every signing refusal goes through here: one operator alert (receipt-failure
+ * row `quarantine_sign:<reason>`), then the coded error.
+ */
 function guardError(reason) {
+  recordEscrowRefusal({ path: 'quarantine_sign', reason });
   const err = new Error(`quarantine list signing refused (${reason}); only a stub or test signer may sign here`);
   err.code = 'quarantine_sign_refused';
   err.reason = reason;
@@ -285,7 +291,7 @@ export async function signQuarantineList(doc, { env = process.env } = {}) {
   const signature = await snap.sign(Buffer.from(signingInput, 'utf8'));
   if (!Buffer.isBuffer(signature) || signature.length !== 64) throw guardError('issuer_sign_invalid');
   const jws = `${signingInput}.${signature.toString('base64url')}`;
-  if (jwsHeader(jws)?.kid !== snap.kid) throw guardError('signer_changed');
+  assertJwsKid(jws, snap.kid);
   // The signature must verify under the public key the guard judged, so a
   // signer that reports a test or ephemeral key but signs with another
   // private key is refused.
@@ -340,6 +346,19 @@ function jwsPayload(jws) {
     return JSON.parse(Buffer.from(String(jws).split('.')[1], 'base64url').toString('utf8'));
   } catch {
     return null;
+  }
+}
+
+/**
+ * The JWS header must name `kid`, the kid the guard judged. Throws the
+ * alerting `signer_changed` refusal otherwise, including an unreadable
+ * header or a missing or empty kid.
+ * @param {string} jws
+ * @param {string} kid
+ */
+export function assertJwsKid(jws, kid) {
+  if (typeof kid !== 'string' || kid === '' || jwsHeader(jws)?.kid !== kid) {
+    throw guardError('signer_changed');
   }
 }
 
