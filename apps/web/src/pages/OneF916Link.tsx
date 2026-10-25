@@ -24,11 +24,15 @@ const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
 const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
 const STAMP_SCRIPT = 'services/gateway/scripts/stamp-foreign-payout.mjs';
 
-const verifyCli = `# Public shells. chit402-verify exits 2 COULD_NOT_CHECK
-# (signed_receipt_unavailable). The signed receipt is on the owner view.
+const verifyCli = `# Public receipts here are unsigned shells.
+# chit402-verify exits 2 COULD_NOT_CHECK (signed_receipt_unavailable).
+# Exit 2 means not checked. It is not INVALID (exit 1).
+# The receipt owner can check the signed copy: npx chit402-verify receipt.json
 npx chit402-verify "${VERIFY_1}"
 npx chit402-verify "${VERIFY_2}"
 
+# This script prints VERDICT COULD_NOT_CHECK and exits 2 for the same reason.
+# Exit 2 means not checked. It is not INVALID (exit 1).
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
 
@@ -172,6 +176,8 @@ export default function OneF916Link() {
             when it signs this same receipt format and publishes the verifying key at{' '}
             <code>https://&lt;issuer-origin&gt;/.well-known/jwks.json</code>. Verification
             matches <code>issuer_signature.kid</code> to that key, then checks the chain.
+            chit402-verify 0.4.11 checks only the Chit402 kid shipped in the package. It cannot
+            check another issuer&apos;s key yet.
             The <code>iss</code> string is a label. Embedded <code>issuer_jwk</code> is not a
             trust root unless its thumbprint equals a key you already pinned. See{' '}
             <Link to="/trust" style={{ color: '#00d4ff' }}>Issuer trust</Link>.
@@ -240,12 +246,19 @@ export default function OneF916Link() {
           <p>
             <code>npx chit402-verify</code> with the receipt URL checks the signature and the chain
             when the signed receipt is available. On these public shells it exits 2{' '}
-            <code>COULD_NOT_CHECK</code> (<code>signed_receipt_unavailable</code>). It does not
+            <code>COULD_NOT_CHECK</code> (<code>signed_receipt_unavailable</code>). Exit 2 means the
+            check could not run. It does not mean the receipt is wrong. The public page holds only
+            the unsigned shell, so there is no signature to check. A receipt that fails a check is
+            INVALID, exit 1. To check one of these receipts, its owner opens the signed receipt in
+            the owner view, saves it as receipt.json, and runs <code>npx chit402-verify receipt.json</code>.
+            Until then, treat the specimens as not checked. It does not
             compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt fetch, the
             issuer signature, the book chain, the Base transfer, and the entry fingerprint. These
             specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public receipt
             is an unsigned shell and the issuer signature is owner-view only. That script prints
-            FAIL <code>public_receipt_is_unsigned_shell</code>. The entry-fingerprint line can still
+            COULD_NOT_CHECK <code>public_receipt_is_unsigned_shell</code> and exits 2 for the same
+            reason: the signature is not public. That result means not checked. It is not evidence
+            that the payout or the entry is wrong. The entry-fingerprint line can still
             say the book entry matches. That line is not VERIFIED. The receipt JSON still omits{' '}
             <code>agent_record_entry</code>; the specimen file carries it.
           </p>
@@ -287,8 +300,9 @@ export default function OneF916Link() {
               binds the tx, chain, payer, payee, amount, and the entry fingerprint. That signature
               is owner-view only. These specimens can&apos;t be publicly verified right now.{' '}
               <code>npx chit402-verify</code> on the public receipt exits 2 <code>COULD_NOT_CHECK</code>{' '}
-              (<code>signed_receipt_unavailable</code>). <code>{VERIFIER_SCRIPT}</code> prints FAIL{' '}
-              <code>public_receipt_is_unsigned_shell</code>. <code>chit_verify_url</code>{' '}
+              (<code>signed_receipt_unavailable</code>). <code>{VERIFIER_SCRIPT}</code> prints
+              COULD_NOT_CHECK <code>public_receipt_is_unsigned_shell</code> and exits 2.{' '}
+              <code>chit_verify_url</code>{' '}
               may be the receipt path alone or the same path with <code>?format=json</code>.
             </li>
           </ul>

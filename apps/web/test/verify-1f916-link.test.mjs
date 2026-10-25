@@ -317,19 +317,28 @@ test('a tampered entry fingerprint fails only that step on a foreign-ingest payo
 });
 
 test('the public unsigned receipt shell fails closed with a clear reason, not a verify_url mismatch', async () => {
-  const fetchImpl = async () => new Response(JSON.stringify({
-    schema: 'chit402.receipt_shell.v1',
-    unsigned: true,
-    receipt_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96',
-    verify_url: null,
-  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const fetchImpl = async (url) => {
+    const target = String(url);
+    if (target.includes('1f916.ai')) {
+      return new Response(JSON.stringify({
+        events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }],
+        events_has_more: false,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({
+      schema: 'chit402.receipt_shell.v1',
+      unsigned: true,
+      receipt_id: 'xfuel-1ebc5616-d9ce-4da9-b56c-847062ff6b96',
+      verify_url: null,
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
   const result = await verifyLink(load(positivePath), { fetchImpl, rpcUrl: 'https://rpc.test/base' });
-  assert.equal(result.steps.fetch_receipt.status, 'FAIL');
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
   assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/);
   for (const name of ['issuer_signature', 'receipt_chain', 'on_chain_tx']) {
-    assert.equal(result.steps[name].status, 'FAIL', name);
+    assert.equal(result.steps[name].status, 'COULD_NOT_CHECK', name);
   }
-  assert.equal(result.verdict, 'FAIL');
+  assert.equal(result.verdict, 'COULD_NOT_CHECK');
 });
 
 // Live network: fetches api.chit402.com, the 1F916 proof API and Base RPC. Since #519
@@ -382,14 +391,16 @@ test('M4 the public page says specimens cannot be verified from the shell', () =
   assert.doesNotMatch(page, /prints PASS or FAIL/);
 });
 
-function assertShellFail(result) {
+function assertShellUnchecked(result) {
   const report = formatReport(result);
-  assert.equal(result.verdict, 'FAIL');
-  assert.equal(result.steps.fetch_receipt.status, 'FAIL');
+  assert.equal(result.verdict, 'COULD_NOT_CHECK');
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
   assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/);
   assert.equal(report.includes('VERIFIED'), false, report);
   assert.equal(report.includes('VERDICT PASS'), false, report);
-  assert.match(report, /VERDICT FAIL/);
+  assert.equal(report.includes('FAIL'), false, report);
+  assert.equal(report.includes('INVALID'), false, report);
+  assert.match(report, /VERDICT COULD_NOT_CHECK/);
 }
 
 test('T10 a shell fails closed with unsigned flipped, schema stripped, or a fake jws', async () => {
@@ -438,12 +449,12 @@ test('T10 a shell fails closed with unsigned flipped, schema stripped, or a fake
       forceVerdict: 'PASS',
       rpcUrl: 'https://rpc.test/base',
     });
-    assertShellFail(result);
+    assertShellUnchecked(result);
     assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/, name);
   }
 });
 
-test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a signed fixture prints only FIXTURE_PASS', () => {
+test('T9 and R3 CLI: shell fixture exits 2 COULD_NOT_CHECK and never prints VERDICT PASS; a signed fixture prints only FIXTURE_PASS', () => {
   const script = join(root, 'scripts/verify-1f916-link.mjs');
   const shellFixture = join(root, 'scripts/fixtures/1f916-link-1-public-shell.json');
   const shell = spawnSync(process.execPath, [script, specimen1Path, '--verdict=PASS'], {
@@ -456,11 +467,13 @@ test('T9 and R3 CLI: shell fixture exits 1 and never prints VERDICT PASS; a sign
     },
   });
   const shellOut = `${shell.stdout || ''}${shell.stderr || ''}`;
-  assert.equal(shell.status, 1, shellOut);
+  assert.equal(shell.status, 2, shellOut);
   assert.match(shellOut, /public_receipt_is_unsigned_shell/);
   assert.equal(shellOut.includes('VERIFIED'), false, shellOut);
   assert.equal(shellOut.includes('VERDICT PASS'), false, shellOut);
-  assert.match(shellOut, /VERDICT FAIL/);
+  assert.equal(shellOut.includes('VERDICT FAIL'), false, shellOut);
+  assert.equal(shellOut.includes('INVALID'), false, shellOut);
+  assert.match(shellOut, /VERDICT COULD_NOT_CHECK/);
   assert.match(shellOut, /^FIXTURE MODE: /m);
 
   const { responses, specimen } = foreignPayoutHarness();

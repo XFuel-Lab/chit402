@@ -42,7 +42,7 @@ const ROUTE_CONTENT = {
   '/docs/1f916-link': {
     title: '1F916 Agent Record link (draft v0) | Chit402',
     h1: '1F916 Agent Record link',
-    lede: 'Draft v0, feedback welcome. Specimen 1 and Specimen 2 are stamped Chit402 listing payouts. Listing 55 verifies at https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62 and listing 45 at https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19. https://1f916.ai/post/7404',
+    lede: 'Draft v0, feedback welcome. Specimen 1 and Specimen 2 are stamped Chit402 listing payouts. Listing 55 has its receipt at https://api.chit402.com/receipt/foreign-x402-muq262x0-1467b076fc62 and listing 45 at https://api.chit402.com/receipt/foreign-x402-muq264r9-69896464bb19. Both public receipts are unsigned shells, so chit402-verify exits 2 COULD_NOT_CHECK on them. https://1f916.ai/post/7404',
   },
   '/docs/eliza': {
     title: 'Eliza plugin | Chit402',

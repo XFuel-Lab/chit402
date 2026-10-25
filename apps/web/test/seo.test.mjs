@@ -277,7 +277,9 @@ test('Book page shows specimen banner and rows before possession', () => {
   assert.match(book, /id="what-the-book-is"/, 'Book explains what it is');
   assert.match(book, /client-attested/);
   assert.match(book, /chit402\.refusal\.v1/);
-  assert.match(book, /not a full inclusion check/i);
+  assert.match(book, /chit402-verify 0\.4\.11/);
+  assert.doesNotMatch(book, /--rpc/);
+  assert.doesNotMatch(book, /@xfuel\/verify<\/code> 0\.3\.1/);
   assert.doesNotMatch(book, /prepaid hold|holds are live/i);
   assert.doesNotMatch(book, /chit-1e57cdd7/);
 });
