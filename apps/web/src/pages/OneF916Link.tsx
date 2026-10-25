@@ -24,11 +24,10 @@ const ENTRY_RECORD_URL = 'https://1f916.ai/api/record/chit402';
 const VERIFIER_SCRIPT = 'scripts/verify-1f916-link.mjs';
 const STAMP_SCRIPT = 'services/gateway/scripts/stamp-foreign-payout.mjs';
 
-const verifyCli = `npx -p @xfuel/verify xfuel-verify receipt.json --fetch-jwks --check-payer
-
-# A facilitator (or any other issuer) publishes its own key.
-# --fetch-jwks allowlists api.chit402.com; pass that issuer's JWKS explicitly:
-# npx -p @xfuel/verify xfuel-verify receipt.json --jwks-url "https://<issuer-origin>/.well-known/jwks.json" --check-payer
+const verifyCli = `# Public shells. chit402-verify exits 2 COULD_NOT_CHECK
+# (signed_receipt_unavailable). The signed receipt is on the owner view.
+npx chit402-verify "${VERIFY_1}"
+npx chit402-verify "${VERIFY_2}"
 
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_1}
 node ${VERIFIER_SCRIPT} https://www.chit402.com${SPECIMEN_2}`;
@@ -203,8 +202,8 @@ export default function OneF916Link() {
             <code>payer</code>.
           </p>
           <p style={styles.note}>
-            A third party checks the signature against the JWKS, then checks that transaction
-            on the chain named in the receipt.
+            A third party runs <code>npx chit402-verify</code> on the receipt URL. When the signed
+            receipt is available, that checks the signature and the chain transfer.
           </p>
         </div>
 
@@ -218,9 +217,10 @@ export default function OneF916Link() {
               <code>chit_verify_url</code> when the entry sets it.
             </li>
             <li>
-              Verify <code>issuer_signature.jws</code> (ES256) against the JWKS entry whose{' '}
-              <code>kid</code> matches. Chit402 publishes that key at{' '}
-              <a href={JWKS} target="_blank" rel="noreferrer">{JWKS}</a>.
+              Run <code>npx chit402-verify</code> on that URL. It checks the issuer signature with
+              the kid shipped in the package. Chit402 publishes the current public key at{' '}
+              <a href={JWKS} target="_blank" rel="noreferrer">{JWKS}</a>. The command does not take
+              a JWKS file.
             </li>
             <li>
               Read payer (<code>caller_binding.payer_wallet</code>), payee (
@@ -238,14 +238,15 @@ export default function OneF916Link() {
             </li>
           </ol>
           <p>
-            <code>npx -p @xfuel/verify xfuel-verify</code> runs the signature and the chain check on a receipt file.
-            It does not compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt
-            fetch, the issuer signature, the book chain, the Base transfer, and the entry fingerprint.
-            These specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public
-            receipt is an unsigned shell and the issuer signature is owner-view only. Expected
-            result: FAIL <code>public_receipt_is_unsigned_shell</code>. The entry-fingerprint line
-            can still say the book entry matches. That line is not VERIFIED. The verifier never
-            prints VERDICT PASS for a public shell. The receipt JSON still omits{' '}
+            <code>npx chit402-verify</code> with the receipt URL checks the signature and the chain
+            when the signed receipt is available. On these public shells it exits 2{' '}
+            <code>COULD_NOT_CHECK</code> (<code>signed_receipt_unavailable</code>). It does not
+            compare the fingerprint. <code>{VERIFIER_SCRIPT}</code> checks the receipt fetch, the
+            issuer signature, the book chain, the Base transfer, and the entry fingerprint. These
+            specimens can&apos;t be publicly verified right now. Since 2026-10-08 the public receipt
+            is an unsigned shell and the issuer signature is owner-view only. That script prints
+            FAIL <code>public_receipt_is_unsigned_shell</code>. The entry-fingerprint line can still
+            say the book entry matches. That line is not VERIFIED. The receipt JSON still omits{' '}
             <code>agent_record_entry</code>; the specimen file carries it.
           </p>
           <pre className="docs-code">
@@ -284,9 +285,10 @@ export default function OneF916Link() {
               The seal is on <a href={ENTRY_RECORD_URL} target="_blank" rel="noreferrer">{ENTRY_RECORD_URL}</a>.
               The house stamp command is <code>{STAMP_SCRIPT}</code>. The stamp&apos;s issuer JWS
               binds the tx, chain, payer, payee, amount, and the entry fingerprint. That signature
-              is owner-view only. These specimens can&apos;t be publicly verified right now: a
-              stranger running the verifier against the public receipt gets FAIL{' '}
-              <code>public_receipt_is_unsigned_shell</code>, not a pass. <code>chit_verify_url</code>{' '}
+              is owner-view only. These specimens can&apos;t be publicly verified right now.{' '}
+              <code>npx chit402-verify</code> on the public receipt exits 2 <code>COULD_NOT_CHECK</code>{' '}
+              (<code>signed_receipt_unavailable</code>). <code>{VERIFIER_SCRIPT}</code> prints FAIL{' '}
+              <code>public_receipt_is_unsigned_shell</code>. <code>chit_verify_url</code>{' '}
               may be the receipt path alone or the same path with <code>?format=json</code>.
             </li>
           </ul>

@@ -480,8 +480,11 @@ test('1F916 link draft is a public docs page', () => {
   assert.doesNotMatch(page, /1ebc5616/);
   assert.doesNotMatch(page, /chit-1b7ac401/);
   assert.doesNotMatch(page, /chit-5d775d12/);
-  assert.match(page, /npx -p @xfuel\/verify xfuel-verify/);
+  assert.match(page, /npx chit402-verify/);
   assert.doesNotMatch(page, /npx xfuel-verify/);
+  assert.doesNotMatch(page, /--fetch-jwks/);
+  assert.doesNotMatch(page, /--jwks-url/);
+  assert.doesNotMatch(page, /--check-payer/);
   assert.match(docs, /href: '\/docs\/1f916-link'/, 'Docs index lists the draft');
   assert.match(sitemap, /https:\/\/www\.chit402\.com\/docs\/1f916-link/);
   assert.match(llms, /\/docs\/1f916-link/);
@@ -532,6 +535,7 @@ test('false claims called out in the site alignment stay fixed', () => {
   const gateway = readFileSync(join(root, 'src/pages/GatewayV1.tsx'), 'utf8');
   const security = readFileSync(join(root, 'src/pages/Security.tsx'), 'utf8');
   const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');
+  const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
   const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
   assert.match(trust, /npx chit402-verify/);
   assert.doesNotMatch(trust, /npx xfuel-verify/);
@@ -544,6 +548,8 @@ test('false claims called out in the site alignment stay fixed', () => {
   assert.doesNotMatch(receipt, /ISSUER_PRIVATE_KEY/);
   assert.doesNotMatch(receipt, /--strict-issuer-history/);
   assert.doesNotMatch(receipt, /\?version=1/);
+  assert.match(book, /npx chit402-verify/);
+  assert.doesNotMatch(book, /--check-payer/);
   assert.doesNotMatch(register, /The demo key/);
   assert.match(register, /Public demo keys never register/);
   assert.doesNotMatch(gateway, /HMAC-signed/);

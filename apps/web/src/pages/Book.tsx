@@ -1142,10 +1142,12 @@ export default function Book() {
               <Link to="/trust">/trust</Link>.
             </p>
             <p>
-              <strong>What it does not prove.</strong> It does not prove the USDC transfer. Check
-              that with <code>npx -p @xfuel/verify xfuel-verify receipt.json --check-payer</code>.
-              It does not prove the model computed the answer. The settlement proof add-on is coming
-              soon, and it covers settlement, not correctness.
+              <strong>What it does not prove.</strong> The issuer signature does not by itself prove
+              the USDC transfer. Check the receipt with{' '}
+              <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
+              The on-chain check is part of that command. On this receipt it prints VERIFIED_PUBLIC
+              and exits 0. The payer is not claimed. It does not prove the model computed the answer.
+              The settlement proof add-on is coming soon, and it covers settlement, not correctness.
             </p>
             <p>
               <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the
