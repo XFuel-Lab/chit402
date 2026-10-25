@@ -7,6 +7,9 @@
  *
  * Prints one line per step, then VERDICT. Exit 0 only when every step passes.
  * Exit 1 is FAIL. Exit 2 is COULD_NOT_CHECK.
+ * A transport error (the fetch rejects, times out, or gets HTTP 5xx) is
+ * COULD_NOT_CHECK, exit 2. HTTP 4xx, a body that is not JSON, a refused
+ * redirect and a fixture miss stay FAIL, exit 1.
  * A public receipt shell (schema chit402.receipt_shell.v1, or unsigned:true)
  * prints COULD_NOT_CHECK and exits 2 with public_receipt_is_unsigned_shell.
  * That result means the signature is not public, so the receipt was not checked.
@@ -142,16 +145,69 @@ function addr(value) {
  * @param {string} url
  * @param {typeof fetch} fetchImpl
  */
-async function getJson(url, fetchImpl) {
-  const res = await fetchImpl(url, {
-    redirect: 'error',
-    headers: { accept: 'application/json' },
-    signal: AbortSignal.timeout(20000),
-  });
+const FETCH_TIMEOUT_MS = 20000;
+
+/**
+ * A network problem, not a bad answer. Steps that hit one are COULD_NOT_CHECK.
+ * @param {string} detail
+ */
+function transportError(detail) {
+  const err = new Error(detail);
+  err.transport = true;
+  return err;
+}
+
+function isTimeout(err) {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
+/**
+ * Sort a fetch rejection into transport (COULD_NOT_CHECK) or not (FAIL).
+ * A fixture miss and a refused redirect are not transport errors.
+ * @param {any} err
+ */
+export function classifyFetchError(err) {
+  if (err?.code === 'fixture_miss') return err;
+  if (isTimeout(err)) return transportError('timeout');
+  const cause = String(err?.cause?.message || '');
+  if (/redirect/i.test(cause)) return new Error('redirect_refused');
+  return transportError(err?.message || 'fetch_failed');
+}
+
+/**
+ * @param {string | URL} url
+ * @param {typeof fetch} fetchImpl
+ * @param {number} [timeoutMs]
+ */
+async function getJson(url, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
+  let res;
+  try {
+    res = await fetchImpl(url, {
+      redirect: 'error',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw classifyFetchError(err);
+  }
   if (!res.ok) {
+    if (res.status >= 500) throw transportError(`http_${res.status}`);
     throw new Error(`http_${res.status}`);
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (err) {
+    if (isTimeout(err)) throw transportError('timeout');
+    throw new Error('body_not_json');
+  }
+}
+
+/**
+ * @param {any} err
+ * @param {string} detail
+ */
+function failOrUnchecked(err, detail) {
+  return err?.transport ? unchecked(detail) : fail(detail);
 }
 
 function receiptUrl(id) {
@@ -188,7 +244,11 @@ function fetchFromFixtureEnv() {
   return async (url) => {
     const target = String(url);
     const key = keys.find((candidate) => target === candidate || target.startsWith(candidate));
-    if (!key) throw new Error(`fixture_miss:${target}`);
+    if (!key) {
+      const err = new Error(`fixture_miss:${target}`);
+      err.code = 'fixture_miss';
+      throw err;
+    }
     const body = responses[key];
     return {
       ok: true,
@@ -292,6 +352,7 @@ function keyForKid(jwks, kid) {
  */
 export async function verifyLink(specimen, opts = {}) {
   const fetchImpl = opts.fetchImpl || fetch;
+  const timeoutMs = opts.timeoutMs || FETCH_TIMEOUT_MS;
   const rpcUrl = opts.rpcUrl || process.env.BASE_RPC_URL || DEFAULT_RPC;
   /** @type {Record<string, {status: string, detail: string}>} */
   const steps = {};
@@ -304,7 +365,7 @@ export async function verifyLink(specimen, opts = {}) {
     steps.fetch_receipt = fail('chit_receipt_id or chit_verify_url is not the public receipt URL');
   } else {
     try {
-      receipt = await getJson(url, fetchImpl);
+      receipt = await getJson(url, fetchImpl, timeoutMs);
       const verifyUrl = String(receipt?.verify_url || '');
       if (isPublicReceiptShell(receipt)) {
         // Since #519 the public route returns an unsigned shell. The issuer JWS,
@@ -320,7 +381,8 @@ export async function verifyLink(specimen, opts = {}) {
         steps.fetch_receipt = pass(url);
       }
     } catch (err) {
-      steps.fetch_receipt = fail(err.message || 'fetch_failed');
+      receipt = null;
+      steps.fetch_receipt = failOrUnchecked(err, err.message || 'fetch_failed');
     }
   }
 
@@ -348,12 +410,12 @@ export async function verifyLink(specimen, opts = {}) {
     steps.on_chain_tx = fail('issuer_signature_failed');
   } else {
     try {
-      jwks = await getJson(JWKS_URL, fetchImpl);
+      jwks = await getJson(JWKS_URL, fetchImpl, timeoutMs);
     } catch (err) {
       const detail = `jwks_fetch:${err.message || 'failed'}`;
-      steps.issuer_signature = fail(detail);
-      steps.receipt_chain = fail(detail);
-      steps.on_chain_tx = fail(detail);
+      steps.issuer_signature = failOrUnchecked(err, detail);
+      steps.receipt_chain = failOrUnchecked(err, detail);
+      steps.on_chain_tx = failOrUnchecked(err, detail);
     }
   }
 
@@ -421,11 +483,11 @@ export async function verifyLink(specimen, opts = {}) {
     } else if (specimen?.payout_tx && !same(`base:${specimen.payout_tx}`, settlement.ref)) {
       steps.on_chain_tx = fail('payout_tx_mismatch');
     } else {
-      steps.on_chain_tx = await checkBaseTransfer(settlement, rpcUrl, fetchImpl);
+      steps.on_chain_tx = await checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs);
     }
   }
 
-  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint);
+  steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint, timeoutMs);
 
   const statuses = STEPS.map((name) => steps[name]?.status);
   const verdict = statuses.every((status) => status === 'PASS')
@@ -441,7 +503,7 @@ export async function verifyLink(specimen, opts = {}) {
  * @param {string} rpcUrl
  * @param {typeof fetch} fetchImpl
  */
-async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
+async function checkBaseTransfer(settlement, rpcUrl, fetchImpl, timeoutMs = FETCH_TIMEOUT_MS) {
   const ref = String(settlement?.ref || '');
   const match = /^base:(0x[0-9a-fA-F]{64})$/.exec(ref);
   if (!match) return fail(`payment.ref is not a Base tx: ${ref}`);
@@ -455,8 +517,9 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
   if (rpc.protocol !== 'https:') return fail('rpc_url_must_be_https');
 
   let body;
+  let res;
   try {
-    const res = await fetchImpl(rpcUrl, {
+    res = await fetchImpl(rpcUrl, {
       method: 'POST',
       redirect: 'error',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
@@ -466,12 +529,19 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
         method: 'eth_getTransactionReceipt',
         params: [txHash],
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return fail(`rpc_http_${res.status}`);
+  } catch (err) {
+    const sorted = classifyFetchError(err);
+    return failOrUnchecked(sorted, `rpc:${sorted.message || 'failed'}`);
+  }
+  if (!res.ok) {
+    return res.status >= 500 ? unchecked(`rpc_http_${res.status}`) : fail(`rpc_http_${res.status}`);
+  }
+  try {
     body = await res.json();
   } catch (err) {
-    return fail(`rpc:${err.message || 'failed'}`);
+    return isTimeout(err) ? unchecked('rpc:timeout') : fail('rpc:body_not_json');
   }
   if (body?.error) return fail(`rpc:${body.error.message || 'error'}`);
   const tx = body?.result;
@@ -510,7 +580,7 @@ async function checkBaseTransfer(settlement, rpcUrl, fetchImpl) {
  * @param {object} specimen
  * @param {typeof fetch} fetchImpl
  */
-async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
+async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null, timeoutMs = FETCH_TIMEOUT_MS) {
   const link = specimen?.agent_record_entry;
   const entry = specimen?.entry;
   if (!link || typeof link !== 'object') return fail('fingerprint_absent');
@@ -539,7 +609,7 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
     for (let page = 0; page < 20 && !found; page += 1) {
       const recordUrl = new URL(`/api/record/${encodeURIComponent(handle)}`, RECORD_ORIGIN);
       if (since != null) recordUrl.searchParams.set('events_since', String(since));
-      const body = await getJson(recordUrl, fetchImpl);
+      const body = await getJson(recordUrl, fetchImpl, timeoutMs);
       const events = Array.isArray(body?.events) ? body.events : [];
       found = events.find((row) => Number(row?.id) === eventId) || null;
       if (found || !body?.events_has_more) break;
@@ -549,7 +619,7 @@ async function checkFingerprint(specimen, fetchImpl, signedFingerprint = null) {
       since = cursor;
     }
   } catch (err) {
-    return fail(`record_fetch:${err.message || 'failed'}`);
+    return failOrUnchecked(err, `record_fetch:${err.message || 'failed'}`);
   }
   if (!found) return fail(`entry_not_found:${handle} event ${eventId}`);
   if (entry.kind != null && found.kind !== entry.kind) {
@@ -581,44 +651,61 @@ export function formatReport(result) {
  * @param {string} target file path or https://www.chit402.com/specimens/*.json
  * @param {typeof fetch} [fetchImpl]
  */
-export async function loadSpecimen(target, fetchImpl = fetch) {
+export async function loadSpecimen(target, fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS) {
   if (/^https:\/\//i.test(target)) {
     const url = new URL(target);
     if (url.origin !== SPECIMEN_ORIGIN || !url.pathname.startsWith('/specimens/') || !url.pathname.endsWith('.json') || url.search || url.username) {
       throw new Error('specimen URL must be https://www.chit402.com/specimens/*.json');
     }
-    return getJson(url, fetchImpl);
+    return getJson(url, fetchImpl, timeoutMs);
   }
   return JSON.parse(readFileSync(target, 'utf8'));
 }
 
-async function main() {
-  const target = process.argv[2];
+/**
+ * The CLI without process.exit, so tests can drive it in-process.
+ * Returns the exit code: 0 PASS, 1 FAIL, 2 COULD_NOT_CHECK or usage.
+ * @param {string[]} argv arguments after the script path
+ * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, log?: (line: string) => void, error?: (line: string) => void }} [io]
+ */
+export async function runCli(argv, io = {}) {
+  const log = io.log || ((line) => console.log(line));
+  const error = io.error || ((line) => console.error(line));
+  const target = argv[0];
   if (!target) {
-    console.error('usage: node scripts/verify-1f916-link.mjs <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
-    process.exit(2);
+    error('usage: node scripts/verify-1f916-link.mjs <specimen.json | https://www.chit402.com/specimens/1f916-link-1.json>');
+    return 2;
   }
+  const fixtureFetch = io.fetchImpl ? null : fetchFromFixtureEnv();
+  const fetchImpl = io.fetchImpl || fixtureFetch || fetch;
   let specimen;
   try {
-    specimen = await loadSpecimen(target);
+    specimen = await loadSpecimen(target, fetchImpl, io.timeoutMs);
   } catch (err) {
-    console.log(`FAIL specimen            ${err.message || 'unreadable'}`);
-    console.log('VERDICT FAIL');
-    process.exit(1);
+    if (err?.transport) {
+      log(`COULD_NOT_CHECK specimen ${err.message || 'fetch_failed'}`);
+      log('VERDICT COULD_NOT_CHECK');
+      return 2;
+    }
+    log(`FAIL specimen            ${err.message || 'unreadable'}`);
+    log('VERDICT FAIL');
+    return 1;
   }
-  const fetchImpl = fetchFromFixtureEnv();
-  const result = await verifyLink(specimen, fetchImpl ? { fetchImpl } : {});
-  if (fetchImpl) {
+  const result = await verifyLink(specimen, { fetchImpl, timeoutMs: io.timeoutMs });
+  if (fixtureFetch) {
     // Every response, including the JWKS and the Base RPC, came from a local file.
     // Any key can sign that receipt, so this run proves nothing about Chit402.
-    console.log(FIXTURE_BANNER);
-    console.error(FIXTURE_BANNER);
-    console.log(formatReport(result).replace(/^VERDICT PASS$/m, FIXTURE_VERDICT));
+    log(FIXTURE_BANNER);
+    error(FIXTURE_BANNER);
+    log(formatReport(result).replace(/^VERDICT PASS$/m, FIXTURE_VERDICT));
   } else {
-    console.log(formatReport(result));
+    log(formatReport(result));
   }
-  const code = result.verdict === 'PASS' ? 0 : result.verdict === 'COULD_NOT_CHECK' ? 2 : 1;
-  process.exit(code);
+  return result.verdict === 'PASS' ? 0 : result.verdict === 'COULD_NOT_CHECK' ? 2 : 1;
+}
+
+async function main() {
+  process.exit(await runCli(process.argv.slice(2)));
 }
 
 const invoked = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;

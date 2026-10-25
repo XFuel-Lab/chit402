@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { bookRowHash, formatReport, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
+import { createServer } from 'node:http';
+import { bookRowHash, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const positivePath = join(root, 'scripts/fixtures/1f916-link-verifier-fixture.json');
@@ -509,4 +510,228 @@ test('T12 CI web job does not set CHIT_LIVE_TESTS and still runs when the verifi
   assert.equal(yml.includes('CHIT_LIVE_TESTS'), false);
   assert.match(yml, /scripts\/verify-1f916-link\.mjs/);
   assert.match(yml, /scripts\/fixtures\/1f916\*/);
+});
+
+// S5: transport errors are COULD_NOT_CHECK (exit 2). HTTP 4xx, a body that is
+// not JSON, a refused redirect and a fixture miss stay FAIL (exit 1).
+// Every request below goes to a loopback server on 127.0.0.1. The real host is
+// kept as the first path segment so one server can answer for every origin.
+async function loopback(routes) {
+  const server = createServer((req, res) => {
+    const host = req.url.split('/')[1];
+    const mode = routes[host] || 'ok';
+    if (typeof mode === 'function') return mode(req, res);
+    if (mode === 'hang') return undefined;
+    if (mode === 'stall_body') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"events":');
+      return undefined;
+    }
+    if (mode === 'redirect') {
+      res.writeHead(302, { location: 'http://127.0.0.1:9/elsewhere' });
+      return res.end();
+    }
+    if (mode === 'not_json') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('<html>not json</html>');
+    }
+    const status = Number(mode);
+    res.writeHead(Number.isInteger(status) ? status : 500, { 'content-type': 'application/json' });
+    return res.end('{}');
+  });
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  const { port } = server.address();
+  const closed = createServer();
+  await new Promise((done) => closed.listen(0, '127.0.0.1', done));
+  const deadPort = closed.address().port;
+  await new Promise((done) => closed.close(done));
+  const base = `http://127.0.0.1:${port}`;
+  const forward = (url, init) => {
+    const u = new URL(String(url));
+    const mode = routes[u.host];
+    const origin = mode === 'refused' ? `http://127.0.0.1:${deadPort}` : base;
+    const target = new URL(`${origin}/${u.host}${u.pathname}${u.search}`);
+    assert.equal(target.hostname, '127.0.0.1', 'tests only reach loopback');
+    return fetch(target, init);
+  };
+  const close = () => new Promise((done) => {
+    server.closeAllConnections?.();
+    server.close(done);
+  });
+  return { forward, close };
+}
+
+const SHELL = {
+  schema: 'chit402.receipt_shell.v1',
+  unsigned: true,
+  receipt_id: 'foreign-x402-muq262x0-1467b076fc62',
+  verify_url: null,
+};
+
+/** Shell receipt and 1F916 record from local bodies; selected hosts go to loopback. */
+function shellFetch(forward, loopHosts, { recordHash = FINGERPRINT } = {}) {
+  return async (url, init) => {
+    const u = new URL(String(url));
+    if (loopHosts.includes(u.host)) return forward(url, init);
+    if (u.host === 'api.chit402.com') return { ok: true, status: 200, json: async () => SHELL };
+    if (u.host === '1f916.ai') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ events: [{ id: 20498, kind: 'listing', hash: recordHash }], events_has_more: false }),
+      };
+    }
+    throw new Error(`unexpected fetch ${u.host}`);
+  };
+}
+
+describe('S5 transport errors vs real failures (loopback only)', () => {
+  const receiptCases = [
+    ['HTTP 500', '500', 'COULD_NOT_CHECK', /http_500/],
+    ['HTTP 503', '503', 'COULD_NOT_CHECK', /http_503/],
+    ['connection refused', 'refused', 'COULD_NOT_CHECK', /./],
+    ['timeout', 'hang', 'COULD_NOT_CHECK', /^timeout$/],
+    ['body stalls after headers', 'stall_body', 'COULD_NOT_CHECK', /^timeout$/],
+    ['HTTP 404', '404', 'FAIL', /http_404/],
+    ['HTTP 400', '400', 'FAIL', /http_400/],
+    ['body not JSON', 'not_json', 'FAIL', /body_not_json/],
+    ['redirect', 'redirect', 'FAIL', /redirect_refused/],
+  ];
+  for (const [label, mode, status, detail] of receiptCases) {
+    test(`receipt fetch ${label} is ${status}`, { timeout: 10000 }, async () => {
+      const lb = await loopback({ 'api.chit402.com': mode });
+      try {
+        const result = await verifyLink(load(specimen1Path), {
+          fetchImpl: shellFetch(lb.forward, ['api.chit402.com']),
+          rpcUrl: 'https://rpc.test/base',
+          timeoutMs: 300,
+        });
+        assert.equal(result.steps.fetch_receipt.status, status, formatReport(result));
+        assert.ok(detail.test(result.steps.fetch_receipt.detail), result.steps.fetch_receipt.detail);
+        assert.equal(result.steps.entry_fingerprint.status, 'PASS', formatReport(result));
+        assert.equal(result.verdict, status, formatReport(result));
+        const report = formatReport(result);
+        assert.equal(report.includes('VERDICT PASS'), false, report);
+      } finally {
+        await lb.close();
+      }
+    });
+  }
+
+  for (const [label, mode, status] of [['HTTP 502', '502', 'COULD_NOT_CHECK'], ['refused', 'refused', 'COULD_NOT_CHECK'], ['HTTP 404', '404', 'FAIL']]) {
+    test(`1F916 record fetch ${label} is ${status}`, { timeout: 10000 }, async () => {
+      const lb = await loopback({ '1f916.ai': mode });
+      try {
+        const result = await verifyLink(load(specimen1Path), {
+          fetchImpl: shellFetch(lb.forward, ['1f916.ai']),
+          rpcUrl: 'https://rpc.test/base',
+          timeoutMs: 300,
+        });
+        assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+        assert.equal(result.steps.entry_fingerprint.status, status, formatReport(result));
+        assert.ok(/record_fetch:/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
+        assert.equal(result.verdict, status, formatReport(result));
+      } finally {
+        await lb.close();
+      }
+    });
+  }
+
+  test('N-D2 a shell with a mismatched 1F916 fingerprint is FAIL exit 1, not COULD_NOT_CHECK', async () => {
+    const result = await verifyLink(load(specimen1Path), {
+      fetchImpl: shellFetch(null, [], { recordHash: TAMPERED }),
+      rpcUrl: 'https://rpc.test/base',
+    });
+    assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+    assert.equal(result.steps.entry_fingerprint.status, 'FAIL');
+    assert.ok(/fingerprint_mismatch/.test(result.steps.entry_fingerprint.detail), result.steps.entry_fingerprint.detail);
+    assert.equal(result.verdict, 'FAIL');
+    const lines = [];
+    const code = await runCli([specimen1Path], {
+      fetchImpl: shellFetch(null, [], { recordHash: TAMPERED }),
+      log: (line) => lines.push(line),
+      error: () => {},
+    });
+    assert.equal(code, 1, lines.join('\n'));
+    assert.ok(/^VERDICT FAIL$/m.test(lines.join('\n')), lines.join('\n'));
+  });
+
+  for (const [label, host, mode, status, steps] of [
+    ['JWKS HTTP 502', 'api.chit402.com', '502', 'COULD_NOT_CHECK', ['issuer_signature', 'receipt_chain', 'on_chain_tx']],
+    ['JWKS HTTP 404', 'api.chit402.com', '404', 'FAIL', ['issuer_signature', 'receipt_chain', 'on_chain_tx']],
+    ['RPC HTTP 503', 'rpc.test', '503', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC refused', 'rpc.test', 'refused', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC timeout', 'rpc.test', 'hang', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC HTTP 400', 'rpc.test', '400', 'FAIL', ['on_chain_tx']],
+    ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
+  ]) {
+    test(`signed receipt: ${label} is ${status}`, { timeout: 10000 }, async () => {
+      const { fetchImpl, specimen } = foreignPayoutHarness();
+      const lb = await loopback({ [host]: mode });
+      try {
+        const wrapped = async (url, init) => {
+          const target = String(url);
+          if (host === 'api.chit402.com' && target.endsWith('/.well-known/jwks.json')) return lb.forward(url, init);
+          if (host === 'rpc.test' && target.startsWith('https://rpc.test/')) return lb.forward(url, init);
+          return fetchImpl(url, init);
+        };
+        const result = await verifyLink(specimen(FINGERPRINT), {
+          fetchImpl: wrapped,
+          rpcUrl: 'https://rpc.test/base',
+          timeoutMs: 300,
+        });
+        for (const name of steps) assert.equal(result.steps[name].status, status, `${name}: ${formatReport(result)}`);
+        assert.equal(result.verdict, status, formatReport(result));
+      } finally {
+        await lb.close();
+      }
+    });
+  }
+
+  const specimenUrl = 'https://www.chit402.com/specimens/1f916-link-1.json';
+  for (const [label, mode, code, verdict] of [
+    ['HTTP 500', '500', 2, 'COULD_NOT_CHECK'],
+    ['refused', 'refused', 2, 'COULD_NOT_CHECK'],
+    ['timeout', 'hang', 2, 'COULD_NOT_CHECK'],
+    ['HTTP 404', '404', 1, 'FAIL'],
+    ['body not JSON', 'not_json', 1, 'FAIL'],
+  ]) {
+    test(`CLI: specimen URL ${label} exits ${code} ${verdict}`, { timeout: 10000 }, async () => {
+      const lb = await loopback({ 'www.chit402.com': mode });
+      const lines = [];
+      try {
+        const got = await runCli([specimenUrl], {
+          fetchImpl: lb.forward,
+          timeoutMs: 300,
+          log: (line) => lines.push(line),
+          error: () => {},
+        });
+        const out = lines.join('\n');
+        assert.equal(got, code, out);
+        assert.ok(new RegExp(`^VERDICT ${verdict}$`, 'm').test(out), out);
+        assert.equal(out.includes('VERDICT PASS'), false, out);
+      } finally {
+        await lb.close();
+      }
+    });
+  }
+
+  test('CLI: a missing local specimen file and a fixture miss stay FAIL exit 1', async () => {
+    const lines = [];
+    const io = { log: (line) => lines.push(line), error: () => {} };
+    assert.equal(await runCli([join(tmpdir(), `no-such-specimen-${process.pid}.json`)], io), 1, lines.join('\n'));
+    const miss = async (url) => {
+      const err = new Error(`fixture_miss:${url}`);
+      err.code = 'fixture_miss';
+      throw err;
+    };
+    assert.equal(await runCli([specimenUrl], { ...io, fetchImpl: miss }), 1, lines.join('\n'));
+    const result = await verifyLink(load(specimen1Path), { fetchImpl: miss, rpcUrl: 'https://rpc.test/base' });
+    assert.equal(result.steps.fetch_receipt.status, 'FAIL');
+    assert.equal(result.verdict, 'FAIL');
+  });
+
+  test('CLI: no argument is usage, exit 2', async () => {
+    assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);
+  });
 });
