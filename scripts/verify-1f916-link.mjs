@@ -255,9 +255,9 @@ const TLS_CODES = new Set([
   'CERT_REJECTED',
   'HOSTNAME_MISMATCH',
   'UNSPECIFIED',
-  'ERR_TLS_CERT_ALTNAME_INVALID',
 ]);
 
+// ERR_TLS_CERT_ALTNAME_INVALID and other ERR_TLS_* / ERR_SSL_* codes come in through the prefix rule.
 function isTlsCode(code) {
   return TLS_CODES.has(code) || /^ERR_(SSL|TLS)_/.test(code);
 }
