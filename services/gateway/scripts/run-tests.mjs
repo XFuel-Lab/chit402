@@ -36,7 +36,8 @@ export function filesWithoutCompletion(records, files) {
     if (!line.trim()) continue;
     try {
       const row = JSON.parse(line);
-      if (row && row.file) done.add(row.file);
+      // A completion row has `passed`. A row with only a problem is not one.
+      if (row && row.file && 'passed' in row) done.add(row.file);
     } catch {
       // A partial last line, or any line that is not JSON, is not a completion.
     }
@@ -44,18 +45,53 @@ export function filesWithoutCompletion(records, files) {
   return files.filter((file) => !done.has(file));
 }
 
-function main() {
-  const files = readdirSync(join(gatewayDir, 'test'))
-    .filter((name) => name.endsWith('.test.mjs'))
-    .sort()
-    .map((name) => `test/${name}`);
-
-  // A green run over zero files is the one outcome worse than a red one.
-  if (files.length === 0) {
-    console.error('run-tests: no test/*.test.mjs files found — refusing to report success.');
-    process.exitCode = 1;
-    return;
+/**
+ * Files whose output had a testTimeoutFailure or a cancelled test, from the
+ * problem rows file-done-reporter writes. One entry per file, problem and test.
+ * @param {string} records
+ * @returns {{ file: string, problem: string, test: string }[]}
+ */
+export function fileProblems(records) {
+  const seen = new Map();
+  for (const line of String(records || '').split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!row || !row.file || !row.problem) continue;
+    const key = `${row.file}\u0000${row.problem}\u0000${row.test || ''}`;
+    if (!seen.has(key)) seen.set(key, { file: row.file, problem: row.problem, test: String(row.test || '') });
   }
+  return [...seen.values()];
+}
+
+/**
+ * The lines run-tests prints for problem rows. Exported for the runner test.
+ * @param {{ file: string, problem: string, test: string }[]} problems
+ */
+export function problemMessages(problems) {
+  return problems.map(({ file, problem, test }) => {
+    const what = problem === 'testTimeoutFailure' ? 'hit the per-file time limit (testTimeoutFailure)' : 'had a cancelled test (cancelledByParent)';
+    const which = test && test !== file ? `, test: ${test}` : '';
+    return `run-tests: FAIL ${file} ${what}${which}. Its tests are missing from the totals.`;
+  });
+}
+
+/**
+ * Run the given files the way CI does and return the exit code. Errors are
+ * written with `error`. Options exist for the runner test.
+ * @param {string[]} files paths relative to cwd
+ * @param {{ cwd?: string, timeoutMs?: number, stdio?: any, env?: NodeJS.ProcessEnv, nodeArgs?: string[], error?: (line: string) => void }} [opts]
+ */
+export function runTestFiles(files, opts = {}) {
+  const cwd = opts.cwd || gatewayDir;
+  const timeoutMs = opts.timeoutMs || 120000;
+  const error = opts.error || ((line) => console.error(line));
+  const baseEnv = opts.env || process.env;
+
 
   // Node options have to precede the file list. A per-test timeout so one hung
   // file cannot pin CI the way a missing filename used to skip it; spawnSync
@@ -75,35 +111,35 @@ function main() {
   const dir = mkdtempSync(join(tmpdir(), 'run-tests-'));
   const recordFile = join(dir, 'files.jsonl');
   const reporter = join(gatewayDir, 'scripts', 'file-done-reporter.mjs');
-  const { status, error, signal } = spawnSync(
+  const { status, error: spawnError, signal } = spawnSync(
     process.execPath,
     [
       '--test',
       '--test-concurrency=1',
-      '--test-timeout=120000',
+      `--test-timeout=${timeoutMs}`,
       '--test-force-exit',
       '--test-reporter=tap',
       '--test-reporter-destination=stdout',
       `--test-reporter=${reporter}`,
       `--test-reporter-destination=${recordFile}`,
-      ...process.argv.slice(2),
+      ...(opts.nodeArgs || []),
       ...files,
     ],
     {
-      stdio: 'inherit',
-      cwd: gatewayDir,
+      stdio: opts.stdio || 'inherit',
+      cwd,
       timeout: 10 * 60 * 1000,
       killSignal: 'SIGKILL',
       env: {
-        ...process.env,
-        NODE_ENV: process.env.NODE_ENV || 'test',
+        ...baseEnv,
+        NODE_ENV: baseEnv.NODE_ENV || 'test',
         // Ephemeral key resets in this process may drop an in-memory history
         // chain. Production never reads this flag.
-        ISSUER_HISTORY_TEST_ROTATION: process.env.ISSUER_HISTORY_TEST_ROTATION || 'true',
+        ISSUER_HISTORY_TEST_ROTATION: baseEnv.ISSUER_HISTORY_TEST_ROTATION || 'true',
         // Test files load throwaway issuer keys. A set ISSUER_PRIVATE_KEY counts
         // as production unless this opt-out is set, and the opt-out never
         // covers the production kid (src/production-process.js).
-        ISSUER_TEST_KEY: process.env.ISSUER_TEST_KEY || '1',
+        ISSUER_TEST_KEY: baseEnv.ISSUER_TEST_KEY || '1',
       },
     },
   );
@@ -116,23 +152,40 @@ function main() {
   }
   rmSync(dir, { recursive: true, force: true });
 
-  if (error) {
-    console.error(`run-tests: ${error.message}`);
-    process.exitCode = 1;
-    return;
+  if (spawnError) {
+    error(`run-tests: ${spawnError.message}`);
+    return 1;
   }
   if (signal) {
-    console.error(`run-tests: test process killed (${signal})`);
-    process.exitCode = 1;
-    return;
+    error(`run-tests: test process killed (${signal})`);
+    return 1;
   }
-  const missing = filesWithoutCompletion(records, files.map((file) => resolve(gatewayDir, file)));
+  const missing = filesWithoutCompletion(records, files.map((file) => resolve(cwd, file)));
   if (missing.length > 0) {
-    console.error(`run-tests: these files did not finish: ${missing.join(', ')}`);
+    error(`run-tests: these files did not finish: ${missing.join(', ')}`);
+    return 1;
+  }
+  const problems = fileProblems(records);
+  if (problems.length > 0) {
+    for (const line of problemMessages(problems)) error(line);
+    return 1;
+  }
+  return status ?? 1;
+}
+
+function main() {
+  const files = readdirSync(join(gatewayDir, 'test'))
+    .filter((name) => name.endsWith('.test.mjs'))
+    .sort()
+    .map((name) => `test/${name}`);
+
+  // A green run over zero files is the one outcome worse than a red one.
+  if (files.length === 0) {
+    console.error('run-tests: no test/*.test.mjs files found. Refusing to report success.');
     process.exitCode = 1;
     return;
   }
-  process.exitCode = status ?? 1;
+  process.exitCode = runTestFiles(files, { nodeArgs: process.argv.slice(2) });
 }
 
 const invokedDirectly = process.argv[1]
