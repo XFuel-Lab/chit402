@@ -39,6 +39,21 @@ grep -q '^CDP_API_KEY_SECRET=.' "$GW/.env" || die "CDP_API_KEY_SECRET missing"
 ylw "==> npm ci"
 ( cd "$GW" && npm ci --omit=dev )
 
+ylw "==> Recording the deployed commit (GATEWAY_COMMIT)"
+# The full 40-hex sha of the checkout that is about to run. /health reports
+# it as `commit`; anything else is reported as null.
+GATEWAY_COMMIT="$(git -C "$XFUEL_REPO" rev-parse HEAD)"
+[[ "$GATEWAY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die "git rev-parse HEAD did not give a 40-hex sha"
+export GATEWAY_COMMIT
+# The unit sources .env, so the value goes there. Rewritten in place, so the
+# file keeps its owner and mode.
+env_tmp="$(mktemp)"
+grep -v '^GATEWAY_COMMIT=' "$GW/.env" > "$env_tmp" || true
+printf 'GATEWAY_COMMIT=%s\n' "$GATEWAY_COMMIT" >> "$env_tmp"
+cat "$env_tmp" > "$GW/.env"
+rm -f "$env_tmp"
+grn "GATEWAY_COMMIT=$GATEWAY_COMMIT"
+
 ylw "==> Stopping / disabling legacy units"
 if [[ -n "${XFUEL_LEGACY_PM2_APP:-}" ]] && command -v pm2 >/dev/null 2>&1; then
   pm2 delete "$XFUEL_LEGACY_PM2_APP" 2>/dev/null || true
@@ -99,6 +114,9 @@ ylw "==> Health fingerprint"
 health="$(curl -sS --max-time 5 http://127.0.0.1:3002/health || true)"
 echo "$health" | head -c 500; echo
 
+if ! echo "$health" | grep -q "\"commit\":\"$GATEWAY_COMMIT\""; then
+  ylw "WARN: /health commit is not $GATEWAY_COMMIT"
+fi
 if echo "$health" | grep -q '30% BBB'; then
   die "OLD gateway fingerprint still live (30% BBB). Wrong tree or orphan."
 fi
