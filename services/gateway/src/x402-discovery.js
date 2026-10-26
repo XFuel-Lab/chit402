@@ -1135,8 +1135,8 @@ export function buildOpenApiSpec(baseUrl = '') {
       + 'GET|POST /v1/agents/{agent_id}/book is possession-gated last-N collected spend '
       + 'with budget Y and remaining (prepaid ceiling). '
       + 'Private Spend: registered sessions get vendor_blind by default. '
-      + 'Replaceable Signer: receipts carry dual signatures (primary + co_signature); '
-      + 'verify offline via docs/VERIFY_ALGORITHM.md. '
+      + 'Receipts carry an ES256 issuer signature; verify offline via docs/VERIFY_ALGORITHM.md. '
+      + 'Receipts are not independently witnessed yet. '
       + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust.',
       'x-guidance':
         'Signed spend receipts for agent x402 payments — who paid which call, verifiable by a third party. '
@@ -1153,7 +1153,7 @@ export function buildOpenApiSpec(baseUrl = '') {
         + 'GET|POST /v1/agents/{agent_id}/book is a possession-gated last-N collected '
         + 'spend pack with budget Y / remaining for that agent_id — not a public index. '
         + 'Private Spend is default for registered sessions (X-XFuel-Session header). '
-      + 'Receipts carry dual signatures; co_signature enables verify if Chit disappears. '
+      + 'Receipts are not independently witnessed yet; any HMAC attestation is gateway-held. '
       + 'Issuer trust (pin JWKS + kid OOB): https://www.chit402.com/trust '
       + 'POST /task-request is a lower-level M2M alternative that returns task_id for '
         + 'polling — do not treat it as the public door.',

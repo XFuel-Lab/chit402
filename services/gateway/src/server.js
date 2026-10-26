@@ -535,10 +535,12 @@ Registered/possession sessions get vendor_blind mode by default. Providers see
 gateway-pooled credentials, not end-customer topology. Demo keys never qualify.
 Pass X-XFuel-Session header with a valid register session to enable.
 
-## Replaceable Signer (verifiable without Chit)
+## HMAC attestations (gateway-held, not independent)
 
-Receipts can carry two signatures: primary (signature) and co-signer (co_signature).
-Either validates the receipt. If Chit disappears, the co-signer's key still works.
+Receipts can carry hmac_attestation and, when configured, co_attestation. Both are
+HMACs computed by the Chit gateway with secrets it holds; they are tamper checks for
+holders of a shared secret, not an independent witness. chit402-verify does not read
+them. Receipts are not independently witnessed yet.
 - docs/VERIFY_ALGORITHM.md : plain-language + runnable verify code (offline).
 - scripts/verify-receipt.mjs : standalone verification script.
 - binding.in_proof: the on-chain settlement proof add-on is coming soon and not active today.
