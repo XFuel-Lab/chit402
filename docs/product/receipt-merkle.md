@@ -153,6 +153,10 @@ The leaf for this receipt is in the issuer's tree of the stated size, under the 
 
 `chit402-verify receipt.json inclusion.json head.json --rpc` checks the inclusion, fetches the Solana transaction, and checks the Base calldata. It prints the same boundary.
 
+## Quarantined heads
+
+A signed head whose root is really an earlier prefix (the Oct 9, 2026 publish/append race) is quarantined: it isn't served, and no inclusion proof against it counts. `/health` lists it under `quarantined_heads`. The public, signed acknowledgement format for such a head is in [`docs/log/quarantine-ack.md`](../log/quarantine-ack.md).
+
 ## What this does not prove
 
 It does not prove the payment. Pending anchor means that chain has not recorded the root yet. An anchor proves the issuer published the root at that time. It does not prove every receipt that will ever exist is in that root — only the tree of that size. It does not prove the RPC you queried is honest; it checks the transaction that RPC returned.
