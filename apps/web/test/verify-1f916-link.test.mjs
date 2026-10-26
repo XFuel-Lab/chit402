@@ -9,6 +9,7 @@ import { describe, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
+import { createServer as createNetServer } from 'node:net';
 import { bookRowHash, classifyFetchError, formatReport, runCli, verifyLink } from '../../../scripts/verify-1f916-link.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -608,6 +609,11 @@ async function loopback(routes) {
       res.writeHead(302, { location: 'http://127.0.0.1:9/elsewhere' });
       return res.end();
     }
+    if (mode === 'short_body') {
+      // N-14: fewer bytes than content-length, then a clean close.
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100', connection: 'close' });
+      return res.end('{"events":');
+    }
     if (mode === 'not_json') {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end('<html>not json</html>');
@@ -670,6 +676,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['timeout', 'hang', 'COULD_NOT_CHECK', /^timeout$/],
     ['body stalls after headers', 'stall_body', 'COULD_NOT_CHECK', /^timeout$/],
     ['socket reset mid-body', 'reset_body', 'COULD_NOT_CHECK', /^UND_ERR_SOCKET$/],
+    ['body shorter than content-length, clean close', 'short_body', 'COULD_NOT_CHECK', /^body_truncated:UND_ERR_RES_CONTENT_LENGTH_MISMATCH$/],
     ['HTTP 404', '404', 'FAIL', /http_404/],
     ['HTTP 400', '400', 'FAIL', /http_400/],
     ['body not JSON', 'not_json', 'FAIL', /body_not_json/],
@@ -757,6 +764,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ['RPC HTTP 599', 'rpc.test', '599', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC body stalls after headers', 'rpc.test', 'stall_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC socket reset mid-body', 'rpc.test', 'reset_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
+    ['RPC body shorter than content-length', 'rpc.test', 'short_body', 'COULD_NOT_CHECK', ['on_chain_tx']],
     ['RPC redirect', 'rpc.test', 'redirect', 'FAIL', ['on_chain_tx']],
     ['RPC body not JSON', 'rpc.test', 'not_json', 'FAIL', ['on_chain_tx']],
   ]) {
@@ -776,7 +784,7 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
           timeoutMs: 300,
         });
         for (const name of steps) assert.equal(result.steps[name].status, status, `${name}: ${formatReport(result)}`);
-        const rpcDetail = { stall_body: /^rpc:timeout$/, reset_body: /^rpc:UND_ERR_SOCKET$/, redirect: /^rpc:redirect_refused$/ }[mode];
+        const rpcDetail = { stall_body: /^rpc:timeout$/, reset_body: /^rpc:UND_ERR_SOCKET$/, short_body: /^rpc:body_truncated:UND_ERR_RES_CONTENT_LENGTH_MISMATCH$/, redirect: /^rpc:redirect_refused$/ }[mode];
         if (host === 'rpc.test' && rpcDetail) {
           assert.ok(rpcDetail.test(result.steps.on_chain_tx.detail), result.steps.on_chain_tx.detail);
         }
@@ -887,7 +895,8 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     const timeout = new DOMException('timed out', 'TimeoutError');
     assert.equal(classifyFetchError(timeout).message, 'timeout');
     assert.equal(classifyFetchError(new DOMException('aborted', 'AbortError')).transport, true);
-    // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail, on the cause or on the error.
+    // M-2: a TLS failure is COULD_NOT_CHECK with a tls: detail. The code counts
+    // only on the cause (or an AggregateError member), where fetch puts it.
     // M-2b: every X509 certificate error code in Node's tls docs, plus UNSPECIFIED.
     const x509 = [
       'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_CRL', 'UNABLE_TO_DECRYPT_CERT_SIGNATURE', 'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
@@ -900,11 +909,15 @@ describe('S5 transport errors vs real failures (loopback only)', () => {
     ];
     assert.equal(x509.length, 28);
     for (const code of [...x509, 'UNSPECIFIED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_TLS_HANDSHAKE_TIMEOUT']) {
-      for (const err of [fetchFailed(coded(code)), coded(code)]) {
+      for (const err of [fetchFailed(coded(code)), fetchFailed(new AggregateError([coded(code)], 'all failed'))]) {
         const got = classifyFetchError(err);
         assert.equal(got.transport, true, code);
         assert.equal(got.message, `tls:${code}`);
       }
+      // On the rejection itself (a custom fetchImpl, not fetch): not TLS, so FAIL.
+      const top = classifyFetchError(coded(code));
+      assert.notEqual(top.transport, true, `top-level ${code}`);
+      assert.equal(top.message, `fetch_error:x:${code}`);
     }
     const redirect = classifyFetchError(fetchFailed(new Error('unexpected redirect')));
     assert.equal(redirect.transport, undefined);
@@ -1212,6 +1225,62 @@ catch (err) { const c = classifyFetchError(err); console.log(JSON.stringify({ tr
       assert.equal(result.steps[name].detail, detail);
     });
   }
+
+  // pr654 (Chief): a genuine link reached through a broken certificate or a
+  // broken network path is never FAIL. Real undici errors from the global
+  // fetch, every request of the run sent to one loopback path. FAIL needs an
+  // answer from a server the client trusts (see the control).
+  test('a genuine link whose every fetch meets a broken certificate or network path is COULD_NOT_CHECK exit 2, never FAIL', { timeout: 60000 }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'link-broken-'));
+    const servers = [];
+    const listen = async (server) => {
+      servers.push(server);
+      await new Promise((done) => server.listen(0, '127.0.0.1', done));
+      return server.address().port;
+    };
+    try {
+      openssl(['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-keyout', 'self.key', '-out', 'self.pem', '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], dir);
+      const selfSigned = createHttpsServer({ key: readFileSync(join(dir, 'self.key')), cert: readFileSync(join(dir, 'self.pem')) }, (req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+      });
+      const plaintext = createNetServer((sock) => { sock.on('error', () => {}); sock.end('HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}'); });
+      const reset = createNetServer((sock) => { sock.on('error', () => {}); sock.resetAndDestroy(); });
+      const dead = createNetServer();
+      const deadPort = await listen(dead);
+      await new Promise((done) => dead.close(done));
+      servers.pop();
+      const paths = [
+        ['self-signed certificate', await listen(selfSigned), /^tls:DEPTH_ZERO_SELF_SIGNED_CERT$/],
+        ['plaintext on the TLS port', await listen(plaintext), /^tls:ERR_SSL_/],
+        ['reset after accept', await listen(reset), /^ECONNRESET$/],
+        ['connection refused', deadPort, /^ECONNREFUSED$/],
+      ];
+      for (const [label, port, specimenDetail] of paths) {
+        const viaPath = (url, init) => {
+          const u = new URL(String(url));
+          return fetch(`https://127.0.0.1:${port}${u.pathname}${u.search}`, init);
+        };
+        for (const path of [specimen1Path, specimen2Path]) {
+          const result = await verifyLink(load(path), { fetchImpl: viaPath, rpcUrl: 'https://rpc.test/base', timeoutMs: 3000 });
+          const failed = Object.entries(result.steps).filter(([, step]) => step.status === 'FAIL');
+          assert.deepEqual(failed, [], `${label}: ${formatReport(result)}`);
+          assert.equal(result.verdict, 'COULD_NOT_CHECK', `${label}: ${formatReport(result)}`);
+        }
+        const lines = [];
+        const code = await runCli([specimenUrl], { fetchImpl: viaPath, timeoutMs: 3000, log: (line) => lines.push(line), error: () => {} });
+        assert.equal(code, 2, `${label}: ${lines.join('\n')}`);
+        const detail = /^COULD_NOT_CHECK specimen (\S+)$/.exec(lines[0] || '');
+        assert.ok(detail && specimenDetail.test(detail[1]), `${label}: ${lines.join('\n')}`);
+      }
+    } finally {
+      for (const server of servers) {
+        server.closeAllConnections?.();
+        server.close();
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   test('CLI: no argument is usage, exit 2', async () => {
     assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);

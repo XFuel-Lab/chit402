@@ -20,16 +20,21 @@ import { resolve } from 'node:path';
 // summary adds up. run-tests.mjs compares it with test/test-counts.json, so a
 // file that stops early (an exit mid-file, a cut event stream) fails the run
 // even when the file itself reports success. A file with no count row counts
-// as zero.
+// as zero. The row also carries `skipped`, the skip and todo tests among them,
+// which run-tests.mjs caps.
 const PROBLEMS = new Set(['testTimeoutFailure', 'cancelledByParent']);
 
 export default async function* fileDoneReporter(source) {
   const counts = new Map();
+  const skips = new Map();
   for await (const event of source) {
     if (event.type === 'test:pass' || event.type === 'test:fail') {
       const d = event.data || {};
       const fileLevel = d.nesting === 0 && d.file && resolve(String(d.name)) === d.file;
-      if (d.file && !fileLevel && d.details?.type !== 'suite') counts.set(d.file, (counts.get(d.file) || 0) + 1);
+      if (d.file && !fileLevel && d.details?.type !== 'suite') {
+        counts.set(d.file, (counts.get(d.file) || 0) + 1);
+        if (d.skip !== undefined || d.todo !== undefined) skips.set(d.file, (skips.get(d.file) || 0) + 1);
+      }
     }
     if (event.type !== 'test:complete' && event.type !== 'test:fail') continue;
     const d = event.data || {};
@@ -45,5 +50,5 @@ export default async function* fileDoneReporter(source) {
     const row = problem ? { file: d.file, passed, problem, test: String(d.name) } : { file: d.file, passed };
     yield `${JSON.stringify(row)}\n`;
   }
-  for (const [file, tests] of counts) yield `${JSON.stringify({ file, tests })}\n`;
+  for (const [file, tests] of counts) yield `${JSON.stringify({ file, tests, skipped: skips.get(file) || 0 })}\n`;
 }

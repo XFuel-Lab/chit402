@@ -104,6 +104,10 @@ jobs:
   gateway:
     name: Gateway Tests
     runs-on: ubuntu-latest
+    # Install and build take a few minutes; the suite takes about 300 s loaded.
+    # run-tests.mjs caps the suite at 600 s and names the running file, so the
+    # step and job limits sit above that cap.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -124,6 +128,11 @@ jobs:
 
       - name: Gateway tests (receipts + x402 adapter)
         working-directory: services/gateway
+        timeout-minutes: 12
+        # CI has none of the machine-dependent skips (root, no anvil), so any
+        # skip here fails. run-tests.mjs refuses a value above the manifest's.
+        env:
+          RUN_TESTS_MAX_SKIPPED: '0'
         run: npm test
 
   # ── CDP spend store (Linux + Windows) ──────────────────────

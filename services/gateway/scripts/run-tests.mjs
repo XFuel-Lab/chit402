@@ -24,6 +24,22 @@
  * --write-counts runs the full suite and writes the file only when every file
  * finished, nothing timed out or was cancelled, and nothing failed. It takes no
  * other arguments, so a filtered run cannot write a lowered count.
+ *
+ * Test filters. A skipped test still emits test:pass, so a filtered run keeps
+ * every count row equal to the manifest and exits 0 with nothing executed
+ * (`--test-name-pattern='^none$'` gave "pass 0, skipped 72"). Two guards:
+ *   - The runner refuses --test-name-pattern, --test-skip-pattern, --test-only
+ *     and --test-shard in its arguments, and strips them from NODE_OPTIONS
+ *     before spawning node. It reads them the way node does (quotes removed,
+ *     `_` as `-`, `--flag=value`), and treats --test-force-exit and test
+ *     isolation `none` the same way.
+ *   - test-counts.json records `skipped`, the most skipped and todo tests a
+ *     run may have. A run that skips more fails. Some skips depend on the
+ *     machine (a root user can read a mode-000 file, anvil may be missing), so
+ *     the number is the worst legitimate case, not one run's count:
+ *     --write-counts keeps the recorded number and fails a run over it.
+ *     Raising it is a hand edit, visible in the diff. CI has none of those
+ *     skips and sets RUN_TESTS_MAX_SKIPPED=0, which may only lower the cap.
  */
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -32,8 +48,167 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'node:path';
 
+/**
+ * Hard cap on the whole node --test process. The loaded full suite takes about
+ * 300 s, so this is about 2x. The gateway job's timeout-minutes in
+ * .github/workflows/test.yml sits above it, so this cap fires first and names
+ * the file that was running.
+ */
+export const SUITE_TIMEOUT_MS = 10 * 60 * 1000;
+
 const gatewayDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const COUNTS_PATH = join(gatewayDir, 'test', 'test-counts.json');
+/** node --test options that run fewer tests than the full suite. */
+export const TEST_FILTER_FLAGS = ['--test-name-pattern', '--test-skip-pattern', '--test-only', '--test-shard'];
+
+/**
+ * Other node --test options the runner refuses. --test-force-exit was removed
+ * in #653 on purpose: under load it cut a file's event stream. Test isolation
+ * `none` runs every file in one process, so the per-file completion and count
+ * records no longer describe files. Isolation `process` is the default and is
+ * allowed.
+ */
+export const REFUSED_TEST_FLAGS = ['--test-force-exit'];
+export const ISOLATION_FLAGS = ['--test-isolation', '--experimental-test-isolation'];
+
+/** Options that never take a value. */
+const NO_VALUE_FLAGS = new Set(['--test-only', '--test-force-exit']);
+
+/** The environment variable CI sets to lower the skip cap (see resolveSkipCap). */
+export const SKIP_CAP_ENV = 'RUN_TESTS_MAX_SKIPPED';
+
+/**
+ * An option token as node reads it: surrounding quotes (single or double,
+ * balanced or not) removed, and `_` read as `-` in the name, since node
+ * accepts --test_only for --test-only. `value` is the part after `=`, or null.
+ * @param {string} token
+ * @returns {{ name: string, value: string | null }}
+ */
+export function normaliseOption(token) {
+  const unquote = (text) => text.replace(/^['"]+/, '').replace(/['"]+$/, '');
+  const bare = unquote(String(token ?? '').trim());
+  const eq = bare.indexOf('=');
+  const name = (eq < 0 ? bare : bare.slice(0, eq)).replace(/_/g, '-');
+  return { name, value: eq < 0 ? null : unquote(bare.slice(eq + 1)) };
+}
+
+/**
+ * Refused options in a token list: test filters, --test-force-exit and test
+ * isolation other than `process`, in every spelling normaliseOption reads.
+ * Each hit is the token's index and how many tokens it uses (2 when a value
+ * follows as its own token, as in `--test-name-pattern x`).
+ * @param {string[]} tokens
+ * @returns {{ index: number, take: number }[]}
+ */
+function refusedOptions(tokens) {
+  const hits = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const { name, value } = normaliseOption(tokens[i]);
+    const next = i + 1 < tokens.length ? normaliseOption(tokens[i + 1]) : null;
+    // A following token that is not itself an option is this option's value.
+    const valueToken = value === null && !NO_VALUE_FLAGS.has(name) && next !== null && !next.name.startsWith('-');
+    if (TEST_FILTER_FLAGS.includes(name) || REFUSED_TEST_FLAGS.includes(name)) {
+      hits.push({ index: i, take: valueToken ? 2 : 1 });
+    } else if (ISOLATION_FLAGS.includes(name)) {
+      const mode = value !== null ? value : (valueToken ? next.name : null);
+      if (mode !== 'process') hits.push({ index: i, take: valueToken ? 2 : 1 });
+    } else {
+      continue;
+    }
+    if (valueToken) i += 1;
+  }
+  return hits;
+}
+
+/**
+ * Refused option tokens in an argument list, as given (`--test-only`,
+ * `--test_name_pattern=x`, `--test-isolation=none`, or the flag token of
+ * `--test-name-pattern x`).
+ * @param {string[]} args
+ * @returns {string[]}
+ */
+export function testFilterArgs(args) {
+  const list = (args || []).map(String);
+  return refusedOptions(list).map(({ index }) => list[index]);
+}
+
+/**
+ * NODE_OPTIONS split the way node splits it: on whitespace, with a
+ * double-quoted section (backslash escapes inside) kept in one token and its
+ * quotes removed. `raw` is the token as written, `text` as node reads it.
+ * @param {string} value
+ * @returns {{ raw: string, text: string }[]}
+ */
+export function nodeOptionsTokens(value) {
+  const tokens = [];
+  const src = String(value || '');
+  let i = 0;
+  while (i < src.length) {
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (i >= src.length) break;
+    const begin = i;
+    let text = '';
+    let quoted = false;
+    while (i < src.length && (quoted || !/\s/.test(src[i]))) {
+      const ch = src[i];
+      if (ch === '"') {
+        quoted = !quoted;
+      } else if (quoted && ch === '\\' && i + 1 < src.length) {
+        i += 1;
+        text += src[i];
+      } else {
+        text += ch;
+      }
+      i += 1;
+    }
+    tokens.push({ raw: src.slice(begin, i), text });
+  }
+  return tokens;
+}
+
+/**
+ * NODE_OPTIONS with every refused option removed (see refusedOptions),
+ * including the value of a space-separated `--test-name-pattern x`. Returns
+ * the cleaned string (kept tokens as written) and what was removed (as node
+ * reads it).
+ * @param {string | undefined} value
+ * @returns {{ value: string, removed: string[] }}
+ */
+export function stripTestFilters(value) {
+  const tokens = nodeOptionsTokens(value);
+  const drop = new Set();
+  for (const { index, take } of refusedOptions(tokens.map((t) => t.text))) {
+    for (let k = 0; k < take; k += 1) drop.add(index + k);
+  }
+  return {
+    value: tokens.filter((_, i) => !drop.has(i)).map((t) => t.raw).join(' '),
+    removed: tokens.filter((_, i) => drop.has(i)).map((t) => t.text),
+  };
+}
+
+/**
+ * The skip cap for this run. The manifest's `skipped` is the worst legitimate
+ * machine (root, no anvil). CI has none of those skips, so the gateway step
+ * sets RUN_TESTS_MAX_SKIPPED=0 and any skip there fails. The variable may only
+ * lower the cap: a value above the manifest, or one that is not a whole number
+ * (an empty string included), is an error and the run does not start.
+ * @param {number} manifestSkipped
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ cap: number, source: string } | { error: string }}
+ */
+export function resolveSkipCap(manifestSkipped, env = process.env) {
+  if (!Object.prototype.hasOwnProperty.call(env, SKIP_CAP_ENV) || env[SKIP_CAP_ENV] === undefined) {
+    return { cap: manifestSkipped, source: 'test/test-counts.json' };
+  }
+  const raw = String(env[SKIP_CAP_ENV]);
+  if (!/^\d+$/.test(raw)) return { error: `run-tests: ${SKIP_CAP_ENV}=${JSON.stringify(raw)} is not a whole number. Refusing to run.` };
+  const cap = Number(raw);
+  if (cap > manifestSkipped) {
+    return { error: `run-tests: ${SKIP_CAP_ENV}=${cap} is above the ${manifestSkipped} skipped tests test/test-counts.json allows. It may only lower the cap. Refusing to run.` };
+  }
+  return { cap, source: SKIP_CAP_ENV };
+}
+
 const REGENERATE = 'If the change is intended, run `npm run test:counts` in services/gateway and commit test/test-counts.json.';
 
 /**
@@ -117,6 +292,44 @@ export function fileTestCounts(records) {
 }
 
 /**
+ * Skipped and todo tests per file, from the same count rows. A count row with
+ * no `skipped` field counts as zero skipped.
+ * @param {string} records
+ * @returns {Map<string, number>}
+ */
+export function fileSkipCounts(records) {
+  const skips = new Map();
+  for (const line of String(records || '').split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (row && row.file && Number.isInteger(row.tests) && !('passed' in row)) skips.set(row.file, Number.isInteger(row.skipped) ? row.skipped : 0);
+  }
+  return skips;
+}
+
+/**
+ * Lines for a run that skipped more tests than the manifest allows.
+ * @param {Map<string, number>} skips from fileSkipCounts
+ * @param {number} maxSkipped the cap (manifest `skipped`, or RUN_TESTS_MAX_SKIPPED)
+ * @param {string} cwd
+ * @param {string} [source] where the cap came from, for the message
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+export function skipCapLines(skips, maxSkipped, cwd, source = 'test/test-counts.json') {
+  const total = [...skips.values()].reduce((a, b) => a + b, 0);
+  if (total <= maxSkipped) return [];
+  const worst = [...skips].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([file, n]) => `${relative(cwd, file)} (${n})`).join(', ');
+  return [`run-tests: FAIL ${total} tests were skipped, more than the ${maxSkipped} ${source} allows. A test filter (--test-name-pattern, --test-only) or a new skip can make a run green with tests not executed. Most skipped: ${worst}. If a new skip is intended, raise \`skipped\` in test/test-counts.json by hand and say why in the PR; npm run test:counts keeps the recorded number.`];
+}
+
+/**
  * Lines for every file whose reported count differs from the manifest. A file
  * with no count row counts as zero. Files are paths relative to cwd, which are
  * also the manifest keys (test/<name>.test.mjs).
@@ -135,7 +348,9 @@ export function countMismatches(counts, files, expected, cwd) {
       continue;
     }
     const want = expected[file];
-    if (got < want) {
+    if (!counts.has(resolve(cwd, file))) {
+      lines.push(`run-tests: FAIL ${file} reported no test count, so 0 of ${want} expected tests are confirmed. The file exited before any test finished, or the reporter's stream was cut before it wrote its count rows (for example under --test-force-exit). ${REGENERATE}`);
+    } else if (got < want) {
       lines.push(`run-tests: FAIL ${file} reported ${got} of ${want} expected tests. It stopped early or tests were removed. ${REGENERATE}`);
     } else if (got > want) {
       lines.push(`run-tests: FAIL ${file} reported ${got} tests but test/test-counts.json expects ${want}. ${REGENERATE}`);
@@ -161,6 +376,16 @@ export function staleManifestEntries(expected, files) {
  * @returns {Record<string, number>}
  */
 export function readCountManifest(path = COUNTS_PATH) {
+  return readManifest(path).files;
+}
+
+/**
+ * Reads and checks test/test-counts.json, including `skipped`, the most
+ * skipped and todo tests a run may have. Throws on a malformed file.
+ * @param {string} [path]
+ * @returns {{ files: Record<string, number>, skipped: number }}
+ */
+export function readManifest(path = COUNTS_PATH) {
   const parsed = JSON.parse(readFileSync(path, 'utf8'));
   const files = parsed && parsed.files;
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('test-counts.json has no files object');
@@ -169,7 +394,8 @@ export function readCountManifest(path = COUNTS_PATH) {
   }
   const sum = Object.values(files).reduce((a, b) => a + b, 0);
   if (parsed.total !== sum) throw new Error(`test-counts.json: total ${JSON.stringify(parsed.total)} is not the sum of its files (${sum})`);
-  return files;
+  if (!Number.isInteger(parsed.skipped) || parsed.skipped < 0) throw new Error(`test-counts.json: skipped ${JSON.stringify(parsed.skipped)} is not a whole number`);
+  return { files, skipped: parsed.skipped };
 }
 
 /**
@@ -177,15 +403,27 @@ export function readCountManifest(path = COUNTS_PATH) {
  * written with `error`. Options exist for the runner test.
  * @param {string[]} files paths relative to cwd
  * When `expected` is given, every file's reported count must equal it. When
- * `onCounts` is given, it receives the per-file counts (relative paths).
- * @param {{ cwd?: string, timeoutMs?: number, stdio?: any, env?: NodeJS.ProcessEnv, nodeArgs?: string[], error?: (line: string) => void, expected?: Record<string, number>, onCounts?: (counts: Record<string, number>) => void }} [opts]
+ * `onCounts` is given, it receives the per-file counts (relative paths) and
+ * the total skipped. When `maxSkipped` is given, a run that skips more fails.
+ * `suiteTimeoutMs` is the hard cap on the whole node --test process.
+ * @param {{ cwd?: string, timeoutMs?: number, suiteTimeoutMs?: number, stdio?: any, env?: NodeJS.ProcessEnv, nodeArgs?: string[], error?: (line: string) => void, expected?: Record<string, number>, maxSkipped?: number, skipCapSource?: string, onCounts?: (counts: Record<string, number>, skipped: number) => void }} [opts]
  */
 export function runTestFiles(files, opts = {}) {
   const cwd = opts.cwd || gatewayDir;
   const timeoutMs = opts.timeoutMs || 120000;
   const error = opts.error || ((line) => console.error(line));
   const baseEnv = opts.env || process.env;
+  const suiteTimeoutMs = opts.suiteTimeoutMs || SUITE_TIMEOUT_MS;
 
+  const filters = testFilterArgs(opts.nodeArgs);
+  if (filters.length > 0) {
+    error(`run-tests: refusing test option ${filters.join(' ')}. A test filter reports skipped tests as passing and can exit 0 with nothing executed; --test-force-exit and test isolation none break the per-file records. Run node --test on the file directly to debug.`);
+    return 1;
+  }
+  const nodeOptions = stripTestFilters(baseEnv.NODE_OPTIONS);
+  if (nodeOptions.removed.length > 0) {
+    error(`run-tests: removed ${nodeOptions.removed.join(' ')} from NODE_OPTIONS for the test run. Test filters, --test-force-exit and test isolation none are not allowed.`);
+  }
 
   // Node options have to precede the file list. A per-test timeout so one hung
   // file cannot pin CI the way a missing filename used to skip it; spawnSync
@@ -225,10 +463,11 @@ export function runTestFiles(files, opts = {}) {
     {
       stdio: opts.stdio || 'inherit',
       cwd,
-      timeout: 10 * 60 * 1000,
+      timeout: suiteTimeoutMs,
       killSignal: 'SIGKILL',
       env: {
         ...baseEnv,
+        NODE_OPTIONS: nodeOptions.value,
         NODE_ENV: baseEnv.NODE_ENV || 'test',
         // Ephemeral key resets in this process may drop an in-memory history
         // chain. Production never reads this flag.
@@ -249,12 +488,22 @@ export function runTestFiles(files, opts = {}) {
   }
   rmSync(dir, { recursive: true, force: true });
 
-  if (spawnError) {
+  // spawnSync reports the suite cap as an ETIMEDOUT error with signal SIGKILL.
+  const capHit = (spawnError && spawnError.code === 'ETIMEDOUT') || signal === 'SIGKILL';
+  if (spawnError && !capHit) {
     error(`run-tests: ${spawnError.message}`);
     return 1;
   }
-  if (signal) {
-    error(`run-tests: test process killed (${signal})`);
+  if (signal || capHit) {
+    error(`run-tests: test process killed (${signal || 'SIGKILL'})`);
+    const unfinished = filesWithoutCompletion(records, files.map((file) => resolve(cwd, file)));
+    if (capHit && unfinished.length > 0) {
+      // The files without a completion row were running or had not started
+      // when the cap hit. Name them, so the red run points somewhere.
+      const shown = unfinished.slice(0, 5).map((file) => relative(cwd, file)).join(', ');
+      const more = unfinished.length > 5 ? ` and ${unfinished.length - 5} more` : '';
+      error(`run-tests: FAIL the whole-suite cap of ${Math.round(suiteTimeoutMs / 1000)} s hit with ${unfinished.length} file${unfinished.length === 1 ? '' : 's'} unfinished: ${shown}${more}. Look at those first; if the suite has simply grown, raise SUITE_TIMEOUT_MS in scripts/run-tests.mjs and timeout-minutes in .github/workflows/test.yml together.`);
+    }
     return 1;
   }
   const missing = filesWithoutCompletion(records, files.map((file) => resolve(cwd, file)));
@@ -275,10 +524,18 @@ export function runTestFiles(files, opts = {}) {
       return 1;
     }
   }
+  const skips = fileSkipCounts(records);
+  if (opts.maxSkipped !== undefined) {
+    const over = skipCapLines(skips, opts.maxSkipped, cwd, opts.skipCapSource);
+    if (over.length > 0) {
+      for (const line of over) error(line);
+      return 1;
+    }
+  }
   if (opts.onCounts) {
     const byFile = {};
     for (const file of files) byFile[file] = counts.get(resolve(cwd, file)) || 0;
-    opts.onCounts(byFile);
+    opts.onCounts(byFile, [...skips.values()].reduce((a, b) => a + b, 0));
   }
   return status ?? 1;
 }
@@ -302,8 +559,9 @@ function main() {
   }
 
   let expected;
+  let maxSkipped;
   try {
-    expected = readCountManifest();
+    ({ files: expected, skipped: maxSkipped } = readManifest());
   } catch (err) {
     console.error(`run-tests: cannot read test/test-counts.json (${err.message}). ${REGENERATE}`);
     process.exitCode = 1;
@@ -315,33 +573,61 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  process.exitCode = runTestFiles(files, { nodeArgs: args, expected });
+  const skipCap = resolveSkipCap(maxSkipped);
+  if ('error' in skipCap) {
+    console.error(skipCap.error);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = runTestFiles(files, { nodeArgs: args, expected, maxSkipped: skipCap.cap, skipCapSource: skipCap.source });
 }
 
-function writeCounts(files, args) {
+/**
+ * --write-counts. Exported for the runner test, which passes `run` and
+ * `countsPath` so it never runs the suite or writes the real manifest.
+ * @param {string[]} files
+ * @param {string[]} args
+ * @param {{ run?: typeof runTestFiles, countsPath?: string, error?: (line: string) => void, log?: (line: string) => void }} [opts]
+ */
+export function writeCounts(files, args, opts = {}) {
+  const run = opts.run || runTestFiles;
+  const countsPath = opts.countsPath || COUNTS_PATH;
+  const error = opts.error || ((line) => console.error(line));
+  const log = opts.log || ((line) => console.log(line));
   if (args.length !== 1) {
-    console.error('run-tests: --write-counts takes no other arguments, so a filtered run cannot write lower counts.');
+    error('run-tests: --write-counts takes no other arguments, so a filtered run cannot write lower counts.');
     return 1;
   }
+  // Keep the recorded skip cap. A machine that skips fewer must not lower it
+  // for the machines that skip more, and a run over it does not write.
+  let recordedSkipped;
+  try {
+    recordedSkipped = readManifest(countsPath).skipped;
+  } catch {
+    recordedSkipped = undefined;
+  }
   let counts;
-  const code = runTestFiles(files, { onCounts: (byFile) => { counts = byFile; } });
+  let skipped = 0;
+  const code = run(files, { maxSkipped: recordedSkipped, onCounts: (byFile, skips) => { counts = byFile; skipped = skips || 0; } });
   if (code !== 0 || !counts) {
-    console.error('run-tests: the run did not pass cleanly. test/test-counts.json was not written.');
+    error('run-tests: the run did not pass cleanly. test/test-counts.json was not written.');
     return 1;
   }
   const empty = files.filter((file) => !(counts[file] > 0));
   if (empty.length > 0) {
-    console.error(`run-tests: no tests reported for ${empty.join(', ')}. test/test-counts.json was not written.`);
+    error(`run-tests: no tests reported for ${empty.join(', ')}. test/test-counts.json was not written.`);
     return 1;
   }
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (recordedSkipped !== undefined) skipped = recordedSkipped;
   const body = {
-    about: 'Tests each gateway test file reports. run-tests.mjs fails on any difference. Regenerate with npm run test:counts after a clean run.',
+    about: 'Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.',
     total,
+    skipped,
     files: counts,
   };
-  writeFileSync(COUNTS_PATH, `${JSON.stringify(body, null, 2)}\n`);
-  console.log(`run-tests: wrote ${relative(gatewayDir, COUNTS_PATH)} (${files.length} files, ${total} tests).`);
+  writeFileSync(countsPath, `${JSON.stringify(body, null, 2)}\n`);
+  log(`run-tests: wrote ${relative(gatewayDir, countsPath)} (${files.length} files, ${total} tests, ${skipped} skipped).`);
   return 0;
 }
 

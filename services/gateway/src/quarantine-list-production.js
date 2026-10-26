@@ -409,6 +409,17 @@ function logDirUnchanged(envLogDir, flagLogDir, logDir) {
   }
 }
 
+/**
+ * Tests only: the D2 check alone. A real --log-dir cannot go through a symlink
+ * later and still resolve to the same directory, so the run cannot reach the
+ * flag walk by itself. Read-only (lstat and realpath). Nothing in src or
+ * scripts calls it, and it refuses in a production process like the others.
+ */
+export async function _logDirUnchangedForTest(envLogDir, flagLogDir, logDir) {
+  refuseTestEntryInProduction();
+  return logDirUnchanged(envLogDir, flagLogDir, logDir);
+}
+
 function realDir(dir, reason = 'log_dir_mismatch') {
   let real;
   try {
