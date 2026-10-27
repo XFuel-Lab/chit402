@@ -94,14 +94,14 @@ test('hardhat.config.cjs: loading the config with a dummy key prints no 4-hex ru
   const { Wallet } = rootRequire('ethers');
   for (const k of keyCases()) {
     const res = run([HARDHAT_CLI, '--config', 'hardhat.config.cjs', 'help'], k.env);
-    assert.ok(/PRIVATE_KEY loaded for /.test(res.out), `${k.name}: the config did not load the key`);
     const leak = leakedWindow(res.out, k.hex);
     assert.equal(leak, null, `${k.name}: part of the private key appeared in hardhat output`);
     if (k.valid) {
       const address = new Wallet(`0x${k.hex}`).address;
       assert.ok(res.out.includes(`PRIVATE_KEY loaded for ${address}`), `${k.name}: derived address not printed`);
     } else {
-      assert.ok(/could not be derived/.test(res.out), `${k.name}: invalid key not reported plainly`);
+      assert.ok(!/PRIVATE_KEY loaded/.test(res.out), `${k.name}: an unparseable key should print nothing`);
+      assert.ok(/Invalid account/.test(res.out), `${k.name}: hardhat did not load the config with the bad key`);
     }
   }
 });
@@ -193,7 +193,7 @@ test('scan self-test: the old hardhat line and other key prints are flagged', ()
   ];
   for (const src of bad) assert.ok(keyPrintProblems(src).length > 0, `scan missed: ${src}`);
   const ok = [
-    "const pk = process.env.PRIVATE_KEY\nconst addr = deployerAddressOf(pk)\nconsole.log(`loaded for ${addr}`)",
+    "const pk = process.env.PRIVATE_KEY\nconst addr = deployerAddressOf(pk)\nif (addr) console.log(`loaded for ${addr}`)",
     "const rpc = process.env.BASE_RPC_URL\nconsole.log(`RPC: ${rpc}`)",
   ];
   for (const src of ok) assert.deepEqual(keyPrintProblems(src), [], `scan over-flagged: ${src}`);
@@ -207,5 +207,6 @@ test('scan (tripwire): no key variable is sliced, interpolated or printed in the
   }
   const hh = fs.readFileSync(path.join(repoRoot, 'hardhat.config.cjs'), 'utf8');
   assert.ok(keyVars(hh).has('pk'), 'hardhat.config.cjs key variable not found; the scan is not looking at it');
-  assert.ok(/console\.log\(`PRIVATE_KEY loaded for \$\{deployerAddress\}`\)/.test(hh), 'hardhat.config.cjs no longer prints only the derived address');
+  assert.ok(/if \(deployerAddress\) console\.log\(`PRIVATE_KEY loaded for \$\{deployerAddress\}`\)/.test(hh), 'hardhat.config.cjs no longer prints only the derived address');
+  assert.ok(!/\bpk\s*\.\s*(?:slice|substring|substr)\s*\(/.test(hh), 'hardhat.config.cjs logs part of the key');
 });

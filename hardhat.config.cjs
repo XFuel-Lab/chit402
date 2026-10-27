@@ -67,11 +67,11 @@ extendEnvironment((hre) => {
 
 const pk = process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY
 if (pk) {
-  // Never print any part of the key. The address is public and derived
-  // offline. If the key does not parse, say so without the error: ethers'
-  // error text can echo its input.
+  // Never print any part of the key. Print only the public address, derived
+  // offline, or nothing if the key does not parse (the ethers error text can
+  // echo its input, so it is never printed).
   const deployerAddress = deployerAddressOf(pk)
-  console.log(`PRIVATE_KEY loaded for ${deployerAddress}`)
+  if (deployerAddress) console.log(`PRIVATE_KEY loaded for ${deployerAddress}`)
 }
 
 function deployerAddressOf(key) {
@@ -79,7 +79,7 @@ function deployerAddressOf(key) {
     const { Wallet } = require('ethers')
     return new Wallet(key.startsWith('0x') ? key : `0x${key}`).address
   } catch (_) {
-    return 'an address that could not be derived (key did not parse)'
+    return null
   }
 }
 
