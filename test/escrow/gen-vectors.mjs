@@ -36,22 +36,19 @@ const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 
 // ---- constants (brief section (a) and (h)) ----
 const CHAIN_ID = 84532;
-const DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)';
-// The domain names the escrow. Vectors are for a fixed placeholder escrow
-// address; Vectors.t.sol runs the constructor at exactly this address.
-const VERIFYING_CONTRACT = ethers.getAddress('0x00000000000000000000000000000000e5c0e5c0');
+const DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)';
 const TREEHEAD_TYPE = 'TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)';
 const BINDING_TYPE = 'ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)';
 const pin = JSON.parse(fs.readFileSync(path.join(repo, 'services/gateway/receipt-log-pin.json'), 'utf8'));
 const e1 = pin.epochs.find((e) => e.epoch === 1);
 const LOG_SALT = ethers.keccak256(ethers.concat([ethers.toUtf8Bytes('chit402.receipt-log.v1'), '0x' + e1.root, '0x' + e1.genesis_digest]));
 
-function domainSeparator(name, version, chainId, verifying, salt) {
-  return ethers.keccak256(coder.encode(['bytes32', 'bytes32', 'bytes32', 'uint256', 'address', 'bytes32'],
-    [k256(DOMAIN_TYPE), k256(name), k256(version), chainId, verifying, salt]));
+function domainSeparator(name, version, chainId, salt) {
+  return ethers.keccak256(coder.encode(['bytes32', 'bytes32', 'bytes32', 'uint256', 'bytes32'],
+    [k256(DOMAIN_TYPE), k256(name), k256(version), chainId, salt]));
 }
-const TH_DOM = domainSeparator('Chit402TreeHead', '1', CHAIN_ID, VERIFYING_CONTRACT, LOG_SALT);
-const B_DOM = domainSeparator('Chit402ReceiptBinding', '1', CHAIN_ID, VERIFYING_CONTRACT, LOG_SALT);
+const TH_DOM = domainSeparator('Chit402TreeHead', '1', CHAIN_ID, LOG_SALT);
+const B_DOM = domainSeparator('Chit402ReceiptBinding', '1', CHAIN_ID, LOG_SALT);
 
 function headStructHash(h) {
   return ethers.keccak256(coder.encode(['bytes32', 'uint32', 'uint64', 'bytes32', 'uint64', 'bytes32'],
@@ -86,9 +83,7 @@ function buildEip712(prev) {
 
   // Throwaway key: reuse the stored public key and signatures when present so
   // the file is stable; --check verifies them instead of re-signing.
-  // Signatures made for an older domain (no verifyingContract) are dropped and
-  // re-made with a new throwaway key, since the old private key was discarded.
-  let tk = prev?.domain_type === DOMAIN_TYPE ? prev?.throwaway : null;
+  let tk = prev?.throwaway;
   if (!tk) {
     const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
     const jwk = publicKey.export({ format: 'jwk' });
@@ -123,7 +118,6 @@ function buildEip712(prev) {
     schema: 'chit402.escrow_vectors.eip712.v1',
     chain_id: CHAIN_ID,
     domain_type: DOMAIN_TYPE,
-    verifying_contract: VERIFYING_CONTRACT,
     treehead_type: TREEHEAD_TYPE,
     binding_type: BINDING_TYPE,
     domain_typehash: k256(DOMAIN_TYPE),

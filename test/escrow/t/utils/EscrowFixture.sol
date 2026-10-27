@@ -56,17 +56,7 @@ abstract contract EscrowFixture is TestBase {
 
     function deploy(address token) internal returns (E) {
         E.TreeHead memory h = liveHead();
-        address at = nextAddr();
-        E e = new E(owner, token, kid, pubX, pubY, LOG_SALT, h, signHeadFor(h, at), 1000 * ONE);
-        require(address(e) == at, "predicted escrow address");
-        return e;
-    }
-
-    /// @dev Address of the next contract this test creates. Heads for a
-    ///      constructor liveness check are signed for this address, since the
-    ///      signing domain names the escrow (verifyingContract).
-    function nextAddr() internal view returns (address) {
-        return vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        return new E(owner, token, kid, pubX, pubY, LOG_SALT, h, signHead(h), 1000 * ONE);
     }
 
     function pinDefaultList(E e) internal {
@@ -89,27 +79,17 @@ abstract contract EscrowFixture is TestBase {
 
     // ---------------- signing helpers ----------------
 
-    /// @dev Domain for the fixture escrow `esc`.
     function domainSep(string memory name, string memory version, uint256 chainId, bytes32 salt)
-        internal
-        view
-        returns (bytes32)
-    {
-        return domainSep(name, version, chainId, address(esc), salt);
-    }
-
-    function domainSep(string memory name, string memory version, uint256 chainId, address verifying, bytes32 salt)
         internal
         pure
         returns (bytes32)
     {
         return keccak256(
             abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"),
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)"),
                 keccak256(bytes(name)),
                 keccak256(bytes(version)),
                 chainId,
-                verifying,
                 salt
             )
         );
@@ -155,24 +135,11 @@ abstract contract EscrowFixture is TestBase {
     }
 
     function signHead(E.TreeHead memory h) internal view returns (E.Sig memory) {
-        return signHeadFor(h, address(esc));
-    }
-
-    /// @dev Head signed for the escrow this test deploys next (constructor liveness).
-    function signHeadNext(E.TreeHead memory h) internal view returns (E.Sig memory) {
-        return signHeadFor(h, nextAddr());
-    }
-
-    function signHeadFor(E.TreeHead memory h, address at) internal view returns (E.Sig memory) {
-        return signWith(pk, headDigest(h, domainSep("Chit402TreeHead", "1", 84532, at, LOG_SALT)));
+        return signWith(pk, headDigest(h, domainSep("Chit402TreeHead", "1", 84532, LOG_SALT)));
     }
 
     function signBinding(E.ReceiptBinding memory b) internal view returns (E.Sig memory) {
-        return signBindingFor(b, address(esc));
-    }
-
-    function signBindingFor(E.ReceiptBinding memory b, address at) internal view returns (E.Sig memory) {
-        bytes32 dom = domainSep("Chit402ReceiptBinding", "1", 84532, at, LOG_SALT);
+        bytes32 dom = domainSep("Chit402ReceiptBinding", "1", 84532, LOG_SALT);
         return signWith(pk, sha256(abi.encodePacked(hex"1901", dom, bindingStruct(b))));
     }
 

@@ -40,15 +40,9 @@ Incident and freeze rules:
 ## Signing format
 
 - `TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)`
-  under domain `Chit402TreeHead`, version `1`, chainId 84532, verifyingContract = the escrow
-  address, salt = log id.
+  under domain `Chit402TreeHead`, version `1`, chainId 84532, salt = log id.
 - `ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)`
-  under domain `Chit402ReceiptBinding`, same version, chainId, verifyingContract and salt.
-- Domain type: `EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)`.
-  Because the domain names the escrow, a head or binding signed for one escrow is not valid at
-  another escrow on the same chain with the same log salt (no double refund across redeploys).
-  The signer must know the escrow address; the constructor liveness head is signed for the
-  address the deploy will create.
+  under domain `Chit402ReceiptBinding`, same version, chainId and salt.
 - The P-256 key signs `e = SHA-256(0x1901 || domainSeparator || structHash)`. The contract
   checks `e` with the `0x100` precompile and accepts high-S. A call passes only if it
   succeeds, returns exactly 32 bytes, and the word is 1.

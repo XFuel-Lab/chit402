@@ -5,9 +5,6 @@ pragma solidity ^0.8.24;
 ///      escrow tests need no git submodule. Signatures match forge's Vm.
 interface Vm {
     function warp(uint256) external;
-    function getNonce(address) external view returns (uint64);
-    function computeCreateAddress(address deployer, uint256 nonce) external pure returns (address);
-    function etch(address target, bytes calldata code) external;
     function chainId(uint256) external;
     function prank(address) external;
     function startPrank(address) external;
