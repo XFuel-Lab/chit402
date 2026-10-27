@@ -11,8 +11,12 @@
  * Dummy values only. They pass on root dotenv 17 and on 18.
  *
  * Layout: 5 child-process tests (one a control that runs plain
- * dotenv.config() to show the hostile switches are live), 1 in-process test
- * and 2 static scans. The scans are a tripwire, not a proof.
+ * dotenv.config() to show the hostile switches are live), 1 in-process test,
+ * 1 scanner self-test and 2 static scans. The scans are a tripwire, not a
+ * proof: they flag any require()/import() whose specifier is not one plain
+ * string literal (e.g. require('dot' + 'env')), and any createRequire or
+ * module.require, but code built at runtime (eval, new Function) cannot be
+ * seen statically. The behavioural tests are the real guard.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -250,6 +254,38 @@ test('helper: pinned options are frozen, an empty path throws', () => {
   assert.throws(() => loadDotenvFile(undefined), TypeError);
 });
 
+/** Lookahead body: whitespace, one string literal with no `${`, then `,` or `)`. */
+const PLAIN_LITERAL_ARG = String.raw`\s*(['"\x60])(?:(?!\1)(?!\$\{)[^\n\\])*\1\s*[,)]`;
+
+/** Loads a static scan cannot resolve: a computed specifier, createRequire, module.require. */
+function computedLoads(src) {
+  const hits = [];
+  if (new RegExp(String.raw`(?<![.\w$])(?:import|require)\s*\((?!${PLAIN_LITERAL_ARG})(?!\s*\))`).test(src)) hits.push('computed');
+  if (/\bcreateRequire\b/.test(src)) hits.push('createRequire');
+  if (/\bmodule\s*\.\s*require\s*\(/.test(src)) hits.push('module.require');
+  return hits;
+}
+
+test('scanner self-test: computed and indirect requires are flagged, plain literals are not', () => {
+  const bad = [
+    "require('dot' + 'env').config({ override: true })",
+    "const n = 'dotenv'.slice(0); require(n).config()",
+    'require(`dot${"env"}`).config()',
+    "const m = await import('dot'.concat('env'))",
+    "const { createRequire: cr } = require('module'); cr(__filename)(x)",
+    "module.require(x)",
+  ];
+  for (const src of bad) assert.ok(computedLoads(src).length > 0, `scan missed: ${src}`);
+  const ok = [
+    "require('ethers')",
+    "const { subtask } = require('hardhat/config')",
+    "try { require('hardhat-tracer') } catch (_) {}",
+    "/** @type {import('hardhat/config').HardhatUserConfig} */",
+    "require(\n  './x.cjs'\n)",
+  ];
+  for (const src of ok) assert.deepEqual(computedLoads(src), [], `scan over-flagged: ${src}`);
+});
+
 test('scan (tripwire): the two key-reading files load env only through loadRootEnv', () => {
   const sites = [
     ['hardhat.config.cjs', /^require\('\.\/scripts\/lib\/dotenv-load\.cjs'\)\.loadRootEnv\(\)$/m],
@@ -260,6 +296,7 @@ test('scan (tripwire): the two key-reading files load env only through loadRootE
     assert.ok(re.test(src), `${rel}: loadRootEnv() call missing or changed`);
     assert.ok(!/(['"`])dotenv(?:\/[^'"`\s]*)?\1/.test(src), `${rel} references the dotenv package directly`);
     assert.ok(!/\bdotenv\s*\.\s*config\s*\(|\.config\s*\(\s*\{\s*path/.test(src), `${rel} calls dotenv config()`);
+    assert.deepEqual(computedLoads(src), [], `${rel} has a load the scan cannot resolve (computed specifier, createRequire or module.require)`);
     const firstCode = src.split('\n').find((l) => /^\s*(?:require|const|let|var|import)\b/.test(l));
     assert.ok(/loadRootEnv\(\)/.test(firstCode ?? ''), `${rel}: env must load before any other require (first was: ${firstCode})`);
   }
