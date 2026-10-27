@@ -225,8 +225,9 @@ test('invariant (source): after /settle returns sent, every exit is a hold, a re
   const exits = [...tail.matchAll(/return\s+([^;]*)/g)].map((m) => m[1].trim());
   const allowed = [
     /^await hold\(/,
-    /^refused\(req, 'payment_replayed'\)$/,
-    /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*\}\)$/,
+    // #663 adds a logging-only network and bounded sub_reason; the response is unchanged.
+    /^refused\(req, 'payment_replayed'(, \{ network: net, sub: '[a-z_]+' \})?\)$/,
+    /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*(network: net,\s*sub: '[a-z_]+',\s*)?\}\)$/,
     /^held$/,
     /^await confirmAndSettle\(\)$/,
     /^\{\s*kind: 'settled',\s*confirmed: true,/,

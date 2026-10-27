@@ -1,5 +1,6 @@
 /**
- * HTTP refusal bodies stay byte-identical to main (5c17588f).
+ * HTTP refusal bodies stay byte-identical to main (5c17588f; payer_precheck
+ * and payer_post follow #664 at 8e55cad7, see their PINNED notes).
  *
  * The logging change adds a network and a bounded sub_reason to every
  * refusal's count and row. None of that may reach the response. For each
@@ -37,7 +38,11 @@ const PINNED = {
   settle_http: { status: 402, body: "{\"error\":\"settle_failed\",\"code\":\"settle_failed\"}", pendingCode: null, settles: 1 },
   chain_mismatch: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
   chain_value_low: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
-  chain_payer: { status: 403, body: "{\"error\":\"payer_mismatch\",\"code\":\"payer_mismatch\"}", pendingCode: null, settles: 1 },
+  // Was chain_payer (settles 1). #664's pre-check refuses it before /settle:
+  // same status and bytes, no /settle call (settle-store-failure.test.mjs F-2).
+  payer_precheck: { status: 403, body: "{\"error\":\"payer_mismatch\",\"code\":\"payer_mismatch\"}", pendingCode: null, settles: 0 },
+  // #664 post-check: 403 with the refund pending_id (settle-store-failure.test.mjs F-2).
+  payer_post: { status: 403, body: null, pendingCode: "payer_mismatch", settles: 1 },
 };
 
 function pendingBody(code) {

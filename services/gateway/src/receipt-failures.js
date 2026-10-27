@@ -79,11 +79,18 @@ export const REFUSAL_SUB_REASONS = Object.freeze([
   // pre-settle: facilitator /verify and the issuance bind
   'facilitator_invalid', 'bind_nonce', 'bind_client_nonce', 'bind_chain_id', 'bind_contract',
   'bind_commitment', 'bind_auth_nonce', 'bind_other', 'anchor_failed', 'store_unavailable', 'no_confirm_rpc',
+  // pre-settle: a route bound to one payer, the signed authorization is another wallet's
+  'payer_precheck',
   // post-submit: /settle was called
   'settle_not_sent', 'transport', 'http', 'success_false', 'facilitator_network', 'missing_tx',
   'payer_field', 'missing_replay_key', 'local_failure', 'awaiting_finality', 'chain_mismatch',
   'underpaid', 'payee', 'late_unmarked', 'tx_spent', 'auth_spent_post', 'reserve_failed',
   'reserve_lost', 'inflight_tx', 'chain_payer',
+  // post-submit: hold('payer'), the chain payer differs from the bound payer
+  // (refund row, late row to mismatch_hold). local_failure above is the
+  // store-failure hold after /settle. reserve_failed and chain_payer are no
+  // longer emitted since #664; kept so older rows still count by name.
+  'payer',
   'other',
 ]);
 const SUB_REASONS = new Set(REFUSAL_SUB_REASONS);
@@ -162,6 +169,9 @@ let alertClock = systemClock;
 const refusalCounts = new Map();
 /** `<hour ISO>|<network>|<reason>|<sub_reason>` -> count, pre-settle only. */
 const breakdownCounts = new Map();
+/** Hour keys present in breakdownCounts. A new one is the only prune trigger. */
+const breakdownHours = new Set();
+let breakdownPrunes = 0;
 const escrowCounts = new Map();
 let total = 0;
 let loaded = false;
@@ -363,13 +373,22 @@ function hourKey(time) {
   return new Date(Math.floor(at / HOUR_MS) * HOUR_MS).toISOString();
 }
 
+// Runs only when a refusal opens a new hour bucket (S-A1), so a burst of
+// refusals inside one hour costs one Map update each, not a walk of every key.
 function pruneBreakdownHours() {
-  const hours = [...new Set([...breakdownCounts.keys()].map((key) => key.slice(0, 24)))].sort();
-  if (hours.length <= BREAKDOWN_HOUR_CAP) return;
+  breakdownPrunes += 1;
+  if (breakdownHours.size <= BREAKDOWN_HOUR_CAP) return;
+  const hours = [...breakdownHours].sort();
   const drop = new Set(hours.slice(0, hours.length - BREAKDOWN_HOUR_CAP));
+  for (const hour of drop) breakdownHours.delete(hour);
   for (const key of breakdownCounts.keys()) {
     if (drop.has(key.slice(0, 24))) breakdownCounts.delete(key);
   }
+}
+
+/** Test seam: how many times the hourly breakdown was pruned. */
+export function breakdownPruneCountForTests() {
+  return breakdownPrunes;
 }
 
 function recordPreSettleRefusal(input) {
@@ -381,9 +400,13 @@ function recordPreSettleRefusal(input) {
   refusalCounts.set(key, (refusalCounts.get(key) || 0) + 1);
   pruneRefusalDays();
   const sub = refusalSubReason(input.sub_reason ?? input.subReason);
-  const hourly = `${hourKey(time)}|${network}|${reason}|${sub}`;
+  const hour = hourKey(time);
+  const hourly = `${hour}|${network}|${reason}|${sub}`;
   breakdownCounts.set(hourly, (breakdownCounts.get(hourly) || 0) + 1);
-  pruneBreakdownHours();
+  if (!breakdownHours.has(hour)) {
+    breakdownHours.add(hour);
+    pruneBreakdownHours();
+  }
   return null;
 }
 
@@ -669,6 +692,8 @@ export function resetReceiptFailuresForTests() {
   alertClock = systemClock;
   refusalCounts.clear();
   breakdownCounts.clear();
+  breakdownHours.clear();
+  breakdownPrunes = 0;
   escrowCounts.clear();
   total = 0;
   alertDropped = 0;

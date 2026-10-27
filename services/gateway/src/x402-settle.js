@@ -530,7 +530,7 @@ export async function settleBoundPayment({
   // Solana: the transfer authority is only read from the chain after
   // /settle, so the post-check in confirmAndSettle stays the check there.
   if (!solana && expectedPayer && !samePayee(authEarly?.from, expectedPayer, { solana: false })) {
-    return refused(req, 'payer_mismatch', { preSettle: true });
+    return deny('payer_mismatch', 'payer_precheck');
   }
 
   // MF1 (after every binding refusal, before the claim): no confirmation RPC for this network means every settle would collect

@@ -172,7 +172,16 @@ export const SCENARIOS = {
   chain_mismatch: { run: () => attempt({ chain: { nonce: OTHER_AUTH_NONCE } }), want: ['settle_unconfirmed', 'chain_mismatch', 'post_submit'] },
   // The chain reader itself refuses a short transfer, so this is chain_mismatch.
   chain_value_low: { run: () => attempt({ chain: { value: 1000n } }), want: ['settle_unconfirmed', 'chain_mismatch', 'post_submit'] },
-  // The chain transfer is from the signed payer, but the route is bound to
-  // another wallet. Checked only after the chain read today (money moved).
-  chain_payer: { run: () => attempt({ call: { expectedPayer: OTHER } }), want: ['payer_mismatch', 'chain_payer', 'post_submit'] },
+  // The signed authorization is from PAYER, but the route is bound to
+  // another wallet. Since #664 the EVM pre-check refuses it before /settle.
+  payer_precheck: { run: () => attempt({ call: { expectedPayer: OTHER } }), want: ['payer_mismatch', 'payer_precheck', 'pre_settle'] },
+  // The authorization matches the bound payer, but the chain transfer is from
+  // another wallet: hold('payer') after /settle, refund row and pending_id.
+  payer_post: {
+    run: () => attempt({
+      call: { expectedPayer: PAYER },
+      cfg: { chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: OTHER, blockNumber: 16, logIndex: 0 }) },
+    }),
+    want: ['payer_mismatch', 'payer', 'post_submit'],
+  },
 };

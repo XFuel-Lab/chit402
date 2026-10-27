@@ -24,11 +24,12 @@ import {
   REFUSAL_SUB_REASONS,
   recordReceiptFailure,
   refusalBreakdown,
+  breakdownPruneCountForTests,
   listReceiptFailures,
   receiptFailureCsv,
   resetReceiptFailuresForTests,
 } from '../src/receipt-failures.js';
-import { SCENARIOS, attempt, RESOURCE } from './fixtures/refusal-scenarios.mjs';
+import { SCENARIOS, attempt, RESOURCE, PAYER, OTHER } from './fixtures/refusal-scenarios.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GATEWAY = path.resolve(HERE, '..');
@@ -119,6 +120,45 @@ test('refusalBreakdown counts over [since, until) and rejects a bad bound', () =
   assert.equal(refusalBreakdown({ until: 'nope' }), null);
   // Read-only: asking twice gives the same answer.
   assert.deepEqual(refusalBreakdown({ since: '2026-10-26T00:00:00Z', until: '2026-10-27T00:00:00Z' }), day);
+});
+
+test('S-A1: the hourly breakdown is pruned when a new hour starts, not on every refusal', () => {
+  resetReceiptFailuresForTests();
+  const pre = (time, reason = 'challenge_mismatch') => recordReceiptFailure({
+    stage: 'pre-check', outcome: 'refused', reason, network: 'base', preSettle: true,
+    sub_reason: 'resource', phase: 'pre_settle', time,
+  });
+  for (let i = 0; i < 500; i += 1) pre(`2026-10-26T10:${String(i % 60).padStart(2, '0')}:00Z`, i % 2 ? 'challenge_mismatch' : 'verify_failed');
+  assert.equal(breakdownPruneCountForTests(), 1, '500 refusals in one hour prune once');
+  pre('2026-10-26T11:05:00Z');
+  pre('2026-10-26T11:59:59Z');
+  assert.equal(breakdownPruneCountForTests(), 2, 'a new hour bucket prunes once more');
+  pre('2026-10-26T10:30:00Z');
+  assert.equal(breakdownPruneCountForTests(), 2, 'an hour already counted does not prune');
+  assert.equal(refusalBreakdown({ since: '2026-10-26T00:00:00Z' }).total, 503);
+});
+
+test('S-A1: the hourly breakdown keeps at most 30 days of hour buckets', () => {
+  resetReceiptFailuresForTests();
+  const start = Date.UTC(2026, 0, 1);
+  const hours = 30 * 24 + 5;
+  for (let i = 0; i < hours; i += 1) {
+    recordReceiptFailure({
+      stage: 'pre-check', outcome: 'refused', reason: 'challenge_mismatch', network: 'base',
+      preSettle: true, sub_reason: 'resource', phase: 'pre_settle', time: new Date(start + i * 3600_000).toISOString(),
+    });
+  }
+  assert.equal(breakdownPruneCountForTests(), hours);
+  const all = refusalBreakdown({ since: '2025-12-31T00:00:00Z' });
+  assert.equal(all.total, 30 * 24, 'the 5 oldest hours were dropped');
+  assert.equal(refusalBreakdown({ since: '2026-01-01T00:00:00Z', until: '2026-01-01T05:00:00Z' }).total, 0);
+});
+
+test('S-A1 (source): pruneBreakdownHours runs only behind a new-hour check', () => {
+  const rf = fs.readFileSync(path.join(GATEWAY, 'src', 'receipt-failures.js'), 'utf8');
+  const calls = rf.match(/\bpruneBreakdownHours\(\);/g) || [];
+  assert.ok(calls.length === 1, `one prune call site, found ${calls.length}`);
+  assert.ok(/if \(!breakdownHours\.has\(hour\)\) \{\s*breakdownHours\.add\(hour\);\s*pruneBreakdownHours\(\);/.test(rf), 'prune is gated on a new hour bucket');
 });
 
 test('every sub_reason literal in x402-settle.js is on the fixed list', () => {
@@ -234,6 +274,9 @@ test('leak test: no signature, nonce or payment header in logs, rows or counts',
     other_auth_nonce: 'b8b8b8b8b8b8b8b8',
     header_prefix: header.slice(0, 24),
     header_tail: header.slice(-24),
+    // payer_precheck / payer_post: neither the bound nor the mismatched wallet is logged.
+    payer_address: PAYER.slice(2),
+    other_address: OTHER.slice(2),
     ...Object.fromEntries(nonces.map((n, i) => [`challenge_nonce_${i}`, n.slice(2)])),
   };
   for (const [where, text] of Object.entries(haystacks)) {
