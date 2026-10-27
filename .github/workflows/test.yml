@@ -29,6 +29,28 @@ jobs:
       - name: Scan tracked files
         run: node scripts/check-public-identifiers.mjs
 
+  # ── Root dotenv pin (hardhat.config.cjs, verify-deployment.cjs) ─
+  # scripts/lib/dotenv-load.cjs pins every dotenv option so DOTENV_* env
+  # cannot change which file loads or let .env overwrite exported deploy
+  # keys. Runs on the root lock's dotenv and again on dotenv 18 (not saved).
+  root-dotenv-pin:
+    name: Root dotenv pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Install root deps (no scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Pin tests on the locked dotenv
+        run: node --test scripts/lib/dotenv-load.test.mjs
+      - name: Pin tests on dotenv 18
+        run: |
+          npm install --no-save --ignore-scripts --no-audit --no-fund dotenv@18.0.9
+          node -e "const v=require('dotenv/package.json').version; if (!v.startsWith('18.')) { console.error('dotenv is ' + v); process.exit(1) }"
+          node --test scripts/lib/dotenv-load.test.mjs
+
   # ── Path-change detection ──────────────────────────────────
   changes:
     name: Detect Changes
