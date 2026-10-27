@@ -14,7 +14,8 @@
  * 2 scanner self-tests and 4 source/launch-config scans. The scans are a tripwire, not a proof: a
  * static scan cannot follow every computed specifier, so it flags any
  * import()/require() whose argument is not a plain string literal and keeps a
- * reviewed allowlist of those, rather than claiming to resolve them.
+ * reviewed allowlist of those, rather than claiming to resolve them. Any
+ * createRequire reference and module.require( are flagged the same way.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -337,6 +338,12 @@ const RULES = {
   },
 };
 
+// Any createRequire reference (named, namespace m.createRequire, renamed
+// destructure) and module.require( are flagged outright and allowlisted by
+// exact expression, since aliasing them hides the call from the rules above.
+RULES.createRequireRef = (src) => /\bcreateRequire\b/.test(src);
+RULES.moduleRequire = (src) => /\bmodule\s*\.\s*require\s*\(/.test(src);
+
 function rulesHit(src) {
   return Object.entries(RULES).filter(([, fn]) => fn(src)).map(([name]) => name).sort();
 }
@@ -358,6 +365,16 @@ const COMPUTED_ALLOWLIST = new Map([
   ['scripts/verify-receipt-payer.mjs', [
     // A path into packages/verify/dist.
     { expr: 'await import(verifyPkg)', count: 1 },
+  ]],
+  ['src/receipt-feedback.js', [
+    // `require` here only loads packages/verify/package.json (a literal).
+    { expr: "import { createRequire } from 'node:module';", count: 1 },
+    { expr: 'const require = createRequire(import.meta.url);', count: 1 },
+  ]],
+  ['src/x402-durable-store.js', [
+    // Reads the INSTANCES count from ecosystem.config.cjs (a literal).
+    { expr: "import { createRequire } from 'node:module';", count: 1 },
+    { expr: "createRequire(import.meta.url)('../ecosystem.config.cjs')", count: 1 },
   ]],
 ]);
 
@@ -390,9 +407,12 @@ test('scanner self-test: every way of reaching dotenv in the fixtures is flagged
     ['const d = await import(`dot${"env"}`);', ['computed']],
     ["require('dotenv').config({ path: '.env' });", ['bareConfig', 'literal']],
     ["const n = 'dot' + 'env'; require(n).config();", ['computed']],
-    ["import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst n = ['dot', 'env'].join('');\nreq(n).config();", ['createRequireAlias']],
-    ["const r = createRequire(import.meta.url);\nr.resolve(name);", ['createRequireAlias']],
-    ["createRequire(import.meta.url)(name).config();", ['createRequireAlias']],
+    ["import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst n = ['dot', 'env'].join('');\nreq(n).config();", ['createRequireAlias', 'createRequireRef']],
+    ["const r = createRequire(import.meta.url);\nr.resolve(name);", ['createRequireAlias', 'createRequireRef']],
+    ["createRequire(import.meta.url)(name).config();", ['createRequireAlias', 'createRequireRef']],
+    ["import * as m from 'node:module';\nm.createRequire(import.meta.url)('dot' + 'env');", ['createRequireAlias', 'createRequireRef']],
+    ["const { createRequire: cr } = await import('node:module');\ncr(import.meta.url)(n);", ['createRequireRef']],
+    ["module.require(n).config();", ['moduleRequire']],
     ["export const x = require.resolve(spec);", []],
   ];
   for (const [src, want] of cases) {
@@ -404,8 +424,6 @@ test('scanner self-test: plain literal loads of other modules are not flagged', 
   const clean = [
     "import fs from 'node:fs';",
     "const m = await import('./x.js');",
-    "const req = createRequire(import.meta.url);\nconst pkg = req('../package.json');",
-    "createRequire(import.meta.url)('../ecosystem.config.cjs');",
     "// mentions dotenv in a comment without quotes\nconst a = 1;",
     "import { loadDotenvFile } from './dotenv-load.js';",
   ];
@@ -425,7 +443,7 @@ test('scan: no gateway source reaches dotenv outside src/dotenv-load.js (tripwir
     const hits = rulesHit(src);
     if (rel === HELPER_REL) {
       assert.ok(!RULES.bareConfig(src), `${rel} calls dotenv config()`);
-      assert.ok(!RULES.computed(src) && !RULES.createRequireAlias(src), `${rel} has a computed load`);
+      assert.ok(!RULES.computed(src) && !RULES.createRequireAlias(src) && !RULES.createRequireRef(src) && !RULES.moduleRequire(src), `${rel} has a computed load`);
       continue;
     }
     if (COMPUTED_ALLOWLIST.has(rel)) {
