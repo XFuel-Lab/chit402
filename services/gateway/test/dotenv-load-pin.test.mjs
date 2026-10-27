@@ -455,6 +455,12 @@ test('scan: launch config does not preload dotenv or set NODE_OPTIONS (tripwire)
       .map((n) => path.join(gatewayDir, n)),
     path.join(repoRoot, 'deploy', 'lightsail', 'gateway.service.in'),
     path.join(repoRoot, 'deploy', 'lightsail', 'install-api.sh'),
+    // The root ecosystem file launches services/gateway/src/server.js
+    // (node_args / interpreter_args could preload dotenv).
+    path.join(repoRoot, 'ecosystem.config.js'),
+    // npm runs scripts with node-options from .npmrc.
+    path.join(repoRoot, '.npmrc'),
+    ...(fs.existsSync(path.join(gatewayDir, '.npmrc')) ? [path.join(gatewayDir, '.npmrc')] : []),
   ];
   for (const f of files) {
     assert.ok(fs.existsSync(f), `launch file missing: ${f}`);
@@ -462,6 +468,11 @@ test('scan: launch config does not preload dotenv or set NODE_OPTIONS (tripwire)
   }
   assert.ok(launch.some(([n]) => n.endsWith('gateway.service.in')), 'systemd unit not scanned');
   assert.ok(launch.some(([n]) => /Dockerfile$/.test(n)), 'Dockerfile not scanned');
+  assert.ok(launch.some(([n]) => n === 'ecosystem.config.js'), 'root ecosystem.config.js not scanned');
+  assert.ok(launch.some(([n]) => n === '.npmrc'), 'root .npmrc not scanned');
+  for (const [name, text] of launch.filter(([n]) => n.endsWith('.npmrc'))) {
+    assert.ok(!/^\s*node[-_]options\s*=/im.test(text), `${name} sets node-options`);
+  }
   const preload = /(?:^|[\s'"=])(?:-r|--require|--import|--loader|--experimental-loader)[\s=]+['"]?dotenv/m;
   for (const [name, text] of launch) {
     assert.ok(!/NODE_OPTIONS/.test(text), `${name} sets NODE_OPTIONS`);
