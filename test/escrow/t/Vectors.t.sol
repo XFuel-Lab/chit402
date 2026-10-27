@@ -11,9 +11,67 @@ import {Jwk7638} from "escrow/Jwk7638.sol";
 contract VectorsTest is EscrowFixture {
     string internal j;
 
+    string internal gw; // the gateway's own fixture (services/gateway/test/fixtures), not regenerated here
+
     function setUp() public override {
         super.setUp();
         j = vm.readFile("vectors/eip712.json");
+        gw = vm.readFile("../../services/gateway/test/fixtures/escrow-eip712-vectors.json");
+    }
+
+    function gwHead() internal view returns (E.TreeHead memory) {
+        return E.TreeHead({
+            epoch: uint32(vm.parseJsonUint(gw, ".tree_head.vectors[0].message.epoch")),
+            treeSize: uint64(vm.parseJsonUint(gw, ".tree_head.vectors[0].message.tree_size")),
+            root: vm.parseJsonBytes32(gw, ".tree_head.vectors[0].message.root"),
+            publishedAt: uint64(vm.parseJsonUint(gw, ".tree_head.vectors[0].message.published_at")),
+            kid: vm.parseJsonBytes32(gw, ".tree_head.vectors[0].message.kid")
+        });
+    }
+
+    function gwBinding() internal view returns (E.ReceiptBinding memory) {
+        return E.ReceiptBinding({
+            leafHash: vm.parseJsonBytes32(gw, ".receipt_binding.vectors[0].message.leaf_hash"),
+            payerCommitment: vm.parseJsonBytes32(gw, ".receipt_binding.vectors[0].message.payer_commitment"),
+            amountAtomic: uint64(vm.parseJsonUint(gw, ".receipt_binding.vectors[0].message.amount_atomic")),
+            assetId: vm.parseJsonBytes32(gw, ".receipt_binding.vectors[0].message.asset_id"),
+            kid: vm.parseJsonBytes32(gw, ".receipt_binding.vectors[0].message.kid")
+        });
+    }
+
+    /// @dev M2 / I1 / I2: both signing domains are byte-identical to the gateway signer's own
+    ///      fixture file (read as is, never regenerated): domain typehash 0xa604fff5...,
+    ///      head separator 0xf872d64d...cbc9, binding separator 0xd8170c88...e927, and the
+    ///      gateway's digest e for its head and binding vectors.
+    function test_domains_equal_gateway_fixture_byte_for_byte() public view {
+        assertEq(esc.DOMAIN_TYPEHASH(), vm.parseJsonBytes32(gw, ".domain_typehash"), "domain typehash = gateway");
+        assertEq(esc.DOMAIN_TYPEHASH(), 0xa604fff5a27d5951f334ccda7abff3286a8af29caeeb196a6f2b40a1dce7612b, "0xa604fff5");
+        assertEq(vm.parseJsonUint(gw, ".chain_id"), esc.CHAIN_ID(), "chain");
+        assertEq(esc.LOG_SALT(), vm.parseJsonBytes32(gw, ".log_id.salt"), "log salt = gateway");
+        assertEq(esc.TREEHEAD_TYPEHASH(), vm.parseJsonBytes32(gw, ".tree_head.typehash"), "head typehash = gateway");
+        assertEq(esc.TREEHEAD_DOMAIN_SEPARATOR(), vm.parseJsonBytes32(gw, ".tree_head.domain_separator"), "head domain = gateway");
+        assertEq(esc.TREEHEAD_DOMAIN_SEPARATOR(), 0xf872d64db3e6a1016b2dbdef96c6065d8b1104416485c6ef465c2b9df8c4cbc9, "0xf872d64d");
+        assertEq(esc.treeHeadDigest(gwHead()), vm.parseJsonBytes32(gw, ".tree_head.vectors[0].e"), "head e = gateway");
+        assertEq(esc.BINDING_TYPEHASH(), vm.parseJsonBytes32(gw, ".receipt_binding.typehash"), "binding typehash = gateway");
+        assertEq(esc.BINDING_DOMAIN_SEPARATOR(), vm.parseJsonBytes32(gw, ".receipt_binding.domain_separator"), "binding domain = gateway");
+        assertEq(esc.bindingDigest(gwBinding()), vm.parseJsonBytes32(gw, ".receipt_binding.vectors[0].e"), "binding e = gateway");
+        assertEq(esc.PAYER_TAG(), vm.parseJsonBytes32(gw, ".receipt_binding.payer_tag"), "payer tag = gateway");
+        assertEq(esc.USDC_BASE_ID(), vm.parseJsonBytes32(gw, ".receipt_binding.asset_id"), "asset id = gateway");
+        // This repo's vectors file agrees with the gateway fixture on every shared value.
+        assertEq(vm.parseJsonBytes32(j, ".treehead_domain_separator"), vm.parseJsonBytes32(gw, ".tree_head.domain_separator"), "vectors head dom");
+        assertEq(vm.parseJsonBytes32(j, ".binding_domain_separator"), vm.parseJsonBytes32(gw, ".receipt_binding.domain_separator"), "vectors binding dom");
+        assertEq(vm.parseJsonBytes32(j, ".worked_head.e"), vm.parseJsonBytes32(gw, ".tree_head.vectors[0].e"), "vectors worked e");
+    }
+
+    /// @dev M2 / I1: a liveness head in the gateway's format (sha256 over 0x1901, the gateway
+    ///      fixture's head separator and the struct hash) deploys an escrow. Throwaway key: the
+    ///      fixture carries no production signature.
+    function test_liveness_head_in_gateway_format_deploys() public {
+        bytes32 gds = vm.parseJsonBytes32(gw, ".tree_head.domain_separator");
+        E.TreeHead memory h = liveHead();
+        E.Sig memory s = signWith(pk, sha256(abi.encodePacked(hex"1901", gds, headStruct(h))));
+        E e = new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
+        assertEq(e.TREEHEAD_DOMAIN_SEPARATOR(), gds, "head domain");
     }
 
     function test_constants_match_vectors() public view {
