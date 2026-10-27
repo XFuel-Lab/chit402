@@ -304,8 +304,8 @@ test('loadDotenvFile: a missing file is returned as error, an empty path throws'
 // dotenv that a reviewer would write by accident, and flag any import() or
 // require() (including a createRequire alias) whose specifier is not a plain
 // string literal, because a computed specifier cannot be resolved statically.
-// Each flagged computed load in the tree is listed in COMPUTED_ALLOWLIST with
-// the reason it is not dotenv.
+// Each flagged load in the tree is listed in COMPUTED_ALLOWLIST by its exact
+// expression and count, with the reason it is not dotenv.
 
 const SOURCE_EXT = /\.(?:c|m)?(?:j|t)sx?$/;
 const SKIP_DIRS = new Set(['node_modules', 'test']);
@@ -342,16 +342,28 @@ function rulesHit(src) {
 }
 
 /**
- * Computed loads that exist today, reviewed by hand. A new one fails the scan
- * until someone checks it and adds it here.
+ * Loads the rules flag that exist today, reviewed by hand. Each entry is the
+ * exact source expression and how many times it occurs. The scan requires
+ * exactly that count, removes those expressions, and runs every rule on what
+ * is left, so a second computed load in an allowlisted file still fails. A
+ * new flagged load anywhere fails until someone checks it and adds it here.
  */
 const COMPUTED_ALLOWLIST = new Map([
-  // Dependency check: `await import(dep)` over a list that names 'dotenv'.
-  // Importing the package runs nothing; there is no config call.
-  ['test-setup.js', ['computed', 'literal']],
-  // import(verifyPkg): a path into packages/verify/dist.
-  ['scripts/verify-receipt-payer.mjs', ['computed']],
+  ['test-setup.js', [
+    // Dependency check: imports each name in a list. Importing the dotenv
+    // package runs nothing; there is no config call.
+    { expr: 'await import(dep)', count: 1 },
+    { expr: "'dotenv',", count: 1 },
+  ]],
+  ['scripts/verify-receipt-payer.mjs', [
+    // A path into packages/verify/dist.
+    { expr: 'await import(verifyPkg)', count: 1 },
+  ]],
 ]);
+
+function occurrences(src, expr) {
+  return src.split(expr).length - 1;
+}
 
 /** Every gateway source file outside node_modules, test/ and dot-dirs. */
 function gatewaySources() {
@@ -418,7 +430,14 @@ test('scan: no gateway source reaches dotenv outside src/dotenv-load.js (tripwir
     }
     if (COMPUTED_ALLOWLIST.has(rel)) {
       seen.add(rel);
-      assert.deepEqual(hits, COMPUTED_ALLOWLIST.get(rel), `${rel}: reviewed loads changed (${hits.join(',')})`);
+      let rest = src;
+      for (const { expr, count } of COMPUTED_ALLOWLIST.get(rel)) {
+        const n = occurrences(src, expr);
+        assert.ok(n === count, `${rel}: allowlisted ${JSON.stringify(expr)} occurs ${n} times, expected ${count}`);
+        rest = rest.split(expr).join('null');
+      }
+      const left = rulesHit(rest);
+      assert.ok(left.length === 0, `${rel}: ${left.join(', ')} outside the allowlisted expressions`);
       continue;
     }
     assert.ok(hits.length === 0, `${rel}: ${hits.join(', ')}; load .env through src/dotenv-load.js`);
