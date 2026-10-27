@@ -167,6 +167,7 @@ import {
   recordEscrowRefusal,
   listReceiptFailures,
   listRefusalCounts,
+  refusalBreakdown,
   receiptFailureCsv,
   receiptFailuresAuth,
   extractReceiptFailuresToken,
@@ -4681,6 +4682,23 @@ export async function createApp() {
     const since = req.query?.since;
     if (since != null && since !== '' && !Number.isFinite(Date.parse(String(since)))) {
       return res.status(400).json({ error: 'bad_since' });
+    }
+    // ?breakdown=1: settle refusal counts by network x reason x sub_reason x
+    // phase over [since, until), for the daily check and a spike alert
+    // (receipt-failures.js refusalBreakdown). Same token, codes and counts
+    // only. Without it the response below is unchanged.
+    if (req.query?.breakdown === '1') {
+      const until = req.query?.until;
+      if (until != null && until !== '' && !Number.isFinite(Date.parse(String(until)))) {
+        return res.status(400).json({ error: 'bad_until' });
+      }
+      res.set('Cache-Control', 'private, no-store');
+      return res.json({
+        refusal_breakdown: refusalBreakdown({
+          since: since ? String(since) : null,
+          until: until ? String(until) : null,
+        }),
+      });
     }
     const failures = listReceiptFailures({ since: since ? String(since) : null });
     const refusalCounts = listRefusalCounts({ since: since ? String(since) : null });

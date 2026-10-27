@@ -17,8 +17,8 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
-import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusal, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
-import { recordReceiptFailure } from './receipt-failures.js';
+import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { recordReceiptFailure, refusalNetworkName, refusalSubReason } from './receipt-failures.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
@@ -68,7 +68,38 @@ export function assertConfirmedSettlement(decision) {
 }
 
 function fail(reason, extra = {}) {
-  return { kind: 'failed', reason, code: clientPaymentCode(reason), preSettle: extra.preSettle === true, retryAfter: extra.retryAfter };
+  const code = clientPaymentCode(reason);
+  // Logged and counted like a pre-settle refusal (fail() is only reached
+  // before /settle). The decision below is unchanged.
+  recordReceiptFailure({
+    network: extra.network || null,
+    stage: 'pre-check',
+    reason: code,
+    preSettle: true,
+    sub_reason: refusalSubReason(extra.sub),
+    phase: 'pre_settle',
+  });
+  recordRefusal(code, null, refusalMeta(extra.network, extra.sub, 'pre_settle'));
+  return { kind: 'failed', reason, code, preSettle: extra.preSettle === true, retryAfter: extra.retryAfter };
+}
+
+/** Issuance-bind refusal reasons (issuance-commitment.js) as a fixed sub_reason. */
+const BIND_SUB = {
+  issuance_bind_nonce_mismatch: 'bind_nonce',
+  issuance_bind_client_nonce_mismatch: 'bind_client_nonce',
+  issuance_bind_chain_id_mismatch: 'bind_chain_id',
+  issuance_bind_settlement_contract_mismatch: 'bind_contract',
+  issuance_bind_commitment_failed: 'bind_commitment',
+  issuance_bind_auth_missing_nonce: 'bind_auth_nonce',
+};
+
+/** Bounded log fields for one refusal: network name, sub_reason, phase. */
+function refusalMeta(network, sub, phase) {
+  return {
+    network: refusalNetworkName(network),
+    sub_reason: refusalSubReason(sub),
+    phase: phase === 'pre_settle' ? 'pre_settle' : 'post_submit',
+  };
 }
 
 function expectedResourceOf({ resource, baseUrl }) {
@@ -138,10 +169,10 @@ export function boundSettledAmount(header, x402Version, live) {
   if (!decoded) return { amount: null };
   const svm = svmTransaction(decoded);
   if (isSolanaNetwork(live.network)) {
-    if (!svm) return { refuse: true };
+    if (!svm) return { refuse: true, why: 'network' };
     return { amount: integerAmount(live.amount) };
   }
-  if (svm) return { refuse: true };
+  if (svm) return { refuse: true, why: 'network' };
   let sent;
   try {
     sent = toPaymentPayload(decoded, { x402Version: x402Version === 2 ? 2 : 1 });
@@ -151,7 +182,7 @@ export function boundSettledAmount(header, x402Version, live) {
   const auth = sent?.payload?.authorization;
   if (!auth) return { amount: null };
   const value = integerAmount(auth.value);
-  if (value == null) return { refuse: true };
+  if (value == null) return { refuse: true, why: 'value' };
   return { amount: value };
 }
 
@@ -268,7 +299,7 @@ function decideReplay(req, prior, { resourceHave, issued, paymentHeader, nonce, 
   if (serveStoredResponse === true && replayBytesReady(nonce)) {
     return idempotentReplay(prior);
   }
-  return refused(req, 'payment_replayed', { preSettle: true });
+  return refused(req, 'payment_replayed', { preSettle: true, network: prior?.network || null, sub: 'exact_replay' });
 }
 
 function awaitInflight(pending) {
@@ -302,17 +333,17 @@ export async function settleBoundPayment({
   try {
     assertX402Boot(cfg);
   } catch (err) {
-    return fail('gateway_not_configured');
+    return fail('gateway_not_configured', { sub: 'boot_refused' });
   }
   if (!bindingEnforced(cfg)) {
     noteUnboundUse('settleBoundPayment', { taskId });
     return null;
   }
-  if (challengeStoreFailed()) return fail('gateway_not_configured');
+  if (challengeStoreFailed()) return fail('gateway_not_configured', { sub: 'challenge_store_failed' });
 
   const active = store || cfg.store || getActiveChallengeStore() || defaultStore;
 
-  if (!nonce) return refused(req, 'challenge_required', { preSettle: true });
+  if (!nonce) return refused(req, 'challenge_required', { preSettle: true, sub: 'no_nonce' });
   if (typeof active.findLate === 'function') {
     const existing = active.findLate({ nonce });
     const stillSubmitting = existing && existing.state === 'submitted' && existing.sent !== true;
@@ -331,49 +362,62 @@ export async function settleBoundPayment({
     return refused(
       req,
       spent ? 'payment_replayed' : (challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required'),
-      { preSettle: true },
+      {
+        preSettle: true,
+        network: challenge?.network || null,
+        // Missing, expired and evicted challenges read the same: challenge_unknown.
+        sub: spent ? 'spent_nonce' : (challenge?.state === 'unknown' ? 'prior_unknown' : 'challenge_unknown'),
+      },
     );
   }
   // A spent nonce that does not match this route and price is a replay refusal,
   // not a fresh challenge mismatch.
-  const mismatch = () => refused(req, spent ? 'payment_replayed' : 'challenge_mismatch', { preSettle: true });
+  // `sub` names the check (logs only). A spent nonce logs spent_nonce, never
+  // the field, so the logs do not describe another payer's settled challenge.
+  const net = challenge.network;
+  const mismatch = (sub) => refused(req, spent ? 'payment_replayed' : 'challenge_mismatch', {
+    preSettle: true,
+    network: net,
+    sub: spent ? 'spent_nonce' : sub,
+  });
+  const deny = (reason, sub, extra = {}) => refused(req, reason, { preSettle: true, network: net, sub, ...extra });
   if (!networkAllowed(challenge.network, cfg)) {
-    return refused(req, 'network_not_accepted', { preSettle: true });
+    return deny('network_not_accepted', 'network_not_allowed');
   }
   const pausedNetwork = settlementRefusal(challenge.network);
-  if (pausedNetwork) return refused(req, pausedNetwork, { preSettle: true });
+  if (pausedNetwork) return deny(pausedNetwork, 'network_paused');
   const blobNet = blobNetwork(paymentHeader);
   if (blobNet && !sameNetwork(blobNet, challenge.network)) {
-    return refused(req, 'network_not_accepted', { preSettle: true });
+    return deny('network_not_accepted', 'payload_network');
   }
 
   const solana = isSolanaNetwork(challenge.network);
   const expectedPayTo = housePayee(cfg, challenge.network, payTo);
   if (!expectedPayTo || !samePayee(challenge.payTo, expectedPayTo, { solana })) {
-    return mismatch();
+    return mismatch('payto_house');
   }
   const decoded = decodePaymentHeader(paymentHeader);
   if (!solana) {
     for (const recipient of signedRecipients(decoded)) {
       if (!samePayee(recipient, expectedPayTo, { solana: false })) {
-        return mismatch();
+        return mismatch('signed_recipient');
       }
     }
     const declaredAsset = declaredEvmAsset(decoded);
     const pinnedAsset = evmAssetAddress(challenge.asset);
     if (declaredAsset && canonicalNetwork(challenge.network) === 'base' && declaredAsset === BASE_SEPOLIA_USDC) {
-      return refused(req, 'network_not_accepted', { preSettle: true });
+      return deny('network_not_accepted', 'sepolia_asset');
     }
     if (declaredAsset && pinnedAsset && declaredAsset !== pinnedAsset) {
-      return refused(req, 'network_not_accepted', { preSettle: true });
+      return deny('network_not_accepted', 'asset_mismatch');
     }
     // Arc: only the chain's own USDC contract, never 0xff..fe or another token.
     if (isArcId(challenge.network)) {
       if (!arcAssetAllowed(challenge.network, pinnedAsset)) {
-        return refused(req, 'network_not_accepted', { preSettle: true });
+        return deny('network_not_accepted', 'arc_asset');
       }
       if (declaredAsset && !arcAssetAllowed(challenge.network, declaredAsset)) {
-        return refused(req, 'network_not_accepted', { preSettle: true });
+        return deny('network_not_accepted', 'arc_asset');
       }
     }
   }
@@ -384,23 +428,23 @@ export async function settleBoundPayment({
   const resourceWant = canonicalPaidRoute(expectedResourceOf({ resource, baseUrl }));
   const resourceHave = canonicalPaidRoute(challenge.resource);
   if (!resourceHave || !resourceWant || resourceHave !== resourceWant) {
-    return mismatch();
+    return mismatch('resource');
   }
   if (challenge.quoteRoute && canonicalPaidRoute(challenge.quoteRoute) !== resourceHave) {
-    return mismatch();
+    return mismatch('quote_route');
   }
   if (!challenge.payTo) {
-    return mismatch();
+    return mismatch('payto_missing');
   }
   if (strictTaskId && challenge.taskId !== taskId) {
-    return mismatch();
+    return mismatch('task_id');
   }
 
   const issued = atomicUnits(challenge.amount);
   const lockedQuote = challenge.quotePrice != null ? atomicUnits(challenge.quotePrice) : issued;
   const routeLocked = challenge.routeQuote != null ? atomicUnits(challenge.routeQuote) : issued;
   if (issued == null || lockedQuote == null || routeLocked == null || issued !== lockedQuote || issued !== routeLocked) {
-    return mismatch();
+    return mismatch('amount_inconsistent');
   }
 
   let routePrice = null;
@@ -410,7 +454,7 @@ export async function settleBoundPayment({
     try {
       routePrice = atomicUnits(await resolveQuote());
     } catch {
-      return mismatch();
+      return mismatch('quote_unavailable');
     }
   } else if (challenge.quoteBodyHash && challenge.quoteBodyHash === quoteBodyHash(priceBody)) {
     routePrice = issued;
@@ -418,21 +462,21 @@ export async function settleBoundPayment({
   // The quoted challenge is the price. It may exceed today's route price.
   // It cannot pay a route that now costs more.
   if (routePrice == null || routePrice > issued) {
-    return mismatch();
+    return mismatch('price_increased');
   }
   const routeQuote = issued.toString();
 
   const settledPick = boundSettledAmount(paymentHeader, clientVersion, challenge);
   if (settledPick.refuse) {
-    return mismatch();
+    return mismatch(settledPick.why === 'network' ? 'payload_network_shape' : 'value_not_integer');
   }
   if (settledPick.amount != null) {
     try {
       if (BigInt(settledPick.amount) < BigInt(String(routeQuote))) {
-        return mismatch();
+        return mismatch('amount_short');
       }
     } catch {
-      return mismatch();
+      return mismatch('amount_unparseable');
     }
   }
 
@@ -440,7 +484,7 @@ export async function settleBoundPayment({
   if (!solana && authEarly?.value) {
     try {
       if (BigInt(authEarly.value) < BigInt(String(routeQuote))) {
-        return mismatch();
+        return mismatch('auth_value_short');
       }
     } catch { /* the chain read is the authority when the value is not an integer */ }
   }
@@ -453,7 +497,7 @@ export async function settleBoundPayment({
       resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
     });
     if (replay) return replay;
-    return refused(req, 'payment_replayed', { preSettle: true });
+    return deny('payment_replayed', 'spent_same_payment');
   }
   // A decoded EVM authorization must carry its EIP-3009 nonce as exactly
   // 0x plus 64 hex. Chain confirmation binds the transfer by that nonce, so
@@ -463,10 +507,10 @@ export async function settleBoundPayment({
   // and gives Permit2 and other transfer methods their own code. It also caps
   // the header size.
   if (!solana) {
-    const authRefusal = evmAuthorizationRefusal(paymentHeader, { maxTimeoutSeconds: challenge.maxTimeoutSeconds });
-    if (authRefusal) return refused(req, authRefusal, { preSettle: true });
+    const authRefusal = evmAuthorizationRefusalDetail(paymentHeader, { maxTimeoutSeconds: challenge.maxTimeoutSeconds });
+    if (authRefusal) return deny(authRefusal.code, authRefusal.sub);
     if (!authEarly || !canonicalAuthNonce(authEarly.nonce)) {
-      return refused(req, 'settle_unconfirmed', { preSettle: true });
+      return deny('settle_unconfirmed', 'auth_nonce');
     }
   }
   const authKeyEarly = !solana
@@ -475,10 +519,10 @@ export async function settleBoundPayment({
   // Every EVM payment needs a replay key. Without one, isAuthSpent cannot
   // stop the same authorization from settling twice.
   if (!solana && !authKeyEarly) {
-    return refused(req, 'settle_unconfirmed', { preSettle: true });
+    return deny('settle_unconfirmed', 'replay_key_missing');
   }
   if (authKeyEarly && active.isAuthSpent(authKeyEarly)) {
-    return refused(req, 'payment_replayed', { preSettle: true });
+    return deny('payment_replayed', 'auth_spent');
   }
   // F-2: a route bound to one payer (expectedPayer) refuses another wallet's
   // EIP-3009 authorization here, before openLateSubmission and /settle, as
@@ -486,7 +530,7 @@ export async function settleBoundPayment({
   // Solana: the transfer authority is only read from the chain after
   // /settle, so the post-check in confirmAndSettle stays the check there.
   if (!solana && expectedPayer && !samePayee(authEarly?.from, expectedPayer, { solana: false })) {
-    return refused(req, 'payer_mismatch', { preSettle: true });
+    return deny('payer_mismatch', 'payer_precheck');
   }
 
   // MF1 (after every binding refusal, before the claim): no confirmation RPC for this network means every settle would collect
@@ -495,7 +539,7 @@ export async function settleBoundPayment({
   const rpcForNet = solana
     ? (cfg.solanaRpcUrl || cfg.solana?.rpcUrl)
     : evmRpcUrlFor(challenge.network, cfg);
-  if (!injectedReader && !rpcForNet) return fail('gateway_not_configured');
+  if (!injectedReader && !rpcForNet) return fail('gateway_not_configured', { network: net, sub: 'no_confirm_rpc' });
 
   const owner = `${taskId}:${nonce}`;
   const claim = active.claim(nonce, owner);
@@ -505,15 +549,15 @@ export async function settleBoundPayment({
       if (pending) {
         const winner = await awaitInflight(pending);
         if (winner === REPLAY_WAIT_TIMEOUT) {
-          return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
+          return deny('payment_in_flight', 'inflight_timeout', { retryAfter: 2 });
         }
         const replay = decideReplay(req, winner, {
           resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
         });
         if (replay) return replay;
-        if (winner?.kind === 'settled') return refused(req, 'payment_replayed', { preSettle: true });
+        if (winner?.kind === 'settled') return deny('payment_replayed', 'inflight_settled');
       }
-      return refused(req, 'payment_in_flight', { preSettle: true, retryAfter: 2 });
+      return deny('payment_in_flight', 'inflight_claimed', { retryAfter: 2 });
     }
     if (claim.reason === 'payment_replayed') {
       const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
@@ -523,7 +567,7 @@ export async function settleBoundPayment({
       });
       if (replay) return replay;
     }
-    return refused(req, claim.reason, { preSettle: true });
+    return deny(claim.reason, claim.reason === 'payment_replayed' ? 'claim_replayed' : 'claim_other');
   }
 
   // Registered before any await so a concurrent same-nonce caller can wait
@@ -587,15 +631,15 @@ export async function settleBoundPayment({
         } catch { /* store */ }
       }
       try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
-      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });
     }
     if (lateCapped && !terminal && (why === 'http' || why === 'success_false')) {
       try { active.release(nonce, owner); } catch { /* store */ }
-      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });
     }
     if (solana && !terminal && (why === 'http' || why === 'success_false')) {
       release();
-      return refused(req, publicReason, { stage, network: challenge.network, tx: hint });
+      return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });
     }
     try { active.markUnknown(nonce); } catch { /* store */ }
     try {
@@ -617,6 +661,8 @@ export async function settleBoundPayment({
       tx: hint,
       outcome: 'pending',
       requestId: req?.id || null,
+      sub_reason: refusalSubReason(why),
+      phase: 'post_submit',
     });
     if (lateRow && typeof active.casLate === 'function') {
       const next = terminal ? 'mismatch_hold' : 'unknown';
@@ -635,12 +681,16 @@ export async function settleBoundPayment({
         pendingId,
         verifyUrl: lateVerifyUrl(cfg, pendingId),
         capture: false,
+        network: challenge.network,
+        sub: why,
       });
     }
     return refused(req, publicReason, {
       pendingId,
       verifyUrl: lateVerifyUrl(cfg, pendingId),
       capture: false,
+      network: challenge.network,
+      sub: why,
     });
   };
 
@@ -648,7 +698,7 @@ export async function settleBoundPayment({
     const priorLate = active.findLate({ authKey: authKeyEarly });
     if (priorLate && priorLate.nonce !== nonce) {
       release();
-      return refused(req, 'payment_replayed', { preSettle: true });
+      return deny('payment_replayed', 'late_other_nonce');
     }
   }
   if (!solana && authEarly && typeof cfg.authorizationState === 'function') {
@@ -663,14 +713,14 @@ export async function settleBoundPayment({
     } catch { used = null; }
     if (used === 'used') {
       release();
-      return refused(req, 'payment_replayed', { preSettle: true });
+      return deny('payment_replayed', 'auth_used_onchain');
     }
   }
 
   const verified = await verifyPayment(paymentHeader, gwOpts);
   if (!verified.valid) {
     release();
-    return refused(req, clientPaymentCode(verified.reason || 'verify_failed'));
+    return refused(req, clientPaymentCode(verified.reason || 'verify_failed'), { network: net, sub: 'facilitator_invalid', phase: 'pre_settle' });
   }
 
   let bindCheck = null;
@@ -683,7 +733,7 @@ export async function settleBoundPayment({
     });
     if (!bindCheck.ok) {
       release();
-      return fail(bindCheck.reason);
+      return fail(bindCheck.reason, { network: net, sub: BIND_SUB[bindCheck.reason] || 'bind_other' });
     }
   }
 
@@ -701,7 +751,7 @@ export async function settleBoundPayment({
     } catch (err) {
       logger.warn({ err: err.message, taskId }, 'x402: dispute window anchor failed');
       release();
-      return fail('dispute_window_anchor_failed');
+      return fail('dispute_window_anchor_failed', { network: net, sub: 'anchor_failed' });
     }
   }
 
@@ -731,8 +781,8 @@ export async function settleBoundPayment({
       }));
     if (!opened.ok) {
       release();
-      if (opened.reason === 'replay_store_unavailable') return fail('replay_store_unavailable');
-      return refused(req, opened.reason || 'payment_replayed', { preSettle: true });
+      if (opened.reason === 'replay_store_unavailable') return fail('replay_store_unavailable', { network: net, sub: 'store_unavailable' });
+      return deny(opened.reason || 'payment_replayed', 'late_open');
     }
     lateRow = opened.row;
     try { active.markSubmitted(nonce); } catch { /* store */ }
@@ -751,7 +801,7 @@ export async function settleBoundPayment({
     }
     try { active.revertSubmitted(nonce, owner); } catch { /* store */ }
     lateRow = null;
-    return refused(req, clientPaymentCode(settled?.reason || 'settle_failed'));
+    return refused(req, clientPaymentCode(settled?.reason || 'settle_failed'), { network: net, sub: 'settle_not_sent' });
   }
   seenTx = settled.transaction || settled.txRef || null;
   if (lateRow) {
@@ -813,7 +863,7 @@ export async function settleBoundPayment({
   }
   if (txSpent) {
     try { active.markSpent(nonce, { txRef: norm.key, replay: true }); } catch { /* store */ }
-    return refused(req, 'payment_replayed');
+    return refused(req, 'payment_replayed', { network: net, sub: 'tx_spent' });
   }
   const authKey = !solana
     ? evmAuthKey(norm.network, challenge.asset, auth?.from, auth?.nonce)
@@ -830,7 +880,7 @@ export async function settleBoundPayment({
   }
   if (authSpent) {
     try { active.markSpent(nonce, { txRef: norm.key, replay: true }); } catch { /* store */ }
-    return refused(req, 'payment_replayed');
+    return refused(req, 'payment_replayed', { network: net, sub: 'auth_spent_post' });
   }
 
   // One transfer, one settlement. reserveTx holds the spent check and the
@@ -853,11 +903,11 @@ export async function settleBoundPayment({
           active.markSpent(nonce, { txRef: norm.key, replay: true });
         }
       } catch { /* another holder has the lease; the replay answer stands */ }
-      return refused(req, 'payment_replayed');
+      return refused(req, 'payment_replayed', { network: net, sub: 'reserve_lost' });
     }
   } else if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
     active.markSpent(nonce, { txRef: norm.key, replay: true });
-    return refused(req, 'payment_replayed');
+    return refused(req, 'payment_replayed', { network: net, sub: 'inflight_tx' });
   } else {
     inflightTx.add(norm.key);
     if (authKey) inflightAuth.add(authKey);
@@ -978,6 +1028,8 @@ export async function settleBoundPayment({
         retryAfter: LATE_RETRY_AFTER_SEC,
         pendingId,
         verifyUrl: lateVerifyUrl(cfg, pendingId),
+        network: net,
+        sub: 'late_unmarked',
       });
     }
   }
@@ -1010,6 +1062,10 @@ function refused(req, reason, extra = {}) {
   const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref', 'payment_scheme_unsupported'].includes(reason)
     ? reason
     : clientPaymentCode(reason);
+  // pre_settle: /settle was not called. A /verify refusal is pre_settle
+  // too, though its row has stage settle (extra.phase).
+  const phase = extra.phase || (extra.preSettle ? 'pre_settle' : 'post_submit');
+  const sub = refusalSubReason(extra.sub);
   if (extra.capture !== false) {
     recordReceiptFailure({
       network: extra.network || null,
@@ -1019,9 +1075,11 @@ function refused(req, reason, extra = {}) {
       outcome: extra.outcome || 'refused',
       requestId: req?.id || null,
       preSettle: extra.preSettle === true,
+      sub_reason: sub,
+      phase,
     });
   }
-  recordRefusal(code, userAgentOf(req));
+  recordRefusal(code, userAgentOf(req), refusalMeta(extra.network, sub, phase));
   return {
     kind: 'failed',
     reason: code,

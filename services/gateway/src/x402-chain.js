@@ -298,37 +298,48 @@ function singleAuthorization(decoded) {
  * @param {string} paymentHeader
  * @param {{ nowSec?: number, maxTimeoutSeconds?: number }} [opts]
  */
-export function evmAuthorizationRefusal(paymentHeader, { nowSec, maxTimeoutSeconds } = {}) {
+export function evmAuthorizationRefusal(paymentHeader, opts = {}) {
+  return evmAuthorizationRefusalDetail(paymentHeader, opts)?.code || null;
+}
+
+/**
+ * evmAuthorizationRefusal plus which check refused, as a fixed sub_reason
+ * for the refusal logs (receipt-failures.js REFUSAL_SUB_REASONS):
+ * header_too_large, scheme, auth_shape, auth_window, auth_nonce, auth_signature.
+ * @returns {{ code: string, sub: string } | null}
+ */
+export function evmAuthorizationRefusalDetail(paymentHeader, { nowSec, maxTimeoutSeconds } = {}) {
+  const no = (code, sub) => ({ code, sub });
   if (typeof paymentHeader === 'string' && paymentHeader.length > PAYMENT_HEADER_MAX_CHARS) {
-    return 'settle_unconfirmed';
+    return no('settle_unconfirmed', 'header_too_large');
   }
   const decoded = decodePaymentHeader(paymentHeader);
-  if (decoded && otherPaymentScheme(decoded)) return 'payment_scheme_unsupported';
-  if (!isPlainObject(decoded)) return 'settle_unconfirmed';
+  if (decoded && otherPaymentScheme(decoded)) return no('payment_scheme_unsupported', 'scheme');
+  if (!isPlainObject(decoded)) return no('settle_unconfirmed', 'auth_shape');
   const one = singleAuthorization(decoded);
-  if (!one) return 'settle_unconfirmed';
+  if (!one) return no('settle_unconfirmed', 'auth_shape');
   const { auth, signature } = one;
   for (const key of Object.keys(auth)) {
-    if (!AUTH_FIELDS.has(key)) return 'settle_unconfirmed';
+    if (!AUTH_FIELDS.has(key)) return no('settle_unconfirmed', 'auth_shape');
   }
   // from and to must be addresses here. The payee and payer checks that
   // follow bind them to the challenge and the facilitator result.
-  if (!evmAddress(auth.from) || !evmAddress(auth.to)) return 'settle_unconfirmed';
+  if (!evmAddress(auth.from) || !evmAddress(auth.to)) return no('settle_unconfirmed', 'auth_shape');
   const value = uintField(auth.value);
   const validAfter = auth.validAfter == null ? '0' : uintField(auth.validAfter);
   const validBefore = uintField(auth.validBefore);
-  if (!value || !validAfter || !validBefore) return 'settle_unconfirmed';
+  if (!value || !validAfter || !validBefore) return no('settle_unconfirmed', 'auth_shape');
   const now = BigInt(Number.isSafeInteger(nowSec) ? nowSec : Math.floor(Date.now() / 1000));
   const advertised = Number.isSafeInteger(maxTimeoutSeconds) && maxTimeoutSeconds > 0 ? maxTimeoutSeconds : 0;
   const windowS = BigInt(Math.max(advertised, EVM_AUTH_MAX_WINDOW_S));
   const skew = BigInt(EVM_AUTH_CLOCK_SKEW_S);
-  if (BigInt(validAfter) > now + skew) return 'settle_unconfirmed';
-  if (BigInt(validBefore) <= now + BigInt(EVM_AUTH_MIN_REMAINING_S)) return 'settle_unconfirmed';
-  if (BigInt(validBefore) > now + windowS + skew) return 'settle_unconfirmed';
-  if (!canonicalAuthNonce(auth.nonce)) return 'settle_unconfirmed';
-  if (typeof signature !== 'string' || !SIGNATURE_RE.test(signature)) return 'settle_unconfirmed';
+  if (BigInt(validAfter) > now + skew) return no('settle_unconfirmed', 'auth_window');
+  if (BigInt(validBefore) <= now + BigInt(EVM_AUTH_MIN_REMAINING_S)) return no('settle_unconfirmed', 'auth_window');
+  if (BigInt(validBefore) > now + windowS + skew) return no('settle_unconfirmed', 'auth_window');
+  if (!canonicalAuthNonce(auth.nonce)) return no('settle_unconfirmed', 'auth_nonce');
+  if (typeof signature !== 'string' || !SIGNATURE_RE.test(signature)) return no('settle_unconfirmed', 'auth_signature');
   const sigBytes = (signature.length - 2) / 2;
-  if (sigBytes < EVM_SIGNATURE_MIN_BYTES || sigBytes > EVM_SIGNATURE_MAX_BYTES) return 'settle_unconfirmed';
+  if (sigBytes < EVM_SIGNATURE_MIN_BYTES || sigBytes > EVM_SIGNATURE_MAX_BYTES) return no('settle_unconfirmed', 'auth_signature');
   return null;
 }
 
