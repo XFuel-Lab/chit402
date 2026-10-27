@@ -33,6 +33,8 @@ jobs:
   # scripts/lib/dotenv-load.cjs pins every dotenv option so DOTENV_* env
   # cannot change which file loads or let .env overwrite exported deploy
   # keys. Runs on the root lock's dotenv and again on dotenv 18 (not saved).
+  # no-key-print.test.mjs loads the hardhat config with dummy keys and
+  # checks no part of a key is printed.
   root-dotenv-pin:
     name: Root dotenv pin
     runs-on: ubuntu-latest
@@ -44,12 +46,12 @@ jobs:
       - name: Install root deps (no scripts)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Pin tests on the locked dotenv
-        run: node --test scripts/lib/dotenv-load.test.mjs
+        run: node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs
       - name: Pin tests on dotenv 18
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund dotenv@18.0.9
           node -e "const v=require('dotenv/package.json').version; if (!v.startsWith('18.')) { console.error('dotenv is ' + v); process.exit(1) }"
-          node --test scripts/lib/dotenv-load.test.mjs
+          node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs
 
   # ── Path-change detection ──────────────────────────────────
   changes:
