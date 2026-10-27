@@ -143,12 +143,24 @@ export function isBindingRefusal(code) {
   return CLOSED.has(code) && code !== 'gateway_not_configured';
 }
 
-export function recordRefusal(code, userAgent) {
-  if (code !== 'challenge_required' && code !== 'challenge_mismatch' && code !== 'payment_in_flight') return;
+/**
+ * Logs one settle refusal. `meta` is bounded by the caller (x402-settle.js
+ * refusalMeta): a network name, a sub_reason from REFUSAL_SUB_REASONS and a
+ * phase. Nothing else from the request reaches the line except the
+ * truncated user agent, as before.
+ */
+export function recordRefusal(code, userAgent, meta = null) {
+  const fields = meta && typeof meta === 'object'
+    ? { network: meta.network, sub_reason: meta.sub_reason, phase: meta.phase }
+    : {};
+  if (code !== 'challenge_required' && code !== 'challenge_mismatch' && code !== 'payment_in_flight') {
+    if (meta) logger.info({ code, ...fields }, 'x402: settle refusal');
+    return;
+  }
   const ua = String(userAgent || 'unknown').slice(0, 80);
   const key = `${code}|${ua}`;
   refusalCounts.set(key, (refusalCounts.get(key) || 0) + 1);
-  logger.warn({ code, ua, count: refusalCounts.get(key) }, 'x402: payment binding refusal');
+  logger.warn({ code, ua, count: refusalCounts.get(key), ...fields }, 'x402: payment binding refusal');
 }
 
 export function refusalSnapshot() {

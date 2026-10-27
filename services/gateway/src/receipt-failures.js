@@ -53,6 +53,47 @@ const FIELDS = ['time', 'network', 'stage', 'reason', 'tx', 'outcome', 'request_
 const REFUSAL_REASONS = new Set(PAYMENT_ERROR_CODES);
 const REFUSAL_NETWORKS = new Set(['base', 'base-sepolia', 'solana', 'solana-devnet']);
 
+/**
+ * Why a settle refusal happened, finer than its public code. A fixed list:
+ * a value that is not on it logs as `other`, so a row or count can never
+ * carry a payer, a nonce, a signature, an amount or free text. Logged and
+ * counted only (rows, counts, the ops breakdown); never in a response.
+ * Names follow the check in x402-settle.js that refused.
+ */
+export const REFUSAL_SUB_REASONS = Object.freeze([
+  // pre-settle: challenge lookup
+  'no_nonce', 'challenge_unknown', 'prior_unknown', 'spent_nonce', 'boot_refused', 'challenge_store_failed',
+  // pre-settle: network and asset
+  'network_not_allowed', 'network_paused', 'payload_network', 'sepolia_asset', 'asset_mismatch', 'arc_asset',
+  // pre-settle: challenge_mismatch, one per check
+  'payto_house', 'signed_recipient', 'resource', 'quote_route', 'payto_missing', 'task_id',
+  'amount_inconsistent', 'quote_unavailable', 'price_increased', 'payload_network_shape',
+  'value_not_integer', 'amount_short', 'amount_unparseable', 'auth_value_short',
+  // pre-settle: replay
+  'exact_replay', 'spent_same_payment', 'auth_spent', 'claim_replayed', 'inflight_settled',
+  'late_other_nonce', 'auth_used_onchain', 'late_open',
+  // pre-settle: in flight and claim
+  'inflight_timeout', 'inflight_claimed', 'claim_other',
+  // pre-settle: the EIP-3009 authorization (evmAuthorizationRefusalDetail)
+  'header_too_large', 'scheme', 'auth_shape', 'auth_window', 'auth_nonce', 'auth_signature', 'replay_key_missing',
+  // pre-settle: facilitator /verify and the issuance bind
+  'facilitator_invalid', 'bind_nonce', 'bind_client_nonce', 'bind_chain_id', 'bind_contract',
+  'bind_commitment', 'bind_auth_nonce', 'bind_other', 'anchor_failed', 'store_unavailable', 'no_confirm_rpc',
+  // post-submit: /settle was called
+  'settle_not_sent', 'transport', 'http', 'success_false', 'facilitator_network', 'missing_tx',
+  'payer_field', 'missing_replay_key', 'local_failure', 'awaiting_finality', 'chain_mismatch',
+  'underpaid', 'payee', 'late_unmarked', 'tx_spent', 'auth_spent_post', 'reserve_failed',
+  'reserve_lost', 'inflight_tx', 'chain_payer',
+  'other',
+]);
+const SUB_REASONS = new Set(REFUSAL_SUB_REASONS);
+/** pre_settle: nothing was sent to the facilitator's /settle. post_submit: it was. */
+export const REFUSAL_PHASES = Object.freeze(['pre_settle', 'post_submit']);
+const PHASES = new Set(REFUSAL_PHASES);
+const HOUR_MS = 60 * 60 * 1000;
+/** Hourly pre-settle buckets kept: 30 days, as the day counts. */
+const BREAKDOWN_HOUR_CAP = 30 * 24;
+
 export const RECEIPT_FAILURE_ROW_CAP = 5000;
 export const RECEIPT_FAILURE_FILE_BYTES = 5 * 1024 * 1024;
 export const RECEIPT_FAILURE_ALERT_ROW_CAP = 1000;
@@ -119,6 +160,8 @@ const lastAlert = new Map();
 const systemClock = () => Date.now();
 let alertClock = systemClock;
 const refusalCounts = new Map();
+/** `<hour ISO>|<network>|<reason>|<sub_reason>` -> count, pre-settle only. */
+const breakdownCounts = new Map();
 const escrowCounts = new Map();
 let total = 0;
 let loaded = false;
@@ -255,6 +298,11 @@ function shape(input) {
   };
   // Folded identical alerts (escrow rows only); absent on every other row.
   if (Number.isSafeInteger(input.repeat) && input.repeat > 0) out.repeat = Math.min(input.repeat, REPEAT_MAX);
+  // Settle refusals only (x402-settle.js refused()); absent on every other row.
+  if (input.sub_reason != null || input.subReason != null) {
+    out.sub_reason = refusalSubReason(input.sub_reason ?? input.subReason);
+    out.phase = refusalPhase(input.phase);
+  }
   return out;
 }
 
@@ -271,9 +319,27 @@ function refusalReason(reason) {
   return REFUSAL_REASONS.has(code) ? code : 'other';
 }
 
+/** A listed sub_reason, else `other`. Strings only. */
+export function refusalSubReason(sub) {
+  return typeof sub === 'string' && SUB_REASONS.has(sub) ? sub : 'other';
+}
+
+function refusalPhase(phase) {
+  return typeof phase === 'string' && PHASES.has(phase) ? phase : 'post_submit';
+}
+
 function refusalNetwork(network) {
   const name = facilitatorNetwork(network);
   return REFUSAL_NETWORKS.has(name) ? name : 'other';
+}
+
+/** The network name refusal counts and logs use: base, base-sepolia, solana, solana-devnet, else other. */
+export function refusalNetworkName(network) {
+  try {
+    return network ? refusalNetwork(network) : 'other';
+  } catch {
+    return 'other';
+  }
 }
 
 function dayKey(time) {
@@ -291,11 +357,33 @@ function pruneRefusalDays() {
   }
 }
 
+function hourKey(time) {
+  const parsed = Date.parse(time);
+  const at = Number.isFinite(parsed) ? parsed : Date.now();
+  return new Date(Math.floor(at / HOUR_MS) * HOUR_MS).toISOString();
+}
+
+function pruneBreakdownHours() {
+  const hours = [...new Set([...breakdownCounts.keys()].map((key) => key.slice(0, 24)))].sort();
+  if (hours.length <= BREAKDOWN_HOUR_CAP) return;
+  const drop = new Set(hours.slice(0, hours.length - BREAKDOWN_HOUR_CAP));
+  for (const key of breakdownCounts.keys()) {
+    if (drop.has(key.slice(0, 24))) breakdownCounts.delete(key);
+  }
+}
+
 function recordPreSettleRefusal(input) {
-  const day = dayKey(input.time || new Date().toISOString());
-  const key = `${day}|${refusalNetwork(input.network)}|${refusalReason(input.reason)}`;
+  const time = input.time || new Date().toISOString();
+  const day = dayKey(time);
+  const network = refusalNetwork(input.network);
+  const reason = refusalReason(input.reason);
+  const key = `${day}|${network}|${reason}`;
   refusalCounts.set(key, (refusalCounts.get(key) || 0) + 1);
   pruneRefusalDays();
+  const sub = refusalSubReason(input.sub_reason ?? input.subReason);
+  const hourly = `${hourKey(time)}|${network}|${reason}|${sub}`;
+  breakdownCounts.set(hourly, (breakdownCounts.get(hourly) || 0) + 1);
+  pruneBreakdownHours();
   return null;
 }
 
@@ -495,6 +583,64 @@ export function listRefusalCounts({ since = null } = {}) {
   return out;
 }
 
+function windowBound(value) {
+  if (value == null || value === '') return null;
+  const at = Date.parse(String(value));
+  return Number.isFinite(at) ? at : NaN;
+}
+
+/**
+ * Settle refusal counts by network x reason x sub_reason x phase over
+ * [since, until), as JSON for the daily receipt-failure check and a spike
+ * alert. Pre-settle refusals come from the hourly counts (memory, 30 days,
+ * so an hour bucket counts when its start is in the window). Post-submit
+ * refusals come from the failure rows (memory and RECEIPT_FAILURES_FILE).
+ * Codes and counts only. Read-only: it changes no count and no row.
+ * @param {{ since?: string|null, until?: string|null }} [opts]
+ * @returns {{ since: string|null, until: string|null, bucket: 'hour', total: number,
+ *   counts: Array<{ network: string, reason: string, sub_reason: string, phase: string, count: number }> } | null}
+ *   null when since or until does not parse
+ */
+export function refusalBreakdown({ since = null, until = null } = {}) {
+  loadFile();
+  const from = windowBound(since);
+  const to = windowBound(until);
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  const inWindow = (at) => Number.isFinite(at)
+    && (from == null || at >= Math.floor(from / HOUR_MS) * HOUR_MS)
+    && (to == null || at < to);
+  const sums = new Map();
+  const add = (network, reason, sub, phase, n) => {
+    const key = `${network}|${reason}|${sub}|${phase}`;
+    sums.set(key, (sums.get(key) || 0) + n);
+  };
+  for (const [key, count] of breakdownCounts) {
+    const [hour, network, reason, sub] = key.split('|');
+    if (!inWindow(Date.parse(hour))) continue;
+    add(network, reason, sub, 'pre_settle', count);
+  }
+  for (const row of rows) {
+    if (row.sub_reason == null) continue;
+    const at = Date.parse(row.time);
+    if (!(Number.isFinite(at) && (from == null || at >= from) && (to == null || at < to))) continue;
+    add(refusalNetwork(row.network), refusalReason(row.reason), refusalSubReason(row.sub_reason), refusalPhase(row.phase), 1);
+  }
+  const counts = [...sums].map(([key, count]) => {
+    const [network, reason, sub, phase] = key.split('|');
+    return { network, reason, sub_reason: sub, phase, count };
+  }).sort((a, b) => a.network.localeCompare(b.network)
+    || a.reason.localeCompare(b.reason)
+    || a.sub_reason.localeCompare(b.sub_reason)
+    || a.phase.localeCompare(b.phase));
+  return {
+    since: from == null ? null : new Date(from).toISOString(),
+    until: to == null ? null : new Date(to).toISOString(),
+    bucket: 'hour',
+    total: counts.reduce((n, c) => n + c.count, 0),
+    counts,
+  };
+}
+
 export function listReceiptFailures({ since = null } = {}) {
   loadFile();
   const cut = since ? Date.parse(since) : NaN;
@@ -522,6 +668,7 @@ export function resetReceiptFailuresForTests() {
   lastAlert.clear();
   alertClock = systemClock;
   refusalCounts.clear();
+  breakdownCounts.clear();
   escrowCounts.clear();
   total = 0;
   alertDropped = 0;

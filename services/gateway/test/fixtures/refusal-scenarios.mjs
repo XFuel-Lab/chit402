@@ -170,7 +170,8 @@ export const SCENARIOS = {
   facilitator_invalid: { run: () => attempt({ fac: { verify: 'invalid' } }), want: ['verify_failed', 'facilitator_invalid', 'pre_settle'] },
   settle_http: { run: () => attempt({ fac: { settle: 'http500' } }), want: ['settle_failed', 'http', 'post_submit'] },
   chain_mismatch: { run: () => attempt({ chain: { nonce: OTHER_AUTH_NONCE } }), want: ['settle_unconfirmed', 'chain_mismatch', 'post_submit'] },
-  underpaid: { run: () => attempt({ chain: { value: 1000n } }), want: ['settle_unconfirmed', 'underpaid', 'post_submit'] },
+  // The chain reader itself refuses a short transfer, so this is chain_mismatch.
+  chain_value_low: { run: () => attempt({ chain: { value: 1000n } }), want: ['settle_unconfirmed', 'chain_mismatch', 'post_submit'] },
   // The chain transfer is from the signed payer, but the route is bound to
   // another wallet. Checked only after the chain read today (money moved).
   chain_payer: { run: () => attempt({ call: { expectedPayer: OTHER } }), want: ['payer_mismatch', 'chain_payer', 'post_submit'] },

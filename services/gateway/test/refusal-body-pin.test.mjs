@@ -36,7 +36,7 @@ const PINNED = {
   facilitator_invalid: { status: 402, body: "{\"error\":\"verify_failed\",\"code\":\"verify_failed\"}", pendingCode: null, settles: 0 },
   settle_http: { status: 402, body: "{\"error\":\"settle_failed\",\"code\":\"settle_failed\"}", pendingCode: null, settles: 1 },
   chain_mismatch: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
-  underpaid: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
+  chain_value_low: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
   chain_payer: { status: 403, body: "{\"error\":\"payer_mismatch\",\"code\":\"payer_mismatch\"}", pendingCode: null, settles: 1 },
 };
 
