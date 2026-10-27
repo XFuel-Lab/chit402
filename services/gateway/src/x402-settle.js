@@ -524,6 +524,14 @@ export async function settleBoundPayment({
   if (authKeyEarly && active.isAuthSpent(authKeyEarly)) {
     return deny('payment_replayed', 'auth_spent');
   }
+  // F-2: a route bound to one payer (expectedPayer) refuses another wallet's
+  // EIP-3009 authorization here, before openLateSubmission and /settle, as
+  // the handshake does (x402-server.js:612-623). Nothing has moved yet.
+  // Solana: the transfer authority is only read from the chain after
+  // /settle, so the post-check in confirmAndSettle stays the check there.
+  if (!solana && expectedPayer && !samePayee(authEarly?.from, expectedPayer, { solana: false })) {
+    return refused(req, 'payer_mismatch', { preSettle: true });
+  }
 
   // MF1 (after every binding refusal, before the claim): no confirmation RPC for this network means every settle would collect
   // funds and then stay unconfirmed. Refuse before the facilitator is called.
@@ -841,8 +849,20 @@ export async function settleBoundPayment({
   // PB4 / PB12: a booked transfer is not a second settlement. Facilitator
   // success and a prior tx are not "settled". Only the chain confirmation
   // below, for this challenge's route and quoted price, is.
-  if (active.isTxSpent(norm.key)) {
-    active.markSpent(nonce, { txRef: norm.key, replay: true });
+  // F-1: from here /settle has returned sent, so funds have moved. A store
+  // read or write that throws goes to hold('local_failure'), which records
+  // the pending row and returns its pendingId and verifyUrl, never a bare
+  // replay_store_unavailable. The payment_replayed exits below are the
+  // transfer or authorization that already holds a receipt.
+  let txSpent;
+  try {
+    txSpent = active.isTxSpent(norm.key);
+  } catch (err) {
+    logger.warn({ err: err.message, taskId }, 'x402: spent-tx check failed after settle');
+    return await hold('local_failure', 'settle_unconfirmed');
+  }
+  if (txSpent) {
+    try { active.markSpent(nonce, { txRef: norm.key, replay: true }); } catch { /* store */ }
     return refused(req, 'payment_replayed', { network: net, sub: 'tx_spent' });
   }
   const authKey = !solana
@@ -851,8 +871,15 @@ export async function settleBoundPayment({
   if (!solana && !authKey) {
     return await hold('missing_replay_key', 'settle_unconfirmed');
   }
-  if (authKey && active.isAuthSpent(authKey)) {
-    active.markSpent(nonce, { txRef: norm.key, replay: true });
+  let authSpent = false;
+  try {
+    authSpent = Boolean(authKey) && active.isAuthSpent(authKey);
+  } catch (err) {
+    logger.warn({ err: err.message, taskId }, 'x402: spent-auth check failed after settle');
+    return await hold('local_failure', 'settle_unconfirmed');
+  }
+  if (authSpent) {
+    try { active.markSpent(nonce, { txRef: norm.key, replay: true }); } catch { /* store */ }
     return refused(req, 'payment_replayed', { network: net, sub: 'auth_spent_post' });
   }
 
@@ -867,13 +894,15 @@ export async function settleBoundPayment({
     try {
       reserved = active.reserveTx(norm.key, authKey, reserveOwner, 180_000) === true;
     } catch (err) {
-      logger.warn({ err: err.message }, 'x402: reserveTx failed closed');
-      return refused(req, 'replay_store_unavailable', { network: net, sub: 'reserve_failed' });
+      logger.warn({ err: err.message }, 'x402: reserveTx failed after settle');
+      return await hold('local_failure', 'settle_unconfirmed');
     }
     if (!reserved) {
-      if (active.isTxSpent(norm.key) || (authKey && active.isAuthSpent(authKey))) {
-        active.markSpent(nonce, { txRef: norm.key, replay: true });
-      }
+      try {
+        if (active.isTxSpent(norm.key) || (authKey && active.isAuthSpent(authKey))) {
+          active.markSpent(nonce, { txRef: norm.key, replay: true });
+        }
+      } catch { /* another holder has the lease; the replay answer stands */ }
       return refused(req, 'payment_replayed', { network: net, sub: 'reserve_lost' });
     }
   } else if (inflightTx.has(norm.key) || (authKey && inflightAuth.has(authKey))) {
@@ -938,9 +967,18 @@ export async function settleBoundPayment({
     return await hold('payee', 'settle_unconfirmed', { terminal: true });
   }
   if (expectedPayer && !samePayee(chain.payer, expectedPayer, { solana })) {
-    active.markSpent(nonce, { txRef: norm.key, payer: chain.payer, rejected: 'payer_mismatch' });
-    active.markTxSpent(norm.key);
-    return refused(req, 'payer_mismatch', { network: net, sub: 'chain_payer' });
+    // The transfer is on chain from another wallet. Write the refund row
+    // first (pending row, late row to mismatch_hold) so the payer gets a
+    // pendingId and verifyUrl, then mark the tx and nonce spent so the
+    // transfer can never unlock this bound resource later.
+    const held = await hold('payer', 'payer_mismatch', { terminal: true });
+    try {
+      active.markSpent(nonce, { txRef: norm.key, payer: chain.payer, rejected: 'payer_mismatch' });
+      active.markTxSpent(norm.key);
+    } catch (err) {
+      logger.warn({ err: err.message, taskId }, 'x402: spent mark failed after payer mismatch');
+    }
+    return held;
   }
 
   active.markSpent(nonce, {
