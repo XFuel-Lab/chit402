@@ -55,7 +55,10 @@ jobs:
       - name: Pin tests on dotenv 18
         # The tarball is checked against the sha512 the registry published for
         # 18.0.9 (the same integrity Dependabot #655 locks) before install.
+        # Any failing command (curl, openssl, base64) stops the step.
+        shell: bash
         run: |
+          set -euo pipefail
           curl -fsSL https://registry.npmjs.org/dotenv/-/dotenv-18.0.9.tgz -o "$RUNNER_TEMP/dotenv-18.0.9.tgz"
           want="3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw=="
           got="$(openssl dgst -sha512 -binary "$RUNNER_TEMP/dotenv-18.0.9.tgz" | base64 -w0)"

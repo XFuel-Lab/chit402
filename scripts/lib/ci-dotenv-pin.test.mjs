@@ -59,3 +59,10 @@ test('the hash check runs before the tarball is installed', () => {
 test('the step checks the installed version is exactly 18.0.9', () => {
   assert.ok(/v !== '18\.0\.9'/.test(step || ''), "the installed dotenv version check (=== '18.0.9') is missing");
 });
+
+test('the step runs under bash with set -euo pipefail', () => {
+  assert.ok(/^\s*shell: bash\s*$/m.test(step || ''), 'the dotenv 18 step must set shell: bash');
+  assert.ok(/^\s*set -euo pipefail\s*$/m.test(step || ''), 'the dotenv 18 run block must start with set -euo pipefail');
+  const s = step || '';
+  assert.ok(s.search(/set -euo pipefail/) < s.search(/curl -fsSL/), 'set -euo pipefail must come before curl');
+});
