@@ -5,7 +5,8 @@
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import config from './config.js';
-import { isBindingRefusal, paymentErrorStatus, bindingEnforced, samePayee } from './x402-flags.js';
+import { isBindingRefusal, paymentFailureStatus, decisionHoldResult, bindingEnforced, samePayee, setHoldRetryAfter } from './x402-flags.js';
+import { terminalStampHold } from './hold-handle.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeInbound,
@@ -42,13 +43,18 @@ function sendResult(res, result) {
       winner_settled: result.winner_settled === true ? true : undefined,
     });
   }
-  return res.status(result?.status || 500).json(
-    result?.body || {
-      error: result?.error || 'internal',
-      ...(result?.code ? { code: result.code } : {}),
-      message: result?.message || 'Board job failed',
-    },
-  );
+  setHoldRetryAfter(res, result?.retryAfter);
+  const payload = result?.body || {
+    error: result?.error || 'internal',
+    ...(result?.code ? { code: result.code } : {}),
+    message: result?.message || 'Board job failed',
+  };
+  return res.status(result?.status || 500).json({
+    ...payload,
+    ...(result?.pending_id ? { pending_id: result.pending_id } : {}),
+    ...(result?.verify_url ? { verify_url: result.verify_url } : {}),
+    ...(result?.outcome === 'refund_owed' ? { status: 'refund_owed' } : {}),
+  });
 }
 
 function paymentHeaderPresent(req) {
@@ -113,14 +119,15 @@ export function registerBoardJobRoutes(app, deps) {
     if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
       const code = decision.code || decision.reason;
       if (isBindingRefusal(code)) {
-        return {
-          ok: false,
-          status: paymentErrorStatus(code),
-          error: code,
-          code,
-          ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
-          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
-        };
+        if (decision.preSettle) {
+          return {
+            ok: false,
+            status: paymentFailureStatus(decision).status,
+            error: code,
+            code,
+          };
+        }
+        return decisionHoldResult({ ...decision, code, reason: code, holdClass: decision.holdClass });
       }
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };
     }
@@ -130,7 +137,7 @@ export function registerBoardJobRoutes(app, deps) {
     const solHouse = config.x402?.solana?.payTo;
     const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
     if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
-      return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
+      return terminalStampHold(decision.paymentRef, { publicBaseUrl: baseUrl || '' });
     }
     if (typeof setPaymentHeaders === 'function') {
       setPaymentHeaders(res, {
@@ -220,21 +227,22 @@ export function registerBoardJobRoutes(app, deps) {
     if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
       const code = decision.code || decision.reason;
       if (isBindingRefusal(code)) {
-        return {
-          ok: false,
-          status: paymentErrorStatus(code),
-          error: code,
-          code,
-          ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
-          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
-        };
+        if (decision.preSettle) {
+          return {
+            ok: false,
+            status: paymentFailureStatus(decision).status,
+            error: code,
+            code,
+          };
+        }
+        return decisionHoldResult({ ...decision, code, reason: code, holdClass: decision.holdClass });
       }
       return { ok: false, status: 402, error: 'job_payment_required', code: 'verify_failed' };
     }
     if (!sameQuotedPrice(decision.quotedAmount, spec.amount)
       || !chainCoversPrice(decision.settledAmount, spec.amount)
       || !samePayee(decision.payTo, spec.payTo)) {
-      return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
+      return terminalStampHold(decision.paymentRef, { publicBaseUrl: baseUrl || '' });
     }
     if (spec.expectedPayer && !samePayee(decision.payerWallet, spec.expectedPayer)) {
       return { ok: false, status: 403, error: 'payer_mismatch', code: 'payer_mismatch' };

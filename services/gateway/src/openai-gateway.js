@@ -53,7 +53,8 @@ import {
   notePaidFulfillment,
   takeServedReceipt,
 } from './paid-response-replay.js';
-import { clientPaymentCode, paymentErrorStatus, paymentFailureBody } from './x402-flags.js';
+import { clientPaymentCode, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter } from './x402-flags.js';
+import { openPostSettleHandle } from './hold-handle.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
@@ -674,18 +675,9 @@ async function meterV1Request(req, res, {
 
     const code = clientPaymentCode(decision.code || decision.reason);
     logger.warn({ reqId: req.id, code }, 'openai-gateway: x402 payment failed');
-    if (decision.retryAfter) res.set('Retry-After', String(decision.retryAfter));
-    const failure = paymentFailureBody(decision);
-    res.status(paymentErrorStatus(code)).json({
-      error: {
-        message: 'Payment could not be settled',
-        type: 'payment_required',
-        code,
-        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
-        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
-        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
-      },
-    });
+    const shaped = { ...decision, code, reason: code };
+    if (shaped.holdClass !== 'resolvable' && shaped.holdClass !== 'terminal') delete shaped.holdClass;
+    sendOpenAiPaymentResult(res, shaped);
     return { halted: true };
   } catch (err) {
     if (activeHold && spendHolds) {
@@ -1840,19 +1832,68 @@ function sendStoredPaidResponse(res, stored) {
   return res.end(Buffer.from(stored.bytes, 'utf8'));
 }
 
+function heldOpenAiMessage(failure) {
+  if (failure.status === 'refund_owed') return 'Refund owed. Do not pay again.';
+  if (failure.pending_id) return 'Payment is pending. Do not pay again.';
+  return 'Do not pay again.';
+}
+
+function unheldOpenAiMessage() {
+  return 'Payment could not be settled';
+}
+
+export function openAiFailurePayload(decision) {
+  const view = paymentFailureStatus(decision);
+  const failure = paymentFailureBody(decision);
+  const held = decision?.holdClass === 'resolvable' || decision?.holdClass === 'terminal';
+  const message = held ? heldOpenAiMessage(failure) : unheldOpenAiMessage();
+  return {
+    status: view.status,
+    retryAfter: view.retryAfter,
+    body: {
+      error: {
+        message,
+        type: 'payment_required',
+        code: failure.code,
+        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
+        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
+        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
+        ...(failure.status ? { status: failure.status } : {}),
+      },
+    },
+  };
+}
+
+function sendOpenAiPaymentResult(res, decision) {
+  const payload = openAiFailurePayload(decision);
+  setHoldRetryAfter(res, payload.retryAfter);
+  res.status(payload.status).json(payload.body);
+}
+
+/** Resolvable handle for a payment whose first request is still in flight. */
+export function inflightHoldDecision(nonce) {
+  const key = typeof nonce === 'string' && nonce ? `inflight:${nonce}` : '';
+  const opened = openPostSettleHandle(null, {
+    key,
+    holdClass: 'resolvable',
+    cfg: { publicBaseUrl: config.service?.publicBaseUrl || '' },
+  });
+  return {
+    code: 'payment_in_flight',
+    reason: 'payment_in_flight',
+    holdClass: 'resolvable',
+    pendingId: opened?.pendingId || null,
+    verifyUrl: opened?.verifyUrl || null,
+    retryAfter: 2,
+  };
+}
+
 /** Exact bytes from the first fulfillment. Does not run the handler. */
 async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
   if (stored?.timedOut) {
-    res.set('Retry-After', '2');
-    res.status(402).json({
-      error: {
-        message: 'Payment could not be settled',
-        type: 'payment_required',
-        code: 'payment_in_flight',
-      },
-    });
+    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req)));
     return true;
   }
   if (!stored?.bytes) {

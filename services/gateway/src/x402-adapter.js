@@ -351,6 +351,9 @@ export class ChallengeStore {
     // Late-issue rows. An array, persisted with the replay store. Not a Map.
     this.late = [];
     this.lateLedger = [];
+    // Public hold handles. id is random. key is the idempotency string and
+    // is never returned by getHoldHandle.
+    this.holdHandles = [];
   }
 
   put(nonce, data) {
@@ -562,6 +565,28 @@ export class ChallengeStore {
     return (key && this.txFacts.get(key)) || null;
   }
 
+  /**
+   * One handle per key. A second call returns the first row and does not
+   * allocate another id. The return value has no key and no payment facts.
+   */
+  ensureHoldHandle({ key, holdClass } = {}) {
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) return null;
+    if (holdClass !== 'resolvable' && holdClass !== 'terminal') return null;
+    const existing = this.holdHandles.find((row) => row.key === key);
+    if (existing) return { pending_id: existing.pending_id, hold_class: existing.hold_class };
+    const pending_id = crypto.randomBytes(16).toString('hex');
+    this.holdHandles.push({ pending_id, key, hold_class: holdClass });
+    return { pending_id, hold_class: holdClass };
+  }
+
+  /** Public read. Unknown ids return null. The key is not included. */
+  getHoldHandle(id) {
+    if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return null;
+    const row = this.holdHandles.find((item) => item.pending_id === id);
+    if (!row) return null;
+    return { pending_id: row.pending_id, hold_class: row.hold_class };
+  }
+
   async recordPending(row) {
     const rec = {
       id: `pending-${Date.now().toString(36)}-${this.pending.length}`,
@@ -699,6 +724,7 @@ export class ChallengeStore {
       pending: this.pending,
       late: this.late,
       lateLedger: this.lateLedger,
+      holdHandles: this.holdHandles,
     };
   }
 
@@ -713,6 +739,7 @@ export class ChallengeStore {
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
     this.late = Array.isArray(raw?.late) ? raw.late : [];
     this.lateLedger = Array.isArray(raw?.lateLedger) ? raw.lateLedger : [];
+    this.holdHandles = Array.isArray(raw?.holdHandles) ? raw.holdHandles : [];
   }
 
   _gc() {

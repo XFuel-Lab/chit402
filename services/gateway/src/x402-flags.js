@@ -123,19 +123,142 @@ export function paymentErrorStatus(code) {
   return 402;
 }
 
+/** Late-issue public ids are 16 random bytes, hex. Anything else is not a handle. */
+const REAL_PENDING_ID = /^[0-9a-f]{32}$/;
+
+export function realPendingId(id) {
+  return typeof id === 'string' && REAL_PENDING_ID.test(id);
+}
+
+/**
+ * Seconds a resolvable hold asks the client to wait. Matches the late
+ * reconciler's published wait. A caller may set a shorter one (the in-process
+ * paid replay uses 2) and that value is kept.
+ */
+export const RESOLVABLE_RETRY_AFTER_SEC = 5;
+
+function retrySeconds(value, fallback) {
+  const n = Number(value);
+  if (Number.isInteger(n) && n >= 1 && n <= 3600) return n;
+  return fallback;
+}
+
+/**
+ * Status for one payment failure.
+ * 202 and 409 refund_owed only when the decision names its class and carries
+ * a real pending id. Anything else keeps today's status for that code.
+ * A named class with no usable id is the documented non-402 fallback
+ * (409, no refund_owed field, no Retry-After): the handle write failed and
+ * the client must not be told to pay again, and must not be given a 202.
+ * @returns {{ status: number, retryAfter: number|null, refundOwed: boolean, fallback: boolean }}
+ */
+export function paymentFailureStatus(decision) {
+  const code = decision && (decision.code || decision.reason);
+  const today = paymentErrorStatus(code);
+  const klass = decision && decision.holdClass;
+  if (klass !== 'resolvable' && klass !== 'terminal') {
+    const retryAfter = retrySeconds(decision?.retryAfter, null);
+    return { status: today, retryAfter, refundOwed: false, fallback: false };
+  }
+  const pending = decision.pendingId ?? decision.pending_id;
+  if (!realPendingId(pending)) {
+    return { status: 409, retryAfter: null, refundOwed: false, fallback: true };
+  }
+  if (klass === 'resolvable') {
+    return {
+      status: 202,
+      retryAfter: retrySeconds(decision.retryAfter, RESOLVABLE_RETRY_AFTER_SEC),
+      refundOwed: false,
+      fallback: false,
+    };
+  }
+  return { status: 409, retryAfter: null, refundOwed: true, fallback: false };
+}
+
 export function paymentErrorBody(code) {
   const c = CLOSED.has(code) ? code : clientPaymentCode(code);
   return { error: c, code: c };
 }
 
-/** Closed payment failure plus the late-issue handles. No challenge body. */
+/**
+ * Closed payment failure plus the late-issue handles. No challenge body.
+ * A resolvable hold keeps today's keys, values and order. A terminal hold
+ * adds status: "refund_owed" after the handles. A class with no handle is
+ * the fallback sentence and nothing else.
+ */
 export function paymentFailureBody(decision) {
   const code = decision?.code || decision?.reason;
-  const body = paymentErrorBody(code);
-  if (decision?.pendingId) body.pending_id = decision.pendingId;
-  if (decision?.verifyUrl) body.verify_url = decision.verifyUrl;
+  const base = paymentErrorBody(code);
+  const view = paymentFailureStatus(decision);
+  if (view.fallback) {
+    return { error: base.error, code: base.code, message: 'Do not pay again.' };
+  }
+  if (!view.refundOwed && view.status !== 202) {
+    if (typeof decision?.receiptJws === 'string' && decision.receiptJws) {
+      return { ...base, receipt_jws: decision.receiptJws };
+    }
+    return base;
+  }
+  const body = { error: base.error, code: base.code };
+  const pending = decision?.pendingId || decision?.pending_id;
+  const verify = decision?.verifyUrl || decision?.verify_url;
+  if (pending) body.pending_id = pending;
+  if (verify) body.verify_url = verify;
+  if (view.refundOwed) body.status = 'refund_owed';
   if (typeof decision?.receiptJws === 'string' && decision.receiptJws) body.receipt_jws = decision.receiptJws;
   return body;
+}
+
+/** Header only. A null retryAfter leaves the response without Retry-After. */
+export function setHoldRetryAfter(res, retryAfter) {
+  if (retryAfter == null || retryAfter === '') return;
+  res.set('Retry-After', String(retryAfter));
+}
+
+/**
+ * JSON for a stamp or board failure that already ran through the status helper.
+ * Pre-settle results have none of the hold fields, so their bytes stay put.
+ */
+export function stampFailureBody(result) {
+  const closed = result?.code || result?.error;
+  const hold = {
+    ...(result?.pending_id ? { pending_id: result.pending_id } : {}),
+    ...(result?.verify_url ? { verify_url: result.verify_url } : {}),
+    ...(result?.outcome === 'refund_owed' ? { status: 'refund_owed' } : {}),
+  };
+  if (isBindingRefusal(closed)) {
+    return {
+      error: closed,
+      code: closed,
+      ...(result?.message ? { message: result.message } : {}),
+      ...hold,
+    };
+  }
+  return {
+    error: result?.error,
+    ...(result?.message ? { message: result.message } : {}),
+    ...hold,
+  };
+}
+
+/**
+ * The object a route returns to its caller for one post-settle decision.
+ * HTTP status, Retry-After and the public fields, and nothing else.
+ */
+export function decisionHoldResult(decision) {
+  const view = paymentFailureStatus(decision);
+  const body = paymentFailureBody(decision);
+  return {
+    ok: false,
+    status: view.status,
+    error: body.error,
+    code: body.code,
+    ...(body.pending_id ? { pending_id: body.pending_id } : {}),
+    ...(body.verify_url ? { verify_url: body.verify_url } : {}),
+    ...(body.message ? { message: body.message } : {}),
+    ...(body.status === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+    ...(view.status === 202 && view.retryAfter != null ? { retryAfter: view.retryAfter } : {}),
+  };
 }
 
 /** Binding failures must not downgrade onto another rail. */

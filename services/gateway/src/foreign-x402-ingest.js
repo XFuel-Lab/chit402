@@ -1268,12 +1268,18 @@ async function collectIngestStamp(ensureStamp) {
     };
   }
   if (!stamp || stamp.ok !== true) {
+    const message = stamp?.message || (stamp?.code ? undefined : STAMP_DUE_MESSAGE);
     return {
       ok: false,
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
-      message: stamp?.message || STAMP_DUE_MESSAGE,
+      ...(message ? { message } : {}),
       challenge: stamp?.challenge || null,
+      ...(stamp?.code ? { code: stamp.code } : {}),
+      ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),
+      ...(stamp?.verify_url ? { verify_url: stamp.verify_url } : {}),
+      ...(stamp?.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+      ...(stamp?.retryAfter != null ? { retryAfter: stamp.retryAfter } : {}),
     };
   }
   return {

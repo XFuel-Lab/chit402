@@ -46,6 +46,7 @@ import {
   lateAdmissionCapped,
   resumeLateIssue,
 } from './late-issue.js';
+import { openPostSettleHandle } from './hold-handle.js';
 
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
@@ -671,15 +672,30 @@ export async function settleBoundPayment({
           why,
           sent: true,
           tx_hint: hint || lateRow.tx_hint || null,
+          hold_class: terminal ? 'terminal' : 'resolvable',
         });
       } catch { /* store */ }
     }
-    const pendingId = lateRow?.pending_id || null;
+    // A late row's id is the public handle. Solana and a capped EVM payer
+    // have no late row. recordPending's id is guessable, so it stays private.
+    // One unguessable handle per nonce is what the verify page resolves.
+    const holdClass = terminal ? 'terminal' : 'resolvable';
+    let pendingId = lateRow?.pending_id || null;
+    if (!pendingId && nonce) {
+      const opened = openPostSettleHandle(active, {
+        key: `settle:${String(challenge.network || '')}:${String(nonce)}`,
+        holdClass,
+        cfg,
+      });
+      pendingId = opened?.pendingId || null;
+    }
+    const verifyUrl = lateVerifyUrl(cfg, pendingId);
     if (!solana && lateIssueEnabled(cfg) && !terminal) {
       return refused(req, 'settle_pending', {
         retryAfter: LATE_RETRY_AFTER_SEC,
         pendingId,
-        verifyUrl: lateVerifyUrl(cfg, pendingId),
+        verifyUrl,
+        holdClass: 'resolvable',
         capture: false,
         network: challenge.network,
         sub: why,
@@ -687,7 +703,8 @@ export async function settleBoundPayment({
     }
     return refused(req, publicReason, {
       pendingId,
-      verifyUrl: lateVerifyUrl(cfg, pendingId),
+      verifyUrl,
+      holdClass,
       capture: false,
       network: challenge.network,
       sub: why,
@@ -1028,6 +1045,7 @@ export async function settleBoundPayment({
         retryAfter: LATE_RETRY_AFTER_SEC,
         pendingId,
         verifyUrl: lateVerifyUrl(cfg, pendingId),
+        holdClass: 'resolvable',
         network: net,
         sub: 'late_unmarked',
       });
@@ -1080,7 +1098,7 @@ function refused(req, reason, extra = {}) {
     });
   }
   recordRefusal(code, userAgentOf(req), refusalMeta(extra.network, sub, phase));
-  return {
+  const out = {
     kind: 'failed',
     reason: code,
     code,
@@ -1089,6 +1107,8 @@ function refused(req, reason, extra = {}) {
     pendingId: extra.pendingId || null,
     verifyUrl: extra.verifyUrl || null,
   };
+  if (extra.holdClass === 'resolvable' || extra.holdClass === 'terminal') out.holdClass = extra.holdClass;
+  return out;
 }
 
 export function reconcilePending(store, readerResults = []) {

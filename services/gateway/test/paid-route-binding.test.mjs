@@ -473,8 +473,10 @@ test('PB7 fee and leg checks use the on-chain amount, not a larger quote', async
       };
     },
   });
-  assert.equal(rejected.status, 402);
+  assert.equal(rejected.status, 409);
   assert.equal(rejected.error, 'stamp_underpaid');
+  assert.equal(rejected.outcome, 'refund_owed');
+  assert.match(rejected.pending_id, /^[0-9a-f]{32}$/);
   assert.equal(jobs.get(id).winner_leg, null);
 
   const paid = await payBoardJob(id, {

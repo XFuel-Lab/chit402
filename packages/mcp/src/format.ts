@@ -38,6 +38,18 @@ export function fail(message: string): ToolResult {
   };
 }
 
+function pendingIdOf(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return '';
+  const id = (raw as { pending_id?: unknown }).pending_id;
+  return typeof id === 'string' ? id : '';
+}
+
+function verifyUrlOf(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return '';
+  const url = (raw as { verify_url?: unknown }).verify_url;
+  return typeof url === 'string' ? url : '';
+}
+
 /** Turn any thrown value into a concise, actionable message. */
 export function describeError(err: unknown): string {
   if (err instanceof XFuelApiError) {
@@ -47,6 +59,17 @@ export function describeError(err: unknown): string {
     // precede the generic status-0 (network) branch below.
     if (err.code === 'polling_timeout') {
       return `${base}${details} — the task has not settled yet; poll get_task_status again in a moment.`;
+    }
+    const raw = err.body;
+    const named = err as { pendingId?: unknown; verifyUrl?: unknown };
+    const pendingId = pendingIdOf(raw) || (typeof named.pendingId === 'string' ? named.pendingId : '');
+    if (pendingId || err.code === 'payment_pending' || err.code === 'refund_owed') {
+      const refund = err.code === 'refund_owed' || (raw && typeof raw === 'object' && (raw as { status?: unknown }).status === 'refund_owed');
+      const url = verifyUrlOf(raw) || (typeof named.verifyUrl === 'string' ? named.verifyUrl : '');
+      const sentence = refund
+        ? `Refund owed. Do not pay again. pending_id: ${pendingId}. verify_url: ${url}.`
+        : `Payment is pending. Do not pay again. pending_id: ${pendingId}. verify_url: ${url}.`;
+      return `${base}${details} — ${sentence}`;
     }
     if (err.status === 402 || err.code === 'payment_rejected') {
       return `${base}${details} — USDC/x402 payment was rejected; check the payer wallet balance, network, and that the server has x402 enabled.`;

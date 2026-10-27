@@ -171,7 +171,7 @@ function writeState(file, state) {
 }
 
 const EMPTY_STATE = {
-  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], txReserved: [], authReserved: [], pending: [], late: [], lateLedger: [],
+  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], txReserved: [], authReserved: [], pending: [], late: [], lateLedger: [], holdHandles: [],
 };
 
 export class DurableChallengeStore {
@@ -231,6 +231,8 @@ export class DurableChallengeStore {
   }
   txFactsOf(key) { return this._with((s) => s.txFactsOf(key)); }
   recordPending(row) { return this._with(async (s) => await s.recordPending(row)); }
+  ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
+  getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
   markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }

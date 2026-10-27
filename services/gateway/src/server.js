@@ -23,9 +23,10 @@ import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
-import { isBindingRefusal, paymentErrorStatus, paymentFailureBody, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
+import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
+import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
 import { readHeadBlock, probeConfiguredSettlementRpcs, startSettlementRpcRecheck } from './x402-chain.js';
 import { evmRpcUrlFor } from './arc-rail.js';
 import { buildDidDocument, didHostFromRequest } from './offer-receipt.js';
@@ -2079,9 +2080,7 @@ export async function createApp() {
                   return res.status(503).json({ error: 'x402_unavailable', code: 'gateway_not_configured' });
                 }
                 if (isBindingRefusal(hs.code || hs.reason)) {
-                  const code = hs.code || hs.reason;
-                  if (hs.retryAfter) res.setHeader('Retry-After', String(hs.retryAfter));
-                  return res.status(paymentErrorStatus(code)).json(paymentFailureBody(hs));
+                  return sendX402Failure(res, hs);
                 }
                 if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                   logger.warn({ reqId: req.id, reason: hs.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -2125,9 +2124,7 @@ export async function createApp() {
                 return res.status(503).json({ error: 'x402_unavailable', code: 'gateway_not_configured' });
               }
               if (isBindingRefusal(decision.code || decision.reason)) {
-                const code = decision.code || decision.reason;
-                if (decision.retryAfter) res.setHeader('Retry-After', String(decision.retryAfter));
-                return res.status(paymentErrorStatus(code)).json(paymentFailureBody(decision));
+                return sendX402Failure(res, decision);
               }
               if (config.x402.fallbackToTfuel && tfuelBuyerRailAllowed(config.x402.network)) {
                 logger.warn({ reqId: req.id, reason: decision.reason }, 'x402 failed — legacy TFUEL fallback (opt-in)');
@@ -3141,6 +3138,25 @@ export async function createApp() {
     return res.status(404).type('html').send(renderReceiptShellMissing());
   }
 
+  function sendHoldPage(res, wantsJson, page) {
+    res.vary('Accept');
+    res.set('Cache-Control', 'private, no-store');
+    const payload = holdPagePayload(page);
+    if (wantsJson) return res.status(200).json(payload.json);
+    res.set('Content-Security-Policy', RECEIPT_HTML_CSP);
+    return res.status(200).type('html').send(payload.html);
+  }
+
+  function sendX402Failure(res, decision) {
+    const view = paymentFailureStatus(decision);
+    setHoldRetryAfter(res, view.retryAfter);
+    return res.status(view.status).json(paymentFailureBody(decision));
+  }
+
+  function terminalStampDecision(paymentRef) {
+    return terminalStampHold(paymentRef, { publicBaseUrl: config.service?.publicBaseUrl || '' });
+  }
+
   function sendPreimage(res, preimages, field, raw) {
     res.set('Cache-Control', 'private, no-store');
     const entry = preimageField(preimages, field);
@@ -3556,6 +3572,8 @@ export async function createApp() {
       if (!task) {
         const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
         if (latePublic) return await publishShell(latePublic, null);
+        const holdPage = holdPageForReceiptId(taskId) || holdPageForReceiptId(rawTaskId);
+        if (holdPage) return sendHoldPage(res, wantsJson, holdPage.page);
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) return await publishShell(spendReceipt, null);
         return sendPublicMissing(res, wantsJson);
@@ -4806,7 +4824,7 @@ export async function createApp() {
           if (isBindingRefusal(code)) {
             return {
               ok: false,
-              status: paymentErrorStatus(code),
+              status: paymentFailureStatus(decision).status,
               error: code,
               code,
               message: 'Register stamp is $0.002 USDC on Base only. Nothing was settled.',
@@ -4823,17 +4841,12 @@ export async function createApp() {
           const code = isBindingRefusal(decision.code || decision.reason)
             ? (decision.code || decision.reason)
             : 'settle_failed';
-          return {
-            ok: false,
-            status: paymentErrorStatus(code),
-            error: code,
-            code,
-          };
+          return decisionHoldResult({ ...decision, code, reason: code, holdClass: decision.holdClass });
         }
         let paid = 0n;
         try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
         if (paid < BigInt(STAMP_FEE_UNITS) || !samePayee(decision.payTo, config.x402.payTo)) {
-          return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
+          return decisionHoldResult(terminalStampDecision(decision.paymentRef));
         }
         if (typeof setX402PaymentResponseHeaders === 'function') {
           await setX402PaymentResponseHeaders(res, {
@@ -4876,18 +4889,8 @@ export async function createApp() {
             stamp_fee_usd: '0.002',
           });
         }
-        const closed = result.code || result.error;
-        if (isBindingRefusal(closed)) {
-          return res.status(result.status).json({
-            error: closed,
-            code: closed,
-            ...(result.message ? { message: result.message } : {}),
-          });
-        }
-        return res.status(result.status).json({
-          error: result.error,
-          message: result.message,
-        });
+        setHoldRetryAfter(res, result.retryAfter);
+        return res.status(result.status).json(stampFailureBody(result));
       }
       return res.status(result.status).json(result.body);
     } catch (err) {
@@ -5030,12 +5033,7 @@ export async function createApp() {
           const code = isBindingRefusal(decision.code || decision.reason)
             ? (decision.code || decision.reason)
             : 'settle_failed';
-          return {
-            ok: false,
-            status: paymentErrorStatus(code),
-            error: code,
-            code,
-          };
+          return decisionHoldResult({ ...decision, code, reason: code, holdClass: decision.holdClass });
         }
         let paid = 0n;
         try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
@@ -5043,12 +5041,7 @@ export async function createApp() {
         const solHouse = config.x402.solana?.payTo;
         const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
         if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
-          return {
-            ok: false,
-            status: 402,
-            error: 'stamp_underpaid',
-            code: 'stamp_underpaid',
-          };
+          return decisionHoldResult(terminalStampDecision(decision.paymentRef));
         }
         await setX402PaymentResponseHeaders(res, {
           ref: decision.paymentRef,
@@ -5097,14 +5090,8 @@ export async function createApp() {
             stamp_fee_usd: '0.002',
           });
         }
-        const closed = result.code || result.error;
-        if (isBindingRefusal(closed)) {
-          return res.status(result.status).json({ error: closed, code: closed });
-        }
-        return res.status(result.status).json({
-          error: result.error,
-          message: result.message,
-        });
+        setHoldRetryAfter(res, result.retryAfter);
+        return res.status(result.status).json(stampFailureBody(result));
       }
       return res.status(result.status).json(result.body);
     } catch (err) {

@@ -639,6 +639,90 @@ describe('XFuelClient', () => {
       ).rejects.toThrow(XFuelApiError);
     });
 
+    it('a 202 with pending_id is a pending hold, not a task and not payment_rejected', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 202,
+          data: {
+            error: 'settle_pending',
+            code: 'settle_pending',
+            pending_id: 'ab'.repeat(16),
+            verify_url: 'https://api.chit402.com/receipt/late-' + 'ab'.repeat(16),
+          },
+        });
+      const client = makeClient();
+      await expect(client.submitTaskWithPayment(taskParams, createMockPayer())).rejects.toMatchObject({
+        code: 'payment_pending',
+        status: 202,
+        pendingId: 'ab'.repeat(16),
+      });
+    });
+
+    it('a 409 refund_owed is distinct from payment_replayed and says not to pay again', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 409,
+          data: {
+            error: 'payer_mismatch',
+            code: 'payer_mismatch',
+            pending_id: 'cd'.repeat(16),
+            verify_url: '/receipt/late-' + 'cd'.repeat(16),
+            status: 'refund_owed',
+          },
+        });
+      const client = makeClient();
+      try {
+        await client.submitTaskWithPayment(taskParams, createMockPayer());
+        throw new Error('expected refund_owed');
+      } catch (err) {
+        expect(err).toBeInstanceOf(XFuelApiError);
+        const api = err as XFuelApiError;
+        expect(api.code).toBe('refund_owed');
+        expect(api.code).not.toBe('payment_replayed');
+        expect(api.code).not.toBe('payment_rejected');
+        expect(api.message.toLowerCase()).toContain('do not pay again');
+        expect(api.message.toLowerCase()).toContain('refund owed');
+        expect(api.pendingId).toBe('cd'.repeat(16));
+        expect(api.verifyUrl).toContain('cd'.repeat(16));
+      }
+    });
+
+    it('a 409 without pending_id stays payment_replayed', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 409,
+          data: { error: 'payment_replayed', code: 'payment_replayed' },
+        });
+      const client = makeClient();
+      await expect(client.submitTaskWithPayment(taskParams, createMockPayer())).rejects.toMatchObject({
+        code: 'payment_replayed',
+        status: 409,
+      });
+    });
+
+    it('a 402 without pending_id is still payment_rejected', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({ status: 402, data: { error: 'verify_failed', code: 'verify_failed' } });
+      const client = makeClient();
+      await expect(client.submitTaskWithPayment(taskParams, createMockPayer())).rejects.toMatchObject({
+        code: 'payment_rejected',
+        status: 402,
+      });
+    });
+
+    it('an accepted task 202 with no pending_id is still the task', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({ status: 202, data: { ...mockTaskResponse, payment_rail: 'usdc' } });
+      const client = makeClient();
+      const result = await client.submitTaskWithPayment(taskParams, createMockPayer());
+      expect(result.task_id).toBe(TASK_ID);
+    });
+
     it('submitInference auto-runs the handshake when a payer is supplied', async () => {
       mockPost
         .mockResolvedValueOnce({ status: 402, data: challengeBody })

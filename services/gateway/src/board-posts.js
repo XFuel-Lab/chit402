@@ -806,6 +806,11 @@ async function collectStamp(ensureStamp) {
       error: stamp?.error || 'stamp_payment_required',
       message: stamp?.message || 'Board stamp is $0.002 USDC (2000 atomic), paid by the poster. Prepaid budget is not debited.',
       challenge: stamp?.challenge || null,
+      ...(stamp?.code ? { code: stamp.code } : {}),
+      ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),
+      ...(stamp?.verify_url ? { verify_url: stamp.verify_url } : {}),
+      ...(stamp?.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+      ...(stamp?.retryAfter != null ? { retryAfter: stamp.retryAfter } : {}),
     };
   }
   return {
