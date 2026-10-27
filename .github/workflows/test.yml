@@ -57,8 +57,9 @@ jobs:
         # 18.0.9 (the same integrity Dependabot #655 locks) before install.
         run: |
           curl -fsSL https://registry.npmjs.org/dotenv/-/dotenv-18.0.9.tgz -o "$RUNNER_TEMP/dotenv-18.0.9.tgz"
-          echo "3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw==" > "$RUNNER_TEMP/dotenv-18.0.9.sha512"
-          openssl dgst -sha512 -binary "$RUNNER_TEMP/dotenv-18.0.9.tgz" | base64 -w0 | diff - "$RUNNER_TEMP/dotenv-18.0.9.sha512"
+          want="3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw=="
+          got="$(openssl dgst -sha512 -binary "$RUNNER_TEMP/dotenv-18.0.9.tgz" | base64 -w0)"
+          if [ "$got" != "$want" ]; then echo "::error::dotenv-18.0.9.tgz sha512 mismatch: $got"; exit 1; fi
           npm install --no-save --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/dotenv-18.0.9.tgz"
           node -e "const v=require('dotenv/package.json').version; if (v !== '18.0.9') { console.error('dotenv is ' + v); process.exit(1) }"
           node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs
