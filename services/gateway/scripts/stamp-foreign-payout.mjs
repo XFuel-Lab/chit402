@@ -15,9 +15,9 @@
  *
  * Restart the gateway after a stamp so the public receipt route reloads the book.
  */
-import dotenv from 'dotenv';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadDotenvFile } from '../src/dotenv-load.js';
 
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -213,7 +213,7 @@ function houseAgentId(env, houseIds) {
 
 async function main() {
   const gatewayDir = join(dirname(fileURLToPath(import.meta.url)), '..');
-  dotenv.config({ path: join(gatewayDir, '.env') });
+  loadDotenvFile(join(gatewayDir, '.env'));
   const { txs } = parseArgs(process.argv.slice(2));
   const fingerprintByTx = new Map(txs.map((item) => [item.tx, item.fingerprint]));
   const recordHandle = process.env.FINGERPRINT_HANDLE || 'chit402';
