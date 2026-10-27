@@ -14,7 +14,11 @@
  * 2 scanner self-tests and 4 source/launch-config scans. The scans are a tripwire, not a proof: a
  * static scan cannot follow every computed specifier, so it flags any
  * import()/require() whose argument is not a plain string literal and keeps a
- * reviewed allowlist of those, rather than claiming to resolve them.
+ * reviewed allowlist of those, rather than claiming to resolve them. Any
+ * createRequire reference and module.require( are flagged the same way.
+ * Out of reach for any static scan: code built at runtime (eval, new
+ * Function, vm) that imports a computed name. The behavioural tests are the
+ * real guard for what src/config.js and the helper do.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -304,8 +308,8 @@ test('loadDotenvFile: a missing file is returned as error, an empty path throws'
 // dotenv that a reviewer would write by accident, and flag any import() or
 // require() (including a createRequire alias) whose specifier is not a plain
 // string literal, because a computed specifier cannot be resolved statically.
-// Each flagged computed load in the tree is listed in COMPUTED_ALLOWLIST with
-// the reason it is not dotenv.
+// Each flagged load in the tree is listed in COMPUTED_ALLOWLIST by its exact
+// expression and count, with the reason it is not dotenv.
 
 const SOURCE_EXT = /\.(?:c|m)?(?:j|t)sx?$/;
 const SKIP_DIRS = new Set(['node_modules', 'test']);
@@ -337,21 +341,49 @@ const RULES = {
   },
 };
 
+// Any createRequire reference (named, namespace m.createRequire, renamed
+// destructure) and module.require( are flagged outright and allowlisted by
+// exact expression, since aliasing them hides the call from the rules above.
+RULES.createRequireRef = (src) => /\bcreateRequire\b/.test(src);
+RULES.moduleRequire = (src) => /\bmodule\s*\.\s*require\s*\(/.test(src);
+
 function rulesHit(src) {
   return Object.entries(RULES).filter(([, fn]) => fn(src)).map(([name]) => name).sort();
 }
 
 /**
- * Computed loads that exist today, reviewed by hand. A new one fails the scan
- * until someone checks it and adds it here.
+ * Loads the rules flag that exist today, reviewed by hand. Each entry is the
+ * exact source expression and how many times it occurs. The scan requires
+ * exactly that count, removes those expressions, and runs every rule on what
+ * is left, so a second computed load in an allowlisted file still fails. A
+ * new flagged load anywhere fails until someone checks it and adds it here.
  */
 const COMPUTED_ALLOWLIST = new Map([
-  // Dependency check: `await import(dep)` over a list that names 'dotenv'.
-  // Importing the package runs nothing; there is no config call.
-  ['test-setup.js', ['computed', 'literal']],
-  // import(verifyPkg): a path into packages/verify/dist.
-  ['scripts/verify-receipt-payer.mjs', ['computed']],
+  ['test-setup.js', [
+    // Dependency check: imports each name in a list. Importing the dotenv
+    // package runs nothing; there is no config call.
+    { expr: 'await import(dep)', count: 1 },
+    { expr: "'dotenv',", count: 1 },
+  ]],
+  ['scripts/verify-receipt-payer.mjs', [
+    // A path into packages/verify/dist.
+    { expr: 'await import(verifyPkg)', count: 1 },
+  ]],
+  ['src/receipt-feedback.js', [
+    // `require` here only loads packages/verify/package.json (a literal).
+    { expr: "import { createRequire } from 'node:module';", count: 1 },
+    { expr: 'const require = createRequire(import.meta.url);', count: 1 },
+  ]],
+  ['src/x402-durable-store.js', [
+    // Reads the INSTANCES count from ecosystem.config.cjs (a literal).
+    { expr: "import { createRequire } from 'node:module';", count: 1 },
+    { expr: "createRequire(import.meta.url)('../ecosystem.config.cjs')", count: 1 },
+  ]],
 ]);
+
+function occurrences(src, expr) {
+  return src.split(expr).length - 1;
+}
 
 /** Every gateway source file outside node_modules, test/ and dot-dirs. */
 function gatewaySources() {
@@ -378,9 +410,12 @@ test('scanner self-test: every way of reaching dotenv in the fixtures is flagged
     ['const d = await import(`dot${"env"}`);', ['computed']],
     ["require('dotenv').config({ path: '.env' });", ['bareConfig', 'literal']],
     ["const n = 'dot' + 'env'; require(n).config();", ['computed']],
-    ["import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst n = ['dot', 'env'].join('');\nreq(n).config();", ['createRequireAlias']],
-    ["const r = createRequire(import.meta.url);\nr.resolve(name);", ['createRequireAlias']],
-    ["createRequire(import.meta.url)(name).config();", ['createRequireAlias']],
+    ["import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nconst n = ['dot', 'env'].join('');\nreq(n).config();", ['createRequireAlias', 'createRequireRef']],
+    ["const r = createRequire(import.meta.url);\nr.resolve(name);", ['createRequireAlias', 'createRequireRef']],
+    ["createRequire(import.meta.url)(name).config();", ['createRequireAlias', 'createRequireRef']],
+    ["import * as m from 'node:module';\nm.createRequire(import.meta.url)('dot' + 'env');", ['createRequireAlias', 'createRequireRef']],
+    ["const { createRequire: cr } = await import('node:module');\ncr(import.meta.url)(n);", ['createRequireRef']],
+    ["module.require(n).config();", ['moduleRequire']],
     ["export const x = require.resolve(spec);", []],
   ];
   for (const [src, want] of cases) {
@@ -392,8 +427,6 @@ test('scanner self-test: plain literal loads of other modules are not flagged', 
   const clean = [
     "import fs from 'node:fs';",
     "const m = await import('./x.js');",
-    "const req = createRequire(import.meta.url);\nconst pkg = req('../package.json');",
-    "createRequire(import.meta.url)('../ecosystem.config.cjs');",
     "// mentions dotenv in a comment without quotes\nconst a = 1;",
     "import { loadDotenvFile } from './dotenv-load.js';",
   ];
@@ -413,12 +446,19 @@ test('scan: no gateway source reaches dotenv outside src/dotenv-load.js (tripwir
     const hits = rulesHit(src);
     if (rel === HELPER_REL) {
       assert.ok(!RULES.bareConfig(src), `${rel} calls dotenv config()`);
-      assert.ok(!RULES.computed(src) && !RULES.createRequireAlias(src), `${rel} has a computed load`);
+      assert.ok(!RULES.computed(src) && !RULES.createRequireAlias(src) && !RULES.createRequireRef(src) && !RULES.moduleRequire(src), `${rel} has a computed load`);
       continue;
     }
     if (COMPUTED_ALLOWLIST.has(rel)) {
       seen.add(rel);
-      assert.deepEqual(hits, COMPUTED_ALLOWLIST.get(rel), `${rel}: reviewed loads changed (${hits.join(',')})`);
+      let rest = src;
+      for (const { expr, count } of COMPUTED_ALLOWLIST.get(rel)) {
+        const n = occurrences(src, expr);
+        assert.ok(n === count, `${rel}: allowlisted ${JSON.stringify(expr)} occurs ${n} times, expected ${count}`);
+        rest = rest.split(expr).join('null');
+      }
+      const left = rulesHit(rest);
+      assert.ok(left.length === 0, `${rel}: ${left.join(', ')} outside the allowlisted expressions`);
       continue;
     }
     assert.ok(hits.length === 0, `${rel}: ${hits.join(', ')}; load .env through src/dotenv-load.js`);
@@ -436,6 +476,12 @@ test('scan: launch config does not preload dotenv or set NODE_OPTIONS (tripwire)
       .map((n) => path.join(gatewayDir, n)),
     path.join(repoRoot, 'deploy', 'lightsail', 'gateway.service.in'),
     path.join(repoRoot, 'deploy', 'lightsail', 'install-api.sh'),
+    // The root ecosystem file launches services/gateway/src/server.js
+    // (node_args / interpreter_args could preload dotenv).
+    path.join(repoRoot, 'ecosystem.config.js'),
+    // npm runs scripts with node-options from .npmrc.
+    path.join(repoRoot, '.npmrc'),
+    ...(fs.existsSync(path.join(gatewayDir, '.npmrc')) ? [path.join(gatewayDir, '.npmrc')] : []),
   ];
   for (const f of files) {
     assert.ok(fs.existsSync(f), `launch file missing: ${f}`);
@@ -443,6 +489,11 @@ test('scan: launch config does not preload dotenv or set NODE_OPTIONS (tripwire)
   }
   assert.ok(launch.some(([n]) => n.endsWith('gateway.service.in')), 'systemd unit not scanned');
   assert.ok(launch.some(([n]) => /Dockerfile$/.test(n)), 'Dockerfile not scanned');
+  assert.ok(launch.some(([n]) => n === 'ecosystem.config.js'), 'root ecosystem.config.js not scanned');
+  assert.ok(launch.some(([n]) => n === '.npmrc'), 'root .npmrc not scanned');
+  for (const [name, text] of launch.filter(([n]) => n.endsWith('.npmrc'))) {
+    assert.ok(!/^\s*node[-_]options\s*=/im.test(text), `${name} sets node-options`);
+  }
   const preload = /(?:^|[\s'"=])(?:-r|--require|--import|--loader|--experimental-loader)[\s=]+['"]?dotenv/m;
   for (const [name, text] of launch) {
     assert.ok(!/NODE_OPTIONS/.test(text), `${name} sets NODE_OPTIONS`);
