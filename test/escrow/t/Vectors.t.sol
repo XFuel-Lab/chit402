@@ -68,7 +68,7 @@ contract VectorsTest is EscrowFixture {
         });
         E.Sig memory s = E.Sig({r: vm.parseJsonBytes32(j, ".throwaway.head_sig.r"), s: vm.parseJsonBytes32(j, ".throwaway.head_sig.s")});
         MockUSDC t = new MockUSDC();
-        E e2 = new E(owner, address(t), k, x, y, LOG_SALT, h, s);
+        E e2 = new E(owner, address(t), k, x, y, LOG_SALT, h, s, 1000 * ONE);
         assertEq(e2.KID(), k, "kid");
 
         E.ReceiptBinding memory b = E.ReceiptBinding({

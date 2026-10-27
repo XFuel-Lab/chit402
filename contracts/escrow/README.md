@@ -56,7 +56,7 @@ Shared vectors: `test/escrow/vectors/eip712.json`.
 | | |
 |---|---|
 | Token | Circle Base Sepolia USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e` (6 decimals, checked on a fork) |
-| Minimum bond to activate | 1,000 USDC |
+| Minimum bond to activate | constructor `minBond`: at least 1,000 USDC on every chain; Base Sepolia (84532) only may go down to 10 USDC (`minBondAllowed`) |
 | Bounty | 50 USDC per epoch, 100 USDC total |
 | Refund | min(signed amount, 5 USDC) per leaf, one per leaf across incidents |
 | Bond period before notice | 14 days |
