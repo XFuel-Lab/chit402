@@ -580,7 +580,12 @@ test('source scan: failure sites use the helper and holds do not say rejected', 
   assert.ok(/paymentFailureStatus\(decision\)/.test(server), 'server uses the status helper');
   assert.equal((server.match(/paymentErrorStatus\(/g) || []).length, 0, 'server does not call the old status');
   assert.ok(/openAiFailurePayload\(/.test(openai), 'openai uses the payload helper');
-  assert.ok(/inflightHoldDecision\(/.test(openai), 'paid replay builds a hold');
+  const replayFn = openai.slice(openai.indexOf('async function maybeServePaidReplay'), openai.indexOf('function finishPaidBody'));
+  const timedOut = replayFn.slice(replayFn.indexOf('if (stored?.timedOut)'), replayFn.indexOf('if (!stored?.bytes)'));
+  assert.ok(/inflightHoldDecision\(/.test(timedOut), 'paid replay in flight builds a hold');
+  assert.ok(/sendOpenAiPaymentResult\(/.test(timedOut), 'paid replay in flight uses the hold response');
+  assert.equal(/status\(402\)/.test(timedOut), false, 'paid replay in flight is not 402');
+  assert.equal(/could not be settled/i.test(timedOut), false, 'paid replay in flight does not say could not be settled');
   assert.ok(/paymentFailureStatus\(decision\)/.test(board), 'board uses the helper');
   assert.ok(/terminalStampHold\(/.test(jobs), 'board-job underpaid is a terminal hold');
   const holdFn = mcp.slice(mcp.indexOf('function pendingIdOf'), mcp.indexOf('if (err.status === 402'));
