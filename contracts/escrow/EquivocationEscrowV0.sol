@@ -131,8 +131,13 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
 
     uint256 public constant CHAIN_ID = 84532;
 
-    bytes32 public constant DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)");
+    /// @dev Both signing domains name this escrow (verifyingContract =
+    ///      address(this)) as well as the chain and the log salt, so a head or
+    ///      binding signed for one escrow is not valid at any other escrow,
+    ///      including a redeploy on the same chain with the same log salt.
+    bytes32 public constant DOMAIN_TYPEHASH = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)"
+    );
     bytes32 public constant TREEHEAD_TYPEHASH =
         keccak256("TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)");
     bytes32 public constant BINDING_TYPEHASH = keccak256(
@@ -345,11 +350,11 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         PUB_Y = pubY_;
         LOG_SALT = logSalt_;
         bytes32 tdom = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("Chit402TreeHead"), keccak256("1"), CHAIN_ID, logSalt_)
+            abi.encode(DOMAIN_TYPEHASH, keccak256("Chit402TreeHead"), keccak256("1"), CHAIN_ID, address(this), logSalt_)
         );
         TREEHEAD_DOMAIN_SEPARATOR = tdom;
         BINDING_DOMAIN_SEPARATOR = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("Chit402ReceiptBinding"), keccak256("1"), CHAIN_ID, logSalt_)
+            abi.encode(DOMAIN_TYPEHASH, keccak256("Chit402ReceiptBinding"), keccak256("1"), CHAIN_ID, address(this), logSalt_)
         );
 
         if (liveHead.kid != kid_) revert LivenessFailed();

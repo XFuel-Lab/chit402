@@ -8,13 +8,13 @@ import {EquivocationEscrowV0 as E, minBondAllowed} from "escrow/EquivocationEscr
 contract MinBondTest is EscrowFixture {
     function deployWith(uint256 mb) internal returns (E) {
         E.TreeHead memory h = liveHead();
-        return new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, signHead(h), mb);
+        return new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, signHeadNext(h), mb);
     }
 
     /// @dev Signs first, so that vm.expectRevert applies to the constructor itself.
     function expectCtorRevert(bytes4 sel, uint256 mb) internal {
         E.TreeHead memory h = liveHead();
-        E.Sig memory sg = signHead(h);
+        E.Sig memory sg = signHeadNext(h);
         vm.expectRevert(sel);
         new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, sg, mb);
     }

@@ -337,12 +337,12 @@ contract EscrowTest is EscrowFixture {
 
         // Fresh escrow funded at exactly MIN_BOND, with 1,000 USDC of refunds registered first.
         E e2 = _activeEscrow();
+        E prev = esc;
+        esc = e2; // heads below are signed for e2 (the domain names the escrow)
         E.EvidenceB memory ev2 = forkB(13, 256, 0, 4);
         bytes32[] memory honest = TreeLib.leaves(256, 4);
         bytes32[] memory forked = new bytes32[](256);
         for (uint256 i = 0; i < 256; i++) forked[i] = TreeLib.leaf(abi.encodePacked("forked-", uint256(4), "-", i));
-        E prev = esc;
-        esc = e2;
         bytes32[] memory keys = new bytes32[](100);
         for (uint256 i = 0; i < 100; i++) {
             ev2.index = uint64(i);
@@ -516,7 +516,7 @@ contract EscrowTest is EscrowFixture {
         assertEq(committer, alice, "commit kept");
 
         E.TreeHead memory h = liveHead();
-        E.Sig memory s = signHead(h);
+        E.Sig memory s = signHeadNext(h);
         vm.expectRevert(E.LivenessFailed.selector);
         new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
@@ -556,7 +556,7 @@ contract EscrowTest is EscrowFixture {
 
     function test_C20_constructor_checks() public {
         E.TreeHead memory h = liveHead();
-        E.Sig memory s = signHead(h);
+        E.Sig memory s = signHeadNext(h);
 
         vm.expectRevert(E.KidMismatch.selector);
         new E(owner, address(usdc), kid, pubY, pubX, LOG_SALT, h, s, 1000 * ONE);
@@ -571,7 +571,7 @@ contract EscrowTest is EscrowFixture {
 
         other = h;
         other.kid = keccak256("other kid");
-        E.Sig memory os = signHead(other);
+        E.Sig memory os = signHeadNext(other);
         vm.expectRevert(E.LivenessFailed.selector);
         new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, other, os, 1000 * ONE);
 

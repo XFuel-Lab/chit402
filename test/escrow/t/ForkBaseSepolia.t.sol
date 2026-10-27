@@ -91,7 +91,7 @@ contract ForkBaseSepoliaTest is EscrowFixture {
             kid: vm.parseJsonBytes32(j, ".throwaway.kid")
         });
         assertTrue(
-            _isOne(_remote100(headDigest(nh, dom), vm.parseJsonBytes32(j, ".throwaway.head_sig.r"), vm.parseJsonBytes32(j, ".throwaway.head_sig.s"), wx, wy)),
+            _isOne(_remote100(headDigest(nh, domainSep("Chit402TreeHead", "1", 84532, vm.parseJsonAddress(j, ".verifying_contract"), LOG_SALT)), vm.parseJsonBytes32(j, ".throwaway.head_sig.r"), vm.parseJsonBytes32(j, ".throwaway.head_sig.s"), wx, wy)),
             "node-signed head verifies on Base Sepolia"
         );
     }
@@ -124,7 +124,7 @@ contract ForkBaseSepoliaTest is EscrowFixture {
     function test_F1_escrow_on_fork_typeA_commit_reveal() public {
         _skipIfNoRpc();
         E.TreeHead memory lh = liveHead();
-        E fe = new E(owner, CIRCLE_USDC, kid, pubX, pubY, LOG_SALT, lh, signHead(lh), 1000 * ONE);
+        E fe = new E(owner, CIRCLE_USDC, kid, pubX, pubY, LOG_SALT, lh, signHeadNext(lh), 1000 * ONE);
         esc = fe;
         E.HeadRef[] memory entries = new E.HeadRef[](1);
         entries[0] = E.HeadRef({epoch: 2, treeSize: 11, root: keccak256("q")});
