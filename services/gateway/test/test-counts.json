@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2476,
+  "total": 2483,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -176,6 +176,7 @@
     "test/session-act-approval-ttl.test.mjs": 5,
     "test/session-act.test.mjs": 21,
     "test/session-delegation.test.mjs": 21,
+    "test/settle-store-failure.test.mjs": 7,
     "test/settlement-proof-flag.test.mjs": 6,
     "test/settlement-proof-guard.test.mjs": 9,
     "test/settlement-proof-off-paths.test.mjs": 14,
