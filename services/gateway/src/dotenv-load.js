@@ -16,9 +16,12 @@ import dotenv from 'dotenv';
  * plain file loader in both 17 and 18 (config() calls it in 18).
  *
  * One thing the options cannot pin on dotenv 17: it ORs DOTENV_CONFIG_DEBUG
- * and DOTENV_CONFIG_QUIET from the environment into debug and quiet. That
- * changes logging only (key names and paths, never values), not which file
- * loads or what is overwritten. dotenv 18 takes the explicit options.
+ * and DOTENV_CONFIG_QUIET from process.env into debug and quiet, and reads
+ * them again after loading, so the same lines inside .env count too. Through
+ * this helper that can only print the "injected env (N) from <path>" line
+ * (and a failed-to-load path): counts and paths, never key names or values.
+ * It does not change which file loads or what is overwritten. dotenv 18
+ * takes the explicit options.
  */
 export const DOTENV_LOAD_OPTIONS = Object.freeze({
   override: false,

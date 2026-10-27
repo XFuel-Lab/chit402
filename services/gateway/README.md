@@ -14,6 +14,13 @@ npm run m2m-server                  # AI listener + M2M API on :3002
 npm test
 ```
 
+## Loading `.env`
+
+Every gateway `.env` load goes through `loadDotenvFile(path)` in `src/dotenv-load.js`. Don't call `dotenv.config()` or import `dotenv/config` anywhere else; `test/dotenv-load-pin.test.mjs` fails if you do.
+- It passes every option explicitly (`override: false`, `quiet: true`, `debug: false`, `encoding: 'utf8'`, `fast: false` and the path). That way `DOTENV_*` variables can't pick a different file or make `.env` overwrite values already exported from the shell. dotenv 18 fills any option you leave out from those variables.
+- It calls `dotenv.configDotenv`, the plain file loader in dotenv 17 and 18, rather than `config()`, which on 17 switches to `.env.vault` when `DOTENV_KEY` is set.
+- On dotenv 17, `DOTENV_CONFIG_DEBUG`/`DOTENV_CONFIG_QUIET` (in the environment or as lines in `.env`) can still turn on its "injected env (N) from <path>" line. That line shows counts and paths only, never values.
+
 ## Key surfaces
 
 | Path | Role |
