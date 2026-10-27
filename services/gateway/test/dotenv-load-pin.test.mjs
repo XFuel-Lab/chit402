@@ -16,6 +16,9 @@
  * import()/require() whose argument is not a plain string literal and keeps a
  * reviewed allowlist of those, rather than claiming to resolve them. Any
  * createRequire reference and module.require( are flagged the same way.
+ * Out of reach for any static scan: code built at runtime (eval, new
+ * Function, vm) that imports a computed name. The behavioural tests are the
+ * real guard for what src/config.js and the helper do.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
