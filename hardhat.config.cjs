@@ -1,5 +1,5 @@
-require('dotenv').config({ path: '.env.local' })
-require('dotenv').config()
+// ./.env.local then ./.env, with every dotenv option pinned (scripts/lib/dotenv-load.cjs).
+require('./scripts/lib/dotenv-load.cjs').loadRootEnv()
 
 require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')

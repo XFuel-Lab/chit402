@@ -19,8 +19,8 @@
 
 'use strict'
 
-require('dotenv').config({ path: '.env.local' })
-require('dotenv').config()
+// ./.env.local then ./.env, with every dotenv option pinned (scripts/lib/dotenv-load.cjs).
+require('./lib/dotenv-load.cjs').loadRootEnv()
 
 const { ethers } = require('ethers')
 const fs = require('fs')
