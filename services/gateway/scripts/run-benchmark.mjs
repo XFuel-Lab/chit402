@@ -20,18 +20,18 @@
  *
  * See docs/BENCHMARK_RUNBOOK.md for the full step-by-step guide.
  */
-import { config as loadEnv } from 'dotenv';
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { loadDotenvFile } from '../src/dotenv-load.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..'); // backend/theta-bridge
 
 // `.env.benchmark` is gitignored — safe place for real URLs/keys. Falls back
 // silently to already-exported environment variables if the file is absent.
-loadEnv({ path: resolve(ROOT, '.env.benchmark') });
+loadDotenvFile(resolve(ROOT, '.env.benchmark'));
 
 const [mode, ...extraArgs] = process.argv.slice(2);
 

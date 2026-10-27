@@ -1,9 +1,11 @@
-import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
+import { loadDotenvFile } from './dotenv-load.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from ./.env in the working directory, the file
+// dotenv loads when given no path. The path and every other option are
+// explicit so DOTENV_* variables cannot change them (src/dotenv-load.js).
+loadDotenvFile(resolve(process.cwd(), '.env'));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
