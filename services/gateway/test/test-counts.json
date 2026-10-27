@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2470,
+  "total": 2476,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -46,7 +46,7 @@
     "test/discovery-copy-brand.test.mjs": 3,
     "test/door-metrics-route.test.mjs": 2,
     "test/door-metrics.test.mjs": 9,
-    "test/dotenv-load-pin.test.mjs": 8,
+    "test/dotenv-load-pin.test.mjs": 14,
     "test/ecdsa-der.test.mjs": 6,
     "test/edgecloud-extract.test.mjs": 10,
     "test/erc8004.test.mjs": 7,
