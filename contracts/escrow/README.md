@@ -1,7 +1,10 @@
 # EquivocationEscrowV0
 
 Base Sepolia (chainId 84532) test bond for the Chit402 receipt log. Test USDC only.
-Mainnet needs its own design; nothing here is a mainnet parameter.
+Mainnet needs its own design; nothing here is a mainnet parameter. The gates that
+have to be true before any mainnet bond are in [MAINNET-GATES.md](./MAINNET-GATES.md).
+Copy that list, and the testnet rules below, into the deploy pack. The pack TARGET
+is re-pinned to the merge commit after merge.
 
 ## What it does
 
@@ -39,6 +42,14 @@ Incident and freeze rules:
 
 ## Signing format
 
+Testnet V0 keeps both domains per log. Neither the tree-head domain nor the
+refund domain carries this escrow's address. The domain type is the four-field
+`EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)`, the same
+type the production gateway signer and `packages/verify` produce today. A signed
+head and a signed refund binding are valid at every escrow that pins this key
+and this log salt. That is per log by design for V0. The gateway and
+`packages/verify` stay unchanged in this release.
+
 - `TreeHead(uint32 epoch,uint64 tree_size,bytes32 root,uint64 published_at,bytes32 kid)`
   under domain `Chit402TreeHead`, version `1`, chainId 84532, salt = log id.
 - `ReceiptBinding(bytes32 leaf_hash,bytes32 payer_commitment,uint64 amount_atomic,bytes32 asset_id,bytes32 kid)`
@@ -49,7 +60,36 @@ Incident and freeze rules:
 - The constructor recomputes the RFC 7638 thumbprint of the pinned x/y and requires it to
   equal `kid`, and requires one genuine signed head (liveness proof).
 
+`test/escrow/t/Vectors.t.sol` reads the gateway signing fixture
+`services/gateway/test/fixtures/escrow-eip712-vectors.json` and checks the head
+domain and the refund domain against that file, byte for byte.
+
 Shared vectors: `test/escrow/vectors/eip712.json`.
+
+## One canonical escrow, and the redeploy rule
+
+Run one canonical escrow address for this log, and record that address with the
+deploy. A second escrow on the same key and log salt accepts the same heads and
+the same refund bindings, and pays them again from its own bond.
+
+Redeploy rule. Retire the old escrow first, so it can no longer pay. Record
+every incident it refunded, including at least one head of each incident.
+Before the new escrow is activated, `pinQuarantineList` excludes at least one
+head of every incident the earlier escrow already refunded. The new escrow then
+reverts `Excluded` on that evidence and `NotAffected` on those refunds, so it
+cannot pay the same incident again. The list is pinned once, and only before
+activation. The signatures themselves do not name the escrow, so this list is
+what stops the second payment.
+
+## Testnet bond
+
+The constructor `minBond` is at least 1,000 USDC on every chain, and at least
+10 USDC only when `block.chainid` is 84532. V0 still reverts `WrongChain` off
+Base Sepolia. At a 10–20 test USDC bond the bounty cannot pay: a bounty is
+50 USDC and `finalizeBounty` pays it only when
+`bondAccounted >= openRequested + 50 USDC`. Below that it credits 0 and leaves
+the bond unchanged. That is acceptable for this testnet only. A rehearsal that
+has to pay a bounty funds at least 50 USDC plus the refunds still open.
 
 ## Parameters
 
@@ -57,7 +97,7 @@ Shared vectors: `test/escrow/vectors/eip712.json`.
 |---|---|
 | Token | Circle Base Sepolia USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e` (6 decimals, checked on a fork) |
 | Minimum bond to activate | constructor `minBond`: at least 1,000 USDC on every chain; Base Sepolia (84532) only may go down to 10 USDC (`minBondAllowed`) |
-| Bounty | 50 USDC per epoch, 100 USDC total |
+| Bounty | 50 USDC per epoch, 100 USDC total. At a 10–20 test USDC bond this pays 0 (see Testnet bond) |
 | Refund | min(signed amount, 5 USDC) per leaf, one per leaf across incidents |
 | Bond period before notice | 14 days |
 | Notice before withdrawal | 14 days |
