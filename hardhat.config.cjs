@@ -67,7 +67,20 @@ extendEnvironment((hre) => {
 
 const pk = process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY
 if (pk) {
-  console.log(`PRIVATE_KEY loaded: ${pk.slice(0, 6)}...`)
+  // Never print any part of the key. The address is public and derived
+  // offline. If the key does not parse, say so without the error: ethers'
+  // error text can echo its input.
+  const deployerAddress = deployerAddressOf(pk)
+  console.log(`PRIVATE_KEY loaded for ${deployerAddress}`)
+}
+
+function deployerAddressOf(key) {
+  try {
+    const { Wallet } = require('ethers')
+    return new Wallet(key.startsWith('0x') ? key : `0x${key}`).address
+  } catch (_) {
+    return 'an address that could not be derived (key did not parse)'
+  }
 }
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
