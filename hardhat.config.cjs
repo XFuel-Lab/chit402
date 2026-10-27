@@ -1,5 +1,5 @@
-require('dotenv').config({ path: '.env.local' })
-require('dotenv').config()
+// ./.env.local then ./.env, with every dotenv option pinned (scripts/lib/dotenv-load.cjs).
+require('./scripts/lib/dotenv-load.cjs').loadRootEnv()
 
 require('@nomicfoundation/hardhat-toolbox')
 require('@nomicfoundation/hardhat-ethers')
@@ -67,7 +67,20 @@ extendEnvironment((hre) => {
 
 const pk = process.env.PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY
 if (pk) {
-  console.log(`PRIVATE_KEY loaded: ${pk.slice(0, 6)}...`)
+  // Never print any part of the key. Print only the public address, derived
+  // offline, or nothing if the key does not parse (the ethers error text can
+  // echo its input, so it is never printed).
+  const deployerAddress = deployerAddressOf(pk)
+  if (deployerAddress) console.log(`PRIVATE_KEY loaded for ${deployerAddress}`)
+}
+
+function deployerAddressOf(key) {
+  try {
+    const { Wallet } = require('ethers')
+    return new Wallet(key.startsWith('0x') ? key : `0x${key}`).address
+  } catch (_) {
+    return null
+  }
 }
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
