@@ -199,6 +199,7 @@ test('a header failure after a settled register stamp still returns the agent', 
     });
     const ingestBody = await ingestPaid.json();
     assert.equal(ingestPaid.status, 409, JSON.stringify(ingestBody));
+    assert.equal(ingestBody.error, 'verify_unavailable', JSON.stringify(ingestBody));
     assert.match(ingestBody.pending_id, /^[0-9a-f]{32}$/);
   } finally {
     delete process.env.X402_HEADER_THROW;
