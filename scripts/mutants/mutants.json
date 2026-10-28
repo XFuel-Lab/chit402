@@ -184,7 +184,7 @@
     {
       "id": "G12_link_without_record",
       "file": "services/gateway/src/hold-handle.js",
-      "find": "const row = active\\.ensureHoldHandle\\(\\{ key, holdClass(, code)? \\}\\);",
+      "find": "const row = active\\.ensureHoldHandle\\(\\{ key, holdClass, code, paymentHash \\}\\);",
       "flags": "",
       "replace": "const row = { pending_id: 'ab'.repeat(16) };",
       "nth": 1,
@@ -694,7 +694,7 @@
     {
       "id": "P2_unclaimed_stamp_hold",
       "file": "services/gateway/src/hold-handle.js",
-      "find": "if \\(!CLAIMED_STAMP_STATES\\.has\\(challenge\\.state\\)\\) return null;",
+      "find": "if \\(!challenge \\|\\| !CLAIMED_STAMP_STATES\\.has\\(challenge\\.state\\)\\) return null;",
       "flags": "",
       "replace": "if (false) return null;",
       "nth": 1,
@@ -704,7 +704,7 @@
     {
       "id": "P3_upgrade_payment",
       "file": "services/gateway/src/x402-adapter.js",
-      "find": "if \\(!holdPaymentMatches\\(existing\\.payment_hash, paymentHash\\)\\) return null;",
+      "find": "if \\(!holdPaymentMatches\\(existing\\.payment_hash, presented\\)\\) return null;",
       "flags": "",
       "replace": "if (false) return null;",
       "nth": 1,
