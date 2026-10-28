@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { testSwitchesOn } from './test-switch.js';
 import { alertStuckPayment } from './stuck-payment-alert.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
@@ -579,8 +580,8 @@ export class ChallengeStore {
     if (existing) {
       if (existing.hold_class === 'resolvable' && holdClass === 'terminal') {
         existing.hold_class = 'terminal';
-      }
-      if (!existing.code && publicCode) existing.code = publicCode;
+        if (publicCode) existing.code = publicCode;
+      } else if (!existing.code && publicCode) existing.code = publicCode;
       return { pending_id: existing.pending_id, hold_class: existing.hold_class, code: existing.code || null };
     }
     const pending_id = crypto.randomBytes(16).toString('hex');
@@ -886,6 +887,9 @@ export async function encodeX402PaymentResponseHeader({
  */
 export async function setX402PaymentResponseHeaders(res, settle) {
   const encoded = await encodeX402PaymentResponseHeader(settle);
+  if (testSwitchesOn() && process.env.X402_HEADER_THROW === '1') {
+    throw new Error('header');
+  }
   if (!encoded || !res || typeof res.setHeader !== 'function') return false;
   res.setHeader('PAYMENT-RESPONSE', encoded);
   res.setHeader('X-PAYMENT-RESPONSE', encoded);

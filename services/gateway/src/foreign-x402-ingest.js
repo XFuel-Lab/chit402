@@ -20,7 +20,7 @@ import { ethers } from 'ethers';
 import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
-import { collectedStampHold } from './hold-handle.js';
+import { collectedStampHold, presentedStampHold } from './hold-handle.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, networkFromPaymentRef, safeExplorerUrl } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
@@ -869,6 +869,35 @@ export function generateForeignTaskId() {
  * @param {object} deps - { ledger, registry, verify?, agentId, session, signingSecret? }
  * @returns {Promise<{ ok: boolean, status: number, body?: object, error?: string, message?: string }>}
  */
+/**
+ * Refusal after a stamp was collected. A waiver keeps today's status.
+ * A settled stamp with no ref is the 409 fallback. Otherwise a terminal handle.
+ * `detail` keeps the specific reason beside "Do not pay again."
+ */
+export function holdAfterStamp(stamp, baseUrl, status, error, code, message) {
+  if (stamp?.waived === true || stamp?.uncollected === true) {
+    return { ok: false, status, error, ...(code ? { code } : {}), ...(message ? { message } : {}) };
+  }
+  const stampRef = stamp?.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : '';
+  const cfg = { publicBaseUrl: baseUrl || '' };
+  if (!stampRef) {
+    const held = collectedStampHold(code || error, null, cfg);
+    return { ...held, ...(message ? { detail: message } : {}) };
+  }
+  const held = collectedStampHold(code || error, stampRef, cfg);
+  return {
+    ok: false,
+    status: held.status,
+    error,
+    code: code || held.code,
+    message: 'Do not pay again.',
+    ...(message ? { detail: message } : {}),
+    ...(held.pending_id ? { pending_id: held.pending_id } : {}),
+    ...(held.verify_url ? { verify_url: held.verify_url } : {}),
+    ...(held.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+  };
+}
+
 export async function ingestForeignX402(body = {}, {
   ledger,
   registry,
@@ -1025,23 +1054,7 @@ export async function ingestForeignX402(body = {}, {
   const stamp = await collectIngestStamp(ensureStamp);
   if (!stamp.ok) return stamp;
 
-  const stampRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : '';
-  const afterStamp = (status, error, code, message) => {
-    if (!stampRef) {
-      return { ok: false, status, error, ...(code ? { code } : {}), ...(message ? { message } : {}) };
-    }
-    const held = collectedStampHold(code || error, stampRef, { publicBaseUrl: baseUrl || '' });
-    return {
-      ok: false,
-      status: held.status,
-      error,
-      code: code || held.code,
-      message: 'Do not pay again.',
-      ...(held.pending_id ? { pending_id: held.pending_id } : {}),
-      ...(held.verify_url ? { verify_url: held.verify_url } : {}),
-      ...(held.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
-    };
-  };
+  const afterStamp = (status, error, code, message) => holdAfterStamp(stamp, baseUrl, status, error, code, message);
 
   // Verify the payment on-chain — FAIL CLOSED. Dedupe runs only after the
   // on-chain payer is bound to this agent, so a stranger cannot squat the ref.
@@ -1207,13 +1220,19 @@ const STAMP_DUE_MESSAGE = 'Ingest stamp is $0.002 USDC (2000 atomic, 6 decimals)
  */
 async function collectIngestStamp(ensureStamp) {
   if (typeof ensureStamp !== 'function') {
-    return { ok: true, waived: false, settlement: null };
+    return { ok: true, waived: false, settlement: null, uncollected: true };
   }
   let stamp;
   try {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'ingest stamp failed');
+    const attempt = ensureStamp?.stampAttempt;
+    if (!attempt?.presented) {
+      return { ok: false, status: 402, error: 'stamp_payment_required', code: 'stamp_payment_required', message: STAMP_DUE_MESSAGE };
+    }
+    const opened = presentedStampHold(attempt.network, attempt.nonce, { publicBaseUrl: attempt.baseUrl || '' });
+    if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
@@ -1412,12 +1431,7 @@ async function commitForeignRow({
   paymentView,
 }) {
   if (!ledger || typeof ledger.append !== 'function') {
-    return {
-      ok: false,
-      status: 503,
-      error: 'service_unavailable',
-      message: 'Ledger not configured',
-    };
+    return holdAfterStamp(stamp, baseUrl, 503, 'service_unavailable', 'service_unavailable', 'Ledger not configured');
   }
 
   const appended = await ledger.append(receipt, {
@@ -1427,12 +1441,7 @@ async function commitForeignRow({
     attemptIndex: fulfillmentMeta?.attemptIndex ?? null,
   });
   if (!appended.ok) {
-    return {
-      ok: false,
-      status: 409,
-      error: appended.code || 'append_failed',
-      message: appended.reason,
-    };
+    return holdAfterStamp(stamp, baseUrl, 409, appended.code || 'append_failed', appended.code || 'append_failed', appended.reason);
   }
 
   if (stamp?.waived && typeof commitStampWaiver === 'function') {

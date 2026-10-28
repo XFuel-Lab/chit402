@@ -17,6 +17,7 @@ import {
   userAgentOf,
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
+import { testSwitchesOn } from './test-switch.js';
 import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure, refusalNetworkName, refusalSubReason } from './receipt-failures.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
@@ -908,9 +909,8 @@ export async function settleBoundPayment({
   seenTx = settled.transaction || settled.txRef || null;
   postSent = true;
   postSentPending = lateRow?.pending_id || null;
-  // Optional observer. Production callers leave it unset. A throw here is the
-  // post-sent catch: the response is a handle, not a bare 402.
-  if (typeof cfg.afterSent === 'function') cfg.afterSent();
+  // Test-only observer. A throw here is the post-sent catch.
+  if (testSwitchesOn() && typeof cfg.afterSent === 'function') cfg.afterSent();
   if (lateRow) {
     lateRow.sent = true;
     if (seenTx) lateRow.tx_hint = seenTx;

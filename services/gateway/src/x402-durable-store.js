@@ -197,7 +197,7 @@ export class DurableChallengeStore {
     readState(file);
   }
 
-  _with(fn) {
+  _load(fn, { write = true } = {}) {
     return withFileLock(this.lockPath, () => {
       const inner = new ChallengeStore({ ttlMs: this.ttlMs });
       const raw = readState(this.file);
@@ -205,9 +205,17 @@ export class DurableChallengeStore {
       if (!raw) throw unavailable('x402 challenge store unreadable', new Error('missing challenge store'));
       inner.loadState(raw);
       const result = fn(inner);
-      writeState(this.file, inner.dumpState());
+      if (write) writeState(this.file, inner.dumpState());
       return result;
     }, this.lockWaitMs);
+  }
+
+  _with(fn) {
+    return this._load(fn, { write: true });
+  }
+
+  _read(fn) {
+    return this._load(fn, { write: false });
   }
 
   put(nonce, data) { return this._with((s) => s.put(nonce, data)); }
@@ -233,7 +241,7 @@ export class DurableChallengeStore {
   recordPending(row) { return this._with(async (s) => await s.recordPending(row)); }
   ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
   getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
-  findHoldHandleByKey(key) { return this._with((s) => s.findHoldHandleByKey(key)); }
+  findHoldHandleByKey(key) { return this._read((s) => s.findHoldHandleByKey(key)); }
   linkHoldHandle(key, linkedPendingId) { return this._with((s) => s.linkHoldHandle(key, linkedPendingId)); }
   holdPageLink(id) { return this._with((s) => s.holdPageLink(id)); }
   listPending() { return this._with((s) => s.listPending()); }

@@ -21,7 +21,7 @@ import { attestationShellDrift } from './public-attestation.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader } from './x402-server.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, extractPaymentNonce } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
@@ -4892,6 +4892,10 @@ export async function createApp() {
         provider: aawp.provider,
         postA2A: async (fields) => await recordA2AMessage(fields),
         ensureRegisterStamp,
+        publicBaseUrl: baseUrl,
+        stampPresented: !!extractPaymentHeader(req).header,
+        stampNetwork: config.x402?.network || 'base',
+        stampNonce: extractPaymentNonce(req),
       });
       if (!result.ok) {
         if (result.challenge) {

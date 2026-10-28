@@ -58,6 +58,31 @@ export function terminalStampHold(paymentRef, cfg) {
 }
 
 /**
+ * A stamp function threw after the caller had already sent a payment header.
+ * The handle is the settle key for that nonce. No nonce is the 409 fallback.
+ * Returns null when there is no nonce, so the caller can use the fallback line.
+ */
+export function presentedStampHold(network, nonce, cfg) {
+  const key = settleHoldKey(network, nonce);
+  if (!key || key.length < 8) return null;
+  const opened = openPostSettleHandle(null, {
+    key,
+    holdClass: 'terminal',
+    code: 'stamp_payment_required',
+    cfg,
+  });
+  if (!opened?.pendingId) return null;
+  const held = decisionHoldResult({
+    code: 'stamp_payment_required',
+    reason: 'stamp_payment_required',
+    holdClass: 'terminal',
+    pendingId: opened.pendingId,
+    verifyUrl: opened.verifyUrl,
+  });
+  return { ...held, error: 'stamp_payment_required', code: 'stamp_payment_required', message: 'Do not pay again.' };
+}
+
+/**
  * A refusal after a stamp was collected. The caller's code is kept even when
  * it is outside the closed payment set. No payment ref is the non-402 fallback.
  */

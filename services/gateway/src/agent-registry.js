@@ -18,7 +18,7 @@ import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
-import { collectedStampHold } from './hold-handle.js';
+import { collectedStampHold, presentedStampHold } from './hold-handle.js';
 
 /** Per-identity possession secret. Issued at register; used to HMAC the book. */
 function issueSession() {
@@ -669,12 +669,23 @@ async function registerPaidStamp(body, deps) {
   });
   if (!control.ok) return control;
 
-  const stampCfg = { publicBaseUrl: '' };
+  const stampCfg = { publicBaseUrl: deps.publicBaseUrl || '' };
   let stamp;
   try {
     stamp = await ensureRegisterStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'register stamp failed');
+    if (!deps.stampPresented) {
+      return {
+        ok: false,
+        status: 402,
+        error: 'stamp_payment_required',
+        code: 'stamp_payment_required',
+        message: 'Register stamp payment failed',
+      };
+    }
+    const opened = presentedStampHold(deps.stampNetwork, deps.stampNonce, stampCfg);
+    if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, stampCfg);
   }
   if (!stamp || stamp.ok !== true) {
@@ -943,6 +954,10 @@ export async function registerAgent(body = {}, {
   proveSmartControl = null,
   ensureRegisterStamp = null,
   persistTask = null,
+  publicBaseUrl = '',
+  stampPresented = false,
+  stampNetwork = '',
+  stampNonce = '',
 } = {}) {
   const taskId = body.task_id || body.taskId || body.receipt_id;
   const agentWallet = body.agentWallet || body.agent_wallet;
@@ -963,6 +978,10 @@ export async function registerAgent(body = {}, {
       proveSmartControl,
       ensureRegisterStamp,
       persistTask,
+      publicBaseUrl,
+      stampPresented,
+      stampNetwork,
+      stampNonce,
     });
   }
   if (typeof verify !== 'function' || typeof loadReceipt !== 'function') {

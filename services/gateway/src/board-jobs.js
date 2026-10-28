@@ -19,7 +19,7 @@ import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import { findLink, findSecret } from './board-posts.js';
-import { collectedStampHold, terminalHold, terminalStampHold } from './hold-handle.js';
+import { collectedStampHold, presentedStampHold, terminalHold, terminalStampHold } from './hold-handle.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
 import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
 import { buildFulfillmentEnvelope, outputCommitmentOf } from './fulfillment-receipt.js';
@@ -223,6 +223,10 @@ async function collectStamp(ensureStamp) {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'board job stamp failed');
+    const attempt = ensureStamp?.stampAttempt;
+    if (!attempt?.presented) return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    const opened = presentedStampHold(attempt.network, attempt.nonce, { publicBaseUrl: attempt.baseUrl || '' });
+    if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {

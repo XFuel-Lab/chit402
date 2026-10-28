@@ -17,7 +17,7 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
-import { collectedStampHold } from './hold-handle.js';
+import { collectedStampHold, presentedStampHold } from './hold-handle.js';
 import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 
 export const BOARD_TYPE_ENDPOINT_REPORT = 'endpoint_report';
@@ -798,6 +798,10 @@ async function collectStamp(ensureStamp) {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'board stamp failed');
+    const attempt = ensureStamp?.stampAttempt;
+    if (!attempt?.presented) return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    const opened = presentedStampHold(attempt.network, attempt.nonce, { publicBaseUrl: attempt.baseUrl || '' });
+    if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
