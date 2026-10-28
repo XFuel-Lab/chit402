@@ -38,6 +38,22 @@ export function fail(message: string): ToolResult {
   };
 }
 
+/** Shared hold sentence for describeError and the stamp/pay tools. */
+export function describeHold(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const body = data as { pending_id?: unknown; verify_url?: unknown; status?: unknown; message?: unknown };
+  const pendingId = typeof body.pending_id === 'string' ? body.pending_id : '';
+  if (!pendingId) {
+    return body.message === 'Do not pay again.' ? 'Do not pay again.' : null;
+  }
+  const refund = body.status === 'refund_owed';
+  const url = typeof body.verify_url === 'string' ? body.verify_url : '';
+  const urlPart = url ? ` verify_url: ${url}.` : '';
+  return refund
+    ? `Refund owed. Do not pay again. pending_id: ${pendingId}.${urlPart}`
+    : `Payment is pending. Do not pay again. pending_id: ${pendingId}.${urlPart}`;
+}
+
 function pendingIdOf(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return '';
   const id = (raw as { pending_id?: unknown }).pending_id;
@@ -62,15 +78,12 @@ export function describeError(err: unknown): string {
     }
     const raw = err.body;
     const named = err as { pendingId?: unknown; verifyUrl?: unknown };
-    const pendingId = pendingIdOf(raw) || (typeof named.pendingId === 'string' ? named.pendingId : '');
-    if (pendingId || err.code === 'payment_pending' || err.code === 'refund_owed') {
-      const refund = err.code === 'refund_owed' || (raw && typeof raw === 'object' && (raw as { status?: unknown }).status === 'refund_owed');
-      const url = verifyUrlOf(raw) || (typeof named.verifyUrl === 'string' ? named.verifyUrl : '');
-      const sentence = refund
-        ? `Refund owed. Do not pay again. pending_id: ${pendingId}. verify_url: ${url}.`
-        : `Payment is pending. Do not pay again. pending_id: ${pendingId}. verify_url: ${url}.`;
-      return `${base}${details} — ${sentence}`;
-    }
+    const held = describeHold(raw) || describeHold({
+      pending_id: typeof named.pendingId === 'string' ? named.pendingId : undefined,
+      verify_url: typeof named.verifyUrl === 'string' ? named.verifyUrl : undefined,
+      status: err.code === 'refund_owed' ? 'refund_owed' : undefined,
+    });
+    if (held) return `${base}${details} — ${held}`;
     if (err.status === 402 || err.code === 'payment_rejected') {
       return `${base}${details} — USDC/x402 payment was rejected; check the payer wallet balance, network, and that the server has x402 enabled.`;
     }

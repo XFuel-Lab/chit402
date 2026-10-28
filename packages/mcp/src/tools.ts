@@ -17,7 +17,20 @@ import { fetchAgentBook } from './agent-book.js';
 import { getBoardJob, getBoardPost, listBoardComments, listBoardJobs, listBoardPosts, writeBoard } from './board.js';
 import { verifyUrlOf, withReceiptFields } from './receipt-fields.js';
 import { runVerifyReceipt } from './verify-receipt.js';
-import { ok, fail, describeError } from './format.js';
+import { ok, fail, describeError, describeHold } from './format.js';
+
+export function registerToolResult(status: number, okStatus: boolean, data: Record<string, unknown>) {
+  const held = describeHold(data);
+  if (held) return fail(held);
+  if (!okStatus) {
+    return fail(`register_agent HTTP ${status}: ${String(data.message || data.error || 'request failed')}`);
+  }
+  return ok(
+    data,
+    `Registered agent_id=${String(data.agent_id)} wallet=${String(data.agentWallet)}` +
+      (data.validate_score != null ? ` score=${String(data.validate_score)}` : ''),
+  );
+}
 
 /**
  * Minimal ModelRegistry read ABI (PoMA). Kept local to the MCP package so this tool
@@ -300,16 +313,7 @@ Returns agent_id (required later by POST /erc8004/validate) and validate_score.`
           }),
         });
         const data = (await res.json()) as Record<string, unknown>;
-        if (!res.ok) {
-          return fail(
-            `register_agent HTTP ${res.status}: ${String(data.message || data.error || 'request failed')}`,
-          );
-        }
-        return ok(
-          data,
-          `Registered agent_id=${String(data.agent_id)} wallet=${String(data.agentWallet)}` +
-            (data.validate_score != null ? ` score=${String(data.validate_score)}` : ''),
-        );
+        return registerToolResult(res.status, res.ok, data);
       } catch (err) {
         return fail(describeError(err));
       }
