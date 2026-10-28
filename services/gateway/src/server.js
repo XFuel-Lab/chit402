@@ -21,7 +21,7 @@ import { attestationShellDrift } from './public-attestation.js';
 import { getSP1Prover, initSP1Prover } from './sp1-prover-client.js';
 import { getProvider } from './provider.js';
 import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhooks.js';
-import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, extractPaymentNonce } from './x402-server.js';
+import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, extractPaymentNonce, withStampAttempt } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
@@ -5021,6 +5021,7 @@ export async function createApp() {
       // Stamp is collected only after the foreign payment verifies. Waiver keys
       // (STAMP_WAIVER_KEYS, default empty) skip it up to STAMP_WAIVER_CAP.
       const ensureStamp = async () => {
+        if (testSwitchesOn() && process.env.X402_STAMP_THROW === '1') throw new Error('stamp');
         const waiver = peekStampWaiver(apiKey);
         if (waiver.eligible) return { ok: true, waived: true };
         if (!config.x402?.enabled) {
@@ -5083,6 +5084,7 @@ export async function createApp() {
           },
         };
       };
+      withStampAttempt(ensureStamp, req, baseUrl);
 
       const result = await ingestForeignX402(body, {
         ledger: usageSettled,

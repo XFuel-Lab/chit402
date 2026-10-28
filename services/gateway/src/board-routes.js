@@ -8,6 +8,8 @@ import { STAMP_FEE_UNITS } from './pricing.js';
 import config from './config.js';
 import { isBindingRefusal, paymentFailureStatus, decisionHoldResult, bindingEnforced, samePayee, setHoldRetryAfter } from './x402-flags.js';
 import { terminalStampHold } from './hold-handle.js';
+import { withStampAttempt } from './x402-server.js';
+import { testSwitchesOn } from './test-switch.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeOps,
@@ -105,6 +107,7 @@ export function registerBoardRoutes(app, deps) {
   }
 
   async function ensureStamp(req, res, apiKey, purpose) {
+    if (testSwitchesOn() && process.env.X402_STAMP_THROW === '1') throw new Error('stamp');
     const waiver = typeof peekStampWaiver === 'function' ? peekStampWaiver(apiKey) : { eligible: false };
     if (waiver.eligible) return { ok: true, waived: true, waiverKey: true };
     if (!x402Enabled) {
@@ -184,7 +187,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'post'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'post'), req, baseUrlFor(req)),
         houseAgentIds: houseAgentIdsFromEnv(),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         chitHosts: chitHostsFromEnv(),
@@ -241,7 +244,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'flag'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'flag'), req, baseUrlFor(req)),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)
@@ -271,7 +274,7 @@ export function registerBoardRoutes(app, deps) {
       ledger,
       actor: actor.ok ? actor.identity : null,
       isDemo: isDemoKey(apiKey),
-      ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment'),
+      ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'comment'), req, baseUrlFor(req)),
       suspendedAgentIds: suspendedAgentIdsFromEnv(),
       commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
         ? () => commitStampWaiver(apiKey)
@@ -366,7 +369,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment-flag'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'comment-flag'), req, baseUrlFor(req)),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)

@@ -7,6 +7,8 @@ import { chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import config from './config.js';
 import { isBindingRefusal, paymentFailureStatus, decisionHoldResult, bindingEnforced, samePayee, setHoldRetryAfter } from './x402-flags.js';
 import { terminalHold, terminalStampHold } from './hold-handle.js';
+import { withStampAttempt } from './x402-server.js';
+import { testSwitchesOn } from './test-switch.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeInbound,
@@ -96,6 +98,7 @@ export function registerBoardJobRoutes(app, deps) {
   }
 
   async function ensureStamp(req, res, apiKey, purpose) {
+    if (testSwitchesOn() && process.env.X402_STAMP_THROW === '1') throw new Error('stamp');
     const waiver = typeof peekStampWaiver === 'function' ? peekStampWaiver(apiKey) : { eligible: false };
     if (waiver.eligible) return { ok: true, waived: true, waiverKey: true };
     if (!x402Enabled) {
@@ -275,7 +278,7 @@ app.post('/v1/board/jobs', async (req, res) => {
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
       const result = await createBoardJob(req.body || {}, jobDeps(req, actor.ok ? actor.identity : null, {
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'job'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'job'), req, baseUrlFor(req)),
       }));
       if (result.ok && apiKey && result.body && typeof commitStampWaiver === 'function') {
         const waiver = typeof peekStampWaiver === 'function' ? peekStampWaiver(apiKey) : { eligible: false };
@@ -312,7 +315,7 @@ app.post('/v1/board/jobs', async (req, res) => {
       const actor = actorOf(req);
       if (!isDemoKey(apiKey) && !actor.ok) return sendResult(res, actor);
       const result = await placeBoardBid(req.params.id, req.body || {}, jobDeps(req, actor.ok ? actor.identity : null, {
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'bid'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'bid'), req, baseUrlFor(req)),
       }));
       return sendResult(res, result);
     } catch {
