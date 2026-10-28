@@ -770,6 +770,26 @@
       "nth": 1,
       "suite": "gw",
       "note": "SHOULD-C claim hash waits until the signature verifies"
+    },
+    {
+      "id": "W6_drop_note_verified",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "  if \\(typeof active\\.noteVerifiedPayment === 'function'\\) \\{\\n    try \\{ active\\.noteVerifiedPayment\\(nonce, headerDigest\\(paymentHeader\\)\\); \\} catch \\{ /\\* store \\*/ \\}\\n  \\}\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gw",
+      "note": "W6 settle must write the hash after verify"
+    },
+    {
+      "id": "W6b_note_verified_before_verify",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "  const verified = await verifyPayment\\(paymentHeader, gwOpts\\);\\n  if \\(!verified\\.valid\\) \\{\\n    release\\(\\);\\n    return refused\\(req, clientPaymentCode\\(verified\\.reason \\|\\| 'verify_failed'\\), \\{ network: net, sub: 'facilitator_invalid', phase: 'pre_settle' \\}\\);\\n  \\}\\n  if \\(typeof active\\.noteVerifiedPayment === 'function'\\) \\{\\n    try \\{ active\\.noteVerifiedPayment\\(nonce, headerDigest\\(paymentHeader\\)\\); \\} catch \\{ /\\* store \\*/ \\}\\n  \\}",
+      "flags": "",
+      "replace": "  if (typeof active.noteVerifiedPayment === 'function') {\n    try { active.noteVerifiedPayment(nonce, headerDigest(paymentHeader)); } catch { /* store */ }\n  }\n  const verified = await verifyPayment(paymentHeader, gwOpts);\n  if (!verified.valid) {\n    release();\n    return refused(req, clientPaymentCode(verified.reason || 'verify_failed'), { network: net, sub: 'facilitator_invalid', phase: 'pre_settle' });\n  }",
+      "nth": 1,
+      "suite": "gw",
+      "note": "W6b hash is written only after verify accepts"
     }
   ]
 }
