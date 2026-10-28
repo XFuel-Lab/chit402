@@ -1,0 +1,141 @@
+/**
+ * Register and ingest stamp underpaid, over HTTP, after /settle.
+ * Offline. Loopback only.
+ */
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { Wallet } from 'ethers';
+
+process.env.HUB_CATALOG_OFFLINE = 'true';
+process.env.TASK_STORE_PERSIST = 'false';
+process.env.NODE_ENV = 'test';
+process.env.X402_ENABLED = 'true';
+process.env.X402_NETWORK = 'base';
+process.env.X402_PAY_TO = '0x1111111111111111111111111111111111111111';
+process.env.X402_USDC_PRICE_DEFAULT = '2000';
+process.env.X402_FACILITATOR_PROVIDER = 'x402';
+process.env.RECEIPT_SIGNING_SECRET = 'stamp-http-test';
+delete process.env.M2M_API_KEYS;
+
+const HOUSE = process.env.X402_PAY_TO;
+const TX = `0x${'ab'.repeat(32)}`;
+let facPayer = '0x' + '22'.repeat(20);
+
+function startFacilitator() {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        isValid: true,
+        success: true,
+        settled: true,
+        transaction: TX,
+        txRef: TX,
+        payer: facPayer,
+        network: 'base',
+      }));
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise((r) => server.close(r)),
+      });
+    });
+  });
+}
+
+const fac = await startFacilitator();
+process.env.X402_FACILITATOR_URL = fac.url;
+process.env.X402_GATEWAY_URL = fac.url;
+
+const { setChainReaderForTests } = await import('../src/x402-chain-hook.js');
+const configMod = await import('../src/config.js');
+const config = configMod.default;
+const { createApp } = await import('../src/server.js');
+const { canonicalRegisterPayMessage } = await import('../src/agent-registry.js');
+const { paymentHeader } = await import('./fixtures/refusal-scenarios.mjs');
+
+let server;
+let base;
+let chainAmount = '2000';
+let shiftPayee = false;
+
+before(async () => {
+  setChainReaderForTests(async () => {
+    if (shiftPayee) config.x402.payTo = '0x' + '99'.repeat(20);
+    return {
+      ok: true,
+      confirmed: true,
+      amount: chainAmount,
+      payer: facPayer,
+      payTo: HOUSE,
+      transaction: TX,
+      network: 'base',
+      logIndex: 0,
+      blockNumber: 1,
+    };
+  });
+  const app = await createApp();
+  await new Promise((resolve) => {
+    server = app.listen(0, '127.0.0.1', () => {
+      base = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+});
+
+after(async () => {
+  setChainReaderForTests(null);
+  if (server) {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+  await fac.close();
+});
+
+async function signedBody(wallet) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const wallet_signature = await wallet.signMessage(canonicalRegisterPayMessage(wallet.address, timestamp));
+  return { agentWallet: wallet.address, wallet_signature, signature_timestamp: timestamp };
+}
+
+function paidHeader(from, nonce) {
+  return paymentHeader({ from, to: HOUSE, nonce, value: '2000', amount: '2000' });
+}
+
+test('register stamp underpaid over HTTP is 409 refund_owed', async () => {
+  chainAmount = '2000';
+  shiftPayee = true;
+  const signer = Wallet.createRandom();
+  facPayer = signer.address;
+  const open = await fetch(`${base}/v1/agents/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(await signedBody(signer)),
+  });
+  const challenge = await open.json();
+  assert.equal(open.status, 402, JSON.stringify(challenge));
+  const nonce = challenge.accepts?.[0]?.extra?.nonce;
+  assert.ok(nonce, JSON.stringify(challenge));
+  const paid = await fetch(`${base}/v1/agents/register`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'payment-signature': paidHeader(signer.address, nonce),
+      'x-payment-nonce': nonce,
+    },
+    body: JSON.stringify(await signedBody(signer)),
+  });
+  const body = await paid.json();
+  assert.equal(paid.status, 409, JSON.stringify(body));
+  assert.equal(body.code || body.error, 'stamp_underpaid');
+  assert.equal(body.status, 'refund_owed');
+  assert.match(body.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(paid.headers.get('retry-after'), null);
+  assert.doesNotMatch(JSON.stringify(body), /rejected|could not be settled/i);
+});

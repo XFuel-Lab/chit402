@@ -500,8 +500,10 @@ test('paid register is a $0.002 stamp from the signing wallet', async () => {
     wallet_signature: signature,
     signature_timestamp: timestamp,
   }, mismatchDeps);
-  assert.equal(mismatch.status, 403);
+  assert.equal(mismatch.status, 409);
   assert.equal(mismatch.error, 'payer_mismatch');
+  assert.match(mismatch.pending_id, /^[0-9a-f]{32}$/);
+  assert.match(mismatch.message, /Do not pay again/);
   assert.equal(mismatch.body, undefined);
   assert.equal(d.ledger.entries.length, 0);
   assert.equal(mismatchDeps.ledger.entries.length, 1);

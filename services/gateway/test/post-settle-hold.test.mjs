@@ -23,7 +23,7 @@ import { ChallengeStore } from '../src/x402-adapter.js';
 import { setActiveChallengeStore } from '../src/x402-durable-store.js';
 import { holdPageForReceiptId, holdPagePayload, openPostSettleHandle, terminalStampHold } from '../src/hold-handle.js';
 import { renderHoldPage, renderReceiptShellMissing } from '../src/receipt-shell.js';
-import { attempt, HOUSE, OTHER, PAYER } from './fixtures/refusal-scenarios.mjs';
+import { attempt, HOUSE, OTHER, PAYER, RESOURCE, USDC } from './fixtures/refusal-scenarios.mjs';
 import { AgentRegistry } from '../src/agent-registry.js';
 import { UsageSettledLedger } from '../src/usage-settled.js';
 import { BoardPostStore } from '../src/board-posts.js';
@@ -584,12 +584,14 @@ test('source scan: failure sites use the helper and holds do not say rejected', 
   const inflight = openai.slice(openai.indexOf('export function inflightHoldDecision'), openai.indexOf('async function maybeServePaidReplay'));
   assert.equal(/inflight:/.test(inflight), false, 'in-flight handle is not a separate key');
   assert.ok(/settleHoldKey\(/.test(inflight), 'in-flight handle uses the settle key');
+  assert.ok(/get\?\.\(nonce\)\?\.network \|\| network/.test(inflight), 'in-flight handle prefers the payment network');
   assert.ok(/function sendX402Failure\(/.test(server), 'task-request helper');
   assert.ok((server.match(/sendX402Failure\(res,/g) || []).length >= 2, 'both task-request paths');
   assert.ok(/paymentFailureStatus\(decision\)/.test(server), 'server uses the status helper');
   assert.equal((server.match(/paymentErrorStatus\(/g) || []).length, 0, 'server does not call the old status');
   assert.ok(/openAiFailurePayload\(/.test(openai), 'openai uses the payload helper');
   const replayFn = openai.slice(openai.indexOf('async function maybeServePaidReplay'), openai.indexOf('function finishPaidBody'));
+  assert.equal(/config\.x402\?\.network/.test(replayFn), false, 'paid replay does not pass the configured network');
   const timedOut = replayFn.slice(replayFn.indexOf('if (stored?.timedOut)'), replayFn.indexOf('if (!stored?.bytes)'));
   assert.ok(/inflightHoldDecision\(/.test(timedOut), 'paid replay in flight builds a hold');
   assert.ok(/sendOpenAiPaymentResult\(/.test(timedOut), 'paid replay in flight uses the hold response');
@@ -597,6 +599,8 @@ test('source scan: failure sites use the helper and holds do not say rejected', 
   assert.equal(/could not be settled/i.test(timedOut), false, 'paid replay in flight does not say could not be settled');
   assert.ok(/paymentFailureStatus\(decision\)/.test(board), 'board uses the helper');
   assert.ok(/terminalStampHold\(/.test(jobs), 'board-job underpaid is a terminal hold');
+  assert.equal((server.match(/return terminalStampDecision\(decision\.paymentRef\)/g) || []).length, 2, 'register and ingest stamp underpaid return the hold');
+  assert.equal(/decisionHoldResult\(terminalStampDecision/.test(server), false, 'stamp hold is not wrapped twice');
   assert.ok(/terminalHold\('payer_mismatch'/.test(jobs), 'board-job route payer mismatch is a terminal hold');
   assert.ok(/terminalHold\('payer_mismatch'/.test(read('board-jobs.js')), 'board-job leg payer mismatch is a terminal hold');
   const holdFn = mcp.slice(mcp.indexOf('export function describeHold'), mcp.indexOf('function pendingIdOf'));
@@ -629,6 +633,69 @@ test('leak: dummy token, header and nonce do not appear on the new responses', (
   assert.equal(blob.includes(DUMMY_HEADER), false);
   assert.equal(blob.includes(DUMMY_NONCE), false);
   assert.doesNotMatch(blob, /pending-[0-9a-z]+-\d+/);
+});
+
+test('register and ingest success receipts match the fcd81206 byte pin', async () => {
+  const prevNow = Date.now;
+  const prevRandom = crypto.randomBytes;
+  const fixedNow = 1761640000000;
+  Date.now = () => fixedNow;
+  try {
+    const signer = new Wallet('0x' + '11'.repeat(32));
+    const timestamp = Math.floor(fixedNow / 1000);
+    const signature = await signer.signMessage(canonicalRegisterPayMessage(signer.address, timestamp));
+    const ledger = new UsageSettledLedger();
+    const registry = new AgentRegistry();
+    const result = await registerAgent({
+      agentWallet: signer.address,
+      wallet_signature: signature,
+      signature_timestamp: timestamp,
+    }, {
+      registry,
+      ledger,
+      bindWallet: async (w) => bindAgentWallet(w, {
+        inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
+      }),
+      proveSmartControl: null,
+      ensureRegisterStamp: async () => ({
+        ok: true,
+        waived: false,
+        settlement: { paymentRef: 'base:0x' + 'ab'.repeat(32), amount: '2000', payerWallet: signer.address },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(ledger.entries.length, 1);
+    const reg = ledger.entries[0];
+    const regPayload = reg.book_chain.issuer_signature.jws.split('.')[1];
+    assert.equal(reg.row_hash, '263c236fdeaa93ab2f20b10e8b1ad4eb836c1e1660bc0b7a08cb295c59218c0c');
+    assert.equal(regPayload, 'eyJzY2hlbWEiOiJjaGl0NDAyLmJvb2tfc2VxLnYxIiwicGF5bG9hZF92ZXJzaW9uIjo0LCJib29rX2lkIjoxLCJ0YXNrX2lkIjoicmVnaXN0ZXItOTI0NmFjMTBhOTE0MjgyZjczMTVmYzk3MjI2YTVjZjAiLCJzZXEiOjEsInByZXZfaGFzaCI6bnVsbCwicm93X2hhc2giOiIyNjNjMjM2ZmRlYWE5M2FiMmYyMGIxMGU4YjFhZDRlYjgzNmMxZTE2NjBiYzBiN2EwOGNiMjk1YzU5MjE4YzBjIiwiZXZlbnQiOiJjb2xsZWN0ZWQiLCJhY3QiOiJzcGVuZCIsInJlcGxheV9vZiI6bnVsbCwicGF5bWVudF9yZWYiOiJiYXNlOjB4YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYiJ9');
+
+    crypto.randomBytes = (n) => Buffer.alloc(n, 0xab);
+    const ingestLedger = new UsageSettledLedger();
+    const ingestRegistry = new AgentRegistry();
+    const identity = ingestRegistry.allocate({ taskId: 'seat' });
+    ingestRegistry.bindWallet(identity.agent_id, { agentWallet: PAYER });
+    const tx = '0x' + 'd1'.repeat(32);
+    const ingested = await ingestForeignX402({
+      payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+      payment_response: { tx, payer: PAYER, network: 'base' },
+      session: identity.session,
+    }, {
+      ledger: ingestLedger,
+      registry: ingestRegistry,
+      agentId: identity.agent_id,
+      session: identity.session,
+      verify: async () => ({ valid: true, payer: PAYER, txHash: tx, blockNumber: 1 }),
+      ensureStamp: async () => ({ ok: true, waived: true }),
+    });
+    assert.equal(ingested.status, 201);
+    assert.equal(ingestLedger.entries.length, 1);
+    const ing = ingestLedger.entries[0];
+    assert.equal(ing.row_hash, '6d83424e6ec82cdaab71539248bd31b0285f3ec9626ae31c6a99e19d17a6b820');
+  } finally {
+    Date.now = prevNow;
+    crypto.randomBytes = prevRandom;
+  }
 });
 
 test('register success receipt bytes and leaf count stay stable for the same payment', async () => {
@@ -743,41 +810,37 @@ test('a second call on a terminal late row is 409 refund_owed with the same id',
   assert.match(openai.body.error.message, /Refund owed/);
 });
 
-test('prior_unknown returns the existing handle instead of a bare 402', async () => {
+test('prior_unknown returns the stored code and does not settle again', async () => {
   const store = new ChallengeStore();
-  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
-  const server = http.createServer((req, res) => {
-    if (String(req.url).endsWith('/settle')) {
-      req.socket.destroy();
-      return;
-    }
-    req.resume();
-    req.on('end', () => {
-      res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ valid: true, isValid: true, payer: PAYER }));
-    });
+  const { settleHoldKey } = await import('../src/hold-handle.js');
+  const nonce = '0x' + '21'.repeat(32);
+  store.put(nonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'unknown',
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  try {
-    const first = await attempt({
-      store,
-      header: fixed,
-      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
-    });
-    assert.equal(first.decision.holdClass, 'resolvable');
-    const second = await attempt({
-      store,
-      nonce: first.nonce,
-      header: fixed,
-      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
-    });
-    assert.equal(second.decision.pendingId, first.decision.pendingId);
-    assert.equal(second.decision.holdClass, 'resolvable');
-    assert.equal(second.decision.preSettle, false);
-    assert.equal(paymentFailureStatus(second.decision).status, 202);
-  } finally {
-    await new Promise((r) => server.close(r));
-  }
+  const opened = store.ensureHoldHandle({
+    key: settleHoldKey('base', nonce),
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+  });
+  const second = await attempt({
+    store,
+    nonce,
+    challenge: null,
+    fac: { settle: 'http500' },
+  });
+  assert.equal(second.hits.settle, 0);
+  assert.equal(second.decision.pendingId, opened.pending_id);
+  assert.equal(second.decision.code, 'settle_failed');
+  assert.equal(second.decision.holdClass, 'resolvable');
+  assert.equal(second.decision.preSettle, false);
+  assert.equal(paymentFailureStatus(second.decision).status, 202);
 });
 
 test('the in-flight replay uses the late row id and the page follows it', async () => {
@@ -848,8 +911,282 @@ test('GET /receipt on the app serves a hold and matches unknown ids', async () =
     assert.equal(unknownHold.status, unknownOther.status);
     assert.equal(holdText, otherText);
     assert.equal(unknownHold.headers.get('cache-control'), unknownOther.headers.get('cache-control'));
+    let storeReads = 0;
+    const origList = store.listLate.bind(store);
+    store.listLate = () => { storeReads += 1; return origList(); };
+    const origLink = store.holdPageLink.bind(store);
+    store.holdPageLink = (id) => { storeReads += 1; return origLink(id); };
+    const plain = await fetch(`${base}/receipt/plain-${hexId()}`, { headers: { accept: 'text/html' } });
+    assert.equal(plain.status, unknownOther.status);
+    assert.equal(storeReads, 0, 'a non-late receipt id does not read the challenge store');
   } finally {
     if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     await new Promise((r) => server.close(r));
   }
+});
+
+function fillCap(store, n = 64) {
+  for (let i = 0; i < n; i += 1) {
+    store.putLate({ pending_id: hexId(), state: 'unknown', auth_key: `cap-x-${i}`, submitted_at: 1 });
+  }
+}
+
+test('a successful capped settle writes no hold handle', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const { decision } = await attempt({
+    store,
+    cfg: {
+      lateIssue: true,
+      chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(decision.kind, 'settled', JSON.stringify(decision));
+  assert.equal(store.holdHandles.length, 0);
+});
+
+test('a capped underpaid settle is terminal and its page says refund owed', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const { decision } = await attempt({
+    store,
+    cfg: {
+      lateIssue: true,
+      chainReader: async () => ({ ok: true, amount: '1', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(decision.holdClass, 'terminal');
+  assert.equal(paymentFailureStatus(decision).status, 409);
+  assert.equal(paymentFailureBody(decision).status, 'refund_owed');
+  assert.deepEqual(holdPageForReceiptId(`late-${decision.pendingId}`, store), { page: 'refund_owed' });
+});
+
+test('a capped facilitator error is a released resolvable hold', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const { decision, nonce } = await attempt({
+    store,
+    fac: { settle: 'http500' },
+    cfg: { lateIssue: true },
+  });
+  assert.equal(decision.holdClass, 'resolvable');
+  assert.match(decision.pendingId, /^[0-9a-f]{32}$/);
+  assert.equal(paymentFailureStatus(decision).status, 202);
+  assert.equal(paymentFailureStatus(decision).retryAfter, 5);
+  assert.equal(store.get(nonce).state, 'issued');
+});
+
+test('a throw after settle returns 202 with a handle', async () => {
+  const store = new ChallengeStore();
+  const { decision } = await attempt({
+    store,
+    cfg: {
+      afterSent: () => { throw new Error('disk'); },
+      chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(decision.code, 'settle_unconfirmed');
+  assert.equal(decision.holdClass, 'resolvable');
+  assert.match(decision.pendingId, /^[0-9a-f]{32}$/);
+  assert.equal(paymentFailureStatus(decision).status, 202);
+  assert.equal(paymentFailureStatus(decision).retryAfter, 5);
+});
+
+test('a released hold page follows the receipt after the retry settles', async () => {
+  const store = new ChallengeStore();
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const server = http.createServer((req, res) => {
+    if (String(req.url).endsWith('/settle')) {
+      res.statusCode = 500;
+      res.end('{"error":"boom"}');
+      return;
+    }
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ valid: true, isValid: true, payer: PAYER }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const first = await attempt({
+      store,
+      header: fixed,
+      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
+    });
+    assert.equal(first.decision.holdClass, 'resolvable');
+    const second = await attempt({
+      store,
+      nonce: first.nonce,
+      header: fixed,
+      cfg: {
+        lateIssue: false,
+        chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+      },
+    });
+    assert.equal(second.decision.kind, 'settled', JSON.stringify(second.decision));
+    const page = holdPageForReceiptId(`late-${first.decision.pendingId}`, store);
+    assert.equal(page?.page, 'receipt');
+    assert.ok(page.taskId);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('an issued late row is a receipt even when the class is resolvable', () => {
+  const store = new ChallengeStore();
+  const id = hexId();
+  store.putLate({
+    pending_id: id,
+    state: 'issued',
+    inline: true,
+    task_id: 'task-issued-1',
+    hold_class: 'resolvable',
+    receipt_id: `late-${id}`,
+  });
+  assert.deepEqual(holdPageForReceiptId(`late-${id}`, store), { page: 'receipt', taskId: 'task-issued-1' });
+});
+
+test('a Solana in-flight replay reuses the payment network handle', async () => {
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  const nonce = '0x' + 'cd'.repeat(32);
+  store.put(nonce, {
+    resource: 'https://api.chit402.com/v1/chat/completions',
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'solana',
+    asset: 'USDC',
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'issued',
+  });
+  const { settleHoldKey } = await import('../src/hold-handle.js');
+  const opened = store.ensureHoldHandle({
+    key: settleHoldKey('solana', nonce),
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+  });
+  const again = inflightHoldDecision(nonce, 'base');
+  assert.equal(again.pendingId, opened.pending_id);
+  assert.equal(store.holdHandles.length, 1);
+});
+
+test('a Solana success:false exit is a released resolvable hold', async () => {
+  const prevEnv = process.env.NODE_ENV;
+  const prevOffline = process.env.HUB_CATALOG_OFFLINE;
+  process.env.NODE_ENV = 'test';
+  process.env.HUB_CATALOG_OFFLINE = 'true';
+  const { runX402Handshake } = await import('../src/x402-server.js');
+  const { startMockFacilitator } = await import('../src/x402-mock-facilitator.js');
+  const { getActiveChallengeStore } = await import('../src/x402-durable-store.js');
+  const payer = 'E6TfVNynPrffpkssHAkLyBFcHebo4q3R631c1oT8H5mh';
+  const solana = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (String(req.url).endsWith('/settle')) {
+        res.end(JSON.stringify({ success: false, settled: false, transaction: 'sig', payer }));
+        return;
+      }
+      res.end(JSON.stringify({ isValid: true, payer }));
+    });
+  });
+  await new Promise((resolve) => solana.listen(0, '127.0.0.1', resolve));
+  const cdp = await startMockFacilitator();
+  const prev = process.env.X402_SOLANA_FACILITATOR_URL;
+  process.env.X402_SOLANA_FACILITATOR_URL = `http://127.0.0.1:${solana.address().port}`;
+  try {
+    const cfg = {
+      enabled: true,
+      defaultRail: 'usdc',
+      fallbackToTfuel: false,
+      facilitatorProvider: 'x402',
+      facilitatorUrl: cdp.url,
+      gatewayUrl: cdp.url,
+      apiKey: null,
+      payTo: '0xtreasury',
+      network: 'base',
+      asset: 'USDC',
+      challengeTtlMs: 120000,
+      usdcPriceDefault: '2000',
+      usdcPrices: {},
+      solana: { enabled: true, payTo: 'CjNFTjvBhbJJd2B5ePPMHRLx1ELZpa8dwQgGL727eKww', network: 'solana', facilitatorUrl: `http://127.0.0.1:${solana.address().port}` },
+    };
+    const baseUrl = 'https://api.chit402.com';
+    const challenge = await runX402Handshake(
+      { headers: {}, body: { model: 'xfuel/auto' } },
+      { taskId: 'solana-release', cfg, baseUrl, resource: `${baseUrl}/v1/chat/completions` },
+    );
+    const solAccept = challenge.body.accepts.find((a) => String(a.network || '').startsWith('solana'));
+    const nonce = solAccept.extra.nonce;
+    const paymentHeader = Buffer.from(JSON.stringify({
+      x402Version: 2,
+      resource: { url: `${baseUrl}/v1/chat/completions`, description: 'Chit paid inference', mimeType: 'application/json' },
+      accepted: {
+        scheme: 'exact',
+        network: solAccept.network,
+        amount: solAccept.amount,
+        asset: solAccept.asset,
+        payTo: solAccept.payTo,
+        maxTimeoutSeconds: 60,
+        extra: { feePayer: solAccept.payTo, nonce },
+      },
+      payload: { transaction: 'AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' },
+      extensions: {},
+    })).toString('base64');
+    const held = await runX402Handshake({
+      headers: { 'payment-signature': paymentHeader, 'x-payment-nonce': nonce },
+      body: { model: 'xfuel/auto' },
+    }, {
+      taskId: 'solana-release',
+      cfg,
+      baseUrl,
+      resource: `${baseUrl}/v1/chat/completions`,
+      amount: solAccept.amount,
+    });
+    assert.equal(held.holdClass, 'resolvable', JSON.stringify(held));
+    assert.match(String(held.pendingId), /^[0-9a-f]{32}$/);
+    assert.equal(paymentFailureStatus(held).status, 202);
+    assert.equal(paymentFailureStatus(held).retryAfter, 5);
+    const active = getActiveChallengeStore();
+    assert.equal(active.get(nonce)?.state, 'issued');
+  } finally {
+    if (prev === undefined) delete process.env.X402_SOLANA_FACILITATOR_URL;
+    else process.env.X402_SOLANA_FACILITATOR_URL = prev;
+    if (prevEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevEnv;
+    if (prevOffline === undefined) delete process.env.HUB_CATALOG_OFFLINE;
+    else process.env.HUB_CATALOG_OFFLINE = prevOffline;
+    await new Promise((r) => solana.close(r));
+    await cdp.close();
+  }
+});
+
+test('ingest refusals after a collected stamp carry a terminal handle', async () => {
+  const registry = new AgentRegistry();
+  const ledger = new UsageSettledLedger();
+  const identity = registry.allocate({ taskId: 'seat' });
+  registry.bindWallet(identity.agent_id, { agentWallet: PAYER });
+  const tx = `0x${'e1'.repeat(32)}`;
+  const result = await ingestForeignX402({
+    payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+    payment_response: { tx, payer: PAYER, network: 'base' },
+    session: identity.session,
+  }, {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: async () => ({ valid: false }),
+    ensureStamp: async () => ({
+      ok: true,
+      waived: false,
+      settlement: { paymentRef: 'base:0xstampingest', amount: '2000', payerWallet: PAYER },
+    }),
+  });
+  assert.equal(result.status, 409);
+  assert.equal(result.message, 'Do not pay again.');
+  assert.match(result.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(result.outcome, 'refund_owed');
 });
