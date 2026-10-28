@@ -44,6 +44,9 @@ export function openPostSettleHandle(store, { key, holdClass, cfg, code, payment
  */
 export function terminalHold(code, paymentRef, cfg) {
   const key = typeof paymentRef === 'string' && paymentRef ? `pay:${paymentRef}:${code}` : '';
+  // pay: rows store sha256 of their own key. The ref is public, so this is an
+  // idempotency tag that lets a repeat of the same stamp return the same id.
+  // It is not a credential and does not bind a payer.
   const opened = openPostSettleHandle(null, {
     key,
     holdClass: 'terminal',
