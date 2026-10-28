@@ -384,7 +384,7 @@
     {
       "id": "R5_success_link_dropped",
       "file": "services/gateway/src/x402-settle.js",
-      "find": "if \\(existing\\?\\.pending_id\\) active\\.linkHoldHandle\\(key, \\{ taskId: issuedTaskId \\}\\);",
+      "find": "if \\(existing\\?\\.pending_id\\) active\\.linkHoldHandle\\(key, \\{ taskId: issuedTaskId \\}, headerDigest\\(paymentHeader\\)\\);",
       "flags": "",
       "replace": "/* no link */",
       "nth": 1,
@@ -720,6 +720,36 @@
       "nth": 1,
       "suite": "gw",
       "note": "SHOULD-3 key uses the stored network"
+    },
+    {
+      "id": "P5_create_without_bound_hash",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "if \\(!stampHoldHashMatches\\(bound, presented\\)\\) return null;",
+      "flags": "",
+      "replace": "if (false) return null;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-A no row until the claimed header matches"
+    },
+    {
+      "id": "P6_link_without_hash",
+      "file": "services/gateway/src/x402-adapter.js",
+      "find": "if \\(row\\.payment_hash && !holdPaymentMatches\\(row\\.payment_hash, paymentHash\\)\\) return null;",
+      "flags": "",
+      "replace": "if (false) return null;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-A link requires the creating payment"
+    },
+    {
+      "id": "P7_store_throw_500",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "return null; // store outage is the 409 fallback",
+      "flags": "",
+      "replace": "throw new Error('store');",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-B store outage stays the 409 fallback"
     }
   ]
 }

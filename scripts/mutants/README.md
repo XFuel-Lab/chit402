@@ -30,6 +30,6 @@ Output lines: `BASELINE <suite> PASS`, `MUT <id> KILLED|SURVIVED|TIMEOUT|NOT_APP
 - `G*`, `X*`: the spec groups and the checkpoint extras.
 - `S*`, `M*`: items from the e7d310e2 review.
 - `R*`: new code in 07235b1a (hold-class upgrade, no eager success write, lazy catch handle, page precedence, success link, `late-` gating, first code kept, header try/catch, every register and ingest post-stamp hold site).
-- `P*`: payer and payment binding on hold reads and stamp-hold upgrades.
+- `P*`: payer and payment binding on hold reads, creates, links, and stamp-hold upgrades.
 
 No network, prod or secrets are used. The runner never commits and never touches git state.
