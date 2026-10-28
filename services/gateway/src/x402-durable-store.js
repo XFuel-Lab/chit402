@@ -224,7 +224,7 @@ export class DurableChallengeStore {
   isSpent(nonce) { return this._with((s) => s.isSpent(nonce)); }
   replayRecord(nonce) { return this._with((s) => s.replayRecord(nonce)); }
   markSpent(nonce, meta) { return this._with((s) => s.markSpent(nonce, meta)); }
-  claim(nonce, owner, leaseMs) { return this._with((s) => s.claim(nonce, owner, leaseMs)); }
+  claim(nonce, owner, leaseMs, paymentHash) { return this._with((s) => s.claim(nonce, owner, leaseMs, paymentHash)); }
   release(nonce, owner) { return this._with((s) => s.release(nonce, owner)); }
   markUnknown(nonce) { return this._with((s) => s.markUnknown(nonce)); }
   isAuthSpent(key) { return this._with((s) => s.isAuthSpent(key)); }
@@ -242,7 +242,7 @@ export class DurableChallengeStore {
   ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
   getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
   findHoldHandleByKey(key) { return this._read((s) => s.findHoldHandleByKey(key)); }
-  linkHoldHandle(key, linkedPendingId) { return this._with((s) => s.linkHoldHandle(key, linkedPendingId)); }
+  linkHoldHandle(key, linked, paymentHash) { return this._with((s) => s.linkHoldHandle(key, linked, paymentHash)); }
   holdPageLink(id) { return this._with((s) => s.holdPageLink(id)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }

@@ -573,7 +573,7 @@ export async function settleBoundPayment({
   if (!injectedReader && !rpcForNet) return fail('gateway_not_configured', { network: net, sub: 'no_confirm_rpc' });
 
   const owner = `${taskId}:${nonce}`;
-  const claim = active.claim(nonce, owner);
+  const claim = active.claim(nonce, owner, undefined, headerDigest(paymentHeader));
   if (!claim.ok) {
     if (claim.reason === 'payment_in_flight') {
       const pending = inflightByNonce.get(String(nonce));
@@ -779,7 +779,7 @@ export async function settleBoundPayment({
       });
       pendingId = opened?.pendingId || null;
     } else if (pendingId && nonce && typeof active.linkHoldHandle === 'function') {
-      try { active.linkHoldHandle(settleHoldKey(challenge.network, nonce), pendingId); } catch { /* store */ }
+      try { active.linkHoldHandle(settleHoldKey(challenge.network, nonce), pendingId, headerDigest(paymentHeader)); } catch { /* store */ }
     }
     const verifyUrl = lateVerifyUrl(cfg, pendingId);
     if (!solana && lateIssueEnabled(cfg) && !terminal) {
@@ -1155,7 +1155,7 @@ export async function settleBoundPayment({
     try {
       const key = settleHoldKey(challenge.network, nonce);
       const existing = active.findHoldHandleByKey(key);
-      if (existing?.pending_id) active.linkHoldHandle(key, { taskId: issuedTaskId });
+      if (existing?.pending_id) active.linkHoldHandle(key, { taskId: issuedTaskId }, headerDigest(paymentHeader));
     } catch { /* store */ }
   }
 

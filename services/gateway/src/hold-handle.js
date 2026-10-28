@@ -70,15 +70,30 @@ export function paymentHeaderDigest(header) {
  */
 const CLAIMED_STAMP_STATES = new Set(['submitted', 'unknown', 'spent']);
 
+function stampHoldHashMatches(stored, presented) {
+  if (typeof stored !== 'string' || typeof presented !== 'string') return false;
+  if (stored.length !== presented.length || stored.length === 0) return false;
+  return crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(presented));
+}
+
 /**
  * A stamp function threw after the caller had already sent a payment header.
  * Open or upgrade the settle-key handle only when this nonce was claimed
- * and the header matches the payment that created the hold. The key uses
- * the stored challenge network. Anything else returns null so the caller
- * uses the 409 fallback, with no refund_owed.
+ * and the header matches the hash stored at claim (or on the late row, the
+ * spent record, or an existing handle). The key uses the stored challenge
+ * network. A store outage returns null. Anything else returns null so the
+ * caller uses the 409 fallback, with no refund_owed.
  */
 export function presentedStampHold(network, nonce, cfg = {}) {
   void network;
+  try {
+    return bindPresentedStampHold(nonce, cfg);
+  } catch {
+    return null; // store outage is the 409 fallback
+  }
+}
+
+function bindPresentedStampHold(nonce, cfg) {
   const active = holdStore(cfg.store);
   if (!active || !nonce) return null;
   const spent = typeof active.isSpent === 'function' && active.isSpent(nonce);
@@ -90,6 +105,14 @@ export function presentedStampHold(network, nonce, cfg = {}) {
   const key = settleHoldKey(net, nonce);
   if (!key || key.length < 8) return null;
   const presented = cfg.paymentHash || paymentHeaderDigest(cfg.paymentHeader);
+  const existing = typeof active.findHoldHandleByKey === 'function' ? active.findHoldHandleByKey(key) : null;
+  const late = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
+  const bound = existing?.payment_hash
+    || challenge.payment_hash
+    || challenge.settlement?.paymentHash
+    || late?.payment_hash
+    || null;
+  if (!stampHoldHashMatches(bound, presented)) return null;
   const opened = openPostSettleHandle(active, {
     key,
     holdClass: 'terminal',

@@ -444,7 +444,7 @@ export class ChallengeStore {
    * A second caller gets payment_in_flight. An expired lease becomes unknown
    * and is not released.
    */
-  claim(nonce, owner, leaseMs = 60_000) {
+  claim(nonce, owner, leaseMs = 60_000, paymentHash = null) {
     if (this.isSpent(nonce)) return { ok: false, reason: 'payment_replayed' };
     const found = this._find(nonce);
     if (!found) return { ok: false, reason: 'challenge_required' };
@@ -474,6 +474,11 @@ export class ChallengeStore {
     rec.state = 'claimed';
     rec.lease_owner = owner || 'local';
     rec.lease_until = Date.now() + leaseMs;
+    // The hash is sha256 of the raw header. It is not a secret: anyone who
+    // has that header can recompute it. It only proves this claim presented it.
+    if (typeof paymentHash === 'string' && paymentHash && !rec.payment_hash) {
+      rec.payment_hash = paymentHash;
+    }
     return { ok: true, challenge: rec };
   }
 
@@ -639,9 +644,10 @@ export class ChallengeStore {
    * Does not allocate an id. No-op when the key has no handle yet.
    * `linked` is a 32-hex late id, or `{ taskId }`.
    */
-  linkHoldHandle(key, linked) {
+  linkHoldHandle(key, linked, paymentHash) {
     const row = this.holdHandles.find((item) => item.key === key);
     if (!row) return null;
+    if (row.payment_hash && !holdPaymentMatches(row.payment_hash, paymentHash)) return null;
     if (linked && typeof linked === 'object') {
       const taskId = typeof linked.taskId === 'string' ? linked.taskId : '';
       if (!taskId || taskId.length > 200) return null;
