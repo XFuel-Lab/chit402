@@ -831,6 +831,9 @@ export async function settleBoundPayment({
     release();
     return refused(req, clientPaymentCode(verified.reason || 'verify_failed'), { network: net, sub: 'facilitator_invalid', phase: 'pre_settle' });
   }
+  if (typeof active.noteVerifiedPayment === 'function') {
+    try { active.noteVerifiedPayment(nonce, headerDigest(paymentHeader)); } catch { /* store */ }
+  }
 
   let bindCheck = null;
   if (challenge.issuance_bind?.required) {

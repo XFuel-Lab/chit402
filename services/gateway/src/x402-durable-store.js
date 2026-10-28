@@ -225,6 +225,7 @@ export class DurableChallengeStore {
   replayRecord(nonce) { return this._with((s) => s.replayRecord(nonce)); }
   markSpent(nonce, meta) { return this._with((s) => s.markSpent(nonce, meta)); }
   claim(nonce, owner, leaseMs, paymentHash) { return this._with((s) => s.claim(nonce, owner, leaseMs, paymentHash)); }
+  noteVerifiedPayment(nonce, paymentHash) { return this._with((s) => s.noteVerifiedPayment(nonce, paymentHash)); }
   release(nonce, owner) { return this._with((s) => s.release(nonce, owner)); }
   markUnknown(nonce) { return this._with((s) => s.markUnknown(nonce)); }
   isAuthSpent(key) { return this._with((s) => s.isAuthSpent(key)); }

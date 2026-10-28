@@ -44,7 +44,12 @@ export function openPostSettleHandle(store, { key, holdClass, cfg, code, payment
  */
 export function terminalHold(code, paymentRef, cfg) {
   const key = typeof paymentRef === 'string' && paymentRef ? `pay:${paymentRef}:${code}` : '';
-  const opened = openPostSettleHandle(null, { key, holdClass: 'terminal', cfg });
+  const opened = openPostSettleHandle(null, {
+    key,
+    holdClass: 'terminal',
+    cfg,
+    paymentHash: paymentHeaderDigest(key),
+  });
   return decisionHoldResult({
     code,
     reason: code,
@@ -108,9 +113,9 @@ function bindPresentedStampHold(nonce, cfg) {
   const existing = typeof active.findHoldHandleByKey === 'function' ? active.findHoldHandleByKey(key) : null;
   const late = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
   const bound = existing?.payment_hash
-    || challenge.payment_hash
-    || challenge.settlement?.paymentHash
     || late?.payment_hash
+    || challenge.settlement?.paymentHash
+    || challenge.payment_hash
     || null;
   if (!stampHoldHashMatches(bound, presented)) return null;
   const opened = openPostSettleHandle(active, {

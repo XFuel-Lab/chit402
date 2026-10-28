@@ -474,12 +474,24 @@ export class ChallengeStore {
     rec.state = 'claimed';
     rec.lease_owner = owner || 'local';
     rec.lease_until = Date.now() + leaseMs;
-    // The hash is sha256 of the raw header. It is not a secret: anyone who
-    // has that header can recompute it. It only proves this claim presented it.
-    if (typeof paymentHash === 'string' && paymentHash && !rec.payment_hash) {
-      rec.payment_hash = paymentHash;
-    }
+    void paymentHash;
+    // payment_hash is set only after the signature verifies
     return { ok: true, challenge: rec };
+  }
+
+  /**
+   * Bind the header hash after verifyPayment accepts it. The hash is sha256
+   * of the raw header. It is not a secret: anyone who has that header can
+   * recompute it. A claim that has not verified does not write it.
+   */
+  noteVerifiedPayment(nonce, paymentHash) {
+    const found = this._find(nonce);
+    if (!found) return false;
+    const rec = found.rec;
+    if (rec.state !== 'claimed' && rec.state !== 'submitted') return false;
+    if (typeof paymentHash !== 'string' || !paymentHash) return false;
+    rec.payment_hash = paymentHash;
+    return true;
   }
 
   release(nonce, owner) {
@@ -491,6 +503,7 @@ export class ChallengeStore {
     rec.state = 'issued';
     rec.lease_owner = null;
     rec.lease_until = null;
+    rec.payment_hash = null;
     return true;
   }
 
@@ -597,8 +610,8 @@ export class ChallengeStore {
         if (!holdPaymentMatches(existing.payment_hash, presented)) return null;
         existing.hold_class = 'terminal';
         if (publicCode) existing.code = publicCode;
-      } else if (existing.payment_hash && !holdPaymentMatches(existing.payment_hash, presented)) {
-        return null;
+      } else if (!holdPaymentMatches(existing.payment_hash, presented)) {
+        return null; // missing hash is not a credential
       } else if (!existing.code && publicCode) existing.code = publicCode;
       return { pending_id: existing.pending_id, hold_class: existing.hold_class, code: existing.code || null };
     }
