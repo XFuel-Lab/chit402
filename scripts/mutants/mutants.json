@@ -680,6 +680,46 @@
       "nth": 12,
       "suite": "gw",
       "note": "NEW-4 ingest"
+    },
+    {
+      "id": "P1_prior_unknown_payment",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const samePayment = \\(stored\\) => typeof stored === 'string' && !!got && digestEqual\\(stored, got\\);",
+      "flags": "",
+      "replace": "const samePayment = () => true;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-1 nonce is not a read credential"
+    },
+    {
+      "id": "P2_unclaimed_stamp_hold",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "if \\(!CLAIMED_STAMP_STATES\\.has\\(challenge\\.state\\)\\) return null;",
+      "flags": "",
+      "replace": "if (false) return null;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-3 issued nonce is not a refund"
+    },
+    {
+      "id": "P3_upgrade_payment",
+      "file": "services/gateway/src/x402-adapter.js",
+      "find": "if \\(!holdPaymentMatches\\(existing\\.payment_hash, paymentHash\\)\\) return null;",
+      "flags": "",
+      "replace": "if (false) return null;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-3 nonce is not an upgrade credential"
+    },
+    {
+      "id": "P4_stamp_hold_network",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "const net = challenge\\.network; // the stored challenge, not the caller's network",
+      "flags": "",
+      "replace": "const net = network; // the stored challenge, not the caller's network",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-3 key uses the stored network"
     }
   ]
 }
