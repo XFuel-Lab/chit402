@@ -36,16 +36,20 @@ export function openPostSettleHandle(store, { key, holdClass, cfg } = {}) {
  * of the same payment returns the same id. No ref means no handle: the
  * caller still gets the non-402 fallback.
  */
-export function terminalStampHold(paymentRef, cfg) {
-  const key = typeof paymentRef === 'string' && paymentRef ? `stamp:${paymentRef}` : '';
+export function terminalHold(code, paymentRef, cfg) {
+  const key = typeof paymentRef === 'string' && paymentRef ? `pay:${paymentRef}:${code}` : '';
   const opened = openPostSettleHandle(null, { key, holdClass: 'terminal', cfg });
   return decisionHoldResult({
-    code: 'stamp_underpaid',
-    reason: 'stamp_underpaid',
+    code,
+    reason: code,
     holdClass: 'terminal',
     pendingId: opened?.pendingId || null,
     verifyUrl: opened?.verifyUrl || null,
   });
+}
+
+export function terminalStampHold(paymentRef, cfg) {
+  return terminalHold('stamp_underpaid', paymentRef, cfg);
 }
 
 /**
@@ -62,6 +66,23 @@ export function holdPagePayload(page) {
   return { json: { status: 'pending' }, html: renderHoldPage('pending') };
 }
 
+export function settleHoldKey(network, nonce) {
+  if (!nonce) return '';
+  return `settle:${String(network || '')}:${String(nonce)}`;
+}
+
+const PENDING_LATE_STATES = new Set(['unknown', 'submitted', 'confirmed', 'issuing']);
+const REFUND_LATE_STATES = new Set(['mismatch_hold', 'expired_unresolved']);
+
+function pageForLateRow(row) {
+  if (!row || row.public_receipt?.issuer_signature?.jws) return null;
+  if (row.hold_class === 'terminal' || REFUND_LATE_STATES.has(row.state)) return { page: 'refund_owed' };
+  if (row.hold_class === 'resolvable' || PENDING_LATE_STATES.has(row.state)) return { page: 'pending' };
+  // not_settled means the chain showed no transfer. That is not a refund
+  // claim, and it is not a pending receipt. The page matches an unknown id.
+  return null;
+}
+
 /** Page class for /receipt/late-<id>, or null when the id is not a hold. */
 export function holdPageForReceiptId(taskId, store = null) {
   const id = String(taskId || '');
@@ -72,18 +93,23 @@ export function holdPageForReceiptId(taskId, store = null) {
   if (!active) return null;
   if (typeof active.getLate === 'function') {
     const row = active.getLate(pendingId);
-    if (row && !row.public_receipt?.issuer_signature?.jws) {
-      const refund = row.hold_class === 'terminal'
-        || row.state === 'mismatch_hold'
-        || row.state === 'expired_unresolved'
-        || row.state === 'not_settled';
-      return { page: refund ? 'refund_owed' : 'pending' };
+    const latePage = pageForLateRow(row);
+    if (latePage) return latePage;
+    if (row?.public_receipt?.issuer_signature?.jws) {
+      return { page: 'receipt', taskId: row.receipt_id || `late-${row.pending_id}` };
     }
   }
-  if (typeof active.getHoldHandle === 'function') {
-    const handle = active.getHoldHandle(pendingId);
-    if (!handle) return null;
-    return { page: handle.hold_class === 'terminal' ? 'refund_owed' : 'pending' };
+  if (typeof active.holdPageLink === 'function') {
+    const link = active.holdPageLink(pendingId);
+    if (link?.linked_pending_id && typeof active.getLate === 'function') {
+      const linked = active.getLate(link.linked_pending_id);
+      if (linked?.public_receipt?.issuer_signature?.jws) {
+        return { page: 'receipt', taskId: linked.receipt_id || `late-${linked.pending_id}` };
+      }
+      const linkedPage = pageForLateRow(linked);
+      if (linkedPage) return linkedPage;
+    }
+    if (link) return { page: link.hold_class === 'terminal' ? 'refund_owed' : 'pending' };
   }
   return null;
 }

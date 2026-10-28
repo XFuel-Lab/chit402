@@ -6,7 +6,7 @@ import { STAMP_FEE_UNITS } from './pricing.js';
 import { chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import config from './config.js';
 import { isBindingRefusal, paymentFailureStatus, decisionHoldResult, bindingEnforced, samePayee, setHoldRetryAfter } from './x402-flags.js';
-import { terminalStampHold } from './hold-handle.js';
+import { terminalHold, terminalStampHold } from './hold-handle.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeInbound,
@@ -245,7 +245,7 @@ export function registerBoardJobRoutes(app, deps) {
       return terminalStampHold(decision.paymentRef, { publicBaseUrl: baseUrl || '' });
     }
     if (spec.expectedPayer && !samePayee(decision.payerWallet, spec.expectedPayer)) {
-      return { ok: false, status: 403, error: 'payer_mismatch', code: 'payer_mismatch' };
+      return terminalHold('payer_mismatch', decision.paymentRef, { publicBaseUrl: baseUrl || '' });
     }
     if (req.res && typeof setPaymentHeaders === 'function') {
       setPaymentHeaders(req.res, {

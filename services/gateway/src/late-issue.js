@@ -768,6 +768,9 @@ export async function resolveLateRecord(store, record, deps = {}) {
   const now = nowMs(deps, cfg);
   let row = store.getLate(id) || record;
   if (TERMINAL.has(row.state)) {
+    if (!row.jws && (row.state === 'mismatch_hold' || row.state === 'expired_unresolved' || row.state === 'not_settled')) {
+      return { state: row.state, pendingId: id, ownerOnly: true };
+    }
     return { jws: row.jws || null, state: row.state, pendingId: id, served: row.served === true };
   }
   if (row.state === 'submitted') {
@@ -954,6 +957,7 @@ function settlePending(row, cfg, extra = {}) {
     verifyUrl: lateVerifyUrl(cfg, row.pending_id),
     served: false,
     ...extra,
+    holdClass: 'resolvable',
   };
 }
 
@@ -991,6 +995,7 @@ export async function resumeLateIssue({ store, req, cfg, nonce, taskId, paymentH
       code: 'settle_unconfirmed',
       pendingId: row.pending_id,
       verifyUrl: lateVerifyUrl(cfg, row.pending_id),
+      holdClass: 'terminal',
     };
   }
   return settlePending(row, cfg);

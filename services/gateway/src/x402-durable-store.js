@@ -233,6 +233,9 @@ export class DurableChallengeStore {
   recordPending(row) { return this._with(async (s) => await s.recordPending(row)); }
   ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
   getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
+  findHoldHandleByKey(key) { return this._with((s) => s.findHoldHandleByKey(key)); }
+  linkHoldHandle(key, linkedPendingId) { return this._with((s) => s.linkHoldHandle(key, linkedPendingId)); }
+  holdPageLink(id) { return this._with((s) => s.holdPageLink(id)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
   markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }

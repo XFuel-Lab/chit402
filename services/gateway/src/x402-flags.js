@@ -155,6 +155,15 @@ function retrySeconds(value, fallback) {
 export function paymentFailureStatus(decision) {
   const code = decision && (decision.code || decision.reason);
   const today = paymentErrorStatus(code);
+  // A pre-settle refusal is never a hold, even if a caller attached a class.
+  if (decision?.preSettle === true) {
+    return {
+      status: today,
+      retryAfter: retrySeconds(decision.retryAfter, null),
+      refundOwed: false,
+      fallback: false,
+    };
+  }
   const klass = decision && decision.holdClass;
   if (klass !== 'resolvable' && klass !== 'terminal') {
     const retryAfter = retrySeconds(decision?.retryAfter, null);

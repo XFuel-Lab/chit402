@@ -679,7 +679,9 @@ async function registerPaidStamp(body, deps) {
       ok: false,
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
-      message: stamp?.message || 'Register stamp is $0.002 USDC (2000 atomic), paid by this wallet',
+      message: stamp?.message
+        || (stamp?.pending_id || stamp?.outcome === 'refund_owed' ? 'Do not pay again.' : null)
+        || (stamp?.code ? undefined : 'Register stamp is $0.002 USDC (2000 atomic), paid by this wallet'),
       challenge: stamp?.challenge || null,
       ...(stamp?.code ? { code: stamp.code } : {}),
       ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),

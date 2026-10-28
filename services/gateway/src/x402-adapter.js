@@ -587,6 +587,41 @@ export class ChallengeStore {
     return { pending_id: row.pending_id, hold_class: row.hold_class };
   }
 
+  /**
+   * Read-only. Used when a retry meets a nonce already marked unknown.
+   * Returns the id and class only.
+   */
+  findHoldHandleByKey(key) {
+    if (typeof key !== 'string' || !key) return null;
+    const row = this.holdHandles.find((item) => item.key === key);
+    if (!row) return null;
+    return { pending_id: row.pending_id, hold_class: row.hold_class };
+  }
+
+  /**
+   * Point an existing handle at the late row for the same payment.
+   * Does not allocate an id. No-op when the key has no handle yet.
+   */
+  linkHoldHandle(key, linkedPendingId) {
+    if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(String(linkedPendingId || ''))) return null;
+    const row = this.holdHandles.find((item) => item.key === key);
+    if (!row) return null;
+    row.linked_pending_id = linkedPendingId;
+    return { pending_id: row.pending_id };
+  }
+
+  /** Page lookup. Includes the late-row link. The idempotency key is not returned. */
+  holdPageLink(id) {
+    if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return null;
+    const row = this.holdHandles.find((item) => item.pending_id === id);
+    if (!row) return null;
+    return {
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      linked_pending_id: row.linked_pending_id || null,
+    };
+  }
+
   async recordPending(row) {
     const rec = {
       id: `pending-${Date.now().toString(36)}-${this.pending.length}`,

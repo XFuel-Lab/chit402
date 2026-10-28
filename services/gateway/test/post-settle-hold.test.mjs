@@ -134,6 +134,21 @@ test('terminal underpaid, payee mismatch, and post-check payer mismatch are 409 
   }
 });
 
+test('a pre-settle decision with a class and an id stays on today status', () => {
+  const id = hexId();
+  const decision = {
+    code: 'payer_mismatch',
+    reason: 'payer_mismatch',
+    preSettle: true,
+    holdClass: 'terminal',
+    pendingId: id,
+    verifyUrl: `/receipt/late-${id}`,
+  };
+  assert.equal(paymentFailureStatus(decision).status, 403);
+  assert.equal(paymentFailureStatus(decision).refundOwed, false);
+  assert.equal(paymentFailureBody(decision).pending_id, undefined);
+});
+
 test('pre-settle payer mismatch stays 403 with the same body', async () => {
   const { decision } = await attempt({ call: { expectedPayer: OTHER } });
   assert.equal(decision.preSettle, true);
@@ -143,7 +158,7 @@ test('pre-settle payer mismatch stays 403 with the same body', async () => {
   assert.deepEqual(paymentFailureBody(decision), { error: 'payer_mismatch', code: 'payer_mismatch' });
 });
 
-test('S-B2: a capped EVM hold gets an unguessable handle, not the recordPending id', async () => {
+test('S-B2: late-issue on and the admission cap still returns a handle and opens no late row', async () => {
   const store = new ChallengeStore();
   for (let i = 0; i < 64; i += 1) {
     store.putLate({
@@ -153,10 +168,10 @@ test('S-B2: a capped EVM hold gets an unguessable handle, not the recordPending 
       submitted_at: 1,
     });
   }
+  const before = store.listLate().length;
   let settles = 0;
   const server = http.createServer((req, res) => {
-    const isSettle = String(req.url).endsWith('/settle');
-    if (isSettle) {
+    if (String(req.url).endsWith('/settle')) {
       settles += 1;
       req.socket.destroy();
       return;
@@ -171,30 +186,19 @@ test('S-B2: a capped EVM hold gets an unguessable handle, not the recordPending 
   try {
     const { decision } = await attempt({
       store,
-      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
-      fac: {},
+      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: true },
     });
-    // attempt() opens its own facilitator. Drive settleBoundPayment through a
-    // destroyed settle by calling attempt only when the store is capped and the
-    // fixture facilitator is replaced below if this path did not hold.
-    assert.ok(settles >= 1, 'settle hit the capped path');
+    assert.ok(settles >= 1);
+    assert.equal(store.listLate().length, before, 'admission cap opened no late row');
     assert.equal(decision.holdClass, 'resolvable');
-    assert.equal(decision.kind, 'failed');
     assert.match(String(decision.pendingId), /^[0-9a-f]{32}$/);
+    assert.ok(store.holdHandles.some((row) => row.pending_id === decision.pendingId));
     assert.equal(paymentFailureStatus(decision).status, 202);
     assert.doesNotMatch(JSON.stringify(decision), /pending-[0-9a-z]+-\d+/);
     assert.doesNotMatch(JSON.stringify(paymentFailureBody(decision)), /pending-[0-9a-z]+-\d+/);
   } finally {
     await new Promise((r) => server.close(r));
   }
-  const handle = store.ensureHoldHandle({ key: 'settle:base:capped-nonce', holdClass: 'resolvable' });
-  assert.match(handle.pending_id, /^[0-9a-f]{32}$/);
-  assert.equal(store.getHoldHandle(handle.pending_id).key, undefined);
-  const before = store.holdHandles.length;
-  const again = store.ensureHoldHandle({ key: 'settle:base:capped-nonce', holdClass: 'terminal' });
-  assert.equal(again.pending_id, handle.pending_id);
-  assert.equal(again.hold_class, 'resolvable');
-  assert.equal(store.holdHandles.length, before);
 });
 
 test('S-B2: a Solana transport hold returns an unguessable handle', async () => {
@@ -572,9 +576,14 @@ test('source scan: failure sites use the helper and holds do not say rejected', 
   const flags = read('x402-flags.js');
   const sdk = readFileSync(join(DIR, '../../../packages/sdk/src/index.ts'), 'utf8');
   const mcp = readFileSync(join(DIR, '../../../packages/mcp/src/format.ts'), 'utf8');
+  const helper = flags.slice(flags.indexOf('export function paymentFailureStatus'), flags.indexOf('export function paymentErrorBody'));
   assert.ok(/function paymentFailureStatus\(/.test(flags), 'helper exists');
-  assert.ok(/status: 202/.test(flags), 'resolvable maps to 202');
-  assert.ok(/status: 409/.test(flags), 'terminal maps to 409');
+  assert.ok(/status: 202/.test(helper), 'resolvable maps to 202');
+  assert.ok(/status: 409/.test(helper), 'terminal maps to 409');
+  assert.ok(/preSettle === true/.test(helper), 'pre-settle guard');
+  const inflight = openai.slice(openai.indexOf('export function inflightHoldDecision'), openai.indexOf('async function maybeServePaidReplay'));
+  assert.equal(/inflight:/.test(inflight), false, 'in-flight handle is not a separate key');
+  assert.ok(/settleHoldKey\(/.test(inflight), 'in-flight handle uses the settle key');
   assert.ok(/function sendX402Failure\(/.test(server), 'task-request helper');
   assert.ok((server.match(/sendX402Failure\(res,/g) || []).length >= 2, 'both task-request paths');
   assert.ok(/paymentFailureStatus\(decision\)/.test(server), 'server uses the status helper');
@@ -588,7 +597,9 @@ test('source scan: failure sites use the helper and holds do not say rejected', 
   assert.equal(/could not be settled/i.test(timedOut), false, 'paid replay in flight does not say could not be settled');
   assert.ok(/paymentFailureStatus\(decision\)/.test(board), 'board uses the helper');
   assert.ok(/terminalStampHold\(/.test(jobs), 'board-job underpaid is a terminal hold');
-  const holdFn = mcp.slice(mcp.indexOf('function pendingIdOf'), mcp.indexOf('if (err.status === 402'));
+  assert.ok(/terminalHold\('payer_mismatch'/.test(jobs), 'board-job route payer mismatch is a terminal hold');
+  assert.ok(/terminalHold\('payer_mismatch'/.test(read('board-jobs.js')), 'board-job leg payer mismatch is a terminal hold');
+  const holdFn = mcp.slice(mcp.indexOf('export function describeHold'), mcp.indexOf('function pendingIdOf'));
   assert.ok(/do not pay again/i.test(holdFn), 'mcp pending branch');
   assert.equal(/rejected/i.test(holdFn), false, 'mcp pending branch has no rejected');
   assert.equal(/wallet balance/i.test(holdFn), false, 'mcp pending branch has no wallet balance');
@@ -673,4 +684,172 @@ test('register success receipt bytes and leaf count stay stable for the same pay
   assert.deepEqual(strip(a.ledger.entries[0]), strip(b.ledger.entries[0]));
   if (prev === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = prev;
+});
+
+test('a second call resumes the same resolvable hold for the task route and the OpenAI route', async () => {
+  const store = new ChallengeStore();
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const pending = async () => ({ ok: false, pending: true });
+  const first = await attempt({
+    store,
+    header: fixed,
+    cfg: { lateIssue: true, chainReader: pending },
+  });
+  assert.equal(first.decision.holdClass, 'resolvable');
+  const second = await attempt({
+    store,
+    nonce: first.nonce,
+    header: fixed,
+    cfg: { lateIssue: true, chainReader: pending },
+  });
+  assert.equal(second.decision.pendingId, first.decision.pendingId);
+  assert.equal(second.decision.holdClass, 'resolvable');
+  const task = paymentFailureStatus(second.decision);
+  assert.equal(task.status, 202);
+  assert.equal(task.retryAfter, 5);
+  assert.equal(paymentFailureBody(second.decision).pending_id, first.decision.pendingId);
+  const openai = openAiFailurePayload(second.decision);
+  assert.equal(openai.status, 202);
+  assert.equal(openai.body.error.pending_id, first.decision.pendingId);
+  assert.match(openai.body.error.message, /Do not pay again/);
+  assert.doesNotMatch(openai.body.error.message, /could not be settled/i);
+});
+
+test('a second call on a terminal late row is 409 refund_owed with the same id', async () => {
+  const store = new ChallengeStore();
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const first = await attempt({
+    store,
+    header: fixed,
+    cfg: {
+      lateIssue: true,
+      chainReader: async () => ({ ok: true, amount: '1', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(first.decision.holdClass, 'terminal');
+  const second = await attempt({
+    store,
+    nonce: first.nonce,
+    header: fixed,
+    cfg: { lateIssue: true, chainReader: async () => ({ ok: false, pending: true }) },
+  });
+  assert.equal(second.decision.pendingId, first.decision.pendingId);
+  assert.equal(second.decision.holdClass, 'terminal');
+  assert.equal(paymentFailureStatus(second.decision).status, 409);
+  assert.equal(paymentFailureStatus(second.decision).retryAfter, null);
+  const openai = openAiFailurePayload(second.decision);
+  assert.equal(openai.status, 409);
+  assert.equal(openai.body.error.status, 'refund_owed');
+  assert.match(openai.body.error.message, /Refund owed/);
+});
+
+test('prior_unknown returns the existing handle instead of a bare 402', async () => {
+  const store = new ChallengeStore();
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const server = http.createServer((req, res) => {
+    if (String(req.url).endsWith('/settle')) {
+      req.socket.destroy();
+      return;
+    }
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ valid: true, isValid: true, payer: PAYER }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const first = await attempt({
+      store,
+      header: fixed,
+      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
+    });
+    assert.equal(first.decision.holdClass, 'resolvable');
+    const second = await attempt({
+      store,
+      nonce: first.nonce,
+      header: fixed,
+      cfg: { gatewayUrl: `http://127.0.0.1:${server.address().port}`, lateIssue: false },
+    });
+    assert.equal(second.decision.pendingId, first.decision.pendingId);
+    assert.equal(second.decision.holdClass, 'resolvable');
+    assert.equal(second.decision.preSettle, false);
+    assert.equal(paymentFailureStatus(second.decision).status, 202);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('the in-flight replay uses the late row id and the page follows it', async () => {
+  const { inflightHoldDecision } = await import('../src/openai-gateway.js');
+  const { holdPageForReceiptId, settleHoldKey } = await import('../src/hold-handle.js');
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  const nonce = '0x' + 'ab'.repeat(32);
+  store.put(nonce, {
+    resource: 'https://api.chit402.com/v1/chat/completions',
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: 'USDC',
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'issued',
+  });
+  const early = inflightHoldDecision(nonce, 'base');
+  assert.match(early.pendingId, /^[0-9a-f]{32}$/);
+  const lateId = hexId();
+  store.putLate({
+    pending_id: lateId,
+    state: 'unknown',
+    nonce,
+    sent: true,
+    hold_class: 'resolvable',
+    payment_hash: 'abc',
+  });
+  store.linkHoldHandle(settleHoldKey('base', nonce), lateId);
+  const again = inflightHoldDecision(nonce, 'base');
+  assert.equal(again.pendingId, lateId);
+  assert.deepEqual(holdPageForReceiptId(`late-${early.pendingId}`, store), { page: 'pending' });
+  const row = store.getLate(lateId);
+  row.public_receipt = { issuer_signature: { jws: 'header.payload.sig' }, task_id: `late-${lateId}` };
+  row.receipt_id = `late-${lateId}`;
+  assert.equal(holdPageForReceiptId(`late-${early.pendingId}`, store).page, 'receipt');
+});
+
+test('GET /receipt on the app serves a hold and matches unknown ids', async () => {
+  process.env.NODE_ENV = 'test';
+  process.env.HUB_CATALOG_OFFLINE = 'true';
+  process.env.TASK_STORE_PERSIST = 'false';
+  process.env.X402_ENABLED = 'false';
+  const { initAIListener } = await import('../src/ai-listener.js');
+  await initAIListener();
+  const { createApp } = await import('../src/server.js');
+  const app = await createApp();
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  const owed = store.ensureHoldHandle({ key: 'pay:page-owed:stamp_underpaid', holdClass: 'terminal' });
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const html = await fetch(`${base}/receipt/late-${owed.pending_id}`, { headers: { accept: 'text/html' } });
+    const json = await fetch(`${base}/receipt/late-${owed.pending_id}?format=json`, { headers: { accept: 'application/json' } });
+    const unknownHold = await fetch(`${base}/receipt/late-${hexId()}`, { headers: { accept: 'text/html' } });
+    const unknownOther = await fetch(`${base}/receipt/not-a-hold-${hexId()}`, { headers: { accept: 'text/html' } });
+    assert.equal(html.status, 200, await html.clone().text());
+    assert.equal(html.headers.get('cache-control'), 'private, no-store');
+    assert.ok(html.headers.get('content-security-policy'), [...html.headers.entries()].map(([k]) => k).join(','));
+    assert.match(await html.text(), /refund owed, do not pay again/);
+    assert.equal((await json.json()).message, 'refund owed, do not pay again');
+    const holdText = await unknownHold.text();
+    const otherText = await unknownOther.text();
+    assert.equal(unknownHold.status, unknownOther.status);
+    assert.equal(holdText, otherText);
+    assert.equal(unknownHold.headers.get('cache-control'), unknownOther.headers.get('cache-control'));
+  } finally {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
 });

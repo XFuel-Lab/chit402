@@ -35,7 +35,7 @@ const PINNED = {
   auth_nonce: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   auth_signature: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   facilitator_invalid: { status: 402, body: "{\"error\":\"verify_failed\",\"code\":\"verify_failed\"}", pendingCode: null, settles: 0 },
-  settle_http: { status: 402, body: "{\"error\":\"settle_failed\",\"code\":\"settle_failed\"}", pendingCode: null, settles: 1 },
+  settle_http: { status: 202, body: null, pendingCode: "settle_failed", settles: 1, holdClass: "resolvable" },
   chain_mismatch: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
   chain_value_low: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
   // Was chain_payer (settles 1). #664's pre-check refuses it before /settle:
@@ -71,7 +71,12 @@ for (const [name, pin] of Object.entries(PINNED)) {
     const keys = pin.holdClass ? `${DECISION_KEYS},holdClass` : DECISION_KEYS;
     assert.equal(Object.keys(decision).join(','), keys, `${name}: decision keys`);
     if (pin.holdClass) assert.equal(decision.holdClass, pin.holdClass, `${name}: class`);
-    assert.equal(decision.retryAfter, undefined, `${name}: no Retry-After`);
+    if (pin.holdClass === 'resolvable') {
+      assert.equal(decision.retryAfter, 5, `${name}: Retry-After`);
+      assert.equal(view.retryAfter, 5, `${name}: header`);
+    } else {
+      assert.equal(decision.retryAfter, undefined, `${name}: no Retry-After`);
+    }
     if (pin.holdClass === 'terminal') assert.equal(view.retryAfter, null, `${name}: no Retry-After header`);
     assert.equal(hits.settle, pin.settles, `${name}: /settle calls`);
   });

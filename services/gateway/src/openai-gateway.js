@@ -54,8 +54,10 @@ import {
   takeServedReceipt,
 } from './paid-response-replay.js';
 import { clientPaymentCode, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter } from './x402-flags.js';
-import { openPostSettleHandle } from './hold-handle.js';
-import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { openPostSettleHandle, settleHoldKey } from './hold-handle.js';
+import { lateVerifyUrl } from './late-issue.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
+import { challengeStore, setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -1845,7 +1847,9 @@ function unheldOpenAiMessage() {
 export function openAiFailurePayload(decision) {
   const view = paymentFailureStatus(decision);
   const failure = paymentFailureBody(decision);
-  const held = decision?.holdClass === 'resolvable' || decision?.holdClass === 'terminal';
+  const held = decision?.holdClass === 'resolvable'
+    || decision?.holdClass === 'terminal'
+    || typeof decision?.pendingId === 'string' && decision.pendingId.length > 0;
   const message = held ? heldOpenAiMessage(failure) : unheldOpenAiMessage();
   return {
     status: view.status,
@@ -1870,13 +1874,33 @@ function sendOpenAiPaymentResult(res, decision) {
   res.status(payload.status).json(payload.body);
 }
 
-/** Resolvable handle for a payment whose first request is still in flight. */
-export function inflightHoldDecision(nonce) {
-  const key = typeof nonce === 'string' && nonce ? `inflight:${nonce}` : '';
-  const opened = openPostSettleHandle(null, {
-    key,
+/**
+ * The in-flight replay uses the same handle as hold(): the late row for this
+ * nonce when one exists, otherwise settle:<network>:<nonce>. It does not
+ * mint an inflight-only id.
+ */
+export function inflightHoldDecision(nonce, network = '') {
+  const cfg = { publicBaseUrl: config.service?.publicBaseUrl || '' };
+  const store = getActiveChallengeStore() || challengeStore;
+  const late = nonce && typeof store?.findLate === 'function' ? store.findLate({ nonce }) : null;
+  if (late?.pending_id) {
+    const terminal = late.hold_class === 'terminal'
+      || late.state === 'mismatch_hold'
+      || late.state === 'expired_unresolved';
+    return {
+      code: 'payment_in_flight',
+      reason: 'payment_in_flight',
+      holdClass: terminal ? 'terminal' : 'resolvable',
+      pendingId: late.pending_id,
+      verifyUrl: lateVerifyUrl(cfg, late.pending_id),
+      ...(terminal ? {} : { retryAfter: 2 }),
+    };
+  }
+  const net = network || store?.get?.(nonce)?.network || '';
+  const opened = openPostSettleHandle(store, {
+    key: settleHoldKey(net, nonce),
     holdClass: 'resolvable',
-    cfg: { publicBaseUrl: config.service?.publicBaseUrl || '' },
+    cfg,
   });
   return {
     code: 'payment_in_flight',
@@ -1893,7 +1917,7 @@ async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
   if (stored?.timedOut) {
-    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req)));
+    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req), config.x402?.network || ''));
     return true;
   }
   if (!stored?.bytes) {

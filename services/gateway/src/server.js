@@ -3565,15 +3565,21 @@ export async function createApp() {
         : null;
       if (foreignReceipt) return await publishShell(await withBookCoverage(foreignReceipt), null);
 
+      const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
+      if (latePublic) return await publishShell(latePublic, null);
+      const holdPage = holdPageForReceiptId(taskId) || holdPageForReceiptId(rawTaskId);
+      if (holdPage?.page === 'receipt' && holdPage.taskId) {
+        const linked = findLatePublicReceipt(holdPage.taskId);
+        if (linked) return await publishShell(linked, null);
+      } else if (holdPage) {
+        return sendHoldPage(res, wantsJson, holdPage.page);
+      }
+
       const aiListener = getAIListener();
       // ?tx= may confirm this id. It must not select a different receipt.
       const task = _findTask(aiListener, taskId);
 
       if (!task) {
-        const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
-        if (latePublic) return await publishShell(latePublic, null);
-        const holdPage = holdPageForReceiptId(taskId) || holdPageForReceiptId(rawTaskId);
-        if (holdPage) return sendHoldPage(res, wantsJson, holdPage.page);
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
         if (spendReceipt) return await publishShell(spendReceipt, null);
         return sendPublicMissing(res, wantsJson);
