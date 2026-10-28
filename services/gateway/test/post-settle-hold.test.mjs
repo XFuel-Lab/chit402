@@ -1640,6 +1640,42 @@ test('a third party who knows the nonce cannot read or upgrade the hold', async 
   assert.equal(store.holdHandles.length, 1);
 });
 
+test('settle binds the claim hash only after verify accepts the header', async () => {
+  const store = new ChallengeStore();
+  const nonce = '0x' + '81'.repeat(32);
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const header = paymentHeader(fixed);
+  const hash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+  let hashAtVerify = 'unset';
+  const ok = await attempt({
+    store,
+    nonce,
+    header: fixed,
+    fac: {
+      observe(req) {
+        if (!String(req.url).endsWith('/verify')) return;
+        if (hashAtVerify !== 'unset') return;
+        hashAtVerify = store.get(nonce)?.payment_hash ?? null;
+      },
+    },
+  });
+  assert.equal(ok.hits.verify, 1, JSON.stringify(ok.decision));
+  assert.equal(hashAtVerify, null);
+  const bound = ok.store.replayRecord(nonce) || ok.store.get(nonce);
+  assert.ok(bound, JSON.stringify(ok.decision));
+  assert.equal(bound.payment_hash, hash);
+  assert.notEqual(bound.state, 'issued');
+
+  const bad = await attempt({
+    header: fixed,
+    fac: { verify: 'invalid' },
+  });
+  assert.equal(bad.hits.verify, 1, JSON.stringify(bad.decision));
+  const left = bad.store.get(bad.nonce);
+  assert.equal(left.state, 'issued', JSON.stringify(bad.decision));
+  assert.equal(left.payment_hash ?? null, null);
+});
+
 test('a bad signature does not keep the claim hash, and the payer still gets the handle', async () => {
   const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
   const store = new ChallengeStore();
