@@ -19,7 +19,7 @@ import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import { findLink, findSecret } from './board-posts.js';
-import { terminalHold, terminalStampHold } from './hold-handle.js';
+import { collectedStampHold, terminalHold, terminalStampHold } from './hold-handle.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
 import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
 import { buildFulfillmentEnvelope, outputCommitmentOf } from './fulfillment-receipt.js';
@@ -223,7 +223,7 @@ async function collectStamp(ensureStamp) {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'board job stamp failed');
-    return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
     return {
@@ -231,8 +231,9 @@ async function collectStamp(ensureStamp) {
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
       message: stamp?.message
-        || (stamp?.pending_id || stamp?.outcome === 'refund_owed' ? 'Do not pay again.' : null)
-        || (stamp?.code ? undefined : 'Board stamp is $0.002 USDC (2000 atomic).'),
+        || (stamp?.pending_id || stamp?.outcome === 'refund_owed'
+          ? 'Do not pay again.'
+          : 'Board stamp is $0.002 USDC (2000 atomic).'),
       challenge: stamp?.challenge || null,
       ...(stamp?.code ? { code: stamp.code } : {}),
       ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),

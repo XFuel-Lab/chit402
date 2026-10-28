@@ -20,6 +20,7 @@ import { ethers } from 'ethers';
 import logger from './logger.js';
 import config from './config.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { collectedStampHold } from './hold-handle.js';
 import { parseNanoIngest, verifyNanoSend } from './nano-rail.js';
 import { buildVerifyUrl, canonicalSignedClaims, networkFromPaymentRef, safeExplorerUrl } from './receipt.js';
 import { claimIdOf } from './claim-id.js';
@@ -1024,15 +1025,28 @@ export async function ingestForeignX402(body = {}, {
   const stamp = await collectIngestStamp(ensureStamp);
   if (!stamp.ok) return stamp;
 
+  const stampRef = stamp.settlement?.paymentRef ? String(stamp.settlement.paymentRef) : '';
+  const afterStamp = (status, error, code, message) => {
+    if (!stampRef) {
+      return { ok: false, status, error, ...(code ? { code } : {}), ...(message ? { message } : {}) };
+    }
+    const held = collectedStampHold(code || error, stampRef, { publicBaseUrl: baseUrl || '' });
+    return {
+      ok: false,
+      status: held.status,
+      error,
+      code: code || held.code,
+      message: 'Do not pay again.',
+      ...(held.pending_id ? { pending_id: held.pending_id } : {}),
+      ...(held.verify_url ? { verify_url: held.verify_url } : {}),
+      ...(held.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+    };
+  };
+
   // Verify the payment on-chain — FAIL CLOSED. Dedupe runs only after the
   // on-chain payer is bound to this agent, so a stranger cannot squat the ref.
   if (!verify || typeof verify !== 'function') {
-    return {
-      ok: false,
-      status: 502,
-      error: 'verify_unavailable',
-      message: 'Payment verification is not configured — cannot ingest without on-chain verify',
-    };
+    return afterStamp(502, 'verify_unavailable', 'verify_unavailable', 'Payment verification is not configured — cannot ingest without on-chain verify');
   }
 
   let verification;
@@ -1047,54 +1061,24 @@ export async function ingestForeignX402(body = {}, {
     });
   } catch (err) {
     logger.warn({ err: err.message }, 'foreign-x402: verification threw — rejecting (fail closed)');
-    return {
-      ok: false,
-      status: 502,
-      error: 'verify_failed',
-      code: 'verify_failed',
-      message: 'Payment verification failed',
-    };
+    return afterStamp(502, 'verify_failed', 'verify_failed', 'Payment verification failed');
   }
 
   if (!verification || verification.valid !== true) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'payment_invalid',
-      code: 'verify_failed',
-      message: 'Payment verification did not confirm',
-    };
+    return afterStamp(400, 'payment_invalid', 'verify_failed', 'Payment verification did not confirm');
   }
 
   const onChainPayer = verification.payer || verification.from || null;
   if (!onChainPayer) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'payer_not_bound',
-      code: 'payer_not_bound',
-      message: 'payer_not_bound',
-    };
+    return afterStamp(403, 'payer_not_bound', 'payer_not_bound', 'payer_not_bound');
   }
   if (paymentResponse.payer && !sameEvmAddress(paymentResponse.payer, onChainPayer) && paymentResponse.payer !== onChainPayer) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'payer_mismatch',
-      code: 'payer_mismatch',
-      message: 'payer_mismatch',
-    };
+    return afterStamp(403, 'payer_mismatch', 'payer_mismatch', 'payer_mismatch');
   }
   if (!payerBoundToAgent(registry, id, onChainPayer)) {
     const proof = body?.owner_proof || body?.ownerProof || null;
     if (!proof) {
-      return {
-        ok: false,
-        status: 403,
-        error: 'payer_not_bound',
-        code: 'payer_not_bound',
-        message: 'payer_not_bound',
-      };
+      return afterStamp(403, 'payer_not_bound', 'payer_not_bound', 'payer_not_bound');
     }
     const proved = await verifyOwnerProof({
       agentId: id,
@@ -1103,13 +1087,7 @@ export async function ingestForeignX402(body = {}, {
       proof,
     });
     if (!proved.ok) {
-      return {
-        ok: false,
-        status: 403,
-        error: proved.code,
-        code: proved.code,
-        message: proved.code,
-      };
+      return afterStamp(403, proved.code, proved.code, proved.code);
     }
   }
 
@@ -1119,32 +1097,17 @@ export async function ingestForeignX402(body = {}, {
       || ledger.findByRef(norm.key)
       || (logKey ? ledger.findByRef(logKey) : null);
     if (existing) {
-      return {
-        ok: false,
-        status: 409,
-        error: 'duplicate_ref',
-        message: 'This payment reference is already in the book',
-      };
+      return afterStamp(409, 'duplicate_ref', 'duplicate_ref', 'This payment reference is already in the book');
     }
   }
 
   if (needsChainAmount) {
     const derived = atomicAmountField(verification.verifiedAmount);
     if (!derived) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'payment_invalid',
-        message: 'upto settlement had no amount on PAYMENT-RESPONSE and the USDC Transfer amount was not read',
-      };
+      return afterStamp(400, 'payment_invalid', 'payment_invalid', 'upto settlement had no amount on PAYMENT-RESPONSE and the USDC Transfer amount was not read');
     }
     if (paymentRequired.max_amount && BigInt(derived) > BigInt(paymentRequired.max_amount)) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'payment_invalid',
-        message: `transferred ${derived} exceeds upto max_amount ${paymentRequired.max_amount}`,
-      };
+      return afterStamp(400, 'payment_invalid', 'payment_invalid', `transferred ${derived} exceeds upto max_amount ${paymentRequired.max_amount}`);
     }
     paymentRequired.amount = derived;
   }
@@ -1167,12 +1130,7 @@ export async function ingestForeignX402(body = {}, {
 
   // Append to ledger — this is the nullification; ledger dedupes by payment.ref
   if (!ledger || typeof ledger.append !== 'function') {
-    return {
-      ok: false,
-      status: 503,
-      error: 'service_unavailable',
-      message: 'Ledger not configured',
-    };
+    return afterStamp(503, 'service_unavailable', 'service_unavailable', 'Ledger not configured');
   }
 
   const appended = await ledger.append(receipt, {
@@ -1183,12 +1141,7 @@ export async function ingestForeignX402(body = {}, {
   });
 
   if (!appended.ok) {
-    return {
-      ok: false,
-      status: 409,
-      error: appended.code || 'append_failed',
-      message: appended.reason,
-    };
+    return afterStamp(409, appended.code || 'append_failed', appended.code || 'append_failed', appended.reason);
   }
   if (logKey && typeof ledger.aliasRef === 'function') ledger.aliasRef(logKey, paymentRef);
 
@@ -1260,12 +1213,8 @@ async function collectIngestStamp(ensureStamp) {
   try {
     stamp = await ensureStamp();
   } catch (err) {
-    return {
-      ok: false,
-      status: 502,
-      error: 'stamp_failed',
-      message: `Stamp collection failed: ${err.message}`,
-    };
+    logger.warn({ err: err.message }, 'ingest stamp failed');
+    return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
     const message = stamp?.message || (stamp?.code ? undefined : STAMP_DUE_MESSAGE);

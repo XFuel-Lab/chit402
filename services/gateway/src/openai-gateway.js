@@ -1896,7 +1896,7 @@ export function inflightHoldDecision(nonce, network = '') {
       ...(terminal ? {} : { retryAfter: 2 }),
     };
   }
-  const net = network || store?.get?.(nonce)?.network || '';
+  const net = store?.get?.(nonce)?.network || network || '';
   const opened = openPostSettleHandle(store, {
     key: settleHoldKey(net, nonce),
     holdClass: 'resolvable',
@@ -1917,7 +1917,7 @@ async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
   if (stored?.timedOut) {
-    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req), config.x402?.network || ''));
+    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req)));
     return true;
   }
   if (!stored?.bytes) {

@@ -362,14 +362,20 @@ export async function settleBoundPayment({
   if (!challenge || (!spent && challenge.state === 'unknown')) {
     if (challenge?.state === 'unknown') {
       const late = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
+      const handle = typeof active.findHoldHandleByKey === 'function'
+        ? active.findHoldHandleByKey(settleHoldKey(challenge.network, nonce))
+        : null;
       const linked = late?.pending_id
-        ? { pending_id: late.pending_id, hold_class: late.hold_class || (late.state === 'mismatch_hold' ? 'terminal' : 'resolvable') }
-        : (typeof active.findHoldHandleByKey === 'function'
-          ? active.findHoldHandleByKey(settleHoldKey(challenge.network, nonce))
-          : null);
+        ? {
+          pending_id: late.pending_id,
+          hold_class: late.hold_class || (late.state === 'mismatch_hold' || late.state === 'expired_unresolved' ? 'terminal' : 'resolvable'),
+          code: late.public_code || handle?.code || null,
+        }
+        : handle;
       if (linked?.pending_id) {
         const terminal = linked.hold_class === 'terminal';
-        return refused(req, terminal ? 'settle_unconfirmed' : 'settle_pending', {
+        const code = linked.code || (terminal ? 'settle_unconfirmed' : 'settle_pending');
+        return refused(req, code, {
           preSettle: false,
           pendingId: linked.pending_id,
           verifyUrl: lateVerifyUrl(cfg, linked.pending_id),
@@ -607,9 +613,21 @@ export async function settleBoundPayment({
     abortServedReceipt(nonceKey);
     if (postSent) {
       logger.warn({ err: err.message }, 'x402: throw after settle');
+      let pendingId = postSentPending;
+      if (!pendingId && nonce) {
+        try {
+          const opened = openPostSettleHandle(active, {
+            key: settleHoldKey(challenge.network, nonce),
+            holdClass: 'resolvable',
+            code: 'settle_unconfirmed',
+            cfg,
+          });
+          pendingId = opened?.pendingId || null;
+        } catch { /* store */ }
+      }
       return refused(req, 'settle_unconfirmed', {
-        pendingId: postSentPending,
-        verifyUrl: lateVerifyUrl(cfg, postSentPending),
+        pendingId,
+        verifyUrl: lateVerifyUrl(cfg, pendingId),
         holdClass: 'resolvable',
         retryAfter: LATE_RETRY_AFTER_SEC,
         network: challenge?.network || null,
@@ -664,10 +682,12 @@ export async function settleBoundPayment({
         const opened = openPostSettleHandle(active, {
           key: settleHoldKey(challenge.network, nonce),
           holdClass: 'resolvable',
+          code: publicReason,
           cfg,
         });
         pendingId = opened?.pendingId || null;
       }
+      if (lateRow && !lateRow.public_code) lateRow.public_code = publicReason;
       return refused(req, publicReason, {
         stage,
         network: challenge.network,
@@ -687,6 +707,7 @@ export async function settleBoundPayment({
             sent: true,
             tx_hint: hint || lateRow.tx_hint || null,
             hold_class: 'resolvable',
+            public_code: lateRow.public_code || publicReason,
           });
         } catch { /* store */ }
       }
@@ -727,11 +748,13 @@ export async function settleBoundPayment({
     if (lateRow && typeof active.casLate === 'function') {
       const next = terminal ? 'mismatch_hold' : 'unknown';
       try {
+        if (!lateRow.public_code) lateRow.public_code = publicReason;
         active.casLate(lateRow.pending_id, ['submitted', 'unknown', 'confirmed'], next, {
           why,
           sent: true,
           tx_hint: hint || lateRow.tx_hint || null,
           hold_class: terminal ? 'terminal' : 'resolvable',
+          public_code: lateRow.public_code,
         });
       } catch { /* store */ }
     }
@@ -744,6 +767,7 @@ export async function settleBoundPayment({
       const opened = openPostSettleHandle(active, {
         key: settleHoldKey(challenge.network, nonce),
         holdClass,
+        code: publicReason,
         cfg,
       });
       pendingId = opened?.pendingId || null;
@@ -863,9 +887,6 @@ export async function settleBoundPayment({
       return deny(opened.reason || 'payment_replayed', 'late_open');
     }
     lateRow = opened.row;
-    if (lateRow?.pending_id && nonce && typeof active.linkHoldHandle === 'function') {
-      try { active.linkHoldHandle(settleHoldKey(challenge.network, nonce), lateRow.pending_id); } catch { /* store */ }
-    }
     try { active.markSubmitted(nonce); } catch { /* store */ }
   }
 
@@ -887,14 +908,9 @@ export async function settleBoundPayment({
   seenTx = settled.transaction || settled.txRef || null;
   postSent = true;
   postSentPending = lateRow?.pending_id || null;
-  if (!postSentPending && nonce) {
-    const opened = openPostSettleHandle(active, {
-      key: settleHoldKey(challenge.network, nonce),
-      holdClass: 'resolvable',
-      cfg,
-    });
-    postSentPending = opened?.pendingId || null;
-  }
+  // Optional observer. Production callers leave it unset. A throw here is the
+  // post-sent catch: the response is a handle, not a bare 402.
+  if (typeof cfg.afterSent === 'function') cfg.afterSent();
   if (lateRow) {
     lateRow.sent = true;
     if (seenTx) lateRow.tx_hint = seenTx;
@@ -1124,6 +1140,15 @@ export async function settleBoundPayment({
         sub: 'late_unmarked',
       });
     }
+  }
+
+  const issuedTaskId = strictTaskId ? taskId : (challenge.taskId || taskId);
+  if (nonce && typeof active.findHoldHandleByKey === 'function' && typeof active.linkHoldHandle === 'function') {
+    try {
+      const key = settleHoldKey(challenge.network, nonce);
+      const existing = active.findHoldHandleByKey(key);
+      if (existing?.pending_id) active.linkHoldHandle(key, { taskId: issuedTaskId });
+    } catch { /* store */ }
   }
 
   return {

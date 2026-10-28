@@ -568,16 +568,24 @@ export class ChallengeStore {
 
   /**
    * One handle per key. A second call returns the first row and does not
-   * allocate another id. The return value has no key and no payment facts.
+   * allocate another id. The only class change is resolvable → terminal.
+   * The first public code stays. The return value has no key and no payment facts.
    */
-  ensureHoldHandle({ key, holdClass } = {}) {
+  ensureHoldHandle({ key, holdClass, code } = {}) {
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) return null;
     if (holdClass !== 'resolvable' && holdClass !== 'terminal') return null;
+    const publicCode = typeof code === 'string' && code ? code : null;
     const existing = this.holdHandles.find((row) => row.key === key);
-    if (existing) return { pending_id: existing.pending_id, hold_class: existing.hold_class };
+    if (existing) {
+      if (existing.hold_class === 'resolvable' && holdClass === 'terminal') {
+        existing.hold_class = 'terminal';
+      }
+      if (!existing.code && publicCode) existing.code = publicCode;
+      return { pending_id: existing.pending_id, hold_class: existing.hold_class, code: existing.code || null };
+    }
     const pending_id = crypto.randomBytes(16).toString('hex');
-    this.holdHandles.push({ pending_id, key, hold_class: holdClass });
-    return { pending_id, hold_class: holdClass };
+    this.holdHandles.push({ pending_id, key, hold_class: holdClass, code: publicCode });
+    return { pending_id, hold_class: holdClass, code: publicCode };
   }
 
   /** Public read. Unknown ids return null. The key is not included. */
@@ -585,29 +593,36 @@ export class ChallengeStore {
     if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return null;
     const row = this.holdHandles.find((item) => item.pending_id === id);
     if (!row) return null;
-    return { pending_id: row.pending_id, hold_class: row.hold_class };
+    return { pending_id: row.pending_id, hold_class: row.hold_class, code: row.code || null };
   }
 
   /**
    * Read-only. Used when a retry meets a nonce already marked unknown.
-   * Returns the id and class only.
+   * Returns the id, class, and the first public code.
    */
   findHoldHandleByKey(key) {
     if (typeof key !== 'string' || !key) return null;
     const row = this.holdHandles.find((item) => item.key === key);
     if (!row) return null;
-    return { pending_id: row.pending_id, hold_class: row.hold_class };
+    return { pending_id: row.pending_id, hold_class: row.hold_class, code: row.code || null };
   }
 
   /**
-   * Point an existing handle at the late row for the same payment.
+   * Point an existing handle at the late row, or at the receipt task id.
    * Does not allocate an id. No-op when the key has no handle yet.
+   * `linked` is a 32-hex late id, or `{ taskId }`.
    */
-  linkHoldHandle(key, linkedPendingId) {
-    if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(String(linkedPendingId || ''))) return null;
+  linkHoldHandle(key, linked) {
     const row = this.holdHandles.find((item) => item.key === key);
     if (!row) return null;
-    row.linked_pending_id = linkedPendingId;
+    if (linked && typeof linked === 'object') {
+      const taskId = typeof linked.taskId === 'string' ? linked.taskId : '';
+      if (!taskId || taskId.length > 200) return null;
+      row.linked_task_id = taskId;
+      return { pending_id: row.pending_id };
+    }
+    if (!/^[0-9a-f]{32}$/.test(String(linked || ''))) return null;
+    row.linked_pending_id = String(linked);
     return { pending_id: row.pending_id };
   }
 
@@ -620,6 +635,7 @@ export class ChallengeStore {
       pending_id: row.pending_id,
       hold_class: row.hold_class,
       linked_pending_id: row.linked_pending_id || null,
+      linked_task_id: row.linked_task_id || null,
     };
   }
 

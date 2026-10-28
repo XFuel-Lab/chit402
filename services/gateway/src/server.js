@@ -3565,19 +3565,26 @@ export async function createApp() {
         : null;
       if (foreignReceipt) return await publishShell(await withBookCoverage(foreignReceipt), null);
 
-      const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
-      if (latePublic) return await publishShell(latePublic, null);
-      const holdPage = holdPageForReceiptId(taskId) || holdPageForReceiptId(rawTaskId);
-      if (holdPage?.page === 'receipt' && holdPage.taskId) {
-        const linked = findLatePublicReceipt(holdPage.taskId);
-        if (linked) return await publishShell(linked, null);
-      } else if (holdPage) {
-        return sendHoldPage(res, wantsJson, holdPage.page);
+      // Only a late- id reads the challenge store. Every other receipt id
+      // keeps the listener lookup and does not lock or rewrite that file.
+      let lookupId = taskId;
+      const lateReceiptId = String(taskId || '').startsWith('late-') || String(rawTaskId || '').startsWith('late-');
+      if (lateReceiptId) {
+        const latePublic = findLatePublicReceipt(taskId) || findLatePublicReceipt(rawTaskId);
+        if (latePublic) return await publishShell(latePublic, null);
+        const holdPage = holdPageForReceiptId(taskId) || holdPageForReceiptId(rawTaskId);
+        if (holdPage?.page === 'receipt' && holdPage.taskId) {
+          const linked = findLatePublicReceipt(holdPage.taskId);
+          if (linked) return await publishShell(linked, null);
+          lookupId = holdPage.taskId;
+        } else if (holdPage) {
+          return sendHoldPage(res, wantsJson, holdPage.page);
+        }
       }
 
       const aiListener = getAIListener();
       // ?tx= may confirm this id. It must not select a different receipt.
-      const task = _findTask(aiListener, taskId);
+      const task = _findTask(aiListener, lookupId);
 
       if (!task) {
         const spendReceipt = spendHoldService?.lookup(taskId) || spendHoldService?.lookup(rawTaskId);
@@ -4852,14 +4859,18 @@ export async function createApp() {
         let paid = 0n;
         try { paid = BigInt(String(decision.settledAmount)); } catch { paid = 0n; }
         if (paid < BigInt(STAMP_FEE_UNITS) || !samePayee(decision.payTo, config.x402.payTo)) {
-          return decisionHoldResult(terminalStampDecision(decision.paymentRef));
+          return terminalStampDecision(decision.paymentRef);
         }
         if (typeof setX402PaymentResponseHeaders === 'function') {
-          await setX402PaymentResponseHeaders(res, {
-            ref: decision.paymentRef,
-            payer: decision.payerWallet || null,
-            resourceUrl: resource,
-          });
+          try {
+            await setX402PaymentResponseHeaders(res, {
+              ref: decision.paymentRef,
+              payer: decision.payerWallet || null,
+              resourceUrl: resource,
+            });
+          } catch (err) {
+            logger.warn({ err: err.message }, 'x402: payment response headers failed after settle');
+          }
         }
         return {
           ok: true,
@@ -5047,13 +5058,17 @@ export async function createApp() {
         const solHouse = config.x402.solana?.payTo;
         const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
         if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
-          return decisionHoldResult(terminalStampDecision(decision.paymentRef));
+          return terminalStampDecision(decision.paymentRef);
         }
-        await setX402PaymentResponseHeaders(res, {
-          ref: decision.paymentRef,
-          payer: decision.payerWallet || null,
-          resourceUrl: resource,
-        });
+        try {
+          await setX402PaymentResponseHeaders(res, {
+            ref: decision.paymentRef,
+            payer: decision.payerWallet || null,
+            resourceUrl: resource,
+          });
+        } catch (err) {
+          logger.warn({ err: err.message }, 'x402: payment response headers failed after settle');
+        }
         return {
           ok: true,
           waived: false,

@@ -17,6 +17,7 @@ import path from 'path';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { collectedStampHold } from './hold-handle.js';
 import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 
 export const BOARD_TYPE_ENDPOINT_REPORT = 'endpoint_report';
@@ -797,7 +798,7 @@ async function collectStamp(ensureStamp) {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'board stamp failed');
-    return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
     return {
@@ -805,8 +806,9 @@ async function collectStamp(ensureStamp) {
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
       message: stamp?.message
-        || (stamp?.pending_id || stamp?.outcome === 'refund_owed' ? 'Do not pay again.' : null)
-        || (stamp?.code ? undefined : 'Board stamp is $0.002 USDC (2000 atomic), paid by the poster. Prepaid budget is not debited.'),
+        || (stamp?.pending_id || stamp?.outcome === 'refund_owed'
+          ? 'Do not pay again.'
+          : 'Board stamp is $0.002 USDC (2000 atomic), paid by the poster. Prepaid budget is not debited.'),
       challenge: stamp?.challenge || null,
       ...(stamp?.code ? { code: stamp.code } : {}),
       ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),
