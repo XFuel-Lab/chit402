@@ -1573,6 +1573,14 @@ test('a third party who knows the nonce cannot read or upgrade the hold', async 
     publicBaseUrl: 'http://127.0.0.1',
   });
   assert.equal(stolen, null);
+  const otherHash = crypto.createHash('sha256').update(paymentHeader(other), 'utf8').digest('hex');
+  const forced = store.ensureHoldHandle({
+    key: settleHoldKey('solana', nonce),
+    holdClass: 'terminal',
+    code: 'stamp_payment_required',
+    paymentHash: otherHash,
+  });
+  assert.equal(forced, null);
   assert.equal(store.holdHandles.find((row) => row.pending_id === opened.pending_id).hold_class, 'resolvable');
   assert.equal(store.holdHandles.length, 1);
 
@@ -1604,6 +1612,92 @@ test('a third party who knows the nonce cannot read or upgrade the hold', async 
   assert.equal(unclaimed, null);
   assert.equal(store.holdHandles.some((item) => item.key === settleHoldKey('base', fresh)), false);
   assert.equal(store.holdHandles.length, 1);
+});
+
+test('a third party cannot create or link a hold before the payer has a row', async () => {
+  const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
+  const store = new ChallengeStore();
+  const fixed = { validBefore: '1893456000' };
+  const header = paymentHeader(fixed);
+  const otherHeader = paymentHeader({ ...fixed, signature: '0x' + '22'.repeat(65) });
+  const paymentHash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+  const otherHash = crypto.createHash('sha256').update(otherHeader, 'utf8').digest('hex');
+  const nonce = '0x' + '66'.repeat(32);
+  store.put(nonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'issued',
+  });
+  const claimed = store.claim(nonce, 'payer', 60_000, paymentHash);
+  assert.equal(claimed.ok, true);
+  assert.equal(claimed.challenge.payment_hash, paymentHash);
+  assert.equal(store.markSubmitted(nonce), true);
+  assert.equal(store.holdHandles.length, 0);
+
+  const stolen = presentedStampHold('solana', nonce, { paymentHeader: otherHeader, store });
+  assert.equal(stolen, null);
+  assert.equal(store.holdHandles.length, 0);
+
+  const payer = presentedStampHold('solana', nonce, {
+    paymentHeader: header,
+    store,
+    publicBaseUrl: 'http://127.0.0.1',
+  });
+  assert.equal(payer.status, 409);
+  assert.equal(payer.outcome, 'refund_owed');
+  assert.match(payer.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(store.holdHandles.length, 1);
+  assert.equal(store.holdHandles[0].payment_hash, paymentHash);
+  assert.equal(store.holdHandles[0].key, settleHoldKey('base', nonce));
+
+  const linkStolen = store.linkHoldHandle(settleHoldKey('base', nonce), { taskId: 'task-stolen' }, otherHash);
+  assert.equal(linkStolen, null);
+  assert.equal(store.holdHandles[0].linked_task_id, undefined);
+
+  const linkPayer = store.linkHoldHandle(settleHoldKey('base', nonce), { taskId: 'task-real' }, paymentHash);
+  assert.equal(linkPayer.pending_id, payer.pending_id);
+  assert.equal(store.holdHandles[0].linked_task_id, 'task-real');
+});
+
+test('a store outage during a stamp throw is the 409 fallback', async () => {
+  const registry = new AgentRegistry();
+  const identity = registry.allocate({ taskId: 'seat' });
+  registry.bindWallet(identity.agent_id, { agentWallet: PAYER });
+  const boom = { isSpent() { throw new Error('lock timeout'); } };
+  setActiveChallengeStore(boom);
+  try {
+    const result = await ingestForeignX402({
+      payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+      payment_response: { tx: '0x' + 'e1'.repeat(32), payer: PAYER, network: 'base' },
+      session: identity.session,
+    }, {
+      ledger: new UsageSettledLedger(),
+      registry,
+      agentId: identity.agent_id,
+      session: identity.session,
+      verify: async () => ({ valid: true, payer: PAYER }),
+      ensureStamp: Object.assign(async () => { throw new Error('stamp'); }, {
+        stampAttempt: {
+          presented: true,
+          network: 'base',
+          nonce: '0x' + '99'.repeat(32),
+          baseUrl: 'http://127.0.0.1',
+          paymentHeader: 'present',
+        },
+      }),
+    });
+    assert.equal(result.status, 409, JSON.stringify(result));
+    assert.equal(result.pending_id, undefined);
+    assert.equal(result.outcome, undefined);
+    assert.match(result.message, /Do not pay again/);
+  } finally {
+    setActiveChallengeStore(null);
+  }
 });
 
 test('a capped release then underpaid upgrades the same handle to refund owed', async () => {
