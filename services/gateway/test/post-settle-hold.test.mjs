@@ -301,8 +301,9 @@ test('S-B2: a Solana transport hold returns an unguessable handle', async () => 
 test('paid replay in flight is 202, idempotent, and does not say could not be settled', () => {
   const store = new ChallengeStore();
   setActiveChallengeStore(store);
-  const first = inflightHoldDecision('nonce-replay-1');
-  const second = inflightHoldDecision('nonce-replay-1');
+  const header = 'inflight-replay-header';
+  const first = inflightHoldDecision('nonce-replay-1', '', header);
+  const second = inflightHoldDecision('nonce-replay-1', '', header);
   assert.equal(first.pendingId, second.pendingId);
   assert.equal(store.holdHandles.length, 1);
   const payload = openAiFailurePayload(first);
@@ -1075,12 +1076,15 @@ test('a Solana in-flight replay reuses the payment network handle', async () => 
     state: 'issued',
   });
   const { settleHoldKey } = await import('../src/hold-handle.js');
+  const { paymentHeaderDigest } = await import('../src/hold-handle.js');
+  const inflightHeader = 'solana-inflight-header';
   const opened = store.ensureHoldHandle({
     key: settleHoldKey('solana', nonce),
     holdClass: 'resolvable',
     code: 'settle_failed',
+    paymentHash: paymentHeaderDigest(inflightHeader),
   });
-  const again = inflightHoldDecision(nonce, 'base');
+  const again = inflightHoldDecision(nonce, 'base', inflightHeader);
   assert.equal(again.pendingId, opened.pending_id);
   assert.equal(store.holdHandles.length, 1);
 });
@@ -1477,6 +1481,28 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
   assert.match(flagged.message, /Do not pay again/);
 });
 
+test('a hold with no stored hash is not returned on a later read', () => {
+  const store = new ChallengeStore();
+  const key = `settle:base:0x${'12'.repeat(32)}`;
+  const opened = store.ensureHoldHandle({
+    key,
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+  });
+  assert.match(opened.pending_id, /^[0-9a-f]{32}$/);
+  const again = store.ensureHoldHandle({
+    key,
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+    paymentHash: 'ab'.repeat(32),
+  });
+  assert.equal(again, null);
+  const bare = store.ensureHoldHandle({ key, holdClass: 'resolvable' });
+  assert.equal(bare, null);
+  assert.equal(store.holdHandles[0].hold_class, 'resolvable');
+  assert.equal(store.getHoldHandle(opened.pending_id).pending_id, opened.pending_id);
+});
+
 test('a third party who knows the nonce cannot read or upgrade the hold', async () => {
   const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
   const store = new ChallengeStore();
@@ -1614,6 +1640,50 @@ test('a third party who knows the nonce cannot read or upgrade the hold', async 
   assert.equal(store.holdHandles.length, 1);
 });
 
+test('a bad signature does not keep the claim hash, and the payer still gets the handle', async () => {
+  const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
+  const store = new ChallengeStore();
+  const nonce = '0x' + '77'.repeat(32);
+  const badHeader = 'bad-signature-header';
+  const goodHeader = 'payer-signature-header';
+  const badHash = crypto.createHash('sha256').update(badHeader, 'utf8').digest('hex');
+  const goodHash = crypto.createHash('sha256').update(goodHeader, 'utf8').digest('hex');
+  store.put(nonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'issued',
+  });
+  const squat = store.claim(nonce, 'stranger', 60_000, badHash);
+  assert.equal(squat.ok, true);
+  assert.equal(store.get(nonce).payment_hash ?? null, null);
+  assert.equal(store.noteVerifiedPayment(nonce, badHash), true);
+  assert.equal(store.release(nonce, 'stranger'), true);
+  assert.equal(store.get(nonce).state, 'issued');
+  assert.equal(store.get(nonce).payment_hash ?? null, null);
+  assert.equal(store.claim(nonce, 'payer').ok, true);
+  assert.equal(store.noteVerifiedPayment(nonce, goodHash), true);
+  assert.equal(store.get(nonce).payment_hash, goodHash);
+  assert.equal(store.markSubmitted(nonce), true);
+  const stolen = presentedStampHold('base', nonce, { paymentHeader: badHeader, store });
+  assert.equal(stolen, null);
+  assert.equal(store.holdHandles.length, 0);
+  const held = presentedStampHold('base', nonce, {
+    paymentHeader: goodHeader,
+    store,
+    publicBaseUrl: 'http://127.0.0.1',
+  });
+  assert.equal(held.status, 409);
+  assert.equal(held.outcome, 'refund_owed');
+  assert.match(held.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(store.holdHandles[0].payment_hash, goodHash);
+  assert.equal(store.holdHandles[0].key, settleHoldKey('base', nonce));
+});
+
 test('a third party cannot create or link a hold before the payer has a row', async () => {
   const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
   const store = new ChallengeStore();
@@ -1635,7 +1705,8 @@ test('a third party cannot create or link a hold before the payer has a row', as
   });
   const claimed = store.claim(nonce, 'payer', 60_000, paymentHash);
   assert.equal(claimed.ok, true);
-  assert.equal(claimed.challenge.payment_hash, paymentHash);
+  assert.equal(claimed.challenge.payment_hash ?? null, null);
+  assert.equal(store.noteVerifiedPayment(nonce, paymentHash), true);
   assert.equal(store.markSubmitted(nonce), true);
   assert.equal(store.holdHandles.length, 0);
 

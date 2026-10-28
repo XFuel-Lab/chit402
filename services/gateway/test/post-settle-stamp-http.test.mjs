@@ -4,6 +4,7 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { Wallet } from 'ethers';
 
@@ -309,6 +310,97 @@ test('a thrown stamp is 402 with no payment header and 409 once a header was sen
       assert.match(fallbackBody.message, /Do not pay again/, call.name);
       assert.equal(fallback.headers.get('retry-after'), null, call.name);
       assert.notEqual(fallbackBody.error, 'stamp_failed', call.name);
+    }
+  } finally {
+    delete process.env.X402_STAMP_THROW;
+  }
+});
+
+test('a claimed nonce returns a handle only for the payment that claimed it', async () => {
+  const seat = await registerPaid();
+  const { challengeStore } = await import('../src/x402-adapter.js');
+  const { getActiveChallengeStore } = await import('../src/x402-durable-store.js');
+  const store = getActiveChallengeStore() || challengeStore;
+  const deadline = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+  const calls = [
+    {
+      name: 'ingest',
+      url: `${base}/v1/agents/${seat.agent_id}/book/ingest`,
+      body: {
+        session: seat.session,
+        payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+        payment_response: { tx: '0x' + 'ec'.repeat(32), payer: seat.signer.address, network: 'base' },
+      },
+    },
+    {
+      name: 'board-jobs',
+      url: `${base}/v1/board/jobs`,
+      body: { session: seat.session, text: 'ship the receipt page', budget: '1000', deadline },
+    },
+    {
+      name: 'board-posts',
+      url: `${base}/v1/board/posts`,
+      body: { session: seat.session, endpoint: 'https://shop.example/v1', outcome: 'success', text: 'answered' },
+    },
+  ];
+  process.env.X402_STAMP_THROW = '1';
+  try {
+    for (const [index, call] of calls.entries()) {
+      const nonce = `0x${String(index + 1).padStart(2, '0')}${'71'.repeat(31)}`;
+      const header = paymentHeader({ validBefore: '1893456000', from: seat.signer.address, nonce });
+      const other = paymentHeader({
+        validBefore: '1893456000',
+        from: seat.signer.address,
+        nonce,
+        signature: '0x' + '22'.repeat(65),
+      });
+      const paymentHash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+      store.put(nonce, {
+        resource: 'https://shop.example/v1',
+        amount: '2000',
+        payTo: HOUSE,
+        network: 'base',
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 120000,
+        state: 'issued',
+      });
+      const claimed = store.claim(nonce, 'stamp-http', 60_000, paymentHash);
+      assert.equal(claimed.ok, true, call.name);
+      assert.equal(store.noteVerifiedPayment(nonce, paymentHash), true, call.name);
+      assert.equal(store.markSubmitted(nonce), true, call.name);
+
+      const stranger = await fetch(call.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-payment': other,
+          'x-payment-nonce': nonce,
+        },
+        body: JSON.stringify(call.body),
+      });
+      const strangerBody = await stranger.json();
+      assert.equal(stranger.status, 409, `${call.name} ${JSON.stringify(strangerBody)}`);
+      assert.equal(strangerBody.pending_id, undefined, call.name);
+      assert.equal(strangerBody.status, undefined, call.name);
+      assert.match(strangerBody.message, /Do not pay again/, call.name);
+
+      const payer = await fetch(call.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-payment': header,
+          'x-payment-nonce': nonce,
+        },
+        body: JSON.stringify(call.body),
+      });
+      const payerBody = await payer.json();
+      assert.equal(payer.status, 409, `${call.name} ${JSON.stringify(payerBody)}`);
+      assert.match(payerBody.pending_id, /^[0-9a-f]{32}$/, call.name);
+      assert.match(payerBody.verify_url, /\/receipt\/late-[0-9a-f]{32}$/, call.name);
+      assert.equal(payerBody.status, 'refund_owed', call.name);
+      assert.match(payerBody.message, /Do not pay again/, call.name);
+      assert.equal(payer.headers.get('retry-after'), null, call.name);
     }
   } finally {
     delete process.env.X402_STAMP_THROW;
