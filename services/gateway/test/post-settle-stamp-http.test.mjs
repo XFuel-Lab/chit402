@@ -204,3 +204,112 @@ test('a header failure after a settled register stamp still returns the agent', 
     delete process.env.X402_HEADER_THROW;
   }
 });
+
+async function registerPaid() {
+  delete process.env.X402_STAMP_THROW;
+  delete process.env.X402_HEADER_THROW;
+  config.x402.payTo = HOUSE;
+  shiftPayee = false;
+  chainAmount = '2000';
+  const signer = Wallet.createRandom();
+  facPayer = signer.address;
+  const open = await fetch(`${base}/v1/agents/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(await signedBody(signer)),
+  });
+  const challenge = await open.json();
+  assert.equal(open.status, 402, JSON.stringify(challenge));
+  const nonce = challenge.accepts?.[0]?.extra?.nonce;
+  assert.ok(nonce, JSON.stringify(challenge));
+  const paid = await fetch(`${base}/v1/agents/register`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'payment-signature': paidHeader(signer.address, nonce),
+      'x-payment-nonce': nonce,
+    },
+    body: JSON.stringify(await signedBody(signer)),
+  });
+  const body = await paid.json();
+  assert.equal(paid.status, 200, JSON.stringify(body));
+  assert.ok(body.agent_id, JSON.stringify(body));
+  assert.ok(body.session, JSON.stringify(body));
+  return { signer, agent_id: body.agent_id, session: body.session };
+}
+
+function stampHeaders(mode, nonce) {
+  const headers = { 'content-type': 'application/json' };
+  if (mode !== 'none') headers['x-payment'] = 'present';
+  if (nonce) headers['x-payment-nonce'] = nonce;
+  return headers;
+}
+
+test('a thrown stamp is 402 with no payment header and 409 once a header was sent', async () => {
+  const seat = await registerPaid();
+  const deadline = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+  const calls = [
+    {
+      name: 'ingest',
+      url: `${base}/v1/agents/${seat.agent_id}/book/ingest`,
+      body: {
+        session: seat.session,
+        payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+        payment_response: { tx: '0x' + 'eb'.repeat(32), payer: seat.signer.address, network: 'base' },
+      },
+    },
+    {
+      name: 'board-jobs',
+      url: `${base}/v1/board/jobs`,
+      body: { session: seat.session, text: 'ship the receipt page', budget: '1000', deadline },
+    },
+    {
+      name: 'board-posts',
+      url: `${base}/v1/board/posts`,
+      body: { session: seat.session, endpoint: 'https://shop.example/v1', outcome: 'success', text: 'answered' },
+    },
+  ];
+  process.env.X402_STAMP_THROW = '1';
+  try {
+    for (const call of calls) {
+      const bare = await fetch(call.url, {
+        method: 'POST',
+        headers: stampHeaders('none'),
+        body: JSON.stringify(call.body),
+      });
+      const bareBody = await bare.json();
+      assert.equal(bare.status, 402, `${call.name} ${JSON.stringify(bareBody)}`);
+      assert.equal(bareBody.pending_id, undefined, call.name);
+      assert.equal(bare.headers.get('retry-after'), null, call.name);
+
+      const named = `http-${call.name}-nonce`;
+      const held = await fetch(call.url, {
+        method: 'POST',
+        headers: stampHeaders('header', named),
+        body: JSON.stringify(call.body),
+      });
+      const heldBody = await held.json();
+      assert.equal(held.status, 409, `${call.name} ${JSON.stringify(heldBody)}`);
+      assert.match(heldBody.pending_id, /^[0-9a-f]{32}$/, call.name);
+      assert.match(heldBody.verify_url, /\/receipt\/late-[0-9a-f]{32}$/, call.name);
+      assert.match(heldBody.message, /Do not pay again/, call.name);
+      assert.equal(held.headers.get('retry-after'), null, call.name);
+      assert.equal(heldBody.status, 'refund_owed', call.name);
+
+      const fallback = await fetch(call.url, {
+        method: 'POST',
+        headers: stampHeaders('header'),
+        body: JSON.stringify(call.body),
+      });
+      const fallbackBody = await fallback.json();
+      assert.equal(fallback.status, 409, `${call.name} fallback ${JSON.stringify(fallbackBody)}`);
+      assert.equal(fallbackBody.error, 'stamp_payment_required', call.name);
+      assert.equal(fallbackBody.pending_id, undefined, `${call.name} fallback must miss the nonce handle`);
+      assert.match(fallbackBody.message, /Do not pay again/, call.name);
+      assert.equal(fallback.headers.get('retry-after'), null, call.name);
+      assert.notEqual(fallbackBody.error, 'stamp_failed', call.name);
+    }
+  } finally {
+    delete process.env.X402_STAMP_THROW;
+  }
+});

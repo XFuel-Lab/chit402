@@ -1399,7 +1399,7 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
   assert.equal(bare.status, 402);
 
   const presented = async () => { throw new Error('settled maybe'); };
-  presented.stampAttempt = { presented: true };
+  presented.stampAttempt = { presented: true, network: 'base', nonce: 'unit-ingest-nonce', baseUrl: 'http://127.0.0.1' };
   const held = await ingestForeignX402({
     payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
     payment_response: { tx: '0x' + 'e8'.repeat(32), payer: PAYER, network: 'base' },
@@ -1413,26 +1413,29 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
     ensureStamp: presented,
   });
   assert.equal(held.status, 409);
+  assert.match(held.pending_id, /^[0-9a-f]{32}$/);
   assert.match(held.message, /Do not pay again/);
 
   const jobStamp = async () => { throw new Error('job'); };
-  jobStamp.stampAttempt = { presented: true };
+  jobStamp.stampAttempt = { presented: true, network: 'base', nonce: 'unit-job-nonce', baseUrl: 'http://127.0.0.1' };
   const job = await createBoardJob({
     text: 'ship the receipt',
     budget: '1000',
     deadline: new Date(Date.now() + 86400000).toISOString(),
   }, { actor: { agent_id: 1 }, ensureStamp: jobStamp, jobs: {} });
   assert.equal(job.status, 409);
+  assert.match(job.pending_id, /^[0-9a-f]{32}$/);
   assert.match(job.message, /Do not pay again/);
 
   const postStamp = async () => { throw new Error('post'); };
-  postStamp.stampAttempt = { presented: true };
+  postStamp.stampAttempt = { presented: true, network: 'base', nonce: 'unit-post-nonce', baseUrl: 'http://127.0.0.1' };
   const flagged = await flagBoardPost('p1', {
     posts: { get: () => ({ id: 'p1', status: 'live', flags: [], receipt_key: 'r' }) },
     actor: { agent_id: 1 },
     ensureStamp: postStamp,
   });
   assert.equal(flagged.status, 409);
+  assert.match(flagged.pending_id, /^[0-9a-f]{32}$/);
   assert.match(flagged.message, /Do not pay again/);
 });
 
