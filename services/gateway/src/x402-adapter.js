@@ -338,6 +338,13 @@ function nonceVariants(nonce) {
   return [trimmed, '0x' + trimmed.padStart(64, '0')];
 }
 
+/** Same SHA-256 hex the settle path stores. A different header does not match. */
+function holdPaymentMatches(stored, presented) {
+  if (typeof stored !== 'string' || typeof presented !== 'string') return false;
+  if (stored.length !== presented.length || stored.length === 0) return false;
+  return crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(presented));
+}
+
 export class ChallengeStore {
   constructor({ ttlMs = DEFAULT_TTL_MS } = {}) {
     this.ttlMs = ttlMs;
@@ -569,23 +576,35 @@ export class ChallengeStore {
 
   /**
    * One handle per key. A second call returns the first row and does not
-   * allocate another id. The only class change is resolvable → terminal.
-   * The first public code stays. The return value has no key and no payment facts.
+   * allocate another id. The only class change is resolvable → terminal,
+   * and only for the payment hash stored when the row was created.
+   * A different payment gets null and the class stays. The return value
+   * has no key and no payment facts.
    */
-  ensureHoldHandle({ key, holdClass, code } = {}) {
+  ensureHoldHandle({ key, holdClass, code, paymentHash } = {}) {
     if (typeof key !== 'string' || key.length < 8 || key.length > 200) return null;
     if (holdClass !== 'resolvable' && holdClass !== 'terminal') return null;
     const publicCode = typeof code === 'string' && code ? code : null;
+    const presented = typeof paymentHash === 'string' && paymentHash ? paymentHash : null;
     const existing = this.holdHandles.find((row) => row.key === key);
     if (existing) {
       if (existing.hold_class === 'resolvable' && holdClass === 'terminal') {
+        if (!holdPaymentMatches(existing.payment_hash, presented)) return null;
         existing.hold_class = 'terminal';
         if (publicCode) existing.code = publicCode;
+      } else if (existing.payment_hash && !holdPaymentMatches(existing.payment_hash, presented)) {
+        return null;
       } else if (!existing.code && publicCode) existing.code = publicCode;
       return { pending_id: existing.pending_id, hold_class: existing.hold_class, code: existing.code || null };
     }
     const pending_id = crypto.randomBytes(16).toString('hex');
-    this.holdHandles.push({ pending_id, key, hold_class: holdClass, code: publicCode });
+    this.holdHandles.push({
+      pending_id,
+      key,
+      hold_class: holdClass,
+      code: publicCode,
+      payment_hash: presented,
+    });
     return { pending_id, hold_class: holdClass, code: publicCode };
   }
 
@@ -599,13 +618,20 @@ export class ChallengeStore {
 
   /**
    * Read-only. Used when a retry meets a nonce already marked unknown.
-   * Returns the id, class, and the first public code.
+   * Returns the id, class, the first public code, and the payment hash
+   * so the retry can match the payment that created the row. The hash
+   * is not a public page field.
    */
   findHoldHandleByKey(key) {
     if (typeof key !== 'string' || !key) return null;
     const row = this.holdHandles.find((item) => item.key === key);
     if (!row) return null;
-    return { pending_id: row.pending_id, hold_class: row.hold_class, code: row.code || null };
+    return {
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      code: row.code || null,
+      payment_hash: row.payment_hash || null,
+    };
   }
 
   /**

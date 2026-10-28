@@ -225,7 +225,10 @@ async function collectStamp(ensureStamp) {
     logger.warn({ err: err.message }, 'board job stamp failed');
     const attempt = ensureStamp?.stampAttempt;
     if (!attempt?.presented) return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
-    const opened = presentedStampHold(attempt.network, attempt.nonce, { publicBaseUrl: attempt.baseUrl || '' });
+    const opened = presentedStampHold(attempt.network, attempt.nonce, {
+      publicBaseUrl: attempt.baseUrl || '',
+      paymentHeader: attempt.paymentHeader || '',
+    });
     if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, {});
   }

@@ -130,6 +130,7 @@ export function withStampAttempt(fn, req, baseUrl = '') {
     network: config.x402?.network || 'base',
     nonce: extractPaymentNonce(req) || '',
     baseUrl: baseUrl || '',
+    paymentHeader: typeof header === 'string' ? header : '',
   };
   return fn;
 }

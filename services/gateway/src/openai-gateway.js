@@ -54,7 +54,7 @@ import {
   takeServedReceipt,
 } from './paid-response-replay.js';
 import { clientPaymentCode, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter } from './x402-flags.js';
-import { openPostSettleHandle, settleHoldKey } from './hold-handle.js';
+import { openPostSettleHandle, paymentHeaderDigest, settleHoldKey } from './hold-handle.js';
 import { lateVerifyUrl } from './late-issue.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 import { challengeStore, setX402PaymentResponseHeaders } from './x402-adapter.js';
@@ -1879,7 +1879,7 @@ function sendOpenAiPaymentResult(res, decision) {
  * nonce when one exists, otherwise settle:<network>:<nonce>. It does not
  * mint an inflight-only id.
  */
-export function inflightHoldDecision(nonce, network = '') {
+export function inflightHoldDecision(nonce, network = '', paymentHeader = '') {
   const cfg = { publicBaseUrl: config.service?.publicBaseUrl || '' };
   const store = getActiveChallengeStore() || challengeStore;
   const late = nonce && typeof store?.findLate === 'function' ? store.findLate({ nonce }) : null;
@@ -1901,6 +1901,7 @@ export function inflightHoldDecision(nonce, network = '') {
     key: settleHoldKey(net, nonce),
     holdClass: 'resolvable',
     cfg,
+    paymentHash: paymentHeaderDigest(paymentHeader),
   });
   return {
     code: 'payment_in_flight',
@@ -1917,7 +1918,7 @@ async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
   if (stored?.timedOut) {
-    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req)));
+    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req), '', extractPaymentHeader(req).header || ''));
     return true;
   }
   if (!stored?.bytes) {

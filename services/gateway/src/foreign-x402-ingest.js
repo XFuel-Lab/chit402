@@ -1231,7 +1231,10 @@ async function collectIngestStamp(ensureStamp) {
     if (!attempt?.presented) {
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'stamp_payment_required', message: STAMP_DUE_MESSAGE };
     }
-    const opened = presentedStampHold(attempt.network, attempt.nonce, { publicBaseUrl: attempt.baseUrl || '' });
+    const opened = presentedStampHold(attempt.network, attempt.nonce, {
+      publicBaseUrl: attempt.baseUrl || '',
+      paymentHeader: attempt.paymentHeader || '',
+    });
     if (opened) return opened;
     return collectedStampHold('stamp_payment_required', null, {});
   }

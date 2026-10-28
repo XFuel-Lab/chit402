@@ -669,7 +669,10 @@ async function registerPaidStamp(body, deps) {
   });
   if (!control.ok) return control;
 
-  const stampCfg = { publicBaseUrl: deps.publicBaseUrl || '' };
+  const stampCfg = {
+    publicBaseUrl: deps.publicBaseUrl || '',
+    paymentHeader: deps.stampPaymentHeader || '',
+  };
   let stamp;
   try {
     stamp = await ensureRegisterStamp();
@@ -958,6 +961,7 @@ export async function registerAgent(body = {}, {
   stampPresented = false,
   stampNetwork = '',
   stampNonce = '',
+  stampPaymentHeader = '',
 } = {}) {
   const taskId = body.task_id || body.taskId || body.receipt_id;
   const agentWallet = body.agentWallet || body.agent_wallet;
@@ -982,6 +986,7 @@ export async function registerAgent(body = {}, {
       stampPresented,
       stampNetwork,
       stampNonce,
+      stampPaymentHeader,
     });
   }
   if (typeof verify !== 'function' || typeof loadReceipt !== 'function') {

@@ -362,17 +362,20 @@ export async function settleBoundPayment({
     : active.get(nonce);
   if (!challenge || (!spent && challenge.state === 'unknown')) {
     if (challenge?.state === 'unknown') {
+      const got = headerDigest(paymentHeader);
+      const samePayment = (stored) => typeof stored === 'string' && !!got && digestEqual(stored, got);
       const late = typeof active.findLate === 'function' ? active.findLate({ nonce }) : null;
       const handle = typeof active.findHoldHandleByKey === 'function'
         ? active.findHoldHandleByKey(settleHoldKey(challenge.network, nonce))
         : null;
-      const linked = late?.pending_id
+      const lateLinked = late?.pending_id && samePayment(late.payment_hash)
         ? {
           pending_id: late.pending_id,
           hold_class: late.hold_class || (late.state === 'mismatch_hold' || late.state === 'expired_unresolved' ? 'terminal' : 'resolvable'),
           code: late.public_code || handle?.code || null,
         }
-        : handle;
+        : null;
+      const linked = lateLinked || (handle?.pending_id && samePayment(handle.payment_hash) ? handle : null);
       if (linked?.pending_id) {
         const terminal = linked.hold_class === 'terminal';
         const code = linked.code || (terminal ? 'settle_unconfirmed' : 'settle_pending');
@@ -622,6 +625,7 @@ export async function settleBoundPayment({
             holdClass: 'resolvable',
             code: 'settle_unconfirmed',
             cfg,
+            paymentHash: headerDigest(paymentHeader),
           });
           pendingId = opened?.pendingId || null;
         } catch { /* store */ }
@@ -685,6 +689,7 @@ export async function settleBoundPayment({
           holdClass: 'resolvable',
           code: publicReason,
           cfg,
+          paymentHash: headerDigest(paymentHeader),
         });
         pendingId = opened?.pendingId || null;
       }
@@ -770,6 +775,7 @@ export async function settleBoundPayment({
         holdClass,
         code: publicReason,
         cfg,
+        paymentHash: headerDigest(paymentHeader),
       });
       pendingId = opened?.pendingId || null;
     } else if (pendingId && nonce && typeof active.linkHoldHandle === 'function') {
@@ -959,8 +965,10 @@ export async function settleBoundPayment({
   // F-1: from here /settle has returned sent, so funds have moved. A store
   // read or write that throws goes to hold('local_failure'), which records
   // the pending row and returns its pendingId and verifyUrl, never a bare
-  // replay_store_unavailable. The payment_replayed exits below are the
-  // transfer or authorization that already holds a receipt.
+  // replay_store_unavailable.
+  // Named exception: tx_spent, auth_spent_post, reserve_lost, inflight_tx.
+  // The original payment already has its receipt. These are the replays.
+  // They stay 409 payment_replayed and carry no handle.
   let txSpent;
   try {
     txSpent = active.isTxSpent(norm.key);

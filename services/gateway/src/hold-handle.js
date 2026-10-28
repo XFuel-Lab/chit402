@@ -4,6 +4,7 @@
  * used: that one is guessable and leaks a count. A retry of the same key
  * returns the same row. The public read is the id and the class only.
  */
+import crypto from 'crypto';
 import { lateVerifyUrl } from './late-issue.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
 import { challengeStore } from './x402-adapter.js';
@@ -17,13 +18,13 @@ export function holdStore(store) {
 /**
  * @returns {{ pendingId: string, verifyUrl: string|null }|null}
  */
-export function openPostSettleHandle(store, { key, holdClass, cfg, code } = {}) {
+export function openPostSettleHandle(store, { key, holdClass, cfg, code, paymentHash } = {}) {
   const active = holdStore(store);
   if (!active || typeof active.ensureHoldHandle !== 'function') return null;
   if (holdClass !== 'resolvable' && holdClass !== 'terminal') return null;
   if (typeof key !== 'string' || key.length < 8 || key.length > 200) return null;
   try {
-    const row = active.ensureHoldHandle({ key, holdClass, code });
+    const row = active.ensureHoldHandle({ key, holdClass, code, paymentHash });
     if (!row?.pending_id) return null;
     return {
       pendingId: row.pending_id,
@@ -57,19 +58,44 @@ export function terminalStampHold(paymentRef, cfg) {
   return terminalHold('stamp_underpaid', paymentRef, cfg);
 }
 
+/** SHA-256 hex of the raw payment header. Empty when the header is absent. */
+export function paymentHeaderDigest(header) {
+  if (typeof header !== 'string' || header.length === 0) return null;
+  return crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+}
+
+/**
+ * States that mean this nonce was claimed past issue. An issued challenge
+ * has not been through /settle, so a throw there is not a refund.
+ */
+const CLAIMED_STAMP_STATES = new Set(['submitted', 'unknown', 'spent']);
+
 /**
  * A stamp function threw after the caller had already sent a payment header.
- * The handle is the settle key for that nonce. No nonce is the 409 fallback.
- * Returns null when there is no nonce, so the caller can use the fallback line.
+ * Open or upgrade the settle-key handle only when this nonce was claimed
+ * and the header matches the payment that created the hold. The key uses
+ * the stored challenge network. Anything else returns null so the caller
+ * uses the 409 fallback, with no refund_owed.
  */
-export function presentedStampHold(network, nonce, cfg) {
-  const key = settleHoldKey(network, nonce);
+export function presentedStampHold(network, nonce, cfg = {}) {
+  void network;
+  const active = holdStore(cfg.store);
+  if (!active || !nonce) return null;
+  const spent = typeof active.isSpent === 'function' && active.isSpent(nonce);
+  const challenge = spent
+    ? (typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null)
+    : (typeof active.get === 'function' ? active.get(nonce) : null);
+  if (!challenge || !CLAIMED_STAMP_STATES.has(challenge.state)) return null;
+  const net = challenge.network; // the stored challenge, not the caller's network
+  const key = settleHoldKey(net, nonce);
   if (!key || key.length < 8) return null;
-  const opened = openPostSettleHandle(null, {
+  const presented = cfg.paymentHash || paymentHeaderDigest(cfg.paymentHeader);
+  const opened = openPostSettleHandle(active, {
     key,
     holdClass: 'terminal',
     code: 'stamp_payment_required',
     cfg,
+    paymentHash: presented,
   });
   if (!opened?.pendingId) return null;
   const held = decisionHoldResult({

@@ -4896,6 +4896,7 @@ export async function createApp() {
         stampPresented: !!extractPaymentHeader(req).header,
         stampNetwork: config.x402?.network || 'base',
         stampNonce: extractPaymentNonce(req),
+        stampPaymentHeader: extractPaymentHeader(req).header || '',
       });
       if (!result.ok) {
         if (result.challenge) {
