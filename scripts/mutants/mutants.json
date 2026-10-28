@@ -750,6 +750,26 @@
       "nth": 1,
       "suite": "gw",
       "note": "SHOULD-B store outage stays the 409 fallback"
+    },
+    {
+      "id": "W3_unhashed_read_open",
+      "file": "services/gateway/src/x402-adapter.js",
+      "find": "return null; // missing hash is not a credential",
+      "flags": "",
+      "replace": "/* W3 */",
+      "nth": 1,
+      "suite": "gw",
+      "note": "same-class read fails closed without a stored hash"
+    },
+    {
+      "id": "P8_claim_hash_before_verify",
+      "file": "services/gateway/src/x402-adapter.js",
+      "find": "// payment_hash is set only after the signature verifies",
+      "flags": "",
+      "replace": "if (typeof paymentHash === 'string' && paymentHash) rec.payment_hash = paymentHash;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "SHOULD-C claim hash waits until the signature verifies"
     }
   ]
 }
