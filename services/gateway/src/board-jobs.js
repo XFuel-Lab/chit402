@@ -19,6 +19,7 @@ import { persistFailed } from './persist-error.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import { atomicUnits, canonicalPaidRoute, chainCoversPrice, sameQuotedPrice } from './paid-route.js';
 import { findLink, findSecret } from './board-posts.js';
+import { collectedStampHold, presentedStampHold, terminalHold, terminalStampHold } from './hold-handle.js';
 import { buildReceipt, buildVerifyUrl } from './receipt.js';
 import { jobSpecPreimage, buildPublicPreimages } from './receipt-preimage.js';
 import { buildFulfillmentEnvelope, outputCommitmentOf } from './fulfillment-receipt.js';
@@ -222,15 +223,30 @@ async function collectStamp(ensureStamp) {
     stamp = await ensureStamp();
   } catch (err) {
     logger.warn({ err: err.message }, 'board job stamp failed');
-    return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    const attempt = ensureStamp?.stampAttempt;
+    if (!attempt?.presented) return fail(402, 'stamp_payment_required', 'Board stamp payment failed');
+    const opened = presentedStampHold(attempt.network, attempt.nonce, {
+      publicBaseUrl: attempt.baseUrl || '',
+      paymentHeader: attempt.paymentHeader || '',
+    });
+    if (opened) return opened;
+    return collectedStampHold('stamp_payment_required', null, {});
   }
   if (!stamp || stamp.ok !== true) {
     return {
       ok: false,
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
-      message: stamp?.message || 'Board stamp is $0.002 USDC (2000 atomic).',
+      message: stamp?.message
+        || (stamp?.pending_id || stamp?.outcome === 'refund_owed'
+          ? 'Do not pay again.'
+          : 'Board stamp is $0.002 USDC (2000 atomic).'),
       challenge: stamp?.challenge || null,
+      ...(stamp?.code ? { code: stamp.code } : {}),
+      ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),
+      ...(stamp?.verify_url ? { verify_url: stamp.verify_url } : {}),
+      ...(stamp?.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+      ...(stamp?.retryAfter != null ? { retryAfter: stamp.retryAfter } : {}),
     };
   }
   return { ok: true, waived: stamp.waived === true, settlement: stamp.settlement || null };
@@ -787,9 +803,9 @@ export async function payBoardJob(jobId, deps = {}) {
       };
     }
     const leg = legSettlement(settled.settlement, price, winnerRoute);
-    if (!leg) return fail(402, 'stamp_underpaid', 'Winner leg did not settle the bid price');
+    if (!leg) return terminalStampHold(settled.settlement?.paymentRef, { publicBaseUrl: deps.baseUrl || '' });
     if (leg.payer && leg.payer.toLowerCase() !== String(posterWallet).toLowerCase()) {
-      return fail(402, 'payer_mismatch', 'The job payment must come from the poster wallet');
+      return terminalHold('payer_mismatch', settled.settlement?.paymentRef, { publicBaseUrl: deps.baseUrl || '' });
     }
     job.winner_leg = { ...leg, payee: winnerWallet };
     jobs.update(job);
@@ -838,7 +854,7 @@ export async function payBoardJob(jobId, deps = {}) {
     });
     if (!settled?.ok) return settled;
     const leg = legSettlement(settled.settlement, winnerFee.toString(), feeRoute);
-    if (!leg) return fail(402, 'stamp_underpaid', 'Fee leg did not settle the stamp plus 1%');
+    if (!leg) return terminalStampHold(settled.settlement?.paymentRef, { publicBaseUrl: deps.baseUrl || '' });
     job.fee_leg = { ...leg, payee: chitPayTo };
     jobs.update(job);
   }

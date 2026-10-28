@@ -53,8 +53,11 @@ import {
   notePaidFulfillment,
   takeServedReceipt,
 } from './paid-response-replay.js';
-import { clientPaymentCode, paymentErrorStatus, paymentFailureBody } from './x402-flags.js';
-import { setX402PaymentResponseHeaders } from './x402-adapter.js';
+import { clientPaymentCode, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter } from './x402-flags.js';
+import { openPostSettleHandle, paymentHeaderDigest, settleHoldKey } from './hold-handle.js';
+import { lateVerifyUrl } from './late-issue.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
+import { challengeStore, setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { measureCogs, rateForModel } from './provider-rates.js';
 import { publishedPrice, DEFAULT_FLOOR_UNITS } from './pricing.js';
 import { getFloatManager } from './provider-float.js';
@@ -674,18 +677,9 @@ async function meterV1Request(req, res, {
 
     const code = clientPaymentCode(decision.code || decision.reason);
     logger.warn({ reqId: req.id, code }, 'openai-gateway: x402 payment failed');
-    if (decision.retryAfter) res.set('Retry-After', String(decision.retryAfter));
-    const failure = paymentFailureBody(decision);
-    res.status(paymentErrorStatus(code)).json({
-      error: {
-        message: 'Payment could not be settled',
-        type: 'payment_required',
-        code,
-        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
-        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
-        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
-      },
-    });
+    const shaped = { ...decision, code, reason: code };
+    if (shaped.holdClass !== 'resolvable' && shaped.holdClass !== 'terminal') delete shaped.holdClass;
+    sendOpenAiPaymentResult(res, shaped);
     return { halted: true };
   } catch (err) {
     if (activeHold && spendHolds) {
@@ -1840,19 +1834,91 @@ function sendStoredPaidResponse(res, stored) {
   return res.end(Buffer.from(stored.bytes, 'utf8'));
 }
 
+function heldOpenAiMessage(failure) {
+  if (failure.status === 'refund_owed') return 'Refund owed. Do not pay again.';
+  if (failure.pending_id) return 'Payment is pending. Do not pay again.';
+  return 'Do not pay again.';
+}
+
+function unheldOpenAiMessage() {
+  return 'Payment could not be settled';
+}
+
+export function openAiFailurePayload(decision) {
+  const view = paymentFailureStatus(decision);
+  const failure = paymentFailureBody(decision);
+  const held = decision?.holdClass === 'resolvable'
+    || decision?.holdClass === 'terminal'
+    || typeof decision?.pendingId === 'string' && decision.pendingId.length > 0;
+  const message = held ? heldOpenAiMessage(failure) : unheldOpenAiMessage();
+  return {
+    status: view.status,
+    retryAfter: view.retryAfter,
+    body: {
+      error: {
+        message,
+        type: 'payment_required',
+        code: failure.code,
+        ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
+        ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
+        ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
+        ...(failure.status ? { status: failure.status } : {}),
+      },
+    },
+  };
+}
+
+function sendOpenAiPaymentResult(res, decision) {
+  const payload = openAiFailurePayload(decision);
+  setHoldRetryAfter(res, payload.retryAfter);
+  res.status(payload.status).json(payload.body);
+}
+
+/**
+ * The in-flight replay uses the same handle as hold(): the late row for this
+ * nonce when one exists, otherwise settle:<network>:<nonce>. It does not
+ * mint an inflight-only id.
+ */
+export function inflightHoldDecision(nonce, network = '', paymentHeader = '') {
+  const cfg = { publicBaseUrl: config.service?.publicBaseUrl || '' };
+  const store = getActiveChallengeStore() || challengeStore;
+  const late = nonce && typeof store?.findLate === 'function' ? store.findLate({ nonce }) : null;
+  if (late?.pending_id) {
+    const terminal = late.hold_class === 'terminal'
+      || late.state === 'mismatch_hold'
+      || late.state === 'expired_unresolved';
+    return {
+      code: 'payment_in_flight',
+      reason: 'payment_in_flight',
+      holdClass: terminal ? 'terminal' : 'resolvable',
+      pendingId: late.pending_id,
+      verifyUrl: lateVerifyUrl(cfg, late.pending_id),
+      ...(terminal ? {} : { retryAfter: 2 }),
+    };
+  }
+  const net = store?.get?.(nonce)?.network || network || '';
+  const opened = openPostSettleHandle(store, {
+    key: settleHoldKey(net, nonce),
+    holdClass: 'resolvable',
+    cfg,
+    paymentHash: paymentHeaderDigest(paymentHeader),
+  });
+  return {
+    code: 'payment_in_flight',
+    reason: 'payment_in_flight',
+    holdClass: 'resolvable',
+    pendingId: opened?.pendingId || null,
+    verifyUrl: opened?.verifyUrl || null,
+    retryAfter: 2,
+  };
+}
+
 /** Exact bytes from the first fulfillment. Does not run the handler. */
 async function maybeServePaidReplay(req, res, metering) {
   if (!metering?.payment?.idempotentReplay) return false;
   const stored = await takeServedReceipt(extractPaymentNonce(req));
   if (stored?.timedOut) {
-    res.set('Retry-After', '2');
-    res.status(402).json({
-      error: {
-        message: 'Payment could not be settled',
-        type: 'payment_required',
-        code: 'payment_in_flight',
-      },
-    });
+    sendOpenAiPaymentResult(res, inflightHoldDecision(extractPaymentNonce(req), '', extractPaymentHeader(req).header || ''));
     return true;
   }
   if (!stored?.bytes) {

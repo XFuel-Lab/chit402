@@ -3,7 +3,7 @@
  * This client does not pay the stamp; a 402 is returned for the caller to settle.
  */
 import type { McpConfig } from './config.js';
-import { ok, fail } from './format.js';
+import { ok, fail, describeHold } from './format.js';
 
 export type BoardEndpointSummary = {
   endpoint_host: string;
@@ -130,6 +130,8 @@ export async function writeBoard(
     body: JSON.stringify(body),
   });
   const data = await readJson(res);
+  const held = describeHold(data);
+  if (held) return fail(held);
   if (res.status === 402) {
     return ok(
       data,

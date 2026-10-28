@@ -171,7 +171,7 @@ function writeState(file, state) {
 }
 
 const EMPTY_STATE = {
-  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], txReserved: [], authReserved: [], pending: [], late: [], lateLedger: [],
+  map: [], spent: [], authSpent: [], txSpent: [], txFacts: [], txReserved: [], authReserved: [], pending: [], late: [], lateLedger: [], holdHandles: [],
 };
 
 export class DurableChallengeStore {
@@ -197,7 +197,7 @@ export class DurableChallengeStore {
     readState(file);
   }
 
-  _with(fn) {
+  _load(fn, { write = true } = {}) {
     return withFileLock(this.lockPath, () => {
       const inner = new ChallengeStore({ ttlMs: this.ttlMs });
       const raw = readState(this.file);
@@ -205,9 +205,17 @@ export class DurableChallengeStore {
       if (!raw) throw unavailable('x402 challenge store unreadable', new Error('missing challenge store'));
       inner.loadState(raw);
       const result = fn(inner);
-      writeState(this.file, inner.dumpState());
+      if (write) writeState(this.file, inner.dumpState());
       return result;
     }, this.lockWaitMs);
+  }
+
+  _with(fn) {
+    return this._load(fn, { write: true });
+  }
+
+  _read(fn) {
+    return this._load(fn, { write: false });
   }
 
   put(nonce, data) { return this._with((s) => s.put(nonce, data)); }
@@ -216,7 +224,8 @@ export class DurableChallengeStore {
   isSpent(nonce) { return this._with((s) => s.isSpent(nonce)); }
   replayRecord(nonce) { return this._with((s) => s.replayRecord(nonce)); }
   markSpent(nonce, meta) { return this._with((s) => s.markSpent(nonce, meta)); }
-  claim(nonce, owner, leaseMs) { return this._with((s) => s.claim(nonce, owner, leaseMs)); }
+  claim(nonce, owner, leaseMs, paymentHash) { return this._with((s) => s.claim(nonce, owner, leaseMs, paymentHash)); }
+  noteVerifiedPayment(nonce, paymentHash) { return this._with((s) => s.noteVerifiedPayment(nonce, paymentHash)); }
   release(nonce, owner) { return this._with((s) => s.release(nonce, owner)); }
   markUnknown(nonce) { return this._with((s) => s.markUnknown(nonce)); }
   isAuthSpent(key) { return this._with((s) => s.isAuthSpent(key)); }
@@ -231,6 +240,11 @@ export class DurableChallengeStore {
   }
   txFactsOf(key) { return this._with((s) => s.txFactsOf(key)); }
   recordPending(row) { return this._with(async (s) => await s.recordPending(row)); }
+  ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
+  getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
+  findHoldHandleByKey(key) { return this._read((s) => s.findHoldHandleByKey(key)); }
+  linkHoldHandle(key, linked, paymentHash) { return this._with((s) => s.linkHoldHandle(key, linked, paymentHash)); }
+  holdPageLink(id) { return this._with((s) => s.holdPageLink(id)); }
   listPending() { return this._with((s) => s.listPending()); }
   updatePending(id, fields) { return this._with((s) => s.updatePending(id, fields)); }
   markSubmitted(nonce) { return this._with((s) => s.markSubmitted(nonce)); }

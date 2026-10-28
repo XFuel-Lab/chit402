@@ -119,6 +119,23 @@ export function extractPaymentNonce(req) {
 }
 
 /**
+ * What the stamp catch needs if the handshake throws. Set on the function
+ * collectStamp actually calls, before that call. Register passes the same
+ * facts as arguments; ingest and the boards hang them on the function.
+ */
+export function withStampAttempt(fn, req, baseUrl = '') {
+  const { header } = extractPaymentHeader(req);
+  fn.stampAttempt = {
+    presented: typeof header === 'string' && header.length > 0,
+    network: config.x402?.network || 'base',
+    nonce: extractPaymentNonce(req) || '',
+    baseUrl: baseUrl || '',
+    paymentHeader: typeof header === 'string' ? header : '',
+  };
+  return fn;
+}
+
+/**
  * Price a task in USDC smallest units.
  *
  * The price is ours to set: it comes from the rate card in pricing.js, metered

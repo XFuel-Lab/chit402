@@ -595,19 +595,88 @@ export interface ModelsResponse {
 export class XFuelApiError extends Error {
   readonly challenge?: X402Challenge;
   readonly body?: unknown;
+  readonly pendingId?: string;
+  readonly verifyUrl?: string;
+  readonly receiptJws?: string;
 
   constructor(
     message: string,
     public readonly status: number,
     public readonly code: string,
     public readonly details?: string[],
-    extras?: { challenge?: X402Challenge; body?: unknown },
+    extras?: { challenge?: X402Challenge; body?: unknown; pendingId?: string; verifyUrl?: string; receiptJws?: string },
   ) {
     super(message);
     this.name = 'XFuelApiError';
     this.challenge = extras?.challenge;
     this.body = extras?.body;
+    this.pendingId = extras?.pendingId;
+    this.verifyUrl = extras?.verifyUrl;
+    this.receiptJws = extras?.receiptJws;
   }
+}
+
+interface PaymentHold {
+  pendingId: string;
+  verifyUrl?: string;
+  refund: boolean;
+}
+
+function paymentHoldOf(data: unknown): PaymentHold | null {
+  if (!data || typeof data !== 'object') return null;
+  const body = data as { pending_id?: unknown; verify_url?: unknown; status?: unknown };
+  if (typeof body.pending_id !== 'string' || body.pending_id.length === 0) return null;
+  return {
+    pendingId: body.pending_id,
+    verifyUrl: typeof body.verify_url === 'string' ? body.verify_url : undefined,
+    refund: body.status === 'refund_owed',
+  };
+}
+
+function paymentHoldError(status: number, hold: PaymentHold, data: unknown): XFuelApiError {
+  const sentence = hold.refund
+    ? 'Refund owed. Do not pay again.'
+    : 'Payment is pending. Do not pay again.';
+  const urlPart = hold.verifyUrl ? ` verify_url: ${hold.verifyUrl}.` : '';
+  const receipt = data && typeof data === 'object'
+    ? (data as { receipt_jws?: unknown }).receipt_jws
+    : undefined;
+  return new XFuelApiError(
+    `${sentence} pending_id: ${hold.pendingId}.${urlPart}`,
+    status,
+    hold.refund ? 'refund_owed' : 'payment_pending',
+    undefined,
+    {
+      pendingId: hold.pendingId,
+      verifyUrl: hold.verifyUrl,
+      receiptJws: typeof receipt === 'string' ? receipt : undefined,
+      body: data,
+    },
+  );
+}
+
+function doNotPayAgainError(data: unknown, status: number): XFuelApiError | null {
+  if (!data || typeof data !== 'object') return null;
+  const body = data as { message?: unknown; error?: unknown; code?: unknown; pending_id?: unknown };
+  if (typeof body.pending_id === 'string' && body.pending_id) return null;
+  if (body.message !== 'Do not pay again.') return null;
+  const code = typeof body.code === 'string' ? body.code : (typeof body.error === 'string' ? body.error : 'settle_unconfirmed');
+  return new XFuelApiError('Do not pay again.', status, code, undefined, { body: data });
+}
+
+function paymentReplayError(data: unknown, status: number): XFuelApiError {
+  const body = (data && typeof data === 'object' ? data : {}) as { error?: unknown; code?: unknown; reason?: unknown };
+  const why = typeof body.reason === 'string'
+    ? body.reason
+    : (typeof body.code === 'string' ? body.code : (typeof body.error === 'string' ? body.error : 'payment_replayed'));
+  const code = typeof body.code === 'string' ? body.code : (typeof body.error === 'string' ? body.error : 'payment_replayed');
+  return new XFuelApiError(
+    `x402 payment was already used (${why})`,
+    status,
+    code,
+    [why],
+    { body: data },
+  );
 }
 
 // ─── Client Options ─────────────────────────────────────────────────────────
@@ -774,7 +843,7 @@ export class XFuelClient {
     if (typeof payer !== 'function') {
       throw new XFuelApiError('submitTaskWithPayment requires a payer function', 0, 'bad_payer');
     }
-    const acceptStatus = (s: number) => s === 402 || (s >= 200 && s < 300);
+    const acceptStatus = (s: number) => s === 402 || s === 409 || (s >= 200 && s < 300);
 
     // Step 1 — submit; accept a 402 challenge without throwing.
     const first = await this.http.post<TaskRequestResponse | X402Challenge>(
@@ -782,6 +851,11 @@ export class XFuelClient {
       params,
       { validateStatus: acceptStatus },
     );
+    const firstHold = paymentHoldOf(first.data);
+    if (firstHold) throw paymentHoldError(first.status, firstHold, first.data);
+    const firstFallback = doNotPayAgainError(first.data, first.status);
+    if (firstFallback) throw firstFallback;
+    if (first.status === 409) throw paymentReplayError(first.data, first.status);
     if (first.status !== 402) return first.data as TaskRequestResponse;
 
     // Step 2 — pay the challenge (agent-side) and retry with X-PAYMENT.
@@ -796,6 +870,11 @@ export class XFuelClient {
       params,
       { headers, validateStatus: acceptStatus },
     );
+    const secondHold = paymentHoldOf(second.data);
+    if (secondHold) throw paymentHoldError(second.status, secondHold, second.data);
+    const secondFallback = doNotPayAgainError(second.data, second.status);
+    if (secondFallback) throw secondFallback;
+    if (second.status === 409) throw paymentReplayError(second.data, second.status);
     if (second.status === 402) {
       const body = second.data as { reason?: string; error?: string; accepts?: unknown };
       // Failed verify/settle returns { error, reason }; a raw re-challenge has accepts[].

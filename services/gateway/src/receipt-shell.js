@@ -607,6 +607,16 @@ export function renderReceiptShellMissing() {
 </html>`;
 }
 
+/** Fixed sentences only. The page does not echo the id or any payment fact. */
+export function renderHoldPage(page) {
+  const text = page === 'refund_owed' ? 'refund owed, do not pay again' : 'pending';
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Chit402</title></head>
+<body><h1>${text}</h1></body>
+</html>`;
+}
+
 export function shellSha256(shell) {
   return crypto.createHash('sha256').update(shellPreimageBytes(shell)).digest('hex');
 }

@@ -23,7 +23,7 @@ import { ChallengeStore } from '../src/x402-adapter.js';
 import { settleBoundPayment } from '../src/x402-settle.js';
 import { confirmEvmReceipt, readEvmAuthorization, clearChainReaderForTests } from '../src/x402-chain.js';
 import { setActiveChallengeStore } from '../src/x402-durable-store.js';
-import { paymentFailureBody, paymentErrorStatus } from '../src/x402-flags.js';
+import { paymentFailureBody, paymentFailureStatus } from '../src/x402-flags.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SETTLE_SRC = fs.readFileSync(path.join(HERE, '..', 'src', 'x402-settle.js'), 'utf8');
@@ -136,7 +136,11 @@ for (const method of ['reserveTx', 'isTxSpent', 'isAuthSpent']) {
       assert.equal(fac.hits.settle, 1, '/settle was called');
       assertPendingHandle(out, method);
       assert.equal(out.code, 'settle_unconfirmed');
-      assert.equal(paymentErrorStatus(out.code), 402);
+      assert.equal(out.holdClass, 'resolvable');
+      const view = paymentFailureStatus(out);
+      assert.equal(view.status, 202);
+      assert.equal(view.retryAfter, 5);
+      assert.equal(paymentFailureBody(out).status, undefined);
       const late = store.findLate({ nonce: store.listLate()[0]?.nonce });
       assert.equal(late?.pending_id, out.pendingId, 'the late row is the one returned');
       assert.equal(late?.state, 'unknown', 'the late row is left for the reconciler');
@@ -206,7 +210,11 @@ test('F-2: a chain payer that still differs marks the tx spent and returns a ref
     });
     assert.equal(fac.hits.settle, 1);
     assert.equal(out.code, 'payer_mismatch');
-    assert.equal(paymentErrorStatus(out.code), 403);
+    assert.equal(out.holdClass, 'terminal');
+    const view = paymentFailureStatus(out);
+    assert.equal(view.status, 409);
+    assert.equal(view.retryAfter, null);
+    assert.equal(paymentFailureBody(out).status, 'refund_owed');
     assertPendingHandle(out, 'chain payer');
     assert.equal(store.isTxSpent(`base:${TX}`) || store.isTxSpent(TX) || [...(store.txSpent?.keys?.() || [])].length > 0, true, 'tx marked spent');
     const late = store.listLate().find((r) => r.pending_id === out.pendingId);
@@ -217,7 +225,7 @@ test('F-2: a chain payer that still differs marks the tx spent and returns a ref
   }
 });
 
-test('invariant (source): after /settle returns sent, every exit is a hold, a replay of a receipted transfer, settle_pending with a pendingId, or a receipt', () => {
+test('invariant (source): after /settle returns sent, every exit is a hold, a named replay (tx_spent, auth_spent_post, reserve_lost, inflight_tx), settle_pending with a pendingId, or a receipt', () => {
   const start = SETTLE_SRC.indexOf('settled = await settlePayment(paymentHeader, gwOpts);');
   const end = SETTLE_SRC.indexOf('\nfunction refused(');
   assert.ok(start > 0 && end > start, 'settle call found');
@@ -225,15 +233,25 @@ test('invariant (source): after /settle returns sent, every exit is a hold, a re
   const exits = [...tail.matchAll(/return\s+([^;]*)/g)].map((m) => m[1].trim());
   const allowed = [
     /^await hold\(/,
-    // #663 adds a logging-only network and bounded sub_reason; the response is unchanged.
-    /^refused\(req, 'payment_replayed'(, \{ network: net, sub: '[a-z_]+' \})?\)$/,
-    /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*(network: net,\s*sub: '[a-z_]+',\s*)?\}\)$/,
+    // Named exception: tx_spent, auth_spent_post, reserve_lost, inflight_tx.
+    // The original payment already has its receipt. These four replays carry no handle.
+    /^refused\(req, 'payment_replayed', \{ network: net, sub: '[a-z_]+' \}\)$/,
+    /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*holdClass: 'resolvable',\s*(network: net,\s*sub: '[a-z_]+',\s*)?\}\)$/,
     /^held$/,
     /^await confirmAndSettle\(\)$/,
     /^\{\s*kind: 'settled',\s*confirmed: true,/,
   ];
   const bad = exits.filter((e) => !allowed.some((re) => re.test(e)));
   assert.deepEqual(bad, [], `exits after /settle without a pending handle: ${JSON.stringify(bad)}`);
+  const replayRe = /^refused\(req, 'payment_replayed', \{ network: net, sub: '([a-z_]+)' \}\)$/;
+  const replays = exits.filter((e) => replayRe.test(e));
+  assert.equal(replays.length, 4, `post-settle replay exits must stay 4, got ${JSON.stringify(replays)}`);
+  assert.deepEqual(replays.map((e) => e.match(replayRe)[1]).sort(), [
+    'auth_spent_post',
+    'inflight_tx',
+    'reserve_lost',
+    'tx_spent',
+  ]);
   assert.ok(!/refused\(req, 'replay_store_unavailable'/.test(tail), 'no replay_store_unavailable after /settle');
   assert.ok(/pendingId,\s*\n\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\)/.test(tail), 'settle_pending carries pendingId and verifyUrl');
 });

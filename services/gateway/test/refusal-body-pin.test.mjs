@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { paymentErrorStatus, paymentFailureBody } from '../src/x402-flags.js';
+import { paymentErrorStatus, paymentFailureBody, paymentFailureStatus } from '../src/x402-flags.js';
 import { SCENARIOS } from './fixtures/refusal-scenarios.mjs';
 
 const DECISION_KEYS = 'kind,reason,code,preSettle,retryAfter,pendingId,verifyUrl';
@@ -35,18 +35,19 @@ const PINNED = {
   auth_nonce: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   auth_signature: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   facilitator_invalid: { status: 402, body: "{\"error\":\"verify_failed\",\"code\":\"verify_failed\"}", pendingCode: null, settles: 0 },
-  settle_http: { status: 402, body: "{\"error\":\"settle_failed\",\"code\":\"settle_failed\"}", pendingCode: null, settles: 1 },
-  chain_mismatch: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
-  chain_value_low: { status: 402, body: null, pendingCode: "settle_unconfirmed", settles: 1 },
+  settle_http: { status: 202, body: null, pendingCode: "settle_failed", settles: 1, holdClass: "resolvable" },
+  chain_mismatch: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
+  chain_value_low: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
   // Was chain_payer (settles 1). #664's pre-check refuses it before /settle:
   // same status and bytes, no /settle call (settle-store-failure.test.mjs F-2).
   payer_precheck: { status: 403, body: "{\"error\":\"payer_mismatch\",\"code\":\"payer_mismatch\"}", pendingCode: null, settles: 0 },
-  // #664 post-check: 403 with the refund pending_id (settle-store-failure.test.mjs F-2).
-  payer_post: { status: 403, body: null, pendingCode: "payer_mismatch", settles: 1 },
+  // Post-check payer mismatch is a terminal hold: 409 refund_owed, code unchanged.
+  payer_post: { status: 409, body: null, pendingCode: "payer_mismatch", settles: 1, holdClass: "terminal", refund: true },
 };
 
-function pendingBody(code) {
-  return new RegExp(`^\\{"error":"${code}","code":"${code}","pending_id":"([0-9a-f]{32})","verify_url":"/receipt/late-\\1"\\}$`);
+function pendingBody(code, refund) {
+  const tail = refund ? ',"status":"refund_owed"' : '';
+  return new RegExp(`^\\{"error":"${code}","code":"${code}","pending_id":"([0-9a-f]{32})","verify_url":"/receipt/late-\\1"${tail}\\}$`);
 }
 
 test('every scenario has a pinned body', () => {
@@ -58,15 +59,25 @@ for (const [name, pin] of Object.entries(PINNED)) {
     const { decision, hits } = await SCENARIOS[name].run();
     assert.ok(decision && decision.kind === 'failed', `${name}: expected a refusal, got ${JSON.stringify(decision)}`);
     const code = decision.code || decision.reason;
-    assert.equal(paymentErrorStatus(code), pin.status, `${name}: status`);
+    const view = paymentFailureStatus(decision);
+    assert.equal(view.status, pin.status, `${name}: status`);
+    if (!pin.holdClass) assert.equal(paymentErrorStatus(code), pin.status, `${name}: pre-settle status`);
     const body = JSON.stringify(paymentFailureBody(decision));
     if (pin.body !== null) {
       assert.equal(body, pin.body, `${name}: body bytes`);
     } else {
-      assert.ok(pendingBody(pin.pendingCode).test(body), `${name}: body ${body} is not the pinned pending shape`);
+      assert.ok(pendingBody(pin.pendingCode, pin.refund === true).test(body), `${name}: body ${body} is not the pinned pending shape`);
     }
-    assert.equal(Object.keys(decision).join(','), DECISION_KEYS, `${name}: decision keys`);
-    assert.equal(decision.retryAfter, undefined, `${name}: no Retry-After`);
+    const keys = pin.holdClass ? `${DECISION_KEYS},holdClass` : DECISION_KEYS;
+    assert.equal(Object.keys(decision).join(','), keys, `${name}: decision keys`);
+    if (pin.holdClass) assert.equal(decision.holdClass, pin.holdClass, `${name}: class`);
+    if (pin.holdClass === 'resolvable') {
+      assert.equal(decision.retryAfter, 5, `${name}: Retry-After`);
+      assert.equal(view.retryAfter, 5, `${name}: header`);
+    } else {
+      assert.equal(decision.retryAfter, undefined, `${name}: no Retry-After`);
+    }
+    if (pin.holdClass === 'terminal') assert.equal(view.retryAfter, null, `${name}: no Retry-After header`);
     assert.equal(hits.settle, pin.settles, `${name}: /settle calls`);
   });
 }

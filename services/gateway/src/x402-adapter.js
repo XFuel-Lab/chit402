@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import logger from './logger.js';
+import { testSwitchesOn } from './test-switch.js';
 import { alertStuckPayment } from './stuck-payment-alert.js';
 import { buildIconUrl } from './xfuel-icon.js';
 import { OFFER_RECEIPT_KEY, buildOfferExtension, buildReceiptExtension } from './offer-receipt.js';
@@ -337,6 +338,13 @@ function nonceVariants(nonce) {
   return [trimmed, '0x' + trimmed.padStart(64, '0')];
 }
 
+/** Same SHA-256 hex the settle path stores. A different header does not match. */
+function holdPaymentMatches(stored, presented) {
+  if (typeof stored !== 'string' || typeof presented !== 'string') return false;
+  if (stored.length !== presented.length || stored.length === 0) return false;
+  return crypto.timingSafeEqual(Buffer.from(stored), Buffer.from(presented));
+}
+
 export class ChallengeStore {
   constructor({ ttlMs = DEFAULT_TTL_MS } = {}) {
     this.ttlMs = ttlMs;
@@ -351,6 +359,10 @@ export class ChallengeStore {
     // Late-issue rows. An array, persisted with the replay store. Not a Map.
     this.late = [];
     this.lateLedger = [];
+    // Public hold handles. id is random. key is the idempotency string and
+    // is never returned by getHoldHandle. Unlike terminal late rows, these
+    // are not pruned: a handle page stays until the store file is replaced.
+    this.holdHandles = [];
   }
 
   put(nonce, data) {
@@ -432,7 +444,7 @@ export class ChallengeStore {
    * A second caller gets payment_in_flight. An expired lease becomes unknown
    * and is not released.
    */
-  claim(nonce, owner, leaseMs = 60_000) {
+  claim(nonce, owner, leaseMs = 60_000, paymentHash = null) {
     if (this.isSpent(nonce)) return { ok: false, reason: 'payment_replayed' };
     const found = this._find(nonce);
     if (!found) return { ok: false, reason: 'challenge_required' };
@@ -462,7 +474,24 @@ export class ChallengeStore {
     rec.state = 'claimed';
     rec.lease_owner = owner || 'local';
     rec.lease_until = Date.now() + leaseMs;
+    void paymentHash;
+    // payment_hash is set only after the signature verifies
     return { ok: true, challenge: rec };
+  }
+
+  /**
+   * Bind the header hash after verifyPayment accepts it. The hash is sha256
+   * of the raw header. It is not a secret: anyone who has that header can
+   * recompute it. A claim that has not verified does not write it.
+   */
+  noteVerifiedPayment(nonce, paymentHash) {
+    const found = this._find(nonce);
+    if (!found) return false;
+    const rec = found.rec;
+    if (rec.state !== 'claimed' && rec.state !== 'submitted') return false;
+    if (typeof paymentHash !== 'string' || !paymentHash) return false;
+    rec.payment_hash = paymentHash;
+    return true;
   }
 
   release(nonce, owner) {
@@ -474,6 +503,7 @@ export class ChallengeStore {
     rec.state = 'issued';
     rec.lease_owner = null;
     rec.lease_until = null;
+    rec.payment_hash = null;
     return true;
   }
 
@@ -560,6 +590,99 @@ export class ChallengeStore {
 
   txFactsOf(key) {
     return (key && this.txFacts.get(key)) || null;
+  }
+
+  /**
+   * One handle per key. A second call returns the first row and does not
+   * allocate another id. The only class change is resolvable → terminal,
+   * and only for the payment hash stored when the row was created.
+   * A different payment gets null and the class stays. The return value
+   * has no key and no payment facts.
+   */
+  ensureHoldHandle({ key, holdClass, code, paymentHash } = {}) {
+    if (typeof key !== 'string' || key.length < 8 || key.length > 200) return null;
+    if (holdClass !== 'resolvable' && holdClass !== 'terminal') return null;
+    const publicCode = typeof code === 'string' && code ? code : null;
+    const presented = typeof paymentHash === 'string' && paymentHash ? paymentHash : null;
+    const existing = this.holdHandles.find((row) => row.key === key);
+    if (existing) {
+      if (existing.hold_class === 'resolvable' && holdClass === 'terminal') {
+        if (!holdPaymentMatches(existing.payment_hash, presented)) return null;
+        existing.hold_class = 'terminal';
+        if (publicCode) existing.code = publicCode;
+      } else if (!holdPaymentMatches(existing.payment_hash, presented)) {
+        return null; // missing hash is not a credential
+      } else if (!existing.code && publicCode) existing.code = publicCode;
+      return { pending_id: existing.pending_id, hold_class: existing.hold_class, code: existing.code || null };
+    }
+    const pending_id = crypto.randomBytes(16).toString('hex');
+    this.holdHandles.push({
+      pending_id,
+      key,
+      hold_class: holdClass,
+      code: publicCode,
+      payment_hash: presented,
+    });
+    return { pending_id, hold_class: holdClass, code: publicCode };
+  }
+
+  /** Public read. Unknown ids return null. The key is not included. */
+  getHoldHandle(id) {
+    if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return null;
+    const row = this.holdHandles.find((item) => item.pending_id === id);
+    if (!row) return null;
+    return { pending_id: row.pending_id, hold_class: row.hold_class, code: row.code || null };
+  }
+
+  /**
+   * Read-only. Used when a retry meets a nonce already marked unknown.
+   * Returns the id, class, the first public code, and the payment hash
+   * so the retry can match the payment that created the row. The hash
+   * is not a public page field.
+   */
+  findHoldHandleByKey(key) {
+    if (typeof key !== 'string' || !key) return null;
+    const row = this.holdHandles.find((item) => item.key === key);
+    if (!row) return null;
+    return {
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      code: row.code || null,
+      payment_hash: row.payment_hash || null,
+    };
+  }
+
+  /**
+   * Point an existing handle at the late row, or at the receipt task id.
+   * Does not allocate an id. No-op when the key has no handle yet.
+   * `linked` is a 32-hex late id, or `{ taskId }`.
+   */
+  linkHoldHandle(key, linked, paymentHash) {
+    const row = this.holdHandles.find((item) => item.key === key);
+    if (!row) return null;
+    if (row.payment_hash && !holdPaymentMatches(row.payment_hash, paymentHash)) return null;
+    if (linked && typeof linked === 'object') {
+      const taskId = typeof linked.taskId === 'string' ? linked.taskId : '';
+      if (!taskId || taskId.length > 200) return null;
+      row.linked_task_id = taskId;
+      return { pending_id: row.pending_id };
+    }
+    if (!/^[0-9a-f]{32}$/.test(String(linked || ''))) return null;
+    row.linked_pending_id = String(linked);
+    return { pending_id: row.pending_id };
+  }
+
+  /** Page lookup. Includes the late-row link. The idempotency key is not returned. */
+  holdPageLink(id) {
+    if (typeof id !== 'string' || !/^[0-9a-f]{32}$/.test(id)) return null;
+    const row = this.holdHandles.find((item) => item.pending_id === id);
+    if (!row) return null;
+    return {
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      linked_pending_id: row.linked_pending_id || null,
+      linked_task_id: row.linked_task_id || null,
+    };
   }
 
   async recordPending(row) {
@@ -699,6 +822,7 @@ export class ChallengeStore {
       pending: this.pending,
       late: this.late,
       lateLedger: this.lateLedger,
+      holdHandles: this.holdHandles,
     };
   }
 
@@ -713,6 +837,7 @@ export class ChallengeStore {
     this.pending = Array.isArray(raw?.pending) ? raw.pending : [];
     this.late = Array.isArray(raw?.late) ? raw.late : [];
     this.lateLedger = Array.isArray(raw?.lateLedger) ? raw.lateLedger : [];
+    this.holdHandles = Array.isArray(raw?.holdHandles) ? raw.holdHandles : [];
   }
 
   _gc() {
@@ -807,6 +932,9 @@ export async function encodeX402PaymentResponseHeader({
  */
 export async function setX402PaymentResponseHeaders(res, settle) {
   const encoded = await encodeX402PaymentResponseHeader(settle);
+  if (testSwitchesOn() && process.env.X402_HEADER_THROW === '1') {
+    throw new Error('header');
+  }
   if (!encoded || !res || typeof res.setHeader !== 'function') return false;
   res.setHeader('PAYMENT-RESPONSE', encoded);
   res.setHeader('X-PAYMENT-RESPONSE', encoded);

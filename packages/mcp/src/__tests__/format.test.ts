@@ -73,6 +73,30 @@ test('describeError maps a 402 / payment_rejected to a payment hint', () => {
   assert.match(describeError(new XFuelApiError('nope', 0, 'payment_rejected')), /payment was rejected/);
 });
 
+test('describeError shows a pending hold and does not say rejected or wallet balance', () => {
+  const err = new XFuelApiError('Payment is pending. Do not pay again.', 202, 'payment_pending', undefined, {
+    body: { pending_id: 'ab'.repeat(16), verify_url: '/receipt/late-' + 'ab'.repeat(16), status: 'pending' },
+  });
+  const msg = describeError(err);
+  assert.match(msg, /do not pay again/i);
+  assert.match(msg, new RegExp('ab'.repeat(16)));
+  assert.match(msg, /verify_url/);
+  assert.doesNotMatch(msg, /rejected/i);
+  assert.doesNotMatch(msg, /wallet balance/i);
+});
+
+test('describeError says refund owed for a terminal hold', () => {
+  const err = new XFuelApiError('Refund owed. Do not pay again.', 409, 'refund_owed', undefined, {
+    body: { pending_id: 'cd'.repeat(16), verify_url: '/receipt/late-' + 'cd'.repeat(16), status: 'refund_owed' },
+  });
+  const msg = describeError(err);
+  assert.match(msg, /refund owed/i);
+  assert.match(msg, /do not pay again/i);
+  assert.match(msg, new RegExp('cd'.repeat(16)));
+  assert.doesNotMatch(msg, /rejected/i);
+  assert.doesNotMatch(msg, /wallet balance/i);
+});
+
 test('describeError maps a 5xx to a retry hint', () => {
   const err = new XFuelApiError('boom', 503, 'internal');
   assert.match(describeError(err), /server error/);

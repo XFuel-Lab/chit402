@@ -56,11 +56,12 @@ export function paymentHeader({
 }
 
 /** Local facilitator. `settle` / `verify` pick the reply shape. */
-export function listenFacilitator({ settle = 'ok', verify = 'ok', tx = TX1, payer = PAYER } = {}) {
+export function listenFacilitator({ settle = 'ok', verify = 'ok', tx = TX1, payer = PAYER, observe = null } = {}) {
   const hits = { verify: 0, settle: 0 };
   const server = http.createServer((req, res) => {
     req.resume();
     req.on('end', () => {
+      if (typeof observe === 'function') observe(req);
       const isSettle = String(req.url).endsWith('/settle');
       hits[isSettle ? 'settle' : 'verify'] += 1;
       res.setHeader('content-type', 'application/json');

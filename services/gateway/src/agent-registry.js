@@ -18,6 +18,7 @@ import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
 import { buildValidationRecord } from './erc8004.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
+import { collectedStampHold, presentedStampHold } from './hold-handle.js';
 
 /** Per-identity possession secret. Issued at register; used to HMAC the book. */
 function issueSession() {
@@ -668,19 +669,43 @@ async function registerPaidStamp(body, deps) {
   });
   if (!control.ok) return control;
 
+  const stampCfg = {
+    publicBaseUrl: deps.publicBaseUrl || '',
+    paymentHeader: deps.stampPaymentHeader || '',
+  };
   let stamp;
   try {
     stamp = await ensureRegisterStamp();
   } catch (err) {
-    return { ok: false, status: 402, error: 'stamp_payment_required', message: err?.message || 'Register stamp payment failed' };
+    logger.warn({ err: err.message }, 'register stamp failed');
+    if (!deps.stampPresented) {
+      return {
+        ok: false,
+        status: 402,
+        error: 'stamp_payment_required',
+        code: 'stamp_payment_required',
+        message: 'Register stamp payment failed',
+      };
+    }
+    const opened = presentedStampHold(deps.stampNetwork, deps.stampNonce, stampCfg);
+    if (opened) return opened;
+    return collectedStampHold('stamp_payment_required', null, stampCfg);
   }
   if (!stamp || stamp.ok !== true) {
     return {
       ok: false,
       status: stamp?.status || 402,
       error: stamp?.error || 'stamp_payment_required',
-      message: stamp?.message || 'Register stamp is $0.002 USDC (2000 atomic), paid by this wallet',
+      message: stamp?.message
+        || (stamp?.pending_id || stamp?.outcome === 'refund_owed'
+          ? 'Do not pay again.'
+          : 'Register stamp is $0.002 USDC (2000 atomic), paid by this wallet'),
       challenge: stamp?.challenge || null,
+      ...(stamp?.code ? { code: stamp.code } : {}),
+      ...(stamp?.pending_id ? { pending_id: stamp.pending_id } : {}),
+      ...(stamp?.verify_url ? { verify_url: stamp.verify_url } : {}),
+      ...(stamp?.outcome === 'refund_owed' ? { outcome: 'refund_owed' } : {}),
+      ...(stamp?.retryAfter != null ? { retryAfter: stamp.retryAfter } : {}),
     };
   }
   if (stamp.waived === true) {
@@ -695,7 +720,7 @@ async function registerPaidStamp(body, deps) {
   const paidPayer = evmPayer(stamp.settlement?.payerWallet);
   const rawPayer = stamp.settlement?.payerWallet ? String(stamp.settlement.payerWallet) : null;
   if (!paymentRef) {
-    return { ok: false, status: 402, error: 'stamp_payment_required', message: 'Register stamp did not include a payment ref' };
+    return collectedStampHold('stamp_payment_required', null, stampCfg);
   }
   if (!paidPayer || paidPayer !== getAddress(bound.address)) {
     await recordRegisterRefundOwed(ledger, registry, {
@@ -703,12 +728,7 @@ async function registerPaidStamp(body, deps) {
       amount: stamp.settlement?.amount,
       payer: rawPayer,
     });
-    return {
-      ok: false,
-      status: 403,
-      error: 'payer_mismatch',
-      message: 'The stamp settled from a wallet other than agentWallet. The payment is on the book as refund_owed. This wallet is not registered.',
-    };
+    return collectedStampHold('payer_mismatch', paymentRef, stampCfg);
   }
   let paid = 0n;
   try { paid = BigInt(String(stamp.settlement.amount)); } catch { paid = 0n; }
@@ -718,18 +738,13 @@ async function registerPaidStamp(body, deps) {
       amount: stamp.settlement?.amount,
       payer: paidPayer,
     });
-    return {
-      ok: false,
-      status: 402,
-      error: 'stamp_underpaid',
-      message: `Register stamp ${paid} is below ${STAMP_FEE_UNITS}. The payment is on the book as refund_owed.`,
-    };
+    return collectedStampHold('stamp_underpaid', paymentRef, stampCfg);
   }
 
   const taskId = `register-${crypto.createHash('sha256').update(paymentRef).digest('hex').slice(0, 32)}`;
   const existing = typeof ledger.findByRef === 'function' ? ledger.findByRef(paymentRef) : null;
   if (existing && existing.task_id !== taskId) {
-    return { ok: false, status: 409, error: 'duplicate_ref', message: 'duplicate payment.ref' };
+    return collectedStampHold('duplicate_ref', paymentRef, stampCfg);
   }
 
   const receipt = {
@@ -762,7 +777,7 @@ async function registerPaidStamp(body, deps) {
       && String(prior.agentWallet).toLowerCase() === String(bound.address).toLowerCase()
     );
     if (!alreadyBound && prior?.agentWallet) {
-      return { ok: false, status: 409, error: 'bind_failed', message: 'agent_id already bound to another wallet' };
+      return collectedStampHold('bind_failed', paymentRef, stampCfg);
     }
     const boundId = registry.bindWallet(existing.agent_id, {
       agentWallet: bound.address,
@@ -772,7 +787,7 @@ async function registerPaidStamp(body, deps) {
       paymentRef,
     });
     if (!boundId.ok) {
-      return { ok: false, status: 409, error: 'bind_failed', message: boundId.reason };
+      return collectedStampHold('bind_failed', paymentRef, stampCfg);
     }
     identity = boundId.identity;
     creditedEntry = existing;
@@ -788,7 +803,7 @@ async function registerPaidStamp(body, deps) {
     identity = upserted.identity;
     const credited = await ledger.append(receipt, { payer: paidPayer, agentId: identity.agent_id });
     if (!credited.ok) {
-      return { ok: false, status: 409, error: credited.code, message: credited.reason };
+      return collectedStampHold(credited.code || 'append_failed', paymentRef, stampCfg);
     }
     creditedEntry = credited.entry;
   }
@@ -942,6 +957,11 @@ export async function registerAgent(body = {}, {
   proveSmartControl = null,
   ensureRegisterStamp = null,
   persistTask = null,
+  publicBaseUrl = '',
+  stampPresented = false,
+  stampNetwork = '',
+  stampNonce = '',
+  stampPaymentHeader = '',
 } = {}) {
   const taskId = body.task_id || body.taskId || body.receipt_id;
   const agentWallet = body.agentWallet || body.agent_wallet;
@@ -962,6 +982,11 @@ export async function registerAgent(body = {}, {
       proveSmartControl,
       ensureRegisterStamp,
       persistTask,
+      publicBaseUrl,
+      stampPresented,
+      stampNetwork,
+      stampNonce,
+      stampPaymentHeader,
     });
   }
   if (typeof verify !== 'function' || typeof loadReceipt !== 'function') {

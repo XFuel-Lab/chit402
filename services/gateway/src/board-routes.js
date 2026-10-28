@@ -6,7 +6,10 @@
 
 import { STAMP_FEE_UNITS } from './pricing.js';
 import config from './config.js';
-import { isBindingRefusal, paymentErrorStatus, bindingEnforced, samePayee } from './x402-flags.js';
+import { isBindingRefusal, paymentFailureStatus, decisionHoldResult, bindingEnforced, samePayee, setHoldRetryAfter } from './x402-flags.js';
+import { terminalStampHold } from './hold-handle.js';
+import { withStampAttempt } from './x402-server.js';
+import { testSwitchesOn } from './test-switch.js';
 import { claimFromRequest } from './agent-book.js';
 import {
   authorizeOps,
@@ -48,13 +51,18 @@ function sendResult(res, result) {
       stamp_fee_usd: '0.002',
     });
   }
-  return res.status(result?.status || 500).json(
-    result?.body || {
-      error: result?.error || 'internal',
-      ...(result?.code ? { code: result.code } : {}),
-      message: result?.message || 'Board request failed',
-    },
-  );
+  setHoldRetryAfter(res, result?.retryAfter);
+  const payload = result?.body || {
+    error: result?.error || 'internal',
+    ...(result?.code ? { code: result.code } : {}),
+    message: result?.message || 'Board request failed',
+  };
+  return res.status(result?.status || 500).json({
+    ...payload,
+    ...(result?.pending_id ? { pending_id: result.pending_id } : {}),
+    ...(result?.verify_url ? { verify_url: result.verify_url } : {}),
+    ...(result?.outcome === 'refund_owed' ? { status: 'refund_owed' } : {}),
+  });
 }
 
 /**
@@ -99,6 +107,7 @@ export function registerBoardRoutes(app, deps) {
   }
 
   async function ensureStamp(req, res, apiKey, purpose) {
+    if (testSwitchesOn() && process.env.X402_STAMP_THROW === '1') throw new Error('stamp');
     const waiver = typeof peekStampWaiver === 'function' ? peekStampWaiver(apiKey) : { eligible: false };
     if (waiver.eligible) return { ok: true, waived: true, waiverKey: true };
     if (!x402Enabled) {
@@ -134,14 +143,15 @@ export function registerBoardRoutes(app, deps) {
     if (decision.kind !== 'settled' || (bindingEnforced(config.x402) && decision.confirmed !== true)) {
       const code = decision.code || decision.reason;
       if (isBindingRefusal(code)) {
-        return {
-          ok: false,
-          status: paymentErrorStatus(code),
-          error: code,
-          code,
-          ...(decision.pendingId ? { pending_id: decision.pendingId } : {}),
-          ...(decision.verifyUrl ? { verify_url: decision.verifyUrl } : {}),
-        };
+        if (decision.preSettle) {
+          return {
+            ok: false,
+            status: paymentFailureStatus(decision).status,
+            error: code,
+            code,
+          };
+        }
+        return decisionHoldResult({ ...decision, code, reason: code, holdClass: decision.holdClass });
       }
       return { ok: false, status: 402, error: 'stamp_payment_required', code: 'verify_failed' };
     }
@@ -151,7 +161,7 @@ export function registerBoardRoutes(app, deps) {
     const solHouse = config.x402?.solana?.payTo;
     const payeeOk = (house && samePayee(decision.payTo, house)) || (solHouse && decision.payTo === solHouse);
     if (paid < BigInt(STAMP_FEE_UNITS) || !payeeOk) {
-      return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };
+      return terminalStampHold(decision.paymentRef, { publicBaseUrl: baseUrl || '' });
     }
     if (typeof setPaymentHeaders === 'function') {
       setPaymentHeaders(res, {
@@ -177,7 +187,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'post'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'post'), req, baseUrlFor(req)),
         houseAgentIds: houseAgentIdsFromEnv(),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         chitHosts: chitHostsFromEnv(),
@@ -234,7 +244,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'flag'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'flag'), req, baseUrlFor(req)),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)
@@ -264,7 +274,7 @@ export function registerBoardRoutes(app, deps) {
       ledger,
       actor: actor.ok ? actor.identity : null,
       isDemo: isDemoKey(apiKey),
-      ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment'),
+      ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'comment'), req, baseUrlFor(req)),
       suspendedAgentIds: suspendedAgentIdsFromEnv(),
       commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
         ? () => commitStampWaiver(apiKey)
@@ -359,7 +369,7 @@ export function registerBoardRoutes(app, deps) {
         ledger,
         actor: actor.ok ? actor.identity : null,
         isDemo: isDemoKey(apiKey),
-        ensureStamp: async () => await ensureStamp(req, res, apiKey, 'comment-flag'),
+        ensureStamp: withStampAttempt(async () => await ensureStamp(req, res, apiKey, 'comment-flag'), req, baseUrlFor(req)),
         suspendedAgentIds: suspendedAgentIdsFromEnv(),
         commitStampWaiver: apiKey && typeof commitStampWaiver === 'function'
           ? () => commitStampWaiver(apiKey)

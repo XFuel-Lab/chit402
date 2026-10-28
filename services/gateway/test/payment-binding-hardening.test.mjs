@@ -1275,8 +1275,12 @@ test('PT21 stamp and register refuse a short or mismatched payment', async () =>
       body: JSON.stringify({ endpoint: 'https://api.chit402.com/v1', outcome: 'success', text: 'no' }),
     });
     const body = await res.json();
-    assert.equal(res.status, 402, JSON.stringify(body));
+    assert.equal(res.status, 409, JSON.stringify(body));
     assert.equal(body.code || body.error, 'stamp_underpaid', JSON.stringify(body));
+    assert.equal(body.status, 'refund_owed');
+    assert.match(body.pending_id, /^[0-9a-f]{32}$/);
+    assert.match(body.verify_url, new RegExp(`/receipt/late-${body.pending_id}$`));
+    assert.equal(res.headers.get('retry-after'), null);
     assert.equal(JSON.stringify(body).includes('1999'), false);
     assert.equal(posts.entries ? posts.entries.length : 0, 0);
   } finally {

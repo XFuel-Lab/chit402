@@ -26,7 +26,7 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "node --import tsx --test src/__tests__/config.test.ts src/__tests__/format.test.ts src/__tests__/receipt-fields.test.ts src/__tests__/tools.test.ts src/__tests__/verify-receipt.test.ts",
+    "test": "node --import tsx --test src/__tests__/config.test.ts src/__tests__/format.test.ts src/__tests__/hold-tools.test.ts src/__tests__/receipt-fields.test.ts src/__tests__/tools.test.ts src/__tests__/verify-receipt.test.ts",
     "smoke": "node --import tsx scripts/smoke.mjs",
     "prepublishOnly": "npm run build && npm test",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
