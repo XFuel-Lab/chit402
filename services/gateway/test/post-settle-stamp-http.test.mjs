@@ -291,11 +291,11 @@ test('a thrown stamp is 402 with no payment header and 409 once a header was sen
       });
       const heldBody = await held.json();
       assert.equal(held.status, 409, `${call.name} ${JSON.stringify(heldBody)}`);
-      assert.match(heldBody.pending_id, /^[0-9a-f]{32}$/, call.name);
-      assert.match(heldBody.verify_url, /\/receipt\/late-[0-9a-f]{32}$/, call.name);
+      assert.equal(heldBody.pending_id, undefined, `${call.name} unclaimed nonce opens no handle`);
+      assert.equal(heldBody.status, undefined, call.name);
+      assert.equal(heldBody.error, 'stamp_payment_required', call.name);
       assert.match(heldBody.message, /Do not pay again/, call.name);
       assert.equal(held.headers.get('retry-after'), null, call.name);
-      assert.equal(heldBody.status, 'refund_owed', call.name);
 
       const fallback = await fetch(call.url, {
         method: 'POST',

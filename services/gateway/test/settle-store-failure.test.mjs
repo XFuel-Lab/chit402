@@ -225,7 +225,7 @@ test('F-2: a chain payer that still differs marks the tx spent and returns a ref
   }
 });
 
-test('invariant (source): after /settle returns sent, every exit is a hold, a replay of a receipted transfer, settle_pending with a pendingId, or a receipt', () => {
+test('invariant (source): after /settle returns sent, every exit is a hold, a named replay (tx_spent, auth_spent_post, reserve_lost, inflight_tx), settle_pending with a pendingId, or a receipt', () => {
   const start = SETTLE_SRC.indexOf('settled = await settlePayment(paymentHeader, gwOpts);');
   const end = SETTLE_SRC.indexOf('\nfunction refused(');
   assert.ok(start > 0 && end > start, 'settle call found');
@@ -233,7 +233,8 @@ test('invariant (source): after /settle returns sent, every exit is a hold, a re
   const exits = [...tail.matchAll(/return\s+([^;]*)/g)].map((m) => m[1].trim());
   const allowed = [
     /^await hold\(/,
-    // Four post-settle replays, each named below. A fifth does not match this count.
+    // Named exception: tx_spent, auth_spent_post, reserve_lost, inflight_tx.
+    // The original payment already has its receipt. These four replays carry no handle.
     /^refused\(req, 'payment_replayed', \{ network: net, sub: '[a-z_]+' \}\)$/,
     /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*holdClass: 'resolvable',\s*(network: net,\s*sub: '[a-z_]+',\s*)?\}\)$/,
     /^held$/,

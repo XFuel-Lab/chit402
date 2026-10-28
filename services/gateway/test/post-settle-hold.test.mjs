@@ -27,7 +27,7 @@ import { createBoardJob } from '../src/board-jobs.js';
 import { flagBoardPost } from '../src/board-posts.js';
 import { holdPageForReceiptId, holdPagePayload, openPostSettleHandle, terminalStampHold } from '../src/hold-handle.js';
 import { renderHoldPage, renderReceiptShellMissing } from '../src/receipt-shell.js';
-import { attempt, HOUSE, OTHER, PAYER, RESOURCE, USDC } from './fixtures/refusal-scenarios.mjs';
+import { attempt, HOUSE, OTHER, PAYER, RESOURCE, USDC, paymentHeader } from './fixtures/refusal-scenarios.mjs';
 import { AgentRegistry } from '../src/agent-registry.js';
 import { UsageSettledLedger } from '../src/usage-settled.js';
 import { BoardPostStore } from '../src/board-posts.js';
@@ -821,6 +821,9 @@ test('prior_unknown returns the stored code and does not settle again', async ()
   const store = new ChallengeStore();
   const { settleHoldKey } = await import('../src/hold-handle.js');
   const nonce = '0x' + '21'.repeat(32);
+  const fixed = { validBefore: '1893456000' };
+  const header = paymentHeader(fixed);
+  const paymentHash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
   store.put(nonce, {
     resource: RESOURCE,
     amount: '2000',
@@ -830,16 +833,19 @@ test('prior_unknown returns the stored code and does not settle again', async ()
     issuedAt: Date.now(),
     expiresAt: Date.now() + 120000,
     state: 'unknown',
+    payment_hash: paymentHash,
   });
   const opened = store.ensureHoldHandle({
     key: settleHoldKey('base', nonce),
     holdClass: 'resolvable',
     code: 'settle_failed',
+    paymentHash,
   });
   const second = await attempt({
     store,
     nonce,
     challenge: null,
+    header: fixed,
     fac: { settle: 'http500' },
   });
   assert.equal(second.hits.settle, 0);
@@ -1246,11 +1252,40 @@ test('register hold sites after the stamp each return a handle', async () => {
   assert.match(presented.result.message, /Do not pay again/);
   assert.equal(presented.result.pending_id, undefined);
 
-  const traced = await signedStampCall(
-    () => { throw new Error('after header'); },
-    { deps: { stampPresented: true, stampNetwork: 'base', stampNonce: '0x' + 'ab'.repeat(32) } },
-  );
-  assertHold(traced.result, 'stamp_payment_required');
+  const nonce = '0x' + 'ab'.repeat(32);
+  const header = paymentHeader({ validBefore: '1893456000' });
+  const paymentHash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+  const store = new ChallengeStore();
+  setActiveChallengeStore(store);
+  store.put(nonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'unknown',
+    payment_hash: paymentHash,
+  });
+  const { settleHoldKey } = await import('../src/hold-handle.js');
+  const opened = store.ensureHoldHandle({
+    key: settleHoldKey('base', nonce),
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+    paymentHash,
+  });
+  try {
+    const traced = await signedStampCall(
+      () => { throw new Error('after header'); },
+      { deps: { stampPresented: true, stampNetwork: 'eip155:1', stampNonce: nonce, stampPaymentHeader: header } },
+    );
+    assertHold(traced.result, 'stamp_payment_required');
+    assert.equal(traced.result.pending_id, opened.pending_id);
+    assert.equal(store.holdHandles[0].key, settleHoldKey('base', nonce));
+  } finally {
+    setActiveChallengeStore(null);
+  }
 
   const noRef = await signedStampCall(() => ({
     ok: true,
@@ -1413,7 +1448,8 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
     ensureStamp: presented,
   });
   assert.equal(held.status, 409);
-  assert.match(held.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(held.pending_id, undefined);
+  assert.equal(held.outcome, undefined);
   assert.match(held.message, /Do not pay again/);
 
   const jobStamp = async () => { throw new Error('job'); };
@@ -1424,7 +1460,8 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
     deadline: new Date(Date.now() + 86400000).toISOString(),
   }, { actor: { agent_id: 1 }, ensureStamp: jobStamp, jobs: {} });
   assert.equal(job.status, 409);
-  assert.match(job.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(job.pending_id, undefined);
+  assert.equal(job.outcome, undefined);
   assert.match(job.message, /Do not pay again/);
 
   const postStamp = async () => { throw new Error('post'); };
@@ -1435,8 +1472,138 @@ test('a stamp throw with no payment header stays 402 on ingest and the boards', 
     ensureStamp: postStamp,
   });
   assert.equal(flagged.status, 409);
-  assert.match(flagged.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(flagged.pending_id, undefined);
+  assert.equal(flagged.outcome, undefined);
   assert.match(flagged.message, /Do not pay again/);
+});
+
+test('a third party who knows the nonce cannot read or upgrade the hold', async () => {
+  const { presentedStampHold, settleHoldKey } = await import('../src/hold-handle.js');
+  const store = new ChallengeStore();
+  const fixed = { validBefore: '1893456000' };
+  const header = paymentHeader(fixed);
+  const other = { ...fixed, signature: '0x' + '22'.repeat(65) };
+  const paymentHash = crypto.createHash('sha256').update(header, 'utf8').digest('hex');
+  const nonce = '0x' + '44'.repeat(32);
+  store.put(nonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'solana',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'unknown',
+    payment_hash: paymentHash,
+  });
+  const opened = store.ensureHoldHandle({
+    key: settleHoldKey('solana', nonce),
+    holdClass: 'resolvable',
+    code: 'settle_failed',
+    paymentHash,
+  });
+  const payer = await attempt({
+    store,
+    nonce,
+    challenge: null,
+    header: fixed,
+    fac: { settle: 'http500' },
+  });
+  assert.equal(payer.hits.settle, 0);
+  assert.equal(payer.decision.pendingId, opened.pending_id);
+  assert.equal(payer.decision.holdClass, 'resolvable');
+
+  const stranger = await attempt({
+    store,
+    nonce,
+    challenge: null,
+    header: other,
+    fac: { settle: 'http500' },
+  });
+  assert.equal(stranger.hits.settle, 0);
+  assert.equal(stranger.decision.pendingId, null);
+  assert.equal(stranger.decision.preSettle, true);
+  assert.equal(stranger.decision.code, 'settle_unconfirmed');
+  assert.equal(store.holdHandles.find((row) => row.pending_id === opened.pending_id).hold_class, 'resolvable');
+
+  const lateNonce = '0x' + '46'.repeat(32);
+  const lateId = hexId();
+  store.put(lateNonce, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'unknown',
+  });
+  store.putLate({
+    pending_id: lateId,
+    state: 'unknown',
+    nonce: lateNonce,
+    sent: true,
+    hold_class: 'resolvable',
+    payment_hash: paymentHash,
+    public_code: 'settle_pending',
+  });
+  const latePayer = await attempt({
+    store,
+    nonce: lateNonce,
+    challenge: null,
+    header: fixed,
+    cfg: { lateIssue: false },
+    fac: { settle: 'http500' },
+  });
+  assert.equal(latePayer.decision.pendingId, lateId);
+  const lateStranger = await attempt({
+    store,
+    nonce: lateNonce,
+    challenge: null,
+    header: other,
+    cfg: { lateIssue: false },
+    fac: { settle: 'http500' },
+  });
+  assert.equal(lateStranger.decision.pendingId, null);
+  assert.equal(lateStranger.decision.code, 'settle_unconfirmed');
+
+  const stolen = presentedStampHold('base', nonce, {
+    paymentHeader: paymentHeader(other),
+    store,
+    publicBaseUrl: 'http://127.0.0.1',
+  });
+  assert.equal(stolen, null);
+  assert.equal(store.holdHandles.find((row) => row.pending_id === opened.pending_id).hold_class, 'resolvable');
+  assert.equal(store.holdHandles.length, 1);
+
+  const owed = presentedStampHold('base', nonce, {
+    paymentHeader: header,
+    store,
+    publicBaseUrl: 'http://127.0.0.1',
+  });
+  assert.equal(owed.status, 409);
+  assert.equal(owed.outcome, 'refund_owed');
+  assert.equal(owed.pending_id, opened.pending_id);
+  const row = store.holdHandles.find((item) => item.pending_id === opened.pending_id);
+  assert.equal(row.hold_class, 'terminal');
+  assert.equal(row.key, settleHoldKey('solana', nonce));
+
+  const fresh = '0x' + '55'.repeat(32);
+  store.put(fresh, {
+    resource: RESOURCE,
+    amount: '2000',
+    payTo: HOUSE,
+    network: 'base',
+    asset: USDC,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 120000,
+    state: 'issued',
+    payment_hash: paymentHash,
+  });
+  const unclaimed = presentedStampHold('base', fresh, { paymentHeader: header, store });
+  assert.equal(unclaimed, null);
+  assert.equal(store.holdHandles.some((item) => item.key === settleHoldKey('base', fresh)), false);
+  assert.equal(store.holdHandles.length, 1);
 });
 
 test('a capped release then underpaid upgrades the same handle to refund owed', async () => {
