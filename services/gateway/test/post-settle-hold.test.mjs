@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -20,7 +21,10 @@ import {
 } from '../src/x402-flags.js';
 import { LATE_RETRY_AFTER_SEC } from '../src/late-issue.js';
 import { ChallengeStore } from '../src/x402-adapter.js';
-import { setActiveChallengeStore } from '../src/x402-durable-store.js';
+import { DurableChallengeStore, setActiveChallengeStore } from '../src/x402-durable-store.js';
+import { getIssuerKid } from '../src/issuer-key.js';
+import { createBoardJob } from '../src/board-jobs.js';
+import { flagBoardPost } from '../src/board-posts.js';
 import { holdPageForReceiptId, holdPagePayload, openPostSettleHandle, terminalStampHold } from '../src/hold-handle.js';
 import { renderHoldPage, renderReceiptShellMissing } from '../src/receipt-shell.js';
 import { attempt, HOUSE, OTHER, PAYER, RESOURCE, USDC } from './fixtures/refusal-scenarios.mjs';
@@ -666,7 +670,8 @@ test('register and ingest success receipts match the fcd81206 byte pin', async (
     assert.equal(result.ok, true);
     assert.equal(ledger.entries.length, 1);
     const reg = ledger.entries[0];
-    const regPayload = reg.book_chain.issuer_signature.jws.split('.')[1];
+    const [regHeader, regPayload] = reg.book_chain.issuer_signature.jws.split('.');
+    assert.equal(JSON.parse(Buffer.from(regHeader, 'base64url').toString()).kid, getIssuerKid());
     assert.equal(reg.row_hash, '263c236fdeaa93ab2f20b10e8b1ad4eb836c1e1660bc0b7a08cb295c59218c0c');
     assert.equal(regPayload, 'eyJzY2hlbWEiOiJjaGl0NDAyLmJvb2tfc2VxLnYxIiwicGF5bG9hZF92ZXJzaW9uIjo0LCJib29rX2lkIjoxLCJ0YXNrX2lkIjoicmVnaXN0ZXItOTI0NmFjMTBhOTE0MjgyZjczMTVmYzk3MjI2YTVjZjAiLCJzZXEiOjEsInByZXZfaGFzaCI6bnVsbCwicm93X2hhc2giOiIyNjNjMjM2ZmRlYWE5M2FiMmYyMGIxMGU4YjFhZDRlYjgzNmMxZTE2NjBiYzBiN2EwOGNiMjk1YzU5MjE4YzBjIiwiZXZlbnQiOiJjb2xsZWN0ZWQiLCJhY3QiOiJzcGVuZCIsInJlcGxheV9vZiI6bnVsbCwicGF5bWVudF9yZWYiOiJiYXNlOjB4YWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYiJ9');
 
@@ -695,6 +700,8 @@ test('register and ingest success receipts match the fcd81206 byte pin', async (
   } finally {
     Date.now = prevNow;
     crypto.randomBytes = prevRandom;
+    const { resetIssuerHistoryStore } = await import('../src/issuer-history.js');
+    resetIssuerHistoryStore();
   }
 });
 
@@ -1189,4 +1196,324 @@ test('ingest refusals after a collected stamp carry a terminal handle', async ()
   assert.equal(result.message, 'Do not pay again.');
   assert.match(result.pending_id, /^[0-9a-f]{32}$/);
   assert.equal(result.outcome, 'refund_owed');
+  assert.match(result.detail, /did not confirm/);
+  assert.match(result.verify_url, /\/receipt\/late-[0-9a-f]{32}$/);
 });
+
+function assertHold(result, code) {
+  assert.equal(result.status, 409, JSON.stringify(result));
+  assert.equal(result.outcome, 'refund_owed');
+  assert.match(result.pending_id, /^[0-9a-f]{32}$/);
+  assert.match(result.verify_url, /\/receipt\/late-[0-9a-f]{32}$/);
+  assert.match(result.message, /Do not pay again/);
+  if (code) assert.equal(result.code || result.error, code);
+}
+
+async function signedStampCall(stamp, extra = {}) {
+  const signer = Wallet.createRandom();
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = await signer.signMessage(canonicalRegisterPayMessage(signer.address, timestamp));
+  const ledger = extra.ledger || new UsageSettledLedger();
+  const registry = extra.registry || new AgentRegistry();
+  const result = await registerAgent({
+    agentWallet: signer.address,
+    wallet_signature: signature,
+    signature_timestamp: timestamp,
+  }, {
+    registry,
+    ledger,
+    bindWallet: async (w) => bindAgentWallet(w, {
+      inspect: async () => ({ kind: 'eoa', official: false, eoa: true, code: '0x' }),
+    }),
+    proveSmartControl: null,
+    publicBaseUrl: 'https://api.chit402.com',
+    ensureRegisterStamp: async () => stamp(signer),
+    ...extra.deps,
+  });
+  return { result, signer, ledger, registry };
+}
+
+test('register hold sites after the stamp each return a handle', async () => {
+  const thrown = await signedStampCall(() => { throw new Error('before settle'); });
+  assert.equal(thrown.result.status, 402);
+  assert.equal(thrown.result.pending_id, undefined);
+
+  const presented = await signedStampCall(
+    () => { throw new Error('after header'); },
+    { deps: { stampPresented: true } },
+  );
+  assert.equal(presented.result.status, 409);
+  assert.match(presented.result.message, /Do not pay again/);
+  assert.equal(presented.result.pending_id, undefined);
+
+  const traced = await signedStampCall(
+    () => { throw new Error('after header'); },
+    { deps: { stampPresented: true, stampNetwork: 'base', stampNonce: '0x' + 'ab'.repeat(32) } },
+  );
+  assertHold(traced.result, 'stamp_payment_required');
+
+  const noRef = await signedStampCall(() => ({
+    ok: true,
+    waived: false,
+    settlement: { amount: '2000', payerWallet: '0x' + '11'.repeat(20) },
+  }));
+  assert.equal(noRef.result.status, 409);
+  assert.match(noRef.result.message, /Do not pay again/);
+
+  const under = await signedStampCall((signer) => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: 'base:0x' + 'c1'.repeat(32), amount: '1', payerWallet: signer.address },
+  }));
+  assertHold(under.result, 'stamp_underpaid');
+  assert.match(under.result.verify_url, /^https:\/\/api\.chit402\.com\/receipt\/late-/);
+
+  const dupRef = 'base:0x' + 'c2'.repeat(32);
+  const dupLedger = new UsageSettledLedger();
+  dupLedger.findByRef = () => ({ task_id: 'someone-else', agent_id: 9 });
+  const dup = await signedStampCall((signer) => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: dupRef, amount: '2000', payerWallet: signer.address },
+  }), { ledger: dupLedger });
+  assertHold(dup.result, 'duplicate_ref');
+
+  const bindRef = 'base:0x' + 'c3'.repeat(32);
+  const bindTask = `register-${crypto.createHash('sha256').update(bindRef).digest('hex').slice(0, 32)}`;
+  const bindLedger = new UsageSettledLedger();
+  bindLedger.findByRef = () => ({ task_id: bindTask, agent_id: 3 });
+  const bindRegistry = new AgentRegistry();
+  bindRegistry.get = () => ({ agentWallet: '0x' + '99'.repeat(20) });
+  const bound = await signedStampCall((signer) => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: bindRef, amount: '2000', payerWallet: signer.address },
+  }), { ledger: bindLedger, registry: bindRegistry });
+  assertHold(bound.result, 'bind_failed');
+
+  const againRef = 'base:0x' + 'c4'.repeat(32);
+  const againTask = `register-${crypto.createHash('sha256').update(againRef).digest('hex').slice(0, 32)}`;
+  const againLedger = new UsageSettledLedger();
+  againLedger.findByRef = () => ({ task_id: againTask, agent_id: 4 });
+  const againRegistry = new AgentRegistry();
+  againRegistry.bindWallet = () => ({ ok: false, reason: 'bind refused' });
+  const again = await signedStampCall((signer) => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: againRef, amount: '2000', payerWallet: signer.address },
+  }), { ledger: againLedger, registry: againRegistry });
+  assertHold(again.result, 'bind_failed');
+
+  const appendLedger = new UsageSettledLedger();
+  appendLedger.append = async () => ({ ok: false, code: 'append_failed', reason: 'full' });
+  const appended = await signedStampCall((signer) => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: 'base:0x' + 'c5'.repeat(32), amount: '2000', payerWallet: signer.address },
+  }), { ledger: appendLedger });
+  assertHold(appended.result, 'append_failed');
+});
+
+function ingestDeps(identity, registry, over = {}) {
+  return {
+    ledger: over.ledger === undefined ? new UsageSettledLedger() : over.ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: over.verify || (async () => ({ valid: true, payer: PAYER })),
+    ensureStamp: async () => ({
+      ok: true,
+      waived: false,
+      settlement: { paymentRef: 'base:0xstampingest', amount: '2000', payerWallet: PAYER },
+    }),
+  };
+}
+
+test('ingest hold sites that were unpinned each return a handle', async () => {
+  const registry = new AgentRegistry();
+  const identity = registry.allocate({ taskId: 'seat' });
+  registry.bindWallet(identity.agent_id, { agentWallet: PAYER });
+  const body = {
+    payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+    payment_response: { tx: '0x' + 'e2'.repeat(32), payer: PAYER, network: 'base' },
+    session: identity.session,
+  };
+  const noPayer = await ingestForeignX402(body, ingestDeps(identity, registry, {
+    verify: async () => ({ valid: true }),
+  }));
+  assertHold(noPayer, 'payer_not_bound');
+
+  const upto = await ingestForeignX402({
+    ...body,
+    payment_required: { resource: 'https://shop.example/v1', scheme: 'upto', payTo: HOUSE, max_amount: '5000' },
+    payment_response: { tx: '0x' + 'e3'.repeat(32), payer: PAYER, network: 'base' },
+  }, ingestDeps(identity, registry, {
+    verify: async () => ({ valid: true, payer: PAYER }),
+  }));
+  assertHold(upto, 'payment_invalid');
+  assert.match(upto.detail, /no amount/);
+
+  const bareLedger = { findByRef() { return null; } };
+  const unavailable = await ingestForeignX402({
+    ...body,
+    payment_response: { tx: '0x' + 'e4'.repeat(32), payer: PAYER, network: 'base' },
+  }, ingestDeps(identity, registry, { ledger: bareLedger }));
+  assertHold(unavailable, 'service_unavailable');
+
+  const failing = new UsageSettledLedger();
+  failing.append = async () => ({ ok: false, code: 'append_failed', reason: 'full' });
+  const appended = await ingestForeignX402({
+    ...body,
+    payment_response: { tx: '0x' + 'e5'.repeat(32), payer: PAYER, network: 'base' },
+  }, ingestDeps(identity, registry, { ledger: failing }));
+  assertHold(appended, 'append_failed');
+
+  const noRef = await ingestForeignX402({
+    ...body,
+    payment_response: { tx: '0x' + 'e6'.repeat(32), payer: PAYER, network: 'base' },
+  }, {
+    ...ingestDeps(identity, registry, { verify: async () => ({ valid: false }) }),
+    ensureStamp: async () => ({ ok: true, waived: false, settlement: {} }),
+  });
+  assert.equal(noRef.status, 409);
+  assert.match(noRef.message, /Do not pay again/);
+  assert.equal(noRef.pending_id, undefined);
+});
+
+test('a stamp throw with no payment header stays 402 on ingest and the boards', async () => {
+  const registry = new AgentRegistry();
+  const identity = registry.allocate({ taskId: 'seat' });
+  registry.bindWallet(identity.agent_id, { agentWallet: PAYER });
+  const bare = await ingestForeignX402({
+    payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+    payment_response: { tx: '0x' + 'e7'.repeat(32), payer: PAYER, network: 'base' },
+    session: identity.session,
+  }, {
+    ledger: new UsageSettledLedger(),
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: async () => ({ valid: true, payer: PAYER }),
+    ensureStamp: async () => { throw new Error('store down'); },
+  });
+  assert.equal(bare.status, 402);
+
+  const presented = async () => { throw new Error('settled maybe'); };
+  presented.stampAttempt = { presented: true };
+  const held = await ingestForeignX402({
+    payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+    payment_response: { tx: '0x' + 'e8'.repeat(32), payer: PAYER, network: 'base' },
+    session: identity.session,
+  }, {
+    ledger: new UsageSettledLedger(),
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    verify: async () => ({ valid: true, payer: PAYER }),
+    ensureStamp: presented,
+  });
+  assert.equal(held.status, 409);
+  assert.match(held.message, /Do not pay again/);
+
+  const jobStamp = async () => { throw new Error('job'); };
+  jobStamp.stampAttempt = { presented: true };
+  const job = await createBoardJob({
+    text: 'ship the receipt',
+    budget: '1000',
+    deadline: new Date(Date.now() + 86400000).toISOString(),
+  }, { actor: { agent_id: 1 }, ensureStamp: jobStamp, jobs: {} });
+  assert.equal(job.status, 409);
+  assert.match(job.message, /Do not pay again/);
+
+  const postStamp = async () => { throw new Error('post'); };
+  postStamp.stampAttempt = { presented: true };
+  const flagged = await flagBoardPost('p1', {
+    posts: { get: () => ({ id: 'p1', status: 'live', flags: [], receipt_key: 'r' }) },
+    actor: { agent_id: 1 },
+    ensureStamp: postStamp,
+  });
+  assert.equal(flagged.status, 409);
+  assert.match(flagged.message, /Do not pay again/);
+});
+
+test('a capped release then underpaid upgrades the same handle to refund owed', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const first = await attempt({
+    store,
+    header: fixed,
+    fac: { settle: 'http500' },
+    cfg: { lateIssue: true },
+  });
+  assert.equal(first.decision.holdClass, 'resolvable');
+  const second = await attempt({
+    store,
+    nonce: first.nonce,
+    header: fixed,
+    cfg: {
+      lateIssue: true,
+      chainReader: async () => ({ ok: true, amount: '1', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(second.decision.pendingId, first.decision.pendingId);
+  assert.equal(second.decision.holdClass, 'terminal');
+  assert.equal(store.holdHandles[0].hold_class, 'terminal');
+  assert.equal(store.holdHandles[0].code, second.decision.code);
+  assert.deepEqual(holdPageForReceiptId(`late-${first.decision.pendingId}`, store), { page: 'refund_owed' });
+});
+
+test('a capped release then a settled retry links the handle to the receipt', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const fixed = { validBefore: String(Math.floor(Date.now() / 1000) + 3600) };
+  const first = await attempt({
+    store,
+    header: fixed,
+    fac: { settle: 'http500' },
+    cfg: { lateIssue: true },
+  });
+  const second = await attempt({
+    store,
+    nonce: first.nonce,
+    header: fixed,
+    cfg: {
+      lateIssue: true,
+      chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(second.decision.kind, 'settled', JSON.stringify(second.decision));
+  assert.equal(store.holdHandles.length, 1);
+  assert.equal(store.holdHandles[0].linked_task_id, second.decision.taskId);
+  assert.deepEqual(
+    holdPageForReceiptId(`late-${first.decision.pendingId}`, store),
+    { page: 'receipt', taskId: second.decision.taskId },
+  );
+});
+
+test('a throw after a capped settle opens the handle in the post-sent catch', async () => {
+  const store = new ChallengeStore();
+  fillCap(store);
+  const { decision } = await attempt({
+    store,
+    cfg: {
+      lateIssue: true,
+      afterSent: () => { throw new Error('disk'); },
+      chainReader: async () => ({ ok: true, amount: '2000', payTo: HOUSE, payer: PAYER, blockNumber: 1, logIndex: 0 }),
+    },
+  });
+  assert.equal(decision.holdClass, 'resolvable');
+  assert.match(decision.pendingId, /^[0-9a-f]{32}$/);
+  assert.equal(store.holdHandles.length, 1);
+  assert.equal(paymentFailureStatus(decision).status, 202);
+});
+
+test('a hold lookup that misses does not rewrite the durable store', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hold-'));
+  const file = join(dir, 'challenges.json');
+  const store = new DurableChallengeStore(file, { createIfMissing: true });
+  const before = readFileSync(file);
+  assert.equal(store.findHoldHandleByKey('settle:base:0x' + 'ab'.repeat(32)), null);
+  assert.equal(readFileSync(file).equals(before), true);
+});
+

@@ -1796,3 +1796,54 @@ test('public ingest ignores a caller-supplied entry fingerprint', async () => {
   assert.equal(checked.payload.claim_id, String(identity.agent_id));
   assert.equal(ledger.entries[0].issuer_signature, undefined);
 });
+
+test('nano ledger failures after a collected stamp return the same handle', async () => {
+  const { registry, identity } = setupDeps();
+  const stamp = async () => ({
+    ok: true,
+    waived: false,
+    settlement: { paymentRef: 'base:0xnanostamp', amount: '2000', payerWallet: WALLET_A },
+  });
+  const missing = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger: { findByRef() { return null; } },
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    fetchImpl: nanoFetch(),
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+    ensureStamp: stamp,
+  });
+  assert.equal(missing.status, 409, JSON.stringify(missing));
+  assert.equal(missing.outcome, 'refund_owed');
+  assert.match(missing.pending_id, /^[0-9a-f]{32}$/);
+  assert.match(missing.verify_url, /\/receipt\/late-[0-9a-f]{32}$/);
+  const again = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger: { findByRef() { return null; } },
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    fetchImpl: nanoFetch(),
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+    ensureStamp: stamp,
+  });
+  assert.equal(again.pending_id, missing.pending_id);
+
+  const ledger = new UsageSettledLedger();
+  ledger.append = async () => ({ ok: false, code: 'append_failed', reason: 'full' });
+  const failed = await ingestForeignX402(nanoBody({ session: identity.session }), {
+    ledger,
+    registry,
+    agentId: identity.agent_id,
+    session: identity.session,
+    fetchImpl: nanoFetch(),
+    rpcUrls: ['http://rpc-a.test', 'http://rpc-b.test'],
+    ensureStamp: async () => ({
+      ok: true,
+      waived: false,
+      settlement: { paymentRef: 'base:0xnanostamp2', amount: '2000', payerWallet: WALLET_A },
+    }),
+  });
+  assert.equal(failed.status, 409, JSON.stringify(failed));
+  assert.match(failed.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(failed.code || failed.error, 'append_failed');
+});

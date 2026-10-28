@@ -19,20 +19,22 @@ process.env.RECEIPT_SIGNING_SECRET = 'stamp-http-test';
 delete process.env.M2M_API_KEYS;
 
 const HOUSE = process.env.X402_PAY_TO;
-const TX = `0x${'ab'.repeat(32)}`;
+let facSeq = 0;
 let facPayer = '0x' + '22'.repeat(20);
 
 function startFacilitator() {
   const server = http.createServer((req, res) => {
     req.resume();
     req.on('end', () => {
+      const tx = `0x${String(facSeq).padStart(2, '0')}${'ab'.repeat(31)}`;
+      if (String(req.url).endsWith('/settle')) facSeq += 1;
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({
         isValid: true,
         success: true,
         settled: true,
-        transaction: TX,
-        txRef: TX,
+        transaction: tx,
+        txRef: tx,
         payer: facPayer,
         network: 'base',
       }));
@@ -66,15 +68,16 @@ let chainAmount = '2000';
 let shiftPayee = false;
 
 before(async () => {
-  setChainReaderForTests(async () => {
+  setChainReaderForTests(async ({ facilitator }) => {
     if (shiftPayee) config.x402.payTo = '0x' + '99'.repeat(20);
+    const tx = facilitator?.transaction || facilitator?.txRef || `0x${'ab'.repeat(32)}`;
     return {
       ok: true,
       confirmed: true,
       amount: chainAmount,
       payer: facPayer,
       payTo: HOUSE,
-      transaction: TX,
+      transaction: tx,
       network: 'base',
       logIndex: 0,
       blockNumber: 1,
@@ -138,4 +141,66 @@ test('register stamp underpaid over HTTP is 409 refund_owed', async () => {
   assert.match(body.pending_id, /^[0-9a-f]{32}$/);
   assert.equal(paid.headers.get('retry-after'), null);
   assert.doesNotMatch(JSON.stringify(body), /rejected|could not be settled/i);
+  assert.match(body.verify_url, /\/receipt\/late-[0-9a-f]{32}$/);
+});
+
+test('a header failure after a settled register stamp still returns the agent', async () => {
+  config.x402.payTo = HOUSE;
+  shiftPayee = false;
+  chainAmount = '2000';
+  process.env.X402_HEADER_THROW = '1';
+  try {
+    const signer = Wallet.createRandom();
+    facPayer = signer.address;
+    const open = await fetch(`${base}/v1/agents/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(await signedBody(signer)),
+    });
+    const challenge = await open.json();
+    assert.equal(open.status, 402, JSON.stringify(challenge));
+    const nonce = challenge.accepts?.[0]?.extra?.nonce;
+    const paid = await fetch(`${base}/v1/agents/register`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'payment-signature': paidHeader(signer.address, nonce),
+        'x-payment-nonce': nonce,
+      },
+      body: JSON.stringify(await signedBody(signer)),
+    });
+    const body = await paid.json();
+    assert.equal(paid.status, 200, JSON.stringify(body));
+    assert.ok(body.agent_id, JSON.stringify(body));
+    const openIngest = await fetch(`${base}/v1/agents/${body.agent_id}/book/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session: body.session,
+        payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+        payment_response: { tx: '0x' + 'e9'.repeat(32), payer: signer.address, network: 'base' },
+      }),
+    });
+    const ingestChallenge = await openIngest.json();
+    assert.equal(openIngest.status, 402, JSON.stringify(ingestChallenge));
+    const ingestNonce = ingestChallenge.accepts?.[0]?.extra?.nonce;
+    const ingestPaid = await fetch(`${base}/v1/agents/${body.agent_id}/book/ingest`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'payment-signature': paidHeader(signer.address, ingestNonce),
+        'x-payment-nonce': ingestNonce,
+      },
+      body: JSON.stringify({
+        session: body.session,
+        payment_required: { resource: 'https://shop.example/v1', amount: '1000', payTo: HOUSE },
+        payment_response: { tx: '0x' + 'ea'.repeat(32), payer: signer.address, network: 'base' },
+      }),
+    });
+    const ingestBody = await ingestPaid.json();
+    assert.equal(ingestPaid.status, 409, JSON.stringify(ingestBody));
+    assert.match(ingestBody.pending_id, /^[0-9a-f]{32}$/);
+  } finally {
+    delete process.env.X402_HEADER_THROW;
+  }
 });
