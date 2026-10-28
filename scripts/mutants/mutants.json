@@ -1,0 +1,685 @@
+{
+  "about": "PR #665 mutants. Regenerate with node build-mutants.mjs > mutants.json",
+  "timeoutSec": 180,
+  "suites": {
+    "gw": {
+      "cwd": "services/gateway",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/post-settle-hold.test.mjs",
+        "test/post-settle-stamp-http.test.mjs",
+        "test/settle-store-failure.test.mjs",
+        "test/refusal-body-pin.test.mjs",
+        "test/paid-route-binding.test.mjs",
+        "test/payment-binding-hardening.test.mjs",
+        "test/late-issue.test.mjs",
+        "test/late-issue-attacks.test.mjs",
+        "test/late-issue-review.test.mjs",
+        "test/board-jobs.test.mjs",
+        "test/board-posts.test.mjs",
+        "test/foreign-x402-ingest.test.mjs",
+        "test/agent-register.test.mjs",
+        "test/register-paid-rail.test.mjs",
+        "test/openai-settle-failure.test.mjs",
+        "test/paid-route-replay.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test",
+        "ISSUER_HISTORY_TEST_ROTATION": "true",
+        "ISSUER_TEST_KEY": "1",
+        "HUB_CATALOG_OFFLINE": "true"
+      }
+    },
+    "sdk": {
+      "cwd": "packages/sdk",
+      "argv": [
+        "npx",
+        "jest",
+        "--watchman=false"
+      ],
+      "env": {}
+    },
+    "mcp": {
+      "cwd": "packages/mcp",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "env": {}
+    }
+  },
+  "mutants": [
+    {
+      "id": "G1_resolvable_402",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "status: 202,\\n(\\s+retryAfter: retrySeconds)",
+      "flags": "",
+      "replace": "status: 402,\n$1",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G2_terminal_202",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "return \\{ status: 409, retryAfter: null, refundOwed: true",
+      "flags": "",
+      "replace": "return { status: 202, retryAfter: null, refundOwed: true",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G3_RA_on_terminal",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "return \\{ status: 409, retryAfter: null, refundOwed: true",
+      "flags": "",
+      "replace": "return { status: 409, retryAfter: 5, refundOwed: true",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G4_resolvable_409",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "status: 202,\\n(\\s+retryAfter: retrySeconds)",
+      "flags": "",
+      "replace": "status: 409,\n$1",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G5_drop_RA_resolvable",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "retryAfter: retrySeconds\\(decision\\.retryAfter, RESOLVABLE_RETRY_AFTER_SEC\\)",
+      "flags": "",
+      "replace": "retryAfter: null",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G6_sdk_payment_rejected",
+      "file": "packages/sdk/src/index.ts",
+      "find": "hold\\.refund \\? 'refund_owed' : 'payment_pending'",
+      "flags": "",
+      "replace": "'payment_rejected'",
+      "nth": 1,
+      "suite": "sdk",
+      "note": ""
+    },
+    {
+      "id": "G7a_register_passthru",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "\\.\\.\\.\\(stamp\\?\\.pending_id \\? \\{ pending_id: stamp\\.pending_id \\} : \\{\\}\\),",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G7b_ingest_passthru",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "\\.\\.\\.\\(stamp\\?\\.pending_id \\? \\{ pending_id: stamp\\.pending_id \\} : \\{\\}\\),",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G8a_drop_presettle_guard",
+      "file": "services/gateway/src/x402-flags.js",
+      "find": "if \\(decision\\?\\.preSettle === true\\) \\{",
+      "flags": "",
+      "replace": "if (false) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G9_bare402_paid_replay",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "sendOpenAiPaymentResult\\(res, inflightHoldDecision\\(extractPaymentNonce\\(req\\)[^;]*\\);",
+      "flags": "",
+      "replace": "res.set('Retry-After', '2'); res.status(402).json({ error: { message: 'Payment could not be settled', type: 'payment_required', code: 'payment_in_flight' } });",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G10a_bare402_stamp_register",
+      "file": "services/gateway/src/server.js",
+      "find": "return (decisionHoldResult\\()?terminalStampDecision\\(decision\\.paymentRef\\)\\)?;",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G10b_bare402_stamp_ingest",
+      "file": "services/gateway/src/server.js",
+      "find": "return (decisionHoldResult\\()?terminalStampDecision\\(decision\\.paymentRef\\)\\)?;",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'stamp_underpaid', code: 'stamp_underpaid' };",
+      "nth": 2,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G11_mcp_rejected",
+      "file": "packages/mcp/src/format.ts",
+      "find": "`Payment is pending\\. Do not pay again\\.",
+      "flags": "",
+      "replace": "`Payment was rejected. Do not pay again.",
+      "nth": 1,
+      "suite": "mcp",
+      "note": ""
+    },
+    {
+      "id": "G12_link_without_record",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "const row = active\\.ensureHoldHandle\\(\\{ key, holdClass(, code)? \\}\\);",
+      "flags": "",
+      "replace": "const row = { pending_id: 'ab'.repeat(16) };",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "G13_page_no_refund_sentence",
+      "file": "services/gateway/src/receipt-shell.js",
+      "find": "'refund owed, do not pay again' : 'pending'",
+      "flags": "",
+      "replace": "'refund owed' : 'pending'",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "X1_drop_class_settlePending",
+      "file": "services/gateway/src/late-issue.js",
+      "find": "( {4}\\.\\.\\.extra,\\n) {4}holdClass: 'resolvable',\\n",
+      "flags": "",
+      "replace": "$1",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "X2_drop_class_ownerOnly",
+      "file": "services/gateway/src/late-issue.js",
+      "find": "(verifyUrl: lateVerifyUrl\\(cfg, row\\.pending_id\\),\\n)\\s+holdClass: 'terminal',\\n",
+      "flags": "",
+      "replace": "$1",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "X3_inflight_key",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "key: settleHoldKey\\(net, nonce\\),",
+      "flags": "",
+      "replace": "key: `inflight:${nonce}`,",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "X4_fifth_replay_exit",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "return await hold\\('missing_replay_key', 'settle_unconfirmed'\\);",
+      "flags": "",
+      "replace": "return refused(req, 'payment_replayed', { network: net, sub: 'missing_replay_key' });",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S3a_released_s1_402",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "return releasedHold\\(\\);",
+      "flags": "",
+      "replace": "return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S3b_released_capped_402",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "return releasedHold\\(\\);",
+      "flags": "",
+      "replace": "return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });",
+      "nth": 2,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S3c_released_solana_402",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "return releasedHold\\(\\);",
+      "flags": "",
+      "replace": "return refused(req, publicReason, { stage, network: challenge.network, tx: hint, sub: why });",
+      "nth": 3,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S2_drop_prior_unknown",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "if \\(challenge\\?\\.state === 'unknown'\\) \\{",
+      "flags": "",
+      "replace": "if (false) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S4a_boardjobs_payer_402",
+      "file": "services/gateway/src/board-jobs.js",
+      "find": "return terminalHold\\('payer_mismatch', settled\\.settlement\\?\\.paymentRef, [^;]*\\);",
+      "flags": "",
+      "replace": "return fail(402, 'payer_mismatch', 'x');",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S4b_jobroutes_payer_403",
+      "file": "services/gateway/src/board-job-routes.js",
+      "find": "return terminalHold\\('payer_mismatch', decision\\.paymentRef, [^;]*\\);",
+      "flags": "",
+      "replace": "return { ok: false, status: 403, error: 'payer_mismatch', code: 'payer_mismatch' };",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "S9_drop_postsent_catch",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "if \\(postSent\\) \\{",
+      "flags": "",
+      "replace": "if (false) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "M2_inflight_network_precedence",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "const net = store\\?\\.get\\?\\.\\(nonce\\)\\?\\.network \\|\\| network \\|\\| '';",
+      "flags": "",
+      "replace": "const net = network || 'base';",
+      "nth": 1,
+      "suite": "gw",
+      "note": ""
+    },
+    {
+      "id": "M3a_mcp_board_hold",
+      "file": "packages/mcp/src/board.ts",
+      "find": " {2}if \\(held\\) return fail\\(held\\);\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "mcp",
+      "note": ""
+    },
+    {
+      "id": "M3b_mcp_register_hold",
+      "file": "packages/mcp/src/tools.ts",
+      "find": " {2}if \\(held\\) return fail\\(held\\);\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "mcp",
+      "note": ""
+    },
+    {
+      "id": "R1_class_no_upgrade",
+      "file": "services/gateway/src/x402-adapter.js",
+      "find": "existing\\.hold_class = 'terminal';",
+      "flags": "",
+      "replace": "/* no upgrade */",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-1 terminal after resolvable"
+    },
+    {
+      "id": "R2_eager_success_write",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "(postSentPending = lateRow\\?\\.pending_id \\|\\| null;\\n)",
+      "flags": "",
+      "replace": "$1  if (!postSentPending && nonce) { const o = openPostSettleHandle(active, { key: settleHoldKey(challenge.network, nonce), holdClass: 'resolvable', cfg }); postSentPending = o?.pendingId || null; }\n",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-1 success write"
+    },
+    {
+      "id": "R3_lazy_catch_handle",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "(let pendingId = postSentPending;\\n\\s+)if \\(!pendingId && nonce\\) \\{",
+      "flags": "",
+      "replace": "$1if (false) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": "S-9 lazy handle"
+    },
+    {
+      "id": "R4_page_state_precedence",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "if \\(signed \\|\\| row\\.state === 'issued' \\|\\| row\\.inline === true\\) \\{",
+      "flags": "",
+      "replace": "if (signed) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-2"
+    },
+    {
+      "id": "R5_success_link_dropped",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "if \\(existing\\?\\.pending_id\\) active\\.linkHoldHandle\\(key, \\{ taskId: issuedTaskId \\}\\);",
+      "flags": "",
+      "replace": "/* no link */",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-2 no-late-row"
+    },
+    {
+      "id": "R6_linked_task_ignored",
+      "file": "services/gateway/src/hold-handle.js",
+      "find": "if \\(link\\?\\.linked_task_id\\) return",
+      "flags": "",
+      "replace": "if (false) return",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-2 page"
+    },
+    {
+      "id": "R7_late_gating_off",
+      "file": "services/gateway/src/server.js",
+      "find": "const lateReceiptId = [^;]*;",
+      "flags": "",
+      "replace": "const lateReceiptId = true;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-5"
+    },
+    {
+      "id": "R8_first_code_dropped",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const code = linked\\.code \\|\\| \\(",
+      "flags": "",
+      "replace": "const code = (",
+      "nth": 1,
+      "suite": "gw",
+      "note": "N-8"
+    },
+    {
+      "id": "R9a_hdr_throw_register",
+      "file": "services/gateway/src/server.js",
+      "find": "logger\\.warn\\(\\{ err: err\\.message \\}, 'x402: payment response headers failed after settle'\\);",
+      "flags": "",
+      "replace": "throw err;",
+      "nth": 1,
+      "suite": "gw",
+      "note": "S-9 register header"
+    },
+    {
+      "id": "R9b_hdr_throw_ingest",
+      "file": "services/gateway/src/server.js",
+      "find": "logger\\.warn\\(\\{ err: err\\.message \\}, 'x402: payment response headers failed after settle'\\);",
+      "flags": "",
+      "replace": "throw err;",
+      "nth": 2,
+      "suite": "gw",
+      "note": "S-9 ingest header"
+    },
+    {
+      "id": "R10_ingest_afterStamp_all",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "if \\(!stampRef\\) \\{",
+      "flags": "",
+      "replace": "if (true) {",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-4 ingest all sites"
+    },
+    {
+      "id": "R11_ingest_catch_402",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return collectedStampHold\\('stamp_payment_required', null, \\{\\}\\);",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'stamp_failed' };",
+      "nth": 1,
+      "suite": "gw",
+      "note": "S-9 ingest catch"
+    },
+    {
+      "id": "R12_boardjobs_catch_402",
+      "file": "services/gateway/src/board-jobs.js",
+      "find": "return collectedStampHold\\('stamp_payment_required', null, \\{\\}\\);",
+      "flags": "",
+      "replace": "return fail(402, 'stamp_payment_required', 'x');",
+      "nth": 1,
+      "suite": "gw",
+      "note": "S-9 board-jobs catch"
+    },
+    {
+      "id": "R13_boardposts_catch_402",
+      "file": "services/gateway/src/board-posts.js",
+      "find": "return collectedStampHold\\('stamp_payment_required', null, \\{\\}\\);",
+      "flags": "",
+      "replace": "return fail(402, 'stamp_payment_required', 'x');",
+      "nth": 1,
+      "suite": "gw",
+      "note": "S-9 board-posts catch"
+    },
+    {
+      "id": "R14_register_site_1",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_2",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 2,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_3",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 3,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_4",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 4,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_5",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 5,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_6",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 6,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_7",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 7,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R14_register_site_8",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "return collectedStampHold\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void collectedStampHold(",
+      "nth": 8,
+      "suite": "gw",
+      "note": "NEW-3/NEW-4 register"
+    },
+    {
+      "id": "R15_ingest_site_1",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 1,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_2",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 2,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_3",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 3,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_4",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 4,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_5",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 5,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_6",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 6,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_7",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 7,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_8",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 8,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_9",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 9,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_10",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 10,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_11",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 11,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    },
+    {
+      "id": "R15_ingest_site_12",
+      "file": "services/gateway/src/foreign-x402-ingest.js",
+      "find": "return afterStamp\\(",
+      "flags": "",
+      "replace": "return { ok: false, status: 402, error: 'mut_bare', code: 'mut_bare' }; void afterStamp(",
+      "nth": 12,
+      "suite": "gw",
+      "note": "NEW-4 ingest"
+    }
+  ]
+}
