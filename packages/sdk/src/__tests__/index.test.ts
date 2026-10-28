@@ -703,6 +703,45 @@ describe('XFuelClient', () => {
       });
     });
 
+    it('keeps the server body and receipt_jws on a hold', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 202,
+          data: {
+            error: 'settle_pending',
+            code: 'settle_pending',
+            pending_id: 'ab'.repeat(16),
+            verify_url: '/receipt/late-' + 'ab'.repeat(16),
+            receipt_jws: 'header.payload.sig',
+          },
+        });
+      const client = makeClient();
+      try {
+        await client.submitTaskWithPayment(taskParams, createMockPayer());
+        throw new Error('expected hold');
+      } catch (err) {
+        const api = err as XFuelApiError;
+        expect(api.receiptJws).toBe('header.payload.sig');
+        expect((api.body as { code?: string }).code).toBe('settle_pending');
+        expect(api.message).toContain('verify_url:');
+      }
+    });
+
+    it('surfaces the fallback Do not pay again message', async () => {
+      mockPost
+        .mockResolvedValueOnce({ status: 402, data: challengeBody })
+        .mockResolvedValueOnce({
+          status: 409,
+          data: { error: 'settle_unconfirmed', code: 'settle_unconfirmed', message: 'Do not pay again.' },
+        });
+      const client = makeClient();
+      await expect(client.submitTaskWithPayment(taskParams, createMockPayer())).rejects.toMatchObject({
+        message: 'Do not pay again.',
+        code: 'settle_unconfirmed',
+      });
+    });
+
     it('a 402 without pending_id is still payment_rejected', async () => {
       mockPost
         .mockResolvedValueOnce({ status: 402, data: challengeBody })

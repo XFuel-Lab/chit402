@@ -352,7 +352,8 @@ export class ChallengeStore {
     this.late = [];
     this.lateLedger = [];
     // Public hold handles. id is random. key is the idempotency string and
-    // is never returned by getHoldHandle.
+    // is never returned by getHoldHandle. Unlike terminal late rows, these
+    // are not pruned: a handle page stays until the store file is replaced.
     this.holdHandles = [];
   }
 
