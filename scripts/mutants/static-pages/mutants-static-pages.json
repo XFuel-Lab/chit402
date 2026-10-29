@@ -125,6 +125,36 @@
       "nth": 1,
       "suite": "webstatic",
       "note": "the edge still inserts the noscript h1 and lede"
+    },
+    {
+      "id": "X10_home_inject_ignores_path",
+      "file": "middleware.ts",
+      "find": "injectHomeIfRoot\\(transformHtml\\(html, seo, pathname\\), pathname, HOME_PAGE\\)",
+      "flags": "",
+      "replace": "injectHomeIfRoot(transformHtml(html, seo, pathname), '/', HOME_PAGE)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home injection uses the request path"
+    },
+    {
+      "id": "X11_middleware_skips_home_inject",
+      "file": "middleware.ts",
+      "find": "injectHomeIfRoot\\(transformHtml\\(html, seo, pathname\\), pathname, HOME_PAGE\\)",
+      "flags": "",
+      "replace": "transformHtml(html, seo, pathname)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the middleware injects the home block"
+    },
+    {
+      "id": "X12_prerender_writes_home_index",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "writeFileSync\\(join\\(distDir, 'index.html'\\), indexHtmlForBuild\\(indexHtml\\)\\);",
+      "flags": "",
+      "replace": "writeFileSync(join(distDir, 'index.html'), injectStatic(indexHtml, contentForRoute('/', env, verifyUrl)));",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the build script does not write the home block into index.html"
     }
   ]
 }

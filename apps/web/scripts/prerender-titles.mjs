@@ -5,12 +5,14 @@
  * and content (H1 + first ~150 words).
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STATIC_ROUTES, contentForRoute, indexHtmlForBuild, injectStatic, loadChitStaticEnv } from './static-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const distDir = join(__dirname, '..', 'dist');
+const distDir = process.env.CHIT_PRERENDER_DIST
+  ? resolve(process.env.CHIT_PRERENDER_DIST)
+  : join(__dirname, '..', 'dist');
 
 export const ROUTE_CONTENT = {
   '/agent-shop': {

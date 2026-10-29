@@ -1,8 +1,10 @@
 /**
  * Static HTML for /, /check, /docs and /pricing. Offline: no network.
  */
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,48 +58,59 @@ function rootInner(html) {
   return match ? match[1] : '';
 }
 
-const HOME_EDGE_SEO = {
-  title: 'Chit402 — treasury desk for agent spend',
-  description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
-  ogTitle: 'Chit402 — treasury desk for agent spend',
-  ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
-  ogImage: 'https://www.chit402.com/og-image.png',
-  domain: 'www.chit402.com',
-  h1: 'Chit402 — treasury desk for agent spend',
-  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. You see the price first, it\'s based on our cost, and you pay in USDC on Base and Solana. The wire is api.chit402.com/v1.',
-};
+function loadEdgeMiddleware(fetchImpl) {
+  const src = readNorm(new URL('../../../middleware.ts', import.meta.url));
+  const js = src
+    .replace(/^import .*\n/gm, '')
+    .replace(/export const config = \{[\s\S]*?\n\};\n/, '')
+    .replace(/interface SeoConfig \{[\s\S]*?\n\}\n/, '')
+    .replace(/:\s*SeoConfig/g, '')
+    .replace(/:\s*Promise<Response>/g, '')
+    .replace(/:\s*Request/g, '')
+    .replace(/:\s*string/g, '')
+    .replace(/:\s*boolean/g, '')
+    .replace('export default async function middleware', 'async function middleware')
+    .replace(/export \{ transformHtml \};?\n?/, '');
+  const factory = new Function(
+    'chitHomePage',
+    'injectHomeIfRoot',
+    'getHostConfig',
+    'LIVE_RECEIPT_VERIFY_URL',
+    'fetch',
+    `${js}\nreturn { middleware, CHIT_HOME_SEO, CHIT_V1_SEO_FULL };`,
+  );
+  return factory(
+    chitHomePage,
+    injectHomeIfRoot,
+    () => ({ githubUrl: env.githubUrl }),
+    verifyUrl,
+    fetchImpl,
+  );
+}
 
-const V1_EDGE_SEO = {
-  title: 'Pay /v1/chat/completions | Chit402',
-  description: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
-  ogTitle: 'Pay /v1/chat/completions | Chit402',
-  ogDescription: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
-  ogImage: 'https://www.chit402.com/og-image.png',
-  domain: 'www.chit402.com',
-  h1: 'Bot drop-in. Wallet pays. You hold the book.',
-  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions: you see the price first, it\'s based on our cost, and every paid call gets a signed receipt. USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
-};
+const edge = loadEdgeMiddleware(async () => new Response(shell, {
+  status: 200,
+  headers: { 'content-type': 'text/html; charset=utf-8' },
+}));
+
+async function edgeHtml(pathname) {
+  const request = new Request(`https://www.chit402.com${pathname}`, {
+    headers: { host: 'www.chit402.com' },
+  });
+  const response = await edge.middleware(request);
+  return response.text();
+}
+
+const servedHome = await edgeHtml('/');
 
 function pageHtml(route) {
   const page = contentForRoute(route, env, verifyUrl);
-  if (route === '/') {
-    const mw = loadMiddlewareTransform();
-    const html = injectHomeIfRoot(mw(shell, HOME_EDGE_SEO, '/'), '/', page);
-    return { page, html };
-  }
+  if (route === '/') return { page, html: servedHome };
   const meta = ROUTE_CONTENT[route];
   return { page, html: renderRouteHtml(shell, route, page, meta, transformHtml) };
 }
 
 const pages = Object.fromEntries(['/', '/check', '/docs', '/pricing'].map((route) => [route, pageHtml(route)]));
-
-function loadMiddlewareTransform() {
-  const src = readNorm(new URL('../../../middleware.ts', import.meta.url));
-  const start = src.indexOf('function escapeAttr');
-  const end = src.indexOf('export default async function middleware');
-  const js = src.slice(start, end).replace(/\):\s*string\s*\{/g, ') {').replace(/(\w+):\s*(string|SeoConfig)/g, '$1');
-  return new Function(`${js}; return transformHtml;`)();
-}
 
 test('each main route renders its h1, sections, and at least 1,200 characters', () => {
   for (const [route, { page, html }] of Object.entries(pages)) {
@@ -243,23 +256,42 @@ test('the shared index shell has no home copy, and only / receives it', () => {
   assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(home)), '/ receives the home block inside #root');
 });
 
-test('chit / keeps the edge noscript h1 and lede after #root', () => {
-  const html = pages['/'].html;
-  assert.ok(/<h1>Chit402 — treasury desk for agent spend<\/h1>/.test(html), 'edge noscript h1');
-  assert.ok(/Who paid which call — export, policy, evidence\. Possession book for agent spend\./.test(html), 'edge noscript lede');
-  assert.ok(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/.test(html), 'noscript is inserted after #root');
-  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(html)), 'home h1 is inside #root');
+test('the middleware entry serves /, /v1/sub, and /security', async () => {
+  const home = await edgeHtml('/');
+  const sub = await edgeHtml('/v1/sub');
+  const security = await edgeHtml('/security');
+  const homeSeo = edge.CHIT_HOME_SEO;
+  const v1Seo = edge.CHIT_V1_SEO_FULL;
+  assert.ok(new RegExp(`<title>${homeSeo.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/title>`).test(home), '/ uses the middleware home title');
+  assert.ok(home.includes(`<h1>${homeSeo.h1}</h1>`), '/ keeps the middleware noscript h1');
+  assert.ok(home.includes(homeSeo.lede), '/ keeps the middleware noscript lede');
+  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(home)), '/ injects the home block');
+  assert.ok(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/.test(home), 'noscript is inserted after #root');
+  assert.ok(new RegExp(`<title>${v1Seo.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/title>`).test(sub), '/v1/sub uses the middleware v1 title');
+  assert.ok(/<link rel="canonical" href="https:\/\/www\.chit402\.com\/v1\/sub" \/>/.test(sub), '/v1/sub canonical uses the real path');
+  assert.ok(sub.includes(`<h1>${v1Seo.h1}</h1>`), '/v1/sub keeps the v1 noscript h1');
+  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(sub), '/v1/sub has no home copy');
+  assert.equal(rootInner(security), '', '/security keeps an empty #root');
+  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(security), '/security has no home copy');
 });
 
-test('/v1 and /v1/* keep their title, canonical and noscript, with no home copy', () => {
-  const mw = loadMiddlewareTransform();
-  const page = chitHomePage(verifyUrl, env.githubUrl);
-  for (const path of ['/v1', '/v1/chat/completions']) {
-    const html = injectHomeIfRoot(mw(shell, V1_EDGE_SEO, path), path, page);
-    assert.ok(/<title>Pay \/v1\/chat\/completions \| Chit402<\/title>/.test(html), `${path} title`);
-    assert.ok(new RegExp(`<link rel="canonical" href="https://www\\.chit402\\.com${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" \\/>`).test(html), `${path} canonical`);
-    assert.ok(/<noscript>[\s\S]*<h1>Bot drop-in\. Wallet pays\. You hold the book\.<\/h1>/.test(html), `${path} noscript h1`);
-    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${path} has no home copy`);
+test('the prerender script leaves index.html as the plain shell', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chit-prerender-'));
+  try {
+    cpSync(join(root, 'index.html'), join(dir, 'index.html'));
+    const before = readNorm(join(dir, 'index.html'));
+    const result = spawnSync(process.execPath, ['scripts/prerender-titles.mjs'], {
+      cwd: root,
+      env: { ...process.env, CHIT_PRERENDER_DIST: dir },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const after = readNorm(join(dir, 'index.html'));
+    assert.equal(after, before, 'index.html is still the plain shell');
+    assert.equal(rootInner(after), '', 'built index.html has an empty #root');
+    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(after), 'built index.html has no home copy');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
