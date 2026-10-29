@@ -8,9 +8,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Wallet } from 'ethers';
 
 const tmp = mkdtempSync(path.join(tmpdir(), 'book-401-'));
@@ -21,7 +23,35 @@ process.env.NODE_ENV = 'test';
 process.env.RECEIPT_SIGNING_SECRET = 'test-receipt-secret-book-401';
 process.env.X402_ENABLED = 'false';
 
-const { createApp } = await import('../src/server.js');
+if (process.env.BOOK_405_RATE_CHILD === '1') {
+  process.env.M2M_RATE_MAX_HITS = '3';
+  process.env.M2M_RATE_WINDOW_MS = '600000';
+  const { createApp: createRateApp } = await import('../src/server.js');
+  const app = await createRateApp();
+  const rateServer = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  const rateBase = `http://127.0.0.1:${rateServer.address().port}`;
+  const rows = [];
+  for (let i = 0; i < 5; i++) {
+    const res = await fetch(`${rateBase}/v1/agents/149/book/rotate`);
+    rows.push({
+      status: res.status,
+      text: await res.text(),
+      limit: res.headers.get('x-ratelimit-limit'),
+      remaining: res.headers.get('x-ratelimit-remaining'),
+      reset: res.headers.get('x-ratelimit-reset'),
+      retry: res.headers.get('retry-after'),
+      allow: res.headers.get('allow'),
+    });
+  }
+  if (typeof rateServer.closeAllConnections === 'function') rateServer.closeAllConnections();
+  await new Promise((resolve) => rateServer.close(resolve));
+  process.stdout.write(`\nBOOK_405_RATE_JSON ${JSON.stringify(rows)}\n`);
+  process.exit(0);
+}
+
+const { createApp, BOOK_POST_ONLY_SUBROUTES } = await import('../src/server.js');
 const { readAgentBook, setAgentBudget, exportAgentBook } = await import('../src/agent-book.js');
 const { initAIListener, getAIListener } = await import('../src/ai-listener.js');
 const { buildReceipt } = await import('../src/receipt.js');
@@ -32,10 +62,11 @@ const JSON_TYPE = 'application/json; charset=utf-8';
 
 let server;
 let base;
+let app;
 
 before(async () => {
   await initAIListener();
-  const app = await createApp();
+  app = await createApp();
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       base = `http://127.0.0.1:${server.address().port}`;
@@ -390,4 +421,242 @@ test('401 hint is referenced at the four book and export sites; llms files are u
     createHash('sha256').update(apiLlms).digest('hex'),
     '9346da542e28956cc59ffe1f9abd5638efccbc2358a98de15c144b319ea53b4e',
   );
+});
+
+const NOT_ALLOWED = '{"error":"method_not_allowed"}';
+const NOT_FOUND = '{"error":"not_found"}';
+const POST_ONLY = ['inflow', 'inflow/correct', 'ingest', 'escrow', 'rotate'];
+
+const OPTIONS_ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key, X-Chit-Ingest-Key, X-Chit-Strict-Model, X-PAYMENT, X-PAYMENT-NONCE, PAYMENT-SIGNATURE, PAYMENT-NONCE, X-XFuel-Session, x-xfuel-session, X-Chit-Board-Ops';
+const OPTIONS_EXPOSE_HEADERS = 'X-XFuel-Signature, x-xfuel-task-id, x-xfuel-provider, x-xfuel-compute-real, x-xfuel-payment-rail, x-xfuel-proof-status, x-xfuel-proof-url, x-xfuel-verify-url, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Chit-Requested-Model, X-Chit-Served-Model, X-Chit-Model-Substituted, X-Chit-Request-Salt, X-Chit-Verifier-Min';
+
+test('GET and HEAD on POST-only book subroutes are 405 with Allow POST', async () => {
+  for (const sub of POST_ONLY) {
+    const url = `${base}/v1/agents/149/book/${sub}`;
+    const getRes = await read(await fetch(url));
+    assert.equal(getRes.status, 405, sub);
+    assert.equal(getRes.text, NOT_ALLOWED, sub);
+    assert.equal(getRes.headers.allow, 'POST', sub);
+    assert.equal(getRes.headers['cache-control'], 'private, no-store', sub);
+    assert.equal(getRes.headers['content-type'], JSON_TYPE, sub);
+    const headRes = await fetch(url, { method: 'HEAD' });
+    const headBody = await headRes.text();
+    assert.equal(headRes.status, 405, `HEAD ${sub}`);
+    assert.equal(headBody, '', `HEAD ${sub} body`);
+    assert.equal(headRes.headers.get('allow'), 'POST', `HEAD ${sub}`);
+    assert.equal(headRes.headers.get('cache-control'), 'private, no-store', `HEAD ${sub}`);
+    assert.equal(headRes.headers.get('content-type'), JSON_TYPE, `HEAD ${sub}`);
+  }
+});
+
+test('unauthenticated POST on POST-only book subroutes stays the main response', async () => {
+  const empty = ['inflow', 'inflow/correct', 'escrow', 'rotate'];
+  for (const sub of empty) {
+    const got = await read(await fetch(`${base}/v1/agents/149/book/${sub}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }));
+    assertEmpty401(got, `POST ${sub}`);
+    assert.equal(got.headers.allow, undefined, sub);
+    assert.equal(got.headers['cache-control'], undefined, sub);
+  }
+  const ingest = await read(await fetch(`${base}/v1/agents/149/book/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  }));
+  assert.equal(ingest.status, 401);
+  assert.equal(ingest.text, '{"error":"unauthorized","message":"Possession proof (session) is required"}');
+  assert.equal(ingest.headers['content-type'], JSON_TYPE);
+  assert.equal(ingest.headers['content-length'], '75');
+  assert.equal(ingest.headers.etag, 'W/"4b-78YK7u58yeDurwzY70v7AyxCMvM"');
+  assert.equal(ingest.headers.allow, undefined);
+});
+
+test('unknown book paths stay 404 and other wrong methods stay 404', async () => {
+  const paths = [
+    '/v1/agents/149/book/rotate%22',
+    '/v1/agents/149/book/inflow%22',
+    '/v1/agents/149/book/rotate&quot',
+    '/v1/agents/149/book/inflow&quot',
+    '/v1/agents/149/book/webhook/v1/models',
+    '/v1/agents/149/book/rotate/extra',
+    '/v1/agents/149/book/nope',
+  ];
+  for (const pathName of paths) {
+    const got = await read(await fetch(`${base}${pathName}`));
+    assert.equal(got.status, 404, pathName);
+    assert.equal(got.text, NOT_FOUND, pathName);
+  }
+  for (const method of ['PUT', 'PATCH', 'DELETE']) {
+    const got = await read(await fetch(`${base}/v1/agents/149/book/rotate`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }));
+    assert.equal(got.status, 404, method);
+    assert.equal(got.text, NOT_FOUND, method);
+  }
+});
+
+test('existing book GET routes are not turned into 405', async () => {
+  const empty = [
+    '/v1/agents/1/book/dispute',
+    '/v1/agents/1/book/a2a-escrow',
+    '/v1/agents/1/book/policy',
+    '/v1/agents/1/book/assign',
+    '/v1/agents/1/book/gaps',
+  ];
+  for (const pathName of empty) {
+    const got = await read(await fetch(`${base}${pathName}`));
+    assertEmpty401(got, pathName);
+  }
+  const exp = await read(await fetch(`${base}/v1/agents/1/book/export`));
+  assertHint(exp, 'export still the hint');
+});
+
+test('router walk: POST-only book routes match BOOK_POST_ONLY_SUBROUTES', () => {
+  const routes = [];
+  for (const layer of app.router.stack) {
+    if (!layer.route) continue;
+    routes.push({ path: layer.route.path, methods: layer.route.methods });
+  }
+  const has = (pathName, method) => routes.some((r) => r.path === pathName && r.methods[method]);
+  for (const pattern of BOOK_POST_ONLY_SUBROUTES) {
+    assert.equal(has(pattern, 'post'), true, `POST ${pattern}`);
+    assert.equal(has(pattern, 'get'), false, `GET ${pattern}`);
+    assert.equal(has(pattern, 'head'), false, `HEAD ${pattern}`);
+  }
+  const seen = new Set(routes.map((r) => r.path).filter((p) => typeof p === 'string' && p.startsWith('/v1/agents/:agent_id/book/')));
+  for (const pathName of seen) {
+    if (has(pathName, 'post') && !has(pathName, 'get') && !has(pathName, 'head')) {
+      assert.ok(BOOK_POST_ONLY_SUBROUTES.includes(pathName), pathName);
+    }
+  }
+});
+
+test('GET book/rotate 405 is still rate limited', async () => {
+  const file = fileURLToPath(import.meta.url);
+  const child = spawn(process.execPath, [file], {
+    env: {
+      ...process.env,
+      BOOK_405_RATE_CHILD: '1',
+      M2M_RATE_MAX_HITS: '3',
+      M2M_RATE_WINDOW_MS: '600000',
+      HUB_CATALOG_OFFLINE: 'true',
+      NODE_ENV: 'test',
+      ISSUER_TEST_KEY: '1',
+      TASK_STORE_PERSIST: 'false',
+    },
+  });
+  let out = '';
+  child.stdout.on('data', (chunk) => { out += chunk; });
+  const code = await new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', resolve);
+  });
+  assert.equal(code, 0, out.slice(-500));
+  const line = out.split('\n').find((row) => row.startsWith('BOOK_405_RATE_JSON '));
+  assert.ok(line, out.slice(-500));
+  const rows = JSON.parse(line.slice('BOOK_405_RATE_JSON '.length));
+  assert.equal(rows.length, 5);
+  for (const row of rows.slice(0, 3)) {
+    assert.equal(row.status, 405);
+    assert.equal(row.text, NOT_ALLOWED);
+    assert.equal(row.allow, 'POST');
+    assert.equal(row.limit, '3');
+    assert.ok(row.remaining != null && row.remaining !== '');
+    assert.ok(row.reset);
+  }
+  assert.equal(rows[3].status, 429);
+  assert.equal(rows[4].status, 429);
+  const limited = JSON.parse(rows[3].text);
+  assert.equal(limited.error, 'rate_limit_exceeded');
+  assert.equal(limited.message, 'Too many requests — slow down.');
+  assert.equal(typeof limited.retryAfterMs, 'number');
+  assert.ok(rows[3].retry);
+});
+
+test('OPTIONS on book/rotate and book matches the values captured on main', async () => {
+  const paths = ['/v1/agents/149/book/rotate', '/v1/agents/149/book'];
+  for (const pathName of paths) {
+    const bare = await read(await fetch(`${base}${pathName}`, { method: 'OPTIONS' }));
+    assert.equal(bare.status, 404, pathName);
+    assert.equal(bare.text, NOT_FOUND, pathName);
+    assert.equal(bare.headers.allow, undefined, pathName);
+    assert.equal(bare.headers['access-control-allow-origin'], undefined, pathName);
+    assert.equal(bare.headers['access-control-allow-methods'], undefined, pathName);
+    assert.equal(bare.headers['access-control-allow-headers'], undefined, pathName);
+    assert.equal(bare.headers['access-control-expose-headers'], undefined, pathName);
+    assert.equal(bare.headers['content-type'], JSON_TYPE, pathName);
+
+    const allowed = await read(await fetch(`${base}${pathName}`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://www.chit402.com',
+        'Access-Control-Request-Method': 'POST',
+      },
+    }));
+    assert.equal(allowed.status, 204, pathName);
+    assert.equal(allowed.text, '', pathName);
+    assert.equal(allowed.headers.allow, undefined, pathName);
+    assert.equal(allowed.headers['access-control-allow-origin'], 'https://www.chit402.com', pathName);
+    assert.equal(allowed.headers['access-control-allow-methods'], 'GET, POST, PUT, DELETE, OPTIONS', pathName);
+    assert.equal(allowed.headers['access-control-allow-headers'], OPTIONS_ALLOW_HEADERS, pathName);
+    assert.equal(allowed.headers['access-control-expose-headers'], OPTIONS_EXPOSE_HEADERS, pathName);
+    assert.equal(allowed.headers.vary, 'Origin', pathName);
+  }
+});
+
+test('GET book/rotate with an allowed Origin keeps the CORS headers', async () => {
+  const origin = 'https://www.chit402.com';
+  const hit = await read(await fetch(`${base}/v1/agents/149/book/rotate`, { headers: { Origin: origin } }));
+  const miss = await read(await fetch(`${base}/v1/agents/149/book/nope`, { headers: { Origin: origin } }));
+  assert.equal(hit.status, 405);
+  assert.equal(miss.status, 404);
+  assert.equal(hit.headers['access-control-allow-origin'], miss.headers['access-control-allow-origin']);
+  assert.equal(hit.headers['access-control-allow-origin'], origin);
+  assert.equal(hit.headers.vary, miss.headers.vary);
+  assert.equal(hit.headers.vary, 'Origin');
+});
+
+test('405 handler is registered after the real routes and before the 404 fallback', () => {
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const guardAt = src.indexOf('app.use(bookPostOnlyMethodGuard)');
+  const mountAt = src.indexOf('ownerView.mount(app)');
+  const broadcastAt = src.indexOf('registerOpenRouterBroadcast(');
+  const fallbackAt = src.indexOf('// ── 404 fallback');
+  let lastPost = -1;
+  const marker = "app.post('/v1/agents/:agent_id/book";
+  for (let from = 0; ;) {
+    const at = src.indexOf(marker, from);
+    if (at < 0) break;
+    lastPost = at;
+    from = at + marker.length;
+  }
+  assert.ok(guardAt > mountAt, 'after ownerView.mount');
+  assert.ok(guardAt > broadcastAt, 'after registerOpenRouterBroadcast');
+  assert.ok(guardAt > lastPost, 'after the last book POST');
+  assert.ok(guardAt < fallbackAt, 'before the 404 fallback');
+  assert.equal(src.indexOf('app.use(bookPostOnlyMethodGuard)', guardAt + 1), -1);
+});
+
+test('openapi lists 405 on the five POST-only book paths', async () => {
+  const spec = await (await fetch(`${base}/openapi.json`)).json();
+  for (const p of [
+    '/v1/agents/{agent_id}/book/inflow',
+    '/v1/agents/{agent_id}/book/inflow/correct',
+    '/v1/agents/{agent_id}/book/ingest',
+    '/v1/agents/{agent_id}/book/escrow',
+    '/v1/agents/{agent_id}/book/rotate',
+  ]) {
+    const res = spec.paths[p].post.responses['405'];
+    assert.ok(res, p);
+    assert.match(res.description, /method_not_allowed/);
+    assert.match(res.description, /Allow is POST/);
+    assert.equal(res.content['application/json'].schema.properties.error.const, 'method_not_allowed');
+  }
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/dispute'].get.responses['405'], undefined);
+  assert.equal(spec.paths['/v1/agents/{agent_id}/book/dispute'].post.responses['405'], undefined);
 });

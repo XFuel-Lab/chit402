@@ -724,6 +724,28 @@ const BOOK_WEBHOOK_ENVELOPE_SCHEMA = {
   },
 };
 
+const BOOK_POST_ONLY_405 = {
+  description: 'GET or HEAD on this POST-only path. Allow is POST. Body is {"error":"method_not_allowed"}.',
+  headers: {
+    Allow: {
+      schema: { type: 'string', enum: ['POST'] },
+      description: 'POST',
+    },
+  },
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['error'],
+        properties: {
+          error: { const: 'method_not_allowed' },
+        },
+      },
+    },
+  },
+};
+
 const AGENTS_BOOK_OP = {
   operationId: 'getAgentBook',
   summary: 'Possession-gated agent spend book',
@@ -1266,6 +1288,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or invalid inflow_claim signature.' },
             409: { description: 'Duplicate task_id.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1303,6 +1326,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or invalid correction signature.' },
             404: { description: 'Inflow row not found.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1349,6 +1373,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             403: { description: 'Demo key or session does not match agent_id.' },
             402: { description: 'Stamp payment required ($0.002 USDC / 2000 atomic) unless a pilot waiver key applies.' },
             409: { description: 'Duplicate transaction (replay protection).' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1704,6 +1729,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
             404: { description: 'Escrow not found.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1888,6 +1914,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             400: { description: 'Session mismatch.' },
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },

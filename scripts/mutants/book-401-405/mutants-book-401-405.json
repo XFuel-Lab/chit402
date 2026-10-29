@@ -1,0 +1,228 @@
+{
+  "about": "Book 401 hint and POST-only book 405. Run with scripts/mutants/run-mutants.mjs.",
+  "timeoutSec": 180,
+  "suites": {
+    "gwbook": {
+      "cwd": "services/gateway",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/book-401-405.test.mjs",
+        "test/agent-book.test.mjs",
+        "test/agent-cap.test.mjs",
+        "test/receipt-audit-path.test.mjs",
+        "test/cors.test.mjs",
+        "test/foreign-x402-ingest.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test",
+        "ISSUER_HISTORY_TEST_ROTATION": "true",
+        "ISSUER_TEST_KEY": "1",
+        "HUB_CATALOG_OFFLINE": "true"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "A1_hint_dropped_read",
+      "file": "services/gateway/src/server.js",
+      "find": "if \\(result\\.status === 401\\) return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);",
+      "flags": "",
+      "replace": "return res.status(result.status).end();",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "read-path 401 back to .end()"
+    },
+    {
+      "id": "A2_hint_dropped_budget",
+      "file": "services/gateway/src/server.js",
+      "find": "if \\(set\\.status === 401\\) return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);",
+      "flags": "",
+      "replace": "return res.status(set.status).end();",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "budget-set 401 back to .end()"
+    },
+    {
+      "id": "A3_hint_dropped_export_get",
+      "file": "services/gateway/src/server.js",
+      "find": "return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);",
+      "flags": "",
+      "replace": "return res.status(401).end();",
+      "nth": 3,
+      "suite": "gwbook",
+      "note": "GET export 401 back to .end()"
+    },
+    {
+      "id": "A4_hint_dropped_export_post",
+      "file": "services/gateway/src/server.js",
+      "find": "return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);",
+      "flags": "",
+      "replace": "return res.status(401).end();",
+      "nth": 4,
+      "suite": "gwbook",
+      "note": "POST export 401 back to .end()"
+    },
+    {
+      "id": "A5_hint_on_403",
+      "file": "services/gateway/src/server.js",
+      "find": "if \\(result\\.status === 401\\) return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);\\n        return res\\.status\\(result\\.status\\)\\.end\\(\\);",
+      "flags": "",
+      "replace": "return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "book read 403 returns the hint body"
+    },
+    {
+      "id": "A6_code_renamed",
+      "file": "services/gateway/src/agent-book.js",
+      "find": "error: 'possession_required'",
+      "flags": "",
+      "replace": "error: 'unauthorized'",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "possession_required renamed"
+    },
+    {
+      "id": "A7_message_one_char",
+      "file": "services/gateway/src/agent-book.js",
+      "find": "Send your Chit402 book session from POST /v1/agents/register",
+      "flags": "",
+      "replace": "Send your Chit402 book session from POST /v1/agents/registe",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "drop one character from the approved message"
+    },
+    {
+      "id": "A8_docs_url_changed",
+      "file": "services/gateway/src/agent-book.js",
+      "find": "https://www\\.chit402\\.com/docs/private-spend",
+      "flags": "",
+      "replace": "/docs",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "docs URL replaced with a relative path"
+    },
+    {
+      "id": "A9_hint_echoes_agent",
+      "file": "services/gateway/src/server.js",
+      "find": "const payload = JSON\\.stringify\\(body\\);",
+      "flags": "",
+      "replace": "const payload = JSON.stringify({ ...body, agent_id: req.params.agent_id });",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "401 body includes agent_id"
+    },
+    {
+      "id": "A10_scope_creep_policy",
+      "file": "services/gateway/src/server.js",
+      "find": "// GET /v1/agents/:agent_id/book/policy — Get current policy\\n  app\\.get\\('/v1/agents/:agent_id/book/policy', privateNoStore\\(\\), \\(req, res\\) => \\{\\n    try \\{\\n      const claim = claimFromRequest\\(req\\);\\n      const session = claim\\.session;\\n      const proof = claim\\.proof;\\n      if \\(!session && !proof\\) \\{\\n        return res\\.status\\(401\\)\\.end\\(\\);",
+      "flags": "",
+      "replace": "// GET /v1/agents/:agent_id/book/policy — Get current policy\n  app.get('/v1/agents/:agent_id/book/policy', privateNoStore(), (req, res) => {\n    try {\n      const claim = claimFromRequest(req);\n      const session = claim.session;\n      const proof = claim.proof;\n      if (!session && !proof) {\n        return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "policy GET 401 sends the hint"
+    },
+    {
+      "id": "B1_405_swallows_post",
+      "file": "services/gateway/src/server.js",
+      "find": "if \\(req\\.method !== 'GET' && req\\.method !== 'HEAD'\\) return next\\(\\);\\n([\\s\\S]*?)app\\.get\\('/v1/agents/:agent_id/book', privateNoStore\\(\\), sendAgentBook\\);",
+      "flags": "",
+      "replace": "$1  app.use(bookPostOnlyMethodGuard);\n  app.get('/v1/agents/:agent_id/book', privateNoStore(), sendAgentBook);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "method-agnostic guard mounted before the book routes"
+    },
+    {
+      "id": "B2_wrong_allow",
+      "file": "services/gateway/src/server.js",
+      "find": "res\\.set\\('Allow', 'POST'\\);",
+      "flags": "",
+      "replace": "res.set('Allow', 'GET, POST');",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "Allow lists GET as well as POST"
+    },
+    {
+      "id": "B3_405_covers_get_route",
+      "file": "services/gateway/src/server.js",
+      "find": "'/v1/agents/:agent_id/book/rotate',\\n\\]\\);",
+      "flags": "",
+      "replace": "'/v1/agents/:agent_id/book/rotate',\n  '/v1/agents/:agent_id/book/dispute',\n]);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "dispute added to BOOK_POST_ONLY_SUBROUTES"
+    },
+    {
+      "id": "B4_405_catches_unknown",
+      "file": "services/gateway/src/server.js",
+      "find": "return BOOK_POST_ONLY_SUBROUTES\\.some\\(\\(pattern\\) => bookPostOnlyPatternMatches\\(pattern, path\\)\\);",
+      "flags": "",
+      "replace": "return bookPostOnlyPatternMatches('/v1/agents/:agent_id/book/*splat', path);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "matcher widened to a book splat"
+    },
+    {
+      "id": "B5_405_drops_one",
+      "file": "services/gateway/src/server.js",
+      "find": "  '/v1/agents/:agent_id/book/inflow/correct',\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "inflow/correct removed from the constant"
+    },
+    {
+      "id": "B6_405_status_404",
+      "file": "services/gateway/src/server.js",
+      "find": "res\\.set\\('Content-Type', 'application/json; charset=utf-8'\\);\\n    res\\.status\\(405\\);",
+      "flags": "",
+      "replace": "res.set('Content-Type', 'application/json; charset=utf-8');\n    res.status(404);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "405 handler sends 404"
+    },
+    {
+      "id": "B7_405_body_changed",
+      "file": "services/gateway/src/server.js",
+      "find": "\\{\"error\":\"method_not_allowed\"\\}",
+      "flags": "",
+      "replace": "{\"error\":\"not_allowed\"}",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "method_not_allowed renamed"
+    },
+    {
+      "id": "B8_405_before_ratelimit",
+      "file": "services/gateway/src/server.js",
+      "find": "app\\.use\\('/v1/agents', rateLimit\\);",
+      "flags": "",
+      "replace": "app.use(bookPostOnlyMethodGuard);\n  app.use('/v1/agents', rateLimit);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "405 mounted before the /v1/agents rate limiter"
+    },
+    {
+      "id": "B9_405_on_options",
+      "file": "services/gateway/src/server.js",
+      "find": "req\\.method !== 'GET' && req\\.method !== 'HEAD'",
+      "flags": "",
+      "replace": "req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS'",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "method guard also matches OPTIONS"
+    },
+    {
+      "id": "B10_405_after_404",
+      "file": "services/gateway/src/server.js",
+      "find": "app\\.use\\(bookPostOnlyMethodGuard\\);\\n\\n  // ── 404 fallback ────────────────────────────────────────────────────────\\n\\n  app\\.use\\(\\(_req, res\\) => \\{\\n    res\\.set\\('Cache-Control', 'private, no-store'\\);\\n    res\\.status\\(404\\)\\.json\\(\\{ error: 'not_found' \\}\\);\\n  \\}\\);",
+      "flags": "",
+      "replace": "// ── 404 fallback ────────────────────────────────────────────────────────\n\n  app.use((_req, res) => {\n    res.set('Cache-Control', 'private, no-store');\n    res.status(404).json({ error: 'not_found' });\n  });\n\n  app.use(bookPostOnlyMethodGuard);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "405 registered after the 404 fallback"
+    }
+  ]
+}
