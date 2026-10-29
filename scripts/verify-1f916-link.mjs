@@ -522,7 +522,9 @@ function keyForKid(jwks, kid) {
 
 /**
  * @param {object} specimen
- * @param {{ fetchImpl?: typeof fetch, rpcUrl?: string }} [opts]
+ * @param {{ fetchImpl?: typeof fetch, rpcUrl?: string, timeoutMs?: number, omitStep?: string }} [opts]
+ * `omitStep` is a test hook. The CLI never passes it, and argv and env cannot set it.
+ * It deletes one named step so a missing result is FAIL. It cannot mark a step PASS.
  */
 export async function verifyLink(specimen, opts = {}) {
   const fetchImpl = opts.fetchImpl || fetch;
@@ -676,6 +678,10 @@ export async function verifyLink(specimen, opts = {}) {
   }
 
   steps.entry_fingerprint = await checkFingerprint(specimen, fetchImpl, signedFingerprint, timeoutMs);
+
+  // Test hook. The CLI never passes this, and argv and env cannot set it.
+  // Deleting one named step leaves a missing result, which the verdict calls FAIL.
+  if (typeof opts.omitStep === 'string' && STEPS.includes(opts.omitStep)) delete steps[opts.omitStep];
 
   const statuses = STEPS.map((name) => steps[name]?.status);
   const verdict = statuses.every((status) => status === 'PASS')
