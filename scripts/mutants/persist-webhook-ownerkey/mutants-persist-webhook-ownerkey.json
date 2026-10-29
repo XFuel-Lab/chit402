@@ -1,0 +1,227 @@
+{
+  "about": "Persist book webhooks and agent owner keys under the agents data dir.",
+  "timeoutSec": 180,
+  "suites": {
+    "gwpersist": {
+      "cwd": "services/gateway",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/persist-webhook-ownerkey.test.mjs",
+        "test/book-webhook.test.mjs",
+        "test/owner-view.test.mjs",
+        "test/cap-store-fail-closed.test.mjs",
+        "test/private-read-cache.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test",
+        "ISSUER_HISTORY_TEST_ROTATION": "true",
+        "ISSUER_TEST_KEY": "1",
+        "HUB_CATALOG_OFFLINE": "true"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "P1_drop_persist_upsert",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._hooks\\.set\\(id, hook\\);\\n    try \\{\\n      this\\._save\\(\\);",
+      "flags": "",
+      "replace": "this._hooks.set(id, hook);\n    try {\n      ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "remove the save call in webhook upsert"
+    },
+    {
+      "id": "P2_drop_persist_bind",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "this\\.byAgent\\.set\\(id, row\\);\\n    try \\{\\n      this\\._save\\(\\);",
+      "flags": "",
+      "replace": "this.byAgent.set(id, row);\n    try {\n      ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "remove the save call in owner-key bind"
+    },
+    {
+      "id": "P3_drop_persist_counters",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "current\\.lastError = result\\.ok \\? null : result\\.error \\|\\| null;\\n    try \\{\\n      this\\._save\\(\\);",
+      "flags": "",
+      "replace": "current.lastError = result.ok ? null : result.error || null;\n    try {\n      ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "remove the save in recordDelivery"
+    },
+    {
+      "id": "L1_drop_boot_load_webhook",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "fs\\.mkdirSync\\(this\\.dir, \\{ recursive: true \\}\\);\\n        this\\._load\\(\\);",
+      "flags": "",
+      "replace": "fs.mkdirSync(this.dir, { recursive: true });\n        ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "skip _load() in the webhook store ctor"
+    },
+    {
+      "id": "L2_drop_boot_load_ownerkey",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "fs\\.mkdirSync\\(this\\.dir, \\{ recursive: true \\}\\);\\n        this\\._load\\(\\);",
+      "flags": "",
+      "replace": "fs.mkdirSync(this.dir, { recursive: true });\n        ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "skip _load() in the owner-key store ctor"
+    },
+    {
+      "id": "L3_singleton_not_replaced",
+      "file": "services/gateway/src/server.js",
+      "find": "const bookWebhooks = new BookWebhookRegistry\\(\\{\\n    dir: agentsDir,\\n    persist: !!config\\.taskStore\\?\\.persist,\\n  \\}\\);\\n  resetBookWebhookRegistry\\(bookWebhooks\\);\\n  const agentOwnerKeys = new AgentOwnerKeyStore\\(\\{\\n    dir: agentsDir,\\n    persist: !!config\\.taskStore\\?\\.persist,\\n  \\}\\);",
+      "flags": "",
+      "replace": "const bookWebhooks = new BookWebhookRegistry();\n  const agentOwnerKeys = new AgentOwnerKeyStore();",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "server keeps an unwired in-memory registry and owner-key store"
+    },
+    {
+      "id": "W1_non_atomic_write",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "const tmp = `\\$\\{target\\}\\.tmp-\\$\\{process\\.pid\\}`;\\n  let fd = null;\\n  try \\{\\n    fd = fsImpl\\.openSync\\(tmp, 'wx', 0o600\\);",
+      "flags": "",
+      "replace": "const tmp = target;\n  let fd = null;\n  try {\n    fd = fsImpl.openSync(tmp, 'w', 0o600);",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "write straight to the target"
+    },
+    {
+      "id": "W2_mode_644",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "openSync\\(tmp, 'wx', 0o600\\)",
+      "flags": "",
+      "replace": "openSync(tmp, 'wx', 0o644)",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "mode 600 becomes 644"
+    },
+    {
+      "id": "W3_no_fsync",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "fsImpl\\.fsyncSync\\(fd\\);\\n    fsImpl\\.closeSync\\(fd\\);",
+      "flags": "",
+      "replace": "fsImpl.closeSync(fd);",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "drop the file fsync"
+    },
+    {
+      "id": "W4_tmp_left_on_error",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "try \\{ fsImpl\\.unlinkSync\\(tmp\\); \\} catch \\{ \\/\\* temp already gone \\*\\/ \\}\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "drop the tmp unlink on the error path"
+    },
+    {
+      "id": "W5_no_rollback",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(had\\) this\\._hooks\\.set\\(id, prior\\);\\n      else this\\._hooks\\.delete\\(id\\);\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "drop the in-memory rollback on a failed webhook write"
+    },
+    {
+      "id": "W6_persist_error_to_400",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(err\\?\\.code === 'persist_failed'\\) throw err;\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "manageBookWebhook no longer rethrows persist_failed"
+    },
+    {
+      "id": "C1_corrupt_means_empty_webhook",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "snap = JSON\\.parse\\(raw\\);\\n    \\} catch \\(err\\) \\{\\n      throw persistFailed\\(err, 'book-webhook: load failed'\\);\\n    \\}",
+      "flags": "",
+      "replace": "snap = JSON.parse(raw);\n    } catch (err) {\n      return;\n    }",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "JSON parse failure returns an empty map"
+    },
+    {
+      "id": "C2_corrupt_means_empty_ownerkey",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "snap = JSON\\.parse\\(raw\\);\\n    \\} catch \\(err\\) \\{\\n      throw persistFailed\\(err, 'agent-owner-key: load failed'\\);\\n    \\}",
+      "flags": "",
+      "replace": "snap = JSON.parse(raw);\n    } catch (err) {\n      return;\n    }",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "JSON parse failure returns an empty map"
+    },
+    {
+      "id": "C3_shape_check_dropped",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "assertWebhookRow\\(key, row\\);\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "drop webhook row validation on load"
+    },
+    {
+      "id": "D1_delete_not_persisted",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._hooks\\.delete\\(id\\);\\n    try \\{\\n      this\\._save\\(\\);",
+      "flags": "",
+      "replace": "this._hooks.delete(id);\n    try {\n      ",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "remove skips the save"
+    },
+    {
+      "id": "D2_late_delivery_resurrects",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(current !== hookRef\\) return;\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "recordDelivery updates without the same-hook check"
+    },
+    {
+      "id": "S1_no_write_serialization",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "for \\(const \\[id, hook\\] of this\\._hooks\\) \\{\\n      webhooks\\[String\\(id\\)\\] = serializeHook\\(hook\\);\\n    \\}",
+      "flags": "",
+      "replace": "const only = this._hooks.entries().next().value;\n    if (only) webhooks[String(only[0])] = serializeHook(only[1]);",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "save only the first row instead of the full current map"
+    },
+    {
+      "id": "E1_events_order_lost",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "events: new Set\\(row\\.events\\),",
+      "flags": "",
+      "replace": "events: new Set([...row.events].sort()),",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "load sorts events"
+    },
+    {
+      "id": "K1_secret_logged",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "\\{ code: 'book_webhook_save_failed', agentId: id, op: 'upsert' \\}",
+      "flags": "",
+      "replace": "{ code: 'book_webhook_save_failed', agentId: id, op: 'upsert', secret: hookSecret }",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "add the secret to the upsert save-failure log"
+    }
+  ]
+}

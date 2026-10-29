@@ -1,0 +1,17 @@
+{
+  "status": 400,
+  "headers": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-DNS-Prefetch-Control": "off",
+    "X-RateLimit-Limit": "120",
+    "X-RateLimit-Remaining": "110",
+    "X-RateLimit-Reset": "60",
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "72",
+    "Connection": "keep-alive",
+    "Keep-Alive": "timeout=5"
+  },
+  "body": "{\"error\":\"invalid_webhook\",\"message\":\"url must be a valid absolute URL\"}"
+}

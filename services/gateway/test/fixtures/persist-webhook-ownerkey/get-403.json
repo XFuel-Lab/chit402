@@ -1,0 +1,18 @@
+{
+  "status": 403,
+  "headers": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-DNS-Prefetch-Control": "off",
+    "X-RateLimit-Limit": "120",
+    "X-RateLimit-Remaining": "112",
+    "X-RateLimit-Reset": "60",
+    "Cache-Control": "private, no-store",
+    "Vary": "X-XFuel-Session, X-XFuel-Book-Proof",
+    "Connection": "keep-alive",
+    "Keep-Alive": "timeout=5",
+    "Content-Length": "0"
+  },
+  "body": ""
+}
