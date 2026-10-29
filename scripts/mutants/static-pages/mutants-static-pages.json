@@ -1,0 +1,210 @@
+{
+  "about": "Reviewer mutants. The agent adds its own (prefix X) for new code. Regenerate with node build-mutants-site-prs.mjs.",
+  "timeoutSec": 180,
+  "suites": {
+    "webstatic": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/prerender-replacer.test.mjs",
+        "test/seo.test.mjs",
+        "test/static-pages.test.mjs"
+      ],
+      "env": {}
+    }
+  },
+  "mutants": [
+    {
+      "id": "P1_noscript_block_dropped",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "\\(\\) => `<div id=\"root\"><\\/div>\\$\\{crawlerBlock\\}`",
+      "flags": "",
+      "replace": "() => `<div id=\"root\"></div>`",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "crawler content is in the HTML"
+    },
+    {
+      "id": "P2_canonical_dropped",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "result = result\\.replace\\(\\/<\\\\\\/head>\\/, \\(\\) => `  \\$\\{canonicalLink\\}\\\\n<\\/head>`\\);",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "canonical link stays"
+    },
+    {
+      "id": "P3_title_replacement_as_pattern",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "\\.replace\\(\\/<title>\\[\\^<\\]\\*<\\\\\\/title>\\/, \\(\\) => `<title>\\$\\{title\\}<\\/title>`\\)",
+      "flags": "",
+      "replace": ".replace(/<title>[^<]*<\\/title>/, `<title>${title}</title>`)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "replacements stay functions ($& in copy is literal)"
+    },
+    {
+      "id": "X1_drop_check_route",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "case '\\/check':\\s*return checkStaticModel\\(\\);",
+      "flags": "",
+      "replace": "case '/check': return null;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "all four routes are rendered"
+    },
+    {
+      "id": "X2_skip_html_escape",
+      "file": "apps/web/scripts/static-render.mjs",
+      "find": "\\.replace\\(\\/&\\/g, '&amp;'\\)[\\s\\S]*?\\.replace\\(\\/'\\/g, '&#39;'\\)",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "copy is HTML-escaped"
+    },
+    {
+      "id": "X3_inject_outside_root",
+      "file": "apps/web/scripts/static-render.mjs",
+      "find": "\\(\\) => `<div id=\"root\">\\$\\{block\\}<\\/div>`",
+      "flags": "",
+      "replace": "() => `<div id=\"root\"></div>${block}`",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "static copy is inside #root"
+    },
+    {
+      "id": "X4_stale_inline_h1",
+      "file": "apps/web/scripts/static-render.mjs",
+      "find": "escapeHtml\\(page\\.h1\\)",
+      "flags": "",
+      "replace": "escapeHtml('stale hero')",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the h1 is read from the shared page"
+    },
+    {
+      "id": "X6_empty_section_list",
+      "file": "apps/web/scripts/static-render.mjs",
+      "find": "const sections = page\\.sections \\|\\| \\[\\];",
+      "flags": "",
+      "replace": "const sections = [];",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "section list is rendered"
+    },
+    {
+      "id": "X7_inject_home_on_any_path",
+      "file": "apps/web/scripts/edge-home.mjs",
+      "find": "if \\(pathname !== '\\/'\\) return html;",
+      "flags": "",
+      "replace": "if (false) return html;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home HTML is injected only for /"
+    },
+    {
+      "id": "X8_write_home_into_index",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "export function indexHtmlForBuild\\(shell\\) \\{\\n  return shell;\\n\\}",
+      "flags": "",
+      "replace": "export function indexHtmlForBuild(shell) {\n  return shell.replace('<div id=\"root\"></div>', '<div id=\"root\"><h1>Who paid which call — and you still hold it.</h1></div>');\n}",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the build does not write home copy into index.html"
+    },
+    {
+      "id": "X9_noscript_insertion_dropped",
+      "file": "middleware.ts",
+      "find": "result = result\\.replace\\(\\s*\\/<div id=\"root\"><\\\\/div>\\/, \\(\\) => `<div id=\"root\"><\\/div>\\$\\{chitNoscript\\}`\\);",
+      "flags": "",
+      "replace": "result = result;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the edge still inserts the noscript h1 and lede"
+    },
+    {
+      "id": "X10_home_inject_ignores_path",
+      "file": "middleware.ts",
+      "find": "injectHomeIfRoot\\(transformHtml\\(html, seo, pathname\\), pathname, HOME_PAGE\\)",
+      "flags": "",
+      "replace": "injectHomeIfRoot(transformHtml(html, seo, pathname), '/', HOME_PAGE)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home injection uses the request path"
+    },
+    {
+      "id": "X11_middleware_skips_home_inject",
+      "file": "middleware.ts",
+      "find": "injectHomeIfRoot\\(transformHtml\\(html, seo, pathname\\), pathname, HOME_PAGE\\)",
+      "flags": "",
+      "replace": "transformHtml(html, seo, pathname)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the middleware injects the home block"
+    },
+    {
+      "id": "X12_prerender_writes_home_index",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "writeFileSync\\(join\\(distDir, 'index.html'\\), indexHtmlForBuild\\(indexHtml\\)\\);",
+      "flags": "",
+      "replace": "writeFileSync(join(distDir, 'index.html'), injectStatic(indexHtml, contentForRoute('/', env, verifyUrl)));",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the build script does not write the home block into index.html"
+    },
+    {
+      "id": "R4_host_check_skipped",
+      "file": "middleware.ts",
+      "find": "if \\(!isChitHost\\(host\\)\\)",
+      "flags": "",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "non-chit hosts are not rewritten"
+    },
+    {
+      "id": "R5_host_check_always_true",
+      "file": "middleware.ts",
+      "find": "return h === 'chit402\\.com' \\|\\| h === 'www\\.chit402\\.com' \\|\\| h\\.endsWith\\('\\.chit402\\.com'\\);",
+      "flags": "",
+      "replace": "return true;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "only chit hosts match"
+    },
+    {
+      "id": "R6_matcher_drops_root",
+      "file": "middleware.ts",
+      "find": "matcher: \\[\\n    '/',\\n",
+      "flags": "",
+      "replace": "matcher: [\n",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the matcher still includes /"
+    },
+    {
+      "id": "R7_content_type_check_removed",
+      "file": "middleware.ts",
+      "find": "if \\(!contentType\\.includes\\('text/html'\\)\\)",
+      "flags": "",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "non-HTML responses are not rewritten"
+    },
+    {
+      "id": "R10_status_forced_200",
+      "file": "middleware.ts",
+      "find": "status: response\\.status",
+      "flags": "",
+      "replace": "status: 200",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "upstream status is preserved"
+    }
+  ]
+}

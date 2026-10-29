@@ -1,0 +1,25 @@
+export const GITHUB: string;
+export const sectionTitles: {
+  start: string;
+  news: string;
+  builders: string;
+  operators: string;
+  auditors: string;
+  probe: string;
+};
+export const docsKicker: string;
+export function h1For(productName: string): string;
+export const startHere: any[];
+export const builders: any[];
+export function operatorsFor(apiDomain: string): any[];
+export const auditors: any[];
+export function introParts(apiDomain: string): any[];
+export function navLinks(apiHost: string): any[];
+export function whatsNew(apiHost: string): any[];
+export function snippetFor(apiV1: string): string;
+export const sdkSnippet: string;
+export function probeLead(): any[];
+export function probeBody(): any[];
+export const sdkLabel: string;
+export function probeFoot(): any[];
+export function probeLinks(): any[];

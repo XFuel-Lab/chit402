@@ -28,6 +28,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
 
 - POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+  Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.
 - POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + receipt. Stateless one-shot. Unauth → 402.
@@ -48,7 +49,7 @@ const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : settlement proof add-on (coming soon, not active).
+- GET  /prove-result      : historical settlement proofs only; Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
 - GET  /health            : status ok or degraded, the last anchored root and tx, and free tier available.
 - GET  /stats             : a coarse receipt-volume bucket. Exact volume, revenue, and payer mix are house-owner only.
 
@@ -150,6 +151,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 
 - POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
+  Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.
 - POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
@@ -172,7 +174,7 @@ const XFUEL_LLMS = `# XFuel Protocol
   The 402 challenge lists both; your wallet picks the network.
 - POST /task-quote        : forecast only (not an invoice).
 - GET  /task-status       : status + proof outcome (also works for /v1 task ids).
-- GET  /prove-result      : settlement proof add-on (coming soon, not active).
+- GET  /prove-result      : historical settlement proofs only; Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
 - GET  /health            : status, demo limits, floats. Token buckets with null
   addresses are post-TGE, not live.
 - GET  /stats             : public-safe usage.
