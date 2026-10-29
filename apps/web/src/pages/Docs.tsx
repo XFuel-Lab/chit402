@@ -17,6 +17,8 @@ import {
   probeLinks,
   sdkLabel,
   sdkSnippet,
+  openrouterKeepRouteParagraphs,
+  openrouterKeepRouteTitle,
   sectionTitles,
   snippetFor,
   startHere,
@@ -56,6 +58,15 @@ export default function Docs() {
             )
           ))}
         </nav>
+
+        <div className="docs-panel">
+          <h2>{openrouterKeepRouteTitle}</h2>
+          {openrouterKeepRouteParagraphs().map((parts, index) => (
+            <p key={index}>
+              <RichText parts={parts} />
+            </p>
+          ))}
+        </div>
 
         <DocSection title={sectionTitles.start} items={startHere} />
 
