@@ -54,7 +54,7 @@ CSV export already existed (`format=csv|json|html`, including `from` / `to`). Th
 
 ## Success
 
-Possession session opens the book, sees last-N + burn + budget + model mix, clicks a live `verify_url`. Missing/wrong possession → 401/403.
+Possession session opens the book, sees last-N + burn + budget + model mix, clicks a live `verify_url`. Missing/wrong possession → 401/403. A 401 on GET or POST `/v1/agents/:agent_id/book` (read or budget set) and on GET or POST `/v1/agents/:agent_id/book/export`, when no session and no proof are present, returns JSON `{"error":"possession_required","message":"Send your Chit402 book session from POST /v1/agents/register","docs":"https://www.chit402.com/docs/private-spend"}`.
 
 ## Live smoke (www + API)
 
@@ -70,7 +70,7 @@ Possession session opens the book, sees last-N + burn + budget + model mix, clic
 2. On `/book`, enter `agent_id` + `session` → **Load book** (or land from `/register` with `?agent_id=`; session is stripped from the URL after load and kept in local storage).
 3. Expect budget **Y** / spent / remaining, 24h burn rate, model mix, and last-N rows with **verify** + **offline** (`?format=auditor`) on collected rows.
 4. Click **verify** on a row → public receipt page resolves without possession.
-5. Wrong or missing session → 401/403 cards (no public book index).
+5. Wrong or missing session → 401/403 cards (no public book index). A missing session on book read, budget set, and export is the 401 JSON body above. A wrong session on those routes is 403 with no JSON body.
 
 **API-only check (same shape as UI):**
 

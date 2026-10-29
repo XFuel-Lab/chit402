@@ -1,7 +1,8 @@
 /**
  * Possession-gated last-N spend book.
  *
- * Unauth / wrong proof → 401/403 empty body (no agent_id leak).
+ * HTTP unauth book → 401 JSON possession hint. Wrong proof → 403 empty body.
+ * Library readAgentBook unauth still returns { status: 401, body: null }.
  * Demo / unmetered / collected:false never appear. Only the requested
  * agent_id. Dedup still holds. /v1 402 unchanged.
  */
@@ -302,7 +303,8 @@ after(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-test('unauth GET/POST book is 401 with empty body and no agent leak', async () => {
+test('unauth GET/POST book is 401 with possession hint and no agent leak', async () => {
+  const hint = '{"error":"possession_required","message":"Send your Chit402 book session from POST /v1/agents/register","docs":"https://www.chit402.com/docs/private-spend"}';
   const getRes = await fetch(`${base}/v1/agents/1/book`);
   const postRes = await fetch(`${base}/v1/agents/1/book`, {
     method: 'POST',
@@ -311,8 +313,8 @@ test('unauth GET/POST book is 401 with empty body and no agent leak', async () =
   });
   assert.equal(getRes.status, 401);
   assert.equal(postRes.status, 401);
-  assert.equal(await emptyBody(getRes), '');
-  assert.equal(await emptyBody(postRes), '');
+  assert.equal(await emptyBody(getRes), hint);
+  assert.equal(await emptyBody(postRes), hint);
 });
 
 test('wrong possession is 403 with empty body for existing and missing agent_id', async () => {
@@ -333,13 +335,14 @@ test('wrong possession is 403 with empty body for existing and missing agent_id'
 });
 
 test('API key is not possession', async () => {
+  const hint = '{"error":"possession_required","message":"Send your Chit402 book session from POST /v1/agents/register","docs":"https://www.chit402.com/docs/private-spend"}';
   const res = await fetch(`${base}/v1/agents/1/book`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': 'xfuel-demo' },
     body: JSON.stringify({}),
   });
   assert.equal(res.status, 401);
-  assert.equal(await emptyBody(res), '');
+  assert.equal(await emptyBody(res), hint);
 });
 
 test('GET /v1/agents is not a public list', async () => {

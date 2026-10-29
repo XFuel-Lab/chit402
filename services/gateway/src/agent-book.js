@@ -28,6 +28,18 @@ export { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 
 export const BOOK_HMAC_PREFIX = 'xfuel-book';
 export const ALLOWANCE_HMAC_PREFIX = 'xfuel-allowance';
+
+/**
+ * Fixed JSON body for the HTTP 401 on book read, budget set, and export.
+ * readAgentBook, setAgentBudget, and exportAgentBook still return
+ * { status: 401, body: null }. server.js is the only sender.
+ */
+// LOCKED-PENDING-CHRISTOPHER
+export const BOOK_POSSESSION_REQUIRED_BODY = Object.freeze({
+  error: 'possession_required',
+  message: 'Send your Chit402 book session from POST /v1/agents/register',
+  docs: 'https://www.chit402.com/docs/private-spend',
+});
 /** Cap spend window id — prepaid ceiling on collected sum (not calendar-month). */
 export const CAP_WINDOW = 'prepaid_ceiling';
 /** Hop floor in USDC atomic units ($0.002). */

@@ -122,7 +122,7 @@ import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-po
 import { VERIFIER_MIN, VERIFIER_MIN_HEADER, receiptPolicyAdvisory, withVerifierAdvisory } from './verifier-min.js';
 import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
-import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook, BOOK_POSSESSION_REQUIRED_BODY } from './agent-book.js';
 import { privateNoStore } from './private-read.js';
 import { coverageForLedger } from './export-coverage.js';
 import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
@@ -4920,6 +4920,18 @@ export async function createApp() {
     }
   });
 
+  function sendBookPossessionRequired(req, res, body) {
+    // The hint is a fixed constant. req is accepted so a body cannot be built
+    // from the request without an edit at this function.
+    void req;
+    const payload = JSON.stringify(body);
+    res.status(401);
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Length', String(Buffer.byteLength(payload)));
+    return res.end(payload);
+  }
+
   async function sendAgentBook(req, res) {
     try {
       const claim = claimFromRequest(req);
@@ -4929,6 +4941,7 @@ export async function createApp() {
           verify: verifyBook,
         });
         if (set.status !== 200) {
+          if (set.status === 401) return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
           return res.status(set.status).end();
         }
       }
@@ -4941,6 +4954,7 @@ export async function createApp() {
           : null,
       });
       if (result.body == null) {
+        if (result.status === 401) return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
         return res.status(result.status).end();
       }
       return res.status(result.status).json(result.body);
@@ -5220,7 +5234,7 @@ export async function createApp() {
       const session = claim.session;
       const proof = claim.proof;
       if (!session && !proof) {
-        return res.status(401).end();
+        return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
       }
 
       const id = Number(req.params.agent_id);
@@ -5271,7 +5285,7 @@ export async function createApp() {
       const session = claim.session || body.session;
       const proof = claim.proof || body.proof;
       if (!session && !proof) {
-        return res.status(401).end();
+        return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
       }
 
       const id = Number(req.params.agent_id);

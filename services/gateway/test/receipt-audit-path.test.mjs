@@ -230,7 +230,7 @@ test('query params, Accept, format, and the verify page cannot restore other lea
 
   const book = await fetchText('/v1/agents/187/book');
   assert.equal(book.status, 401);
-  assert.equal(book.text, '');
+  assert.equal(book.text, '{"error":"possession_required","message":"Send your Chit402 book session from POST /v1/agents/register","docs":"https://www.chit402.com/docs/private-spend"}');
 });
 
 test('the chit-1ebc5616 style receipt verifies, and a tampered audit path does not', async () => {
