@@ -1,4 +1,5 @@
 export const HOME_SNIPPET_API: string;
+export const HOME_H1: string;
 export const dropInSnippet: string;
 export const partnerKeySnippet: string;
 
@@ -6,12 +7,9 @@ export type HomeLink = { href: string; label: string; internal?: boolean };
 
 export const homeContent: {
   h1: string;
-  lead: string;
-  description: string;
+  subhead: string;
   pricingHref: string;
   pricingLabel: string;
-  productsHref: string;
-  productsLabel: string;
   bookHref: string;
   bookLabel: string;
   verifyLabel: string;
