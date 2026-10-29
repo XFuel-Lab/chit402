@@ -1,0 +1,110 @@
+{
+  "about": "Reviewer mutants. The agent adds its own (prefix X) for new code. Regenerate with node build-mutants-site-prs.mjs.",
+  "timeoutSec": 180,
+  "suites": {
+    "webstatic": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/prerender-replacer.test.mjs",
+        "test/seo.test.mjs",
+        "test/static-pages.test.mjs"
+      ],
+      "env": {}
+    }
+  },
+  "mutants": [
+    {
+      "id": "P1_noscript_block_dropped",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "\\(\\) => `<div id=\"root\"><\\/div>\\$\\{crawlerBlock\\}`",
+      "flags": "",
+      "replace": "() => `<div id=\"root\"></div>`",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "crawler content is in the HTML"
+    },
+    {
+      "id": "P2_canonical_dropped",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "result = result\\.replace\\(\\/<\\\\\\/head>\\/, \\(\\) => `  \\$\\{canonicalLink\\}\\\\n<\\/head>`\\);",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "canonical link stays"
+    },
+    {
+      "id": "P3_title_replacement_as_pattern",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "\\.replace\\(\\/<title>\\[\\^<\\]\\*<\\\\\\/title>\\/, \\(\\) => `<title>\\$\\{title\\}<\\/title>`\\)",
+      "flags": "",
+      "replace": ".replace(/<title>[^<]*<\\/title>/, `<title>${title}</title>`)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "replacements stay functions ($& in copy is literal)"
+    },
+    {
+      "id": "X1_drop_check_route",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "case '\\/check':\\s*return checkStaticModel\\(\\);",
+      "flags": "",
+      "replace": "case '/check': return null;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "all four routes are rendered"
+    },
+    {
+      "id": "X2_skip_html_escape",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "\\.replace\\(\\/&\\/g, '&amp;'\\)[\\s\\S]*?\\.replace\\(\\/'\\/g, '&#39;'\\)",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "copy is HTML-escaped"
+    },
+    {
+      "id": "X3_inject_outside_root",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "\\(\\) => `<div id=\"root\">\\$\\{block\\}<\\/div>`",
+      "flags": "",
+      "replace": "() => `<div id=\"root\"></div>${block}`",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "static copy is inside #root"
+    },
+    {
+      "id": "X4_stale_inline_h1",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "escapeHtml\\(page\\.h1\\)",
+      "flags": "",
+      "replace": "escapeHtml('stale hero')",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the h1 is read from the shared page"
+    },
+    {
+      "id": "X5_middleware_drops_root",
+      "file": "middleware.ts",
+      "find": "function keepStaticRoot\\(html: string\\): string \\{\\n  return html;\\n\\}",
+      "flags": "",
+      "replace": "function keepStaticRoot(html: string): string {\n  return html.replace(/<div id=\"root\">[\\s\\S]*?<\\/div>/, '<div id=\"root\"></div>');\n}",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "middleware keeps the static home block"
+    },
+    {
+      "id": "X6_empty_section_list",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "const sections = page\\.sections \\|\\| \\[\\];",
+      "flags": "",
+      "replace": "const sections = [];",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "section list is rendered"
+    }
+  ]
+}
