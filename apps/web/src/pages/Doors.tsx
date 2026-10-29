@@ -39,15 +39,6 @@ ${env}
 }`;
 }
 
-const sidecarSnippet = `npm install chit402-sidecar
-
-import { createSidecarFetch } from 'chit402-sidecar';
-
-const fetchWithReceipt = createSidecarFetch({
-  onReceipt: (receipt) => console.log(receipt.verify_url),
-});
-// Wrap the fetch you already use to pay OpenRouter, Groq, or another provider.`;
-
 export const moreDoors: DocLink[] = [
   {
     title: 'Chat /v1 wire',
@@ -184,13 +175,25 @@ export default function Doors() {
           <div className="docs-panel">
             <h2>3. Sidecar</h2>
             <p>
-              <strong>What you get:</strong> a receipt on a call you already pay a provider for.
-              Install <code>chit402-sidecar</code>. Without a collected USDC <code>payment.ref</code>,
-              that receipt is client-attested. It does not write the book by itself.
+              <strong>What you get:</strong> for OpenRouter, keep the route you already pay and use{' '}
+              <a
+                href="https://github.com/XFuel-Lab/chit402/blob/main/docs/product/openrouter-broadcast.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                OpenRouter Broadcast
+              </a>
+              . Set the webhook URL to <code>https://api.chit402.com/v1/openrouter/broadcast</code>{' '}
+              with header <code>Authorization: Bearer {'<ingest_key>'}</code>. It covers new calls
+              only. Receipts are on the reported rail. Without an attached OpenRouter key they are
+              marked &quot;Reported via OpenRouter Broadcast (unverified)&quot;. Steps from the
+              Broadcast guide; we haven&apos;t yet run the full flow end to end on a fresh account.
             </p>
-            <pre className="docs-code">
-              <code>{sidecarSnippet}</code>
-            </pre>
+            <p>
+              <code>chit402-sidecar</code> is local, client-recorded receipts only. The npm package
+              is currently not importable.
+            </p>
+            <p>Direct Groq calls have no server-side path today.</p>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: '0.75rem' }}>
               The Worker source is <code>packages/sidecar/worker</code> in the repo. To have Chit
               collect USDC instead, use the TypeScript door above (keyless x402, or a partner key).

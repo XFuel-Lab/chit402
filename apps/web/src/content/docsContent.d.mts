@@ -7,6 +7,8 @@ export const sectionTitles: {
   auditors: string;
   probe: string;
 };
+export const openrouterKeepRouteTitle: string;
+export function openrouterKeepRouteParagraphs(): any[];
 export const docsKicker: string;
 export function h1For(productName: string): string;
 export const startHere: any[];
