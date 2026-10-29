@@ -57,6 +57,11 @@ function sha256(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
+/** Source scans compare LF text. A Windows checkout may store CRLF. */
+function sourceText(relativeUrl) {
+  return readFileSync(new URL(relativeUrl, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+}
+
 function issuerKey() {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   const exported = publicKey.export({ format: 'jwk' });
@@ -552,9 +557,9 @@ test('production call sites reach the shared resolver', async () => {
   assert.equal(found.ok, true, found.reason);
   assert.notEqual(found.reason, 'kid_not_in_history');
 
-  const anchorSrc = readFileSync(new URL('../src/anchor-trust.ts', import.meta.url), 'utf8');
-  const historySrc = readFileSync(new URL('../src/issuer-history.ts', import.meta.url), 'utf8');
-  const verdictSrc = readFileSync(new URL('../src/verdict.ts', import.meta.url), 'utf8');
+  const anchorSrc = sourceText('../src/anchor-trust.ts');
+  const historySrc = sourceText('../src/issuer-history.ts');
+  const verdictSrc = sourceText('../src/verdict.ts');
   assert.ok(
     /return issuerKeyWindow\(doc, kid, publishedAt, \{ allowUntimedOpen: true \}\);/.test(anchorSrc),
     'anchor-trust.ts returns the shared resolver for a head',
@@ -630,7 +635,7 @@ test('receipt and head paths agree on the inner reason', async () => {
 });
 
 test('bundled, sealed, and file histories answer the same single-row window', async () => {
-  const historySrc = readFileSync(new URL('../src/issuer-history.ts', import.meta.url), 'utf8');
+  const historySrc = sourceText('../src/issuer-history.ts');
   const bundledPath = fileURLToPath(new URL('../issuer-history.snapshot.json', import.meta.url));
   const v1Path = fileURLToPath(new URL('../issuer-history.v1.snapshot.json', import.meta.url));
   const bundledBytes = readFileSync(bundledPath);
