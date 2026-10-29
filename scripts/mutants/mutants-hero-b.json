@@ -185,6 +185,46 @@
       "nth": 1,
       "suite": "webstatic",
       "note": "no-JS home h1 reads HOME_H1"
+    },
+    {
+      "id": "H13_hostconfig_title_restored",
+      "file": "apps/web/src/hostConfig.ts",
+      "find": "title: HOME_TITLE,",
+      "flags": "",
+      "replace": "title: 'Chit402 — treasury desk for agent spend',",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "chit seo.title stays on HOME_TITLE"
+    },
+    {
+      "id": "H14_hostconfig_ogtitle_restored",
+      "file": "apps/web/src/hostConfig.ts",
+      "find": "ogTitle: HOME_TITLE,",
+      "flags": "",
+      "replace": "ogTitle: 'Chit402 — treasury desk for agent spend',",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "chit seo.ogTitle stays on HOME_TITLE"
+    },
+    {
+      "id": "H15_docs_title_restored",
+      "file": "apps/web/scripts/prerender-titles.mjs",
+      "find": "title: HOME_TITLE,",
+      "flags": "",
+      "replace": "title: 'Chit402 — treasury desk for agent spend',",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "/docs prerender title stays on HOME_TITLE"
+    },
+    {
+      "id": "H16_llms_heading_restored",
+      "file": "api/llms.txt.ts",
+      "find": "# \\$\\{HOME_TITLE\\}",
+      "flags": "",
+      "replace": "# Chit402 — treasury desk for agent spend",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "llms heading stays on HOME_TITLE"
     }
   ]
 }

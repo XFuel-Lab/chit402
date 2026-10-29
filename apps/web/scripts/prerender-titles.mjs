@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STATIC_ROUTES, contentForRoute, indexHtmlForBuild, injectStatic, loadChitStaticEnv } from './static-html.mjs';
+import { HOME_TITLE } from '../src/content/homeContent.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // CHIT_PRERENDER_DIST is for tests only and must never be set in Vercel env.
@@ -22,7 +23,7 @@ export const ROUTE_CONTENT = {
     lede: 'Chit is the till for an agent shop. Stamp receipts onto the possession book — pay HTTP 402 USDC on Base or Solana (a quoted price and a receipt for every call) via the /v1 wire or install doors. We are the till, not the Chief of SEO. Show the client the book, not a screenshot.',
   },
   '/docs': {
-    title: 'Chit402 — treasury desk for agent spend',
+    title: HOME_TITLE,
     h1: 'Build on Chit402',
     lede: 'Possession book first — who paid which call; hold verify_url; export, policy, evidence. Install wires live on /doors. Public beta at api.chit402.com. USDC on Base and Solana.',
   },
