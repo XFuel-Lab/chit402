@@ -18,30 +18,35 @@ const BROADCAST_GUIDE = 'https://github.com/XFuel-Lab/chit402/blob/main/docs/pro
 
 export function openrouterKeepRouteParagraphs() {
   return [
-    ['OpenRouter Broadcast is on by default.'],
+    ["Chit's Broadcast receiver is on."],
+    ["Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account."],
     [
       'Mint a book with ',
       { code: 'POST /v1/openrouter/books' },
       '. No wallet and no payment. The response returns book_id plus an ingest_key that is shown once.',
     ],
     [
-      'In OpenRouter, set the webhook URL to ',
+      'In OpenRouter, enable Broadcast under Settings > Observability. Set the webhook URL to ',
       { code: BROADCAST_WEBHOOK },
       ' with header ',
       { code: 'Authorization: Bearer <ingest_key>' },
       '.',
     ],
-    ['It covers new calls only, with no backfill of past calls.'],
     [
-      'Receipts are on the reported rail. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)". An optional key lets Chit check each generation against OpenRouter.',
+      'An optional key lets Chit check each generation against OpenRouter. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)".',
     ],
-    ['Reads are a JSON list of receipts. The cap is 200. Rows are not added to an agent\'s USDC spent total.'],
+    ['It covers new calls only, with no backfill of past calls.'],
+    ['Receipts are on the reported rail.'],
+    [
+      'Reads are ',
+      { code: 'GET /v1/openrouter/books/:book_id/receipts' },
+      ', a JSON list of receipts. The cap is 200. Rows are not added to an agent\'s USDC spent total.',
+    ],
     [
       'Guide: ',
       { link: { href: BROADCAST_GUIDE, label: 'docs/product/openrouter-broadcast.md', blank: true } },
       '.',
     ],
-    ['Steps from the Broadcast guide; we haven\'t yet run the full flow end to end on a fresh account.'],
   ];
 }
 

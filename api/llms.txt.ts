@@ -11,21 +11,23 @@ const CHIT_LLMS = `# ${HOME_TITLE}
 
 ## Already pay OpenRouter? Keep your route
 
-OpenRouter Broadcast is on by default.
+Chit's Broadcast receiver is on.
+
+Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account.
 
 Mint a book with POST /v1/openrouter/books. No wallet and no payment. The response returns book_id plus an ingest_key that is shown once.
 
-In OpenRouter, set the webhook URL to https://api.chit402.com/v1/openrouter/broadcast with header Authorization: Bearer <ingest_key>.
+In OpenRouter, enable Broadcast under Settings > Observability. Set the webhook URL to https://api.chit402.com/v1/openrouter/broadcast with header Authorization: Bearer <ingest_key>.
+
+An optional key lets Chit check each generation against OpenRouter. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)".
 
 It covers new calls only, with no backfill of past calls.
 
-Receipts are on the reported rail. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)". An optional key lets Chit check each generation against OpenRouter.
+Receipts are on the reported rail.
 
-Reads are a JSON list of up to 200 receipts. Rows are not added to an agent's USDC spent total.
+Reads are GET /v1/openrouter/books/:book_id/receipts, a JSON list of receipts. The cap is 200. Rows are not added to an agent's USDC spent total.
 
 Guide: https://github.com/XFuel-Lab/chit402/blob/main/docs/product/openrouter-broadcast.md
-
-Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account.
 
 ## Money pages (chit402.com)
 
