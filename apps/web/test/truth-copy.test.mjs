@@ -32,6 +32,7 @@ const LOCKED_FILES = [
   'WHITEPAPER.md',
   'api/llms.txt.ts',
   'apps/web/src/pages/Pricing.tsx',
+  'apps/web/src/pages/Docs.tsx',
   'apps/web/src/pages/Products.tsx',
 ];
 
@@ -43,6 +44,8 @@ const COPY_FILES = [
   'apps/web/src/pages/Products.tsx',
   'apps/web/src/pages/Book.tsx',
   'apps/web/src/pages/Docs.tsx',
+  'apps/web/src/content/docsContent.mjs',
+  'apps/web/src/content/pricingContent.mjs',
   'apps/web/src/pages/Security.tsx',
   'apps/web/src/pages/OneF916Link.tsx',
   'docs/doors/README.md',
@@ -94,11 +97,17 @@ function addedHunk(rel) {
   return null;
 }
 
+function scannedText(file) {
+  const added = addedHunk(file);
+  return added != null ? added : read(file);
+}
+
 function copyScanText(rel) {
-  const added = addedHunk(rel);
-  if (added != null) return added;
-  let src = read(rel);
-  if (rel === 'apps/web/src/pages/Pricing.tsx') src = src.replace('not trustless ZK', '');
+  const extra = PAGE_CONTENT[rel];
+  let src = extra ? `${scannedText(rel)}\n${scannedText(extra)}` : scannedText(rel);
+  if (rel === 'apps/web/src/pages/Pricing.tsx' || rel === 'apps/web/src/content/pricingContent.mjs') {
+    src = src.replace(/not trustless ZK/g, '');
+  }
   if (rel === 'README.md') src = src.replace('$120', '').replace('$0.001', '');
   return src;
 }
@@ -238,5 +247,12 @@ test('changed copy has no hype words and no new price other than $0.002', () => 
     const src = copyScanText(rel).split(tier2Price).join('');
     assert.ok(!/revolutionary|game-changing|billions|trustless/i.test(src), `${rel}: no hype words in the changed copy`);
     assert.ok(!/\$(?!0\.002\b)\d/.test(src), `${rel}: no new price other than $0.002`);
+  }
+});
+
+test('shared page modules do not say stranger', () => {
+  for (const rel of Object.values(PAGE_CONTENT)) {
+    const src = read(rel);
+    assert.ok(!/\bstranger\b/i.test(src), `${rel}: no stranger`);
   }
 });
