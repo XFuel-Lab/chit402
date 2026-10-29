@@ -65,6 +65,11 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
+// The static page body lives inside #root. Leave it in place when the edge rewrites head and noscript.
+function keepStaticRoot(html: string): string {
+  return html;
+}
+
 function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
   const canonicalUrl = escapeAttr(`https://${seo.domain}${pathname}`);
   
@@ -107,7 +112,7 @@ function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
       /<div id="root"><\/div>/, () => `<div id="root"></div>${chitNoscript}`);
   }
 
-  return result;
+  return keepStaticRoot(result);
 }
 
 export default async function middleware(request: Request): Promise<Response> {
@@ -138,3 +143,5 @@ export default async function middleware(request: Request): Promise<Response> {
     },
   });
 }
+
+export { transformHtml };

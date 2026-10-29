@@ -7,11 +7,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { STATIC_ROUTES, contentForRoute, injectStatic, loadChitStaticEnv } from './static-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, '..', 'dist');
 
-const ROUTE_CONTENT = {
+export const ROUTE_CONTENT = {
   '/agent-shop': {
     title: 'The till for an agent shop | Chit',
     h1: 'Your SEO bot spent it. You hold the book.',
@@ -236,6 +237,7 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 
 if (isMain) {
   const indexHtml = readFileSync(join(distDir, 'index.html'), 'utf8');
+  const { env, verifyUrl } = loadChitStaticEnv();
 
   for (const [route, content] of Object.entries(ROUTE_CONTENT)) {
     const routeDir = join(distDir, route.slice(1));
@@ -245,12 +247,22 @@ if (isMain) {
       mkdirSync(routeDir, { recursive: true });
     }
     
-    const newHtml = transformHtml(indexHtml, route, content);
+    let newHtml = transformHtml(indexHtml, route, content);
+    if (STATIC_ROUTES.includes(route)) {
+      const page = contentForRoute(route, env, verifyUrl);
+      if (!page) throw new Error(`missing static page for ${route}`);
+      newHtml = injectStatic(newHtml, page);
+    }
     writeFileSync(routeHtml, newHtml);
     console.log(`✓ Generated ${route}/index.html`);
     console.log(`  Title: "${content.title}"`);
     console.log(`  H1: "${content.h1}"`);
   }
+
+  const home = contentForRoute('/', env, verifyUrl);
+  if (!home) throw new Error('missing static page for /');
+  writeFileSync(join(distDir, 'index.html'), injectStatic(indexHtml, home));
+  console.log('✓ Wrote static home content into /index.html');
 
   console.log(`\n✅ Prerender complete: ${Object.keys(ROUTE_CONTENT).length} route-specific HTML files with crawler content.`);
 }
