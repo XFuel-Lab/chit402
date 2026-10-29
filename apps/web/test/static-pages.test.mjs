@@ -3,9 +3,10 @@
  */
 import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { transformHtml, ROUTE_CONTENT } from '../scripts/prerender-titles.mjs';
@@ -56,6 +57,46 @@ function visibleText(html) {
 function rootInner(html) {
   const match = html.match(/<div id="root">([\s\S]*?)<\/div>/);
   return match ? match[1] : '';
+}
+
+const LOCKED_H1 = 'Your agents spent money this week. On what, and with whom?';
+const LOCKED_SUBHEAD = 'Each paid call lands as a row in a book you hold: hub, model, amount, and a link to its receipt. $0.002 per receipt.';
+const LOCKED_TIER2_OFF = 'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+const TIER2_PRICE_LINE = 'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+const CLARITY_PRICE = 'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system.';
+const OLD_H1 = 'Who paid which call — and you still hold it.';
+const OLD_LEAD = 'Treasury desk and spend ledger for agent teams — not a router dashboard.';
+const OLD_DESCRIPTION = 'Every collected inference returns hub, model, amount, and a verify link you can export, policy, and evidence-pack. After you see the row, the possession book keeps last-N spend for the principal who funds the agent.';
+
+function esc(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function present(src, text, msg) {
+  assert.ok(new RegExp(esc(text)).test(src), msg);
+}
+
+function absent(src, text, msg) {
+  assert.ok(new RegExp(`^(?![\\s\\S]*${esc(text)})[\\s\\S]*$`).test(src), msg);
+}
+
+function heroOf(html) {
+  const inner = rootInner(html);
+  const cut = inner.indexOf('90-second drop-in');
+  return cut === -1 ? inner : inner.slice(0, cut);
+}
+
+function noHomeCopy(html, label) {
+  absent(html, LOCKED_H1, `${label} has no home h1`);
+  absent(html, OLD_H1, `${label} has no retired home h1`);
+}
+
+function assertPlus010Marked(text, label) {
+  const hits = text.split(/\n|<\/p>|<\/li>/).filter((chunk) => chunk.includes('+$0.10'));
+  assert.ok(hits.length > 0, `${label} includes +$0.10`);
+  for (const chunk of hits) {
+    assert.ok(/Currently unavailable/.test(chunk), `${label}: +$0.10 never appears without Currently unavailable in the same sentence`);
+  }
 }
 
 function loadEdgeMiddleware(fetchImpl) {
@@ -132,6 +173,38 @@ function pageHtml(route) {
 
 const pages = Object.fromEntries(['/', '/check', '/docs', '/pricing'].map((route) => [route, pageHtml(route)]));
 
+async function productsBodyHtml() {
+  const require = createRequire(new URL('../package.json', import.meta.url));
+  const { build } = require('esbuild');
+  const outfile = join(root, 'test', '.products-body.mjs');
+  try {
+    await build({
+      absWorkingDir: root,
+      entryPoints: ['src/pages/Products.tsx'],
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      outfile,
+      jsx: 'automatic',
+      external: ['react', 'react/jsx-runtime', 'react-router-dom'],
+      logLevel: 'silent',
+    });
+    const { default: Products } = await import(pathToFileURL(outfile).href);
+    const React = require('react');
+    const { renderToStaticMarkup } = require('react-dom/server');
+    const { MemoryRouter } = require('react-router-dom');
+    return renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(Products)));
+  } finally {
+    rmSync(outfile, { force: true });
+  }
+}
+
+function productsRelateHtml(html) {
+  const start = html.indexOf('How seats relate');
+  const end = html.indexOf('Install wires', start);
+  return start === -1 ? '' : html.slice(start, end === -1 ? undefined : end);
+}
+
 test('each main route renders its h1, sections, and at least 1,200 characters', () => {
   for (const [route, { page, html }] of Object.entries(pages)) {
     const h1 = html.match(/<h1>([^<]*)<\/h1>/);
@@ -144,12 +217,76 @@ test('each main route renders its h1, sections, and at least 1,200 characters', 
 
 test('locked home strings are in the static html', () => {
   const html = pages['/'].html;
-  assert.ok(/Who paid which call — and you still hold it\./.test(html), 'home hero h1');
-  assert.ok(/Treasury desk and spend ledger/.test(html), 'home lead');
+  present(html, LOCKED_H1, 'home hero h1');
+  present(html, LOCKED_SUBHEAD, 'home subhead');
+  present(html, '<a href="/pricing">$0.002 per receipt</a>', 'home chip links to /pricing');
+  absent(html, OLD_H1, 'old h1 is absent');
+  absent(html, OLD_LEAD, 'old lead is absent');
+  absent(html, OLD_DESCRIPTION, 'old description is absent');
   assert.ok(/Check it yourself/.test(html), 'home check-it-yourself line');
   assert.ok(/href="\/book"/.test(html), 'home links /book');
   assert.ok(/href="\/check"/.test(html), 'home links /check');
   assert.ok(new RegExp(`href="${verifyUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(html), 'home links the live receipt');
+});
+
+test('home hero on the edge and in React uses the locked h1, subhead, and receipt chip', async () => {
+  const html = await edgeHtml('/');
+  const hero = heroOf(html);
+  present(hero, LOCKED_H1, 'edge hero h1');
+  present(hero, LOCKED_SUBHEAD, 'edge hero subhead');
+  present(hero, '<a href="/pricing">$0.002 per receipt</a>', 'edge chip links to /pricing');
+  absent(hero, OLD_H1, 'old h1 is absent from the edge hero');
+  absent(hero, OLD_LEAD, 'old lead is absent from the edge hero');
+  absent(hero, OLD_DESCRIPTION, 'old description is absent from the edge hero');
+
+  const chit = readNorm(new URL('../src/pages/ChitHome.tsx', import.meta.url));
+  const home = readNorm(new URL('../src/content/homeContent.mjs', import.meta.url));
+  present(home, LOCKED_H1, 'home content has the locked h1');
+  present(home, LOCKED_SUBHEAD, 'home content has the locked subhead');
+  present(home, "pricingLabel: '$0.002 per receipt'", 'chip label is $0.002 per receipt');
+  present(home, "pricingHref: '/pricing'", 'chip href is /pricing');
+  present(chit, '<h1 style={styles.heroTitle}>{homeContent.h1}</h1>', 'ChitHome h1 uses the shared constant');
+  present(chit, '{homeContent.subhead}', 'ChitHome renders the subhead');
+  present(chit, '<Link to={homeContent.pricingHref} style={styles.pricingChipLink}>', 'ChitHome chip points at pricing');
+  present(chit, '{homeContent.pricingLabel}', 'ChitHome chip uses the shared label');
+  absent(chit, OLD_H1, 'ChitHome has no old h1');
+  absent(home, OLD_H1, 'home content has no old h1');
+  absent(chit, OLD_LEAD, 'ChitHome has no old lead');
+  absent(home, OLD_LEAD, 'home content has no old lead');
+  absent(chit, OLD_DESCRIPTION, 'ChitHome has no old description');
+  absent(home, OLD_DESCRIPTION, 'home content has no old description');
+});
+
+test('the home hero has no Tier-2 price, routing percent, or products chip', async () => {
+  const hero = heroOf(await edgeHtml('/'));
+  absent(hero, '$0.10', 'edge hero has no $0.10');
+  absent(hero, '+ 1%', 'edge hero has no + 1%');
+  absent(hero, 'routing cost + 1%', 'edge hero has no routing cost + 1%');
+  absent(hero, 'Stamp · Private Desk · Attest', 'edge hero has no products chip');
+  absent(hero, 'Attest', 'edge hero has no Attest');
+  const chit = readNorm(new URL('../src/pages/ChitHome.tsx', import.meta.url));
+  const home = readNorm(new URL('../src/content/homeContent.mjs', import.meta.url));
+  absent(chit, '$0.10', 'ChitHome has no $0.10');
+  absent(home, '$0.10', 'home content has no $0.10');
+  absent(chit, 'routing cost + 1%', 'ChitHome has no routing cost + 1%');
+  absent(home, 'routing cost + 1%', 'home content has no routing cost + 1%');
+  absent(chit, 'Stamp · Private Desk · Attest', 'ChitHome has no products chip');
+  absent(home, 'Stamp · Private Desk · Attest', 'home content has no products chip');
+  absent(chit, 'Attest', 'ChitHome has no Attest');
+  absent(home, 'Attest', 'home content has no Attest');
+});
+
+test('ChitHome and homeStaticModel read the h1 constant', () => {
+  const chit = readNorm(new URL('../src/pages/ChitHome.tsx', import.meta.url));
+  const home = readNorm(new URL('../src/content/homeContent.mjs', import.meta.url));
+  const model = home.slice(home.indexOf('export function homeStaticModel'));
+  present(home, "export const HOME_H1 = 'Your agents spent money this week. On what, and with whom?'", 'h1 lives in one constant');
+  present(home, 'h1: HOME_H1', 'homeContent.h1 reads HOME_H1');
+  present(chit, '<h1 style={styles.heroTitle}>{homeContent.h1}</h1>', 'ChitHome uses homeContent.h1');
+  absent(chit, LOCKED_H1, 'ChitHome does not inline the h1');
+  present(model, 'h1: homeContent.h1', 'homeStaticModel uses homeContent.h1');
+  absent(model, LOCKED_H1, 'homeStaticModel does not inline the h1');
+  assert.ok(new RegExp(`^(?![\\s\\S]*${esc(LOCKED_H1)}[\\s\\S]*${esc(LOCKED_H1)})[\\s\\S]*$`).test(home), 'the h1 string is defined once');
 });
 
 test('locked check strings are in the static html', () => {
@@ -175,8 +312,57 @@ test('locked pricing strings are in the static html', () => {
   assert.ok(/cost \+ 1%/.test(html), 'pricing states Private Desk cost + 1%');
   assert.ok(/^(?![\s\S]*monthly plan)[\s\S]*$/.test(html), 'pricing has no monthly plan');
   assert.ok(/^(?![\s\S]*per month)[\s\S]*$/.test(html), 'pricing has no per-month price');
-  assert.ok(/Tier-2 settlement proofs are off while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./.test(html), 'Tier-2 settlement proofs are off');
-  assert.ok(/^(?![\s\S]*\$0\.10)[\s\S]*$/.test(html), 'pricing shows no Tier-2 price');
+  present(html, TIER2_PRICE_LINE, 'Tier-2 settlement proof is present exactly with Currently unavailable');
+  present(html, LOCKED_TIER2_OFF, 'pricing html shows the locked sentence');
+  assert.ok(/Currently unavailable/.test(html), 'pricing shows the Tier-2 price exactly with Currently unavailable');
+  assert.ok(/\+\$0\.10 per proof/.test(html), 'pricing shows the Tier-2 price exactly with Currently unavailable');
+});
+
+test('pricing html shows the locked sentence once on the clarity line and the price sentence once on a price row', () => {
+  const html = pages['/pricing'].html;
+  const clarity = html.split('</p>').find((chunk) => /Private \+ Attest/.test(chunk) && /Tier-2 settlement proofs are off/.test(chunk)) ?? '';
+  present(clarity, LOCKED_TIER2_OFF, 'clarity line keeps the locked sentence');
+  present(clarity, CLARITY_PRICE, 'clarity line drops the repeated unaffected clause');
+  assert.ok(/receipts are unaffected/.test(clarity), 'clarity says unaffected');
+  assert.ok(!/receipts are unaffected[\s\S]*receipts are unaffected/.test(clarity), 'clarity says unaffected once');
+  assert.ok(!/Tier-2 settlement proof: \+\$0\.10 per proof\. Currently unavailable while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./.test(clarity), 'clarity line does not repeat the full price sentence');
+  const rows = html.split('<li>').slice(1).map((chunk) => chunk.split('</li>')[0]).filter((chunk) => chunk.includes('+$0.10'));
+  assert.ok(rows.length === 1, 'one price row states +$0.10');
+  present(rows[0], TIER2_PRICE_LINE, 'the price row keeps the full price sentence');
+});
+
+test('pricing html and products state the Tier-2 price as currently unavailable', () => {
+  const pricing = pages['/pricing'].html;
+  present(pricing, TIER2_PRICE_LINE, 'prerendered pricing has the price sentence');
+  const products = readNorm(new URL('../src/pages/Products.tsx', import.meta.url));
+  present(products, TIER2_PRICE_LINE, 'products has the price sentence');
+  present(products, `forWho: TIER2_LINE`, 'Private + Attest for-line uses the Tier-2 sentence');
+  present(products, 'detail: TIER2_LINE', 'Private + Attest detail uses the Tier-2 sentence');
+  present(products, 'Private + Attest</strong>: {TIER2_OFF} {TIER2_LINE}', 'Private + Attest line uses the locked sentence and the price sentence');
+});
+
+test('rendered pricing and products body show the locked sentence', async () => {
+  present(pages['/pricing'].html, LOCKED_TIER2_OFF, 'pricing html shows the locked sentence');
+  const body = productsRelateHtml(await productsBodyHtml());
+  present(body, LOCKED_TIER2_OFF, 'products body shows the locked sentence');
+  present(body, TIER2_PRICE_LINE, 'products body shows the unavailable price sentence');
+});
+
+test('Products meta and the /products lede keep the locked sentence and do not state +$0.10', () => {
+  const products = readNorm(new URL('../src/pages/Products.tsx', import.meta.url));
+  const meta = products.match(/description:\s*\n\s*'([^']*)'/)?.[1] ?? '';
+  const prerender = readNorm(new URL('../scripts/prerender-titles.mjs', import.meta.url));
+  const lede = prerender.match(/'\/products': \{[\s\S]*?lede:\s*\n\s*'([^']*)'/)?.[1] ?? '';
+  present(meta, LOCKED_TIER2_OFF, 'Products meta keeps the locked sentence');
+  present(lede, LOCKED_TIER2_OFF, '/products lede keeps the locked sentence');
+  assert.ok(!/\+\$0\.10/.test(meta), 'Products meta does not state +$0.10');
+  assert.ok(!/\+\$0\.10/.test(lede), '/products lede does not state +$0.10');
+});
+
+test('+$0.10 never appears without Currently unavailable in the same sentence', () => {
+  assertPlus010Marked(pages['/pricing'].html, 'pricing html');
+  assertPlus010Marked(readNorm(new URL('../src/content/pricingContent.mjs', import.meta.url)), 'pricing source');
+  assertPlus010Marked(readNorm(new URL('../src/pages/Products.tsx', import.meta.url)), 'products source');
 });
 
 test('primary links are real anchors and not hash placeholders', () => {
@@ -265,15 +451,15 @@ test('title, meta and canonical tags stay on today\'s bytes for /pricing and /do
 test('the shared index shell has no home copy, and only / receives it', () => {
   const built = indexHtmlForBuild(shell);
   assert.equal(rootInner(built), '', 'dist/index.html keeps an empty #root');
-  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(built), 'index.html has no home copy');
+  noHomeCopy(built, 'index.html');
   const page = chitHomePage(verifyUrl, env.githubUrl);
   for (const path of ['/security', '/docs/doors', '/board/abc', '/v1/sub', '/no-such-page']) {
     const html = injectHomeIfRoot(built, path, page);
     assert.equal(rootInner(html), '', `${path} stays an empty shell`);
-    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${path} has no home copy`);
+    noHomeCopy(html, path);
   }
   const home = injectHomeIfRoot(built, '/', page);
-  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(home)), '/ receives the home block inside #root');
+  present(rootInner(home), LOCKED_H1, '/ receives the home block inside #root');
 });
 
 test('the middleware entry serves /, /v1/sub, and /security', async () => {
@@ -285,18 +471,18 @@ test('the middleware entry serves /, /v1/sub, and /security', async () => {
   assert.ok(new RegExp(`<title>${homeSeo.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/title>`).test(home), '/ uses the middleware home title');
   assert.ok(home.includes(`<h1>${homeSeo.h1}</h1>`), '/ keeps the middleware noscript h1');
   assert.ok(home.includes(homeSeo.lede), '/ keeps the middleware noscript lede');
-  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(home)), '/ injects the home block');
+  present(rootInner(home), LOCKED_H1, '/ injects the home block');
   assert.ok(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/.test(home), 'noscript is inserted after #root');
   assert.ok(new RegExp(`<title>${v1Seo.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/title>`).test(sub), '/v1/sub uses the middleware v1 title');
   assert.ok(/<link rel="canonical" href="https:\/\/www\.chit402\.com\/v1\/sub" \/>/.test(sub), '/v1/sub canonical uses the real path');
   assert.ok(sub.includes(`<h1>${v1Seo.h1}</h1>`), '/v1/sub keeps the v1 noscript h1');
-  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(sub), '/v1/sub has no home copy');
+  noHomeCopy(sub, '/v1/sub');
   assert.equal(rootInner(security), '', '/security keeps an empty #root');
-  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(security), '/security has no home copy');
+  noHomeCopy(security, '/security');
   for (const host of ['example.vercel.app', 'evilchit402.com']) {
     const html = await edgeHtml('/', host);
     assert.equal(html, shell, `${host} / is unchanged`);
-    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${host} / has no home block`);
+    noHomeCopy(html, `${host} /`);
   }
 });
 
@@ -319,7 +505,7 @@ test('non-HTML and 404 responses pass through the middleware unchanged', async (
   });
   assert.equal(json.html, '{"ok":true}', 'non-HTML body is unchanged');
   assert.equal(json.contentType, 'application/json', 'non-HTML content-type is unchanged');
-  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(json.html), 'non-HTML has no home block');
+  noHomeCopy(json.html, 'non-HTML');
   const missing = await edgeResult({ status: 404 });
   assert.equal(missing.status, 404, '404 status is unchanged');
 });
@@ -338,7 +524,7 @@ test('the prerender script leaves index.html as the plain shell', () => {
     const after = readNorm(join(dir, 'index.html'));
     assert.equal(after, before, 'index.html is still the plain shell');
     assert.equal(rootInner(after), '', 'built index.html has an empty #root');
-    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(after), 'built index.html has no home copy');
+    noHomeCopy(after, 'built index.html');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

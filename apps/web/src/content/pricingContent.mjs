@@ -10,8 +10,10 @@ function link(href, label, internal) {
 
 export function pricingModel(apiV1) {
   const origin = apiV1.replace(/\/v1$/, '');
-  const tier2 =
+  const tier2Off =
     'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+  const tier2 =
+    'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   return {
     h1: 'Pay for a collected hop.',
     kicker: 'Pricing',
@@ -61,7 +63,9 @@ export function pricingModel(apiV1) {
       [
         { strong: 'Private + Attest', style: strongLight },
         ': ',
-        tier2,
+        tier2Off,
+        ' ',
+        tier2.replace('; standard $0.002 receipts are unaffected.', '.'),
       ],
     ],
     columns: [
@@ -103,7 +107,6 @@ export function pricingModel(apiV1) {
     ],
     valueTitle: 'Value-add (optional)',
     valueItems: [
-      tier2,
       [
         { strong: 'Private Desk', style: strongMuted },
         ' — cost + 1% vendor-blind routing (allowlist / explicit product; not the default public door)',
