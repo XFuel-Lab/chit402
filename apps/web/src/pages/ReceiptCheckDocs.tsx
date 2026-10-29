@@ -50,7 +50,7 @@ export default function ReceiptCheckDocs() {
           </p>
           <p>
             <code>output.hash</code> stays a commitment to private model output. Coverage hashes over book rows
-            are not published. The HMAC tag needs the gateway secret, so a stranger does not recompute it.
+            are not published. The HMAC tag needs the gateway secret, so a third party does not recompute it.
           </p>
         </div>
 

@@ -2,7 +2,7 @@
   "schema": "1f916.project.v1",
   "handle": "chit402",
   "name": "Chit402",
-  "summary": "Signed, stranger-verifiable spend receipts for agent calls. Each paid call gets a receipt with a public verify URL that anyone can check without an account. The receipt log is anchored on Base and Solana.",
+  "summary": "Signed, third party verifiable spend receipts for agent calls. Each paid call gets a receipt with a public verify URL that anyone can check without an account. The receipt log is anchored on Base and Solana.",
   "kind": "service",
   "homepage": "https://www.chit402.com/",
   "source": "https://github.com/XFuel-Lab/chit402",

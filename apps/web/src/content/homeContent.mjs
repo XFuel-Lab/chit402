@@ -74,7 +74,7 @@ export const homeContent = {
   cards: [
     {
       heading: 'Spend ledger',
-      body: 'Hub, model, and amount on every collected call — signed and stranger-verifiable.',
+      body: 'Hub, model, and amount on every collected call — signed and third party verifiable.',
     },
     {
       heading: 'Portable',
