@@ -65,3 +65,34 @@ Flat fields aligned with `/book/export` and [hemei stranger specimens](hemei-str
 - Embed iframe / row card (separate PR)
 - Unauthenticated webhook admin
 - Architecture handoff beyond this envelope
+
+## Persistence
+
+The gateway stores the webhook map in `book-webhooks.json` under the agents data directory:
+
+```
+<data>/agents/book-webhooks.json
+```
+
+The file is mode `600`. From this release on, a webhook survives a gateway restart.
+
+Anything registered before the deploy that ships this release was already dropped at that deploy's restart, and at every restart before it. The owner has to register again.
+
+Register again with the book session:
+
+```
+PUT /v1/agents/:agent_id/book/webhook
+```
+
+`POST` on that same path updates the hook too. Send `X-XFuel-Session` and a JSON body:
+
+```
+{"url":"https://treasury.example/hooks/chit402","events":["settle","collected"],"secret":"optional"}
+```
+
+If `secret` is omitted, the response includes a new `secret_once`. The integrator has to update its signature check to that value. The previous signing key is no longer used.
+
+Known gaps:
+
+- The webhook signing secret is plaintext at rest (mode `600`).
+- Rotating the book session does not revoke the webhook. A hook set by an earlier session holder stays until `DELETE` or a later `PUT`/`POST`.
