@@ -184,9 +184,14 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   assert.ok(/COULD_NOT_CHECK/.test(src), 'cite skill names COULD_NOT_CHECK');
   assert.ok(!/about an hour after issue/.test(src), 'cite skill does not say about an hour after issue');
   assert.ok(/Today it returns COULD_NOT_CHECK/.test(src), 'cite skill says today the public check returns COULD_NOT_CHECK');
-  assert.ok(/only after the receipt is anchored/.test(src), 'cite skill: exit 0 only after the receipt is anchored');
-  assert.ok(/exit 2 \(PENDING\)/.test(src), 'cite skill: exit 2 (PENDING) before anchor');
-  assert.ok(/contacts api\.chit402\.com/.test(src), 'cite skill: verify contacts api.chit402.com');
+  assert.ok(/only after the receipt is anchored/.test(src), 'snippet: only after the receipt is anchored');
+  assert.ok(/exit 2 \(PENDING\)/.test(src), 'snippet: exit 2 (PENDING) before anchor');
+  assert.ok(/contacts api\.chit402\.com/.test(src), 'snippet: verify contacts api.chit402.com');
+  const stepA = src.split('\n').find((line) => /^\s*- \(a\)/.test(line)) ?? '';
+  assert.ok(/only after the receipt is anchored/.test(stepA), 'step 3(a): only after the receipt is anchored');
+  assert.ok(/exits 2 \(PENDING\)/.test(stepA), 'step 3(a): exits 2 (PENDING)');
+  assert.ok(/contacts api\.chit402\.com/.test(stepA), 'step 3(a): contacts api.chit402.com');
+  assert.ok((src.match(/jq \.xfuel/g) || []).length === 2, 'SKILL.md jq .xfuel appears on the step and in the snippet');
   assert.ok(!/expects exit 0/.test(src), 'cite skill: old expects exit 0 wording is gone');
   assert.ok(/jq \.xfuel response\.json > receipt\.json/.test(src), 'cite skill saves jq .xfuel response.json > receipt.json');
   assert.ok(
@@ -199,13 +204,14 @@ test('cite skill reads the saved receipt, not the public shell', () => {
 });
 
 test('settlement-proof refusal and historical prove-result are pinned', () => {
-  const narrowed = /Requests that ask for a settlement proof \(`proof_tier` settlement or inference, or Private \+ Attest\) get `400 settlement_proof_not_offered` before any quote or payment\./;
-  for (const rel of ['WHITEPAPER.md', 'docs/POSITIONING.md', 'api/llms.txt.ts']) {
-    const src = read(rel);
-    assert.ok(narrowed.test(src), `${rel}: narrowed settlement-proof 400 sentence`);
-  }
+  const narrowed = /Requests that ask for a settlement proof \(`proof_tier` settlement or inference, or Private \+ Attest\) get `400 settlement_proof_not_offered` before any quote or payment\./g;
+  const whitepaper = read('WHITEPAPER.md');
+  const positioning = read('docs/POSITIONING.md');
   const llms = read('api/llms.txt.ts');
-  assert.ok(/\/prove-result\s+: historical settlement proofs only/.test(llms), 'llms.txt: prove-result is historical settlement proofs only');
+  assert.ok((whitepaper.match(narrowed) || []).length === 2, 'WHITEPAPER has both narrowed 400 sentences');
+  assert.ok((llms.match(narrowed) || []).length === 2, 'llms.txt has both narrowed 400 sentences');
+  assert.ok(/Requests that ask for a settlement proof \(`proof_tier` settlement or inference, or Private \+ Attest\) get `400 settlement_proof_not_offered` before any quote or payment\./.test(positioning), 'POSITIONING has the narrowed 400 sentence');
+  assert.ok((llms.match(/\/prove-result\s+: historical settlement proofs only/g) || []).length === 2, 'llms.txt has both historical prove-result lines');
 });
 
 test('1F916 page says a third party cannot check the receipt leg today', () => {
