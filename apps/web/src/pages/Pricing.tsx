@@ -2,8 +2,6 @@ import { Link } from 'react-router-dom';
 import type { CSSProperties } from 'react';
 import SeoHead from '../components/SeoHead';
 import { getApiV1 } from '../apiHost';
-import { RichText } from '../content/RichText';
-import { pricingModel } from '../content/pricingContent.mjs';
 
 const PRICING_SEO = {
   title: 'Pricing — standard receipt $0.002 USDC | Chit402',
@@ -13,76 +11,159 @@ const PRICING_SEO = {
 
 export default function Pricing() {
   const apiV1 = getApiV1();
-  const copy = pricingModel(apiV1);
 
   return (
     <div className="page docs-page">
       <SeoHead title={PRICING_SEO.title} description={PRICING_SEO.description} />
       <div className="container" style={{ maxWidth: 720 }}>
         <header className="page-header">
-          <span className="docs-kicker">{copy.kicker}</span>
-          <h1>{copy.h1}</h1>
+          <span className="docs-kicker">Pricing</span>
+          <h1>Pay for a collected hop.</h1>
           <p>
-            <RichText parts={copy.intro} />
+            Chit is the book — not a router shop. The standard receipt and provider routing are priced
+            separately from hub COGS — quoted, receipted — USDC on Base and Solana.{' '}
+            <Link to="/products" style={styles.link}>
+              See products → /products
+            </Link>
+            .
           </p>
         </header>
 
         <section style={styles.clarityBar} aria-labelledby="standard-receipt-heading">
-          <p style={styles.clarityLabel}>{copy.clarityLabel}</p>
+          <p style={styles.clarityLabel}>Standard receipt (every hop)</p>
           <h2 id="standard-receipt-heading" style={styles.clarityAmount}>
-            {copy.clarityAmount}
+            $0.002 USDC
           </h2>
-          {copy.clarityParagraphs.map((parts: any, index: number) => (
-            <p key={index} style={styles.clarityBody}>
-              <RichText parts={parts} />
-            </p>
-          ))}
+          <p style={styles.clarityBody}>
+            One flat stamp for the treasury desk: HTTP 402 quote, USDC settle on Base or Solana, and a
+            signed receipt with <code>verify_url</code> you can verify offline. Bigger jobs do not
+            make the receipt harder or more expensive — the standard receipt stays $0.002 unless our
+            unit cost changes.
+          </p>
+          <p style={styles.clarityBody}>
+            Provider inference is billed at{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost + 1%</strong>
+            {' '}(platform fee 100 bps on provider COGS). Hub, model, and upstream USDC are
+            pass-through plus that routing fee. Network fees on your chain are yours. Without
+            payment or a partner key, <code>POST {apiV1}/chat/completions</code> returns HTTP 402.
+            Bring your OpenRouter key, get a Chit receipt for every call. Send{' '}
+            <code>X-OpenRouter-Key</code> (or <code>Authorization</code> on an{' '}
+            <code>openrouter/</code> route). Chit charges this $0.002 receipt. Inference is
+            paid by you to OpenRouter, and the receipt labels that cost
+            paid-by-caller-to-OpenRouter. Familiar names stay on the open-model book.
+          </p>
+          <p style={styles.clarityBody}>
+            Possession-gated book ingest costs a{' '}
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>$0.002</strong> stamp
+            (2000 atomic USDC, 6 decimals), paid by the submitter via x402 on Base or Solana.
+            The stamp is not debited from prepaid budget. A pilot waiver is off unless an operator
+            lists partner keys. Cemented Nano (XNO) sends can be stamped on the same door.
+          </p>
+          <p style={styles.clarityBody}>
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private Desk</strong> — vendor-blind
+            routing at the same <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>cost + 1%</strong>{' '}
+            door; Tier-1 signed receipt with <code>privacy.mode=vendor_blind</code>. Gateway-trusted spend
+            privacy — not prompt-private, not trustless ZK. Request with{' '}
+            <code>xfuel.privacy_product: private_desk</code> (or enable Private Spend on your gateway
+            allowlist).
+          </p>
+          <p style={styles.clarityBody}>
+            <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private + Attest</strong>:{' '}
+            Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
+          </p>
         </section>
 
         <div className="grid grid-3" style={{ gap: '1.25rem', marginBottom: '2rem' }}>
-          {copy.columns.map((column: any) => (
-            <div key={column.title} className="card">
-              <h3 style={styles.cardTitle}>{column.title}</h3>
-              <ul style={styles.list}>
-                {column.items.map((item: any, index: number) => (
-                  <li key={index}>{typeof item === 'string' ? item : <RichText parts={item} />}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          <div className="card">
+            <h3 style={styles.cardTitle}>Included on the hop</h3>
+            <ul style={styles.list}>
+              <li>Signed receipt naming hub, model, and amount</li>
+              <li>
+                Public <code>verify_url</code> — stranger-verifiable without a second fee
+              </li>
+              <li>USDC on Base and Solana (chain-neutral x402)</li>
+              <li>Quoted settle before the call completes</li>
+            </ul>
+          </div>
+          <div className="card">
+            <h3 style={styles.cardTitle}>Separate from Chit</h3>
+            <ul style={styles.list}>
+              <li>Provider / hub inference price (pass-through COGS + 1% routing)</li>
+              <li>Your wallet and chain network costs</li>
+              <li>Partner key billing (if you use one instead of x402)</li>
+            </ul>
+          </div>
+          <div className="card">
+            <h3 style={styles.cardTitle}>How quoting works</h3>
+            <ul style={styles.list}>
+              <li>
+                First request without payment → HTTP 402 with atomic USDC amount (standard receipt{' '}
+                <code>2000</code> = $0.002, plus provider COGS + 1% when applicable)
+              </li>
+              <li>Retry with <code>X-PAYMENT</code> after USDC settle, or send a partner API key</li>
+              <li>
+                Live discovery:{' '}
+                <a href={`${apiV1.replace(/\/v1$/, '')}/.well-known/x402`} style={styles.link}>
+                  /.well-known/x402
+                </a>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <section className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>{copy.valueTitle}</h2>
+          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Value-add (optional)</h2>
           <ul style={styles.list}>
-            {copy.valueItems.map((item: any, index: number) => (
-              <li key={index}>{typeof item === 'string' ? item : <RichText parts={item} />}</li>
-            ))}
+            <li>
+              Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> — cost + 1% vendor-blind routing
+              (allowlist / explicit product; not the default public door)
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
+            </li>
+            <li>
+              <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available
+              to buy yet
+            </li>
           </ul>
-          <p style={{ ...styles.muted, marginTop: '0.85rem' }}>{copy.valueNote}</p>
+          <p style={{ ...styles.muted, marginTop: '0.85rem' }}>
+            Volume and premier stamp houses win because the receipt is flat and boring — high
+            throughput does not inflate the per-hop stamp.
+          </p>
         </section>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>{copy.enterTitle}</h2>
+          <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>How you enter</h2>
           <p style={styles.muted}>
-            <RichText parts={copy.enterBody} />
+            The product is the possession book — who paid which call, holdable after settle. Pay the
+            quoted USDC (HTTP 402 on Base or Solana, or a partner <code>X-API-Key</code>), hold the
+            signed receipt with <code>verify_url</code>. After you register,{' '}
+            <Link to="/book" style={styles.link}>
+              /book
+            </Link>{' '}
+            keeps last-N spend. Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
+            <Link to="/doors" style={styles.link}>
+              /doors
+            </Link>
+            .
           </p>
         </div>
 
         <div style={styles.ctaRow}>
-          {copy.ctas.map((cta: any) => (
-            <Link
-              key={cta.href}
-              to={cta.href}
-              className={cta.variant === 'primary' ? 'btn btn-primary' : 'btn btn-secondary'}
-            >
-              {cta.label}
-            </Link>
-          ))}
+          <Link to="/doors" className="btn btn-primary">
+            Install doors
+          </Link>
+          <Link to="/book" className="btn btn-secondary">
+            Open the book
+          </Link>
         </div>
 
         <p style={styles.footnote}>
-          <RichText parts={copy.footnote} />
+          Legacy measured-task wire (<code>/task-request</code>) works the same way, with the fee based on our cost plus a margin, on
+          a different path — prefer <code>{apiV1}</code> for new installs.
         </p>
       </div>
     </div>

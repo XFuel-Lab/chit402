@@ -1,27 +1,191 @@
 import { Link } from 'react-router-dom';
 import { getApiHost, getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
-import { DocSection } from './docsShared';
-import { RichText } from '../content/RichText';
-import {
-  auditors,
-  builders,
-  docsKicker,
-  h1For,
-  introParts,
-  navLinks,
-  operatorsFor,
-  probeBody,
-  probeFoot,
-  probeLead,
-  probeLinks,
-  sdkLabel,
-  sdkSnippet,
-  sectionTitles,
-  snippetFor,
-  startHere,
-  whatsNew,
-} from '../content/docsContent.mjs';
+import { DocSection, type DocLink } from './docsShared';
+
+const GITHUB = 'https://github.com/XFuel-Lab/chit402/blob/main';
+
+const startHere: DocLink[] = [
+  {
+    title: 'What the book is, and isn\'t',
+    description: 'Collected vs client-attested, what a receipt proves, settled vs unsettled, daily anchors.',
+    href: '/book#what-the-book-is',
+    meta: 'book',
+    internal: true,
+  },
+  {
+    title: 'Products',
+    description: 'Stamp, Private Desk, and Private + Attest — book-first seats and what you hold after settle.',
+    href: '/products',
+    meta: 'seats',
+    internal: true,
+  },
+  {
+    title: 'Chit in 15 lines',
+    description: 'Fastest receipt path — pay USDC, collect verify_url, start the book.',
+    href: '/docs/chit-in-15-lines',
+    meta: 'start',
+    internal: true,
+  },
+  {
+    title: 'Spend audit',
+    description: 'Paste a Base or Solana wallet. USDC out by counterparty, public receipt match, no signup. Incomplete scans show no total.',
+    href: '/audit',
+    meta: 'public',
+    internal: true,
+  },
+  {
+    title: '1F916 link (draft)',
+    description: 'Draft v0. Specimen 1 and Specimen 2 are stamped listing payouts, with verify links.',
+    href: '/docs/1f916-link',
+    meta: 'draft',
+    internal: true,
+  },
+  {
+    title: 'Deployment',
+    description: 'How to deploy the gateway, contracts, and prover.',
+    href: `${GITHUB}/docs/DEPLOYMENT.md`,
+    meta: 'ops',
+    external: true,
+  },
+  {
+    title: 'Positioning',
+    description: 'Possession book story — who paid which call, evidence, and policy.',
+    href: `${GITHUB}/docs/POSITIONING.md`,
+    meta: 'story',
+    external: true,
+  },
+  {
+    title: 'Whitepaper',
+    description: 'Protocol design: settlement, proofs, circuits, governance.',
+    href: `${GITHUB}/WHITEPAPER.md`,
+    meta: 'v2.6',
+    external: true,
+  },
+];
+
+const builders: DocLink[] = [
+  {
+    title: 'Private Spend',
+    description: 'vendor_blind for possession sessions — topology privacy, not prompt encryption.',
+    href: '/docs/private-spend',
+    meta: 'product',
+    internal: true,
+  },
+  {
+    title: 'Escrow helper',
+    description: 'Ledger escrow beside the book for high-value jobs. Settlement-tier escrow is paused while settlement proofs are unavailable.',
+    href: `${GITHUB}/docs/product/escrow-helper.md`,
+    meta: 'book',
+    external: true,
+  },
+  {
+    title: 'A2A escrow + machine dispute',
+    description: 'Agent↔agent job_spec_hash flow on the book — open, fund, submit, release or challenge.',
+    href: `${GITHUB}/docs/product/a2a-escrow-dispute-v1.md`,
+    meta: 'book',
+    external: true,
+  },
+  {
+    title: 'M2M API',
+    description: 'REST task submit, status, webhooks, quotes.',
+    href: `${GITHUB}/docs/M2M_API.md`,
+    meta: 'REST',
+    external: true,
+  },
+  {
+    title: 'USDC / x402',
+    description: 'Payment rail for the book — agent-side USDC on Base or Solana.',
+    href: `${GITHUB}/docs/X402_ADAPTER.md`,
+    meta: 'x402',
+    external: true,
+  },
+  {
+    title: 'Cloudflare Monetization Gateway',
+    description: 'Receipt for an x402 v2 call settled by Coinbase on Base. Evidence is foreign_ingest.',
+    href: '/docs/cloudflare-x402',
+    meta: 'x402',
+    internal: true,
+  },
+  {
+    title: 'Issuer trust',
+    description: 'Current ES256 key, issuer history, and chit402-verify.',
+    href: '/trust',
+    meta: 'trust',
+    internal: true,
+  },
+  {
+    title: 'Receipt check',
+    description: 'Recompute public receipt hashes and check the signed issuer key history.',
+    href: '/docs/receipt-check',
+    meta: 'verify',
+    internal: true,
+  },
+  {
+    title: 'Verify',
+    description: 'Exit codes and the reason anchors chit402-verify prints.',
+    href: '/docs/verify',
+    meta: 'verify',
+    internal: true,
+  },
+  {
+    title: 'Install doors',
+    description: 'Chat /v1 wire, Eliza, ACP, MCP, frameworks, Cloudflare, swarms — peers into the same book.',
+    href: '/doors',
+    meta: 'doors',
+    internal: true,
+  },
+];
+
+function getOperators(apiDomain: string): DocLink[] {
+  return [
+    {
+      title: 'Deployment',
+      description: 'Base verifier, gateway, manifests.',
+      href: `${GITHUB}/docs/DEPLOYMENT.md`,
+      meta: 'deploy',
+      external: true,
+    },
+    {
+      title: 'Testing',
+      description: 'Contract matrix, gateway tests, zkLLM cargo tests.',
+      href: `${GITHUB}/docs/TESTING.md`,
+      meta: '755+',
+      external: true,
+    },
+    {
+      title: 'Hosted API',
+      description: `Public API at ${apiDomain}.`,
+      href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
+      meta: 'api',
+      external: true,
+    },
+  ];
+}
+
+const auditors: DocLink[] = [
+  {
+    title: 'Responsible disclosure',
+    description: 'Scope, safe harbour, and how findings are credited.',
+    href: `${GITHUB}/docs/bug-bounty.md`,
+    meta: 'security',
+    external: true,
+  },
+  {
+    title: 'Security design',
+    description: 'Trust ladder and settlement surfaces.',
+    href: `${GITHUB}/docs/security-design.md`,
+    meta: 'model',
+    external: true,
+  },
+];
+
+function getSnippet(apiV1: string) {
+  return `curl -sS -D - ${apiV1}/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{}'
+# → HTTP 402 + PAYMENT-REQUIRED (USDC on Base or Solana)`;
+}
 
 export default function Docs() {
   const config = getHostConfig();
@@ -29,86 +193,126 @@ export default function Docs() {
   const apiHost = getApiHost();
   const apiV1 = getApiV1();
   const apiDomain = config.apiDomain;
-  const operators = operatorsFor(apiDomain);
-  const snippet = snippetFor(apiV1);
-  const news = whatsNew(apiHost);
-  const links = navLinks(apiHost);
+  const operators = getOperators(apiDomain);
+  const SNIPPET = getSnippet(apiV1);
 
   return (
     <div className="page docs-page">
       <div className="container">
         <header className="page-header">
-          <span className="docs-kicker">{docsKicker}</span>
-          <h1>{h1For(productName)}</h1>
+          <span className="docs-kicker">Documentation</span>
+          <h1>{productName} possession book</h1>
           <p>
-            <RichText parts={introParts(apiDomain)} />
+            The product is the book — who paid which call; hold <code>verify_url</code>; export,
+            policy, and evidence. Install paths are how agents reach the same stamped receipts:{' '}
+            <Link to="/doors">Install wires</Link>. No account. No API key. A wallet that can
+            pay the 402 is enough. Register is only to hold the book after a collected receipt.
+            Apache-2.0. Public beta at <code>{apiDomain}</code>. Paying it is mainnet USDC.
           </p>
         </header>
 
         <nav className="docs-rail" aria-label="Quick links">
-          {links.map((link) => (
-            link.internal ? (
-              <Link key={link.href} to={link.href}>{link.label}</Link>
-            ) : (
-              <a key={link.href} href={link.href} target={link.blank ? '_blank' : undefined} rel={link.blank ? 'noreferrer' : undefined}>
-                {link.label}
-              </a>
-            )
-          ))}
+          <Link to="/book">Principal book</Link>
+          <Link to="/trust">Trust</Link>
+          <Link to="/doors">Install wires → /doors</Link>
+          <a href={`${apiHost}/health`} target="_blank" rel="noreferrer">
+            API health
+          </a>
+          <a href="https://github.com/XFuel-Lab/chit402" target="_blank" rel="noreferrer">
+            GitHub
+          </a>
+          <a href="https://www.npmjs.com/package/chit402-sdk" target="_blank" rel="noreferrer">
+            npm SDK
+          </a>
+          <a href={`${GITHUB}/docs/bug-bounty.md`} target="_blank" rel="noreferrer">
+            Disclosure
+          </a>
+          <Link to="/products">Products</Link>
+          <Link to="/pricing">Pricing</Link>
+          <Link to="/security">Security</Link>
         </nav>
 
-        <DocSection title={sectionTitles.start} items={startHere} />
+        <DocSection title="Start here" items={startHere} />
 
         <div className="docs-panel">
-          <h2>{sectionTitles.news}</h2>
+          <h2>What&apos;s new</h2>
           <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.7, paddingLeft: '1.2rem' }}>
-            {news.map((parts, index) => (
-              <li key={index}>
-                <RichText parts={parts} />
-              </li>
-            ))}
+            <li>
+              <strong>2026-09-30</strong> — the receipt root is published daily on Base and on Solana.
+              The current head is{' '}
+              <a href={`${apiHost}/v1/receipts/tree/head`}>GET /v1/receipts/tree/head</a>.{' '}
+              chit402-verify 0.4.11 checks that anchor inside{' '}
+              <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
+            </li>
+            <li>
+              <strong>2026-10-06</strong> — the public receipt log is durable and tied to an epoch.
+            </li>
+            <li>
+              <strong>2026-10-03</strong> — a blocked spend can return a signed refusal
+              (<code>chit402.refusal.v1</code>). chit402-verify 0.4.11 checks a signed refusal with{' '}
+              <code>npx chit402-verify</code> and the refusal URL.
+            </li>
+            <li>
+              <strong>2026-10-04</strong> — public spend audit at <Link to="/audit">/audit</Link>.
+            </li>
+            <li>
+              <strong>2026-10-04</strong> — hash preimages and signed issuer key history.
+              Check them on <Link to="/docs/receipt-check">Receipt check</Link>. Published receipts
+              from before the object was stored still return 404 on <code>/preimage</code>.
+            </li>
           </ul>
         </div>
-        <DocSection title={sectionTitles.builders} items={builders} />
-        <DocSection title={sectionTitles.operators} items={operators} />
-        <DocSection title={sectionTitles.auditors} items={auditors} />
+        <DocSection title="Builders" items={builders} />
+        <DocSection title="Operators" items={operators} />
+        <DocSection title="Auditors" items={auditors} />
 
         <div className="docs-panel">
-          <h2>{sectionTitles.probe}</h2>
+          <h2>Probe the paid door</h2>
           <p>
-            <RichText parts={probeLead()} />
+            Unauthenticated <code>POST /v1/chat/completions</code> returns HTTP 402. Settle USDC,
+            then retry with <code>X-PAYMENT</code> for a signed receipt with <code>verify_url</code>.
+            Bring your OpenRouter key, get a Chit receipt for every call. Send it as{' '}
+            <code>X-OpenRouter-Key</code>. Chit charges the $0.002 receipt and records the model
+            that served plus the OpenRouter-reported cost, labelled paid-by-caller-to-OpenRouter.
           </p>
           <p>
-            <RichText parts={probeBody()} />
+            Each signed receipt carries hub, model, amount, and <code>verify_url</code>. Each call
+            is charged a quoted price and gets a receipt, paid in USDC on Base or Solana.{' '}
+            <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected
+            spend. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
           </p>
           <pre className="docs-code">
-            <code>{snippet}</code>
+            <code>{SNIPPET}</code>
           </pre>
-          <p style={{ marginTop: '0.75rem' }}>{sdkLabel}</p>
+          <p style={{ marginTop: '0.75rem' }}>SDK (x402 payer):</p>
           <pre className="docs-code">
-            <code>{sdkSnippet}</code>
+            <code>{`npm install chit402-sdk
+# client.chatCompletions({ model: 'xfuel/auto', messages: [...] })`}</code>
           </pre>
           <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', opacity: 0.85 }}>
-            <RichText parts={probeFoot()} />
+            Lower-level M2M path: <code>POST /task-request</code>. Do not use{' '}
+            <code>createMockPayer</code> against this host. Windows: <code>curl.exe</code>.
           </p>
           <div className="docs-actions">
-            {probeLinks().map((link) => (
-              link.internal ? (
-                <Link key={link.href} to={link.href} className={link.className}>
-                  {link.label}
-                </Link>
-              ) : (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={link.className}
-                >
-                  {link.label}
-                </a>
-              )
-            ))}
+            <a
+              href={`${GITHUB}/packages/sdk/README.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-primary btn-sm"
+            >
+              SDK docs
+            </a>
+            <Link to="/doors" className="btn btn-secondary btn-sm">
+              Install doors
+            </Link>
+            <a
+              href={`${GITHUB}/docs/README.md`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-secondary btn-sm"
+            >
+              Full docs hub
+            </a>
           </div>
         </div>
       </div>
