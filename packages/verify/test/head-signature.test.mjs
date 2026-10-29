@@ -711,7 +711,7 @@ test('a thumbprint match uses that entry window, not an earlier row with the sam
   assert.notEqual(trusted.reason, 'kid_not_in_history');
 });
 
-test('duplicate history matches for one kid or thumbprint fail closed', () => {
+test('identical rows for one kid verify, and two labels for one key fail closed', () => {
   const key = issuerKey();
   const open = {
     jwk: key.publicJwk,
@@ -731,9 +731,9 @@ test('duplicate history matches for one kid or thumbprint fail closed', () => {
     trustedKids: [key.kid],
     issuerHistory: sameKid,
   });
-  assert.equal(byKid.ok, false);
-  assert.equal(byKid.reason, 'head_kid_window');
-  assert.match(byKid.message, /kid_ambiguous/);
+  // Two identical rows for one kid fold into one window. They are not ambiguous.
+  assert.equal(byKid.ok, true, byKid.message);
+  assert.equal(byKid.reason, null);
 
   const sameThumb = historyFrom(key, [
     { ...open, kid: 'label-a' },

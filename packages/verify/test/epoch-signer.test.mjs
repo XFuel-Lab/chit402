@@ -89,6 +89,15 @@ test('a retired history key does not sign the epoch record', () => {
     epochRecordSignatureOk(record, record.issuer_signature.jws, history(pair, 'retired'), AT),
     false,
   );
+  assert.equal(
+    epochRecordSignatureOk(
+      record,
+      record.issuer_signature.jws,
+      history(pair, 'retired', { not_after: '2026-05-01T00:00:00.000Z' }),
+      AT,
+    ),
+    false,
+  );
 });
 
 test('an active key is not active before not_before', () => {
@@ -119,8 +128,8 @@ test('a retired key cannot backdate the epoch with its own iat', () => {
         kid: pair.kid,
         jwk: pair.jwk,
         alg: 'ES256',
-        not_before: retiredAt,
-        not_after: null,
+        not_before: BEFORE,
+        not_after: retiredAt,
         status: 'retired',
         revoked_at: null,
       },
