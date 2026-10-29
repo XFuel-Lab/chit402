@@ -431,10 +431,14 @@ test('401 hint is referenced at the four book and export sites; llms files are u
     'bd4767285b8c21cf0cb21a5b57b70cfe4effe49db69159b31f576e2bf3de9a8d',
   );
   const apiLlms = readFileSync(new URL('../../../api/llms.txt.ts', import.meta.url));
-  assert.equal(
-    createHash('sha256').update(apiLlms).digest('hex'),
+  const apiSha = createHash('sha256').update(apiLlms).digest('hex');
+  // This PR does not edit api/llms.txt.ts. CI checks out the merge with main,
+  // and main moved the file after the branch point, so either untouched copy is valid.
+  const untouchedApiLlms = new Set([
     '9346da542e28956cc59ffe1f9abd5638efccbc2358a98de15c144b319ea53b4e',
-  );
+    '19ab8e85698d62a809c388abb5ab51cb5e2c0b4231d9f4bac0bbc1be98d8f416',
+  ]);
+  assert.ok(untouchedApiLlms.has(apiSha), apiSha);
 });
 
 const NOT_ALLOWED = '{"error":"method_not_allowed"}';
