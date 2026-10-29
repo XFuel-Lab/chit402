@@ -227,7 +227,8 @@ test('settlement-proof refusal and historical prove-result are pinned', () => {
   const positioning = read('docs/POSITIONING.md');
   const llms = read('api/llms.txt.ts');
   assert.ok((whitepaper.match(narrowed) || []).length === 2, 'WHITEPAPER has both narrowed 400 sentences');
-  assert.ok((llms.match(narrowed) || []).length === 2, 'llms.txt has both narrowed 400 sentences');
+  const narrowedInSource = /Requests that ask for a settlement proof \(\\?`proof_tier\\?` settlement or inference, or Private \+ Attest\) get \\?`400 settlement_proof_not_offered\\?` before any quote or payment\./g;
+  assert.ok((llms.match(narrowedInSource) || []).length === 2, 'llms.txt has both narrowed 400 sentences');
   assert.ok(/Requests that ask for a settlement proof \(`proof_tier` settlement or inference, or Private \+ Attest\) get `400 settlement_proof_not_offered` before any quote or payment\./.test(positioning), 'POSITIONING has the narrowed 400 sentence');
   assert.ok((llms.match(/\/prove-result\s+: historical settlement proofs only/g) || []).length === 2, 'llms.txt has both historical prove-result lines');
 });

@@ -2,9 +2,11 @@
  * Homepage SEO must describe the public door as paid /v1.
  * x402scan origin copy reads these tags; "unmetered" here is the lie.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -620,14 +622,59 @@ test('llms.txt API route links issuer trust page', () => {
 
 test('chit llms.txt first line reads HOME_TITLE', () => {
   const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8').replace(/\r\n/g, '\n');
-  assert.ok(
-    /import \{ HOME_TITLE \} from '\.\.\/apps\/web\/src\/content\/homeContent\.mjs'/.test(llms),
-    'llms.txt imports HOME_TITLE',
-  );
+  const inlineRe = /const HOME_TITLE = '([^']*)'/;
+  assert.ok(inlineRe.test(llms), 'llms.txt inlines HOME_TITLE');
+  const inlineTitle = llms.match(inlineRe)?.[1];
+  assert.equal(inlineTitle, HOME_TITLE, 'inline HOME_TITLE === homeContent HOME_TITLE');
+  const noCrossTree = /^(?![\s\S]*(?:import\s+(?:type\s+)?(?:[^'"\n]*from\s+)?|import\s*\(\s*|require\s*\(\s*)['"](?:[^'"]*\/apps\/[^'"]*|apps\/[^'"]*|[^'"]*\.mjs)['"])[\s\S]*$/;
+  assert.ok(noCrossTree.test(llms), 'llms.txt has no import or require into apps/ or ending in .mjs');
   assert.ok(/const CHIT_LLMS = `# \$\{HOME_TITLE\}\n/.test(llms), 'CHIT_LLMS heading is # plus HOME_TITLE');
   const block = llms.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/)?.[1] ?? '';
   const firstLine = block.split('\n')[0].replace(/\$\{HOME_TITLE\}/g, HOME_TITLE);
   assert.equal(firstLine, '# ' + HOME_TITLE, 'llms.txt first line === # HOME_TITLE');
+});
+
+test('llms.txt handler parses and serves the locked chit body', async () => {
+  const require = createRequire(new URL('../package.json', import.meta.url));
+  const esbuild = require('esbuild');
+  const srcPath = join(root, '../../api/llms.txt.ts');
+  const result = await esbuild.build({
+    entryPoints: [srcPath],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    loader: { '.ts': 'ts' },
+    write: false,
+    logLevel: 'silent',
+  });
+  assert.equal(result.errors.length, 0, 'llms.txt.ts parses');
+  const dir = mkdtempSync(join(tmpdir(), 'llms-handler-'));
+  const outfile = join(dir, 'handler.mjs');
+  try {
+    writeFileSync(outfile, result.outputFiles[0].text);
+    const { default: handler } = await import(pathToFileURL(outfile).href);
+    const req = { headers: { host: 'www.chit402.com' } };
+    let statusCode = 0;
+    let body = '';
+    const res = {
+      setHeader() { return this; },
+      status(code) { statusCode = code; return this; },
+      send(content) { body = String(content); return this; },
+    };
+    handler(req, res);
+    const served = Buffer.from(String(body).replace(/\r\n/g, '\n'), 'utf8');
+    const expected = Buffer.from(
+      readFileSync(join(root, 'test/fixtures/llms-expected.txt'), 'utf8').replace(/\r\n/g, '\n'),
+      'utf8',
+    );
+    const text = served.toString('utf8');
+    assert.equal(statusCode, 200);
+    assert.equal(text.split('\n')[0], '# Chit402: receipts for what your agents spend');
+    assert.ok(/`proof_tier`/.test(text), 'served body keeps literal `proof_tier`');
+    assert.deepEqual(served, expected);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('apps and api source drop the retired home title', () => {
