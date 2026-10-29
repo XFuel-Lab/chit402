@@ -125,7 +125,8 @@ import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
 import { privateNoStore } from './private-read.js';
 import { coverageForLedger } from './export-coverage.js';
-import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
+import { BookWebhookRegistry, resetBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
+import { AgentOwnerKeyStore } from './agent-owner-key.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import {
   BookPolicyStore,
@@ -1070,6 +1071,15 @@ export async function createApp() {
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
+  const bookWebhooks = new BookWebhookRegistry({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  resetBookWebhookRegistry(bookWebhooks);
+  const agentOwnerKeys = new AgentOwnerKeyStore({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
   const usageSettled = new UsageSettledLedger({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
@@ -1210,7 +1220,7 @@ export async function createApp() {
         .catch((err) => logger.warn({ err: err.message, taskId: entry?.task_id }, 'public attestation enqueue failed'));
     }
     scheduleBookWebhook(entry, {
-      registry: getBookWebhookRegistry(),
+      registry: bookWebhooks,
       baseUrl: config.service.publicBaseUrl || 'https://api.chit402.com',
     });
   });
@@ -5739,7 +5749,7 @@ export async function createApp() {
       const claim = claimFromRequest(req);
       const result = manageBookWebhook(req.params.agent_id, req.method, claim, req.body || {}, {
         verify: verifyBook,
-        registry: getBookWebhookRegistry(),
+        registry: bookWebhooks,
       });
       if (result.body == null) {
         return res.status(result.status).end();
@@ -5838,6 +5848,7 @@ export async function createApp() {
     store: ownerStore,
     saltStore,
     registry: agentRegistry,
+    agentKeys: agentOwnerKeys,
     loadReceipt: loadFullReceipt,
     // Read only. Present only with RECEIPT_PAYER_BINDING_EIP712=true.
     payerBinding: payerBindingOn ? (taskId, receiptJws) => payerBindingView(payerBindingStore, taskId, receiptJws) : null,
