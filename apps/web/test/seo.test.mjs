@@ -620,10 +620,12 @@ test('llms.txt API route links issuer trust page', () => {
 
 test('chit llms.txt first line reads HOME_TITLE', () => {
   const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8').replace(/\r\n/g, '\n');
-  assert.ok(
-    /import \{ HOME_TITLE \} from '\.\.\/apps\/web\/src\/content\/homeContent\.mjs'/.test(llms),
-    'llms.txt imports HOME_TITLE',
-  );
+  const inlineRe = /const HOME_TITLE = '([^']*)'/;
+  assert.ok(inlineRe.test(llms), 'llms.txt inlines HOME_TITLE');
+  const inlineTitle = llms.match(inlineRe)?.[1];
+  assert.equal(inlineTitle, HOME_TITLE, 'inline HOME_TITLE === homeContent HOME_TITLE');
+  const noCrossTree = /^(?![\s\S]*(?:import\s+(?:type\s+)?(?:[^'"\n]*from\s+)?|import\s*\(\s*|require\s*\(\s*)['"](?:[^'"]*\/apps\/[^'"]*|apps\/[^'"]*|[^'"]*\.mjs)['"])[\s\S]*$/;
+  assert.ok(noCrossTree.test(llms), 'llms.txt has no import or require into apps/ or ending in .mjs');
   assert.ok(/const CHIT_LLMS = `# \$\{HOME_TITLE\}\n/.test(llms), 'CHIT_LLMS heading is # plus HOME_TITLE');
   const block = llms.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/)?.[1] ?? '';
   const firstLine = block.split('\n')[0].replace(/\$\{HOME_TITLE\}/g, HOME_TITLE);

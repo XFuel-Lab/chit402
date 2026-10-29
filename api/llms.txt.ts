@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { HOME_TITLE } from '../apps/web/src/content/homeContent.mjs';
+
+const HOME_TITLE = 'Chit402: receipts for what your agents spend';
 
 const CHIT_LLMS = `# ${HOME_TITLE}
 
