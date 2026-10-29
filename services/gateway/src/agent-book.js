@@ -33,8 +33,9 @@ export const ALLOWANCE_HMAC_PREFIX = 'xfuel-allowance';
  * Fixed JSON body for the HTTP 401 on book read, budget set, and export.
  * readAgentBook, setAgentBudget, and exportAgentBook still return
  * { status: 401, body: null }. server.js is the only sender.
+ * Message text is the approved wording. error and docs stay fixed.
  */
-// LOCKED-PENDING-CHRISTOPHER
+// LOCKED
 export const BOOK_POSSESSION_REQUIRED_BODY = Object.freeze({
   error: 'possession_required',
   message: 'Send your Chit402 book session from POST /v1/agents/register',
