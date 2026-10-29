@@ -54,7 +54,7 @@ Where each field comes from (JWS payload = decoded `issuer_signature.jws` on the
 | settled_amount | JWS `payment.settled_amount`, or `payment.net_amount` on payload ≤ 7. String, smallest units (USDC: 6 decimals, "2000" = $0.002). This is the on-chain transfer to the payee. |
 | model | JWS `route.model` |
 | output_hash | JWS `output.hash` (keccak256) |
-| receipt_sha256 | Integrity hash of the copy you hold: sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string in that copy. The receipt's identity is `task_id` / `verify_url`. |
+| receipt_sha256 | Unsigned fingerprint of the copy you cite: sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string in that copy. It is not signed and is not proof the receipt is genuine; run `npx chit402-verify` for that. The receipt's identity is `task_id` / `verify_url`. |
 
 For many receipts: `{"compute":[{…},{…}]}`, or put the list in a file, pin its sha256 in the note and link it from the artifact.
 

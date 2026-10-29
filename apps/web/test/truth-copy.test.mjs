@@ -184,9 +184,12 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   assert.ok(/COULD_NOT_CHECK/.test(src), 'cite skill names COULD_NOT_CHECK');
   assert.ok(!/about an hour after issue/.test(src), 'cite skill does not say about an hour after issue');
   assert.ok(/Today it returns COULD_NOT_CHECK/.test(src), 'cite skill says today the public check returns COULD_NOT_CHECK');
-  assert.ok(/only after the receipt is anchored/.test(src), 'snippet: only after the receipt is anchored');
-  assert.ok(/exit 2 \(PENDING\)/.test(src), 'snippet: exit 2 (PENDING) before anchor');
-  assert.ok(/contacts api\.chit402\.com/.test(src), 'snippet: verify contacts api.chit402.com');
+  assert.ok((src.match(/only after the receipt is anchored/g) || []).length === 2, 'SKILL.md says only after the receipt is anchored twice');
+  assert.ok(/exit 2 \(PENDING\)/.test(src), 'SKILL.md contains exit 2 (PENDING)');
+  assert.ok((src.match(/contacts api\.chit402\.com/g) || []).length === 2, 'SKILL.md says contacts api.chit402.com twice');
+  assert.ok(/Unsigned fingerprint/.test(src), 'cite skill calls receipt_sha256 an Unsigned fingerprint');
+  assert.ok(/not proof the receipt is genuine/.test(src), 'cite skill says receipt_sha256 is not proof the receipt is genuine');
+  assert.ok(!/Integrity hash/.test(src), 'cite skill no longer calls receipt_sha256 an Integrity hash');
   const stepA = src.split('\n').find((line) => /^\s*- \(a\)/.test(line)) ?? '';
   assert.ok(/only after the receipt is anchored/.test(stepA), 'step 3(a): only after the receipt is anchored');
   assert.ok(/exits 2 \(PENDING\)/.test(stepA), 'step 3(a): exits 2 (PENDING)');
