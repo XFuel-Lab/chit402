@@ -1,0 +1,90 @@
+{
+  "about": "Home hero and Tier-2 price mutants. Offline. Kill means the web static suite fails.",
+  "timeoutSec": 180,
+  "suites": {
+    "webstatic": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/prerender-replacer.test.mjs",
+        "test/seo.test.mjs",
+        "test/static-pages.test.mjs"
+      ],
+      "env": {}
+    }
+  },
+  "mutants": [
+    {
+      "id": "H1_old_h1_restored",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "Your agents spent money this week\\. On what, and with whom\\?",
+      "flags": "",
+      "replace": "Who paid which call — and you still hold it.",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "locked h1 stays"
+    },
+    {
+      "id": "H2_subhead_dropped_from_edge",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "paragraphs: \\[homeContent\\.subhead, homeContent\\.checkYourself\\]",
+      "flags": "",
+      "replace": "paragraphs: [homeContent.checkYourself]",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "edge home block keeps the subhead"
+    },
+    {
+      "id": "H3_chip_label_restored",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "pricingLabel: '\\$0\\.002 per receipt'",
+      "flags": "",
+      "replace": "pricingLabel: 'Standard receipt ' + '$' + '0.002 · routing cost + 1%'",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "hero chip is only $0.002 per receipt"
+    },
+    {
+      "id": "H4_products_chip_readded",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "\\{ href: homeContent\\.pricingHref, label: homeContent\\.pricingLabel \\},",
+      "flags": "",
+      "replace": "{ href: homeContent.pricingHref, label: homeContent.pricingLabel },\n          { href: '/products', label: 'Stamp · Private Desk · Attest' },",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "hero does not show the products chip"
+    },
+    {
+      "id": "H5_tier2_drops_currently_unavailable",
+      "file": "apps/web/src/content/pricingContent.mjs",
+      "find": "Currently unavailable ",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "Tier-2 price stays marked currently unavailable"
+    },
+    {
+      "id": "H6_tier2_price_removed",
+      "file": "apps/web/src/content/pricingContent.mjs",
+      "find": "\\+\\$0\\.10 ",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "pricing states the Tier-2 price"
+    },
+    {
+      "id": "H7_chithome_inlines_h1",
+      "file": "apps/web/src/pages/ChitHome.tsx",
+      "find": "<h1 style=\\{styles\\.heroTitle\\}>\\{homeContent\\.h1\\}</h1>",
+      "flags": "",
+      "replace": "<h1 style={styles.heroTitle}>Your agents spent money this week. On what, and with whom?</h1>",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "ChitHome reads the shared h1 constant"
+    }
+  ]
+}

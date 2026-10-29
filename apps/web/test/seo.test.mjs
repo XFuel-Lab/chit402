@@ -218,8 +218,11 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   const chitHome = readPage('src/pages/ChitHome.tsx');
   const receiptCard = readFileSync(join(root, 'src/components/LiveReceiptCard.tsx'), 'utf8');
   const liveSpecimen = readFileSync(join(root, 'src/lib/liveReceiptSpecimen.ts'), 'utf8');
-  assert.match(chitHome, /Who paid which call — and you still hold it\./, 'ChitHome leads principal-first');
-  assert.match(chitHome, /Treasury desk and spend ledger/, 'ChitHome names treasury desk');
+  assert.ok(/Your agents spent money this week\. On what, and with whom\?/.test(chitHome), 'ChitHome leads with the funder question');
+  assert.ok(/Each paid call lands as a row in a book you hold: hub, model, amount, and a link a third party can check\. \$0\.002 per receipt\./.test(chitHome), 'ChitHome subhead');
+  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it\.)[\s\S]*$/.test(chitHome), 'ChitHome drops the old h1');
+  assert.ok(/^(?![\s\S]*Treasury desk and spend ledger for agent teams)[\s\S]*$/.test(chitHome), 'ChitHome drops the old lead');
+  assert.ok(/^(?![\s\S]*Every collected inference returns hub, model, amount, and a verify link you can export, policy, and evidence-pack\.)[\s\S]*$/.test(chitHome), 'ChitHome drops the old description');
   assert.match(chitHome, /LiveReceiptCard/, 'ChitHome renders live receipt card');
   assert.match(liveSpecimen, /xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15/, 'Live receipt specimen id locked');
   assert.match(liveSpecimen, /2026-10-19T02:23:00\.000Z/, 'Live receipt time is the public issued_at');
@@ -264,10 +267,11 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.match(chitHome, /\/docs\/eliza/, 'ChitHome links to Eliza stub');
   assert.doesNotMatch(chitHome, /By XFuel Lab|is the parent|XFuel Lab/i, 'ChitHome must not show parent naming in chrome');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
-  assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
-  assert.match(chitHome, /to="\/pricing"|pricingHref: '\/pricing'/, 'ChitHome links to pricing page');
-  assert.match(chitHome, /to="\/products"|productsHref: '\/products'/, 'ChitHome links to products page');
-  assert.match(chitHome, /Private Desk · Attest/, 'ChitHome surfaces products chip');
+  assert.ok(/pricingLabel: '\$0\.002 per receipt'/.test(chitHome), 'ChitHome surfaces the receipt chip');
+  assert.ok(/pricingHref: '\/pricing'/.test(chitHome), 'ChitHome links the chip to /pricing');
+  assert.ok(/^(?![\s\S]*routing cost \+ 1%)[\s\S]*$/.test(chitHome), 'ChitHome hero has no routing cost + 1%');
+  assert.ok(/^(?![\s\S]*Stamp · Private Desk · Attest)[\s\S]*$/.test(chitHome), 'ChitHome hero has no products chip');
+  assert.ok(/^(?![\s\S]*\$0\.10)[\s\S]*$/.test(chitHome), 'ChitHome hero has no $0.10');
   assert.doesNotMatch(chitHome, /POST \/v1\/chat\/completions/, 'ChitHome hero must not lead with POST /v1');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
   assert.doesNotMatch(chitHome, /wallet moves/i, 'ChitHome must not lead with wallet-move');
@@ -523,7 +527,7 @@ test('App routes docs subpages', () => {
 });
 
 test('Products page surfaces three book-first seats', () => {
-  const products = readFileSync(join(root, 'src/pages/Products.tsx'), 'utf8');
+  const products = readFileSync(join(root, 'src/pages/Products.tsx'), 'utf8').replace(/\r\n/g, '\n');
   const pricing = readPage('src/pages/Pricing.tsx');
   assert.match(products, /<h1>Three seats on the possession book\./, 'Products page title');
   assert.match(products, /name: 'Stamp'/, 'Products includes Stamp seat');
@@ -531,8 +535,8 @@ test('Products page surfaces three book-first seats', () => {
   assert.match(products, /name: 'Private Desk'/, 'Products includes Private Desk seat');
   assert.match(products, /cost \+ 1%|100 bps/, 'Products states Desk routing fee');
   assert.match(products, /name: 'Private \+ Attest'/, 'Products includes Private + Attest seat');
-  assert.match(products, /Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system\. Standard receipts at \$0\.002 are unaffected\./, 'Products carries the Tier-2 notice');
-  assert.doesNotMatch(products, /\$0\.10/, 'Products shows no Tier-2 price');
+  assert.ok(/Tier-2 settlement proof: \+\$0\.10 per proof\. Currently unavailable while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./.test(products), 'Products carries the Tier-2 notice');
+  assert.ok(/Tier-2 settlement proof: \+\$0\.10 per proof\. Currently unavailable while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./.test(products), 'Products shows the Tier-2 price exactly with Currently unavailable');
   assert.doesNotMatch(products, /\bOpenAI\b/i, 'Products must not name OpenAI');
   assert.match(pricing, /to="\/products"|link\('\/products'/, 'Pricing links to products');
 });
