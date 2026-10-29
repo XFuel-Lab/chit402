@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Outlet, NavLink } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { HOME_TITLE } from '../content/homeContent.mjs';
 import { getHostConfig, isChitHost } from '../hostConfig';
 import SeoHead from './SeoHead';
 
@@ -25,15 +26,17 @@ const chitNavLinks: NavItem[] = [
 
 export default function Layout() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { pathname } = useLocation();
   const config = getHostConfig();
   const isChit = isChitHost();
+  const homeSeoTitle = isChit && pathname === '/' ? HOME_TITLE : undefined;
   const navLinks: NavItem[] = isChit
     ? [...chitNavLinks, { to: config.githubUrl, label: 'GitHub', external: true }]
     : xfuelNavLinks;
 
   return (
     <>
-      <SeoHead />
+      <SeoHead title={homeSeoTitle} />
       <header style={styles.header}>
         <div className="container" style={styles.headerInner}>
           <NavLink to="/" style={styles.logo}>

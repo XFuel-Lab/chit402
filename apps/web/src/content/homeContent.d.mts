@@ -1,5 +1,6 @@
 export const HOME_SNIPPET_API: string;
 export const HOME_H1: string;
+export const HOME_TITLE: string;
 export const dropInSnippet: string;
 export const partnerKeySnippet: string;
 

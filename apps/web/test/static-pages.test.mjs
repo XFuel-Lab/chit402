@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { transformHtml, ROUTE_CONTENT } from '../scripts/prerender-titles.mjs';
-import { homeContent } from '../src/content/homeContent.mjs';
+import { HOME_H1, HOME_TITLE, homeContent } from '../src/content/homeContent.mjs';
 import {
   contentForRoute,
   indexHtmlForBuild,
@@ -117,6 +117,8 @@ function loadEdgeMiddleware(fetchImpl) {
     'injectHomeIfRoot',
     'getHostConfig',
     'LIVE_RECEIPT_VERIFY_URL',
+    'HOME_H1',
+    'HOME_TITLE',
     'fetch',
     `${js}\nreturn { middleware, CHIT_HOME_SEO, CHIT_V1_SEO_FULL };`,
   );
@@ -125,6 +127,8 @@ function loadEdgeMiddleware(fetchImpl) {
     injectHomeIfRoot,
     () => ({ githubUrl: env.githubUrl }),
     verifyUrl,
+    HOME_H1,
+    HOME_TITLE,
     fetchImpl,
   );
 }
@@ -469,7 +473,8 @@ test('the middleware entry serves /, /v1/sub, and /security', async () => {
   const homeSeo = edge.CHIT_HOME_SEO;
   const v1Seo = edge.CHIT_V1_SEO_FULL;
   assert.ok(new RegExp(`<title>${homeSeo.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/title>`).test(home), '/ uses the middleware home title');
-  assert.ok(home.includes(`<h1>${homeSeo.h1}</h1>`), '/ keeps the middleware noscript h1');
+  assert.equal((home.match(/<h1\b/g) || []).length, 1, '/ has one h1');
+  assert.equal(home.match(/<h1>([^<]*)<\/h1>/)?.[1], HOME_H1, '/ h1 is HOME_H1');
   assert.ok(home.includes(homeSeo.lede), '/ keeps the middleware noscript lede');
   present(rootInner(home), LOCKED_H1, '/ injects the home block');
   assert.ok(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/.test(home), 'noscript is inserted after #root');
@@ -484,6 +489,46 @@ test('the middleware entry serves /, /v1/sub, and /security', async () => {
     assert.equal(html, shell, `${host} / is unchanged`);
     noHomeCopy(html, `${host} /`);
   }
+});
+
+test('home edge html has one h1 from HOME_H1 and the new title', async () => {
+  const html = norm(await edgeHtml('/'));
+  const h1s = html.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/g) || [];
+  assert.equal(h1s.length, 1, 'served home html has exactly one h1');
+  const h1 = h1s[0].replace(/<[^>]+>/g, '');
+  assert.equal(h1, HOME_H1, 'the home h1 equals HOME_H1');
+  assert.equal(h1, 'Your agents spent money this week. On what, and with whom?', 'the home h1 is the shared hero');
+  const title = html.match(/<title>([^<]*)<\/title>/)?.[1] ?? '';
+  const ogTitle = html.match(/<meta property="og:title" content="([^"]*)" \/>/)?.[1] ?? '';
+  const twitterTitle = html.match(/<meta name="twitter:title" content="([^"]*)" \/>/)?.[1] ?? '';
+  assert.equal(title, 'Chit402: receipts for what your agents spend', 'home title');
+  assert.equal(title, HOME_TITLE, 'home title reads HOME_TITLE');
+  assert.equal(ogTitle, 'Chit402: receipts for what your agents spend', 'home og:title');
+  assert.equal(twitterTitle, 'Chit402: receipts for what your agents spend', 'home twitter:title');
+  assert.ok(/^(?![\s\S]*treasury desk for agent spend)[\s\S]*$/.test(html), 'home html drops treasury desk for agent spend');
+  const noscript = html.match(/<noscript>[\s\S]*?<\/noscript>/)?.[0] ?? '';
+  assert.ok(noscript.length > 0, 'home keeps the noscript block');
+  assert.ok(/^(?![\s\S]*<h1\b)[\s\S]*$/.test(noscript), 'home noscript does not add a second h1');
+});
+
+test('home title and the no-JS h1 read the shared constants', () => {
+  const middleware = readNorm(new URL('../../../middleware.ts', import.meta.url));
+  const layout = readNorm(new URL('../src/components/Layout.tsx', import.meta.url));
+  const home = readNorm(new URL('../src/content/homeContent.mjs', import.meta.url));
+  const shellHtml = readNorm(new URL('../index.html', import.meta.url));
+  const model = home.slice(home.indexOf('export function homeStaticModel'));
+  assert.ok(/export const HOME_TITLE = 'Chit402: receipts for what your agents spend'/.test(home), 'HOME_TITLE is the new home title');
+  assert.ok(/title:\s*HOME_TITLE/.test(middleware), 'middleware title reads HOME_TITLE');
+  assert.ok(/ogTitle:\s*HOME_TITLE/.test(middleware), 'middleware ogTitle reads HOME_TITLE');
+  assert.ok(/h1:\s*HOME_H1/.test(middleware), 'middleware home h1 reads HOME_H1');
+  assert.ok(/pathname\.startsWith\('\/v1'\) \? `<h1>\$\{seo\.h1\}<\/h1>/.test(middleware), 'home noscript omits the second h1');
+  assert.ok(/h1: homeContent\.h1/.test(model), 'homeStaticModel reads homeContent.h1');
+  assert.ok(/HOME_TITLE/.test(layout), 'Layout reads HOME_TITLE');
+  assert.ok(/isChit && pathname === '\/'/.test(layout), 'Layout applies the home title only on the chit home route');
+  assert.ok(/<title>Chit402: receipts for what your agents spend<\/title>/.test(shellHtml), 'index title is the new home title');
+  assert.ok(/property="og:title" content="Chit402: receipts for what your agents spend"/.test(shellHtml), 'index og:title matches the home title');
+  assert.ok(/name="twitter:title" content="Chit402: receipts for what your agents spend"/.test(shellHtml), 'index twitter:title matches the home title');
+  assert.ok(/^(?![\s\S]*treasury desk for agent spend)[\s\S]*$/.test(shellHtml), 'index shell drops treasury desk for agent spend');
 });
 
 test('the edge matcher is /, /v1, and /v1/*', () => {

@@ -143,7 +143,12 @@ test('public marketing pages keep book-first wire copy', () => {
 
 test('homepage title and hero lead with treasury desk, not wallet-move', () => {
   const title = html.match(/<title>([^<]*)<\/title>/i)?.[1] ?? '';
-  assert.match(title, /treasury desk for agent spend/i, 'title leads with treasury desk');
+  const ogTitle = metaContent(html, 'property', 'og:title');
+  const twitterTitle = metaContent(html, 'name', 'twitter:title');
+  assert.equal(title, 'Chit402: receipts for what your agents spend', 'home title');
+  assert.equal(title, HOME_TITLE, 'home title reads HOME_TITLE');
+  assert.equal(ogTitle, 'Chit402: receipts for what your agents spend', 'home og:title');
+  assert.equal(twitterTitle, 'Chit402: receipts for what your agents spend', 'home twitter:title');
   assert.doesNotMatch(title, /wallet moves/i, 'title does not lead with wallet-move');
   assert.doesNotMatch(title, /receipt you still hold/i, 'title does not lead with receipt-you-still-hold');
   assert.doesNotMatch(title, /best available provider/i);
@@ -193,6 +198,7 @@ test('README first paragraph leads with the book', () => {
 });
 
 import { existsSync } from 'node:fs';
+import { HOME_TITLE } from '../src/content/homeContent.mjs';
 
 test('prerendered money pages have unique crawler titles (after build)', { skip: !existsSync(join(root, 'dist')) }, () => {
   const expectedTitles = {
@@ -601,21 +607,12 @@ test('llms.txt API route links issuer trust page', () => {
 });
 
 test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {
-  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8').replace(/\r\n/g, '\n');
   
-  assert.match(
-    middleware,
-    /title:\s*['"]Chit402 — treasury desk for agent spend['"]/,
-    'middleware CHIT_SEO title uses treasury desk'
-  );
-  assert.match(
-    middleware,
-    /ogTitle:\s*['"]Chit402 — treasury desk for agent spend['"]/,
-    'middleware CHIT_SEO ogTitle uses treasury desk'
-  );
-  assert.match(
-    middleware,
-    /description:\s*['"]Who paid which call — export, policy, evidence\. Possession book for agent spend\.['"]/,
+  assert.ok(/title:\s*HOME_TITLE/.test(middleware), 'middleware CHIT_SEO title reads HOME_TITLE');
+  assert.ok(/ogTitle:\s*HOME_TITLE/.test(middleware), 'middleware CHIT_SEO ogTitle reads HOME_TITLE');
+  assert.ok(
+    /description:\s*['"]Who paid which call — export, policy, evidence\. Possession book for agent spend\.['"]/.test(middleware),
     'middleware CHIT_SEO description uses locked copy'
   );
   assert.doesNotMatch(middleware, /wallet moves/i, 'middleware must not lead with wallet-move');
@@ -672,15 +669,13 @@ test('middleware transformHtml produces Chit402 crawler output for homepage', ()
 </body>
 </html>`;
 
-  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8');
+  const middleware = readFileSync(join(root, '../../middleware.ts'), 'utf8').replace(/\r\n/g, '\n');
   
-  const chitSeoTitleMatch = middleware.match(/const CHIT_SEO[\s\S]*?title:\s*['"]([^'"]+)['"]/);
-  const chitSeoTitle = chitSeoTitleMatch?.[1] ?? '';
-  assert.ok(chitSeoTitle.startsWith('Chit402'), 'CHIT_SEO title starts with Chit402');
-  
-  const chitSeoOgTitleMatch = middleware.match(/const CHIT_SEO[\s\S]*?ogTitle:\s*['"]([^'"]+)['"]/);
-  const chitSeoOgTitle = chitSeoOgTitleMatch?.[1] ?? '';
-  assert.ok(chitSeoOgTitle.startsWith('Chit402'), 'CHIT_SEO ogTitle starts with Chit402');
+  assert.equal(HOME_TITLE, 'Chit402: receipts for what your agents spend', 'HOME_TITLE is the home title');
+  assert.ok(/const CHIT_SEO[\s\S]*?title:\s*HOME_TITLE/.test(middleware), 'CHIT_SEO title reads HOME_TITLE');
+  assert.ok(/const CHIT_SEO[\s\S]*?ogTitle:\s*HOME_TITLE/.test(middleware), 'CHIT_SEO ogTitle reads HOME_TITLE');
+  const chitSeoTitle = HOME_TITLE;
+  const chitSeoOgTitle = HOME_TITLE;
   
   const chitSeoDescMatch = middleware.match(/const CHIT_SEO[\s\S]*?description:\s*['"]([^'"]+)['"]/);
   const chitSeoDesc = chitSeoDescMatch?.[1] ?? '';

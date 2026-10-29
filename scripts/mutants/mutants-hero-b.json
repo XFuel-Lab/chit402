@@ -145,6 +145,46 @@
       "nth": 1,
       "suite": "truthcopy",
       "note": "stranger in homeContent.mjs fails"
+    },
+    {
+      "id": "H9_second_h1_readded",
+      "file": "middleware.ts",
+      "find": "pathname\\.startsWith\\('/v1'\\) \\? `<h1>\\$\\{seo\\.h1\\}</h1>\\\\n      ` : ''",
+      "flags": "",
+      "replace": "`<h1>${seo.h1}</h1>\\n      <h1>Second heading</h1>\\n      `",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home noscript does not add a second h1"
+    },
+    {
+      "id": "H10_old_home_title_restored",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "Chit402: receipts for what your agents spend",
+      "flags": "",
+      "replace": "Chit402 — treasury desk for agent spend",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home title stays off the old treasury-desk wording"
+    },
+    {
+      "id": "H11_home_title_reworded",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "receipts for what your agents spend",
+      "flags": "",
+      "replace": "receipts for agent spend",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home title wording stays exact"
+    },
+    {
+      "id": "H12_nojs_h1_hardcoded",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "h1: homeContent\\.h1",
+      "flags": "",
+      "replace": "h1: 'Your agents spent a different week. On what?'",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "no-JS home h1 reads HOME_H1"
     }
   ]
 }
