@@ -12,7 +12,8 @@
         "test/book-webhook.test.mjs",
         "test/owner-view.test.mjs",
         "test/cap-store-fail-closed.test.mjs",
-        "test/private-read-cache.test.mjs"
+        "test/private-read-cache.test.mjs",
+        "test/identities-file-mode.test.mjs"
       ],
       "env": {
         "NODE_ENV": "test",
@@ -222,6 +223,26 @@
       "nth": 1,
       "suite": "gwpersist",
       "note": "a failed save logs the webhook signing secret"
+    },
+    {
+      "id": "I1_drop_identities_chmod",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "fs\\.chmodSync\\(file, 0o600\\);",
+      "flags": "",
+      "replace": "void file;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "boot leaves a looser identities.json mode unchanged"
+    },
+    {
+      "id": "I2_identities_mode_644",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "chmodSync\\(file, 0o600\\)",
+      "flags": "",
+      "replace": "chmodSync(file, 0o644)",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "boot chmod uses mode 644"
     }
   ]
 }
