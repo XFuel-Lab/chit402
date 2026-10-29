@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { STATIC_ROUTES, contentForRoute, indexHtmlForBuild, injectStatic, loadChitStaticEnv } from './static-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// CHIT_PRERENDER_DIST is for tests only and must never be set in Vercel env.
 const distDir = process.env.CHIT_PRERENDER_DIST
   ? resolve(process.env.CHIT_PRERENDER_DIST)
   : join(__dirname, '..', 'dist');
