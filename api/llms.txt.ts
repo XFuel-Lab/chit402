@@ -30,7 +30,7 @@ const CHIT_LLMS = `# ${HOME_TITLE}
 
 - POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
-  Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.
+  Requests that ask for a settlement proof (\`proof_tier\` settlement or inference, or Private + Attest) get \`400 settlement_proof_not_offered\` before any quote or payment.
 - POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + receipt. Stateless one-shot. Unauth → 402.
@@ -153,7 +153,7 @@ const XFUEL_LLMS = `# XFuel Protocol
 
 - POST /v1/chat/completions : Chat completions. Unauthenticated GET or
   POST {} → 402 x402 (USDC on Base or Solana). Returns signed receipt + public verify_url.
-  Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.
+  Requests that ask for a settlement proof (\`proof_tier\` settlement or inference, or Private + Attest) get \`400 settlement_proof_not_offered\` before any quote or payment.
 - POST /v1/responses        : Responses API (bot drop-in). Same x402 + signed receipt as
   /v1/chat/completions. Accepts input (string or message array), max_output_tokens.
   Returns Responses-shaped output + XFuel receipt. Stateless one-shot. Unauth → 402.
