@@ -1218,7 +1218,7 @@ test('source pins the atomic writer, the stores, and the llms text', () => {
   const webhook = read(path.join(gatewayRoot, 'src', 'book-webhook.js'));
   const owner = read(path.join(gatewayRoot, 'src', 'agent-owner-key.js'));
   const server = read(path.join(gatewayRoot, 'src', 'server.js'));
-  const llmsApi = fs.readFileSync(path.join(repoRoot, 'api', 'llms.txt.ts'));
+  const llmsApi = fs.readFileSync(path.join(repoRoot, 'api', 'llms.txt.ts'), 'utf8').replace(/\r\n/g, '\n');
   assert.ok(/openSync\(tmp, 'wx', 0o600\)/.test(helper), 'helper opens the temp file with wx and mode 600');
   assert.ok(/fsyncSync\(fd\)[\s\S]*renameSync\(tmp, target\)/.test(helper), 'helper fsyncs before rename');
   assert.ok(/unlinkSync\(tmp\)/.test(helper), 'helper unlinks the temp file on the error path');
@@ -1236,6 +1236,6 @@ test('source pins the atomic writer, the stores, and the llms text', () => {
   const end = server.indexOf('`;\n', start);
   const llms = server.slice(start + marker.length, end);
   assert.equal(crypto.createHash('sha256').update(llms).digest('hex'), '849b93d4cf438207817eda145e6ed40193a2f9137e28428c7ce0718f5d5e4970');
-  assert.equal(crypto.createHash('sha256').update(llmsApi).digest('hex'), '9346da542e28956cc59ffe1f9abd5638efccbc2358a98de15c144b319ea53b4e');
+  assert.equal(crypto.createHash('sha256').update(llmsApi).digest('hex'), '19ab8e85698d62a809c388abb5ab51cb5e2c0b4231d9f4bac0bbc1be98d8f416');
   assert.equal(typeof writeAtomicJson, 'function');
 });
