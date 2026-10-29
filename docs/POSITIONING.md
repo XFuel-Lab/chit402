@@ -19,7 +19,7 @@ Private Spend (product mode, see [ADR 0010](adr/0010-private-desk-attest.md)): b
 ## Trust tiers
 
 1. Signed receipt (live, default) — route, model, cost, output hash  
-2. SP1 settlement proof — fees, payment binding, output commitment, nullifier on Base. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Requests with `proof_tier` get `400 settlement_proof_not_offered`.  
+2. SP1 settlement proof — fees, payment binding, output commitment, nullifier on Base. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.  
 3. Verified Inference (parked; not offered) — model computation for open-weight models  
 
 Do not claim Tier 2 proves a black-box LLM ran correctly.
