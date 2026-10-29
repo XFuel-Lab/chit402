@@ -58,7 +58,7 @@
     },
     {
       "id": "X2_skip_html_escape",
-      "file": "apps/web/scripts/static-html.mjs",
+      "file": "apps/web/scripts/static-render.mjs",
       "find": "\\.replace\\(\\/&\\/g, '&amp;'\\)[\\s\\S]*?\\.replace\\(\\/'\\/g, '&#39;'\\)",
       "flags": "",
       "replace": "",
@@ -68,7 +68,7 @@
     },
     {
       "id": "X3_inject_outside_root",
-      "file": "apps/web/scripts/static-html.mjs",
+      "file": "apps/web/scripts/static-render.mjs",
       "find": "\\(\\) => `<div id=\"root\">\\$\\{block\\}<\\/div>`",
       "flags": "",
       "replace": "() => `<div id=\"root\"></div>${block}`",
@@ -78,7 +78,7 @@
     },
     {
       "id": "X4_stale_inline_h1",
-      "file": "apps/web/scripts/static-html.mjs",
+      "file": "apps/web/scripts/static-render.mjs",
       "find": "escapeHtml\\(page\\.h1\\)",
       "flags": "",
       "replace": "escapeHtml('stale hero')",
@@ -87,24 +87,44 @@
       "note": "the h1 is read from the shared page"
     },
     {
-      "id": "X5_middleware_drops_root",
-      "file": "middleware.ts",
-      "find": "function keepStaticRoot\\(html: string\\): string \\{\\n  return html;\\n\\}",
-      "flags": "",
-      "replace": "function keepStaticRoot(html: string): string {\n  return html.replace(/<div id=\"root\">[\\s\\S]*?<\\/div>/, '<div id=\"root\"></div>');\n}",
-      "nth": 1,
-      "suite": "webstatic",
-      "note": "middleware keeps the static home block"
-    },
-    {
       "id": "X6_empty_section_list",
-      "file": "apps/web/scripts/static-html.mjs",
+      "file": "apps/web/scripts/static-render.mjs",
       "find": "const sections = page\\.sections \\|\\| \\[\\];",
       "flags": "",
       "replace": "const sections = [];",
       "nth": 1,
       "suite": "webstatic",
       "note": "section list is rendered"
+    },
+    {
+      "id": "X7_inject_home_on_any_path",
+      "file": "apps/web/scripts/edge-home.mjs",
+      "find": "if \\(pathname !== '\\/'\\) return html;",
+      "flags": "",
+      "replace": "if (false) return html;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "home HTML is injected only for /"
+    },
+    {
+      "id": "X8_write_home_into_index",
+      "file": "apps/web/scripts/static-html.mjs",
+      "find": "export function indexHtmlForBuild\\(shell\\) \\{\\n  return shell;\\n\\}",
+      "flags": "",
+      "replace": "export function indexHtmlForBuild(shell) {\n  return shell.replace('<div id=\"root\"></div>', '<div id=\"root\"><h1>Who paid which call — and you still hold it.</h1></div>');\n}",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the build does not write home copy into index.html"
+    },
+    {
+      "id": "X9_noscript_insertion_dropped",
+      "file": "middleware.ts",
+      "find": "result = result\\.replace\\(\\s*\\/<div id=\"root\"><\\\\/div>\\/, \\(\\) => `<div id=\"root\"><\\/div>\\$\\{chitNoscript\\}`\\);",
+      "flags": "",
+      "replace": "result = result;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the edge still inserts the noscript h1 and lede"
     }
   ]
 }

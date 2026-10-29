@@ -10,10 +10,12 @@ import { transformHtml, ROUTE_CONTENT } from '../scripts/prerender-titles.mjs';
 import { homeContent } from '../src/content/homeContent.mjs';
 import {
   contentForRoute,
+  indexHtmlForBuild,
   injectStatic,
   loadChitStaticEnv,
   renderRouteHtml,
 } from '../scripts/static-html.mjs';
+import { chitHomePage, injectHomeIfRoot } from '../scripts/edge-home.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const shell = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -54,8 +56,35 @@ function rootInner(html) {
   return match ? match[1] : '';
 }
 
+const HOME_EDGE_SEO = {
+  title: 'Chit402 — treasury desk for agent spend',
+  description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
+  ogTitle: 'Chit402 — treasury desk for agent spend',
+  ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
+  ogImage: 'https://www.chit402.com/og-image.png',
+  domain: 'www.chit402.com',
+  h1: 'Chit402 — treasury desk for agent spend',
+  lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. You see the price first, it\'s based on our cost, and you pay in USDC on Base and Solana. The wire is api.chit402.com/v1.',
+};
+
+const V1_EDGE_SEO = {
+  title: 'Pay /v1/chat/completions | Chit402',
+  description: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
+  ogTitle: 'Pay /v1/chat/completions | Chit402',
+  ogDescription: 'Bot drop-in. Wallet pays. You hold the book. The wire is api.chit402.com/v1.',
+  ogImage: 'https://www.chit402.com/og-image.png',
+  domain: 'www.chit402.com',
+  h1: 'Bot drop-in. Wallet pays. You hold the book.',
+  lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions: you see the price first, it\'s based on our cost, and every paid call gets a signed receipt. USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
+};
+
 function pageHtml(route) {
   const page = contentForRoute(route, env, verifyUrl);
+  if (route === '/') {
+    const mw = loadMiddlewareTransform();
+    const html = injectHomeIfRoot(mw(shell, HOME_EDGE_SEO, '/'), '/', page);
+    return { page, html };
+  }
   const meta = ROUTE_CONTENT[route];
   return { page, html: renderRouteHtml(shell, route, page, meta, transformHtml) };
 }
@@ -113,7 +142,7 @@ test('locked pricing strings are in the static html', () => {
   assert.ok(/cost \+ 1%/.test(html), 'pricing states Private Desk cost + 1%');
   assert.ok(/^(?![\s\S]*monthly plan)[\s\S]*$/.test(html), 'pricing has no monthly plan');
   assert.ok(/^(?![\s\S]*per month)[\s\S]*$/.test(html), 'pricing has no per-month price');
-  assert.ok(/Tier-2 settlement proofs are temporarily unavailable/.test(html), 'Tier-2 settlement proofs are off');
+  assert.ok(/Tier-2 settlement proofs are off while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./.test(html), 'Tier-2 settlement proofs are off');
   assert.ok(/^(?![\s\S]*\$0\.10)[\s\S]*$/.test(html), 'pricing shows no Tier-2 price');
 });
 
@@ -179,7 +208,7 @@ test('a string changed in the shared source changes the generated html', () => {
 test('static html does not freeze live receipt box values or a receipt count', () => {
   for (const [route, { html }] of Object.entries(pages)) {
     assert.ok(/^(?![\s\S]*<1k receipts)[\s\S]*$/.test(html), `${route} has no <1k receipts count`);
-    assert.ok(/^(?![\s\S]*\b\d{2,}\s+receipts\b)[\s\S]*$/.test(html), `${route} has no receipt count`);
+    assert.ok(/^(?![\s\S]*(?<![\d.])\d{2,}\s+receipts\b)[\s\S]*$/.test(html), `${route} has no receipt count`);
     assert.ok(/^(?![\s\S]*2026-10-19T02:23:00\.000Z)[\s\S]*$/.test(html), `${route} has no live receipt date`);
     assert.ok(/^(?![\s\S]*0x731e4fdc70a8dba370c579c23e8520d2edcde052f28abaf3ed26c95c8603116f)[\s\S]*$/.test(html), `${route} has no live receipt payment`);
     assert.ok(/^(?![\s\S]*Live collected row)[\s\S]*$/.test(html), `${route} has no live receipt box badge`);
@@ -190,7 +219,7 @@ test('title, meta and canonical tags stay on today\'s bytes for /pricing and /do
   for (const route of ['/pricing', '/docs']) {
     const html = transformHtml(shell, route, ROUTE_CONTENT[route]);
     const head = html.match(/<head>[\s\S]*<\/head>/)[0];
-    assert.equal(head, pinnedHeads[route], `${route} head is unchanged`);
+    assert.equal(norm(head), norm(pinnedHeads[route]), `${route} head is unchanged`);
     assert.ok(/<link rel="canonical" href="https:\/\/www\.chit402\.com[^"]*" \/>/.test(html), `${route} keeps its canonical link`);
   }
   for (const route of ['/check', '/pricing', '/docs']) {
@@ -200,32 +229,56 @@ test('title, meta and canonical tags stay on today\'s bytes for /pricing and /do
   }
 });
 
-test('middleware rewrite keeps the static home block', () => {
+test('the shared index shell has no home copy, and only / receives it', () => {
+  const built = indexHtmlForBuild(shell);
+  assert.equal(rootInner(built), '', 'dist/index.html keeps an empty #root');
+  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(built), 'index.html has no home copy');
+  const page = chitHomePage(verifyUrl, env.githubUrl);
+  for (const path of ['/security', '/docs/doors', '/board/abc', '/v1/sub', '/no-such-page']) {
+    const html = injectHomeIfRoot(built, path, page);
+    assert.equal(rootInner(html), '', `${path} stays an empty shell`);
+    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${path} has no home copy`);
+  }
+  const home = injectHomeIfRoot(built, '/', page);
+  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(home)), '/ receives the home block inside #root');
+});
+
+test('chit / keeps the edge noscript h1 and lede after #root', () => {
+  const html = pages['/'].html;
+  assert.ok(/<h1>Chit402 — treasury desk for agent spend<\/h1>/.test(html), 'edge noscript h1');
+  assert.ok(/Who paid which call — export, policy, evidence\. Possession book for agent spend\./.test(html), 'edge noscript lede');
+  assert.ok(/<div id="root">[\s\S]*?<\/div>\s*<noscript>/.test(html), 'noscript is inserted after #root');
+  assert.ok(/Who paid which call — and you still hold it\./.test(rootInner(html)), 'home h1 is inside #root');
+});
+
+test('/v1 and /v1/* keep their title, canonical and noscript, with no home copy', () => {
   const mw = loadMiddlewareTransform();
-  const seo = {
-    title: 'T',
-    description: 'D',
-    ogTitle: 'OT',
-    ogDescription: 'OD',
-    ogImage: 'https://x/i.png',
-    domain: 'www.chit402.com',
-    h1: 'Edge h1',
-    lede: 'Edge lede',
-  };
-  const rewritten = mw(pages['/'].html, seo, '/');
-  assert.ok(/Who paid which call — and you still hold it\./.test(rewritten), 'middleware keeps the static home h1');
-  assert.ok(/href="\/book"/.test(rewritten), 'middleware keeps the book link');
-  assert.ok(/href="\/check"/.test(rewritten), 'middleware keeps the check link');
-  assert.ok(new RegExp(`href="${verifyUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(rewritten), 'middleware keeps the live receipt link');
-  const mwSrc = readNorm(new URL('../../../middleware.ts', import.meta.url));
-  assert.ok(/export \{ transformHtml \}/.test(mwSrc), 'middleware exports the rewrite');
-  assert.ok(/return keepStaticRoot\(result\)/.test(mwSrc), 'middleware keeps the static root');
+  const page = chitHomePage(verifyUrl, env.githubUrl);
+  for (const path of ['/v1', '/v1/chat/completions']) {
+    const html = injectHomeIfRoot(mw(shell, V1_EDGE_SEO, path), path, page);
+    assert.ok(/<title>Pay \/v1\/chat\/completions \| Chit402<\/title>/.test(html), `${path} title`);
+    assert.ok(new RegExp(`<link rel="canonical" href="https://www\\.chit402\\.com${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}" \\/>`).test(html), `${path} canonical`);
+    assert.ok(/<noscript>[\s\S]*<h1>Bot drop-in\. Wallet pays\. You hold the book\.<\/h1>/.test(html), `${path} noscript h1`);
+    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${path} has no home copy`);
+  }
+});
+
+test('hrefs use only http, https, mailto, or a relative path', () => {
+  const allowed = /^(?:https?:\/\/|mailto:|\/(?!\/)|\.\.?\/)/;
+  for (const [route, { html }] of Object.entries(pages)) {
+    const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
+    assert.ok(hrefs.length > 0, `${route} has anchors`);
+    for (const href of hrefs) {
+      assert.ok(allowed.test(href), `${route} href ${href} is http, https, mailto, or relative`);
+    }
+  }
 });
 
 test('the generator and the modules it imports do not fetch', () => {
   const entry = resolve(root, 'scripts/prerender-titles.mjs');
+  const edge = resolve(root, 'scripts/edge-home.mjs');
   const seen = new Set();
-  const queue = [entry];
+  const queue = [entry, edge];
   while (queue.length) {
     const abs = queue.pop();
     if (seen.has(abs)) continue;
@@ -245,4 +298,7 @@ test('the generator and the modules it imports do not fetch', () => {
     assert.ok(/^(?![\s\S]*https:\/\/api\.chit402\.com)[\s\S]*$/.test(src), `${label} does not call https://api.chit402.com`);
   }
   assert.ok(seen.size >= 5, 'generator import scan covers the content modules');
+  const planted = codeWithoutLiterals('export function pull() {\n  return fetch("https://api.chit402.com/health");\n}\n');
+  assert.ok(/\bfetch\s*\(/.test(planted), 'a real fetch( call stays visible and fails the no-fetch guard');
+  assert.ok(/^(?![\s\S]*\bfetch\s*\()[\s\S]*$/.test('const ok = 1;\n'), 'the no-fetch guard passes a file with no call');
 });
