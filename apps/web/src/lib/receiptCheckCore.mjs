@@ -7,6 +7,32 @@ const INPUT_ERROR_TITLE = "Couldn't read that input.";
 const INPUT_HINT = 'Paste receipt JSON, a chit- or xfuel- id, or a verify link.';
 const EXAMPLE = 'xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15';
 const ACCEPTED = ['receipt JSON', 'a chit- id', 'a verify link'];
+const TOO_LARGE = 'Receipt input is too large.';
+const SHORTER = 'Paste a shorter receipt, or a chit- or xfuel- id, or a verify link.';
+const WAIT = 'Wait, then try the check again.';
+const NOT_IN_LOG = 'This receipt is not in the public log. The book row is unchanged.';
+const PASTE_SIGNED = 'Paste the signed receipt from the owner view and check it again.';
+const COULD_NOT = 'The check could not be completed.';
+const TRY_AGAIN = 'Try this check again.';
+const SLOW_DOWN = 'Too many requests — slow down.';
+
+/** User-facing check copy. The page and the static HTML both read this. */
+export function receiptCheckExplain() {
+  return {
+    inputErrorTitle: INPUT_ERROR_TITLE,
+    inputHint: INPUT_HINT,
+    example: EXAMPLE,
+    accepted: ACCEPTED.slice(),
+    tooLarge: TOO_LARGE,
+    shorter: SHORTER,
+    wait: WAIT,
+    notInLog: NOT_IN_LOG,
+    pasteSigned: PASTE_SIGNED,
+    couldNot: COULD_NOT,
+    tryAgain: TRY_AGAIN,
+    slowDown: SLOW_DOWN,
+  };
+}
 
 function stringOrNull(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -39,13 +65,13 @@ function extras(payload) {
 }
 
 function fallbackHint(overall, status) {
-  if (status === 413) return 'Paste a shorter receipt, or a chit- or xfuel- id, or a verify link.';
-  if (status === 429) return 'Wait, then try the check again.';
-  if (overall === 'NOT_IN_LOG') return 'This receipt is not in the public log. The book row is unchanged.';
-  if (overall === 'INVALID') return 'Paste the signed receipt from the owner view and check it again.';
+  if (status === 413) return SHORTER;
+  if (status === 429) return WAIT;
+  if (overall === 'NOT_IN_LOG') return NOT_IN_LOG;
+  if (overall === 'INVALID') return PASTE_SIGNED;
   if (overall === 'INPUT_ERROR') return INPUT_HINT;
   if (overall === 'VERIFIED' || overall === 'VERIFIED_PUBLIC') return null;
-  return 'Try this check again.';
+  return TRY_AGAIN;
 }
 
 function hintOf(payload, overall, status) {
@@ -77,7 +103,7 @@ function inputErrorView(status, payload) {
   const serverMessage = payload && typeof payload === 'object' && typeof payload.message === 'string'
     ? payload.message
     : '';
-  const detail = serverMessage || (status === 413 ? 'Receipt input is too large.' : '');
+  const detail = serverMessage || (status === 413 ? TOO_LARGE : '');
   const lines = [INPUT_ERROR_TITLE];
   if (detail && detail !== INPUT_ERROR_TITLE) lines.push(detail);
   return {
@@ -114,7 +140,7 @@ export function receiptCheckView(status, payload) {
       return {
         kind: 'verdict',
         overall: 'COULD_NOT_CHECK',
-        lines: withoutHint(['COULD_NOT_CHECK', 'Too many requests — slow down.'], hint),
+        lines: withoutHint(['COULD_NOT_CHECK', SLOW_DOWN], hint),
         error: null,
         hint,
         accepted: null,
@@ -140,8 +166,8 @@ export function receiptCheckView(status, payload) {
   return {
     kind: 'verdict',
     overall: 'COULD_NOT_CHECK',
-    lines: ['COULD_NOT_CHECK', 'The check could not be completed.'],
-    error: 'The check could not be completed.',
+    lines: ['COULD_NOT_CHECK', COULD_NOT],
+    error: COULD_NOT,
     hint,
     accepted: null,
     example: null,

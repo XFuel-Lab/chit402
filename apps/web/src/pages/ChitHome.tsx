@@ -1,43 +1,19 @@
-import { useState, type CSSProperties } from 'react';
+import { Fragment, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { getApiV1 } from '../apiHost';
 import { getHostConfig } from '../hostConfig';
 import LiveReceiptCard from '../components/LiveReceiptCard';
 import { LIVE_RECEIPT_VERIFY_URL } from '../lib/liveReceiptSpecimen';
-
-const apiV1 = 'https://api.chit402.com/v1';
+import { RichText } from '../content/RichText';
+import {
+  HOME_SNIPPET_API,
+  dropInSnippet,
+  homeContent,
+  ninetyLead,
+  partnerKeySnippet,
+} from '../content/homeContent.mjs';
 
 type DropInDoor = 'x402' | 'key';
-
-const dropInSnippet = `import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
-import { registerExactEvmScheme } from '@x402/evm/exact/client';
-import { privateKeyToAccount } from 'viem/accounts';
-
-const client = new x402Client();
-registerExactEvmScheme(client, { signer: privateKeyToAccount(process.env.EVM_PRIVATE_KEY) });
-const fetchWithPayment = wrapFetchWithPayment(fetch, client);
-
-const res = await fetchWithPayment('${apiV1}/chat/completions', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ model: 'xfuel/auto', messages: [{ role: 'user', content: 'Say hello in five words.' }] }),
-});
-const paid = await res.json();
-console.log(paid.xfuel.verify_url); // signed receipt`;
-
-const partnerKeySnippet = `const res = await fetch('${apiV1}/chat/completions', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': process.env.CHIT402_API_KEY,
-  },
-  body: JSON.stringify({
-    model: 'xfuel/auto',
-    messages: [{ role: 'user', content: 'Say hello in five words.' }],
-  }),
-});
-const paid = await res.json();
-console.log(paid.xfuel.verify_url); // signed receipt`;
 
 export default function ChitHome() {
   const config = getHostConfig();
@@ -49,27 +25,21 @@ export default function ChitHome() {
         <div className="container chit-hero-wrap">
           <div className="chit-hero-grid">
             <div className="chit-hero-copy">
-              <h1 style={styles.heroTitle}>Who paid which call — and you still hold it.</h1>
-              <p style={styles.heroLead}>
-                Treasury desk and spend ledger for agent teams — not a router dashboard.
-              </p>
-              <p style={styles.heroDescription}>
-                Every collected inference returns hub, model, amount, and a verify link you can
-                export, policy, and evidence-pack. After you see the row, the possession book keeps
-                last-N spend for the principal who funds the agent.
-              </p>
+              <h1 style={styles.heroTitle}>{homeContent.h1}</h1>
+              <p style={styles.heroLead}>{homeContent.lead}</p>
+              <p style={styles.heroDescription}>{homeContent.description}</p>
               <p style={styles.pricingChip}>
-                <Link to="/pricing" style={styles.pricingChipLink}>
-                  Standard receipt $0.002 · routing cost + 1%
+                <Link to={homeContent.pricingHref} style={styles.pricingChipLink}>
+                  {homeContent.pricingLabel}
                 </Link>
                 {' · '}
-                <Link to="/products" style={styles.pricingChipLink}>
-                  Stamp · Private Desk · Attest
+                <Link to={homeContent.productsHref} style={styles.pricingChipLink}>
+                  {homeContent.productsLabel}
                 </Link>
               </p>
               <div style={styles.heroCta}>
-                <Link to="/book" className="btn btn-primary">
-                  Open the book
+                <Link to={homeContent.bookHref} className="btn btn-primary">
+                  {homeContent.bookLabel}
                 </Link>
                 <a
                   href={LIVE_RECEIPT_VERIFY_URL}
@@ -77,37 +47,33 @@ export default function ChitHome() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Verify live receipt
+                  {homeContent.verifyLabel}
                 </a>
-                <Link to="/docs/chit-in-15-lines" className="btn btn-secondary">
-                  Drop-in docs
+                <Link to={homeContent.dropInDocsHref} className="btn btn-secondary">
+                  {homeContent.dropInDocsLabel}
                 </Link>
               </div>
               <p style={styles.checkYourself}>
-                Check it yourself:{' '}
-                <Link to="/check" style={styles.checkLink}>Check a receipt</Link>
-                {' · '}
-                <Link to="/audit" style={styles.checkLink}>Audit a wallet</Link>
-                {' · '}
-                <a href="https://api.chit402.com/v1/receipts/tree/head" style={styles.checkLink}>
-                  Today&apos;s receipt root, published on Base and Solana
-                </a>
-                {' · '}
-                <Link to="/trust" style={styles.checkLink}>Pin our issuer key</Link>
+                {homeContent.checkYourself}{' '}
+                {homeContent.checkLinks.map((link, index) => (
+                  <Fragment key={link.href}>
+                    {index > 0 ? ' · ' : null}
+                    {link.internal ? (
+                      <Link to={link.href} style={styles.checkLink}>{link.label}</Link>
+                    ) : (
+                      <a href={link.href} style={styles.checkLink}>{link.label}</a>
+                    )}
+                  </Fragment>
+                ))}
               </p>
             </div>
             <LiveReceiptCard />
           </div>
 
           <div className="chit-ninety-door card">
-            <h2 style={styles.ninetyTitle}>90-second drop-in</h2>
+            <h2 style={styles.ninetyTitle}>{homeContent.ninetyTitle}</h2>
             <p style={styles.ninetyLead}>
-              Stamp who paid which call onto the possession book. Pay per call over x402
-              (HTTP 402, USDC on Base or Solana), or use a partner API key. Either path
-              returns a signed receipt you can{' '}
-              <a href={LIVE_RECEIPT_VERIFY_URL} target="_blank" rel="noreferrer">public verify</a>.
-              Install wires (chat clients, Eliza, ACP, MCP, peers):{' '}
-              <Link to="/doors">/doors</Link>.
+              <RichText parts={ninetyLead(LIVE_RECEIPT_VERIFY_URL)} />
             </p>
             <DropInSamples apiUrl={resolvedApiV1} />
           </div>
@@ -117,7 +83,7 @@ export default function ChitHome() {
       <section style={{ padding: '2rem 0' }}>
         <div className="container" style={{ maxWidth: 720 }}>
           <h2 style={{ marginBottom: '0.5rem', textAlign: 'center', fontSize: '1.25rem' }}>
-            Also works
+            {homeContent.alsoWorksTitle}
           </h2>
           <p
             style={{
@@ -128,7 +94,7 @@ export default function ChitHome() {
               lineHeight: 1.6,
             }}
           >
-            Same possession book — secondary adapters and orchestration stacks.
+            {homeContent.alsoWorksBody}
           </p>
           <div
             style={{
@@ -138,44 +104,25 @@ export default function ChitHome() {
               justifyContent: 'center',
             }}
           >
-            <Link to="/docs/eliza" className="btn btn-secondary btn-sm">
-              Eliza plugin
-            </Link>
-            <Link to="/docs/cloudflare" className="btn btn-secondary btn-sm">
-              Cloudflare
-            </Link>
-            <Link to="/docs/acp" className="btn btn-secondary btn-sm">
-              Virtuals ACP
-            </Link>
-            <Link to="/docs/openclaw" className="btn btn-secondary btn-sm">
-              OpenClaw
-            </Link>
-            <Link to="/docs/swarm-platforms" className="btn btn-secondary btn-sm">
-              Olas + Theoriq
-            </Link>
-            <Link to="/docs/framework-adapters" className="btn btn-secondary btn-sm">
-              Framework adapters
-            </Link>
+            {homeContent.adapters.map((link) => (
+              <Link key={link.href} to={link.href} className="btn btn-secondary btn-sm">
+                {link.label}
+              </Link>
+            ))}
           </div>
         </div>
       </section>
 
       <section style={{ padding: '1rem 0 3rem' }}>
         <div className="container" style={{ maxWidth: 720 }}>
-          <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>The row stays with you</h2>
+          <h2 style={{ marginBottom: '1.5rem', textAlign: 'center' }}>{homeContent.rowTitle}</h2>
           <div className="grid grid-3" style={{ gap: '1.5rem' }}>
-            <div className="card">
-              <h3>Spend ledger</h3>
-              <p>Hub, model, and amount on every collected call — signed and stranger-verifiable.</p>
-            </div>
-            <div className="card">
-              <h3>Portable</h3>
-              <p>Move wallets, keep receipts. Register after USDC settle to hold the possession book.</p>
-            </div>
-            <div className="card">
-              <h3>Quoted settle</h3>
-              <p>HTTP 402 quotes before the call. USDC on Base and Solana. Receipt after settle.</p>
-            </div>
+            {homeContent.cards.map((card) => (
+              <div key={card.heading} className="card">
+                <h3>{card.heading}</h3>
+                <p>{card.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -189,20 +136,16 @@ export default function ChitHome() {
               rel="noreferrer"
               style={{ color: '#00d4ff' }}
             >
-              GitHub
+              {homeContent.githubLabel}
             </a>
-            {' · '}
-            <Link to="/trust" style={{ color: '#00d4ff' }}>
-              Trust
-            </Link>
-            {' · '}
-            <Link to="/activity" style={{ color: '#00d4ff' }}>
-              Activity
-            </Link>
-            {' · '}
-            <Link to="/audit" style={{ color: '#00d4ff' }}>
-              Audit
-            </Link>
+            {homeContent.footerLinks.map((link) => (
+              <Fragment key={link.href}>
+                {' · '}
+                <Link to={link.href} style={{ color: '#00d4ff' }}>
+                  {link.label}
+                </Link>
+              </Fragment>
+            ))}
           </p>
         </div>
       </section>
@@ -308,7 +251,7 @@ const styles: Record<string, CSSProperties> = {
 
 function DropInSamples({ apiUrl }: { apiUrl: string }) {
   const [door, setDoor] = useState<DropInDoor>('x402');
-  const snippet = (door === 'x402' ? dropInSnippet : partnerKeySnippet).replace(apiV1, apiUrl);
+  const snippet = (door === 'x402' ? dropInSnippet : partnerKeySnippet).replace(HOME_SNIPPET_API, apiUrl);
   const tabId = door === 'x402' ? 'drop-in-x402' : 'drop-in-key';
 
   return (
@@ -323,7 +266,7 @@ function DropInSamples({ apiUrl }: { apiUrl: string }) {
           style={door === 'x402' ? styles.ninetyTabOn : styles.ninetyTab}
           onClick={() => setDoor('x402')}
         >
-          Pay per call (x402)
+          {homeContent.payPerCall}
         </button>
         <button
           type="button"
@@ -334,7 +277,7 @@ function DropInSamples({ apiUrl }: { apiUrl: string }) {
           style={door === 'key' ? styles.ninetyTabOn : styles.ninetyTab}
           onClick={() => setDoor('key')}
         >
-          Partner API key
+          {homeContent.partnerKey}
         </button>
       </div>
       <pre
