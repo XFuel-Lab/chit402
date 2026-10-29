@@ -46,6 +46,7 @@ const COPY_FILES = [
   'apps/web/src/pages/Docs.tsx',
   'apps/web/src/content/docsContent.mjs',
   'apps/web/src/content/pricingContent.mjs',
+  'apps/web/src/content/homeContent.mjs',
   'apps/web/src/pages/Security.tsx',
   'apps/web/src/pages/OneF916Link.tsx',
   'docs/doors/README.md',
@@ -251,7 +252,8 @@ test('changed copy has no hype words and no new price other than $0.002', () => 
 });
 
 test('shared page modules do not say stranger', () => {
-  for (const rel of Object.values(PAGE_CONTENT)) {
+  const files = [...new Set([...Object.values(PAGE_CONTENT), 'apps/web/src/content/homeContent.mjs'])];
+  for (const rel of files) {
     const src = read(rel);
     assert.ok(!/\bstranger\b/i.test(src), `${rel}: no stranger`);
   }

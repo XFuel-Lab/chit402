@@ -219,7 +219,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   const receiptCard = readFileSync(join(root, 'src/components/LiveReceiptCard.tsx'), 'utf8');
   const liveSpecimen = readFileSync(join(root, 'src/lib/liveReceiptSpecimen.ts'), 'utf8');
   assert.ok(/Your agents spent money this week\. On what, and with whom\?/.test(chitHome), 'ChitHome leads with the funder question');
-  assert.ok(/Each paid call lands as a row in a book you hold: hub, model, amount, and a link a third party can check\. \$0\.002 per receipt\./.test(chitHome), 'ChitHome subhead');
+  assert.ok(/Each paid call lands as a row in a book you hold: hub, model, amount, and a link to its receipt\. \$0\.002 per receipt\./.test(chitHome), 'ChitHome subhead');
   assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it\.)[\s\S]*$/.test(chitHome), 'ChitHome drops the old h1');
   assert.ok(/^(?![\s\S]*Treasury desk and spend ledger for agent teams)[\s\S]*$/.test(chitHome), 'ChitHome drops the old lead');
   assert.ok(/^(?![\s\S]*Every collected inference returns hub, model, amount, and a verify link you can export, policy, and evidence-pack\.)[\s\S]*$/.test(chitHome), 'ChitHome drops the old description');

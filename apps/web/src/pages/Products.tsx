@@ -3,6 +3,9 @@ import type { CSSProperties } from 'react';
 import SeoHead from '../components/SeoHead';
 import { getApiV1 } from '../apiHost';
 
+const TIER2_OFF =
+  'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+
 const TIER2_LINE =
   'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
 
@@ -114,7 +117,7 @@ export default function Products() {
             <strong style={{ color: '#d0d0dc' }}>Stamp</strong> is on every hop.{' '}
             <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> swaps the routing posture to
             vendor-blind at the same cost + 1% door.{' '}
-            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: {TIER2_LINE}
+            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: {TIER2_OFF} {TIER2_LINE}
           </p>
           <p style={{ ...styles.muted, marginTop: '0.75rem' }}>
             Install wires (chat /v1, Eliza, ACP, MCP, frameworks) are not separate products — they

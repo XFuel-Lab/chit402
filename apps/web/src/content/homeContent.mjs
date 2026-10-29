@@ -38,7 +38,7 @@ export const HOME_H1 = 'Your agents spent money this week. On what, and with who
 export const homeContent = {
   h1: HOME_H1,
   subhead:
-    'Each paid call lands as a row in a book you hold: hub, model, amount, and a link a third party can check. $0.002 per receipt.',
+    'Each paid call lands as a row in a book you hold: hub, model, amount, and a link to its receipt. $0.002 per receipt.',
   pricingHref: '/pricing',
   pricingLabel: '$0.002 per receipt',
   bookHref: '/book',

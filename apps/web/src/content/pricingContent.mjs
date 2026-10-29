@@ -65,7 +65,7 @@ export function pricingModel(apiV1) {
         ': ',
         tier2Off,
         ' ',
-        tier2,
+        tier2.replace('; standard $0.002 receipts are unaffected.', '.'),
       ],
     ],
     columns: [
@@ -107,7 +107,6 @@ export function pricingModel(apiV1) {
     ],
     valueTitle: 'Value-add (optional)',
     valueItems: [
-      tier2,
       [
         { strong: 'Private Desk', style: strongMuted },
         ' — cost + 1% vendor-blind routing (allowlist / explicit product; not the default public door)',

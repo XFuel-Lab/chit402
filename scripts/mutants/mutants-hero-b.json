@@ -13,6 +13,16 @@
         "test/static-pages.test.mjs"
       ],
       "env": {}
+    },
+    "truthcopy": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/truth-copy.test.mjs"
+      ],
+      "env": {}
     }
   },
   "mutants": [
@@ -85,6 +95,56 @@
       "nth": 1,
       "suite": "webstatic",
       "note": "ChitHome reads the shared h1 constant"
+    },
+    {
+      "id": "H8_subhead_reworded",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "a link to its receipt",
+      "flags": "",
+      "replace": "a link you can open",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "subhead stays on the locked wording"
+    },
+    {
+      "id": "S2_pricing_render_drops_locked",
+      "file": "apps/web/src/content/pricingContent.mjs",
+      "find": "tier2Off,\\n        ' ',\\n        tier2\\.replace",
+      "flags": "",
+      "replace": "tier2.replace",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "removing the locked sentence from the pricing render fails"
+    },
+    {
+      "id": "S2_products_body_drops_locked",
+      "file": "apps/web/src/pages/Products.tsx",
+      "find": "\\{TIER2_OFF\\} \\{TIER2_LINE\\}",
+      "flags": "",
+      "replace": "{TIER2_LINE}",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "removing the locked sentence from the products body fails"
+    },
+    {
+      "id": "S3_subhead_billions",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "a link to its receipt",
+      "flags": "",
+      "replace": "Trusted by billions.",
+      "nth": 1,
+      "suite": "truthcopy",
+      "note": "Trusted by billions. in the subhead fails"
+    },
+    {
+      "id": "S3_home_stranger",
+      "file": "apps/web/src/content/homeContent.mjs",
+      "find": "a link to its receipt",
+      "flags": "",
+      "replace": "a link a stranger can check",
+      "nth": 1,
+      "suite": "truthcopy",
+      "note": "stranger in homeContent.mjs fails"
     }
   ]
 }
