@@ -19,6 +19,26 @@ function readNorm(abs) {
   return readFileSync(abs, 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+const MARKER = "haven't yet run the full flow end to end on a fresh account";
+
+function assertNoOverclaim(src, label) {
+  assert.ok(!/5 min/i.test(src), `${label} has no time claim`);
+  assert.ok(!/csv/i.test(src), `${label} has no csv claim`);
+  assert.ok(
+    !/backfill/i.test(src.replace(/no backfill of past calls/gi, '')),
+    `${label} has no backfill claim`,
+  );
+  assert.ok(
+    !/verified/i.test(src.replace(/unverified/gi, '')),
+    `${label} does not say verified outside unverified`,
+  );
+}
+
+function markerWindow(src, limit) {
+  const at = src.search(/haven't yet run the full flow end to end on a fresh account/);
+  return at < 0 ? '' : src.slice(at, at + limit);
+}
+
 function insertionOf(oldText, newText) {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
@@ -106,9 +126,29 @@ test('llms.txt Broadcast block states the webhook, new calls, unverified reports
     /https:\/\/github\.com\/XFuel-Lab\/chit402\/blob\/main\/docs\/product\/openrouter-broadcast\.md/.test(block),
     'block links the GitHub Broadcast guide',
   );
-  assert.ok(!/5 min/i.test(block), 'block does not say 5 min');
-  assert.ok(!/csv/i.test(block), 'block does not say csv');
-  assert.ok(!/verified/i.test(block.replace(/unverified/gi, '')), 'block does not say verified outside unverified');
+  assert.ok(/Chit's Broadcast receiver is on\./.test(block), 'block says Chit receiver is on');
+  assert.ok(
+    !/OpenRouter Broadcast is on by default/.test(block),
+    'block does not call the receiver an OpenRouter setting',
+  );
+  assert.ok(
+    /enable Broadcast under Settings > Observability/.test(block),
+    'block says to enable Broadcast under Settings > Observability',
+  );
+  assert.ok(
+    /GET \/v1\/openrouter\/books\/:book_id\/receipts/.test(block),
+    'block names the receipts read route',
+  );
+  assert.ok(new RegExp(MARKER).test(block), 'block has the end-to-end marker');
+  const near = markerWindow(block, 520);
+  assert.ok(/POST \/v1\/openrouter\/books/.test(near), 'marker sits next to mint');
+  assert.ok(/Settings > Observability/.test(near), 'marker sits next to the webhook step');
+  assert.ok(
+    /https:\/\/api\.chit402\.com\/v1\/openrouter\/broadcast/.test(near),
+    'marker sits next to the webhook URL',
+  );
+  assert.ok(/optional key lets Chit check/.test(near), 'marker sits next to attach-key');
+  assertNoOverclaim(block, 'llms.txt block');
   assert.ok(!/\bstranger\b/i.test(block), 'block does not say stranger');
 });
 
@@ -132,6 +172,28 @@ test('/docs source contains the Broadcast heading and webhook URL', () => {
     /https:\/\/api\.chit402\.com\/v1\/openrouter\/broadcast/.test(docs),
     '/docs source contains the webhook URL',
   );
+  const docsBlock = docsCopy.match(/export function openrouterKeepRouteParagraphs\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.ok(docsBlock.length > 0, '/docs Broadcast block is present');
+  assert.ok(/Chit's Broadcast receiver is on\./.test(docsBlock), '/docs says Chit receiver is on');
+  assert.ok(
+    !/OpenRouter Broadcast is on by default/.test(docsBlock),
+    '/docs does not call the receiver an OpenRouter setting',
+  );
+  assert.ok(
+    /enable Broadcast under Settings > Observability/.test(docsBlock),
+    '/docs says to enable Broadcast under Settings > Observability',
+  );
+  assert.ok(
+    /GET \/v1\/openrouter\/books\/:book_id\/receipts/.test(docsBlock),
+    '/docs names the receipts read route',
+  );
+  assert.ok(new RegExp(MARKER).test(docsBlock), '/docs has the end-to-end marker');
+  const docsNear = markerWindow(docsBlock, 700);
+  assert.ok(/POST \/v1\/openrouter\/books/.test(docsNear), '/docs marker sits next to mint');
+  assert.ok(/Settings > Observability/.test(docsNear), '/docs marker sits next to the webhook step');
+  assert.ok(/BROADCAST_WEBHOOK/.test(docsNear), '/docs marker sits next to the webhook URL');
+  assert.ok(/optional key lets Chit check/.test(docsNear), '/docs marker sits next to attach-key');
+  assertNoOverclaim(docsBlock, '/docs block');
 });
 
 test('/doors sidecar card points OpenRouter at Broadcast and does not install the broken package', () => {
@@ -148,10 +210,17 @@ test('/doors sidecar card points OpenRouter at Broadcast and does not install th
     /https:\/\/api\.chit402\.com\/v1\/openrouter\/broadcast/.test(sidecar),
     'Sidecar card names the Broadcast webhook',
   );
-  assert.ok(/Groq has no server-side path today/.test(sidecar), 'Groq has no server-side path');
+  assert.ok(
+    /Direct Groq calls have no server-side path today/.test(sidecar),
+    'direct Groq calls have no server-side path',
+  );
   assert.ok(!/Broadcast[^\n]{0,80}Groq/.test(sidecar), 'Groq is not on a Broadcast line');
   assert.ok(!/Groq[^\n]{0,80}Broadcast/.test(sidecar), 'Broadcast is not on the Groq line');
-  assert.ok(!/5 min/i.test(sidecar), 'Sidecar card does not say 5 min');
-  assert.ok(!/csv/i.test(sidecar), 'Sidecar card does not say csv');
-  assert.ok(!/verified/i.test(sidecar.replace(/unverified/gi, '')), 'Sidecar card does not say verified outside unverified');
+  const stepPara = sidecar.match(/<p>[\s\S]*?v1\/openrouter\/broadcast[\s\S]*?<\/p>/)?.[0] ?? '';
+  assert.ok(stepPara.length > 0, 'Sidecar card has the OpenRouter step paragraph');
+  assert.ok(
+    /full flow end to end on a fresh account/.test(stepPara),
+    'doors marker sits in the step paragraph',
+  );
+  assertNoOverclaim(sidecar, '/doors sidecar card');
 });

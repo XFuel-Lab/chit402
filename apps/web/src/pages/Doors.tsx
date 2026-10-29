@@ -193,7 +193,7 @@ export default function Doors() {
               <code>chit402-sidecar</code> is local, client-recorded receipts only. The npm package
               is currently not importable.
             </p>
-            <p>Groq has no server-side path today.</p>
+            <p>Direct Groq calls have no server-side path today.</p>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: '0.75rem' }}>
               The Worker source is <code>packages/sidecar/worker</code> in the repo. To have Chit
               collect USDC instead, use the TypeScript door above (keyless x402, or a partner key).
