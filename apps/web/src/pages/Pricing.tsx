@@ -69,7 +69,7 @@ export default function Pricing() {
           </p>
           <p style={styles.clarityBody}>
             <strong style={{ color: '#f0f0f5', fontWeight: 600 }}>Private + Attest</strong>:{' '}
-            Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
+            Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
           </p>
         </section>
 
@@ -115,14 +115,14 @@ export default function Pricing() {
           <h2 style={{ fontSize: '1.1rem', marginBottom: '0.65rem' }}>Value-add (optional)</h2>
           <ul style={styles.list}>
             <li>
-              Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
+              Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
             </li>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> — cost + 1% vendor-blind routing
               (allowlist / explicit product; not the default public door)
             </li>
             <li>
-              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
+              <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
             </li>
             <li>
               <strong style={{ color: '#d0d0dc' }}>Spend guarantee</strong> — parked; not available

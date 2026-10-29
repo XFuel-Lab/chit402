@@ -36,8 +36,8 @@ export default function Security() {
           </span>
           <h1 style={styles.h1}>Security &amp; transparency</h1>
           <p style={styles.lead}>
-            USDC settles on <strong>Base and Solana</strong>. Trust starts with signed receipts. On-chain
-            settlement proofs are coming soon. See our{' '}
+            USDC settles on <strong>Base and Solana</strong>. Trust starts with signed receipts.
+            Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. See our{' '}
             <a href={positioning} target="_blank" rel="noreferrer" style={{ color: '#00d4ff' }}>
               positioning
             </a>{' '}

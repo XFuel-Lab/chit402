@@ -286,7 +286,7 @@ export default function Docs() {
             Each signed receipt carries hub, model, amount, and <code>verify_url</code>. Each call
             is charged a quoted price and gets a receipt, paid in USDC on Base or Solana.{' '}
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected
-            spend. The on-chain settlement proof add-on is coming soon.
+            spend. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
           </p>
           <pre className="docs-code">
             <code>{SNIPPET}</code>

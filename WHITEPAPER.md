@@ -15,7 +15,7 @@ Chit402 is a modular settlement layer for AI compute. Agents and applications su
 Trust is tiered:
 
 1. **Signed receipt** (default) — route, model, cost, and output hash
-2. **SP1 settlement proof** (coming soon; not currently offered) — fee correctness, payment binding, output commitment, and a single-use nullifier on Base
+2. **SP1 settlement proof** — fee correctness, payment binding, output commitment, and a single-use nullifier on Base. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Requests with `proof_tier` get `400 settlement_proof_not_offered`.
 3. **Verified Inference** (active build) — proof that an exact open-weight model ran on the input (self-owned zkLLM prover)
 
 The product is settlement and proof. Providers (OpenAI-compatible APIs, neoclouds, DePIN GPUs) are pluggable. Money and proof verification live on Base. See [ADR 0002 — Base settlement home](docs/adr/0002-base-settlement-home.md).
@@ -72,7 +72,7 @@ Circuits are independent modules (inference, A2A, bridge, zkML, DePIN, and other
 ## 3. Trust tiers
 
 1. **Signed receipt** (default, live) — route, model, cost, and output hash, signed by Chit.
-2. **SP1 settlement proof** (coming soon; not currently offered) — fee correctness, payment binding, output-hash commitment, and a single-use nullifier on Base (~25s, ~270K gas).
+2. **SP1 settlement proof** — fee correctness, payment binding, output-hash commitment, and a single-use nullifier on Base (~25s, ~270K gas). Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Requests with `proof_tier` get `400 settlement_proof_not_offered`.
 3. **Verified Inference** (active build) — proves that an exact open-weight model ran on the input via the self-owned zkLLM prover.
 
 Tier 2 proves **settlement**, not that a black-box API computed a model correctly. Tier 3 applies where model weights are available. Details: [Verified Inference tiers](docs/VERIFIED_INFERENCE_TIERS.md).
@@ -128,7 +128,7 @@ Allocation is forward-looking (community, strategic, ecosystem, team, treasury, 
 
 ## 8. Security
 
-- SP1 settlement proofs with nullifier replay protection (coming soon; not currently offered)
+- SP1 settlement proofs with nullifier replay protection. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
 - Role-based access, pausability, and circuit breakers on verifiers
 - Non-custodial payments (agent signs USDC)
 - **Audit Phase 1:** `contracts/core/`, primary inference circuit, `SP1ProofHooks` (Base)

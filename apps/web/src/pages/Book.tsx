@@ -1039,7 +1039,7 @@ export default function Book() {
                   </summary>
                   <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.75rem' }}>
                     <label className="book-field">
-                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above. Tier-2 settlement proofs are temporarily unavailable; leave empty.</span>
+                      <span className="book-field-label">Tier-2 above (USDC) — require <code>proof_tier</code> at/above. Tier-2 settlement proofs are off; leave empty.</span>
                       <input
                         className="input"
                         type="text"
@@ -1147,7 +1147,7 @@ export default function Book() {
               <code>npx chit402-verify &quot;https://api.chit402.com/receipt/xfuel-3155b7d8-4315-44bc-bfdc-bf6b78ff2d15&quot;</code>.
               The on-chain check is part of that command. On this receipt it prints VERIFIED_PUBLIC
               and exits 0. The payer is not claimed. It does not prove the model computed the answer.
-              The settlement proof add-on is coming soon, and it covers settlement, not correctness.
+              Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. A settlement proof covers settlement, not model correctness.
             </p>
             <p>
               <strong>Settled vs unsettled.</strong> Rolling settlement is on. Each call settles the
