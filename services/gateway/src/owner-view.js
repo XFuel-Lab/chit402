@@ -11,6 +11,7 @@
  */
 import crypto from 'node:crypto';
 import { ethers } from 'ethers';
+import logger from './logger.js';
 import { AgentOwnerKeyStore, agentBindMessage } from './agent-owner-key.js';
 import { openOwnerStore, resolveOwnerStorePath } from './owner-store.js';
 import { jcsCanonicalize, privateFieldsOf, decodeJwsPayload } from './receipt-shell.js';
@@ -641,15 +642,23 @@ export function createOwnerView(deps) {
     const id = Number(req.params.agent_id);
     const identity = Number.isInteger(id) ? deps.registry?.get?.(id) : null;
     const wallet = identity?.agentWallet || identity?.agent_wallet || null;
-    const bound = identity && wallet
-      ? agentKeys.bind({
-        agentId: id,
-        publicKey: req.body?.public_key,
-        walletSignature: req.body?.wallet_signature,
-        keySignature: req.body?.key_signature,
-        agentWallet: wallet,
-      })
-      : { ok: false };
+    let bound = { ok: false };
+    try {
+      bound = identity && wallet
+        ? agentKeys.bind({
+          agentId: id,
+          publicKey: req.body?.public_key,
+          walletSignature: req.body?.wallet_signature,
+          keySignature: req.body?.key_signature,
+          agentWallet: wallet,
+        })
+        : { ok: false };
+    } catch (err) {
+      if (err?.code === 'persist_failed') {
+        logger.warn({ code: 'agent_owner_key_save_failed', agentId: id }, 'agent-owner-key: save failed');
+      }
+      return await sendGenericNotFound(res, started, budgetMs);
+    }
     if (!bound.ok) return await sendGenericNotFound(res, started, budgetMs);
     preparePrivate(res);
     return res.json({ bound: true, agent_id: id });
