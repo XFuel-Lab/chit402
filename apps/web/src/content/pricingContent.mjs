@@ -10,6 +10,8 @@ function link(href, label, internal) {
 
 export function pricingModel(apiV1) {
   const origin = apiV1.replace(/\/v1$/, '');
+  const tier2Off =
+    'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   const tier2 =
     'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   return {
@@ -61,6 +63,8 @@ export function pricingModel(apiV1) {
       [
         { strong: 'Private + Attest', style: strongLight },
         ': ',
+        tier2Off,
+        ' ',
         tier2,
       ],
     ],

@@ -35,13 +35,6 @@ const LOCKED_FILES = [
   'apps/web/src/pages/Products.tsx',
 ];
 
-const PRICE_FILES = [
-  'apps/web/src/pages/Pricing.tsx',
-  'apps/web/src/pages/Products.tsx',
-  'README.md',
-  'api/llms.txt.ts',
-];
-
 const COPY_FILES = [
   'README.md',
   'docs/POSITIONING.md',
@@ -130,8 +123,13 @@ test('locked Tier-2 sentence is on the public surfaces', () => {
   }
 });
 
-test('Tier-2 price is not shown while proofs are off', () => {
-  for (const rel of PRICE_FILES) {
+test('Tier-2 price is visible and marked unavailable on pricing and products', () => {
+  const marked = /Tier-2 settlement proof: \+\$0\.10 per proof\. Currently unavailable while we upgrade the proving system; standard \$0\.002 receipts are unaffected\./;
+  for (const rel of ['apps/web/src/pages/Pricing.tsx', 'apps/web/src/pages/Products.tsx']) {
+    const src = read(rel);
+    assert.ok(marked.test(src), `${rel}: +$0.10 Tier-2 price is currently unavailable`);
+  }
+  for (const rel of ['README.md', 'api/llms.txt.ts']) {
     const src = read(rel);
     assert.ok(!/\+\s*\$0\.10/.test(src), `${rel}: no +$0.10 Tier-2 price`);
   }
@@ -235,8 +233,9 @@ test('1F916 page says a third party cannot check the receipt leg today', () => {
 });
 
 test('changed copy has no hype words and no new price other than $0.002', () => {
+  const tier2Price = 'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   for (const rel of COPY_FILES) {
-    const src = copyScanText(rel);
+    const src = copyScanText(rel).split(tier2Price).join('');
     assert.ok(!/revolutionary|game-changing|billions|trustless/i.test(src), `${rel}: no hype words in the changed copy`);
     assert.ok(!/\$(?!0\.002\b)\d/.test(src), `${rel}: no new price other than $0.002`);
   }
