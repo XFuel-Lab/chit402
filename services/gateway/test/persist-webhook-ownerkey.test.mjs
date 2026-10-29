@@ -1413,8 +1413,13 @@ test('16 source pins the writer, the stores, and the llms text', () => {
     '849b93d4cf438207817eda145e6ed40193a2f9137e28428c7ce0718f5d5e4970',
   );
   const llmsTs = fs.readFileSync(path.join(repoRoot, 'api/llms.txt.ts'));
-  assert.equal(
-    crypto.createHash('sha256').update(llmsTs).digest('hex'),
+  const llmsTsHash = crypto.createHash('sha256').update(llmsTs).digest('hex');
+  // This PR does not edit api/llms.txt.ts. pull_request CI checks out the merge
+  // with main, and main's #675 added the OpenRouter Broadcast section, so the
+  // checkout hash differs from the file at the branch point. Both are untouched.
+  const llmsTsPins = new Set([
     '9346da542e28956cc59ffe1f9abd5638efccbc2358a98de15c144b319ea53b4e',
-  );
+    '19ab8e85698d62a809c388abb5ab51cb5e2c0b4231d9f4bac0bbc1be98d8f416',
+  ]);
+  assert.ok(llmsTsPins.has(llmsTsHash), `api/llms.txt.ts hash ${llmsTsHash}`);
 });
