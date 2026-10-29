@@ -9,6 +9,24 @@ const CHIT_LLMS = `# ${HOME_TITLE}
 > Cost-plus, quoted, receipted — pay x402 USDC on Base or Solana.
 > The wire is api.chit402.com/v1.
 
+## Already pay OpenRouter? Keep your route
+
+OpenRouter Broadcast is on by default.
+
+Mint a book with POST /v1/openrouter/books. No wallet and no payment. The response returns book_id plus an ingest_key that is shown once.
+
+In OpenRouter, set the webhook URL to https://api.chit402.com/v1/openrouter/broadcast with header Authorization: Bearer <ingest_key>.
+
+It covers new calls only, with no backfill of past calls.
+
+Receipts are on the reported rail. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)". An optional key lets Chit check each generation against OpenRouter.
+
+Reads are a JSON list of up to 200 receipts. Rows are not added to an agent's USDC spent total.
+
+Guide: https://github.com/XFuel-Lab/chit402/blob/main/docs/product/openrouter-broadcast.md
+
+Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account.
+
 ## Money pages (chit402.com)
 
 - /trust    : Issuer trust: current ES256 key, issuer history, and chit402-verify. https://www.chit402.com/trust
