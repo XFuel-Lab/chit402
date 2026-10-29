@@ -75,6 +75,16 @@
       "note": "book read 403 returns the hint body"
     },
     {
+      "id": "X8_budget_403_sends_hint",
+      "file": "services/gateway/src/server.js",
+      "find": "if \\(set\\.status === 401\\) return sendBookPossessionRequired\\(req, res, BOOK_POSSESSION_REQUIRED_BODY\\);\\n          return res\\.status\\(set\\.status\\)\\.end\\(\\);",
+      "flags": "",
+      "replace": "return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);",
+      "nth": 1,
+      "suite": "gwbook",
+      "note": "budget-set 403 returns the 401 hint"
+    },
+    {
       "id": "A6_code_renamed",
       "file": "services/gateway/src/agent-book.js",
       "find": "error: 'possession_required'",

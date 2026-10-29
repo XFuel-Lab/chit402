@@ -137,6 +137,20 @@ test('POST /book with a budget and no session is the same hint', async () => {
   assertHint(got, 'budget set');
 });
 
+test('POST book budget with a dummy session is 403 empty', async () => {
+  for (const id of ['1', '999999', 'abc']) {
+    const got = await read(await fetch(`${base}/v1/agents/${id}/book`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session: 'dummy-session-0000', budget: 5 }),
+    }));
+    assertEmpty403(got, `budget 403 ${id}`);
+    assert.equal(got.headers['www-authenticate'], undefined, `budget 403 ${id} authenticate`);
+    assert.equal(got.text.includes('possession_required'), false, `budget 403 ${id} hint`);
+    assert.notEqual(got.text, HINT, `budget 403 ${id} body`);
+  }
+});
+
 test('GET and POST /book/export with no credentials return the same hint', async () => {
   const getRes = await read(await fetch(`${base}/v1/agents/1/book/export`));
   const postRes = await read(await fetch(`${base}/v1/agents/1/book/export`, {
