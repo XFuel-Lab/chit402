@@ -715,6 +715,31 @@ test('bundled, sealed, and file histories answer the same single-row window', as
   await assertBoth(retiredFile.document, key, key, key.kid, T1_AFTER, false, 'issued_after_not_after');
 });
 
+test('an open-ended retired row is refused only on the epoch path', async () => {
+  const key = issuerKey();
+  const open = historyFrom(key, [
+    row(key, { notBefore: T0 }),
+    row(key, { notBefore: T0, notAfter: null, status: 'retired' }),
+  ]).doc;
+  assert.equal(epochHistoryKeyAllowed(open, key.kid, '2026-03-01T00:00:00.000Z'), false);
+  assert.equal(epochHistoryKeyAllowed(open, key.kid, '2030-01-01T00:00:00.000Z'), false);
+  await assertBoth(open, key, key, key.kid, '2026-03-01T00:00:00.000Z', true, null);
+  await assertBoth(open, key, key, key.kid, '2030-01-01T00:00:00.000Z', true, null);
+
+  const onlyRetired = historyFrom(key, [
+    row(key, { notBefore: T0, notAfter: null, status: 'retired' }),
+  ]).doc;
+  assert.equal(epochHistoryKeyAllowed(onlyRetired, key.kid, '2026-03-01T00:00:00.000Z'), false);
+  assert.equal(epochHistoryKeyAllowed(onlyRetired, key.kid, '2030-01-01T00:00:00.000Z'), false);
+
+  const bounded = historyFrom(key, [
+    row(key, { notBefore: T0, notAfter: T1, status: 'retired' }),
+  ]).doc;
+  assert.equal(epochHistoryKeyAllowed(bounded, key.kid, INSIDE), true);
+  assert.equal(epochHistoryKeyAllowed(bounded, key.kid, T1), true);
+  assert.equal(epochHistoryKeyAllowed(bounded, key.kid, T1_AFTER), false);
+});
+
 test('epoch path uses the shared window and keeps its stricter revocation rule', () => {
   const key = issuerKey();
   const active = { entries: [row(key, { notBefore: T0 })] };

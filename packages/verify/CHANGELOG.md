@@ -3,6 +3,10 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- An epoch record refuses a retired key whose folded window has no `not_after`, at every time. A retired row that sets `not_after` still follows that window. Receipts and tree heads still accept a retired row with no `not_after`.
+
 ## 0.5.0-pre.0: Version validity windows (pre-release)
 
 Not published. The bundled `version-windows.json` is test-signed in this build; `prepublishOnly` and `scripts/check-verify-publish.mjs` refuse to publish until the signing ceremony replaces it with the production signature. The version moved off 0.4.11 so no build of this code can be published under that number.

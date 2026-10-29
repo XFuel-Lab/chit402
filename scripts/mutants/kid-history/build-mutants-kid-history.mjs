@@ -49,6 +49,14 @@ const mutants = [
   m('B15_label_only_match', IH, /\.filter\(\(row\) => historyRowMatchesKid\(row, kid\)\)/, '.filter((row) => row.kid === kid)', 'both paths match rows by label OR jwk thumbprint (one matcher)'),
   m('B16_receipt_untimed_open', IH, /const window = issuerKeyWindow\(doc, kid, issuedAt\);/, 'const window = issuerKeyWindow(doc, kid, issuedAt, { allowUntimedOpen: true });', 'receipt with no signed time stays issued_at_missing'),
   m('C1_ambiguous_exit_code', VD, /(const WINDOW_FAIL = new Set\(\[\n)  'kid_ambiguous',\n/, '$1', 'kid_ambiguous on the receipt path maps to key_window fail, exit 1'),
+  m('X1_epoch_revoked_not_sticky', IH, /if \(row\.status === 'revoked'\) return false;\n    if \(row\.revoked_at != null && row\.revoked_at !== ''\) return false;/, "if (row.status === 'revoked' && false) return false;", 'epoch: a revoked row or revoked_at stamp refuses every time, including before revoked_at'),
+  m('X2_epoch_missing_at_accepts', IH, /if \(parseTime\(at\) == null\) return false;/, 'if (parseTime(at) == null) return true;', 'epoch: a missing or unparseable at returns false'),
+  m('X3_epoch_label_only', IH, /\.filter\(\(row\) => row\.kid === kid \|\| row\.jwk\?\.kid === kid\)/, '.filter((row) => row.kid === kid)', 'epoch: rows still match on row.kid or jwk.kid'),
+  m('X4_epoch_ambiguity_dropped', IH, /if \(kidRowsAmbiguous\(matches\)\) return false;/, 'if (kidRowsAmbiguous(matches)) void 0;', 'epoch: rows that disagree on key identity return false'),
+  m('X5_epoch_retired_refuses', IH, /return issuerKeyWindow\(aligned, kid, at\)\.ok;/, "return issuerKeyWindow(aligned, kid, at).ok && matches[matches.length - 1].status === 'active';", 'epoch: a retired row with not_after does not refuse a time the shared window admits'),
+  m('X6_epoch_open_retired_dropped', IH, /if \(openEndedRetired\(matches\)\) return false;/, 'if (openEndedRetired(matches)) void 0;', 'epoch: an open-ended retired row refuses every time'),
+  m('X7_epoch_open_retired_all_paths', IH, /return issuerEntryWindow\(\{/, "if (openEndedRetired(matches)) return { ok: false, reason: 'issued_after_not_after' }; return issuerEntryWindow({", 'open-ended retired refusal stays on the epoch path'),
+  m('X8_epoch_open_retired_null_allowed', IH, /return retired && !foldedNotAfter;/, 'return retired && foldedNotAfter;', 'epoch: an open end refuses; a not_after still uses the window'),
 ];
 const verifySuite = { cwd: 'packages/verify', argv: ['sh', '-c', `./node_modules/.bin/tsc -p . && node --test --test-concurrency=1 ${TESTS.join(' ')}`], env: { NODE_ENV: 'test' } };
 const tscSuite = { cwd: 'packages/verify', argv: ['sh', '-c', './node_modules/.bin/tsc -p . --noEmit'], env: {} };

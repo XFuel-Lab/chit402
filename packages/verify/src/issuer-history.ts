@@ -358,11 +358,25 @@ export function issuerKeyWindow(
 }
 
 /**
+ * True when a retired row leaves the folded window open.
+ * The fold's not_after is null when every matched row has no not_after.
+ * Receipts and tree heads do not use this. An epoch record does.
+ */
+function openEndedRetired(
+  rows: ReadonlyArray<{ status?: string | null; not_after?: string | null }>,
+): boolean {
+  const retired = rows.some((row) => row.status === 'retired');
+  const foldedNotAfter = rows.some((row) => row.not_after != null && row.not_after !== '');
+  return retired && !foldedNotAfter;
+}
+
+/**
  * Epoch records share the receipt and tree-head window.
  * A revoked row, or any revoked_at stamp, refuses every time, including a
  * time before revoked_at. A missing time refuses. Rows still match on
  * `row.kid` or `row.jwk.kid`. Rows that disagree on key identity refuse.
- * A retired row does not refuse a time the combined window admits.
+ * A retired row with a not_after uses that window. A retired row that leaves
+ * the folded not_after open refuses every time.
  */
 export function epochHistoryKeyAllowed(
   doc: IssuerHistoryDocument | null | undefined,
@@ -378,6 +392,7 @@ export function epochHistoryKeyAllowed(
   }
   if (kidRowsAmbiguous(matches)) return false;
   if (parseTime(at) == null) return false;
+  if (openEndedRetired(matches)) return false;
   // The epoch matcher is the label or jwk.kid. The shared resolver matches
   // the label or the thumbprint, so align the label after the identity check.
   const aligned: IssuerHistoryDocument = {

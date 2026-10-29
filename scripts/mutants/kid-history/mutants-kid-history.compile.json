@@ -260,8 +260,8 @@
       "flags": "",
       "replace": "if (row.status === 'revoked' && false) return false;",
       "nth": 1,
-      "note": "epoch: a revoked row or revoked_at stamp refuses every time, including before revoked_at",
-      "suite": "tsc"
+      "suite": "tsc",
+      "note": "epoch: a revoked row or revoked_at stamp refuses every time, including before revoked_at"
     },
     {
       "id": "X2_epoch_missing_at_accepts",
@@ -270,8 +270,8 @@
       "flags": "",
       "replace": "if (parseTime(at) == null) return true;",
       "nth": 1,
-      "note": "epoch: a missing or unparseable at returns false",
-      "suite": "tsc"
+      "suite": "tsc",
+      "note": "epoch: a missing or unparseable at returns false"
     },
     {
       "id": "X3_epoch_label_only",
@@ -280,8 +280,8 @@
       "flags": "",
       "replace": ".filter((row) => row.kid === kid)",
       "nth": 1,
-      "note": "epoch: rows still match on row.kid or jwk.kid",
-      "suite": "tsc"
+      "suite": "tsc",
+      "note": "epoch: rows still match on row.kid or jwk.kid"
     },
     {
       "id": "X4_epoch_ambiguity_dropped",
@@ -290,8 +290,8 @@
       "flags": "",
       "replace": "if (kidRowsAmbiguous(matches)) void 0;",
       "nth": 1,
-      "note": "epoch: rows that disagree on key identity return false",
-      "suite": "tsc"
+      "suite": "tsc",
+      "note": "epoch: rows that disagree on key identity return false"
     },
     {
       "id": "X5_epoch_retired_refuses",
@@ -300,8 +300,38 @@
       "flags": "",
       "replace": "return issuerKeyWindow(aligned, kid, at).ok && matches[matches.length - 1].status === 'active';",
       "nth": 1,
-      "note": "epoch: a retired row does not refuse a time the shared window admits",
-      "suite": "tsc"
+      "suite": "tsc",
+      "note": "epoch: a retired row with not_after does not refuse a time the shared window admits"
+    },
+    {
+      "id": "X6_epoch_open_retired_dropped",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(openEndedRetired\\(matches\\)\\) return false;",
+      "flags": "",
+      "replace": "if (openEndedRetired(matches)) void 0;",
+      "nth": 1,
+      "suite": "tsc",
+      "note": "epoch: an open-ended retired row refuses every time"
+    },
+    {
+      "id": "X7_epoch_open_retired_all_paths",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return issuerEntryWindow\\(\\{",
+      "flags": "",
+      "replace": "if (openEndedRetired(matches)) return { ok: false, reason: 'issued_after_not_after' }; return issuerEntryWindow({",
+      "nth": 1,
+      "suite": "tsc",
+      "note": "open-ended retired refusal stays on the epoch path"
+    },
+    {
+      "id": "X8_epoch_open_retired_null_allowed",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return retired && !foldedNotAfter;",
+      "flags": "",
+      "replace": "return retired && foldedNotAfter;",
+      "nth": 1,
+      "suite": "tsc",
+      "note": "epoch: an open end refuses; a not_after still uses the window"
     }
   ]
 }
