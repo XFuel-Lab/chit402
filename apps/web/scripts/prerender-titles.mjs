@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { STATIC_ROUTES, contentForRoute, injectStatic, loadChitStaticEnv } from './static-html.mjs';
+import { STATIC_ROUTES, contentForRoute, indexHtmlForBuild, injectStatic, loadChitStaticEnv } from './static-html.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const distDir = join(__dirname, '..', 'dist');
@@ -259,10 +259,7 @@ if (isMain) {
     console.log(`  H1: "${content.h1}"`);
   }
 
-  const home = contentForRoute('/', env, verifyUrl);
-  if (!home) throw new Error('missing static page for /');
-  writeFileSync(join(distDir, 'index.html'), injectStatic(indexHtml, home));
-  console.log('✓ Wrote static home content into /index.html');
+  writeFileSync(join(distDir, 'index.html'), indexHtmlForBuild(indexHtml));
 
   console.log(`\n✅ Prerender complete: ${Object.keys(ROUTE_CONTENT).length} route-specific HTML files with crawler content.`);
 }
