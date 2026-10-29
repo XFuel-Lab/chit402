@@ -14,7 +14,7 @@
  * - Files are restored after every mutant, on SIGINT/SIGTERM, and verified by
  *   sha256 at the end. A mutant whose pattern does not match is NOT_APPLIED.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,7 +54,13 @@ function restoreAll() {
   for (const [abs, text] of originals) writeFileSync(abs, text);
   originals.clear();
 }
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { restoreAll(); process.exit(130); });
+// Suites run async so these handlers fire mid-run (spawnSync blocks the event loop).
+let child = null;
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
+  if (child) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }
+  restoreAll();
+  process.exit(130);
+});
 
 function runSuite(name) {
   const s = spec.suites[name];
@@ -64,10 +70,21 @@ function runSuite(name) {
   const argv = useUnshare
     ? ['-rn', 'sh', '-c', 'ip link set lo up 2>/dev/null; exec "$@"', 'sh', ...s.argv]
     : s.argv.slice(1);
-  const res = spawnSync(cmd, argv, { cwd: join(root, s.cwd), env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-  rmSync(tmp, { recursive: true, force: true });
-  if (res.error?.code === 'ETIMEDOUT' || res.signal === 'SIGKILL') return { result: 'TIMEOUT', out: res.stdout + res.stderr };
-  return { result: res.status === 0 ? 'PASS' : 'FAIL', out: (res.stdout || '') + (res.stderr || '') };
+  return new Promise((resolveRun) => {
+    let out = '';
+    let timedOut = false;
+    child = spawn(cmd, argv, { cwd: join(root, s.cwd), env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const cap = (d) => { out += d; if (out.length > 1_000_000) out = out.slice(-500_000); };
+    child.stdout.on('data', cap);
+    child.stderr.on('data', cap);
+    const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, timeoutMs);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      child = null;
+      rmSync(tmp, { recursive: true, force: true });
+      resolveRun({ result: timedOut ? 'TIMEOUT' : (code === 0 ? 'PASS' : 'FAIL'), out });
+    });
+  });
 }
 
 function applyMutant(m) {
@@ -89,7 +106,7 @@ function applyMutant(m) {
 
 const suites = [...new Set(mutants.map((m) => m.suite))];
 for (const name of suites) {
-  const b = runSuite(name);
+  const b = await runSuite(name);
   console.log(`BASELINE\t${name}\t${b.result}`);
   if (b.result !== 'PASS') { console.error(b.out.slice(-4000)); process.exit(3); }
 }
@@ -99,7 +116,7 @@ for (const m of mutants) {
   let result;
   try {
     if (!applyMutant(m)) result = 'NOT_APPLIED';
-    else result = (({ PASS: 'SURVIVED', FAIL: 'KILLED', TIMEOUT: 'TIMEOUT' })[runSuite(m.suite).result]);
+    else result = (({ PASS: 'SURVIVED', FAIL: 'KILLED', TIMEOUT: 'TIMEOUT' })[(await runSuite(m.suite)).result]);
   } finally {
     restoreAll();
   }
