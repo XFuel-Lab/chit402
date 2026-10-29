@@ -3,6 +3,9 @@ import type { CSSProperties } from 'react';
 import SeoHead from '../components/SeoHead';
 import { getApiV1 } from '../apiHost';
 
+const TIER2_LINE =
+  'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+
 const PRODUCTS_SEO = {
   title: 'Products — Stamp, Private Desk, Attest | Chit402',
   description:
@@ -50,11 +53,10 @@ const seats: ProductSeat[] = [
   {
     name: 'Private + Attest',
     price: 'Desk routing + 1%',
-    forWho: 'Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.',
+    forWho: TIER2_LINE,
     youHold:
       'Desk receipt; verify offline or pin issuer JWKS.',
-    detail:
-      'Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.',
+    detail: TIER2_LINE,
     primaryTo: '/docs/private-spend',
     primaryLabel: 'Private Spend docs',
     secondaryTo: '/trust',
@@ -112,7 +114,7 @@ export default function Products() {
             <strong style={{ color: '#d0d0dc' }}>Stamp</strong> is on every hop.{' '}
             <strong style={{ color: '#d0d0dc' }}>Private Desk</strong> swaps the routing posture to
             vendor-blind at the same cost + 1% door.{' '}
-            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.
+            <strong style={{ color: '#d0d0dc' }}>Private + Attest</strong>: {TIER2_LINE}
           </p>
           <p style={{ ...styles.muted, marginTop: '0.75rem' }}>
             Install wires (chat /v1, Eliza, ACP, MCP, frameworks) are not separate products — they

@@ -11,7 +11,7 @@ function link(href, label, internal) {
 export function pricingModel(apiV1) {
   const origin = apiV1.replace(/\/v1$/, '');
   const tier2 =
-    'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
+    'Tier-2 settlement proof: +$0.10 per proof. Currently unavailable while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   return {
     h1: 'Pay for a collected hop.',
     kicker: 'Pricing',
