@@ -52,7 +52,7 @@ space shows spend and declines to show provenance.
 
 Say: Chit402 is the book; this agent spent Y on this job; you hold hub, model, and amount; not a smart
 router; not a model shop; $0.002 standard receipt, routing cost + 1%, USDC on Base and Solana; possession-gated book; register fail-closed;
-signed receipt is table stakes (ES256); money on Base and Solana, proofs on Base; Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected; budgets instead of API keys.  
+signed receipt is table stakes (ES256); money on Base and Solana; Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected; budgets instead of API keys.  
 Do not say: best available provider; smart router; crypto control plane as the lead; swap one
 baseURL as the hero; Theta-centric / DePIN hub as identity; **DePIN / Chit is cheaper** (it is not the price
 floor, and a saving claim needs a named baseline and must be allowed to print negative); TFUEL as
