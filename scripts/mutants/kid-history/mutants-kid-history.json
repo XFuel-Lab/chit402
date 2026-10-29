@@ -1,0 +1,259 @@
+{
+  "about": "chit402-verify kid-history shared window rule. Regenerate with node build-mutants-kid-history.mjs. After any run, rebuild dist (npm run build) before other tests: the last mutant leaves a mutated dist/.",
+  "timeoutSec": 180,
+  "suites": {
+    "verify": {
+      "cwd": "packages/verify",
+      "argv": [
+        "sh",
+        "-c",
+        "./node_modules/.bin/tsc -p . && node --test --test-concurrency=1 test/kid-history-window.test.mjs test/head-signature.test.mjs test/issuer-history-attacks.test.mjs test/preimage-history.test.mjs test/issuer-history-sealed-pin.test.mjs test/check-input.test.mjs test/public-attestation-046.test.mjs test/verdict-040.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "A1_not_before_exclusive",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(issued < notBefore\\) return",
+      "flags": "",
+      "replace": "if (issued <= notBefore) return",
+      "nth": 1,
+      "suite": "verify",
+      "note": "not_before is inclusive: signed == not_before must verify"
+    },
+    {
+      "id": "A2_not_after_exclusive",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(notAfter != null && issued > notAfter\\)",
+      "flags": "",
+      "replace": "if (notAfter != null && issued >= notAfter)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "not_after is inclusive: signed == not_after must verify"
+    },
+    {
+      "id": "A3_revoked_at_inclusive",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(issued >= revoked\\) return",
+      "flags": "",
+      "replace": "if (issued > revoked) return",
+      "nth": 1,
+      "suite": "verify",
+      "note": "signed == revoked_at must be refused"
+    },
+    {
+      "id": "A4_drop_revoked_check",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "(if \\(issued >= revoked)\\) return",
+      "flags": "",
+      "replace": "$1 && false) return",
+      "nth": 1,
+      "suite": "verify",
+      "note": "revoked row must refuse signed >= revoked_at"
+    },
+    {
+      "id": "A5_revoked_not_sticky",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "status: revoked \\? 'revoked' : last\\.status",
+      "flags": "",
+      "replace": "status: last.status",
+      "nth": 1,
+      "suite": "verify",
+      "note": "revocation sticks even if a later row says otherwise"
+    },
+    {
+      "id": "A6_latest_not_after_wins",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(notAfterMs == null \\|\\| parsed < notAfterMs\\)",
+      "flags": "",
+      "replace": "if (notAfterMs == null || parsed > notAfterMs)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "earliest not_after binds; a later row cannot widen"
+    },
+    {
+      "id": "A7_latest_revoked_at_wins",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(revokedMs == null \\|\\| parsed < revokedMs\\)",
+      "flags": "",
+      "replace": "if (revokedMs == null || parsed > revokedMs)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "earliest revoked_at binds"
+    },
+    {
+      "id": "A8_earliest_not_before_wins",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(notBeforeMs == null \\|\\| parsed > notBeforeMs\\)",
+      "flags": "",
+      "replace": "if (notBeforeMs == null || parsed < notBeforeMs)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "latest not_before binds; cannot widen backwards"
+    },
+    {
+      "id": "A9_missing_time_reason",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(issued == null\\) return \\{ ok: false, reason: 'issued_at_missing' \\};",
+      "flags": "",
+      "replace": "if (issued == null) return { ok: false, reason: 'not_before_missing' };",
+      "nth": 1,
+      "suite": "verify",
+      "note": "missing/unparseable signed time keeps reason issued_at_missing"
+    },
+    {
+      "id": "A10_bad_not_after_ignored",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(parsed == null\\) return \\{ ok: false, reason: 'not_after_invalid' \\};",
+      "flags": "",
+      "replace": "if (parsed == null) continue;",
+      "nth": 1,
+      "suite": "verify",
+      "note": "unparseable not_after refuses not_after_invalid on both paths"
+    },
+    {
+      "id": "A11_receipt_time_field_swap",
+      "file": "packages/verify/src/index.ts",
+      "find": "const issuedAt = \\(verifiedClaims && 'iat' in verifiedClaims \\? verifiedClaims\\.iat : null\\)",
+      "flags": "",
+      "replace": "const issuedAt = ((receipt as { created_at?: unknown }).created_at ?? null)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "receipt window uses the signed iat, not the outer created_at"
+    },
+    {
+      "id": "B1_head_window_dropped",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "const window = headHistoryWindow\\(issuerHistory, kid, publishedAt\\);",
+      "flags": "",
+      "replace": "const window = { ok: true, reason: null as string | null };",
+      "nth": 1,
+      "suite": "verify",
+      "note": "production head path must enforce the window"
+    },
+    {
+      "id": "B2_head_bypass_pick_first",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "return issuerKeyWindow\\(doc, kid, publishedAt, \\{ allowUntimedOpen: true \\}\\);",
+      "flags": "",
+      "replace": "{ const first = (doc.entries || []).find((e) => e && e.kid === kid); if (!first) return { ok: false, reason: 'kid_not_in_history' }; return first.status === 'active' && !first.not_after ? { ok: true, reason: null } : issuerKeyWindow(doc, kid, publishedAt, { allowUntimedOpen: true }); }",
+      "nth": 1,
+      "suite": "verify",
+      "note": "head path must go through the shared resolver, not the first row"
+    },
+    {
+      "id": "B3_ambiguity_pick_first",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(kidRowsAmbiguous\\(matches\\)\\) return \\{ ok: false, reason: 'kid_ambiguous' \\};",
+      "flags": "",
+      "replace": "if (kidRowsAmbiguous(matches)) return issuerEntryWindow(matches[0], issuedAt);",
+      "nth": 1,
+      "suite": "verify",
+      "note": "ambiguity refuses; never pick-first"
+    },
+    {
+      "id": "B7_head_untimed_closed",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "allowUntimedOpen: true",
+      "flags": "",
+      "replace": "allowUntimedOpen: false",
+      "nth": 1,
+      "suite": "verify",
+      "note": "v1 head without published_at still verifies for an open active kid"
+    },
+    {
+      "id": "B8_untimed_closed_window_accepts",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return \\{ ok: false, reason: 'published_at_missing' \\};",
+      "flags": "",
+      "replace": "return { ok: true, reason: null };",
+      "nth": 1,
+      "suite": "verify",
+      "note": "untimed head with not_after/revoked (after fold) refuses published_at_missing"
+    },
+    {
+      "id": "B9_untimed_future_not_before",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "> Date\\.now\\(\\)\\)",
+      "flags": "",
+      "replace": "> Date.now() + 1e15)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "untimed head with not_before in the future refuses"
+    },
+    {
+      "id": "B10_head_time_swapped_to_now",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "headHistoryWindow\\(issuerHistory, kid, publishedAt\\)",
+      "flags": "",
+      "replace": "headHistoryWindow(issuerHistory, kid, new Date().toISOString())",
+      "nth": 1,
+      "suite": "verify",
+      "note": "head window keyed on signed published_at, not now"
+    },
+    {
+      "id": "B11_receipt_time_swapped_to_now",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const window = issuerKeyWindow\\(doc, kid, issuedAt\\);",
+      "flags": "",
+      "replace": "const window = issuerKeyWindow(doc, kid, new Date().toISOString());",
+      "nth": 1,
+      "suite": "verify",
+      "note": "receipt window keyed on signed iat, not now"
+    },
+    {
+      "id": "B12_receipt_last_row_only",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const window = issuerKeyWindow\\(doc, kid, issuedAt\\);",
+      "flags": "",
+      "replace": "const window = issuerEntryWindow((doc.entries || []).filter((r) => r.kid === kid).pop(), issuedAt);",
+      "nth": 1,
+      "suite": "verify",
+      "note": "receipt path must fold all rows (later retired row cannot widen not_after)"
+    },
+    {
+      "id": "B14_ambiguity_dropped",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(kidRowsAmbiguous\\(matches\\)\\) return \\{ ok: false, reason: 'kid_ambiguous' \\};",
+      "flags": "",
+      "replace": "if (kidRowsAmbiguous(matches)) void 0;",
+      "nth": 1,
+      "suite": "verify",
+      "note": "two labels for one key, or two keys for one label, refuse kid_ambiguous"
+    },
+    {
+      "id": "B15_label_only_match",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "\\.filter\\(\\(row\\) => historyRowMatchesKid\\(row, kid\\)\\)",
+      "flags": "",
+      "replace": ".filter((row) => row.kid === kid)",
+      "nth": 1,
+      "suite": "verify",
+      "note": "both paths match rows by label OR jwk thumbprint (one matcher)"
+    },
+    {
+      "id": "B16_receipt_untimed_open",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const window = issuerKeyWindow\\(doc, kid, issuedAt\\);",
+      "flags": "",
+      "replace": "const window = issuerKeyWindow(doc, kid, issuedAt, { allowUntimedOpen: true });",
+      "nth": 1,
+      "suite": "verify",
+      "note": "receipt with no signed time stays issued_at_missing"
+    },
+    {
+      "id": "C1_ambiguous_exit_code",
+      "file": "packages/verify/src/verdict.ts",
+      "find": "(const WINDOW_FAIL = new Set\\(\\[\\n)  'kid_ambiguous',\\n",
+      "flags": "",
+      "replace": "$1",
+      "nth": 1,
+      "suite": "verify",
+      "note": "kid_ambiguous on the receipt path maps to key_window fail, exit 1"
+    }
+  ]
+}
