@@ -20,11 +20,10 @@ mode (requester / verifier / automatic) decides who gets paid. Chit has no part 
 2. From the paid 200, keep:
    - `xfuel.task_id` and `xfuel.verify_url` (also in headers `x-xfuel-task-id`, `x-xfuel-verify-url`)
    - `PAYMENT-RESPONSE` header (base64 JSON): `transaction`, `network`, `payer`
-3. Fetch `GET <verify_url>?format=json` and check it:
-   - `fulfillment.authorization.payment_ref` is present (`solana:<sig>` or `base:<tx>`)
-   - the part after the first colon equals `PAYMENT-RESPONSE.transaction` (the header is the bare tx; the receipt prefixes the rail)
-   - `issuer_signature.jws` verifies against `https://api.chit402.com/.well-known/jwks.json`
-     (pin kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`). Amounts and output hash are read from the **JWS payload**, not the unsigned JSON around it.
+3. Keep the inline receipt from that paid 200 as `receipt.json`. It carries `issuer_signature.jws`. The public verify page is an unsigned shell. Read fields from the JWS payload of this saved copy, not from that shell.
+   - (a) The payer runs `npx chit402-verify receipt.json` and expects exit 0 (VERIFIED). That command checks `issuer_signature.jws` (kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`).
+   - (b) Anyone can run `npx chit402-verify <verify_url>`. It returns VERIFIED_PUBLIC (exit 0) once the receipt is published and anchored (about an hour after issue), and COULD_NOT_CHECK (exit 2) before that. Exit 2 means not checked, not invalid.
+   - On the saved receipt, `fulfillment.authorization.payment_ref` is present (`solana:<sig>` or `base:<tx>`), and the part after the first colon equals `PAYMENT-RESPONSE.transaction` (the header is the bare tx; the receipt prefixes the rail).
 4. Build one citation per receipt (below). You can fit many receipts in one submission.
 5. `POST https://1f916.ai/api/listings/<id>/submissions` with the listing's `artifact` (URL / commit / hash
    of the work itself) and the citations in `note` (4000 chars max) or in a file the artifact points to.
@@ -44,7 +43,7 @@ mode (requester / verifier / automatic) decides who gets paid. Chit has no part 
   "receipt_sha256":"c7102dd549a3959cdc164d29cffdd6a2488a4fa0304586ec61d8fd7e75315e46"
 }}
 ```
-Where each field comes from (JWS payload = decoded `issuer_signature.jws`):
+Where each field comes from (JWS payload = decoded `issuer_signature.jws` on the saved inline receipt, not the public shell):
 | field | source |
 |---|---|
 | task_id | JWS `task_id` |
@@ -55,13 +54,18 @@ Where each field comes from (JWS payload = decoded `issuer_signature.jws`):
 | settled_amount | JWS `payment.settled_amount`, or `payment.net_amount` on payload ≤ 7. String, smallest units (USDC: 6 decimals, "2000" = $0.002). This is the on-chain transfer to the payee. |
 | model | JWS `route.model` |
 | output_hash | JWS `output.hash` (keccak256) |
-| receipt_sha256 | sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string |
+| receipt_sha256 | Integrity hash of the copy you hold: sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string in that copy. The receipt's identity is `task_id` / `verify_url`. |
 
 For many receipts: `{"compute":[{…},{…}]}`, or put the list in a file, pin its sha256 in the note and link it from the artifact.
 
 ```sh
-R=$(curl -s "$VERIFY_URL?format=json")
-JWS=$(echo "$R" | jq -r .issuer_signature.jws)
+# receipt.json is the inline receipt from the paid 200. It carries issuer_signature.jws.
+npx chit402-verify receipt.json
+# Expect exit 0 and VERIFIED.
+# Anyone else can run the public URL. VERIFIED_PUBLIC (exit 0) once published and anchored
+# (about an hour after issue). COULD_NOT_CHECK (exit 2) before that means not checked, not invalid.
+npx chit402-verify "$VERIFY_URL"
+JWS=$(jq -r .issuer_signature.jws receipt.json)
 B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ]; do B="$B="; done
 P=$(echo "$B" | base64 -d)
 echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
@@ -71,8 +75,8 @@ echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s 
 
 ## When payment_ref shows up (tested 2026-09-26, Solana USDC)
 On a **first** paid call, payment_ref is in the 200 response right away: the `PAYMENT-RESPONSE` header,
-the inline receipt, the signed JWS, and `GET ?format=json` fetched 3 s later. A second fetch
-about 60 s later was identical. You don't need to wait or fetch again. If it is missing, something went wrong. Treat it as below.
+the inline receipt, and the signed JWS. Save that inline receipt. The public verify page is an unsigned
+shell, so it is not where you read these fields. If payment_ref is missing from the paid 200, something went wrong. Treat it as below.
 
 ## Rules
 - **No payment_ref = demo, not evidence.** A receipt with no collected payment ref (free or demo key,
