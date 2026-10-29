@@ -138,15 +138,17 @@ test('feedback omits the receipt unless the caller opts in', () => {
 });
 
 test('the feedback box is opt-in and does not collect a contact address', () => {
-  const src = readFileSync(new URL('../src/pages/ReceiptCheck.tsx', import.meta.url), 'utf8');
-  assert.match(src, /Something wrong\? Tell us/);
-  assert.match(src, /What did you expect\?/);
-  assert.match(src, /What were you trying to do\?/);
-  assert.match(src, /Attach the receipt I pasted so the team can reproduce it/);
-  assert.match(src, /Notes are posted publicly as GitHub issues\. Don't include private info\./);
-  assert.equal(src.includes('defaultChecked'), false);
-  assert.equal(src.includes('type="email"'), false);
-  assert.equal(src.includes('contact'), false);
+  const src = readFileSync(new URL('../src/pages/ReceiptCheck.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const copy = readFileSync(new URL('../src/content/checkContent.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(/Something wrong\? Tell us/.test(copy), 'feedback prompt is in the shared copy');
+  assert.ok(/What did you expect\?/.test(copy), 'expected question is in the shared copy');
+  assert.ok(/What were you trying to do\?/.test(copy), 'intent question is in the shared copy');
+  assert.ok(/Attach the receipt I pasted so the team can reproduce it/.test(copy), 'attach label is in the shared copy');
+  assert.ok(/Notes are posted publicly as GitHub issues\. Don't include private info\./.test(copy), 'public note is in the shared copy');
+  assert.ok(/^(?![\s\S]*defaultChecked)[\s\S]*$/.test(src), 'attach is not pre-checked');
+  assert.ok(/^(?![\s\S]*type="email")[\s\S]*$/.test(src), 'the page has no email field');
+  assert.ok(/^(?![\s\S]*contact)[\s\S]*$/.test(src), 'the page does not collect a contact');
+  assert.ok(/^(?![\s\S]*contact)[\s\S]*$/.test(copy), 'the shared copy does not collect a contact');
 });
 
 test('issuer history docs use the CLI exit', () => {

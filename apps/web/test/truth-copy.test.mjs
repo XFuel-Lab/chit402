@@ -69,8 +69,15 @@ const CITATION_FIELDS = [
   'receipt_sha256',
 ];
 
+const PAGE_CONTENT = {
+  'apps/web/src/pages/Docs.tsx': 'apps/web/src/content/docsContent.mjs',
+  'apps/web/src/pages/Pricing.tsx': 'apps/web/src/content/pricingContent.mjs',
+};
+
 function read(rel) {
-  return readFileSync(join(repoRoot, rel), 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const text = (file) => readFileSync(join(repoRoot, file), 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const extra = PAGE_CONTENT[rel];
+  return extra ? `${text(rel)}\n${text(extra)}` : text(rel);
 }
 
 function addedHunk(rel) {

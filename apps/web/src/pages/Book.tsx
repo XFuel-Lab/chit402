@@ -1105,7 +1105,7 @@ export default function Book() {
                   <li><code>payment_ref</code> / <code>rail</code> — on-chain attestation</li>
                   <li><code>bucket</code> — inflow allocation bucket when no ref</li>
                   <li><code>replay_count</code> — idempotent resubmits (never double-counted)</li>
-                  <li><code>verify_url</code> — stranger-safe receipt page</li>
+                  <li><code>verify_url</code> — third-party-verifiable receipt page</li>
                 </ul>
               </details>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
