@@ -190,8 +190,8 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   assert.ok(!/expects exit 0/.test(src), 'cite skill: old expects exit 0 wording is gone');
   assert.ok(/jq \.xfuel response\.json > receipt\.json/.test(src), 'cite skill saves jq .xfuel response.json > receipt.json');
   assert.ok(
-    /\[ -n "\$JWS" \] && \[ "\$JWS" != null \] \|\| \{ echo "no issuer_signature\.jws in receipt\.json" >&2; false; \}/.test(src),
-    'cite skill JWS guard uses false and does not exit the caller',
+    /if \[ -n "\$JWS" \] && \[ "\$JWS" != null \]; then[\s\S]*?else\s+echo "no issuer_signature\.jws in receipt\.json" >&2\s+false\s+fi/.test(src),
+    'cite snippet if/else ends false so failure is nonzero and does not exit the caller',
   );
   for (const field of CITATION_FIELDS) {
     assert.ok(new RegExp(`\\b${field}\\b`).test(src), `cite skill lists ${field}`);

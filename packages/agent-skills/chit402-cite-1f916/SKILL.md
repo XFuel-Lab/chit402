@@ -67,12 +67,16 @@ npx chit402-verify receipt.json
 # Anyone can run npx chit402-verify <verify_url>. Today it returns COULD_NOT_CHECK (exit 2) for these receipts: the public path does not check Solana receipts, and a Base receipt returns VERIFIED_PUBLIC (exit 0) only once its public page carries a signed public attestation. Exit 2 means not checked, not invalid.
 npx chit402-verify "$VERIFY_URL"
 JWS=$(jq -r .issuer_signature.jws receipt.json)
-[ -n "$JWS" ] && [ "$JWS" != null ] || { echo "no issuer_signature.jws in receipt.json" >&2; false; }
-B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ]; do B="$B="; done
-P=$(echo "$B" | base64 -d)
-echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
- '{compute:{vendor:"chit402",task_id,verify_url:$v,payment_ref:.payment.ref,network:$n,asset:.payment.asset,
-   settled_amount:(.payment.settled_amount // .payment.net_amount),model:.route.model,output_hash:.output.hash,receipt_sha256:$h}}'
+if [ -n "$JWS" ] && [ "$JWS" != null ]; then
+  B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ]; do B="$B="; done
+  P=$(echo "$B" | base64 -d)
+  echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
+   '{compute:{vendor:"chit402",task_id,verify_url:$v,payment_ref:.payment.ref,network:$n,asset:.payment.asset,
+     settled_amount:(.payment.settled_amount // .payment.net_amount),model:.route.model,output_hash:.output.hash,receipt_sha256:$h}}'
+else
+  echo "no issuer_signature.jws in receipt.json" >&2
+  false
+fi
 ```
 
 ## When payment_ref shows up (tested 2026-09-26, Solana USDC)
