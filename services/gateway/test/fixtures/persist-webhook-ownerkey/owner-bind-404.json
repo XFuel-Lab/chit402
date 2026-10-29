@@ -1,0 +1,19 @@
+{
+  "status": 404,
+  "headers": {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-DNS-Prefetch-Control": "off",
+    "X-RateLimit-Limit": "120",
+    "X-RateLimit-Remaining": "106",
+    "X-RateLimit-Reset": "60",
+    "Cache-Control": "private, no-store",
+    "Vary": "Authorization",
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": "21",
+    "Connection": "keep-alive",
+    "Keep-Alive": "timeout=5"
+  },
+  "body": "{\"error\":\"not_found\"}"
+}

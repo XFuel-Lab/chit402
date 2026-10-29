@@ -1,0 +1,17 @@
+[
+  "get-unset.json",
+  "put-with-secret.json",
+  "post-with-secret.json",
+  "get-set.json",
+  "delete.json",
+  "delete-again.json",
+  "get-401.json",
+  "get-403.json",
+  "put-400-no-url.json",
+  "put-400-bad-url.json",
+  "put-400-unknown-event.json",
+  "put-generated-secret.json",
+  "owner-bind-200.json",
+  "owner-bind-404.json",
+  "owner-bind-404-missing.json"
+]

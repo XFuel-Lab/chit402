@@ -1,8 +1,12 @@
 import crypto from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import logger from './logger.js';
 import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
 import { testSwitchesOn } from './test-switch.js';
+import { persistFailed } from './persist-error.js';
+import { writeAtomicJson } from './atomic-json-file.js';
 
 /** Signed envelope schema for treasury desk push. */
 export const BOOK_WEBHOOK_SCHEMA = 'chit402.book_webhook.v1';
@@ -17,14 +21,140 @@ export const BOOK_WEBHOOK_EVENTS = Object.freeze({
 
 const VALID_EVENTS = new Set(Object.values(BOOK_WEBHOOK_EVENTS));
 
+function serializeHook(hook) {
+  return {
+    agent_id: hook.agent_id,
+    url: hook.url,
+    secret: hook.secret,
+    events: [...hook.events],
+    enabled: hook.enabled !== false,
+    createdAt: hook.createdAt,
+    updatedAt: hook.updatedAt,
+    deliveries: hook.deliveries,
+    failures: hook.failures,
+    lastStatus: hook.lastStatus ?? null,
+    lastError: hook.lastError ?? null,
+  };
+}
+
+function assertWebhookRow(key, row) {
+  const id = Number(key);
+  if (!Number.isInteger(id) || id < 1 || String(id) !== String(key)) {
+    throw new Error('webhook row rejected');
+  }
+  if (!row || typeof row !== 'object' || Array.isArray(row)) {
+    throw new Error('webhook row rejected');
+  }
+  if (Number(row.agent_id) !== id) throw new Error('webhook row rejected');
+  validateWebhookUrl(row.url);
+  if (typeof row.secret !== 'string' || row.secret.length === 0) {
+    throw new Error('webhook row rejected');
+  }
+  if (!Array.isArray(row.events)) throw new Error('webhook row rejected');
+  const seen = new Set();
+  for (const event of row.events) {
+    if (typeof event !== 'string' || !VALID_EVENTS.has(event) || seen.has(event)) {
+      throw new Error('webhook row rejected');
+    }
+    seen.add(event);
+  }
+  if (typeof row.enabled !== 'boolean') throw new Error('webhook row rejected');
+  if (typeof row.createdAt !== 'number' || typeof row.updatedAt !== 'number') {
+    throw new Error('webhook row rejected');
+  }
+  if (!Number.isInteger(row.deliveries) || row.deliveries < 0) throw new Error('webhook row rejected');
+  if (!Number.isInteger(row.failures) || row.failures < 0) throw new Error('webhook row rejected');
+  if (!(row.lastStatus == null || Number.isInteger(row.lastStatus))) throw new Error('webhook row rejected');
+  if (!(row.lastError == null || typeof row.lastError === 'string')) throw new Error('webhook row rejected');
+}
+
+function hookFromRow(row) {
+  return {
+    agent_id: row.agent_id,
+    url: row.url,
+    secret: row.secret,
+    events: new Set(row.events),
+    enabled: row.enabled !== false,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deliveries: row.deliveries,
+    failures: row.failures,
+    lastStatus: row.lastStatus ?? null,
+    lastError: row.lastError ?? null,
+  };
+}
+
 /**
- * Per-agent webhook registry (in-memory; matches gateway M2M design).
+ * Per-agent webhook registry.
  * One webhook URL per agent_id — treasury desk endpoint registered via possession session.
+ * With persist, the snapshot is `<agentsDir>/book-webhooks.json`.
  */
 export class BookWebhookRegistry {
-  constructor() {
+  /**
+   * @param {{ dir?: string|null, persist?: boolean, fs?: object }} [opts]
+   */
+  constructor({ dir = null, persist = false, fs: fsImpl = null } = {}) {
     /** @type {Map<number, object>} */
     this._hooks = new Map();
+    this.dir = persist && dir ? String(dir) : null;
+    this.persist = !!this.dir;
+    this._fs = fsImpl || undefined;
+    if (this.persist) {
+      try {
+        fs.mkdirSync(this.dir, { recursive: true });
+        this._load();
+      } catch (err) {
+        throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-webhook: mkdir failed');
+      }
+    }
+  }
+
+  _file() {
+    return path.join(this.dir, 'book-webhooks.json');
+  }
+
+  _load() {
+    let raw;
+    try {
+      raw = fs.readFileSync(this._file(), 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') return;
+      throw persistFailed(err, 'book-webhook: load failed');
+    }
+    let snap;
+    try {
+      snap = JSON.parse(raw);
+    } catch (err) {
+      throw persistFailed(err, 'book-webhook: load failed');
+    }
+    if (!snap || typeof snap !== 'object' || Array.isArray(snap) || snap.version !== 1) {
+      throw persistFailed(new Error('webhook store shape'), 'book-webhook: load failed');
+    }
+    const webhooks = snap.webhooks;
+    if (!webhooks || typeof webhooks !== 'object' || Array.isArray(webhooks)) {
+      throw persistFailed(new Error('webhook store shape'), 'book-webhook: load failed');
+    }
+    for (const [key, row] of Object.entries(webhooks)) {
+      try {
+        assertWebhookRow(key, row);
+      } catch (err) {
+        throw persistFailed(err, 'book-webhook: load failed');
+      }
+      const hook = hookFromRow(row);
+      this._hooks.set(hook.agent_id, hook);
+    }
+  }
+
+  _save() {
+    if (!this.persist) return;
+    const webhooks = {};
+    for (const [id, hook] of this._hooks) {
+      webhooks[String(id)] = serializeHook(hook);
+    }
+    writeAtomicJson(this._file(), { version: 1, webhooks }, {
+      fs: this._fs,
+      label: 'book-webhook: save failed',
+    });
   }
 
   /**
@@ -64,7 +194,17 @@ export class BookWebhookRegistry {
       lastStatus: existing?.lastStatus || null,
       lastError: existing?.lastError || null,
     };
+    const had = this._hooks.has(id);
+    const prior = this._hooks.get(id);
     this._hooks.set(id, hook);
+    try {
+      this._save();
+    } catch (err) {
+      if (had) this._hooks.set(id, prior);
+      else this._hooks.delete(id);
+      logger.warn({ code: 'book_webhook_save_failed', agentId: id, op: 'upsert' }, 'book-webhook: save failed');
+      throw err;
+    }
     const out = { config: publicBookWebhookConfig(hook) };
     if (generatedSecret) out.secret_once = generatedSecret;
     return out;
@@ -90,7 +230,47 @@ export class BookWebhookRegistry {
     const hook = this._hooks.get(id);
     if (!hook) return null;
     this._hooks.delete(id);
+    try {
+      this._save();
+    } catch (err) {
+      this._hooks.set(id, hook);
+      logger.warn({ code: 'book_webhook_save_failed', agentId: id, op: 'remove' }, 'book-webhook: save failed');
+      throw err;
+    }
     return publicBookWebhookConfig(hook);
+  }
+
+  /**
+   * Persist delivery counters for the hook the delivery was scheduled against.
+   * A late result for a deleted or replaced hook is ignored. A write failure
+   * rolls the counters back and is logged; it never throws into the settle path.
+   * @param {number|string} agentId
+   * @param {object} hookRef
+   * @param {{ ok?: boolean, status?: number|null, error?: string|null }} result
+   */
+  recordDelivery(agentId, hookRef, result) {
+    const id = Number(agentId);
+    const current = this._hooks.get(id);
+    if (current !== hookRef) return;
+    const before = {
+      deliveries: current.deliveries,
+      failures: current.failures,
+      lastStatus: current.lastStatus,
+      lastError: current.lastError,
+    };
+    current.deliveries += result.ok ? 1 : 0;
+    current.failures += result.ok ? 0 : 1;
+    current.lastStatus = result.status;
+    current.lastError = result.ok ? null : result.error || null;
+    try {
+      this._save();
+    } catch (err) {
+      current.deliveries = before.deliveries;
+      current.failures = before.failures;
+      current.lastStatus = before.lastStatus;
+      current.lastError = before.lastError;
+      logger.warn({ code: 'book_webhook_counter_persist_failed', agentId: id }, 'book webhook counter persist failed');
+    }
   }
 }
 
@@ -100,8 +280,8 @@ export function getBookWebhookRegistry() {
   return _registry;
 }
 
-export function resetBookWebhookRegistry() {
-  _registry = null;
+export function resetBookWebhookRegistry(next = null) {
+  _registry = next instanceof BookWebhookRegistry ? next : null;
 }
 
 /** HTTPS only; localhost allowed only in NODE_ENV=test. */
@@ -328,21 +508,17 @@ export function scheduleBookWebhook(entry, { registry, baseUrl } = {}) {
   if (!envelope) return;
 
   setImmediate(async () => {
-    await deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id)
-      .then((res) => {
-        hook.deliveries += res.ok ? 1 : 0;
-        hook.failures += res.ok ? 0 : 1;
-        hook.lastStatus = res.status;
-        hook.lastError = res.ok ? null : res.error || null;
-        if (res.ok) {
-          logger.info({ agentId: entry.agent_id, taskId: entry.task_id, event }, 'Book webhook delivered');
-        }
-      })
-      .catch((err) => {
-        hook.failures += 1;
-        hook.lastError = err.message?.slice(0, 160) || 'delivery error';
-        logger.warn({ err: hook.lastError, agentId: entry.agent_id, taskId: entry.task_id }, 'Book webhook dispatch error');
-      });
+    try {
+      const res = await deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id);
+      reg.recordDelivery(entry.agent_id, hook, res);
+      if (res.ok) {
+        logger.info({ agentId: entry.agent_id, taskId: entry.task_id, event }, 'Book webhook delivered');
+      }
+    } catch (err) {
+      const lastError = err.message?.slice(0, 160) || 'delivery error';
+      reg.recordDelivery(entry.agent_id, hook, { ok: false, status: null, error: lastError });
+      logger.warn({ err: lastError, agentId: entry.agent_id, taskId: entry.task_id }, 'Book webhook dispatch error');
+    }
   });
 }
 
@@ -422,6 +598,7 @@ export function manageBookWebhook(agentId, method, claim = {}, body = {}, { veri
       }
       return { status: 200, body: response };
     } catch (err) {
+      if (err?.code === 'persist_failed') throw err;
       return {
         status: 400,
         body: { error: 'invalid_webhook', message: err.message },
