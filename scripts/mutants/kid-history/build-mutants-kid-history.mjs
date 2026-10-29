@@ -57,6 +57,8 @@ const mutants = [
   m('X6_epoch_open_retired_dropped', IH, /if \(openEndedRetired\(matches\)\) return false;/, 'if (openEndedRetired(matches)) void 0;', 'epoch: an open-ended retired row refuses every time'),
   m('X7_epoch_open_retired_all_paths', IH, /return issuerEntryWindow\(\{/, "if (openEndedRetired(matches)) return { ok: false, reason: 'issued_after_not_after' }; return issuerEntryWindow({", 'open-ended retired refusal stays on the epoch path'),
   m('X8_epoch_open_retired_null_allowed', IH, /return retired && !foldedNotAfter;/, 'return retired && foldedNotAfter;', 'epoch: an open end refuses; a not_after still uses the window'),
+  m('Y1_missing_not_after_counts_as_set', IH, /row\.not_after != null && row\.not_after !== ''/, "!('not_after' in row) || (row.not_after != null && row.not_after !== '')", 'epoch: a missing not_after is an open end, not a set end'),
+  m('Y3_empty_not_after_counts_as_set', IH, /row\.not_after != null && row\.not_after !== ''/, 'row.not_after != null', 'epoch: an empty not_after is an open end, not a set end'),
 ];
 const verifySuite = { cwd: 'packages/verify', argv: ['sh', '-c', `./node_modules/.bin/tsc -p . && node --test --test-concurrency=1 ${TESTS.join(' ')}`], env: { NODE_ENV: 'test' } };
 const tscSuite = { cwd: 'packages/verify', argv: ['sh', '-c', './node_modules/.bin/tsc -p . --noEmit'], env: {} };

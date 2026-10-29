@@ -332,6 +332,26 @@
       "nth": 1,
       "suite": "tsc",
       "note": "epoch: an open end refuses; a not_after still uses the window"
+    },
+    {
+      "id": "Y1_missing_not_after_counts_as_set",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "row\\.not_after != null && row\\.not_after !== ''",
+      "flags": "",
+      "replace": "!('not_after' in row) || (row.not_after != null && row.not_after !== '')",
+      "nth": 1,
+      "suite": "tsc",
+      "note": "epoch: a missing not_after is an open end, not a set end"
+    },
+    {
+      "id": "Y3_empty_not_after_counts_as_set",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "row\\.not_after != null && row\\.not_after !== ''",
+      "flags": "",
+      "replace": "row.not_after != null",
+      "nth": 1,
+      "suite": "tsc",
+      "note": "epoch: an empty not_after is an open end, not a set end"
     }
   ]
 }

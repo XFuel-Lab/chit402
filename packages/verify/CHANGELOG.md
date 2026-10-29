@@ -3,10 +3,6 @@
 All notable changes to the Chit402 offline verifier are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
-
-- An epoch record refuses a retired key whose folded window has no `not_after`, at every time. A retired row that sets `not_after` still follows that window. Receipts and tree heads still accept a retired row with no `not_after`.
-
 ## 0.5.0-pre.0: Version validity windows (pre-release)
 
 Not published. The bundled `version-windows.json` is test-signed in this build; `prepublishOnly` and `scripts/check-verify-publish.mjs` refuse to publish until the signing ceremony replaces it with the production signature. The version moved off 0.4.11 so no build of this code can be published under that number.
@@ -18,7 +14,7 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 ### Fixed: one key window for receipts, tree heads, and epochs
 - A kid's history rows fold into one window on the receipt path, the tree-head path, and the epoch path: latest `not_before`, earliest `not_after`, earliest `revoked_at`, and revocation sticks. A later row cannot widen that window. `not_before` and `not_after` stay inclusive. `revoked_at` stays exclusive.
 - A tree head signed inside that window verifies when the kid has more than one lifecycle row. `kid_ambiguous` means the matched rows do not name one key (two labels, or two keys). On a receipt it is a key-window failure, exit 1. No matching row stays `kid_not_in_history`, exit 2.
-- An epoch record uses that same window. A revoked row, or any `revoked_at` stamp, still refuses every time, including a time before `revoked_at`. A retired row does not refuse a time the window admits.
+- An epoch record uses that same window. A revoked row, or any `revoked_at` stamp, still refuses every time, including a time before `revoked_at`. A retired row does not refuse a time the window admits on receipts and tree heads. Epoch records and public attestations refuse a retired row with no `not_after`.
 - Docs anchor `kid_ambiguous`. No snapshot bytes, hashes, or signatures changed. Version not bumped. `BUILD_DIGEST.txt` moved because `src/issuer-history.ts`, `src/anchor-trust.ts`, and `src/verdict.ts` changed.
 
 ### Changed

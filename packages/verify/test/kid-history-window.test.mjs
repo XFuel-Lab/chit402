@@ -738,6 +738,41 @@ test('an open-ended retired row is refused only on the epoch path', async () => 
   assert.equal(epochHistoryKeyAllowed(bounded, key.kid, INSIDE), true);
   assert.equal(epochHistoryKeyAllowed(bounded, key.kid, T1), true);
   assert.equal(epochHistoryKeyAllowed(bounded, key.kid, T1_AFTER), false);
+
+  const missingNotAfter = row(key, { notBefore: T0, status: 'retired' });
+  delete missingNotAfter.not_after;
+  const missing = {
+    entries: [
+      row(key, { notBefore: T0 }),
+      missingNotAfter,
+    ],
+  };
+  assert.equal(Object.prototype.hasOwnProperty.call(missingNotAfter, 'not_after'), false);
+  assert.equal(epochHistoryKeyAllowed(missing, key.kid, '2026-03-01T00:00:00.000Z'), false);
+  assert.equal(epochHistoryKeyAllowed(missing, key.kid, '2030-01-01T00:00:00.000Z'), false);
+
+  const blank = {
+    entries: [
+      row(key, { notBefore: T0 }),
+      row(key, { notBefore: T0, notAfter: '', status: 'retired' }),
+    ],
+  };
+  assert.equal(epochHistoryKeyAllowed(blank, key.kid, '2026-03-01T00:00:00.000Z'), false);
+  assert.equal(epochHistoryKeyAllowed(blank, key.kid, '2030-01-01T00:00:00.000Z'), false);
+});
+
+test('a later active row does not clear a retired not_after', () => {
+  const key = issuerKey();
+  const entries = [
+    row(key, { notBefore: T0 }),
+    row(key, { notBefore: T0, notAfter: T1, status: 'retired' }),
+    row(key, { notBefore: T0, status: 'active' }),
+  ];
+  assertResolver({ entries }, key.kid, INSIDE, true, null);
+  assertResolver({ entries }, key.kid, T1, true, null);
+  assertResolver({ entries }, key.kid, T1_AFTER, false, 'issued_after_not_after');
+  assert.equal(epochHistoryKeyAllowed({ entries }, key.kid, INSIDE), true);
+  assert.equal(epochHistoryKeyAllowed({ entries }, key.kid, T1_AFTER), false);
 });
 
 test('epoch path uses the shared window and keeps its stricter revocation rule', () => {
