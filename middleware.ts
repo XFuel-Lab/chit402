@@ -1,3 +1,7 @@
+import { chitHomePage, injectHomeIfRoot } from './apps/web/scripts/edge-home.mjs';
+import { getHostConfig } from './apps/web/src/hostConfig';
+import { LIVE_RECEIPT_VERIFY_URL } from './apps/web/src/lib/liveReceiptSpecimen';
+
 export const config = {
   matcher: [
     '/',
@@ -65,11 +69,6 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// The static page body lives inside #root. Leave it in place when the edge rewrites head and noscript.
-function keepStaticRoot(html: string): string {
-  return html;
-}
-
 function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
   const canonicalUrl = escapeAttr(`https://${seo.domain}${pathname}`);
   
@@ -112,7 +111,7 @@ function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
       /<div id="root"><\/div>/, () => `<div id="root"></div>${chitNoscript}`);
   }
 
-  return keepStaticRoot(result);
+  return result;
 }
 
 export default async function middleware(request: Request): Promise<Response> {
@@ -133,7 +132,8 @@ export default async function middleware(request: Request): Promise<Response> {
   const html = await response.text();
   const pathname = url.pathname;
   const seo = pathname.startsWith('/v1') ? CHIT_V1_SEO_FULL : CHIT_HOME_SEO;
-  const transformedHtml = transformHtml(html, seo, pathname);
+  const homePage = chitHomePage(LIVE_RECEIPT_VERIFY_URL, getHostConfig().githubUrl);
+  const transformedHtml = injectHomeIfRoot(transformHtml(html, seo, pathname), pathname, homePage);
   
   return new Response(transformedHtml, {
     status: response.status,
