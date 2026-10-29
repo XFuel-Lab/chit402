@@ -11,7 +11,7 @@ function link(href, label, internal) {
 export function pricingModel(apiV1) {
   const origin = apiV1.replace(/\/v1$/, '');
   const tier2 =
-    'Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected.';
+    'Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.';
   return {
     h1: 'Pay for a collected hop.',
     kicker: 'Pricing',
@@ -26,7 +26,9 @@ export function pricingModel(apiV1) {
       [
         'One flat stamp for the treasury desk: HTTP 402 quote, USDC settle on Base or Solana, and a signed receipt with ',
         { code: 'verify_url' },
-        ' you can verify offline. Bigger jobs do not make the receipt harder or more expensive — the standard receipt stays $0.002 unless our unit cost changes.',
+        '. Anyone can run ',
+        { code: 'npx chit402-verify' },
+        ' on that URL. Some receipts return COULD_NOT_CHECK (exit 2), which means not checked, not invalid. Bigger jobs do not make the receipt harder or more expensive — the standard receipt stays $0.002 unless our unit cost changes.',
       ],
       [
         'Provider inference is billed at ',
@@ -67,7 +69,13 @@ export function pricingModel(apiV1) {
         title: 'Included on the hop',
         items: [
           'Signed receipt naming hub, model, and amount',
-          ['Public ', { code: 'verify_url' }, ' — stranger-verifiable without a second fee'],
+          [
+            'Anyone can run ',
+            { code: 'npx chit402-verify' },
+            ' on the public ',
+            { code: 'verify_url' },
+            '. COULD_NOT_CHECK (exit 2) means not checked, not invalid.',
+          ],
           'USDC on Base and Solana (chain-neutral x402)',
           'Quoted settle before the call completes',
         ],
