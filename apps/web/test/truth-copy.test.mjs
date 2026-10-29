@@ -189,11 +189,11 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   }
 });
 
-test('1F916 page says a stranger cannot check the receipt leg today', () => {
+test('1F916 page says a third party cannot check the receipt leg today', () => {
   const src = read('apps/web/src/pages/OneF916Link.tsx');
   assert.ok(
-    /Today a stranger cannot run that check: the public receipts are unsigned shells, so `npx chit402-verify` and `scripts\/verify-1f916-link\.mjs` return COULD_NOT_CHECK \(exit 2\) on the receipt leg\. Exit 2 means not checked, not invalid\. This note stays until signed public receipts ship for these payouts\./.test(src),
-    'OneF916Link has the locked stranger sentence',
+    /one offline check covers the instruction and the money\. Today a third party cannot run this check: the public receipts are unsigned shells, so <code>npx chit402-verify<\/code> and <code>scripts\/verify-1f916-link\.mjs<\/code> return COULD_NOT_CHECK \(exit 2\) on the receipt leg\. Exit 2 means not checked, not invalid\. This note stays until signed public receipts ship for these payouts\./.test(src),
+    'OneF916Link says a third party cannot run this check today',
   );
   assert.ok(/COULD_NOT_CHECK/.test(src), 'OneF916Link still says COULD_NOT_CHECK');
   assert.ok(/not invalid/.test(src), 'OneF916Link still says not invalid');
