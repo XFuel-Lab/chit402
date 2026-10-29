@@ -1,4 +1,5 @@
 import { chitHomePage, injectHomeIfRoot } from './apps/web/scripts/edge-home.mjs';
+import { HOME_H1, HOME_TITLE } from './apps/web/src/content/homeContent.mjs';
 import { getHostConfig } from './apps/web/src/hostConfig';
 import { LIVE_RECEIPT_VERIFY_URL } from './apps/web/src/lib/liveReceiptSpecimen';
 
@@ -11,9 +12,9 @@ export const config = {
 };
 
 const CHIT_SEO = {
-  title: 'Chit402 — treasury desk for agent spend',
+  title: HOME_TITLE,
   description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
-  ogTitle: 'Chit402 — treasury desk for agent spend',
+  ogTitle: HOME_TITLE,
   ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
   ogImage: 'https://www.chit402.com/og-image.png',
   domain: 'www.chit402.com',
@@ -46,7 +47,7 @@ interface SeoConfig {
 
 const CHIT_HOME_SEO: SeoConfig = {
   ...CHIT_SEO,
-  h1: 'Chit402 — treasury desk for agent spend',
+  h1: HOME_H1,
   lede: 'Who paid which call — export, policy, evidence. Possession book for agent spend. POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url. You see the price first, it\'s based on our cost, and you pay in USDC on Base and Solana. The wire is api.chit402.com/v1.',
 };
 
@@ -98,11 +99,12 @@ function transformHtml(html: string, seo: SeoConfig, pathname: string): string {
       /<link rel="canonical" href="[^"]*" \/>/, () => `<link rel="canonical" href="${canonicalUrl}" />`);
   }
 
+  // Home renders HOME_H1 inside #root. /v1 has no static h1, so the noscript keeps one.
+  const noscriptHeading = pathname.startsWith('/v1') ? `<h1>${seo.h1}</h1>\n      ` : '';
   const chitNoscript = `
   <noscript>
     <article style="max-width:640px;margin:2rem auto;padding:1rem;font-family:system-ui,sans-serif;">
-      <h1>${seo.h1}</h1>
-      <p>${seo.lede}</p>
+      ${noscriptHeading}<p>${seo.lede}</p>
     </article>
   </noscript>`;
 

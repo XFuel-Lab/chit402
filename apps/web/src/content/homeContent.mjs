@@ -35,6 +35,8 @@ console.log(paid.xfuel.verify_url); // signed receipt`;
 // One-line swap: 'Your agents spent this week. On what, and with whom?'
 export const HOME_H1 = 'Your agents spent money this week. On what, and with whom?';
 
+export const HOME_TITLE = 'Chit402: receipts for what your agents spend';
+
 export const homeContent = {
   h1: HOME_H1,
   subhead:
