@@ -56,6 +56,8 @@ const CHIT_V1_SEO_FULL: SeoConfig = {
   lede: 'Exact product: baseURL https://api.chit402.com/v1. POST /v1/chat/completions: you see the price first, it\'s based on our cost, and every paid call gets a signed receipt. USDC on Base and Solana. Without x402 payment, the gateway returns HTTP 402. A partner X-API-Key is a supported alternative.',
 };
 
+const HOME_PAGE = chitHomePage(LIVE_RECEIPT_VERIFY_URL, getHostConfig().githubUrl);
+
 /**
  * The path is request data. Escape it for a quoted attribute, and pass every
  * replacement as a function so "$'" or "$&" in a path is never a pattern.
@@ -132,8 +134,7 @@ export default async function middleware(request: Request): Promise<Response> {
   const html = await response.text();
   const pathname = url.pathname;
   const seo = pathname.startsWith('/v1') ? CHIT_V1_SEO_FULL : CHIT_HOME_SEO;
-  const homePage = chitHomePage(LIVE_RECEIPT_VERIFY_URL, getHostConfig().githubUrl);
-  const transformedHtml = injectHomeIfRoot(transformHtml(html, seo, pathname), pathname, homePage);
+  const transformedHtml = injectHomeIfRoot(transformHtml(html, seo, pathname), pathname, HOME_PAGE);
   
   return new Response(transformedHtml, {
     status: response.status,
