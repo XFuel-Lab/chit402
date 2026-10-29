@@ -22,7 +22,6 @@ export default function Security() {
     ? 'https://github.com/XFuel-Lab/chit402'
     : 'https://github.com/XFuel-Lab/xfuel-protocol';
   const bugBounty = `${repoBase}/blob/main/docs/bug-bounty.md`;
-  const auditChecklist = `${repoBase}/blob/main/docs/AUDIT_READINESS_CHECKLIST.md`;
   const positioning = `${repoBase}/blob/main/docs/POSITIONING.md`;
 
   const baseVerifier = '0x9373499645292715a2275A78eD65B14215C41c06';
@@ -52,9 +51,6 @@ export default function Security() {
             <code style={{ fontSize: '0.85em' }}>SP1ProofHooks</code>, the USDC fee sink, and the primary inference circuit.
             Status updates will be posted when a firm is engaged and reports are published.
           </p>
-          <a href={auditChecklist} target="_blank" rel="noreferrer" className="btn btn-secondary btn-sm" style={{ marginTop: '0.5rem', display: 'inline-flex' }}>
-            Audit readiness checklist (GitHub)
-          </a>
         </div>
 
         <div className="card" style={{ padding: '1.5rem', marginBottom: '1.25rem' }}>
