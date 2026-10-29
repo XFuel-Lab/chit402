@@ -1,0 +1,81 @@
+{
+  "about": "OpenRouter Broadcast www copy. M1-M6 must all be killed. Offline, 180s.",
+  "timeoutSec": 180,
+  "suites": {
+    "broadcast-docs": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/openrouter-broadcast-copy.test.mjs",
+        "test/seo.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "M1_delete_llms_block",
+      "file": "api/llms.txt.ts",
+      "find": "## Already pay OpenRouter\\? Keep your route\\n[\\s\\S]*?fresh account\\.\\n\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "delete the new llms.txt block (tests 1 and 3)"
+    },
+    {
+      "id": "M2_change_668_line",
+      "file": "api/llms.txt.ts",
+      "find": "proof_tier",
+      "flags": "",
+      "replace": "proof_tiet",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "change one character in a #668 line (test 1)"
+    },
+    {
+      "id": "M3_unescaped_backtick",
+      "file": "api/llms.txt.ts",
+      "find": "Keep your route",
+      "flags": "",
+      "replace": "Keep your route`",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "put an unescaped backtick in the new block (test 2)"
+    },
+    {
+      "id": "M4_restore_sidecar_install",
+      "file": "apps/web/src/pages/Doors.tsx",
+      "find": "is currently not importable",
+      "flags": "",
+      "replace": "is currently not importable\nnpm install chit402-sidecar",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "restore the unflagged sidecar install line on /doors (test 5)"
+    },
+    {
+      "id": "M5_drop_unverified",
+      "file": "api/llms.txt.ts",
+      "find": "Broadcast \\(unverified\\)",
+      "flags": "",
+      "replace": "Broadcast",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "drop unverified from the block (test 3)"
+    },
+    {
+      "id": "M6_remove_docs_block",
+      "file": "apps/web/src/pages/Docs.tsx",
+      "find": "        <div className=\"docs-panel\">\\n          <h2>\\{openrouterKeepRouteTitle\\}<\\/h2>[\\s\\S]*?        <\\/div>\\n\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "remove the /docs block (test 4)"
+    }
+  ]
+}
