@@ -85,8 +85,15 @@ test('a revoked history key does not sign the epoch record', () => {
 test('a retired history key does not sign the epoch record', () => {
   const pair = keyPair();
   const record = recordFor(pair, claims);
+  // A retired row whose not_after is already past does not sign. An open
+  // retired window is covered by the shared key-window tests.
   assert.equal(
-    epochRecordSignatureOk(record, record.issuer_signature.jws, history(pair, 'retired'), AT),
+    epochRecordSignatureOk(
+      record,
+      record.issuer_signature.jws,
+      history(pair, 'retired', { not_after: '2026-05-01T00:00:00.000Z' }),
+      AT,
+    ),
     false,
   );
 });
@@ -119,8 +126,8 @@ test('a retired key cannot backdate the epoch with its own iat', () => {
         kid: pair.kid,
         jwk: pair.jwk,
         alg: 'ES256',
-        not_before: retiredAt,
-        not_after: null,
+        not_before: BEFORE,
+        not_after: retiredAt,
         status: 'retired',
         revoked_at: null,
       },

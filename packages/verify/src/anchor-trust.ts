@@ -31,7 +31,8 @@ import {
   type Es256Jwk,
 } from './jws.js';
 import {
-  issuerEntryWindow,
+  historyRowMatchesKid,
+  issuerKeyWindow,
   verifyIssuerHistoryDocument,
   type IssuerHistoryDocument,
 } from './issuer-history.js';
@@ -191,22 +192,13 @@ function trustCompactJws(
   return { ok: false, trust: null, kid, payload: null, reason: 'head_signature_invalid' };
 }
 
-function historyEntryMatches(entry: { kid?: string; jwk?: Es256Jwk }, kid: string): boolean {
-  if (entry.kid === kid) return true;
-  return Boolean(entry.jwk && isEs256PublicJwk(entry.jwk) && jwkThumbprint(entry.jwk) === kid);
-}
-
 function historyEntryKey(doc: IssuerHistoryDocument, kid: string | null): Es256Jwk | null {
   if (!kid) return null;
   for (const entry of doc.entries || []) {
     if (!entry?.jwk || !isEs256PublicJwk(entry.jwk)) continue;
-    if (historyEntryMatches(entry, kid)) return entry.jwk;
+    if (historyRowMatchesKid(entry, kid)) return entry.jwk;
   }
   return null;
-}
-
-function historyEntriesForKid(doc: IssuerHistoryDocument, kid: string) {
-  return (doc.entries || []).filter((entry) => entry && historyEntryMatches(entry, kid));
 }
 
 function stable(value: unknown): string {
@@ -423,30 +415,14 @@ export function headTrustedFromInclusion(
 }
 
 /**
- * A signed published_at is checked with the receipt window rules.
- * v1 heads omit the field, and a closed head with no observed chain time
- * signs null. That is not issued_at_missing. An active kid with an open
- * window still verifies. A revoked kid, or one with not_after, fails closed
- * because the missing time cannot show the head was signed inside the window.
+ * The tree-head window is the receipt window, including an untimed v1 head.
  */
 function headHistoryWindow(
   doc: IssuerHistoryDocument,
   kid: string,
   publishedAt: unknown,
 ): { ok: boolean; reason: string | null } {
-  const matches = historyEntriesForKid(doc, kid);
-  if (matches.length === 0) return { ok: false, reason: 'kid_not_in_history' };
-  if (matches.length !== 1) return { ok: false, reason: 'kid_ambiguous' };
-  const entry = matches[0];
-  const hasTime = publishedAt != null && publishedAt !== '';
-  if (hasTime) return issuerEntryWindow(entry, publishedAt);
-  const notBefore = entry.not_before ? Date.parse(entry.not_before) : NaN;
-  if (!Number.isFinite(notBefore)) return { ok: false, reason: 'not_before_missing' };
-  if (notBefore > Date.now()) return { ok: false, reason: 'issued_before_not_before' };
-  if (entry.status === 'revoked' || entry.not_after != null) {
-    return { ok: false, reason: 'published_at_missing' };
-  }
-  return { ok: true, reason: null };
+  return issuerKeyWindow(doc, kid, publishedAt, { allowUntimedOpen: true });
 }
 
 function asAddressList(value: unknown, chain: 'base' | 'solana'): string[] {

@@ -12,6 +12,7 @@ import {
   verifyIssuerJws,
   ISSUER_JWS_TYP,
   jwkThumbprint,
+  isEs256PublicJwk,
   isPinnedTrustedJwk,
   DEFAULT_TRUSTED_ISSUER_KIDS,
   type Es256Jwk,
@@ -256,16 +257,51 @@ export function issuerEntryWindow(
   return { ok: true, reason: null };
 }
 
+/**
+ * A history row belongs to `kid` when its label is that kid, or when the
+ * RFC 7638 thumbprint of its ES256 public JWK is that kid.
+ */
+export function historyRowMatchesKid(
+  row: { kid?: string | null; jwk?: Es256Jwk | null } | null | undefined,
+  kid: string,
+): boolean {
+  if (!row) return false;
+  if (row.kid === kid) return true;
+  return Boolean(row.jwk && isEs256PublicJwk(row.jwk) && jwkThumbprint(row.jwk) === kid);
+}
+
+/**
+ * Ambiguity is about key identity, not about how many lifecycle rows a key has.
+ * True when the rows do not all share one JWK thumbprint, or do not all carry one kid label.
+ */
+export function kidRowsAmbiguous(
+  matches: ReadonlyArray<{ kid?: string | null; jwk?: Es256Jwk | null }>,
+): boolean {
+  const labels = new Set<string>();
+  const prints = new Set<string>();
+  for (const row of matches) {
+    if (!row || typeof row.kid !== 'string' || row.kid === '') return true;
+    labels.add(row.kid);
+    if (!row.jwk || !isEs256PublicJwk(row.jwk)) return true;
+    const print = jwkThumbprint(row.jwk);
+    if (!print) return true;
+    prints.add(print);
+  }
+  return labels.size !== 1 || prints.size !== 1;
+}
+
 export function issuerKeyWindow(
   doc: IssuerHistoryDocument,
   kid: string,
   issuedAt: unknown,
+  { allowUntimedOpen = false }: { allowUntimedOpen?: boolean } = {},
 ): { ok: boolean; reason: string | null } {
   // The end of the window is sticky. The earliest revoked_at and the earliest
   // not_after across every entry for this kid still apply after a later row.
   // not_before uses the latest stamp, so a later row cannot widen it backwards.
-  const matches = (doc.entries || []).filter((row) => row.kid === kid);
+  const matches = (doc.entries || []).filter((row) => historyRowMatchesKid(row, kid));
   if (!matches.length) return { ok: false, reason: 'kid_not_in_history' };
+  if (kidRowsAmbiguous(matches)) return { ok: false, reason: 'kid_ambiguous' };
   const last = matches[matches.length - 1];
   let notBefore: string | null = null;
   let notBeforeMs: number | null = null;
@@ -304,6 +340,15 @@ export function issuerKeyWindow(
     }
   }
   if (revoked && revokedAt == null) return { ok: false, reason: 'revoked_at_missing' };
+  // Untimed heads see the folded window. A receipt never takes this branch.
+  if ((issuedAt == null || issuedAt === '') && allowUntimedOpen) {
+    if (notBeforeMs == null) return { ok: false, reason: 'not_before_missing' };
+    if (notBeforeMs > Date.now()) return { ok: false, reason: 'issued_before_not_before' };
+    if (revoked || notAfter != null) {
+      return { ok: false, reason: 'published_at_missing' };
+    }
+    return { ok: true, reason: null };
+  }
   return issuerEntryWindow({
     not_before: notBefore,
     not_after: notAfter,
@@ -313,10 +358,11 @@ export function issuerKeyWindow(
 }
 
 /**
- * Epoch records are a new trust path. The signer has to be `active` at `at`
- * and this history must never revoke that kid. A later `revoked` row sticks,
- * including for a time before `revoked_at`. `retired` is not active.
- * A missing time cannot show the key was active.
+ * Epoch records share the receipt and tree-head window.
+ * A revoked row, or any revoked_at stamp, refuses every time, including a
+ * time before revoked_at. A missing time refuses. Rows still match on
+ * `row.kid` or `row.jwk.kid`. Rows that disagree on key identity refuse.
+ * A retired row does not refuse a time the combined window admits.
  */
 export function epochHistoryKeyAllowed(
   doc: IssuerHistoryDocument | null | undefined,
@@ -330,24 +376,14 @@ export function epochHistoryKeyAllowed(
     if (row.status === 'revoked') return false;
     if (row.revoked_at != null && row.revoked_at !== '') return false;
   }
-  const issued = parseTime(at);
-  if (issued == null) return false;
-  let chosen: IssuerHistoryEntry | null = null;
-  let chosenMs: number | null = null;
-  for (const row of matches) {
-    const start = parseTime(row.not_before);
-    if (start == null || start > issued) continue;
-    if (chosenMs == null || start >= chosenMs) {
-      chosen = row;
-      chosenMs = start;
-    }
-  }
-  if (!chosen || chosen.status !== 'active') return false;
-  if (chosen.not_after != null && chosen.not_after !== '') {
-    const end = parseTime(chosen.not_after);
-    if (end == null || issued > end) return false;
-  }
-  return true;
+  if (kidRowsAmbiguous(matches)) return false;
+  if (parseTime(at) == null) return false;
+  // The epoch matcher is the label or jwk.kid. The shared resolver matches
+  // the label or the thumbprint, so align the label after the identity check.
+  const aligned: IssuerHistoryDocument = {
+    entries: matches.map((row) => ({ ...row, kid })),
+  };
+  return issuerKeyWindow(aligned, kid, at).ok;
 }
 
 export function issuerHistoryDocumentHash(doc: unknown): string {

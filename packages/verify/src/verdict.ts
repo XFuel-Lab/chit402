@@ -94,6 +94,7 @@ const VERSION_WINDOW_FAIL = new Set([
 ]);
 
 const WINDOW_FAIL = new Set([
+  'kid_ambiguous',
   'kid_revoked_before_issuance',
   'issued_before_not_before',
   'issued_after_not_after',
@@ -753,6 +754,7 @@ export const VERDICT_DOC_ANCHORS = [
   'signed_receipt_unavailable',
   'unsupported_version',
   'kid_not_in_history',
+  'kid_ambiguous',
   'receipt_unavailable',
   'issuer_history_unavailable',
   'log_unreachable',

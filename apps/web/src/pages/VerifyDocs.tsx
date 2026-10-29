@@ -9,6 +9,7 @@ const REASONS: { id: string; text: string }[] = [
   { id: 'signed_receipt_unavailable', text: 'The document is the public shell. The signed receipt is on the owner view. Exit 2. This is not a missing issuer-history file.' },
   { id: 'unsupported_version', text: 'This verifier does not accept the receipt version. Exit 2. Upgrade the verifier.' },
   { id: 'kid_not_in_history', text: 'No loaded issuer history covers this key. Exit 2. Pass --issuer-history with a snapshot that includes the kid and prefix-extends the bundled snapshot.' },
+  { id: 'kid_ambiguous', text: 'The history rows for this kid do not name one key. Exit 1.' },
   { id: 'receipt_unavailable', text: 'The receipt itself was not fetched. Exit 2. Every check is could_not_check. The receipt was not found invalid.' },
   { id: 'issuer_history_unavailable', text: 'Issuer history could not be read. Exit 1, matching the CLI. This is not a tampered receipt.' },
   { id: 'log_unreachable', text: 'A loaded receipt\'s log or anchor was not fetched. Exit 2. The receipt was not found invalid.' },
