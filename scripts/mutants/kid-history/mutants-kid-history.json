@@ -254,6 +254,56 @@
       "nth": 1,
       "suite": "verify",
       "note": "kid_ambiguous on the receipt path maps to key_window fail, exit 1"
+    },
+    {
+      "id": "X1_epoch_revoked_not_sticky",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(row\\.status === 'revoked'\\) return false;\\n    if \\(row\\.revoked_at != null && row\\.revoked_at !== ''\\) return false;",
+      "flags": "",
+      "replace": "if (row.status === 'revoked' && false) return false;",
+      "nth": 1,
+      "note": "epoch: a revoked row or revoked_at stamp refuses every time, including before revoked_at",
+      "suite": "verify"
+    },
+    {
+      "id": "X2_epoch_missing_at_accepts",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(parseTime\\(at\\) == null\\) return false;",
+      "flags": "",
+      "replace": "if (parseTime(at) == null) return true;",
+      "nth": 1,
+      "note": "epoch: a missing or unparseable at returns false",
+      "suite": "verify"
+    },
+    {
+      "id": "X3_epoch_label_only",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "\\.filter\\(\\(row\\) => row\\.kid === kid \\|\\| row\\.jwk\\?\\.kid === kid\\)",
+      "flags": "",
+      "replace": ".filter((row) => row.kid === kid)",
+      "nth": 1,
+      "note": "epoch: rows still match on row.kid or jwk.kid",
+      "suite": "verify"
+    },
+    {
+      "id": "X4_epoch_ambiguity_dropped",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(kidRowsAmbiguous\\(matches\\)\\) return false;",
+      "flags": "",
+      "replace": "if (kidRowsAmbiguous(matches)) void 0;",
+      "nth": 1,
+      "note": "epoch: rows that disagree on key identity return false",
+      "suite": "verify"
+    },
+    {
+      "id": "X5_epoch_retired_refuses",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return issuerKeyWindow\\(aligned, kid, at\\)\\.ok;",
+      "flags": "",
+      "replace": "return issuerKeyWindow(aligned, kid, at).ok && matches[matches.length - 1].status === 'active';",
+      "nth": 1,
+      "note": "epoch: a retired row does not refuse a time the shared window admits",
+      "suite": "verify"
     }
   ]
 }
