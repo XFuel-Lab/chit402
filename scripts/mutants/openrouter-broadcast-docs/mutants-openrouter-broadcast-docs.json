@@ -20,7 +20,7 @@
     {
       "id": "M1_delete_llms_block",
       "file": "api/llms.txt.ts",
-      "find": "## Already pay OpenRouter\\? Keep your route\\n[\\s\\S]*?fresh account\\.\\n\\n",
+      "find": "## Already pay OpenRouter\\? Keep your route\\n[\\s\\S]*?openrouter-broadcast\\.md\\n\\n",
       "flags": "",
       "replace": "",
       "nth": 1,
@@ -76,6 +76,46 @@
       "nth": 1,
       "suite": "broadcast-docs",
       "note": "remove the /docs block (test 4)"
+    },
+    {
+      "id": "D2_drop_docs_marker",
+      "file": "apps/web/src/content/docsContent.mjs",
+      "find": "Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account\\.",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "drop the end-to-end marker from /docs"
+    },
+    {
+      "id": "D4_docs_time_claim",
+      "file": "apps/web/src/content/docsContent.mjs",
+      "find": "Chit's Broadcast receiver is on\\.",
+      "flags": "",
+      "replace": "Chit's Broadcast receiver is on. 5 minutes",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "add a 5 minutes claim to /docs"
+    },
+    {
+      "id": "D5_drop_doors_marker",
+      "file": "apps/web/src/pages/Doors.tsx",
+      "find": "full flow end to end on a fresh account",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "drop the end-to-end marker from /doors"
+    },
+    {
+      "id": "D6_marker_away_from_steps",
+      "file": "api/llms.txt.ts",
+      "find": "Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account\\.\\n\\n([\\s\\S]*?)(Guide: https://github\\.com/XFuel-Lab/chit402/blob/main/docs/product/openrouter-broadcast\\.md\\n)",
+      "flags": "",
+      "replace": "$1$2\nSteps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account.\n",
+      "nth": 1,
+      "suite": "broadcast-docs",
+      "note": "put the marker back at the end of the block, away from the steps"
     }
   ]
 }
