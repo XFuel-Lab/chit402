@@ -1,0 +1,239 @@
+[
+  {
+    "name": "webhook-get-unset",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "X-XFuel-Session, X-XFuel-Book-Proof",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"webhook\":null,\"supported_events\":[\"settle\",\"inflow\",\"policy_blocked\",\"collected\"]}"
+  },
+  {
+    "name": "webhook-put-with-secret",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"webhook\":{\"agent_id\":1,\"enabled\":true,\"url_host\":\"127.0.0.1:9\",\"url_path\":\"/hook\",\"events\":[\"settle\",\"collected\"],\"has_secret\":true,\"createdAt\":0,\"updatedAt\":0,\"deliveries\":0,\"failures\":0,\"lastStatus\":null,\"lastError\":null},\"supported_events\":[\"settle\",\"inflow\",\"policy_blocked\",\"collected\"]}"
+  },
+  {
+    "name": "webhook-get-set",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "X-XFuel-Session, X-XFuel-Book-Proof",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"webhook\":{\"agent_id\":1,\"enabled\":true,\"url_host\":\"127.0.0.1:9\",\"url_path\":\"/hook\",\"events\":[\"settle\",\"collected\"],\"has_secret\":true,\"createdAt\":0,\"updatedAt\":0,\"deliveries\":0,\"failures\":0,\"lastStatus\":null,\"lastError\":null},\"supported_events\":[\"settle\",\"inflow\",\"policy_blocked\",\"collected\"]}"
+  },
+  {
+    "name": "webhook-post",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"webhook\":{\"agent_id\":1,\"enabled\":true,\"url_host\":\"127.0.0.1:9\",\"url_path\":\"/hook-post\",\"events\":[\"inflow\"],\"has_secret\":true,\"createdAt\":0,\"updatedAt\":0,\"deliveries\":0,\"failures\":0,\"lastStatus\":null,\"lastError\":null},\"supported_events\":[\"settle\",\"inflow\",\"policy_blocked\",\"collected\"]}"
+  },
+  {
+    "name": "webhook-delete",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"status\":\"removed\",\"webhook\":{\"agent_id\":1,\"enabled\":true,\"url_host\":\"127.0.0.1:9\",\"url_path\":\"/hook-post\",\"events\":[\"inflow\"],\"has_secret\":true,\"createdAt\":0,\"updatedAt\":0,\"deliveries\":0,\"failures\":0,\"lastStatus\":null,\"lastError\":null}}"
+  },
+  {
+    "name": "webhook-delete-again",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":1,\"status\":\"removed\",\"webhook\":null}"
+  },
+  {
+    "name": "webhook-put-generated-secret",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"agent_id\":3,\"webhook\":{\"agent_id\":3,\"enabled\":true,\"url_host\":\"127.0.0.1:9\",\"url_path\":\"/gen\",\"events\":[\"policy_blocked\",\"settle\"],\"has_secret\":true,\"createdAt\":0,\"updatedAt\":0,\"deliveries\":0,\"failures\":0,\"lastStatus\":null,\"lastError\":null},\"supported_events\":[\"settle\",\"inflow\",\"policy_blocked\",\"collected\"],\"secret_once\":\"0000000000000000000000000000000000000000000000000000000000000000\"}"
+  },
+  {
+    "name": "webhook-401",
+    "status": 401,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "X-XFuel-Session, X-XFuel-Book-Proof",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": ""
+  },
+  {
+    "name": "webhook-403",
+    "status": 403,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "X-XFuel-Session, X-XFuel-Book-Proof",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": ""
+  },
+  {
+    "name": "webhook-400-no-url",
+    "status": 400,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"error\":\"invalid_request\",\"message\":\"url is required\"}"
+  },
+  {
+    "name": "webhook-400-bad-url",
+    "status": 400,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"error\":\"invalid_webhook\",\"message\":\"url must be a valid absolute URL\"}"
+  },
+  {
+    "name": "webhook-400-unknown-event",
+    "status": 400,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"error\":\"invalid_webhook\",\"message\":\"unknown event \\\"nope\\\"; valid: settle, inflow, policy_blocked, collected\"}"
+  },
+  {
+    "name": "owner-key-200",
+    "status": 200,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "Authorization",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"bound\":true,\"agent_id\":4}"
+  },
+  {
+    "name": "owner-key-404",
+    "status": 404,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "Authorization",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"error\":\"not_found\"}"
+  },
+  {
+    "name": "owner-key-404-unknown-agent",
+    "status": 404,
+    "headers": {
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+      "referrer-policy": "no-referrer",
+      "x-dns-prefetch-control": "off",
+      "x-ratelimit-limit": "120",
+      "cache-control": "private, no-store",
+      "vary": "Authorization",
+      "content-type": "application/json; charset=utf-8",
+      "connection": "keep-alive",
+      "keep-alive": "timeout=5"
+    },
+    "body": "{\"error\":\"not_found\"}"
+  }
+]

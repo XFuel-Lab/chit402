@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
+import { unlinkStaleAtomicTemps, writeAtomicJsonFile } from './atomic-json-file.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
@@ -41,6 +42,8 @@ export class AgentRegistry {
     if (this.persist) {
       try {
         fs.mkdirSync(this.dir, { recursive: true });
+        unlinkStaleAtomicTemps(this.dir, fs);
+        this._tightenIdentitiesMode();
         this._load();
       } catch (err) {
         throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: mkdir failed');
@@ -50,6 +53,29 @@ export class AgentRegistry {
 
   _file() {
     return path.join(this.dir, 'identities.json');
+  }
+
+  /** An existing file looser than mode 600 is tightened. Content is not rewritten. */
+  _tightenIdentitiesMode() {
+    const file = this._file();
+    let st;
+    try {
+      st = fs.statSync(file);
+    } catch (err) {
+      if (err.code === 'ENOENT') return;
+      throw persistFailed(err, 'agent-registry: load failed');
+    }
+    if (!st.isFile()) {
+      throw persistFailed(new Error('identities.json is not a file'), 'agent-registry: load failed');
+    }
+    const mode = st.mode & 0o777;
+    if ((mode & ~0o600) === 0) return;
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch (err) {
+      throw persistFailed(err, 'agent-registry: chmod failed');
+    }
+    logger.warn({ path: file, mode: mode.toString(8) }, 'identities.json permissions tightened');
   }
 
   _load() {
@@ -86,17 +112,10 @@ export class AgentRegistry {
 
   _save() {
     if (!this.persist) return;
-    try {
-      const target = this._file();
-      const tmp = `${target}.tmp-${process.pid}`;
-      fs.writeFileSync(tmp, JSON.stringify({
-        nextId: this.nextId,
-        identities: [...this.byId.values()],
-      }));
-      fs.renameSync(tmp, target);
-    } catch (err) {
-      throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-registry: save failed');
-    }
+    writeAtomicJsonFile(this._file(), JSON.stringify({
+      nextId: this.nextId,
+      identities: [...this.byId.values()],
+    }), { label: 'agent-registry: save failed' });
   }
 
   get(agentId) {

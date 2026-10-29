@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2587,
+  "total": 2609,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -65,6 +65,7 @@
     "test/hemei-public-pull-export.test.mjs": 3,
     "test/hemei-stranger-specimens.test.mjs": 7,
     "test/hub-catalog.test.mjs": 15,
+    "test/identities-file-mode.test.mjs": 5,
     "test/incl-rpc-timeout.test.mjs": 7,
     "test/inclusion-anchored-head.test.mjs": 9,
     "test/inclusion-covered-by.test.mjs": 1,
@@ -110,6 +111,7 @@
     "test/payment-binding-hardening.test.mjs": 26,
     "test/payment-binding.test.mjs": 10,
     "test/payment-response-header.test.mjs": 5,
+    "test/persist-webhook-ownerkey.test.mjs": 17,
     "test/post-settle-hold.test.mjs": 45,
     "test/post-settle-stamp-http.test.mjs": 4,
     "test/pr520-mustfix.test.mjs": 7,
