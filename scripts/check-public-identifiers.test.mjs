@@ -6,6 +6,9 @@ import {
   isTestFixture,
   scanContent,
 } from './check-public-identifiers.mjs';
+// The mutant-runner self-check rides this always-on file so CI runs it
+// without a workflow edit.
+import './mutants/run-mutants.test.mjs';
 
 const bip39 = readFileSync(new URL('./bip39-english.txt', import.meta.url), 'utf8')
   .trim()
