@@ -60,6 +60,46 @@ Flat fields aligned with `/book/export` and [hemei stranger specimens](hemei-str
 | `inflow_claim` | Present on `inflow` |
 | `emitted_at` | Push timestamp |
 
+## Persistence
+
+Webhook registration is stored under the agents data directory, beside `identities.json`, in:
+
+```
+<data>/agents/book-webhooks.json
+```
+
+The file mode is `600`. State survives a gateway restart from this release on.
+
+Anything set before the deploy that ships this release was already lost at that deploy's restart, and at every earlier restart. Owners must re-register.
+
+Re-register with either:
+
+```
+PUT /v1/agents/:agent_id/book/webhook
+```
+
+or:
+
+```
+POST /v1/agents/:agent_id/book/webhook
+```
+
+Send:
+
+```
+X-XFuel-Session
+```
+
+and a JSON body:
+
+```
+{"url":"https://treasury.example/hooks/chit402","events":["settle","collected"]}
+```
+
+`secret` is optional. If it is omitted, the response includes a new `secret_once` and the integrator must update its signature check.
+
+Known gaps: the webhook signing secret is plaintext at rest at mode `600`. Rotating the book session does not revoke the webhook.
+
 ## Not in v1
 
 - Embed iframe / row card (separate PR)
