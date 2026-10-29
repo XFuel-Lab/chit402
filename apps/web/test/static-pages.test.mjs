@@ -438,6 +438,12 @@ test('static html does not freeze live receipt box values or a receipt count', (
   }
 });
 
+test('/docs prerender title reads HOME_TITLE', () => {
+  const prerender = readNorm(new URL('../scripts/prerender-titles.mjs', import.meta.url));
+  assert.equal(ROUTE_CONTENT['/docs'].title, HOME_TITLE, '/docs prerender title === HOME_TITLE');
+  assert.ok(/'\/docs': \{\n    title: HOME_TITLE,/.test(prerender), '/docs title reads HOME_TITLE');
+});
+
 test('title, meta and canonical tags stay on today\'s bytes for /pricing and /docs', () => {
   for (const route of ['/pricing', '/docs']) {
     const html = transformHtml(shell, route, ROUTE_CONTENT[route]);

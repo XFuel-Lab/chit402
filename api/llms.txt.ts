@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { HOME_TITLE } from '../apps/web/src/content/homeContent.mjs';
 
-const CHIT_LLMS = `# Chit402 — treasury desk for agent spend
+const CHIT_LLMS = `# ${HOME_TITLE}
 
 > Who paid which call — export, policy, evidence. Possession book for agent spend.
 > POST /v1/chat/completions returns a signed receipt: hub, model, amount, verify_url.

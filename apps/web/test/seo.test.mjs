@@ -2,7 +2,7 @@
  * Homepage SEO must describe the public door as paid /v1.
  * x402scan origin copy reads these tags; "unmetered" here is the lie.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -205,7 +205,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
     'agent-shop': 'The till for an agent shop | Chit',
     'book': 'Principal book — spend dashboard | Chit',
     'book-bot': 'Paste this. The shop gets a till | Chit',
-    'docs': 'Chit402 — treasury desk for agent spend',
+    'docs': HOME_TITLE,
     'doors': 'Install doors — wires into the book | Chit402',
     'v1': 'Pay /v1/chat/completions | Chit',
   };
@@ -429,10 +429,22 @@ test('llms.txt API route has no nested backticks in CHIT_LLMS template', () => {
   assert.doesNotMatch(chitBlock, /` \{ action/, 'no nested backticks that break the handler bundle');
 });
 
+function seoFieldValue(expr) {
+  const trimmed = expr.trim();
+  if (trimmed === 'HOME_TITLE') return HOME_TITLE;
+  const quoted = trimmed.match(/^'(.*)'$/);
+  return quoted ? quoted[1] : trimmed;
+}
+
 test('host config has correct Chit SEO values', () => {
-  const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
-  assert.match(hostConfig, /title:.*treasury desk for agent spend/i, 'Chit SEO title uses treasury desk for listings');
-  assert.match(hostConfig, /ogTitle:.*treasury desk for agent spend/i, 'Chit ogTitle uses treasury desk for listings');
+  const hostConfig = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8').replace(/\r\n/g, '\n');
+  const chit = hostConfig.match(/const CHIT_CONFIG: HostConfig = \{([\s\S]*?)\n\};/)?.[1] ?? '';
+  const titleExpr = chit.match(/(?<![\w])title:\s*([^,\n]+)/)?.[1] ?? '';
+  const ogExpr = chit.match(/ogTitle:\s*([^,\n]+)/)?.[1] ?? '';
+  assert.ok(/(?<![\w])title:\s*HOME_TITLE\b/.test(chit), 'chit seo.title reads HOME_TITLE');
+  assert.ok(/ogTitle:\s*HOME_TITLE\b/.test(chit), 'chit seo.ogTitle reads HOME_TITLE');
+  assert.equal(seoFieldValue(titleExpr), HOME_TITLE, 'chit seo.title === HOME_TITLE');
+  assert.equal(seoFieldValue(ogExpr), HOME_TITLE, 'chit seo.ogTitle === HOME_TITLE');
   assert.match(hostConfig, /description:.*Who paid which call/i, 'Chit description leads with who paid which call');
   assert.match(hostConfig, /ogDescription:.*Possession book for agent spend/i, 'Chit ogDescription names possession book');
   assert.doesNotMatch(hostConfig, /wallet moves/i, 'Chit SEO must not lead with wallet-move');
@@ -604,6 +616,39 @@ test('issuer trust page publishes JWKS URLs, kid, and rotation policy', () => {
 test('llms.txt API route links issuer trust page', () => {
   const llmsApi = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
   assert.match(llmsApi, /www\.chit402\.com\/trust/);
+});
+
+test('chit llms.txt first line reads HOME_TITLE', () => {
+  const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(
+    /import \{ HOME_TITLE \} from '\.\.\/apps\/web\/src\/content\/homeContent\.mjs'/.test(llms),
+    'llms.txt imports HOME_TITLE',
+  );
+  assert.ok(/const CHIT_LLMS = `# \$\{HOME_TITLE\}\n/.test(llms), 'CHIT_LLMS heading is # plus HOME_TITLE');
+  const block = llms.match(/const CHIT_LLMS = `([\s\S]*?)`;\s*\nconst XFUEL_LLMS/)?.[1] ?? '';
+  const firstLine = block.split('\n')[0].replace(/\$\{HOME_TITLE\}/g, HOME_TITLE);
+  assert.equal(firstLine, '# ' + HOME_TITLE, 'llms.txt first line === # HOME_TITLE');
+});
+
+test('apps and api source drop the retired home title', () => {
+  const retired = /^(?![\s\S]*treasury desk for agent spend)[\s\S]*$/;
+  const repo = join(root, '../..');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'test') continue;
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else if (/\.(?:ts|tsx|mjs|js|html|md|json)$/.test(entry.name)) files.push(abs);
+    }
+  };
+  walk(join(repo, 'apps'));
+  walk(join(repo, 'api'));
+  assert.ok(files.length > 10, 'apps and api source scan sees files');
+  for (const abs of files) {
+    const src = readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
+    assert.ok(retired.test(src), `${abs.slice(repo.length + 1)} drops the retired home title`);
+  }
 });
 
 test('middleware CHIT_SEO uses Chit402 titles (not Chit)', () => {

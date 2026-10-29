@@ -4,6 +4,8 @@
  * xfuel.app → XFuel branding (default)
  */
 
+import { HOME_TITLE } from './content/homeContent.mjs';
+
 export type HostBrand = 'chit' | 'xfuel';
 
 export interface HostConfig {
@@ -42,9 +44,9 @@ const CHIT_CONFIG: HostConfig = {
   githubUrl: 'https://github.com/XFuel-Lab/chit402',
   publicContactEmail: 'hello@chit402.com',
   seo: {
-    title: 'Chit402 — treasury desk for agent spend',
+    title: HOME_TITLE,
     description: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
-    ogTitle: 'Chit402 — treasury desk for agent spend',
+    ogTitle: HOME_TITLE,
     ogDescription: 'Who paid which call — export, policy, evidence. Possession book for agent spend.',
   },
 };
