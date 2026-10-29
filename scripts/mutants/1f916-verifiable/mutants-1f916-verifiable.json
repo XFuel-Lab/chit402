@@ -83,6 +83,16 @@
       "nth": 1,
       "suite": "web1f916",
       "note": "COULD_NOT_CHECK exits 2"
+    },
+    {
+      "id": "X1_omit_step_ignored",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "if \\(typeof opts\\.omitStep === 'string' && STEPS\\.includes\\(opts\\.omitStep\\)\\) delete steps\\[opts\\.omitStep\\];",
+      "flags": "",
+      "replace": "if (false) delete steps[opts.omitStep];",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "omitStep drops a step so a missing result is FAIL"
     }
   ]
 }

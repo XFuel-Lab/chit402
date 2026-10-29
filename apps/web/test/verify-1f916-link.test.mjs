@@ -1286,3 +1286,159 @@ catch (err) { const c = classifyFetchError(err); console.log(JSON.stringify({ tr
     assert.equal(await runCli([], { log: () => {}, error: () => {} }), 2);
   });
 });
+
+function verifierSource() {
+  return readFileSync(join(root, 'scripts/verify-1f916-link.mjs'), 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+test('shell plus a bad registry fingerprint is FAIL entry_fingerprint, VERDICT FAIL, exit 1', async () => {
+  const result = await verifyLink(load(specimen1Path), {
+    fetchImpl: shellFetch(null, [], { recordHash: TAMPERED }),
+    rpcUrl: 'https://rpc.test/base',
+  });
+  const report = formatReport(result);
+  const re = /^FAIL entry_fingerprint\s+/m;
+  assert.ok(re.test(report), report);
+  assert.equal(result.steps.entry_fingerprint.status, 'FAIL');
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+  assert.equal(result.verdict, 'FAIL');
+  const lines = [];
+  const code = await runCli([specimen1Path], {
+    fetchImpl: shellFetch(null, [], { recordHash: TAMPERED }),
+    log: (line) => lines.push(line),
+    error: () => {},
+  });
+  const out = lines.join('\n');
+  assert.equal(code, 1, out);
+  const verdict = /^VERDICT FAIL$/m;
+  assert.ok(verdict.test(out), out);
+});
+
+test('shell plus a good fingerprint is COULD_NOT_CHECK on fetch_receipt and not_checked downstream, exit 2', async () => {
+  const result = await verifyLink(load(specimen1Path), {
+    fetchImpl: shellFetch(null, []),
+    rpcUrl: 'https://rpc.test/base',
+  });
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+  assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/);
+  for (const name of ['issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+    assert.equal(result.steps[name].status, 'COULD_NOT_CHECK', name);
+    assert.equal(result.steps[name].detail, 'not_checked', name);
+  }
+  assert.equal(result.steps.entry_fingerprint.status, 'PASS');
+  assert.equal(result.verdict, 'COULD_NOT_CHECK');
+  const lines = [];
+  const code = await runCli([specimen1Path], {
+    fetchImpl: shellFetch(null, []),
+    log: (line) => lines.push(line),
+    error: () => {},
+  });
+  const out = lines.join('\n');
+  assert.equal(code, 2, out);
+  const verdict = /^VERDICT COULD_NOT_CHECK$/m;
+  assert.ok(verdict.test(out), out);
+});
+
+test('unsigned true with a non-shell schema is still a shell', async () => {
+  const specimen = load(specimen1Path);
+  const id = specimen.chit_receipt_id;
+  const verifyUrl = `https://api.chit402.com/receipt/${id}`;
+  const result = await verifyLink(specimen, {
+    fetchImpl: async (url) => {
+      const target = String(url);
+      if (target.includes('1f916.ai')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            events: [{ id: 20498, kind: 'listing', hash: FINGERPRINT }],
+            events_has_more: false,
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          schema: 'chit402.foreign_payout.v1',
+          unsigned: true,
+          receipt_id: id,
+          task_id: id,
+          verify_url: verifyUrl,
+        }),
+      };
+    },
+    rpcUrl: 'https://rpc.test/base',
+  });
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+  assert.match(result.steps.fetch_receipt.detail, /public_receipt_is_unsigned_shell/);
+  for (const name of ['issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+    assert.equal(result.steps[name].detail, 'not_checked', name);
+  }
+  assert.equal(result.verdict, 'COULD_NOT_CHECK');
+});
+
+test('omitStep drops a step from verifyLink and the verdict is FAIL', async () => {
+  const result = await verifyLink(load(specimen1Path), {
+    fetchImpl: shellFetch(null, []),
+    rpcUrl: 'https://rpc.test/base',
+    omitStep: 'entry_fingerprint',
+  });
+  assert.equal(result.steps.entry_fingerprint, undefined);
+  assert.equal(result.steps.fetch_receipt.status, 'COULD_NOT_CHECK');
+  for (const name of ['issuer_signature', 'receipt_chain', 'on_chain_tx']) {
+    assert.equal(result.steps[name].status, 'COULD_NOT_CHECK', name);
+    assert.equal(result.steps[name].detail, 'not_checked', name);
+  }
+  assert.equal(result.verdict, 'FAIL');
+});
+
+test('receipt fetch HTTP 404 and bad JSON exit 1; refused port and HTTP 503 exit 2', { timeout: 20000 }, async () => {
+  const cases = [
+    ['HTTP 404', '404', 1, 'FAIL', /^http_404$/],
+    ['bad JSON', 'not_json', 1, 'FAIL', /^body_not_json$/],
+    ['ECONNREFUSED', 'refused', 2, 'COULD_NOT_CHECK', /^ECONNREFUSED$/],
+    ['HTTP 503', '503', 2, 'COULD_NOT_CHECK', /^http_503$/],
+  ];
+  for (const [label, mode, code, verdict, detail] of cases) {
+    const lb = await loopback({ 'api.chit402.com': mode });
+    const lines = [];
+    try {
+      const got = await runCli([specimen1Path], {
+        fetchImpl: shellFetch(lb.forward, ['api.chit402.com']),
+        timeoutMs: 300,
+        log: (line) => lines.push(line),
+        error: () => {},
+      });
+      const out = lines.join('\n');
+      assert.equal(got, code, `${label}: ${out}`);
+      const verdictRe = new RegExp(`^VERDICT ${verdict}$`, 'm');
+      assert.ok(verdictRe.test(out), `${label}: ${out}`);
+      const row = new RegExp(`^${verdict} fetch_receipt\\s+`, 'm');
+      assert.ok(row.test(out), `${label}: ${out}`);
+      const detailLine = out.split('\n').find((line) => line.includes('fetch_receipt'));
+      const found = detailLine ? detailLine.split(/\s+/).pop() : '';
+      assert.ok(detail.test(found), `${label}: ${detailLine}`);
+    } finally {
+      await lb.close();
+    }
+  }
+});
+
+test('source scan: public_receipt_is_unsigned_shell', () => {
+  const src = verifierSource();
+  const re = /public_receipt_is_unsigned_shell/;
+  assert.ok(re.test(src), 'script still contains public_receipt_is_unsigned_shell');
+});
+
+test('source scan: FIXTURE_VERDICT', () => {
+  const src = verifierSource();
+  const re = /FIXTURE_VERDICT/;
+  assert.ok(re.test(src), 'script still contains FIXTURE_VERDICT');
+});
+
+test('source scan: missing step is FAIL', () => {
+  const src = verifierSource();
+  const re = /status === 'FAIL' \|\| status == null/;
+  assert.ok(re.test(src), 'script still contains status === \'FAIL\' || status == null');
+});
