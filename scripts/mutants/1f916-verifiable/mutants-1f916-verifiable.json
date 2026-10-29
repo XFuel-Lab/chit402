@@ -1,0 +1,98 @@
+{
+  "about": "Reviewer mutants. The agent adds its own (prefix X) for new code. Regenerate with node build-mutants-site-prs.mjs.",
+  "timeoutSec": 180,
+  "suites": {
+    "web1f916": {
+      "cwd": "apps/web",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/verify-1f916-link.test.mjs"
+      ],
+      "env": {}
+    }
+  },
+  "mutants": [
+    {
+      "id": "V1_shell_schema_not_detected",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "if \\(receipt\\.schema === 'chit402\\.receipt_shell\\.v1'\\) return true;",
+      "flags": "",
+      "replace": "if (false) return true;",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "an unsigned shell never reaches PASS"
+    },
+    {
+      "id": "V2_unsigned_flag_not_detected",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "if \\(receipt\\.unsigned === true\\) return true;",
+      "flags": "",
+      "replace": "if (false) return true;",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "unsigned:true is a shell"
+    },
+    {
+      "id": "V3_missing_step_not_fail",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "status === 'FAIL' \\|\\| status == null",
+      "flags": "",
+      "replace": "status === 'FAIL'",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "a missing step is FAIL, never PASS or COULD_NOT_CHECK"
+    },
+    {
+      "id": "V4_any_pass_is_pass",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "statuses\\.every\\(\\(status\\) => status === 'PASS'\\)",
+      "flags": "",
+      "replace": "statuses.some((status) => status === 'PASS')",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "PASS needs every step"
+    },
+    {
+      "id": "V5_fixture_can_print_pass",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "\\.replace\\(\\/\\^VERDICT PASS\\$\\/m, FIXTURE_VERDICT\\)",
+      "flags": "",
+      "replace": ".replace(/^VERDICT NEVER$/m, FIXTURE_VERDICT)",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "fixture mode never prints VERDICT PASS"
+    },
+    {
+      "id": "V6_every_error_unchecked",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "return err\\?\\.transport \\? unchecked\\(detail\\) : fail\\(detail\\);",
+      "flags": "",
+      "replace": "return unchecked(detail);",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "only transport errors are COULD_NOT_CHECK"
+    },
+    {
+      "id": "V7_could_not_check_exit_0",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "result\\.verdict === 'COULD_NOT_CHECK' \\? 2 : 1",
+      "flags": "",
+      "replace": "result.verdict === 'COULD_NOT_CHECK' ? 0 : 1",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "COULD_NOT_CHECK exits 2"
+    },
+    {
+      "id": "X1_omit_step_ignored",
+      "file": "scripts/verify-1f916-link.mjs",
+      "find": "if \\(typeof opts\\.omitStep === 'string' && STEPS\\.includes\\(opts\\.omitStep\\)\\) delete steps\\[opts\\.omitStep\\];",
+      "flags": "",
+      "replace": "if (false) delete steps[opts.omitStep];",
+      "nth": 1,
+      "suite": "web1f916",
+      "note": "omitStep drops a step so a missing result is FAIL"
+    }
+  ]
+}
