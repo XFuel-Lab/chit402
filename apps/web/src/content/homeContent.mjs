@@ -32,15 +32,15 @@ export const partnerKeySnippet = `const res = await fetch('${HOME_SNIPPET_API}/c
 const paid = await res.json();
 console.log(paid.xfuel.verify_url); // signed receipt`;
 
+// One-line swap: 'Your agents spent this week. On what, and with whom?'
+export const HOME_H1 = 'Your agents spent money this week. On what, and with whom?';
+
 export const homeContent = {
-  h1: 'Who paid which call — and you still hold it.',
-  lead: 'Treasury desk and spend ledger for agent teams — not a router dashboard.',
-  description:
-    'Every collected inference returns hub, model, amount, and a verify link you can export, policy, and evidence-pack. After you see the row, the possession book keeps last-N spend for the principal who funds the agent.',
+  h1: HOME_H1,
+  subhead:
+    'Each paid call lands as a row in a book you hold: hub, model, amount, and a link to its receipt. $0.002 per receipt.',
   pricingHref: '/pricing',
-  pricingLabel: 'Standard receipt $0.002 · routing cost + 1%',
-  productsHref: '/products',
-  productsLabel: 'Stamp · Private Desk · Attest',
+  pricingLabel: '$0.002 per receipt',
   bookHref: '/book',
   bookLabel: 'Open the book',
   verifyLabel: 'Verify live receipt',
@@ -111,10 +111,9 @@ export function homeStaticModel({ verifyUrl, githubUrl }) {
     h1: homeContent.h1,
     sections: [
       {
-        paragraphs: [homeContent.lead, homeContent.description, homeContent.checkYourself],
+        paragraphs: [homeContent.subhead, homeContent.checkYourself],
         links: [
           { href: homeContent.pricingHref, label: homeContent.pricingLabel },
-          { href: homeContent.productsHref, label: homeContent.productsLabel },
           { href: homeContent.bookHref, label: homeContent.bookLabel },
           { href: verifyUrl, label: homeContent.verifyLabel, blank: true },
           { href: homeContent.dropInDocsHref, label: homeContent.dropInDocsLabel },

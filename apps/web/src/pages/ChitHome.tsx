@@ -26,15 +26,10 @@ export default function ChitHome() {
           <div className="chit-hero-grid">
             <div className="chit-hero-copy">
               <h1 style={styles.heroTitle}>{homeContent.h1}</h1>
-              <p style={styles.heroLead}>{homeContent.lead}</p>
-              <p style={styles.heroDescription}>{homeContent.description}</p>
+              <p style={styles.heroLead}>{homeContent.subhead}</p>
               <p style={styles.pricingChip}>
                 <Link to={homeContent.pricingHref} style={styles.pricingChipLink}>
                   {homeContent.pricingLabel}
-                </Link>
-                {' · '}
-                <Link to={homeContent.productsHref} style={styles.pricingChipLink}>
-                  {homeContent.productsLabel}
                 </Link>
               </p>
               <div style={styles.heroCta}>
@@ -170,13 +165,6 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: '1rem',
     fontWeight: 600,
     lineHeight: 1.4,
-  },
-  heroDescription: {
-    fontSize: '1rem',
-    color: '#8a8a9a',
-    maxWidth: '36rem',
-    marginBottom: '1rem',
-    lineHeight: 1.7,
   },
   pricingChip: {
     marginBottom: '1.25rem',
