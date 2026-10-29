@@ -187,9 +187,9 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   assert.ok((src.match(/only after the receipt is anchored/g) || []).length === 2, 'SKILL.md says only after the receipt is anchored twice');
   assert.ok(/exit 2 \(PENDING\)/.test(src), 'SKILL.md contains exit 2 (PENDING)');
   assert.ok((src.match(/contacts api\.chit402\.com/g) || []).length === 2, 'SKILL.md says contacts api.chit402.com twice');
-  assert.ok(/Unsigned fingerprint/.test(src), 'cite skill calls receipt_sha256 an Unsigned fingerprint');
-  assert.ok(/not proof the receipt is genuine/.test(src), 'cite skill says receipt_sha256 is not proof the receipt is genuine');
-  assert.ok(!/Integrity hash/.test(src), 'cite skill no longer calls receipt_sha256 an Integrity hash');
+  const shaRow = src.split('\n').map((l) => l.replace(/\r$/, '')).find((l) => /^\| receipt_sha256 \|/.test(l)) ?? '';
+  assert.ok(shaRow === '| receipt_sha256 | Unsigned fingerprint of the copy you cite: sha256 hex of the UTF-8 bytes of the compact `issuer_signature.jws` string in that copy. It is not signed and is not proof the receipt is genuine; run `npx chit402-verify` for that. The receipt\'s identity is `task_id` / `verify_url`. |', 'receipt_sha256 row is the approved text');
+  assert.ok(!/integrity hash/i.test(src), 'cite skill does not call receipt_sha256 an integrity hash');
   const stepA = src.split('\n').find((line) => /^\s*- \(a\)/.test(line)) ?? '';
   assert.ok(/only after the receipt is anchored/.test(stepA), 'step 3(a): only after the receipt is anchored');
   assert.ok(/exits 2 \(PENDING\)/.test(stepA), 'step 3(a): exits 2 (PENDING)');
