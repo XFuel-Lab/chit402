@@ -9,7 +9,7 @@ const TIER2_LINE =
 const PRODUCTS_SEO = {
   title: 'Products — Stamp, Private Desk, Attest | Chit402',
   description:
-    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest. Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system. Standard receipts at $0.002 are unaffected. Not a router — who paid which call.',
+    'Book-first seats on the possession ledger: Stamp ($0.002 receipt), Private Desk (vendor-blind cost + 1%), Private + Attest. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Not a router — who paid which call.',
 };
 
 type ProductSeat = {

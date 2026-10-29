@@ -167,22 +167,15 @@ export function operatorsFor(apiDomain) {
     },
     {
       title: 'Hosted API',
-      description: `Public beta at ${apiDomain}.`,
-      href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
-      meta: 'demo',
+      description: `Public API at ${apiDomain}.`,
+      href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
+      meta: 'api',
       external: true,
     },
   ];
 }
 
 export const auditors = [
-  {
-    title: 'Audit readiness',
-    description: 'Phase 1 scope freeze and handover checklist.',
-    href: `${GITHUB}/docs/AUDIT_READINESS_CHECKLIST.md`,
-    meta: 'audit',
-    external: true,
-  },
   {
     title: 'Responsible disclosure',
     description: 'Scope, safe harbour, and how findings are credited.',
@@ -295,7 +288,7 @@ export function probeBody() {
     { code: 'verify_url' },
     '. Each call is charged a quoted price and gets a receipt, paid in USDC on Base or Solana. ',
     { code: 'GET|POST /v1/agents/:agent_id/book' },
-    ' is possession-gated last-N collected spend. The on-chain settlement proof add-on is coming soon.',
+    ' is possession-gated last-N collected spend. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.',
   ];
 }
 
@@ -317,7 +310,6 @@ export function probeLinks() {
   return [
     { href: `${GITHUB}/packages/sdk/README.md`, label: 'SDK docs', blank: true, className: 'btn btn-primary btn-sm' },
     { href: '/doors', label: 'Install doors', internal: true, className: 'btn btn-secondary btn-sm' },
-    { href: `${GITHUB}/docs/DEMO_COMMANDS.md`, label: 'Demo commands', blank: true, className: 'btn btn-secondary btn-sm' },
     { href: `${GITHUB}/docs/README.md`, label: 'Full docs hub', blank: true, className: 'btn btn-secondary btn-sm' },
   ];
 }

@@ -7,11 +7,11 @@ Entry points for agents and platforms. Each door is a self-contained install pat
 | Chat completions | **live** | `POST /v1/chat/completions` @ `https://api.chit402.com` |
 | MCP | **live** | `npx chit402-mcp` — `packages/mcp` |
 | Eliza plugin | **live** | `@xfuel/plugin-elizaos` — `packages/plugin-elizaos` |
-| **Bankr skill (print receipt)** | **shipped** | [`skills/chit402-receipt/`](../skills/chit402-receipt/) · [spec](./bankr-skill-spec.md) |
+| **Bankr skill (print receipt)** | **shipped** | [`skills/chit402-receipt/`](../../skills/chit402-receipt/) · [spec](./bankr-skill-spec.md) |
 | SDK | **live** | `npm install chit402-sdk` |
 | LangChain + AI SDK | **shipped** | `@xfuel/adapters` · [www `/docs/framework-adapters`](https://chit402.com/docs/framework-adapters) |
 | Cloudflare Agents | **shipped** | Sidecar + Worker · [www `/docs/cloudflare`](https://chit402.com/docs/cloudflare) |
-| OpenClaw | **shipped** | [`skills/openclaw-chit402/`](../skills/openclaw-chit402/) · [www `/docs/openclaw`](https://chit402.com/docs/openclaw) |
+| OpenClaw | **shipped** | [`skills/openclaw-chit402/`](../../skills/openclaw-chit402/) · [www `/docs/openclaw`](https://chit402.com/docs/openclaw) |
 | Virtuals ACP | **shipped** | [ACP stamp path](./acp-stamp-path.md) · [www `/docs/acp`](https://chit402.com/docs/acp) |
 | Olas / Theoriq | **shipped** | [Swarm beachhead](./later-adapters.md) · [www `/docs/swarm-platforms`](https://chit402.com/docs/swarm-platforms) |
 | EmDash paid reads | **in repo, coming to npm** | [`packages/emdash-chit402`](../../packages/emdash-chit402/README.md) |
